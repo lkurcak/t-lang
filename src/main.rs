@@ -1,5 +1,5 @@
 use std::process::ExitCode;
-use t::interp::Value;
+use t_lang::interp::Value;
 
 const USAGE: &str = "usage: t [run|check] <file.t>\n       t lsp";
 
@@ -8,7 +8,7 @@ fn main() -> ExitCode {
     if let [cmd] = args.as_slice()
         && cmd == "lsp"
     {
-        return match t::lsp::run() {
+        return match t_lang::lsp::run() {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("t lsp: {e}");
@@ -33,7 +33,7 @@ fn main() -> ExitCode {
     };
 
     if cmd == "check" {
-        return match t::check_source(&src) {
+        return match t_lang::check_source(&src) {
             Ok(_) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("{}", e.render(path, &src));
@@ -42,7 +42,7 @@ fn main() -> ExitCode {
         };
     }
 
-    let run = t::run_source(&src);
+    let run = t_lang::run_source(&src);
     for line in &run.output {
         println!("{line}");
     }

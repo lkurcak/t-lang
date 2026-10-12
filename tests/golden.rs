@@ -10,7 +10,7 @@
 
 use std::fs;
 use std::path::Path;
-use t::interp::Value;
+use t_lang::interp::Value;
 
 #[test]
 fn golden() {
@@ -37,7 +37,7 @@ fn golden() {
             continue;
         }
 
-        let run = t::run_source(&src);
+        let run = t_lang::run_source(&src);
         let mut actual = run.output;
         match (run.result, expected_error) {
             (Ok(value), None) => {

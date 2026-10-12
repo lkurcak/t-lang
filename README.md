@@ -19,13 +19,22 @@ fn main() {
 }
 ```
 
+## Install
+
+```sh
+cargo install t-lang    # installs the `t` command
+```
+
 ## Usage
 
 ```sh
-cargo run -- examples/hello.t         # type-check and run
-cargo run -- check examples/hello.t   # type-check only
-cargo test                            # run every program in tests/t/
+t examples/hello.t          # type-check and run
+t check examples/hello.t    # type-check only
+t lsp                       # language server (see below)
 ```
+
+From a checkout, use `cargo run -- <args>` instead, and `cargo test` to run
+every program in `tests/t/`.
 
 Pipeline: `lexer` → `parser` → `check` (type checker) → `interp` (tree-walking
 interpreter). A real backend (emitting C) comes once the type system has
@@ -34,7 +43,7 @@ enough in it to be worth compiling.
 ## Editor support
 
 `t lsp` is a Language Server Protocol server over stdio. For now it reports
-errors as you type. Install the binary first: `cargo install --path .`
+errors as you type.
 
 **Neovim (0.11+):** install
 [t-lang.nvim](https://github.com/lkurcak/t-lang.nvim), e.g.
@@ -66,3 +75,8 @@ print(1 + 2);   // expect: 3
 | 6 | traits | ad-hoc polymorphism, typeclasses, coherence | |
 | 7 | ownership, borrowing | affine types, regions/lifetimes | |
 | — | C backend | | when it's worth it |
+
+## License
+
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
+[MIT license](LICENSE-MIT), at your option.
