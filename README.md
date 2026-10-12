@@ -31,6 +31,22 @@ Pipeline: `lexer` → `parser` → `check` (type checker) → `interp` (tree-wal
 interpreter). A real backend (emitting C) comes once the type system has
 enough in it to be worth compiling.
 
+## Editor support
+
+`t lsp` is a Language Server Protocol server over stdio. For now it reports
+errors as you type. Install the binary first: `cargo install --path .`
+
+**Neovim (0.11+):** install
+[t-lang.nvim](https://github.com/lkurcak/t-lang.nvim), e.g.
+`vim.pack.add({ "https://github.com/lkurcak/t-lang.nvim" })`. It's published
+from [editors/nvim](editors/nvim) with
+`git subtree split --prefix=editors/nvim`, so edit it here.
+
+**Helix:** merge [editors/helix/languages.toml](editors/helix/languages.toml)
+into `~/.config/helix/languages.toml`.
+
+**Anything else with an LSP client:** run `t lsp` for files ending in `.t`.
+
 ## Tests
 
 Each `tests/t/*.t` file is a program with its expectations in comments:

@@ -5,6 +5,7 @@ pub mod check;
 pub mod error;
 pub mod interp;
 pub mod lexer;
+pub mod lsp;
 pub mod parser;
 pub mod types;
 

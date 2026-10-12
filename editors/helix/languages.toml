@@ -1,0 +1,13 @@
+# Merge into ~/.config/helix/languages.toml. Needs `t` on $PATH.
+
+[language-server.t]
+command = "t"
+args = ["lsp"]
+
+[[language]]
+name = "t"
+scope = "source.t"
+file-types = ["t"]
+comment-token = "//"
+indent = { tab-width = 4, unit = "    " }
+language-servers = ["t"]
