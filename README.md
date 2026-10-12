@@ -38,9 +38,7 @@ errors as you type. Install the binary first: `cargo install --path .`
 
 **Neovim (0.11+):** install
 [t-lang.nvim](https://github.com/lkurcak/t-lang.nvim), e.g.
-`vim.pack.add({ "https://github.com/lkurcak/t-lang.nvim" })`. It's published
-from [editors/nvim](editors/nvim) with
-`git subtree split --prefix=editors/nvim`, so edit it here.
+`vim.pack.add({ "https://github.com/lkurcak/t-lang.nvim" })`.
 
 **Helix:** merge [editors/helix/languages.toml](editors/helix/languages.toml)
 into `~/.config/helix/languages.toml`.
