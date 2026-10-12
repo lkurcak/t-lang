@@ -25,12 +25,14 @@ use crate::types::Type;
 use std::collections::HashMap;
 
 /// Built-in functions, available everywhere. Shared with the interpreter.
-pub const BUILTINS: &[&str] = &["print"];
+pub const BUILTINS: &[&str] = &["print", "print_bool"];
 
 fn builtin_type(name: &str) -> Type {
     match name {
         // print : fn(int) -> ()
         "print" => Type::Fn(vec![Type::Int], Box::new(Type::Unit)),
+        // print_bool : fn(bool) -> ()
+        "print_bool" => Type::Fn(vec![Type::Bool], Box::new(Type::Unit)),
         _ => unreachable!("unknown builtin `{name}`"),
     }
 }

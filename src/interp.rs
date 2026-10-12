@@ -97,6 +97,11 @@ impl Interp<'_, '_> {
                 self.out.push(int(arg).to_string());
                 Ok(Value::Unit)
             }
+            Value::Builtin("print_bool") => {
+                let [arg] = <[Value; 1]>::try_from(args).unwrap_or_else(|_| unsound("print_bool arity"));
+                self.out.push(bool(arg).to_string());
+                Ok(Value::Unit)
+            }
             Value::Fn(name) => {
                 let decl = self.fns[name.as_str()];
                 if self.depth >= MAX_CALL_DEPTH {
