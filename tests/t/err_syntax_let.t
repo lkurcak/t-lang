@@ -1,4 +1,4 @@
 fn main() {
     let = 5;
 }
-// error: expected a name, found `=`
+// error: expected a pattern, found `=`

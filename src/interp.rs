@@ -3,8 +3,8 @@
 //! there's a real backend.
 //!
 //! Look at how often this file calls `unsound(..)`: every place where a value
-//! could have the "wrong shape", like adding a bool, calling an int, or an `if`
-//! on a number. The type checker promises those places are unreachable for
+//! could have the "wrong shape", like adding a bool, calling an int, an `if`
+//! on a number, or a `match` where no arm fits. The type checker promises those places are unreachable for
 //! every program it accepts. That promise is the *type soundness* theorem
 //! ("well-typed programs don't go wrong"), and those calls are where you'd see
 //! it fail if the checker had a bug.
@@ -28,6 +28,10 @@ pub enum Value {
     /// its own parameters and other top-level functions.
     Fn(String),
     Builtin(&'static str),
+    /// A struct: its type's name, and its fields in declaration order.
+    Struct(String, Vec<(String, Value)>),
+    /// An enum value: its type's name, which variant, and that variant's fields.
+    Variant(String, String, Vec<Value>),
 }
 
 impl fmt::Display for Value {
@@ -38,6 +42,31 @@ impl fmt::Display for Value {
             Value::Unit => f.write_str("()"),
             Value::Fn(name) => write!(f, "<fn {name}>"),
             Value::Builtin(name) => write!(f, "<fn {name}>"),
+            Value::Struct(name, fields) if fields.is_empty() => write!(f, "{name} {{}}"),
+            Value::Struct(name, fields) => {
+                write!(f, "{name} {{ ")?;
+                for (i, (field, v)) in fields.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{field}: {v}")?;
+                }
+                f.write_str(" }")
+            }
+            Value::Variant(ty, variant, fields) => {
+                write!(f, "{ty}::{variant}")?;
+                if !fields.is_empty() {
+                    f.write_str("(")?;
+                    for (i, v) in fields.iter().enumerate() {
+                        if i > 0 {
+                            f.write_str(", ")?;
+                        }
+                        write!(f, "{v}")?;
+                    }
+                    f.write_str(")")?;
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -46,7 +75,15 @@ impl fmt::Display for Value {
 /// program later fails.
 pub fn run(prog: &Program, out: &mut Vec<String>) -> Result<Value, Error> {
     let fns = prog.fns.iter().map(|f| (f.name.name.as_str(), f)).collect();
-    let mut interp = Interp { fns, locals: Vec::new(), depth: 0, out };
+    let structs = prog
+        .types
+        .iter()
+        .filter_map(|t| match t {
+            TypeDecl::Struct(s) => Some((s.name.name.as_str(), s)),
+            TypeDecl::Enum(_) => None,
+        })
+        .collect();
+    let mut interp = Interp { fns, structs, locals: Vec::new(), depth: 0, out };
     interp.call(Value::Fn("main".to_string()), Vec::new(), Span::new(0, 0))
 }
 
@@ -71,6 +108,8 @@ fn bool(v: Value) -> bool {
 
 struct Interp<'p, 'o> {
     fns: HashMap<&'p str, &'p FnDecl>,
+    /// For putting struct literals' fields in declaration order.
+    structs: HashMap<&'p str, &'p StructDecl>,
     locals: Vec<(String, Value)>,
     depth: usize,
     out: &'o mut Vec<String>,
@@ -181,9 +220,11 @@ impl Interp<'_, '_> {
                 let scope = self.locals.len();
                 for stmt in stmts {
                     match stmt {
-                        Stmt::Let { name, init, .. } => {
+                        Stmt::Let { pat, init, .. } => {
                             let v = self.eval(init)?;
-                            self.locals.push((name.name.clone(), v));
+                            if !self.bind(pat, &v) {
+                                unsound(&format!("`let` pattern didn't match `{v}`"));
+                            }
                         }
                         Stmt::Expr(e) => {
                             self.eval(e)?;
@@ -197,7 +238,92 @@ impl Interp<'_, '_> {
                 self.locals.truncate(scope);
                 v
             }
+
+            // These live in their own functions to keep `eval`'s stack frame
+            // small: in debug builds every temporary in this `match` gets its
+            // own slot, and deep recursion multiplies the frame size.
+            ExprKind::StructLit(name, inits) => self.struct_lit(name, inits)?,
+            ExprKind::Field(x, field) => self.field(x, field)?,
+            ExprKind::Variant(ty, variant, args) => {
+                let args = args.iter().map(|a| self.eval(a)).collect::<Result<_, _>>()?;
+                Value::Variant(ty.name.clone(), variant.name.clone(), args)
+            }
+            ExprKind::Match(scrutinee, arms) => self.match_expr(scrutinee, arms)?,
         })
+    }
+
+    fn struct_lit(&mut self, name: &Ident, inits: &[FieldInit]) -> Result<Value, Error> {
+        let decl = self.structs[name.name.as_str()];
+        // Evaluate in the order written, store in the order declared.
+        let mut values = Vec::new();
+        for init in inits {
+            values.push((init.name.name.as_str(), self.eval(&init.value)?));
+        }
+        let fields = decl
+            .fields
+            .iter()
+            .map(|f| {
+                let i = values.iter().position(|(n, _)| *n == f.name.name);
+                let i = i.unwrap_or_else(|| unsound("missing struct field"));
+                (f.name.name.clone(), values[i].1.clone())
+            })
+            .collect();
+        Ok(Value::Struct(name.name.clone(), fields))
+    }
+
+    fn field(&mut self, x: &Expr, field: &Ident) -> Result<Value, Error> {
+        match self.eval(x)? {
+            Value::Struct(_, fields) => match fields.into_iter().find(|(f, _)| *f == field.name) {
+                Some((_, v)) => Ok(v),
+                None => unsound(&format!("no field `{}`", field.name)),
+            },
+            other => unsound(&format!("field access on `{other}`")),
+        }
+    }
+
+    fn match_expr(&mut self, scrutinee: &Expr, arms: &[Arm]) -> Result<Value, Error> {
+        let v = self.eval(scrutinee)?;
+        let scope = self.locals.len();
+        let mut chosen = None;
+        for arm in arms {
+            if self.bind(&arm.pat, &v) {
+                chosen = Some(arm);
+                break;
+            }
+            // Drop whatever a partial match bound before failing.
+            self.locals.truncate(scope);
+        }
+        let Some(arm) = chosen else {
+            unsound(&format!("no `match` arm fits `{v}`"));
+        };
+        let result = self.eval(&arm.body);
+        self.locals.truncate(scope);
+        result
+    }
+
+    /// Tries to match `v` against `p`. On success, pushes the variables `p`
+    /// binds onto `locals` and returns `true`.
+    fn bind(&mut self, p: &Pattern, v: &Value) -> bool {
+        match (&p.kind, v) {
+            (PatternKind::Wild, _) => true,
+            (PatternKind::Bind(name), _) => {
+                self.locals.push((name.clone(), v.clone()));
+                true
+            }
+            (PatternKind::Int(n), Value::Int(m)) => n == m,
+            (PatternKind::Bool(b), Value::Bool(c)) => b == c,
+            (PatternKind::Unit, Value::Unit) => true,
+            (PatternKind::Variant(_, variant, pats), Value::Variant(_, name, fields)) => {
+                variant.name == *name && pats.iter().zip(fields).all(|(p, v)| self.bind(p, v))
+            }
+            (PatternKind::Struct(_, field_pats, _), Value::Struct(_, fields)) => {
+                field_pats.iter().all(|fp| match fields.iter().find(|(f, _)| *f == fp.name.name) {
+                    Some((_, v)) => self.bind(&fp.pat, v),
+                    None => unsound(&format!("no field `{}`", fp.name.name)),
+                })
+            }
+            _ => unsound(&format!("pattern can't apply to `{v}`")),
+        }
     }
 
     fn arith(&self, op: BinOp, l: i64, r: i64, span: Span) -> Result<Value, Error> {

@@ -9,7 +9,43 @@ use std::fmt;
 
 #[derive(Debug, Clone)]
 pub struct Program {
+    pub types: Vec<TypeDecl>,
     pub fns: Vec<FnDecl>,
+}
+
+/// `struct Point { x: int, y: int }` or `enum Shape { Circle(int), Empty }`.
+#[derive(Debug, Clone)]
+pub enum TypeDecl {
+    Struct(StructDecl),
+    Enum(EnumDecl),
+}
+
+impl TypeDecl {
+    pub fn name(&self) -> &Ident {
+        match self {
+            TypeDecl::Struct(s) => &s.name,
+            TypeDecl::Enum(e) => &e.name,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct StructDecl {
+    pub name: Ident,
+    pub fields: Vec<Param>,
+}
+
+#[derive(Debug, Clone)]
+pub struct EnumDecl {
+    pub name: Ident,
+    pub variants: Vec<Variant>,
+}
+
+/// One case of an enum: `Rect(int, int)`, or `Empty` with no fields.
+#[derive(Debug, Clone)]
+pub struct Variant {
+    pub name: Ident,
+    pub fields: Vec<TypeExpr>,
 }
 
 #[derive(Debug, Clone)]
@@ -21,6 +57,7 @@ pub struct FnDecl {
 }
 
 #[derive(Debug, Clone)]
+/// `name: type`. Used for function parameters and struct fields.
 pub struct Param {
     pub name: Ident,
     pub ty: TypeExpr,
@@ -40,7 +77,8 @@ pub struct TypeExpr {
 
 #[derive(Debug, Clone)]
 pub enum TypeExprKind {
-    /// `int`, `bool`, or a name that doesn't exist (caught by the checker).
+    /// `int`, `bool`, a struct or enum, or a name that doesn't exist (caught
+    /// by the checker).
     Named(String),
     /// `()`
     Unit,
@@ -67,12 +105,63 @@ pub enum ExprKind {
     If(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
     /// `{ stmt; stmt; tail }`; without a tail the block's value is `()`.
     Block(Vec<Stmt>, Option<Box<Expr>>),
+    /// `Point { x: 1, y: 2 }`
+    StructLit(Ident, Vec<FieldInit>),
+    /// `p.x`
+    Field(Box<Expr>, Ident),
+    /// `Shape::Rect(2, 3)`, or `Shape::Empty` with no arguments.
+    Variant(Ident, Ident, Vec<Expr>),
+    /// `match e { pat => e, .. }`
+    Match(Box<Expr>, Vec<Arm>),
+}
+
+#[derive(Debug, Clone)]
+pub struct FieldInit {
+    pub name: Ident,
+    pub value: Expr,
+}
+
+#[derive(Debug, Clone)]
+pub struct Arm {
+    pub pat: Pattern,
+    pub body: Expr,
 }
 
 #[derive(Debug, Clone)]
 pub enum Stmt {
-    Let { name: Ident, ty: Option<TypeExpr>, init: Expr },
+    /// `let pat: ty = init;`. The pattern must be irrefutable: `let x = ..`,
+    /// `let Point { x, y } = ..`, but not `let Shape::Empty = ..`.
+    Let { pat: Pattern, ty: Option<TypeExpr>, init: Expr },
     Expr(Expr),
+}
+
+#[derive(Debug, Clone)]
+pub struct Pattern {
+    pub kind: PatternKind,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum PatternKind {
+    /// `_`: matches anything, binds nothing.
+    Wild,
+    /// `x`: matches anything and names it.
+    Bind(String),
+    Int(i64),
+    Bool(bool),
+    Unit,
+    /// `Shape::Rect(w, _)`
+    Variant(Ident, Ident, Vec<Pattern>),
+    /// `Point { x, y: 0 }`, or `Point { x, .. }` to ignore the other fields
+    /// (the `bool`).
+    Struct(Ident, Vec<FieldPat>, bool),
+}
+
+/// `y: 0` in a struct pattern. Plain `x` is short for `x: x`.
+#[derive(Debug, Clone)]
+pub struct FieldPat {
+    pub name: Ident,
+    pub pat: Pattern,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

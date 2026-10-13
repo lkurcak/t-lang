@@ -3,6 +3,7 @@
 pub mod ast;
 pub mod check;
 pub mod error;
+pub mod exhaust;
 pub mod interp;
 pub mod lexer;
 pub mod lsp;
@@ -29,8 +30,11 @@ pub struct RunResult {
 
 /// Checks and then interprets a program.
 pub fn run_source(src: &str) -> RunResult {
-    // The interpreter recurses once per nested call, so give it a big stack.
-    const STACK_SIZE: usize = 256 * 1024 * 1024;
+    // The interpreter recurses several times per nested call, so give it a
+    // big stack: enough to reach `MAX_CALL_DEPTH` even in debug builds, where
+    // frames are huge. It's only reserved address space; untouched pages cost
+    // nothing.
+    const STACK_SIZE: usize = 1024 * 1024 * 1024;
     let src = src.to_owned();
     std::thread::Builder::new()
         .stack_size(STACK_SIZE)

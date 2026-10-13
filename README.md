@@ -68,7 +68,7 @@ print(1 + 2);   // expect: 3
 | Step | Feature | Concept | Notes |
 |---|---|---|---|
 | 1 ✅ | ints, bools, `let`, functions, `if` | simply typed lambda calculus, soundness | [docs/01-stlc.md](docs/01-stlc.md) |
-| 2 | structs, enums, `match` | algebraic data types, exhaustiveness | |
+| 2 ✅ | structs, enums, `match` | algebraic data types, exhaustiveness | [docs/02-adts.md](docs/02-adts.md) |
 | 3 | inference, closures | unification / bidirectional typing | |
 | 4 | generics | parametric polymorphism (System F), monomorphization | |
 | 5 | recursive types | iso- vs equi-recursive types | |
