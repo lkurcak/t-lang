@@ -33,7 +33,13 @@ fn main() {
 ## Install
 
 ```sh
-cargo install t-lang    # installs the `t` command
+brew install lkurcak/tap/t-lang
+```
+
+or
+
+```sh
+cargo install t-lang    # either way, installs the `t` command
 ```
 
 ## Usage
