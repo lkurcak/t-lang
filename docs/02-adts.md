@@ -80,6 +80,19 @@ binds the variables `Δ`". For example, `Shape::Rect(w, _) : Shape ⊣ w : int`.
 That's `Checker::pattern`. Each arm's body is checked in a context extended
 with that arm's bindings, just as T-Let extends the context with one variable.
 
+An or-pattern `p | q` binds the same Δ as each of its alternatives, so they
+must all agree on it, with the same variables at the same types:
+
+```text
+  p : T ⊣ Δ    q : T ⊣ Δ
+  ---------------------- (P-Or)
+      p | q : T ⊣ Δ
+```
+
+`Shape::Circle(r) | Shape::Rect(r, _)` is fine. `Opt::Some(x) | Opt::None`
+isn't: when the value is `None`, the body would read an `x` that was never
+set. That's a stuck state, so this rule matters for soundness too.
+
 ## Exhaustiveness is part of soundness
 
 The last premise of T-Match, "p1..pn cover T", says every value of type `T`
@@ -132,6 +145,25 @@ examined), peeling off the first column each time. Values are seen by their
    remaining columns. The witness names the unmentioned constructor.
 
 When no columns are left, `q` is useful exactly when no rows are left.
+
+**Or-patterns** fit in without a new case. A row starting with `a | b` is
+split into two rows, one starting with `a` and one with `b`, since it stops
+exactly the values either of those would.
+
+Unreachable *alternatives* need more care than unreachable arms.
+`Opt::Some(1 | 1)` hides its duplicate inside a variant. In
+
+```rust
+Opt::Some(1) => ..,
+Opt::Some(1 | 2) | Opt::None => ..,
+```
+
+the inner `1` is dead because of the arm above, but the second arm as a whole
+is fine, thanks to `2` and `None`. So `exhaust::redundant` expands each arm
+into every combination of its alternatives, in the order they're tried
+(`Some(1)`, `Some(2)`, `None`), and checks each one against all the arms and
+combinations before it. An alternative is unreachable if no combination that
+uses it is useful, and an arm is unreachable if none of its combinations are.
 
 Worked example, with `struct Pixel { color: Color, bright: bool }` and
 `enum Color { Red, Green }` (`tests/t/err_match_missing_nested.t`):
@@ -202,8 +234,8 @@ bidirectional typing, which is step 3. Without an expected type, say in
   `match x { Empty => .. }` with `Empty` *not* in scope silently binds a new
   variable named `Empty` and matches everything. Requiring the prefix makes
   that mistake impossible here.
-- **Unreachable arms are errors**, not warnings: T has no warnings yet. An
-  unreachable arm doesn't break soundness, but it's almost always a bug.
+- **Unreachable arms and alternatives are errors**, not warnings: T has no
+  warnings yet. They don't break soundness, but they're almost always a bug.
 - **No struct literals in `if`/`match` heads.** In `if x { .. }`, is `x {`
   a struct literal? Rust's answer, copied here: not in that position. Use
   parentheses: `if p == (P { x: 1 }) { .. }` (`tests/t/if_struct_literal.t`).
@@ -223,7 +255,6 @@ bidirectional typing, which is step 3. Without an expected type, say in
 | `enum List { Nil, Cons(int, List) }` | recursive types | 5 |
 | tuples `(int, bool)` | anonymous structs; easy, just not needed yet | — |
 | guards `x if x > 0 => ..` | they make exhaustiveness approximate: the checker can't see through `if` | — |
-| or-patterns `A \| B => ..` | see exercise 3 | — |
 | mutation of fields | effects, ownership | 7 |
 
 ## Exercises
@@ -233,10 +264,11 @@ bidirectional typing, which is step 3. Without an expected type, say in
 2. Delete the exhaustiveness check in `Checker::match_expr` and write a
    program that hits `unsound` in the interpreter. Compare with step 1's
    exercise 2.
-3. Add or-patterns `p | q`. In `useful`, an or-pattern in the first column
-   of a row expands into one row per alternative. What should
-   `Shape::Circle(x) | Shape::Rect(x, _)` bind, and what must be true of
-   `x`'s type in both alternatives?
+3. Expanding every combination of alternatives is exponential: write one arm
+   that `exhaust::redundant` expands into 1024 rows. Can you find unreachable
+   alternatives without expanding? (Hint: `useful` already accepts rows that
+   contain or-patterns and splits them only when they reach the first
+   column.)
 4. How many values does `enum E { A(bool, bool), B(Never), C }` have? Write
    a match with one arm per value and no wildcards, and check it's accepted.
    Then remove the `inhabited_ctor` filter in `useful` and see which of your

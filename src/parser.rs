@@ -26,7 +26,8 @@
 //! match    = "match" expr "{" (pattern "=>" expr ","?)* "}"  -- `,` optional after a block/if/match
 //! field_init = IDENT (":" expr)?                             -- `x` is short for `x: x`
 //!
-//! pattern  = "_" | IDENT | "-"? INT | "true" | "false" | "(" ")"
+//! pattern  = pat_atom ("|" pat_atom)*
+//! pat_atom = "_" | IDENT | "-"? INT | "true" | "false" | "(" ")"
 //!          | IDENT "::" IDENT ("(" pattern,* ")")?
 //!          | IDENT "{" (IDENT (":" pattern)?),* ".."? "}"
 //! ```
@@ -412,6 +413,25 @@ impl Parser {
     }
 
     fn pattern(&mut self) -> Result<Pattern, Error> {
+        let first = self.pat_atom()?;
+        if *self.peek() == Tok::OrOr {
+            return Err(Error::syntax(
+                self.span(),
+                "use `|` between pattern alternatives, not `||`",
+            ));
+        }
+        if *self.peek() != Tok::Pipe {
+            return Ok(first);
+        }
+        let mut alts = vec![first];
+        while self.eat(&Tok::Pipe) {
+            alts.push(self.pat_atom()?);
+        }
+        let span = alts[0].span.to(alts[alts.len() - 1].span);
+        Ok(Pattern { kind: PatternKind::Or(alts), span })
+    }
+
+    fn pat_atom(&mut self) -> Result<Pattern, Error> {
         let start = self.span();
         let kind = match self.peek().clone() {
             Tok::Int(n) => PatternKind::Int(n),

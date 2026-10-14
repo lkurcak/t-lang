@@ -44,6 +44,7 @@ pub enum Tok {
     Bang,
     AndAnd,
     OrOr,
+    Pipe,
     Eof,
 }
 
@@ -89,6 +90,7 @@ impl Tok {
             Tok::Bang => "!",
             Tok::AndAnd => "&&",
             Tok::OrOr => "||",
+            Tok::Pipe => "|",
         };
         format!("`{s}`")
     }
@@ -157,6 +159,7 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Error> {
                 (b'>', Some(b'=')) => (Tok::Ge, 2),
                 (b'&', Some(b'&')) => (Tok::AndAnd, 2),
                 (b'|', Some(b'|')) => (Tok::OrOr, 2),
+                (b'|', _) => (Tok::Pipe, 1),
                 (b'(', _) => (Tok::LParen, 1),
                 (b')', _) => (Tok::RParen, 1),
                 (b'{', _) => (Tok::LBrace, 1),

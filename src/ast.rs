@@ -155,6 +155,9 @@ pub enum PatternKind {
     /// `Point { x, y: 0 }`, or `Point { x, .. }` to ignore the other fields
     /// (the `bool`).
     Struct(Ident, Vec<FieldPat>, bool),
+    /// `Shape::Circle(r) | Shape::Rect(r, _)`: matches if any alternative
+    /// does. Every alternative must bind the same variables, at the same types.
+    Or(Vec<Pattern>),
 }
 
 /// `y: 0` in a struct pattern. Plain `x` is short for `x: x`.

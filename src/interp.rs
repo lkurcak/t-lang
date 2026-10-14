@@ -316,6 +316,14 @@ impl Interp<'_, '_> {
             (PatternKind::Variant(_, variant, pats), Value::Variant(_, name, fields)) => {
                 variant.name == *name && pats.iter().zip(fields).all(|(p, v)| self.bind(p, v))
             }
+            (PatternKind::Or(alts), _) => {
+                let scope = self.locals.len();
+                alts.iter().any(|alt| {
+                    // Undo anything a failed alternative bound part-way.
+                    self.locals.truncate(scope);
+                    self.bind(alt, v)
+                })
+            }
             (PatternKind::Struct(_, field_pats, _), Value::Struct(_, fields)) => {
                 field_pats.iter().all(|fp| match fields.iter().find(|(f, _)| *f == fp.name.name) {
                     Some((_, v)) => self.bind(&fp.pat, v),

@@ -22,7 +22,7 @@
 
 use crate::ast::*;
 use crate::error::{Error, Span};
-use crate::exhaust::{self, Ctor, Pat};
+use crate::exhaust::{self, Ctor, Pat, Redundant};
 use crate::types::{AdtDef, Adts, Type};
 use std::collections::{HashMap, HashSet};
 
@@ -199,6 +199,31 @@ fn resolve<V>(t: &TypeExpr, adts: &HashMap<String, V>) -> Result<Type, Error> {
             Box::new(resolve(ret, adts)?),
         )),
     }
+}
+
+/// Why an or-pattern alternative's bindings `b` disagree with the first
+/// alternative's `a`, if they do.
+fn or_mismatch(a: &[(String, Type)], b: &[(String, Type)]) -> Option<String> {
+    for (name, t) in a {
+        match b.iter().find(|(n, _)| n == name) {
+            None => return Some(format!("`{name}` is not bound in this alternative")),
+            Some((_, u)) if u != t => {
+                return Some(format!(
+                    "`{name}` is `{t}` in the first alternative but `{u}` in this one"
+                ));
+            }
+            Some(_) => {}
+        }
+    }
+    let (extra, _) = b.iter().find(|(n, _)| !a.iter().any(|(m, _)| m == n))?;
+    Some(format!("`{extra}` is bound in this alternative but not in the first"))
+}
+
+fn unreachable_alt(span: Span) -> Error {
+    Error::ty(
+        span,
+        "unreachable alternative: the patterns before it already match everything it would",
+    )
 }
 
 /// "1 field", "2 fields".
@@ -514,7 +539,14 @@ impl Checker {
                     };
                     let mut binds = Vec::new();
                     let p = self.pattern(pat, &t, &mut binds)?;
-                    if let Some(missing) = exhaust::missing(&self.adts, &t, &[p]) {
+                    // Only alternatives can be unreachable here. A whole `let`
+                    // pattern only is when the value can't exist, like a
+                    // `Never` parameter, and then nothing is wrong.
+                    let p = [p];
+                    if let Some(Redundant::Alt(span)) = exhaust::redundant(&self.adts, &t, &p) {
+                        return Err(unreachable_alt(span));
+                    }
+                    if let Some(missing) = exhaust::missing(&self.adts, &t, &p) {
                         return Err(Error::ty(
                             pat.span,
                             format!(
@@ -566,11 +598,15 @@ impl Checker {
             pats.push(self.pattern(&arm.pat, &t, &mut b)?);
             binds.push(b);
         }
-        if let Some(i) = exhaust::unreachable_arm(&self.adts, &t, &pats) {
-            return Err(Error::ty(
-                arms[i].pat.span,
-                "unreachable pattern: the arms above already match everything it would",
-            ));
+        match exhaust::redundant(&self.adts, &t, &pats) {
+            Some(Redundant::Arm(i)) => {
+                return Err(Error::ty(
+                    arms[i].pat.span,
+                    "unreachable pattern: the arms above already match everything it would",
+                ));
+            }
+            Some(Redundant::Alt(span)) => return Err(unreachable_alt(span)),
+            None => {}
         }
         if let Some(missing) = exhaust::missing(&self.adts, &t, &pats) {
             return Err(Error::ty(
@@ -665,6 +701,29 @@ impl Checker {
                     .map(|(a, t)| self.pattern(a, t, binds))
                     .collect::<Result<_, _>>()?;
                 Pat::Ctor(Ctor::Variant(i), args)
+            }
+            // Each alternative is checked separately, and they must all bind
+            // the same Δ. Otherwise the arm's body could read a variable that
+            // the alternative which actually matched never set.
+            PatternKind::Or(alts) => {
+                let outer = binds.len();
+                let mut first: Option<Vec<(String, Type)>> = None;
+                let mut pats = Vec::new();
+                for alt in alts {
+                    let mut b = binds.clone();
+                    pats.push((self.pattern(alt, ty, &mut b)?, alt.span));
+                    let new = b.split_off(outer);
+                    match &first {
+                        None => first = Some(new),
+                        Some(want) => {
+                            if let Some(msg) = or_mismatch(want, &new) {
+                                return Err(Error::ty(alt.span, msg));
+                            }
+                        }
+                    }
+                }
+                binds.extend(first.unwrap_or_default());
+                Pat::Or(pats)
             }
             PatternKind::Struct(name, field_pats, rest) => {
                 let fields = self.struct_def(name)?;
