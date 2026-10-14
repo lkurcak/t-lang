@@ -10,7 +10,8 @@
 //! enum     = "enum" IDENT "{" (variant ("," variant)* ","?)? "}"
 //! variant  = IDENT ("(" type ("," type)* ","? ")")?
 //! type     = IDENT | "(" ")" | "fn" "(" (type ("," type)*)? ")" ("->" type)?
-//! block    = "{" (let | expr ";" | block_like_expr)* expr? "}"
+//! block    = "{" (let | expr ";" | block_like ";"?)* expr? "}"
+//! block_like = if | match | block
 //! let      = "let" pattern (":" type)? "=" expr ";"
 //! expr     = or
 //! or       = and ("||" and)*
@@ -31,6 +32,12 @@
 //!          | IDENT "::" IDENT ("(" pattern,* ")")?
 //!          | IDENT "{" (IDENT (":" pattern)?),* ".."? "}"
 //! ```
+//!
+//! Like Rust, an `if`, `match` or block at the *start* of a statement is the
+//! whole statement, so `if c { a } else { b } - x` is two statements, not a
+//! subtraction. Without a `;` such a statement must have type `()` (checked in
+//! `check.rs`), which turns that mistake into a type error. Parenthesize to
+//! use one in a larger expression: `(if c { a } else { b }) - x`.
 //!
 //! One ambiguity: in `if x { .. }` the `x {` could start a struct literal. Like
 //! Rust, struct literals aren't allowed directly in the head of an `if` or
@@ -233,14 +240,20 @@ impl Parser {
                 stmts.push(self.let_stmt()?);
                 continue;
             }
-            let e = self.expr()?;
+            let block_like = matches!(self.peek(), Tok::If | Tok::Match | Tok::LBrace);
+            let e = match self.peek() {
+                Tok::If => self.if_expr()?,
+                Tok::Match => self.match_expr()?,
+                Tok::LBrace => self.block()?,
+                _ => self.expr()?,
+            };
             if self.eat(&Tok::Semi) {
                 stmts.push(Stmt::Expr(e));
             } else if *self.peek() == Tok::RBrace {
                 break Some(Box::new(e));
-            } else if matches!(e.kind, ExprKind::If(..) | ExprKind::Block(..) | ExprKind::Match(..)) {
-                // Like Rust, `if`/`match`/blocks used as statements don't need a `;`.
-                stmts.push(Stmt::Expr(e));
+            } else if block_like {
+                // The statement ends here, `;` or not.
+                stmts.push(Stmt::BlockLike(e));
             } else {
                 return Err(self.unexpected("`;` or `}`"));
             }

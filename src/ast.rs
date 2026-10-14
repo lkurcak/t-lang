@@ -132,7 +132,11 @@ pub enum Stmt {
     /// `let pat: ty = init;`. The pattern must be irrefutable: `let x = ..`,
     /// `let Point { x, y } = ..`, but not `let Shape::Empty = ..`.
     Let { pat: Pattern, ty: Option<TypeExpr>, init: Expr },
+    /// `e;`: any type, value discarded.
     Expr(Expr),
+    /// An `if`, `match` or block statement with no `;` after it, like
+    /// `if c { print(1) }`. As in Rust, it must have type `()`.
+    BlockLike(Expr),
 }
 
 #[derive(Debug, Clone)]

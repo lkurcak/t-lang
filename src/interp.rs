@@ -226,7 +226,7 @@ impl Interp<'_, '_> {
                                 unsound(&format!("`let` pattern didn't match `{v}`"));
                             }
                         }
-                        Stmt::Expr(e) => {
+                        Stmt::Expr(e) | Stmt::BlockLike(e) => {
                             self.eval(e)?;
                         }
                     }

@@ -517,7 +517,8 @@ impl Checker {
     //     Γ ⊢ { let x = e1; rest } : T
     //
     // `Γ, x : T1` is "Γ extended with x" (shadowing any earlier x).
-    // Expression statements `e;` are typed and their value discarded.
+    // Expression statements `e;` are typed and their value discarded. An
+    // `if`/`match`/block statement without the `;` must be `()`.
     //
     // With a pattern, `let p = e1;` extends Γ with every variable `p` binds.
     // `p` must be *irrefutable* (match every value of type T1): there's no
@@ -558,6 +559,27 @@ impl Checker {
                 }
                 Stmt::Expr(e) => {
                     self.synth(e)?;
+                }
+                // Rust's rule, and the reason for it: in
+                // `if c { 10 } else { 20 } - x` the `if` is its own statement,
+                // and its value would silently be thrown away.
+                Stmt::BlockLike(e) => {
+                    let t = self.synth(e)?;
+                    if t != Type::Unit {
+                        let what = match e.kind {
+                            ExprKind::If(..) => "`if`",
+                            ExprKind::Match(..) => "`match`",
+                            _ => "block",
+                        };
+                        return Err(Error::ty(
+                            result_span(e),
+                            format!(
+                                "expected `()`, found `{t}`: this {what} is a statement, so its \
+                                 value would be lost; add `;` to discard it, or wrap it in \
+                                 parentheses to use it in an expression"
+                            ),
+                        ));
+                    }
                 }
             }
         }
