@@ -83,7 +83,13 @@ pub fn run(prog: &Program, out: &mut Vec<String>) -> Result<Value, Error> {
             TypeDecl::Enum(_) => None,
         })
         .collect();
-    let mut interp = Interp { fns, structs, locals: Vec::new(), depth: 0, out };
+    let mut interp = Interp {
+        fns,
+        structs,
+        locals: Vec::new(),
+        depth: 0,
+        out,
+    };
     interp.call(Value::Fn("main".to_string()), Vec::new(), Span::new(0, 0))
 }
 
@@ -137,7 +143,8 @@ impl Interp<'_, '_> {
                 Ok(Value::Unit)
             }
             Value::Builtin("print_bool") => {
-                let [arg] = <[Value; 1]>::try_from(args).unwrap_or_else(|_| unsound("print_bool arity"));
+                let [arg] =
+                    <[Value; 1]>::try_from(args).unwrap_or_else(|_| unsound("print_bool arity"));
                 self.out.push(bool(arg).to_string());
                 Ok(Value::Unit)
             }
@@ -202,7 +209,10 @@ impl Interp<'_, '_> {
 
             ExprKind::Call(f, args) => {
                 let f = self.eval(f)?;
-                let args = args.iter().map(|a| self.eval(a)).collect::<Result<_, _>>()?;
+                let args = args
+                    .iter()
+                    .map(|a| self.eval(a))
+                    .collect::<Result<_, _>>()?;
                 self.call(f, args, e.span)?
             }
 
@@ -245,7 +255,10 @@ impl Interp<'_, '_> {
             ExprKind::StructLit(name, inits) => self.struct_lit(name, inits)?,
             ExprKind::Field(x, field) => self.field(x, field)?,
             ExprKind::Variant(ty, variant, args) => {
-                let args = args.iter().map(|a| self.eval(a)).collect::<Result<_, _>>()?;
+                let args = args
+                    .iter()
+                    .map(|a| self.eval(a))
+                    .collect::<Result<_, _>>()?;
                 Value::Variant(ty.name.clone(), variant.name.clone(), args)
             }
             ExprKind::Match(scrutinee, arms) => self.match_expr(scrutinee, arms)?,
@@ -324,12 +337,12 @@ impl Interp<'_, '_> {
                     self.bind(alt, v)
                 })
             }
-            (PatternKind::Struct(_, field_pats, _), Value::Struct(_, fields)) => {
-                field_pats.iter().all(|fp| match fields.iter().find(|(f, _)| *f == fp.name.name) {
+            (PatternKind::Struct(_, field_pats, _), Value::Struct(_, fields)) => field_pats
+                .iter()
+                .all(|fp| match fields.iter().find(|(f, _)| *f == fp.name.name) {
                     Some((_, v)) => self.bind(&fp.pat, v),
                     None => unsound(&format!("no field `{}`", fp.name.name)),
-                })
-            }
+                }),
             _ => unsound(&format!("pattern can't apply to `{v}`")),
         }
     }

@@ -38,15 +38,27 @@ pub struct Error {
 
 impl Error {
     pub fn syntax(span: Span, message: impl Into<String>) -> Error {
-        Error { phase: Phase::Syntax, span, message: message.into() }
+        Error {
+            phase: Phase::Syntax,
+            span,
+            message: message.into(),
+        }
     }
 
     pub fn ty(span: Span, message: impl Into<String>) -> Error {
-        Error { phase: Phase::Type, span, message: message.into() }
+        Error {
+            phase: Phase::Type,
+            span,
+            message: message.into(),
+        }
     }
 
     pub fn runtime(span: Span, message: impl Into<String>) -> Error {
-        Error { phase: Phase::Runtime, span, message: message.into() }
+        Error {
+            phase: Phase::Runtime,
+            span,
+            message: message.into(),
+        }
     }
 
     /// Renders the error rustc-style, with the offending line underlined.
@@ -61,7 +73,10 @@ impl Error {
         let line_end = src[start..].find('\n').map_or(src.len(), |i| start + i);
         let line_no = src[..start].matches('\n').count() + 1;
         let col = src[line_start..start].chars().count() + 1;
-        let width = src[start..self.span.end.clamp(start, line_end)].chars().count().max(1);
+        let width = src[start..self.span.end.clamp(start, line_end)]
+            .chars()
+            .count()
+            .max(1);
 
         let gutter = " ".repeat(line_no.to_string().len());
         format!(

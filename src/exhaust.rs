@@ -132,7 +132,10 @@ fn expand(p: &Pat) -> Vec<(Pat, Vec<Span>)> {
                 }
                 combos = next;
             }
-            combos.into_iter().map(|(fields, chosen)| (Pat::Ctor(*c, fields), chosen)).collect()
+            combos
+                .into_iter()
+                .map(|(fields, chosen)| (Pat::Ctor(*c, fields), chosen))
+                .collect()
         }
     }
 }
@@ -213,17 +216,22 @@ impl Cx<'_> {
                 // built with them, so none can slip past the rows that way.
                 let unseen: Option<Vec<Ctor>> = all.as_ref().map(|all| {
                     let unseen = all.iter().filter(|c| !seen.contains(c));
-                    unseen.filter(|c| self.inhabited_ctor(**c, ty)).copied().collect()
+                    unseen
+                        .filter(|c| self.inhabited_ctor(**c, ty))
+                        .copied()
+                        .collect()
                 });
                 match (all, unseen) {
                     // Note that an enum with no variants always lands here,
                     // and then there's nothing to try: `_` is useless because
                     // there are no values at all.
-                    (Some(all), Some(unseen)) if unseen.is_empty() => all.into_iter().find_map(|c| {
-                        let wilds = vec![Pat::Wild; self.fields(c, ty).len()];
-                        let q: Vec<Pat> = [vec![Pat::Ctor(c, wilds)], q[1..].to_vec()].concat();
-                        self.useful(rows, &q, tys)
-                    }),
+                    (Some(all), Some(unseen)) if unseen.is_empty() => {
+                        all.into_iter().find_map(|c| {
+                            let wilds = vec![Pat::Wild; self.fields(c, ty).len()];
+                            let q: Vec<Pat> = [vec![Pat::Ctor(c, wilds)], q[1..].to_vec()].concat();
+                            self.useful(rows, &q, tys)
+                        })
+                    }
                     (_, unseen) => {
                         let defaults: Vec<Vec<Pat>> = rows
                             .iter()
@@ -302,22 +310,33 @@ impl Cx<'_> {
             return "_".to_string();
         };
         let field_tys = self.fields(*c, ty);
-        let args: Vec<String> = args.iter().zip(&field_tys).map(|(p, t)| self.show(p, t)).collect();
+        let args: Vec<String> = args
+            .iter()
+            .zip(&field_tys)
+            .map(|(p, t)| self.show(p, t))
+            .collect();
         match (c, ty) {
             (Ctor::Bool(b), _) => b.to_string(),
             (Ctor::Unit, _) => "()".to_string(),
             (Ctor::Int(n), _) => n.to_string(),
             (Ctor::Struct, Type::Adt(name)) => {
-                let AdtDef::Struct(fields) = &self.adts[name] else { unreachable!() };
+                let AdtDef::Struct(fields) = &self.adts[name] else {
+                    unreachable!()
+                };
                 if fields.is_empty() {
                     return format!("{name} {{}}");
                 }
-                let fields: Vec<String> =
-                    fields.iter().zip(&args).map(|((f, _), a)| format!("{f}: {a}")).collect();
+                let fields: Vec<String> = fields
+                    .iter()
+                    .zip(&args)
+                    .map(|((f, _), a)| format!("{f}: {a}"))
+                    .collect();
                 format!("{name} {{ {} }}", fields.join(", "))
             }
             (Ctor::Variant(i), Type::Adt(name)) => {
-                let AdtDef::Enum(variants) = &self.adts[name] else { unreachable!() };
+                let AdtDef::Enum(variants) = &self.adts[name] else {
+                    unreachable!()
+                };
                 let variant = &variants[*i].0;
                 if args.is_empty() {
                     format!("{name}::{variant}")
@@ -339,7 +358,10 @@ fn expand_or(rows: &[Vec<Pat>]) -> Vec<Vec<Pat>> {
     for row in rows {
         match &row[0] {
             Pat::Or(alts) => {
-                out.extend(alts.iter().map(|(a, _)| [vec![a.clone()], row[1..].to_vec()].concat()));
+                out.extend(
+                    alts.iter()
+                        .map(|(a, _)| [vec![a.clone()], row[1..].to_vec()].concat()),
+                );
             }
             _ => out.push(row.clone()),
         }

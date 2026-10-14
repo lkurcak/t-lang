@@ -186,9 +186,15 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Error> {
             i += len;
             tok
         };
-        toks.push(Token { tok, span: Span::new(start, i) });
+        toks.push(Token {
+            tok,
+            span: Span::new(start, i),
+        });
     }
 
-    toks.push(Token { tok: Tok::Eof, span: Span::new(src.len(), src.len()) });
+    toks.push(Token {
+        tok: Tok::Eof,
+        span: Span::new(src.len(), src.len()),
+    });
     Ok(toks)
 }

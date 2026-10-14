@@ -48,7 +48,11 @@ use crate::error::{Error, Span};
 use crate::lexer::{Tok, Token};
 
 pub fn parse(tokens: Vec<Token>) -> Result<Program, Error> {
-    let mut p = Parser { toks: tokens, pos: 0, no_struct: false };
+    let mut p = Parser {
+        toks: tokens,
+        pos: 0,
+        no_struct: false,
+    };
     let mut types = Vec::new();
     let mut fns = Vec::new();
     loop {
@@ -119,12 +123,18 @@ impl Parser {
     }
 
     fn unexpected(&self, wanted: &str) -> Error {
-        Error::syntax(self.span(), format!("expected {wanted}, found {}", self.peek().describe()))
+        Error::syntax(
+            self.span(),
+            format!("expected {wanted}, found {}", self.peek().describe()),
+        )
     }
 
     fn ident(&mut self) -> Result<Ident, Error> {
         match self.peek().clone() {
-            Tok::Ident(name) => Ok(Ident { name, span: self.bump().span }),
+            Tok::Ident(name) => Ok(Ident {
+                name,
+                span: self.bump().span,
+            }),
             _ => Err(self.unexpected("a name")),
         }
     }
@@ -160,10 +170,18 @@ impl Parser {
         let ret = if self.eat(&Tok::Arrow) {
             self.ty()?
         } else {
-            TypeExpr { kind: TypeExprKind::Unit, span: close }
+            TypeExpr {
+                kind: TypeExprKind::Unit,
+                span: close,
+            }
         };
         let body = self.block()?;
-        Ok(FnDecl { name, params, ret, body })
+        Ok(FnDecl {
+            name,
+            params,
+            ret,
+            body,
+        })
     }
 
     fn param(&mut self) -> Result<Param, Error> {
@@ -202,12 +220,18 @@ impl Parser {
         match self.peek().clone() {
             Tok::Ident(name) => {
                 self.bump();
-                Ok(TypeExpr { kind: TypeExprKind::Named(name), span: start })
+                Ok(TypeExpr {
+                    kind: TypeExprKind::Named(name),
+                    span: start,
+                })
             }
             Tok::LParen => {
                 self.bump();
                 let end = self.expect(Tok::RParen)?;
-                Ok(TypeExpr { kind: TypeExprKind::Unit, span: start.to(end) })
+                Ok(TypeExpr {
+                    kind: TypeExprKind::Unit,
+                    span: start.to(end),
+                })
             }
             Tok::Fn => {
                 self.bump();
@@ -216,10 +240,16 @@ impl Parser {
                 let ret = if self.eat(&Tok::Arrow) {
                     self.ty()?
                 } else {
-                    TypeExpr { kind: TypeExprKind::Unit, span: close }
+                    TypeExpr {
+                        kind: TypeExprKind::Unit,
+                        span: close,
+                    }
                 };
                 let span = start.to(ret.span);
-                Ok(TypeExpr { kind: TypeExprKind::Fn(params, Box::new(ret)), span })
+                Ok(TypeExpr {
+                    kind: TypeExprKind::Fn(params, Box::new(ret)),
+                    span,
+                })
             }
             _ => Err(self.unexpected("a type")),
         }
@@ -259,13 +289,20 @@ impl Parser {
             }
         };
         let end = self.expect(Tok::RBrace)?;
-        Ok(Expr { kind: ExprKind::Block(stmts, tail), span: start.to(end) })
+        Ok(Expr {
+            kind: ExprKind::Block(stmts, tail),
+            span: start.to(end),
+        })
     }
 
     fn let_stmt(&mut self) -> Result<Stmt, Error> {
         self.expect(Tok::Let)?;
         let pat = self.pattern()?;
-        let ty = if self.eat(&Tok::Colon) { Some(self.ty()?) } else { None };
+        let ty = if self.eat(&Tok::Colon) {
+            Some(self.ty()?)
+        } else {
+            None
+        };
         self.expect(Tok::Eq)?;
         let init = self.expr()?;
         self.expect(Tok::Semi)?;
@@ -287,7 +324,10 @@ impl Parser {
             self.bump();
             let rhs = self.binary(prec + 1)?;
             let span = lhs.span.to(rhs.span);
-            lhs = Expr { kind: ExprKind::Binary(op, Box::new(lhs), Box::new(rhs)), span };
+            lhs = Expr {
+                kind: ExprKind::Binary(op, Box::new(lhs), Box::new(rhs)),
+                span,
+            };
 
             if prec == CMP_PREC && binop(self.peek()).is_some_and(|(_, p)| p == CMP_PREC) {
                 return Err(Error::syntax(
@@ -308,7 +348,10 @@ impl Parser {
         let start = self.bump().span;
         let operand = self.unary()?;
         let span = start.to(operand.span);
-        Ok(Expr { kind: ExprKind::Unary(op, Box::new(operand)), span })
+        Ok(Expr {
+            kind: ExprKind::Unary(op, Box::new(operand)),
+            span,
+        })
     }
 
     fn postfix(&mut self) -> Result<Expr, Error> {
@@ -317,11 +360,17 @@ impl Parser {
             if self.eat(&Tok::LParen) {
                 let (args, end) = self.args()?;
                 let span = e.span.to(end);
-                e = Expr { kind: ExprKind::Call(Box::new(e), args), span };
+                e = Expr {
+                    kind: ExprKind::Call(Box::new(e), args),
+                    span,
+                };
             } else if self.eat(&Tok::Dot) {
                 let field = self.ident()?;
                 let span = e.span.to(field.span);
-                e = Expr { kind: ExprKind::Field(Box::new(e), field), span };
+                e = Expr {
+                    kind: ExprKind::Field(Box::new(e), field),
+                    span,
+                };
             } else {
                 return Ok(e);
             }
@@ -348,11 +397,17 @@ impl Parser {
                 self.bump();
                 if *self.peek() == Tok::RParen {
                     let end = self.bump().span;
-                    return Ok(Expr { kind: ExprKind::Unit, span: span.to(end) });
+                    return Ok(Expr {
+                        kind: ExprKind::Unit,
+                        span: span.to(end),
+                    });
                 }
                 let inner = self.structs(true, Self::expr)?;
                 let end = self.expect(Tok::RParen)?;
-                return Ok(Expr { kind: inner.kind, span: span.to(end) });
+                return Ok(Expr {
+                    kind: inner.kind,
+                    span: span.to(end),
+                });
             }
             Tok::LBrace => return self.block(),
             Tok::If => return self.if_expr(),
@@ -368,12 +423,19 @@ impl Parser {
         let cond = self.structs(false, Self::expr)?;
         let then = self.block()?;
         let els = if self.eat(&Tok::Else) {
-            Some(Box::new(if *self.peek() == Tok::If { self.if_expr()? } else { self.block()? }))
+            Some(Box::new(if *self.peek() == Tok::If {
+                self.if_expr()?
+            } else {
+                self.block()?
+            }))
         } else {
             None
         };
         let span = start.to(els.as_ref().map_or(then.span, |e| e.span));
-        Ok(Expr { kind: ExprKind::If(Box::new(cond), Box::new(then), els), span })
+        Ok(Expr {
+            kind: ExprKind::If(Box::new(cond), Box::new(then), els),
+            span,
+        })
     }
 
     fn match_expr(&mut self) -> Result<Expr, Error> {
@@ -385,14 +447,20 @@ impl Parser {
             let pat = self.pattern()?;
             self.expect(Tok::FatArrow)?;
             let body = self.structs(true, Self::expr)?;
-            let block_like = matches!(body.kind, ExprKind::Block(..) | ExprKind::If(..) | ExprKind::Match(..));
+            let block_like = matches!(
+                body.kind,
+                ExprKind::Block(..) | ExprKind::If(..) | ExprKind::Match(..)
+            );
             arms.push(Arm { pat, body });
             if !self.eat(&Tok::Comma) && !block_like && *self.peek() != Tok::RBrace {
                 return Err(self.unexpected("`,` or `}`"));
             }
         }
         let end = self.expect(Tok::RBrace)?;
-        Ok(Expr { kind: ExprKind::Match(Box::new(scrutinee), arms), span: start.to(end) })
+        Ok(Expr {
+            kind: ExprKind::Match(Box::new(scrutinee), arms),
+            span: start.to(end),
+        })
     }
 
     /// `Point { x: 1, y }`
@@ -405,13 +473,19 @@ impl Parser {
                 let value = if p.eat(&Tok::Colon) {
                     p.expr()?
                 } else {
-                    Expr { kind: ExprKind::Var(name.name.clone()), span: name.span }
+                    Expr {
+                        kind: ExprKind::Var(name.name.clone()),
+                        span: name.span,
+                    }
                 };
                 Ok(FieldInit { name, value })
             })
         })?;
         let span = name.span.to(end);
-        Ok(Expr { kind: ExprKind::StructLit(name, fields), span })
+        Ok(Expr {
+            kind: ExprKind::StructLit(name, fields),
+            span,
+        })
     }
 
     /// `Shape::Rect(2, 3)` or `Shape::Empty`
@@ -419,10 +493,16 @@ impl Parser {
         let ty = self.ident()?;
         self.expect(Tok::ColonColon)?;
         let variant = self.ident()?;
-        let (args, end) =
-            if self.eat(&Tok::LParen) { self.args()? } else { (Vec::new(), variant.span) };
+        let (args, end) = if self.eat(&Tok::LParen) {
+            self.args()?
+        } else {
+            (Vec::new(), variant.span)
+        };
         let span = ty.span.to(end);
-        Ok(Expr { kind: ExprKind::Variant(ty, variant, args), span })
+        Ok(Expr {
+            kind: ExprKind::Variant(ty, variant, args),
+            span,
+        })
     }
 
     fn pattern(&mut self) -> Result<Pattern, Error> {
@@ -441,7 +521,10 @@ impl Parser {
             alts.push(self.pat_atom()?);
         }
         let span = alts[0].span.to(alts[alts.len() - 1].span);
-        Ok(Pattern { kind: PatternKind::Or(alts), span })
+        Ok(Pattern {
+            kind: PatternKind::Or(alts),
+            span,
+        })
     }
 
     fn pat_atom(&mut self) -> Result<Pattern, Error> {
@@ -454,14 +537,20 @@ impl Parser {
                     return Err(self.unexpected("an integer"));
                 };
                 let end = self.bump().span;
-                return Ok(Pattern { kind: PatternKind::Int(-n), span: start.to(end) });
+                return Ok(Pattern {
+                    kind: PatternKind::Int(-n),
+                    span: start.to(end),
+                });
             }
             Tok::True => PatternKind::Bool(true),
             Tok::False => PatternKind::Bool(false),
             Tok::LParen => {
                 self.bump();
                 let end = self.expect(Tok::RParen)?;
-                return Ok(Pattern { kind: PatternKind::Unit, span: start.to(end) });
+                return Ok(Pattern {
+                    kind: PatternKind::Unit,
+                    span: start.to(end),
+                });
             }
             Tok::Ident(name) => match self.peek2() {
                 Tok::ColonColon => {
@@ -474,7 +563,10 @@ impl Parser {
                         (Vec::new(), variant.span)
                     };
                     let kind = PatternKind::Variant(ty, variant, args);
-                    return Ok(Pattern { kind, span: start.to(end) });
+                    return Ok(Pattern {
+                        kind,
+                        span: start.to(end),
+                    });
                 }
                 Tok::LBrace => return self.struct_pattern(),
                 _ if name == "_" => PatternKind::Wild,
@@ -506,7 +598,10 @@ impl Parser {
             let pat = if self.eat(&Tok::Colon) {
                 self.pattern()?
             } else {
-                Pattern { kind: PatternKind::Bind(name.name.clone()), span: name.span }
+                Pattern {
+                    kind: PatternKind::Bind(name.name.clone()),
+                    span: name.span,
+                }
             };
             fields.push(FieldPat { name, pat });
             if !self.eat(&Tok::Comma) {
@@ -514,7 +609,10 @@ impl Parser {
             }
         }
         let span = ty.span.to(self.expect(Tok::RBrace)?);
-        Ok(Pattern { kind: PatternKind::Struct(ty, fields, rest), span })
+        Ok(Pattern {
+            kind: PatternKind::Struct(ty, fields, rest),
+            span,
+        })
     }
 }
 

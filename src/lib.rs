@@ -39,7 +39,10 @@ pub fn run_source(src: &str) -> RunResult {
     std::thread::Builder::new()
         .stack_size(STACK_SIZE)
         .spawn(move || match check_source(&src) {
-            Err(e) => RunResult { output: Vec::new(), result: Err(e) },
+            Err(e) => RunResult {
+                output: Vec::new(),
+                result: Err(e),
+            },
             Ok(program) => {
                 let mut output = Vec::new();
                 let result = interp::run(&program, &mut output);

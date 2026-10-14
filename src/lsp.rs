@@ -8,8 +8,8 @@
 use crate::error::{Error, Phase};
 use lsp_server::{Connection, ErrorCode, Message, Notification, Response};
 use lsp_types::notification::{
-    DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument,
-    Notification as _, PublishDiagnostics,
+    DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, Notification as _,
+    PublishDiagnostics,
 };
 use lsp_types::{
     Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
@@ -69,9 +69,19 @@ pub fn run() -> Result<()> {
     Ok(())
 }
 
-fn publish(conn: &Connection, uri: Uri, version: Option<i32>, diagnostics: Vec<Diagnostic>) -> Result<()> {
-    let params = PublishDiagnosticsParams { uri, diagnostics, version };
-    conn.sender.send(Notification::new(PublishDiagnostics::METHOD.to_string(), params).into())?;
+fn publish(
+    conn: &Connection,
+    uri: Uri,
+    version: Option<i32>,
+    diagnostics: Vec<Diagnostic>,
+) -> Result<()> {
+    let params = PublishDiagnosticsParams {
+        uri,
+        diagnostics,
+        version,
+    };
+    conn.sender
+        .send(Notification::new(PublishDiagnostics::METHOD.to_string(), params).into())?;
     Ok(())
 }
 

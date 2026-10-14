@@ -49,17 +49,27 @@ pub fn check(prog: &Program) -> Result<(), Error> {
     // Pass 1: collect every function's signature first, so bodies can refer to
     // functions defined later in the file (and to themselves: recursion).
     for f in &prog.fns {
-        let params =
-            f.params.iter().map(|p| resolve(&p.ty, &adts)).collect::<Result<Vec<_>, _>>()?;
+        let params = f
+            .params
+            .iter()
+            .map(|p| resolve(&p.ty, &adts))
+            .collect::<Result<Vec<_>, _>>()?;
         let ret = resolve(&f.ret, &adts)?;
         let ty = Type::Fn(params, Box::new(ret));
         if globals.insert(f.name.name.clone(), ty).is_some() {
-            return Err(Error::ty(f.name.span, format!("`{}` is already defined", f.name.name)));
+            return Err(Error::ty(
+                f.name.span,
+                format!("`{}` is already defined", f.name.name),
+            ));
         }
     }
 
     // Pass 2: check each body against its declared return type.
-    let mut cx = Checker { adts, globals, locals: Vec::new() };
+    let mut cx = Checker {
+        adts,
+        globals,
+        locals: Vec::new(),
+    };
     for f in &prog.fns {
         cx.locals.clear();
         for (i, p) in f.params.iter().enumerate() {
@@ -69,7 +79,8 @@ pub fn check(prog: &Program) -> Result<(), Error> {
                     format!("parameter `{}` is declared twice", p.name.name),
                 ));
             }
-            cx.locals.push((p.name.name.clone(), resolve(&p.ty, &cx.adts)?));
+            cx.locals
+                .push((p.name.name.clone(), resolve(&p.ty, &cx.adts)?));
         }
         let ret = resolve(&f.ret, &cx.adts)?;
         cx.check(&f.body, &ret)?;
@@ -92,10 +103,16 @@ fn collect_adts(prog: &Program) -> Result<Adts, Error> {
     for d in &prog.types {
         let name = d.name();
         if matches!(name.name.as_str(), "int" | "bool") {
-            return Err(Error::ty(name.span, format!("`{}` is a built-in type", name.name)));
+            return Err(Error::ty(
+                name.span,
+                format!("`{}` is a built-in type", name.name),
+            ));
         }
         if names.insert(name.name.clone(), ()).is_some() {
-            return Err(Error::ty(name.span, format!("type `{}` is already defined", name.name)));
+            return Err(Error::ty(
+                name.span,
+                format!("type `{}` is already defined", name.name),
+            ));
         }
     }
 
@@ -195,7 +212,10 @@ fn resolve<V>(t: &TypeExpr, adts: &HashMap<String, V>) -> Result<Type, Error> {
         },
         TypeExprKind::Unit => Ok(Type::Unit),
         TypeExprKind::Fn(params, ret) => Ok(Type::Fn(
-            params.iter().map(|p| resolve(p, adts)).collect::<Result<_, _>>()?,
+            params
+                .iter()
+                .map(|p| resolve(p, adts))
+                .collect::<Result<_, _>>()?,
             Box::new(resolve(ret, adts)?),
         )),
     }
@@ -216,7 +236,9 @@ fn or_mismatch(a: &[(String, Type)], b: &[(String, Type)]) -> Option<String> {
         }
     }
     let (extra, _) = b.iter().find(|(n, _)| !a.iter().any(|(m, _)| m == n))?;
-    Some(format!("`{extra}` is bound in this alternative but not in the first"))
+    Some(format!(
+        "`{extra}` is bound in this alternative but not in the first"
+    ))
 }
 
 fn unreachable_alt(span: Span) -> Error {
@@ -270,7 +292,10 @@ impl Checker {
         if got == *want {
             Ok(())
         } else {
-            Err(Error::ty(result_span(e), format!("expected `{want}`, found `{got}`")))
+            Err(Error::ty(
+                result_span(e),
+                format!("expected `{want}`, found `{got}`"),
+            ))
         }
     }
 
@@ -525,7 +550,12 @@ impl Checker {
     // other branch to take if it doesn't.
     //
     // `want` is the expected type of the result, when checking (see `check`).
-    fn block(&mut self, stmts: &[Stmt], tail: Option<&Expr>, want: Option<&Type>) -> Result<Type, Error> {
+    fn block(
+        &mut self,
+        stmts: &[Stmt],
+        tail: Option<&Expr>,
+        want: Option<&Type>,
+    ) -> Result<Type, Error> {
         let scope = self.locals.len();
         for stmt in stmts {
             match stmt {
@@ -670,12 +700,20 @@ impl Checker {
     ///
     /// Returns the pattern in the reduced form the exhaustiveness checker
     /// uses.
-    fn pattern(&self, p: &Pattern, ty: &Type, binds: &mut Vec<(String, Type)>) -> Result<Pat, Error> {
+    fn pattern(
+        &self,
+        p: &Pattern,
+        ty: &Type,
+        binds: &mut Vec<(String, Type)>,
+    ) -> Result<Pat, Error> {
         let expect = |found: Type| {
             if found == *ty {
                 Ok(())
             } else {
-                Err(Error::ty(p.span, format!("expected `{ty}`, found `{found}`")))
+                Err(Error::ty(
+                    p.span,
+                    format!("expected `{ty}`, found `{found}`"),
+                ))
             }
         };
         Ok(match &p.kind {
@@ -788,10 +826,14 @@ impl Checker {
     fn struct_def(&self, name: &Ident) -> Result<&[(String, Type)], Error> {
         match self.adts.get(&name.name) {
             Some(AdtDef::Struct(fields)) => Ok(fields),
-            Some(AdtDef::Enum(_)) => {
-                Err(Error::ty(name.span, format!("`{}` is an enum, not a struct", name.name)))
-            }
-            None => Err(Error::ty(name.span, format!("unknown type `{}`", name.name))),
+            Some(AdtDef::Enum(_)) => Err(Error::ty(
+                name.span,
+                format!("`{}` is an enum, not a struct", name.name),
+            )),
+            None => Err(Error::ty(
+                name.span,
+                format!("unknown type `{}`", name.name),
+            )),
         }
     }
 
@@ -800,7 +842,10 @@ impl Checker {
         let variants = match self.adts.get(&ty.name) {
             Some(AdtDef::Enum(variants)) => variants,
             Some(AdtDef::Struct(_)) => {
-                return Err(Error::ty(ty.span, format!("`{}` is a struct, not an enum", ty.name)));
+                return Err(Error::ty(
+                    ty.span,
+                    format!("`{}` is a struct, not an enum", ty.name),
+                ));
             }
             None => return Err(Error::ty(ty.span, format!("unknown type `{}`", ty.name))),
         };
@@ -810,7 +855,10 @@ impl Checker {
             .find(|(_, (v, _))| *v == variant.name)
             .map(|(i, (_, fields))| (i, fields.as_slice()))
             .ok_or_else(|| {
-                Error::ty(variant.span, format!("`{}` has no variant `{}`", ty.name, variant.name))
+                Error::ty(
+                    variant.span,
+                    format!("`{}` has no variant `{}`", ty.name, variant.name),
+                )
             })
     }
 

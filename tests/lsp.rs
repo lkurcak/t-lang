@@ -60,28 +60,46 @@ fn reports_and_clears_diagnostics() {
     };
     let uri = "file:///tmp/test.t";
 
-    c.send(json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"capabilities": {}}}));
+    c.send(
+        json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"capabilities": {}}}),
+    );
     let init = c.recv();
-    assert_eq!(init["result"]["capabilities"]["textDocumentSync"], 1, "{init}");
+    assert_eq!(
+        init["result"]["capabilities"]["textDocumentSync"], 1,
+        "{init}"
+    );
     c.send(json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}));
 
     // Open a file with a type error on line 2 (0-based line 1).
     let bad = "fn main() {\n    let x: int = true;\n}\n";
-    c.send(json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
-        "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": bad}
-    }}));
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": bad}
+        }}),
+    );
     let diags = c.diagnostics();
     assert_eq!(diags.len(), 1, "{diags:?}");
-    assert_eq!(diags[0]["message"], "type error: expected `int`, found `bool`");
-    assert_eq!(diags[0]["range"]["start"], json!({"line": 1, "character": 17}));
-    assert_eq!(diags[0]["range"]["end"], json!({"line": 1, "character": 21}));
+    assert_eq!(
+        diags[0]["message"],
+        "type error: expected `int`, found `bool`"
+    );
+    assert_eq!(
+        diags[0]["range"]["start"],
+        json!({"line": 1, "character": 17})
+    );
+    assert_eq!(
+        diags[0]["range"]["end"],
+        json!({"line": 1, "character": 21})
+    );
 
     // Fix it: the diagnostics are cleared.
     let good = "fn main() {\n    let x: int = 1;\n}\n";
-    c.send(json!({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
-        "textDocument": {"uri": uri, "version": 2},
-        "contentChanges": [{"text": good}]
-    }}));
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
+            "textDocument": {"uri": uri, "version": 2},
+            "contentChanges": [{"text": good}]
+        }}),
+    );
     assert_eq!(c.diagnostics(), Vec::<Value>::new());
 
     c.send(json!({"jsonrpc": "2.0", "id": 2, "method": "shutdown"}));
