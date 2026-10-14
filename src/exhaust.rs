@@ -26,7 +26,7 @@
 //! does too.
 
 use crate::error::Span;
-use crate::types::{AdtDef, Adts, Type};
+use crate::types::{AdtDef, Adts, Type, struct_fields, variant_fields};
 
 /// A pattern reduced to what matters for coverage. Bindings become wildcards
 /// (`x` matches anything, just like `_`) and struct fields are put in
@@ -423,17 +423,14 @@ impl Cx<'_> {
 
     /// The types of the fields that constructor `c` of type `ty` holds.
     fn fields(&self, c: Ctor, ty: &Type) -> Vec<Type> {
-        match (c, ty) {
-            (Ctor::Bool(_) | Ctor::Unit | Ctor::Int(..), _) => Vec::new(),
-            (Ctor::Struct, Type::Adt(name)) => match &self.adts[name] {
-                AdtDef::Struct(fields) => fields.iter().map(|(_, t)| t.clone()).collect(),
-                AdtDef::Enum(_) => unreachable!("struct pattern on enum `{name}`"),
-            },
-            (Ctor::Variant(i), Type::Adt(name)) => match &self.adts[name] {
-                AdtDef::Enum(variants) => variants[i].1.clone(),
-                AdtDef::Struct(_) => unreachable!("variant pattern on struct `{name}`"),
-            },
-            _ => unreachable!("constructor {c:?} doesn't belong to `{ty}`"),
+        match c {
+            Ctor::Bool(_) | Ctor::Unit | Ctor::Int(..) => Vec::new(),
+            Ctor::Struct => struct_fields(self.adts, ty)
+                .unwrap_or_else(|| unreachable!("struct pattern on `{ty}`"))
+                .into_iter()
+                .map(|(_, t)| t)
+                .collect(),
+            Ctor::Variant(i) => variant_fields(self.adts, ty, i),
         }
     }
 
@@ -454,9 +451,7 @@ impl Cx<'_> {
             (Ctor::Unit, _) => "()".to_string(),
             (Ctor::Int(lo, hi), _) => show_range(*lo, *hi, true),
             (Ctor::Struct, Type::Adt(name)) => {
-                let AdtDef::Struct(fields) = &self.adts[name] else {
-                    unreachable!()
-                };
+                let fields = struct_fields(self.adts, ty).expect("a struct");
                 if fields.is_empty() {
                     return format!("{name} {{}}");
                 }

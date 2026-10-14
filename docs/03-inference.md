@@ -1,7 +1,7 @@
 # Step 3: type inference and closures
 
-Code: `src/check.rs` (`Checker::unify`, `Checker::lambda` and `Checker::check`)
-and `src/interp.rs` (`Closure`).
+Code: `src/check/unify.rs` (`Checker::unify`), `src/check/mod.rs`
+(`Checker::lambda` and `Checker::check`) and `src/interp.rs` (`Closure`).
 
 ```rust
 fn adder(n: int) -> fn(int) -> int { |x| x + n }

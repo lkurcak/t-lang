@@ -25,11 +25,16 @@
 //! the parameter in `|x| x + 1`, the checker makes up a *type variable* and
 //! works out what it must be from how it's used: `unify`.
 
+mod lints;
+mod unify;
+
 use crate::ast::*;
-use crate::error::{Edit, Error, Fix, Lint, Span, Warning};
+use crate::error::{Edit, Error, Fix, Span, Warning};
 use crate::exhaust::{self, Ctor, Pat, Redundant};
-use crate::types::{AdtDef, Adts, Type};
+use crate::types::{AdtDef, Adts, Type, all_fields, struct_fields, variant_fields};
+use lints::{Uses, mergeable, narrowable, unreachable_alt, unreachable_arm, unused};
 use std::collections::{HashMap, HashSet};
+use unify::Var;
 
 /// Built-in functions, available everywhere. Shared with the interpreter.
 pub const BUILTINS: &[&str] = &["print", "print_bool"];
@@ -196,30 +201,18 @@ fn contains(adts: &Adts, ty: &Type, target: &str, seen: &mut HashSet<String>) ->
     if !seen.insert(name.clone()) {
         return false;
     }
-    field_types(&adts[name]).any(|t| contains(adts, t, target, seen))
-}
-
-/// The types of every field of every variant.
-fn field_types(def: &AdtDef) -> Box<dyn Iterator<Item = &Type> + '_> {
-    match def {
-        AdtDef::Struct(fields) => Box::new(fields.iter().map(|(_, t)| t)),
-        AdtDef::Enum(variants) => Box::new(variants.iter().flat_map(|(_, ts)| ts)),
-    }
+    all_fields(adts, ty)
+        .iter()
+        .any(|t| contains(adts, t, target, seen))
 }
 
 /// Adds the name of every struct and enum that `t` mentions to `out`.
 fn adt_names(t: &Type, out: &mut HashSet<String>) {
-    match t {
-        Type::Adt(name) => {
-            out.insert(name.clone());
-        }
-        Type::Fn(params, ret) => {
-            for p in params {
-                adt_names(p, out);
-            }
-            adt_names(ret, out);
-        }
-        Type::Int | Type::Bool | Type::Unit | Type::Var(_) => {}
+    if let Type::Adt(name) = t {
+        out.insert(name.clone());
+    }
+    for p in t.parts() {
+        adt_names(p, out);
     }
 }
 
@@ -292,246 +285,10 @@ fn or_mismatch(a: &[Local], b: &[Local]) -> Option<String> {
     ))
 }
 
-/// A variable nothing reads. The fix renames it to start with `_`, which says
-/// that's on purpose, everywhere it's bound.
-fn unused(local: &Local) -> Warning {
-    let name = &local.name;
-    let edits = local
-        .sites
-        .iter()
-        .map(|site| match site.shorthand {
-            true => Edit::insert(site.span.end, format!(": _{name}")),
-            false => Edit::insert(site.span.start, "_"),
-        })
-        .collect();
-    Warning {
-        lint: Lint::UnusedVariables,
-        span: local.sites[0].span,
-        message: format!("unused variable `{name}`"),
-        fixes: vec![Fix::new(format!("rename to `_{name}`"), edits)],
-    }
-}
-
-/// Arm `i` can never match. The fix deletes it, along with the `,` and the
-/// whitespace that separate it from its neighbours.
-fn unreachable_arm(arms: &[Arm], i: usize) -> Warning {
-    let span = arms[i].pat.span;
-    let delete = if let Some(next) = arms.get(i + 1) {
-        Some(Span::new(span.start, next.pat.span.start))
-    } else if i > 0 {
-        // The last arm: from the end of the one before, which leaves any
-        // trailing `,` behind for that one.
-        Some(Span::new(arms[i - 1].body.span.end, arms[i].body.span.end))
-    } else {
-        // The only arm, and the `,` after it can't be found from here.
-        None
-    };
-    Warning {
-        lint: Lint::UnreachablePatterns,
-        span,
-        message: "unreachable pattern: the arms above already match everything it would".into(),
-        fixes: delete
-            .map(|d| Fix::new("remove the unreachable arm", vec![Edit::delete(d)]))
-            .into_iter()
-            .collect(),
-    }
-}
-
-/// The or-pattern alternative at `span`, somewhere in `pats`, can never
-/// match. The fix deletes it and the `|` next to it.
-fn unreachable_alt(span: Span, pats: &[Pattern]) -> Warning {
-    let fix = pats
-        .iter()
-        .find_map(|p| alternatives(p, span))
-        .map(|(alts, k)| {
-            let delete = match k {
-                0 => Span::new(alts[0].span.start, alts[1].span.start),
-                _ => Span::new(alts[k - 1].span.end, alts[k].span.end),
-            };
-            Fix::new(
-                "remove the unreachable alternative",
-                vec![Edit::delete(delete)],
-            )
-        });
-    Warning {
-        lint: Lint::UnreachablePatterns,
-        span,
-        message:
-            "unreachable alternative: the patterns before it already match everything it would"
-                .into(),
-        fixes: fix.into_iter().collect(),
-    }
-}
-
-/// The alternatives of the or-pattern in `p` that has one at `span`, and
-/// which one that is.
-fn alternatives(p: &Pattern, span: Span) -> Option<(&[Pattern], usize)> {
-    match &p.kind {
-        PatternKind::Or(alts) => alts
-            .iter()
-            .position(|a| a.span == span)
-            .map(|k| (alts.as_slice(), k))
-            .or_else(|| alts.iter().find_map(|a| alternatives(a, span))),
-        PatternKind::Variant(_, _, pats) => pats.iter().find_map(|p| alternatives(p, span)),
-        PatternKind::Struct(_, fields, _) => fields.iter().find_map(|f| alternatives(&f.pat, span)),
-        _ => None,
-    }
-}
-
-/// The range at `span`, somewhere in `pats`, only reaches `lo..=hi`.
-fn narrowable(span: Span, lo: i64, hi: i64, pats: &[Pattern]) -> Warning {
-    let inclusive = pats.iter().find_map(|p| written_inclusive(p, span));
-    let range = exhaust::show_range(lo, hi, inclusive.unwrap_or(true));
-    Warning {
-        lint: Lint::OverlappingRanges,
-        span,
-        message: format!(
-            "this range can be narrowed to `{range}`: the patterns before it already match the rest"
-        ),
-        fixes: vec![Fix::new(
-            format!("narrow to `{range}`"),
-            vec![Edit::replace(span, range)],
-        )],
-    }
-}
-
-/// Alternatives of the or-pattern `p` that touch end to end, like
-/// `0..10 | 10..20`, each run as a warning naming the one range that covers
-/// it. At least one of them must be a range: `1 | 2` is fine as it is.
-///
-/// The fix writes the merged range in place of whichever of them comes first
-/// in the source, and deletes the others with the `|` before each.
-fn mergeable(p: &Pattern, alts: &[Pattern]) -> Vec<Warning> {
-    // `(lo, hi, is a range, written with ..=, index in alts)`
-    let mut ints: Vec<(i64, i64, bool, bool, usize)> = alts
-        .iter()
-        .enumerate()
-        .filter_map(|(k, a)| match a.kind {
-            PatternKind::Int(n) => Some((n, n, false, true, k)),
-            PatternKind::Range(lo, hi, inclusive) => Some((lo, hi, true, inclusive, k)),
-            _ => None,
-        })
-        .collect();
-    ints.sort_by_key(|&(lo, ..)| lo);
-    ints.chunk_by(|a, b| a.1.checked_add(1) == Some(b.0))
-        .filter(|run| run.len() > 1 && run.iter().any(|&(_, _, range, _, _)| range))
-        .map(|run| {
-            let names: Vec<String> = run
-                .iter()
-                .map(|&(lo, hi, _, inclusive, _)| {
-                    format!("`{}`", exhaust::show_range(lo, hi, inclusive))
-                })
-                .collect();
-            let (last, rest) = names.split_last().expect("a run has two or more");
-            // Written in the style of the highest one.
-            let &(_, hi, _, inclusive, _) = run.last().expect("a run has two or more");
-            let merged = exhaust::show_range(run[0].0, hi, inclusive);
-
-            let mut ks: Vec<usize> = run.iter().map(|&(.., k)| k).collect();
-            ks.sort_unstable();
-            let mut edits = vec![Edit::replace(alts[ks[0]].span, merged.clone())];
-            // Every `k` here is past `ks[0]`, so it has a `|` before it.
-            edits.extend(
-                ks[1..]
-                    .iter()
-                    .map(|&k| Edit::delete(Span::new(alts[k - 1].span.end, alts[k].span.end))),
-            );
-            Warning {
-                lint: Lint::MergeableRanges,
-                span: p.span,
-                message: format!(
-                    "{} and {last} can be merged into `{merged}`",
-                    rest.join(", ")
-                ),
-                fixes: vec![Fix::new(format!("merge into `{merged}`"), edits)],
-            }
-        })
-        .collect()
-}
-
-/// Whether the range pattern at `span` inside `p` was written with `..=`.
-fn written_inclusive(p: &Pattern, span: Span) -> Option<bool> {
-    match &p.kind {
-        PatternKind::Range(_, _, inclusive) if p.span == span => Some(*inclusive),
-        PatternKind::Variant(_, _, pats) | PatternKind::Or(pats) => {
-            pats.iter().find_map(|p| written_inclusive(p, span))
-        }
-        PatternKind::Struct(_, fields, _) => {
-            fields.iter().find_map(|f| written_inclusive(&f.pat, span))
-        }
-        _ => None,
-    }
-}
-
-/// What one function refers to, for finding dead code.
-#[derive(Default)]
-struct Uses {
-    /// Functions it names, called or not.
-    fns: HashSet<String>,
-    /// Structs and enums its signature or body mentions.
-    types: HashSet<String>,
-    /// Structs it constructs.
-    structs: HashSet<String>,
-    /// Enum variants it constructs, as `(enum, variant)`.
-    variants: HashSet<(String, String)>,
-}
-
-fn dead(span: Span, message: String) -> Warning {
-    Warning {
-        lint: Lint::DeadCode,
-        span,
-        message,
-        fixes: Vec::new(),
-    }
-}
-
 /// "1 field", "2 fields".
 fn plural(n: usize, what: &str) -> String {
     format!("{n} {what}{}", if n == 1 { "" } else { "s" })
 }
-
-/// A type variable: a type the checker hasn't worked out yet.
-struct Var {
-    /// What it turned out to be, once `unify` finds out. That can be another
-    /// variable, or a type with variables in it, like `fn(_) -> int`.
-    solution: Option<Type>,
-    /// Where it came from, for when it's never solved: the span, what it's
-    /// the type of ("the type of `x`") and how to fix that.
-    span: Span,
-    what: String,
-    hint: String,
-}
-
-/// Why two types can't be made equal.
-enum Clash {
-    /// Different shapes, like `int` and `bool`.
-    Mismatch,
-    /// Variable `.0` would have to equal type `.1`, which contains it.
-    Infinite(u32, Type),
-}
-
-/// Does `t` have a type variable in it?
-fn has_vars(t: &Type) -> bool {
-    match t {
-        Type::Var(_) => true,
-        Type::Fn(params, ret) => params.iter().any(has_vars) || has_vars(ret),
-        Type::Int | Type::Bool | Type::Unit | Type::Adt(_) => false,
-    }
-}
-
-/// `t`, with every variable `v` in it called `name`. For explaining an
-/// infinite type, which is easier with a name for the type that repeats.
-fn name_var(t: &Type, v: u32, name: &str) -> Type {
-    match t {
-        Type::Var(w) if *w == v => Type::Adt(name.to_string()),
-        Type::Fn(params, ret) => Type::Fn(
-            params.iter().map(|p| name_var(p, v, name)).collect(),
-            Box::new(name_var(ret, v, name)),
-        ),
-        t => t.clone(),
-    }
-}
-
 struct Checker {
     adts: Adts,
     globals: HashMap<String, Type>,
@@ -575,143 +332,6 @@ impl Checker {
         Ok(())
     }
 
-    /// A new type variable, for the type of something at `span`. `what` and
-    /// `hint` explain it if it's never solved, see `solve_all`.
-    fn fresh(&mut self, span: Span, what: String, hint: String) -> Type {
-        self.vars.push(Var {
-            solution: None,
-            span,
-            what,
-            hint,
-        });
-        Type::Var(self.vars.len() as u32 - 1)
-    }
-
-    /// `t`, looking through variables that are solved, as far as the
-    /// outermost type: `fn(_) -> _`, not necessarily `fn(int) -> bool`.
-    fn shallow(&self, t: &Type) -> Type {
-        let mut t = t.clone();
-        while let Type::Var(v) = t {
-            match &self.vars[v as usize].solution {
-                Some(s) => t = s.clone(),
-                None => break,
-            }
-        }
-        t
-    }
-
-    /// `t` with every solved variable replaced by its solution, all the way
-    /// down. Any `Type::Var` left in it is unknown so far.
-    fn solved(&self, t: &Type) -> Type {
-        match self.shallow(t) {
-            Type::Fn(params, ret) => Type::Fn(
-                params.iter().map(|p| self.solved(p)).collect(),
-                Box::new(self.solved(&ret)),
-            ),
-            t => t,
-        }
-    }
-
-    /// Does variable `v` occur in `t`?
-    fn occurs(&self, v: u32, t: &Type) -> bool {
-        match self.shallow(t) {
-            Type::Var(w) => v == w,
-            Type::Fn(params, ret) => {
-                params.iter().any(|p| self.occurs(v, p)) || self.occurs(v, &ret)
-            }
-            Type::Int | Type::Bool | Type::Unit | Type::Adt(_) => false,
-        }
-    }
-
-    /// Makes `a` and `b` the same type, by solving variables in them, or
-    /// says why that's impossible. This is *unification* (Robinson, 1965):
-    ///
-    /// - A variable unifies with anything, by being solved as it. Unless it
-    ///   occurs in that thing: `T = fn(T) -> int` has no finite solution.
-    /// - Two function types unify if their parameters and results do.
-    /// - Anything else must be the very same type.
-    ///
-    /// Solving `T` as `int` here holds for the rest of the function, so the
-    /// order types are learned in doesn't matter, up to a point (see
-    /// docs/03-inference.md).
-    fn unify(&mut self, a: &Type, b: &Type) -> Result<(), Clash> {
-        match (self.shallow(a), self.shallow(b)) {
-            (Type::Var(v), Type::Var(w)) if v == w => Ok(()),
-            (Type::Var(v), t) | (t, Type::Var(v)) => {
-                if self.occurs(v, &t) {
-                    return Err(Clash::Infinite(v, t));
-                }
-                self.vars[v as usize].solution = Some(t);
-                Ok(())
-            }
-            (Type::Fn(ps, r), Type::Fn(qs, s)) if ps.len() == qs.len() => {
-                for (p, q) in ps.iter().zip(&qs) {
-                    self.unify(p, q)?;
-                }
-                self.unify(&r, &s)
-            }
-            (a, b) if a == b => Ok(()),
-            _ => Err(Clash::Mismatch),
-        }
-    }
-
-    /// Unifies `a` and `b`. If they don't fit, the error at `span` says
-    /// `mismatch(a, b)`, with what's known about them so far.
-    fn unify_or(
-        &mut self,
-        a: &Type,
-        b: &Type,
-        span: Span,
-        mismatch: impl FnOnce(&Type, &Type) -> String,
-    ) -> Result<(), Error> {
-        match self.unify(a, b) {
-            Ok(()) => Ok(()),
-            Err(Clash::Mismatch) => {
-                Err(Error::ty(span, mismatch(&self.solved(a), &self.solved(b))))
-            }
-            Err(Clash::Infinite(v, t)) => {
-                let t = name_var(&self.solved(&t), v, "T");
-                Err(Error::ty(
-                    span,
-                    format!(
-                        "infinite type: this needs a type `T` that is `{t}`, which contains \
-                         `T` itself (recursive types come in step 5)"
-                    ),
-                ))
-            }
-        }
-    }
-
-    /// At the end of a function: every variable made since `vars` must be
-    /// solved, and every comparison must be on a type that allows it.
-    ///
-    /// Leaving a variable unsolved would be harmless to the interpreter, which
-    /// never looks at types. But a compiler has to know how big a value is
-    /// and how to pass it, so like Rust, T asks for an annotation.
-    fn solve_all(&mut self, vars: usize) -> Result<(), Error> {
-        for (t, span, op) in std::mem::take(&mut self.comparisons) {
-            let t = self.shallow(&t);
-            // If it's still unknown, that's reported below.
-            if !matches!(t, Type::Var(_)) {
-                self.comparable(&t, span, op)?;
-            }
-        }
-        for v in vars..self.vars.len() {
-            let t = self.solved(&Type::Var(v as u32));
-            if has_vars(&t) {
-                let Var {
-                    span, what, hint, ..
-                } = &self.vars[v];
-                let message = match t {
-                    Type::Var(_) => format!("cannot infer {what}; {hint}"),
-                    t => format!("cannot fully infer {what}, only that it's `{t}`; {hint}"),
-                };
-                return Err(Error::ty(*span, message));
-            }
-        }
-        Ok(())
-    }
-
     /// Finds a variable's type, and notes that it was used.
     fn lookup(&mut self, name: &str) -> Option<Type> {
         match self.locals.iter_mut().rev().find(|l| l.name == name) {
@@ -735,91 +355,6 @@ impl Checker {
     /// Notes that the function being checked mentions type `t`.
     fn mention(&mut self, t: &Type) {
         adt_names(t, &mut self.uses().types);
-    }
-
-    /// Warns about code that can never run: functions `main` can't reach,
-    /// and structs, enums and variants that no such function constructs.
-    /// Their names say what's dead; one starting with `_` says that's on
-    /// purpose.
-    ///
-    /// There's no fix: removing one dead function can break another that
-    /// calls it.
-    fn dead_code(&mut self, prog: &Program) {
-        let index: HashMap<&str, usize> = prog
-            .fns
-            .iter()
-            .enumerate()
-            .map(|(i, f)| (f.name.name.as_str(), i))
-            .collect();
-        // Everything reachable from `main`, by following which function
-        // names which. Functions that only call each other aren't.
-        let mut live = vec![false; prog.fns.len()];
-        let mut todo = vec![index["main"]];
-        while let Some(i) = todo.pop() {
-            if !std::mem::replace(&mut live[i], true) {
-                let callees = self.uses[i].fns.iter();
-                todo.extend(callees.filter_map(|f| index.get(f.as_str())));
-            }
-        }
-
-        let mut used = Uses::default();
-        for (f, uses) in self.uses.iter().zip(&live) {
-            if *uses {
-                used.types.extend(f.types.iter().cloned());
-                used.structs.extend(f.structs.iter().cloned());
-                used.variants.extend(f.variants.iter().cloned());
-            }
-        }
-        // A type mentioned by a live one is live too.
-        let mut todo: Vec<String> = used.types.iter().cloned().collect();
-        while let Some(t) = todo.pop() {
-            let mut inner = HashSet::new();
-            for ft in field_types(&self.adts[&t]) {
-                adt_names(ft, &mut inner);
-            }
-            for name in inner {
-                if used.types.insert(name.clone()) {
-                    todo.push(name);
-                }
-            }
-        }
-
-        let on_purpose = |id: &Ident| id.name.starts_with('_');
-        for (f, live) in prog.fns.iter().zip(&live) {
-            if !live && !on_purpose(&f.name) {
-                let message = format!("function `{}` is never used", f.name.name);
-                self.warnings.push(dead(f.name.span, message));
-            }
-        }
-        for d in &prog.types {
-            if on_purpose(d.name()) {
-                continue;
-            }
-            match d {
-                TypeDecl::Struct(s) => {
-                    if !used.structs.contains(&s.name.name) {
-                        let message = format!("struct `{}` is never constructed", s.name.name);
-                        self.warnings.push(dead(s.name.span, message));
-                    }
-                }
-                TypeDecl::Enum(e) if !used.types.contains(&e.name.name) => {
-                    let message = format!("enum `{}` is never used", e.name.name);
-                    self.warnings.push(dead(e.name.span, message));
-                }
-                TypeDecl::Enum(e) => {
-                    for v in &e.variants {
-                        let key = (e.name.name.clone(), v.name.name.clone());
-                        if !on_purpose(&v.name) && !used.variants.contains(&key) {
-                            let message = format!(
-                                "variant `{}::{}` is never constructed",
-                                e.name.name, v.name.name
-                            );
-                            self.warnings.push(dead(v.name.span, message));
-                        }
-                    }
-                }
-            }
-        }
     }
 
     /// Leaves a scope: drops the locals from `scope` on, warning about any
@@ -924,8 +459,9 @@ impl Checker {
                 //  ---------------------------------------------------- (T-Eq) for == !=
                 //                  Γ ⊢ l == r : bool
                 //
-                // See `comparable` for why functions are excluded. If T isn't known yet, as in `|a, b| a == b`, this premise
-                // waits until it is, at the end of the function.
+                // See `comparable` for why functions are excluded. If T isn't
+                // known yet, as in `|a, b| a == b`, this premise waits until it
+                // is, at the end of the function.
                 BinOp::Eq | BinOp::Ne => {
                     let t = self.synth(l)?;
                     self.check(r, &t)?;
@@ -1018,7 +554,8 @@ impl Checker {
             //
             // A product type is *introduced* by giving every field.
             ExprKind::StructLit(name, inits) => {
-                let fields = self.struct_def(name)?.to_vec();
+                let ty = self.struct_type(name)?;
+                let fields = struct_fields(&self.adts, &ty).expect("a struct");
                 let mut given = vec![false; fields.len()];
                 for init in inits {
                     let Some(i) = fields.iter().position(|(f, _)| *f == init.name.name) else {
@@ -1044,7 +581,7 @@ impl Checker {
                 }
                 self.uses().types.insert(name.name.clone());
                 self.uses().structs.insert(name.name.clone());
-                Ok(Type::Adt(name.name.clone()))
+                Ok(ty)
             }
 
             //   Γ ⊢ e : S    struct S { .., f: T, .. }
@@ -1069,15 +606,9 @@ impl Checker {
                         ),
                     ));
                 }
-                let fields = match &t {
-                    Type::Adt(name) => match &self.adts[name] {
-                        AdtDef::Struct(fields) => fields.as_slice(),
-                        AdtDef::Enum(_) => &[],
-                    },
-                    _ => &[],
-                };
-                match fields.iter().find(|(f, _)| *f == field.name) {
-                    Some((_, ft)) => Ok(ft.clone()),
+                let fields = struct_fields(&self.adts, &t).unwrap_or_default();
+                match fields.into_iter().find(|(f, _)| *f == field.name) {
+                    Some((_, ft)) => Ok(ft),
                     None => Err(Error::ty(
                         field.span,
                         format!("`{t}` has no field `{}`", field.name),
@@ -1092,8 +623,8 @@ impl Checker {
             // A sum type is *introduced* by picking one variant and giving its
             // fields. Its eliminator is `match`.
             ExprKind::Variant(ty, variant, args) => {
-                let (_, fields) = self.variant(ty, variant)?;
-                let fields = fields.to_vec();
+                let (t, i) = self.variant(ty, variant)?;
+                let fields = variant_fields(&self.adts, &t, i);
                 if fields.len() != args.len() {
                     return Err(Error::ty(
                         e.span,
@@ -1112,8 +643,8 @@ impl Checker {
                 }
                 let (ty, variant) = (ty.name.clone(), variant.name.clone());
                 self.uses().types.insert(ty.clone());
-                self.uses().variants.insert((ty.clone(), variant));
-                Ok(Type::Adt(ty))
+                self.uses().variants.insert((ty, variant));
+                Ok(t)
             }
 
             ExprKind::Match(scrutinee, arms) => self.match_expr(e, scrutinee, arms, None),
@@ -1404,9 +935,9 @@ impl Checker {
                 Pat::Ctor(Ctor::Unit, Vec::new())
             }
             PatternKind::Variant(name, variant, args) => {
-                let (i, fields) = self.variant(name, variant)?;
-                let fields = fields.to_vec();
-                self.pattern_is(p, ty, Type::Adt(name.name.clone()))?;
+                let (t, i) = self.variant(name, variant)?;
+                let fields = variant_fields(&self.adts, &t, i);
+                self.pattern_is(p, ty, t)?;
                 self.uses().types.insert(name.name.clone());
                 if fields.len() != args.len() {
                     return Err(Error::ty(
@@ -1465,8 +996,9 @@ impl Checker {
                 Pat::Or(pats)
             }
             PatternKind::Struct(name, field_pats, rest) => {
-                let fields = self.struct_def(name)?.to_vec();
-                self.pattern_is(p, ty, Type::Adt(name.name.clone()))?;
+                let t = self.struct_type(name)?;
+                let fields = struct_fields(&self.adts, &t).expect("a struct");
+                self.pattern_is(p, ty, t)?;
                 self.uses().types.insert(name.name.clone());
                 // Fields left out of the pattern match anything.
                 let mut args = vec![Pat::Wild; fields.len()];
@@ -1518,9 +1050,10 @@ impl Checker {
         })
     }
 
-    fn struct_def(&self, name: &Ident) -> Result<&[(String, Type)], Error> {
+    /// The type a struct literal or pattern names, which must be a struct.
+    fn struct_type(&self, name: &Ident) -> Result<Type, Error> {
         match self.adts.get(&name.name) {
-            Some(AdtDef::Struct(fields)) => Ok(fields),
+            Some(AdtDef::Struct(_)) => Ok(Type::Adt(name.name.clone())),
             Some(AdtDef::Enum(_)) => Err(Error::ty(
                 name.span,
                 format!("`{}` is an enum, not a struct", name.name),
@@ -1532,8 +1065,8 @@ impl Checker {
         }
     }
 
-    /// Looks up `E::V`, returning the variant's index and field types.
-    fn variant(&self, ty: &Ident, variant: &Ident) -> Result<(usize, &[Type]), Error> {
+    /// Looks up `E::V`, returning the enum's type and the variant's index.
+    fn variant(&self, ty: &Ident, variant: &Ident) -> Result<(Type, usize), Error> {
         let variants = match self.adts.get(&ty.name) {
             Some(AdtDef::Enum(variants)) => variants,
             Some(AdtDef::Struct(_)) => {
@@ -1546,9 +1079,8 @@ impl Checker {
         };
         variants
             .iter()
-            .enumerate()
-            .find(|(_, (v, _))| *v == variant.name)
-            .map(|(i, (_, fields))| (i, fields.as_slice()))
+            .position(|(v, _)| *v == variant.name)
+            .map(|i| (Type::Adt(ty.name.clone()), i))
             .ok_or_else(|| {
                 Error::ty(
                     variant.span,
@@ -1586,7 +1118,7 @@ impl Checker {
     fn holds_fn(&self, t: &Type) -> bool {
         match t {
             Type::Fn(..) => true,
-            Type::Adt(name) => field_types(&self.adts[name]).any(|t| self.holds_fn(t)),
+            Type::Adt(_) => all_fields(&self.adts, t).iter().any(|t| self.holds_fn(t)),
             // Fields' types are always known.
             Type::Int | Type::Bool | Type::Unit | Type::Var(_) => false,
         }

@@ -41,7 +41,7 @@
 //! Like Rust, an `if`, `match` or block at the *start* of a statement is the
 //! whole statement, so `if c { a } else { b } - x` is two statements, not a
 //! subtraction. Without a `;` such a statement must have type `()` (checked in
-//! `check.rs`), which turns that mistake into a type error. Parenthesize to
+//! `check/mod.rs`), which turns that mistake into a type error. Parenthesize to
 //! use one in a larger expression: `(if c { a } else { b }) - x`.
 //!
 //! One ambiguity: in `if x { .. }` the `x {` could start a struct literal. Like

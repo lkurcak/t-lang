@@ -1,0 +1,170 @@
+//! Type variables and unification: how the checker works out the types a
+//! program doesn't write down (see docs/03-inference.md).
+
+use super::Checker;
+use crate::error::{Error, Span};
+use crate::types::Type;
+
+/// A type variable: a type the checker hasn't worked out yet.
+pub(super) struct Var {
+    /// What it turned out to be, once `unify` finds out. That can be another
+    /// variable, or a type with variables in it, like `fn(_) -> int`.
+    solution: Option<Type>,
+    /// Where it came from, for when it's never solved: the span, what it's
+    /// the type of ("the type of `x`") and how to fix that.
+    span: Span,
+    what: String,
+    hint: String,
+}
+
+/// Why two types can't be made equal.
+pub(super) enum Clash {
+    /// Different shapes, like `int` and `bool`.
+    Mismatch,
+    /// Variable `.0` would have to equal type `.1`, which contains it.
+    Infinite(u32, Type),
+}
+
+/// Does `t` have a type variable in it?
+fn has_vars(t: &Type) -> bool {
+    matches!(t, Type::Var(_)) || t.parts().any(has_vars)
+}
+
+/// `t`, with every variable `v` in it called `name`. For explaining an
+/// infinite type, which is easier with a name for the type that repeats.
+fn name_var(t: &Type, v: u32, name: &str) -> Type {
+    match t {
+        Type::Var(w) if *w == v => Type::Adt(name.to_string()),
+        t => t.map(|p| name_var(p, v, name)),
+    }
+}
+
+impl Checker {
+    /// A new type variable, for the type of something at `span`. `what` and
+    /// `hint` explain it if it's never solved, see `solve_all`.
+    pub(super) fn fresh(&mut self, span: Span, what: String, hint: String) -> Type {
+        self.vars.push(Var {
+            solution: None,
+            span,
+            what,
+            hint,
+        });
+        Type::Var(self.vars.len() as u32 - 1)
+    }
+
+    /// `t`, looking through variables that are solved, as far as the
+    /// outermost type: `fn(_) -> _`, not necessarily `fn(int) -> bool`.
+    pub(super) fn shallow(&self, t: &Type) -> Type {
+        let mut t = t.clone();
+        while let Type::Var(v) = t {
+            match &self.vars[v as usize].solution {
+                Some(s) => t = s.clone(),
+                None => break,
+            }
+        }
+        t
+    }
+
+    /// `t` with every solved variable replaced by its solution, all the way
+    /// down. Any `Type::Var` left in it is unknown so far.
+    pub(super) fn solved(&self, t: &Type) -> Type {
+        self.shallow(t).map(|p| self.solved(p))
+    }
+
+    /// Does variable `v` occur in `t`?
+    fn occurs(&self, v: u32, t: &Type) -> bool {
+        match self.shallow(t) {
+            Type::Var(w) => v == w,
+            t => t.parts().any(|p| self.occurs(v, p)),
+        }
+    }
+
+    /// Makes `a` and `b` the same type, by solving variables in them, or
+    /// says why that's impossible. This is *unification* (Robinson, 1965):
+    ///
+    /// - A variable unifies with anything, by being solved as it. Unless it
+    ///   occurs in that thing: `T = fn(T) -> int` has no finite solution.
+    /// - Two function types unify if their parameters and results do.
+    /// - Anything else must be the very same type.
+    ///
+    /// Solving `T` as `int` here holds for the rest of the function, so the
+    /// order types are learned in doesn't matter, up to a point (see
+    /// docs/03-inference.md).
+    pub(super) fn unify(&mut self, a: &Type, b: &Type) -> Result<(), Clash> {
+        match (self.shallow(a), self.shallow(b)) {
+            (Type::Var(v), Type::Var(w)) if v == w => Ok(()),
+            (Type::Var(v), t) | (t, Type::Var(v)) => {
+                if self.occurs(v, &t) {
+                    return Err(Clash::Infinite(v, t));
+                }
+                self.vars[v as usize].solution = Some(t);
+                Ok(())
+            }
+            (Type::Fn(ps, r), Type::Fn(qs, s)) if ps.len() == qs.len() => {
+                for (p, q) in ps.iter().zip(&qs) {
+                    self.unify(p, q)?;
+                }
+                self.unify(&r, &s)
+            }
+            (a, b) if a == b => Ok(()),
+            _ => Err(Clash::Mismatch),
+        }
+    }
+
+    /// Unifies `a` and `b`. If they don't fit, the error at `span` says
+    /// `mismatch(a, b)`, with what's known about them so far.
+    pub(super) fn unify_or(
+        &mut self,
+        a: &Type,
+        b: &Type,
+        span: Span,
+        mismatch: impl FnOnce(&Type, &Type) -> String,
+    ) -> Result<(), Error> {
+        match self.unify(a, b) {
+            Ok(()) => Ok(()),
+            Err(Clash::Mismatch) => {
+                Err(Error::ty(span, mismatch(&self.solved(a), &self.solved(b))))
+            }
+            Err(Clash::Infinite(v, t)) => {
+                let t = name_var(&self.solved(&t), v, "T");
+                Err(Error::ty(
+                    span,
+                    format!(
+                        "infinite type: this needs a type `T` that is `{t}`, which contains \
+                         `T` itself (recursive types come in step 5)"
+                    ),
+                ))
+            }
+        }
+    }
+
+    /// At the end of a function: every variable made since `vars` must be
+    /// solved, and every comparison must be on a type that allows it.
+    ///
+    /// Leaving a variable unsolved would be harmless to the interpreter, which
+    /// never looks at types. But a compiler has to know how big a value is
+    /// and how to pass it, so like Rust, T asks for an annotation.
+    pub(super) fn solve_all(&mut self, vars: usize) -> Result<(), Error> {
+        for (t, span, op) in std::mem::take(&mut self.comparisons) {
+            let t = self.shallow(&t);
+            // If it's still unknown, that's reported below.
+            if !matches!(t, Type::Var(_)) {
+                self.comparable(&t, span, op)?;
+            }
+        }
+        for v in vars..self.vars.len() {
+            let t = self.solved(&Type::Var(v as u32));
+            if has_vars(&t) {
+                let Var {
+                    span, what, hint, ..
+                } = &self.vars[v];
+                let message = match t {
+                    Type::Var(_) => format!("cannot infer {what}; {hint}"),
+                    t => format!("cannot fully infer {what}, only that it's `{t}`; {hint}"),
+                };
+                return Err(Error::ty(*span, message));
+            }
+        }
+        Ok(())
+    }
+}
