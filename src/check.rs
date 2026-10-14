@@ -248,6 +248,63 @@ fn unreachable_alt(span: Span) -> Error {
     )
 }
 
+/// The range at `span`, somewhere in `pats`, only reaches `lo..=hi`.
+fn narrowable(span: Span, lo: i64, hi: i64, pats: &[Pattern]) -> Error {
+    let inclusive = pats.iter().find_map(|p| written_inclusive(p, span));
+    let range = exhaust::show_range(lo, hi, inclusive.unwrap_or(true));
+    Error::ty(
+        span,
+        format!(
+            "this range can be narrowed to `{range}`: the patterns before it already match the rest"
+        ),
+    )
+}
+
+/// Alternatives that touch end to end, like `0..10 | 10..20`, as an error
+/// message naming the one range that covers them. At least one of them must
+/// be a range: `1 | 2` is fine as it is.
+fn mergeable(alts: &[Pattern]) -> Option<String> {
+    // `(lo, hi, is a range, written with ..=)`
+    let mut ints: Vec<(i64, i64, bool, bool)> = alts
+        .iter()
+        .filter_map(|a| match a.kind {
+            PatternKind::Int(n) => Some((n, n, false, true)),
+            PatternKind::Range(lo, hi, inclusive) => Some((lo, hi, true, inclusive)),
+            _ => None,
+        })
+        .collect();
+    ints.sort_by_key(|&(lo, ..)| lo);
+    let run = ints
+        .chunk_by(|a, b| a.1.checked_add(1) == Some(b.0))
+        .find(|run| run.len() > 1 && run.iter().any(|&(_, _, range, _)| range))?;
+    let names: Vec<String> = run
+        .iter()
+        .map(|&(lo, hi, _, inclusive)| format!("`{}`", exhaust::show_range(lo, hi, inclusive)))
+        .collect();
+    let (last, rest) = names.split_last()?;
+    // Written in the style of the highest one.
+    let &(_, hi, _, inclusive) = run.last()?;
+    let merged = exhaust::show_range(run[0].0, hi, inclusive);
+    Some(format!(
+        "{} and {last} can be merged into `{merged}`",
+        rest.join(", ")
+    ))
+}
+
+/// Whether the range pattern at `span` inside `p` was written with `..=`.
+fn written_inclusive(p: &Pattern, span: Span) -> Option<bool> {
+    match &p.kind {
+        PatternKind::Range(_, _, inclusive) if p.span == span => Some(*inclusive),
+        PatternKind::Variant(_, _, pats) | PatternKind::Or(pats) => {
+            pats.iter().find_map(|p| written_inclusive(p, span))
+        }
+        PatternKind::Struct(_, fields, _) => {
+            fields.iter().find_map(|f| written_inclusive(&f.pat, span))
+        }
+        _ => None,
+    }
+}
+
 /// "1 field", "2 fields".
 fn plural(n: usize, what: &str) -> String {
     format!("{n} {what}{}", if n == 1 { "" } else { "s" })
@@ -574,8 +631,12 @@ impl Checker {
                     // pattern only is when the value can't exist, like a
                     // `Never` parameter, and then nothing is wrong.
                     let p = [p];
-                    if let Some(Redundant::Alt(span)) = exhaust::redundant(&self.adts, &t, &p) {
-                        return Err(unreachable_alt(span));
+                    match exhaust::redundant(&self.adts, &t, &p) {
+                        Some(Redundant::Alt(span)) => return Err(unreachable_alt(span)),
+                        Some(Redundant::Trim(span, lo, hi)) => {
+                            return Err(narrowable(span, lo, hi, std::slice::from_ref(pat)));
+                        }
+                        Some(Redundant::Arm(_)) | None => {}
                     }
                     if let Some(missing) = exhaust::missing(&self.adts, &t, &p) {
                         return Err(Error::ty(
@@ -658,6 +719,10 @@ impl Checker {
                 ));
             }
             Some(Redundant::Alt(span)) => return Err(unreachable_alt(span)),
+            Some(Redundant::Trim(span, lo, hi)) => {
+                let pats: Vec<Pattern> = arms.iter().map(|a| a.pat.clone()).collect();
+                return Err(narrowable(span, lo, hi, &pats));
+            }
             None => {}
         }
         if let Some(missing) = exhaust::missing(&self.adts, &t, &pats) {
@@ -730,7 +795,17 @@ impl Checker {
             }
             PatternKind::Int(n) => {
                 expect(Type::Int)?;
-                Pat::Ctor(Ctor::Int(*n), Vec::new())
+                Pat::Ctor(Ctor::Int(*n, *n), Vec::new())
+            }
+            PatternKind::Range(lo, hi, _) => {
+                expect(Type::Int)?;
+                if lo > hi {
+                    return Err(Error::ty(
+                        p.span,
+                        "this range is empty, so it can never match",
+                    ));
+                }
+                Pat::Range(*lo, *hi, p.span)
             }
             PatternKind::Bool(b) => {
                 expect(Type::Bool)?;
@@ -781,6 +856,9 @@ impl Checker {
                             }
                         }
                     }
+                }
+                if let Some(msg) = mergeable(alts) {
+                    return Err(Error::ty(p.span, msg));
                 }
                 binds.extend(first.unwrap_or_default());
                 Pat::Or(pats)

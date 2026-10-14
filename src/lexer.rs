@@ -26,6 +26,8 @@ pub enum Tok {
     ColonColon,
     Semi,
     Dot,
+    DotDot,
+    DotDotEq,
     Arrow,
     FatArrow,
     // operators
@@ -73,6 +75,8 @@ impl Tok {
             Tok::ColonColon => "::",
             Tok::Semi => ";",
             Tok::Dot => ".",
+            Tok::DotDot => "..",
+            Tok::DotDotEq => "..=",
             Tok::Arrow => "->",
             Tok::FatArrow => "=>",
             Tok::Eq => "=",
@@ -149,7 +153,10 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Error> {
             }
         } else {
             let next = bytes.get(i + 1).copied();
+            let third = bytes.get(i + 2).copied();
             let (tok, len) = match (c, next) {
+                (b'.', Some(b'.')) if third == Some(b'=') => (Tok::DotDotEq, 3),
+                (b'.', Some(b'.')) => (Tok::DotDot, 2),
                 (b'-', Some(b'>')) => (Tok::Arrow, 2),
                 (b'=', Some(b'>')) => (Tok::FatArrow, 2),
                 (b':', Some(b':')) => (Tok::ColonColon, 2),

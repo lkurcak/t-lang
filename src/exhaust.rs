@@ -15,8 +15,15 @@
 //!
 //! Patterns are compared by *constructor*: the thing a value was built with,
 //! like `true`, `Shape::Rect` or `Point`. A type's constructors are finite for
-//! bool, `()`, structs and enums, but not for int (practically speaking), and
-//! functions have none we can look inside.
+//! bool, `()`, structs and enums, and functions have none we can look inside.
+//!
+//! Ints are the odd one out: there are too many to list one by one, so their
+//! constructors are *ranges*, and `5` is just `5..=5`. Ranges can overlap, so
+//! before comparing them, `split` cuts them at every boundary the rows
+//! mention. With rows `0..=9` and `5..`, the ints become `..=-1`, `0..=4`,
+//! `5..=9` and `10..`, and each piece lies wholly inside or outside each row's
+//! range. From there they work like any other constructors. This is what rustc
+//! does too.
 
 use crate::error::Span;
 use crate::types::{AdtDef, Adts, Type};
@@ -28,6 +35,11 @@ use crate::types::{AdtDef, Adts, Type};
 pub enum Pat {
     Wild,
     Ctor(Ctor, Vec<Pat>),
+    /// A range pattern `lo..=hi`, with its source span to point at if it can
+    /// be narrowed. `useful` never sees one: `plain` turns it into
+    /// `Ctor::Int(lo, hi)` first. (A single int is a `Ctor::Int` from the
+    /// start. It can't be narrowed, only be unreachable.)
+    Range(i64, i64, Span),
     /// Matches if any alternative does. Each alternative keeps its source
     /// span, to point at it if it's unreachable.
     Or(Vec<(Pat, Span)>),
@@ -37,7 +49,8 @@ pub enum Pat {
 pub enum Ctor {
     Bool(bool),
     Unit,
-    Int(i64),
+    /// The ints from the first to the second, inclusive.
+    Int(i64, i64),
     /// A struct has a single constructor.
     Struct,
     /// The n-th variant of an enum.
@@ -52,10 +65,15 @@ pub enum Redundant {
     /// An alternative of an or-pattern, by its span: earlier arms and earlier
     /// alternatives match everything it would.
     Alt(Span),
+    /// A range pattern, by its span, that only ever matches `lo..=hi`, a
+    /// narrower range: earlier arms and alternatives match the ints at one or
+    /// both of its ends. Ints they match in the middle are fine, as in
+    /// `5 => .., 0..10 => ..`, since there's no narrower range to write.
+    Trim(Span, i64, i64),
 }
 
 /// Finds the first arm, or else the first or-pattern alternative, that can
-/// never match.
+/// never match, or else the first range that could be narrower.
 ///
 /// Checking only whole arms misses `Some(1 | 1)`, and checking each
 /// or-pattern only against its own earlier alternatives misses the `1` in
@@ -68,6 +86,9 @@ pub enum Redundant {
 ///
 /// That's exponential in the number of or-patterns in one arm, but real
 /// arms have few.
+///
+/// A range is narrowed to the ints some useful combination can still match
+/// with it (see `reached`), from the first to the last.
 pub fn redundant(adts: &Adts, ty: &Type, arms: &[Pat]) -> Option<Redundant> {
     let cx = Cx { adts };
     let tys = [ty.clone()];
@@ -78,8 +99,10 @@ pub fn redundant(adts: &Adts, ty: &Type, arms: &[Pat]) -> Option<Redundant> {
         // combination used.
         let mut alts: Vec<Span> = Vec::new();
         let mut useful_alts: Vec<Span> = Vec::new();
+        let mut ranges: Vec<Reach> = Vec::new();
         for (p, chosen) in expand(arm) {
-            let useful = cx.useful(&rows, std::slice::from_ref(&p), &tys).is_some();
+            let q = plain(&p, None);
+            let useful = cx.useful(&rows, std::slice::from_ref(&q), &tys).is_some();
             arm_useful |= useful;
             for span in chosen {
                 if !alts.contains(&span) {
@@ -89,7 +112,20 @@ pub fn redundant(adts: &Adts, ty: &Type, arms: &[Pat]) -> Option<Redundant> {
                     useful_alts.push(span);
                 }
             }
-            rows.push(vec![p]);
+            if useful {
+                for (lo, hi, span) in ranges_in(&p) {
+                    let (a, b) = cx.reached(&rows, ty, &p, lo, hi, span);
+                    match ranges.iter_mut().find(|r| r.span == span) {
+                        Some(r) => r.reached = (r.reached.0.min(a), r.reached.1.max(b)),
+                        None => ranges.push(Reach {
+                            span,
+                            written: (lo, hi),
+                            reached: (a, b),
+                        }),
+                    }
+                }
+            }
+            rows.push(vec![q]);
         }
         if !arm_useful {
             return Some(Redundant::Arm(i));
@@ -98,8 +134,57 @@ pub fn redundant(adts: &Adts, ty: &Type, arms: &[Pat]) -> Option<Redundant> {
         if let Some(span) = dead.min_by_key(|s| s.start) {
             return Some(Redundant::Alt(span));
         }
+        let wide = ranges.into_iter().filter(|r| r.written != r.reached);
+        if let Some(r) = wide.min_by_key(|r| r.span.start) {
+            return Some(Redundant::Trim(r.span, r.reached.0, r.reached.1));
+        }
     }
     None
+}
+
+/// A range pattern in one arm, as written and as far as useful combinations
+/// of the arm reach with it. A range in several combinations reaches the
+/// union, from the lowest int any of them reaches to the highest.
+struct Reach {
+    span: Span,
+    written: (i64, i64),
+    reached: (i64, i64),
+}
+
+/// `p` with its ranges turned into plain constructors, for `useful`. The one
+/// at `narrow`'s span, if any, becomes `narrow`'s constructor instead.
+fn plain(p: &Pat, narrow: Option<(Span, Ctor)>) -> Pat {
+    match p {
+        Pat::Wild => Pat::Wild,
+        Pat::Range(lo, hi, span) => match narrow {
+            Some((s, c)) if s == *span => Pat::Ctor(c, Vec::new()),
+            _ => Pat::Ctor(Ctor::Int(*lo, *hi), Vec::new()),
+        },
+        Pat::Ctor(c, args) => Pat::Ctor(*c, args.iter().map(|a| plain(a, narrow)).collect()),
+        Pat::Or(alts) => Pat::Or(alts.iter().map(|(a, s)| (plain(a, narrow), *s)).collect()),
+    }
+}
+
+/// The ranges in an or-free pattern, as `(lo, hi, span)`.
+fn ranges_in(p: &Pat) -> Vec<(i64, i64, Span)> {
+    match p {
+        Pat::Wild => Vec::new(),
+        Pat::Range(lo, hi, span) => vec![(*lo, *hi, *span)],
+        Pat::Ctor(_, args) => args.iter().flat_map(ranges_in).collect(),
+        Pat::Or(_) => unreachable!("expanded before looking for ranges"),
+    }
+}
+
+/// Every int constructor in an or-free, plain pattern.
+fn ints_in(p: &Pat, out: &mut Vec<Ctor>) {
+    if let Pat::Ctor(c, args) = p {
+        if let Ctor::Int(..) = c {
+            out.push(*c);
+        }
+        for a in args {
+            ints_in(a, out);
+        }
+    }
 }
 
 /// Every or-free version of `p`, one per combination of alternatives, in the
@@ -107,7 +192,7 @@ pub fn redundant(adts: &Adts, ty: &Type, arms: &[Pat]) -> Option<Redundant> {
 /// chose.
 fn expand(p: &Pat) -> Vec<(Pat, Vec<Span>)> {
     match p {
-        Pat::Wild => vec![(Pat::Wild, Vec::new())],
+        Pat::Wild | Pat::Range(..) => vec![(p.clone(), Vec::new())],
         Pat::Or(alts) => alts
             .iter()
             .flat_map(|(alt, span)| {
@@ -144,7 +229,7 @@ fn expand(p: &Pat) -> Vec<(Pat, Vec<Span>)> {
 /// the arms are exhaustive.
 pub fn missing(adts: &Adts, ty: &Type, arms: &[Pat]) -> Option<String> {
     let cx = Cx { adts };
-    let rows: Vec<Vec<Pat>> = arms.iter().map(|p| vec![p.clone()]).collect();
+    let rows: Vec<Vec<Pat>> = arms.iter().map(|p| vec![plain(p, None)]).collect();
     let witness = cx.useful(&rows, &[Pat::Wild], std::slice::from_ref(ty))?;
     Some(cx.show(&witness[0], ty))
 }
@@ -154,6 +239,39 @@ struct Cx<'a> {
 }
 
 impl Cx<'_> {
+    /// The first and last ints of the range `lo..=hi` at `span` in `p` that
+    /// `p` can match with no row matching too. `p` must be useful, so there
+    /// are some.
+    ///
+    /// The range is `split` at every int boundary anywhere in the rows, so
+    /// that each piece is wholly inside or outside every range the rows have
+    /// at its position. Then all the ints in a piece are reached or none are,
+    /// and asking about one piece at a time is enough.
+    fn reached(
+        &self,
+        rows: &[Vec<Pat>],
+        ty: &Type,
+        p: &Pat,
+        lo: i64,
+        hi: i64,
+        span: Span,
+    ) -> (i64, i64) {
+        let mut seen = Vec::new();
+        for row in rows {
+            ints_in(&row[0], &mut seen);
+        }
+        let pieces = split(lo, hi, &seen);
+        let tys = std::slice::from_ref(ty);
+        let live = |c: &&Ctor| {
+            let q = plain(p, Some((span, **c)));
+            self.useful(rows, std::slice::from_ref(&q), tys).is_some()
+        };
+        match (pieces.iter().find(live), pieces.iter().rev().find(live)) {
+            (Some(Ctor::Int(a, _)), Some(Ctor::Int(_, b))) => (*a, *b),
+            _ => unreachable!("`p` is useful, so some piece of each range is"),
+        }
+    }
+
     /// Is the pattern vector `q` useful with respect to `rows`? Every row and
     /// `q` have one pattern per column, and column `j` has type `tys[j]`.
     ///
@@ -190,32 +308,34 @@ impl Cx<'_> {
         match &q[0] {
             // `redundant` expands or-patterns before asking, and `missing`
             // asks about `_`, so `q` never holds one.
-            Pat::Or(_) => unreachable!("or-pattern in `q`"),
+            Pat::Or(_) | Pat::Range(..) => unreachable!("or-pattern or range in `q`"),
             Pat::Ctor(c, args) => {
-                let fields = self.fields(*c, ty);
-                let arity = fields.len();
-                let rows = specialize(rows, *c, arity);
-                let q: Vec<Pat> = args.iter().chain(&q[1..]).cloned().collect();
-                let tys = [fields, rest_tys.to_vec()].concat();
-                let mut witness = self.useful(&rows, &q, &tys)?;
-                let rest = witness.split_off(arity);
-                Some([vec![Pat::Ctor(*c, witness)], rest].concat())
+                // A range in `q` may overlap a row's only in part, like
+                // `0..=9` and `5..`. Then `q` is useful iff one of its pieces
+                // is, and each piece is either covered by a row or not.
+                let pieces = match *c {
+                    Ctor::Int(lo, hi) => split(lo, hi, &head_ctors(rows)),
+                    c => vec![c],
+                };
+                pieces.into_iter().find_map(|c| {
+                    let fields = self.fields(c, ty);
+                    let arity = fields.len();
+                    let rows = specialize(rows, c, arity);
+                    let q: Vec<Pat> = args.iter().chain(&q[1..]).cloned().collect();
+                    let tys = [fields, rest_tys.to_vec()].concat();
+                    let mut witness = self.useful(&rows, &q, &tys)?;
+                    let rest = witness.split_off(arity);
+                    Some([vec![Pat::Ctor(c, witness)], rest].concat())
+                })
             }
             Pat::Wild => {
-                let seen: Vec<Ctor> = rows
-                    .iter()
-                    .filter_map(|row| match &row[0] {
-                        Pat::Ctor(c, _) => Some(*c),
-                        Pat::Wild => None,
-                        Pat::Or(_) => unreachable!("expanded above"),
-                    })
-                    .collect();
-                let all = self.all_ctors(ty);
+                let seen = head_ctors(rows);
+                let all = self.all_ctors(ty, &seen);
                 // Constructors no row mentions. Ones that can't hold a value,
                 // like `Maybe::Impossible(Never)`, don't count: no value is
                 // built with them, so none can slip past the rows that way.
                 let unseen: Option<Vec<Ctor>> = all.as_ref().map(|all| {
-                    let unseen = all.iter().filter(|c| !seen.contains(c));
+                    let unseen = all.iter().filter(|c| !seen.iter().any(|d| covers(*d, **c)));
                     unseen
                         .filter(|c| self.inhabited_ctor(**c, ty))
                         .copied()
@@ -255,17 +375,19 @@ impl Cx<'_> {
         }
     }
 
-    /// Every constructor of `ty`, or `None` if there are too many to list
-    /// (int) or none that patterns can name (functions).
-    fn all_ctors(&self, ty: &Type) -> Option<Vec<Ctor>> {
+    /// Every constructor of `ty`, or `None` if there are none that patterns
+    /// can name (functions). For int, that's every int, split into ranges at
+    /// the boundaries of the ones in `seen`.
+    fn all_ctors(&self, ty: &Type, seen: &[Ctor]) -> Option<Vec<Ctor>> {
         match ty {
+            Type::Int => Some(split(i64::MIN, i64::MAX, seen)),
             Type::Bool => Some(vec![Ctor::Bool(false), Ctor::Bool(true)]),
             Type::Unit => Some(vec![Ctor::Unit]),
             Type::Adt(name) => Some(match &self.adts[name] {
                 AdtDef::Struct(_) => vec![Ctor::Struct],
                 AdtDef::Enum(variants) => (0..variants.len()).map(Ctor::Variant).collect(),
             }),
-            Type::Int | Type::Fn(..) => None,
+            Type::Fn(..) => None,
         }
     }
 
@@ -276,7 +398,7 @@ impl Cx<'_> {
     /// types (step 5) will need more care: `enum Stream { Next(int, Stream) }`
     /// has no finite values.
     fn inhabited(&self, ty: &Type) -> bool {
-        match self.all_ctors(ty) {
+        match self.all_ctors(ty, &[]) {
             Some(all) => all.into_iter().any(|c| self.inhabited_ctor(c, ty)),
             None => true,
         }
@@ -290,7 +412,7 @@ impl Cx<'_> {
     /// The types of the fields that constructor `c` of type `ty` holds.
     fn fields(&self, c: Ctor, ty: &Type) -> Vec<Type> {
         match (c, ty) {
-            (Ctor::Bool(_) | Ctor::Unit | Ctor::Int(_), _) => Vec::new(),
+            (Ctor::Bool(_) | Ctor::Unit | Ctor::Int(..), _) => Vec::new(),
             (Ctor::Struct, Type::Adt(name)) => match &self.adts[name] {
                 AdtDef::Struct(fields) => fields.iter().map(|(_, t)| t.clone()).collect(),
                 AdtDef::Enum(_) => unreachable!("struct pattern on enum `{name}`"),
@@ -318,7 +440,7 @@ impl Cx<'_> {
         match (c, ty) {
             (Ctor::Bool(b), _) => b.to_string(),
             (Ctor::Unit, _) => "()".to_string(),
-            (Ctor::Int(n), _) => n.to_string(),
+            (Ctor::Int(lo, hi), _) => show_range(*lo, *hi, true),
             (Ctor::Struct, Type::Adt(name)) => {
                 let AdtDef::Struct(fields) = &self.adts[name] else {
                     unreachable!()
@@ -349,6 +471,23 @@ impl Cx<'_> {
     }
 }
 
+/// Writes the ints `lo..=hi` as a pattern: `5`, `1..=9` (or `1..10` if not
+/// `inclusive`), `10..`, `..=-1` (or `..0`), or `_` for all of them.
+pub fn show_range(lo: i64, hi: i64, inclusive: bool) -> String {
+    let start = if lo == i64::MIN {
+        String::new()
+    } else {
+        lo.to_string()
+    };
+    match hi {
+        _ if lo == hi => lo.to_string(),
+        i64::MAX if lo == i64::MIN => "_".to_string(),
+        i64::MAX => format!("{start}.."),
+        _ if inclusive => format!("{start}..={hi}"),
+        _ => format!("{start}..{}", hi + 1),
+    }
+}
+
 /// Replaces each row starting with `a | b | ..` with one row per alternative.
 /// (The parser never nests an or-pattern directly inside another, and ones
 /// nested deeper, like `Some(1 | 2)`, reach the first column after
@@ -369,16 +508,65 @@ fn expand_or(rows: &[Vec<Pat>]) -> Vec<Vec<Pat>> {
     out
 }
 
+/// The constructors the rows start with. They must not start with an
+/// or-pattern.
+fn head_ctors(rows: &[Vec<Pat>]) -> Vec<Ctor> {
+    rows.iter()
+        .filter_map(|row| match &row[0] {
+            Pat::Ctor(c, _) => Some(*c),
+            Pat::Wild => None,
+            Pat::Or(_) | Pat::Range(..) => {
+                unreachable!("expanded and made plain before looking at constructors")
+            }
+        })
+        .collect()
+}
+
+/// Does a row starting with constructor `d` match every value built with `c`?
+/// For ints, that's when `d`'s range contains `c`'s. Ranges are always
+/// `split` first, so `c` is wholly inside `d` or wholly outside it.
+fn covers(d: Ctor, c: Ctor) -> bool {
+    match (d, c) {
+        (Ctor::Int(lo, hi), Ctor::Int(a, b)) => lo <= a && b <= hi,
+        _ => d == c,
+    }
+}
+
+/// Cuts `lo..=hi` into consecutive ranges at every boundary of the int ranges
+/// in `seen`, so each piece is wholly inside or wholly outside each of them.
+fn split(lo: i64, hi: i64, seen: &[Ctor]) -> Vec<Ctor> {
+    // Where each piece starts: `lo`, and wherever a seen range starts, or
+    // starts having ended. In i128, since one past `i64::MAX` is a boundary.
+    let (lo, hi) = (i128::from(lo), i128::from(hi));
+    let mut starts = vec![lo];
+    for c in seen {
+        if let Ctor::Int(a, b) = *c {
+            starts.extend([i128::from(a), i128::from(b) + 1]);
+        }
+    }
+    starts.retain(|s| (lo..=hi).contains(s));
+    starts.sort_unstable();
+    starts.dedup();
+    let ends = starts.iter().skip(1).map(|s| s - 1).chain([hi]);
+    starts
+        .iter()
+        .zip(ends)
+        .map(|(&a, b)| Ctor::Int(a as i64, b as i64))
+        .collect()
+}
+
 /// Keeps the rows whose first pattern could match constructor `c`, with that
 /// pattern replaced by `c`'s `arity` field patterns (all `_` if it was `_`).
 fn specialize(rows: &[Vec<Pat>], c: Ctor, arity: usize) -> Vec<Vec<Pat>> {
     rows.iter()
         .filter_map(|row| {
             let fields = match &row[0] {
-                Pat::Ctor(d, args) if *d == c => args.clone(),
+                Pat::Ctor(d, args) if covers(*d, c) => args.clone(),
                 Pat::Ctor(..) => return None,
                 Pat::Wild => vec![Pat::Wild; arity],
-                Pat::Or(_) => unreachable!("expanded before specializing"),
+                Pat::Or(_) | Pat::Range(..) => {
+                    unreachable!("expanded and made plain before specializing")
+                }
             };
             Some([fields, row[1..].to_vec()].concat())
         })

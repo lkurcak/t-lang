@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Range patterns on ints: `1..10` (excluding 10), `1..=9`, `10..`, `..0` and
+  `..=-1`. Exhaustiveness checking understands them, so
+  `match n { ..0 => a, 0.. => b }` needs no `_`, and an empty range like
+  `5..5` is an error.
+- An error for a range whose end the patterns before it already match, with
+  the narrower range to write instead: after `0..=5`, the arm `5..=10` should
+  be `6..=10`. A range that surrounds an earlier one is fine
+  (`5..10 => a, 0..20 => b`).
+- An error for or-pattern alternatives that touch end to end, like
+  `0..10 | 10..20`, suggesting the one range `0..20`. `0 | 1 | 2` is fine.
+
+### Changed
+
+- A non-exhaustive `match` on ints names the first range left out
+  (``non-exhaustive `match`: `..=-1` not covered``) instead of `_`.
+
 ## 0.2.0 (2026-10-14)
 
 Step 2: algebraic data types. See [docs/02-adts.md](docs/02-adts.md).

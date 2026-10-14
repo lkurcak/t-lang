@@ -156,6 +156,12 @@ pub enum PatternKind {
     /// `x`: matches anything and names it.
     Bind(String),
     Int(i64),
+    /// An int range, with both bounds inclusive: `1..=9` is `Range(1, 9, true)`,
+    /// `1..10` is `Range(1, 9, false)`, `10..` runs to the largest int and
+    /// `..=-1` from the smallest. The `bool` says whether it was written with
+    /// `..=`, so suggestions can keep the style. `lo > hi` means the range is
+    /// empty, which the checker rejects.
+    Range(i64, i64, bool),
     Bool(bool),
     Unit,
     /// `Shape::Rect(w, _)`

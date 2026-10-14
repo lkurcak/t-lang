@@ -324,6 +324,7 @@ impl Interp<'_, '_> {
                 true
             }
             (PatternKind::Int(n), Value::Int(m)) => n == m,
+            (PatternKind::Range(lo, hi, _), Value::Int(m)) => lo <= m && m <= hi,
             (PatternKind::Bool(b), Value::Bool(c)) => b == c,
             (PatternKind::Unit, Value::Unit) => true,
             (PatternKind::Variant(_, variant, pats), Value::Variant(_, name, fields)) => {

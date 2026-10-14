@@ -5,4 +5,4 @@ fn f(o: Opt) -> int {
     }
 }
 fn main() {}
-// error: non-exhaustive `match`: `Opt::Some(_)` not covered
+// error: non-exhaustive `match`: `Opt::Some(..=0)` not covered

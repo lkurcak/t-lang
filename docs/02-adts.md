@@ -187,9 +187,49 @@ color: both Red and Green are mentioned (case 2). Try each:
 Reassemble: Pixel { color: Green, bright: false } is not covered.
 ```
 
-`int` has too many constructors to list (one per number), so a match on an
-int is always case 3 and needs a `_` or a variable somewhere. Function values
-have no constructors patterns can name at all.
+**Ints** have too many constructors to list one per number, so their
+constructors are *ranges*, and the pattern `5` is just `5..=5`. Range patterns
+write them directly: `1..10` (10 excluded), `1..=9`, `10..`, `..0`, `..=-1`.
+Ranges can overlap, which plain constructors can't, so before comparing them
+`exhaust::split` cuts the ints at every boundary the rows mention:
+
+```text
+rows: 0..=9, 5..       pieces: ..=-1 | 0..=4 | 5..=9 | 10..
+```
+
+Each piece is wholly inside or wholly outside each row's range, so the pieces
+behave like an ordinary finite set of constructors. `..0 => .., 0.. => ..`
+mentions both pieces, so it's exhaustive (case 2) with no `_`, and
+`0 => .., 1 => ..` misses `..=-1` and `2..` (case 3), which the error names. A
+range in `q` is split the same way, and is useful if any piece of it is:
+after `0..10` and `10..=20`, the arm `5..=15` is unreachable, though neither
+arm covers it alone. Function values have no constructors patterns can name
+at all.
+
+A range can also be *partly* dead. Overlapping ranges are fine when the later
+one surrounds the earlier, as a fallback around a special case
+(`5..10 => .., 0..20 => ..`), but if earlier patterns cover one of its ends,
+the range claims ints it can never get:
+
+```rust
+0..=5 => ..,
+5..=10 => ..,   // error: this range can be narrowed to `6..=10`
+```
+
+So `exhaust::redundant` also asks, for each range in each useful combination,
+which of its `split` pieces are still useful with the range narrowed to just
+that piece. The range should run from the first such piece to the last, and
+if that's narrower than what's written, it's an error with the narrower range
+as the fix. Asking about the whole pattern, not just the range, matters:
+after `P { x: 0..20, y: true }`, the arm `P { x: 10..30, .. }` needs all of
+`10..30`, because `P { x: 10, y: false }` reaches it.
+
+Last, alternatives of one or-pattern that touch end to end, like
+`0..10 | 10..20`, are an error suggesting the single range `0..20`. At least
+one must be a range, so `0 | 1 | 2` is fine. This one is purely a matter of
+style, and the only check here that isn't about values that can't match. It
+only looks at alternatives directly in the or-pattern, not at
+`Some(0..10) | Some(10..20)`.
 
 Usefulness is NP-complete in general: you can encode SAT as a match on
 `bool`s. Real matches are small and shallow, so in practice it's fast.
@@ -253,7 +293,6 @@ bidirectional typing, which is step 3. Without an expected type, say in
 |---|---|---|
 | `enum Option<T>` | generic types | 4 |
 | `enum List { Nil, Cons(int, List) }` | recursive types | 5 |
-| range patterns `1..=9`, `..=-1`, `10..` | int constructors would have to be split into intervals; deferred | — |
 | tuples `(int, bool)` | anonymous structs; easy, just not needed yet | — |
 | guards `x if x > 0 => ..` | they make exhaustiveness approximate: the checker can't see through `if` | — |
 | mutation of fields | effects, ownership | 7 |
@@ -285,4 +324,4 @@ bidirectional typing, which is step 3. Without an expected type, say in
 - Luc Maranget, *Warnings for pattern matching*, Journal of Functional
   Programming, 2007. Section 3 is the algorithm in `exhaust.rs`.
 - The rustc dev guide's chapter on pattern and exhaustiveness checking, for
-  what a production version adds (ranges, slices, references, privacy).
+  what a production version adds (slices, references, privacy).

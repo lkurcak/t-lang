@@ -28,9 +28,11 @@
 //! field_init = IDENT (":" expr)?                             -- `x` is short for `x: x`
 //!
 //! pattern  = pat_atom ("|" pat_atom)*
-//! pat_atom = "_" | IDENT | "-"? INT | "true" | "false" | "(" ")"
+//! pat_atom = "_" | IDENT | int | range | "true" | "false" | "(" ")"
 //!          | IDENT "::" IDENT ("(" pattern,* ")")?
 //!          | IDENT "{" (IDENT (":" pattern)?),* ".."? "}"
+//! range    = int ".." int? | int "..=" int | ".." int | "..=" int
+//! int      = "-"? INT
 //! ```
 //!
 //! Like Rust, an `if`, `match` or block at the *start* of a statement is the
@@ -530,15 +532,40 @@ impl Parser {
     fn pat_atom(&mut self) -> Result<Pattern, Error> {
         let start = self.span();
         let kind = match self.peek().clone() {
-            Tok::Int(n) => PatternKind::Int(n),
-            Tok::Minus => {
-                self.bump();
-                let Tok::Int(n) = *self.peek() else {
-                    return Err(self.unexpected("an integer"));
+            Tok::Int(_) | Tok::Minus => {
+                let (lo, mut end) = self.pat_int()?;
+                let kind = match self.peek() {
+                    Tok::DotDot => {
+                        end = self.bump().span;
+                        if matches!(self.peek(), Tok::Int(_) | Tok::Minus) {
+                            let (hi, e) = self.pat_int()?;
+                            end = e;
+                            // Can't overflow: the smallest int literal is
+                            // `-9223372036854775807`, one above `i64::MIN`.
+                            PatternKind::Range(lo, hi - 1, false)
+                        } else {
+                            PatternKind::Range(lo, i64::MAX, false)
+                        }
+                    }
+                    Tok::DotDotEq => {
+                        self.bump();
+                        let (hi, e) = self.pat_int()?;
+                        end = e;
+                        PatternKind::Range(lo, hi, true)
+                    }
+                    _ => PatternKind::Int(lo),
                 };
-                let end = self.bump().span;
                 return Ok(Pattern {
-                    kind: PatternKind::Int(-n),
+                    kind,
+                    span: start.to(end),
+                });
+            }
+            Tok::DotDot | Tok::DotDotEq => {
+                let inclusive = self.bump().tok == Tok::DotDotEq;
+                let (hi, end) = self.pat_int()?;
+                let hi = if inclusive { hi } else { hi - 1 };
+                return Ok(Pattern {
+                    kind: PatternKind::Range(i64::MIN, hi, inclusive),
                     span: start.to(end),
                 });
             }
@@ -578,6 +605,17 @@ impl Parser {
         Ok(Pattern { kind, span: start })
     }
 
+    /// `5` or `-5` in a pattern.
+    fn pat_int(&mut self) -> Result<(i64, Span), Error> {
+        let start = self.span();
+        let neg = self.eat(&Tok::Minus);
+        let Tok::Int(n) = *self.peek() else {
+            return Err(self.unexpected("an integer"));
+        };
+        let end = self.bump().span;
+        Ok((if neg { -n } else { n }, start.to(end)))
+    }
+
     /// `Point { x, y: 0, .. }`
     fn struct_pattern(&mut self) -> Result<Pattern, Error> {
         let ty = self.ident()?;
@@ -588,9 +626,7 @@ impl Parser {
             if *self.peek() == Tok::RBrace {
                 break;
             }
-            if *self.peek() == Tok::Dot && *self.peek2() == Tok::Dot {
-                self.bump();
-                self.bump();
+            if self.eat(&Tok::DotDot) {
                 rest = true;
                 break;
             }
