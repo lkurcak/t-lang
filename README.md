@@ -74,6 +74,46 @@ into `~/.config/helix/languages.toml`.
 
 **Anything else with an LSP client:** run `t lsp` for files ending in `.t`.
 
+### Syntax highlighting
+
+[editors/tree-sitter-t](editors/tree-sitter-t) is a
+[tree-sitter](https://tree-sitter.github.io/) grammar for T, with highlight
+queries in `queries/highlights.scm` that work in both editors below. The
+generated parser (`src/parser.c`) is checked in, so all you need is a C
+compiler. After changing `grammar.js`, regenerate it with
+`tree-sitter generate` in that directory; `cargo test` checks that it parses
+every program in `tests/t/` and `examples/`.
+
+**Helix:** [editors/helix/languages.toml](editors/helix/languages.toml)
+already points Helix at the grammar. Then fetch and build it, and copy the
+queries where Helix looks for them:
+
+```sh
+hx --grammar fetch && hx --grammar build
+mkdir -p ~/.config/helix/runtime/queries/t
+cp editors/tree-sitter-t/queries/highlights.scm ~/.config/helix/runtime/queries/t/
+```
+
+**Neovim (0.11+):** build the parser and copy the queries into your
+`site` directory, from a checkout:
+
+```sh
+site=~/.local/share/nvim/site
+mkdir -p $site/parser $site/queries/t
+cc -shared -fPIC -O2 -I editors/tree-sitter-t/src \
+    editors/tree-sitter-t/src/parser.c -o $site/parser/t.so
+cp editors/tree-sitter-t/queries/highlights.scm $site/queries/t/
+```
+
+and turn it on for T files in your config:
+
+```lua
+vim.api.nvim_create_autocmd("FileType", {
+  pattern = "t",
+  callback = function() vim.treesitter.start() end,
+})
+```
+
 ## Tests
 
 Each `tests/t/*.t` file is a program with its expectations in comments:

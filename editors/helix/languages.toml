@@ -1,4 +1,5 @@
-# Merge into ~/.config/helix/languages.toml. Needs `t` on $PATH.
+# Merge into ~/.config/helix/languages.toml. Needs `t` on $PATH. For syntax
+# highlighting, see "Syntax highlighting" in the README.
 
 [language-server.t]
 command = "t"
@@ -11,3 +12,7 @@ file-types = ["t"]
 comment-token = "//"
 indent = { tab-width = 4, unit = "    " }
 language-servers = ["t"]
+
+[[grammar]]
+name = "t"
+source = { git = "https://github.com/lkurcak/t-lang", rev = "main", subpath = "editors/tree-sitter-t" }

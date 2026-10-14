@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- A tree-sitter grammar with highlight queries, in `editors/tree-sitter-t`,
+  and setup notes for syntax highlighting in Helix and Neovim.
+
 ### Changed
 
 - Closures that capture variables are downward-only: they can be called and
