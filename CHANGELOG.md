@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 (2026-10-14)
 
 Step 3: type inference and closures. See
 [docs/03-inference.md](docs/03-inference.md).

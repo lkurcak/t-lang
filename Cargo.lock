@@ -161,7 +161,7 @@ dependencies = [
 
 [[package]]
 name = "t-lang"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "lsp-server",
  "lsp-types",
