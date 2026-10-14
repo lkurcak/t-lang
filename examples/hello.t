@@ -18,4 +18,5 @@ fn main() {
     print(fact(10));
     print(twice(fact, 3));
     print(area(Shape::Rect(3, 4)));
+    print(area(Shape::Circle(2)) + area(Shape::Empty));
 }

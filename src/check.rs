@@ -71,13 +71,21 @@ pub fn check(prog: &Program, warnings: &mut Vec<Warning>) -> Result<(), Error> {
         adts,
         globals,
         locals: Vec::new(),
+        uses: Vec::new(),
         warnings: Vec::new(),
     };
-    let bodies = cx.bodies(prog);
+    let result = cx.bodies(prog).and_then(|()| check_main(prog));
+    // What's dead depends on the whole program, so only once it all checks.
+    if result.is_ok() {
+        cx.dead_code(prog);
+    }
     cx.warnings.sort_by_key(|w| w.span.start);
     warnings.append(&mut cx.warnings);
-    bodies?;
+    result
+}
 
+/// Checks that there's a `main`, and that it takes nothing.
+fn check_main(prog: &Program) -> Result<(), Error> {
     match prog.fns.iter().find(|f| f.name.name == "main") {
         None => Err(Error::ty(Span::new(0, 0), "program has no `main` function")),
         Some(main) if !main.params.is_empty() => {
@@ -189,6 +197,22 @@ fn field_types(def: &AdtDef) -> Box<dyn Iterator<Item = &Type> + '_> {
     match def {
         AdtDef::Struct(fields) => Box::new(fields.iter().map(|(_, t)| t)),
         AdtDef::Enum(variants) => Box::new(variants.iter().flat_map(|(_, ts)| ts)),
+    }
+}
+
+/// Adds the name of every struct and enum that `t` mentions to `out`.
+fn adt_names(t: &Type, out: &mut HashSet<String>) {
+    match t {
+        Type::Adt(name) => {
+            out.insert(name.clone());
+        }
+        Type::Fn(params, ret) => {
+            for p in params {
+                adt_names(p, out);
+            }
+            adt_names(ret, out);
+        }
+        Type::Int | Type::Bool | Type::Unit => {}
     }
 }
 
@@ -438,6 +462,28 @@ fn written_inclusive(p: &Pattern, span: Span) -> Option<bool> {
     }
 }
 
+/// What one function refers to, for finding dead code.
+#[derive(Default)]
+struct Uses {
+    /// Functions it names, called or not.
+    fns: HashSet<String>,
+    /// Structs and enums its signature or body mentions.
+    types: HashSet<String>,
+    /// Structs it constructs.
+    structs: HashSet<String>,
+    /// Enum variants it constructs, as `(enum, variant)`.
+    variants: HashSet<(String, String)>,
+}
+
+fn dead(span: Span, message: String) -> Warning {
+    Warning {
+        lint: Lint::DeadCode,
+        span,
+        message,
+        fixes: Vec::new(),
+    }
+}
+
 /// "1 field", "2 fields".
 fn plural(n: usize, what: &str) -> String {
     format!("{n} {what}{}", if n == 1 { "" } else { "s" })
@@ -450,6 +496,8 @@ struct Checker {
     /// leaving truncates (see `end_scope`). Searching from the top makes inner
     /// `let`s shadow outer ones.
     locals: Vec<Local>,
+    /// What each function checked so far refers to, in program order.
+    uses: Vec<Uses>,
     warnings: Vec<Warning>,
 }
 
@@ -457,6 +505,7 @@ impl Checker {
     /// Checks each function's body against its declared return type.
     fn bodies(&mut self, prog: &Program) -> Result<(), Error> {
         for f in &prog.fns {
+            self.uses.push(Uses::default());
             for (i, p) in f.params.iter().enumerate() {
                 if f.params[..i].iter().any(|q| q.name.name == p.name.name) {
                     return Err(Error::ty(
@@ -465,9 +514,11 @@ impl Checker {
                     ));
                 }
                 let ty = resolve(&p.ty, &self.adts)?;
+                self.mention(&ty);
                 self.locals.push(Local::new(&p.name.name, ty, p.name.span));
             }
             let ret = resolve(&f.ret, &self.adts)?;
+            self.mention(&ret);
             self.check(&f.body, &ret)?;
             self.end_scope(0);
         }
@@ -481,7 +532,106 @@ impl Checker {
                 local.used = true;
                 Some(local.ty.clone())
             }
-            None => self.globals.get(name).cloned(),
+            None => {
+                let ty = self.globals.get(name).cloned()?;
+                self.uses().fns.insert(name.to_string());
+                Some(ty)
+            }
+        }
+    }
+
+    /// What the function being checked refers to.
+    fn uses(&mut self) -> &mut Uses {
+        self.uses.last_mut().expect("checking outside a function")
+    }
+
+    /// Notes that the function being checked mentions type `t`.
+    fn mention(&mut self, t: &Type) {
+        adt_names(t, &mut self.uses().types);
+    }
+
+    /// Warns about code that can never run: functions `main` can't reach,
+    /// and structs, enums and variants that no such function constructs.
+    /// Their names say what's dead; one starting with `_` says that's on
+    /// purpose.
+    ///
+    /// There's no fix: removing one dead function can break another that
+    /// calls it.
+    fn dead_code(&mut self, prog: &Program) {
+        let index: HashMap<&str, usize> = prog
+            .fns
+            .iter()
+            .enumerate()
+            .map(|(i, f)| (f.name.name.as_str(), i))
+            .collect();
+        // Everything reachable from `main`, by following which function
+        // names which. Functions that only call each other aren't.
+        let mut live = vec![false; prog.fns.len()];
+        let mut todo = vec![index["main"]];
+        while let Some(i) = todo.pop() {
+            if !std::mem::replace(&mut live[i], true) {
+                let callees = self.uses[i].fns.iter();
+                todo.extend(callees.filter_map(|f| index.get(f.as_str())));
+            }
+        }
+
+        let mut used = Uses::default();
+        for (f, uses) in self.uses.iter().zip(&live) {
+            if *uses {
+                used.types.extend(f.types.iter().cloned());
+                used.structs.extend(f.structs.iter().cloned());
+                used.variants.extend(f.variants.iter().cloned());
+            }
+        }
+        // A type mentioned by a live one is live too.
+        let mut todo: Vec<String> = used.types.iter().cloned().collect();
+        while let Some(t) = todo.pop() {
+            let mut inner = HashSet::new();
+            for ft in field_types(&self.adts[&t]) {
+                adt_names(ft, &mut inner);
+            }
+            for name in inner {
+                if used.types.insert(name.clone()) {
+                    todo.push(name);
+                }
+            }
+        }
+
+        let on_purpose = |id: &Ident| id.name.starts_with('_');
+        for (f, live) in prog.fns.iter().zip(&live) {
+            if !live && !on_purpose(&f.name) {
+                let message = format!("function `{}` is never used", f.name.name);
+                self.warnings.push(dead(f.name.span, message));
+            }
+        }
+        for d in &prog.types {
+            if on_purpose(d.name()) {
+                continue;
+            }
+            match d {
+                TypeDecl::Struct(s) => {
+                    if !used.structs.contains(&s.name.name) {
+                        let message = format!("struct `{}` is never constructed", s.name.name);
+                        self.warnings.push(dead(s.name.span, message));
+                    }
+                }
+                TypeDecl::Enum(e) if !used.types.contains(&e.name.name) => {
+                    let message = format!("enum `{}` is never used", e.name.name);
+                    self.warnings.push(dead(e.name.span, message));
+                }
+                TypeDecl::Enum(e) => {
+                    for v in &e.variants {
+                        let key = (e.name.name.clone(), v.name.name.clone());
+                        if !on_purpose(&v.name) && !used.variants.contains(&key) {
+                            let message = format!(
+                                "variant `{}::{}` is never constructed",
+                                e.name.name, v.name.name
+                            );
+                            self.warnings.push(dead(v.name.span, message));
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -702,6 +852,8 @@ impl Checker {
                         format!("missing field `{}` in `{}`", fields[i].0, name.name),
                     ));
                 }
+                self.uses().types.insert(name.name.clone());
+                self.uses().structs.insert(name.name.clone());
                 Ok(Type::Adt(name.name.clone()))
             }
 
@@ -753,7 +905,10 @@ impl Checker {
                 for (arg, field) in args.iter().zip(&fields) {
                     self.check(arg, field)?;
                 }
-                Ok(Type::Adt(ty.name.clone()))
+                let (ty, variant) = (ty.name.clone(), variant.name.clone());
+                self.uses().types.insert(ty.clone());
+                self.uses().variants.insert((ty.clone(), variant));
+                Ok(Type::Adt(ty))
             }
 
             ExprKind::Match(scrutinee, arms) => self.match_expr(e, scrutinee, arms, None),
@@ -786,6 +941,7 @@ impl Checker {
                     let t = match ty {
                         Some(ann) => {
                             let t = resolve(ann, &self.adts)?;
+                            self.mention(&t);
                             self.check(init, &t)?;
                             t
                         }
@@ -986,6 +1142,7 @@ impl Checker {
                 let (i, fields) = self.variant(name, variant)?;
                 let fields = fields.to_vec();
                 expect(Type::Adt(name.name.clone()))?;
+                self.uses().types.insert(name.name.clone());
                 if fields.len() != args.len() {
                     return Err(Error::ty(
                         p.span,
@@ -1037,6 +1194,7 @@ impl Checker {
             PatternKind::Struct(name, field_pats, rest) => {
                 let fields = self.struct_def(name)?.to_vec();
                 expect(Type::Adt(name.name.clone()))?;
+                self.uses().types.insert(name.name.clone());
                 // Fields left out of the pattern match anything.
                 let mut args = vec![Pat::Wild; fields.len()];
                 let mut given = vec![false; fields.len()];

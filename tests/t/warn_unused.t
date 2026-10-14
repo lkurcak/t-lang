@@ -25,6 +25,7 @@ fn main() {
     print(z);
     print(first(6, 7));
     print(get(Opt::Some(8)));
+    print(get(Opt::None));
 }
 // warning: unused variable `b`
 // warning: unused variable `n`
@@ -35,3 +36,4 @@ fn main() {
 // expect: 5
 // expect: 6
 // expect: 1
+// expect: 0

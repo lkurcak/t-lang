@@ -59,6 +59,9 @@ fn main() {
     let Pair::AB(n, b) | Pair::BA(b, n) = Pair::BA(true, 7);
     print(n);                               // expect: 7
     print_bool(b);                          // expect: true
+    let Pair::AB(m, c) | Pair::BA(c, m) = Pair::AB(8, false);
+    print(m);                               // expect: 8
+    print_bool(c);                          // expect: false
     // The first alternative binds `x` = 0, then fails on `b: 0`. The second
     // then matches and binds `x` = 5.
     let x = match (S { a: 0, b: 5 }) {

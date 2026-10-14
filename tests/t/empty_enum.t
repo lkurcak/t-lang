@@ -25,3 +25,7 @@ fn get(m: Maybe) -> int {
 fn main() {
     print(get(Maybe::Real(1)));   // expect: 1
 }
+// Neither function can ever be called, and `Impossible` never constructed.
+// warning: function `absurd` is never used
+// warning: function `absurd_bool` is never used
+// warning: variant `Maybe::Impossible` is never constructed

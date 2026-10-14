@@ -8,6 +8,8 @@ fn f(p: Pair) -> int {
 }
 fn main() {
     print(f(Pair::R(1, 2)));
+    print(f(Pair::L(3, 4)));
 }
 // warning: unused variable `b`
 // expect: 2
+// expect: 3

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- A warning for code that can never run (`dead_code`): functions `main`
+  doesn't reach, even if they call each other, structs `main` never builds,
+  enums it never mentions, and variants it never constructs. Names starting
+  with `_` are exempt. Editors fade it out.
+
 ## 0.2.2 (2026-10-14)
 
 ### Added

@@ -11,5 +11,6 @@ fn get(m: Maybe) -> int {
 fn main() {
     print(get(Maybe::Real(4)));
 }
+// warning: variant `Maybe::Impossible` is never constructed
 // warning: unreachable pattern
 // expect: 4

@@ -105,6 +105,9 @@ pub enum Lint {
     MergeableRanges,
     /// A variable that nothing reads.
     UnusedVariables,
+    /// A function `main` never reaches, or a struct, enum or variant it
+    /// never constructs.
+    DeadCode,
 }
 
 impl Lint {
@@ -114,6 +117,7 @@ impl Lint {
             Lint::OverlappingRanges => "overlapping_ranges",
             Lint::MergeableRanges => "mergeable_ranges",
             Lint::UnusedVariables => "unused_variables",
+            Lint::DeadCode => "dead_code",
         }
     }
 }

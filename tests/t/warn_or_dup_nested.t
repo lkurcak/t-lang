@@ -9,7 +9,9 @@ fn f(o: Opt) -> int {
 fn main() {
     print(f(Opt::Some(1)));
     print(f(Opt::Some(2)));
+    print(f(Opt::None));
 }
 // warning: unreachable alternative
 // expect: 1
+// expect: 0
 // expect: 0
