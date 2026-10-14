@@ -526,7 +526,7 @@ impl Parser {
         };
         let span = start.to(body.span);
         Ok(Expr {
-            kind: ExprKind::Lambda(Arc::new(Lambda { params, ret, body })),
+            kind: ExprKind::Lambda(Arc::new(Lambda::new(params, ret, body))),
             span,
         })
     }

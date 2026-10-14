@@ -40,15 +40,18 @@ pub enum Value {
 /// What `|x| x + n` evaluates to: its code, and the environment it was
 /// created in, which holds `n`.
 ///
-/// The environment is a *copy* of the locals at that point. Since nothing in T
-/// can change a variable after it's bound, a copy and the original can never
-/// disagree, so this is the same as sharing them. It still has to live
-/// somewhere for as long as the closure does, which may be longer than the
-/// function that made it (see docs/03-inference.md).
+/// The environment is a *copy* of the locals the body uses, made at that
+/// point. Since nothing in T can change a variable after it's bound, a copy
+/// and the original can never disagree, so this is the same as sharing them.
+/// It still has to live somewhere for as long as the closure does, which may
+/// be longer than the function that made it (see docs/03-inference.md).
+///
+/// Copies of the closure share one environment, so copying a closure that
+/// holds closures that hold closures costs no more than copying one.
 #[derive(Debug, Clone)]
 pub struct Closure {
     pub code: Arc<Lambda>,
-    pub env: Vec<(String, Value)>,
+    pub env: Arc<[(String, Value)]>,
 }
 
 /// The same closure: made by the same expression, in equal environments. T
@@ -182,10 +185,10 @@ impl Interp<'_, '_> {
             }
             // A closure's environment is the one it was created in, plus its
             // parameters.
-            Value::Closure(Closure { code, mut env }) => {
+            Value::Closure(Closure { code, env }) => {
                 let params = code.params.iter().map(|p| p.name.name.clone());
-                env.extend(params.zip(args));
-                self.enter(env, &code.body, span)
+                let locals = env.iter().cloned().chain(params.zip(args)).collect();
+                self.enter(locals, &code.body, span)
             }
             other => unsound(&format!("called a non-function `{other}`")),
         }
@@ -305,11 +308,18 @@ impl Interp<'_, '_> {
                 Value::Variant(ty.name.clone(), variant.name.clone(), args)
             }
             ExprKind::Match(scrutinee, arms) => self.match_expr(scrutinee, arms)?,
-            // Capturing every local is simplest. A compiler would keep only
-            // the ones the body mentions: its *free variables*.
+            // Only the locals the body uses: its free variables that aren't
+            // top-level functions.
             ExprKind::Lambda(code) => Value::Closure(Closure {
+                env: code
+                    .captures
+                    .iter()
+                    .filter_map(|name| {
+                        let local = self.locals.iter().rev().find(|(n, _)| n == name);
+                        local.cloned()
+                    })
+                    .collect(),
                 code: code.clone(),
-                env: self.locals.clone(),
             }),
         })
     }

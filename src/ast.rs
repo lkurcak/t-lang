@@ -126,6 +126,100 @@ pub struct Lambda {
     pub params: Vec<LambdaParam>,
     pub ret: Option<TypeExpr>,
     pub body: Expr,
+    /// The names the body uses but doesn't bind itself: its *free
+    /// variables*, which a closure made from it has to capture. Some may be
+    /// top-level functions, which need no capturing.
+    pub captures: Vec<String>,
+}
+
+impl Lambda {
+    pub fn new(params: Vec<LambdaParam>, ret: Option<TypeExpr>, body: Expr) -> Lambda {
+        let mut bound: Vec<String> = params.iter().map(|p| p.name.name.clone()).collect();
+        let mut captures = Vec::new();
+        free_vars(&body, &mut bound, &mut captures);
+        Lambda {
+            params,
+            ret,
+            body,
+            captures,
+        }
+    }
+}
+
+/// Adds the variables `e` uses that aren't in `bound` to `out`, once each.
+/// `bound` grows and shrinks with the scopes inside `e`, so a `let` or
+/// pattern in there shadows an outer name only where it's in scope.
+fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
+    let mut go = |e: &Expr, bound: &mut Vec<String>| free_vars(e, bound, out);
+    match &e.kind {
+        ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit => {}
+        ExprKind::Var(name) => {
+            if !bound.contains(name) && !out.contains(name) {
+                out.push(name.clone());
+            }
+        }
+        ExprKind::Unary(_, x) | ExprKind::Field(x, _) => go(x, bound),
+        ExprKind::Binary(_, l, r) => {
+            go(l, bound);
+            go(r, bound);
+        }
+        ExprKind::Call(f, args) => {
+            go(f, bound);
+            args.iter().for_each(|a| go(a, bound));
+        }
+        ExprKind::If(c, then, els) => {
+            go(c, bound);
+            go(then, bound);
+            els.iter().for_each(|e| go(e, bound));
+        }
+        ExprKind::Block(stmts, tail) => {
+            let scope = bound.len();
+            for stmt in stmts {
+                match stmt {
+                    Stmt::Let { pat, init, .. } => {
+                        go(init, bound);
+                        pattern_binds(pat, bound);
+                    }
+                    Stmt::Expr(e) | Stmt::BlockLike(e) => go(e, bound),
+                }
+            }
+            tail.iter().for_each(|t| go(t, bound));
+            bound.truncate(scope);
+        }
+        ExprKind::StructLit(_, inits) => inits.iter().for_each(|i| go(&i.value, bound)),
+        ExprKind::Variant(_, _, args) => args.iter().for_each(|a| go(a, bound)),
+        ExprKind::Match(scrutinee, arms) => {
+            go(scrutinee, bound);
+            for arm in arms {
+                let scope = bound.len();
+                pattern_binds(&arm.pat, bound);
+                go(&arm.body, bound);
+                bound.truncate(scope);
+            }
+        }
+        ExprKind::Lambda(l) => {
+            let scope = bound.len();
+            bound.extend(l.params.iter().map(|p| p.name.name.clone()));
+            go(&l.body, bound);
+            bound.truncate(scope);
+        }
+    }
+}
+
+/// Adds the variables `p` binds to `out`.
+fn pattern_binds(p: &Pattern, out: &mut Vec<String>) {
+    match &p.kind {
+        PatternKind::Bind(name) => out.push(name.clone()),
+        PatternKind::Variant(_, _, pats) | PatternKind::Or(pats) => {
+            pats.iter().for_each(|p| pattern_binds(p, out));
+        }
+        PatternKind::Struct(_, fields, _) => fields.iter().for_each(|f| pattern_binds(&f.pat, out)),
+        PatternKind::Wild
+        | PatternKind::Int(_)
+        | PatternKind::Range(..)
+        | PatternKind::Bool(_)
+        | PatternKind::Unit => {}
+    }
 }
 
 #[derive(Debug)]

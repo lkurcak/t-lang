@@ -185,10 +185,12 @@ locals it uses, its **environment**. `adder(5)` returns `|x| x + n` with
 called **closure conversion**, and it's how every compiler does it. C has no
 closures, so C APIs do it by hand: a function pointer plus a `void *context`.
 
-The interpreter copies the locals into the closure when it's created
-(`Value::Closure`). Since nothing in T can change a variable once it's bound,
-a copy can never disagree with the original, so copying is the same as
-sharing. The order still shows (`closures.t`):
+The interpreter copies the locals the closure uses into it when it's created
+(`Value::Closure`). Those are its **free variables**: the names its body uses
+but doesn't bind itself, worked out once by the parser (`Lambda::captures`).
+Since nothing in T can change a variable once it's bound, a copy can never
+disagree with the original, so copying is the same as sharing. The order
+still shows (`closures.t`):
 
 ```rust
 let n = 1;
@@ -221,9 +223,10 @@ behind a pointer.
 - **Rust's syntax:** `|x| x + 1`, `|x: int| -> int { .. }` (a return type
   needs a block), and `|| 1` with no parameters. `||` is a single token, so
   the parser accepts it where an expression starts as an empty parameter list.
-- **Every local is captured.** A compiler would capture only the closure's
-  *free variables*, the ones its body uses. It makes no difference to what
-  the program does.
+- **Only free variables are captured**, and copies of a closure share one
+  environment. Capturing every local in scope would mean the same thing, but
+  a closure would copy every closure before it, each holding every closure
+  before *that*: twice the size at each step (`closure_chain.t`).
 - **Unsolved variables are errors**, not defaulted to some type. Rust does
   the same, except for number literals, which default to `i32`.
 - **Variables never leave a function.** Every global's type is fully known,
@@ -258,8 +261,9 @@ behind a pointer.
    of the variable fresh copies of them. Then `id(1)` and `id(true)` both
    check. This is *Algorithm W* (Damas and Milner, 1982), and step 4 in
    miniature.
-5. Capture only free variables in `interp.rs`. How do you find them, given
-   that a closure's own parameters and `let`s shadow outer names?
+5. `Lambda::captures` lists top-level functions a closure calls too, and
+   the interpreter skips them. Why can't it tell them apart from locals
+   when it computes them? Could the checker?
 6. In T-App, when `f`'s type is a variable, `Checker::synth` unifies it with
    a function type of fresh variables, and claims that can't fail. Why not?
 
