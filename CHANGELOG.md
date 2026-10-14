@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Warnings. Unlike errors they don't stop the program; `t` prints them to
+  stderr and runs it anyway.
+- Fixes for warnings and some errors, shown as `help:` lines and offered by
+  `t lsp` as quick fixes (code actions): remove an unreachable arm or
+  alternative, narrow or merge a range, add the missing `;` after an `if` or
+  `match` statement (or wrap it in parentheses), and use `|` instead of `||`
+  between pattern alternatives.
+- `t lsp` reports every warning, not just the first problem. Each warning has
+  a code naming its kind (`unreachable_patterns`, `overlapping_ranges`,
+  `mergeable_ranges`), and unreachable patterns are tagged as unnecessary, so
+  editors fade them out.
+
+### Changed
+
+- Unreachable arms and alternatives, ranges that can be narrowed, and ranges
+  that can be merged are warnings instead of errors, and every one is
+  reported instead of just the first.
+
 ## 0.2.1 (2026-10-14)
 
 ### Added

@@ -5,5 +5,10 @@ fn f(n: int) -> int {
         ..=10 => 2,
     }
 }
-fn main() {}
-// error: this range can be narrowed to `..=-1`
+fn main() {
+    print(f(0));
+    print(f(-1));
+}
+// warning: this range can be narrowed to `..=-1`
+// expect: 1
+// expect: 2

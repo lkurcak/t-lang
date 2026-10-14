@@ -4,5 +4,8 @@ fn f(a: bool) -> int {
         true => 2,
     }
 }
-fn main() {}
-// error: unreachable pattern
+fn main() {
+    print(f(true));
+}
+// warning: unreachable pattern
+// expect: 1

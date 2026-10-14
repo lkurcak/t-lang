@@ -1,21 +1,27 @@
 //! A Language Server Protocol server, so any LSP-capable editor can show T's
-//! errors as you type. Run as `t lsp`; it talks JSON-RPC over stdin/stdout.
+//! errors and warnings as you type, and offer their fixes as quick fixes. Run
+//! as `t lsp`; it talks JSON-RPC over stdin/stdout.
 //!
-//! For now it only publishes diagnostics: on every open/change it re-checks the
-//! whole file (it's tiny and fast) and reports the first error. It never runs
-//! the program.
+//! On every open/change it re-checks the whole file (it's tiny and fast) and
+//! reports every warning and the first error. Asked for code actions, it
+//! checks the file again and offers the fixes of the diagnostics in range. It
+//! never runs the program.
 
-use crate::error::{Error, Phase};
-use lsp_server::{Connection, ErrorCode, Message, Notification, Response};
+use crate::error::{Error, Fix, Lint, Phase, Span, Warning};
+use lsp_server::{Connection, ErrorCode, Message, Notification, Request, Response};
 use lsp_types::notification::{
     DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, Notification as _,
     PublishDiagnostics,
 };
+use lsp_types::request::{CodeActionRequest, Request as _};
 use lsp_types::{
-    Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, Position, PublishDiagnosticsParams, Range, ServerCapabilities,
-    TextDocumentSyncCapability, TextDocumentSyncKind, Uri,
+    CodeAction, CodeActionKind, CodeActionOptions, CodeActionOrCommand, CodeActionParams,
+    CodeActionProviderCapability, Diagnostic, DiagnosticSeverity, DiagnosticTag,
+    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+    NumberOrString, Position, PublishDiagnosticsParams, Range, ServerCapabilities,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Uri, WorkspaceEdit,
 };
+use std::collections::HashMap;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -24,36 +30,45 @@ pub fn run() -> Result<()> {
     let capabilities = ServerCapabilities {
         // FULL: the editor sends the whole file on every change, not diffs.
         text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
+        code_action_provider: Some(CodeActionProviderCapability::Options(CodeActionOptions {
+            code_action_kinds: Some(vec![CodeActionKind::QUICKFIX]),
+            ..Default::default()
+        })),
         ..Default::default()
     };
     conn.initialize(serde_json::to_value(capabilities)?)?;
 
+    // The text of every open file, by URI.
+    let mut docs: HashMap<String, String> = HashMap::new();
     for msg in &conn.receiver {
         match msg {
             Message::Request(req) => {
                 if conn.handle_shutdown(&req)? {
                     break;
                 }
-                let msg = format!("unsupported request `{}`", req.method);
-                let resp = Response::new_err(req.id, ErrorCode::MethodNotFound as i32, msg);
-                conn.sender.send(resp.into())?;
+                conn.sender.send(respond(req, &docs)?.into())?;
             }
             Message::Notification(n) => match n.method.as_str() {
                 DidOpenTextDocument::METHOD => {
                     let p: DidOpenTextDocumentParams = serde_json::from_value(n.params)?;
                     let doc = p.text_document;
-                    publish(&conn, doc.uri, Some(doc.version), diagnose(&doc.text))?;
+                    let diags = diagnose(&doc.text).into_iter().map(|(d, _)| d).collect();
+                    publish(&conn, doc.uri.clone(), Some(doc.version), diags)?;
+                    docs.insert(doc.uri.as_str().to_string(), doc.text);
                 }
                 DidChangeTextDocument::METHOD => {
                     let p: DidChangeTextDocumentParams = serde_json::from_value(n.params)?;
                     // With FULL sync, the last change holds the whole new text.
-                    if let Some(change) = p.content_changes.last() {
+                    if let Some(change) = p.content_changes.into_iter().last() {
                         let doc = p.text_document;
-                        publish(&conn, doc.uri, Some(doc.version), diagnose(&change.text))?;
+                        let diags = diagnose(&change.text).into_iter().map(|(d, _)| d).collect();
+                        publish(&conn, doc.uri.clone(), Some(doc.version), diags)?;
+                        docs.insert(doc.uri.as_str().to_string(), change.text);
                     }
                 }
                 DidCloseTextDocument::METHOD => {
                     let p: DidCloseTextDocumentParams = serde_json::from_value(n.params)?;
+                    docs.remove(p.text_document.uri.as_str());
                     publish(&conn, p.text_document.uri, None, Vec::new())?;
                 }
                 _ => {}
@@ -67,6 +82,27 @@ pub fn run() -> Result<()> {
     drop(conn);
     io_threads.join()?;
     Ok(())
+}
+
+fn respond(req: Request, docs: &HashMap<String, String>) -> Result<Response> {
+    match req.method.as_str() {
+        CodeActionRequest::METHOD => {
+            let p: CodeActionParams = serde_json::from_value(req.params)?;
+            let actions = match docs.get(p.text_document.uri.as_str()) {
+                Some(src) => code_actions(&p.text_document.uri, src, p.range),
+                None => Vec::new(),
+            };
+            Ok(Response::new_ok(req.id, actions))
+        }
+        _ => {
+            let msg = format!("unsupported request `{}`", req.method);
+            Ok(Response::new_err(
+                req.id,
+                ErrorCode::MethodNotFound as i32,
+                msg,
+            ))
+        }
+    }
 }
 
 fn publish(
@@ -85,26 +121,83 @@ fn publish(
     Ok(())
 }
 
-fn diagnose(src: &str) -> Vec<Diagnostic> {
-    match crate::check_source(src) {
-        Ok(_) => Vec::new(),
-        Err(e) => vec![to_diagnostic(&e, src)],
+/// Every diagnostic for `src`, each with its fixes.
+fn diagnose(src: &str) -> Vec<(Diagnostic, Vec<Fix>)> {
+    let checked = crate::check_source(src);
+    let mut out: Vec<_> = checked
+        .warnings
+        .iter()
+        .map(|w| (warning_diagnostic(w, src), w.fixes.clone()))
+        .collect();
+    if let Err(e) = &checked.result {
+        out.push((error_diagnostic(e, src), e.fixes.clone()));
     }
+    out
 }
 
-fn to_diagnostic(e: &Error, src: &str) -> Diagnostic {
+/// A quick fix for each fix of each diagnostic that touches `range`.
+fn code_actions(uri: &Uri, src: &str, range: Range) -> Vec<CodeActionOrCommand> {
+    let mut actions = Vec::new();
+    for (diag, fixes) in diagnose(src) {
+        if diag.range.start > range.end || range.start > diag.range.end {
+            continue;
+        }
+        // The fix to apply without asking, if the editor does that, is the
+        // only one there is.
+        let preferred = fixes.len() == 1;
+        for fix in fixes {
+            let edits = fix
+                .edits
+                .iter()
+                .map(|e| TextEdit::new(lsp_range(src, e.span), e.text.clone()))
+                .collect();
+            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                title: fix.title,
+                kind: Some(CodeActionKind::QUICKFIX),
+                diagnostics: Some(vec![diag.clone()]),
+                edit: Some(WorkspaceEdit {
+                    changes: Some(HashMap::from([(uri.clone(), edits)])),
+                    ..Default::default()
+                }),
+                is_preferred: Some(preferred),
+                ..Default::default()
+            }));
+        }
+    }
+    actions
+}
+
+fn error_diagnostic(e: &Error, src: &str) -> Diagnostic {
     let phase = match e.phase {
         Phase::Syntax => "syntax error",
         Phase::Type => "type error",
         Phase::Runtime => "runtime error",
     };
     Diagnostic {
-        range: Range::new(position(src, e.span.start), position(src, e.span.end)),
+        range: lsp_range(src, e.span),
         severity: Some(DiagnosticSeverity::ERROR),
         source: Some("t".to_string()),
         message: format!("{phase}: {}", e.message),
         ..Default::default()
     }
+}
+
+fn warning_diagnostic(w: &Warning, src: &str) -> Diagnostic {
+    Diagnostic {
+        range: lsp_range(src, w.span),
+        severity: Some(DiagnosticSeverity::WARNING),
+        code: Some(NumberOrString::String(w.lint.name().to_string())),
+        source: Some("t".to_string()),
+        message: w.message.clone(),
+        // Editors fade out code tagged unnecessary, which is just right for
+        // code that can never run.
+        tags: (w.lint == Lint::UnreachablePatterns).then(|| vec![DiagnosticTag::UNNECESSARY]),
+        ..Default::default()
+    }
+}
+
+fn lsp_range(src: &str, span: Span) -> Range {
+    Range::new(position(src, span.start), position(src, span.end))
 }
 
 /// Converts a byte offset into an LSP position. LSP columns count UTF-16 code

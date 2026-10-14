@@ -46,7 +46,7 @@
 //! `match` (write `if (P { .. }) == p` instead). `no_struct` tracks that.
 
 use crate::ast::*;
-use crate::error::{Error, Span};
+use crate::error::{Edit, Error, Fix, Span};
 use crate::lexer::{Tok, Token};
 
 pub fn parse(tokens: Vec<Token>) -> Result<Program, Error> {
@@ -510,10 +510,12 @@ impl Parser {
     fn pattern(&mut self) -> Result<Pattern, Error> {
         let first = self.pat_atom()?;
         if *self.peek() == Tok::OrOr {
-            return Err(Error::syntax(
-                self.span(),
-                "use `|` between pattern alternatives, not `||`",
-            ));
+            let span = self.span();
+            return Err(
+                Error::syntax(span, "use `|` between pattern alternatives, not `||`").with_fix(
+                    Fix::new("replace `||` with `|`", vec![Edit::replace(span, "|")]),
+                ),
+            );
         }
         if *self.peek() != Tok::Pipe {
             return Ok(first);

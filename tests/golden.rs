@@ -7,9 +7,18 @@
 //! - `// error: <text>` — the program must fail (to parse, to type-check, or at
 //!   runtime) with an error whose rendered message contains `<text>`. Any
 //!   `expect` lines must then match what was printed before the error.
+//! - `// warning: <text>` — one per warning, in order, each contained in the
+//!   rendered warning. A warning without one is a failure.
+//!
+//! Fixes are checked too. Applying warnings' fixes one after another must
+//! leave a program that does exactly the same thing, and run out of fixes
+//! (one fix can lead to another: narrowing `0..10 | 5..20` gives
+//! `0..10 | 10..20`, which can then be merged). Applying an error's first fix
+//! must get rid of that error.
 
 use std::fs;
 use std::path::Path;
+use t_lang::RunResult;
 use t_lang::interp::Value;
 
 #[test]
@@ -36,12 +45,36 @@ fn golden() {
             .filter_map(|l| directive(l, "// expect: "))
             .collect();
         let expected_error = src.lines().find_map(|l| directive(l, "// error: "));
-        if expected.is_empty() && expected_error.is_none() {
-            failures.push(format!("{name}: has no `// expect:` or `// error:` lines"));
+        let expected_warnings: Vec<String> = src
+            .lines()
+            .filter_map(|l| directive(l, "// warning: "))
+            .collect();
+        if expected.is_empty() && expected_error.is_none() && expected_warnings.is_empty() {
+            failures.push(format!(
+                "{name}: has no `// expect:`, `// error:` or `// warning:` lines"
+            ));
             continue;
         }
 
         let run = t_lang::run_source(&src);
+        let warnings: Vec<String> = run.warnings.iter().map(|w| w.render(&name, &src)).collect();
+        let matches = warnings.len() == expected_warnings.len()
+            && warnings
+                .iter()
+                .zip(&expected_warnings)
+                .all(|(w, want)| w.contains(want));
+        if !matches {
+            failures.push(format!(
+                "{name}: expected warnings {expected_warnings:?}, got\n{}",
+                warnings.join("\n\n")
+            ));
+            continue;
+        }
+        if let Err(failure) = check_fixes(&src, &run) {
+            failures.push(format!("{name}: {failure}"));
+            continue;
+        }
+
         let mut actual = run.output;
         match (run.result, expected_error) {
             (Ok(value), None) => {
@@ -87,4 +120,46 @@ fn golden() {
             failures.join("\n\n")
         );
     }
+}
+
+/// Applies fixes one at a time: for each warning in turn, then for the error.
+fn check_fixes(src: &str, run: &RunResult) -> Result<(), String> {
+    let (mut src, mut run) = (src.to_string(), run.clone());
+    let mut rounds = 0;
+    while let Some(fix) = run.warnings.iter().find_map(|w| w.fixes.first()) {
+        rounds += 1;
+        if rounds > 10 {
+            return Err(format!("fixes never stop coming:\n{src}"));
+        }
+        let fixed = fix.apply(&src);
+        let after = t_lang::run_source(&fixed);
+        let same = after.output == run.output
+            && match (&after.result, &run.result) {
+                (Ok(a), Ok(b)) => a == b,
+                (Err(a), Err(b)) => a.message == b.message,
+                _ => false,
+            };
+        if !same {
+            return Err(format!(
+                "fix {:?} changed what the program does:\n{fixed}",
+                fix.title
+            ));
+        }
+        (src, run) = (fixed, after);
+    }
+    if let Err(e) = &run.result
+        && let Some(fix) = e.fixes.first()
+    {
+        let fixed = fix.apply(&src);
+        if let Err(after) = t_lang::run_source(&fixed).result
+            && after.message == e.message
+            && after.span == e.span
+        {
+            return Err(format!(
+                "fix {:?} didn't fix the error:\n{fixed}",
+                fix.title
+            ));
+        }
+    }
+    Ok(())
 }

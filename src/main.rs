@@ -33,7 +33,11 @@ fn main() -> ExitCode {
     };
 
     if cmd == "check" {
-        return match t_lang::check_source(&src) {
+        let checked = t_lang::check_source(&src);
+        for w in &checked.warnings {
+            eprintln!("{}\n", w.render(path, &src));
+        }
+        return match checked.result {
             Ok(_) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("{}", e.render(path, &src));
@@ -43,6 +47,9 @@ fn main() -> ExitCode {
     }
 
     let run = t_lang::run_source(&src);
+    for w in &run.warnings {
+        eprintln!("{}\n", w.render(path, &src));
+    }
     for line in &run.output {
         println!("{line}");
     }

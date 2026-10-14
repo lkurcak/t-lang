@@ -127,6 +127,8 @@ Both checks are then one-liners:
   witness is the error message: ``non-exhaustive `match`: `Shape::Rect(_, _)`
   not covered``.
 - **Unreachable arm:** arm *i*'s pattern is not useful after arms `0..i`.
+  That's a warning, not an error: the program still means something (the arm
+  just never runs), it's only almost certainly a mistake.
 
 It works on a matrix (one row per arm, one column per value still to be
 examined), peeling off the first column each time. Values are seen by their
@@ -213,19 +215,19 @@ the range claims ints it can never get:
 
 ```rust
 0..=5 => ..,
-5..=10 => ..,   // error: this range can be narrowed to `6..=10`
+5..=10 => ..,   // warning: this range can be narrowed to `6..=10`
 ```
 
 So `exhaust::redundant` also asks, for each range in each useful combination,
 which of its `split` pieces are still useful with the range narrowed to just
 that piece. The range should run from the first such piece to the last, and
-if that's narrower than what's written, it's an error with the narrower range
+if that's narrower than what's written, it's a warning with the narrower range
 as the fix. Asking about the whole pattern, not just the range, matters:
 after `P { x: 0..20, y: true }`, the arm `P { x: 10..30, .. }` needs all of
 `10..30`, because `P { x: 10, y: false }` reaches it.
 
 Last, alternatives of one or-pattern that touch end to end, like
-`0..10 | 10..20`, are an error suggesting the single range `0..20`. At least
+`0..10 | 10..20`, get a warning suggesting the single range `0..20`. At least
 one must be a range, so `0 | 1 | 2` is fine. This one is purely a matter of
 style, and the only check here that isn't about values that can't match. It
 only looks at alternatives directly in the or-pattern, not at
@@ -250,7 +252,7 @@ In logic this is "from a contradiction, anything follows". Rust's `!` and
 
 The same goes for a variant that holds a `Never`: no value can be built with
 it, so it needs no arm, and an arm for it is unreachable
-(`tests/t/empty_enum.t`, `err_match_uninhabited_arm.t`). `exhaust.rs` asks
+(`tests/t/empty_enum.t`, `warn_match_uninhabited_arm.t`). `exhaust.rs` asks
 whether a type is **inhabited** (has any values) to know this. It has to ask
 in case 2 and not just leave it to the recursion. Otherwise the two checks
 disagree: reachability finds the `Impossible(n)` arm useless (specializing
@@ -274,8 +276,14 @@ bidirectional typing, which is step 3. Without an expected type, say in
   `match x { Empty => .. }` with `Empty` *not* in scope silently binds a new
   variable named `Empty` and matches everything. Requiring the prefix makes
   that mistake impossible here.
-- **Unreachable arms and alternatives are errors**, not warnings: T has no
-  warnings yet. They don't break soundness, but they're almost always a bug.
+- **Errors vs. warnings.** An error means the program has no meaning, or
+  might get stuck: a type mismatch, a non-exhaustive `match`, a refutable
+  `let`. A warning means it has one, just not the one you probably wanted:
+  unreachable arms and alternatives, ranges that could be narrower or merged.
+  Each warning comes with a fix that keeps the program doing exactly what it
+  did (`tests/golden.rs` checks this), which editors offer as a quick fix.
+  An empty range like `5..5` stays an error, as in Rust: it's surely a typo,
+  and there's no fix to suggest.
 - **No struct literals in `if`/`match` heads.** In `if x { .. }`, is `x {`
   a struct literal? Rust's answer, copied here: not in that position. Use
   parentheses: `if p == (P { x: 1 }) { .. }` (`tests/t/if_struct_literal.t`).

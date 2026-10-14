@@ -7,5 +7,12 @@ fn f(c: C) -> int {
         C::G | C::B => 3,
     }
 }
-fn main() {}
-// error: unreachable pattern
+fn main() {
+    print(f(C::R));
+    print(f(C::G));
+    print(f(C::B));
+}
+// warning: unreachable pattern
+// expect: 1
+// expect: 1
+// expect: 2

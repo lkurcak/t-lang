@@ -21,7 +21,7 @@
 //! algorithm. That's not true of every type system (see docs/01-stlc.md).
 
 use crate::ast::*;
-use crate::error::{Error, Span};
+use crate::error::{Edit, Error, Fix, Lint, Span, Warning};
 use crate::exhaust::{self, Ctor, Pat, Redundant};
 use crate::types::{AdtDef, Adts, Type};
 use std::collections::{HashMap, HashSet};
@@ -39,7 +39,9 @@ fn builtin_type(name: &str) -> Type {
     }
 }
 
-pub fn check(prog: &Program) -> Result<(), Error> {
+/// Type-checks `prog`, adding any warnings to `warnings`, in source order.
+/// Those found before an error are kept.
+pub fn check(prog: &Program, warnings: &mut Vec<Warning>) -> Result<(), Error> {
     let adts = collect_adts(prog)?;
     let mut globals = HashMap::new();
     for &b in BUILTINS {
@@ -69,22 +71,12 @@ pub fn check(prog: &Program) -> Result<(), Error> {
         adts,
         globals,
         locals: Vec::new(),
+        warnings: Vec::new(),
     };
-    for f in &prog.fns {
-        cx.locals.clear();
-        for (i, p) in f.params.iter().enumerate() {
-            if f.params[..i].iter().any(|q| q.name.name == p.name.name) {
-                return Err(Error::ty(
-                    p.name.span,
-                    format!("parameter `{}` is declared twice", p.name.name),
-                ));
-            }
-            cx.locals
-                .push((p.name.name.clone(), resolve(&p.ty, &cx.adts)?));
-        }
-        let ret = resolve(&f.ret, &cx.adts)?;
-        cx.check(&f.body, &ret)?;
-    }
+    let bodies = cx.bodies(prog);
+    cx.warnings.sort_by_key(|w| w.span.start);
+    warnings.append(&mut cx.warnings);
+    bodies?;
 
     match prog.fns.iter().find(|f| f.name.name == "main") {
         None => Err(Error::ty(Span::new(0, 0), "program has no `main` function")),
@@ -241,54 +233,141 @@ fn or_mismatch(a: &[(String, Type)], b: &[(String, Type)]) -> Option<String> {
     ))
 }
 
-fn unreachable_alt(span: Span) -> Error {
-    Error::ty(
+/// Arm `i` can never match. The fix deletes it, along with the `,` and the
+/// whitespace that separate it from its neighbours.
+fn unreachable_arm(arms: &[Arm], i: usize) -> Warning {
+    let span = arms[i].pat.span;
+    let delete = if let Some(next) = arms.get(i + 1) {
+        Some(Span::new(span.start, next.pat.span.start))
+    } else if i > 0 {
+        // The last arm: from the end of the one before, which leaves any
+        // trailing `,` behind for that one.
+        Some(Span::new(arms[i - 1].body.span.end, arms[i].body.span.end))
+    } else {
+        // The only arm, and the `,` after it can't be found from here.
+        None
+    };
+    Warning {
+        lint: Lint::UnreachablePatterns,
         span,
-        "unreachable alternative: the patterns before it already match everything it would",
-    )
+        message: "unreachable pattern: the arms above already match everything it would".into(),
+        fixes: delete
+            .map(|d| Fix::new("remove the unreachable arm", vec![Edit::delete(d)]))
+            .into_iter()
+            .collect(),
+    }
+}
+
+/// The or-pattern alternative at `span`, somewhere in `pats`, can never
+/// match. The fix deletes it and the `|` next to it.
+fn unreachable_alt(span: Span, pats: &[Pattern]) -> Warning {
+    let fix = pats
+        .iter()
+        .find_map(|p| alternatives(p, span))
+        .map(|(alts, k)| {
+            let delete = match k {
+                0 => Span::new(alts[0].span.start, alts[1].span.start),
+                _ => Span::new(alts[k - 1].span.end, alts[k].span.end),
+            };
+            Fix::new(
+                "remove the unreachable alternative",
+                vec![Edit::delete(delete)],
+            )
+        });
+    Warning {
+        lint: Lint::UnreachablePatterns,
+        span,
+        message:
+            "unreachable alternative: the patterns before it already match everything it would"
+                .into(),
+        fixes: fix.into_iter().collect(),
+    }
+}
+
+/// The alternatives of the or-pattern in `p` that has one at `span`, and
+/// which one that is.
+fn alternatives(p: &Pattern, span: Span) -> Option<(&[Pattern], usize)> {
+    match &p.kind {
+        PatternKind::Or(alts) => alts
+            .iter()
+            .position(|a| a.span == span)
+            .map(|k| (alts.as_slice(), k))
+            .or_else(|| alts.iter().find_map(|a| alternatives(a, span))),
+        PatternKind::Variant(_, _, pats) => pats.iter().find_map(|p| alternatives(p, span)),
+        PatternKind::Struct(_, fields, _) => fields.iter().find_map(|f| alternatives(&f.pat, span)),
+        _ => None,
+    }
 }
 
 /// The range at `span`, somewhere in `pats`, only reaches `lo..=hi`.
-fn narrowable(span: Span, lo: i64, hi: i64, pats: &[Pattern]) -> Error {
+fn narrowable(span: Span, lo: i64, hi: i64, pats: &[Pattern]) -> Warning {
     let inclusive = pats.iter().find_map(|p| written_inclusive(p, span));
     let range = exhaust::show_range(lo, hi, inclusive.unwrap_or(true));
-    Error::ty(
+    Warning {
+        lint: Lint::OverlappingRanges,
         span,
-        format!(
+        message: format!(
             "this range can be narrowed to `{range}`: the patterns before it already match the rest"
         ),
-    )
+        fixes: vec![Fix::new(
+            format!("narrow to `{range}`"),
+            vec![Edit::replace(span, range)],
+        )],
+    }
 }
 
-/// Alternatives that touch end to end, like `0..10 | 10..20`, as an error
-/// message naming the one range that covers them. At least one of them must
-/// be a range: `1 | 2` is fine as it is.
-fn mergeable(alts: &[Pattern]) -> Option<String> {
-    // `(lo, hi, is a range, written with ..=)`
-    let mut ints: Vec<(i64, i64, bool, bool)> = alts
+/// Alternatives of the or-pattern `p` that touch end to end, like
+/// `0..10 | 10..20`, each run as a warning naming the one range that covers
+/// it. At least one of them must be a range: `1 | 2` is fine as it is.
+///
+/// The fix writes the merged range in place of whichever of them comes first
+/// in the source, and deletes the others with the `|` before each.
+fn mergeable(p: &Pattern, alts: &[Pattern]) -> Vec<Warning> {
+    // `(lo, hi, is a range, written with ..=, index in alts)`
+    let mut ints: Vec<(i64, i64, bool, bool, usize)> = alts
         .iter()
-        .filter_map(|a| match a.kind {
-            PatternKind::Int(n) => Some((n, n, false, true)),
-            PatternKind::Range(lo, hi, inclusive) => Some((lo, hi, true, inclusive)),
+        .enumerate()
+        .filter_map(|(k, a)| match a.kind {
+            PatternKind::Int(n) => Some((n, n, false, true, k)),
+            PatternKind::Range(lo, hi, inclusive) => Some((lo, hi, true, inclusive, k)),
             _ => None,
         })
         .collect();
     ints.sort_by_key(|&(lo, ..)| lo);
-    let run = ints
-        .chunk_by(|a, b| a.1.checked_add(1) == Some(b.0))
-        .find(|run| run.len() > 1 && run.iter().any(|&(_, _, range, _)| range))?;
-    let names: Vec<String> = run
-        .iter()
-        .map(|&(lo, hi, _, inclusive)| format!("`{}`", exhaust::show_range(lo, hi, inclusive)))
-        .collect();
-    let (last, rest) = names.split_last()?;
-    // Written in the style of the highest one.
-    let &(_, hi, _, inclusive) = run.last()?;
-    let merged = exhaust::show_range(run[0].0, hi, inclusive);
-    Some(format!(
-        "{} and {last} can be merged into `{merged}`",
-        rest.join(", ")
-    ))
+    ints.chunk_by(|a, b| a.1.checked_add(1) == Some(b.0))
+        .filter(|run| run.len() > 1 && run.iter().any(|&(_, _, range, _, _)| range))
+        .map(|run| {
+            let names: Vec<String> = run
+                .iter()
+                .map(|&(lo, hi, _, inclusive, _)| {
+                    format!("`{}`", exhaust::show_range(lo, hi, inclusive))
+                })
+                .collect();
+            let (last, rest) = names.split_last().expect("a run has two or more");
+            // Written in the style of the highest one.
+            let &(_, hi, _, inclusive, _) = run.last().expect("a run has two or more");
+            let merged = exhaust::show_range(run[0].0, hi, inclusive);
+
+            let mut ks: Vec<usize> = run.iter().map(|&(.., k)| k).collect();
+            ks.sort_unstable();
+            let mut edits = vec![Edit::replace(alts[ks[0]].span, merged.clone())];
+            // Every `k` here is past `ks[0]`, so it has a `|` before it.
+            edits.extend(
+                ks[1..]
+                    .iter()
+                    .map(|&k| Edit::delete(Span::new(alts[k - 1].span.end, alts[k].span.end))),
+            );
+            Warning {
+                lint: Lint::MergeableRanges,
+                span: p.span,
+                message: format!(
+                    "{} and {last} can be merged into `{merged}`",
+                    rest.join(", ")
+                ),
+                fixes: vec![Fix::new(format!("merge into `{merged}`"), edits)],
+            }
+        })
+        .collect()
 }
 
 /// Whether the range pattern at `span` inside `p` was written with `..=`.
@@ -317,9 +396,30 @@ struct Checker {
     /// leaving truncates. Searching from the top makes inner `let`s shadow
     /// outer ones.
     locals: Vec<(String, Type)>,
+    warnings: Vec<Warning>,
 }
 
 impl Checker {
+    /// Checks each function's body against its declared return type.
+    fn bodies(&mut self, prog: &Program) -> Result<(), Error> {
+        for f in &prog.fns {
+            self.locals.clear();
+            for (i, p) in f.params.iter().enumerate() {
+                if f.params[..i].iter().any(|q| q.name.name == p.name.name) {
+                    return Err(Error::ty(
+                        p.name.span,
+                        format!("parameter `{}` is declared twice", p.name.name),
+                    ));
+                }
+                self.locals
+                    .push((p.name.name.clone(), resolve(&p.ty, &self.adts)?));
+            }
+            let ret = resolve(&f.ret, &self.adts)?;
+            self.check(&f.body, &ret)?;
+        }
+        Ok(())
+    }
+
     fn lookup(&self, name: &str) -> Option<Type> {
         self.locals
             .iter()
@@ -631,12 +731,15 @@ impl Checker {
                     // pattern only is when the value can't exist, like a
                     // `Never` parameter, and then nothing is wrong.
                     let p = [p];
-                    match exhaust::redundant(&self.adts, &t, &p) {
-                        Some(Redundant::Alt(span)) => return Err(unreachable_alt(span)),
-                        Some(Redundant::Trim(span, lo, hi)) => {
-                            return Err(narrowable(span, lo, hi, std::slice::from_ref(pat)));
+                    let pats = std::slice::from_ref(pat);
+                    for r in exhaust::redundant(&self.adts, &t, &p) {
+                        match r {
+                            Redundant::Alt(span) => self.warnings.push(unreachable_alt(span, pats)),
+                            Redundant::Trim(span, lo, hi) => {
+                                self.warnings.push(narrowable(span, lo, hi, pats));
+                            }
+                            Redundant::Arm(_) => {}
                         }
-                        Some(Redundant::Arm(_)) | None => {}
                     }
                     if let Some(missing) = exhaust::missing(&self.adts, &t, &p) {
                         return Err(Error::ty(
@@ -662,6 +765,7 @@ impl Checker {
                             ExprKind::Match(..) => "`match`",
                             _ => "block",
                         };
+                        let (start, end) = (e.span.start, e.span.end);
                         return Err(Error::ty(
                             result_span(e),
                             format!(
@@ -669,7 +773,15 @@ impl Checker {
                                  value would be lost; add `;` to discard it, or wrap it in \
                                  parentheses to use it in an expression"
                             ),
-                        ));
+                        )
+                        .with_fix(Fix::new(
+                            "add `;` to discard the value",
+                            vec![Edit::insert(end, ";")],
+                        ))
+                        .with_fix(Fix::new(
+                            "wrap it in parentheses",
+                            vec![Edit::insert(start, "("), Edit::insert(end, ")")],
+                        )));
                     }
                 }
             }
@@ -694,8 +806,8 @@ impl Checker {
     // variables Δ" (see `pattern`). The last premise is exhaustiveness: every
     // value of type T matches some pi. Without it, a value matching no arm
     // would leave the program stuck, so it's as much a part of soundness as
-    // any other premise. Arms that can never match are rejected too: they
-    // aren't unsound, but they're always a mistake.
+    // any other premise. Arms that can never match get a warning: they aren't
+    // unsound, but they're always a mistake.
     fn match_expr(
         &mut self,
         e: &Expr,
@@ -711,19 +823,13 @@ impl Checker {
             pats.push(self.pattern(&arm.pat, &t, &mut b)?);
             binds.push(b);
         }
-        match exhaust::redundant(&self.adts, &t, &pats) {
-            Some(Redundant::Arm(i)) => {
-                return Err(Error::ty(
-                    arms[i].pat.span,
-                    "unreachable pattern: the arms above already match everything it would",
-                ));
-            }
-            Some(Redundant::Alt(span)) => return Err(unreachable_alt(span)),
-            Some(Redundant::Trim(span, lo, hi)) => {
-                let pats: Vec<Pattern> = arms.iter().map(|a| a.pat.clone()).collect();
-                return Err(narrowable(span, lo, hi, &pats));
-            }
-            None => {}
+        let written: Vec<Pattern> = arms.iter().map(|a| a.pat.clone()).collect();
+        for r in exhaust::redundant(&self.adts, &t, &pats) {
+            self.warnings.push(match r {
+                Redundant::Arm(i) => unreachable_arm(arms, i),
+                Redundant::Alt(span) => unreachable_alt(span, &written),
+                Redundant::Trim(span, lo, hi) => narrowable(span, lo, hi, &written),
+            });
         }
         if let Some(missing) = exhaust::missing(&self.adts, &t, &pats) {
             return Err(Error::ty(
@@ -766,7 +872,7 @@ impl Checker {
     /// Returns the pattern in the reduced form the exhaustiveness checker
     /// uses.
     fn pattern(
-        &self,
+        &mut self,
         p: &Pattern,
         ty: &Type,
         binds: &mut Vec<(String, Type)>,
@@ -817,6 +923,7 @@ impl Checker {
             }
             PatternKind::Variant(name, variant, args) => {
                 let (i, fields) = self.variant(name, variant)?;
+                let fields = fields.to_vec();
                 expect(Type::Adt(name.name.clone()))?;
                 if fields.len() != args.len() {
                     return Err(Error::ty(
@@ -832,7 +939,7 @@ impl Checker {
                 }
                 let args = args
                     .iter()
-                    .zip(fields)
+                    .zip(&fields)
                     .map(|(a, t)| self.pattern(a, t, binds))
                     .collect::<Result<_, _>>()?;
                 Pat::Ctor(Ctor::Variant(i), args)
@@ -857,14 +964,12 @@ impl Checker {
                         }
                     }
                 }
-                if let Some(msg) = mergeable(alts) {
-                    return Err(Error::ty(p.span, msg));
-                }
+                self.warnings.extend(mergeable(p, alts));
                 binds.extend(first.unwrap_or_default());
                 Pat::Or(pats)
             }
             PatternKind::Struct(name, field_pats, rest) => {
-                let fields = self.struct_def(name)?;
+                let fields = self.struct_def(name)?.to_vec();
                 expect(Type::Adt(name.name.clone()))?;
                 // Fields left out of the pattern match anything.
                 let mut args = vec![Pat::Wild; fields.len()];

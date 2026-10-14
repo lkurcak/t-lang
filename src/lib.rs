@@ -10,18 +10,32 @@ pub mod lsp;
 pub mod parser;
 pub mod types;
 
-use error::Error;
+use error::{Error, Warning};
 use interp::Value;
 
-/// Lexes, parses and type-checks a program.
-pub fn check_source(src: &str) -> Result<ast::Program, Error> {
-    let tokens = lexer::lex(src)?;
-    let program = parser::parse(tokens)?;
-    check::check(&program)?;
-    Ok(program)
+pub struct Checked {
+    /// Warnings found, including those before an error.
+    pub warnings: Vec<Warning>,
+    /// The checked program, or the first error.
+    pub result: Result<ast::Program, Error>,
 }
 
+/// Lexes, parses and type-checks a program.
+pub fn check_source(src: &str) -> Checked {
+    let mut warnings = Vec::new();
+    let result = (|| {
+        let tokens = lexer::lex(src)?;
+        let program = parser::parse(tokens)?;
+        check::check(&program, &mut warnings)?;
+        Ok(program)
+    })();
+    Checked { warnings, result }
+}
+
+#[derive(Clone)]
 pub struct RunResult {
+    /// Warnings from checking the program.
+    pub warnings: Vec<Warning>,
     /// Lines printed with `print`, including those before an error.
     pub output: Vec<String>,
     /// The value `main` returned, or the error that stopped the program.
@@ -38,15 +52,23 @@ pub fn run_source(src: &str) -> RunResult {
     let src = src.to_owned();
     std::thread::Builder::new()
         .stack_size(STACK_SIZE)
-        .spawn(move || match check_source(&src) {
-            Err(e) => RunResult {
-                output: Vec::new(),
-                result: Err(e),
-            },
-            Ok(program) => {
-                let mut output = Vec::new();
-                let result = interp::run(&program, &mut output);
-                RunResult { output, result }
+        .spawn(move || {
+            let Checked { warnings, result } = check_source(&src);
+            match result {
+                Err(e) => RunResult {
+                    warnings,
+                    output: Vec::new(),
+                    result: Err(e),
+                },
+                Ok(program) => {
+                    let mut output = Vec::new();
+                    let result = interp::run(&program, &mut output);
+                    RunResult {
+                        warnings,
+                        output,
+                        result,
+                    }
+                }
             }
         })
         .expect("failed to spawn interpreter thread")

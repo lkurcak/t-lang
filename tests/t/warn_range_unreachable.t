@@ -7,5 +7,12 @@ fn f(n: int) -> int {
         _ => 4,
     }
 }
-fn main() {}
-// error: unreachable pattern
+fn main() {
+    print(f(5));
+    print(f(15));
+    print(f(21));
+}
+// warning: unreachable pattern
+// expect: 1
+// expect: 2
+// expect: 4

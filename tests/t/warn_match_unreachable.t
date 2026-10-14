@@ -6,5 +6,10 @@ fn f(o: Opt) -> int {
         Opt::None => 1,
     }
 }
-fn main() {}
-// error: unreachable pattern
+fn main() {
+    print(f(Opt::Some(7)));
+    print(f(Opt::None));
+}
+// warning: unreachable pattern
+// expect: 7
+// expect: 0

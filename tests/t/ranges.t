@@ -22,7 +22,7 @@ fn sign(n: int) -> int {
 
 // A later range may contain an earlier one, as a fallback around a special
 // case. (If the earlier one covered an end of it, it should be narrowed: see
-// `err_range_trim_*.t`.)
+// `warn_range_trim_*.t`.)
 fn overlap(n: int) -> int {
     match n {
         5..10 => 1,

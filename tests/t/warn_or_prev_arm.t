@@ -8,5 +8,14 @@ fn f(o: Opt) -> int {
         _ => 0,
     }
 }
-fn main() {}
-// error: unreachable alternative
+fn main() {
+    print(f(Opt::Some(1)));
+    print(f(Opt::Some(2)));
+    print(f(Opt::None));
+    print(f(Opt::Some(3)));
+}
+// warning: unreachable alternative
+// expect: 1
+// expect: 2
+// expect: 2
+// expect: 0

@@ -59,8 +59,8 @@ enough in it to be worth compiling.
 
 ## Editor support
 
-`t lsp` is a Language Server Protocol server over stdio. For now it reports
-errors as you type.
+`t lsp` is a Language Server Protocol server over stdio. It reports errors and
+warnings as you type, and offers their fixes as quick fixes (code actions).
 
 **Neovim (0.11+):** install
 [t-lang.nvim](https://github.com/lkurcak/t-lang.nvim), e.g.
@@ -78,7 +78,11 @@ Each `tests/t/*.t` file is a program with its expectations in comments:
 ```rust
 print(1 + 2);   // expect: 3
 // error: expected `int`, found `bool`
+// warning: unreachable pattern
 ```
+
+Every warning must be expected, and applying the warnings' fixes must not
+change what the program does.
 
 ## Roadmap
 

@@ -72,8 +72,10 @@ pub enum Redundant {
     Trim(Span, i64, i64),
 }
 
-/// Finds the first arm, or else the first or-pattern alternative, that can
-/// never match, or else the first range that could be narrower.
+/// Finds every arm and or-pattern alternative that can never match, and every
+/// range that could be narrower, in the order of the arms. Within an arm, a
+/// dead alternative comes before a range to narrow, and an unreachable arm
+/// reports nothing else.
 ///
 /// Checking only whole arms misses `Some(1 | 1)`, and checking each
 /// or-pattern only against its own earlier alternatives misses the `1` in
@@ -89,8 +91,9 @@ pub enum Redundant {
 ///
 /// A range is narrowed to the ints some useful combination can still match
 /// with it (see `reached`), from the first to the last.
-pub fn redundant(adts: &Adts, ty: &Type, arms: &[Pat]) -> Option<Redundant> {
+pub fn redundant(adts: &Adts, ty: &Type, arms: &[Pat]) -> Vec<Redundant> {
     let cx = Cx { adts };
+    let mut found = Vec::new();
     let tys = [ty.clone()];
     let mut rows: Vec<Vec<Pat>> = Vec::new();
     for (i, arm) in arms.iter().enumerate() {
@@ -128,18 +131,26 @@ pub fn redundant(adts: &Adts, ty: &Type, arms: &[Pat]) -> Option<Redundant> {
             rows.push(vec![q]);
         }
         if !arm_useful {
-            return Some(Redundant::Arm(i));
+            found.push(Redundant::Arm(i));
+            continue;
         }
-        let dead = alts.into_iter().filter(|s| !useful_alts.contains(s));
-        if let Some(span) = dead.min_by_key(|s| s.start) {
-            return Some(Redundant::Alt(span));
-        }
-        let wide = ranges.into_iter().filter(|r| r.written != r.reached);
-        if let Some(r) = wide.min_by_key(|r| r.span.start) {
-            return Some(Redundant::Trim(r.span, r.reached.0, r.reached.1));
-        }
+        let mut dead: Vec<Span> = alts
+            .into_iter()
+            .filter(|s| !useful_alts.contains(s))
+            .collect();
+        dead.sort_by_key(|s| s.start);
+        found.extend(dead.into_iter().map(Redundant::Alt));
+        let mut wide: Vec<Reach> = ranges
+            .into_iter()
+            .filter(|r| r.written != r.reached)
+            .collect();
+        wide.sort_by_key(|r| r.span.start);
+        found.extend(
+            wide.into_iter()
+                .map(|r| Redundant::Trim(r.span, r.reached.0, r.reached.1)),
+        );
     }
-    None
+    found
 }
 
 /// A range pattern in one arm, as written and as far as useful combinations

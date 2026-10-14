@@ -8,5 +8,8 @@ fn get(m: Maybe) -> int {
         Maybe::Impossible(n) => match n {},
     }
 }
-fn main() {}
-// error: unreachable pattern
+fn main() {
+    print(get(Maybe::Real(4)));
+}
+// warning: unreachable pattern
+// expect: 4

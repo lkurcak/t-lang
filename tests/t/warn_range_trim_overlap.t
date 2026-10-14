@@ -6,5 +6,12 @@ fn f(n: int) -> int {
         _ => 3,
     }
 }
-fn main() {}
-// error: this range can be narrowed to `20..30`
+fn main() {
+    print(f(15));
+    print(f(25));
+    print(f(30));
+}
+// warning: this range can be narrowed to `20..30`
+// expect: 1
+// expect: 2
+// expect: 3
