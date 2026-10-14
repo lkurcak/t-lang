@@ -253,6 +253,7 @@ bidirectional typing, which is step 3. Without an expected type, say in
 |---|---|---|
 | `enum Option<T>` | generic types | 4 |
 | `enum List { Nil, Cons(int, List) }` | recursive types | 5 |
+| range patterns `1..=9`, `..=-1`, `10..` | int constructors would have to be split into intervals; deferred | — |
 | tuples `(int, bool)` | anonymous structs; easy, just not needed yet | — |
 | guards `x if x > 0 => ..` | they make exhaustiveness approximate: the checker can't see through `if` | — |
 | mutation of fields | effects, ownership | 7 |
