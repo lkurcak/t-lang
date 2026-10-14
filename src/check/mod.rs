@@ -2,7 +2,7 @@
 //! types `int`, `bool`, `()` and function types, plus `let`, `if` and
 //! top-level recursive functions (step 1), plus structs, enums and `match`
 //! (step 2, see docs/02-adts.md), plus closures and type inference (step 3, see
-//! docs/03-inference.md).
+//! docs/03-inference.md), plus generics (step 4, see docs/04-generics.md).
 //!
 //! Each case below is an implementation of a *typing rule*, written above it in
 //! the usual inference-rule notation:
@@ -26,14 +26,23 @@
 //! works out what it must be from how it's used: `unify`.
 
 mod escape;
+mod generics;
+mod info;
 mod lints;
 mod unify;
+
+pub(crate) use generics::resolve;
+pub use info::{Info, Instance, Note, NoteKind};
 
 use crate::ast::*;
 use crate::error::{Edit, Error, Fix, Span, Warning};
 use crate::exhaust::{self, Ctor, Pat, Redundant};
-use crate::types::{AdtDef, Adts, Type, all_fields, struct_fields, variant_fields};
+use crate::types::{
+    AdtDef, AdtKind, Adts, Scheme, Subst, Type, all_fields, struct_fields, variant_fields,
+};
 use escape::{Escape, Exit, Origin, bound_origin};
+use generics::Use;
+use info::Defs;
 use lints::{Uses, mergeable, narrowable, unreachable_alt, unreachable_arm, unused};
 use std::collections::{HashMap, HashSet};
 use unify::Var;
@@ -44,59 +53,31 @@ pub const BUILTINS: &[&str] = &["print", "print_bool"];
 fn builtin_type(name: &str) -> Type {
     match name {
         // print : fn(int) -> ()
-        "print" => Type::Fn(vec![Type::Int], Box::new(Type::Unit)),
+        "print" => Type::func(vec![Type::Int], Type::Unit),
         // print_bool : fn(bool) -> ()
-        "print_bool" => Type::Fn(vec![Type::Bool], Box::new(Type::Unit)),
+        "print_bool" => Type::func(vec![Type::Bool], Type::Unit),
         _ => unreachable!("unknown builtin `{name}`"),
     }
 }
 
 /// Type-checks `prog`, adding any warnings to `warnings`, in source order.
-/// Those found before an error are kept.
-pub fn check(prog: &Program, warnings: &mut Vec<Warning>) -> Result<(), Error> {
-    let adts = collect_adts(prog)?;
-    let mut globals = HashMap::new();
-    for &b in BUILTINS {
-        globals.insert(b.to_string(), builtin_type(b));
-    }
-
-    // Pass 1: collect every function's signature first, so bodies can refer to
-    // functions defined later in the file (and to themselves: recursion).
-    for f in &prog.fns {
-        let params = f
-            .params
-            .iter()
-            .map(|p| resolve(&p.ty, &adts))
-            .collect::<Result<Vec<_>, _>>()?;
-        let ret = resolve(&f.ret, &adts)?;
-        let ty = Type::Fn(params, Box::new(ret));
-        if globals.insert(f.name.name.clone(), ty).is_some() {
-            return Err(Error::ty(
-                f.name.span,
-                format!("`{}` is already defined", f.name.name),
-            ));
-        }
-    }
-
-    // Pass 2: check each body against its declared return type.
-    let mut cx = Checker {
-        adts,
-        globals,
-        locals: Vec::new(),
-        vars: Vec::new(),
-        comparisons: Vec::new(),
-        escapes: Vec::new(),
-        uses: Vec::new(),
-        warnings: Vec::new(),
-    };
-    let result = cx.bodies(prog).and_then(|()| check_main(prog));
-    // What's dead depends on the whole program, so only once it all checks.
-    if result.is_ok() {
-        cx.dead_code(prog);
-    }
+/// Those found before an error are kept, and so is what was learned about
+/// the program up to it.
+pub fn check(prog: &Program, warnings: &mut Vec<Warning>) -> (Info, Result<(), Error>) {
+    let mut cx = Checker::new(prog);
+    let result = cx.program(prog);
+    cx.type_notes(prog);
     cx.warnings.sort_by_key(|w| w.span.start);
     warnings.append(&mut cx.warnings);
-    result
+    (cx.info, result)
+}
+
+/// Checks `prog` like `check`, but without the warnings, and with the name
+/// of the function the error is in, if it's in one. For checking what
+/// monomorphisation made (see `mono.rs`).
+pub fn recheck(prog: &Program) -> Result<(), (Option<String>, Error)> {
+    let mut cx = Checker::new(prog);
+    cx.program(prog).map_err(|e| (cx.failed_in.take(), e))
 }
 
 /// Checks that there's a `main`, and that it takes nothing.
@@ -110,11 +91,12 @@ fn check_main(prog: &Program) -> Result<(), Error> {
     }
 }
 
-/// Builds the table of structs and enums. Rejects duplicate names, fields and
-/// variants, and types that contain themselves.
-fn collect_adts(prog: &Program) -> Result<Adts, Error> {
+/// Builds the table of structs and enums, and fills in `arities`, how many
+/// type arguments each takes. Rejects duplicate names, fields, variants and
+/// type parameters, type parameters no field uses, types that contain
+/// themselves, and polymorphic recursion.
+fn collect_adts(prog: &Program, arities: &mut HashMap<String, usize>) -> Result<Adts, Error> {
     // All names first, so declarations can mention each other in any order.
-    let mut names = HashMap::new();
     for d in &prog.types {
         let name = d.name();
         if matches!(name.name.as_str(), "int" | "bool") {
@@ -123,7 +105,10 @@ fn collect_adts(prog: &Program) -> Result<Adts, Error> {
                 format!("`{}` is a built-in type", name.name),
             ));
         }
-        if names.insert(name.name.clone(), ()).is_some() {
+        if arities
+            .insert(name.name.clone(), d.type_params().len())
+            .is_some()
+        {
             return Err(Error::ty(
                 name.span,
                 format!("type `{}` is already defined", name.name),
@@ -132,10 +117,12 @@ fn collect_adts(prog: &Program) -> Result<Adts, Error> {
     }
 
     let mut adts = Adts::new();
-    // Every field's type, with where it was written, for the recursion check.
+    // Every field's type, with where it was written, for the recursion
+    // checks.
     let mut field_types = Vec::new();
     for d in &prog.types {
-        let def = match d {
+        let params = generics::declare(d.type_params())?;
+        let kind = match d {
             TypeDecl::Struct(s) => {
                 let mut fields: Vec<(String, Type)> = Vec::new();
                 for f in &s.fields {
@@ -145,11 +132,11 @@ fn collect_adts(prog: &Program) -> Result<Adts, Error> {
                             format!("field `{}` is declared twice", f.name.name),
                         ));
                     }
-                    let t = resolve(&f.ty, &names)?;
-                    field_types.push((&s.name, f.ty.span, t.clone()));
+                    let t = resolve(&f.ty, arities, &params)?;
+                    field_types.push((&d.name().name, f.ty.span, t.clone()));
                     fields.push((f.name.name.clone(), t));
                 }
-                AdtDef::Struct(fields)
+                AdtKind::Struct(fields)
             }
             TypeDecl::Enum(e) => {
                 let mut variants: Vec<(String, Vec<Type>)> = Vec::new();
@@ -162,30 +149,56 @@ fn collect_adts(prog: &Program) -> Result<Adts, Error> {
                     }
                     let mut tys = Vec::new();
                     for f in &v.fields {
-                        let t = resolve(f, &names)?;
-                        field_types.push((&e.name, f.span, t.clone()));
+                        let t = resolve(f, arities, &params)?;
+                        field_types.push((&d.name().name, f.span, t.clone()));
                         tys.push(t);
                     }
                     variants.push((v.name.name.clone(), tys));
                 }
-                AdtDef::Enum(variants)
+                AdtKind::Enum(variants)
             }
         };
+        let def = AdtDef { params, kind };
+        let fields: Vec<Type> = field_types
+            .iter()
+            .filter(|(owner, ..)| **owner == d.name().name)
+            .map(|(.., t)| t.clone())
+            .collect();
+        let of = format!("the fields of `{}`", d.name().name);
+        generics::all_used(d.type_params(), &fields, &of)?;
         adts.insert(d.name().name.clone(), def);
     }
+
+    // `struct S<T> { f: fn(S<Option<T>>) -> int }` would need `S<int>`, so
+    // `S<Option<int>>`, so `S<Option<Option<int>>>`...
+    let mut uses = Vec::new();
+    for (owner, span, t) in &field_types {
+        each_adt(t, &mut |name, args| {
+            uses.push(Use {
+                from: owner,
+                to: name,
+                args,
+                span: *span,
+            })
+        });
+    }
+    let params: HashMap<&str, &[String]> = adts
+        .iter()
+        .map(|(name, def)| (name.as_str(), def.params.as_slice()))
+        .collect();
+    generics::polymorphic_recursion(&uses, &params)?;
 
     // A struct that holds itself, even via other types, would need infinite
     // memory: `struct A { a: A }` has the size of an int plus... itself.
     // Making that work takes a pointer, and a story for who frees it: that's
     // step 5, ownership.
     for (owner, span, t) in field_types {
-        if contains(&adts, &t, &owner.name, &mut HashSet::new()) {
+        if contains(&adts, &t, owner, &mut HashSet::new()) {
             return Err(Error::ty(
                 span,
                 format!(
-                    "`{}` contains itself, so it would have infinite size \
-                     (holding itself through a pointer comes in step 5)",
-                    owner.name
+                    "`{owner}` contains itself, so it would have infinite size \
+                     (holding itself through a pointer comes in step 5)"
                 ),
             ));
         }
@@ -193,15 +206,30 @@ fn collect_adts(prog: &Program) -> Result<Adts, Error> {
     Ok(adts)
 }
 
+/// Calls `f` with the name and type arguments of every struct and enum in
+/// `t`, at any depth.
+fn each_adt<'t>(t: &'t Type, f: &mut impl FnMut(&'t str, &'t [Type])) {
+    if let Type::Adt(name, args) = t {
+        f(name, args);
+    }
+    for p in t.parts() {
+        each_adt(p, f);
+    }
+}
+
 /// Does a value of type `ty` hold a `target`, at any depth? Function types
 /// don't count: a function value is a code address, not the values its
-/// signature mentions.
-fn contains(adts: &Adts, ty: &Type, target: &str, seen: &mut HashSet<String>) -> bool {
-    let Type::Adt(name) = ty else { return false };
+/// signature mentions. `struct A { b: Box<A> }` counts, through `Box`'s
+/// field of type `T`.
+///
+/// This terminates because polymorphic recursion is ruled out first, so only
+/// finitely many types can turn up in here.
+fn contains(adts: &Adts, ty: &Type, target: &str, seen: &mut HashSet<Type>) -> bool {
+    let Type::Adt(name, _) = ty else { return false };
     if name == target {
         return true;
     }
-    if !seen.insert(name.clone()) {
+    if !seen.insert(ty.clone()) {
         return false;
     }
     all_fields(adts, ty)
@@ -211,33 +239,9 @@ fn contains(adts: &Adts, ty: &Type, target: &str, seen: &mut HashSet<String>) ->
 
 /// Adds the name of every struct and enum that `t` mentions to `out`.
 fn adt_names(t: &Type, out: &mut HashSet<String>) {
-    if let Type::Adt(name) = t {
-        out.insert(name.clone());
-    }
-    for p in t.parts() {
-        adt_names(p, out);
-    }
-}
-
-/// Turns a type as written (`TypeExpr`) into a type as understood (`Type`).
-/// `adts` holds the names of the program's structs and enums.
-fn resolve<V>(t: &TypeExpr, adts: &HashMap<String, V>) -> Result<Type, Error> {
-    match &t.kind {
-        TypeExprKind::Named(name) => match name.as_str() {
-            "int" => Ok(Type::Int),
-            "bool" => Ok(Type::Bool),
-            _ if adts.contains_key(name) => Ok(Type::Adt(name.clone())),
-            _ => Err(Error::ty(t.span, format!("unknown type `{name}`"))),
-        },
-        TypeExprKind::Unit => Ok(Type::Unit),
-        TypeExprKind::Fn(params, ret) => Ok(Type::Fn(
-            params
-                .iter()
-                .map(|p| resolve(p, adts))
-                .collect::<Result<_, _>>()?,
-            Box::new(resolve(ret, adts)?),
-        )),
-    }
+    each_adt(t, &mut |name, _| {
+        out.insert(name.to_string());
+    });
 }
 
 /// A variable in the local context Γ.
@@ -306,15 +310,22 @@ fn plural(n: usize, what: &str) -> String {
 }
 struct Checker {
     adts: Adts,
-    globals: HashMap<String, Type>,
+    /// How many type arguments each struct and enum takes.
+    arities: HashMap<String, usize>,
+    /// The global part of the context Γ: every top-level function and
+    /// built-in.
+    globals: HashMap<String, Scheme>,
+    /// The type parameters of the function being checked.
+    type_params: Vec<String>,
     /// The local part of the context Γ, as a stack. Entering a scope pushes,
     /// leaving truncates (see `end_scope`). Searching from the top makes inner
     /// `let`s shadow outer ones.
     locals: Vec<Local>,
     /// Every type variable, indexed by `Type::Var`'s number.
     vars: Vec<Var>,
-    /// `==` and `!=` on values whose type wasn't known yet, as the type, the
-    /// span and the operator. Checked once the function's types are.
+    /// `==` and `!=` on values whose type wasn't fully known yet, as the
+    /// type, the span and the operator. Checked once the function's types
+    /// are.
     comparisons: Vec<(Type, Span, BinOp)>,
     /// Values that may be closures leaving the frame that made them, checked
     /// once the function's types are known.
@@ -322,49 +333,217 @@ struct Checker {
     /// What each function checked so far refers to, in program order.
     uses: Vec<Uses>,
     warnings: Vec<Warning>,
+    /// Where things are declared, for `info`.
+    defs: Defs,
+    /// What's been learned about the program.
+    info: Info,
+    /// Uses of generic things in the function being checked, with type
+    /// arguments that may still have variables in them. `finish_notes`
+    /// moves them to `info`.
+    pending: Vec<(Span, Instance)>,
+    /// The function the first error was in, if it was in one.
+    failed_in: Option<String>,
 }
 
 impl Checker {
-    /// Checks each function's body against its declared return type.
-    fn bodies(&mut self, prog: &Program) -> Result<(), Error> {
+    fn new(prog: &Program) -> Checker {
+        Checker {
+            adts: Adts::new(),
+            arities: HashMap::new(),
+            globals: HashMap::new(),
+            type_params: Vec::new(),
+            locals: Vec::new(),
+            vars: Vec::new(),
+            comparisons: Vec::new(),
+            escapes: Vec::new(),
+            uses: Vec::new(),
+            warnings: Vec::new(),
+            defs: Defs::new(prog),
+            info: Info::default(),
+            pending: Vec::new(),
+            failed_in: None,
+        }
+    }
+
+    fn program(&mut self, prog: &Program) -> Result<(), Error> {
+        self.adts = collect_adts(prog, &mut self.arities)?;
+        self.signatures(prog)?;
+        self.bodies(prog)?;
+        self.no_polymorphic_recursion(prog)?;
+        check_main(prog)?;
+        // What's dead depends on the whole program, so only once it all checks.
+        self.dead_code(prog);
+        Ok(())
+    }
+
+    /// Pass 1: collects every function's signature first, so bodies can
+    /// refer to functions defined later in the file (and to themselves:
+    /// recursion).
+    fn signatures(&mut self, prog: &Program) -> Result<(), Error> {
+        for &b in BUILTINS {
+            let ty = builtin_type(b);
+            let scheme = Scheme {
+                params: Vec::new(),
+                ty,
+            };
+            self.globals.insert(b.to_string(), scheme);
+        }
         for f in &prog.fns {
-            self.uses.push(Uses::default());
-            for (i, p) in f.params.iter().enumerate() {
-                if f.params[..i].iter().any(|q| q.name.name == p.name.name) {
-                    return Err(Error::ty(
-                        p.name.span,
-                        format!("parameter `{}` is declared twice", p.name.name),
-                    ));
-                }
-                let ty = resolve(&p.ty, &self.adts)?;
-                self.mention(&ty);
-                self.locals
-                    .push(Local::param(&p.name.name, ty, p.name.span));
+            if f.name.name == "main" && !f.type_params.is_empty() {
+                return Err(Error::ty(
+                    f.type_params[0].span,
+                    "`main` must not have type parameters: nothing could say what they are",
+                ));
             }
-            let ret = resolve(&f.ret, &self.adts)?;
-            self.mention(&ret);
-            let vars = self.vars.len();
-            self.check(&f.body, &ret)?;
-            self.leaves(&f.body, &ret, Exit::Return);
-            self.end_scope(0);
-            self.solve_all(vars)?;
+            let params = generics::declare(&f.type_params)?;
+            let resolve = |t| resolve(t, &self.arities, &params);
+            let param_tys = f
+                .params
+                .iter()
+                .map(|p| resolve(&p.ty))
+                .collect::<Result<Vec<_>, _>>()?;
+            let ret = resolve(&f.ret)?;
+            let mut mentioned = param_tys.clone();
+            mentioned.push(ret.clone());
+            let of = format!("the signature of `{}`", f.name.name);
+            generics::all_used(&f.type_params, &mentioned, &of)?;
+            let ty = Type::func(param_tys, ret);
+            if self
+                .globals
+                .insert(f.name.name.clone(), Scheme { params, ty })
+                .is_some()
+            {
+                return Err(Error::ty(
+                    f.name.span,
+                    format!("`{}` is already defined", f.name.name),
+                ));
+            }
         }
         Ok(())
     }
 
-    /// Finds a variable's type, and notes that it was used.
-    fn lookup(&mut self, name: &str) -> Option<Type> {
-        match self.locals.iter_mut().rev().find(|l| l.name == name) {
-            Some(local) => {
-                local.used = true;
-                Some(local.ty.clone())
+    /// Pass 2: checks each function's body against its declared return type.
+    fn bodies(&mut self, prog: &Program) -> Result<(), Error> {
+        for f in &prog.fns {
+            let notes = self.info.notes.len();
+            let result = self.body(f);
+            self.finish_notes(notes);
+            if result.is_err() {
+                self.failed_in = Some(f.name.name.clone());
             }
-            None => {
-                let ty = self.globals.get(name).cloned()?;
-                self.uses().fns.insert(name.to_string());
-                Some(ty)
+            result?;
+        }
+        Ok(())
+    }
+
+    fn body(&mut self, f: &FnDecl) -> Result<(), Error> {
+        self.uses.push(Uses::default());
+        let scheme = self.globals[&f.name.name].clone();
+        let Type::Fn(sig) = &scheme.ty else {
+            unreachable!("a function has a function type")
+        };
+        let kind = NoteKind::Fn(f.name.name.clone());
+        self.note(
+            f.name.span,
+            kind,
+            Some(scheme.ty.clone()),
+            Some(f.name.span),
+        );
+        // Inside the body its type parameters are in scope, and opaque:
+        // `Type::Param` is equal only to itself.
+        self.type_params = scheme.params.clone();
+        for (i, p) in f.params.iter().enumerate() {
+            if f.params[..i].iter().any(|q| q.name.name == p.name.name) {
+                return Err(Error::ty(
+                    p.name.span,
+                    format!("parameter `{}` is declared twice", p.name.name),
+                ));
+            }
+            let ty = sig.params[i].clone();
+            self.mention(&ty);
+            let local = Local::param(&p.name.name, ty, p.name.span);
+            self.note_binds(std::slice::from_ref(&local), false);
+            self.locals.push(local);
+        }
+        let ret = (*sig.ret).clone();
+        self.mention(&ret);
+        let vars = self.vars.len();
+        self.check(&f.body, &ret)?;
+        self.leaves(&f.body, &ret, Exit::Return);
+        self.end_scope(0);
+        self.solve_all(vars)
+    }
+
+    /// A type written inside the function being checked.
+    fn resolve(&self, t: &TypeExpr) -> Result<Type, Error> {
+        resolve(t, &self.arities, &self.type_params)
+    }
+
+    /// Rejects polymorphic recursion between functions: see
+    /// `generics::polymorphic_recursion`.
+    fn no_polymorphic_recursion(&self, prog: &Program) -> Result<(), Error> {
+        // Which function each use is in, from where they are.
+        let mut uses = Vec::new();
+        for (span, instance) in &self.info.instances {
+            if let Instance::Fn(to, args) = instance
+                && let Some(from) = prog
+                    .fns
+                    .iter()
+                    .find(|f| f.body.span.start <= span.start && span.end <= f.body.span.end)
+            {
+                uses.push(Use {
+                    from: &from.name.name,
+                    to,
+                    args,
+                    span: *span,
+                });
             }
         }
+        // In source order, so the first one is reported.
+        uses.sort_by_key(|u| u.span.start);
+        let params: HashMap<&str, &[String]> = self
+            .globals
+            .iter()
+            .map(|(name, s)| (name.as_str(), s.params.as_slice()))
+            .collect();
+        generics::polymorphic_recursion(&uses, &params)
+    }
+
+    /// Finds a variable's type, and notes that it was used and what it
+    /// refers to. A generic function is instantiated: each use gets its own
+    /// fresh variable for each type parameter, so `id(1)` and `id(true)` can
+    /// both be fine.
+    fn lookup(&mut self, name: &str, span: Span) -> Option<Type> {
+        if let Some(local) = self.locals.iter_mut().rev().find(|l| l.name == name) {
+            local.used = true;
+            let (ty, def) = (local.ty.clone(), local.sites[0].span);
+            self.note(
+                span,
+                NoteKind::Var(name.to_string()),
+                Some(ty.clone()),
+                Some(def),
+            );
+            return Some(ty);
+        }
+        let scheme = self.globals.get(name).cloned()?;
+        self.uses().fns.insert(name.to_string());
+        let args: Vec<Type> = scheme
+            .params
+            .iter()
+            .map(|p| {
+                self.fresh(
+                    span,
+                    format!("`{p}` for this use of `{name}`"),
+                    "nothing here says what it is, so annotate where the result goes".into(),
+                )
+            })
+            .collect();
+        let ty = Subst::new(&scheme.params, &args).apply(&scheme.ty);
+        let def = self.defs.fns.get(name).copied();
+        let instance = Instance::Fn(name.to_string(), args);
+        let kind = NoteKind::Fn(name.to_string());
+        self.note_use(span, kind, ty.clone(), def, Some(instance));
+        Some(ty)
     }
 
     /// What the function being checked refers to.
@@ -404,7 +583,9 @@ impl Checker {
             ExprKind::Match(scrutinee, arms) => self.match_expr(e, scrutinee, arms, Some(want))?,
             ExprKind::Lambda(l) => {
                 let sig = match self.shallow(want) {
-                    Type::Fn(params, ret) if params.len() == l.params.len() => Some((params, *ret)),
+                    Type::Fn(sig) if sig.params.len() == l.params.len() => {
+                        Some((sig.params, *sig.ret))
+                    }
                     _ => None,
                 };
                 self.lambda(l, sig)?
@@ -431,8 +612,11 @@ impl Checker {
             //   (x : T) ∈ Γ
             //  ------------- (T-Var)
             //   Γ ⊢ x : T
+            //
+            // If x is a generic function, T is its type with a fresh variable
+            // for each type parameter (see `lookup`).
             ExprKind::Var(name) => self
-                .lookup(name)
+                .lookup(name, e.span)
                 .ok_or_else(|| Error::ty(e.span, format!("unknown variable `{name}`"))),
 
             //   Γ ⊢ e : int            Γ ⊢ e : bool
@@ -475,19 +659,21 @@ impl Checker {
                     Ok(Type::Bool)
                 }
 
-                //   Γ ⊢ l : T   Γ ⊢ r : T   T contains no function type
-                //  ---------------------------------------------------- (T-Eq) for == !=
-                //                  Γ ⊢ l == r : bool
+                //   Γ ⊢ l : T   Γ ⊢ r : T   T contains no function type or type parameter
+                //  ------------------------------------------------------------------ (T-Eq) for == !=
+                //                         Γ ⊢ l == r : bool
                 //
-                // See `comparable` for why functions are excluded. If T isn't
-                // known yet, as in `|a, b| a == b`, this premise waits until it
-                // is, at the end of the function.
+                // See `comparable` for why those are excluded. If T isn't
+                // fully known yet, as in `|a, b| a == b`, this premise waits
+                // until it is, at the end of the function.
                 BinOp::Eq | BinOp::Ne => {
                     let t = self.synth(l)?;
                     self.check(r, &t)?;
-                    match self.shallow(&t) {
-                        Type::Var(_) => self.comparisons.push((t, e.span, *op)),
-                        t => self.comparable(&t, e.span, *op)?,
+                    let t = self.solved(&t);
+                    if unify::has_vars(&t) {
+                        self.comparisons.push((t, e.span, *op));
+                    } else {
+                        self.comparable(&t, e.span, *op)?;
                     }
                     Ok(Type::Bool)
                 }
@@ -502,7 +688,7 @@ impl Checker {
             ExprKind::Call(f, args) => {
                 let ft = self.synth(f)?;
                 let (params, ret) = match self.shallow(&ft) {
-                    Type::Fn(params, ret) => (params, *ret),
+                    Type::Fn(sig) => (sig.params, *sig.ret),
                     Type::Var(_) => {
                         let params: Vec<Type> = args
                             .iter()
@@ -513,7 +699,7 @@ impl Checker {
                             .collect();
                         let what = "the type of this call".to_string();
                         let ret = self.fresh(e.span, what, "add a type annotation".into());
-                        let sig = Type::Fn(params.clone(), Box::new(ret.clone()));
+                        let sig = Type::func(params.clone(), ret.clone());
                         self.unify(&ft, &sig)
                             .unwrap_or_else(|_| unreachable!("fresh variables fit anything"));
                         (params, ret)
@@ -573,6 +759,9 @@ impl Checker {
             //               Γ ⊢ S { f1: e1, .., fn: en } : S
             //
             // A product type is *introduced* by giving every field.
+            //
+            // For a generic struct, S is `S<A1, .., Ak>` with a fresh
+            // variable for each type parameter, and T1..Tn mention them.
             ExprKind::StructLit(name, inits) => {
                 let ty = self.struct_type(name)?;
                 let fields = struct_fields(&self.adts, &ty).expect("a struct");
@@ -591,6 +780,7 @@ impl Checker {
                         ));
                     }
                     given[i] = true;
+                    self.note_field(&name.name, &init.name, &fields[i].1);
                     self.check(&init.value, &fields[i].1)?;
                     self.leaves(&init.value, &fields[i].1, Exit::Store);
                 }
@@ -629,7 +819,12 @@ impl Checker {
                 }
                 let fields = struct_fields(&self.adts, &t).unwrap_or_default();
                 match fields.into_iter().find(|(f, _)| *f == field.name) {
-                    Some((_, ft)) => Ok(ft),
+                    Some((_, ft)) => {
+                        if let Type::Adt(s, _) = &t {
+                            self.note_field(&s.clone(), field, &ft);
+                        }
+                        Ok(ft)
+                    }
                     None => Err(Error::ty(
                         field.span,
                         format!("`{t}` has no field `{}`", field.name),
@@ -709,7 +904,9 @@ impl Checker {
                 ),
             };
             params.push(t.clone());
-            self.locals.push(Local::param(name, t, p.name.span));
+            let local = Local::param(name, t, p.name.span);
+            self.note_binds(std::slice::from_ref(&local), p.ty.is_none());
+            self.locals.push(local);
         }
         let wanted = sig.map(|(_, r)| r);
         let ret = match &l.ret {
@@ -725,13 +922,13 @@ impl Checker {
         };
         self.leaves(&l.body, &ret, Exit::Return);
         self.end_scope(scope);
-        Ok(Type::Fn(params, Box::new(ret)))
+        Ok(Type::func(params, ret))
     }
 
     /// The type a closure's annotation names, which must fit the one
     /// `wanted` from the context, if any.
     fn annotation(&mut self, ann: &TypeExpr, wanted: Option<Type>) -> Result<Type, Error> {
-        let t = resolve(ann, &self.adts)?;
+        let t = self.resolve(ann)?;
         self.mention(&t);
         if let Some(w) = wanted {
             self.unify_or(&t, &w, ann.span, |t, w| {
@@ -766,7 +963,7 @@ impl Checker {
                 Stmt::Let { pat, ty, init } => {
                     let t = match ty {
                         Some(ann) => {
-                            let t = resolve(ann, &self.adts)?;
+                            let t = self.resolve(ann)?;
                             self.mention(&t);
                             self.check(init, &t)?;
                             t
@@ -779,6 +976,7 @@ impl Checker {
                     if let Some(origin) = bound_origin(pat, origin) {
                         binds[0].origin = Some(origin);
                     }
+                    self.note_binds(&binds, ty.is_none());
                     let t = self.solved(&t);
                     // Only alternatives can be unreachable here. A whole `let`
                     // pattern only is when the value can't exist, like a
@@ -877,6 +1075,7 @@ impl Checker {
             if let Some(origin) = bound_origin(&arm.pat, origin.clone()) {
                 b[0].origin = Some(origin);
             }
+            self.note_binds(&b, true);
             binds.push(b);
         }
         // The patterns may have told us what the scrutinee is.
@@ -1048,6 +1247,7 @@ impl Checker {
                         ));
                     }
                     given[i] = true;
+                    self.note_field(&name.name, &fp.name, &fields[i].1);
                     args[i] = self.pattern(&fp.pat, &fields[i].1, binds)?;
                     // `P { x }`: the parser made the pattern `x` out of the
                     // field name, so they're in the same place.
@@ -1082,10 +1282,12 @@ impl Checker {
     }
 
     /// The type a struct literal or pattern names, which must be a struct.
-    fn struct_type(&self, name: &Ident) -> Result<Type, Error> {
-        match self.adts.get(&name.name) {
-            Some(AdtDef::Struct(_)) => Ok(Type::Adt(name.name.clone())),
-            Some(AdtDef::Enum(_)) => Err(Error::ty(
+    /// If it's generic, each type parameter gets a fresh variable, to be
+    /// worked out from the fields or from where it's used.
+    fn struct_type(&mut self, name: &Ident) -> Result<Type, Error> {
+        match self.adts.get(&name.name).map(|d| &d.kind) {
+            Some(AdtKind::Struct(_)) => Ok(self.instantiate(name, NoteKind::Struct)),
+            Some(AdtKind::Enum(_)) => Err(Error::ty(
                 name.span,
                 format!("`{}` is an enum, not a struct", name.name),
             )),
@@ -1096,11 +1298,41 @@ impl Checker {
         }
     }
 
-    /// Looks up `E::V`, returning the enum's type and the variant's index.
-    fn variant(&self, ty: &Ident, variant: &Ident) -> Result<(Type, usize), Error> {
-        let variants = match self.adts.get(&ty.name) {
-            Some(AdtDef::Enum(variants)) => variants,
-            Some(AdtDef::Struct(_)) => {
+    /// `name<A1, .., Ak>`, with a fresh variable for each type parameter
+    /// of struct or enum `name`, noted as a use of it at `name`'s span.
+    fn instantiate(&mut self, name: &Ident, kind: fn(String) -> NoteKind) -> Type {
+        let params = self.adts[&name.name].params.clone();
+        let args: Vec<Type> = params
+            .iter()
+            .map(|p| {
+                self.fresh(
+                    name.span,
+                    format!("`{p}` for this `{}`", name.name),
+                    "nothing here says what it is, so annotate where it goes, e.g. \
+                     `let x: Option<int> = ..`"
+                        .into(),
+                )
+            })
+            .collect();
+        let ty = Type::Adt(name.name.clone(), args.clone());
+        let def = self.defs.types.get(&name.name).copied();
+        let instance = Instance::Adt(name.name.clone(), args);
+        self.note_use(
+            name.span,
+            kind(name.name.clone()),
+            ty.clone(),
+            def,
+            Some(instance),
+        );
+        ty
+    }
+
+    /// Looks up `E::V`, returning the enum's type, instantiated as in
+    /// `instantiate`, and the variant's index.
+    fn variant(&mut self, ty: &Ident, variant: &Ident) -> Result<(Type, usize), Error> {
+        let variants = match self.adts.get(&ty.name).map(|d| &d.kind) {
+            Some(AdtKind::Enum(variants)) => variants,
+            Some(AdtKind::Struct(_)) => {
                 return Err(Error::ty(
                     ty.span,
                     format!("`{}` is a struct, not an enum", ty.name),
@@ -1108,50 +1340,73 @@ impl Checker {
             }
             None => return Err(Error::ty(ty.span, format!("unknown type `{}`", ty.name))),
         };
-        variants
-            .iter()
-            .position(|(v, _)| *v == variant.name)
-            .map(|i| (Type::Adt(ty.name.clone()), i))
-            .ok_or_else(|| {
-                Error::ty(
-                    variant.span,
-                    format!("`{}` has no variant `{}`", ty.name, variant.name),
-                )
-            })
+        let Some(i) = variants.iter().position(|(v, _)| *v == variant.name) else {
+            return Err(Error::ty(
+                variant.span,
+                format!("`{}` has no variant `{}`", ty.name, variant.name),
+            ));
+        };
+        let t = self.instantiate(ty, NoteKind::Enum);
+        let fields = variant_fields(&self.adts, &t, i);
+        let as_fn = match fields.is_empty() {
+            true => t.clone(),
+            false => Type::func(fields, t.clone()),
+        };
+        let key = (ty.name.clone(), variant.name.clone());
+        let def = self.defs.variants.get(&key).copied();
+        let kind = NoteKind::Variant(ty.name.clone(), variant.name.clone());
+        self.note(variant.span, kind, Some(as_fn), def);
+        Ok((t, i))
+    }
+
+    /// Notes a use of field `field` of struct `s`, of type `ty`.
+    fn note_field(&mut self, s: &str, field: &Ident, ty: &Type) {
+        let def = self.defs.fields.get(&(s.to_string(), field.name.clone()));
+        let kind = NoteKind::Field(field.name.clone());
+        self.note(field.span, kind, Some(ty.clone()), def.copied());
     }
 
     /// The rest of T-Eq's premise: `t`, which is known, contains no
-    /// function type.
+    /// function type or type parameter.
     ///
     /// Equality on functions is excluded: deciding whether two functions
     /// behave the same on every input is undecidable, and comparing them by
     /// address would make `==` depend on how the compiler happened to lay out
     /// code. Structs and enums compare field by field, so they're excluded if
     /// any field is (or holds) a function.
+    ///
+    /// A type parameter `T` could be any type, functions included, so `==`
+    /// on a `T` can't be allowed either. Saying "any type that has `==`"
+    /// takes a bound, `T: Eq`, which comes with traits (step 6).
     fn comparable(&self, t: &Type, span: Span, op: BinOp) -> Result<(), Error> {
-        if let Type::Fn(..) = t {
-            return Err(Error::ty(
-                span,
-                format!("cannot compare functions with `{op}`"),
-            ));
-        }
-        if self.holds_fn(t) {
-            return Err(Error::ty(
-                span,
-                format!("cannot compare `{t}` with `{op}`: it contains a function"),
-            ));
-        }
-        Ok(())
+        let message = match (t, self.incomparable(t)) {
+            (_, None) => return Ok(()),
+            (Type::Fn(..), _) => format!("cannot compare functions with `{op}`"),
+            (Type::Param(p), _) => format!(
+                "cannot compare values of type `{p}` with `{op}`: `{p}` is a type \
+                 parameter, so it may be a function; that takes a bound like `{p}: Eq`, \
+                 which comes with traits (step 6)"
+            ),
+            (_, Some(Type::Param(p))) => format!(
+                "cannot compare `{t}` with `{op}`: it contains `{p}`, a type parameter, \
+                 which may be a function"
+            ),
+            (_, Some(_)) => format!("cannot compare `{t}` with `{op}`: it contains a function"),
+        };
+        Err(Error::ty(span, message))
     }
 
-    /// Is `t` a function, or a struct or enum with one somewhere inside?
-    /// This terminates because types can't contain themselves.
-    fn holds_fn(&self, t: &Type) -> bool {
+    /// The first function type or type parameter in `t` or, if it's a
+    /// struct or enum, in its fields. This terminates because types can't
+    /// contain themselves.
+    fn incomparable(&self, t: &Type) -> Option<Type> {
         match t {
-            Type::Fn(..) => true,
-            Type::Adt(_) => all_fields(&self.adts, t).iter().any(|t| self.holds_fn(t)),
-            // Fields' types are always known.
-            Type::Int | Type::Bool | Type::Unit | Type::Var(_) => false,
+            Type::Fn(..) | Type::Param(_) => Some(t.clone()),
+            Type::Adt(..) => all_fields(&self.adts, t)
+                .iter()
+                .find_map(|t| self.incomparable(t)),
+            // Only called on types with no variables in them.
+            Type::Int | Type::Bool | Type::Unit | Type::Var(_) => None,
         }
     }
 }

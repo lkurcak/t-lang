@@ -188,3 +188,68 @@ fn warns_and_offers_quick_fixes() {
 
     stop(child, c);
 }
+
+#[test]
+fn hovers_hints_and_goes_to_definitions() {
+    let (child, mut c) = start();
+    let uri = "file:///tmp/generic.t";
+    let src = "fn id<T>(x: T) -> T { x }\nfn main() {\n    let n = id(1);\n    print(n);\n}\n";
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
+        }}),
+    );
+    assert_eq!(c.diagnostics(), Vec::<Value>::new());
+    let at = |line: u32, character: u32| json!({"textDocument": {"uri": uri}, "position": {"line": line, "character": character}});
+
+    // `id` in `id(1)` is the copy of `id` for `int`.
+    c.send(json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": at(2, 13)}));
+    let hover = c.response(2)["result"].clone();
+    assert_eq!(
+        hover["contents"]["value"], "```t\nfn id::<int>: fn(int) -> int\n```",
+        "{hover}"
+    );
+    // Inside `id`, `x` is a `T`.
+    c.send(json!({"jsonrpc": "2.0", "id": 3, "method": "textDocument/hover", "params": at(0, 22)}));
+    let hover = c.response(3)["result"].clone();
+    assert_eq!(hover["contents"]["value"], "```t\nx: T\n```", "{hover}");
+
+    // `n` is defined by the `let`, `id` by the `fn`.
+    c.send(json!({"jsonrpc": "2.0", "id": 4, "method": "textDocument/definition", "params": at(3, 10)}));
+    let def = c.response(4)["result"].clone();
+    assert_eq!(def["uri"], uri);
+    assert_eq!(
+        def["range"],
+        json!({"start": {"line": 2, "character": 8}, "end": {"line": 2, "character": 9}})
+    );
+    c.send(json!({"jsonrpc": "2.0", "id": 5, "method": "textDocument/definition", "params": at(2, 12)}));
+    let def = c.response(5)["result"].clone();
+    assert_eq!(
+        def["range"],
+        json!({"start": {"line": 0, "character": 3}, "end": {"line": 0, "character": 5}})
+    );
+
+    // The type of `n` and the type argument of `id`, both inferred.
+    let whole = json!({"start": {"line": 0, "character": 0}, "end": {"line": 5, "character": 0}});
+    c.send(
+        json!({"jsonrpc": "2.0", "id": 6, "method": "textDocument/inlayHint", "params": {
+            "textDocument": {"uri": uri}, "range": whole
+        }}),
+    );
+    let hints = c.response(6)["result"].clone();
+    let hints: Vec<(Value, Value)> = hints
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| (h["position"].clone(), h["label"].clone()))
+        .collect();
+    assert_eq!(
+        hints,
+        vec![
+            (json!({"line": 2, "character": 9}), json!(": int")),
+            (json!({"line": 2, "character": 14}), json!("::<int>")),
+        ]
+    );
+
+    stop(child, c);
+}

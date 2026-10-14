@@ -240,7 +240,9 @@ impl Checker {
         let mut todo: Vec<String> = used.types.iter().cloned().collect();
         while let Some(t) = todo.pop() {
             let mut inner = HashSet::new();
-            for ft in all_fields(&self.adts, &Type::Adt(t)) {
+            // Its fields as declared, mentioning its own type parameters.
+            let params = self.adts[&t].params.iter().map(|p| Type::Param(p.clone()));
+            for ft in all_fields(&self.adts, &Type::Adt(t, params.collect())) {
                 adt_names(&ft, &mut inner);
             }
             for name in inner {

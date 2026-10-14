@@ -7,6 +7,11 @@
 //! storing are the only ways a value can outlive the frame it's in. Calls and
 //! fields are always safe: every function's result and every field were
 //! checked here too.
+//!
+//! In a generic function, a value of type `T` isn't a function as far as
+//! this can tell, though the caller may pick a function type. Each copy
+//! monomorphisation makes is checked again, with `T` known, to catch that
+//! (see `mono.rs`).
 
 use super::Checker;
 use crate::ast::*;

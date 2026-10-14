@@ -28,17 +28,27 @@ impl TypeDecl {
             TypeDecl::Enum(e) => &e.name,
         }
     }
+
+    pub fn type_params(&self) -> &[Ident] {
+        match self {
+            TypeDecl::Struct(s) => &s.type_params,
+            TypeDecl::Enum(e) => &e.type_params,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct StructDecl {
     pub name: Ident,
+    /// `<A, B>` in `struct Pair<A, B> { .. }`; empty if it isn't generic.
+    pub type_params: Vec<Ident>,
     pub fields: Vec<Param>,
 }
 
 #[derive(Debug, Clone)]
 pub struct EnumDecl {
     pub name: Ident,
+    pub type_params: Vec<Ident>,
     pub variants: Vec<Variant>,
 }
 
@@ -52,6 +62,8 @@ pub struct Variant {
 #[derive(Debug, Clone)]
 pub struct FnDecl {
     pub name: Ident,
+    /// `<T>` in `fn id<T>(x: T) -> T`; empty if it isn't generic.
+    pub type_params: Vec<Ident>,
     pub params: Vec<Param>,
     pub ret: TypeExpr,
     pub body: Expr,
@@ -78,9 +90,10 @@ pub struct TypeExpr {
 
 #[derive(Debug, Clone)]
 pub enum TypeExprKind {
-    /// `int`, `bool`, a struct or enum, or a name that doesn't exist (caught
-    /// by the checker).
-    Named(String),
+    /// `int`, `bool`, a type parameter, a struct or enum with its type
+    /// arguments (`Option<int>`), or a name that doesn't exist (caught by the
+    /// checker).
+    Named(String, Vec<TypeExpr>),
     /// `()`
     Unit,
     /// `fn(int, bool) -> int`

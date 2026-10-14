@@ -23,6 +23,7 @@
 ((type_identifier) @type
   (#not-match? @type "^(int|bool)$"))
 (unit_type) @type.builtin
+(type_parameter) @type.parameter
 
 ; Functions
 

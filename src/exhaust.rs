@@ -15,7 +15,8 @@
 //!
 //! Patterns are compared by *constructor*: the thing a value was built with,
 //! like `true`, `Shape::Rect` or `Point`. A type's constructors are finite for
-//! bool, `()`, structs and enums, and functions have none we can look inside.
+//! bool, `()`, structs and enums, and functions and type parameters have none
+//! we can look inside.
 //!
 //! Ints are the odd one out: there are too many to list one by one, so their
 //! constructors are *ranges*, and `5` is just `5..=5`. Ranges can overlap, so
@@ -26,7 +27,7 @@
 //! does too.
 
 use crate::error::Span;
-use crate::types::{AdtDef, Adts, Type, struct_fields, variant_fields};
+use crate::types::{AdtKind, Adts, Type, struct_fields, variant_fields};
 
 /// A pattern reduced to what matters for coverage. Bindings become wildcards
 /// (`x` matches anything, just like `_`) and struct fields are put in
@@ -395,11 +396,13 @@ impl Cx<'_> {
             Type::Int => Some(split(i64::MIN, i64::MAX, seen)),
             Type::Bool => Some(vec![Ctor::Bool(false), Ctor::Bool(true)]),
             Type::Unit => Some(vec![Ctor::Unit]),
-            Type::Adt(name) => Some(match &self.adts[name] {
-                AdtDef::Struct(_) => vec![Ctor::Struct],
-                AdtDef::Enum(variants) => (0..variants.len()).map(Ctor::Variant).collect(),
+            Type::Adt(name, _) => Some(match &self.adts[name].kind {
+                AdtKind::Struct(_) => vec![Ctor::Struct],
+                AdtKind::Enum(variants) => (0..variants.len()).map(Ctor::Variant).collect(),
             }),
-            Type::Fn(..) | Type::Var(_) => None,
+            // Nothing is known about a type parameter's values: it could be
+            // anything.
+            Type::Fn(..) | Type::Param(_) | Type::Var(_) => None,
         }
     }
 
@@ -450,7 +453,7 @@ impl Cx<'_> {
             (Ctor::Bool(b), _) => b.to_string(),
             (Ctor::Unit, _) => "()".to_string(),
             (Ctor::Int(lo, hi), _) => show_range(*lo, *hi, true),
-            (Ctor::Struct, Type::Adt(name)) => {
+            (Ctor::Struct, Type::Adt(name, _)) => {
                 let fields = struct_fields(self.adts, ty).expect("a struct");
                 if fields.is_empty() {
                     return format!("{name} {{}}");
@@ -462,8 +465,8 @@ impl Cx<'_> {
                     .collect();
                 format!("{name} {{ {} }}", fields.join(", "))
             }
-            (Ctor::Variant(i), Type::Adt(name)) => {
-                let AdtDef::Enum(variants) = &self.adts[name] else {
+            (Ctor::Variant(i), Type::Adt(name, _)) => {
+                let AdtKind::Enum(variants) = &self.adts[name].kind else {
                     unreachable!()
                 };
                 let variant = &variants[*i].0;

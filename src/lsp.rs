@@ -3,23 +3,32 @@
 //! as `t lsp`; it talks JSON-RPC over stdin/stdout.
 //!
 //! On every open/change it re-checks the whole file (it's tiny and fast) and
-//! reports every warning and the first error. Asked for code actions, it
-//! checks the file again and offers the fixes of the diagnostics in range. It
-//! never runs the program.
+//! reports every warning and the first error. Asked for anything else, it
+//! checks the file again and answers from what the checker found out
+//! (`check::Info`): the fixes of the diagnostics in range as code actions,
+//! the type of what's under the cursor on hover, where that's defined, and
+//! inferred types and type arguments as inlay hints. It never runs the
+//! program.
 
+use crate::check::Note;
 use crate::error::{Error, Fix, Lint, Phase, Span, Warning};
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, Response};
 use lsp_types::notification::{
     DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, Notification as _,
     PublishDiagnostics,
 };
-use lsp_types::request::{CodeActionRequest, Request as _};
+use lsp_types::request::{
+    CodeActionRequest, GotoDefinition, HoverRequest, InlayHintRequest, Request as _,
+};
 use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOptions, CodeActionOrCommand, CodeActionParams,
     CodeActionProviderCapability, Diagnostic, DiagnosticSeverity, DiagnosticTag,
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    NumberOrString, Position, PublishDiagnosticsParams, Range, ServerCapabilities,
-    TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Uri, WorkspaceEdit,
+    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams,
+    HoverProviderCapability, InlayHint, InlayHintKind, InlayHintLabel, InlayHintParams, Location,
+    MarkupContent, MarkupKind, NumberOrString, OneOf, Position, PublishDiagnosticsParams, Range,
+    ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Uri,
+    WorkspaceEdit,
 };
 use std::collections::HashMap;
 
@@ -34,6 +43,9 @@ pub fn run() -> Result<()> {
             code_action_kinds: Some(vec![CodeActionKind::QUICKFIX]),
             ..Default::default()
         })),
+        hover_provider: Some(HoverProviderCapability::Simple(true)),
+        definition_provider: Some(OneOf::Left(true)),
+        inlay_hint_provider: Some(OneOf::Left(true)),
         ..Default::default()
     };
     conn.initialize(serde_json::to_value(capabilities)?)?;
@@ -93,6 +105,43 @@ fn respond(req: Request, docs: &HashMap<String, String>) -> Result<Response> {
                 None => Vec::new(),
             };
             Ok(Response::new_ok(req.id, actions))
+        }
+        HoverRequest::METHOD => {
+            let p: HoverParams = serde_json::from_value(req.params)?;
+            let at = p.text_document_position_params;
+            let hover = docs.get(at.text_document.uri.as_str()).and_then(|src| {
+                let notes = crate::check_source(src).info.notes;
+                let note = note_at(&notes, src, at.position)?;
+                Some(Hover {
+                    contents: HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: format!("```t\n{}\n```", note.hover()),
+                    }),
+                    range: Some(lsp_range(src, note.span)),
+                })
+            });
+            Ok(Response::new_ok(req.id, hover))
+        }
+        GotoDefinition::METHOD => {
+            let p: GotoDefinitionParams = serde_json::from_value(req.params)?;
+            let at = p.text_document_position_params;
+            let uri = at.text_document.uri;
+            let def = docs.get(uri.as_str()).and_then(|src| {
+                let def = note_at(&crate::check_source(src).info.notes, src, at.position)?.def?;
+                Some(GotoDefinitionResponse::Scalar(Location {
+                    uri: uri.clone(),
+                    range: lsp_range(src, def),
+                }))
+            });
+            Ok(Response::new_ok(req.id, def))
+        }
+        InlayHintRequest::METHOD => {
+            let p: InlayHintParams = serde_json::from_value(req.params)?;
+            let hints = match docs.get(p.text_document.uri.as_str()) {
+                Some(src) => inlay_hints(src, p.range),
+                None => Vec::new(),
+            };
+            Ok(Response::new_ok(req.id, hints))
         }
         _ => {
             let msg = format!("unsupported request `{}`", req.method);
@@ -167,6 +216,39 @@ fn code_actions(uri: &Uri, src: &str, range: Range) -> Vec<CodeActionOrCommand> 
     actions
 }
 
+/// What's at `pos`: the innermost name there, if there's one.
+fn note_at<'n>(notes: &'n [Note], src: &str, pos: Position) -> Option<&'n Note> {
+    let at = offset(src, pos);
+    notes
+        .iter()
+        .filter(|n| n.span.contains(at))
+        .min_by_key(|n| n.span.end - n.span.start)
+}
+
+/// The types the checker inferred, and the type arguments it worked out for
+/// each use of something generic, inside `range`.
+fn inlay_hints(src: &str, range: Range) -> Vec<InlayHint> {
+    let mut notes = crate::check_source(src).info.notes;
+    notes.sort_by_key(|n| n.span.start);
+    notes
+        .iter()
+        .filter_map(|n| {
+            let hint = n.hint()?;
+            let pos = position(src, n.span.end);
+            (range.start <= pos && pos <= range.end).then(|| InlayHint {
+                position: pos,
+                label: InlayHintLabel::String(hint),
+                kind: Some(InlayHintKind::TYPE),
+                text_edits: None,
+                tooltip: None,
+                padding_left: None,
+                padding_right: None,
+                data: None,
+            })
+        })
+        .collect()
+}
+
 fn error_diagnostic(e: &Error, src: &str) -> Diagnostic {
     let phase = match e.phase {
         Phase::Syntax => "syntax error",
@@ -214,6 +296,24 @@ fn position(src: &str, offset: usize) -> Position {
     Position::new(line as u32, character as u32)
 }
 
+/// Converts an LSP position back into a byte offset: the inverse of
+/// `position`. One past the end of a line is the end of that line.
+fn offset(src: &str, pos: Position) -> usize {
+    let line_start: usize = src
+        .split_inclusive('\n')
+        .take(pos.line as usize)
+        .map(str::len)
+        .sum();
+    let mut units = 0;
+    for (i, c) in src[line_start..].char_indices() {
+        if units >= pos.character as usize || c == '\n' {
+            return line_start + i;
+        }
+        units += c.len_utf16();
+    }
+    src.len()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -226,5 +326,13 @@ mod tests {
         assert_eq!(position(src, x), Position::new(1, 3));
         assert_eq!(position(src, 0), Position::new(0, 0));
         assert_eq!(position(src, src.len()), Position::new(2, 0));
+    }
+
+    #[test]
+    fn offset_inverts_position() {
+        let src = "ab\né𝕏x\n";
+        for (i, _) in src.char_indices().chain([(src.len(), ' ')]) {
+            assert_eq!(offset(src, position(src, i)), i);
+        }
     }
 }

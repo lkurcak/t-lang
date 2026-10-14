@@ -50,20 +50,25 @@ cargo install t-lang    # either way, installs the `t` command
 ```sh
 t examples/hello.t          # type-check and run
 t check examples/hello.t    # type-check only
+t mono examples/hello.t     # print the program after monomorphisation
 t lsp                       # language server (see below)
 ```
 
 From a checkout, use `cargo run -- <args>` instead, and `cargo test` to run
 every program in `tests/t/`.
 
-Pipeline: `lexer` → `parser` → `check` (type checker) → `interp` (tree-walking
-interpreter). A real backend (emitting C) comes once the type system has
+Pipeline: `lexer` → `parser` → `check` (type checker) → `mono`
+(monomorphisation: a copy of each generic function and type per type it's
+used at) → `interp` (tree-walking interpreter). A real backend (emitting C) comes once the type system has
 enough in it to be worth compiling.
 
 ## Editor support
 
 `t lsp` is a Language Server Protocol server over stdio. It reports errors and
 warnings as you type, and offers their fixes as quick fixes (code actions).
+Hovering shows types, go to definition works for variables, functions,
+types, fields and variants, and inlay hints show inferred types and type
+arguments.
 
 **Neovim (0.11+):** install
 [t-lang.nvim](https://github.com/lkurcak/t-lang.nvim), e.g.
@@ -125,7 +130,8 @@ print(1 + 2);   // expect: 3
 ```
 
 Every warning must be expected, and applying the warnings' fixes must not
-change what the program does.
+change what the program does. A `tests/t/<name>.mono` file holds what
+`t mono` prints for that test; `BLESS=1 cargo test` rewrites them.
 
 ## Design constraints
 
@@ -154,7 +160,7 @@ combine features in ways nobody planned for.
 | 1 ✅ | ints, bools, `let`, functions, `if` | simply typed lambda calculus, soundness | [docs/01-stlc.md](docs/01-stlc.md) |
 | 2 ✅ | structs, enums, `match` | algebraic data types, exhaustiveness | [docs/02-adts.md](docs/02-adts.md) |
 | 3 ✅ | inference, closures | unification / bidirectional typing | [docs/03-inference.md](docs/03-inference.md) |
-| 4 | generics | rank-1 (prenex) parametric polymorphism, monomorphization | |
+| 4 ✅ | generics | rank-1 (prenex) parametric polymorphism, monomorphization | [docs/04-generics.md](docs/04-generics.md) |
 | 5 | ownership, borrowing, pointers | affine types, regions/lifetimes; types that hold themselves through a pointer | |
 | 6 | traits | ad-hoc polymorphism, typeclasses, coherence; closures as `Fn` traits | |
 | 7 | effects | effect systems: which functions can panic, allocate or diverge | |

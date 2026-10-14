@@ -1,0 +1,198 @@
+//! Type parameters: resolving the names in written types against them, and
+//! the rules that keep generic code monomorphisable (see
+//! docs/04-generics.md).
+
+use crate::ast::*;
+use crate::error::{Error, Span};
+use crate::types::Type;
+use std::collections::{HashMap, HashSet};
+
+/// "1 type argument", "2 type arguments".
+fn type_args(n: usize) -> String {
+    format!("{n} type argument{}", if n == 1 { "" } else { "s" })
+}
+
+/// Turns a type as written (`TypeExpr`) into a type as understood (`Type`).
+/// `arities` says how many type arguments each struct and enum takes, and
+/// `params` are the type parameters in scope.
+pub(crate) fn resolve(
+    t: &TypeExpr,
+    arities: &HashMap<String, usize>,
+    params: &[String],
+) -> Result<Type, Error> {
+    match &t.kind {
+        TypeExprKind::Named(name, args) => {
+            let arity = if params.contains(name) || matches!(name.as_str(), "int" | "bool") {
+                0
+            } else {
+                match arities.get(name) {
+                    Some(&n) => n,
+                    None => return Err(Error::ty(t.span, format!("unknown type `{name}`"))),
+                }
+            };
+            if args.len() != arity {
+                let what = match () {
+                    _ if params.contains(name) => format!("type parameter `{name}`"),
+                    _ => format!("`{name}`"),
+                };
+                let message = match arity {
+                    0 => format!("{what} takes no type arguments"),
+                    n => format!(
+                        "{what} takes {} but {} {} supplied",
+                        type_args(n),
+                        args.len(),
+                        if args.len() == 1 { "was" } else { "were" }
+                    ),
+                };
+                return Err(Error::ty(t.span, message));
+            }
+            let args = args
+                .iter()
+                .map(|a| resolve(a, arities, params))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(match name.as_str() {
+                _ if params.contains(name) => Type::Param(name.clone()),
+                "int" => Type::Int,
+                "bool" => Type::Bool,
+                _ => Type::Adt(name.clone(), args),
+            })
+        }
+        TypeExprKind::Unit => Ok(Type::Unit),
+        TypeExprKind::Fn(params_, ret) => Ok(Type::func(
+            params_
+                .iter()
+                .map(|p| resolve(p, arities, params))
+                .collect::<Result<_, _>>()?,
+            resolve(ret, arities, params)?,
+        )),
+    }
+}
+
+/// Checks the type parameters declared by a function, struct or enum, and
+/// returns their names.
+pub(super) fn declare(params: &[Ident]) -> Result<Vec<String>, Error> {
+    let mut names: Vec<String> = Vec::new();
+    for p in params {
+        if matches!(p.name.as_str(), "int" | "bool") {
+            return Err(Error::ty(
+                p.span,
+                format!("`{}` is a built-in type", p.name),
+            ));
+        }
+        if names.contains(&p.name) {
+            return Err(Error::ty(
+                p.span,
+                format!("type parameter `{}` is declared twice", p.name),
+            ));
+        }
+        names.push(p.name.clone());
+    }
+    Ok(names)
+}
+
+/// Checks that every one of `params` appears somewhere in `tys`. One that
+/// doesn't could never be worked out at a use, since T has no syntax for
+/// giving type arguments explicitly: `of` says what it would be missing
+/// from.
+pub(super) fn all_used(params: &[Ident], tys: &[Type], of: &str) -> Result<(), Error> {
+    for p in params {
+        if !tys.iter().any(|t| mentions(t, &p.name)) {
+            return Err(Error::ty(
+                p.span,
+                format!(
+                    "type parameter `{}` is never used in {of}, so nothing could say \
+                     what it is",
+                    p.name
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Does `t` mention type parameter `p`?
+fn mentions(t: &Type, p: &str) -> bool {
+    matches!(t, Type::Param(q) if q == p) || t.parts().any(|t| mentions(t, p))
+}
+
+/// One generic thing using another: function `from` calls or names
+/// function `to`, or struct or enum `from` has a field that mentions `to`,
+/// with type arguments `args`, which may mention `from`'s own parameters.
+pub(super) struct Use<'a> {
+    pub(super) from: &'a str,
+    pub(super) to: &'a str,
+    pub(super) args: &'a [Type],
+    pub(super) span: Span,
+}
+
+/// Rejects polymorphic recursion that would make monomorphisation go on
+/// forever, like `fn f<T>(x: T) { f(Option::Some(x)) }`: `f<int>` needs
+/// `f<Option<int>>`, which needs `f<Option<Option<int>>>`, and so on.
+///
+/// Every copy monomorphisation makes is of some item with arguments built
+/// from the arguments of the copy that needed it. So it only goes on
+/// forever if some type parameter flows, through uses, back into itself
+/// with something wrapped around it. That's a graph problem: there's a node
+/// for each parameter of each item, and a use of `to<.., A, ..>` in `from`
+/// gives an edge from each parameter of `from` that `A` mentions to `to`'s
+/// parameter. The edge *grows* if `A` is more than just that parameter.
+/// Monomorphisation finishes exactly when no cycle has an edge that grows.
+/// (This is how .NET's ECMA-335 spec rules out "expansive" generic types.)
+///
+/// `params` holds each item's type parameters.
+pub(super) fn polymorphic_recursion(
+    uses: &[Use],
+    params: &HashMap<&str, &[String]>,
+) -> Result<(), Error> {
+    // Edges between `(item, parameter index)` nodes, and whether each grows.
+    type Node<'a> = (&'a str, usize);
+    let mut edges: Vec<(Node, Node, bool, &Use)> = Vec::new();
+    for u in uses {
+        let Some(from_params) = params.get(u.from) else {
+            continue;
+        };
+        for (j, arg) in u.args.iter().enumerate() {
+            for (i, p) in from_params.iter().enumerate() {
+                if mentions(arg, p) {
+                    let grows = *arg != Type::Param(p.clone());
+                    edges.push(((u.from, i), (u.to, j), grows, u));
+                }
+            }
+        }
+    }
+    let reaches = |start: (&str, usize), goal: (&str, usize)| {
+        let mut seen = HashSet::new();
+        let mut todo = vec![start];
+        while let Some(n) = todo.pop() {
+            if n == goal {
+                return true;
+            }
+            if seen.insert(n) {
+                todo.extend(edges.iter().filter(|e| e.0 == n).map(|e| e.1));
+            }
+        }
+        false
+    };
+    for &(a, b, grows, u) in &edges {
+        if grows && reaches(b, a) {
+            let arg = &u.args[b.1];
+            let to_p = &params[u.to][b.1];
+            let message = if u.from == u.to {
+                format!(
+                    "polymorphic recursion: `{}` uses itself with `{to_p}` = `{arg}`, a bigger \
+                     type each time round, so monomorphising it would never end",
+                    u.from
+                )
+            } else {
+                format!(
+                    "polymorphic recursion: this use of `{}` with `{to_p}` = `{arg}` leads \
+                     back to `{}`, with a bigger type each time round, so monomorphising \
+                     them would never end",
+                    u.to, u.from
+                )
+            };
+            return Err(Error::ty(u.span, message));
+        }
+    }
+    Ok(())
+}

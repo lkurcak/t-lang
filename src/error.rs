@@ -1,7 +1,7 @@
 //! Source spans and diagnostics shared by every compiler phase.
 
 /// A byte range `start..end` in the source text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Span {
     pub start: usize,
     pub end: usize,
@@ -10,6 +10,11 @@ pub struct Span {
 impl Span {
     pub fn new(start: usize, end: usize) -> Span {
         Span { start, end }
+    }
+
+    /// Is `offset` inside, counting the end?
+    pub fn contains(self, offset: usize) -> bool {
+        self.start <= offset && offset <= self.end
     }
 
     /// The smallest span covering both `self` and `other`.

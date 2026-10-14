@@ -2,8 +2,23 @@
 
 ## Unreleased
 
+Step 4: generics. See [docs/04-generics.md](docs/04-generics.md).
+
 ### Added
 
+- Generic functions, structs and enums: `fn id<T>(x: T) -> T`,
+  `struct Pair<A, B> { .. }`, `enum Option<T> { Some(T), None }`, and
+  types like `Option<int>`. Type arguments are inferred at each use. Inside
+  a generic body a type parameter is opaque, and `==` on one is an error
+  until traits. Closures and `let`s stay monomorphic.
+- Monomorphisation, as a pass between checking and running: each generic
+  function and type is copied once per list of type arguments it's used
+  with. `t mono <file>` prints the result. Polymorphic recursion that would
+  need infinitely many copies is an error. Each copy is checked again, so
+  using a generic that returns or stores its argument at a function type
+  (`id(|x| x + n)`) is rejected like the non-generic version would be.
+- `t lsp` answers hover, go to definition and inlay hints (inferred types,
+  and the type arguments of generic uses).
 - A tree-sitter grammar with highlight queries, in `editors/tree-sitter-t`,
   and setup notes for syntax highlighting in Helix and Neovim.
 

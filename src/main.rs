@@ -1,7 +1,7 @@
 use std::process::ExitCode;
 use t_lang::interp::Value;
 
-const USAGE: &str = "usage: t [run|check] <file.t>\n       t lsp";
+const USAGE: &str = "usage: t [run|check|mono] <file.t>\n       t lsp";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -17,7 +17,7 @@ fn main() -> ExitCode {
         };
     }
     let (cmd, path) = match args.as_slice() {
-        [cmd, path] if cmd == "run" || cmd == "check" => (cmd.as_str(), path),
+        [cmd, path] if matches!(cmd.as_str(), "run" | "check" | "mono") => (cmd.as_str(), path),
         [path] if !path.starts_with('-') => ("run", path),
         _ => {
             eprintln!("{USAGE}");
@@ -32,13 +32,20 @@ fn main() -> ExitCode {
         }
     };
 
-    if cmd == "check" {
+    if cmd == "check" || cmd == "mono" {
         let checked = t_lang::check_source(&src);
         for w in &checked.warnings {
             eprintln!("{}\n", w.render(path, &src));
         }
         return match checked.result {
-            Ok(_) => ExitCode::SUCCESS,
+            Ok(program) => {
+                // The program with every generic function and type replaced
+                // by its copies, as the interpreter runs it.
+                if cmd == "mono" {
+                    print!("{program}");
+                }
+                ExitCode::SUCCESS
+            }
             Err(e) => {
                 eprintln!("{}", e.render(path, &src));
                 ExitCode::FAILURE

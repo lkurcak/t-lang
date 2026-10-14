@@ -26,7 +26,7 @@ pub(super) enum Clash {
 }
 
 /// Does `t` have a type variable in it?
-fn has_vars(t: &Type) -> bool {
+pub(super) fn has_vars(t: &Type) -> bool {
     matches!(t, Type::Var(_)) || t.parts().any(has_vars)
 }
 
@@ -34,7 +34,7 @@ fn has_vars(t: &Type) -> bool {
 /// infinite type, which is easier with a name for the type that repeats.
 fn name_var(t: &Type, v: u32, name: &str) -> Type {
     match t {
-        Type::Var(w) if *w == v => Type::Adt(name.to_string()),
+        Type::Var(w) if *w == v => Type::Param(name.to_string()),
         t => t.map(|p| name_var(p, v, name)),
     }
 }
@@ -84,8 +84,11 @@ impl Checker {
     ///
     /// - A variable unifies with anything, by being solved as it. Unless it
     ///   occurs in that thing: `T = fn(T) -> int` has no finite solution.
-    /// - Two function types unify if their parameters and results do.
-    /// - Anything else must be the very same type.
+    /// - Two types of the same shape unify if their parts do: two function
+    ///   types if their parameters and results do, `Option<A>` and
+    ///   `Option<B>` if `A` and `B` do.
+    /// - Anything else must be the very same type. A type parameter is only
+    ///   ever the same as itself.
     ///
     /// Solving `T` as `int` here holds for the rest of the function, so the
     /// order types are learned in doesn't matter, up to a point (see
@@ -100,13 +103,12 @@ impl Checker {
                 self.vars[v as usize].solution = Some(t);
                 Ok(())
             }
-            (Type::Fn(ps, r), Type::Fn(qs, s)) if ps.len() == qs.len() => {
-                for (p, q) in ps.iter().zip(&qs) {
+            (a, b) if a.same_shape(&b) => {
+                for (p, q) in a.parts().zip(b.parts()) {
                     self.unify(p, q)?;
                 }
-                self.unify(&r, &s)
+                Ok(())
             }
-            (a, b) if a == b => Ok(()),
             _ => Err(Clash::Mismatch),
         }
     }
@@ -139,7 +141,8 @@ impl Checker {
     }
 
     /// At the end of a function: every variable made since `vars` must be
-    /// solved, every comparison must be on a type that allows it, and no
+    /// solved (including those for the type arguments of generic things it
+    /// uses), every comparison must be on a type that allows it, and no
     /// closure that captures may leave the frame that made it.
     ///
     /// Leaving a variable unsolved would be harmless to the interpreter, which
@@ -148,9 +151,9 @@ impl Checker {
     pub(super) fn solve_all(&mut self, vars: usize) -> Result<(), Error> {
         self.check_escapes()?;
         for (t, span, op) in std::mem::take(&mut self.comparisons) {
-            let t = self.shallow(&t);
-            // If it's still unknown, that's reported below.
-            if !matches!(t, Type::Var(_)) {
+            let t = self.solved(&t);
+            // If it's still not fully known, that's reported below.
+            if !has_vars(&t) {
                 self.comparable(&t, span, op)?;
             }
         }

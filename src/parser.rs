@@ -4,12 +4,14 @@
 //!
 //! ```text
 //! program  = (fn_decl | struct | enum)*
-//! fn_decl  = "fn" IDENT "(" (param ("," param)* ","?)? ")" ("->" type)? block
+//! fn_decl  = "fn" IDENT generics? "(" (param ("," param)* ","?)? ")" ("->" type)? block
+//! generics = "<" (IDENT ("," IDENT)* ","?)? ">"
 //! param    = IDENT ":" type
-//! struct   = "struct" IDENT "{" (param ("," param)* ","?)? "}"
-//! enum     = "enum" IDENT "{" (variant ("," variant)* ","?)? "}"
+//! struct   = "struct" IDENT generics? "{" (param ("," param)* ","?)? "}"
+//! enum     = "enum" IDENT generics? "{" (variant ("," variant)* ","?)? "}"
 //! variant  = IDENT ("(" type ("," type)* ","? ")")?
-//! type     = IDENT | "(" ")" | "fn" "(" (type ("," type)*)? ")" ("->" type)?
+//! type     = IDENT ("<" type ("," type)* ","? ">")? | "(" ")"
+//!          | "fn" "(" (type ("," type)*)? ")" ("->" type)?
 //! block    = "{" (let | expr ";" | block_like ";"?)* expr? "}"
 //! block_like = if | match | block
 //! let      = "let" pattern (":" type)? "=" expr ";"
@@ -171,6 +173,7 @@ impl Parser {
         }
         self.bump();
         let name = self.ident()?;
+        let type_params = self.generics()?;
         self.expect(Tok::LParen)?;
         let (params, close) = self.comma_list(Tok::RParen, Self::param)?;
         let ret = if self.eat(&Tok::Arrow) {
@@ -184,10 +187,20 @@ impl Parser {
         let body = self.block()?;
         Ok(FnDecl {
             name,
+            type_params,
             params,
             ret,
             body,
         })
+    }
+
+    /// `<T, U>` after the name of a function, struct or enum, if it's there.
+    fn generics(&mut self) -> Result<Vec<Ident>, Error> {
+        if self.eat(&Tok::Lt) {
+            Ok(self.comma_list(Tok::Gt, Self::ident)?.0)
+        } else {
+            Ok(Vec::new())
+        }
     }
 
     fn param(&mut self) -> Result<Param, Error> {
@@ -200,14 +213,20 @@ impl Parser {
     fn struct_decl(&mut self) -> Result<StructDecl, Error> {
         self.expect(Tok::Struct)?;
         let name = self.ident()?;
+        let type_params = self.generics()?;
         self.expect(Tok::LBrace)?;
         let (fields, _) = self.comma_list(Tok::RBrace, Self::param)?;
-        Ok(StructDecl { name, fields })
+        Ok(StructDecl {
+            name,
+            type_params,
+            fields,
+        })
     }
 
     fn enum_decl(&mut self) -> Result<EnumDecl, Error> {
         self.expect(Tok::Enum)?;
         let name = self.ident()?;
+        let type_params = self.generics()?;
         self.expect(Tok::LBrace)?;
         let (variants, _) = self.comma_list(Tok::RBrace, |p| {
             let name = p.ident()?;
@@ -218,7 +237,11 @@ impl Parser {
             };
             Ok(Variant { name, fields })
         })?;
-        Ok(EnumDecl { name, variants })
+        Ok(EnumDecl {
+            name,
+            type_params,
+            variants,
+        })
     }
 
     fn ty(&mut self) -> Result<TypeExpr, Error> {
@@ -226,9 +249,17 @@ impl Parser {
         match self.peek().clone() {
             Tok::Ident(name) => {
                 self.bump();
+                // There's no `<` operator in a type, so this can only start
+                // type arguments.
+                let (args, span) = if self.eat(&Tok::Lt) {
+                    let (args, end) = self.comma_list(Tok::Gt, Self::ty)?;
+                    (args, start.to(end))
+                } else {
+                    (Vec::new(), start)
+                };
                 Ok(TypeExpr {
-                    kind: TypeExprKind::Named(name),
-                    span: start,
+                    kind: TypeExprKind::Named(name, args),
+                    span,
                 })
             }
             Tok::LParen => {

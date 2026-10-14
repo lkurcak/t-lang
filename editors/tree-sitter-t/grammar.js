@@ -63,10 +63,14 @@ module.exports = grammar({
     function_item: $ => seq(
       'fn',
       field('name', $.identifier),
+      optional(field('type_parameters', $.type_parameters)),
       field('parameters', $.parameters),
       optional(seq('->', field('return_type', $._type))),
       field('body', $.block),
     ),
+
+    // `<T, U>` after the name of a function, struct or enum.
+    type_parameters: $ => seq('<', commaSep(alias($.identifier, $.type_parameter)), '>'),
 
     parameters: $ => seq('(', commaSep($.parameter), ')'),
 
@@ -75,6 +79,7 @@ module.exports = grammar({
     struct_item: $ => seq(
       'struct',
       field('name', $._type_identifier),
+      optional(field('type_parameters', $.type_parameters)),
       field('body', $.field_declaration_list),
     ),
 
@@ -89,6 +94,7 @@ module.exports = grammar({
     enum_item: $ => seq(
       'enum',
       field('name', $._type_identifier),
+      optional(field('type_parameters', $.type_parameters)),
       field('body', $.enum_variant_list),
     ),
 
@@ -103,7 +109,15 @@ module.exports = grammar({
 
     // Types
 
-    _type: $ => choice($._type_identifier, $.unit_type, $.function_type),
+    _type: $ => choice($._type_identifier, $.generic_type, $.unit_type, $.function_type),
+
+    // `Option<int>`
+    generic_type: $ => seq(
+      field('type', $._type_identifier),
+      field('type_arguments', $.type_arguments),
+    ),
+
+    type_arguments: $ => seq('<', commaSep1($._type), '>'),
 
     unit_type: _ => seq('(', ')'),
 
