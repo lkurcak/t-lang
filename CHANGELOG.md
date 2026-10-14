@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 (2026-10-15)
 
 Step 4: generics. See [docs/04-generics.md](docs/04-generics.md).
 

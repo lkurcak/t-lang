@@ -99,8 +99,9 @@ mkdir -p ~/.config/helix/runtime/queries/t
 cp editors/tree-sitter-t/queries/highlights.scm ~/.config/helix/runtime/queries/t/
 ```
 
-**Neovim (0.11+):** build the parser and copy the queries into your
-`site` directory, from a checkout:
+**Neovim (0.11+):** with [t-lang.nvim](https://github.com/lkurcak/t-lang.nvim),
+run `:TInstallParser`. Without it, build the parser and copy the queries into
+your `site` directory, from a checkout:
 
 ```sh
 site=~/.local/share/nvim/site
