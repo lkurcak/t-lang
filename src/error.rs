@@ -103,6 +103,8 @@ pub enum Lint {
     OverlappingRanges,
     /// Or-pattern alternatives that touch end to end, like `0..10 | 10..20`.
     MergeableRanges,
+    /// A variable that nothing reads.
+    UnusedVariables,
 }
 
 impl Lint {
@@ -111,6 +113,7 @@ impl Lint {
             Lint::UnreachablePatterns => "unreachable_patterns",
             Lint::OverlappingRanges => "overlapping_ranges",
             Lint::MergeableRanges => "mergeable_ranges",
+            Lint::UnusedVariables => "unused_variables",
         }
     }
 }

@@ -190,8 +190,9 @@ fn warning_diagnostic(w: &Warning, src: &str) -> Diagnostic {
         source: Some("t".to_string()),
         message: w.message.clone(),
         // Editors fade out code tagged unnecessary, which is just right for
-        // code that can never run.
-        tags: (w.lint == Lint::UnreachablePatterns).then(|| vec![DiagnosticTag::UNNECESSARY]),
+        // code that can never run and variables nothing reads.
+        tags: matches!(w.lint, Lint::UnreachablePatterns | Lint::UnusedVariables)
+            .then(|| vec![DiagnosticTag::UNNECESSARY]),
         ..Default::default()
     }
 }

@@ -15,6 +15,9 @@
   a code naming its kind (`unreachable_patterns`, `overlapping_ranges`,
   `mergeable_ranges`), and unreachable patterns are tagged as unnecessary, so
   editors fade them out.
+- A warning for variables nothing reads (`unused_variables`), with a fix
+  that renames `x` to `_x`, everywhere an or-pattern binds it, and
+  `P { x }` to `P { x: _x }`. Names starting with `_` are exempt.
 
 ### Changed
 

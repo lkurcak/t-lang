@@ -213,13 +213,46 @@ fn resolve<V>(t: &TypeExpr, adts: &HashMap<String, V>) -> Result<Type, Error> {
     }
 }
 
+/// A variable in the local context Γ.
+#[derive(Debug, Clone)]
+struct Local {
+    name: String,
+    ty: Type,
+    /// Where it's bound: one place, or one per alternative of an or-pattern.
+    sites: Vec<Site>,
+    /// Whether anything has read it, for the unused-variable warning.
+    used: bool,
+}
+
+/// Where a variable is bound. `shorthand` is for a struct pattern's `P { x }`,
+/// which is short for `P { x: x }`.
+#[derive(Debug, Clone, Copy)]
+struct Site {
+    span: Span,
+    shorthand: bool,
+}
+
+impl Local {
+    fn new(name: &str, ty: Type, span: Span) -> Local {
+        Local {
+            name: name.to_string(),
+            ty,
+            sites: vec![Site {
+                span,
+                shorthand: false,
+            }],
+            used: false,
+        }
+    }
+}
+
 /// Why an or-pattern alternative's bindings `b` disagree with the first
 /// alternative's `a`, if they do.
-fn or_mismatch(a: &[(String, Type)], b: &[(String, Type)]) -> Option<String> {
-    for (name, t) in a {
-        match b.iter().find(|(n, _)| n == name) {
+fn or_mismatch(a: &[Local], b: &[Local]) -> Option<String> {
+    for Local { name, ty: t, .. } in a {
+        match b.iter().find(|l| l.name == *name) {
             None => return Some(format!("`{name}` is not bound in this alternative")),
-            Some((_, u)) if u != t => {
+            Some(Local { ty: u, .. }) if u != t => {
                 return Some(format!(
                     "`{name}` is `{t}` in the first alternative but `{u}` in this one"
                 ));
@@ -227,10 +260,31 @@ fn or_mismatch(a: &[(String, Type)], b: &[(String, Type)]) -> Option<String> {
             Some(_) => {}
         }
     }
-    let (extra, _) = b.iter().find(|(n, _)| !a.iter().any(|(m, _)| m == n))?;
+    let extra = b.iter().find(|l| !a.iter().any(|m| m.name == l.name))?;
     Some(format!(
-        "`{extra}` is bound in this alternative but not in the first"
+        "`{}` is bound in this alternative but not in the first",
+        extra.name
     ))
+}
+
+/// A variable nothing reads. The fix renames it to start with `_`, which says
+/// that's on purpose, everywhere it's bound.
+fn unused(local: &Local) -> Warning {
+    let name = &local.name;
+    let edits = local
+        .sites
+        .iter()
+        .map(|site| match site.shorthand {
+            true => Edit::insert(site.span.end, format!(": _{name}")),
+            false => Edit::insert(site.span.start, "_"),
+        })
+        .collect();
+    Warning {
+        lint: Lint::UnusedVariables,
+        span: local.sites[0].span,
+        message: format!("unused variable `{name}`"),
+        fixes: vec![Fix::new(format!("rename to `_{name}`"), edits)],
+    }
 }
 
 /// Arm `i` can never match. The fix deletes it, along with the `,` and the
@@ -393,9 +447,9 @@ struct Checker {
     adts: Adts,
     globals: HashMap<String, Type>,
     /// The local part of the context Γ, as a stack. Entering a scope pushes,
-    /// leaving truncates. Searching from the top makes inner `let`s shadow
-    /// outer ones.
-    locals: Vec<(String, Type)>,
+    /// leaving truncates (see `end_scope`). Searching from the top makes inner
+    /// `let`s shadow outer ones.
+    locals: Vec<Local>,
     warnings: Vec<Warning>,
 }
 
@@ -403,7 +457,6 @@ impl Checker {
     /// Checks each function's body against its declared return type.
     fn bodies(&mut self, prog: &Program) -> Result<(), Error> {
         for f in &prog.fns {
-            self.locals.clear();
             for (i, p) in f.params.iter().enumerate() {
                 if f.params[..i].iter().any(|q| q.name.name == p.name.name) {
                     return Err(Error::ty(
@@ -411,22 +464,35 @@ impl Checker {
                         format!("parameter `{}` is declared twice", p.name.name),
                     ));
                 }
-                self.locals
-                    .push((p.name.name.clone(), resolve(&p.ty, &self.adts)?));
+                let ty = resolve(&p.ty, &self.adts)?;
+                self.locals.push(Local::new(&p.name.name, ty, p.name.span));
             }
             let ret = resolve(&f.ret, &self.adts)?;
             self.check(&f.body, &ret)?;
+            self.end_scope(0);
         }
         Ok(())
     }
 
-    fn lookup(&self, name: &str) -> Option<Type> {
-        self.locals
-            .iter()
-            .rev()
-            .find(|(n, _)| n == name)
-            .map(|(_, t)| t.clone())
-            .or_else(|| self.globals.get(name).cloned())
+    /// Finds a variable's type, and notes that it was used.
+    fn lookup(&mut self, name: &str) -> Option<Type> {
+        match self.locals.iter_mut().rev().find(|l| l.name == name) {
+            Some(local) => {
+                local.used = true;
+                Some(local.ty.clone())
+            }
+            None => self.globals.get(name).cloned(),
+        }
+    }
+
+    /// Leaves a scope: drops the locals from `scope` on, warning about any
+    /// that were never used. A name starting with `_` says that's on purpose.
+    fn end_scope(&mut self, scope: usize) {
+        for local in self.locals.split_off(scope) {
+            if !local.used && !local.name.starts_with('_') {
+                self.warnings.push(unused(&local));
+            }
+        }
     }
 
     /// Checks that `e` has type `want`.
@@ -794,7 +860,7 @@ impl Checker {
             (Some(tail), None) => self.synth(tail)?,
             (None, _) => Type::Unit,
         };
-        self.locals.truncate(scope);
+        self.end_scope(scope);
         Ok(t)
     }
 
@@ -855,7 +921,7 @@ impl Checker {
                 }
                 (None, _) => result = Some(self.synth(&arm.body)?),
             }
-            self.locals.truncate(scope);
+            self.end_scope(scope);
         }
         result.ok_or_else(|| {
             Error::ty(
@@ -871,12 +937,7 @@ impl Checker {
     ///
     /// Returns the pattern in the reduced form the exhaustiveness checker
     /// uses.
-    fn pattern(
-        &mut self,
-        p: &Pattern,
-        ty: &Type,
-        binds: &mut Vec<(String, Type)>,
-    ) -> Result<Pat, Error> {
+    fn pattern(&mut self, p: &Pattern, ty: &Type, binds: &mut Vec<Local>) -> Result<Pat, Error> {
         let expect = |found: Type| {
             if found == *ty {
                 Ok(())
@@ -890,13 +951,13 @@ impl Checker {
         Ok(match &p.kind {
             PatternKind::Wild => Pat::Wild,
             PatternKind::Bind(name) => {
-                if binds.iter().any(|(n, _)| n == name) {
+                if binds.iter().any(|l| l.name == *name) {
                     return Err(Error::ty(
                         p.span,
                         format!("`{name}` is bound more than once in the same pattern"),
                     ));
                 }
-                binds.push((name.clone(), ty.clone()));
+                binds.push(Local::new(name, ty.clone(), p.span));
                 Pat::Wild
             }
             PatternKind::Int(n) => {
@@ -949,17 +1010,22 @@ impl Checker {
             // the alternative which actually matched never set.
             PatternKind::Or(alts) => {
                 let outer = binds.len();
-                let mut first: Option<Vec<(String, Type)>> = None;
+                let mut first: Option<Vec<Local>> = None;
                 let mut pats = Vec::new();
                 for alt in alts {
                     let mut b = binds.clone();
                     pats.push((self.pattern(alt, ty, &mut b)?, alt.span));
                     let new = b.split_off(outer);
-                    match &first {
+                    match &mut first {
                         None => first = Some(new),
                         Some(want) => {
                             if let Some(msg) = or_mismatch(want, &new) {
                                 return Err(Error::ty(alt.span, msg));
+                            }
+                            // The same variable, bound in one more place.
+                            for l in want.iter_mut() {
+                                let same = new.iter().find(|m| m.name == l.name);
+                                l.sites.extend(same.into_iter().flat_map(|m| &m.sites));
                             }
                         }
                     }
@@ -989,6 +1055,13 @@ impl Checker {
                     }
                     given[i] = true;
                     args[i] = self.pattern(&fp.pat, &fields[i].1, binds)?;
+                    // `P { x }`: the parser made the pattern `x` out of the
+                    // field name, so they're in the same place.
+                    if fp.pat.span == fp.name.span
+                        && let Some(site) = binds.last_mut().and_then(|l| l.sites.first_mut())
+                    {
+                        site.shorthand = true;
+                    }
                 }
                 if let Some(i) = given.iter().position(|g| !g)
                     && !rest

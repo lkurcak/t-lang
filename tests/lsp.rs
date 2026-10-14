@@ -118,7 +118,7 @@ fn reports_and_clears_diagnostics() {
     );
 
     // Fix it: the diagnostics are cleared.
-    let good = "fn main() {\n    let x: int = 1;\n}\n";
+    let good = "fn main() {\n    let _x: int = 1;\n}\n";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
             "textDocument": {"uri": uri, "version": 2},
