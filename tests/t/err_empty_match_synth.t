@@ -1,6 +1,8 @@
+// With no arms and nothing that uses it, nothing says what type this `match`
+// has. `empty_enum.t` has one that's used, so it's inferred.
 enum Never {}
 fn f(n: Never) {
-    let x = match n {};
+    let _x = match n {};
 }
 fn main() {}
-// error: a `match` with no arms needs a known type here
+// error: cannot infer the type of this `match`; it has no arms to tell

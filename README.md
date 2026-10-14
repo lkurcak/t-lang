@@ -23,9 +23,12 @@ fn fact(n: int) -> int {
 
 fn twice(f: fn(int) -> int, x: int) -> int { f(f(x)) }
 
+fn adder(n: int) -> fn(int) -> int { |x| x + n }
+
 fn main() {
     print(fact(10));
     print(twice(fact, 3));
+    print(twice(adder(5), 0));
     print(area(Shape::Rect(3, 4)));
     print(area(Shape::Circle(2)) + area(Shape::Empty));
 }
@@ -91,7 +94,7 @@ change what the program does.
 |---|---|---|---|
 | 1 ✅ | ints, bools, `let`, functions, `if` | simply typed lambda calculus, soundness | [docs/01-stlc.md](docs/01-stlc.md) |
 | 2 ✅ | structs, enums, `match` | algebraic data types, exhaustiveness | [docs/02-adts.md](docs/02-adts.md) |
-| 3 | inference, closures | unification / bidirectional typing | |
+| 3 ✅ | inference, closures | unification / bidirectional typing | [docs/03-inference.md](docs/03-inference.md) |
 | 4 | generics | parametric polymorphism (System F), monomorphization | |
 | 5 | recursive types | iso- vs equi-recursive types | |
 | 6 | traits | ad-hoc polymorphism, typeclasses, coherence | |

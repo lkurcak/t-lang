@@ -23,6 +23,9 @@
 //! postfix  = primary ("(" args ")" | "." IDENT)*
 //! primary  = INT | "true" | "false" | IDENT | "(" ")" | "(" expr ")" | block | if
 //!          | match | IDENT "{" field_init,* "}" | IDENT "::" IDENT ("(" args ")")?
+//!          | lambda
+//! lambda   = ("||" | "|" (lparam ("," lparam)* ","?)? "|") ("->" type block | expr)
+//! lparam   = IDENT (":" type)?
 //! if       = "if" expr block ("else" (block | if))?
 //! match    = "match" expr "{" (pattern "=>" expr ","?)* "}"  -- `,` optional after a block/if/match
 //! field_init = IDENT (":" expr)?                             -- `x` is short for `x: x`
@@ -48,6 +51,7 @@
 use crate::ast::*;
 use crate::error::{Edit, Error, Fix, Span};
 use crate::lexer::{Tok, Token};
+use std::sync::Arc;
 
 pub fn parse(tokens: Vec<Token>) -> Result<Program, Error> {
     let mut p = Parser {
@@ -414,6 +418,7 @@ impl Parser {
             Tok::LBrace => return self.block(),
             Tok::If => return self.if_expr(),
             Tok::Match => return self.match_expr(),
+            Tok::Pipe | Tok::OrOr => return self.lambda(),
             _ => return Err(self.unexpected("an expression")),
         };
         self.bump();
@@ -486,6 +491,42 @@ impl Parser {
         let span = name.span.to(end);
         Ok(Expr {
             kind: ExprKind::StructLit(name, fields),
+            span,
+        })
+    }
+
+    /// `|x, y: int| x + y`, `|x| -> int { x }` or `|| 1`. As in Rust, the body
+    /// runs as far right as an expression can, and a return type needs a
+    /// block after it.
+    fn lambda(&mut self) -> Result<Expr, Error> {
+        let start = self.span();
+        let params = if self.eat(&Tok::OrOr) {
+            Vec::new()
+        } else {
+            self.expect(Tok::Pipe)?;
+            self.comma_list(Tok::Pipe, |p| {
+                let name = p.ident()?;
+                let ty = if p.eat(&Tok::Colon) {
+                    Some(p.ty()?)
+                } else {
+                    None
+                };
+                Ok(LambdaParam { name, ty })
+            })?
+            .0
+        };
+        let (ret, body) = if self.eat(&Tok::Arrow) {
+            let ret = self.ty()?;
+            if *self.peek() != Tok::LBrace {
+                return Err(self.unexpected("`{` (a closure with a return type needs a block)"));
+            }
+            (Some(ret), self.block()?)
+        } else {
+            (None, self.expr()?)
+        };
+        let span = start.to(body.span);
+        Ok(Expr {
+            kind: ExprKind::Lambda(Arc::new(Lambda { params, ret, body })),
             span,
         })
     }

@@ -1,7 +1,8 @@
 //! The type checker. This is the simply typed lambda calculus (STLC) with base
 //! types `int`, `bool`, `()` and function types, plus `let`, `if` and
 //! top-level recursive functions (step 1), plus structs, enums and `match`
-//! (step 2, see docs/02-adts.md).
+//! (step 2, see docs/02-adts.md), plus closures and type inference (step 3, see
+//! docs/03-inference.md).
 //!
 //! Each case below is an implementation of a *typing rule*, written above it in
 //! the usual inference-rule notation:
@@ -19,6 +20,10 @@
 //! Every function here is *syntax-directed*: for each form of expression
 //! exactly one rule applies, so the rules can be read directly as a recursive
 //! algorithm. That's not true of every type system (see docs/01-stlc.md).
+//!
+//! Where a rule needs a type the program doesn't write down, like the `T` of
+//! the parameter in `|x| x + 1`, the checker makes up a *type variable* and
+//! works out what it must be from how it's used: `unify`.
 
 use crate::ast::*;
 use crate::error::{Edit, Error, Fix, Lint, Span, Warning};
@@ -71,6 +76,8 @@ pub fn check(prog: &Program, warnings: &mut Vec<Warning>) -> Result<(), Error> {
         adts,
         globals,
         locals: Vec::new(),
+        vars: Vec::new(),
+        comparisons: Vec::new(),
         uses: Vec::new(),
         warnings: Vec::new(),
     };
@@ -212,7 +219,7 @@ fn adt_names(t: &Type, out: &mut HashSet<String>) {
             }
             adt_names(ret, out);
         }
-        Type::Int | Type::Bool | Type::Unit => {}
+        Type::Int | Type::Bool | Type::Unit | Type::Var(_) => {}
     }
 }
 
@@ -270,18 +277,12 @@ impl Local {
     }
 }
 
-/// Why an or-pattern alternative's bindings `b` disagree with the first
-/// alternative's `a`, if they do.
+/// Why an or-pattern alternative's bindings `b` don't have the same names as
+/// the first alternative's `a`, if they don't.
 fn or_mismatch(a: &[Local], b: &[Local]) -> Option<String> {
-    for Local { name, ty: t, .. } in a {
-        match b.iter().find(|l| l.name == *name) {
-            None => return Some(format!("`{name}` is not bound in this alternative")),
-            Some(Local { ty: u, .. }) if u != t => {
-                return Some(format!(
-                    "`{name}` is `{t}` in the first alternative but `{u}` in this one"
-                ));
-            }
-            Some(_) => {}
+    for Local { name, .. } in a {
+        if !b.iter().any(|l| l.name == *name) {
+            return Some(format!("`{name}` is not bound in this alternative"));
         }
     }
     let extra = b.iter().find(|l| !a.iter().any(|m| m.name == l.name))?;
@@ -489,6 +490,48 @@ fn plural(n: usize, what: &str) -> String {
     format!("{n} {what}{}", if n == 1 { "" } else { "s" })
 }
 
+/// A type variable: a type the checker hasn't worked out yet.
+struct Var {
+    /// What it turned out to be, once `unify` finds out. That can be another
+    /// variable, or a type with variables in it, like `fn(_) -> int`.
+    solution: Option<Type>,
+    /// Where it came from, for when it's never solved: the span, what it's
+    /// the type of ("the type of `x`") and how to fix that.
+    span: Span,
+    what: String,
+    hint: String,
+}
+
+/// Why two types can't be made equal.
+enum Clash {
+    /// Different shapes, like `int` and `bool`.
+    Mismatch,
+    /// Variable `.0` would have to equal type `.1`, which contains it.
+    Infinite(u32, Type),
+}
+
+/// Does `t` have a type variable in it?
+fn has_vars(t: &Type) -> bool {
+    match t {
+        Type::Var(_) => true,
+        Type::Fn(params, ret) => params.iter().any(has_vars) || has_vars(ret),
+        Type::Int | Type::Bool | Type::Unit | Type::Adt(_) => false,
+    }
+}
+
+/// `t`, with every variable `v` in it called `name`. For explaining an
+/// infinite type, which is easier with a name for the type that repeats.
+fn name_var(t: &Type, v: u32, name: &str) -> Type {
+    match t {
+        Type::Var(w) if *w == v => Type::Adt(name.to_string()),
+        Type::Fn(params, ret) => Type::Fn(
+            params.iter().map(|p| name_var(p, v, name)).collect(),
+            Box::new(name_var(ret, v, name)),
+        ),
+        t => t.clone(),
+    }
+}
+
 struct Checker {
     adts: Adts,
     globals: HashMap<String, Type>,
@@ -496,6 +539,11 @@ struct Checker {
     /// leaving truncates (see `end_scope`). Searching from the top makes inner
     /// `let`s shadow outer ones.
     locals: Vec<Local>,
+    /// Every type variable, indexed by `Type::Var`'s number.
+    vars: Vec<Var>,
+    /// `==` and `!=` on values whose type wasn't known yet, as the type, the
+    /// span and the operator. Checked once the function's types are.
+    comparisons: Vec<(Type, Span, BinOp)>,
     /// What each function checked so far refers to, in program order.
     uses: Vec<Uses>,
     warnings: Vec<Warning>,
@@ -519,8 +567,147 @@ impl Checker {
             }
             let ret = resolve(&f.ret, &self.adts)?;
             self.mention(&ret);
+            let vars = self.vars.len();
             self.check(&f.body, &ret)?;
             self.end_scope(0);
+            self.solve_all(vars)?;
+        }
+        Ok(())
+    }
+
+    /// A new type variable, for the type of something at `span`. `what` and
+    /// `hint` explain it if it's never solved, see `solve_all`.
+    fn fresh(&mut self, span: Span, what: String, hint: String) -> Type {
+        self.vars.push(Var {
+            solution: None,
+            span,
+            what,
+            hint,
+        });
+        Type::Var(self.vars.len() as u32 - 1)
+    }
+
+    /// `t`, looking through variables that are solved, as far as the
+    /// outermost type: `fn(_) -> _`, not necessarily `fn(int) -> bool`.
+    fn shallow(&self, t: &Type) -> Type {
+        let mut t = t.clone();
+        while let Type::Var(v) = t {
+            match &self.vars[v as usize].solution {
+                Some(s) => t = s.clone(),
+                None => break,
+            }
+        }
+        t
+    }
+
+    /// `t` with every solved variable replaced by its solution, all the way
+    /// down. Any `Type::Var` left in it is unknown so far.
+    fn solved(&self, t: &Type) -> Type {
+        match self.shallow(t) {
+            Type::Fn(params, ret) => Type::Fn(
+                params.iter().map(|p| self.solved(p)).collect(),
+                Box::new(self.solved(&ret)),
+            ),
+            t => t,
+        }
+    }
+
+    /// Does variable `v` occur in `t`?
+    fn occurs(&self, v: u32, t: &Type) -> bool {
+        match self.shallow(t) {
+            Type::Var(w) => v == w,
+            Type::Fn(params, ret) => {
+                params.iter().any(|p| self.occurs(v, p)) || self.occurs(v, &ret)
+            }
+            Type::Int | Type::Bool | Type::Unit | Type::Adt(_) => false,
+        }
+    }
+
+    /// Makes `a` and `b` the same type, by solving variables in them, or
+    /// says why that's impossible. This is *unification* (Robinson, 1965):
+    ///
+    /// - A variable unifies with anything, by being solved as it. Unless it
+    ///   occurs in that thing: `T = fn(T) -> int` has no finite solution.
+    /// - Two function types unify if their parameters and results do.
+    /// - Anything else must be the very same type.
+    ///
+    /// Solving `T` as `int` here holds for the rest of the function, so the
+    /// order types are learned in doesn't matter, up to a point (see
+    /// docs/03-inference.md).
+    fn unify(&mut self, a: &Type, b: &Type) -> Result<(), Clash> {
+        match (self.shallow(a), self.shallow(b)) {
+            (Type::Var(v), Type::Var(w)) if v == w => Ok(()),
+            (Type::Var(v), t) | (t, Type::Var(v)) => {
+                if self.occurs(v, &t) {
+                    return Err(Clash::Infinite(v, t));
+                }
+                self.vars[v as usize].solution = Some(t);
+                Ok(())
+            }
+            (Type::Fn(ps, r), Type::Fn(qs, s)) if ps.len() == qs.len() => {
+                for (p, q) in ps.iter().zip(&qs) {
+                    self.unify(p, q)?;
+                }
+                self.unify(&r, &s)
+            }
+            (a, b) if a == b => Ok(()),
+            _ => Err(Clash::Mismatch),
+        }
+    }
+
+    /// Unifies `a` and `b`. If they don't fit, the error at `span` says
+    /// `mismatch(a, b)`, with what's known about them so far.
+    fn unify_or(
+        &mut self,
+        a: &Type,
+        b: &Type,
+        span: Span,
+        mismatch: impl FnOnce(&Type, &Type) -> String,
+    ) -> Result<(), Error> {
+        match self.unify(a, b) {
+            Ok(()) => Ok(()),
+            Err(Clash::Mismatch) => {
+                Err(Error::ty(span, mismatch(&self.solved(a), &self.solved(b))))
+            }
+            Err(Clash::Infinite(v, t)) => {
+                let t = name_var(&self.solved(&t), v, "T");
+                Err(Error::ty(
+                    span,
+                    format!(
+                        "infinite type: this needs a type `T` that is `{t}`, which contains \
+                         `T` itself (recursive types come in step 5)"
+                    ),
+                ))
+            }
+        }
+    }
+
+    /// At the end of a function: every variable made since `vars` must be
+    /// solved, and every comparison must be on a type that allows it.
+    ///
+    /// Leaving a variable unsolved would be harmless to the interpreter, which
+    /// never looks at types. But a compiler has to know how big a value is
+    /// and how to pass it, so like Rust, T asks for an annotation.
+    fn solve_all(&mut self, vars: usize) -> Result<(), Error> {
+        for (t, span, op) in std::mem::take(&mut self.comparisons) {
+            let t = self.shallow(&t);
+            // If it's still unknown, that's reported below.
+            if !matches!(t, Type::Var(_)) {
+                self.comparable(&t, span, op)?;
+            }
+        }
+        for v in vars..self.vars.len() {
+            let t = self.solved(&Type::Var(v as u32));
+            if has_vars(&t) {
+                let Var {
+                    span, what, hint, ..
+                } = &self.vars[v];
+                let message = match t {
+                    Type::Var(_) => format!("cannot infer {what}; {hint}"),
+                    t => format!("cannot fully infer {what}, only that it's `{t}`; {hint}"),
+                };
+                return Err(Error::ty(*span, message));
+            }
         }
         Ok(())
     }
@@ -647,29 +834,31 @@ impl Checker {
 
     /// Checks that `e` has type `want`.
     ///
-    /// In STLC every expression's type can be computed bottom-up, so checking
-    /// is mostly "synthesize, then compare". In step 3 (bidirectional typing)
-    /// checking becomes its own mode that can push type information *down*
-    /// into an expression.
+    /// Mostly that's "synthesize, then unify". But this is *bidirectional*
+    /// typing: checking is its own mode, which pushes the type that's wanted
+    /// *down* into the expression, so its parts know their types before
+    /// they're looked at.
     ///
-    /// Blocks and `match` already push `want` down to their results. It makes
-    /// no difference except for one expression: `match x {}` on an enum with
-    /// no variants. It has no arms to compute a type from, but since it can
-    /// never run, it can have whatever type is wanted (see docs/02-adts.md).
+    /// That matters for closures: in `apply(|p| p.x, ..)`, `p` gets its type
+    /// from `apply`'s signature before the body reads `p.x`, which needs it.
+    /// Blocks and `match` pass `want` on to their results, so that reaches
+    /// closures inside them too.
     fn check(&mut self, e: &Expr, want: &Type) -> Result<(), Error> {
         let got = match &e.kind {
             ExprKind::Block(stmts, tail) => self.block(stmts, tail.as_deref(), Some(want))?,
             ExprKind::Match(scrutinee, arms) => self.match_expr(e, scrutinee, arms, Some(want))?,
+            ExprKind::Lambda(l) => {
+                let sig = match self.shallow(want) {
+                    Type::Fn(params, ret) if params.len() == l.params.len() => Some((params, *ret)),
+                    _ => None,
+                };
+                self.lambda(l, sig)?
+            }
             _ => self.synth(e)?,
         };
-        if got == *want {
-            Ok(())
-        } else {
-            Err(Error::ty(
-                result_span(e),
-                format!("expected `{want}`, found `{got}`"),
-            ))
-        }
+        self.unify_or(&got, want, result_span(e), |got, want| {
+            format!("expected `{want}`, found `{got}`")
+        })
     }
 
     /// Computes ("synthesizes") the type of `e`.
@@ -735,26 +924,14 @@ impl Checker {
                 //  ---------------------------------------------------- (T-Eq) for == !=
                 //                  Γ ⊢ l == r : bool
                 //
-                // Equality on functions is excluded: deciding whether two
-                // functions behave the same on every input is undecidable, and
-                // comparing them by address would make `==` depend on how the
-                // compiler happened to lay out code. Structs and enums compare
-                // field by field, so they're excluded if any field is (or
-                // holds) a function.
+                // See `comparable` for why functions are excluded. If T isn't known yet, as in `|a, b| a == b`, this premise
+                // waits until it is, at the end of the function.
                 BinOp::Eq | BinOp::Ne => {
                     let t = self.synth(l)?;
                     self.check(r, &t)?;
-                    if let Type::Fn(..) = t {
-                        return Err(Error::ty(
-                            e.span,
-                            format!("cannot compare functions with `{op}`"),
-                        ));
-                    }
-                    if self.holds_fn(&t) {
-                        return Err(Error::ty(
-                            e.span,
-                            format!("cannot compare `{t}` with `{op}`: it contains a function"),
-                        ));
+                    match self.shallow(&t) {
+                        Type::Var(_) => self.comparisons.push((t, e.span, *op)),
+                        t => self.comparable(&t, e.span, *op)?,
                     }
                     Ok(Type::Bool)
                 }
@@ -763,9 +940,28 @@ impl Checker {
             //   Γ ⊢ f : fn(T1, .., Tn) -> R    Γ ⊢ a1 : T1  ..  Γ ⊢ an : Tn
             //  ------------------------------------------------------------ (T-App)
             //                  Γ ⊢ f(a1, .., an) : R
+            //
+            // If f's type isn't known yet, it's a function: one taking n
+            // arguments of some types, returning some type.
             ExprKind::Call(f, args) => {
-                let (params, ret) = match self.synth(f)? {
-                    Type::Fn(params, ret) => (params, ret),
+                let ft = self.synth(f)?;
+                let (params, ret) = match self.shallow(&ft) {
+                    Type::Fn(params, ret) => (params, *ret),
+                    Type::Var(_) => {
+                        let params: Vec<Type> = args
+                            .iter()
+                            .map(|a| {
+                                let what = "the type of this argument".to_string();
+                                self.fresh(a.span, what, "add a type annotation".into())
+                            })
+                            .collect();
+                        let what = "the type of this call".to_string();
+                        let ret = self.fresh(e.span, what, "add a type annotation".into());
+                        let sig = Type::Fn(params.clone(), Box::new(ret.clone()));
+                        self.unify(&ft, &sig)
+                            .unwrap_or_else(|_| unreachable!("fresh variables fit anything"));
+                        (params, ret)
+                    }
                     t => return Err(Error::ty(f.span, format!("`{t}` is not a function"))),
                 };
                 if params.len() != args.len() {
@@ -783,7 +979,7 @@ impl Checker {
                 for (arg, param) in args.iter().zip(&params) {
                     self.check(arg, param)?;
                 }
-                Ok(*ret)
+                Ok(ret)
             }
 
             //   Γ ⊢ c : bool   Γ ⊢ a : T   Γ ⊢ b : T
@@ -799,22 +995,16 @@ impl Checker {
                     Some(els) => {
                         let t = self.synth(then)?;
                         let u = self.synth(els)?;
-                        if t != u {
-                            return Err(Error::ty(
-                                result_span(els),
-                                format!("`if` and `else` have different types: `{t}` and `{u}`"),
-                            ));
-                        }
+                        self.unify_or(&t, &u, result_span(els), |t, u| {
+                            format!("`if` and `else` have different types: `{t}` and `{u}`")
+                        })?;
                         Ok(t)
                     }
                     None => {
                         let t = self.synth(then)?;
-                        if t != Type::Unit {
-                            return Err(Error::ty(
-                                result_span(then),
-                                format!("`if` without `else` must have type `()`, found `{t}`"),
-                            ));
-                        }
+                        self.unify_or(&t, &Type::Unit, result_span(then), |t, _| {
+                            format!("`if` without `else` must have type `()`, found `{t}`")
+                        })?;
                         Ok(Type::Unit)
                     }
                 }
@@ -862,8 +1052,23 @@ impl Checker {
             //               Γ ⊢ e.f : T
             //
             // ...and *eliminated* by taking any one field out.
+            //
+            // Unlike most rules, this one needs e's type *now*: which struct
+            // it is decides what T is. So it can't be a variable to solve
+            // later.
             ExprKind::Field(x, field) => {
                 let t = self.synth(x)?;
+                let t = self.solved(&t);
+                if let Type::Var(_) = t {
+                    return Err(Error::ty(
+                        x.span,
+                        format!(
+                            "the type of this must be known to read its field `{}`; \
+                             add a type annotation",
+                            field.name
+                        ),
+                    ));
+                }
                 let fields = match &t {
                     Type::Adt(name) => match &self.adts[name] {
                         AdtDef::Struct(fields) => fields.as_slice(),
@@ -912,7 +1117,74 @@ impl Checker {
             }
 
             ExprKind::Match(scrutinee, arms) => self.match_expr(e, scrutinee, arms, None),
+
+            ExprKind::Lambda(l) => self.lambda(l, None),
         }
+    }
+
+    //   Γ, x1 : T1, .., xn : Tn ⊢ e : R
+    //  ---------------------------------- (T-Abs)
+    //   Γ ⊢ |x1, .., xn| e : fn(T1, .., Tn) -> R
+    //
+    // Function *introduction*, the λ of the lambda calculus; T-App is its
+    // elimination. The body sees Γ, so it can use the locals around it:
+    // that's what makes it a closure.
+    //
+    // Nothing says what T1..Tn are. An annotation does, or else `sig`, the
+    // signature wanted when checking (see `check`). Failing those, each is a
+    // fresh variable, for `unify` to solve from how the body and the callers
+    // use it.
+    fn lambda(&mut self, l: &Lambda, sig: Option<(Vec<Type>, Type)>) -> Result<Type, Error> {
+        let scope = self.locals.len();
+        let mut params = Vec::new();
+        for (i, p) in l.params.iter().enumerate() {
+            let name = &p.name.name;
+            if l.params[..i].iter().any(|q| q.name.name == *name) {
+                return Err(Error::ty(
+                    p.name.span,
+                    format!("parameter `{name}` is declared twice"),
+                ));
+            }
+            let wanted = sig.as_ref().map(|(ps, _)| ps[i].clone());
+            let t = match (&p.ty, wanted) {
+                (Some(ann), wanted) => self.annotation(ann, wanted)?,
+                (None, Some(t)) => t,
+                (None, None) => self.fresh(
+                    p.name.span,
+                    format!("the type of `{name}`"),
+                    format!("annotate it, e.g. `|{name}: int|`"),
+                ),
+            };
+            params.push(t.clone());
+            self.locals.push(Local::new(name, t, p.name.span));
+        }
+        let wanted = sig.map(|(_, r)| r);
+        let ret = match &l.ret {
+            Some(ann) => Some(self.annotation(ann, wanted)?),
+            None => wanted,
+        };
+        let ret = match ret {
+            Some(r) => {
+                self.check(&l.body, &r)?;
+                r
+            }
+            None => self.synth(&l.body)?,
+        };
+        self.end_scope(scope);
+        Ok(Type::Fn(params, Box::new(ret)))
+    }
+
+    /// The type a closure's annotation names, which must fit the one
+    /// `wanted` from the context, if any.
+    fn annotation(&mut self, ann: &TypeExpr, wanted: Option<Type>) -> Result<Type, Error> {
+        let t = resolve(ann, &self.adts)?;
+        self.mention(&t);
+        if let Some(w) = wanted {
+            self.unify_or(&t, &w, ann.span, |t, w| {
+                format!("expected `{w}`, found `{t}`")
+            })?;
+        }
+        Ok(t)
     }
 
     //   Γ ⊢ e1 : T1    Γ, x : T1 ⊢ rest : T
@@ -949,6 +1221,7 @@ impl Checker {
                     };
                     let mut binds = Vec::new();
                     let p = self.pattern(pat, &t, &mut binds)?;
+                    let t = self.solved(&t);
                     // Only alternatives can be unreachable here. A whole `let`
                     // pattern only is when the value can't exist, like a
                     // `Never` parameter, and then nothing is wrong.
@@ -981,30 +1254,29 @@ impl Checker {
                 // and its value would silently be thrown away.
                 Stmt::BlockLike(e) => {
                     let t = self.synth(e)?;
-                    if t != Type::Unit {
-                        let what = match e.kind {
-                            ExprKind::If(..) => "`if`",
-                            ExprKind::Match(..) => "`match`",
-                            _ => "block",
-                        };
-                        let (start, end) = (e.span.start, e.span.end);
-                        return Err(Error::ty(
-                            result_span(e),
-                            format!(
-                                "expected `()`, found `{t}`: this {what} is a statement, so its \
-                                 value would be lost; add `;` to discard it, or wrap it in \
-                                 parentheses to use it in an expression"
-                            ),
+                    let what = match e.kind {
+                        ExprKind::If(..) => "`if`",
+                        ExprKind::Match(..) => "`match`",
+                        _ => "block",
+                    };
+                    let (start, end) = (e.span.start, e.span.end);
+                    self.unify_or(&t, &Type::Unit, result_span(e), |t, _| {
+                        format!(
+                            "expected `()`, found `{t}`: this {what} is a statement, so its \
+                             value would be lost; add `;` to discard it, or wrap it in \
+                             parentheses to use it in an expression"
                         )
-                        .with_fix(Fix::new(
+                    })
+                    .map_err(|err| {
+                        err.with_fix(Fix::new(
                             "add `;` to discard the value",
                             vec![Edit::insert(end, ";")],
                         ))
                         .with_fix(Fix::new(
                             "wrap it in parentheses",
                             vec![Edit::insert(start, "("), Edit::insert(end, ")")],
-                        )));
-                    }
+                        ))
+                    })?;
                 }
             }
         }
@@ -1045,6 +1317,8 @@ impl Checker {
             pats.push(self.pattern(&arm.pat, &t, &mut b)?);
             binds.push(b);
         }
+        // The patterns may have told us what the scrutinee is.
+        let t = self.solved(&t);
         let written: Vec<Pattern> = arms.iter().map(|a| a.pat.clone()).collect();
         for r in exhaust::redundant(&self.adts, &t, &pats) {
             self.warnings.push(match r {
@@ -1067,24 +1341,25 @@ impl Checker {
             match (&result, want) {
                 (Some(r), Some(_)) => self.check(&arm.body, &r.clone())?,
                 (Some(r), None) => {
+                    let r = r.clone();
                     let u = self.synth(&arm.body)?;
-                    if u != *r {
-                        return Err(Error::ty(
-                            result_span(&arm.body),
-                            format!("`match` arms have different types: `{r}` and `{u}`"),
-                        ));
-                    }
+                    self.unify_or(&r, &u, result_span(&arm.body), |r, u| {
+                        format!("`match` arms have different types: `{r}` and `{u}`")
+                    })?;
                 }
                 (None, _) => result = Some(self.synth(&arm.body)?),
             }
             self.end_scope(scope);
         }
-        result.ok_or_else(|| {
-            Error::ty(
+        // No arms and no type wanted: `let x = match n {};`. Its type is
+        // whatever the rest of the function needs it to be.
+        Ok(result.unwrap_or_else(|| {
+            self.fresh(
                 e.span,
-                "a `match` with no arms needs a known type here, e.g. `let x: int = match ..`",
+                "the type of this `match`".into(),
+                "it has no arms to tell, so give it a type, e.g. `let x: int = match ..`".into(),
             )
-        })
+        }))
     }
 
     /// Checks that pattern `p` can match values of type `ty`, and adds the
@@ -1094,16 +1369,6 @@ impl Checker {
     /// Returns the pattern in the reduced form the exhaustiveness checker
     /// uses.
     fn pattern(&mut self, p: &Pattern, ty: &Type, binds: &mut Vec<Local>) -> Result<Pat, Error> {
-        let expect = |found: Type| {
-            if found == *ty {
-                Ok(())
-            } else {
-                Err(Error::ty(
-                    p.span,
-                    format!("expected `{ty}`, found `{found}`"),
-                ))
-            }
-        };
         Ok(match &p.kind {
             PatternKind::Wild => Pat::Wild,
             PatternKind::Bind(name) => {
@@ -1117,11 +1382,11 @@ impl Checker {
                 Pat::Wild
             }
             PatternKind::Int(n) => {
-                expect(Type::Int)?;
+                self.pattern_is(p, ty, Type::Int)?;
                 Pat::Ctor(Ctor::Int(*n, *n), Vec::new())
             }
             PatternKind::Range(lo, hi, _) => {
-                expect(Type::Int)?;
+                self.pattern_is(p, ty, Type::Int)?;
                 if lo > hi {
                     return Err(Error::ty(
                         p.span,
@@ -1131,17 +1396,17 @@ impl Checker {
                 Pat::Range(*lo, *hi, p.span)
             }
             PatternKind::Bool(b) => {
-                expect(Type::Bool)?;
+                self.pattern_is(p, ty, Type::Bool)?;
                 Pat::Ctor(Ctor::Bool(*b), Vec::new())
             }
             PatternKind::Unit => {
-                expect(Type::Unit)?;
+                self.pattern_is(p, ty, Type::Unit)?;
                 Pat::Ctor(Ctor::Unit, Vec::new())
             }
             PatternKind::Variant(name, variant, args) => {
                 let (i, fields) = self.variant(name, variant)?;
                 let fields = fields.to_vec();
-                expect(Type::Adt(name.name.clone()))?;
+                self.pattern_is(p, ty, Type::Adt(name.name.clone()))?;
                 self.uses().types.insert(name.name.clone());
                 if fields.len() != args.len() {
                     return Err(Error::ty(
@@ -1179,10 +1444,18 @@ impl Checker {
                             if let Some(msg) = or_mismatch(want, &new) {
                                 return Err(Error::ty(alt.span, msg));
                             }
-                            // The same variable, bound in one more place.
+                            // The same variable, bound in one more place, so
+                            // with the same type.
                             for l in want.iter_mut() {
-                                let same = new.iter().find(|m| m.name == l.name);
-                                l.sites.extend(same.into_iter().flat_map(|m| &m.sites));
+                                let m = new.iter().find(|m| m.name == l.name);
+                                let m = m.expect("or_mismatch checked the names");
+                                self.unify_or(&l.ty, &m.ty, alt.span, |t, u| {
+                                    format!(
+                                        "`{}` is `{t}` in the first alternative but `{u}` in this one",
+                                        l.name
+                                    )
+                                })?;
+                                l.sites.extend(m.sites.iter().copied());
                             }
                         }
                     }
@@ -1193,7 +1466,7 @@ impl Checker {
             }
             PatternKind::Struct(name, field_pats, rest) => {
                 let fields = self.struct_def(name)?.to_vec();
-                expect(Type::Adt(name.name.clone()))?;
+                self.pattern_is(p, ty, Type::Adt(name.name.clone()))?;
                 self.uses().types.insert(name.name.clone());
                 // Fields left out of the pattern match anything.
                 let mut args = vec![Pat::Wild; fields.len()];
@@ -1237,6 +1510,14 @@ impl Checker {
         })
     }
 
+    /// Unifies the type `ty` a pattern should match with the type `found` it
+    /// does match.
+    fn pattern_is(&mut self, p: &Pattern, ty: &Type, found: Type) -> Result<(), Error> {
+        self.unify_or(&found, ty, p.span, |found, ty| {
+            format!("expected `{ty}`, found `{found}`")
+        })
+    }
+
     fn struct_def(&self, name: &Ident) -> Result<&[(String, Type)], Error> {
         match self.adts.get(&name.name) {
             Some(AdtDef::Struct(fields)) => Ok(fields),
@@ -1276,13 +1557,38 @@ impl Checker {
             })
     }
 
+    /// The rest of T-Eq's premise: `t`, which is known, contains no
+    /// function type.
+    ///
+    /// Equality on functions is excluded: deciding whether two functions
+    /// behave the same on every input is undecidable, and comparing them by
+    /// address would make `==` depend on how the compiler happened to lay out
+    /// code. Structs and enums compare field by field, so they're excluded if
+    /// any field is (or holds) a function.
+    fn comparable(&self, t: &Type, span: Span, op: BinOp) -> Result<(), Error> {
+        if let Type::Fn(..) = t {
+            return Err(Error::ty(
+                span,
+                format!("cannot compare functions with `{op}`"),
+            ));
+        }
+        if self.holds_fn(t) {
+            return Err(Error::ty(
+                span,
+                format!("cannot compare `{t}` with `{op}`: it contains a function"),
+            ));
+        }
+        Ok(())
+    }
+
     /// Is `t` a function, or a struct or enum with one somewhere inside?
     /// This terminates because types can't contain themselves.
     fn holds_fn(&self, t: &Type) -> bool {
         match t {
             Type::Fn(..) => true,
             Type::Adt(name) => field_types(&self.adts[name]).any(|t| self.holds_fn(t)),
-            Type::Int | Type::Bool | Type::Unit => false,
+            // Fields' types are always known.
+            Type::Int | Type::Bool | Type::Unit | Type::Var(_) => false,
         }
     }
 }

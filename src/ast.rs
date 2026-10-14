@@ -6,6 +6,7 @@
 
 use crate::error::Span;
 use std::fmt;
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct Program {
@@ -113,6 +114,24 @@ pub enum ExprKind {
     Variant(Ident, Ident, Vec<Expr>),
     /// `match e { pat => e, .. }`
     Match(Box<Expr>, Vec<Arm>),
+    /// `|x, y: int| x + y`. Shared, because the closure values the
+    /// interpreter makes from it point to it.
+    Lambda(Arc<Lambda>),
+}
+
+/// An anonymous function: `|x| x + 1`, `|x: int| -> int { x + 1 }`, or `|| 1`
+/// with no parameters. Any type left out is inferred.
+#[derive(Debug)]
+pub struct Lambda {
+    pub params: Vec<LambdaParam>,
+    pub ret: Option<TypeExpr>,
+    pub body: Expr,
+}
+
+#[derive(Debug)]
+pub struct LambdaParam {
+    pub name: Ident,
+    pub ty: Option<TypeExpr>,
 }
 
 #[derive(Debug, Clone)]

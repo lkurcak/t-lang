@@ -387,7 +387,8 @@ impl Cx<'_> {
     }
 
     /// Every constructor of `ty`, or `None` if there are none that patterns
-    /// can name (functions). For int, that's every int, split into ranges at
+    /// can name (functions, and types the checker hasn't inferred because
+    /// every pattern was `_` or a variable). For int, that's every int, split into ranges at
     /// the boundaries of the ones in `seen`.
     fn all_ctors(&self, ty: &Type, seen: &[Ctor]) -> Option<Vec<Ctor>> {
         match ty {
@@ -398,7 +399,7 @@ impl Cx<'_> {
                 AdtDef::Struct(_) => vec![Ctor::Struct],
                 AdtDef::Enum(variants) => (0..variants.len()).map(Ctor::Variant).collect(),
             }),
-            Type::Fn(..) => None,
+            Type::Fn(..) | Type::Var(_) => None,
         }
     }
 

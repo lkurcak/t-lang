@@ -14,6 +14,7 @@ use crate::check::BUILTINS;
 use crate::error::{Error, Span};
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::Arc;
 
 /// Deep enough for any reasonable recursion, shallow enough to stop runaway
 /// recursion with an error instead of crashing the interpreter itself.
@@ -24,14 +25,38 @@ pub enum Value {
     Int(i64),
     Bool(bool),
     Unit,
-    /// A top-level function, by name. No closures yet: a function can only see
-    /// its own parameters and other top-level functions.
+    /// A top-level function, by name. It can only see its own parameters and
+    /// other top-level functions.
     Fn(String),
     Builtin(&'static str),
+    /// A closure: an anonymous function, plus the local variables it can see.
+    Closure(Closure),
     /// A struct: its type's name, and its fields in declaration order.
     Struct(String, Vec<(String, Value)>),
     /// An enum value: its type's name, which variant, and that variant's fields.
     Variant(String, String, Vec<Value>),
+}
+
+/// What `|x| x + n` evaluates to: its code, and the environment it was
+/// created in, which holds `n`.
+///
+/// The environment is a *copy* of the locals at that point. Since nothing in T
+/// can change a variable after it's bound, a copy and the original can never
+/// disagree, so this is the same as sharing them. It still has to live
+/// somewhere for as long as the closure does, which may be longer than the
+/// function that made it (see docs/03-inference.md).
+#[derive(Debug, Clone)]
+pub struct Closure {
+    pub code: Arc<Lambda>,
+    pub env: Vec<(String, Value)>,
+}
+
+/// The same closure: made by the same expression, in equal environments. T
+/// programs can't compare functions; this is for tests.
+impl PartialEq for Closure {
+    fn eq(&self, other: &Closure) -> bool {
+        Arc::ptr_eq(&self.code, &other.code) && self.env == other.env
+    }
 }
 
 impl fmt::Display for Value {
@@ -42,6 +67,7 @@ impl fmt::Display for Value {
             Value::Unit => f.write_str("()"),
             Value::Fn(name) => write!(f, "<fn {name}>"),
             Value::Builtin(name) => write!(f, "<fn {name}>"),
+            Value::Closure(_) => f.write_str("<closure>"),
             Value::Struct(name, fields) if fields.is_empty() => write!(f, "{name} {{}}"),
             Value::Struct(name, fields) => {
                 write!(f, "{name} {{ ")?;
@@ -150,24 +176,41 @@ impl Interp<'_, '_> {
             }
             Value::Fn(name) => {
                 let decl = self.fns[name.as_str()];
-                if self.depth >= MAX_CALL_DEPTH {
-                    return Err(Error::runtime(
-                        span,
-                        format!("stack overflow (more than {MAX_CALL_DEPTH} nested calls)"),
-                    ));
-                }
-                // A call gets a fresh environment: just the parameters. The
-                // caller's locals are saved and restored afterwards.
+                // A call gets a fresh environment: just the parameters.
                 let params = decl.params.iter().map(|p| p.name.name.clone());
-                let saved = std::mem::replace(&mut self.locals, params.zip(args).collect());
-                self.depth += 1;
-                let result = self.eval(&decl.body);
-                self.depth -= 1;
-                self.locals = saved;
-                result
+                self.enter(params.zip(args).collect(), &decl.body, span)
+            }
+            // A closure's environment is the one it was created in, plus its
+            // parameters.
+            Value::Closure(Closure { code, mut env }) => {
+                let params = code.params.iter().map(|p| p.name.name.clone());
+                env.extend(params.zip(args));
+                self.enter(env, &code.body, span)
             }
             other => unsound(&format!("called a non-function `{other}`")),
         }
+    }
+
+    /// Evaluates a function body with `locals` as its environment. The
+    /// caller's locals are saved and restored afterwards.
+    fn enter(
+        &mut self,
+        locals: Vec<(String, Value)>,
+        body: &Expr,
+        span: Span,
+    ) -> Result<Value, Error> {
+        if self.depth >= MAX_CALL_DEPTH {
+            return Err(Error::runtime(
+                span,
+                format!("stack overflow (more than {MAX_CALL_DEPTH} nested calls)"),
+            ));
+        }
+        let saved = std::mem::replace(&mut self.locals, locals);
+        self.depth += 1;
+        let result = self.eval(body);
+        self.depth -= 1;
+        self.locals = saved;
+        result
     }
 
     fn eval(&mut self, e: &Expr) -> Result<Value, Error> {
@@ -262,6 +305,12 @@ impl Interp<'_, '_> {
                 Value::Variant(ty.name.clone(), variant.name.clone(), args)
             }
             ExprKind::Match(scrutinee, arms) => self.match_expr(scrutinee, arms)?,
+            // Capturing every local is simplest. A compiler would keep only
+            // the ones the body mentions: its *free variables*.
+            ExprKind::Lambda(code) => Value::Closure(Closure {
+                code: code.clone(),
+                env: self.locals.clone(),
+            }),
         })
     }
 

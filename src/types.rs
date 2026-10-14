@@ -18,6 +18,11 @@ pub enum Type {
     /// the same. The alternative, structural typing, would compare what's
     /// inside instead.
     Adt(String),
+    /// A type not known yet: a *type variable*, standing for some type the
+    /// checker will work out from how the value is used (see docs/03-inference.md).
+    /// The number indexes the checker's table of what each one has turned out
+    /// to be. Variables only ever exist while a function body is checked.
+    Var(u32),
 }
 
 /// What a struct or enum is made of.
@@ -50,6 +55,8 @@ impl fmt::Display for Type {
                 write!(f, ") -> {ret}")
             }
             Type::Adt(name) => f.write_str(name),
+            // Like Rust: "some type, not known yet".
+            Type::Var(_) => f.write_str("_"),
         }
     }
 }

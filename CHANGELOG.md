@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+Step 3: type inference and closures. See
+[docs/03-inference.md](docs/03-inference.md).
+
+### Added
+
+- Closures: `|x| x + 1`, `|x: int, y| -> int { x * y }`, and `|| 1` with no
+  parameters. They can use the locals around them, be passed, returned and
+  stored in structs, and have the same `fn(..) -> ..` types as top-level
+  functions.
+- Type inference inside function bodies. A closure parameter's type comes
+  from its annotation, from the type expected where the closure is written
+  (`apply(|p| p.x, ..)`), or else from how it's used, by unification. A
+  variable whose type is never worked out is an error asking for an
+  annotation, as is one that would need an infinite type (`|f| f(f)`).
+- `let x = match n {};` with no arms and no annotation takes the type `x` is
+  used at, instead of being an error.
+
 ## 0.2.3 (2026-10-14)
 
 ### Added
