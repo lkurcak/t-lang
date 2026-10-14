@@ -262,6 +262,15 @@ pub struct Pattern {
     pub span: Span,
 }
 
+impl Pattern {
+    /// The variables it binds.
+    pub fn binds(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        pattern_binds(self, &mut out);
+        out
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum PatternKind {
     /// `_`: matches anything, binds nothing.

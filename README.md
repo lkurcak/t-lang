@@ -23,12 +23,11 @@ fn fact(n: int) -> int {
 
 fn twice(f: fn(int) -> int, x: int) -> int { f(f(x)) }
 
-fn adder(n: int) -> fn(int) -> int { |x| x + n }
-
 fn main() {
+    let n = 5;
     print(fact(10));
     print(twice(fact, 3));
-    print(twice(adder(5), 0));
+    print(twice(|x| x + n, 0));
     print(area(Shape::Rect(3, 4)));
     print(area(Shape::Circle(2)) + area(Shape::Empty));
 }
@@ -88,6 +87,26 @@ print(1 + 2);   // expect: 3
 Every warning must be expected, and applying the warnings' fixes must not
 change what the program does.
 
+## Design constraints
+
+T should be good enough to write an operating system in, so it has to
+compile to bare metal: no garbage collector, and no runtime. Every feature
+has to fit that:
+
+- **Every value has a size known at compile time.** Generics are
+  monomorphized, so there's no boxing and no type information at run time.
+- **Nothing allocates behind your back.** The core language never touches
+  the heap; allocation will live in a library, as in Rust's split between
+  `core`, `alloc` and `std`.
+- **Closures that capture are downward-only:** they can be passed to
+  functions but not returned or stored, since their variables live on the
+  stack. See [docs/03-inference.md](docs/03-inference.md).
+- **Errors are values, not exceptions.** There's no unwinding.
+
+Within that, the aim is to push the type system as far as it goes, and keep
+it sound: well-typed programs don't go wrong, including the ones that
+combine features in ways nobody planned for.
+
 ## Roadmap
 
 | Step | Feature | Concept | Notes |
@@ -95,10 +114,11 @@ change what the program does.
 | 1 ✅ | ints, bools, `let`, functions, `if` | simply typed lambda calculus, soundness | [docs/01-stlc.md](docs/01-stlc.md) |
 | 2 ✅ | structs, enums, `match` | algebraic data types, exhaustiveness | [docs/02-adts.md](docs/02-adts.md) |
 | 3 ✅ | inference, closures | unification / bidirectional typing | [docs/03-inference.md](docs/03-inference.md) |
-| 4 | generics | parametric polymorphism (System F), monomorphization | |
-| 5 | recursive types | iso- vs equi-recursive types | |
-| 6 | traits | ad-hoc polymorphism, typeclasses, coherence | |
-| 7 | ownership, borrowing | affine types, regions/lifetimes | |
+| 4 | generics | rank-1 (prenex) parametric polymorphism, monomorphization | |
+| 5 | ownership, borrowing, pointers | affine types, regions/lifetimes; types that hold themselves through a pointer | |
+| 6 | traits | ad-hoc polymorphism, typeclasses, coherence; closures as `Fn` traits | |
+| 7 | effects | effect systems: which functions can panic, allocate or diverge | |
+| 8 | refinement types | proving indexes in bounds, so indexing can't panic | |
 | — | C backend | | when it's worth it |
 
 ## License

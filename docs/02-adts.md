@@ -289,9 +289,9 @@ bidirectional typing, which is step 3. Without an expected type, say in
   parentheses: `if p == (P { x: 1 }) { .. }` (`tests/t/if_struct_literal.t`).
 - **No recursive types.** `enum List { Nil, Cons(int, List) }` is rejected:
   a `List` would contain a `List`, so it would have infinite size. C needs a
-  pointer for this, and so do we, which means deciding who frees it (no GC!)
-  and how the type checker reasons about a type that refers to itself.
-  That's step 5.
+  pointer for this, and so do we, which means deciding who frees it (no GC!).
+  That's step 5, ownership. T won't have ML-style recursive types that hold
+  themselves directly; a list will be a resizable array, as in Rust's `Vec`.
 - **`==` on structs and enums** compares field by field, unless a function
   is in there somewhere (same reason as step 1's T-Eq).
 
@@ -300,10 +300,10 @@ bidirectional typing, which is step 3. Without an expected type, say in
 | Missing | Why it's missing | Step |
 |---|---|---|
 | `enum Option<T>` | generic types | 4 |
-| `enum List { Nil, Cons(int, List) }` | recursive types | 5 |
+| `enum List { Nil, Cons(int, List) }` | a type holding itself needs a pointer, and an owner for it | 5 |
 | tuples `(int, bool)` | anonymous structs; easy, just not needed yet | — |
 | guards `x if x > 0 => ..` | they make exhaustiveness approximate: the checker can't see through `if` | — |
-| mutation of fields | effects, ownership | 7 |
+| mutation of fields | ownership | 5 |
 
 ## Exercises
 
@@ -323,7 +323,8 @@ bidirectional typing, which is step 3. Without an expected type, say in
    arms the checker now asks for, and which one it calls unreachable when
    you add it.
 5. `Cx::inhabited` assumes types aren't recursive. Find a recursive type
-   that has no values, which step 5 will have to handle.
+   that has no values, which step 5 will have to handle once types can hold
+   themselves through pointers.
 
 ## Reading
 

@@ -108,8 +108,9 @@ That's not a technicality. `|f| f(f)` is the heart of the untyped lambda
 calculus's paradoxes: `(|f| f(f))(|f| f(f))` runs forever, and Curry's
 Y combinator is built from it. The simply typed lambda calculus rejects it,
 and that's why every STLC program halts (T only has unbounded loops through
-top-level recursion). Step 5 gives `α = fn(α) -> β` a solution after all, as
-a *recursive type*.
+top-level recursion). T won't ever solve `α = fn(α) -> β` as it stands: a
+type will only be able to hold itself through a named struct or enum, behind
+a pointer (step 5), so a name always ties the knot.
 
 ## Bidirectional typing: when order matters
 
@@ -180,8 +181,8 @@ parametric polymorphism, which is step 4.
 ## Closures and memory
 
 A closure is a value made of two things: its code, and the values of the
-locals it uses, its **environment**. `adder(5)` returns `|x| x + n` with
-`n = 5` packed alongside. Turning a closure into a (code, environment) pair is
+locals it uses, its **environment**. In `let add = |x| x + n;`, `add` is the
+code of `|x| x + n` with `n` packed alongside. Turning a closure into a (code, environment) pair is
 called **closure conversion**, and it's how every compiler does it. C has no
 closures, so C APIs do it by hand: a function pointer plus a `void *context`.
 
@@ -199,30 +200,77 @@ let n = 2;          // a new `n`, shadowing the old one
 get() + n           // 3
 ```
 
-The hard part is where the environment *lives*. `adder`'s `n` is a parameter,
-on `adder`'s stack frame, but the closure outlives that frame: it's returned.
-This is the classic **upward funarg problem**. Closures that only go *down*
-(passed to functions, never returned or stored) can point into the stack, as
-Pascal's nested procedures do. Ones that go up need the environment somewhere
-that outlives the call: the heap. Then someone has to free it, and copying a
-closure copies a pointer to its environment, so who's that? A garbage
-collector would answer for most languages. T has none, so the answer is
-ownership, step 7. Until there's a real backend, the interpreter gets to not
-care.
+The hard part is where the environment *lives*. Take
 
-Rust's answer, for comparison: every closure has its own unnamed type,
-exactly the size of its environment, so it can live on the stack and be
-moved like any other value. `fn(int) -> int` there is only a plain function
-pointer, which capturing closures don't fit. Talking about "some closure
-type" takes generics (step 4) and traits (`impl Fn(int) -> int`, step 6). T's
-`fn(int) -> int` is more like Rust's `Rc<dyn Fn(i64) -> i64>`: any function,
-behind a pointer.
+```rust
+fn adder(n: int) -> fn(int) -> int { |x| x + n }
+```
+
+`n` is a parameter, on `adder`'s stack frame, but the closure outlives that
+frame: it's returned. This is the classic **upward funarg problem**. A
+closure that goes up needs its environment somewhere that outlives the call:
+the heap. Then someone has to free it, and copying a closure copies a pointer
+to its environment, so who's that? Most languages answer with a garbage
+collector, or reference counting. T can't: it has to compile to bare metal,
+with no runtime.
+
+So in T, **closures that capture are downward-only**: they can be called, and
+passed to functions, but not returned or stored in a struct or enum. Then the
+environment can simply live in the frame that made the closure, and the
+closure can be a pair of pointers, to its code and into that frame, which
+only ever reaches frames *above* it on the stack, which are still there.
+That's how Pascal's nested procedures work, and Swift's non-escaping closures.
+`adder` is an error:
+
+```
+type error: cannot return a closure that captures `n`: it keeps `n` on the
+stack, and closures that capture can only be passed down, not returned
+```
+
+Closures that capture nothing are plain functions, and go anywhere.
+
+The rule (`src/check/escape.rs`) follows *where a value may have come from*,
+not its type: `fn(int) -> int` is one type, whether or not the function
+behind it captures. A value may be a closure that captures if it's
+
+- a closure literal that captures a local,
+- a parameter: the caller could have passed one, or
+- a variable bound to one of those, or an `if`, `match` or block that may
+  end in one.
+
+Such a value must not be returned (from a function or a closure), or put in a
+struct or enum, once its type turns out to be a function type. Call results
+and fields are always safe, because they were returned or stored, so they
+passed the same check. And since nothing in T can change a variable or reach
+the heap, returning and storing are the only ways a value can outlive its
+frame. So that's the whole rule.
+
+It's also coarse. `fn id(f: fn(int) -> int) -> fn(int) -> int { f }` is an
+error, though it only hands the caller back its own closure, which is still
+alive. Telling those apart means saying in the type *which* frame a closure
+borrows from: `id` returns something that lives as long as its argument. That's
+a lifetime, and it's what step 5 (ownership and borrowing) is about. This rule
+is the smallest case of one: every function value either lives forever, or
+lives as long as "here".
+
+The other way out, for later: give every closure its own unnamed type,
+exactly the size of its environment, so it can be returned *by value* and
+live wherever its caller puts it. That's what Rust does. `fn(i64) -> i64`
+there is only a plain function pointer, which capturing closures don't fit,
+and talking about "some closure type" takes generics (step 4) and traits
+(`impl Fn(i64) -> i64`, step 6). Each closure having its own type also lets
+the compiler inline it into every function it's passed to, so it often
+disappears entirely.
+
+The interpreter doesn't care where environments live, and shares them behind
+an `Rc`. The rule is in the checker, so that a compiled T never needs to.
 
 ## Design decisions worth noticing
 
 - **Rust's syntax:** `|x| x + 1`, `|x: int| -> int { .. }` (a return type
   needs a block), and `|| 1` with no parameters. `||` is a single token, so
   the parser accepts it where an expression starts as an empty parameter list.
+- **Capturing closures go down, not up.** See *Closures and memory*.
 - **Only free variables are captured**, and copies of a closure share one
   environment. Capturing every local in scope would mean the same thing, but
   a closure would copy every closure before it, each holding every closure
@@ -243,8 +291,9 @@ behind a pointer.
 | Missing | Why it's missing | Step |
 |---|---|---|
 | `let id = \|x\| x;` usable at two types | let-polymorphism is parametric polymorphism | 4 |
+| returning a closure that captures | its environment is on the stack: lifetimes, or a type per closure | 5, 6 |
 | a closure calling itself | its name isn't in scope in its own body; use a top-level `fn` | — |
-| changing a captured variable | mutation, and who owns the environment | 7 |
+| changing a captured variable | mutation, and who owns the environment | 5 |
 | patterns as parameters, `\|P { x, y }\| ..` | easy, just not needed yet | — |
 | inferring top-level signatures | on purpose, see *Where inference stops* | — |
 
@@ -264,7 +313,17 @@ behind a pointer.
 5. `Lambda::captures` lists top-level functions a closure calls too, and
    the interpreter skips them. Why can't it tell them apart from locals
    when it computes them? Could the checker?
-6. In T-App, when `f`'s type is a variable, `Checker::synth` unifies it with
+6. `fn id(f: fn(int) -> int) -> fn(int) -> int { f }` is rejected, though
+   it's harmless on its own. Write a program that would go wrong if it
+   weren't, using `id` and a closure that captures. Then: why is it fine for
+   `escape_ok.t` to return a field?
+7. *Defunctionalization* (Reynolds, 1972) compiles closures without a heap
+   differently: every closure of type `fn(int) -> int` in the program
+   becomes a variant of one enum holding its environment, and calling one is
+   a `match`. Then `adder` works, returning an enum. What's the size of that
+   enum? What goes wrong with `closure_chain.t` if each closure there is
+   returned?
+8. In T-App, when `f`'s type is a variable, `Checker::synth` unifies it with
    a function type of fresh variables, and claims that can't fail. Why not?
 
 ## Reading
@@ -276,5 +335,7 @@ behind a pointer.
 - Jana Dunfield and Neel Krishnaswami, *Bidirectional Typing*, ACM Computing
   Surveys, 2021. A survey of the checking/synthesis split.
 - Benjamin Pierce and David Turner, *Local Type Inference*, TOPLAS 2000.
+- John Reynolds, *Definitional Interpreters for Higher-Order Programming
+  Languages*, 1972. Where defunctionalization comes from.
 - *The Rust Reference*, chapter on closure expressions, and the rustc dev
   guide's chapter on type inference.

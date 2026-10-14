@@ -3,23 +3,27 @@
 struct P { x: int, y: int }
 
 fn apply(f: fn(int) -> int, x: int) -> int { f(x) }
-fn compose(f: fn(int) -> int, g: fn(int) -> int) -> fn(int) -> int {
-    |x| g(f(x))
+fn compose(f: fn(int) -> int, g: fn(int) -> int, x: int) -> int {
+    // A closure can capture a parameter, as long as it's only passed down.
+    apply(|y| g(f(y)), x)
 }
-// Returning a closure that captured a parameter: `n` outlives the call that
-// bound it.
-fn adder(n: int) -> fn(int) -> int { |x| x + n }
 fn on_point(f: fn(P) -> int) -> int { f(P { x: 3, y: 4 }) }
 fn inc(x: int) -> int { x + 1 }
+// Closures that capture nothing can be returned: they're plain functions.
+fn pick(double: bool) -> fn(int) -> int {
+    if double { |x| x * 2 } else { inc }
+}
 
 fn main() {
     let k = 10;
     print(apply(|x| x * k, 4));             // expect: 40
-    let add5 = adder(5);
+    let five = 5;
+    let add5 = |x| x + five;
     print(add5(1));                         // expect: 6
-    print(compose(add5, adder(100))(0));    // expect: 105
+    print(compose(add5, |x| x + 100, 0));   // expect: 105
     // Top-level functions and closures have the same types.
-    print(compose(inc, |x| x * 2)(3));      // expect: 8
+    print(compose(inc, |x| x * 2, 3));      // expect: 8
+    print(pick(true)(pick(false)(4)));      // expect: 10
     // `p`'s type comes from `on_point`'s signature, so `p.x` works.
     print(on_point(|p| p.x * p.y));         // expect: 12
     // No parameters, annotations, a block body.
@@ -32,9 +36,10 @@ fn main() {
     let get = || n;
     let n = 2;
     print(get() + n);                       // expect: 3
-    // Closures in data.
-    let fs = Fs { a: |x| x - 1, b: add5 };
-    print((fs.a)(fs.b(0)));                 // expect: 4
+    // Closures in data, if they capture nothing.
+    let fs = Fs { a: |x| x - 1, b: pick(true) };
+    print((fs.a)(fs.b(3)));                 // expect: 5
+    print(apply(fs.a, 1));                  // expect: 0
     // Immediately called.
     print((|x| x + 1)(41));                 // expect: 42
     // Calling an argument with unknown type makes it a function.

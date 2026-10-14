@@ -25,6 +25,7 @@
 //! the parameter in `|x| x + 1`, the checker makes up a *type variable* and
 //! works out what it must be from how it's used: `unify`.
 
+mod escape;
 mod lints;
 mod unify;
 
@@ -32,6 +33,7 @@ use crate::ast::*;
 use crate::error::{Edit, Error, Fix, Span, Warning};
 use crate::exhaust::{self, Ctor, Pat, Redundant};
 use crate::types::{AdtDef, Adts, Type, all_fields, struct_fields, variant_fields};
+use escape::{Escape, Exit, Origin, bound_origin};
 use lints::{Uses, mergeable, narrowable, unreachable_alt, unreachable_arm, unused};
 use std::collections::{HashMap, HashSet};
 use unify::Var;
@@ -83,6 +85,7 @@ pub fn check(prog: &Program, warnings: &mut Vec<Warning>) -> Result<(), Error> {
         locals: Vec::new(),
         vars: Vec::new(),
         comparisons: Vec::new(),
+        escapes: Vec::new(),
         uses: Vec::new(),
         warnings: Vec::new(),
     };
@@ -173,15 +176,15 @@ fn collect_adts(prog: &Program) -> Result<Adts, Error> {
 
     // A struct that holds itself, even via other types, would need infinite
     // memory: `struct A { a: A }` has the size of an int plus... itself.
-    // Making that work takes a pointer (and a story for who frees it), plus
-    // a theory of recursive types. That's step 5.
+    // Making that work takes a pointer, and a story for who frees it: that's
+    // step 5, ownership.
     for (owner, span, t) in field_types {
         if contains(&adts, &t, &owner.name, &mut HashSet::new()) {
             return Err(Error::ty(
                 span,
                 format!(
                     "`{}` contains itself, so it would have infinite size \
-                     (recursive types come in step 5)",
+                     (holding itself through a pointer comes in step 5)",
                     owner.name
                 ),
             ));
@@ -246,6 +249,9 @@ struct Local {
     sites: Vec<Site>,
     /// Whether anything has read it, for the unused-variable warning.
     used: bool,
+    /// Why it may hold a closure that must stay in its frame, if it may
+    /// (see `escape`).
+    origin: Option<Origin>,
 }
 
 /// Where a variable is bound. `shorthand` is for a struct pattern's `P { x }`,
@@ -266,6 +272,15 @@ impl Local {
                 shorthand: false,
             }],
             used: false,
+            origin: None,
+        }
+    }
+
+    /// A parameter, which may be a closure that captures.
+    fn param(name: &str, ty: Type, span: Span) -> Local {
+        Local {
+            origin: Some(Origin::Param(name.to_string())),
+            ..Local::new(name, ty, span)
         }
     }
 }
@@ -301,6 +316,9 @@ struct Checker {
     /// `==` and `!=` on values whose type wasn't known yet, as the type, the
     /// span and the operator. Checked once the function's types are.
     comparisons: Vec<(Type, Span, BinOp)>,
+    /// Values that may be closures leaving the frame that made them, checked
+    /// once the function's types are known.
+    escapes: Vec<Escape>,
     /// What each function checked so far refers to, in program order.
     uses: Vec<Uses>,
     warnings: Vec<Warning>,
@@ -320,12 +338,14 @@ impl Checker {
                 }
                 let ty = resolve(&p.ty, &self.adts)?;
                 self.mention(&ty);
-                self.locals.push(Local::new(&p.name.name, ty, p.name.span));
+                self.locals
+                    .push(Local::param(&p.name.name, ty, p.name.span));
             }
             let ret = resolve(&f.ret, &self.adts)?;
             self.mention(&ret);
             let vars = self.vars.len();
             self.check(&f.body, &ret)?;
+            self.leaves(&f.body, &ret, Exit::Return);
             self.end_scope(0);
             self.solve_all(vars)?;
         }
@@ -572,6 +592,7 @@ impl Checker {
                     }
                     given[i] = true;
                     self.check(&init.value, &fields[i].1)?;
+                    self.leaves(&init.value, &fields[i].1, Exit::Store);
                 }
                 if let Some(i) = given.iter().position(|g| !g) {
                     return Err(Error::ty(
@@ -640,6 +661,7 @@ impl Checker {
                 }
                 for (arg, field) in args.iter().zip(&fields) {
                     self.check(arg, field)?;
+                    self.leaves(arg, field, Exit::Store);
                 }
                 let (ty, variant) = (ty.name.clone(), variant.name.clone());
                 self.uses().types.insert(ty.clone());
@@ -687,7 +709,7 @@ impl Checker {
                 ),
             };
             params.push(t.clone());
-            self.locals.push(Local::new(name, t, p.name.span));
+            self.locals.push(Local::param(name, t, p.name.span));
         }
         let wanted = sig.map(|(_, r)| r);
         let ret = match &l.ret {
@@ -701,6 +723,7 @@ impl Checker {
             }
             None => self.synth(&l.body)?,
         };
+        self.leaves(&l.body, &ret, Exit::Return);
         self.end_scope(scope);
         Ok(Type::Fn(params, Box::new(ret)))
     }
@@ -752,6 +775,10 @@ impl Checker {
                     };
                     let mut binds = Vec::new();
                     let p = self.pattern(pat, &t, &mut binds)?;
+                    let origin = self.origin(init, &mut Vec::new()).map(|(o, _)| o);
+                    if let Some(origin) = bound_origin(pat, origin) {
+                        binds[0].origin = Some(origin);
+                    }
                     let t = self.solved(&t);
                     // Only alternatives can be unreachable here. A whole `let`
                     // pattern only is when the value can't exist, like a
@@ -841,11 +868,15 @@ impl Checker {
         want: Option<&Type>,
     ) -> Result<Type, Error> {
         let t = self.synth(scrutinee)?;
+        let origin = self.origin(scrutinee, &mut Vec::new()).map(|(o, _)| o);
         let mut pats = Vec::new();
         let mut binds = Vec::new();
         for arm in arms {
             let mut b = Vec::new();
             pats.push(self.pattern(&arm.pat, &t, &mut b)?);
+            if let Some(origin) = bound_origin(&arm.pat, origin.clone()) {
+                b[0].origin = Some(origin);
+            }
             binds.push(b);
         }
         // The patterns may have told us what the scrutinee is.

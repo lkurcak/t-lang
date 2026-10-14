@@ -131,7 +131,7 @@ impl Checker {
                     span,
                     format!(
                         "infinite type: this needs a type `T` that is `{t}`, which contains \
-                         `T` itself (recursive types come in step 5)"
+                         `T` itself"
                     ),
                 ))
             }
@@ -139,12 +139,14 @@ impl Checker {
     }
 
     /// At the end of a function: every variable made since `vars` must be
-    /// solved, and every comparison must be on a type that allows it.
+    /// solved, every comparison must be on a type that allows it, and no
+    /// closure that captures may leave the frame that made it.
     ///
     /// Leaving a variable unsolved would be harmless to the interpreter, which
     /// never looks at types. But a compiler has to know how big a value is
     /// and how to pass it, so like Rust, T asks for an annotation.
     pub(super) fn solve_all(&mut self, vars: usize) -> Result<(), Error> {
+        self.check_escapes()?;
         for (t, span, op) in std::mem::take(&mut self.comparisons) {
             let t = self.shallow(&t);
             // If it's still unknown, that's reported below.

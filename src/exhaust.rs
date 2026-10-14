@@ -406,9 +406,9 @@ impl Cx<'_> {
     /// Does `ty` have any values at all? `enum Never {}` doesn't, and neither
     /// does anything that must hold a `Never`.
     ///
-    /// This terminates because types can't contain themselves yet. Recursive
-    /// types (step 5) will need more care: `enum Stream { Next(int, Stream) }`
-    /// has no finite values.
+    /// This terminates because types can't contain themselves yet. Once they
+    /// can through pointers (step 5), this needs more care: a stream that
+    /// always holds a pointer to another stream has no finite values.
     fn inhabited(&self, ty: &Type) -> bool {
         match self.all_ctors(ty, &[]) {
             Some(all) => all.into_iter().any(|c| self.inhabited_ctor(c, ty)),

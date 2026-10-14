@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Closures that capture variables are downward-only: they can be called and
+  passed to functions, but not returned or stored in a struct or enum, since
+  the variables they capture live on the stack. `fn adder(n: int) ->
+  fn(int) -> int { |x| x + n }` is now an error, and so is returning a
+  function-typed parameter. Closures that capture nothing, and top-level
+  functions, go anywhere as before. This keeps closures compilable without a
+  heap or a garbage collector.
+- The roadmap is reordered around compiling to bare metal: generics, then
+  ownership (with types that hold themselves through pointers, in place of
+  a separate recursive-types step), traits, effects, and refinement types.
+
 ## 0.3.0 (2026-10-14)
 
 Step 3: type inference and closures. See

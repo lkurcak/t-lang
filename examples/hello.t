@@ -14,12 +14,11 @@ fn fact(n: int) -> int {
 
 fn twice(f: fn(int) -> int, x: int) -> int { f(f(x)) }
 
-fn adder(n: int) -> fn(int) -> int { |x| x + n }
-
 fn main() {
+    let n = 5;
     print(fact(10));
     print(twice(fact, 3));
-    print(twice(adder(5), 0));
+    print(twice(|x| x + n, 0));
     print(area(Shape::Rect(3, 4)));
     print(area(Shape::Circle(2)) + area(Shape::Empty));
 }

@@ -17,8 +17,8 @@ fn main() {
     let _unused = Opt::None;
     print(f(5) + a);                // expect: 115
     // Nested closures capture through the outer one.
-    let g = || || b;
-    print(g()());                   // expect: 2
+    let g = || { let h = || b; h() };
+    print(g());                     // expect: 2
     // Top-level functions aren't captured; they're always there.
     let h = || double(b);
     print(h());                     // expect: 4
