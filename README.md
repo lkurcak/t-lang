@@ -51,6 +51,7 @@ cargo install t-lang    # either way, installs the `t` command
 t examples/hello.t          # type-check and run
 t check examples/hello.t    # type-check only
 t mono examples/hello.t     # print the program after monomorphisation
+t fmt examples/hello.t      # format the file in place (--check: just print a diff)
 t lsp                       # language server (see below)
 ```
 

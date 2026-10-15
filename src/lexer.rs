@@ -106,9 +106,21 @@ pub struct Token {
     pub span: Span,
 }
 
+/// A `// ...` comment. The parser never sees these; `t fmt` keeps them.
+#[derive(Debug, Clone)]
+pub struct Comment {
+    pub span: Span,
+}
+
 pub fn lex(src: &str) -> Result<Vec<Token>, Error> {
+    Ok(lex_with_comments(src)?.0)
+}
+
+/// The tokens, and the comments between them, both in order.
+pub fn lex_with_comments(src: &str) -> Result<(Vec<Token>, Vec<Comment>), Error> {
     let bytes = src.as_bytes();
     let mut toks = Vec::new();
+    let mut comments = Vec::new();
     let mut i = 0;
 
     while i < bytes.len() {
@@ -123,6 +135,10 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Error> {
             while i < bytes.len() && bytes[i] != b'\n' {
                 i += 1;
             }
+            let end = start + src[start..i].trim_end().len();
+            comments.push(Comment {
+                span: Span::new(start, end),
+            });
             continue;
         }
 
@@ -203,5 +219,5 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Error> {
         tok: Tok::Eof,
         span: Span::new(src.len(), src.len()),
     });
-    Ok(toks)
+    Ok((toks, comments))
 }

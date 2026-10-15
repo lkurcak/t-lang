@@ -1,29 +1,71 @@
-//! Prints a program back out as source, for `t mono`. A program without
-//! generics prints as T that parses back to the same program; the names
-//! monomorphisation gives its copies, like `id::<int>`, don't parse.
+//! Prints a program back out as source, for `t mono` and `t fmt`. A
+//! program without generics prints as T that parses back to the same
+//! program; the names monomorphisation gives its copies, like `id::<int>`,
+//! don't parse.
+//!
+//! For `t fmt` the printer also has the source's comments and blank lines
+//! (`Trivia`), and puts them back as it goes.
 
 use crate::ast::*;
-use crate::exhaust::show_range;
+use crate::lexer::Tok;
+use crate::trivia::Trivia;
 use std::fmt::{self, Write};
 
 impl fmt::Display for Program {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut p = Printer::default();
-        let mut first = true;
         for d in &self.types {
-            if !std::mem::take(&mut first) {
-                p.out.push('\n');
-            }
+            p.start_line(true);
             p.type_decl(d);
         }
         for func in &self.fns {
-            if !std::mem::take(&mut first) {
-                p.out.push('\n');
-            }
+            p.start_line(true);
             p.fn_decl(func);
         }
+        p.out.push('\n');
         f.write_str(&p.out)
     }
+}
+
+/// Prints `program` with the comments and blank lines in `trivia`, and its
+/// items in the order they're written.
+pub fn format(program: &Program, trivia: Trivia) -> String {
+    enum Item<'a> {
+        Type(&'a TypeDecl),
+        Fn(&'a FnDecl),
+    }
+    let mut p = Printer {
+        trivia: Some(trivia),
+        ..Printer::default()
+    };
+    let mut items: Vec<(usize, Item)> = program
+        .types
+        .iter()
+        .map(|d| (d.name().span.start, Item::Type(d)))
+        .chain(program.fns.iter().map(|f| (f.name.span.start, Item::Fn(f))))
+        .collect();
+    items.sort_by_key(|(pos, _)| *pos);
+    for (pos, item) in items {
+        // Starts at the `struct`, `enum` or `fn` before the name.
+        let start = p.before(pos);
+        p.element(start, false);
+        let end = match item {
+            Item::Type(d) => {
+                p.type_decl(d);
+                p.find(pos, &Tok::RBrace) + 1
+            }
+            Item::Fn(f) => {
+                p.fn_decl(f);
+                f.body.span.end
+            }
+        };
+        p.trailing(end);
+    }
+    p.dangling(usize::MAX, false);
+    if !p.out.is_empty() {
+        p.out.push('\n');
+    }
+    p.out
 }
 
 /// How tightly a binary operator binds, as in the parser.
@@ -59,17 +101,151 @@ fn starts_block_like(e: &Expr) -> bool {
 }
 
 #[derive(Default)]
-struct Printer {
+struct Printer<'s> {
     out: String,
     indent: usize,
+    /// The source's comments and blank lines, when formatting it.
+    trivia: Option<Trivia<'s>>,
 }
 
-impl Printer {
+impl Printer<'_> {
     fn line(&mut self) {
         self.out.push('\n');
         for _ in 0..self.indent {
             self.out.push_str("    ");
         }
+    }
+
+    /// Starts a line, after a blank one if `blank`, unless nothing has been
+    /// printed yet.
+    fn start_line(&mut self, blank: bool) {
+        if self.out.is_empty() {
+            return;
+        }
+        if blank {
+            self.out.push('\n');
+        }
+        self.line();
+    }
+
+    /// Starts the line for something that starts at `pos` in the source: an
+    /// item, statement, arm or list element, after the comments before it.
+    /// Keeps a blank line before it, unless it's `first` in its block or
+    /// list.
+    fn element(&mut self, pos: usize, first: bool) {
+        let Some(t) = &mut self.trivia else {
+            self.start_line(false);
+            return;
+        };
+        let comments = t.leading(pos);
+        let blank = t.blank_before(pos);
+        let mut first = first;
+        for c in comments {
+            self.start_line(c.blank && !first);
+            self.out.push_str(&c.text);
+            first = false;
+        }
+        self.start_line(blank && !first);
+    }
+
+    /// The comment after something that ends at `end`, if it's on the same
+    /// line.
+    fn trailing(&mut self, end: usize) {
+        let Some(t) = self.trivia.as_mut().and_then(|t| t.trailing(end)) else {
+            return;
+        };
+        self.out.push(' ');
+        let line_start = self.out.rfind('\n').map_or(0, |i| i + 1);
+        let column = self.out[line_start..].chars().count();
+        self.out.push_str(&t.text);
+        for more in t.more {
+            let _ = write!(self.out, "\n{:column$}{more}", "");
+        }
+    }
+
+    /// The comments left before `close`, the end of a block or list, each on
+    /// a line of its own. Returns whether there were any.
+    fn dangling(&mut self, close: usize, first: bool) -> bool {
+        let Some(t) = &mut self.trivia else {
+            return false;
+        };
+        let comments = t.leading(close);
+        let any = !comments.is_empty();
+        let mut first = first;
+        for c in comments {
+            self.start_line(c.blank && !first);
+            self.out.push_str(&c.text);
+            first = false;
+        }
+        any
+    }
+
+    /// Are there comments to print before `pos`?
+    fn comments_before(&self, pos: usize) -> bool {
+        self.trivia.as_ref().is_some_and(|t| t.any_before(pos))
+    }
+
+    /// Where the first `tok` at or after `pos` starts in the source.
+    fn find(&self, pos: usize, tok: &Tok) -> usize {
+        self.trivia.as_ref().map_or(0, |t| t.find(pos, tok).start)
+    }
+
+    /// Where the token before the one at `pos` starts.
+    fn before(&self, pos: usize) -> usize {
+        self.trivia.as_ref().map_or(0, |t| t.before(pos).start)
+    }
+
+    /// Prints `items` between `open` and `close`, separated by commas: on one
+    /// line, or one per line if `always_break` or there are comments among
+    /// them. `close_pos` is where `close` is in the source, and `rest` goes
+    /// after the last item (the `..` in a struct pattern).
+    #[allow(clippy::too_many_arguments)]
+    fn list<T>(
+        &mut self,
+        (open, close): (&str, &str),
+        close_pos: usize,
+        items: &[T],
+        span: impl Fn(&T) -> (usize, usize),
+        rest: Option<&str>,
+        always_break: bool,
+        mut item: impl FnMut(&mut Self, &T),
+    ) {
+        self.out.push_str(open);
+        if !always_break && !self.comments_before(close_pos) {
+            for (i, x) in items.iter().enumerate() {
+                if i > 0 {
+                    self.out.push_str(", ");
+                }
+                item(self, x);
+            }
+            if let Some(rest) = rest {
+                if !items.is_empty() {
+                    self.out.push_str(", ");
+                }
+                self.out.push_str(rest);
+            }
+            self.out.push_str(close);
+            return;
+        }
+        self.indent += 1;
+        for (i, x) in items.iter().enumerate() {
+            let (start, end) = span(x);
+            self.element(start, i == 0);
+            item(self, x);
+            self.out.push(',');
+            self.trailing(end);
+        }
+        let empty = items.is_empty() && rest.is_none();
+        if let Some(rest) = rest {
+            self.element(close_pos, items.is_empty());
+            self.out.push_str(rest);
+        }
+        let comments = self.dangling(close_pos, items.is_empty());
+        self.indent -= 1;
+        if !empty || comments {
+            self.line();
+        }
+        self.out.push_str(close);
     }
 
     fn generics(&mut self, params: &[Ident]) {
@@ -80,53 +256,83 @@ impl Printer {
     }
 
     fn type_decl(&mut self, d: &TypeDecl) {
-        let (keyword, items): (&str, Vec<String>) = match d {
-            TypeDecl::Struct(s) => (
-                "struct",
-                s.fields
-                    .iter()
-                    .map(|f| format!("{}: {}", f.name.name, ty(&f.ty)))
-                    .collect(),
-            ),
-            TypeDecl::Enum(e) => (
-                "enum",
-                e.variants
-                    .iter()
-                    .map(|v| match v.fields.is_empty() {
-                        true => v.name.name.clone(),
-                        false => format!("{}({})", v.name.name, types(&v.fields)),
-                    })
-                    .collect(),
-            ),
+        let keyword = match d {
+            TypeDecl::Struct(_) => "struct",
+            TypeDecl::Enum(_) => "enum",
         };
         let _ = write!(self.out, "{keyword} {}", d.name().name);
         self.generics(d.type_params());
-        if items.is_empty() {
-            self.out.push_str(" {}\n");
-            return;
+        let open = self.find(d.name().span.end, &Tok::LBrace);
+        let close = self.find(open, &Tok::RBrace);
+        let always_break = match d {
+            TypeDecl::Struct(s) => !s.fields.is_empty(),
+            TypeDecl::Enum(e) => !e.variants.is_empty(),
+        };
+        let delims = (" {", "}");
+        match d {
+            TypeDecl::Struct(s) => self.list(
+                delims,
+                close,
+                &s.fields,
+                |f| (f.name.span.start, f.ty.span.end),
+                None,
+                always_break,
+                |p, f| {
+                    let _ = write!(p.out, "{}: {}", f.name.name, ty(&f.ty));
+                },
+            ),
+            TypeDecl::Enum(e) => {
+                let ends: Vec<usize> = e
+                    .variants
+                    .iter()
+                    .map(|v| match v.fields.last() {
+                        Some(t) => self.find(t.span.end, &Tok::RParen) + 1,
+                        None => v.name.span.end,
+                    })
+                    .collect();
+                let variants: Vec<(&Variant, usize)> = e.variants.iter().zip(ends).collect();
+                self.list(
+                    delims,
+                    close,
+                    &variants,
+                    |(v, end)| (v.name.span.start, *end),
+                    None,
+                    always_break,
+                    |p, (v, _)| {
+                        p.out.push_str(&v.name.name);
+                        if !v.fields.is_empty() {
+                            let _ = write!(p.out, "({})", types(&v.fields));
+                        }
+                    },
+                )
+            }
         }
-        self.out.push_str(" {");
-        for item in items {
-            let _ = write!(self.out, "\n    {item},");
-        }
-        self.out.push_str("\n}\n");
     }
 
     fn fn_decl(&mut self, f: &FnDecl) {
         let _ = write!(self.out, "fn {}", f.name.name);
         self.generics(&f.type_params);
-        let params: Vec<String> = f
-            .params
-            .iter()
-            .map(|p| format!("{}: {}", p.name.name, ty(&p.ty)))
-            .collect();
-        let _ = write!(self.out, "({})", params.join(", "));
+        let open = self.find(f.name.span.end, &Tok::LParen);
+        let close = match f.params.last() {
+            Some(p) => self.find(p.ty.span.end, &Tok::RParen),
+            None => self.find(open, &Tok::RParen),
+        };
+        self.list(
+            ("(", ")"),
+            close,
+            &f.params,
+            |p| (p.name.span.start, p.ty.span.end),
+            None,
+            false,
+            |p, param| {
+                let _ = write!(p.out, "{}: {}", param.name.name, ty(&param.ty));
+            },
+        );
         if !matches!(f.ret.kind, TypeExprKind::Unit) {
             let _ = write!(self.out, " -> {}", ty(&f.ret));
         }
         self.out.push(' ');
         self.expr(&f.body, 0, false);
-        self.out.push('\n');
     }
 
     /// Prints `e`, in parentheses if it binds less tightly than `min`. If
@@ -182,7 +388,7 @@ impl Printer {
                     _ => UNARY + 1,
                 };
                 self.expr(f, min, no_struct);
-                self.args(args);
+                self.args(f.span.end, args);
             }
             ExprKind::Field(x, field) => {
                 let min = match x.kind {
@@ -202,27 +408,33 @@ impl Printer {
                     self.expr(els, 0, false);
                 }
             }
-            ExprKind::Block(stmts, tail) => self.block(stmts, tail.as_deref()),
+            ExprKind::Block(stmts, tail) => self.block(stmts, tail.as_deref(), e.span),
             ExprKind::StructLit(name, targs, inits) => {
                 self.out.push_str(&name.name);
                 self.out.push_str(&turbofish(targs));
-                if inits.is_empty() {
-                    self.out.push_str(" {}");
-                    return;
-                }
-                self.out.push_str(" { ");
-                for (i, init) in inits.iter().enumerate() {
-                    if i > 0 {
-                        self.out.push_str(", ");
-                    }
-                    self.out.push_str(&init.name.name);
-                    let shorthand = matches!(&init.value.kind, ExprKind::Var(v, t) if *v == init.name.name && t.is_empty());
-                    if !shorthand {
-                        self.out.push_str(": ");
-                        self.expr(&init.value, 0, false);
-                    }
-                }
-                self.out.push_str(" }");
+                let close = e.span.end - 1;
+                let flat = !self.comments_before(close);
+                let delims = match (inits.is_empty(), flat) {
+                    (true, true) => (" {", "}"),
+                    (false, true) => (" { ", " }"),
+                    (_, false) => (" {", "}"),
+                };
+                self.list(
+                    delims,
+                    close,
+                    inits,
+                    |i| (i.name.span.start, i.value.span.end),
+                    None,
+                    false,
+                    |p, init| {
+                        p.out.push_str(&init.name.name);
+                        let shorthand = matches!(&init.value.kind, ExprKind::Var(v, t) if *v == init.name.name && t.is_empty());
+                        if !shorthand {
+                            p.out.push_str(": ");
+                            p.expr(&init.value, 0, false);
+                        }
+                    },
+                );
             }
             ExprKind::Variant(ty, targs, variant, args) => {
                 let _ = write!(
@@ -233,25 +445,29 @@ impl Printer {
                     variant.name
                 );
                 if !args.is_empty() {
-                    self.args(args);
+                    self.args(variant.span.end, args);
                 }
             }
             ExprKind::Match(scrutinee, arms) => {
                 self.out.push_str("match ");
                 self.expr(scrutinee, 0, true);
-                if arms.is_empty() {
+                if arms.is_empty() && !self.comments_before(e.span.end) {
                     self.out.push_str(" {}");
                     return;
                 }
                 self.out.push_str(" {");
                 self.indent += 1;
-                for arm in arms {
-                    self.line();
+                let open = self.find(scrutinee.span.end, &Tok::LBrace);
+                self.trailing(open + 1);
+                for (i, arm) in arms.iter().enumerate() {
+                    self.element(arm.pat.span.start, i == 0);
                     self.out.push_str(&pattern(&arm.pat));
                     self.out.push_str(" => ");
                     self.expr(&arm.body, 0, false);
                     self.out.push(',');
+                    self.trailing(arm.body.span.end);
                 }
+                self.dangling(e.span.end - 1, false);
                 self.indent -= 1;
                 self.line();
                 self.out.push('}');
@@ -260,15 +476,26 @@ impl Printer {
                 if l.params.is_empty() {
                     self.out.push_str("||");
                 } else {
-                    let params: Vec<String> = l
-                        .params
-                        .iter()
-                        .map(|p| match &p.ty {
-                            Some(t) => format!("{}: {}", p.name.name, ty(t)),
-                            None => p.name.name.clone(),
-                        })
-                        .collect();
-                    let _ = write!(self.out, "|{}|", params.join(", "));
+                    let last = l.params.last().unwrap();
+                    let last_end = last.ty.as_ref().map_or(last.name.span.end, |t| t.span.end);
+                    let close = self.find(last_end, &Tok::Pipe);
+                    self.list(
+                        ("|", "|"),
+                        close,
+                        &l.params,
+                        |p| {
+                            let end = p.ty.as_ref().map_or(p.name.span.end, |t| t.span.end);
+                            (p.name.span.start, end)
+                        },
+                        None,
+                        false,
+                        |p, param| {
+                            p.out.push_str(&param.name.name);
+                            if let Some(t) = &param.ty {
+                                let _ = write!(p.out, ": {}", ty(t));
+                            }
+                        },
+                    );
                 }
                 self.out.push(' ');
                 match &l.ret {
@@ -282,26 +509,38 @@ impl Printer {
         }
     }
 
-    fn args(&mut self, args: &[Expr]) {
-        self.out.push('(');
-        for (i, a) in args.iter().enumerate() {
-            if i > 0 {
-                self.out.push_str(", ");
-            }
-            self.expr(a, 0, false);
-        }
-        self.out.push(')');
+    /// Call arguments, after the callee that ends at `after`.
+    fn args(&mut self, after: usize, args: &[Expr]) {
+        let close = match args.last() {
+            Some(a) => self.find(a.span.end, &Tok::RParen),
+            None => self.find(after, &Tok::RParen),
+        };
+        self.list(
+            ("(", ")"),
+            close,
+            args,
+            |a| (a.span.start, a.span.end),
+            None,
+            false,
+            |p, a| p.expr(a, 0, false),
+        );
     }
 
-    fn block(&mut self, stmts: &[Stmt], tail: Option<&Expr>) {
-        if stmts.is_empty() && tail.is_none() {
+    fn block(&mut self, stmts: &[Stmt], tail: Option<&Expr>, span: crate::error::Span) {
+        let close = span.end - 1;
+        if stmts.is_empty() && tail.is_none() && !self.comments_before(close) {
             self.out.push_str("{}");
             return;
         }
         self.out.push('{');
         self.indent += 1;
-        for stmt in stmts {
-            self.line();
+        self.trailing(span.start + 1);
+        for (i, stmt) in stmts.iter().enumerate() {
+            let (start, end) = match stmt {
+                Stmt::Let { pat, init, .. } => (self.before(pat.span.start), init.span.end),
+                Stmt::Expr(e) | Stmt::BlockLike(e) => (e.span.start, e.span.end),
+            };
+            self.element(start, i == 0);
             match stmt {
                 Stmt::Let { pat, ty: t, init } => {
                     let _ = write!(self.out, "let {}", pattern(pat));
@@ -318,11 +557,14 @@ impl Printer {
                 }
                 Stmt::BlockLike(e) => self.expr(e, 0, false),
             }
+            self.trailing(end);
         }
         if let Some(tail) = tail {
-            self.line();
+            self.element(tail.span.start, stmts.is_empty());
             self.statement(tail);
+            self.trailing(tail.span.end);
         }
+        self.dangling(close, stmts.is_empty() && tail.is_none());
         self.indent -= 1;
         self.line();
         self.out.push('}');
@@ -366,7 +608,7 @@ fn pattern(p: &Pattern) -> String {
         PatternKind::Wild => "_".into(),
         PatternKind::Bind(name) => name.clone(),
         PatternKind::Int(n) => n.to_string(),
-        PatternKind::Range(lo, hi, inclusive) => show_range(*lo, *hi, *inclusive),
+        PatternKind::Range(lo, hi, inclusive) => range(*lo, *hi, *inclusive),
         PatternKind::Bool(b) => b.to_string(),
         PatternKind::Unit => "()".into(),
         PatternKind::Variant(ty, targs, variant, args) => {
@@ -398,5 +640,19 @@ fn pattern(p: &Pattern) -> String {
             let alts: Vec<String> = alts.iter().map(pattern).collect();
             alts.join(" | ")
         }
+    }
+}
+
+/// A range pattern as written. Unlike `exhaust::show_range`, which tidies
+/// ranges up for messages, this keeps `0..1` from turning into `0`.
+fn range(lo: i64, hi: i64, inclusive: bool) -> String {
+    let lo = match lo {
+        i64::MIN => String::new(),
+        lo => lo.to_string(),
+    };
+    match hi {
+        _ if inclusive => format!("{lo}..={hi}"),
+        i64::MAX => format!("{lo}.."),
+        hi => format!("{lo}..{}", hi + 1),
     }
 }

@@ -5,12 +5,14 @@ pub mod ast;
 pub mod check;
 pub mod error;
 pub mod exhaust;
+pub mod fmt;
 pub mod interp;
 pub mod lexer;
 pub mod lsp;
 pub mod mono;
 pub mod parser;
 mod pretty;
+mod trivia;
 pub mod types;
 
 use error::{Error, Warning};
