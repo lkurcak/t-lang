@@ -14,6 +14,7 @@
 //! (see `mono.rs`).
 
 use super::Checker;
+use super::scope::Binding;
 use crate::ast::*;
 use crate::error::{Error, Span};
 use crate::types::Type;
@@ -44,9 +45,9 @@ pub(super) struct Escape {
     exit: Exit,
 }
 
-/// The variables bound inside the expression being looked at, and what each
-/// may hold, innermost last.
-type Inner = Vec<(String, Option<Origin>)>;
+/// The names bound inside the expression being looked at, innermost last:
+/// `Some` of what it may hold for a variable, `None` for a nested function.
+type Inner = Vec<(String, Option<Option<Origin>>)>;
 
 impl Checker {
     /// Notes that `e`, of type `ty`, leaves the frame it's evaluated in by
@@ -103,35 +104,31 @@ impl Checker {
     /// `inner` holds the variables bound inside the outermost expression
     /// asked about, since those aren't in `self.locals`.
     pub(super) fn origin(&self, e: &Expr, inner: &mut Inner) -> Option<(Origin, Span)> {
-        let is_local = |name: &str, inner: &Inner| {
-            inner.iter().any(|(n, _)| n == name) || self.locals.iter().any(|l| l.name == name)
+        // `Some` of what `name` may hold if it's a variable, bound inside
+        // `e` or around it.
+        let local = |name: &str, inner: &Inner| match inner.iter().rev().find(|(n, _)| n == name) {
+            Some((_, local)) => local.clone(),
+            None => match self.binding(name) {
+                Some(Binding::Local(i)) => Some(self.locals[i].origin.clone()),
+                _ => None,
+            },
         };
         match &e.kind {
-            ExprKind::Var(name, _) => {
-                let origin = match inner.iter().rev().find(|(n, _)| n == name) {
-                    Some((_, origin)) => origin.clone(),
-                    None => self
-                        .locals
-                        .iter()
-                        .rev()
-                        .find(|l| l.name == *name)?
-                        .origin
-                        .clone(),
-                };
-                origin.map(|o| (o, e.span))
-            }
-            // Names that aren't locals are top-level functions, which are
-            // always there.
+            ExprKind::Var(name, _) => local(name, inner).flatten().map(|o| (o, e.span)),
+            // Names that aren't locals are functions, which are always
+            // there.
             ExprKind::Lambda(l) => l
                 .captures
                 .iter()
-                .find(|c| is_local(c, inner))
+                .find(|c| local(c, inner).is_some())
                 .map(|c| (Origin::Captures(c.clone()), e.span)),
             ExprKind::If(_, then, els) => self
                 .origin(then, inner)
                 .or_else(|| els.as_ref().and_then(|els| self.origin(els, inner))),
             ExprKind::Block(stmts, tail) => {
                 let scope = inner.len();
+                let fns = stmts.iter().filter_map(Stmt::as_fn);
+                inner.extend(fns.map(|f| (f.name.name.clone(), None)));
                 for stmt in stmts {
                     if let Stmt::Let { pat, init, .. } = stmt {
                         let origin = self.origin(init, inner).map(|(o, _)| o);
@@ -163,8 +160,8 @@ impl Checker {
 /// fields never hold one.
 fn bind(p: &Pattern, origin: Option<Origin>, inner: &mut Inner) {
     match &p.kind {
-        PatternKind::Bind(name) => inner.push((name.clone(), origin)),
-        _ => inner.extend(p.binds().into_iter().map(|name| (name, None))),
+        PatternKind::Bind(name) => inner.push((name.clone(), Some(origin))),
+        _ => inner.extend(p.binds().into_iter().map(|name| (name, Some(None)))),
     }
 }
 

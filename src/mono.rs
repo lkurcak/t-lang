@@ -14,6 +14,9 @@
 //! `int` for them, and so on down. It finishes because the checker rejects
 //! polymorphic recursion.
 //!
+//! It works on a program with no nested functions left (see `lift.rs`), so
+//! every function has a name of its own.
+//!
 //! The interpreter runs what comes out of here, and `t mono` prints it.
 
 use crate::ast::*;
@@ -23,7 +26,8 @@ use crate::types::{Subst, Type, comma_list};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// `prog`, which must have checked with `info`, without generics.
+/// `prog`, which must have checked with `info` and then been lifted,
+/// without generics.
 ///
 /// What comes out is checked again. That catches one kind of error the
 /// checker can't see in a generic function's body, where it only knows `T`
@@ -213,6 +217,7 @@ impl<'p> Mono<'p> {
         };
         FnDecl {
             doc: f.doc.clone(),
+            span: f.span,
             name: Ident {
                 name: name.unwrap_or(&f.name.name).to_string(),
                 span: f.name.span,
@@ -227,6 +232,7 @@ impl<'p> Mono<'p> {
                     ty: cx.ty(&p.ty),
                 })
                 .collect(),
+            parens: f.parens,
             ret: cx.ty(&f.ret),
             body: cx.expr(&f.body),
         }
@@ -279,7 +285,8 @@ impl<'p> Mono<'p> {
     }
 
     /// The error for copy `f` not checking: `e`, at the use outside any
-    /// generic function that it comes from.
+    /// generic function that it comes from. It names functions as they're
+    /// written, not by their symbols.
     fn blame(&self, f: &str, e: Error) -> Error {
         // Up through the copies that needed it.
         let mut top = f;
@@ -296,13 +303,13 @@ impl<'p> Mono<'p> {
             .collect();
         let inside = match top == f {
             true => "in that copy of it".to_string(),
-            false => format!("in `{f}`, which that needs"),
+            false => format!("in `{}`, which that needs", check::source_name(f)),
         };
         Error::ty(
             copy.needed_at,
             format!(
                 "cannot use `{}` with {} here: {inside}, {}",
-                copy.of,
+                check::source_name(&copy.of),
                 bindings.join(", "),
                 e.message
             ),
@@ -414,6 +421,7 @@ impl Cx<'_, '_, '_> {
                         },
                         Stmt::Expr(e) => Stmt::Expr(self.expr(e)),
                         Stmt::BlockLike(e) => Stmt::BlockLike(self.expr(e)),
+                        Stmt::Fn(_) => unreachable!("nested functions are lifted first"),
                     })
                     .collect(),
                 tail.as_ref().map(|t| Box::new(self.expr(t))),

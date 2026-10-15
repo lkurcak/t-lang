@@ -114,15 +114,95 @@ pub struct Variant {
     pub fields: Vec<TypeExpr>,
 }
 
+/// A function: at the top level, or in a block, where it's *nested*. A
+/// nested `fn` means what it would at the top level, so it can't use the
+/// locals around it; only its name is scoped, to the block it's in.
 #[derive(Debug, Clone)]
 pub struct FnDecl {
     pub doc: Option<DocComment>,
+    /// From the `fn` to the end of the body, without the doc comment.
+    pub span: Span,
     pub name: Ident,
     /// `<T>` in `fn id<T>(x: T) -> T`; empty if it isn't generic.
     pub type_params: Vec<Ident>,
     pub params: Vec<Param>,
+    /// From the `(` before the parameters to the `)` after them.
+    pub parens: Span,
     pub ret: TypeExpr,
     pub body: Expr,
+}
+
+impl Program {
+    /// Every function, nested ones too: the top-level ones in order, then
+    /// the ones nested in those, and so on. Each comes with the index in
+    /// this list of the function it's nested in, if it's nested.
+    pub fn all_fns(&self) -> Vec<(&FnDecl, Option<usize>)> {
+        let mut out: Vec<(&FnDecl, Option<usize>)> = self.fns.iter().map(|f| (f, None)).collect();
+        let mut i = 0;
+        while i < out.len() {
+            let mut nested = Vec::new();
+            nested_fns(&out[i].0.body, &mut nested);
+            out.extend(nested.into_iter().map(|f| (f, Some(i))));
+            i += 1;
+        }
+        out
+    }
+}
+
+/// Adds the functions declared in blocks in `e` to `out`, in order, but not
+/// those nested in them in turn.
+fn nested_fns<'a>(e: &'a Expr, out: &mut Vec<&'a FnDecl>) {
+    if let ExprKind::Block(stmts, _) = &e.kind {
+        out.extend(stmts.iter().filter_map(Stmt::as_fn));
+    }
+    for c in e.children() {
+        nested_fns(c, out);
+    }
+}
+
+impl Expr {
+    /// The expressions directly inside this one, in order. Not the bodies
+    /// of the functions declared in it, which are separate functions.
+    pub fn children(&self) -> Vec<&Expr> {
+        match &self.kind {
+            ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit | ExprKind::Var(..) => Vec::new(),
+            ExprKind::Unary(_, x) | ExprKind::Field(x, _) => vec![x],
+            ExprKind::Binary(_, l, r) => vec![l, r],
+            ExprKind::Call(f, args) => std::iter::once(&**f).chain(args).collect(),
+            ExprKind::If(c, then, els) => [&**c, then].into_iter().chain(els.as_deref()).collect(),
+            ExprKind::Block(stmts, tail) => stmts
+                .iter()
+                .filter_map(|s| match s {
+                    Stmt::Let { init: e, .. } | Stmt::Expr(e) | Stmt::BlockLike(e) => Some(e),
+                    Stmt::Fn(_) => None,
+                })
+                .chain(tail.as_deref())
+                .collect(),
+            ExprKind::StructLit(_, _, inits) => inits.iter().map(|i| &i.value).collect(),
+            ExprKind::Variant(_, _, _, args) => args.iter().collect(),
+            ExprKind::Match(scrutinee, arms) => std::iter::once(&**scrutinee)
+                .chain(arms.iter().map(|a| &a.body))
+                .collect(),
+            ExprKind::Lambda(l) => vec![&l.body],
+        }
+    }
+
+    /// Does `name` appear anywhere in this, in the bodies of functions
+    /// declared in it too? Whatever it refers to there.
+    pub fn mentions(&self, name: &str) -> bool {
+        match &self.kind {
+            ExprKind::Var(n, _) => n == name,
+            ExprKind::Block(stmts, _)
+                if stmts
+                    .iter()
+                    .filter_map(Stmt::as_fn)
+                    .any(|f| f.body.mentions(name)) =>
+            {
+                true
+            }
+            _ => self.children().iter().any(|c| c.mentions(name)),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -203,7 +283,7 @@ pub struct Lambda {
     pub body: Expr,
     /// The names the body uses but doesn't bind itself: its *free
     /// variables*, which a closure made from it has to capture. Some may be
-    /// top-level functions, which need no capturing.
+    /// functions, which need no capturing.
     pub captures: Vec<String>,
 }
 
@@ -249,6 +329,10 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
         }
         ExprKind::Block(stmts, tail) => {
             let scope = bound.len();
+            // A nested `fn`'s name is in scope in the whole block, and its
+            // body is a function of its own, which can't capture anything.
+            let fns = stmts.iter().filter_map(Stmt::as_fn);
+            bound.extend(fns.map(|f| f.name.name.clone()));
             for stmt in stmts {
                 match stmt {
                     Stmt::Let { pat, init, .. } => {
@@ -256,6 +340,7 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
                         pattern_binds(pat, bound);
                     }
                     Stmt::Expr(e) | Stmt::BlockLike(e) => go(e, bound),
+                    Stmt::Fn(_) => {}
                 }
             }
             tail.iter().for_each(|t| go(t, bound));
@@ -332,6 +417,19 @@ pub enum Stmt {
     /// An `if`, `match` or block statement with no `;` after it, like
     /// `if c { print(1) }`. As in Rust, it must have type `()`.
     BlockLike(Expr),
+    /// `fn helper() { .. }`: a nested function. Its name is in scope in the
+    /// whole block, before the `fn` as well as after. Boxed, like `Let`'s
+    /// type.
+    Fn(Box<FnDecl>),
+}
+
+impl Stmt {
+    pub fn as_fn(&self) -> Option<&FnDecl> {
+        match self {
+            Stmt::Fn(f) => Some(f),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

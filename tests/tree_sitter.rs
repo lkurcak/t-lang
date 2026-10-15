@@ -136,3 +136,34 @@ fn tells_doc_comments_from_comments() {
         ]
     );
 }
+
+/// A `fn` in a block is a `function_item`, like one at the top level, and
+/// its name is highlighted as a function.
+#[test]
+fn parses_nested_functions() {
+    let src = "fn main() {\n    /// Doc.\n    fn helper<T>(x: T) -> T { x }\n    helper(1)\n}\n";
+    let tree = parser().parse(src, None).unwrap();
+    let root = tree.root_node();
+    assert!(first_error(root).is_none(), "{}", root.to_sexp());
+    let body = root.child(0).unwrap().child_by_field_name("body").unwrap();
+    let mut cursor = body.walk();
+    let kinds: Vec<&str> = body.named_children(&mut cursor).map(|n| n.kind()).collect();
+    assert_eq!(kinds, ["doc_comment", "function_item", "call_expression"]);
+    let nested = body.named_child(1).unwrap();
+    let name = nested.child_by_field_name("name").unwrap();
+    assert_eq!(name.utf8_text(src.as_bytes()).unwrap(), "helper");
+    assert!(nested.child_by_field_name("type_parameters").is_some());
+
+    let language = tree_sitter_t::LANGUAGE.into();
+    let query = Query::new(&language, tree_sitter_t::HIGHLIGHTS_QUERY).unwrap();
+    let mut cursor = QueryCursor::new();
+    let mut captures = cursor.captures(&query, root, src.as_bytes());
+    let mut function = None;
+    while let Some((m, i)) = captures.next() {
+        let c = m.captures[*i];
+        if c.node.id() == name.id() {
+            function = Some(query.capture_names()[c.index as usize]);
+        }
+    }
+    assert_eq!(function, Some("function"));
+}

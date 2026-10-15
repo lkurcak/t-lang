@@ -2,12 +2,13 @@
 //! narrowed or merged, dead code, and doc comments that document nothing.
 //! None of these make a program wrong, so none of them stop it.
 
+use super::scope::FnId;
 use super::{Checker, Local, adt_names};
 use crate::ast::*;
 use crate::error::{Edit, Fix, Lint, Span, Warning};
 use crate::exhaust;
 use crate::types::{Type, all_fields};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 /// A variable nothing reads. The fix renames it to start with `_`, which says
 /// that's on purpose, everywhere it's bound.
@@ -204,7 +205,7 @@ pub(super) fn unused_doc(doc: &DocComment) -> Warning {
 #[derive(Default)]
 pub(super) struct Uses {
     /// Functions it names, called or not.
-    pub(super) fns: HashSet<String>,
+    pub(super) fns: HashSet<FnId>,
     /// Structs and enums its signature or body mentions.
     pub(super) types: HashSet<String>,
     /// Structs it constructs.
@@ -226,25 +227,23 @@ impl Checker {
     /// Warns about code that can never run: functions `main` can't reach,
     /// and structs, enums and variants that no such function constructs.
     /// Their names say what's dead; one starting with `_` says that's on
-    /// purpose.
+    /// purpose. A nested function can only be reached from its block, so
+    /// one that nothing there uses is dead too. One nested in a dead
+    /// function goes without saying, so that's all that's reported.
     ///
     /// There's no fix: removing one dead function can break another that
     /// calls it.
     pub(super) fn dead_code(&mut self, prog: &Program) {
-        let index: HashMap<&str, usize> = prog
-            .fns
-            .iter()
-            .enumerate()
-            .map(|(i, f)| (f.name.name.as_str(), i))
-            .collect();
         // Everything reachable from `main`, by following which function
-        // names which. Functions that only call each other aren't.
-        let mut live = vec![false; prog.fns.len()];
-        let mut todo = vec![index["main"]];
-        while let Some(i) = todo.pop() {
-            if !std::mem::replace(&mut live[i], true) {
-                let callees = self.uses[i].fns.iter();
-                todo.extend(callees.filter_map(|f| index.get(f.as_str())));
+        // names which. Functions that only call each other aren't. The
+        // top-level ones come first, so `main`'s id is where it is in
+        // `prog.fns`.
+        let main = prog.fns.iter().position(|f| f.name.name == "main");
+        let mut live = vec![false; self.fns.len()];
+        let mut todo = vec![FnId(main.expect("checked that there's a `main`"))];
+        while let Some(f) = todo.pop() {
+            if !std::mem::replace(&mut live[f.0], true) {
+                todo.extend(self.uses[f.0].fns.iter().copied());
             }
         }
 
@@ -273,8 +272,9 @@ impl Checker {
         }
 
         let on_purpose = |id: &Ident| id.name.starts_with('_');
-        for (f, live) in prog.fns.iter().zip(&live) {
-            if !live && !on_purpose(&f.name) {
+        for (f, is_live) in self.fns.iter().zip(&live) {
+            let in_live = f.parent.is_none_or(|p| live[p.0]);
+            if !is_live && in_live && !on_purpose(&f.name) {
                 let message = format!("function `{}` is never used", f.name.name);
                 self.warnings.push(dead(f.name.span, message));
             }

@@ -372,3 +372,76 @@ fn formats_documents() {
 
     stop(child, c);
 }
+
+/// Hover and go to definition find the function a name refers to, when
+/// nested functions share a name with each other and with a top-level one.
+#[test]
+fn finds_nested_functions_that_share_a_name() {
+    let (child, mut c) = start();
+    let uri = "file:///tmp/nested.t";
+    let src = "\
+/// The top-level one.
+fn helper() -> int { 1 }
+fn main() {
+    print(helper());
+    {
+        print_bool(helper(2));
+        /// The nested one.
+        fn helper(x: int) -> bool { x > 1 }
+    }
+    print(other());
+}
+fn other() -> int {
+    fn helper() -> int { 3 }
+    helper()
+}
+";
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
+        }}),
+    );
+    assert_eq!(c.diagnostics(), Vec::<Value>::new());
+    // The line and column of the `nth` place `needle` is in the source.
+    let at = |needle: &str, nth: usize| {
+        let offset = src.match_indices(needle).nth(nth).unwrap().0;
+        let line = src[..offset].matches('\n').count();
+        let character = offset - src[..offset].rfind('\n').map_or(0, |i| i + 1);
+        json!({"line": line, "character": character})
+    };
+    // Asks for `method` at the `nth` `helper`.
+    let mut id = 1;
+    let mut ask = |c: &mut Client, method: &str, nth: usize| {
+        id += 1;
+        c.send(
+            json!({"jsonrpc": "2.0", "id": id, "method": method, "params": {
+                "textDocument": {"uri": uri}, "position": at("helper", nth)
+            }}),
+        );
+        c.response(id)["result"].clone()
+    };
+    let (hover, def) = ("textDocument/hover", "textDocument/definition");
+
+    // `helper`s in order: 0 the top-level one, 1 its use in `main`, 2 the
+    // nested one's use before it, 3 the nested one, 4 `other`'s, 5 its use.
+    let top = "```t\nfn helper: fn() -> int\n```\n\n---\n\nThe top-level one.";
+    let nested = "```t\nfn helper: fn(int) -> bool\n```\n\n---\n\nThe nested one.";
+    let others = "```t\nfn helper: fn() -> int\n```";
+    assert_eq!(ask(&mut c, hover, 1)["contents"]["value"], top);
+    assert_eq!(ask(&mut c, def, 1)["range"]["start"], at("helper", 0));
+    let used_before = ask(&mut c, hover, 2);
+    assert_eq!(
+        used_before["contents"]["value"], nested,
+        "used before it's declared"
+    );
+    assert_eq!(ask(&mut c, def, 2)["range"]["start"], at("helper", 3));
+    assert_eq!(
+        ask(&mut c, hover, 3)["contents"]["value"],
+        nested,
+        "the declaration"
+    );
+    assert_eq!(ask(&mut c, hover, 5)["contents"]["value"], others);
+    assert_eq!(ask(&mut c, def, 5)["range"]["start"], at("helper", 4));
+
+    stop(child, c);
+}

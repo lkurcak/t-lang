@@ -1,0 +1,63 @@
+struct Holder { f: fn(int) -> int }
+
+struct One { n: int }
+
+fn main() {
+    print(main::double(1));
+    print(main::fact(5));
+    print_bool(main::is_even(10));
+    print_bool(main::is_odd(10));
+    print(main::twice::<int>(main::double, 3));
+    print_bool(main::twice::<bool>(|b| !b, true));
+    print(main::sum_to(4));
+    let k = 3;
+    let add_k = |x: int| { main::inc(x) + k };
+    print(add_k(1));
+    let f = pick(true);
+    print(f(7));
+    print(top());
+}
+
+/// Doubles `x`.
+fn main::double(x: int) -> int { x * 2 }
+
+fn main::fact(n: int) -> int {
+    if n == 0 { 1 } else { n * main::fact(n - 1) }
+}
+
+fn main::is_even(n: int) -> bool {
+    if n == 0 { true } else { main::is_odd(n - 1) }
+}
+
+fn main::is_odd(n: int) -> bool {
+    if n == 0 { false } else { main::is_even(n - 1) }
+}
+
+fn main::twice::<int>(f: fn(int) -> int, x: int) -> int { f(f(x)) }
+
+fn main::twice::<bool>(f: fn(bool) -> bool, x: bool) -> bool { f(f(x)) }
+
+fn main::sum_to(n: int) -> int { main::sum_to::go(1, 0, n) }
+
+fn main::sum_to::go(i: int, acc: int, n: int) -> int {
+    if i > n { acc } else { main::sum_to::go(i + 1, acc + i, n) }
+}
+
+fn main::inc(x: int) -> int { x + 1 }
+
+fn pick(b: bool) -> fn(int) -> int {
+    if b { double_it() } else { pick::neg }
+}
+
+fn pick::neg(x: int) -> int { -x }
+
+fn double_it() -> fn(int) -> int {
+    let h = Holder { f: double_it::double };
+    h.f
+}
+
+fn double_it::double(x: int) -> int { x + x }
+
+fn top() -> int { top::one().n }
+
+fn top::one() -> One { One { n: 1 } }

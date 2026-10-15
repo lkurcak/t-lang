@@ -1,7 +1,8 @@
 //! Prints a program back out as source, for `t mono` and `t fmt`. A
-//! program without generics prints as T that parses back to the same
-//! program; the names monomorphisation gives its copies, like `id::<int>`,
-//! don't parse.
+//! program without generics or nested functions prints as T that parses
+//! back to the same program; the names monomorphisation gives its copies,
+//! like `id::<int>`, and the symbols nested functions are lifted under,
+//! like `main::helper`, don't parse.
 //!
 //! The printer turns the AST into a `Doc`, which says where lines may
 //! break, and `doc::render` decides where they do. For `t fmt` it also has
@@ -684,6 +685,7 @@ impl Printer<'_> {
             let (start, end) = match stmt {
                 Stmt::Let { pat, init, .. } => (self.before(pat.span.start), init.span.end),
                 Stmt::Expr(e) | Stmt::BlockLike(e) => (e.span.start, e.span.end),
+                Stmt::Fn(f) => (doc_start(&f.doc, f.span), f.span.end),
             };
             body = body + line.clone() + self.element(start, i == 0);
             let doc = match stmt {
@@ -697,6 +699,7 @@ impl Printer<'_> {
                 }
                 Stmt::Expr(e) => self.statement(e) + ";",
                 Stmt::BlockLike(e) => self.expr(e, 0, Ctx::default()),
+                Stmt::Fn(f) => self.fn_decl(f),
             };
             body = body + doc + self.trailing(end);
         }
@@ -825,7 +828,8 @@ impl Printer<'_> {
     }
 }
 
-/// Where something documented by `doc` starts, if its name is at `name`.
+/// Where something documented by `doc` starts, if it starts at `name`
+/// otherwise.
 fn doc_start(doc: &Option<DocComment>, name: Span) -> usize {
     doc.as_ref().map_or(name.start, |d| d.span().start)
 }

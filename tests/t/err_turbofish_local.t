@@ -3,4 +3,4 @@ fn main() {
     let f = id;
     print(f::<int>(1));
 }
-// error: `f` is a variable, and only top-level functions, structs and enums take type arguments
+// error: `f` is a variable, and only functions, structs and enums take type arguments

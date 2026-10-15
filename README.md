@@ -29,8 +29,12 @@ fn main() {
     print(fact(10));                                    // expect: 3628800
     print(twice(fact, 3));                              // expect: 720
     print(twice(|x| x + n, 0));                         // expect: 10
+    print(twice(square, 3));                            // expect: 81
     print(area(Shape::Rect(3, 4)));                     // expect: 12
     print(area(Shape::Circle(2)) + area(Shape::Empty)); // expect: 12
+
+    // A nested `fn`: only `main` can see it.
+    fn square(x: int) -> int { x * x }
 }
 ```
 
@@ -64,9 +68,9 @@ comments and single blank lines. It refuses to write anything that would
 parse to a different program. See [docs/fmt.md](docs/fmt.md) for why there
 are no options and how it works.
 
-Pipeline: `lexer` → `parser` → `check` (type checker) → `mono`
-(monomorphisation: a copy of each generic function and type per type it's
-used at) → `interp` (tree-walking interpreter). A real backend (emitting C) comes once the type system has
+Pipeline: `lexer` → `parser` → `check` (type checker) → `lift` (nested
+functions moved to the top level) → `mono` (monomorphisation: a copy of
+each generic function and type per type it's used at) → `interp` (tree-walking interpreter). A real backend (emitting C) comes once the type system has
 enough in it to be worth compiling.
 
 ## Editor support
@@ -196,7 +200,8 @@ has to fit that:
   `core`, `alloc` and `std`.
 - **Closures that capture are downward-only:** they can be passed to
   functions but not returned or stored, since their variables live on the
-  stack. See [docs/03-inference.md](docs/03-inference.md).
+  stack. A `fn` nested in a block captures nothing, so it can go anywhere.
+  See [docs/03-inference.md](docs/03-inference.md).
 - **Errors are values, not exceptions.** There's no unwinding.
 
 Within that, the aim is to push the type system as far as it goes, and keep
@@ -209,7 +214,7 @@ combine features in ways nobody planned for.
 |---|---|---|---|
 | 1 ✅ | ints, bools, `let`, functions, `if` | simply typed lambda calculus, soundness | [docs/01-stlc.md](docs/01-stlc.md) |
 | 2 ✅ | structs, enums, `match` | algebraic data types, exhaustiveness | [docs/02-adts.md](docs/02-adts.md) |
-| 3 ✅ | inference, closures | unification / bidirectional typing | [docs/03-inference.md](docs/03-inference.md) |
+| 3 ✅ | inference, closures, nested `fn`s | unification / bidirectional typing | [docs/03-inference.md](docs/03-inference.md) |
 | 4 ✅ | generics | rank-1 (prenex) parametric polymorphism, monomorphization | [docs/04-generics.md](docs/04-generics.md) |
 | 5 | ownership, borrowing, pointers | affine types, regions/lifetimes; types that hold themselves through a pointer | |
 | 6 | traits | ad-hoc polymorphism, typeclasses, coherence; closures as `Fn` traits | |

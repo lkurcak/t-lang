@@ -91,8 +91,11 @@ fn mono() {
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
 
-/// A program without generics prints as itself: parsing what `t mono`
-/// prints gives a program that prints the same, and does the same.
+/// A program without generics or nested functions prints as itself:
+/// parsing what `t mono` prints gives a program that prints the same, and
+/// does the same. (The names of the copies of generic things, like
+/// `id::<int>`, and of lifted nested functions, like `main::helper`, don't
+/// parse.)
 #[test]
 fn printing_round_trips() {
     let mut failures = Vec::new();
@@ -103,7 +106,7 @@ fn printing_round_trips() {
             continue;
         };
         let printed = program.to_string();
-        if printed.contains("::<") {
+        if printed.contains("::<") || program.fns.iter().any(|f| f.name.name.contains("::")) {
             continue;
         }
         let reprinted = match t_lang::check_source(&printed).result {

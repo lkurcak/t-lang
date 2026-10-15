@@ -165,10 +165,10 @@ OCaml, and the core of Haskell.
 |---|---|---|---|
 | System F | anywhere | written | none in general (undecidable) |
 | Hindley–Milner | outermost, on `let`-bound names | inferred, by generalising at `let` | complete, no annotations |
-| T (and Rust) | outermost, on top-level `fn`s, structs and enums | written: `<T>` | inside bodies only |
+| T (and Rust) | outermost, on `fn`s, structs and enums | written: `<T>` | inside bodies only |
 
-So only top-level functions, structs and enums can be generic, and only by
-saying so with `<T>`. A closure, and any `let`, has one type
+So only functions (top-level or nested), structs and enums can be generic,
+and only by saying so with `<T>`. A closure, and any `let`, has one type
 (`err_infer_monomorphic.t`, `err_generic_let_mono.t`):
 
 ```rust,error
@@ -230,9 +230,10 @@ programs, and the golden tests check it.
 
 This only works because of rank 1. Monomorphisation needs to know, at
 compile time, every type each generic is used at. With rank 1 that's always
-so: every `∀` is at the outside of a top-level item, and every use of one is
-a direct mention of that item's name, so each use has its type arguments
-right there, and they're built from types known at the use. Follow those
+so: every `∀` is at the outside of an item (a `fn`, struct or enum), and
+every use of one is a direct mention of that item's name, so each use has
+its type arguments right there, and they're built from types known at the
+use. Follow those
 from `main` and you have them all.
 
 With rank 2, `apply_both(f)` uses `f` at `int` and `bool`, but `f` is a
@@ -335,7 +336,8 @@ reads the same table.
 
 ## Design decisions worth noticing
 
-- **Explicit type parameters, rank 1.** `<T>` on top-level items only. See
+- **Explicit type parameters, rank 1.** `<T>` on items only (`fn`s, nested
+  or not, structs and enums). See
   *System F, Hindley–Milner, and what T does*.
 - **Type arguments are inferred, written with a turbofish, or some of
   each**: `_` in `::<..>` means "infer this part", as in

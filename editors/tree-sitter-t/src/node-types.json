@@ -249,6 +249,10 @@
           "named": true
         },
         {
+          "type": "function_item",
+          "named": true
+        },
+        {
           "type": "let_declaration",
           "named": true
         }

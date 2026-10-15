@@ -1,8 +1,9 @@
 //! The type checker. This is the simply typed lambda calculus (STLC) with base
 //! types `int`, `bool`, `()` and function types, plus `let`, `if` and
-//! top-level recursive functions (step 1), plus structs, enums and `match`
-//! (step 2, see docs/02-adts.md), plus closures and type inference (step 3, see
-//! docs/03-inference.md), plus generics (step 4, see docs/04-generics.md).
+//! recursive functions (step 1), plus structs, enums and `match`
+//! (step 2, see docs/02-adts.md), plus closures, nested functions and type
+//! inference (step 3, see docs/03-inference.md), plus generics (step 4, see
+//! docs/04-generics.md).
 //!
 //! Each case below is an implementation of a *typing rule*, written above it in
 //! the usual inference-rule notation:
@@ -15,7 +16,7 @@
 //!
 //! read as "if the premises hold, the conclusion holds". The judgment
 //! `Γ ⊢ e : T` reads "in context Γ, expression e has type T", where the
-//! context Γ maps variable names to their types (here: `locals` + `globals`).
+//! context Γ maps variable names to their types (here: `locals` + `scopes`).
 //!
 //! Every function here is *syntax-directed*: for each form of expression
 //! exactly one rule applies, so the rules can be read directly as a recursive
@@ -29,10 +30,12 @@ mod escape;
 mod generics;
 mod info;
 mod lints;
+mod scope;
 mod unify;
 
 pub(crate) use generics::resolve;
 pub use info::{Info, Instance, Note, NoteKind};
+pub use scope::source_name;
 
 use crate::ast::*;
 use crate::error::{Edit, Error, Fix, Span, Warning};
@@ -44,6 +47,7 @@ use escape::{Escape, Exit, Origin, bound_origin};
 use generics::Use;
 use info::Defs;
 use lints::{Uses, mergeable, narrowable, unreachable_alt, unreachable_arm, unused, unused_doc};
+use scope::{Binding, FnDef, FnId, FnScope, outer_param, to_closure};
 use std::collections::{HashMap, HashSet};
 use unify::Var;
 
@@ -306,15 +310,30 @@ struct Checker {
     adts: Adts,
     /// How many type arguments each struct and enum takes.
     arities: HashMap<String, usize>,
-    /// The global part of the context Γ: every top-level function and
-    /// built-in.
-    globals: HashMap<String, Scheme>,
+    /// Every function, top-level and nested, by `FnId`.
+    fns: Vec<FnDef>,
+    /// Each nested function's id, by where its name is declared.
+    nested_ids: HashMap<Span, FnId>,
+    /// The functions in scope, as a stack: the top-level ones, then those
+    /// of each block around what's being checked that declares any. With
+    /// the built-ins, the global part of the context Γ (see `scope.rs`).
+    scopes: Vec<FnScope>,
+    /// The function being checked.
+    current: Option<FnId>,
     /// The type parameters of the function being checked.
     type_params: Vec<String>,
+    /// Those of the functions it's nested in, which it can't use.
+    enclosing_params: Vec<String>,
     /// The local part of the context Γ, as a stack. Entering a scope pushes,
     /// leaving truncates (see `end_scope`). Searching from the top makes inner
     /// `let`s shadow outer ones.
     locals: Vec<Local>,
+    /// Where the function being checked has its locals from. Those below
+    /// are of functions it's nested in, which it can't capture.
+    barrier: usize,
+    /// How to fix a capture by the nested function being checked, if
+    /// there's a way, and the index of the first local it works for.
+    closure_fix: Option<(usize, Fix)>,
     /// Every type variable, indexed by `Type::Var`'s number.
     vars: Vec<Var>,
     /// `==` and `!=` on values whose type wasn't fully known yet, as the
@@ -324,7 +343,7 @@ struct Checker {
     /// Values that may be closures leaving the frame that made them, checked
     /// once the function's types are known.
     escapes: Vec<Escape>,
-    /// What each function checked so far refers to, in program order.
+    /// What each function checked so far refers to, by `FnId`.
     uses: Vec<Uses>,
     warnings: Vec<Warning>,
     /// Where things are declared, for `info`.
@@ -344,9 +363,15 @@ impl Checker {
         Checker {
             adts: Adts::new(),
             arities: HashMap::new(),
-            globals: HashMap::new(),
+            fns: Vec::new(),
+            nested_ids: HashMap::new(),
+            scopes: Vec::new(),
+            current: None,
             type_params: Vec::new(),
+            enclosing_params: Vec::new(),
             locals: Vec::new(),
+            barrier: 0,
+            closure_fix: None,
             vars: Vec::new(),
             comparisons: Vec::new(),
             escapes: Vec::new(),
@@ -361,9 +386,9 @@ impl Checker {
 
     fn program(&mut self, prog: &Program) -> Result<(), Error> {
         self.adts = collect_adts(prog, &mut self.arities)?;
-        self.signatures(prog)?;
+        self.signatures(&prog.all_fns())?;
         self.bodies(prog)?;
-        self.no_polymorphic_recursion(prog)?;
+        self.no_polymorphic_recursion()?;
         check_main(prog)?;
         // What's dead depends on the whole program, so only once it all checks.
         self.dead_code(prog);
@@ -372,25 +397,23 @@ impl Checker {
 
     /// Pass 1: collects every function's signature first, so bodies can
     /// refer to functions defined later in the file (and to themselves:
-    /// recursion).
-    fn signatures(&mut self, prog: &Program) -> Result<(), Error> {
-        for &b in BUILTINS {
-            let ty = builtin_type(b);
-            let scheme = Scheme {
-                params: Vec::new(),
-                ty,
-            };
-            self.globals.insert(b.to_string(), scheme);
-        }
-        for f in &prog.fns {
-            if f.name.name == "main" && !f.type_params.is_empty() {
+    /// recursion). Nested ones too, which can be used anywhere in their
+    /// block, and by each other. `fns` are all of them, with the index of the
+    /// one each is nested in, if it is (see `Program::all_fns`).
+    fn signatures(&mut self, fns: &[(&FnDecl, Option<usize>)]) -> Result<(), Error> {
+        let mut top: Vec<FnId> = Vec::new();
+        let mut symbols = HashSet::new();
+        for (i, &(f, parent)) in fns.iter().enumerate() {
+            let parent = parent.map(FnId);
+            if parent.is_none() && f.name.name == "main" && !f.type_params.is_empty() {
                 return Err(Error::ty(
                     f.type_params[0].span,
                     "`main` must not have type parameters: nothing could say what they are",
                 ));
             }
             let params = generics::declare(&f.type_params)?;
-            let resolve = |t| resolve(t, &self.arities, &params);
+            let outer = self.params_around(parent);
+            let resolve = |t| self.resolve_in(t, &f.name.name, &params, &outer);
             let param_tys = f
                 .params
                 .iter()
@@ -398,25 +421,57 @@ impl Checker {
                 .collect::<Result<Vec<_>, _>>()?;
             let ret = resolve(&f.ret)?;
             let ty = Type::func(param_tys, ret);
-            if self
-                .globals
-                .insert(f.name.name.clone(), Scheme { params, ty })
-                .is_some()
-            {
-                return Err(Error::ty(
-                    f.name.span,
-                    format!("`{}` is already defined", f.name.name),
-                ));
-            }
+            let name = &f.name.name;
+            let symbol = match parent {
+                None => {
+                    if BUILTINS.contains(&name.as_str())
+                        || top.iter().any(|id| self.fns[id.0].name.name == *name)
+                    {
+                        return Err(Error::ty(
+                            f.name.span,
+                            format!("`{name}` is already defined"),
+                        ));
+                    }
+                    top.push(FnId(i));
+                    name.clone()
+                }
+                Some(p) => {
+                    self.nested_ids.insert(f.name.span, FnId(i));
+                    scope::symbol(&self.fns[p.0].symbol, name, &symbols)
+                }
+            };
+            symbols.insert(symbol.clone());
+            self.info.symbols.insert(f.name.span, symbol.clone());
+            self.fns.push(FnDef {
+                name: f.name.clone(),
+                symbol,
+                scheme: Scheme { params, ty },
+                parent,
+                body: f.body.span,
+            });
         }
+        self.scopes.push(FnScope { at: 0, fns: top });
+        self.uses = (0..fns.len()).map(|_| Uses::default()).collect();
         Ok(())
+    }
+
+    /// The type parameters of the function with id `f` and those it's
+    /// nested in, if any.
+    fn params_around(&self, f: Option<FnId>) -> Vec<String> {
+        let mut params = Vec::new();
+        let mut f = f;
+        while let Some(id) = f {
+            params.extend(self.fns[id.0].scheme.params.iter().cloned());
+            f = self.fns[id.0].parent;
+        }
+        params
     }
 
     /// Pass 2: checks each function's body against its declared return type.
     fn bodies(&mut self, prog: &Program) -> Result<(), Error> {
-        for f in &prog.fns {
+        for (i, f) in prog.fns.iter().enumerate() {
             let notes = self.info.notes.len();
-            let result = self.body(f);
+            let result = self.body(f, FnId(i));
             self.finish_notes(notes);
             if result.is_err() {
                 self.failed_in = Some(f.name.name.clone());
@@ -426,9 +481,10 @@ impl Checker {
         Ok(())
     }
 
-    fn body(&mut self, f: &FnDecl) -> Result<(), Error> {
-        self.uses.push(Uses::default());
-        let scheme = self.globals[&f.name.name].clone();
+    /// Checks the body of `f`, which has id `id`, top-level or nested.
+    fn body(&mut self, f: &FnDecl, id: FnId) -> Result<(), Error> {
+        self.current = Some(id);
+        let scheme = self.fns[id.0].scheme.clone();
         let Type::Fn(sig) = &scheme.ty else {
             unreachable!("a function has a function type")
         };
@@ -442,6 +498,7 @@ impl Checker {
         // Inside the body its type parameters are in scope, and opaque:
         // `Type::Param` is equal only to itself.
         self.type_params = scheme.params.clone();
+        let scope = self.locals.len();
         for (i, p) in f.params.iter().enumerate() {
             if f.params[..i].iter().any(|q| q.name.name == p.name.name) {
                 return Err(Error::ty(
@@ -460,29 +517,59 @@ impl Checker {
         let vars = self.vars.len();
         self.check(&f.body, &ret)?;
         self.leaves(&f.body, &ret, Exit::Return);
-        self.end_scope(0);
+        self.end_scope(scope);
         self.solve_all(vars)
     }
 
     /// A type written inside the function being checked.
     fn resolve(&self, t: &TypeExpr) -> Result<Type, Error> {
-        resolve(t, &self.arities, &self.type_params)
+        self.resolve_in(
+            t,
+            self.current_name(),
+            &self.type_params,
+            &self.enclosing_params,
+        )
+    }
+
+    /// The name of the function being checked.
+    fn current_name(&self) -> &str {
+        let f = self.current.expect("checking outside a function");
+        &self.fns[f.0].name.name
+    }
+
+    /// A type written in function `f`, where type parameters `params` are
+    /// in scope, and `f` is nested in functions with type parameters
+    /// `outer`.
+    fn resolve_in(
+        &self,
+        t: &TypeExpr,
+        f: &str,
+        params: &[String],
+        outer: &[String],
+    ) -> Result<Type, Error> {
+        match outer_param(t, f, params, outer, &self.arities) {
+            Some(e) => Err(e),
+            None => resolve(t, &self.arities, params),
+        }
     }
 
     /// Rejects polymorphic recursion between functions: see
     /// `generics::polymorphic_recursion`.
-    fn no_polymorphic_recursion(&self, prog: &Program) -> Result<(), Error> {
+    fn no_polymorphic_recursion(&self) -> Result<(), Error> {
         // Which function each use is in, from where they are.
         let mut uses = Vec::new();
         for (span, instance) in &self.info.instances {
+            // The innermost function it's in.
+            let from = self
+                .fns
+                .iter()
+                .filter(|f| f.body.start <= span.start && span.end <= f.body.end)
+                .min_by_key(|f| f.body.end - f.body.start);
             if let Instance::Fn(to, args) = instance
-                && let Some(from) = prog
-                    .fns
-                    .iter()
-                    .find(|f| f.body.span.start <= span.start && span.end <= f.body.span.end)
+                && let Some(from) = from
             {
                 uses.push(Use {
-                    from: &from.name.name,
+                    from: &from.symbol,
                     to,
                     args,
                     span: *span,
@@ -492,9 +579,9 @@ impl Checker {
         // In source order, so the first one is reported.
         uses.sort_by_key(|u| u.span.start);
         let params: HashMap<&str, &[String]> = self
-            .globals
+            .fns
             .iter()
-            .map(|(name, s)| (name.as_str(), s.params.as_slice()))
+            .map(|f| (f.symbol.as_str(), f.scheme.params.as_slice()))
             .collect();
         generics::polymorphic_recursion(&uses, &params)
     }
@@ -510,43 +597,54 @@ impl Checker {
         targs: &[TypeExpr],
         span: Span,
     ) -> Result<Option<Type>, Error> {
-        if let Some(local) = self.locals.iter_mut().rev().find(|l| l.name == name) {
-            if !targs.is_empty() {
-                return Err(Error::ty(
+        let (scheme, def, symbol) = match self.binding(name) {
+            None => return Ok(None),
+            Some(Binding::Local(i)) => {
+                if i < self.barrier {
+                    return Err(self.capture(i, span));
+                }
+                if !targs.is_empty() {
+                    return Err(Error::ty(
+                        span,
+                        format!(
+                            "`{name}` is a variable, and only functions, structs and enums take \
+                             type arguments"
+                        ),
+                    ));
+                }
+                let local = &mut self.locals[i];
+                local.used = true;
+                let (ty, def) = (local.ty.clone(), local.sites[0].span);
+                self.note(
                     span,
-                    format!(
-                        "`{name}` is a variable, and only top-level functions, structs and \
-                         enums take type arguments"
-                    ),
-                ));
+                    NoteKind::Var(name.to_string()),
+                    Some(ty.clone()),
+                    Some(def),
+                );
+                return Ok(Some(ty));
             }
-            local.used = true;
-            let (ty, def) = (local.ty.clone(), local.sites[0].span);
-            self.note(
-                span,
-                NoteKind::Var(name.to_string()),
-                Some(ty.clone()),
-                Some(def),
-            );
-            return Ok(Some(ty));
-        }
-        let Some(scheme) = self.globals.get(name).cloned() else {
-            return Ok(None);
+            Some(Binding::Fn(id)) => {
+                self.uses().fns.insert(id);
+                let f = &self.fns[id.0];
+                (f.scheme.clone(), Some(f.name.span), Some(f.symbol.clone()))
+            }
+            Some(Binding::Builtin(b)) => {
+                let ty = builtin_type(b);
+                let scheme = Scheme {
+                    params: Vec::new(),
+                    ty,
+                };
+                (scheme, None, None)
+            }
         };
-        self.uses().fns.insert(name.to_string());
         let args = self.type_args(name, &scheme.params, targs, span, "(..)")?;
         let ty = Subst::new(&scheme.params, &args).apply(&scheme.ty);
-        let def = self.defs.fns.get(name).copied();
-        let instance = Instance::Fn(name.to_string(), args);
+        let instance = symbol.map(|symbol| {
+            self.info.symbols.insert(span, symbol.clone());
+            Instance::Fn(symbol, args)
+        });
         let kind = NoteKind::Fn(name.to_string());
-        self.note_use(
-            span,
-            kind,
-            ty.clone(),
-            def,
-            Some(instance),
-            targs.is_empty(),
-        );
+        self.note_use(span, kind, ty.clone(), def, instance, targs.is_empty());
         Ok(Some(ty))
     }
 
@@ -600,7 +698,7 @@ impl Checker {
         let t = generics::name_holes(t, &mut holes);
         let mut params = self.type_params.clone();
         params.extend(holes.iter().map(|(name, _)| name.clone()));
-        let ty = resolve(&t, &self.arities, &params)?;
+        let ty = self.resolve_in(&t, self.current_name(), &params, &self.enclosing_params)?;
         let (names, vars): (Vec<String>, Vec<Type>) = holes
             .into_iter()
             .map(|(name, span)| {
@@ -614,7 +712,8 @@ impl Checker {
 
     /// What the function being checked refers to.
     fn uses(&mut self) -> &mut Uses {
-        self.uses.last_mut().expect("checking outside a function")
+        let f = self.current.expect("checking outside a function");
+        &mut self.uses[f.0]
     }
 
     /// Notes that the function being checked mentions type `t`.
@@ -1019,6 +1118,10 @@ impl Checker {
     // other branch to take if it doesn't.
     //
     // `want` is the expected type of the result, when checking (see `check`).
+    //
+    // A nested `fn` extends the context of the whole block, before it as
+    // well as after, so that it can be recursive, and nested functions can
+    // call each other. Its body is checked as if it were at the top level.
     fn block(
         &mut self,
         stmts: &[Stmt],
@@ -1026,8 +1129,25 @@ impl Checker {
         want: Option<&Type>,
     ) -> Result<Type, Error> {
         let scope = self.locals.len();
-        for stmt in stmts {
+        let fns: Vec<&FnDecl> = stmts.iter().filter_map(Stmt::as_fn).collect();
+        for (i, f) in fns.iter().enumerate() {
+            if fns[..i].iter().any(|g| g.name.name == f.name.name) {
+                return Err(Error::ty(
+                    f.name.span,
+                    format!("`{}` is already defined", f.name.name),
+                ));
+            }
+        }
+        if !fns.is_empty() {
+            let fns = fns.iter().map(|f| self.nested_ids[&f.name.span]).collect();
+            self.scopes.push(FnScope { at: scope, fns });
+        }
+        for (k, stmt) in stmts.iter().enumerate() {
             match stmt {
+                Stmt::Fn(f) => {
+                    let fix = to_closure(f, stmts, k, tail);
+                    self.nested(f, fix)?;
+                }
                 Stmt::Let { pat, ty, init } => {
                     let t = match ty {
                         Some(ann) => {
@@ -1113,6 +1233,9 @@ impl Checker {
             (None, _) => Type::Unit,
         };
         self.end_scope(scope);
+        if !fns.is_empty() {
+            self.scopes.pop();
+        }
         Ok(t)
     }
 

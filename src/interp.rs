@@ -25,8 +25,9 @@ pub enum Value {
     Int(i64),
     Bool(bool),
     Unit,
-    /// A top-level function, by name. It can only see its own parameters and
-    /// other top-level functions.
+    /// A function, by name. It can only see its own parameters and other
+    /// functions. Nested ones have been lifted to the top level by now,
+    /// under their symbols (see `lift.rs`).
     Fn(String),
     Builtin(&'static str),
     /// A closure: an anonymous function, plus the local variables it can see.
@@ -68,7 +69,7 @@ impl fmt::Display for Value {
             Value::Int(n) => write!(f, "{n}"),
             Value::Bool(b) => write!(f, "{b}"),
             Value::Unit => f.write_str("()"),
-            Value::Fn(name) => write!(f, "<fn {name}>"),
+            Value::Fn(name) => write!(f, "<fn {}>", crate::check::source_name(name)),
             Value::Builtin(name) => write!(f, "<fn {name}>"),
             Value::Closure(_) => f.write_str("<closure>"),
             Value::Struct(name, fields) if fields.is_empty() => write!(f, "{name} {{}}"),
@@ -285,6 +286,7 @@ impl Interp<'_, '_> {
                         Stmt::Expr(e) | Stmt::BlockLike(e) => {
                             self.eval(e)?;
                         }
+                        Stmt::Fn(_) => unreachable!("nested functions are lifted first"),
                     }
                 }
                 let v = match tail {
@@ -309,7 +311,7 @@ impl Interp<'_, '_> {
             }
             ExprKind::Match(scrutinee, arms) => self.match_expr(scrutinee, arms)?,
             // Only the locals the body uses: its free variables that aren't
-            // top-level functions.
+            // functions.
             ExprKind::Lambda(code) => Value::Closure(Closure {
                 env: code
                     .captures

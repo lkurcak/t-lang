@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Nested functions: a `fn` can be declared as a statement in any block. It
+  means exactly what it would at the top level; only its name is scoped, to
+  the whole block, so it can be used before it's declared, be recursive, and
+  call the other functions of its block. It can be generic and have a doc
+  comment, and it shadows any outer function of the same name. It can't
+  capture: using a local of a function it's in is an error, "can't capture
+  `x` in a nested `fn`; use a closure", whose fix makes it a closure when
+  that works. See docs/03-inference.md.
+- The checker resolves each use of a function to its definition, through
+  the scopes it's in, rather than by name. Once checked, nested functions
+  are moved to the top level under names of their own (`main::helper`),
+  which `t mono` shows, so monomorphisation and the interpreter never see
+  one. Messages, `t lsp`'s hover and go to definition show and find the
+  function as written, even when several share a name.
+- "Never used" warnings for nested functions that nothing in their block
+  uses.
+- `t fmt` formats nested functions like top-level ones, with their doc
+  comments, and keeps blank lines around them as around any statement. The
+  tree-sitter grammar parses them.
+- A clearer syntax error for a `struct` or `enum` in a block: only `fn` can
+  be nested, for now.
+
 ## 0.4.2 (2026-10-15)
 
 ### Added

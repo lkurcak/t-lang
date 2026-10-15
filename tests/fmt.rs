@@ -201,6 +201,53 @@ fn add(p: P) -> int {
     );
 }
 
+/// A nested `fn` is printed like a top-level one, with its doc comment
+/// and the comments in and around it, and blank lines around it are kept
+/// or dropped as around any statement.
+#[test]
+fn prints_nested_functions_like_statements() {
+    let src = "\
+fn main() {
+
+
+    /// Doubles.
+    ///   Indented.
+    // plain, between the doc and the `fn`
+    fn double(x: int) -> int { x * 2 } // after it
+    fn half<T>(x: int, f: fn(int) -> T) -> T {
+        // inside
+        f(x / 2)
+    }
+
+
+
+    let x = half(double(3), |n| n); fn id(x: int) -> int { x }
+    print(id(x))
+
+
+}
+";
+    assert_eq!(
+        fmt(src),
+        "\
+fn main() {
+    /// Doubles.
+    ///   Indented.
+    // plain, between the doc and the `fn`
+    fn double(x: int) -> int { x * 2 } // after it
+    fn half<T>(x: int, f: fn(int) -> T) -> T {
+        // inside
+        f(x / 2)
+    }
+
+    let x = half(double(3), |n| n);
+    fn id(x: int) -> int { x }
+    print(id(x))
+}
+"
+    );
+}
+
 /// A `///` that documents nothing is kept like a comment, but a comment
 /// that can't stay where it is moves to the next place one can go, and
 /// before a field a `///` would document it. Inside a struct or enum, they
@@ -251,6 +298,9 @@ fn doc_comments_are_part_of_the_program() {
     let documented = parse("/// A.\nfn a() {}\nfn b() {}\n");
     let moved = parse("fn a() {}\n/// A.\nfn b() {}\n");
     assert_ne!(t_lang::fmt::shape(&documented), t_lang::fmt::shape(&moved));
+    let nested = parse("fn a() {\n    /// B.\n    fn b() {}\n    fn c() {}\n}\n");
+    let moved = parse("fn a() {\n    fn b() {}\n    /// B.\n    fn c() {}\n}\n");
+    assert_ne!(t_lang::fmt::shape(&nested), t_lang::fmt::shape(&moved));
     let stray = parse("fn a() {\n    /// A.\n}\n");
     assert_ne!(
         t_lang::fmt::shape(&stray),

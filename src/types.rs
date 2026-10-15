@@ -210,7 +210,7 @@ impl fmt::Display for Type {
     }
 }
 
-/// The type of a top-level function, which may be generic: `∀T. fn(T) -> T`
+/// The type of a function, which may be generic: `∀T. fn(T) -> T`
 /// is `Scheme { params: ["T"], ty: fn(T) -> T }`. Each use of the function
 /// *instantiates* it, picking a type for each parameter.
 ///

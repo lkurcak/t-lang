@@ -12,7 +12,7 @@
 //! variant  = IDENT ("(" type ("," type)* ","? ")")?
 //! type     = IDENT ("<" type ("," type)* ","? ">")? | "(" ")"
 //!          | "fn" "(" (type ("," type)*)? ")" ("->" type)?
-//! block    = "{" (let | expr ";" | block_like ";"?)* expr? "}"
+//! block    = "{" (let | fn_decl | expr ";" | block_like ";"?)* expr? "}"
 //! block_like = if | match | block
 //! let      = "let" pattern (":" type)? "=" expr ";"
 //! expr     = or
@@ -46,6 +46,9 @@
 //! subtraction. Without a `;` such a statement must have type `()` (checked in
 //! `check.rs`), which turns that mistake into a type error. Parenthesize to
 //! use one in a larger expression: `(if c { a } else { b }) - x`.
+//!
+//! A `fn` in a block is a nested function (see `ast::FnDecl`). Only `fn`
+//! can be declared there, for now: not `struct` or `enum`.
 //!
 //! A `///` doc comment documents the `fn`, `struct`, `enum`, field or
 //! variant after it. The parser takes doc comments out of the tokens first,
@@ -227,10 +230,10 @@ impl Parser {
             return Err(self.unexpected("`fn`, `struct` or `enum`"));
         }
         let doc = self.doc();
-        self.bump();
+        let start = self.bump().span;
         let name = self.ident()?;
         let type_params = self.generics()?;
-        self.expect(Tok::LParen)?;
+        let open = self.expect(Tok::LParen)?;
         let (params, close) = self.comma_list(Tok::RParen, Self::param)?;
         let ret = if self.eat(&Tok::Arrow) {
             self.ty()?
@@ -243,9 +246,11 @@ impl Parser {
         let body = self.block()?;
         Ok(FnDecl {
             doc,
+            span: start.to(body.span),
             name,
             type_params,
             params,
+            parens: open.to(close),
             ret,
             body,
         })
@@ -372,9 +377,29 @@ impl Parser {
             if *self.peek() == Tok::RBrace {
                 break None;
             }
-            if *self.peek() == Tok::Let {
-                stmts.push(self.let_stmt()?);
-                continue;
+            match self.peek() {
+                Tok::Let => {
+                    stmts.push(self.let_stmt()?);
+                    continue;
+                }
+                Tok::Fn => {
+                    stmts.push(Stmt::Fn(Box::new(self.fn_decl()?)));
+                    continue;
+                }
+                Tok::Struct | Tok::Enum => {
+                    let what = match self.peek() {
+                        Tok::Struct => "a `struct`",
+                        _ => "an `enum`",
+                    };
+                    return Err(Error::syntax(
+                        self.span(),
+                        format!(
+                            "{what} can't be declared in a block, only at the top level; \
+                             for now only `fn` can be nested"
+                        ),
+                    ));
+                }
+                _ => {}
             }
             let block_like = matches!(self.peek(), Tok::If | Tok::Match | Tok::LBrace);
             let e = match self.peek() {

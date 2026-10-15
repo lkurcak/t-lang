@@ -1,7 +1,8 @@
 # Step 3: type inference and closures
 
 Code: `src/check/unify.rs` (`Checker::unify`), `src/check.rs`
-(`Checker::lambda` and `Checker::check`) and `src/interp.rs` (`Closure`).
+(`Checker::lambda` and `Checker::check`), `src/interp.rs` (`Closure`), and
+for nested functions `src/check/scope.rs` and `src/lift.rs`.
 
 ```rust
 fn main() {
@@ -28,11 +29,75 @@ way to *introduce* one was a top-level `fn`. A closure is the lambda calculus's
 
 The body is checked in Γ extended with the parameters, so it can use any local
 in scope: `|x| x + n` reads the `n` around it. That's what makes it a
-*closure*: it closes over its environment. A top-level function only ever sees
-its parameters and other top-level functions.
+*closure*: it closes over its environment. A `fn` only ever sees its
+parameters and other functions.
 
-Closures and top-level functions have the same types, so either can go
-wherever a `fn(int) -> int` is wanted (`tests/t/closures.t`).
+Closures and functions have the same types, so either can go wherever a
+`fn(int) -> int` is wanted (`tests/t/closures.t`).
+
+### Nested functions
+
+A `fn` can also be declared in a block, as a statement. It means exactly what
+it would at the top level; only its name is scoped, to the block
+(`tests/t/nested_fns.t`):
+
+```rust
+fn main() {
+    print(fact(5)); // expect: 120
+
+    fn fact(n: int) -> int {
+        if n == 0 { 1 } else { n * fact(n - 1) }
+    }
+}
+```
+
+The name is in scope in the *whole* block, before the `fn` as well as after,
+so a nested `fn` can call itself, and nested `fn`s in the same block can call
+each other, in any order. It can be generic and have a doc comment, like any
+`fn`. It shadows any outer function of the same name, and two functions can
+each have their own `fn helper`. Like Rust, which has the same rule for
+items in blocks, the block's functions shadow the locals bound before the
+block, and are shadowed by those bound in it.
+
+What it can't do is capture. It doesn't see the locals around it, or the
+type parameters of the function it's in, only other functions and types:
+
+```rust,error
+fn main() {
+    let n = 5;
+    fn add_n(x: int) -> int {
+        x + n // error: can't capture `n` in a nested `fn`; use a closure
+    }
+    print(add_n(1));
+}
+```
+
+That's what makes it more than a closure with a name. A nested `fn` can be
+moved to the top level, or into another function, as it is, and it means the
+same. It's a plain function, so it can be returned and stored, as a capturing
+closure can't (see *Closures and memory*). And the checker can check it as a
+function of its own, with its own type variables, so nothing it does can
+change what's inferred around it.
+
+So which to use?
+
+- **A nested `fn`** for a helper that needs no locals: it has a name and a
+  signature that says what it takes, it can be recursive or generic, and it
+  goes anywhere a function can. Moving it out of the function later is a
+  cut and paste.
+- **A closure** when it needs the locals around it, or when it's short and
+  passed straight to something: `apply(|x| x + 1, 2)`, with its types
+  inferred from where it goes.
+
+Since two functions can now have the same name, the checker resolves every
+use of a name to its *definition*, through the scopes it's in
+(`src/check/scope.rs`), not by looking the name up in one global table. Each
+function gets a *symbol* that's unique in the program, like `main::fact`.
+Once the program checks, every nested `fn` is moved to the top level under
+its symbol (`src/lift.rs`), which is easy since it captures nothing. After
+that, nothing needs to know there were nested functions: not
+monomorphisation, not the interpreter, and not a backend. `t mono` shows
+the symbols; messages and editors show the names as written.
 
 ## Where do T1..Tn come from?
 
@@ -295,7 +360,7 @@ an `Rc`. The rule is in the checker, so that a compiled T never needs to.
 |---|---|---|
 | `let id = \|x\| x;` usable at two types | let-polymorphism is parametric polymorphism | 4 |
 | returning a closure that captures | its environment is on the stack: lifetimes, or a type per closure | 5, 6 |
-| a closure calling itself | its name isn't in scope in its own body; use a top-level `fn` | — |
+| a closure calling itself | its name isn't in scope in its own body; use a nested `fn` | — |
 | changing a captured variable | mutation, and who owns the environment | 5 |
 | patterns as parameters, `\|P { x, y }\| ..` | easy, just not needed yet | — |
 | inferring top-level signatures | on purpose, see *Where inference stops* | — |
@@ -313,8 +378,8 @@ an `Rc`. The rule is in the checker, so that a compiled T never needs to.
    of the variable fresh copies of them. Then `id(1)` and `id(true)` both
    check. This is *Algorithm W* (Damas and Milner, 1982), and step 4 in
    miniature.
-5. `Lambda::captures` lists top-level functions a closure calls too, and
-   the interpreter skips them. Why can't it tell them apart from locals
+5. `Lambda::captures` lists functions a closure calls too, and the
+   interpreter skips them. Why can't it tell them apart from locals
    when it computes them? Could the checker?
 6. `fn id(f: fn(int) -> int) -> fn(int) -> int { f }` is rejected, though
    it's harmless on its own. Write a program that would go wrong if it

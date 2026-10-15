@@ -2,6 +2,7 @@
 //! the rules that keep generic code monomorphisable (see
 //! docs/04-generics.md).
 
+use super::scope::source_name;
 use crate::ast::*;
 use crate::error::{Error, Span};
 use crate::types::Type;
@@ -134,6 +135,7 @@ fn mentions(t: &Type, p: &str) -> bool {
 /// One generic thing using another: function `from` calls or names
 /// function `to`, or struct or enum `from` has a field that mentions `to`,
 /// with type arguments `args`, which may mention `from`'s own parameters.
+/// Functions are named by their symbols.
 pub(super) struct Use<'a> {
     pub(super) from: &'a str,
     pub(super) to: &'a str,
@@ -193,18 +195,17 @@ pub(super) fn polymorphic_recursion(
         if grows && reaches(b, a) {
             let arg = &u.args[b.1];
             let to_p = &params[u.to][b.1];
+            let (from, to) = (source_name(u.from), source_name(u.to));
             let message = if u.from == u.to {
                 format!(
-                    "polymorphic recursion: `{}` uses itself with `{to_p}` = `{arg}`, a bigger \
-                     type each time round, so monomorphising it would never end",
-                    u.from
+                    "polymorphic recursion: `{from}` uses itself with `{to_p}` = `{arg}`, a bigger \
+                     type each time round, so monomorphising it would never end"
                 )
             } else {
                 format!(
-                    "polymorphic recursion: this use of `{}` with `{to_p}` = `{arg}` leads \
-                     back to `{}`, with a bigger type each time round, so monomorphising \
-                     them would never end",
-                    u.to, u.from
+                    "polymorphic recursion: this use of `{to}` with `{to_p}` = `{arg}` leads \
+                     back to `{from}`, with a bigger type each time round, so monomorphising \
+                     them would never end"
                 )
             };
             return Err(Error::ty(u.span, message));

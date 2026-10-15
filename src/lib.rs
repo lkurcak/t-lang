@@ -1,5 +1,5 @@
-//! The T compiler. Pipeline: source → `lexer` → `parser` → `check` → `mono`
-//! → `interp`.
+//! The T compiler. Pipeline: source → `lexer` → `parser` → `check` → `lift`
+//! → `mono` → `interp`.
 
 pub mod ast;
 pub mod check;
@@ -9,6 +9,7 @@ pub mod exhaust;
 pub mod fmt;
 pub mod interp;
 pub mod lexer;
+pub mod lift;
 pub mod lsp;
 pub mod mono;
 pub mod parser;
@@ -24,12 +25,12 @@ pub struct Checked {
     pub warnings: Vec<Warning>,
     /// What the checker learned about the program, as far as it got.
     pub info: check::Info,
-    /// The checked program, monomorphised (so with no generics left), or
-    /// the first error.
+    /// The checked program, lifted (so with no nested functions left) and
+    /// monomorphised (so with no generics left), or the first error.
     pub result: Result<ast::Program, Error>,
 }
 
-/// Lexes, parses, type-checks and monomorphises a program.
+/// Lexes, parses, type-checks, lifts and monomorphises a program.
 pub fn check_source(src: &str) -> Checked {
     let mut warnings = Vec::new();
     let program = match lexer::lex(src).and_then(parser::parse) {
@@ -43,7 +44,7 @@ pub fn check_source(src: &str) -> Checked {
         }
     };
     let (info, result) = check::check(&program, &mut warnings);
-    let result = result.and_then(|()| mono::monomorphise(&program, &info));
+    let result = result.and_then(|()| mono::monomorphise(&lift::lift(&program, &info), &info));
     Checked {
         warnings,
         info,

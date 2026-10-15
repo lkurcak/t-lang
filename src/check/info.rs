@@ -21,10 +21,14 @@ pub struct Info {
     /// by the span of its name. In a generic function these can mention its
     /// own type parameters.
     pub instances: HashMap<Span, Instance>,
+    /// The symbol of every function, by the span of its name where it's
+    /// declared and where it's used: a name for it that's unique in the
+    /// program, unlike the one it's written with (see `check/scope.rs`).
+    pub symbols: HashMap<Span, String>,
 }
 
 /// A use of something generic, with its type arguments: `id` in `id(1)` is
-/// `Fn("id", [int])`.
+/// `Fn("id", [int])`. A function is named by its symbol.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Instance {
     Fn(String, Vec<Type>),
@@ -99,10 +103,10 @@ impl Note {
     }
 }
 
-/// Where each function, type, field and variant is declared, by name.
+/// Where each type, field and variant is declared, by name. Functions can
+/// share a name, so the checker keeps track of them itself.
 #[derive(Debug, Default)]
 pub(super) struct Defs {
-    pub(super) fns: HashMap<String, Span>,
     pub(super) types: HashMap<String, Span>,
     /// By `(type, field)`.
     pub(super) fields: HashMap<(String, String), Span>,
@@ -122,7 +126,7 @@ impl Defs {
                 defs.docs.insert(name.span, d.markdown());
             }
         };
-        for f in &prog.fns {
+        for (f, _) in prog.all_fns() {
             doc(&f.name, f.doc.as_ref());
         }
         for d in &prog.types {
@@ -131,9 +135,6 @@ impl Defs {
                 TypeDecl::Struct(s) => s.fields.iter().for_each(|f| doc(&f.name, f.doc.as_ref())),
                 TypeDecl::Enum(e) => e.variants.iter().for_each(|v| doc(&v.name, v.doc.as_ref())),
             }
-        }
-        for f in &prog.fns {
-            defs.fns.entry(f.name.name.clone()).or_insert(f.name.span);
         }
         for d in &prog.types {
             let ty = d.name().name.clone();
@@ -302,7 +303,7 @@ impl Checker {
                 }
             }
         }
-        for f in &prog.fns {
+        for (f, _) in prog.all_fns() {
             let params = &f.type_params;
             self.param_notes(params);
             for p in &f.params {
@@ -358,7 +359,8 @@ fn names(params: &[Ident]) -> Vec<String> {
 }
 
 /// Calls `f` on every type written inside `e`: annotations on `let`s and
-/// closures, and type arguments, in expressions and in patterns.
+/// closures, and type arguments, in expressions and in patterns. Not in
+/// the functions nested in it.
 fn each_annotation(e: &Expr, f: &mut impl FnMut(&TypeExpr)) {
     match &e.kind {
         ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit => {}
@@ -388,6 +390,8 @@ fn each_annotation(e: &Expr, f: &mut impl FnMut(&TypeExpr)) {
                         each_annotation(init, f);
                     }
                     Stmt::Expr(e) | Stmt::BlockLike(e) => each_annotation(e, f),
+                    // A function of its own, with its own type parameters.
+                    Stmt::Fn(_) => {}
                 }
             }
             tail.iter().for_each(|t| each_annotation(t, f));
