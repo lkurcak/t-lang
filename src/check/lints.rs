@@ -2,7 +2,7 @@
 //! narrowed or merged, dead code, and doc comments that document nothing.
 //! None of these make a program wrong, so none of them stop it. The naming
 //! lints are in `naming.rs`, since their fixes rename, which checks the
-//! renamed source.
+//! renamed source. `#[allow(..)]` turns any of them off (`allow.rs`).
 
 use super::scope::FnId;
 use super::{Checker, Local, adt_names};

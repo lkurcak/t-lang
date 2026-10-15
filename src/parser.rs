@@ -3,16 +3,17 @@
 //! Grammar (lowest to highest precedence for operators):
 //!
 //! ```text
-//! program  = (fn_decl | struct | enum)*
+//! program  = (head (fn_decl | struct | enum))*
+//! head     = ("#" "[" "allow" "(" (IDENT ("," IDENT)* ","?)? ")" "]")*
 //! fn_decl  = "fn" IDENT generics? "(" (param ("," param)* ","?)? ")" ("->" type)? block
 //! generics = "<" (IDENT ("," IDENT)* ","?)? ">"
 //! param    = IDENT ":" type
-//! struct   = "struct" IDENT generics? "{" (param ("," param)* ","?)? "}"
-//! enum     = "enum" IDENT generics? "{" (variant ("," variant)* ","?)? "}"
+//! struct   = "struct" IDENT generics? "{" (head param ("," head param)* ","?)? "}"
+//! enum     = "enum" IDENT generics? "{" (head variant ("," head variant)* ","?)? "}"
 //! variant  = IDENT ("(" type ("," type)* ","? ")")?
 //! type     = IDENT ("<" type ("," type)* ","? ">")? | "(" ")"
 //!          | "fn" "(" (type ("," type)*)? ")" ("->" type)?
-//! block    = "{" (let | fn_decl | struct | enum | expr ";" | block_like ";"?)* expr? "}"
+//! block    = "{" (let | head (fn_decl | struct | enum) | expr ";" | block_like ";"?)* expr? "}"
 //! block_like = if | match | block
 //! let      = "let" pattern (":" type)? "=" expr ";"
 //! expr     = or
@@ -52,7 +53,8 @@
 //! A `///` doc comment documents the `fn`, `struct`, `enum`, field or
 //! variant after it. The parser takes doc comments out of the tokens first,
 //! and attaches each run of them to what starts right after it (`doc`). The
-//! ones nothing takes are `Program::stray_docs`.
+//! ones nothing takes are `Program::stray_docs`. The `#[allow(..)]`
+//! attributes before something can come before or after its doc comment.
 //!
 //! One ambiguity: in `if x { .. }` the `x {` could start a struct literal. Like
 //! Rust, struct literals aren't allowed directly in the head of an `if` or
@@ -77,11 +79,14 @@ pub fn parse(tokens: Vec<Token>) -> Result<Program, Error> {
     let mut types = Vec::new();
     let mut fns = Vec::new();
     loop {
+        if *p.peek() == Tok::Eof {
+            break;
+        }
+        let head = p.head()?;
         match p.peek() {
-            Tok::Eof => break,
-            Tok::Struct => types.push(TypeDecl::Struct(p.struct_decl()?)),
-            Tok::Enum => types.push(TypeDecl::Enum(p.enum_decl()?)),
-            _ => fns.push(p.fn_decl()?),
+            Tok::Struct => types.push(TypeDecl::Struct(p.struct_decl(head)?)),
+            Tok::Enum => types.push(TypeDecl::Enum(p.enum_decl(head)?)),
+            _ => fns.push(p.fn_decl(head)?),
         }
     }
     let stray_docs = p.stray_docs();
@@ -142,6 +147,43 @@ impl Parser {
         }
         self.attached[first..last].fill(true);
         Some(doc_comment(&self.docs[first..last]))
+    }
+
+    /// The doc comment and attributes of what starts at the next token, or
+    /// after the attributes there.
+    fn head(&mut self) -> Result<Head, Error> {
+        let mut doc = self.doc();
+        let mut allows = Vec::new();
+        while *self.peek() == Tok::Hash {
+            let start = self.bump().span;
+            self.expect(Tok::LBracket)?;
+            match self.peek() {
+                Tok::Ident(name) if name == "allow" => {
+                    self.bump();
+                }
+                Tok::Ident(name) => {
+                    let message = format!("unknown attribute `{name}`; the only one is `allow`");
+                    return Err(Error::syntax(self.span(), message));
+                }
+                _ => return Err(self.unexpected("`allow`")),
+            }
+            self.expect(Tok::LParen)?;
+            let (lints, _) = self.comma_list(Tok::RParen, Self::ident)?;
+            let end = self.expect(Tok::RBracket)?;
+            allows.push(Allow {
+                span: start.to(end),
+                lints,
+            });
+        }
+        if !allows.is_empty()
+            && let Some(after) = self.doc()
+        {
+            match &mut doc {
+                Some(d) => d.lines.extend(after.lines),
+                None => doc = Some(after),
+            }
+        }
+        Ok(Head { doc, allows })
     }
 
     /// The doc comments nothing took, each run of lines with no other token
@@ -224,11 +266,10 @@ impl Parser {
         Ok((items, end))
     }
 
-    fn fn_decl(&mut self) -> Result<FnDecl, Error> {
+    fn fn_decl(&mut self, head: Head) -> Result<FnDecl, Error> {
         if *self.peek() != Tok::Fn {
             return Err(self.unexpected("`fn`, `struct` or `enum`"));
         }
-        let doc = self.doc();
         let start = self.bump().span;
         let name = self.ident()?;
         let type_params = self.generics()?;
@@ -244,7 +285,8 @@ impl Parser {
         };
         let body = self.block()?;
         Ok(FnDecl {
-            doc,
+            doc: head.doc,
+            allows: head.allows,
             span: start.to(body.span),
             name,
             type_params,
@@ -270,23 +312,28 @@ impl Parser {
         let ty = self.ty()?;
         Ok(Param {
             doc: None,
+            allows: Vec::new(),
             name,
             ty,
         })
     }
 
-    fn struct_decl(&mut self) -> Result<StructDecl, Error> {
-        let doc = self.doc();
+    fn struct_decl(&mut self, head: Head) -> Result<StructDecl, Error> {
         let start = self.expect(Tok::Struct)?;
         let name = self.ident()?;
         let type_params = self.generics()?;
         self.expect(Tok::LBrace)?;
         let (fields, end) = self.comma_list(Tok::RBrace, |p| {
-            let doc = p.doc();
-            Ok(Param { doc, ..p.param()? })
+            let Head { doc, allows } = p.head()?;
+            Ok(Param {
+                doc,
+                allows,
+                ..p.param()?
+            })
         })?;
         Ok(StructDecl {
-            doc,
+            doc: head.doc,
+            allows: head.allows,
             span: start.to(end),
             name,
             type_params,
@@ -294,14 +341,13 @@ impl Parser {
         })
     }
 
-    fn enum_decl(&mut self) -> Result<EnumDecl, Error> {
-        let doc = self.doc();
+    fn enum_decl(&mut self, head: Head) -> Result<EnumDecl, Error> {
         let start = self.expect(Tok::Enum)?;
         let name = self.ident()?;
         let type_params = self.generics()?;
         self.expect(Tok::LBrace)?;
         let (variants, end) = self.comma_list(Tok::RBrace, |p| {
-            let doc = p.doc();
+            let Head { doc, allows } = p.head()?;
             let name = p.ident()?;
             let (fields, span) = if p.eat(&Tok::LParen) {
                 let (fields, close) = p.comma_list(Tok::RParen, Self::ty)?;
@@ -311,13 +357,15 @@ impl Parser {
             };
             Ok(Variant {
                 doc,
+                allows,
                 span,
                 name,
                 fields,
             })
         })?;
         Ok(EnumDecl {
-            doc,
+            doc: head.doc,
+            allows: head.allows,
             span: start.to(end),
             name,
             type_params,
@@ -384,26 +432,22 @@ impl Parser {
             if *self.peek() == Tok::RBrace {
                 break None;
             }
-            match self.peek() {
-                Tok::Let => {
-                    stmts.push(self.let_stmt()?);
-                    continue;
-                }
-                Tok::Fn => {
-                    stmts.push(Stmt::Fn(Box::new(self.fn_decl()?)));
-                    continue;
-                }
-                Tok::Struct => {
-                    let d = TypeDecl::Struct(self.struct_decl()?);
-                    stmts.push(Stmt::Type(Box::new(d)));
-                    continue;
-                }
-                Tok::Enum => {
-                    let d = TypeDecl::Enum(self.enum_decl()?);
-                    stmts.push(Stmt::Type(Box::new(d)));
-                    continue;
-                }
-                _ => {}
+            if *self.peek() == Tok::Let {
+                stmts.push(self.let_stmt()?);
+                continue;
+            }
+            if matches!(self.peek(), Tok::Fn | Tok::Struct | Tok::Enum | Tok::Hash) {
+                let head = self.head()?;
+                let stmt = match self.peek() {
+                    Tok::Fn => Stmt::Fn(Box::new(self.fn_decl(head)?)),
+                    Tok::Struct => Stmt::Type(Box::new(TypeDecl::Struct(self.struct_decl(head)?))),
+                    Tok::Enum => Stmt::Type(Box::new(TypeDecl::Enum(self.enum_decl(head)?))),
+                    _ => {
+                        return Err(self.unexpected("`fn`, `struct` or `enum` after `#[allow(..)]`"));
+                    }
+                };
+                stmts.push(stmt);
+                continue;
             }
             let block_like = matches!(self.peek(), Tok::If | Tok::Match | Tok::LBrace);
             let e = match self.peek() {
@@ -882,6 +926,12 @@ fn binop(tok: &Tok) -> Option<(BinOp, u8)> {
         Tok::Percent => (BinOp::Rem, 5),
         _ => return None,
     })
+}
+
+/// What can come before a `fn`, `struct`, `enum`, field or variant.
+struct Head {
+    doc: Option<DocComment>,
+    allows: Vec<Allow>,
 }
 
 /// One doc comment from a run of `///` lines.

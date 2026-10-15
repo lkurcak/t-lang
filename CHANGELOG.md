@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Added
+
+- `#[allow(..)]` turns lints off: before a `fn`, `struct`, `enum`, field or
+  variant, top-level or nested, it turns off the lints it names in all of
+  it, as in Rust. It goes before or after the doc comment; `t fmt` puts it
+  after. A name that isn't a lint's is a new warning, `unknown_lints`, with
+  a fix when it's close to one (`dead_cod` → `dead_code`). `#[allow]` is the
+  only attribute; any other is a syntax error, as is one before anything
+  else, like a `let`.
+- `t check` and `t run` name a lint the first time it warns, with how to
+  turn it off: "= note: `#[allow(dead_code)]` turns this off". `t lsp`
+  already gave the lint as each warning's code.
+- Syntax highlighting for attributes.
+
 ### Changed
 
 - Syntax highlighting: the `x` of a shorthand `P { x }`, in a struct

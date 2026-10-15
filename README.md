@@ -68,6 +68,30 @@ comments and single blank lines. It refuses to write anything that would
 parse to a different program. See [docs/fmt.md](docs/fmt.md) for why there
 are no options and how it works.
 
+Warnings don't stop a program, and most come with a fix. Each belongs to a
+lint, which the first warning of each names. `#[allow(..)]` before a `fn`,
+`struct`, `enum`, field or variant turns the lints it names off in all of
+it, a function's body and the functions nested in it included:
+
+```rust
+#[allow(non_camel_case_types, dead_code)]
+enum ffi_result { OK, Retry, Fatal }
+
+fn main() {
+    let r = ffi_result::OK;
+    match r {
+        ffi_result::OK => print(0), // expect: 0
+        _ => print(1),
+    }
+}
+```
+
+As in Rust, a name that isn't a lint's is a warning (`unknown_lints`), not
+an error. The lints are `unused_variables`, `dead_code`,
+`unreachable_patterns`, `overlapping_ranges`, `mergeable_ranges`,
+`unused_doc_comments`, `non_camel_case_types`, `non_snake_case` and
+`unknown_lints`.
+
 Pipeline: `lexer` → `parser` → `check` (type checker) → `lift` (nested
 functions and types moved to the top level) → `mono` (monomorphisation: a copy of
 each generic function and type per type it's used at) → `interp` (tree-walking interpreter). A real backend (emitting C) comes once the type system has

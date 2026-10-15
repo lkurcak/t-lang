@@ -149,6 +149,32 @@
     }
   },
   {
+    "type": "attribute_item",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "identifier",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "binary_expression",
     "named": true,
     "fields": {
@@ -242,6 +268,10 @@
       "types": [
         {
           "type": "_expression",
+          "named": true
+        },
+        {
+          "type": "attribute_item",
           "named": true
         },
         {
@@ -465,6 +495,10 @@
       "required": false,
       "types": [
         {
+          "type": "attribute_item",
+          "named": true
+        },
+        {
           "type": "enum_variant",
           "named": true
         }
@@ -520,6 +554,10 @@
       "multiple": true,
       "required": false,
       "types": [
+        {
+          "type": "attribute_item",
+          "named": true
+        },
         {
           "type": "field_declaration",
           "named": true
@@ -1047,6 +1085,10 @@
       "required": false,
       "types": [
         {
+          "type": "attribute_item",
+          "named": true
+        },
+        {
           "type": "enum_item",
           "named": true
         },
@@ -1364,6 +1406,10 @@
     "named": false
   },
   {
+    "type": "#",
+    "named": false
+  },
+  {
     "type": "%",
     "named": false
   },
@@ -1453,6 +1499,14 @@
   },
   {
     "type": ">=",
+    "named": false
+  },
+  {
+    "type": "[",
+    "named": false
+  },
+  {
+    "type": "]",
     "named": false
   },
   {

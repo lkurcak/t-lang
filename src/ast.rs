@@ -60,6 +60,16 @@ impl DocComment {
     }
 }
 
+/// `#[allow(dead_code, unused_variables)]` before a `fn`, `struct`, `enum`,
+/// field or variant: no warnings of those lints in it. The only attribute
+/// there is. Which names are lints isn't checked until `allow::apply`.
+#[derive(Debug, Clone)]
+pub struct Allow {
+    /// From the `#` to the `]`.
+    pub span: Span,
+    pub lints: Vec<Ident>,
+}
+
 /// `struct Point { x: int, y: int }` or `enum Shape { Circle(int), Empty }`.
 #[derive(Debug, Clone)]
 pub enum TypeDecl {
@@ -82,6 +92,13 @@ impl TypeDecl {
         }
     }
 
+    pub fn allows(&self) -> &[Allow] {
+        match self {
+            TypeDecl::Struct(s) => &s.allows,
+            TypeDecl::Enum(e) => &e.allows,
+        }
+    }
+
     /// From the `struct` or `enum` to the `}`.
     pub fn span(&self) -> Span {
         match self {
@@ -101,7 +118,8 @@ impl TypeDecl {
 #[derive(Debug, Clone)]
 pub struct StructDecl {
     pub doc: Option<DocComment>,
-    /// From the `struct` to the `}`, without the doc comment.
+    pub allows: Vec<Allow>,
+    /// From the `struct` to the `}`, without the doc comment or attributes.
     pub span: Span,
     pub name: Ident,
     /// `<A, B>` in `struct Pair<A, B> { .. }`; empty if it isn't generic.
@@ -112,7 +130,8 @@ pub struct StructDecl {
 #[derive(Debug, Clone)]
 pub struct EnumDecl {
     pub doc: Option<DocComment>,
-    /// From the `enum` to the `}`, without the doc comment.
+    pub allows: Vec<Allow>,
+    /// From the `enum` to the `}`, without the doc comment or attributes.
     pub span: Span,
     pub name: Ident,
     pub type_params: Vec<Ident>,
@@ -123,6 +142,7 @@ pub struct EnumDecl {
 #[derive(Debug, Clone)]
 pub struct Variant {
     pub doc: Option<DocComment>,
+    pub allows: Vec<Allow>,
     /// From the name to the `)` after the fields, if it has any.
     pub span: Span,
     pub name: Ident,
@@ -135,7 +155,9 @@ pub struct Variant {
 #[derive(Debug, Clone)]
 pub struct FnDecl {
     pub doc: Option<DocComment>,
-    /// From the `fn` to the end of the body, without the doc comment.
+    pub allows: Vec<Allow>,
+    /// From the `fn` to the end of the body, without the doc comment or
+    /// attributes.
     pub span: Span,
     pub name: Ident,
     /// `<T>` in `fn id<T>(x: T) -> T`; empty if it isn't generic.
@@ -238,8 +260,9 @@ impl Expr {
 #[derive(Debug, Clone)]
 /// `name: type`. Used for function parameters and struct fields.
 pub struct Param {
-    /// Only a struct field can have one.
+    /// Only a struct field can have one, or attributes.
     pub doc: Option<DocComment>,
+    pub allows: Vec<Allow>,
     pub name: Ident,
     pub ty: TypeExpr,
 }

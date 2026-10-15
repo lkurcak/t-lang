@@ -222,6 +222,7 @@ impl<'p> Mono<'p> {
         };
         FnDecl {
             doc: f.doc.clone(),
+            allows: f.allows.clone(),
             span: f.span,
             name: Ident {
                 name: name.unwrap_or(&f.name.name).to_string(),
@@ -233,6 +234,7 @@ impl<'p> Mono<'p> {
                 .iter()
                 .map(|p| Param {
                     doc: None,
+                    allows: Vec::new(),
                     name: p.name.clone(),
                     ty: cx.ty(&p.ty),
                 })
@@ -260,6 +262,7 @@ impl<'p> Mono<'p> {
         match d {
             TypeDecl::Struct(st) => TypeDecl::Struct(StructDecl {
                 doc: st.doc.clone(),
+                allows: st.allows.clone(),
                 span: st.span,
                 name,
                 type_params: Vec::new(),
@@ -268,6 +271,7 @@ impl<'p> Mono<'p> {
                     .iter()
                     .map(|f| Param {
                         doc: f.doc.clone(),
+                        allows: f.allows.clone(),
                         name: f.name.clone(),
                         ty: cx.ty(&f.ty),
                     })
@@ -275,6 +279,7 @@ impl<'p> Mono<'p> {
             }),
             TypeDecl::Enum(e) => TypeDecl::Enum(EnumDecl {
                 doc: e.doc.clone(),
+                allows: e.allows.clone(),
                 span: e.span,
                 name,
                 type_params: Vec::new(),
@@ -283,6 +288,7 @@ impl<'p> Mono<'p> {
                     .iter()
                     .map(|v| Variant {
                         doc: v.doc.clone(),
+                        allows: v.allows.clone(),
                         span: v.span,
                         name: v.name.clone(),
                         fields: v.fields.iter().map(|t| cx.ty(t)).collect(),

@@ -292,6 +292,8 @@ bidirectional typing, which is step 3. Without an expected type, say in
   unreachable arms and alternatives, ranges that could be narrower or merged.
   Each warning comes with a fix that keeps the program doing exactly what it
   did (`tests/golden.rs` checks this), which editors offer as a quick fix.
+  Where the code is meant, `#[allow(unreachable_patterns)]` on the function
+  turns the warning off instead.
   An empty range like `5..5` stays an error, as in Rust: it's surely a typo,
   and there's no fix to suggest.
 - **No struct literals in `if`/`match` heads.** In `if x { .. }`, is `x {`

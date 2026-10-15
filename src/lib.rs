@@ -1,6 +1,7 @@
 //! The T compiler. Pipeline: source → `lexer` → `parser` → `check` → `lift`
 //! → `mono` → `interp`.
 
+mod allow;
 pub mod ast;
 pub mod check;
 mod doc;
@@ -49,7 +50,7 @@ pub fn check_source(src: &str) -> Checked {
     // Here rather than in `check`, since the fixes check renamed programs.
     let checked = result.is_ok().then_some(&info);
     warnings.extend(naming::warnings(src, &program, checked));
-    warnings.sort_by_key(|w| w.span.start);
+    allow::apply(&program, &mut warnings);
     let result = result.and_then(|()| mono::monomorphise(&lift::lift(&program, &info), &info));
     Checked {
         warnings,

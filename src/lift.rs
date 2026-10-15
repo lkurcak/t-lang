@@ -46,6 +46,7 @@ impl<'p> Cx<'p> {
         let body = self.expr(&f.body, &mut nested);
         out.push(FnDecl {
             doc: f.doc.clone(),
+            allows: f.allows.clone(),
             span: f.span,
             name: self.ident(&f.name),
             type_params: f.type_params.clone(),
@@ -63,6 +64,7 @@ impl<'p> Cx<'p> {
         match d {
             TypeDecl::Struct(s) => TypeDecl::Struct(StructDecl {
                 doc: s.doc.clone(),
+                allows: s.allows.clone(),
                 span: s.span,
                 name: self.ident(&s.name),
                 type_params: s.type_params.clone(),
@@ -70,6 +72,7 @@ impl<'p> Cx<'p> {
             }),
             TypeDecl::Enum(e) => TypeDecl::Enum(EnumDecl {
                 doc: e.doc.clone(),
+                allows: e.allows.clone(),
                 span: e.span,
                 name: self.ident(&e.name),
                 type_params: e.type_params.clone(),
@@ -78,6 +81,7 @@ impl<'p> Cx<'p> {
                     .iter()
                     .map(|v| Variant {
                         doc: v.doc.clone(),
+                        allows: v.allows.clone(),
                         span: v.span,
                         name: v.name.clone(),
                         fields: v.fields.iter().map(|t| self.ty(t)).collect(),
@@ -106,6 +110,7 @@ impl<'p> Cx<'p> {
     fn param(&self, p: &Param) -> Param {
         Param {
             doc: p.doc.clone(),
+            allows: p.allows.clone(),
             name: p.name.clone(),
             ty: self.ty(&p.ty),
         }

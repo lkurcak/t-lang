@@ -52,7 +52,7 @@ impl Expectations {
 pub fn check(name: &str, src: &str) -> Result<(), String> {
     let want = Expectations::of(src);
     let run = t_lang::run_source(src);
-    let warnings: Vec<String> = run.warnings.iter().map(|w| w.render(name, src)).collect();
+    let warnings = t_lang::error::Warning::render_all(&run.warnings, name, src);
     let matches = warnings.len() == want.warnings.len()
         && warnings
             .iter()

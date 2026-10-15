@@ -55,7 +55,7 @@ module.exports = grammar({
   ],
 
   rules: {
-    source_file: $ => repeat($._item),
+    source_file: $ => repeat(choice($._item, $.attribute_item)),
 
     _item: $ => choice($.function_item, $.struct_item, $.enum_item),
 
@@ -69,6 +69,18 @@ module.exports = grammar({
     doc_comment: _ => token(seq('///', optional(/[^/\n].*/))),
 
     // Items
+
+    // `#[allow(dead_code)]` before an item, field or variant. As in Rust's
+    // grammar, it's a sibling of what it's on rather than part of it.
+    attribute_item: $ => seq(
+      '#',
+      '[',
+      field('name', $.identifier),
+      '(',
+      commaSep($.identifier),
+      ')',
+      ']',
+    ),
 
     function_item: $ => seq(
       'fn',
@@ -93,7 +105,11 @@ module.exports = grammar({
       field('body', $.field_declaration_list),
     ),
 
-    field_declaration_list: $ => seq('{', commaSep($.field_declaration), '}'),
+    field_declaration_list: $ => seq(
+      '{',
+      commaSep(seq(repeat($.attribute_item), $.field_declaration)),
+      '}',
+    ),
 
     field_declaration: $ => seq(
       field('name', $._field_identifier),
@@ -108,7 +124,11 @@ module.exports = grammar({
       field('body', $.enum_variant_list),
     ),
 
-    enum_variant_list: $ => seq('{', commaSep($.enum_variant), '}'),
+    enum_variant_list: $ => seq(
+      '{',
+      commaSep(seq(repeat($.attribute_item), $.enum_variant)),
+      '}',
+    ),
 
     enum_variant: $ => seq(
       field('name', $.identifier),
@@ -149,7 +169,12 @@ module.exports = grammar({
 
     // A `fn`, `struct` or `enum` in a block is local to it: an item like
     // any other.
-    _statement: $ => choice($.let_declaration, $.expression_statement, $._item),
+    _statement: $ => choice(
+      $.let_declaration,
+      $.expression_statement,
+      $._item,
+      $.attribute_item,
+    ),
 
     let_declaration: $ => seq(
       'let',

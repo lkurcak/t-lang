@@ -50,6 +50,10 @@
 (variant_expression variant: (identifier) @constructor)
 (variant_pattern variant: (identifier) @constructor)
 
+; Attributes
+
+(attribute_item) @attribute
+
 ; Keywords
 
 "fn" @keyword.function
@@ -74,5 +78,5 @@
 (wildcard_pattern) @variable.builtin
 (remaining_field_pattern) @variable.builtin
 
-["(" ")" "{" "}"] @punctuation.bracket
+["(" ")" "[" "]" "{" "}"] @punctuation.bracket
 ["," ";" ":" "::" "."] @punctuation.delimiter

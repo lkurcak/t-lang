@@ -53,13 +53,12 @@ pub fn format(program: &Program, trivia: Trivia) -> String {
         if i > 0 {
             doc = doc + Doc::HardLine;
         }
-        // It starts at its doc comment, or else at the `struct`, `enum` or
-        // `fn` before the name.
-        let item_doc = match item {
-            Item::Type(d) => d.doc(),
-            Item::Fn(f) => f.doc.as_ref(),
+        // It starts at its doc comment or attributes, or else at the
+        // `struct`, `enum` or `fn` before the name.
+        let start = match item {
+            Item::Type(d) => lead_start(d.doc(), d.allows(), p.before(pos)),
+            Item::Fn(f) => lead_start(f.doc.as_ref(), &f.allows, f.span.start),
         };
-        let start = item_doc.map_or(p.before(pos), |d| d.span().start);
         doc = doc + p.element(start, i == 0);
         let end = match item {
             Item::Type(_) => p.find(pos, &Tok::RBrace) + 1,
@@ -189,19 +188,26 @@ impl Printer<'_> {
         doc
     }
 
-    /// The doc comment of something that starts at `pos` in the source
-    /// (after the doc), each line on a line of its own, then any comments
-    /// between the doc and it.
-    fn doc(&mut self, doc: Option<&DocComment>, pos: usize) -> Doc {
-        let Some(d) = doc else {
+    /// The doc comment and attributes of something that starts at `pos` in
+    /// the source (after them), each line on a line of its own, with any
+    /// comments between them and it. The doc comment goes first, wherever
+    /// it was.
+    fn lead(&mut self, doc: Option<&DocComment>, allows: &[Allow], pos: usize) -> Doc {
+        if doc.is_none() && allows.is_empty() {
             return Doc::nil();
-        };
-        let lines = concat(
-            d.lines
-                .iter()
+        }
+        let mut out = concat(
+            doc.iter()
+                .flat_map(|d| &d.lines)
                 .map(|l| text(format!("///{}", l.text)) + Doc::HardLine),
         );
-        lines + self.element(pos, true)
+        for a in allows {
+            let lints: Vec<&str> = a.lints.iter().map(|l| l.name.as_str()).collect();
+            let allow = format!("#[allow({})]", lints.join(", "));
+            out = out + self.element(a.span.start, true) + allow + self.trailing(a.span.end);
+            out = out + Doc::HardLine;
+        }
+        out + self.element(pos, true)
     }
 
     /// The comment after something that ends at `end`, if it's on the same
@@ -329,7 +335,7 @@ impl Printer<'_> {
             TypeDecl::Enum(_) => "enum ",
         };
         let name = d.name();
-        let doc = self.doc(d.doc(), self.before(name.span.start));
+        let doc = self.lead(d.doc(), d.allows(), self.before(name.span.start));
         let open = self.find(name.span.end, &Tok::LBrace);
         let close = self.find(open, &Tok::RBrace);
         if let Some(t) = &mut self.trivia {
@@ -341,9 +347,12 @@ impl Printer<'_> {
                 BRACES,
                 close,
                 &s.fields,
-                |f| (doc_start(&f.doc, f.name.span), f.ty.span.end),
+                |f| {
+                    let start = lead_start(f.doc.as_ref(), &f.allows, f.name.span.start);
+                    (start, f.ty.span.end)
+                },
                 None,
-                |p, f| p.doc(f.doc.as_ref(), f.name.span.start) + p.param(f),
+                |p, f| p.lead(f.doc.as_ref(), &f.allows, f.name.span.start) + p.param(f),
             ),
             TypeDecl::Enum(e) => {
                 let variants: Vec<(&Variant, usize)> = e
@@ -358,10 +367,13 @@ impl Printer<'_> {
                     BRACES,
                     close,
                     &variants,
-                    |(v, end)| (doc_start(&v.doc, v.name.span), *end),
+                    |(v, end)| {
+                        let start = lead_start(v.doc.as_ref(), &v.allows, v.name.span.start);
+                        (start, *end)
+                    },
                     None,
                     |p, (v, end)| {
-                        let doc = p.doc(v.doc.as_ref(), v.name.span.start);
+                        let doc = p.lead(v.doc.as_ref(), &v.allows, v.name.span.start);
                         let fields = match v.fields.is_empty() {
                             true => Doc::nil(),
                             false => p.types(PARENS, end - 1, &v.fields),
@@ -380,7 +392,7 @@ impl Printer<'_> {
     }
 
     fn fn_decl(&mut self, f: &FnDecl) -> Doc {
-        let doc = self.doc(f.doc.as_ref(), self.before(f.name.span.start));
+        let doc = self.lead(f.doc.as_ref(), &f.allows, f.span.start);
         let generics = self.generics(&f.name, &f.type_params);
         let open = self.find(f.name.span.end, &Tok::LParen);
         let close = self.close(open, f.params.last().map(|p| p.ty.span.end), &Tok::RParen);
@@ -685,10 +697,13 @@ impl Printer<'_> {
             let (start, end) = match stmt {
                 Stmt::Let { pat, init, .. } => (self.before(pat.span.start), init.span.end),
                 Stmt::Expr(e) | Stmt::BlockLike(e) => (e.span.start, e.span.end),
-                Stmt::Fn(f) => (doc_start(&f.doc, f.span), f.span.end),
+                Stmt::Fn(f) => (
+                    lead_start(f.doc.as_ref(), &f.allows, f.span.start),
+                    f.span.end,
+                ),
                 Stmt::Type(d) => {
                     let name = d.name().span;
-                    let start = d.doc().map_or(self.before(name.start), |d| d.span().start);
+                    let start = lead_start(d.doc(), d.allows(), self.before(name.start));
                     (start, self.find(name.end, &Tok::RBrace) + 1)
                 }
             };
@@ -834,10 +849,12 @@ impl Printer<'_> {
     }
 }
 
-/// Where something documented by `doc` starts, if it starts at `name`
-/// otherwise.
-fn doc_start(doc: &Option<DocComment>, name: Span) -> usize {
-    doc.as_ref().map_or(name.start, |d| d.span().start)
+/// Where something with the doc comment `doc` and attributes `allows`
+/// starts, if it starts at `pos` without them.
+fn lead_start(doc: Option<&DocComment>, allows: &[Allow], pos: usize) -> usize {
+    let doc = doc.map(|d| d.span().start);
+    let allow = allows.first().map(|a| a.span.start);
+    [doc, allow].into_iter().flatten().fold(pos, usize::min)
 }
 
 /// A range pattern as written. Unlike `exhaust::show_range`, which tidies

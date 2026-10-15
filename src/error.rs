@@ -77,7 +77,15 @@ impl Error {
             Phase::Type => "type error",
             Phase::Runtime => "runtime error",
         };
-        render(label, self.span, &self.message, &self.fixes, path, src)
+        render(
+            label,
+            self.span,
+            &self.message,
+            &self.fixes,
+            None,
+            path,
+            src,
+        )
     }
 }
 
@@ -93,13 +101,31 @@ pub struct Warning {
 }
 
 impl Warning {
-    pub fn render(&self, path: &str, src: &str) -> String {
-        render("warning", self.span, &self.message, &self.fixes, path, src)
+    /// Renders the warning rustc-style. With `note`, it ends by saying how
+    /// to turn its lint off, as it should the first time the lint comes up.
+    pub fn render(&self, path: &str, src: &str, note: bool) -> String {
+        let note = note.then(|| format!("`#[allow({})]` turns this off", self.lint.name()));
+        let (span, fixes) = (self.span, &self.fixes);
+        render("warning", span, &self.message, fixes, note, path, src)
+    }
+
+    /// Renders each of `warnings`, noting how to turn a lint off the first
+    /// time it comes up, as rustc does.
+    pub fn render_all(warnings: &[Warning], path: &str, src: &str) -> Vec<String> {
+        let mut seen = Vec::new();
+        warnings
+            .iter()
+            .map(|w| {
+                let first = !seen.contains(&w.lint);
+                seen.push(w.lint);
+                w.render(path, src, first)
+            })
+            .collect()
     }
 }
 
-/// The kinds of warning. Each has a name, so that one day a program can turn
-/// them off or into errors.
+/// The kinds of warning. Each has a name, for `#[allow(..)]` to turn it off
+/// with (see `allow.rs`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Lint {
     /// An arm or or-pattern alternative that earlier patterns already cover.
@@ -121,6 +147,8 @@ pub enum Lint {
     /// A function, parameter, variable or field whose name isn't in
     /// `snake_case`.
     NonSnakeCase,
+    /// A name in `#[allow(..)]` that isn't a lint's.
+    UnknownLints,
 }
 
 impl Lint {
@@ -134,7 +162,24 @@ impl Lint {
             Lint::UnusedDocComments => "unused_doc_comments",
             Lint::NonCamelCaseTypes => "non_camel_case_types",
             Lint::NonSnakeCase => "non_snake_case",
+            Lint::UnknownLints => "unknown_lints",
         }
+    }
+
+    pub const ALL: [Lint; 9] = [
+        Lint::UnreachablePatterns,
+        Lint::OverlappingRanges,
+        Lint::MergeableRanges,
+        Lint::UnusedVariables,
+        Lint::DeadCode,
+        Lint::UnusedDocComments,
+        Lint::NonCamelCaseTypes,
+        Lint::NonSnakeCase,
+        Lint::UnknownLints,
+    ];
+
+    pub fn from_name(name: &str) -> Option<Lint> {
+        Lint::ALL.into_iter().find(|l| l.name() == name)
     }
 }
 
@@ -194,8 +239,16 @@ impl Edit {
 }
 
 /// A diagnostic rustc-style: the offending line underlined, then a `help`
-/// line for each fix.
-fn render(label: &str, span: Span, message: &str, fixes: &[Fix], path: &str, src: &str) -> String {
+/// line for each fix, and the `note`, if any.
+fn render(
+    label: &str,
+    span: Span,
+    message: &str,
+    fixes: &[Fix],
+    note: Option<String>,
+    path: &str,
+    src: &str,
+) -> String {
     let start = span.start.min(src.len());
     let line_start = src[..start].rfind('\n').map_or(0, |i| i + 1);
     let line_end = src[start..].find('\n').map_or(src.len(), |i| start + i);
@@ -215,6 +268,9 @@ fn render(label: &str, span: Span, message: &str, fixes: &[Fix], path: &str, src
     );
     for fix in fixes {
         out.push_str(&format!("\n{gutter} = help: {}", fix.title));
+    }
+    if let Some(note) = note {
+        out.push_str(&format!("\n{gutter} = note: {note}"));
     }
     out
 }

@@ -1,4 +1,5 @@
 use std::process::ExitCode;
+use t_lang::error::Warning;
 use t_lang::interp::Value;
 
 const USAGE: &str =
@@ -40,8 +41,8 @@ fn main() -> ExitCode {
 
     if cmd == "check" || cmd == "mono" {
         let checked = t_lang::check_source(&src);
-        for w in &checked.warnings {
-            eprintln!("{}\n", w.render(path, &src));
+        for w in Warning::render_all(&checked.warnings, path, &src) {
+            eprintln!("{w}\n");
         }
         return match checked.result {
             Ok(program) => {
@@ -60,8 +61,8 @@ fn main() -> ExitCode {
     }
 
     let run = t_lang::run_source(&src);
-    for w in &run.warnings {
-        eprintln!("{}\n", w.render(path, &src));
+    for w in Warning::render_all(&run.warnings, path, &src) {
+        eprintln!("{w}\n");
     }
     for line in &run.output {
         println!("{line}");
