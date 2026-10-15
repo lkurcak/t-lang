@@ -1,6 +1,7 @@
 //! Which definition each name refers to. Locals are found on the stack of
 //! `Checker::locals`, functions in the stack of `FnScope`s: one for the
 //! top level, and one for each block that declares functions of its own.
+//! Names in types are worked out before checking (see `check/names.rs`).
 //!
 //! Each function has a *symbol*, a name for it that's unique in the whole
 //! program, which the checker records for every use (`Info::symbols`). A
@@ -9,13 +10,13 @@
 //! that's taken (`main::helper#2`). No source program can write those, so
 //! once checked, the nested functions can be moved to the top level under
 //! them (see `lift.rs`), and nothing after that needs to know they were
-//! ever nested.
+//! ever nested. Local types get symbols the same way.
 
 use super::Checker;
 use crate::ast::*;
 use crate::error::{Edit, Error, Fix, Span};
 use crate::types::Scheme;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 /// A function, by where it is in `Checker::fns`: the top-level ones first,
 /// in order, then the nested ones (see `Program::all_fns`).
@@ -63,47 +64,65 @@ pub(super) fn symbol(parent: &str, name: &str, taken: &HashSet<String>) -> Strin
         .expect("there are always more numbers")
 }
 
-/// The name a function was written with, from its symbol or the name of a
-/// copy of it that monomorphisation made: `helper` for `main::helper#2`,
-/// `id::<int>` for `id::<int>`, `helper::<int>` for `main::helper::<int>`.
-/// For messages, which shouldn't show symbols.
-pub fn source_name(symbol: &str) -> String {
-    let (base, args) = symbol.split_at(symbol.find("::<").unwrap_or(symbol.len()));
-    let name = base.rsplit("::").next().unwrap_or(base);
-    let name = name.split('#').next().unwrap_or(name);
-    format!("{name}{args}")
+/// The symbol of each of `fns`, which are as `Program::all_fns` gives them.
+pub(super) fn symbols(fns: &[(&FnDecl, Option<usize>)]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut taken = HashSet::new();
+    for &(f, parent) in fns {
+        let symbol = match parent {
+            None => f.name.name.clone(),
+            Some(p) => symbol(&out[p], &f.name.name, &taken),
+        };
+        taken.insert(symbol.clone());
+        out.push(symbol);
+    }
+    out
 }
 
-/// The error for the first type in `t` that names a type parameter of a
-/// function that nested `fn` `f` is in: one of `outer`, and not one of its
-/// own `params`, or a struct or enum, if there is one. A nested `fn` means
-/// what it would at the top level, so it can't see those.
-pub(super) fn outer_param(
-    t: &TypeExpr,
-    f: &str,
-    params: &[String],
-    outer: &[String],
-    arities: &HashMap<String, usize>,
-) -> Option<Error> {
-    match &t.kind {
-        TypeExprKind::Named(name, args) => {
-            if outer.contains(name) && !params.contains(name) && !arities.contains_key(name) {
-                return Some(Error::ty(
-                    t.span,
-                    format!(
-                        "can't use type parameter `{name}` of the enclosing function in a \
-                         nested `fn`; declare it on this one too, as in `fn {f}<{name}>`"
-                    ),
-                ));
-            }
-            args.iter()
-                .find_map(|a| outer_param(a, f, params, outer, arities))
+/// The name a function or type was written with, from its symbol or the
+/// name of a copy of it that monomorphisation made: `helper` for
+/// `main::helper#2`, `id::<int>` for `id::<int>`, `helper::<Point>` for
+/// `main::helper::<main::Point>`. For messages, which shouldn't show
+/// symbols. Anything else in `symbol`, like the `fn(..) -> ..` of a type,
+/// stays as it is.
+pub fn source_name(symbol: &str) -> String {
+    let mut out = String::new();
+    let mut rest = symbol;
+    while let Some(c) = rest.chars().next() {
+        let len = rest
+            .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .unwrap_or(rest.len());
+        if len == 0 {
+            out.push(c);
+            rest = &rest[c.len_utf8()..];
+            continue;
         }
-        TypeExprKind::Unit => None,
-        TypeExprKind::Fn(ps, r) => ps
-            .iter()
-            .chain([&**r])
-            .find_map(|p| outer_param(p, f, params, outer, arities)),
+        let (name, after) = rest.split_at(len);
+        // The number that tells apart nested things of the same name.
+        let after = match after.strip_prefix('#') {
+            Some(n) => n.trim_start_matches(|c: char| c.is_ascii_digit()),
+            None => after,
+        };
+        // A function's name before what's nested in it, rather than before
+        // type arguments, is dropped.
+        match after.strip_prefix("::") {
+            Some(inner) if !inner.starts_with('<') => rest = inner,
+            _ => {
+                out.push_str(name);
+                rest = after;
+            }
+        }
+    }
+    out
+}
+
+/// Where the function or type with symbol `symbol` is declared, for telling
+/// apart two of the same name: "in `main`", or "at the top level".
+pub(super) fn declared_in(symbol: &str) -> String {
+    let base = &symbol[..symbol.find("::<").unwrap_or(symbol.len())];
+    match base.rsplit_once("::") {
+        Some((parent, _)) => format!("in `{}`", source_name(parent)),
+        None => "at the top level".to_string(),
     }
 }
 
@@ -157,6 +176,7 @@ pub(super) fn to_closure(f: &FnDecl, stmts: &[Stmt], k: usize, tail: Option<&Exp
         && !f.body.mentions(name)
         && stmts.iter().enumerate().all(|(j, s)| match s {
             Stmt::Fn(g) => j == k || !g.body.mentions(name),
+            Stmt::Type(_) => true,
             Stmt::Let { init: e, .. } | Stmt::Expr(e) | Stmt::BlockLike(e) => match j < k {
                 true => !e.mentions(name),
                 false => only_called(e, name),
@@ -208,7 +228,6 @@ pub(super) struct Outer {
     current: Option<FnId>,
     type_params: Vec<String>,
     barrier: usize,
-    enclosing_params: usize,
     comparisons: Vec<(crate::types::Type, Span, BinOp)>,
     escapes: Vec<super::escape::Escape>,
     closure_fix: Option<(usize, Fix)>,
@@ -228,19 +247,15 @@ impl Checker {
             current: self.current,
             type_params: std::mem::take(&mut self.type_params),
             barrier: std::mem::replace(&mut self.barrier, barrier),
-            enclosing_params: self.enclosing_params.len(),
             comparisons: std::mem::take(&mut self.comparisons),
             escapes: std::mem::take(&mut self.escapes),
             closure_fix: std::mem::take(&mut self.closure_fix),
         };
         self.closure_fix = fix.map(|fix| (outer.barrier, fix));
-        self.enclosing_params
-            .extend(outer.type_params.iter().cloned());
         let result = self.body(f, id);
         self.current = outer.current;
         self.type_params = outer.type_params;
         self.barrier = outer.barrier;
-        self.enclosing_params.truncate(outer.enclosing_params);
         self.comparisons = outer.comparisons;
         self.escapes = outer.escapes;
         self.closure_fix = outer.closure_fix;

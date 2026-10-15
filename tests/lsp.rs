@@ -445,3 +445,82 @@ fn other() -> int {
 
     stop(child, c);
 }
+
+/// Hover and go to definition follow a local type to the one it refers
+/// to, when several share a name: in a type, a struct literal, a pattern
+/// and a field.
+#[test]
+fn finds_local_types_that_share_a_name() {
+    let (child, mut c) = start();
+    let uri = "file:///tmp/local.t";
+    let src = "\
+/// The top-level one.
+struct P { x: int }
+fn main() {
+    let a: P = P { x: 1 };
+    print(a.x);
+    {
+        let P { y } = P { y: true };
+        print_bool(y);
+        /// The local one.
+        struct P { y: bool }
+    }
+    print(other().x);
+}
+fn other() -> P {
+    let local = P { z: 3 };
+    struct P { z: int }
+    top(local.z)
+}
+fn top(x: int) -> P { P { x } }
+";
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
+        }}),
+    );
+    assert_eq!(c.diagnostics(), Vec::<Value>::new());
+    // The line and column of the `nth` place `needle` is in the source.
+    let at = |needle: &str, nth: usize| {
+        let offset = src.match_indices(needle).nth(nth).unwrap().0;
+        let line = src[..offset].matches('\n').count();
+        let character = offset - src[..offset].rfind('\n').map_or(0, |i| i + 1);
+        json!({"line": line, "character": character})
+    };
+    let mut id = 1;
+    let mut ask = |c: &mut Client, method: &str, needle: &str, nth: usize| {
+        id += 1;
+        c.send(
+            json!({"jsonrpc": "2.0", "id": id, "method": method, "params": {
+                "textDocument": {"uri": uri}, "position": at(needle, nth)
+            }}),
+        );
+        c.response(id)["result"].clone()
+    };
+    let (hover, def) = ("textDocument/hover", "textDocument/definition");
+
+    // `P`s in order: 0 the top-level one, 1 and 2 its uses in `main`, 3
+    // and 4 the local one's pattern and literal, before it, 5 the local
+    // one, 6 `other`'s result, which is the top-level one, 7 a literal of
+    // `other`'s own, before it, 8 that, and 9 and 10 the top-level one in
+    // `top`.
+    let top = "```t\nstruct P\n```\n\n---\n\nThe top-level one.";
+    let local = "```t\nstruct P\n```\n\n---\n\nThe local one.";
+    assert_eq!(ask(&mut c, hover, "P", 1)["contents"]["value"], top);
+    assert_eq!(ask(&mut c, def, "P", 2)["range"]["start"], at("P", 0));
+    assert_eq!(ask(&mut c, hover, "P", 3)["contents"]["value"], local);
+    assert_eq!(ask(&mut c, def, "P", 3)["range"]["start"], at("P", 5));
+    assert_eq!(ask(&mut c, def, "P", 4)["range"]["start"], at("P", 5));
+    assert_eq!(
+        ask(&mut c, def, "P", 6)["range"]["start"],
+        at("P", 0),
+        "a signature is outside the body"
+    );
+    assert_eq!(ask(&mut c, def, "P", 7)["range"]["start"], at("P", 8));
+    assert_eq!(ask(&mut c, def, "P", 10)["range"]["start"], at("P", 0));
+    // A field of `other`'s, by the type of what it's read from.
+    assert_eq!(ask(&mut c, def, "z", 2)["range"]["start"], at("z", 1));
+    assert_eq!(ask(&mut c, def, "z", 0)["range"]["start"], at("z", 1));
+
+    stop(child, c);
+}

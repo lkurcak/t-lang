@@ -12,19 +12,25 @@
   capture: using a local of a function it's in is an error, "can't capture
   `x` in a nested `fn`; use a closure", whose fix makes it a closure when
   that works. See docs/03-inference.md.
-- The checker resolves each use of a function to its definition, through
-  the scopes it's in, rather than by name. Once checked, nested functions
-  are moved to the top level under names of their own (`main::helper`),
-  which `t mono` shows, so monomorphisation and the interpreter never see
-  one. Messages, `t lsp`'s hover and go to definition show and find the
-  function as written, even when several share a name.
+- Local types: a `struct` or `enum` can be declared in a block too, by the
+  same rules. Its name is in scope in the whole block and shadows any outer
+  type of the same name, and its values can leave the block by inference.
+  It can't use the type parameters of the function it's in. When two
+  different types of the same name meet in a type error, the message says
+  so, and where each is declared.
+- The checker resolves each use of a function or type to its definition,
+  through the scopes it's in, rather than by name. Once checked, nested
+  functions and local types are moved to the top level under names of
+  their own (`main::helper`, `main::Point`), which `t mono` shows, so
+  monomorphisation and the interpreter never see one. Messages, printed
+  values, `t lsp`'s hover and go to definition show and find them as
+  written, even when several share a name.
 - "Never used" warnings for nested functions that nothing in their block
-  uses.
-- `t fmt` formats nested functions like top-level ones, with their doc
-  comments, and keeps blank lines around them as around any statement. The
-  tree-sitter grammar parses them.
-- A clearer syntax error for a `struct` or `enum` in a block: only `fn` can
-  be nested, for now.
+  uses, and the dead-code warnings for structs, enums and variants cover
+  local ones.
+- `t fmt` formats nested functions and local types like top-level ones,
+  with their doc comments, and keeps blank lines around them as around any
+  statement. The tree-sitter grammar parses them.
 
 ## 0.4.2 (2026-10-15)
 

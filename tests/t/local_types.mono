@@ -1,0 +1,68 @@
+struct P { x: int }
+
+/// Two of the top-level `P`.
+struct total::Pair { left: P, right: P }
+
+enum shapes::Shape::<int> { Circle(int), Rect(int, int), Empty }
+
+struct main::P { y: bool }
+
+struct main::Q { n: int }
+
+struct main::P#2 { z: int }
+
+struct other::P { y: int }
+
+enum outer::inner::Sign { Minus, Plus }
+
+fn total() -> int {
+    let pair = total::Pair { left: P { x: 1 }, right: P { x: 2 } };
+    total::sum(pair)
+}
+
+fn total::sum(p: total::Pair) -> int { p.left.x + p.right.x }
+
+fn shapes() -> int {
+    shapes::area(shapes::Shape::<int>::Circle(2))
+        + shapes::area(shapes::Shape::<int>::Rect(2, 3))
+        + shapes::area(shapes::Shape::<int>::Empty)
+}
+
+fn shapes::area(s: shapes::Shape::<int>) -> int {
+    match s {
+        shapes::Shape::<int>::Circle(r) => 3 * r * r,
+        shapes::Shape::<int>::Rect(w, h) => w * h,
+        shapes::Shape::<int>::Empty => 0,
+    }
+}
+
+fn main() {
+    print(total());
+    print(shapes());
+    print_bool((main::P { y: true }).y);
+    let q = { main::Q { n: 7 } };
+    print(q.n);
+    {
+        let main::P#2 { z } = main::P#2 { z: 9 };
+        print(z);
+    }
+    print(other());
+    print(outer());
+}
+
+fn other() -> int { (other::P { y: 4 }).y }
+
+fn outer() -> int { outer::inner() }
+
+fn outer::inner() -> int {
+    outer::inner::value(outer::inner::Sign::Plus)
+        + outer::inner::value(outer::inner::Sign::Minus)
+        + outer::inner::value(outer::inner::Sign::Plus)
+}
+
+fn outer::inner::value(s: outer::inner::Sign) -> int {
+    match s {
+        outer::inner::Sign::Minus => -5,
+        outer::inner::Sign::Plus => 5,
+    }
+}

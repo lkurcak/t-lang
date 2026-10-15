@@ -69,7 +69,7 @@ parse to a different program. See [docs/fmt.md](docs/fmt.md) for why there
 are no options and how it works.
 
 Pipeline: `lexer` → `parser` → `check` (type checker) → `lift` (nested
-functions moved to the top level) → `mono` (monomorphisation: a copy of
+functions and types moved to the top level) → `mono` (monomorphisation: a copy of
 each generic function and type per type it's used at) → `interp` (tree-walking interpreter). A real backend (emitting C) comes once the type system has
 enough in it to be worth compiling.
 
@@ -214,7 +214,7 @@ combine features in ways nobody planned for.
 |---|---|---|---|
 | 1 ✅ | ints, bools, `let`, functions, `if` | simply typed lambda calculus, soundness | [docs/01-stlc.md](docs/01-stlc.md) |
 | 2 ✅ | structs, enums, `match` | algebraic data types, exhaustiveness | [docs/02-adts.md](docs/02-adts.md) |
-| 3 ✅ | inference, closures, nested `fn`s | unification / bidirectional typing | [docs/03-inference.md](docs/03-inference.md) |
+| 3 ✅ | inference, closures, nested `fn`s and types | unification / bidirectional typing | [docs/03-inference.md](docs/03-inference.md) |
 | 4 ✅ | generics | rank-1 (prenex) parametric polymorphism, monomorphization | [docs/04-generics.md](docs/04-generics.md) |
 | 5 | ownership, borrowing, pointers | affine types, regions/lifetimes; types that hold themselves through a pointer | |
 | 6 | traits | ad-hoc polymorphism, typeclasses, coherence; closures as `Fn` traits | |

@@ -1,8 +1,8 @@
 //! Prints a program back out as source, for `t mono` and `t fmt`. A
-//! program without generics or nested functions prints as T that parses
-//! back to the same program; the names monomorphisation gives its copies,
-//! like `id::<int>`, and the symbols nested functions are lifted under,
-//! like `main::helper`, don't parse.
+//! program without generics, nested functions or local types prints as T
+//! that parses back to the same program; the names monomorphisation gives
+//! its copies, like `id::<int>`, and the symbols nested functions and local
+//! types are lifted under, like `main::helper`, don't parse.
 //!
 //! The printer turns the AST into a `Doc`, which says where lines may
 //! break, and `doc::render` decides where they do. For `t fmt` it also has
@@ -686,6 +686,11 @@ impl Printer<'_> {
                 Stmt::Let { pat, init, .. } => (self.before(pat.span.start), init.span.end),
                 Stmt::Expr(e) | Stmt::BlockLike(e) => (e.span.start, e.span.end),
                 Stmt::Fn(f) => (doc_start(&f.doc, f.span), f.span.end),
+                Stmt::Type(d) => {
+                    let name = d.name().span;
+                    let start = d.doc().map_or(self.before(name.start), |d| d.span().start);
+                    (start, self.find(name.end, &Tok::RBrace) + 1)
+                }
             };
             body = body + line.clone() + self.element(start, i == 0);
             let doc = match stmt {
@@ -700,6 +705,7 @@ impl Printer<'_> {
                 Stmt::Expr(e) => self.statement(e) + ";",
                 Stmt::BlockLike(e) => self.expr(e, 0, Ctx::default()),
                 Stmt::Fn(f) => self.fn_decl(f),
+                Stmt::Type(d) => self.type_decl(d),
             };
             body = body + doc + self.trailing(end);
         }

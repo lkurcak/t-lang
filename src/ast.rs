@@ -140,23 +140,38 @@ impl Program {
         let mut out: Vec<(&FnDecl, Option<usize>)> = self.fns.iter().map(|f| (f, None)).collect();
         let mut i = 0;
         while i < out.len() {
-            let mut nested = Vec::new();
-            nested_fns(&out[i].0.body, &mut nested);
-            out.extend(nested.into_iter().map(|f| (f, Some(i))));
+            let mut fns = Vec::new();
+            nested(&out[i].0.body, Stmt::as_fn, &mut fns);
+            out.extend(fns.into_iter().map(|f| (f, Some(i))));
             i += 1;
+        }
+        out
+    }
+
+    /// Every struct and enum, local ones too: the top-level ones in order,
+    /// then the ones declared in each function in `all_fns`, in that order.
+    /// Each comes with the index in `all_fns` of the function it's in, if
+    /// it's local.
+    pub fn all_types(&self) -> Vec<(&TypeDecl, Option<usize>)> {
+        let mut out: Vec<(&TypeDecl, Option<usize>)> =
+            self.types.iter().map(|d| (d, None)).collect();
+        for (i, (f, _)) in self.all_fns().into_iter().enumerate() {
+            let mut local = Vec::new();
+            nested(&f.body, Stmt::as_type, &mut local);
+            out.extend(local.into_iter().map(|d| (d, Some(i))));
         }
         out
     }
 }
 
-/// Adds the functions declared in blocks in `e` to `out`, in order, but not
-/// those nested in them in turn.
-fn nested_fns<'a>(e: &'a Expr, out: &mut Vec<&'a FnDecl>) {
+/// Adds what `item` finds among the statements of the blocks in `e` to
+/// `out`, in order, but not in the functions nested in them.
+fn nested<'a, T>(e: &'a Expr, item: fn(&'a Stmt) -> Option<&'a T>, out: &mut Vec<&'a T>) {
     if let ExprKind::Block(stmts, _) = &e.kind {
-        out.extend(stmts.iter().filter_map(Stmt::as_fn));
+        out.extend(stmts.iter().filter_map(item));
     }
     for c in e.children() {
-        nested_fns(c, out);
+        nested(c, item, out);
     }
 }
 
@@ -174,7 +189,7 @@ impl Expr {
                 .iter()
                 .filter_map(|s| match s {
                     Stmt::Let { init: e, .. } | Stmt::Expr(e) | Stmt::BlockLike(e) => Some(e),
-                    Stmt::Fn(_) => None,
+                    Stmt::Fn(_) | Stmt::Type(_) => None,
                 })
                 .chain(tail.as_deref())
                 .collect(),
@@ -340,7 +355,7 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
                         pattern_binds(pat, bound);
                     }
                     Stmt::Expr(e) | Stmt::BlockLike(e) => go(e, bound),
-                    Stmt::Fn(_) => {}
+                    Stmt::Fn(_) | Stmt::Type(_) => {}
                 }
             }
             tail.iter().for_each(|t| go(t, bound));
@@ -421,12 +436,23 @@ pub enum Stmt {
     /// whole block, before the `fn` as well as after. Boxed, like `Let`'s
     /// type.
     Fn(Box<FnDecl>),
+    /// `struct Point { .. }` or `enum Shape { .. }`: a local type. Like a
+    /// nested function, it means what it would at the top level, and its
+    /// name is in scope in the whole block.
+    Type(Box<TypeDecl>),
 }
 
 impl Stmt {
     pub fn as_fn(&self) -> Option<&FnDecl> {
         match self {
             Stmt::Fn(f) => Some(f),
+            _ => None,
+        }
+    }
+
+    pub fn as_type(&self) -> Option<&TypeDecl> {
+        match self {
+            Stmt::Type(d) => Some(d),
             _ => None,
         }
     }

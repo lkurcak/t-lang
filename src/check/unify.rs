@@ -2,6 +2,7 @@
 //! program doesn't write down (see docs/03-inference.md).
 
 use super::Checker;
+use super::scope::{declared_in, source_name};
 use crate::error::{Error, Span};
 use crate::types::Type;
 
@@ -28,6 +29,36 @@ pub(super) enum Clash {
 /// Does `t` have a type variable in it?
 pub(super) fn has_vars(t: &Type) -> bool {
     matches!(t, Type::Var(_)) || t.parts().any(has_vars)
+}
+
+/// If `a` and `b` mention two different types of the same name, which look
+/// the same in a message, the rest of the message, which says so.
+fn same_name(a: &Type, b: &Type) -> String {
+    let mut symbols: Vec<&str> = Vec::new();
+    for t in [a, b] {
+        super::each_adt(t, &mut |s, _| {
+            if !symbols.contains(&s) {
+                symbols.push(s);
+            }
+        });
+    }
+    for (i, x) in symbols.iter().enumerate() {
+        let name = source_name(x);
+        if let Some(y) = symbols[i + 1..].iter().find(|y| source_name(y) == name) {
+            let (x_in, y_in) = (declared_in(x), declared_in(y));
+            return match x_in == y_in {
+                true => format!(
+                    "; these are two different types called `{name}`, declared in different \
+                     blocks {x_in}"
+                ),
+                false => format!(
+                    "; these are two different types called `{name}`, one declared {x_in} and \
+                     one {y_in}"
+                ),
+            };
+        }
+    }
+    String::new()
 }
 
 /// `t`, with every variable `v` in it called `name`. For explaining an
@@ -125,7 +156,9 @@ impl Checker {
         match self.unify(a, b) {
             Ok(()) => Ok(()),
             Err(Clash::Mismatch) => {
-                Err(Error::ty(span, mismatch(&self.solved(a), &self.solved(b))))
+                let (a, b) = (self.solved(a), self.solved(b));
+                let message = mismatch(&a, &b) + &same_name(&a, &b);
+                Err(Error::ty(span, message))
             }
             Err(Clash::Infinite(v, t)) => {
                 let t = name_var(&self.solved(&t), v, "T");

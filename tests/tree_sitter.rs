@@ -167,3 +167,29 @@ fn parses_nested_functions() {
     }
     assert_eq!(function, Some("function"));
 }
+
+#[test]
+fn parses_local_types() {
+    let src = "fn main() {\n    /// Doc.\n    struct P { x: int }\n    enum E<T> { A(T) }\n    P { x: 1 }.x\n}\n";
+    let tree = parser().parse(src, None).unwrap();
+    let root = tree.root_node();
+    assert!(first_error(root).is_none(), "{}", root.to_sexp());
+    let body = root.child(0).unwrap().child_by_field_name("body").unwrap();
+    let mut cursor = body.walk();
+    let kinds: Vec<&str> = body.named_children(&mut cursor).map(|n| n.kind()).collect();
+    assert_eq!(
+        kinds,
+        [
+            "doc_comment",
+            "struct_item",
+            "enum_item",
+            "field_expression"
+        ]
+    );
+    let name = body
+        .named_child(1)
+        .unwrap()
+        .child_by_field_name("name")
+        .unwrap();
+    assert_eq!(name.utf8_text(src.as_bytes()).unwrap(), "P");
+}

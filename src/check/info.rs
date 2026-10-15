@@ -21,14 +21,15 @@ pub struct Info {
     /// by the span of its name. In a generic function these can mention its
     /// own type parameters.
     pub instances: HashMap<Span, Instance>,
-    /// The symbol of every function, by the span of its name where it's
-    /// declared and where it's used: a name for it that's unique in the
-    /// program, unlike the one it's written with (see `check/scope.rs`).
+    /// The symbol of every function, struct and enum, by the span of its
+    /// name where it's declared and where it's used: a name for it that's
+    /// unique in the program, unlike the one it's written with (see
+    /// `check/scope.rs` and `check/names.rs`).
     pub symbols: HashMap<Span, String>,
 }
 
 /// A use of something generic, with its type arguments: `id` in `id(1)` is
-/// `Fn("id", [int])`. A function is named by its symbol.
+/// `Fn("id", [int])`. Each is named by its symbol.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Instance {
     Fn(String, Vec<Type>),
@@ -103,8 +104,8 @@ impl Note {
     }
 }
 
-/// Where each type, field and variant is declared, by name. Functions can
-/// share a name, so the checker keeps track of them itself.
+/// Where each type, field and variant is declared, by the type's symbol.
+/// The checker keeps track of functions itself.
 #[derive(Debug, Default)]
 pub(super) struct Defs {
     pub(super) types: HashMap<String, Span>,
@@ -118,8 +119,9 @@ pub(super) struct Defs {
 }
 
 impl Defs {
-    /// The first declaration of each name: the checker rejects the others.
-    pub(super) fn new(prog: &Program) -> Defs {
+    /// The first declaration of each: the checker rejects the others.
+    /// `types` are those of `Program::all_types`, in order.
+    pub(super) fn new(prog: &Program, types: &[super::TypeDef]) -> Defs {
         let mut defs = Defs::default();
         let mut doc = |name: &Ident, doc: Option<&DocComment>| {
             if let Some(d) = doc {
@@ -129,15 +131,16 @@ impl Defs {
         for (f, _) in prog.all_fns() {
             doc(&f.name, f.doc.as_ref());
         }
-        for d in &prog.types {
+        let all = prog.all_types();
+        for (d, _) in &all {
             doc(d.name(), d.doc());
             match d {
                 TypeDecl::Struct(s) => s.fields.iter().for_each(|f| doc(&f.name, f.doc.as_ref())),
                 TypeDecl::Enum(e) => e.variants.iter().for_each(|v| doc(&v.name, v.doc.as_ref())),
             }
         }
-        for d in &prog.types {
-            let ty = d.name().name.clone();
+        for ((d, _), def) in all.iter().zip(types) {
+            let ty = def.symbol.clone();
             defs.types.entry(ty.clone()).or_insert(d.name().span);
             match d {
                 TypeDecl::Struct(s) => {
@@ -260,11 +263,11 @@ impl Checker {
     /// type, type parameter, field or variant. None of that needs inference,
     /// so it's done for the whole program, even past an error.
     pub(super) fn type_notes(&mut self, prog: &Program) {
-        for d in &prog.types {
+        for (i, (d, _)) in prog.all_types().into_iter().enumerate() {
             let params = d.type_params();
             let name = &d.name().name;
             let generic = Type::Adt(
-                name.clone(),
+                self.types[i].symbol.clone(),
                 params.iter().map(|p| Type::Param(p.name.clone())).collect(),
             );
             let kind = match d {
@@ -277,7 +280,7 @@ impl Checker {
             match d {
                 TypeDecl::Struct(s) => {
                     for f in &s.fields {
-                        let ty = super::generics::resolve(&f.ty, &self.arities, &names(params));
+                        let ty = self.resolve_with(&f.ty, &names(params));
                         let kind = NoteKind::Field(f.name.name.clone());
                         self.note(f.name.span, kind, ty.ok(), Some(f.name.span));
                         self.type_expr_notes(&f.ty, params);
@@ -288,7 +291,7 @@ impl Checker {
                         let fields: Result<Vec<Type>, _> = v
                             .fields
                             .iter()
-                            .map(|t| super::generics::resolve(t, &self.arities, &names(params)))
+                            .map(|t| self.resolve_with(t, &names(params)))
                             .collect();
                         let ty = fields.ok().map(|fields| match fields.is_empty() {
                             true => generic.clone(),
@@ -328,16 +331,17 @@ impl Checker {
             TypeExprKind::Named(name, args) => {
                 // Only the name, not the arguments after it.
                 let span = Span::new(t.span.start, t.span.start + name.len());
-                if let Some(p) = params.iter().find(|p| p.name == *name) {
-                    let kind = NoteKind::TypeParam(name.clone());
-                    self.note(span, kind, None, Some(p.span));
-                } else if let Some(def) = self.defs.types.get(name).copied() {
-                    let ty = super::generics::resolve(t, &self.arities, &names(params));
-                    let kind = match self.adts.get(name).map(|d| &d.kind) {
+                if let Some(symbol) = self.adt_symbol(name, t.span) {
+                    let def = self.defs.types.get(symbol).copied();
+                    let kind = match self.adts.get(symbol).map(|d| &d.kind) {
                         Some(crate::types::AdtKind::Enum(_)) => NoteKind::Enum(name.clone()),
                         _ => NoteKind::Struct(name.clone()),
                     };
-                    self.note(span, kind, ty.ok(), Some(def));
+                    let ty = self.resolve_with(t, &names(params));
+                    self.note(span, kind, ty.ok(), def);
+                } else if let Some(p) = params.iter().find(|p| p.name == *name) {
+                    let kind = NoteKind::TypeParam(name.clone());
+                    self.note(span, kind, None, Some(p.span));
                 }
                 for a in args {
                     self.type_expr_notes(a, params);
@@ -390,8 +394,9 @@ fn each_annotation(e: &Expr, f: &mut impl FnMut(&TypeExpr)) {
                         each_annotation(init, f);
                     }
                     Stmt::Expr(e) | Stmt::BlockLike(e) => each_annotation(e, f),
-                    // A function of its own, with its own type parameters.
-                    Stmt::Fn(_) => {}
+                    // A function or type of its own, with its own type
+                    // parameters.
+                    Stmt::Fn(_) | Stmt::Type(_) => {}
                 }
             }
             tail.iter().for_each(|t| each_annotation(t, f));

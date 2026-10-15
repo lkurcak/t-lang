@@ -206,11 +206,11 @@ pub(super) fn unused_doc(doc: &DocComment) -> Warning {
 pub(super) struct Uses {
     /// Functions it names, called or not.
     pub(super) fns: HashSet<FnId>,
-    /// Structs and enums its signature or body mentions.
+    /// Structs and enums its signature or body mentions, by symbol.
     pub(super) types: HashSet<String>,
     /// Structs it constructs.
     pub(super) structs: HashSet<String>,
-    /// Enum variants it constructs, as `(enum, variant)`.
+    /// Enum variants it constructs, as `(enum's symbol, variant)`.
     pub(super) variants: HashSet<(String, String)>,
 }
 
@@ -228,8 +228,9 @@ impl Checker {
     /// and structs, enums and variants that no such function constructs.
     /// Their names say what's dead; one starting with `_` says that's on
     /// purpose. A nested function can only be reached from its block, so
-    /// one that nothing there uses is dead too. One nested in a dead
-    /// function goes without saying, so that's all that's reported.
+    /// one that nothing there uses is dead too. A nested function or local
+    /// type in a dead function goes without saying, so that's all that's
+    /// reported.
     ///
     /// There's no fix: removing one dead function can break another that
     /// calls it.
@@ -279,24 +280,26 @@ impl Checker {
                 self.warnings.push(dead(f.name.span, message));
             }
         }
-        for d in &prog.types {
-            if on_purpose(d.name()) {
+        for ((d, _), def) in prog.all_types().into_iter().zip(&self.types) {
+            let in_live = def.parent.is_none_or(|p| live[p.0]);
+            if on_purpose(d.name()) || !in_live {
                 continue;
             }
+            let symbol = &def.symbol;
             match d {
                 TypeDecl::Struct(s) => {
-                    if !used.structs.contains(&s.name.name) {
+                    if !used.structs.contains(symbol) {
                         let message = format!("struct `{}` is never constructed", s.name.name);
                         self.warnings.push(dead(s.name.span, message));
                     }
                 }
-                TypeDecl::Enum(e) if !used.types.contains(&e.name.name) => {
+                TypeDecl::Enum(e) if !used.types.contains(symbol) => {
                     let message = format!("enum `{}` is never used", e.name.name);
                     self.warnings.push(dead(e.name.span, message));
                 }
                 TypeDecl::Enum(e) => {
                     for v in &e.variants {
-                        let key = (e.name.name.clone(), v.name.name.clone());
+                        let key = (symbol.clone(), v.name.name.clone());
                         if !on_purpose(&v.name) && !used.variants.contains(&key) {
                             let message = format!(
                                 "variant `{}::{}` is never constructed",

@@ -99,6 +99,64 @@ that, nothing needs to know there were nested functions: not
 monomorphisation, not the interpreter, and not a backend. `t mono` shows
 the symbols; messages and editors show the names as written.
 
+### Local types
+
+A `struct` or `enum` can be declared in a block too, by the same rules: it
+means what it would at the top level, its name is in scope in the whole
+block, and it shadows any outer type of the same name
+(`tests/t/local_types.t`). So a helper type can stay with the nested `fn`s
+that use it, inside the one function that needs them:
+
+```rust
+fn main() {
+    print(perimeter(Rect { w: 2, h: 3 })); // expect: 10
+
+    struct Rect { w: int, h: int }
+    fn perimeter(r: Rect) -> int { 2 * (r.w + r.h) }
+}
+```
+
+Like a nested `fn`, a local type can't use the type parameters of the
+function it's in: in `fn wrap<T>`, `struct Box { v: T }` is an error, since
+at the top level that `T` would mean nothing. Declare `struct Box<T>`
+instead.
+
+Nothing outside the block can name a local type, but its values can still
+leave the block, since inference doesn't need the name:
+
+```rust
+fn main() {
+    let p = {
+        struct P { x: int }
+        P { x: 1 }
+    };
+    print(p.x); // expect: 1
+}
+```
+
+Types are compared by name, so two local types of the same name are still
+two types. They look the same in a message, so when they meet, it says
+which is which:
+
+```rust,error
+fn f() -> int {
+    struct P { x: int }
+    fn g(p: P) -> int { p.x }
+    fn h() -> int {
+        struct P { x: int }
+        g(P { x: 1 }) // error: these are two different types called `P`
+    }
+    h()
+}
+```
+
+Local types get symbols the same way, like `main::Rect`, and are lifted with
+the functions. Finding which type a name refers to is simpler than for a
+function, because only another type can shadow a type, never a local
+variable, and nothing about it depends on inference. So it's done for the
+whole program before checking starts (`src/check/names.rs`), and the
+checker looks up each type name by where it's written.
+
 ## Where do T1..Tn come from?
 
 T-Abs has a problem the step 1 rules didn't: nothing in `|x| x + 1` says what

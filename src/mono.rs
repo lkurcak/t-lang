@@ -14,15 +14,15 @@
 //! `int` for them, and so on down. It finishes because the checker rejects
 //! polymorphic recursion.
 //!
-//! It works on a program with no nested functions left (see `lift.rs`), so
-//! every function has a name of its own.
+//! It works on a program with no nested functions or local types left (see
+//! `lift.rs`), so everything has a name of its own.
 //!
 //! The interpreter runs what comes out of here, and `t mono` prints it.
 
 use crate::ast::*;
 use crate::check::{self, Info, Instance};
 use crate::error::{Error, Span};
-use crate::types::{Subst, Type, comma_list};
+use crate::types::{Subst, Type};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -52,11 +52,16 @@ pub fn monomorphise(prog: &Program, info: &Info) -> Result<Program, Error> {
     }
 }
 
-/// The name of the copy of `name` for type arguments `args`.
+/// The name of the copy of `name` for type arguments `args`. It has the
+/// symbols of the types in them, which tell apart types of the same name,
+/// where `Type`'s `Display` shows the names as written.
 fn mangle(name: &str, args: &[Type]) -> String {
     match args {
         [] => name.to_string(),
-        args => format!("{name}::<{}>", comma_list(args)),
+        args => {
+            let args: Vec<String> = args.iter().map(Type::symbols).collect();
+            format!("{name}::<{}>", args.join(", "))
+        }
     }
 }
 
@@ -335,8 +340,16 @@ struct Cx<'m, 'p, 's> {
 impl Cx<'_, '_, '_> {
     /// A type written in the original, as written in the copy.
     fn ty(&mut self, t: &TypeExpr) -> TypeExpr {
-        let resolved = check::resolve(t, &self.m.arities, &self.params)
-            .expect("monomorphising a program that checked");
+        // Everything is at the top level by now, named by its symbol.
+        let arities = &self.m.arities;
+        let names = |name: &str, _| match self.params.iter().any(|p| p == name) {
+            true => None,
+            false => arities
+                .get(name)
+                .map(|&n| check::TypeName::Adt(name.to_string(), n)),
+        };
+        let resolved =
+            check::resolve(t, &names, &self.params).expect("monomorphising a program that checked");
         self.written(&self.s.apply(&resolved), t.span)
     }
 
@@ -421,7 +434,9 @@ impl Cx<'_, '_, '_> {
                         },
                         Stmt::Expr(e) => Stmt::Expr(self.expr(e)),
                         Stmt::BlockLike(e) => Stmt::BlockLike(self.expr(e)),
-                        Stmt::Fn(_) => unreachable!("nested functions are lifted first"),
+                        Stmt::Fn(_) | Stmt::Type(_) => {
+                            unreachable!("nested functions and types are lifted first")
+                        }
                     })
                     .collect(),
                 tail.as_ref().map(|t| Box::new(self.expr(t))),

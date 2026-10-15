@@ -1,9 +1,9 @@
 //! The type checker. This is the simply typed lambda calculus (STLC) with base
 //! types `int`, `bool`, `()` and function types, plus `let`, `if` and
 //! recursive functions (step 1), plus structs, enums and `match`
-//! (step 2, see docs/02-adts.md), plus closures, nested functions and type
-//! inference (step 3, see docs/03-inference.md), plus generics (step 4, see
-//! docs/04-generics.md).
+//! (step 2, see docs/02-adts.md), plus closures, nested functions and types,
+//! and type inference (step 3, see docs/03-inference.md), plus generics
+//! (step 4, see docs/04-generics.md).
 //!
 //! Each case below is an implementation of a *typing rule*, written above it in
 //! the usual inference-rule notation:
@@ -30,10 +30,11 @@ mod escape;
 mod generics;
 mod info;
 mod lints;
+mod names;
 mod scope;
 mod unify;
 
-pub(crate) use generics::resolve;
+pub(crate) use generics::{TypeName, resolve};
 pub use info::{Info, Instance, Note, NoteKind};
 pub use scope::source_name;
 
@@ -47,7 +48,8 @@ use escape::{Escape, Exit, Origin, bound_origin};
 use generics::Use;
 use info::Defs;
 use lints::{Uses, mergeable, narrowable, unreachable_alt, unreachable_arm, unused, unused_doc};
-use scope::{Binding, FnDef, FnId, FnScope, outer_param, to_closure};
+use names::{Scoped, TypeDef};
+use scope::{Binding, FnDef, FnId, FnScope, to_closure};
 use std::collections::{HashMap, HashSet};
 use unify::Var;
 
@@ -68,7 +70,7 @@ fn builtin_type(name: &str) -> Type {
 /// Those found before an error are kept, and so is what was learned about
 /// the program up to it.
 pub fn check(prog: &Program, warnings: &mut Vec<Warning>) -> (Info, Result<(), Error>) {
-    let mut cx = Checker::new(prog);
+    let mut cx = Checker::new(prog, false);
     cx.warnings.extend(prog.stray_docs.iter().map(unused_doc));
     let result = cx.program(prog);
     cx.type_notes(prog);
@@ -81,7 +83,7 @@ pub fn check(prog: &Program, warnings: &mut Vec<Warning>) -> (Info, Result<(), E
 /// of the function the error is in, if it's in one. For checking what
 /// monomorphisation made (see `mono.rs`).
 pub fn recheck(prog: &Program) -> Result<(), (Option<String>, Error)> {
-    let mut cx = Checker::new(prog);
+    let mut cx = Checker::new(prog, true);
     cx.program(prog).map_err(|e| (cx.failed_in.take(), e))
 }
 
@@ -94,114 +96,6 @@ fn check_main(prog: &Program) -> Result<(), Error> {
         }
         Some(_) => Ok(()),
     }
-}
-
-/// Builds the table of structs and enums, and fills in `arities`, how many
-/// type arguments each takes. Rejects duplicate names, fields, variants and
-/// type parameters, type parameters no field uses, types that contain
-/// themselves, and polymorphic recursion.
-fn collect_adts(prog: &Program, arities: &mut HashMap<String, usize>) -> Result<Adts, Error> {
-    // All names first, so declarations can mention each other in any order.
-    for d in &prog.types {
-        let name = d.name();
-        if matches!(name.name.as_str(), "int" | "bool") {
-            return Err(Error::ty(
-                name.span,
-                format!("`{}` is a built-in type", name.name),
-            ));
-        }
-        if arities
-            .insert(name.name.clone(), d.type_params().len())
-            .is_some()
-        {
-            return Err(Error::ty(
-                name.span,
-                format!("type `{}` is already defined", name.name),
-            ));
-        }
-    }
-
-    let mut adts = Adts::new();
-    // Every field's type, with where it was written, for the recursion
-    // checks.
-    let mut field_types = Vec::new();
-    for d in &prog.types {
-        let params = generics::declare(d.type_params())?;
-        let kind = match d {
-            TypeDecl::Struct(s) => {
-                let mut fields: Vec<(String, Type)> = Vec::new();
-                for f in &s.fields {
-                    if fields.iter().any(|(n, _)| *n == f.name.name) {
-                        return Err(Error::ty(
-                            f.name.span,
-                            format!("field `{}` is declared twice", f.name.name),
-                        ));
-                    }
-                    let t = resolve(&f.ty, arities, &params)?;
-                    field_types.push((&d.name().name, f.ty.span, t.clone()));
-                    fields.push((f.name.name.clone(), t));
-                }
-                AdtKind::Struct(fields)
-            }
-            TypeDecl::Enum(e) => {
-                let mut variants: Vec<(String, Vec<Type>)> = Vec::new();
-                for v in &e.variants {
-                    if variants.iter().any(|(n, _)| *n == v.name.name) {
-                        return Err(Error::ty(
-                            v.name.span,
-                            format!("variant `{}` is declared twice", v.name.name),
-                        ));
-                    }
-                    let mut tys = Vec::new();
-                    for f in &v.fields {
-                        let t = resolve(f, arities, &params)?;
-                        field_types.push((&d.name().name, f.span, t.clone()));
-                        tys.push(t);
-                    }
-                    variants.push((v.name.name.clone(), tys));
-                }
-                AdtKind::Enum(variants)
-            }
-        };
-        let def = AdtDef { params, kind };
-        adts.insert(d.name().name.clone(), def);
-    }
-
-    // `struct S<T> { f: fn(S<Option<T>>) -> int }` would need `S<int>`, so
-    // `S<Option<int>>`, so `S<Option<Option<int>>>`...
-    let mut uses = Vec::new();
-    for (owner, span, t) in &field_types {
-        each_adt(t, &mut |name, args| {
-            uses.push(Use {
-                from: owner,
-                to: name,
-                args,
-                span: *span,
-            })
-        });
-    }
-    let params: HashMap<&str, &[String]> = adts
-        .iter()
-        .map(|(name, def)| (name.as_str(), def.params.as_slice()))
-        .collect();
-    generics::polymorphic_recursion(&uses, &params)?;
-
-    // A struct that holds itself, even via other types, would need infinite
-    // memory: `struct A { a: A }` has the size of an int plus... itself.
-    // Making that work takes a pointer, and a story for who frees it: that's
-    // step 5, ownership.
-    for (owner, span, t) in field_types {
-        if contains(&adts, &t, owner, &mut HashSet::new()) {
-            return Err(Error::ty(
-                span,
-                format!(
-                    "`{owner}` contains itself, so it would have infinite size \
-                     (holding itself through a pointer comes in step 5)"
-                ),
-            ));
-        }
-    }
-    Ok(adts)
 }
 
 /// Calls `f` with the name and type arguments of every struct and enum in
@@ -306,10 +200,23 @@ fn or_mismatch(a: &[Local], b: &[Local]) -> Option<String> {
 fn plural(n: usize, what: &str) -> String {
     format!("{n} {what}{}", if n == 1 { "" } else { "s" })
 }
+
 struct Checker {
+    /// What every struct and enum is made of, by symbol.
     adts: Adts,
-    /// How many type arguments each struct and enum takes.
+    /// How many type arguments each struct and enum takes, by symbol.
     arities: HashMap<String, usize>,
+    /// Every struct and enum, top-level and local, in the order of
+    /// `Program::all_types`.
+    types: Vec<TypeDef>,
+    /// What each name in a type refers to, by its span (see `names.rs`).
+    /// `None` when checking what monomorphisation made, which has
+    /// everything at the top level, named by its symbol, and where a copy
+    /// has the spans of what it's a copy of, all through a type, so spans
+    /// don't tell names apart. Names are looked up as they are then.
+    type_names: Option<HashMap<Span, Scoped>>,
+    /// The symbol of every function, by `FnId`.
+    fn_symbols: Vec<String>,
     /// Every function, top-level and nested, by `FnId`.
     fns: Vec<FnDef>,
     /// Each nested function's id, by where its name is declared.
@@ -322,8 +229,6 @@ struct Checker {
     current: Option<FnId>,
     /// The type parameters of the function being checked.
     type_params: Vec<String>,
-    /// Those of the functions it's nested in, which it can't use.
-    enclosing_params: Vec<String>,
     /// The local part of the context Γ, as a stack. Entering a scope pushes,
     /// leaving truncates (see `end_scope`). Searching from the top makes inner
     /// `let`s shadow outer ones.
@@ -359,16 +264,29 @@ struct Checker {
 }
 
 impl Checker {
-    fn new(prog: &Program) -> Checker {
+    /// `mono` says whether `prog` is what monomorphisation made.
+    fn new(prog: &Program, mono: bool) -> Checker {
+        let fn_symbols = scope::symbols(&prog.all_fns());
+        let (types, type_names) = names::names(prog, &prog.all_fns(), &fn_symbols);
+        let type_names = (!mono).then_some(type_names);
+        let mut info = Info::default();
+        for (span, name) in type_names.iter().flatten() {
+            if let Scoped::Adt(symbol) = name {
+                info.symbols.insert(*span, symbol.clone());
+            }
+        }
         Checker {
             adts: Adts::new(),
             arities: HashMap::new(),
+            defs: Defs::new(prog, &types),
+            types,
+            type_names,
+            fn_symbols,
             fns: Vec::new(),
             nested_ids: HashMap::new(),
             scopes: Vec::new(),
             current: None,
             type_params: Vec::new(),
-            enclosing_params: Vec::new(),
             locals: Vec::new(),
             barrier: 0,
             closure_fix: None,
@@ -377,15 +295,14 @@ impl Checker {
             escapes: Vec::new(),
             uses: Vec::new(),
             warnings: Vec::new(),
-            defs: Defs::new(prog),
-            info: Info::default(),
+            info,
             pending: Vec::new(),
             failed_in: None,
         }
     }
 
     fn program(&mut self, prog: &Program) -> Result<(), Error> {
-        self.adts = collect_adts(prog, &mut self.arities)?;
+        self.collect_adts(prog)?;
         self.signatures(&prog.all_fns())?;
         self.bodies(prog)?;
         self.no_polymorphic_recursion()?;
@@ -402,7 +319,6 @@ impl Checker {
     /// one each is nested in, if it is (see `Program::all_fns`).
     fn signatures(&mut self, fns: &[(&FnDecl, Option<usize>)]) -> Result<(), Error> {
         let mut top: Vec<FnId> = Vec::new();
-        let mut symbols = HashSet::new();
         for (i, &(f, parent)) in fns.iter().enumerate() {
             let parent = parent.map(FnId);
             if parent.is_none() && f.name.name == "main" && !f.type_params.is_empty() {
@@ -412,17 +328,16 @@ impl Checker {
                 ));
             }
             let params = generics::declare(&f.type_params)?;
-            let outer = self.params_around(parent);
-            let resolve = |t| self.resolve_in(t, &f.name.name, &params, &outer);
             let param_tys = f
                 .params
                 .iter()
-                .map(|p| resolve(&p.ty))
+                .map(|p| self.resolve_with(&p.ty, &params))
                 .collect::<Result<Vec<_>, _>>()?;
-            let ret = resolve(&f.ret)?;
+            let ret = self.resolve_with(&f.ret, &params)?;
             let ty = Type::func(param_tys, ret);
             let name = &f.name.name;
-            let symbol = match parent {
+            let symbol = self.fn_symbols[i].clone();
+            match parent {
                 None => {
                     if BUILTINS.contains(&name.as_str())
                         || top.iter().any(|id| self.fns[id.0].name.name == *name)
@@ -433,14 +348,11 @@ impl Checker {
                         ));
                     }
                     top.push(FnId(i));
-                    name.clone()
                 }
-                Some(p) => {
+                Some(_) => {
                     self.nested_ids.insert(f.name.span, FnId(i));
-                    scope::symbol(&self.fns[p.0].symbol, name, &symbols)
                 }
-            };
-            symbols.insert(symbol.clone());
+            }
             self.info.symbols.insert(f.name.span, symbol.clone());
             self.fns.push(FnDef {
                 name: f.name.clone(),
@@ -453,18 +365,6 @@ impl Checker {
         self.scopes.push(FnScope { at: 0, fns: top });
         self.uses = (0..fns.len()).map(|_| Uses::default()).collect();
         Ok(())
-    }
-
-    /// The type parameters of the function with id `f` and those it's
-    /// nested in, if any.
-    fn params_around(&self, f: Option<FnId>) -> Vec<String> {
-        let mut params = Vec::new();
-        let mut f = f;
-        while let Some(id) = f {
-            params.extend(self.fns[id.0].scheme.params.iter().cloned());
-            f = self.fns[id.0].parent;
-        }
-        params
     }
 
     /// Pass 2: checks each function's body against its declared return type.
@@ -521,36 +421,157 @@ impl Checker {
         self.solve_all(vars)
     }
 
+    /// Pass 0: builds the table of structs and enums, local ones too, and
+    /// fills in `arities`. Rejects duplicate names, fields, variants and
+    /// type parameters, type parameters no field uses, types that contain
+    /// themselves, and polymorphic recursion.
+    fn collect_adts(&mut self, prog: &Program) -> Result<(), Error> {
+        let decls = prog.all_types();
+        // All names first, so declarations can mention each other in any
+        // order.
+        let mut declared = HashSet::new();
+        for ((d, _), def) in decls.iter().zip(&self.types) {
+            let name = d.name();
+            if matches!(name.name.as_str(), "int" | "bool") {
+                return Err(Error::ty(
+                    name.span,
+                    format!("`{}` is a built-in type", name.name),
+                ));
+            }
+            if !declared.insert((def.block, &name.name)) {
+                return Err(Error::ty(
+                    name.span,
+                    format!("type `{}` is already defined", name.name),
+                ));
+            }
+            let arity = d.type_params().len();
+            self.arities.insert(def.symbol.clone(), arity);
+        }
+
+        let mut adts = Adts::new();
+        // Every field's type, with the symbol of the type it's in and where
+        // it was written, for the recursion checks.
+        let mut field_types = Vec::new();
+        for ((d, _), def) in decls.iter().zip(&self.types) {
+            let params = generics::declare(d.type_params())?;
+            let kind = match d {
+                TypeDecl::Struct(s) => {
+                    let mut fields: Vec<(String, Type)> = Vec::new();
+                    for f in &s.fields {
+                        if fields.iter().any(|(n, _)| *n == f.name.name) {
+                            return Err(Error::ty(
+                                f.name.span,
+                                format!("field `{}` is declared twice", f.name.name),
+                            ));
+                        }
+                        let t = self.resolve_with(&f.ty, &params)?;
+                        field_types.push((def.symbol.as_str(), f.ty.span, t.clone()));
+                        fields.push((f.name.name.clone(), t));
+                    }
+                    AdtKind::Struct(fields)
+                }
+                TypeDecl::Enum(e) => {
+                    let mut variants: Vec<(String, Vec<Type>)> = Vec::new();
+                    for v in &e.variants {
+                        if variants.iter().any(|(n, _)| *n == v.name.name) {
+                            return Err(Error::ty(
+                                v.name.span,
+                                format!("variant `{}` is declared twice", v.name.name),
+                            ));
+                        }
+                        let mut tys = Vec::new();
+                        for f in &v.fields {
+                            let t = self.resolve_with(f, &params)?;
+                            field_types.push((def.symbol.as_str(), f.span, t.clone()));
+                            tys.push(t);
+                        }
+                        variants.push((v.name.name.clone(), tys));
+                    }
+                    AdtKind::Enum(variants)
+                }
+            };
+            adts.insert(def.symbol.clone(), AdtDef { params, kind });
+        }
+
+        // `struct S<T> { f: fn(S<Option<T>>) -> int }` would need `S<int>`,
+        // so `S<Option<int>>`, so `S<Option<Option<int>>>`...
+        let mut uses = Vec::new();
+        for (owner, span, t) in &field_types {
+            each_adt(t, &mut |name, args| {
+                uses.push(Use {
+                    from: owner,
+                    to: name,
+                    args,
+                    span: *span,
+                })
+            });
+        }
+        let params: HashMap<&str, &[String]> = adts
+            .iter()
+            .map(|(name, def)| (name.as_str(), def.params.as_slice()))
+            .collect();
+        generics::polymorphic_recursion(&uses, &params)?;
+
+        // A struct that holds itself, even via other types, would need
+        // infinite memory: `struct A { a: A }` has the size of an int
+        // plus... itself. Making that work takes a pointer, and a story for
+        // who frees it: that's step 5, ownership.
+        for (owner, span, t) in field_types {
+            if contains(&adts, &t, owner, &mut HashSet::new()) {
+                return Err(Error::ty(
+                    span,
+                    format!(
+                        "`{}` contains itself, so it would have infinite size \
+                         (holding itself through a pointer comes in step 5)",
+                        source_name(owner)
+                    ),
+                ));
+            }
+        }
+        self.adts = adts;
+        Ok(())
+    }
+
+    /// What type name `name`, written at `span` where type parameters
+    /// `params` are in scope, refers to, if it's a struct or enum or an
+    /// outer type parameter (see `names.rs`).
+    fn type_name(&self, name: &str, span: Span, params: &[String]) -> Option<TypeName> {
+        let Some(names) = &self.type_names else {
+            if params.iter().any(|p| p == name) {
+                return None;
+            }
+            let arity = *self.arities.get(name)?;
+            return Some(TypeName::Adt(name.to_string(), arity));
+        };
+        match names.get(&span)? {
+            Scoped::Adt(symbol) => {
+                let arity = *self.arities.get(symbol)?;
+                Some(TypeName::Adt(symbol.clone(), arity))
+            }
+            Scoped::OuterParam(keyword, item) => Some(TypeName::OuterParam(keyword, item.clone())),
+        }
+    }
+
+    /// The symbol of the struct or enum that `name`, written at `span`,
+    /// refers to, if it's one.
+    fn adt_symbol<'a>(&'a self, name: &'a str, span: Span) -> Option<&'a str> {
+        match &self.type_names {
+            None => self.arities.contains_key(name).then_some(name),
+            Some(names) => match names.get(&span)? {
+                Scoped::Adt(symbol) => Some(symbol),
+                Scoped::OuterParam(..) => None,
+            },
+        }
+    }
+
+    /// A type written where type parameters `params` are in scope.
+    fn resolve_with(&self, t: &TypeExpr, params: &[String]) -> Result<Type, Error> {
+        resolve(t, &|name, span| self.type_name(name, span, params), params)
+    }
+
     /// A type written inside the function being checked.
     fn resolve(&self, t: &TypeExpr) -> Result<Type, Error> {
-        self.resolve_in(
-            t,
-            self.current_name(),
-            &self.type_params,
-            &self.enclosing_params,
-        )
-    }
-
-    /// The name of the function being checked.
-    fn current_name(&self) -> &str {
-        let f = self.current.expect("checking outside a function");
-        &self.fns[f.0].name.name
-    }
-
-    /// A type written in function `f`, where type parameters `params` are
-    /// in scope, and `f` is nested in functions with type parameters
-    /// `outer`.
-    fn resolve_in(
-        &self,
-        t: &TypeExpr,
-        f: &str,
-        params: &[String],
-        outer: &[String],
-    ) -> Result<Type, Error> {
-        match outer_param(t, f, params, outer, &self.arities) {
-            Some(e) => Err(e),
-            None => resolve(t, &self.arities, params),
-        }
+        self.resolve_with(t, &self.type_params)
     }
 
     /// Rejects polymorphic recursion between functions: see
@@ -698,7 +719,7 @@ impl Checker {
         let t = generics::name_holes(t, &mut holes);
         let mut params = self.type_params.clone();
         params.extend(holes.iter().map(|(name, _)| name.clone()));
-        let ty = self.resolve_in(&t, self.current_name(), &params, &self.enclosing_params)?;
+        let ty = self.resolve_with(&t, &params)?;
         let (names, vars): (Vec<String>, Vec<Type>) = holes
             .into_iter()
             .map(|(name, span)| {
@@ -931,6 +952,10 @@ impl Checker {
             // and T1..Tn mention them.
             ExprKind::StructLit(name, targs, inits) => {
                 let ty = self.struct_type(name, targs)?;
+                let Type::Adt(symbol, _) = &ty else {
+                    unreachable!("a struct")
+                };
+                let symbol = symbol.clone();
                 let fields = struct_fields(&self.adts, &ty).expect("a struct");
                 let mut given = vec![false; fields.len()];
                 for init in inits {
@@ -947,7 +972,7 @@ impl Checker {
                         ));
                     }
                     given[i] = true;
-                    self.note_field(&name.name, &init.name, &fields[i].1);
+                    self.note_field(&symbol, &init.name, &fields[i].1);
                     self.check(&init.value, &fields[i].1)?;
                     self.leaves(&init.value, &fields[i].1, Exit::Store);
                 }
@@ -957,8 +982,8 @@ impl Checker {
                         format!("missing field `{}` in `{}`", fields[i].0, name.name),
                     ));
                 }
-                self.uses().types.insert(name.name.clone());
-                self.uses().structs.insert(name.name.clone());
+                self.uses().types.insert(symbol.clone());
+                self.uses().structs.insert(symbol);
                 Ok(ty)
             }
 
@@ -1025,7 +1050,10 @@ impl Checker {
                     self.check(arg, field)?;
                     self.leaves(arg, field, Exit::Store);
                 }
-                let (ty, variant) = (ty.name.clone(), variant.name.clone());
+                let Type::Adt(symbol, _) = &t else {
+                    unreachable!("an enum")
+                };
+                let (ty, variant) = (symbol.clone(), variant.name.clone());
                 self.uses().types.insert(ty.clone());
                 self.uses().variants.insert((ty, variant));
                 Ok(t)
@@ -1148,6 +1176,8 @@ impl Checker {
                     let fix = to_closure(f, stmts, k, tail);
                     self.nested(f, fix)?;
                 }
+                // Checked with the others, before any function.
+                Stmt::Type(_) => {}
                 Stmt::Let { pat, ty, init } => {
                     let t = match ty {
                         Some(ann) => {
@@ -1358,8 +1388,10 @@ impl Checker {
             PatternKind::Variant(name, targs, variant, args) => {
                 let (t, i) = self.variant(name, targs, variant)?;
                 let fields = variant_fields(&self.adts, &t, i);
+                if let Type::Adt(symbol, _) = &t {
+                    self.uses().types.insert(symbol.clone());
+                }
                 self.pattern_is(p, ty, t)?;
-                self.uses().types.insert(name.name.clone());
                 if fields.len() != args.len() {
                     return Err(Error::ty(
                         p.span,
@@ -1419,8 +1451,12 @@ impl Checker {
             PatternKind::Struct(name, targs, field_pats, rest) => {
                 let t = self.struct_type(name, targs)?;
                 let fields = struct_fields(&self.adts, &t).expect("a struct");
+                let Type::Adt(symbol, _) = &t else {
+                    unreachable!("a struct")
+                };
+                let symbol = symbol.clone();
+                self.uses().types.insert(symbol.clone());
                 self.pattern_is(p, ty, t)?;
-                self.uses().types.insert(name.name.clone());
                 // Fields left out of the pattern match anything.
                 let mut args = vec![Pat::Wild; fields.len()];
                 let mut given = vec![false; fields.len()];
@@ -1438,7 +1474,7 @@ impl Checker {
                         ));
                     }
                     given[i] = true;
-                    self.note_field(&name.name, &fp.name, &fields[i].1);
+                    self.note_field(&symbol, &fp.name, &fields[i].1);
                     args[i] = self.pattern(&fp.pat, &fields[i].1, binds)?;
                     // `P { x }`: the parser made the pattern `x` out of the
                     // field name, so they're in the same place.
@@ -1476,7 +1512,10 @@ impl Checker {
     /// If it's generic, each type parameter gets a fresh variable, to be
     /// worked out from the fields or from where it's used.
     fn struct_type(&mut self, name: &Ident, targs: &[TypeExpr]) -> Result<Type, Error> {
-        match self.adts.get(&name.name).map(|d| &d.kind) {
+        let def = self
+            .adt_symbol(&name.name, name.span)
+            .and_then(|s| self.adts.get(s));
+        match def.map(|d| &d.kind) {
             Some(AdtKind::Struct(_)) => self.instantiate(name, targs, " { .. }", NoteKind::Struct),
             Some(AdtKind::Enum(_)) => Err(Error::ty(
                 name.span,
@@ -1489,10 +1528,10 @@ impl Checker {
         }
     }
 
-    /// `name<A1, .., Ak>`, for struct or enum `name`, with the type
-    /// arguments `targs` or else a fresh variable for each type parameter,
-    /// noted as a use of it at `name`'s span. `rest` follows `name::<..>`
-    /// in an example of writing them.
+    /// `name<A1, .., Ak>`, for struct or enum `name`, which must be one,
+    /// with the type arguments `targs` or else a fresh variable for each
+    /// type parameter, noted as a use of it at `name`'s span. `rest`
+    /// follows `name::<..>` in an example of writing them.
     fn instantiate(
         &mut self,
         name: &Ident,
@@ -1500,11 +1539,15 @@ impl Checker {
         rest: &str,
         kind: fn(String) -> NoteKind,
     ) -> Result<Type, Error> {
-        let params = self.adts[&name.name].params.clone();
+        let symbol = self
+            .adt_symbol(&name.name, name.span)
+            .expect("a struct or enum");
+        let symbol = symbol.to_string();
+        let params = self.adts[&symbol].params.clone();
         let args = self.type_args(&name.name, &params, targs, name.span, rest)?;
-        let ty = Type::Adt(name.name.clone(), args.clone());
-        let def = self.defs.types.get(&name.name).copied();
-        let instance = Instance::Adt(name.name.clone(), args);
+        let ty = Type::Adt(symbol.clone(), args.clone());
+        let def = self.defs.types.get(&symbol).copied();
+        let instance = Instance::Adt(symbol, args);
         let kind = kind(name.name.clone());
         self.note_use(
             name.span,
@@ -1525,7 +1568,9 @@ impl Checker {
         targs: &[TypeExpr],
         variant: &Ident,
     ) -> Result<(Type, usize), Error> {
-        let variants = match self.adts.get(&ty.name).map(|d| &d.kind) {
+        let symbol = self.adt_symbol(&ty.name, ty.span).map(str::to_string);
+        let def = symbol.as_ref().and_then(|s| self.adts.get(s));
+        let variants = match def.map(|d| &d.kind) {
             Some(AdtKind::Enum(variants)) => variants,
             Some(AdtKind::Struct(_)) => {
                 return Err(Error::ty(
@@ -1548,7 +1593,7 @@ impl Checker {
             true => t.clone(),
             false => Type::func(fields, t.clone()),
         };
-        let key = (ty.name.clone(), variant.name.clone());
+        let key = (symbol.expect("an enum"), variant.name.clone());
         let def = self.defs.variants.get(&key).copied();
         let kind = NoteKind::Variant(ty.name.clone(), variant.name.clone());
         self.note(variant.span, kind, Some(as_fn), def);

@@ -147,8 +147,9 @@ module.exports = grammar({
 
     block: $ => seq('{', repeat($._statement), optional($._expression), '}'),
 
-    // A `fn` in a block is nested: a `function_item` like any other.
-    _statement: $ => choice($.let_declaration, $.expression_statement, $.function_item),
+    // A `fn`, `struct` or `enum` in a block is local to it: an item like
+    // any other.
+    _statement: $ => choice($.let_declaration, $.expression_statement, $._item),
 
     let_declaration: $ => seq(
       'let',

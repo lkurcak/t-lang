@@ -26,12 +26,24 @@ pub(super) fn arity_error(what: &str, arity: usize, given: usize, span: Span) ->
     Error::ty(span, message)
 }
 
+/// What a name in a type refers to, if it isn't a type parameter of what
+/// it's written in, or `int` or `bool`.
+pub(crate) enum TypeName {
+    /// A struct or enum, by its symbol (see `check/names.rs`), with how
+    /// many type arguments it takes.
+    Adt(String, usize),
+    /// A type parameter of a function that what it's written in is nested
+    /// in, which it can't use. With the keyword and name of what it's
+    /// written in: `("fn", "helper")`.
+    OuterParam(&'static str, String),
+}
+
 /// Turns a type as written (`TypeExpr`) into a type as understood (`Type`).
-/// `arities` says how many type arguments each struct and enum takes, and
-/// `params` are the type parameters in scope.
+/// `names` says what the name at a span refers to, and `params` are the type
+/// parameters in scope, for names it says nothing about.
 pub(crate) fn resolve(
     t: &TypeExpr,
-    arities: &HashMap<String, usize>,
+    names: &dyn Fn(&str, Span) -> Option<TypeName>,
     params: &[String],
 ) -> Result<Type, Error> {
     match &t.kind {
@@ -40,39 +52,47 @@ pub(crate) fn resolve(
             "`_` can only stand for a type in type arguments, like `id::<_>`",
         )),
         TypeExprKind::Named(name, args) => {
-            let arity = if params.contains(name) || matches!(name.as_str(), "int" | "bool") {
-                0
-            } else {
-                match arities.get(name) {
-                    Some(&n) => n,
-                    None => return Err(Error::ty(t.span, format!("unknown type `{name}`"))),
+            let (ty, arity) = match names(name, t.span) {
+                Some(TypeName::Adt(symbol, n)) => (Type::Adt(symbol, Vec::new()), n),
+                Some(TypeName::OuterParam(keyword, item)) => {
+                    let nested = if keyword == "fn" { "nested" } else { "local" };
+                    return Err(Error::ty(
+                        t.span,
+                        format!(
+                            "can't use type parameter `{name}` of the enclosing function in a \
+                             {nested} `{keyword}`; declare it on this one too, as in \
+                             `{keyword} {item}<{name}>`"
+                        ),
+                    ));
                 }
+                None if params.contains(name) => (Type::Param(name.clone()), 0),
+                None if name == "int" => (Type::Int, 0),
+                None if name == "bool" => (Type::Bool, 0),
+                None => return Err(Error::ty(t.span, format!("unknown type `{name}`"))),
             };
             if args.len() != arity {
-                let what = match () {
-                    _ if params.contains(name) => format!("type parameter `{name}`"),
+                let what = match ty {
+                    Type::Param(_) => format!("type parameter `{name}`"),
                     _ => format!("`{name}`"),
                 };
                 return Err(arity_error(&what, arity, args.len(), t.span));
             }
             let args = args
                 .iter()
-                .map(|a| resolve(a, arities, params))
+                .map(|a| resolve(a, names, params))
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok(match name.as_str() {
-                _ if params.contains(name) => Type::Param(name.clone()),
-                "int" => Type::Int,
-                "bool" => Type::Bool,
-                _ => Type::Adt(name.clone(), args),
+            Ok(match ty {
+                Type::Adt(symbol, _) => Type::Adt(symbol, args),
+                ty => ty,
             })
         }
         TypeExprKind::Unit => Ok(Type::Unit),
         TypeExprKind::Fn(params_, ret) => Ok(Type::func(
             params_
                 .iter()
-                .map(|p| resolve(p, arities, params))
+                .map(|p| resolve(p, names, params))
                 .collect::<Result<_, _>>()?,
-            resolve(ret, arities, params)?,
+            resolve(ret, names, params)?,
         )),
     }
 }

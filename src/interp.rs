@@ -72,9 +72,11 @@ impl fmt::Display for Value {
             Value::Fn(name) => write!(f, "<fn {}>", crate::check::source_name(name)),
             Value::Builtin(name) => write!(f, "<fn {name}>"),
             Value::Closure(_) => f.write_str("<closure>"),
-            Value::Struct(name, fields) if fields.is_empty() => write!(f, "{name} {{}}"),
+            Value::Struct(name, fields) if fields.is_empty() => {
+                write!(f, "{} {{}}", crate::check::source_name(name))
+            }
             Value::Struct(name, fields) => {
-                write!(f, "{name} {{ ")?;
+                write!(f, "{} {{ ", crate::check::source_name(name))?;
                 for (i, (field, v)) in fields.iter().enumerate() {
                     if i > 0 {
                         f.write_str(", ")?;
@@ -84,7 +86,7 @@ impl fmt::Display for Value {
                 f.write_str(" }")
             }
             Value::Variant(ty, variant, fields) => {
-                write!(f, "{ty}::{variant}")?;
+                write!(f, "{}::{variant}", crate::check::source_name(ty))?;
                 if !fields.is_empty() {
                     f.write_str("(")?;
                     for (i, v) in fields.iter().enumerate() {
@@ -286,7 +288,9 @@ impl Interp<'_, '_> {
                         Stmt::Expr(e) | Stmt::BlockLike(e) => {
                             self.eval(e)?;
                         }
-                        Stmt::Fn(_) => unreachable!("nested functions are lifted first"),
+                        Stmt::Fn(_) | Stmt::Type(_) => {
+                            unreachable!("nested functions and types are lifted first")
+                        }
                     }
                 }
                 let v = match tail {

@@ -245,6 +245,10 @@
           "named": true
         },
         {
+          "type": "enum_item",
+          "named": true
+        },
+        {
           "type": "expression_statement",
           "named": true
         },
@@ -254,6 +258,10 @@
         },
         {
           "type": "let_declaration",
+          "named": true
+        },
+        {
+          "type": "struct_item",
           "named": true
         }
       ]

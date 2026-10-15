@@ -248,6 +248,56 @@ fn main() {
     );
 }
 
+/// Local types too: from the AST, with their docs, and with the blank
+/// lines of any statement around them.
+#[test]
+fn prints_local_types_like_statements() {
+    let src = "\
+fn main() {
+
+
+    /// A point.
+    // plain, between the doc and the `struct`
+    struct P { /// The x.
+    x: int, y: int } // after it
+    enum Shape<T> {
+        // inside
+        Circle(T), Empty
+    }
+
+
+
+    let p = P { x: 1, y: 2 }; struct Q {}
+    print(p.x)
+
+
+}
+";
+    assert_eq!(
+        fmt(src),
+        "\
+fn main() {
+    /// A point.
+    // plain, between the doc and the `struct`
+    struct P {
+        /// The x.
+        x: int,
+        y: int,
+    } // after it
+    enum Shape<T> {
+        // inside
+        Circle(T),
+        Empty,
+    }
+
+    let p = P { x: 1, y: 2 };
+    struct Q {}
+    print(p.x)
+}
+"
+    );
+}
+
 /// A `///` that documents nothing is kept like a comment, but a comment
 /// that can't stay where it is moves to the next place one can go, and
 /// before a field a `///` would document it. Inside a struct or enum, they

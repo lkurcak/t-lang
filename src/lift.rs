@@ -1,80 +1,152 @@
-//! Lifting: moves every nested function to the top level, named by its
-//! symbol (`main::helper`, see `check/scope.rs`), and renames every use of a
-//! function to the symbol the checker found it refers to. A nested function
-//! can't capture anything, so that's all it takes: it means the same at the
-//! top level, under a name of its own. After this, nothing needs to know
-//! there were nested functions, or that two functions can share a name:
-//! not monomorphisation, not the interpreter, and not a backend.
+//! Lifting: moves every nested function and local type to the top level,
+//! named by its symbol (`main::helper`, `main::Point`, see `check/scope.rs`
+//! and `check/names.rs`), and renames every use of a function or type to
+//! the symbol the checker found it refers to. A nested function can't
+//! capture anything, and a local type can't use the type parameters of the
+//! function it's in, so that's all it takes: each means the same at the top
+//! level, under a name of its own. After this, nothing needs to know there
+//! were nested functions or local types, or that two of them can share a
+//! name: not monomorphisation, not the interpreter, and not a backend.
 
 use crate::ast::*;
 use crate::check::Info;
+use crate::error::Span;
 use std::sync::Arc;
 
-/// `prog`, which must have checked with `info`, with no nested functions.
-/// Each one comes right after the function it was in, in order.
+/// `prog`, which must have checked with `info`, with no nested functions or
+/// local types. Each function nested in another comes right after it, in
+/// order, and the local types come after the top-level ones, in the order of
+/// `Program::all_types`.
 pub fn lift(prog: &Program, info: &Info) -> Program {
+    let cx = Cx { info };
+    let types = prog
+        .all_types()
+        .into_iter()
+        .map(|(d, _)| cx.type_decl(d))
+        .collect();
     let mut fns = Vec::new();
     for f in &prog.fns {
-        lift_fn(f, info, &mut fns);
+        cx.function(f, &mut fns);
     }
     Program {
-        types: prog.types.clone(),
+        types,
         fns,
         stray_docs: prog.stray_docs.clone(),
     }
 }
 
-/// Adds `f`, named by its symbol, to `out`, then those nested in it.
-fn lift_fn(f: &FnDecl, info: &Info, out: &mut Vec<FnDecl>) {
-    let mut cx = Cx {
-        info,
-        nested: Vec::new(),
-    };
-    let body = cx.expr(&f.body);
-    out.push(FnDecl {
-        doc: f.doc.clone(),
-        span: f.span,
-        name: Ident {
-            name: info.symbols[&f.name.span].clone(),
-            span: f.name.span,
-        },
-        type_params: f.type_params.clone(),
-        params: f.params.clone(),
-        parens: f.parens,
-        ret: f.ret.clone(),
-        body,
-    });
-    for g in cx.nested {
-        lift_fn(g, info, out);
-    }
-}
-
 struct Cx<'p> {
     info: &'p Info,
-    /// The functions nested in the one being lifted, in order.
-    nested: Vec<&'p FnDecl>,
 }
 
 impl<'p> Cx<'p> {
-    fn expr(&mut self, e: &'p Expr) -> Expr {
+    /// Adds `f`, named by its symbol, to `out`, then those nested in it.
+    fn function(&self, f: &'p FnDecl, out: &mut Vec<FnDecl>) {
+        let mut nested = Vec::new();
+        let body = self.expr(&f.body, &mut nested);
+        out.push(FnDecl {
+            doc: f.doc.clone(),
+            span: f.span,
+            name: self.ident(&f.name),
+            type_params: f.type_params.clone(),
+            params: f.params.iter().map(|p| self.param(p)).collect(),
+            parens: f.parens,
+            ret: self.ty(&f.ret),
+            body,
+        });
+        for g in nested {
+            self.function(g, out);
+        }
+    }
+
+    fn type_decl(&self, d: &TypeDecl) -> TypeDecl {
+        match d {
+            TypeDecl::Struct(s) => TypeDecl::Struct(StructDecl {
+                doc: s.doc.clone(),
+                name: self.ident(&s.name),
+                type_params: s.type_params.clone(),
+                fields: s.fields.iter().map(|f| self.param(f)).collect(),
+            }),
+            TypeDecl::Enum(e) => TypeDecl::Enum(EnumDecl {
+                doc: e.doc.clone(),
+                name: self.ident(&e.name),
+                type_params: e.type_params.clone(),
+                variants: e
+                    .variants
+                    .iter()
+                    .map(|v| Variant {
+                        doc: v.doc.clone(),
+                        name: v.name.clone(),
+                        fields: v.fields.iter().map(|t| self.ty(t)).collect(),
+                    })
+                    .collect(),
+            }),
+        }
+    }
+
+    /// `id`, renamed to the symbol of what it refers to, if it's a function
+    /// or type.
+    fn ident(&self, id: &Ident) -> Ident {
+        Ident {
+            name: self.renamed(&id.name, id.span),
+            span: id.span,
+        }
+    }
+
+    /// The symbol of what `name`, written at `at`, refers to, or `name` if
+    /// it isn't a function or type.
+    fn renamed(&self, name: &str, at: Span) -> String {
+        let symbol = self.info.symbols.get(&at);
+        symbol.map_or_else(|| name.to_string(), String::clone)
+    }
+
+    fn param(&self, p: &Param) -> Param {
+        Param {
+            doc: p.doc.clone(),
+            name: p.name.clone(),
+            ty: self.ty(&p.ty),
+        }
+    }
+
+    fn ty(&self, t: &TypeExpr) -> TypeExpr {
+        let kind = match &t.kind {
+            TypeExprKind::Named(name, args) => {
+                TypeExprKind::Named(self.renamed(name, t.span), self.types(args))
+            }
+            TypeExprKind::Unit => TypeExprKind::Unit,
+            TypeExprKind::Fn(params, ret) => {
+                TypeExprKind::Fn(self.types(params), Box::new(self.ty(ret)))
+            }
+        };
+        TypeExpr { kind, span: t.span }
+    }
+
+    fn types(&self, ts: &[TypeExpr]) -> Vec<TypeExpr> {
+        ts.iter().map(|t| self.ty(t)).collect()
+    }
+
+    /// `e`, renamed, adding the functions nested in it to `nested`, in
+    /// order. Local types are taken out too: `lift` has them already.
+    fn expr(&self, e: &'p Expr, nested: &mut Vec<&'p FnDecl>) -> Expr {
         let kind = match &e.kind {
             ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit => e.kind.clone(),
             ExprKind::Var(name, targs) => {
-                let name = self.info.symbols.get(&e.span).unwrap_or(name);
-                ExprKind::Var(name.clone(), targs.clone())
+                ExprKind::Var(self.renamed(name, e.span), self.types(targs))
             }
-            ExprKind::Unary(op, x) => ExprKind::Unary(*op, Box::new(self.expr(x))),
-            ExprKind::Binary(op, l, r) => {
-                ExprKind::Binary(*op, Box::new(self.expr(l)), Box::new(self.expr(r)))
-            }
+            ExprKind::Unary(op, x) => ExprKind::Unary(*op, Box::new(self.expr(x, nested))),
+            ExprKind::Binary(op, l, r) => ExprKind::Binary(
+                *op,
+                Box::new(self.expr(l, nested)),
+                Box::new(self.expr(r, nested)),
+            ),
             ExprKind::Call(f, args) => ExprKind::Call(
-                Box::new(self.expr(f)),
-                args.iter().map(|a| self.expr(a)).collect(),
+                Box::new(self.expr(f, nested)),
+                args.iter().map(|a| self.expr(a, nested)).collect(),
             ),
             ExprKind::If(c, then, els) => ExprKind::If(
-                Box::new(self.expr(c)),
-                Box::new(self.expr(then)),
-                els.as_ref().map(|e| Box::new(self.expr(e))),
+                Box::new(self.expr(c, nested)),
+                Box::new(self.expr(then, nested)),
+                els.as_ref().map(|e| Box::new(self.expr(e, nested))),
             ),
             ExprKind::Block(stmts, tail) => ExprKind::Block(
                 stmts
@@ -82,45 +154,48 @@ impl<'p> Cx<'p> {
                     .filter_map(|s| {
                         Some(match s {
                             Stmt::Let { pat, ty, init } => Stmt::Let {
-                                pat: pat.clone(),
-                                ty: ty.clone(),
-                                init: self.expr(init),
+                                pat: self.pattern(pat),
+                                ty: ty.as_ref().map(|t| Box::new(self.ty(t))),
+                                init: self.expr(init, nested),
                             },
-                            Stmt::Expr(e) => Stmt::Expr(self.expr(e)),
-                            Stmt::BlockLike(e) => Stmt::BlockLike(self.expr(e)),
+                            Stmt::Expr(e) => Stmt::Expr(self.expr(e, nested)),
+                            Stmt::BlockLike(e) => Stmt::BlockLike(self.expr(e, nested)),
                             Stmt::Fn(f) => {
-                                self.nested.push(f);
+                                nested.push(f);
                                 return None;
                             }
+                            Stmt::Type(_) => return None,
                         })
                     })
                     .collect(),
-                tail.as_ref().map(|t| Box::new(self.expr(t))),
+                tail.as_ref().map(|t| Box::new(self.expr(t, nested))),
             ),
             ExprKind::StructLit(name, targs, inits) => ExprKind::StructLit(
-                name.clone(),
-                targs.clone(),
+                self.ident(name),
+                self.types(targs),
                 inits
                     .iter()
                     .map(|i| FieldInit {
                         name: i.name.clone(),
-                        value: self.expr(&i.value),
+                        value: self.expr(&i.value, nested),
                     })
                     .collect(),
             ),
-            ExprKind::Field(x, field) => ExprKind::Field(Box::new(self.expr(x)), field.clone()),
+            ExprKind::Field(x, field) => {
+                ExprKind::Field(Box::new(self.expr(x, nested)), field.clone())
+            }
             ExprKind::Variant(ty, targs, variant, args) => ExprKind::Variant(
-                ty.clone(),
-                targs.clone(),
+                self.ident(ty),
+                self.types(targs),
                 variant.clone(),
-                args.iter().map(|a| self.expr(a)).collect(),
+                args.iter().map(|a| self.expr(a, nested)).collect(),
             ),
             ExprKind::Match(scrutinee, arms) => ExprKind::Match(
-                Box::new(self.expr(scrutinee)),
+                Box::new(self.expr(scrutinee, nested)),
                 arms.iter()
                     .map(|a| Arm {
-                        pat: a.pat.clone(),
-                        body: self.expr(&a.body),
+                        pat: self.pattern(&a.pat),
+                        body: self.expr(&a.body, nested),
                     })
                     .collect(),
             ),
@@ -131,13 +206,42 @@ impl<'p> Cx<'p> {
                     .iter()
                     .map(|p| LambdaParam {
                         name: p.name.clone(),
-                        ty: p.ty.clone(),
+                        ty: p.ty.as_ref().map(|t| self.ty(t)),
                     })
                     .collect();
-                let body = self.expr(&l.body);
-                ExprKind::Lambda(Arc::new(Lambda::new(params, l.ret.clone(), body)))
+                let ret = l.ret.as_ref().map(|t| self.ty(t));
+                let body = self.expr(&l.body, nested);
+                ExprKind::Lambda(Arc::new(Lambda::new(params, ret, body)))
             }
         };
         Expr { kind, span: e.span }
+    }
+
+    fn pattern(&self, p: &Pattern) -> Pattern {
+        let kind = match &p.kind {
+            PatternKind::Variant(ty, targs, variant, args) => PatternKind::Variant(
+                self.ident(ty),
+                self.types(targs),
+                variant.clone(),
+                args.iter().map(|a| self.pattern(a)).collect(),
+            ),
+            PatternKind::Struct(name, targs, fields, rest) => PatternKind::Struct(
+                self.ident(name),
+                self.types(targs),
+                fields
+                    .iter()
+                    .map(|f| FieldPat {
+                        name: f.name.clone(),
+                        pat: self.pattern(&f.pat),
+                    })
+                    .collect(),
+                *rest,
+            ),
+            PatternKind::Or(alts) => {
+                PatternKind::Or(alts.iter().map(|a| self.pattern(a)).collect())
+            }
+            kind => kind.clone(),
+        };
+        Pattern { kind, span: p.span }
     }
 }

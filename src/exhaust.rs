@@ -453,7 +453,8 @@ impl Cx<'_> {
             (Ctor::Bool(b), _) => b.to_string(),
             (Ctor::Unit, _) => "()".to_string(),
             (Ctor::Int(lo, hi), _) => show_range(*lo, *hi, true),
-            (Ctor::Struct, Type::Adt(name, _)) => {
+            (Ctor::Struct, Type::Adt(symbol, _)) => {
+                let name = crate::check::source_name(symbol);
                 let fields = struct_fields(self.adts, ty).expect("a struct");
                 if fields.is_empty() {
                     return format!("{name} {{}}");
@@ -465,10 +466,11 @@ impl Cx<'_> {
                     .collect();
                 format!("{name} {{ {} }}", fields.join(", "))
             }
-            (Ctor::Variant(i), Type::Adt(name, _)) => {
-                let AdtKind::Enum(variants) = &self.adts[name].kind else {
+            (Ctor::Variant(i), Type::Adt(symbol, _)) => {
+                let AdtKind::Enum(variants) = &self.adts[symbol].kind else {
                     unreachable!()
                 };
+                let name = crate::check::source_name(symbol);
                 let variant = &variants[*i].0;
                 if args.is_empty() {
                     format!("{name}::{variant}")

@@ -12,7 +12,7 @@
 //! variant  = IDENT ("(" type ("," type)* ","? ")")?
 //! type     = IDENT ("<" type ("," type)* ","? ">")? | "(" ")"
 //!          | "fn" "(" (type ("," type)*)? ")" ("->" type)?
-//! block    = "{" (let | fn_decl | expr ";" | block_like ";"?)* expr? "}"
+//! block    = "{" (let | fn_decl | struct | enum | expr ";" | block_like ";"?)* expr? "}"
 //! block_like = if | match | block
 //! let      = "let" pattern (":" type)? "=" expr ";"
 //! expr     = or
@@ -47,8 +47,7 @@
 //! `check.rs`), which turns that mistake into a type error. Parenthesize to
 //! use one in a larger expression: `(if c { a } else { b }) - x`.
 //!
-//! A `fn` in a block is a nested function (see `ast::FnDecl`). Only `fn`
-//! can be declared there, for now: not `struct` or `enum`.
+//! A `fn`, `struct` or `enum` in a block is local to it (see `ast::Stmt`).
 //!
 //! A `///` doc comment documents the `fn`, `struct`, `enum`, field or
 //! variant after it. The parser takes doc comments out of the tokens first,
@@ -386,18 +385,15 @@ impl Parser {
                     stmts.push(Stmt::Fn(Box::new(self.fn_decl()?)));
                     continue;
                 }
-                Tok::Struct | Tok::Enum => {
-                    let what = match self.peek() {
-                        Tok::Struct => "a `struct`",
-                        _ => "an `enum`",
-                    };
-                    return Err(Error::syntax(
-                        self.span(),
-                        format!(
-                            "{what} can't be declared in a block, only at the top level; \
-                             for now only `fn` can be nested"
-                        ),
-                    ));
+                Tok::Struct => {
+                    let d = TypeDecl::Struct(self.struct_decl()?);
+                    stmts.push(Stmt::Type(Box::new(d)));
+                    continue;
+                }
+                Tok::Enum => {
+                    let d = TypeDecl::Enum(self.enum_decl()?);
+                    stmts.push(Stmt::Type(Box::new(d)));
+                    continue;
                 }
                 _ => {}
             }

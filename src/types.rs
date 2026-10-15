@@ -1,5 +1,6 @@
 //! Types as the checker understands them.
 
+use crate::check::source_name;
 use std::collections::HashMap;
 use std::fmt;
 
@@ -11,8 +12,10 @@ pub enum Type {
     Unit,
     /// `fn(A, B) -> R`. The arrow type `A × B → R` of the lambda calculus.
     Fn(FnType),
-    /// A struct or enum, by name, with its type arguments: `Shape`, or
-    /// `Option<int>`. Its definition lives in an `Adts` table.
+    /// A struct or enum, by its symbol, with its type arguments: `Shape`,
+    /// or `Option<int>`. Its definition lives in an `Adts` table. The
+    /// symbol is its name, unless it's a local type (see `check/names.rs`).
+    /// `Display` shows the name, as written.
     ///
     /// Types are compared by *name* (nominal typing): `struct A { x: int }`
     /// and `struct B { x: int }` are different types even though they look
@@ -188,6 +191,26 @@ impl Type {
     }
 }
 
+impl Type {
+    /// Like `to_string`, but with the symbols of structs and enums rather
+    /// than their names, so that two types of the same name show
+    /// differently.
+    pub fn symbols(&self) -> String {
+        match self {
+            Type::Fn(sig) => {
+                let params: Vec<String> = sig.params.iter().map(Type::symbols).collect();
+                format!("fn({}) -> {}", params.join(", "), sig.ret.symbols())
+            }
+            Type::Adt(name, args) if args.is_empty() => name.clone(),
+            Type::Adt(name, args) => {
+                let args: Vec<String> = args.iter().map(Type::symbols).collect();
+                format!("{name}<{}>", args.join(", "))
+            }
+            t => t.to_string(),
+        }
+    }
+}
+
 /// `a, b, c`
 pub fn comma_list<T: fmt::Display>(items: &[T]) -> String {
     let items: Vec<String> = items.iter().map(T::to_string).collect();
@@ -201,8 +224,8 @@ impl fmt::Display for Type {
             Type::Bool => f.write_str("bool"),
             Type::Unit => f.write_str("()"),
             Type::Fn(sig) => write!(f, "fn({}) -> {}", comma_list(&sig.params), sig.ret),
-            Type::Adt(name, args) if args.is_empty() => f.write_str(name),
-            Type::Adt(name, args) => write!(f, "{name}<{}>", comma_list(args)),
+            Type::Adt(name, args) if args.is_empty() => f.write_str(&source_name(name)),
+            Type::Adt(name, args) => write!(f, "{}<{}>", source_name(name), comma_list(args)),
             Type::Param(name) => f.write_str(name),
             // Like Rust: "some type, not known yet".
             Type::Var(_) => f.write_str("_"),
