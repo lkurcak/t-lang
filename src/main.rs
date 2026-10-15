@@ -5,8 +5,36 @@ use t_lang::interp::Value;
 const USAGE: &str =
     "usage: t [run|check|mono] <file.t>\n       t fmt [--check] <file.t>...\n       t lsp";
 
+const HELP: &str = "\
+T: like C, but a different letter.
+
+usage: t [run|check|mono] <file.t>
+       t fmt [--check] <file.t>...
+       t lsp
+
+  t <file.t>          type-check and run
+  t check <file.t>    type-check only
+  t mono <file.t>     print the program after monomorphisation
+  t fmt <file.t>...   format the files in place (--check: just print a diff)
+  t lsp               language server, over stdio
+  t --help, -h        print this
+  t --version, -V     print the version";
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if let [flag] = args.as_slice() {
+        match flag.as_str() {
+            "--help" | "-h" => {
+                println!("{HELP}");
+                return ExitCode::SUCCESS;
+            }
+            "--version" | "-V" => {
+                println!("t {}", env!("CARGO_PKG_VERSION"));
+                return ExitCode::SUCCESS;
+            }
+            _ => {}
+        }
+    }
     if let [cmd] = args.as_slice()
         && cmd == "lsp"
     {

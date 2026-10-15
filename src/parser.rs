@@ -443,7 +443,9 @@ impl Parser {
                     Tok::Struct => Stmt::Type(Box::new(TypeDecl::Struct(self.struct_decl(head)?))),
                     Tok::Enum => Stmt::Type(Box::new(TypeDecl::Enum(self.enum_decl(head)?))),
                     _ => {
-                        return Err(self.unexpected("`fn`, `struct` or `enum` after `#[allow(..)]`"));
+                        return Err(
+                            self.unexpected("`fn`, `struct` or `enum` after `#[allow(..)]`")
+                        );
                     }
                 };
                 stmts.push(stmt);

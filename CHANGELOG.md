@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `t --help` (or `-h`) prints what each command does, on stdout, and `t
+  --version` (or `-V`) prints the version. Both used to print the usage as
+  if they were a mistake, and exit with 2.
+
 ## 0.4.4 (2026-10-15)
 
 ### Added
