@@ -2,10 +2,29 @@
 
 ## Unreleased
 
+### Added
+
+- `t fmt <file>`, a formatter with one style and no options: 100 columns,
+  four-space indentation, a line broken only where it doesn't fit (with
+  Wadler's "prettier printer" algorithm). It keeps comments, and single
+  blank lines between items, statements and arms, and lines up comments at
+  the ends of consecutive lines. `t fmt --check` prints a diff and fails if
+  a file isn't formatted. It parses its own output before writing, and
+  refuses if that's a different program. See [docs/fmt.md](docs/fmt.md).
+- `t lsp` formats documents, so editors can format on request or on save.
+  See the README for Neovim and Helix; the Helix config formats on save.
+
 ### Changed
 
+- `t mono` prints in `t fmt`'s style: short declarations and blocks that
+  are one expression go on one line, and long lines break.
 - Building T needs Rust 1.99 or later, up from 1.88. T is an application, so
   it tracks the Rust it's built with rather than holding to an old one.
+
+### Fixed
+
+- `t mono` printed a range pattern like `0..1` as `0`, and `(a < b) < c`
+  without its parentheses, which doesn't parse.
 
 ## 0.4.0 (2026-10-15)
 

@@ -58,6 +58,11 @@ t lsp                       # language server (see below)
 From a checkout, use `cargo run -- <args>` instead, and `cargo test` to run
 every program in `tests/t/`.
 
+`t fmt` formats T in one style, with no options, at 100 columns, keeping
+comments and single blank lines. It refuses to write anything that would
+parse to a different program. See [docs/fmt.md](docs/fmt.md) for why there
+are no options and how it works.
+
 Pipeline: `lexer` → `parser` → `check` (type checker) → `mono`
 (monomorphisation: a copy of each generic function and type per type it's
 used at) → `interp` (tree-walking interpreter). A real backend (emitting C) comes once the type system has
