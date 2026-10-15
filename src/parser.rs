@@ -23,9 +23,10 @@
 //! mul      = unary (("*" | "/" | "%") unary)*
 //! unary    = ("-" | "!") unary | call
 //! postfix  = primary ("(" args ")" | "." IDENT)*
-//! primary  = INT | "true" | "false" | IDENT | "(" ")" | "(" expr ")" | block | if
-//!          | match | IDENT "{" field_init,* "}" | IDENT "::" IDENT ("(" args ")")?
-//!          | lambda
+//! primary  = INT | "true" | "false" | IDENT targs? | "(" ")" | "(" expr ")" | block
+//!          | if | match | IDENT targs? "{" field_init,* "}"
+//!          | IDENT targs? "::" IDENT ("(" args ")")? | lambda
+//! targs    = "::" "<" type ("," type)* ","? ">"            -- the "turbofish"
 //! lambda   = ("||" | "|" (lparam ("," lparam)* ","?)? "|") ("->" type block | expr)
 //! lparam   = IDENT (":" type)?
 //! if       = "if" expr block ("else" (block | if))?
@@ -34,8 +35,8 @@
 //!
 //! pattern  = pat_atom ("|" pat_atom)*
 //! pat_atom = "_" | IDENT | int | range | "true" | "false" | "(" ")"
-//!          | IDENT "::" IDENT ("(" pattern,* ")")?
-//!          | IDENT "{" (IDENT (":" pattern)?),* ".."? "}"
+//!          | IDENT targs? "::" IDENT ("(" pattern,* ")")?
+//!          | IDENT targs? "{" (IDENT (":" pattern)?),* ".."? "}"
 //! range    = int ".." int? | int "..=" int | ".." int | "..=" int
 //! int      = "-"? INT
 //! ```
@@ -343,7 +344,11 @@ impl Parser {
         self.expect(Tok::Eq)?;
         let init = self.expr()?;
         self.expect(Tok::Semi)?;
-        Ok(Stmt::Let { pat, ty, init })
+        Ok(Stmt::Let {
+            pat,
+            ty: ty.map(Box::new),
+            init,
+        })
     }
 
     fn expr(&mut self) -> Result<Expr, Error> {
@@ -426,9 +431,12 @@ impl Parser {
             Tok::True => ExprKind::Bool(true),
             Tok::False => ExprKind::Bool(false),
             Tok::Ident(name) => match self.peek2() {
-                Tok::ColonColon => return self.variant_expr(),
-                Tok::LBrace if !self.no_struct => return self.struct_lit(),
-                _ => ExprKind::Var(name),
+                Tok::ColonColon => return self.path_expr(),
+                Tok::LBrace if !self.no_struct => {
+                    let name = self.ident()?;
+                    return self.struct_lit(name, Vec::new());
+                }
+                _ => ExprKind::Var(name, Vec::new()),
             },
             Tok::LParen => {
                 self.bump();
@@ -501,9 +509,52 @@ impl Parser {
         })
     }
 
-    /// `Point { x: 1, y }`
-    fn struct_lit(&mut self) -> Result<Expr, Error> {
+    /// `::<int, bool>` after a name, if it's there: explicit type arguments.
+    /// Like Rust, the `::` keeps the `<` from reading as less-than.
+    fn turbofish(&mut self) -> Result<(Vec<TypeExpr>, Option<Span>), Error> {
+        if *self.peek() == Tok::ColonColon && *self.peek2() == Tok::Lt {
+            self.bump();
+            self.bump();
+            let (args, end) = self.comma_list(Tok::Gt, Self::ty)?;
+            Ok((args, Some(end)))
+        } else {
+            Ok((Vec::new(), None))
+        }
+    }
+
+    /// A name followed by `::`: `Shape::Rect(2, 3)`, `Shape::Empty`,
+    /// `Option::<int>::None`, `id::<int>` or `Pair::<int, bool> { .. }`.
+    fn path_expr(&mut self) -> Result<Expr, Error> {
         let name = self.ident()?;
+        let (targs, end) = self.turbofish()?;
+        if let Some(end) = end
+            && *self.peek() != Tok::ColonColon
+        {
+            if *self.peek() == Tok::LBrace && !self.no_struct {
+                return self.struct_lit(name, targs);
+            }
+            return Ok(Expr {
+                span: name.span.to(end),
+                kind: ExprKind::Var(name.name, targs),
+            });
+        }
+        self.expect(Tok::ColonColon)?;
+        let variant = self.ident()?;
+        let (args, end) = if self.eat(&Tok::LParen) {
+            self.args()?
+        } else {
+            (Vec::new(), variant.span)
+        };
+        let span = name.span.to(end);
+        Ok(Expr {
+            kind: ExprKind::Variant(name, targs, variant, args),
+            span,
+        })
+    }
+
+    /// `Point { x: 1, y }`, from the `{`, after the name and any type
+    /// arguments.
+    fn struct_lit(&mut self, name: Ident, targs: Vec<TypeExpr>) -> Result<Expr, Error> {
         self.expect(Tok::LBrace)?;
         let (fields, end) = self.structs(true, |p| {
             p.comma_list(Tok::RBrace, |p| {
@@ -512,7 +563,7 @@ impl Parser {
                     p.expr()?
                 } else {
                     Expr {
-                        kind: ExprKind::Var(name.name.clone()),
+                        kind: ExprKind::Var(name.name.clone(), Vec::new()),
                         span: name.span,
                     }
                 };
@@ -521,7 +572,7 @@ impl Parser {
         })?;
         let span = name.span.to(end);
         Ok(Expr {
-            kind: ExprKind::StructLit(name, fields),
+            kind: ExprKind::StructLit(name, targs, fields),
             span,
         })
     }
@@ -558,23 +609,6 @@ impl Parser {
         let span = start.to(body.span);
         Ok(Expr {
             kind: ExprKind::Lambda(Arc::new(Lambda::new(params, ret, body))),
-            span,
-        })
-    }
-
-    /// `Shape::Rect(2, 3)` or `Shape::Empty`
-    fn variant_expr(&mut self) -> Result<Expr, Error> {
-        let ty = self.ident()?;
-        self.expect(Tok::ColonColon)?;
-        let variant = self.ident()?;
-        let (args, end) = if self.eat(&Tok::LParen) {
-            self.args()?
-        } else {
-            (Vec::new(), variant.span)
-        };
-        let span = ty.span.to(end);
-        Ok(Expr {
-            kind: ExprKind::Variant(ty, variant, args),
             span,
         })
     }
@@ -656,20 +690,27 @@ impl Parser {
             Tok::Ident(name) => match self.peek2() {
                 Tok::ColonColon => {
                     let ty = self.ident()?;
-                    self.bump();
+                    let (targs, end) = self.turbofish()?;
+                    if end.is_some() && *self.peek() == Tok::LBrace {
+                        return self.struct_pattern(ty, targs);
+                    }
+                    self.expect(Tok::ColonColon)?;
                     let variant = self.ident()?;
                     let (args, end) = if self.eat(&Tok::LParen) {
                         self.comma_list(Tok::RParen, Self::pattern)?
                     } else {
                         (Vec::new(), variant.span)
                     };
-                    let kind = PatternKind::Variant(ty, variant, args);
+                    let kind = PatternKind::Variant(ty, targs, variant, args);
                     return Ok(Pattern {
                         kind,
                         span: start.to(end),
                     });
                 }
-                Tok::LBrace => return self.struct_pattern(),
+                Tok::LBrace => {
+                    let ty = self.ident()?;
+                    return self.struct_pattern(ty, Vec::new());
+                }
                 _ if name == "_" => PatternKind::Wild,
                 _ => PatternKind::Bind(name),
             },
@@ -691,8 +732,7 @@ impl Parser {
     }
 
     /// `Point { x, y: 0, .. }`
-    fn struct_pattern(&mut self) -> Result<Pattern, Error> {
-        let ty = self.ident()?;
+    fn struct_pattern(&mut self, ty: Ident, targs: Vec<TypeExpr>) -> Result<Pattern, Error> {
         self.expect(Tok::LBrace)?;
         let mut fields = Vec::new();
         let mut rest = false;
@@ -720,7 +760,7 @@ impl Parser {
         }
         let span = ty.span.to(self.expect(Tok::RBrace)?);
         Ok(Pattern {
-            kind: PatternKind::Struct(ty, fields, rest),
+            kind: PatternKind::Struct(ty, targs, fields, rest),
             span,
         })
     }

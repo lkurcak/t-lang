@@ -12,6 +12,19 @@ fn type_args(n: usize) -> String {
     format!("{n} type argument{}", if n == 1 { "" } else { "s" })
 }
 
+/// `what` takes `arity` type arguments, but `given` were written at `span`.
+pub(super) fn arity_error(what: &str, arity: usize, given: usize, span: Span) -> Error {
+    let message = match arity {
+        0 => format!("{what} takes no type arguments"),
+        n => format!(
+            "{what} takes {} but {given} {} supplied",
+            type_args(n),
+            if given == 1 { "was" } else { "were" }
+        ),
+    };
+    Error::ty(span, message)
+}
+
 /// Turns a type as written (`TypeExpr`) into a type as understood (`Type`).
 /// `arities` says how many type arguments each struct and enum takes, and
 /// `params` are the type parameters in scope.
@@ -35,16 +48,7 @@ pub(crate) fn resolve(
                     _ if params.contains(name) => format!("type parameter `{name}`"),
                     _ => format!("`{name}`"),
                 };
-                let message = match arity {
-                    0 => format!("{what} takes no type arguments"),
-                    n => format!(
-                        "{what} takes {} but {} {} supplied",
-                        type_args(n),
-                        args.len(),
-                        if args.len() == 1 { "was" } else { "were" }
-                    ),
-                };
-                return Err(Error::ty(t.span, message));
+                return Err(arity_error(&what, arity, args.len(), t.span));
             }
             let args = args
                 .iter()
@@ -88,26 +92,6 @@ pub(super) fn declare(params: &[Ident]) -> Result<Vec<String>, Error> {
         names.push(p.name.clone());
     }
     Ok(names)
-}
-
-/// Checks that every one of `params` appears somewhere in `tys`. One that
-/// doesn't could never be worked out at a use, since T has no syntax for
-/// giving type arguments explicitly: `of` says what it would be missing
-/// from.
-pub(super) fn all_used(params: &[Ident], tys: &[Type], of: &str) -> Result<(), Error> {
-    for p in params {
-        if !tys.iter().any(|t| mentions(t, &p.name)) {
-            return Err(Error::ty(
-                p.span,
-                format!(
-                    "type parameter `{}` is never used in {of}, so nothing could say \
-                     what it is",
-                    p.name
-                ),
-            ));
-        }
-    }
-    Ok(())
 }
 
 /// Does `t` mention type parameter `p`?

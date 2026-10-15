@@ -1,0 +1,77 @@
+enum Option::<int> {
+    Some(int),
+    None,
+}
+
+enum Option::<bool> {
+    Some(bool),
+    None,
+}
+
+struct Pair::<int, bool> {
+    first: int,
+    second: bool,
+}
+
+struct Pair::<int, int> {
+    first: int,
+    second: int,
+}
+
+struct Id::<Pair<int, int>> {
+    n: int,
+}
+
+struct Id::<bool> {
+    n: int,
+}
+
+fn none::<bool>() -> Option::<bool> {
+    Option::<bool>::None
+}
+
+fn count::<Pair<int, bool>>(n: int) -> int {
+    n
+}
+
+fn id::<int>(x: int) -> int {
+    x
+}
+
+fn apply::<int>(f: fn(int) -> int, x: int) -> int {
+    f(x)
+}
+
+fn is_some::<int>(o: Option::<int>) -> bool {
+    match o {
+        Option::<int>::Some(_) => true,
+        Option::<int>::None => false,
+    }
+}
+
+fn is_some::<bool>(o: Option::<bool>) -> bool {
+    match o {
+        Option::<bool>::Some(_) => true,
+        Option::<bool>::None => false,
+    }
+}
+
+fn main() {
+    print(id::<int>(1));
+    print_bool(is_some::<int>(Option::<int>::None));
+    print_bool(is_some::<bool>(none::<bool>()));
+    print(count::<Pair<int, bool>>(3));
+    print(apply::<int>(id::<int>, 4));
+    let p = Pair::<int, bool> { first: 5, second: true };
+    print(p.first);
+    let users: Id::<Pair<int, int>> = Id::<Pair<int, int>> { n: 6 };
+    print(users.n);
+    let things = Id::<bool> { n: 7 };
+    print(things.n);
+    match Option::<int>::Some(8) {
+        Option::<int>::Some(n) => print(n),
+        Option::<int>::None => {},
+    }
+    let Pair::<int, bool> { first, .. } = p;
+    print(first);
+}

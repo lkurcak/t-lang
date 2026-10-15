@@ -110,11 +110,19 @@ That's `Checker::lookup` for functions and `Checker::instantiate` for struct
 literals, variants and patterns. As with every other variable, `solve_all`
 demands that each one is solved by the end of the function. `let x =
 Option::None;` doesn't say what `T` is, so it's an error asking for an
-annotation (`err_generic_infer.t`). For the same reason a type parameter
-must appear in the signature of its function, or the fields of its type
-(`err_generic_unused_fn.t`): T has no syntax for writing type arguments
-explicitly (Rust's `id::<int>`), so one nothing mentions could never be
-worked out.
+annotation (`err_generic_infer.t`).
+
+Or the type arguments can be written out, with Rust's *turbofish*:
+`id::<int>(1)`, `Option::<int>::None`, `Pair::<int, bool> { .. }`, and the
+same in patterns (`generic_turbofish.t`). The `::` is there because
+`id<int>(1)` would read as `id < int > (1)`, two comparisons. Written type
+arguments simply take the place of the fresh variables, so everything else
+works the same. They're what makes a type parameter that the signature
+doesn't mention usable: `fn none<T>() -> Option<T>` can be inferred from
+where its result goes, but `fn count<T>(n: int) -> int` can only be called
+as `count::<bool>(3)` (`err_generic_infer_fn.t`). A struct can have such a
+*phantom* parameter too: `struct Id<T> { n: int }` is just an int, but an
+`Id<User>` and an `Id<Order>` can't be mixed up.
 
 Inference stays inside function bodies. Generic signatures are written by
 hand, and a body's variables never leak out of it.
@@ -323,15 +331,15 @@ reads the same table.
 
 - **Explicit type parameters, rank 1.** `<T>` on top-level items only. See
   *System F, Hindley–Milner, and what T does*.
-- **No turbofish.** Type arguments are always inferred, so every type
-  parameter must appear in its signature or fields, and a use that doesn't
-  pin one down needs an annotation where its result goes.
+- **Type arguments are inferred, or written with a turbofish**, never
+  partly: `pair::<int, _>` isn't a thing (yet: see the exercises).
 - **The checker's opinion of a type parameter is fixed.** `Type::Param`
   isn't a variable; the body can't learn anything about it. A *rigid* or
   *skolem* variable, in the jargon.
 - **Copies are named `id::<int>`**: Rust's syntax for explicit type
-  arguments. Nothing in a source program can be called that, so copies can't
-  clash with anything. That's why `t mono` output with copies in it doesn't
+  arguments, which is what using a copy amounts to. Nothing in a source
+  program can be *declared* with that name, so copies can't clash with
+  anything, but it also means `t mono` output with copies in it doesn't
   parse. For a program without generics it's the program itself, reformatted,
   and the tests check that it parses back to the same thing.
 - **Every copy is checked again.** That's cheap here and catches the one
@@ -347,7 +355,6 @@ reads the same table.
 |---|---|---|
 | `T: Eq`, `==` on a `T` | bounds are traits | 6 |
 | generic closures, `let`-generalisation | closures are values; see above | — |
-| explicit type arguments, `id::<int>` | inference covers it, for now | — |
 | `Option<T>` holding itself, lists, trees | needs pointers | 5 |
 | returning a closure through a generic | lifetimes | 5 |
 | higher-rank types, `fn(∀T. fn(T) -> T)` | can't be monomorphised | — |
@@ -359,18 +366,22 @@ reads the same table.
    can't it add them, and why can't it compare them?
 2. Monomorphise `tests/t/generics.t` by hand, then check with `t mono`.
    How many copies of `Option` are there, and why that many?
-3. Add explicit type arguments, `id::<int>(1)`: parse them, and unify each
-   one with the fresh variable `lookup` makes for it. Then allow type
-   parameters that aren't in the signature.
-4. Rewrite `nest` from *Polymorphic recursion* so that it's allowed, using
-   an enum that holds the levels. What did that cost?
-5. Draw the parameter graph for `fn f<A, B>(a: A, b: B) { f(b, Pair { x:
-   a }) }`. Does it have a cycle that grows? Check with the checker.
+3. Allow `_` in written type arguments, as in `pair::<int, _>(1, true)`:
+   write some and infer the rest. Where in `Checker::type_args` does it
+   go, and why can't `resolve` do it?
+4. Rewrite `nest` from *Polymorphic recursion* so that it's allowed, by
+   counting the levels instead of wrapping the value in them. What did that
+   cost?
+5. With `struct Box<T> { x: T }`, draw the parameter graph for
+   `fn f<A, B>(a: A, b: B) { f(b, Box { x: a }) }`. Does it have a cycle
+   that grows? Check with the checker.
 6. Boxing instead: suppose every value of a type parameter were a pointer.
    What would the interpreter need to change? What would a compiler?
-7. Make `let` generalise, as in exercise 4 of step 3, and then try to
-   monomorphise `let id = |x| x; id(1); id(true)`. Where does it go wrong
-   if `id` captures something?
+7. Make `let` generalise, as in exercise 4 of step 3, and monomorphise it
+   by copying the `let` once per type it's used at:
+   `let id = |x| x; id(1); id(true)` becomes two `let`s. Now try
+   `let id = { print(1); |x| x };`. What goes wrong, and how does ML's
+   *value restriction* avoid it?
 8. Why is it fine for `apply<T>(f: fn(T) -> T, x: T)` to be called with a
    closure that captures, when `id` isn't?
 

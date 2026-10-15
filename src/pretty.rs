@@ -158,7 +158,10 @@ impl Printer {
                 let _ = write!(self.out, "{b}");
             }
             ExprKind::Unit => self.out.push_str("()"),
-            ExprKind::Var(name) => self.out.push_str(name),
+            ExprKind::Var(name, targs) => {
+                self.out.push_str(name);
+                self.out.push_str(&turbofish(targs));
+            }
             ExprKind::Unary(op, x) => {
                 let _ = write!(self.out, "{op}");
                 self.expr(x, UNARY, no_struct);
@@ -175,7 +178,7 @@ impl Printer {
                 // Something more than a name or a field needs parentheses to
                 // be called: `(|x| x)(1)`.
                 let min = match f.kind {
-                    ExprKind::Var(_) | ExprKind::Field(..) | ExprKind::Call(..) => UNARY,
+                    ExprKind::Var(..) | ExprKind::Field(..) | ExprKind::Call(..) => UNARY,
                     _ => UNARY + 1,
                 };
                 self.expr(f, min, no_struct);
@@ -183,7 +186,7 @@ impl Printer {
             }
             ExprKind::Field(x, field) => {
                 let min = match x.kind {
-                    ExprKind::Var(_) | ExprKind::Field(..) | ExprKind::Call(..) => UNARY,
+                    ExprKind::Var(..) | ExprKind::Field(..) | ExprKind::Call(..) => UNARY,
                     _ => UNARY + 1,
                 };
                 self.expr(x, min, no_struct);
@@ -200,8 +203,9 @@ impl Printer {
                 }
             }
             ExprKind::Block(stmts, tail) => self.block(stmts, tail.as_deref()),
-            ExprKind::StructLit(name, inits) => {
+            ExprKind::StructLit(name, targs, inits) => {
                 self.out.push_str(&name.name);
+                self.out.push_str(&turbofish(targs));
                 if inits.is_empty() {
                     self.out.push_str(" {}");
                     return;
@@ -212,8 +216,7 @@ impl Printer {
                         self.out.push_str(", ");
                     }
                     self.out.push_str(&init.name.name);
-                    let shorthand =
-                        matches!(&init.value.kind, ExprKind::Var(v) if *v == init.name.name);
+                    let shorthand = matches!(&init.value.kind, ExprKind::Var(v, t) if *v == init.name.name && t.is_empty());
                     if !shorthand {
                         self.out.push_str(": ");
                         self.expr(&init.value, 0, false);
@@ -221,8 +224,14 @@ impl Printer {
                 }
                 self.out.push_str(" }");
             }
-            ExprKind::Variant(ty, variant, args) => {
-                let _ = write!(self.out, "{}::{}", ty.name, variant.name);
+            ExprKind::Variant(ty, targs, variant, args) => {
+                let _ = write!(
+                    self.out,
+                    "{}{}::{}",
+                    ty.name,
+                    turbofish(targs),
+                    variant.name
+                );
                 if !args.is_empty() {
                     self.args(args);
                 }
@@ -327,6 +336,14 @@ impl Printer {
     }
 }
 
+/// `::<int, bool>`, or nothing if there are no type arguments.
+fn turbofish(targs: &[TypeExpr]) -> String {
+    match targs {
+        [] => String::new(),
+        targs => format!("::<{}>", types(targs)),
+    }
+}
+
 fn types(ts: &[TypeExpr]) -> String {
     let ts: Vec<String> = ts.iter().map(ty).collect();
     ts.join(", ")
@@ -352,15 +369,16 @@ fn pattern(p: &Pattern) -> String {
         PatternKind::Range(lo, hi, inclusive) => show_range(*lo, *hi, *inclusive),
         PatternKind::Bool(b) => b.to_string(),
         PatternKind::Unit => "()".into(),
-        PatternKind::Variant(ty, variant, args) => {
-            let head = format!("{}::{}", ty.name, variant.name);
+        PatternKind::Variant(ty, targs, variant, args) => {
+            let head = format!("{}{}::{}", ty.name, turbofish(targs), variant.name);
             if args.is_empty() {
                 return head;
             }
             let args: Vec<String> = args.iter().map(pattern).collect();
             format!("{head}({})", args.join(", "))
         }
-        PatternKind::Struct(ty, fields, rest) => {
+        PatternKind::Struct(ty, targs, fields, rest) => {
+            let ty = format!("{}{}", ty.name, turbofish(targs));
             let mut items: Vec<String> = fields
                 .iter()
                 .map(|f| match &f.pat.kind {
@@ -372,8 +390,8 @@ fn pattern(p: &Pattern) -> String {
                 items.push("..".into());
             }
             match items.is_empty() {
-                true => format!("{} {{}}", ty.name),
-                false => format!("{} {{ {} }}", ty.name, items.join(", ")),
+                true => format!("{ty} {{}}"),
+                false => format!("{ty} {{ {} }}", items.join(", ")),
             }
         }
         PatternKind::Or(alts) => {

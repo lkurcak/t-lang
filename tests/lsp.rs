@@ -193,7 +193,7 @@ fn warns_and_offers_quick_fixes() {
 fn hovers_hints_and_goes_to_definitions() {
     let (child, mut c) = start();
     let uri = "file:///tmp/generic.t";
-    let src = "fn id<T>(x: T) -> T { x }\nfn main() {\n    let n = id(1);\n    print(n);\n}\n";
+    let src = "fn id<T>(x: T) -> T { x }\nfn main() {\n    let n = id(1);\n    print(n);\n    print(id::<int>(2));\n}\n";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
             "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
@@ -229,8 +229,9 @@ fn hovers_hints_and_goes_to_definitions() {
         json!({"start": {"line": 0, "character": 3}, "end": {"line": 0, "character": 5}})
     );
 
-    // The type of `n` and the type argument of `id`, both inferred.
-    let whole = json!({"start": {"line": 0, "character": 0}, "end": {"line": 5, "character": 0}});
+    // The type of `n` and the type argument of `id`, both inferred. Not the
+    // one written out in `id::<int>(2)`.
+    let whole = json!({"start": {"line": 0, "character": 0}, "end": {"line": 6, "character": 0}});
     c.send(
         json!({"jsonrpc": "2.0", "id": 6, "method": "textDocument/inlayHint", "params": {
             "textDocument": {"uri": uri}, "range": whole

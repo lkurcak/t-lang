@@ -44,8 +44,9 @@ pub struct Note {
     pub args: Vec<Type>,
     /// Where it's defined, if anywhere: a built-in isn't.
     pub def: Option<Span>,
-    /// Whether nothing in the source says what `ty` is, so an editor might
-    /// show it: a `let` without an annotation, say.
+    /// Whether nothing in the source says what `ty` is, or for a use of
+    /// something generic, what `args` are, so an editor might show it: a
+    /// `let` without an annotation, say, or `id(1)` without `::<int>`.
     pub inferred: bool,
 }
 
@@ -84,14 +85,14 @@ impl Note {
     /// variable whose type was inferred (`: int`), or the type arguments of a
     /// use of something generic (`::<int>`).
     pub fn hint(&self) -> Option<String> {
-        if self.inferred {
-            return self.ty.as_ref().map(|t| format!(": {t}"));
+        if !self.inferred {
+            return None;
         }
         match self.kind {
-            NoteKind::Fn(_) | NoteKind::Struct(_) | NoteKind::Enum(_) if !self.args.is_empty() => {
+            NoteKind::Fn(_) | NoteKind::Struct(_) | NoteKind::Enum(_) => {
                 Some(format!("::<{}>", comma_list(&self.args)))
             }
-            _ => None,
+            _ => self.ty.as_ref().map(|t| format!(": {t}")),
         }
     }
 }
@@ -152,7 +153,8 @@ impl Checker {
 
     /// Like `note`, for a use of something generic with type arguments
     /// `args`, which monomorphisation will need. Uses of things that
-    /// aren't generic need nothing.
+    /// aren't generic need nothing. The type arguments were `inferred`
+    /// unless they were written out.
     pub(super) fn note_use(
         &mut self,
         span: Span,
@@ -160,6 +162,7 @@ impl Checker {
         ty: Type,
         def: Option<Span>,
         instance: Option<Instance>,
+        inferred: bool,
     ) {
         let args = match &instance {
             Some(Instance::Fn(_, args) | Instance::Adt(_, args)) => args.clone(),
@@ -174,9 +177,9 @@ impl Checker {
             span,
             kind,
             ty: Some(ty),
+            inferred: inferred && !args.is_empty(),
             args,
             def,
-            inferred: false,
         });
     }
 
@@ -326,10 +329,12 @@ fn names(params: &[Ident]) -> Vec<String> {
     params.iter().map(|p| p.name.clone()).collect()
 }
 
-/// Calls `f` on every type annotation inside `e`: on `let`s and closures.
+/// Calls `f` on every type written inside `e`: annotations on `let`s and
+/// closures, and type arguments, in expressions and in patterns.
 fn each_annotation(e: &Expr, f: &mut impl FnMut(&TypeExpr)) {
     match &e.kind {
-        ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit | ExprKind::Var(_) => {}
+        ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit => {}
+        ExprKind::Var(_, targs) => targs.iter().for_each(&mut *f),
         ExprKind::Unary(_, x) | ExprKind::Field(x, _) => each_annotation(x, f),
         ExprKind::Binary(_, l, r) => {
             each_annotation(l, f);
@@ -347,7 +352,8 @@ fn each_annotation(e: &Expr, f: &mut impl FnMut(&TypeExpr)) {
         ExprKind::Block(stmts, tail) => {
             for stmt in stmts {
                 match stmt {
-                    Stmt::Let { ty, init, .. } => {
+                    Stmt::Let { pat, ty, init } => {
+                        pattern_annotations(pat, f);
                         if let Some(t) = ty {
                             f(t);
                         }
@@ -358,11 +364,20 @@ fn each_annotation(e: &Expr, f: &mut impl FnMut(&TypeExpr)) {
             }
             tail.iter().for_each(|t| each_annotation(t, f));
         }
-        ExprKind::StructLit(_, inits) => inits.iter().for_each(|i| each_annotation(&i.value, f)),
-        ExprKind::Variant(_, _, args) => args.iter().for_each(|a| each_annotation(a, f)),
+        ExprKind::StructLit(_, targs, inits) => {
+            targs.iter().for_each(&mut *f);
+            inits.iter().for_each(|i| each_annotation(&i.value, f));
+        }
+        ExprKind::Variant(_, targs, _, args) => {
+            targs.iter().for_each(&mut *f);
+            args.iter().for_each(|a| each_annotation(a, f));
+        }
         ExprKind::Match(scrutinee, arms) => {
             each_annotation(scrutinee, f);
-            arms.iter().for_each(|a| each_annotation(&a.body, f));
+            for arm in arms {
+                pattern_annotations(&arm.pat, f);
+                each_annotation(&arm.body, f);
+            }
         }
         ExprKind::Lambda(l) => {
             for p in &l.params {
@@ -375,5 +390,26 @@ fn each_annotation(e: &Expr, f: &mut impl FnMut(&TypeExpr)) {
             }
             each_annotation(&l.body, f);
         }
+    }
+}
+
+/// Calls `f` on every type argument written in pattern `p`.
+fn pattern_annotations(p: &Pattern, f: &mut impl FnMut(&TypeExpr)) {
+    match &p.kind {
+        PatternKind::Variant(_, targs, _, pats) => {
+            targs.iter().for_each(&mut *f);
+            pats.iter().for_each(|p| pattern_annotations(p, f));
+        }
+        PatternKind::Struct(_, targs, fields, _) => {
+            targs.iter().for_each(&mut *f);
+            fields.iter().for_each(|fp| pattern_annotations(&fp.pat, f));
+        }
+        PatternKind::Or(alts) => alts.iter().for_each(|p| pattern_annotations(p, f)),
+        PatternKind::Wild
+        | PatternKind::Bind(_)
+        | PatternKind::Int(_)
+        | PatternKind::Range(..)
+        | PatternKind::Bool(_)
+        | PatternKind::Unit => {}
     }
 }

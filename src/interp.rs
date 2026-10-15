@@ -221,7 +221,7 @@ impl Interp<'_, '_> {
             ExprKind::Int(n) => Value::Int(*n),
             ExprKind::Bool(b) => Value::Bool(*b),
             ExprKind::Unit => Value::Unit,
-            ExprKind::Var(name) => self.lookup(name),
+            ExprKind::Var(name, _) => self.lookup(name),
 
             ExprKind::Unary(op, x) => {
                 let v = self.eval(x)?;
@@ -298,9 +298,9 @@ impl Interp<'_, '_> {
             // These live in their own functions to keep `eval`'s stack frame
             // small: in debug builds every temporary in this `match` gets its
             // own slot, and deep recursion multiplies the frame size.
-            ExprKind::StructLit(name, inits) => self.struct_lit(name, inits)?,
+            ExprKind::StructLit(name, _, inits) => self.struct_lit(name, inits)?,
             ExprKind::Field(x, field) => self.field(x, field)?,
-            ExprKind::Variant(ty, variant, args) => {
+            ExprKind::Variant(ty, _, variant, args) => {
                 let args = args
                     .iter()
                     .map(|a| self.eval(a))
@@ -386,7 +386,7 @@ impl Interp<'_, '_> {
             (PatternKind::Range(lo, hi, _), Value::Int(m)) => lo <= m && m <= hi,
             (PatternKind::Bool(b), Value::Bool(c)) => b == c,
             (PatternKind::Unit, Value::Unit) => true,
-            (PatternKind::Variant(_, variant, pats), Value::Variant(_, name, fields)) => {
+            (PatternKind::Variant(_, _, variant, pats), Value::Variant(_, name, fields)) => {
                 variant.name == *name && pats.iter().zip(fields).all(|(p, v)| self.bind(p, v))
             }
             (PatternKind::Or(alts), _) => {
@@ -397,7 +397,7 @@ impl Interp<'_, '_> {
                     self.bind(alt, v)
                 })
             }
-            (PatternKind::Struct(_, field_pats, _), Value::Struct(_, fields)) => field_pats
+            (PatternKind::Struct(_, _, field_pats, _), Value::Struct(_, fields)) => field_pats
                 .iter()
                 .all(|fp| match fields.iter().find(|(f, _)| *f == fp.name.name) {
                     Some((_, v)) => self.bind(&fp.pat, v),

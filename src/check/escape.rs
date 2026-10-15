@@ -107,7 +107,7 @@ impl Checker {
             inner.iter().any(|(n, _)| n == name) || self.locals.iter().any(|l| l.name == name)
         };
         match &e.kind {
-            ExprKind::Var(name) => {
+            ExprKind::Var(name, _) => {
                 let origin = match inner.iter().rev().find(|(n, _)| n == name) {
                     Some((_, origin)) => origin.clone(),
                     None => self

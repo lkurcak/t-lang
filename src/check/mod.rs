@@ -159,13 +159,6 @@ fn collect_adts(prog: &Program, arities: &mut HashMap<String, usize>) -> Result<
             }
         };
         let def = AdtDef { params, kind };
-        let fields: Vec<Type> = field_types
-            .iter()
-            .filter(|(owner, ..)| **owner == d.name().name)
-            .map(|(.., t)| t.clone())
-            .collect();
-        let of = format!("the fields of `{}`", d.name().name);
-        generics::all_used(d.type_params(), &fields, &of)?;
         adts.insert(d.name().name.clone(), def);
     }
 
@@ -403,10 +396,6 @@ impl Checker {
                 .map(|p| resolve(&p.ty))
                 .collect::<Result<Vec<_>, _>>()?;
             let ret = resolve(&f.ret)?;
-            let mut mentioned = param_tys.clone();
-            mentioned.push(ret.clone());
-            let of = format!("the signature of `{}`", f.name.name);
-            generics::all_used(&f.type_params, &mentioned, &of)?;
             let ty = Type::func(param_tys, ret);
             if self
                 .globals
@@ -510,11 +499,26 @@ impl Checker {
     }
 
     /// Finds a variable's type, and notes that it was used and what it
-    /// refers to. A generic function is instantiated: each use gets its own
-    /// fresh variable for each type parameter, so `id(1)` and `id(true)` can
-    /// both be fine.
-    fn lookup(&mut self, name: &str, span: Span) -> Option<Type> {
+    /// refers to. A generic function is instantiated: its type parameters
+    /// are replaced by the type arguments `targs`, if any were written, or
+    /// else by a fresh variable each. So each use is separate, and `id(1)`
+    /// and `id(true)` can both be fine.
+    fn lookup(
+        &mut self,
+        name: &str,
+        targs: &[TypeExpr],
+        span: Span,
+    ) -> Result<Option<Type>, Error> {
         if let Some(local) = self.locals.iter_mut().rev().find(|l| l.name == name) {
+            if !targs.is_empty() {
+                return Err(Error::ty(
+                    span,
+                    format!(
+                        "`{name}` is a variable, and only top-level functions, structs and \
+                         enums take type arguments"
+                    ),
+                ));
+            }
             local.used = true;
             let (ty, def) = (local.ty.clone(), local.sites[0].span);
             self.note(
@@ -523,27 +527,65 @@ impl Checker {
                 Some(ty.clone()),
                 Some(def),
             );
-            return Some(ty);
+            return Ok(Some(ty));
         }
-        let scheme = self.globals.get(name).cloned()?;
+        let Some(scheme) = self.globals.get(name).cloned() else {
+            return Ok(None);
+        };
         self.uses().fns.insert(name.to_string());
-        let args: Vec<Type> = scheme
-            .params
-            .iter()
-            .map(|p| {
-                self.fresh(
-                    span,
-                    format!("`{p}` for this use of `{name}`"),
-                    "nothing here says what it is, so annotate where the result goes".into(),
-                )
-            })
-            .collect();
+        let args = self.type_args(name, &scheme.params, targs, span, "(..)")?;
         let ty = Subst::new(&scheme.params, &args).apply(&scheme.ty);
         let def = self.defs.fns.get(name).copied();
         let instance = Instance::Fn(name.to_string(), args);
         let kind = NoteKind::Fn(name.to_string());
-        self.note_use(span, kind, ty.clone(), def, Some(instance));
-        Some(ty)
+        self.note_use(
+            span,
+            kind,
+            ty.clone(),
+            def,
+            Some(instance),
+            targs.is_empty(),
+        );
+        Ok(Some(ty))
+    }
+
+    /// The type arguments for a use at `span` of `name`, which has type
+    /// parameters `params`: those written in `targs`, or a fresh variable
+    /// for each if none were. `rest` is what follows `name::<..>` in an
+    /// example of writing them, for when they can't be inferred.
+    fn type_args(
+        &mut self,
+        name: &str,
+        params: &[String],
+        targs: &[TypeExpr],
+        span: Span,
+        rest: &str,
+    ) -> Result<Vec<Type>, Error> {
+        if targs.is_empty() {
+            let example = vec!["int"; params.len()].join(", ");
+            return Ok(params
+                .iter()
+                .map(|p| {
+                    self.fresh(
+                        span,
+                        format!("`{p}` for this use of `{name}`"),
+                        format!(
+                            "nothing here says what it is, so write it, as in \
+                             `{name}::<{example}>{rest}`, or annotate where the result goes"
+                        ),
+                    )
+                })
+                .collect());
+        }
+        if targs.len() != params.len() {
+            return Err(generics::arity_error(
+                &format!("`{name}`"),
+                params.len(),
+                targs.len(),
+                span,
+            ));
+        }
+        targs.iter().map(|t| self.resolve(t)).collect()
     }
 
     /// What the function being checked refers to.
@@ -613,10 +655,11 @@ impl Checker {
             //  ------------- (T-Var)
             //   Γ ⊢ x : T
             //
-            // If x is a generic function, T is its type with a fresh variable
-            // for each type parameter (see `lookup`).
-            ExprKind::Var(name) => self
-                .lookup(name, e.span)
+            // If x is a generic function, T is its type with the type
+            // arguments substituted for its type parameters: the ones written
+            // in `x::<..>`, or else a fresh variable for each (see `lookup`).
+            ExprKind::Var(name, targs) => self
+                .lookup(name, targs, e.span)?
                 .ok_or_else(|| Error::ty(e.span, format!("unknown variable `{name}`"))),
 
             //   Γ ⊢ e : int            Γ ⊢ e : bool
@@ -760,10 +803,11 @@ impl Checker {
             //
             // A product type is *introduced* by giving every field.
             //
-            // For a generic struct, S is `S<A1, .., Ak>` with a fresh
-            // variable for each type parameter, and T1..Tn mention them.
-            ExprKind::StructLit(name, inits) => {
-                let ty = self.struct_type(name)?;
+            // For a generic struct, S is `S<A1, .., Ak>`, with the type
+            // arguments written or a fresh variable for each type parameter,
+            // and T1..Tn mention them.
+            ExprKind::StructLit(name, targs, inits) => {
+                let ty = self.struct_type(name, targs)?;
                 let fields = struct_fields(&self.adts, &ty).expect("a struct");
                 let mut given = vec![false; fields.len()];
                 for init in inits {
@@ -838,8 +882,8 @@ impl Checker {
             //
             // A sum type is *introduced* by picking one variant and giving its
             // fields. Its eliminator is `match`.
-            ExprKind::Variant(ty, variant, args) => {
-                let (t, i) = self.variant(ty, variant)?;
+            ExprKind::Variant(ty, targs, variant, args) => {
+                let (t, i) = self.variant(ty, targs, variant)?;
                 let fields = variant_fields(&self.adts, &t, i);
                 if fields.len() != args.len() {
                     return Err(Error::ty(
@@ -1164,8 +1208,8 @@ impl Checker {
                 self.pattern_is(p, ty, Type::Unit)?;
                 Pat::Ctor(Ctor::Unit, Vec::new())
             }
-            PatternKind::Variant(name, variant, args) => {
-                let (t, i) = self.variant(name, variant)?;
+            PatternKind::Variant(name, targs, variant, args) => {
+                let (t, i) = self.variant(name, targs, variant)?;
                 let fields = variant_fields(&self.adts, &t, i);
                 self.pattern_is(p, ty, t)?;
                 self.uses().types.insert(name.name.clone());
@@ -1225,8 +1269,8 @@ impl Checker {
                 binds.extend(first.unwrap_or_default());
                 Pat::Or(pats)
             }
-            PatternKind::Struct(name, field_pats, rest) => {
-                let t = self.struct_type(name)?;
+            PatternKind::Struct(name, targs, field_pats, rest) => {
+                let t = self.struct_type(name, targs)?;
                 let fields = struct_fields(&self.adts, &t).expect("a struct");
                 self.pattern_is(p, ty, t)?;
                 self.uses().types.insert(name.name.clone());
@@ -1284,9 +1328,9 @@ impl Checker {
     /// The type a struct literal or pattern names, which must be a struct.
     /// If it's generic, each type parameter gets a fresh variable, to be
     /// worked out from the fields or from where it's used.
-    fn struct_type(&mut self, name: &Ident) -> Result<Type, Error> {
+    fn struct_type(&mut self, name: &Ident, targs: &[TypeExpr]) -> Result<Type, Error> {
         match self.adts.get(&name.name).map(|d| &d.kind) {
-            Some(AdtKind::Struct(_)) => Ok(self.instantiate(name, NoteKind::Struct)),
+            Some(AdtKind::Struct(_)) => self.instantiate(name, targs, " { .. }", NoteKind::Struct),
             Some(AdtKind::Enum(_)) => Err(Error::ty(
                 name.span,
                 format!("`{}` is an enum, not a struct", name.name),
@@ -1298,38 +1342,42 @@ impl Checker {
         }
     }
 
-    /// `name<A1, .., Ak>`, with a fresh variable for each type parameter
-    /// of struct or enum `name`, noted as a use of it at `name`'s span.
-    fn instantiate(&mut self, name: &Ident, kind: fn(String) -> NoteKind) -> Type {
+    /// `name<A1, .., Ak>`, for struct or enum `name`, with the type
+    /// arguments `targs` or else a fresh variable for each type parameter,
+    /// noted as a use of it at `name`'s span. `rest` follows `name::<..>`
+    /// in an example of writing them.
+    fn instantiate(
+        &mut self,
+        name: &Ident,
+        targs: &[TypeExpr],
+        rest: &str,
+        kind: fn(String) -> NoteKind,
+    ) -> Result<Type, Error> {
         let params = self.adts[&name.name].params.clone();
-        let args: Vec<Type> = params
-            .iter()
-            .map(|p| {
-                self.fresh(
-                    name.span,
-                    format!("`{p}` for this `{}`", name.name),
-                    "nothing here says what it is, so annotate where it goes, e.g. \
-                     `let x: Option<int> = ..`"
-                        .into(),
-                )
-            })
-            .collect();
+        let args = self.type_args(&name.name, &params, targs, name.span, rest)?;
         let ty = Type::Adt(name.name.clone(), args.clone());
         let def = self.defs.types.get(&name.name).copied();
         let instance = Instance::Adt(name.name.clone(), args);
+        let kind = kind(name.name.clone());
         self.note_use(
             name.span,
-            kind(name.name.clone()),
+            kind,
             ty.clone(),
             def,
             Some(instance),
+            targs.is_empty(),
         );
-        ty
+        Ok(ty)
     }
 
     /// Looks up `E::V`, returning the enum's type, instantiated as in
     /// `instantiate`, and the variant's index.
-    fn variant(&mut self, ty: &Ident, variant: &Ident) -> Result<(Type, usize), Error> {
+    fn variant(
+        &mut self,
+        ty: &Ident,
+        targs: &[TypeExpr],
+        variant: &Ident,
+    ) -> Result<(Type, usize), Error> {
         let variants = match self.adts.get(&ty.name).map(|d| &d.kind) {
             Some(AdtKind::Enum(variants)) => variants,
             Some(AdtKind::Struct(_)) => {
@@ -1346,7 +1394,8 @@ impl Checker {
                 format!("`{}` has no variant `{}`", ty.name, variant.name),
             ));
         };
-        let t = self.instantiate(ty, NoteKind::Enum);
+        let rest = format!("::{}", variant.name);
+        let t = self.instantiate(ty, targs, &rest, NoteKind::Enum)?;
         let fields = variant_fields(&self.adts, &t, i);
         let as_fn = match fields.is_empty() {
             true => t.clone(),

@@ -34,6 +34,8 @@
 ((call_expression function: (identifier) @function)
   (#not-match? @function "^(print|print_bool)$"))
 
+(generic_function function: (identifier) @function)
+
 (parameter pattern: (identifier) @variable.parameter)
 (closure_parameter pattern: (identifier) @variable.parameter)
 

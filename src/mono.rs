@@ -376,9 +376,12 @@ impl Cx<'_, '_, '_> {
     fn expr(&mut self, e: &Expr) -> Expr {
         let kind = match &e.kind {
             ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit => e.kind.clone(),
-            ExprKind::Var(name) => {
-                ExprKind::Var(self.instance(e.span).unwrap_or_else(|| name.clone()))
-            }
+            // Type arguments written in the source are in `info.instances`
+            // like the inferred ones, and the copy's name says them.
+            ExprKind::Var(name, _) => ExprKind::Var(
+                self.instance(e.span).unwrap_or_else(|| name.clone()),
+                Vec::new(),
+            ),
             ExprKind::Unary(op, x) => ExprKind::Unary(*op, Box::new(self.expr(x))),
             ExprKind::Binary(op, l, r) => {
                 ExprKind::Binary(*op, Box::new(self.expr(l)), Box::new(self.expr(r)))
@@ -398,7 +401,7 @@ impl Cx<'_, '_, '_> {
                     .map(|s| match s {
                         Stmt::Let { pat, ty, init } => Stmt::Let {
                             pat: self.pattern(pat),
-                            ty: ty.as_ref().map(|t| self.ty(t)),
+                            ty: ty.as_ref().map(|t| Box::new(self.ty(t))),
                             init: self.expr(init),
                         },
                         Stmt::Expr(e) => Stmt::Expr(self.expr(e)),
@@ -407,8 +410,9 @@ impl Cx<'_, '_, '_> {
                     .collect(),
                 tail.as_ref().map(|t| Box::new(self.expr(t))),
             ),
-            ExprKind::StructLit(name, inits) => ExprKind::StructLit(
+            ExprKind::StructLit(name, _, inits) => ExprKind::StructLit(
                 self.ident(name),
+                Vec::new(),
                 inits
                     .iter()
                     .map(|i| FieldInit {
@@ -418,8 +422,9 @@ impl Cx<'_, '_, '_> {
                     .collect(),
             ),
             ExprKind::Field(x, field) => ExprKind::Field(Box::new(self.expr(x)), field.clone()),
-            ExprKind::Variant(ty, variant, args) => ExprKind::Variant(
+            ExprKind::Variant(ty, _, variant, args) => ExprKind::Variant(
                 self.ident(ty),
+                Vec::new(),
                 variant.clone(),
                 args.iter().map(|a| self.expr(a)).collect(),
             ),
@@ -450,13 +455,15 @@ impl Cx<'_, '_, '_> {
 
     fn pattern(&mut self, p: &Pattern) -> Pattern {
         let kind = match &p.kind {
-            PatternKind::Variant(ty, variant, args) => PatternKind::Variant(
+            PatternKind::Variant(ty, _, variant, args) => PatternKind::Variant(
                 self.ident(ty),
+                Vec::new(),
                 variant.clone(),
                 args.iter().map(|a| self.pattern(a)).collect(),
             ),
-            PatternKind::Struct(name, fields, rest) => PatternKind::Struct(
+            PatternKind::Struct(name, _, fields, rest) => PatternKind::Struct(
                 self.ident(name),
+                Vec::new(),
                 fields
                     .iter()
                     .map(|f| FieldPat {

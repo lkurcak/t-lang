@@ -111,7 +111,10 @@ pub enum ExprKind {
     Int(i64),
     Bool(bool),
     Unit,
-    Var(String),
+    /// `x`, or `id::<int>` with type arguments (a *turbofish*) for a generic
+    /// function. Every list of type arguments here and below is empty if none
+    /// were written, and then the checker infers them.
+    Var(String, Vec<TypeExpr>),
     Unary(UnOp, Box<Expr>),
     Binary(BinOp, Box<Expr>, Box<Expr>),
     Call(Box<Expr>, Vec<Expr>),
@@ -119,12 +122,13 @@ pub enum ExprKind {
     If(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
     /// `{ stmt; stmt; tail }`; without a tail the block's value is `()`.
     Block(Vec<Stmt>, Option<Box<Expr>>),
-    /// `Point { x: 1, y: 2 }`
-    StructLit(Ident, Vec<FieldInit>),
+    /// `Point { x: 1, y: 2 }`, or `Pair::<int, bool> { .. }`
+    StructLit(Ident, Vec<TypeExpr>, Vec<FieldInit>),
     /// `p.x`
     Field(Box<Expr>, Ident),
-    /// `Shape::Rect(2, 3)`, or `Shape::Empty` with no arguments.
-    Variant(Ident, Ident, Vec<Expr>),
+    /// `Shape::Rect(2, 3)`, `Shape::Empty` with no arguments, or
+    /// `Option::<int>::None` with type arguments.
+    Variant(Ident, Vec<TypeExpr>, Ident, Vec<Expr>),
     /// `match e { pat => e, .. }`
     Match(Box<Expr>, Vec<Arm>),
     /// `|x, y: int| x + y`. Shared, because the closure values the
@@ -166,7 +170,7 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
     let mut go = |e: &Expr, bound: &mut Vec<String>| free_vars(e, bound, out);
     match &e.kind {
         ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit => {}
-        ExprKind::Var(name) => {
+        ExprKind::Var(name, _) => {
             if !bound.contains(name) && !out.contains(name) {
                 out.push(name.clone());
             }
@@ -199,8 +203,8 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
             tail.iter().for_each(|t| go(t, bound));
             bound.truncate(scope);
         }
-        ExprKind::StructLit(_, inits) => inits.iter().for_each(|i| go(&i.value, bound)),
-        ExprKind::Variant(_, _, args) => args.iter().for_each(|a| go(a, bound)),
+        ExprKind::StructLit(_, _, inits) => inits.iter().for_each(|i| go(&i.value, bound)),
+        ExprKind::Variant(_, _, _, args) => args.iter().for_each(|a| go(a, bound)),
         ExprKind::Match(scrutinee, arms) => {
             go(scrutinee, bound);
             for arm in arms {
@@ -223,10 +227,12 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
 fn pattern_binds(p: &Pattern, out: &mut Vec<String>) {
     match &p.kind {
         PatternKind::Bind(name) => out.push(name.clone()),
-        PatternKind::Variant(_, _, pats) | PatternKind::Or(pats) => {
+        PatternKind::Variant(_, _, _, pats) | PatternKind::Or(pats) => {
             pats.iter().for_each(|p| pattern_binds(p, out));
         }
-        PatternKind::Struct(_, fields, _) => fields.iter().for_each(|f| pattern_binds(&f.pat, out)),
+        PatternKind::Struct(_, _, fields, _) => {
+            fields.iter().for_each(|f| pattern_binds(&f.pat, out))
+        }
         PatternKind::Wild
         | PatternKind::Int(_)
         | PatternKind::Range(..)
@@ -259,7 +265,8 @@ pub enum Stmt {
     /// `let Point { x, y } = ..`, but not `let Shape::Empty = ..`.
     Let {
         pat: Pattern,
-        ty: Option<TypeExpr>,
+        /// Boxed, since it's rare and would make every `Stmt` bigger.
+        ty: Option<Box<TypeExpr>>,
         init: Expr,
     },
     /// `e;`: any type, value discarded.
@@ -299,11 +306,11 @@ pub enum PatternKind {
     Range(i64, i64, bool),
     Bool(bool),
     Unit,
-    /// `Shape::Rect(w, _)`
-    Variant(Ident, Ident, Vec<Pattern>),
+    /// `Shape::Rect(w, _)`, or `Option::<int>::Some(x)` with type arguments.
+    Variant(Ident, Vec<TypeExpr>, Ident, Vec<Pattern>),
     /// `Point { x, y: 0 }`, or `Point { x, .. }` to ignore the other fields
     /// (the `bool`).
-    Struct(Ident, Vec<FieldPat>, bool),
+    Struct(Ident, Vec<TypeExpr>, Vec<FieldPat>, bool),
     /// `Shape::Circle(r) | Shape::Rect(r, _)`: matches if any alternative
     /// does. Every alternative must bind the same variables, at the same types.
     Or(Vec<Pattern>),

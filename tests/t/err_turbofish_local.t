@@ -1,0 +1,6 @@
+fn id<T>(x: T) -> T { x }
+fn main() {
+    let f = id;
+    print(f::<int>(1));
+}
+// error: `f` is a variable, and only top-level functions, structs and enums take type arguments

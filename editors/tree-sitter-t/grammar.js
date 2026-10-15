@@ -49,6 +49,9 @@ module.exports = grammar({
     // `if x {` could start a struct literal or the `if`'s block; the real
     // parser forbids struct literals there, here the struct reading loses.
     [$._expression, $._type_identifier],
+    // `x::` could go on as `x::<int>` (a function) or `x::V` (a variant):
+    // the token after `::` decides.
+    [$.generic_function, $._type_identifier],
   ],
 
   rules: {
@@ -119,6 +122,10 @@ module.exports = grammar({
 
     type_arguments: $ => seq('<', commaSep1($._type), '>'),
 
+    // `::<int, bool>`: type arguments written out where a type can't go
+    // straight after a name, since `<` would read as less-than.
+    _turbofish: $ => seq('::', field('type_arguments', $.type_arguments)),
+
     unit_type: _ => seq('(', ')'),
 
     function_type: $ => prec.right(seq(
@@ -158,6 +165,7 @@ module.exports = grammar({
       $.boolean_literal,
       $.unit_expression,
       $.identifier,
+      $.generic_function,
       $.unary_expression,
       $.binary_expression,
       $.call_expression,
@@ -211,8 +219,12 @@ module.exports = grammar({
       field('field', $._field_identifier),
     )),
 
+    // `id::<int>`
+    generic_function: $ => seq(field('function', $.identifier), $._turbofish),
+
     struct_expression: $ => prec.dynamic(-1, seq(
       field('name', $._type_identifier),
+      optional($._turbofish),
       field('body', $.field_initializer_list),
     )),
 
@@ -233,6 +245,7 @@ module.exports = grammar({
     // `Shape::Rect(2, 3)` or `Shape::Empty`
     variant_expression: $ => prec.right(seq(
       field('type', $._type_identifier),
+      optional($._turbofish),
       '::',
       field('variant', $.identifier),
       optional(field('arguments', $.arguments)),
@@ -308,6 +321,7 @@ module.exports = grammar({
 
     variant_pattern: $ => seq(
       field('type', $._type_identifier),
+      optional($._turbofish),
       '::',
       field('variant', $.identifier),
       optional(seq('(', commaSep($._pattern), ')')),
@@ -315,6 +329,7 @@ module.exports = grammar({
 
     struct_pattern: $ => seq(
       field('type', $._type_identifier),
+      optional($._turbofish),
       '{',
       repeat(seq($.field_pattern, ',')),
       optional(choice($.field_pattern, $.remaining_field_pattern)),

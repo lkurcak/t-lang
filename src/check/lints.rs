@@ -89,8 +89,10 @@ fn alternatives(p: &Pattern, span: Span) -> Option<(&[Pattern], usize)> {
             .position(|a| a.span == span)
             .map(|k| (alts.as_slice(), k))
             .or_else(|| alts.iter().find_map(|a| alternatives(a, span))),
-        PatternKind::Variant(_, _, pats) => pats.iter().find_map(|p| alternatives(p, span)),
-        PatternKind::Struct(_, fields, _) => fields.iter().find_map(|f| alternatives(&f.pat, span)),
+        PatternKind::Variant(_, _, _, pats) => pats.iter().find_map(|p| alternatives(p, span)),
+        PatternKind::Struct(_, _, fields, _) => {
+            fields.iter().find_map(|f| alternatives(&f.pat, span))
+        }
         _ => None,
     }
 }
@@ -170,10 +172,10 @@ pub(super) fn mergeable(p: &Pattern, alts: &[Pattern]) -> Vec<Warning> {
 fn written_inclusive(p: &Pattern, span: Span) -> Option<bool> {
     match &p.kind {
         PatternKind::Range(_, _, inclusive) if p.span == span => Some(*inclusive),
-        PatternKind::Variant(_, _, pats) | PatternKind::Or(pats) => {
+        PatternKind::Variant(_, _, _, pats) | PatternKind::Or(pats) => {
             pats.iter().find_map(|p| written_inclusive(p, span))
         }
-        PatternKind::Struct(_, fields, _) => {
+        PatternKind::Struct(_, _, fields, _) => {
             fields.iter().find_map(|f| written_inclusive(&f.pat, span))
         }
         _ => None,
