@@ -12,6 +12,7 @@ pub mod lexer;
 pub mod lift;
 pub mod lsp;
 pub mod mono;
+mod naming;
 pub mod parser;
 mod pretty;
 pub mod rename;
@@ -45,6 +46,10 @@ pub fn check_source(src: &str) -> Checked {
         }
     };
     let (info, result) = check::check(&program, &mut warnings);
+    // Here rather than in `check`, since the fixes check renamed programs.
+    let checked = result.is_ok().then_some(&info);
+    warnings.extend(naming::warnings(src, &program, checked));
+    warnings.sort_by_key(|w| w.span.start);
     let result = result.and_then(|()| mono::monomorphise(&lift::lift(&program, &info), &info));
     Checked {
         warnings,

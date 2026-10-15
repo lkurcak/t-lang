@@ -97,6 +97,14 @@ from the parse alone, so it's there while the file has a type error. Inlay
 hints show inferred types and type arguments. It formats files as `t fmt`
 does (see below).
 
+Names are written as in Rust: structs, enums, variants and type
+parameters in `UpperCamelCase`, and functions, parameters, variables and
+fields in `snake_case`, with an acronym as one word (`HttpServer`), and
+leading underscores and digits allowed (`_unused`, `Vec2`). A name written
+otherwise gets a warning where it's declared (`non_camel_case_types` or
+`non_snake_case`), whose fix is the rename above, unless the new name
+would be a keyword or clash with something.
+
 **Neovim (0.11+):** install
 [t-lang.nvim](https://github.com/lkurcak/t-lang.nvim), e.g.
 `vim.pack.add({ "https://github.com/lkurcak/t-lang.nvim" })`.

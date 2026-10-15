@@ -4,6 +4,18 @@
 
 ### Added
 
+- Naming lints, as in Rust: `non_camel_case_types` for a struct, enum,
+  variant or type parameter whose name isn't in `UpperCamelCase`, and
+  `non_snake_case` for a function, parameter, variable or field whose name
+  isn't in `snake_case`. Leading underscores don't count and digits are
+  fine (`_unused`, `Vec2`, `x1`), and an acronym is one word, so
+  `HTTPServer` should be `HttpServer`. Each is reported once, where the
+  name is declared, as rustc words it: "type `my_point` should have an
+  upper camel case name: `MyPoint`". The fix renames it everywhere, as
+  `t lsp`'s rename does, so it's offered only when the program checks and
+  the new name isn't a keyword and clashes with nothing. The test programs
+  that broke the rules are renamed.
+
 - Nested functions: a `fn` can be declared as a statement in any block. It
   means exactly what it would at the top level; only its name is scoped, to
   the whole block, so it can be used before it's declared, be recursive, and

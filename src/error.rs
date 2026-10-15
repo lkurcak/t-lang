@@ -115,6 +115,12 @@ pub enum Lint {
     DeadCode,
     /// A `///` doc comment that isn't before anything it can document.
     UnusedDocComments,
+    /// A struct, enum, variant or type parameter whose name isn't in
+    /// `UpperCamelCase`.
+    NonCamelCaseTypes,
+    /// A function, parameter, variable or field whose name isn't in
+    /// `snake_case`.
+    NonSnakeCase,
 }
 
 impl Lint {
@@ -126,6 +132,8 @@ impl Lint {
             Lint::UnusedVariables => "unused_variables",
             Lint::DeadCode => "dead_code",
             Lint::UnusedDocComments => "unused_doc_comments",
+            Lint::NonCamelCaseTypes => "non_camel_case_types",
+            Lint::NonSnakeCase => "non_snake_case",
         }
     }
 }

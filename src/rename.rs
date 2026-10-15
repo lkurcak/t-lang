@@ -217,6 +217,11 @@ fn is_var(n: &Note) -> bool {
     matches!(n.kind, NoteKind::Var(_))
 }
 
+/// Is `name` a name: an identifier other than `_`, and not a keyword?
+pub fn is_name(name: &str) -> bool {
+    valid(name, false).is_ok()
+}
+
 /// Is `new` something a name can be changed to? A type's can't be `int` or
 /// `bool`.
 fn valid(new: &str, is_type: bool) -> Result<(), String> {

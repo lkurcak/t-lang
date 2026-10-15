@@ -39,7 +39,7 @@ fn xor(a: bool, b: bool) -> bool {
 }
 
 // Alternatives may bind in a different order.
-enum Pair { AB(int, bool), BA(bool, int) }
+enum Pair { IntBool(int, bool), BoolInt(bool, int) }
 struct S { a: int, b: int }
 
 fn main() {
@@ -56,10 +56,10 @@ fn main() {
     print(code(Light { on: true, color: Color::Blue }));    // expect: 2
     print(code(Light { on: false, color: Color::Green }));  // expect: 3
     // Irrefutable, so fine in `let`.
-    let Pair::AB(n, b) | Pair::BA(b, n) = Pair::BA(true, 7);
+    let Pair::IntBool(n, b) | Pair::BoolInt(b, n) = Pair::BoolInt(true, 7);
     print(n);                               // expect: 7
     print_bool(b);                          // expect: true
-    let Pair::AB(m, c) | Pair::BA(c, m) = Pair::AB(8, false);
+    let Pair::IntBool(m, c) | Pair::BoolInt(c, m) = Pair::IntBool(8, false);
     print(m);                               // expect: 8
     print_bool(c);                          // expect: false
     // The first alternative binds `x` = 0, then fails on `b: 0`. The second
