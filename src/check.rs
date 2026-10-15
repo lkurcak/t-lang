@@ -3,7 +3,10 @@
 //! recursive functions (step 1), plus structs, enums and `match`
 //! (step 2, see docs/02-adts.md), plus closures, nested functions and types,
 //! and type inference (step 3, see docs/03-inference.md), plus generics
-//! (step 4, see docs/04-generics.md).
+//! (step 4, see docs/04-generics.md), plus references, boxes, mutation and
+//! moves (step 5, see docs/05-ownership.md). Whether a program uses its
+//! references and moved values correctly is checked after its types are,
+//! by the borrow checker (`borrowck`), from what `typed` records here.
 //!
 //! Each case below is an implementation of a *typing rule*, written above it in
 //! the usual inference-rule notation:
@@ -32,9 +35,10 @@ mod info;
 mod lints;
 mod names;
 mod scope;
+pub(crate) mod typed;
 mod unify;
 
-pub(crate) use generics::{TypeName, resolve};
+pub(crate) use generics::{Lifetimes, TypeName, resolve};
 pub use info::{Info, Instance, Note, NoteKind};
 pub use scope::source_name;
 
@@ -42,7 +46,8 @@ use crate::ast::*;
 use crate::error::{Edit, Error, Fix, Span, Warning};
 use crate::exhaust::{self, Ctor, Pat, Redundant};
 use crate::types::{
-    AdtDef, AdtKind, Adts, Scheme, Subst, Type, all_fields, struct_fields, variant_fields,
+    AdtDef, AdtKind, Adts, Region, Scheme, Subst, Type, all_fields, is_copy, struct_fields,
+    variant_fields,
 };
 use escape::{Escape, Exit, Origin, bound_origin};
 use generics::Use;
@@ -51,6 +56,7 @@ use lints::{Uses, mergeable, narrowable, unreachable_alt, unreachable_arm, unuse
 use names::{Scoped, TypeDef};
 use scope::{Binding, FnDef, FnId, FnScope, to_closure};
 use std::collections::{HashMap, HashSet};
+use typed::{Bind, Res, Typed};
 use unify::Var;
 
 /// Built-in functions, available everywhere. Shared with the interpreter.
@@ -102,7 +108,7 @@ fn check_main(prog: &Program) -> Result<(), Error> {
 /// Calls `f` with the name and type arguments of every struct and enum in
 /// `t`, at any depth.
 fn each_adt<'t>(t: &'t Type, f: &mut impl FnMut(&'t str, &'t [Type])) {
-    if let Type::Adt(name, args) = t {
+    if let Type::Adt(name, _, args) = t {
         f(name, args);
     }
     for p in t.parts() {
@@ -112,13 +118,15 @@ fn each_adt<'t>(t: &'t Type, f: &mut impl FnMut(&'t str, &'t [Type])) {
 
 /// Does a value of type `ty` hold a `target`, at any depth? Function types
 /// don't count: a function value is a code address, not the values its
-/// signature mentions. `struct A { b: Box<A> }` counts, through `Box`'s
-/// field of type `T`.
+/// signature mentions. Nor do references and boxes, which hold an address.
+/// `struct A { b: Wrap<A> }` counts, through `Wrap`'s field of type `T`.
 ///
 /// This terminates because polymorphic recursion is ruled out first, so only
 /// finitely many types can turn up in here.
 fn contains(adts: &Adts, ty: &Type, target: &str, seen: &mut HashSet<Type>) -> bool {
-    let Type::Adt(name, _) = ty else { return false };
+    let Type::Adt(name, ..) = ty else {
+        return false;
+    };
     if name == target {
         return true;
     }
@@ -142,6 +150,12 @@ fn adt_names(t: &Type, out: &mut HashSet<String>) {
 struct Local {
     name: String,
     ty: Type,
+    /// Declared `mut`?
+    mutable: bool,
+    /// From the `mut` to the name, if it's `mut`.
+    mut_span: Option<Span>,
+    /// Bound by reference by match ergonomics, and if so, `&mut`?
+    by_ref: Option<bool>,
     /// Where it's bound: one place, or one per alternative of an or-pattern.
     sites: Vec<Site>,
     /// Whether anything has read it, for the unused-variable warning.
@@ -164,6 +178,9 @@ impl Local {
         Local {
             name: name.to_string(),
             ty,
+            mutable: false,
+            mut_span: None,
+            by_ref: None,
             sites: vec![Site {
                 span,
                 shorthand: false,
@@ -171,6 +188,11 @@ impl Local {
             used: false,
             origin: None,
         }
+    }
+
+    /// Its id: where its name is first bound (see `typed`).
+    fn id(&self) -> Span {
+        self.sites[0].span
     }
 
     /// A parameter, which may be a closure that captures.
@@ -202,11 +224,12 @@ fn plural(n: usize, what: &str) -> String {
     format!("{n} {what}{}", if n == 1 { "" } else { "s" })
 }
 
-struct Checker {
+pub(crate) struct Checker {
     /// What every struct and enum is made of, by symbol.
     adts: Adts,
-    /// How many type arguments each struct and enum takes, by symbol.
-    arities: HashMap<String, usize>,
+    /// How many lifetime and type arguments each struct and enum takes, by
+    /// symbol.
+    arities: HashMap<String, (usize, usize)>,
     /// Every struct and enum, top-level and local, in the order of
     /// `Program::all_types`.
     types: Vec<TypeDef>,
@@ -230,6 +253,16 @@ struct Checker {
     current: Option<FnId>,
     /// The type parameters of the function being checked.
     type_params: Vec<String>,
+    /// Its lifetime parameters, elided ones too.
+    lifetimes: Vec<String>,
+    /// Is this what monomorphisation made? Then lifetimes mean nothing, and
+    /// the borrow checker doesn't run: it already did, on the program before.
+    mono: bool,
+    /// What the borrow checker needs to know about each body.
+    typed: Typed,
+    /// Closures' captures, with their types, which must turn out to be
+    /// `Copy` and hold no references (see `check_captures`).
+    captures: Vec<(String, Type, Span)>,
     /// The local part of the context Γ, as a stack. Entering a scope pushes,
     /// leaving truncates (see `end_scope`). Searching from the top makes inner
     /// `let`s shadow outer ones.
@@ -288,6 +321,10 @@ impl Checker {
             scopes: Vec::new(),
             current: None,
             type_params: Vec::new(),
+            lifetimes: Vec::new(),
+            mono,
+            typed: Typed::default(),
+            captures: Vec::new(),
             locals: Vec::new(),
             barrier: 0,
             closure_fix: None,
@@ -322,19 +359,28 @@ impl Checker {
         let mut top: Vec<FnId> = Vec::new();
         for (i, &(f, parent)) in fns.iter().enumerate() {
             let parent = parent.map(FnId);
-            if parent.is_none() && f.name.name == "main" && !f.type_params.is_empty() {
+            if parent.is_none() && f.name.name == "main" && !f.generics.types.is_empty() {
                 return Err(Error::ty(
-                    f.type_params[0].span,
+                    f.generics.types[0].span,
                     "`main` must not have type parameters: nothing could say what they are",
                 ));
             }
-            let params = generics::declare(&f.type_params)?;
-            let param_tys = f
-                .params
-                .iter()
-                .map(|p| self.resolve_with(&p.ty, &params))
-                .collect::<Result<Vec<_>, _>>()?;
-            let ret = self.resolve_with(&f.ret, &params)?;
+            let params = generics::declare(&f.generics.types)?;
+            let declared = generics::declare_lifetimes(&f.generics.lifetimes)?;
+            let bounds = generics::bounds(&f.generics, &declared, &params)?;
+            let (param_tys, ret, lifetimes) = match self.mono {
+                // Lifetimes don't matter any more.
+                true => {
+                    let mut any = Lifetimes::Any;
+                    let ps = f
+                        .params
+                        .iter()
+                        .map(|p| self.resolve_with(&p.ty, &params, &mut any));
+                    let ps = ps.collect::<Result<Vec<_>, _>>()?;
+                    (ps, self.resolve_with(&f.ret, &params, &mut any)?, declared)
+                }
+                false => self.signature(f, &params, &declared)?,
+            };
             let ty = Type::func(param_tys, ret);
             let name = &f.name.name;
             let symbol = self.fn_symbols[i].clone();
@@ -358,7 +404,12 @@ impl Checker {
             self.fns.push(FnDef {
                 name: f.name.clone(),
                 symbol,
-                scheme: Scheme { params, ty },
+                scheme: Scheme {
+                    params,
+                    lifetimes,
+                    bounds,
+                    ty,
+                },
                 parent,
                 body: f.body.span,
             });
@@ -366,6 +417,49 @@ impl Checker {
         self.scopes.push(FnScope { at: 0, fns: top });
         self.uses = (0..fns.len()).map(|_| Uses::default()).collect();
         Ok(())
+    }
+
+    /// The parameter and return types of `f`, which has type parameters
+    /// `params` and declares lifetimes `declared`, and its lifetime
+    /// parameters: those, and one more for each lifetime its parameters
+    /// leave out.
+    ///
+    /// That's *lifetime elision*, as in Rust. A lifetime its return type
+    /// leaves out is the one lifetime its parameters have, if they have
+    /// exactly one: `fn first(p: &Pair) -> &int` returns something borrowed
+    /// from `p`. Otherwise it has to be written.
+    fn signature(
+        &self,
+        f: &FnDecl,
+        params: &[String],
+        declared: &[String],
+    ) -> Result<(Vec<Type>, Type, Vec<String>), Error> {
+        let mut lts = Lifetimes::Params {
+            declared,
+            elided: Vec::new(),
+        };
+        let param_tys = f
+            .params
+            .iter()
+            .map(|p| self.resolve_with(&p.ty, params, &mut lts))
+            .collect::<Result<Vec<_>, _>>()?;
+        let Lifetimes::Params { elided, .. } = lts else {
+            unreachable!()
+        };
+        let mut inputs: Vec<&Region> = Vec::new();
+        for r in param_tys.iter().flat_map(Type::regions) {
+            if !inputs.contains(&r) {
+                inputs.push(r);
+            }
+        }
+        let input = match inputs[..] {
+            [r] => Ok(r.clone()),
+            _ => Err(inputs.len()),
+        };
+        let mut lts = Lifetimes::Return { declared, input };
+        let ret = self.resolve_with(&f.ret, params, &mut lts)?;
+        let lifetimes = declared.iter().cloned().chain(elided).collect();
+        Ok((param_tys, ret, lifetimes))
     }
 
     /// Pass 2: checks each function's body against its declared return type.
@@ -399,6 +493,7 @@ impl Checker {
         // Inside the body its type parameters are in scope, and opaque:
         // `Type::Param` is equal only to itself.
         self.type_params = scheme.params.clone();
+        self.lifetimes = scheme.lifetimes.clone();
         let scope = self.locals.len();
         for (i, p) in f.params.iter().enumerate() {
             if f.params[..i].iter().any(|q| q.name.name == p.name.name) {
@@ -409,8 +504,11 @@ impl Checker {
             }
             let ty = sig.params[i].clone();
             self.mention(&ty);
-            let local = Local::param(&p.name.name, ty, p.name.span);
+            let mut local = Local::param(&p.name.name, ty, p.name.span);
+            local.mutable = p.mutable.is_some();
+            local.mut_span = p.mutable.map(|m| Span::new(m.start, p.name.span.start));
             self.note_binds(std::slice::from_ref(&local), false);
+            self.bind(&local);
             self.locals.push(local);
         }
         let ret = (*sig.ret).clone();
@@ -419,7 +517,56 @@ impl Checker {
         self.check(&f.body, &ret)?;
         self.leaves(&f.body, &ret, Exit::Return);
         self.end_scope(scope);
-        self.solve_all(vars)
+        self.solve_all(vars)?;
+        if self.mono {
+            return Ok(());
+        }
+        let warnings = crate::borrowck::check(self, f, &scheme)?;
+        self.warnings.extend(warnings);
+        Ok(())
+    }
+
+    /// What every struct and enum is made of, by symbol.
+    pub(crate) fn adts(&self) -> &Adts {
+        &self.adts
+    }
+
+    /// What the borrow checker needs to know about the bodies checked.
+    pub(crate) fn typed(&self) -> &Typed {
+        &self.typed
+    }
+
+    /// `t` with the type variables in it replaced by what they turned out
+    /// to be.
+    pub(crate) fn solution(&self, t: &Type) -> Type {
+        self.solved(t)
+    }
+
+    /// The type of function `symbol`.
+    pub(crate) fn scheme(&self, symbol: &str) -> &Scheme {
+        let f = self.fns.iter().find(|f| f.symbol == symbol);
+        &f.expect("a function the checker saw").scheme
+    }
+
+    /// Type `t`, written inside the function being checked, with lifetimes
+    /// meaning what they mean there.
+    pub(crate) fn written_type(&self, t: &TypeExpr) -> Option<Type> {
+        self.resolve(t).ok()
+    }
+
+    /// Records local `l` for the borrow checker.
+    fn bind(&mut self, l: &Local) {
+        let bind = Bind {
+            name: l.name.clone(),
+            ty: l.ty.clone(),
+            mutable: l.mutable,
+            mut_span: l.mut_span,
+            by_ref: l.by_ref,
+        };
+        self.typed.binds.insert(l.id(), bind);
+        for site in &l.sites {
+            self.typed.sites.insert(site.span, l.id());
+        }
     }
 
     /// Pass 0: builds the table of structs and enums, local ones too, and
@@ -433,7 +580,7 @@ impl Checker {
         let mut declared = HashSet::new();
         for ((d, _), def) in decls.iter().zip(&self.types) {
             let name = d.name();
-            if matches!(name.name.as_str(), "int" | "bool") {
+            if matches!(name.name.as_str(), "int" | "bool" | "Box") {
                 return Err(Error::ty(
                     name.span,
                     format!("`{}` is a built-in type", name.name),
@@ -445,7 +592,7 @@ impl Checker {
                     format!("type `{}` is already defined", name.name),
                 ));
             }
-            let arity = d.type_params().len();
+            let arity = (d.generics().lifetimes.len(), d.type_params().len());
             self.arities.insert(def.symbol.clone(), arity);
         }
 
@@ -455,6 +602,14 @@ impl Checker {
         let mut field_types = Vec::new();
         for ((d, _), def) in decls.iter().zip(&self.types) {
             let params = generics::declare(d.type_params())?;
+            let lifetimes = generics::declare_lifetimes(&d.generics().lifetimes)?;
+            let bounds = generics::bounds(d.generics(), &lifetimes, &params)?;
+            let mut lts = match self.mono {
+                true => Lifetimes::Any,
+                false => Lifetimes::Fields {
+                    declared: &lifetimes,
+                },
+            };
             let kind = match d {
                 TypeDecl::Struct(s) => {
                     let mut fields: Vec<(String, Type)> = Vec::new();
@@ -465,7 +620,7 @@ impl Checker {
                                 format!("field `{}` is declared twice", f.name.name),
                             ));
                         }
-                        let t = self.resolve_with(&f.ty, &params)?;
+                        let t = self.resolve_with(&f.ty, &params, &mut lts)?;
                         field_types.push((def.symbol.as_str(), f.ty.span, t.clone()));
                         fields.push((f.name.name.clone(), t));
                     }
@@ -482,7 +637,7 @@ impl Checker {
                         }
                         let mut tys = Vec::new();
                         for f in &v.fields {
-                            let t = self.resolve_with(f, &params)?;
+                            let t = self.resolve_with(f, &params, &mut lts)?;
                             field_types.push((def.symbol.as_str(), f.span, t.clone()));
                             tys.push(t);
                         }
@@ -491,7 +646,14 @@ impl Checker {
                     AdtKind::Enum(variants)
                 }
             };
-            adts.insert(def.symbol.clone(), AdtDef { params, kind });
+            let adt = AdtDef {
+                params,
+                lifetimes,
+                bounds,
+                copy: d.is_copy(),
+                kind,
+            };
+            adts.insert(def.symbol.clone(), adt);
         }
 
         // `struct S<T> { f: fn(S<Option<T>>) -> int }` would need `S<int>`,
@@ -515,20 +677,21 @@ impl Checker {
 
         // A struct that holds itself, even via other types, would need
         // infinite memory: `struct A { a: A }` has the size of an int
-        // plus... itself. Making that work takes a pointer, and a story for
-        // who frees it: that's step 5, ownership.
-        for (owner, span, t) in field_types {
-            if contains(&adts, &t, owner, &mut HashSet::new()) {
+        // plus... itself. It can hold itself through a pointer, which has a
+        // size of its own: `Box<A>` or `&A`.
+        for (owner, span, t) in &field_types {
+            if contains(&adts, t, owner, &mut HashSet::new()) {
+                let name = source_name(owner);
                 return Err(Error::ty(
-                    span,
+                    *span,
                     format!(
-                        "`{}` contains itself, so it would have infinite size \
-                         (holding itself through a pointer comes in step 5)",
-                        source_name(owner)
+                        "`{name}` contains itself, so it would have infinite size; hold it \
+                         through a pointer, like `Box<{name}>`, instead"
                     ),
                 ));
             }
         }
+        derive_copy(&adts, &decls, &self.types)?;
         self.adts = adts;
         Ok(())
     }
@@ -541,13 +704,13 @@ impl Checker {
             if params.iter().any(|p| p == name) {
                 return None;
             }
-            let arity = *self.arities.get(name)?;
-            return Some(TypeName::Adt(name.to_string(), arity));
+            let (lts, arity) = *self.arities.get(name)?;
+            return Some(TypeName::Adt(name.to_string(), lts, arity));
         };
         match names.get(&span)? {
             Scoped::Adt(symbol) => {
-                let arity = *self.arities.get(symbol)?;
-                Some(TypeName::Adt(symbol.clone(), arity))
+                let (lts, arity) = *self.arities.get(symbol)?;
+                Some(TypeName::Adt(symbol.clone(), lts, arity))
             }
             Scoped::OuterParam(keyword, item) => Some(TypeName::OuterParam(keyword, item.clone())),
         }
@@ -565,14 +728,31 @@ impl Checker {
         }
     }
 
-    /// A type written where type parameters `params` are in scope.
-    fn resolve_with(&self, t: &TypeExpr, params: &[String]) -> Result<Type, Error> {
-        resolve(t, &|name, span| self.type_name(name, span, params), params)
+    /// A type written where type parameters `params` are in scope, and
+    /// lifetimes mean what `lts` says.
+    fn resolve_with(
+        &self,
+        t: &TypeExpr,
+        params: &[String],
+        lts: &mut Lifetimes,
+    ) -> Result<Type, Error> {
+        resolve(
+            t,
+            &|name, span| self.type_name(name, span, params),
+            params,
+            lts,
+        )
     }
 
     /// A type written inside the function being checked.
     fn resolve(&self, t: &TypeExpr) -> Result<Type, Error> {
-        self.resolve_with(t, &self.type_params)
+        let mut lts = match self.mono {
+            true => Lifetimes::Any,
+            false => Lifetimes::Body {
+                declared: &self.lifetimes,
+            },
+        };
+        self.resolve_with(t, &self.type_params, &mut lts)
     }
 
     /// Rejects polymorphic recursion between functions: see
@@ -618,10 +798,10 @@ impl Checker {
         name: &str,
         targs: &[TypeExpr],
         span: Span,
-    ) -> Result<Option<Type>, Error> {
+    ) -> Result<Option<(Type, Res)>, Error> {
         // Notes are for the name, not any `::<..>` after it.
         let at = Span::new(span.start, span.start + name.len());
-        let (scheme, def, symbol) = match self.binding(name) {
+        let (scheme, def, symbol, builtin) = match self.binding(name) {
             None => return Ok(None),
             Some(Binding::Local(i)) => {
                 if i < self.barrier {
@@ -638,38 +818,37 @@ impl Checker {
                 }
                 let local = &mut self.locals[i];
                 local.used = true;
-                let (ty, def) = (local.ty.clone(), local.sites[0].span);
+                let (ty, def) = (local.ty.clone(), local.id());
                 self.note(
                     at,
                     NoteKind::Var(name.to_string()),
                     Some(ty.clone()),
                     Some(def),
                 );
-                return Ok(Some(ty));
+                return Ok(Some((ty, Res::Local(def))));
             }
             Some(Binding::Fn(id)) => {
                 self.uses().fns.insert(id);
                 let f = &self.fns[id.0];
-                (f.scheme.clone(), Some(f.name.span), Some(f.symbol.clone()))
+                let scheme = f.scheme.clone();
+                (scheme, Some(f.name.span), Some(f.symbol.clone()), None)
             }
-            Some(Binding::Builtin(b)) => {
-                let ty = builtin_type(b);
-                let scheme = Scheme {
-                    params: Vec::new(),
-                    ty,
-                };
-                (scheme, None, None)
-            }
+            Some(Binding::Builtin(b)) => (Scheme::mono(builtin_type(b)), None, None, Some(b)),
         };
         let args = self.type_args(name, &scheme.params, targs, span, "(..)")?;
         let ty = Subst::new(&scheme.params, &args).apply(&scheme.ty);
+        let res = match (&symbol, builtin) {
+            (Some(symbol), _) => Res::Fn(symbol.clone(), args.clone()),
+            (None, Some(_)) => Res::Builtin,
+            (None, None) => unreachable!("a function or a built-in"),
+        };
         let instance = symbol.map(|symbol| {
             self.info.symbols.insert(span, symbol.clone());
             (span, Instance::Fn(symbol, args))
         });
         let kind = NoteKind::Fn(name.to_string());
         self.note_use(at, kind, ty.clone(), def, instance, targs.is_empty());
-        Ok(Some(ty))
+        Ok(Some((ty, res)))
     }
 
     /// The type arguments for a use at `span` of `name`, which has type
@@ -722,7 +901,13 @@ impl Checker {
         let t = generics::name_holes(t, &mut holes);
         let mut params = self.type_params.clone();
         params.extend(holes.iter().map(|(name, _)| name.clone()));
-        let ty = self.resolve_with(&t, &params)?;
+        let mut lts = match self.mono {
+            true => Lifetimes::Any,
+            false => Lifetimes::Body {
+                declared: &self.lifetimes,
+            },
+        };
+        let ty = self.resolve_with(&t, &params, &mut lts)?;
         let (names, vars): (Vec<String>, Vec<Type>) = holes
             .into_iter()
             .map(|(name, span)| {
@@ -779,15 +964,80 @@ impl Checker {
                 };
                 self.lambda(l, sig)?
             }
+            // `&x` where a `&T` is wanted: `x` should be a `T`.
+            ExprKind::Unary(op @ (UnOp::Ref | UnOp::RefMut), x) => match self.shallow(want) {
+                Type::Ref(_, m, inner) if m == (*op == UnOp::RefMut) => {
+                    self.check(x, &inner)?;
+                    Type::Ref(Region::Erased, m, inner)
+                }
+                _ => self.synth(e)?,
+            },
             _ => self.synth(e)?,
         };
+        self.typed.exprs.insert(e, got.clone());
+        if let Some(target) = self.coerce(e, &got, want) {
+            return match self.unify(&target, want) {
+                Ok(()) => Ok(()),
+                Err(_) => Err(Error::ty(
+                    result_span(e),
+                    format!(
+                        "expected `{}`, found `{}`",
+                        self.solved(want),
+                        self.solved(&got)
+                    ),
+                )),
+            };
+        }
         self.unify_or(&got, want, result_span(e), |got, want| {
             format!("expected `{want}`, found `{got}`")
         })
     }
 
+    /// If `e`, a reference of type `got`, is wanted as a reference of type
+    /// `want` that it isn't, the reference it can be *coerced* to: it's
+    /// borrowed again, as `&**e` say. A `&mut T` can be used as a `&T`,
+    /// since there's nothing a `&T` can do that a `&mut T` can't, and a
+    /// `&Box<T>` or `&&T` as a `&T`, by following the box or reference to
+    /// what it points to, as Rust's *deref coercion* does. Recorded for the
+    /// borrow checker, and for `lift` to write out.
+    fn coerce(&mut self, e: &Expr, got: &Type, want: &Type) -> Option<Type> {
+        let (Type::Ref(_, gm, a), Type::Ref(_, wm, b)) = (self.shallow(got), self.shallow(want))
+        else {
+            return None;
+        };
+        if wm && !gm {
+            return None;
+        }
+        let mut a = *a;
+        let mut derefs = 0;
+        loop {
+            let (sa, sb) = (self.shallow(&a), self.shallow(&b));
+            if matches!(sa, Type::Var(_)) || matches!(sb, Type::Var(_)) || sa.same_shape(&sb) {
+                break;
+            }
+            match sa {
+                Type::Box(inner) => a = *inner,
+                Type::Ref(_, m, inner) if m || !wm => a = *inner,
+                _ => break,
+            }
+            derefs += 1;
+        }
+        if derefs == 0 && gm == wm {
+            return None;
+        }
+        self.typed.coerced.insert(e, (derefs, wm));
+        self.info.coercions.insert(e.span, (derefs, wm));
+        Some(Type::Ref(Region::Erased, wm, Box::new(a)))
+    }
+
     /// Computes ("synthesizes") the type of `e`.
     fn synth(&mut self, e: &Expr) -> Result<Type, Error> {
+        let t = self.synth_inner(e)?;
+        self.typed.exprs.insert(e, t.clone());
+        Ok(t)
+    }
+
+    fn synth_inner(&mut self, e: &Expr) -> Result<Type, Error> {
         match &e.kind {
             //  ----------------- (T-Int)       ------------------- (T-True/False)
             //   Γ ⊢ 42 : int                    Γ ⊢ true : bool
@@ -805,20 +1055,111 @@ impl Checker {
             // If x is a generic function, T is its type with the type
             // arguments substituted for its type parameters: the ones written
             // in `x::<..>`, or else a fresh variable for each (see `lookup`).
-            ExprKind::Var(name, targs) => self
-                .lookup(name, targs, e.span)?
-                .ok_or_else(|| Error::ty(e.span, format!("unknown variable `{name}`"))),
+            ExprKind::Var(name, targs) => {
+                let Some((t, res)) = self.lookup(name, targs, e.span)? else {
+                    return Err(Error::ty(e.span, format!("unknown variable `{name}`")));
+                };
+                self.typed.vars.insert(e, res);
+                Ok(t)
+            }
 
             //   Γ ⊢ e : int            Γ ⊢ e : bool
             //  -------------- (T-Neg)  -------------- (T-Not)
             //   Γ ⊢ -e : int            Γ ⊢ !e : bool
-            ExprKind::Unary(op, x) => {
+            ExprKind::Unary(op @ (UnOp::Neg | UnOp::Not), x) => {
                 let t = match op {
                     UnOp::Neg => Type::Int,
-                    UnOp::Not => Type::Bool,
+                    _ => Type::Bool,
                 };
                 self.check(x, &t)?;
                 Ok(t)
+            }
+
+            //        Γ ⊢ e : T                   Γ ⊢ e : T
+            //  ---------------------- (T-Ref)  -------------------------- (T-RefMut)
+            //   Γ ⊢ &e : &'r T                Γ ⊢ &mut e : &'r mut T
+            //
+            // The region `'r` is how long the borrow lasts. Nothing here
+            // decides that; the borrow checker works it out, and checks that
+            // `e` is a place that lives that long and isn't used in a way
+            // that clashes with the borrow while it lasts. `&` of a value
+            // that isn't a place borrows a temporary holding it.
+            ExprKind::Unary(op @ (UnOp::Ref | UnOp::RefMut), x) => {
+                let t = self.synth(x)?;
+                Ok(Type::Ref(Region::Erased, *op == UnOp::RefMut, Box::new(t)))
+            }
+
+            //   Γ ⊢ e : &'r T         Γ ⊢ e : &'r mut T         Γ ⊢ e : Box<T>
+            //  --------------- (T-Deref) ------------------- ------------------
+            //    Γ ⊢ *e : T              Γ ⊢ *e : T              Γ ⊢ *e : T
+            ExprKind::Unary(UnOp::Deref, x) => {
+                let t = self.synth(x)?;
+                match self.shallow(&t) {
+                    Type::Ref(_, _, inner) | Type::Box(inner) => Ok(*inner),
+                    Type::Var(_) => Err(Error::ty(
+                        x.span,
+                        "the type of this must be known to use `*` on it; add a type annotation",
+                    )),
+                    t => Err(Error::ty(
+                        e.span,
+                        format!("can't use `*` on `{t}`: only on a reference or a box"),
+                    )),
+                }
+            }
+
+            //   Γ ⊢ p : T    p is a place    Γ ⊢ e : T
+            //  ---------------------------------------- (T-Assign)
+            //               Γ ⊢ p = e : ()
+            //
+            // Whether `p` may be changed, by being declared `mut` or being
+            // behind a `&mut`, is for the borrow checker.
+            ExprKind::Assign(op, place, value) => {
+                let not_place = || {
+                    Error::ty(
+                        place.span,
+                        "can't assign to this: only to a variable, a field, or what `*` points to",
+                    )
+                };
+                if !place.is_place() {
+                    return Err(not_place());
+                }
+                let t = self.synth(place)?;
+                if let ExprKind::Var(..) = place.kind
+                    && !matches!(
+                        self.typed.vars.get(&std::ptr::from_ref(&**place)),
+                        Some(Res::Local(_))
+                    )
+                {
+                    return Err(not_place());
+                }
+                match op {
+                    None => {
+                        self.check(value, &t)?;
+                        self.leaves(value, &t, Exit::Assign);
+                    }
+                    Some(op) => {
+                        self.unify_or(&t, &Type::Int, place.span, |t, _| {
+                            format!("`{op}=` works on an `int`, not on `{t}`")
+                        })?;
+                        self.check(value, &Type::Int)?;
+                    }
+                }
+                Ok(Type::Unit)
+            }
+
+            //   Γ ⊢ c : bool    Γ ⊢ body : ()
+            //  ------------------------------- (T-While)
+            //     Γ ⊢ while c { body } : ()
+            ExprKind::While(c, body) => {
+                self.check(c, &Type::Bool)?;
+                let t = self.synth(body)?;
+                self.unify_or(&t, &Type::Unit, result_span(body), |t, _| {
+                    format!(
+                        "expected `()`, found `{t}`: a `while` loop's body has nowhere for a \
+                         value to go; add `;` to discard it"
+                    )
+                })?;
+                Ok(Type::Unit)
             }
 
             ExprKind::Binary(op, l, r) => match op {
@@ -955,7 +1296,7 @@ impl Checker {
             // and T1..Tn mention them.
             ExprKind::StructLit(name, targs, inits) => {
                 let ty = self.struct_type(name, targs)?;
-                let Type::Adt(symbol, _) = &ty else {
+                let Type::Adt(symbol, ..) = &ty else {
                     unreachable!("a struct")
                 };
                 let symbol = symbol.clone();
@@ -999,9 +1340,17 @@ impl Checker {
             // Unlike most rules, this one needs e's type *now*: which struct
             // it is decides what T is. So it can't be a variable to solve
             // later.
+            //
+            // If e is a reference or a box, the field is of what it points
+            // to, at any depth: `r.x` for `r: &Point` is `(*r).x`.
             ExprKind::Field(x, field) => {
                 let t = self.synth(x)?;
-                let t = self.solved(&t);
+                let mut t = self.solved(&t);
+                let mut derefs = 0;
+                while let Type::Ref(_, _, inner) | Type::Box(inner) = t {
+                    t = *inner;
+                    derefs += 1;
+                }
                 if let Type::Var(_) = t {
                     return Err(Error::ty(
                         x.span,
@@ -1013,11 +1362,16 @@ impl Checker {
                     ));
                 }
                 let fields = struct_fields(&self.adts, &t).unwrap_or_default();
-                match fields.into_iter().find(|(f, _)| *f == field.name) {
-                    Some((_, ft)) => {
-                        if let Type::Adt(s, _) = &t {
+                match fields
+                    .into_iter()
+                    .enumerate()
+                    .find(|(_, (f, _))| *f == field.name)
+                {
+                    Some((i, (_, ft))) => {
+                        if let Type::Adt(s, ..) = &t {
                             self.note_field(&s.clone(), field, &ft);
                         }
+                        self.typed.fields.insert(e, (derefs, i));
                         Ok(ft)
                     }
                     None => Err(Error::ty(
@@ -1033,6 +1387,9 @@ impl Checker {
             //
             // A sum type is *introduced* by picking one variant and giving its
             // fields. Its eliminator is `match`.
+            ExprKind::Variant(ty, targs, variant, args) if self.is_box(ty) => {
+                self.box_new(e, targs, variant, args)
+            }
             ExprKind::Variant(ty, targs, variant, args) => {
                 let (t, i) = self.variant(ty, targs, variant)?;
                 let fields = variant_fields(&self.adts, &t, i);
@@ -1053,7 +1410,7 @@ impl Checker {
                     self.check(arg, field)?;
                     self.leaves(arg, field, Exit::Store);
                 }
-                let Type::Adt(symbol, _) = &t else {
+                let Type::Adt(symbol, ..) = &t else {
                     unreachable!("an enum")
                 };
                 let (ty, variant) = (symbol.clone(), variant.name.clone());
@@ -1081,6 +1438,21 @@ impl Checker {
     // fresh variable, for `unify` to solve from how the body and the callers
     // use it.
     fn lambda(&mut self, l: &Lambda, sig: Option<(Vec<Type>, Type)>) -> Result<Type, Error> {
+        // What it captures is copied into it, so must be `Copy`, and must
+        // not hold a reference, which the closure could outlive: whether it
+        // does is checked once their types are known.
+        let mut captured = Vec::new();
+        for name in &l.captures {
+            if let Some(Binding::Local(i)) = self.binding(name)
+                && i >= self.barrier
+            {
+                let local = &self.locals[i];
+                captured.push(local.id());
+                let span = first_use(&l.body, name).unwrap_or(l.body.span);
+                self.captures.push((name.clone(), local.ty.clone(), span));
+            }
+        }
+        self.typed.captures.insert(l, captured);
         let scope = self.locals.len();
         let mut params = Vec::new();
         for (i, p) in l.params.iter().enumerate() {
@@ -1102,8 +1474,11 @@ impl Checker {
                 ),
             };
             params.push(t.clone());
-            let local = Local::param(name, t, p.name.span);
+            let mut local = Local::param(name, t, p.name.span);
+            local.mutable = p.mutable.is_some();
+            local.mut_span = p.mutable.map(|m| Span::new(m.start, p.name.span.start));
             self.note_binds(std::slice::from_ref(&local), p.ty.is_none());
+            self.bind(&local);
             self.locals.push(local);
         }
         let wanted = sig.map(|(_, r)| r);
@@ -1192,12 +1567,13 @@ impl Checker {
                         None => self.synth(init)?,
                     };
                     let mut binds = Vec::new();
-                    let p = self.pattern(pat, &t, &mut binds)?;
+                    let p = self.pattern(pat, &t, None, &mut binds)?;
                     let origin = self.origin(init, &mut Vec::new()).map(|(o, _)| o);
                     if let Some(origin) = bound_origin(pat, origin) {
                         binds[0].origin = Some(origin);
                     }
                     self.note_binds(&binds, ty.is_none());
+                    binds.iter().for_each(|l| self.bind(l));
                     let t = self.solved(&t);
                     // Only alternatives can be unreachable here. A whole `let`
                     // pattern only is when the value can't exist, like a
@@ -1295,11 +1671,12 @@ impl Checker {
         let mut binds = Vec::new();
         for arm in arms {
             let mut b = Vec::new();
-            pats.push(self.pattern(&arm.pat, &t, &mut b)?);
+            pats.push(self.pattern(&arm.pat, &t, None, &mut b)?);
             if let Some(origin) = bound_origin(&arm.pat, origin.clone()) {
                 b[0].origin = Some(origin);
             }
             self.note_binds(&b, true);
+            b.iter().for_each(|l| self.bind(l));
             binds.push(b);
         }
         // The patterns may have told us what the scrutinee is.
@@ -1351,19 +1728,68 @@ impl Checker {
     /// variables it binds to `binds`. This is the judgment `p : T ⊣ Δ` from
     /// T-Match, with `binds` as Δ.
     ///
+    /// `by_ref` says how variables bind: by value, moving or copying what
+    /// they're bound to (`None`), or by reference to it (`Some`, with whether
+    /// it's `&mut`). They bind by value until the pattern looks through a
+    /// reference: that's *match ergonomics*, as in Rust. In
+    /// `match r { Option::Some(x) => .. }` with `r: &Option<int>`, the
+    /// variant pattern looks through the `&` to the `Option<int>` behind it,
+    /// and `x` is a `&int`, borrowed from inside it.
+    ///
     /// Returns the pattern in the reduced form the exhaustiveness checker
     /// uses.
-    fn pattern(&mut self, p: &Pattern, ty: &Type, binds: &mut Vec<Local>) -> Result<Pat, Error> {
+    fn pattern(
+        &mut self,
+        p: &Pattern,
+        ty: &Type,
+        mut by_ref: Option<bool>,
+        binds: &mut Vec<Local>,
+    ) -> Result<Pat, Error> {
+        let looks_inside = !matches!(
+            p.kind,
+            PatternKind::Wild | PatternKind::Bind(..) | PatternKind::Or(_)
+        );
+        let mut ty = ty.clone();
+        if looks_inside {
+            let mut peeled = 0;
+            while let Type::Ref(_, m, inner) = self.shallow(&ty) {
+                // Through a `&` to a `&mut`, it's still only shared.
+                by_ref = Some(by_ref.unwrap_or(true) && m);
+                ty = *inner;
+                peeled += 1;
+            }
+            if peeled > 0 {
+                self.typed.peels.insert(p, peeled);
+            }
+        }
+        let ty = &ty;
         Ok(match &p.kind {
             PatternKind::Wild => Pat::Wild,
-            PatternKind::Bind(name) => {
+            PatternKind::Bind(name, mutable) => {
                 if binds.iter().any(|l| l.name == *name) {
                     return Err(Error::ty(
                         p.span,
                         format!("`{name}` is bound more than once in the same pattern"),
                     ));
                 }
-                binds.push(Local::new(name, ty.clone(), p.span));
+                if *mutable && by_ref.is_some() {
+                    return Err(Error::ty(
+                        p.span,
+                        format!(
+                            "`{name}` can't be `mut` here: it's bound by reference, as the \
+                             pattern looks through a reference to get to it"
+                        ),
+                    ));
+                }
+                let t = match by_ref {
+                    Some(m) => Type::Ref(Region::Erased, m, Box::new(ty.clone())),
+                    None => ty.clone(),
+                };
+                let mut local = Local::new(name, t, p.name_span());
+                local.mutable = *mutable;
+                local.mut_span = mutable.then(|| Span::new(p.span.start, p.name_span().start));
+                local.by_ref = by_ref;
+                binds.push(local);
                 Pat::Wild
             }
             PatternKind::Int(n) => {
@@ -1391,7 +1817,7 @@ impl Checker {
             PatternKind::Variant(name, targs, variant, args) => {
                 let (t, i) = self.variant(name, targs, variant)?;
                 let fields = variant_fields(&self.adts, &t, i);
-                if let Type::Adt(symbol, _) = &t {
+                if let Type::Adt(symbol, ..) = &t {
                     self.uses().types.insert(symbol.clone());
                 }
                 self.pattern_is(p, ty, t)?;
@@ -1410,7 +1836,7 @@ impl Checker {
                 let args = args
                     .iter()
                     .zip(&fields)
-                    .map(|(a, t)| self.pattern(a, t, binds))
+                    .map(|(a, t)| self.pattern(a, t, by_ref, binds))
                     .collect::<Result<_, _>>()?;
                 Pat::Ctor(Ctor::Variant(i), args)
             }
@@ -1423,7 +1849,7 @@ impl Checker {
                 let mut pats = Vec::new();
                 for alt in alts {
                     let mut b = binds.clone();
-                    pats.push((self.pattern(alt, ty, &mut b)?, alt.span));
+                    pats.push((self.pattern(alt, ty, by_ref, &mut b)?, alt.span));
                     let new = b.split_off(outer);
                     match &mut first {
                         None => first = Some(new),
@@ -1454,7 +1880,7 @@ impl Checker {
             PatternKind::Struct(name, targs, field_pats, rest) => {
                 let t = self.struct_type(name, targs)?;
                 let fields = struct_fields(&self.adts, &t).expect("a struct");
-                let Type::Adt(symbol, _) = &t else {
+                let Type::Adt(symbol, ..) = &t else {
                     unreachable!("a struct")
                 };
                 let symbol = symbol.clone();
@@ -1478,7 +1904,7 @@ impl Checker {
                     }
                     given[i] = true;
                     self.note_field(&symbol, &fp.name, &fields[i].1);
-                    args[i] = self.pattern(&fp.pat, &fields[i].1, binds)?;
+                    args[i] = self.pattern(&fp.pat, &fields[i].1, by_ref, binds)?;
                     // `P { x }`: the parser made the pattern `x` out of the
                     // field name, so they're in the same place.
                     if fp.pat.span == fp.name.span
@@ -1548,7 +1974,12 @@ impl Checker {
         let symbol = symbol.to_string();
         let params = self.adts[&symbol].params.clone();
         let args = self.type_args(&name.name, &params, targs, name.span, rest)?;
-        let ty = Type::Adt(symbol.clone(), args.clone());
+        let lifetimes = self.adts[&symbol].lifetimes.len();
+        let ty = Type::Adt(
+            symbol.clone(),
+            vec![Region::Erased; lifetimes],
+            args.clone(),
+        );
         let def = self.defs.types.get(&symbol).copied();
         let instance = Instance::Adt(symbol, args);
         let kind = kind(name.name.clone());
@@ -1573,6 +2004,12 @@ impl Checker {
     ) -> Result<(Type, usize), Error> {
         let symbol = self.adt_symbol(&ty.name, ty.span).map(str::to_string);
         let def = symbol.as_ref().and_then(|s| self.adts.get(s));
+        if def.is_none() && ty.name == "Box" {
+            return Err(Error::ty(
+                ty.span,
+                "`Box` isn't an enum: `Box::new(x)` makes one, and `*b` is what box `b` holds",
+            ));
+        }
         let variants = match def.map(|d| &d.kind) {
             Some(AdtKind::Enum(variants)) => variants,
             Some(AdtKind::Struct(_)) => {
@@ -1641,17 +2078,155 @@ impl Checker {
     }
 
     /// The first function type or type parameter in `t` or, if it's a
-    /// struct or enum, in its fields. This terminates because types can't
-    /// contain themselves.
+    /// struct or enum, in its fields, or in what a reference or box in it
+    /// points to: `==` compares those, not addresses.
     fn incomparable(&self, t: &Type) -> Option<Type> {
+        self.incomparable_in(t, &mut HashSet::new())
+    }
+
+    /// `incomparable`, where the types in `seen` are being looked at
+    /// already: a type can hold itself through a box or reference.
+    fn incomparable_in(&self, t: &Type, seen: &mut HashSet<Type>) -> Option<Type> {
         match t {
             Type::Fn(..) | Type::Param(_) => Some(t.clone()),
-            Type::Adt(..) => all_fields(&self.adts, t)
-                .iter()
-                .find_map(|t| self.incomparable(t)),
+            Type::Adt(..) => {
+                if !seen.insert(t.erased()) {
+                    return None;
+                }
+                all_fields(&self.adts, t)
+                    .iter()
+                    .find_map(|t| self.incomparable_in(t, seen))
+            }
+            Type::Ref(_, _, inner) | Type::Box(inner) => self.incomparable_in(inner, seen),
             // Only called on types with no variables in them.
             Type::Int | Type::Bool | Type::Unit | Type::Var(_) => None,
         }
+    }
+
+    /// Does `name`, written as the type in `name::new(..)`, mean `Box`?
+    fn is_box(&self, name: &Ident) -> bool {
+        name.name == "Box" && self.adt_symbol(&name.name, name.span).is_none()
+    }
+
+    //        Γ ⊢ e : T
+    //  -------------------------- (T-Box)
+    //   Γ ⊢ Box::new(e) : Box<T>
+    //
+    // Puts `e` on the heap: the one way a T program allocates memory.
+    fn box_new(
+        &mut self,
+        e: &Expr,
+        targs: &[TypeExpr],
+        new: &Ident,
+        args: &[Expr],
+    ) -> Result<Type, Error> {
+        if new.name != "new" {
+            return Err(Error::ty(
+                new.span,
+                format!(
+                    "`Box` has no `{}`; `Box::new(x)` puts `x` in a box",
+                    new.name
+                ),
+            ));
+        }
+        let [arg] = args else {
+            return Err(Error::ty(
+                e.span,
+                format!(
+                    "`Box::new` takes 1 argument but {} were supplied",
+                    args.len()
+                ),
+            ));
+        };
+        let t = match targs {
+            [] => self.synth(arg)?,
+            [t] => {
+                let t = self.type_arg(t)?;
+                self.check(arg, &t)?;
+                t
+            }
+            _ => return Err(generics::arity_error("`Box`", 1, targs.len(), e.span)),
+        };
+        self.leaves(arg, &t, Exit::Store);
+        Ok(Type::Box(Box::new(t)))
+    }
+
+    /// At the end of a function: each closure's captures must be copies it
+    /// can keep. That's when their types are known.
+    fn check_captures(&mut self) -> Result<(), Error> {
+        for (name, ty, span) in std::mem::take(&mut self.captures) {
+            let t = self.solved(&ty);
+            if unify::has_vars(&t) {
+                // Reported as not inferred.
+                continue;
+            }
+            let why = if t.may_borrow() && matches!(t, Type::Fn(_)) {
+                format!(
+                    "it's a `{t}`, which takes references of a certain lifetime only, and the \
+                     closure could outlive that"
+                )
+            } else if t.may_borrow() && !matches!(t, Type::Param(_)) {
+                format!(
+                    "it's a `{t}`, which holds a reference, and the closure could outlive what \
+                     that points to"
+                )
+            } else if !is_copy(&self.adts, &t, false) {
+                format!("closures copy what they capture, and a `{t}` can't be copied")
+            } else {
+                continue;
+            };
+            return Err(Error::ty(
+                span,
+                format!(
+                    "this closure can't capture `{name}`: {why}; pass it as an argument instead"
+                ),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Checks that each `#[derive(Copy)]` among `decls` (with their symbols in
+/// `types`) is on a type whose fields are all `Copy`, whatever its type
+/// parameters are. Those are assumed to be: `Pair<A, B>` is only copied where
+/// its type arguments are.
+fn derive_copy(
+    adts: &Adts,
+    decls: &[(&TypeDecl, Option<usize>)],
+    types: &[TypeDef],
+) -> Result<(), Error> {
+    for ((d, _), def) in decls.iter().zip(types) {
+        let Some(derive) = d.derives().first() else {
+            continue;
+        };
+        let bad = match &adts[&def.symbol].kind {
+            AdtKind::Struct(fields) => fields
+                .iter()
+                .find(|(_, t)| !is_copy(adts, t, true))
+                .map(|(f, t)| (format!("field `{f}`"), t)),
+            AdtKind::Enum(variants) => variants.iter().find_map(|(v, ts)| {
+                let t = ts.iter().find(|t| !is_copy(adts, t, true))?;
+                Some((format!("variant `{v}`"), t))
+            }),
+        };
+        if let Some((what, t)) = bad {
+            return Err(Error::ty(
+                derive.span,
+                format!(
+                    "`{}` can't be `Copy`: its {what} holds a `{t}`, which isn't",
+                    d.name().name
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Where variable `name` is first used in `e`, if it is.
+fn first_use(e: &Expr, name: &str) -> Option<Span> {
+    match &e.kind {
+        ExprKind::Var(n, _) if n == name => Some(e.span),
+        _ => e.children().into_iter().find_map(|c| first_use(c, name)),
     }
 }
 

@@ -117,8 +117,8 @@ fn main() {
 ```
 
 Like a nested `fn`, a local type can't use the type parameters of the
-function it's in: in `fn wrap<T>`, `struct Box { v: T }` is an error, since
-at the top level that `T` would mean nothing. Declare `struct Box<T>`
+function it's in: in `fn wrap<T>`, `struct Wrap { v: T }` is an error, since
+at the top level that `T` would mean nothing. Declare `struct Wrap<T>`
 instead.
 
 Nothing outside the block can name a local type, but its values can still
@@ -315,9 +315,11 @@ closures, so C APIs do it by hand: a function pointer plus a `void *context`.
 The interpreter copies the locals the closure uses into it when it's created
 (`Value::Closure`). Those are its **free variables**: the names its body uses
 but doesn't bind itself, worked out once by the parser (`Lambda::captures`).
-Since nothing in T can change a variable once it's bound, a copy can never
-disagree with the original, so copying is the same as sharing. The order
-still shows (`closures.t`):
+In this step nothing in T can change a variable once it's bound, so a copy
+can never disagree with the original, and copying is the same as sharing.
+(Step 5 adds mutation, and keeps the copies: a closure has its own, which
+it can't change. See docs/05-ownership.md.) The order still shows
+(`closures.t`):
 
 ```rust,fragment
 let n = 1;
@@ -369,7 +371,8 @@ struct or enum, once its type turns out to be a function type. Call results
 and fields are always safe, because they were returned or stored, so they
 passed the same check. And since nothing in T can change a variable or reach
 the heap, returning and storing are the only ways a value can outlive its
-frame. So that's the whole rule.
+frame. So that's the whole rule. (Step 5 adds two more ways, assigning and
+boxing, and the rule covers them too.)
 
 It's also coarse. `fn id(f: fn(int) -> int) -> fn(int) -> int { f }` is an
 error, though it only hands the caller back its own closure, which is still
@@ -377,7 +380,8 @@ alive. Telling those apart means saying in the type *which* frame a closure
 borrows from: `id` returns something that lives as long as its argument. That's
 a lifetime, and it's what step 5 (ownership and borrowing) is about. This rule
 is the smallest case of one: every function value either lives forever, or
-lives as long as "here".
+lives as long as "here". (Step 5 gives references lifetimes, but not yet
+function values: see docs/05-ownership.md.)
 
 The other way out, for later: give every closure its own unnamed type,
 exactly the size of its environment, so it can be returned *by value* and

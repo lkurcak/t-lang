@@ -322,7 +322,7 @@ fn shorthand_pats(p: &Pattern, out: &mut HashSet<Span>) {
             pats.iter().for_each(|p| shorthand_pats(p, out));
         }
         PatternKind::Wild
-        | PatternKind::Bind(_)
+        | PatternKind::Bind(..)
         | PatternKind::Int(_)
         | PatternKind::Range(..)
         | PatternKind::Bool(_)

@@ -56,7 +56,7 @@ pub fn format(program: &Program, trivia: Trivia) -> String {
         // It starts at its doc comment or attributes, or else at the
         // `struct`, `enum` or `fn` before the name.
         let start = match item {
-            Item::Type(d) => lead_start(d.doc(), d.allows(), p.before(pos)),
+            Item::Type(d) => type_lead_start(d, p.before(pos)),
             Item::Fn(f) => lead_start(f.doc.as_ref(), &f.allows, f.span.start),
         };
         doc = doc + p.element(start, i == 0);
@@ -105,7 +105,7 @@ const UNARY: u8 = 6;
 fn block_like(e: &Expr) -> bool {
     matches!(
         e.kind,
-        ExprKind::If(..) | ExprKind::Match(..) | ExprKind::Block(..)
+        ExprKind::If(..) | ExprKind::Match(..) | ExprKind::While(..) | ExprKind::Block(..)
     )
 }
 
@@ -193,7 +193,18 @@ impl Printer<'_> {
     /// comments between them and it. The doc comment goes first, wherever
     /// it was.
     fn lead(&mut self, doc: Option<&DocComment>, allows: &[Allow], pos: usize) -> Doc {
-        if doc.is_none() && allows.is_empty() {
+        self.lead_derives(doc, allows, &[], pos)
+    }
+
+    /// `lead`, with `#[derive(..)]`s after the `#[allow(..)]`s.
+    fn lead_derives(
+        &mut self,
+        doc: Option<&DocComment>,
+        allows: &[Allow],
+        derives: &[Derive],
+        pos: usize,
+    ) -> Doc {
+        if doc.is_none() && allows.is_empty() && derives.is_empty() {
             return Doc::nil();
         }
         let mut out = concat(
@@ -201,10 +212,12 @@ impl Printer<'_> {
                 .flat_map(|d| &d.lines)
                 .map(|l| text(format!("///{}", l.text)) + Doc::HardLine),
         );
-        for a in allows {
-            let lints: Vec<&str> = a.lints.iter().map(|l| l.name.as_str()).collect();
-            let allow = format!("#[allow({})]", lints.join(", "));
-            out = out + self.element(a.span.start, true) + allow + self.trailing(a.span.end);
+        let attrs = allows.iter().map(|a| ("allow", a.span, &a.lints));
+        let attrs = attrs.chain(derives.iter().map(|d| ("derive", d.span, &d.names)));
+        for (attr, span, names) in attrs {
+            let names: Vec<&str> = names.iter().map(|l| l.name.as_str()).collect();
+            let attr = format!("#[{attr}({})]", names.join(", "));
+            out = out + self.element(span.start, true) + attr + self.trailing(span.end);
             out = out + Doc::HardLine;
         }
         out + self.element(pos, true)
@@ -313,19 +326,35 @@ impl Printer<'_> {
         }
     }
 
-    /// `<A, B>` after the name of a generic function, struct or enum.
-    fn generics(&mut self, name: &Ident, params: &[Ident]) -> Doc {
-        if params.is_empty() {
+    /// `<'a, T: 'a>` after the name of a generic function, struct or enum.
+    fn generics(&mut self, name: &Ident, g: &Generics) -> Doc {
+        if g.is_empty() {
             return Doc::nil();
         }
-        let close = self.close(name.span.end, params.last().map(|p| p.span.end), &Tok::Gt);
+        let params: Vec<&Ident> = g.lifetimes.iter().chain(&g.types).collect();
+        // Each with the end of its bounds, if it has any.
+        let end = |p: &Ident| {
+            let bounds = g.bounds_of(&p.name);
+            bounds.last().map_or(p.span.end, |b| b.span.end)
+        };
+        let close = self.close(name.span.end, params.last().map(|p| end(p)), &Tok::Gt);
         self.list(
             ANGLES,
             close,
-            params,
-            |p| (p.span.start, p.span.end),
+            &params,
+            |p| (p.span.start, end(p)),
             None,
-            |_, p| text(&p.name),
+            |_, p| {
+                let bounds: Vec<&str> = g
+                    .bounds_of(&p.name)
+                    .iter()
+                    .map(|b| b.name.as_str())
+                    .collect();
+                match bounds.is_empty() {
+                    true => text(&p.name),
+                    false => text(format!("{}: {}", p.name, bounds.join(" + "))),
+                }
+            },
         )
     }
 
@@ -335,13 +364,18 @@ impl Printer<'_> {
             TypeDecl::Enum(_) => "enum ",
         };
         let name = d.name();
-        let doc = self.lead(d.doc(), d.allows(), self.before(name.span.start));
+        let doc = self.lead_derives(
+            d.doc(),
+            d.allows(),
+            d.derives(),
+            self.before(name.span.start),
+        );
         let open = self.find(name.span.end, &Tok::LBrace);
         let close = self.find(open, &Tok::RBrace);
         if let Some(t) = &mut self.trivia {
             t.hold_docs(name.span.start, close);
         }
-        let head = doc + keyword + &name.name + self.generics(name, d.type_params()) + " ";
+        let head = doc + keyword + &name.name + self.generics(name, d.generics()) + " ";
         let body = match d {
             TypeDecl::Struct(s) => self.list(
                 BRACES,
@@ -386,21 +420,25 @@ impl Printer<'_> {
         head + body
     }
 
-    /// `name: type`
+    /// `name: type`, or `mut name: type`
     fn param(&mut self, p: &Param) -> Doc {
-        text(&p.name.name) + ": " + self.ty(&p.ty)
+        let name = match p.mutable {
+            Some(_) => format!("mut {}", p.name.name),
+            None => p.name.name.clone(),
+        };
+        text(name) + ": " + self.ty(&p.ty)
     }
 
     fn fn_decl(&mut self, f: &FnDecl) -> Doc {
         let doc = self.lead(f.doc.as_ref(), &f.allows, f.span.start);
-        let generics = self.generics(&f.name, &f.type_params);
+        let generics = self.generics(&f.name, &f.generics);
         let open = self.find(f.name.span.end, &Tok::LParen);
         let close = self.close(open, f.params.last().map(|p| p.ty.span.end), &Tok::RParen);
         let params = self.list(
             PARENS,
             close,
             &f.params,
-            |p| (p.name.span.start, p.ty.span.end),
+            |p| (param_start(p), p.ty.span.end),
             None,
             |p, param| p.param(param),
         );
@@ -422,8 +460,9 @@ impl Printer<'_> {
     fn expr(&mut self, e: &Expr, min: u8, ctx: Ctx) -> Doc {
         let own = match &e.kind {
             ExprKind::Binary(op, ..) => prec(*op),
-            // A closure's body runs as far right as it can.
-            ExprKind::Lambda(_) => 0,
+            // A closure's body runs as far right as it can, and so does
+            // the value of an assignment.
+            ExprKind::Lambda(_) | ExprKind::Assign(..) => 0,
             _ => UNARY,
         };
         let parens = own < min
@@ -464,6 +503,14 @@ impl Printer<'_> {
                 self.expr(x, min, ctx) + "." + &field.name
             }
             ExprKind::If(..) => self.if_chain(e),
+            ExprKind::While(c, body) => {
+                group(text("while ") + self.head(c) + self.block_or_expr(body))
+            }
+            ExprKind::Assign(op, place, value) => {
+                let op = op.map_or(String::new(), |op| op.to_string());
+                let place = self.expr(place, 1, ctx);
+                place + format!(" {op}= ") + self.expr(value, 0, ctx.inner())
+            }
             ExprKind::Block(stmts, tail) => group(self.block(stmts, tail.as_deref(), e.span)),
             ExprKind::StructLit(name, targs, inits) => {
                 let close = e.span.end - 1;
@@ -530,12 +577,18 @@ impl Printer<'_> {
                             &l.params,
                             |p| {
                                 let end = p.ty.as_ref().map_or(p.name.span.end, |t| t.span.end);
-                                (p.name.span.start, end)
+                                (p.mutable.unwrap_or(p.name.span).start, end)
                             },
                             None,
-                            |p, param| match &param.ty {
-                                Some(t) => text(&param.name.name) + ": " + p.ty(t),
-                                None => text(&param.name.name),
+                            |p, param| {
+                                let name = match param.mutable {
+                                    Some(_) => format!("mut {}", param.name.name),
+                                    None => param.name.name.clone(),
+                                };
+                                match &param.ty {
+                                    Some(t) => text(name) + ": " + p.ty(t),
+                                    None => text(name),
+                                }
                             },
                         )
                     }
@@ -703,7 +756,7 @@ impl Printer<'_> {
                 ),
                 Stmt::Type(d) => {
                     let name = d.name().span;
-                    let start = lead_start(d.doc(), d.allows(), self.before(name.start));
+                    let start = type_lead_start(d, self.before(name.start));
                     (start, self.find(name.end, &Tok::RBrace) + 1)
                 }
             };
@@ -782,6 +835,17 @@ impl Printer<'_> {
                 text(name) + self.types(ANGLES, close, args)
             }
             TypeExprKind::Unit => text("()"),
+            TypeExprKind::Lifetime(name) => text(name),
+            TypeExprKind::Ref(lifetime, mutable, inner) => {
+                let mut head = String::from("&");
+                if let Some(l) = lifetime {
+                    head = head + &l.name + " ";
+                }
+                if *mutable {
+                    head += "mut ";
+                }
+                text(head) + self.ty(inner)
+            }
             TypeExprKind::Fn(params, ret) => {
                 let open = self.find(t.span.start, &Tok::LParen);
                 let close = self.close(open, params.last().map(|p| p.span.end), &Tok::RParen);
@@ -797,7 +861,8 @@ impl Printer<'_> {
     fn pattern(&mut self, p: &Pattern) -> Doc {
         match &p.kind {
             PatternKind::Wild => text("_"),
-            PatternKind::Bind(name) => text(name),
+            PatternKind::Bind(name, false) => text(name),
+            PatternKind::Bind(name, true) => text(format!("mut {name}")),
             PatternKind::Int(n) => text(n.to_string()),
             PatternKind::Range(lo, hi, inclusive) => text(range(*lo, *hi, *inclusive)),
             PatternKind::Bool(b) => text(b.to_string()),
@@ -830,7 +895,7 @@ impl Printer<'_> {
                     |f| (f.name.span.start, f.pat.span.end),
                     rest,
                     |p, f| match &f.pat.kind {
-                        PatternKind::Bind(b) if *b == f.name.name => text(b),
+                        PatternKind::Bind(b, false) if *b == f.name.name => text(b),
                         _ => text(&f.name.name) + ": " + p.pattern(&f.pat),
                     },
                 );
@@ -849,12 +914,24 @@ impl Printer<'_> {
     }
 }
 
+/// Where a function parameter starts: at its `mut`, if it has one.
+fn param_start(p: &Param) -> usize {
+    p.mutable.unwrap_or(p.name.span).start
+}
+
 /// Where something with the doc comment `doc` and attributes `allows`
 /// starts, if it starts at `pos` without them.
 fn lead_start(doc: Option<&DocComment>, allows: &[Allow], pos: usize) -> usize {
     let doc = doc.map(|d| d.span().start);
     let allow = allows.first().map(|a| a.span.start);
     [doc, allow].into_iter().flatten().fold(pos, usize::min)
+}
+
+/// Where struct or enum `d` starts, if it starts at `pos` without its doc
+/// comment and attributes.
+fn type_lead_start(d: &TypeDecl, pos: usize) -> usize {
+    let derive = d.derives().first().map_or(pos, |d| d.span.start);
+    lead_start(d.doc(), d.allows(), pos).min(derive)
 }
 
 /// A range pattern as written. Unlike `exhaust::show_range`, which tidies

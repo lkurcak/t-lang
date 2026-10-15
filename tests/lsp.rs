@@ -141,6 +141,35 @@ fn reports_and_clears_diagnostics() {
 }
 
 #[test]
+fn borrow_errors_point_at_the_borrow() {
+    let (child, mut c) = start();
+    let uri = "file:///tmp/borrow.t";
+    let src = "fn main() {\n    let mut x = 1;\n    let r = &x;\n    x = 2;\n    print(*r);\n}\n";
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
+        }}),
+    );
+    let diags = c.diagnostics();
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    assert_eq!(
+        diags[0]["message"],
+        "type error: cannot assign to `x` while `x` is borrowed"
+    );
+    assert_eq!(
+        diags[0]["relatedInformation"],
+        json!([{
+            "location": {
+                "uri": uri,
+                "range": {"start": {"line": 2, "character": 12}, "end": {"line": 2, "character": 14}}
+            },
+            "message": "`x` is borrowed here"
+        }])
+    );
+    stop(child, c);
+}
+
+#[test]
 fn warns_and_offers_quick_fixes() {
     let (child, mut c) = start();
     let uri = "file:///tmp/warn.t";

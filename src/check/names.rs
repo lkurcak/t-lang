@@ -174,7 +174,7 @@ impl Walk<'_> {
     /// parameters, which the items in it can't use.
     fn function(&mut self, f: &FnDecl) {
         self.current.push(self.fn_ids[&std::ptr::from_ref(f)]);
-        self.enter("fn", &f.name, &f.type_params);
+        self.enter("fn", &f.name, &f.generics.types);
         for p in &f.params {
             self.ty(&p.ty);
         }
@@ -187,13 +187,13 @@ impl Walk<'_> {
     fn type_decl(&mut self, d: &TypeDecl) {
         match d {
             TypeDecl::Struct(s) => {
-                self.enter("struct", &s.name, &s.type_params);
+                self.enter("struct", &s.name, &s.generics.types);
                 for f in &s.fields {
                     self.ty(&f.ty);
                 }
             }
             TypeDecl::Enum(e) => {
-                self.enter("enum", &e.name, &e.type_params);
+                self.enter("enum", &e.name, &e.generics.types);
                 for t in e.variants.iter().flat_map(|v| &v.fields) {
                     self.ty(t);
                 }
@@ -220,11 +220,12 @@ impl Walk<'_> {
                 self.name(name, t.span);
                 args.iter().for_each(|a| self.ty(a));
             }
-            TypeExprKind::Unit => {}
+            TypeExprKind::Unit | TypeExprKind::Lifetime(_) => {}
             TypeExprKind::Fn(params, ret) => {
                 params.iter().for_each(|p| self.ty(p));
                 self.ty(ret);
             }
+            TypeExprKind::Ref(_, _, inner) => self.ty(inner),
         }
     }
 
@@ -289,7 +290,7 @@ impl Walk<'_> {
             }
             PatternKind::Or(alts) => alts.iter().for_each(|p| self.pattern(p)),
             PatternKind::Wild
-            | PatternKind::Bind(_)
+            | PatternKind::Bind(..)
             | PatternKind::Int(_)
             | PatternKind::Range(..)
             | PatternKind::Bool(_)

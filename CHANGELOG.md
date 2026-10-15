@@ -1,5 +1,62 @@
 # Changelog
 
+## Unreleased
+
+Step 5: ownership, borrowing and pointers. See
+[docs/05-ownership.md](docs/05-ownership.md).
+
+### Added
+
+- References: `&x` and `&mut x`, of types `&T` and `&mut T`, and `*r` for
+  what `r` points to. A field of a reference is a field of what it points
+  to (`r.x`), and a `&mut T` can be used as a `&T`, and a `&Box<T>` or
+  `&&T` as a `&T` (deref coercion).
+- Lifetimes: `&'a T`, `fn f<'a>(..)`, `struct S<'a>`, bounds like
+  `'b: 'a` and `T: 'a`, and Rust's lifetime elision for signatures. A
+  struct or enum can hold a reference, so a type can hold itself through
+  one. A lifetime left out in a function type is one each call picks:
+  `fn(&int) -> int` takes references of any lifetime.
+- `Box<T>`, a value on the heap: `Box::new(x)` allocates, `*b` is what it
+  holds, and it's freed when its owner goes away. A type can hold itself
+  through a box: `enum List { Nil, Cons(int, Box<List>) }`.
+- Mutation: `let mut`, `mut` parameters and pattern bindings, assignment to
+  variables, fields and `*r`, and `+=`, `-=`, `*=`, `/=` and `%=`.
+- `while` loops.
+- Moves: using a value whose type isn't `Copy` moves it, and it can't be
+  used again until it gets a new value. `int`, `bool`, `()`, functions and
+  shared references are `Copy`, and so are structs and enums with
+  `#[derive(Copy)]`, if their fields are. `#[derive(..)]` is the second
+  attribute; `Copy` is all it derives.
+- The borrow checker (`src/borrowck`), as in rustc since 2018: non-lexical
+  lifetimes, worked out on a lowered form of each function (MIR). It
+  rejects using a value after it's moved, moving out from behind a
+  reference, changing what isn't `mut` or is behind a `&`, using or
+  changing something in a way that clashes with a borrow of it, references
+  that outlive what they point to, and functions that need more of their
+  lifetimes or type parameters than their signatures say.
+- Matching on a reference looks through it, and binds variables by
+  reference (match ergonomics).
+- A warning, `unused_mut`, for a variable declared `mut` that's never
+  changed. Its fix removes the `mut`.
+- The interpreter keeps memory the way a compiled program would, and
+  checks for dangling references, uses after moves, double frees and leaks
+  as it runs.
+- Errors can have notes, pointing at other places that explain them:
+  "`x` is borrowed here".
+- Syntax highlighting for all of the above.
+
+### Changed
+
+- `Box` is a built-in type, so a struct, enum or type parameter can't be
+  called that.
+- Closures can only capture values that are `Copy` and hold no
+  references, since what they capture is copied into them, and can't
+  change what they capture. Assigning a closure that captures, or a
+  function read through a reference, is an error, as returning and storing
+  one are.
+- A struct or enum that contains itself suggests holding itself through a
+  pointer, like `Box<List>`, instead.
+
 ## 0.4.5 (2026-10-15)
 
 ### Added

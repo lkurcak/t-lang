@@ -4,6 +4,10 @@
     "named": true,
     "subtypes": [
       {
+        "type": "assignment_expression",
+        "named": true
+      },
+      {
         "type": "binary_expression",
         "named": true
       },
@@ -21,6 +25,10 @@
       },
       {
         "type": "closure_expression",
+        "named": true
+      },
+      {
+        "type": "compound_assignment_expr",
         "named": true
       },
       {
@@ -52,6 +60,10 @@
         "named": true
       },
       {
+        "type": "reference_expression",
+        "named": true
+      },
+      {
         "type": "struct_expression",
         "named": true
       },
@@ -65,6 +77,10 @@
       },
       {
         "type": "variant_expression",
+        "named": true
+      },
+      {
+        "type": "while_expression",
         "named": true
       }
     ]
@@ -83,6 +99,10 @@
       },
       {
         "type": "integer_pattern",
+        "named": true
+      },
+      {
+        "type": "mut_pattern",
         "named": true
       },
       {
@@ -124,6 +144,10 @@
         "named": true
       },
       {
+        "type": "reference_type",
+        "named": true
+      },
+      {
         "type": "type_identifier",
         "named": true
       },
@@ -146,6 +170,32 @@
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "assignment_expression",
+    "named": true,
+    "fields": {
+      "left": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "_expression",
+            "named": true
+          }
+        ]
+      },
+      "right": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "_expression",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
@@ -388,6 +438,16 @@
           }
         ]
       }
+    },
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "mutable_specifier",
+          "named": true
+        }
+      ]
     }
   },
   {
@@ -403,6 +463,84 @@
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "compound_assignment_expr",
+    "named": true,
+    "fields": {
+      "left": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "_expression",
+            "named": true
+          }
+        ]
+      },
+      "operator": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "%=",
+            "named": false
+          },
+          {
+            "type": "*=",
+            "named": false
+          },
+          {
+            "type": "+=",
+            "named": false
+          },
+          {
+            "type": "-=",
+            "named": false
+          },
+          {
+            "type": "/=",
+            "named": false
+          }
+        ]
+      },
+      "right": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "_expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "constrained_type_parameter",
+    "named": true,
+    "fields": {
+      "bounds": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "lifetime_bounds",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type_parameter",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
@@ -888,6 +1026,47 @@
     }
   },
   {
+    "type": "lifetime_bounds",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "lifetime",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "lifetime_parameter",
+    "named": true,
+    "fields": {
+      "bounds": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "lifetime_bounds",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "lifetime",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "match_arm",
     "named": true,
     "fields": {
@@ -955,6 +1134,25 @@
     }
   },
   {
+    "type": "mut_pattern",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "mutable_specifier",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "or_pattern",
     "named": true,
     "fields": {},
@@ -1008,6 +1206,16 @@
           }
         ]
       }
+    },
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "mutable_specifier",
+          "named": true
+        }
+      ]
     }
   },
   {
@@ -1050,6 +1258,62 @@
       "types": [
         {
           "type": "integer_pattern",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "reference_expression",
+    "named": true,
+    "fields": {
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "_expression",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "mutable_specifier",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "reference_type",
+    "named": true,
+    "fields": {
+      "type": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "_type",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "lifetime",
+          "named": true
+        },
+        {
+          "type": "mutable_specifier",
           "named": true
         }
       ]
@@ -1226,6 +1490,10 @@
         {
           "type": "_type",
           "named": true
+        },
+        {
+          "type": "lifetime",
+          "named": true
         }
       ]
     }
@@ -1239,7 +1507,11 @@
       "required": false,
       "types": [
         {
-          "type": "type_parameter",
+          "type": "constrained_type_parameter",
+          "named": true
+        },
+        {
+          "type": "lifetime_parameter",
           "named": true
         }
       ]
@@ -1280,6 +1552,10 @@
         "types": [
           {
             "type": "!",
+            "named": false
+          },
+          {
+            "type": "*",
             "named": false
           },
           {
@@ -1398,6 +1674,32 @@
     }
   },
   {
+    "type": "while_expression",
+    "named": true,
+    "fields": {
+      "body": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "block",
+            "named": true
+          }
+        ]
+      },
+      "condition": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "_expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "!",
     "named": false
   },
@@ -1411,6 +1713,14 @@
   },
   {
     "type": "%",
+    "named": false
+  },
+  {
+    "type": "%=",
+    "named": false
+  },
+  {
+    "type": "&",
     "named": false
   },
   {
@@ -1430,7 +1740,15 @@
     "named": false
   },
   {
+    "type": "*=",
+    "named": false
+  },
+  {
     "type": "+",
+    "named": false
+  },
+  {
+    "type": "+=",
     "named": false
   },
   {
@@ -1439,6 +1757,10 @@
   },
   {
     "type": "-",
+    "named": false
+  },
+  {
+    "type": "-=",
     "named": false
   },
   {
@@ -1459,6 +1781,10 @@
   },
   {
     "type": "/",
+    "named": false
+  },
+  {
+    "type": "/=",
     "named": false
   },
   {
@@ -1551,6 +1877,10 @@
     "named": false
   },
   {
+    "type": "lifetime",
+    "named": true
+  },
+  {
     "type": "line_comment",
     "named": true,
     "extra": true
@@ -1558,6 +1888,10 @@
   {
     "type": "match",
     "named": false
+  },
+  {
+    "type": "mutable_specifier",
+    "named": true
   },
   {
     "type": "struct",
@@ -1574,6 +1908,10 @@
   {
     "type": "type_parameter",
     "named": true
+  },
+  {
+    "type": "while",
+    "named": false
   },
   {
     "type": "wildcard_pattern",

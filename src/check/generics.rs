@@ -5,7 +5,7 @@
 use super::scope::source_name;
 use crate::ast::*;
 use crate::error::{Error, Span};
-use crate::types::Type;
+use crate::types::{FnType, Region, Type};
 use std::collections::{HashMap, HashSet};
 
 /// "1 type argument", "2 type arguments".
@@ -30,30 +30,196 @@ pub(super) fn arity_error(what: &str, arity: usize, given: usize, span: Span) ->
 /// it's written in, or `int` or `bool`.
 pub(crate) enum TypeName {
     /// A struct or enum, by its symbol (see `check/names.rs`), with how
-    /// many type arguments it takes.
-    Adt(String, usize),
+    /// many lifetime and type arguments it takes.
+    Adt(String, usize, usize),
     /// A type parameter of a function that what it's written in is nested
     /// in, which it can't use. With the keyword and name of what it's
     /// written in: `("fn", "helper")`.
     OuterParam(&'static str, String),
 }
 
+/// What the lifetimes written in a type mean, which depends on where it's
+/// written.
+pub(crate) enum Lifetimes<'a> {
+    /// In a function's parameters, where `declared` are its lifetime
+    /// parameters. Each lifetime left out gets a parameter of its own,
+    /// named `'_0`, `'_1` and so on, added to `elided`. That's *lifetime
+    /// elision*.
+    Params {
+        declared: &'a [String],
+        elided: Vec<String>,
+    },
+    /// In a function's return type. A lifetime left out is `input`'s, if
+    /// it's there: the one lifetime the parameters have.
+    Return {
+        declared: &'a [String],
+        input: Result<Region, usize>,
+    },
+    /// In a function's body: one left out is for the borrow checker to work
+    /// out.
+    Body { declared: &'a [String] },
+    /// In the fields of a struct or enum, where none can be left out.
+    Fields { declared: &'a [String] },
+    /// Anywhere, as written: in what monomorphisation made, and where types
+    /// are only being shown.
+    Any,
+}
+
+impl Lifetimes<'_> {
+    /// The region lifetime `l` names, or the one it stands for if it's left
+    /// out (`None`), in a type written at `span`.
+    pub(crate) fn region(&mut self, l: Option<&str>, span: Span) -> Result<Region, Error> {
+        let declared = match self {
+            Lifetimes::Params { declared, .. }
+            | Lifetimes::Return { declared, .. }
+            | Lifetimes::Body { declared }
+            | Lifetimes::Fields { declared } => *declared,
+            Lifetimes::Any => &[],
+        };
+        match l {
+            Some("'static") => return Ok(Region::Static),
+            Some(name) if name != "'_" => {
+                if matches!(self, Lifetimes::Any) || declared.iter().any(|d| d == name) {
+                    return Ok(Region::Named(name.to_string()));
+                }
+                return Err(Error::ty(
+                    span,
+                    format!(
+                        "use of undeclared lifetime `{name}`; declare it, as in `fn f<{name}>`"
+                    ),
+                ));
+            }
+            _ => {}
+        }
+        match self {
+            Lifetimes::Params { elided, .. } => {
+                let name = format!("'_{}", elided.len());
+                elided.push(name.clone());
+                Ok(Region::Named(name))
+            }
+            Lifetimes::Return { input: Ok(r), .. } => Ok(r.clone()),
+            Lifetimes::Return { input: Err(0), .. } => Err(Error::ty(
+                span,
+                "missing lifetime: this returns a reference, but there's nothing it could \
+                 borrow from, as no parameter holds one",
+            )),
+            Lifetimes::Return { input: Err(n), .. } => Err(Error::ty(
+                span,
+                format!(
+                    "missing lifetime: this returns a reference, but the parameters have {n} \
+                     lifetimes, so it's not clear which it borrows from; name the one it \
+                     does, as in `fn f<'a>(x: &'a int, y: &int) -> &'a int`"
+                ),
+            )),
+            Lifetimes::Body { .. } | Lifetimes::Any => Ok(Region::Erased),
+            Lifetimes::Fields { .. } => Err(Error::ty(
+                span,
+                "missing lifetime: a reference in a struct or enum needs one, as in \
+                 `struct S<'a> { r: &'a int }`",
+            )),
+        }
+    }
+}
+
 /// Turns a type as written (`TypeExpr`) into a type as understood (`Type`).
 /// `names` says what the name at a span refers to, and `params` are the type
-/// parameters in scope, for names it says nothing about.
+/// parameters in scope, for names it says nothing about. `lifetimes` says
+/// what lifetimes mean.
 pub(crate) fn resolve(
     t: &TypeExpr,
     names: &dyn Fn(&str, Span) -> Option<TypeName>,
     params: &[String],
+    lifetimes: &mut Lifetimes,
 ) -> Result<Type, Error> {
+    resolve_in(t, names, params, lifetimes, None)
+}
+
+/// The lifetimes a function type being resolved is generic over: those
+/// left out in its parameters. In its result, one left out is the one
+/// lifetime its parameters have, if they have exactly one.
+struct Binder {
+    bound: Vec<String>,
+    /// Once its parameters are resolved, their lifetime, or how many they
+    /// have if it isn't one.
+    ret: Option<Result<Region, usize>>,
+}
+
+/// The region lifetime `l` names, written at `span` in a type, or the one
+/// it stands for if it's left out, inside the function type `binder` is
+/// for, if it's in one.
+fn region(
+    l: Option<&str>,
+    span: Span,
+    lifetimes: &mut Lifetimes,
+    binder: Option<&mut Binder>,
+) -> Result<Region, Error> {
+    match (l, binder) {
+        (Some(name), _) if name != "'_" => lifetimes.region(Some(name), span),
+        (_, Some(b)) => match &b.ret {
+            None => {
+                let name = format!("'^{}", b.bound.len());
+                b.bound.push(name.clone());
+                Ok(Region::Named(name))
+            }
+            Some(Ok(r)) => Ok(r.clone()),
+            Some(Err(n)) => Err(Error::ty(
+                span,
+                format!(
+                    "missing lifetime: this function type returns a reference, but its \
+                     parameters have {n} lifetimes, so it's not clear which it borrows from"
+                ),
+            )),
+        },
+        (_, None) => lifetimes.region(l, span),
+    }
+}
+
+fn resolve_in(
+    t: &TypeExpr,
+    names: &dyn Fn(&str, Span) -> Option<TypeName>,
+    params: &[String],
+    lifetimes: &mut Lifetimes,
+    mut binder: Option<&mut Binder>,
+) -> Result<Type, Error> {
+    let go = |t: &TypeExpr, lifetimes: &mut Lifetimes, binder: Option<&mut Binder>| {
+        resolve_in(t, names, params, lifetimes, binder)
+    };
     match &t.kind {
         TypeExprKind::Named(name, _) if name == "_" => Err(Error::ty(
             t.span,
             "`_` can only stand for a type in type arguments, like `id::<_>`",
         )),
+        TypeExprKind::Lifetime(name) => Err(Error::ty(
+            t.span,
+            format!("expected a type, found lifetime `{name}`"),
+        )),
+        TypeExprKind::Ref(l, mutable, inner) => {
+            let span = Span::new(t.span.start, t.span.start + 1);
+            let l = l.as_ref().map(|l| l.name.as_str());
+            let region = region(l, span, lifetimes, binder.as_deref_mut())?;
+            let inner = go(inner, lifetimes, binder)?;
+            Ok(Type::Ref(region, *mutable, Box::new(inner)))
+        }
         TypeExprKind::Named(name, args) => {
-            let (ty, arity) = match names(name, t.span) {
-                Some(TypeName::Adt(symbol, n)) => (Type::Adt(symbol, Vec::new()), n),
+            // Lifetime arguments come first.
+            let lts = args
+                .iter()
+                .take_while(|a| matches!(a.kind, TypeExprKind::Lifetime(_)))
+                .count();
+            let (lt_args, args) = args.split_at(lts);
+            if let Some(l) = args
+                .iter()
+                .find(|a| matches!(a.kind, TypeExprKind::Lifetime(_)))
+            {
+                return Err(Error::ty(
+                    l.span,
+                    "lifetime arguments must come before type arguments",
+                ));
+            }
+            let (ty, lt_arity, arity) = match names(name, t.span) {
+                Some(TypeName::Adt(symbol, l, n)) => {
+                    (Type::Adt(symbol, Vec::new(), Vec::new()), l, n)
+                }
                 Some(TypeName::OuterParam(keyword, item)) => {
                     let nested = if keyword == "fn" { "nested" } else { "local" };
                     return Err(Error::ty(
@@ -65,9 +231,10 @@ pub(crate) fn resolve(
                         ),
                     ));
                 }
-                None if params.contains(name) => (Type::Param(name.clone()), 0),
-                None if name == "int" => (Type::Int, 0),
-                None if name == "bool" => (Type::Bool, 0),
+                None if params.contains(name) => (Type::Param(name.clone()), 0, 0),
+                None if name == "int" => (Type::Int, 0, 0),
+                None if name == "bool" => (Type::Bool, 0, 0),
+                None if name == "Box" => (Type::Box(Box::new(Type::Unit)), 0, 1),
                 None => return Err(Error::ty(t.span, format!("unknown type `{name}`"))),
             };
             if args.len() != arity {
@@ -77,23 +244,67 @@ pub(crate) fn resolve(
                 };
                 return Err(arity_error(&what, arity, args.len(), t.span));
             }
+            // Left out, they're all elided, as in `fn f(h: Holder) -> int`.
+            let regions = match lt_args.len() {
+                0 => (0..lt_arity)
+                    .map(|_| region(None, t.span, lifetimes, binder.as_deref_mut()))
+                    .collect::<Result<Vec<_>, _>>()?,
+                n if n == lt_arity => lt_args
+                    .iter()
+                    .map(|a| match &a.kind {
+                        TypeExprKind::Lifetime(l) => {
+                            region(Some(l), a.span, lifetimes, binder.as_deref_mut())
+                        }
+                        _ => unreachable!("only lifetimes"),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+                n => {
+                    let message = match lt_arity {
+                        0 => format!("`{name}` takes no lifetime arguments"),
+                        1 => format!("`{name}` takes 1 lifetime argument but {n} were supplied"),
+                        l => format!("`{name}` takes {l} lifetime arguments but {n} were supplied"),
+                    };
+                    return Err(Error::ty(t.span, message));
+                }
+            };
             let args = args
                 .iter()
-                .map(|a| resolve(a, names, params))
+                .map(|a| go(a, lifetimes, binder.as_deref_mut()))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(match ty {
-                Type::Adt(symbol, _) => Type::Adt(symbol, args),
+                Type::Adt(symbol, ..) => Type::Adt(symbol, regions, args),
+                Type::Box(_) => Type::Box(Box::new(args.into_iter().next().expect("one"))),
                 ty => ty,
             })
         }
         TypeExprKind::Unit => Ok(Type::Unit),
-        TypeExprKind::Fn(params_, ret) => Ok(Type::func(
-            params_
+        // A function type of its own, generic over what it leaves out.
+        TypeExprKind::Fn(params_, ret) => {
+            let mut b = Binder {
+                bound: Vec::new(),
+                ret: None,
+            };
+            let params_ = params_
                 .iter()
-                .map(|p| resolve(p, names, params))
-                .collect::<Result<_, _>>()?,
-            resolve(ret, names, params)?,
-        )),
+                .map(|p| go(p, lifetimes, Some(&mut b)))
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut inputs: Vec<&Region> = Vec::new();
+            for r in params_.iter().flat_map(Type::regions) {
+                if !inputs.contains(&r) {
+                    inputs.push(r);
+                }
+            }
+            b.ret = Some(match inputs[..] {
+                [r] => Ok(r.clone()),
+                _ => Err(inputs.len()),
+            });
+            let ret = go(ret, lifetimes, Some(&mut b))?;
+            Ok(Type::Fn(FnType {
+                params: params_,
+                ret: Box::new(ret),
+                bound: b.bound,
+            }))
+        }
     }
 }
 
@@ -110,11 +321,14 @@ pub(super) fn name_holes(t: &TypeExpr, holes: &mut Vec<(String, Span)>) -> TypeE
             name.clone(),
             args.iter().map(|a| name_holes(a, holes)).collect(),
         ),
-        TypeExprKind::Unit => TypeExprKind::Unit,
+        TypeExprKind::Unit | TypeExprKind::Lifetime(_) => t.kind.clone(),
         TypeExprKind::Fn(params, ret) => TypeExprKind::Fn(
             params.iter().map(|p| name_holes(p, holes)).collect(),
             Box::new(name_holes(ret, holes)),
         ),
+        TypeExprKind::Ref(l, m, inner) => {
+            TypeExprKind::Ref(l.clone(), *m, Box::new(name_holes(inner, holes)))
+        }
     };
     TypeExpr { kind, span: t.span }
 }
@@ -130,7 +344,7 @@ pub(super) fn declare(params: &[Ident]) -> Result<Vec<String>, Error> {
                 "a type parameter needs a name; `_` means \"infer this\" in type arguments",
             ));
         }
-        if matches!(p.name.as_str(), "int" | "bool") {
+        if matches!(p.name.as_str(), "int" | "bool" | "Box") {
             return Err(Error::ty(
                 p.span,
                 format!("`{}` is a built-in type", p.name),
@@ -145,6 +359,54 @@ pub(super) fn declare(params: &[Ident]) -> Result<Vec<String>, Error> {
         names.push(p.name.clone());
     }
     Ok(names)
+}
+
+/// Checks the lifetime parameters declared by a function, struct or enum,
+/// and returns their names.
+pub(super) fn declare_lifetimes(params: &[Ident]) -> Result<Vec<String>, Error> {
+    let mut names: Vec<String> = Vec::new();
+    for p in params {
+        if p.name == "'static" || p.name == "'_" {
+            return Err(Error::ty(
+                p.span,
+                format!("`{}` is a reserved lifetime name", p.name),
+            ));
+        }
+        if names.contains(&p.name) {
+            return Err(Error::ty(
+                p.span,
+                format!("lifetime `{}` is declared twice", p.name),
+            ));
+        }
+        names.push(p.name.clone());
+    }
+    Ok(names)
+}
+
+/// The bounds in `g`, whose lifetime parameters are `lifetimes` and type
+/// parameters `params`.
+pub(super) fn bounds(
+    g: &Generics,
+    lifetimes: &[String],
+    params: &[String],
+) -> Result<Vec<crate::types::Bound>, Error> {
+    use crate::types::Bound;
+    let mut l = Lifetimes::Body {
+        declared: lifetimes,
+    };
+    let mut out = Vec::new();
+    for (subject, after) in &g.bounds {
+        for b in after {
+            let r = l.region(Some(&b.name), b.span)?;
+            if subject.name.starts_with('\'') {
+                let s = l.region(Some(&subject.name), subject.span)?;
+                out.push(Bound::Region(s, r));
+            } else if params.contains(&subject.name) {
+                out.push(Bound::Param(subject.name.clone(), r));
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Does `t` mention type parameter `p`?

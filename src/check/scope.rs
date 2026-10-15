@@ -172,7 +172,7 @@ impl Checker {
 /// be returned or stored. Its doc comment becomes a plain comment.
 pub(super) fn to_closure(f: &FnDecl, stmts: &[Stmt], k: usize, tail: Option<&Expr>) -> Option<Fix> {
     let name = &f.name.name;
-    let fits = f.type_params.is_empty()
+    let fits = f.generics.is_empty()
         && !f.body.mentions(name)
         && stmts.iter().enumerate().all(|(j, s)| match s {
             Stmt::Fn(g) => j == k || !g.body.mentions(name),
@@ -227,8 +227,10 @@ fn only_called(e: &Expr, name: &str) -> bool {
 pub(super) struct Outer {
     current: Option<FnId>,
     type_params: Vec<String>,
+    lifetimes: Vec<String>,
     barrier: usize,
     comparisons: Vec<(crate::types::Type, Span, BinOp)>,
+    captures: Vec<(String, crate::types::Type, Span)>,
     escapes: Vec<super::escape::Escape>,
     closure_fix: Option<(usize, Fix)>,
 }
@@ -246,8 +248,10 @@ impl Checker {
         let outer = Outer {
             current: self.current,
             type_params: std::mem::take(&mut self.type_params),
+            lifetimes: std::mem::take(&mut self.lifetimes),
             barrier: std::mem::replace(&mut self.barrier, barrier),
             comparisons: std::mem::take(&mut self.comparisons),
+            captures: std::mem::take(&mut self.captures),
             escapes: std::mem::take(&mut self.escapes),
             closure_fix: std::mem::take(&mut self.closure_fix),
         };
@@ -255,8 +259,10 @@ impl Checker {
         let result = self.body(f, id);
         self.current = outer.current;
         self.type_params = outer.type_params;
+        self.lifetimes = outer.lifetimes;
         self.barrier = outer.barrier;
         self.comparisons = outer.comparisons;
+        self.captures = outer.captures;
         self.escapes = outer.escapes;
         self.closure_fix = outer.closure_fix;
         result

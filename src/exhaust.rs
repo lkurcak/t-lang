@@ -391,28 +391,37 @@ impl Cx<'_> {
     /// can name (functions, and types the checker hasn't inferred because
     /// every pattern was `_` or a variable). For int, that's every int, split into ranges at
     /// the boundaries of the ones in `seen`.
+    ///
+    /// A reference has the constructors of what it points to: patterns look
+    /// through it (*match ergonomics*). A box has none: patterns can't.
     fn all_ctors(&self, ty: &Type, seen: &[Ctor]) -> Option<Vec<Ctor>> {
-        match ty {
+        match peel(ty) {
             Type::Int => Some(split(i64::MIN, i64::MAX, seen)),
             Type::Bool => Some(vec![Ctor::Bool(false), Ctor::Bool(true)]),
             Type::Unit => Some(vec![Ctor::Unit]),
-            Type::Adt(name, _) => Some(match &self.adts[name].kind {
+            Type::Adt(name, ..) => Some(match &self.adts[name].kind {
                 AdtKind::Struct(_) => vec![Ctor::Struct],
                 AdtKind::Enum(variants) => (0..variants.len()).map(Ctor::Variant).collect(),
             }),
             // Nothing is known about a type parameter's values: it could be
             // anything.
-            Type::Fn(..) | Type::Param(_) | Type::Var(_) => None,
+            Type::Fn(..) | Type::Param(_) | Type::Var(_) | Type::Box(_) => None,
+            Type::Ref(..) => unreachable!("peeled"),
         }
     }
 
     /// Does `ty` have any values at all? `enum Never {}` doesn't, and neither
     /// does anything that must hold a `Never`.
     ///
-    /// This terminates because types can't contain themselves yet. Once they
-    /// can through pointers (step 5), this needs more care: a stream that
-    /// always holds a pointer to another stream has no finite values.
+    /// A type can hold itself only through a reference or a box, and those
+    /// are taken to have values, whatever they point to, so this terminates.
+    /// That's not quite right: a stream that always holds a box with
+    /// another stream in it has no finite values. But it's on the safe
+    /// side, since it can only ask for more arms than needed, never fewer.
     fn inhabited(&self, ty: &Type) -> bool {
+        if let Type::Ref(..) | Type::Box(_) = ty {
+            return true;
+        }
         match self.all_ctors(ty, &[]) {
             Some(all) => all.into_iter().any(|c| self.inhabited_ctor(c, ty)),
             None => true,
@@ -426,6 +435,7 @@ impl Cx<'_> {
 
     /// The types of the fields that constructor `c` of type `ty` holds.
     fn fields(&self, c: Ctor, ty: &Type) -> Vec<Type> {
+        let ty = peel(ty);
         match c {
             Ctor::Bool(_) | Ctor::Unit | Ctor::Int(..) => Vec::new(),
             Ctor::Struct => struct_fields(self.adts, ty)
@@ -439,6 +449,7 @@ impl Cx<'_> {
 
     /// Writes a witness back out in source syntax, for error messages.
     fn show(&self, p: &Pat, ty: &Type) -> String {
+        let ty = peel(ty);
         let Pat::Ctor(c, args) = p else {
             // Witnesses are built from `_` and constructors only.
             return "_".to_string();
@@ -453,7 +464,7 @@ impl Cx<'_> {
             (Ctor::Bool(b), _) => b.to_string(),
             (Ctor::Unit, _) => "()".to_string(),
             (Ctor::Int(lo, hi), _) => show_range(*lo, *hi, true),
-            (Ctor::Struct, Type::Adt(symbol, _)) => {
+            (Ctor::Struct, Type::Adt(symbol, ..)) => {
                 let name = crate::check::source_name(symbol);
                 let fields = struct_fields(self.adts, ty).expect("a struct");
                 if fields.is_empty() {
@@ -466,7 +477,7 @@ impl Cx<'_> {
                     .collect();
                 format!("{name} {{ {} }}", fields.join(", "))
             }
-            (Ctor::Variant(i), Type::Adt(symbol, _)) => {
+            (Ctor::Variant(i), Type::Adt(symbol, ..)) => {
                 let AdtKind::Enum(variants) = &self.adts[symbol].kind else {
                     unreachable!()
                 };
@@ -480,6 +491,15 @@ impl Cx<'_> {
             }
             _ => unreachable!("constructor {c:?} doesn't belong to `{ty}`"),
         }
+    }
+}
+
+/// What `ty` points to, if it's a reference, at any depth: patterns look
+/// through references to it.
+fn peel(ty: &Type) -> &Type {
+    match ty {
+        Type::Ref(_, _, t) => peel(t),
+        t => t,
     }
 }
 

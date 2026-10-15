@@ -23,6 +23,7 @@ const PREC = {
   comparative: 8,
   and: 7,
   or: 6,
+  assign: 0,
   closure: -1,
 };
 
@@ -70,8 +71,9 @@ module.exports = grammar({
 
     // Items
 
-    // `#[allow(dead_code)]` before an item, field or variant. As in Rust's
-    // grammar, it's a sibling of what it's on rather than part of it.
+    // `#[allow(dead_code)]` before an item, field or variant, or
+    // `#[derive(Copy)]` before a struct or enum. As in Rust's grammar, it's
+    // a sibling of what it's on rather than part of it.
     attribute_item: $ => seq(
       '#',
       '[',
@@ -91,12 +93,38 @@ module.exports = grammar({
       field('body', $.block),
     ),
 
-    // `<T, U>` after the name of a function, struct or enum.
-    type_parameters: $ => seq('<', commaSep(alias($.identifier, $.type_parameter)), '>'),
+    // `<'a, T: 'a>` after the name of a function, struct or enum.
+    type_parameters: $ => seq(
+      '<',
+      commaSep(choice($.lifetime_parameter, $.constrained_type_parameter)),
+      '>',
+    ),
+
+    lifetime_parameter: $ => seq(
+      field('name', $.lifetime),
+      optional(field('bounds', $.lifetime_bounds)),
+    ),
+
+    constrained_type_parameter: $ => seq(
+      field('name', alias($.identifier, $.type_parameter)),
+      optional(field('bounds', $.lifetime_bounds)),
+    ),
+
+    // `: 'a + 'b`
+    lifetime_bounds: $ => seq(':', $.lifetime, repeat(seq('+', $.lifetime))),
+
+    lifetime: _ => token(seq("'", /[a-zA-Z_][a-zA-Z0-9_]*/)),
+
+    mutable_specifier: _ => 'mut',
 
     parameters: $ => seq('(', commaSep($.parameter), ')'),
 
-    parameter: $ => seq(field('pattern', $.identifier), ':', field('type', $._type)),
+    parameter: $ => seq(
+      optional($.mutable_specifier),
+      field('pattern', $.identifier),
+      ':',
+      field('type', $._type),
+    ),
 
     struct_item: $ => seq(
       'struct',
@@ -139,7 +167,21 @@ module.exports = grammar({
 
     // Types
 
-    _type: $ => choice($._type_identifier, $.generic_type, $.unit_type, $.function_type),
+    _type: $ => choice(
+      $._type_identifier,
+      $.generic_type,
+      $.unit_type,
+      $.function_type,
+      $.reference_type,
+    ),
+
+    // `&T`, `&'a mut T`
+    reference_type: $ => seq(
+      '&',
+      optional($.lifetime),
+      optional($.mutable_specifier),
+      field('type', $._type),
+    ),
 
     // `Option<int>`
     generic_type: $ => seq(
@@ -147,7 +189,7 @@ module.exports = grammar({
       field('type_arguments', $.type_arguments),
     ),
 
-    type_arguments: $ => seq('<', commaSep1($._type), '>'),
+    type_arguments: $ => seq('<', commaSep1(choice($.lifetime, $._type)), '>'),
 
     // `::<int, bool>`: type arguments written out where a type can't go
     // straight after a name, since `<` would read as less-than.
@@ -190,7 +232,7 @@ module.exports = grammar({
       prec(PREC.block_statement, $._block_like),
     ),
 
-    _block_like: $ => choice($.if_expression, $.match_expression, $.block),
+    _block_like: $ => choice($.if_expression, $.match_expression, $.while_expression, $.block),
 
     // Expressions
 
@@ -201,7 +243,10 @@ module.exports = grammar({
       $.identifier,
       $.generic_function,
       $.unary_expression,
+      $.reference_expression,
       $.binary_expression,
+      $.assignment_expression,
+      $.compound_assignment_expr,
       $.call_expression,
       $.field_expression,
       $.parenthesized_expression,
@@ -220,8 +265,27 @@ module.exports = grammar({
     parenthesized_expression: $ => seq('(', $._expression, ')'),
 
     unary_expression: $ => prec(PREC.unary, seq(
-      field('operator', choice('-', '!')),
+      field('operator', choice('-', '!', '*')),
       field('operand', $._expression),
+    )),
+
+    // `&x`, `&mut x`
+    reference_expression: $ => prec(PREC.unary, seq(
+      '&',
+      optional($.mutable_specifier),
+      field('value', $._expression),
+    )),
+
+    assignment_expression: $ => prec.right(PREC.assign, seq(
+      field('left', $._expression),
+      '=',
+      field('right', $._expression),
+    )),
+
+    compound_assignment_expr: $ => prec.right(PREC.assign, seq(
+      field('left', $._expression),
+      field('operator', choice('+=', '-=', '*=', '/=', '%=')),
+      field('right', $._expression),
     )),
 
     binary_expression: $ => {
@@ -299,6 +363,7 @@ module.exports = grammar({
     ),
 
     closure_parameter: $ => seq(
+      optional($.mutable_specifier),
       field('pattern', $.identifier),
       optional(seq(':', field('type', $._type))),
     ),
@@ -311,6 +376,12 @@ module.exports = grammar({
     )),
 
     else_clause: $ => seq('else', choice($.block, $.if_expression)),
+
+    while_expression: $ => seq(
+      'while',
+      field('condition', $._expression),
+      field('body', $.block),
+    ),
 
     match_expression: $ => seq(
       'match',
@@ -332,6 +403,7 @@ module.exports = grammar({
     _pattern: $ => choice(
       $.wildcard_pattern,
       $.identifier,
+      $.mut_pattern,
       $.integer_pattern,
       $.range_pattern,
       $.boolean_literal,
@@ -342,6 +414,9 @@ module.exports = grammar({
     ),
 
     wildcard_pattern: _ => '_',
+
+    // `mut x`
+    mut_pattern: $ => seq($.mutable_specifier, $.identifier),
 
     integer_pattern: $ => seq(optional('-'), $.integer_literal),
 

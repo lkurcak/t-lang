@@ -25,6 +25,7 @@
   (#not-match? @type "^(int|bool)$"))
 (unit_type) @type.builtin
 (type_parameter) @type.parameter
+(lifetime) @label
 
 ; Functions
 
@@ -60,14 +61,17 @@
 "let" @keyword
 ["struct" "enum"] @keyword.type
 ["if" "else" "match"] @keyword.conditional
+"while" @keyword.repeat
+(mutable_specifier) @keyword.storage.modifier
 
 ; Operators and punctuation
 
 [
   "+" "-" "*" "/" "%"
   "==" "!=" "<" "<=" ">" ">="
-  "&&" "!"
-  "=" "->" "=>" ".." "..="
+  "&&" "!" "&"
+  "=" "+=" "-=" "*=" "/=" "%="
+  "->" "=>" ".." "..="
 ] @operator
 
 (binary_expression "||" @operator)

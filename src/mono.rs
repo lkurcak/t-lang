@@ -22,7 +22,7 @@
 use crate::ast::*;
 use crate::check::{self, Info, Instance};
 use crate::error::{Error, Span};
-use crate::types::{Subst, Type};
+use crate::types::{Region, Subst, Type};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -78,7 +78,7 @@ struct Copy {
 struct Mono<'p> {
     prog: &'p Program,
     info: &'p Info,
-    arities: HashMap<String, usize>,
+    arities: HashMap<String, (usize, usize)>,
     fns: HashMap<&'p str, &'p FnDecl>,
     types: HashMap<&'p str, &'p TypeDecl>,
     /// Every copy of a generic function so far, by name, and their names in
@@ -101,7 +101,10 @@ impl<'p> Mono<'p> {
             arities: prog
                 .types
                 .iter()
-                .map(|d| (d.name().name.clone(), d.type_params().len()))
+                .map(|d| {
+                    let arity = (d.generics().lifetimes.len(), d.type_params().len());
+                    (d.name().name.clone(), arity)
+                })
                 .collect(),
             fns: prog.fns.iter().map(|f| (f.name.name.as_str(), f)).collect(),
             types: prog
@@ -122,7 +125,7 @@ impl<'p> Mono<'p> {
         // Non-generic functions and types are where it starts: each is
         // its own one copy, and from them come all the others.
         let mut fns: HashMap<String, FnDecl> = HashMap::new();
-        for f in prog.fns.iter().filter(|f| f.type_params.is_empty()) {
+        for f in prog.fns.iter().filter(|f| f.generics.types.is_empty()) {
             fns.insert(
                 f.name.name.clone(),
                 self.function(f, &Subst::default(), None),
@@ -136,7 +139,7 @@ impl<'p> Mono<'p> {
             if let Some(name) = self.fn_queue.pop() {
                 let copy = &self.copies[&name];
                 let f = self.fns[copy.of.as_str()];
-                let s = Subst::new(&names(&f.type_params), &copy.args.clone());
+                let s = Subst::new(&names(&f.generics.types), &copy.args.clone());
                 let decl = self.function(f, &s, Some(&name));
                 fns.insert(name, decl);
             } else if let Some((name, args)) = self.type_queue.pop() {
@@ -166,7 +169,7 @@ impl<'p> Mono<'p> {
         }
         for f in &prog.fns {
             let name = &f.name.name;
-            if f.type_params.is_empty() {
+            if f.generics.types.is_empty() {
                 out.fns.extend(fns.remove(name));
             } else {
                 for copy in &self.copy_order {
@@ -217,7 +220,7 @@ impl<'p> Mono<'p> {
         let mut cx = Cx {
             m: self,
             s,
-            params: names(&f.type_params),
+            params: names(&f.generics.types),
             copy: name,
         };
         FnDecl {
@@ -228,13 +231,14 @@ impl<'p> Mono<'p> {
                 name: name.unwrap_or(&f.name.name).to_string(),
                 span: f.name.span,
             },
-            type_params: Vec::new(),
+            generics: lifetimes_only(&f.generics),
             params: f
                 .params
                 .iter()
                 .map(|p| Param {
                     doc: None,
                     allows: Vec::new(),
+                    mutable: p.mutable,
                     name: p.name.clone(),
                     ty: cx.ty(&p.ty),
                 })
@@ -265,13 +269,15 @@ impl<'p> Mono<'p> {
                 allows: st.allows.clone(),
                 span: st.span,
                 name,
-                type_params: Vec::new(),
+                generics: lifetimes_only(&st.generics),
+                derives: st.derives.clone(),
                 fields: st
                     .fields
                     .iter()
                     .map(|f| Param {
                         doc: f.doc.clone(),
                         allows: f.allows.clone(),
+                        mutable: None,
                         name: f.name.clone(),
                         ty: cx.ty(&f.ty),
                     })
@@ -282,7 +288,8 @@ impl<'p> Mono<'p> {
                 allows: e.allows.clone(),
                 span: e.span,
                 name,
-                type_params: Vec::new(),
+                generics: lifetimes_only(&e.generics),
+                derives: e.derives.clone(),
                 variants: e
                     .variants
                     .iter()
@@ -310,7 +317,8 @@ impl<'p> Mono<'p> {
         let copy = &self.copies[top];
         let decl = self.fns[copy.of.as_str()];
         let bindings: Vec<String> = decl
-            .type_params
+            .generics
+            .types
             .iter()
             .zip(&copy.args)
             .map(|(p, a)| format!("`{}` = `{a}`", p.name))
@@ -335,6 +343,22 @@ fn names(params: &[Ident]) -> Vec<String> {
     params.iter().map(|p| p.name.clone()).collect()
 }
 
+/// `g` without its type parameters, which a copy doesn't have, and the
+/// bounds on them. Copies are generic over lifetimes as before.
+fn lifetimes_only(g: &Generics) -> Generics {
+    Generics {
+        lifetimes: g.lifetimes.clone(),
+        types: Vec::new(),
+        bounds: g
+            .bounds
+            .iter()
+            .filter(|(p, _)| p.name.starts_with('\''))
+            .cloned()
+            .collect(),
+        span: g.span,
+    }
+}
+
 /// Copying one function or type.
 struct Cx<'m, 'p, 's> {
     m: &'m mut Mono<'p>,
@@ -355,10 +379,10 @@ impl Cx<'_, '_, '_> {
             true => None,
             false => arities
                 .get(name)
-                .map(|&n| check::TypeName::Adt(name.to_string(), n)),
+                .map(|&(l, n)| check::TypeName::Adt(name.to_string(), l, n)),
         };
-        let resolved =
-            check::resolve(t, &names, &self.params).expect("monomorphising a program that checked");
+        let resolved = check::resolve(t, &names, &self.params, &mut check::Lifetimes::Any)
+            .expect("monomorphising a program that checked");
         self.written(&self.s.apply(&resolved), t.span)
     }
 
@@ -372,13 +396,39 @@ impl Cx<'_, '_, '_> {
                 sig.params.iter().map(|p| self.written(p, span)).collect(),
                 Box::new(self.written(&sig.ret, span)),
             ),
-            Type::Adt(name, args) => {
+            Type::Adt(name, regions, args) => {
                 // A copy's fields may need more copies.
                 for a in args {
                     self.written(a, span);
                 }
-                TypeExprKind::Named(self.m.type_copy(name, args.clone()), Vec::new())
+                // Lifetimes as written, or none if they were all left out.
+                let lifetimes = match regions.iter().all(|r| *r == Region::Erased) {
+                    true => Vec::new(),
+                    false => regions
+                        .iter()
+                        .map(|r| TypeExpr {
+                            kind: TypeExprKind::Lifetime(region_name(r)),
+                            span,
+                        })
+                        .collect(),
+                };
+                let copy = self
+                    .m
+                    .type_copy(name, args.iter().map(Type::erased).collect());
+                TypeExprKind::Named(copy, lifetimes)
             }
+            Type::Ref(r, m, inner) => {
+                let lifetime = match r {
+                    Region::Erased => None,
+                    Region::Named(n) if n.starts_with("'^") => None,
+                    r => Some(Ident {
+                        name: region_name(r),
+                        span,
+                    }),
+                };
+                TypeExprKind::Ref(lifetime, *m, Box::new(self.written(inner, span)))
+            }
+            Type::Box(inner) => TypeExprKind::Named("Box".into(), vec![self.written(inner, span)]),
             Type::Param(_) | Type::Var(_) => unreachable!("`{t}` left after monomorphising"),
         };
         TypeExpr { kind, span }
@@ -389,14 +439,15 @@ impl Cx<'_, '_, '_> {
     fn instance(&mut self, span: Span) -> Option<String> {
         let instance = self.m.info.instances.get(&span)?.clone();
         Some(match instance {
+            // A copy doesn't depend on lifetimes, so they're left out.
             Instance::Fn(name, args) => {
-                let args = args.iter().map(|a| self.s.apply(a)).collect();
+                let args = args.iter().map(|a| self.s.apply(a).erased()).collect();
                 self.m.fn_copy(&name, args, span, self.copy)
             }
             Instance::Adt(name, args) => {
-                let args: Vec<Type> = args.iter().map(|a| self.s.apply(a)).collect();
+                let args: Vec<Type> = args.iter().map(|a| self.s.apply(a).erased()).collect();
                 // Its fields' types may need copies of their own.
-                self.written(&Type::Adt(name.clone(), args.clone()), span);
+                self.written(&Type::Adt(name.clone(), Vec::new(), args.clone()), span);
                 self.m.type_copy(&name, args)
             }
         })
@@ -482,12 +533,19 @@ impl Cx<'_, '_, '_> {
                     .params
                     .iter()
                     .map(|p| LambdaParam {
+                        mutable: p.mutable,
                         name: p.name.clone(),
                         ty: p.ty.as_ref().map(|t| self.ty(t)),
                     })
                     .collect();
                 let ret = l.ret.as_ref().map(|t| self.ty(t));
                 ExprKind::Lambda(Arc::new(Lambda::new(params, ret, self.expr(&l.body))))
+            }
+            ExprKind::Assign(op, place, value) => {
+                ExprKind::Assign(*op, Box::new(self.expr(place)), Box::new(self.expr(value)))
+            }
+            ExprKind::While(c, body) => {
+                ExprKind::While(Box::new(self.expr(c)), Box::new(self.expr(body)))
             }
         };
         Expr { kind, span: e.span }
@@ -519,5 +577,14 @@ impl Cx<'_, '_, '_> {
             kind => kind.clone(),
         };
         Pattern { kind, span: p.span }
+    }
+}
+
+/// How region `r` is written: `'a`, or `'_` for one nobody named.
+fn region_name(r: &Region) -> String {
+    match r {
+        Region::Named(n) if !r.is_elided() && !n.starts_with("'^") => n.clone(),
+        Region::Static => "'static".into(),
+        _ => "'_".into(),
     }
 }

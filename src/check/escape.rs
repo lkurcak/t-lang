@@ -3,10 +3,12 @@
 //! be called, and passed down to other functions, but not returned, or stored
 //! in a struct or enum. See docs/03-inference.md.
 //!
-//! Nothing in T can change a variable or reach the heap, so returning and
-//! storing are the only ways a value can outlive the frame it's in. Calls and
-//! fields are always safe: every function's result and every field were
-//! checked here too.
+//! Returning, storing in a struct, enum or box, and assigning are the only
+//! ways a value can outlive the frame it's in. Calls and fields are always
+//! safe: every function's result and every field were checked here too.
+//! What a reference points to isn't: it may be a variable of a function
+//! further up, holding a closure that captures from that function's frame,
+//! so the closure can only be passed further down.
 //!
 //! In a generic function, a value of type `T` isn't a function as far as
 //! this can tell, though the caller may pick a function type. Each copy
@@ -27,6 +29,10 @@ pub(super) enum Origin {
     /// This parameter, which may be any function the caller has, including
     /// a closure that captures.
     Param(String),
+    /// What a reference points to, which may be a variable holding a
+    /// closure that captures. With the reference's type: what a box points
+    /// to is fine, since it was stored, so checked.
+    Deref(Type),
 }
 
 /// How a value would leave the frame it's in.
@@ -34,6 +40,7 @@ pub(super) enum Origin {
 pub(super) enum Exit {
     Return,
     Store,
+    Assign,
 }
 
 /// A value that may be a closure that captures, leaving its frame. That's an
@@ -73,8 +80,31 @@ impl Checker {
             if !matches!(self.shallow(&escape.ty), Type::Fn(..)) {
                 continue;
             }
+            if let Origin::Deref(t) = &escape.origin
+                && let Type::Box(_) = self.shallow(t)
+            {
+                continue;
+            }
             let rule = "closures that capture can only be passed down";
             let message = match (escape.origin, escape.exit) {
+                (Origin::Captures(x), Exit::Assign) => format!(
+                    "cannot assign a closure that captures `{x}`: it keeps `{x}` on the stack, \
+                     and {rule}"
+                ),
+                (Origin::Param(p), Exit::Assign) => {
+                    format!("cannot assign `{p}`: it may be a closure that captures, and {rule}")
+                }
+                (Origin::Deref(_), exit) => {
+                    let what = match exit {
+                        Exit::Return => "return",
+                        Exit::Store => "store",
+                        Exit::Assign => "assign",
+                    };
+                    format!(
+                        "cannot {what} this function: it's read through a reference, so it may \
+                         be a closure that captures, and {rule}"
+                    )
+                }
                 (Origin::Captures(x), Exit::Return) => format!(
                     "cannot return a closure that captures `{x}`: it keeps `{x}` on the \
                      stack, and {rule}, not returned"
@@ -115,6 +145,10 @@ impl Checker {
         };
         match &e.kind {
             ExprKind::Var(name, _) => local(name, inner).flatten().map(|o| (o, e.span)),
+            ExprKind::Unary(UnOp::Deref, x) => {
+                let t = self.typed.exprs.get(&std::ptr::from_ref(&**x)).cloned();
+                Some((Origin::Deref(t.unwrap_or(Type::Unit)), e.span))
+            }
             // Names that aren't locals are functions, which are always
             // there.
             ExprKind::Lambda(l) => l
@@ -160,7 +194,7 @@ impl Checker {
 /// fields never hold one.
 fn bind(p: &Pattern, origin: Option<Origin>, inner: &mut Inner) {
     match &p.kind {
-        PatternKind::Bind(name) => inner.push((name.clone(), Some(origin))),
+        PatternKind::Bind(name, _) => inner.push((name.clone(), Some(origin))),
         _ => inner.extend(p.binds().into_iter().map(|name| (name, Some(None)))),
     }
 }
@@ -169,7 +203,7 @@ fn bind(p: &Pattern, origin: Option<Origin>, inner: &mut Inner) {
 /// value matched: as in `bind`, only a variable binding the whole value.
 pub(super) fn bound_origin(p: &Pattern, origin: Option<Origin>) -> Option<Origin> {
     match p.kind {
-        PatternKind::Bind(_) => origin,
+        PatternKind::Bind(..) => origin,
         _ => None,
     }
 }

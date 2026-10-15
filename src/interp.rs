@@ -8,6 +8,18 @@
 //! every program it accepts. That promise is the *type soundness* theorem
 //! ("well-typed programs don't go wrong"), and those calls are where you'd see
 //! it fail if the checker had a bug.
+//!
+//! Since step 5 it also keeps memory the way a compiled program would, so
+//! that the borrow checker's promises can fail here too. Every variable and
+//! temporary lives in a *slot*, freed when it goes out of scope; a box's
+//! value lives in a slot on the *heap*, freed when the box is dropped. A
+//! reference is the address of a slot and the path to a field in it, so
+//! following one to a slot that was freed is a *dangling reference*. Moving
+//! a value that owns a box out of a place leaves `Value::Moved` behind, so
+//! using it again is a *use after move*, and freeing the box twice a
+//! *double free*. And at the end, the heap must be empty: anything left is
+//! a *leak*. The borrow checker promises none of those happen
+//! (docs/05-ownership.md).
 
 use crate::ast::*;
 use crate::check::BUILTINS;
@@ -36,16 +48,43 @@ pub enum Value {
     Struct(String, Vec<(String, Value)>),
     /// An enum value: its type's name, which variant, and that variant's fields.
     Variant(String, String, Vec<Value>),
+    /// A reference, `&` or `&mut`: where the value it points to is.
+    Ref(Ptr),
+    /// A box: where its value is, on the heap.
+    Box(Ptr),
+    /// What's left in a place whose value was moved out.
+    Moved,
+}
+
+/// Where a value is: a slot, and the fields to follow inside the value
+/// there, each by its index among its struct's or variant's fields.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ptr {
+    slot: usize,
+    /// Which use of the slot it points into. Each time a slot is freed, it
+    /// counts up, so a pointer from before isn't fooled by the slot's next
+    /// use.
+    generation: u64,
+    path: Vec<usize>,
+}
+
+impl Ptr {
+    /// Field `i` of the value this points to.
+    fn field(&self, i: usize) -> Ptr {
+        let mut p = self.clone();
+        p.path.push(i);
+        p
+    }
 }
 
 /// What `|x| x + n` evaluates to: its code, and the environment it was
 /// created in, which holds `n`.
 ///
 /// The environment is a *copy* of the locals the body uses, made at that
-/// point. Since nothing in T can change a variable after it's bound, a copy
-/// and the original can never disagree, so this is the same as sharing them.
-/// It still has to live somewhere for as long as the closure does, which may
-/// be longer than the function that made it (see docs/03-inference.md).
+/// point. What a closure can capture is `Copy` and holds no references, so
+/// a copy is as good as the original. It still has to live somewhere for as
+/// long as the closure does, which may be longer than the function that made
+/// it (see docs/03-inference.md).
 ///
 /// Copies of the closure share one environment, so copying a closure that
 /// holds closures that hold closures costs no more than copying one.
@@ -72,6 +111,9 @@ impl fmt::Display for Value {
             Value::Fn(name) => write!(f, "<fn {}>", crate::check::source_name(name)),
             Value::Builtin(name) => write!(f, "<fn {name}>"),
             Value::Closure(_) => f.write_str("<closure>"),
+            Value::Ref(_) => f.write_str("<reference>"),
+            Value::Box(_) => f.write_str("<box>"),
+            Value::Moved => f.write_str("<moved>"),
             Value::Struct(name, fields) if fields.is_empty() => {
                 write!(f, "{} {{}}", crate::check::source_name(name))
             }
@@ -103,6 +145,22 @@ impl fmt::Display for Value {
     }
 }
 
+impl Value {
+    /// Does this value own a box, so that copying it would mean two owners?
+    /// Then using it moves it. Through a reference doesn't count: that box
+    /// is someone else's. Everything else is copied: whether that's allowed
+    /// is the checker's business, not memory's.
+    fn owns_box(&self) -> bool {
+        match self {
+            Value::Box(_) => true,
+            Value::Struct(_, fields) => fields.iter().any(|(_, v)| v.owns_box()),
+            Value::Variant(_, _, fields) => fields.iter().any(Value::owns_box),
+            Value::Moved => unsound("use of a value that was moved out of, at least in part"),
+            _ => false,
+        }
+    }
+}
+
 /// Runs `main`. Anything the program prints is appended to `out`, even if the
 /// program later fails.
 pub fn run(prog: &Program, out: &mut Vec<String>) -> Result<Value, Error> {
@@ -119,10 +177,20 @@ pub fn run(prog: &Program, out: &mut Vec<String>) -> Result<Value, Error> {
         fns,
         structs,
         locals: Vec::new(),
+        memory: Memory::default(),
+        temps: Vec::new(),
         depth: 0,
         out,
     };
-    interp.call(Value::Fn("main".to_string()), Vec::new(), Span::new(0, 0))
+    let result = interp.call(Value::Fn("main".to_string()), Vec::new(), Span::new(0, 0))?;
+    interp.drop(result.clone());
+    if interp.memory.on_heap > 0 {
+        unsound(&format!(
+            "memory leak: {} boxes were never freed",
+            interp.memory.on_heap
+        ));
+    }
+    Ok(result)
 }
 
 #[track_caller]
@@ -144,26 +212,231 @@ fn bool(v: Value) -> bool {
     }
 }
 
+/// A place for a value to live: a variable or temporary on the stack, or
+/// what a box holds, on the heap.
+struct Slot {
+    value: Value,
+    generation: u64,
+    live: bool,
+}
+
+/// Every slot, in use or not.
+#[derive(Default)]
+struct Memory {
+    slots: Vec<Slot>,
+    /// Slots not in use, to use again.
+    free: Vec<usize>,
+    /// How many slots are on the heap, for finding leaks.
+    on_heap: usize,
+}
+
+impl Memory {
+    /// A new slot holding `value`, on the heap if `heap`.
+    fn alloc(&mut self, value: Value, heap: bool) -> Ptr {
+        self.on_heap += usize::from(heap);
+        let slot = match self.free.pop() {
+            Some(i) => {
+                let s = &mut self.slots[i];
+                s.value = value;
+                s.live = true;
+                i
+            }
+            None => {
+                self.slots.push(Slot {
+                    value,
+                    generation: 0,
+                    live: true,
+                });
+                self.slots.len() - 1
+            }
+        };
+        Ptr {
+            slot,
+            generation: self.slots[slot].generation,
+            path: Vec::new(),
+        }
+    }
+
+    /// Frees the slot `p` points to, which must be in use, and returns
+    /// what was in it.
+    fn free(&mut self, p: &Ptr, heap: bool) -> Value {
+        self.slot(p);
+        let s = &mut self.slots[p.slot];
+        s.live = false;
+        s.generation += 1;
+        self.free.push(p.slot);
+        self.on_heap -= usize::from(heap);
+        std::mem::replace(&mut s.value, Value::Unit)
+    }
+
+    /// The slot `p` points into, which must still be there.
+    fn slot(&self, p: &Ptr) -> &Slot {
+        let s = &self.slots[p.slot];
+        if !s.live || s.generation != p.generation {
+            unsound("a reference to memory that was freed: a dangling reference, or a double free");
+        }
+        s
+    }
+
+    /// The value `p` points to.
+    fn get(&self, p: &Ptr) -> &Value {
+        let mut v = &self.slot(p).value;
+        for &i in &p.path {
+            v = match v {
+                Value::Struct(_, fields) => &fields[i].1,
+                Value::Variant(_, _, fields) => &fields[i],
+                Value::Moved => unsound("use of a value that was moved"),
+                other => unsound(&format!("field {i} of `{other}`")),
+            };
+        }
+        v
+    }
+
+    fn get_mut(&mut self, p: &Ptr) -> &mut Value {
+        self.slot(p);
+        let mut v = &mut self.slots[p.slot].value;
+        for &i in &p.path {
+            v = match v {
+                Value::Struct(_, fields) => &mut fields[i].1,
+                Value::Variant(_, _, fields) => &mut fields[i],
+                Value::Moved => unsound("assignment into a value that was moved"),
+                other => unsound(&format!("field {i} of `{other}`")),
+            };
+        }
+        v
+    }
+}
+
 struct Interp<'p, 'o> {
     fns: HashMap<&'p str, &'p FnDecl>,
     /// For putting struct literals' fields in declaration order.
     structs: HashMap<&'p str, &'p StructDecl>,
-    locals: Vec<(String, Value)>,
+    /// The variables in scope, innermost last, each with its slot. A
+    /// temporary that a `let` keeps alive (`let r = &f();`) is one with no
+    /// name.
+    locals: Vec<(String, Ptr)>,
+    memory: Memory,
+    /// The temporaries made in each statement being run, innermost last,
+    /// to free when it's done.
+    temps: Vec<Vec<Ptr>>,
     depth: usize,
     out: &'o mut Vec<String>,
 }
 
 impl Interp<'_, '_> {
-    fn lookup(&self, name: &str) -> Value {
-        if let Some((_, v)) = self.locals.iter().rev().find(|(n, _)| n == name) {
-            return v.clone();
-        }
+    /// The slot of local variable `name`, if it's one.
+    fn local(&self, name: &str) -> Option<Ptr> {
+        let local = self.locals.iter().rev().find(|(n, _)| n == name);
+        local.map(|(_, p)| p.clone())
+    }
+
+    /// The function `name` names, which isn't a local.
+    fn function(&self, name: &str) -> Value {
         if self.fns.contains_key(name) {
             return Value::Fn(name.to_string());
         }
         match BUILTINS.iter().find(|&&b| b == name) {
             Some(&b) => Value::Builtin(b),
             None => unsound(&format!("unbound variable `{name}`")),
+        }
+    }
+
+    /// The value at `p`, moved out if it owns a box, or else copied.
+    fn read(&mut self, p: &Ptr) -> Value {
+        let v = self.memory.get(p);
+        if let Value::Moved = v {
+            unsound("use of a value that was moved");
+        }
+        if v.owns_box() {
+            std::mem::replace(self.memory.get_mut(p), Value::Moved)
+        } else {
+            v.clone()
+        }
+    }
+
+    /// Frees everything `v` owns: the boxes in it, and what's in those.
+    fn drop(&mut self, v: Value) {
+        match v {
+            Value::Box(p) => {
+                let inner = self.memory.free(&p, true);
+                self.drop(inner);
+            }
+            Value::Struct(_, fields) => fields.into_iter().for_each(|(_, v)| self.drop(v)),
+            Value::Variant(_, _, fields) => fields.into_iter().for_each(|v| self.drop(v)),
+            _ => {}
+        }
+    }
+
+    /// Drops the variables from `scope` on, the last declared first, and
+    /// frees their slots.
+    fn end_scope(&mut self, scope: usize) {
+        while self.locals.len() > scope {
+            let (_, p) = self.locals.pop().expect("a local");
+            let v = self.memory.free(&p, false);
+            self.drop(v);
+        }
+    }
+
+    /// Runs `f` as a statement: the temporaries it makes are dropped, in
+    /// reverse, when it's done.
+    fn statement<T>(&mut self, f: impl FnOnce(&mut Self) -> Result<T, Error>) -> Result<T, Error> {
+        self.temps.push(Vec::new());
+        let result = f(self);
+        for p in self.temps.pop().expect("pushed").into_iter().rev() {
+            let v = self.memory.free(&p, false);
+            self.drop(v);
+        }
+        result
+    }
+
+    /// A new temporary holding `v`, dropped at the end of the statement.
+    fn temp(&mut self, v: Value) -> Ptr {
+        let p = self.memory.alloc(v, false);
+        match self.temps.last_mut() {
+            Some(temps) => temps.push(p.clone()),
+            None => unsound("a temporary outside any statement"),
+        }
+        p
+    }
+
+    /// Where the value of place expression `e` is. Anything else is
+    /// evaluated into a temporary, which is where it is.
+    fn place(&mut self, e: &Expr) -> Result<Ptr, Error> {
+        match &e.kind {
+            ExprKind::Var(name, _) => match self.local(name) {
+                Some(p) => Ok(p),
+                None => {
+                    let f = self.function(name);
+                    Ok(self.temp(f))
+                }
+            },
+            // Through any references and boxes to the struct.
+            ExprKind::Field(x, field) => {
+                let mut p = self.place(x)?;
+                loop {
+                    match self.memory.get(&p) {
+                        Value::Ref(q) | Value::Box(q) => p = q.clone(),
+                        Value::Struct(_, fields) => {
+                            let i = fields.iter().position(|(f, _)| *f == field.name);
+                            let i =
+                                i.unwrap_or_else(|| unsound(&format!("no field `{}`", field.name)));
+                            return Ok(p.field(i));
+                        }
+                        other => unsound(&format!("field access on `{other}`")),
+                    }
+                }
+            }
+            ExprKind::Unary(UnOp::Deref, x) => {
+                let p = self.place(x)?;
+                match self.memory.get(&p) {
+                    Value::Ref(q) | Value::Box(q) => Ok(q.clone()),
+                    other => unsound(&format!("`*` on `{other}`")),
+                }
+            }
+            _ => {
+                let v = self.eval(e)?;
+                Ok(self.temp(v))
+            }
         }
     }
 
@@ -197,8 +470,9 @@ impl Interp<'_, '_> {
         }
     }
 
-    /// Evaluates a function body with `locals` as its environment. The
-    /// caller's locals are saved and restored afterwards.
+    /// Evaluates a function body with `locals` as its environment, each in
+    /// a new slot, freed at the end. The caller's locals are saved and
+    /// restored afterwards.
     fn enter(
         &mut self,
         locals: Vec<(String, Value)>,
@@ -211,11 +485,18 @@ impl Interp<'_, '_> {
                 format!("stack overflow (more than {MAX_CALL_DEPTH} nested calls)"),
             ));
         }
+        let locals = locals
+            .into_iter()
+            .map(|(name, v)| (name, self.memory.alloc(v, false)))
+            .collect();
         let saved = std::mem::replace(&mut self.locals, locals);
+        let saved_temps = std::mem::take(&mut self.temps);
         self.depth += 1;
-        let result = self.eval(body);
+        let result = self.statement(|i| i.eval(body));
         self.depth -= 1;
+        self.end_scope(0);
         self.locals = saved;
+        self.temps = saved_temps;
         result
     }
 
@@ -224,7 +505,15 @@ impl Interp<'_, '_> {
             ExprKind::Int(n) => Value::Int(*n),
             ExprKind::Bool(b) => Value::Bool(*b),
             ExprKind::Unit => Value::Unit,
-            ExprKind::Var(name, _) => self.lookup(name),
+            ExprKind::Var(name, _) => match self.local(name) {
+                Some(p) => self.read(&p),
+                None => self.function(name),
+            },
+            ExprKind::Field(..) | ExprKind::Unary(UnOp::Deref, _) => {
+                let p = self.place(e)?;
+                self.read(&p)
+            }
+            ExprKind::Unary(UnOp::Ref | UnOp::RefMut, x) => Value::Ref(self.place(x)?),
 
             ExprKind::Unary(op, x) => {
                 let v = self.eval(x)?;
@@ -234,7 +523,7 @@ impl Interp<'_, '_> {
                             .checked_neg()
                             .ok_or_else(|| Error::runtime(e.span, "integer overflow"))?,
                     ),
-                    UnOp::Not => Value::Bool(!bool(v)),
+                    _ => Value::Bool(!bool(v)),
                 }
             }
 
@@ -246,14 +535,18 @@ impl Interp<'_, '_> {
                 Value::Bool(bool(self.eval(l)?) || bool(self.eval(r)?))
             }
 
+            // `==` looks at its operands where they are, and moves neither.
+            ExprKind::Binary(op @ (BinOp::Eq | BinOp::Ne), l, r) => {
+                let l = self.place(l)?;
+                let r = self.place(r)?;
+                let same = self.equal(self.memory.get(&l), self.memory.get(&r));
+                Value::Bool(same == (*op == BinOp::Eq))
+            }
+
             ExprKind::Binary(op, l, r) => {
                 let l = self.eval(l)?;
                 let r = self.eval(r)?;
-                match op {
-                    BinOp::Eq => Value::Bool(l == r),
-                    BinOp::Ne => Value::Bool(l != r),
-                    _ => self.arith(*op, int(l), int(r), e.span)?,
-                }
+                self.arith(*op, int(l), int(r), e.span)?
             }
 
             ExprKind::Call(f, args) => {
@@ -266,7 +559,7 @@ impl Interp<'_, '_> {
             }
 
             ExprKind::If(c, then, els) => {
-                if bool(self.eval(c)?) {
+                if bool(self.statement(|i| i.eval(c))?) {
                     self.eval(then)?
                 } else if let Some(els) = els {
                     self.eval(els)?
@@ -275,37 +568,40 @@ impl Interp<'_, '_> {
                 }
             }
 
-            ExprKind::Block(stmts, tail) => {
-                let scope = self.locals.len();
-                for stmt in stmts {
-                    match stmt {
-                        Stmt::Let { pat, init, .. } => {
-                            let v = self.eval(init)?;
-                            if !self.bind(pat, &v) {
-                                unsound(&format!("`let` pattern didn't match `{v}`"));
-                            }
-                        }
-                        Stmt::Expr(e) | Stmt::BlockLike(e) => {
-                            self.eval(e)?;
-                        }
-                        Stmt::Fn(_) | Stmt::Type(_) => {
-                            unreachable!("nested functions and types are lifted first")
-                        }
-                    }
+            ExprKind::While(c, body) => {
+                while bool(self.statement(|i| i.eval(c))?) {
+                    self.eval(body)?;
                 }
-                let v = match tail {
-                    Some(tail) => self.eval(tail)?,
-                    None => Value::Unit,
-                };
-                self.locals.truncate(scope);
-                v
+                Value::Unit
             }
+
+            // The value first, then the place, as in Rust. What was there
+            // is dropped.
+            ExprKind::Assign(op, place, value) => {
+                let v = self.eval(value)?;
+                let p = self.place(place)?;
+                let v = match op {
+                    Some(op) => {
+                        let old = int(self.memory.get(&p).clone());
+                        self.arith(*op, old, int(v), e.span)?
+                    }
+                    None => v,
+                };
+                let old = std::mem::replace(self.memory.get_mut(&p), v);
+                self.drop(old);
+                Value::Unit
+            }
+
+            ExprKind::Block(stmts, tail) => self.block(stmts, tail.as_deref())?,
 
             // These live in their own functions to keep `eval`'s stack frame
             // small: in debug builds every temporary in this `match` gets its
             // own slot, and deep recursion multiplies the frame size.
             ExprKind::StructLit(name, _, inits) => self.struct_lit(name, inits)?,
-            ExprKind::Field(x, field) => self.field(x, field)?,
+            ExprKind::Variant(ty, _, _, args) if ty.name == "Box" => {
+                let v = self.eval(&args[0])?;
+                Value::Box(self.memory.alloc(v, true))
+            }
             ExprKind::Variant(ty, _, variant, args) => {
                 let args = args
                     .iter()
@@ -315,18 +611,81 @@ impl Interp<'_, '_> {
             }
             ExprKind::Match(scrutinee, arms) => self.match_expr(scrutinee, arms)?,
             // Only the locals the body uses: its free variables that aren't
-            // functions.
-            ExprKind::Lambda(code) => Value::Closure(Closure {
-                env: code
-                    .captures
-                    .iter()
-                    .filter_map(|name| {
-                        let local = self.locals.iter().rev().find(|(n, _)| n == name);
-                        local.cloned()
-                    })
-                    .collect(),
-                code: code.clone(),
-            }),
+            // functions. They're `Copy`, so they're copied.
+            ExprKind::Lambda(code) => {
+                let mut env = Vec::new();
+                for name in &code.captures {
+                    if let Some(p) = self.local(name) {
+                        let v = self.read(&p);
+                        env.push((name.clone(), v));
+                    }
+                }
+                Value::Closure(Closure {
+                    env: env.into(),
+                    code: code.clone(),
+                })
+            }
+        })
+    }
+
+    /// A block: each statement's temporaries are dropped at its end, and
+    /// the block's variables at the block's end, after the value of its
+    /// tail is worked out, and the tail's temporaries dropped.
+    fn block(&mut self, stmts: &[Stmt], tail: Option<&Expr>) -> Result<Value, Error> {
+        let scope = self.locals.len();
+        let result = self.block_inner(stmts, tail);
+        self.end_scope(scope);
+        result
+    }
+
+    fn block_inner(&mut self, stmts: &[Stmt], tail: Option<&Expr>) -> Result<Value, Error> {
+        for stmt in stmts {
+            match stmt {
+                Stmt::Let { pat, init, .. } => self.let_stmt(pat, init)?,
+                Stmt::Expr(e) | Stmt::BlockLike(e) => {
+                    self.statement(|i| {
+                        let v = i.eval(e)?;
+                        i.drop(v);
+                        Ok(())
+                    })?;
+                }
+                Stmt::Fn(_) | Stmt::Type(_) => {
+                    unreachable!("nested functions and types are lifted first")
+                }
+            }
+        }
+        match tail {
+            Some(tail) => self.statement(|i| i.eval(tail)),
+            None => Ok(Value::Unit),
+        }
+    }
+
+    /// `let pat = init;`. If `init` is `&e` of a value that isn't a place,
+    /// the temporary holding it lives as long as a variable would, to the
+    /// end of the block, as in Rust: `let r = &make();` is fine.
+    fn let_stmt(&mut self, pat: &Pattern, init: &Expr) -> Result<(), Error> {
+        if let ExprKind::Unary(UnOp::Ref | UnOp::RefMut, x) = &init.kind
+            && !x.is_place()
+        {
+            let v = self.statement(|i| i.eval(x))?;
+            let p = self.memory.alloc(v, false);
+            self.locals.push((String::new(), p.clone()));
+            let r = self.memory.alloc(Value::Ref(p), false);
+            self.temps.push(vec![r.clone()]);
+            self.bind(pat, &r, false);
+            let temps = self.temps.pop().expect("pushed");
+            for p in temps {
+                self.memory.free(&p, false);
+            }
+            return Ok(());
+        }
+        self.statement(|i| {
+            let p = i.place(init)?;
+            if !i.matches(pat, &p) {
+                unsound("a `let` pattern didn't match");
+            }
+            i.bind(pat, &p, false);
+            Ok(())
         })
     }
 
@@ -335,7 +694,7 @@ impl Interp<'_, '_> {
         // Evaluate in the order written, store in the order declared.
         let mut values = Vec::new();
         for init in inits {
-            values.push((init.name.name.as_str(), self.eval(&init.value)?));
+            values.push((init.name.name.as_str(), Some(self.eval(&init.value)?)));
         }
         let fields = decl
             .fields
@@ -343,73 +702,131 @@ impl Interp<'_, '_> {
             .map(|f| {
                 let i = values.iter().position(|(n, _)| *n == f.name.name);
                 let i = i.unwrap_or_else(|| unsound("missing struct field"));
-                (f.name.name.clone(), values[i].1.clone())
+                (f.name.name.clone(), values[i].1.take().expect("each once"))
             })
             .collect();
         Ok(Value::Struct(name.name.clone(), fields))
     }
 
-    fn field(&mut self, x: &Expr, field: &Ident) -> Result<Value, Error> {
-        match self.eval(x)? {
-            Value::Struct(_, fields) => match fields.into_iter().find(|(f, _)| *f == field.name) {
-                Some((_, v)) => Ok(v),
-                None => unsound(&format!("no field `{}`", field.name)),
-            },
-            other => unsound(&format!("field access on `{other}`")),
-        }
-    }
-
+    /// Picks the first arm whose pattern matches, without moving anything,
+    /// then binds its variables, moving or borrowing from the scrutinee.
+    /// The scrutinee is looked at where it is, if it's a place.
     fn match_expr(&mut self, scrutinee: &Expr, arms: &[Arm]) -> Result<Value, Error> {
-        let v = self.eval(scrutinee)?;
-        let scope = self.locals.len();
-        let mut chosen = None;
-        for arm in arms {
-            if self.bind(&arm.pat, &v) {
-                chosen = Some(arm);
-                break;
-            }
-            // Drop whatever a partial match bound before failing.
-            self.locals.truncate(scope);
-        }
-        let Some(arm) = chosen else {
-            unsound(&format!("no `match` arm fits `{v}`"));
-        };
-        let result = self.eval(&arm.body);
-        self.locals.truncate(scope);
-        result
+        self.statement(|i| {
+            let p = i.place(scrutinee)?;
+            let Some(arm) = arms.iter().find(|arm| i.matches(&arm.pat, &p)) else {
+                unsound(&format!("no `match` arm fits `{}`", i.memory.get(&p)));
+            };
+            let scope = i.locals.len();
+            i.bind(&arm.pat, &p, false);
+            let result = i.eval(&arm.body);
+            i.end_scope(scope);
+            result
+        })
     }
 
-    /// Tries to match `v` against `p`. On success, pushes the variables `p`
-    /// binds onto `locals` and returns `true`.
-    fn bind(&mut self, p: &Pattern, v: &Value) -> bool {
-        match (&p.kind, v) {
-            (PatternKind::Wild, _) => true,
-            (PatternKind::Bind(name), _) => {
-                self.locals.push((name.clone(), v.clone()));
-                true
-            }
+    /// Does `p` match the value at `v`? Patterns that look inside a value
+    /// look through references to it, as the checker's do.
+    fn matches(&self, p: &Pattern, v: &Ptr) -> bool {
+        let mut v = v.clone();
+        let looks_inside = !matches!(
+            p.kind,
+            PatternKind::Wild | PatternKind::Bind(..) | PatternKind::Or(_)
+        );
+        while let (true, Value::Ref(q)) = (looks_inside, self.memory.get(&v)) {
+            v = q.clone();
+        }
+        match (&p.kind, self.memory.get(&v)) {
+            (PatternKind::Wild | PatternKind::Bind(..), _) => true,
             (PatternKind::Int(n), Value::Int(m)) => n == m,
             (PatternKind::Range(lo, hi, _), Value::Int(m)) => lo <= m && m <= hi,
             (PatternKind::Bool(b), Value::Bool(c)) => b == c,
             (PatternKind::Unit, Value::Unit) => true,
-            (PatternKind::Variant(_, _, variant, pats), Value::Variant(_, name, fields)) => {
-                variant.name == *name && pats.iter().zip(fields).all(|(p, v)| self.bind(p, v))
+            (PatternKind::Variant(_, _, variant, pats), Value::Variant(_, name, _)) => {
+                variant.name == *name
+                    && pats
+                        .iter()
+                        .enumerate()
+                        .all(|(i, p)| self.matches(p, &v.field(i)))
             }
-            (PatternKind::Or(alts), _) => {
-                let scope = self.locals.len();
-                alts.iter().any(|alt| {
-                    // Undo anything a failed alternative bound part-way.
-                    self.locals.truncate(scope);
-                    self.bind(alt, v)
+            (PatternKind::Or(alts), _) => alts.iter().any(|alt| self.matches(alt, &v)),
+            (PatternKind::Struct(_, _, field_pats, _), Value::Struct(_, fields)) => {
+                field_pats.iter().all(|fp| {
+                    match fields.iter().position(|(f, _)| *f == fp.name.name) {
+                        Some(i) => self.matches(&fp.pat, &v.field(i)),
+                        None => unsound(&format!("no field `{}`", fp.name.name)),
+                    }
                 })
             }
-            (PatternKind::Struct(_, _, field_pats, _), Value::Struct(_, fields)) => field_pats
-                .iter()
-                .all(|fp| match fields.iter().find(|(f, _)| *f == fp.name.name) {
-                    Some((_, v)) => self.bind(&fp.pat, v),
-                    None => unsound(&format!("no field `{}`", fp.name.name)),
-                }),
-            _ => unsound(&format!("pattern can't apply to `{v}`")),
+            (_, v) => unsound(&format!("pattern can't apply to `{v}`")),
+        }
+    }
+
+    /// Binds the variables of `p`, which matches the value at `v`: each to
+    /// what it matches, moved or copied out, or a reference to it if
+    /// `by_ref` or the pattern looked through a reference to get there.
+    fn bind(&mut self, p: &Pattern, v: &Ptr, mut by_ref: bool) {
+        let mut v = v.clone();
+        let looks_inside = !matches!(
+            p.kind,
+            PatternKind::Wild | PatternKind::Bind(..) | PatternKind::Or(_)
+        );
+        while let (true, Value::Ref(q)) = (looks_inside, self.memory.get(&v)) {
+            v = q.clone();
+            by_ref = true;
+        }
+        match &p.kind {
+            PatternKind::Bind(name, _) => {
+                let value = match by_ref {
+                    true => Value::Ref(v),
+                    false => self.read(&v),
+                };
+                let slot = self.memory.alloc(value, false);
+                self.locals.push((name.clone(), slot));
+            }
+            PatternKind::Variant(_, _, _, pats) => {
+                for (i, p) in pats.iter().enumerate() {
+                    self.bind(p, &v.field(i), by_ref);
+                }
+            }
+            PatternKind::Struct(_, _, field_pats, _) => {
+                for fp in field_pats {
+                    let Value::Struct(_, fields) = self.memory.get(&v) else {
+                        unsound("struct pattern on something else");
+                    };
+                    let i = fields.iter().position(|(f, _)| *f == fp.name.name);
+                    let i = i.unwrap_or_else(|| unsound("no such field"));
+                    self.bind(&fp.pat, &v.field(i), by_ref);
+                }
+            }
+            PatternKind::Or(alts) => {
+                let alt = alts.iter().find(|alt| self.matches(alt, &v));
+                let alt = alt.unwrap_or_else(|| unsound("no alternative matches"));
+                self.bind(alt, &v, by_ref);
+            }
+            PatternKind::Wild
+            | PatternKind::Int(_)
+            | PatternKind::Range(..)
+            | PatternKind::Bool(_)
+            | PatternKind::Unit => {}
+        }
+    }
+
+    /// Are `a` and `b` equal, looking through references and boxes to what
+    /// they point to?
+    fn equal(&self, a: &Value, b: &Value) -> bool {
+        match (a, b) {
+            (Value::Ref(p) | Value::Box(p), Value::Ref(q) | Value::Box(q)) => {
+                self.equal(self.memory.get(p), self.memory.get(q))
+            }
+            (Value::Struct(s, xs), Value::Struct(t, ys)) => {
+                s == t && xs.iter().zip(ys).all(|((_, x), (_, y))| self.equal(x, y))
+            }
+            (Value::Variant(s, v, xs), Value::Variant(t, w, ys)) => {
+                s == t && v == w && xs.iter().zip(ys).all(|(x, y)| self.equal(x, y))
+            }
+            (Value::Moved, _) | (_, Value::Moved) => unsound("comparing a moved value"),
+            (a, b) => a == b,
         }
     }
 

@@ -16,6 +16,10 @@ pub enum Tok {
     Struct,
     Enum,
     Match,
+    Mut,
+    While,
+    /// `'a`: a lifetime, with its `'`.
+    Lifetime(String),
     // punctuation
     LParen,
     RParen,
@@ -35,6 +39,8 @@ pub enum Tok {
     FatArrow,
     // operators
     Eq,
+    /// `+=`, `-=` and the others: an operator and `=`, assigning.
+    OpEq(OpEq),
     EqEq,
     NotEq,
     Lt,
@@ -47,6 +53,7 @@ pub enum Tok {
     Slash,
     Percent,
     Bang,
+    Amp,
     AndAnd,
     OrOr,
     Pipe,
@@ -63,6 +70,8 @@ impl Tok {
             Tok::Int(n) => return format!("`{n}`"),
             Tok::Ident(name) => return format!("`{name}`"),
             Tok::Doc(_) => return "a doc comment".to_string(),
+            Tok::Lifetime(name) => return format!("`{name}`"),
+            Tok::OpEq(op) => return format!("`{}=`", op.symbol()),
             Tok::Eof => return "end of file".to_string(),
             Tok::Fn => "fn",
             Tok::Let => "let",
@@ -73,6 +82,8 @@ impl Tok {
             Tok::Struct => "struct",
             Tok::Enum => "enum",
             Tok::Match => "match",
+            Tok::Mut => "mut",
+            Tok::While => "while",
             Tok::LParen => "(",
             Tok::RParen => ")",
             Tok::LBrace => "{",
@@ -102,11 +113,34 @@ impl Tok {
             Tok::Slash => "/",
             Tok::Percent => "%",
             Tok::Bang => "!",
+            Tok::Amp => "&",
             Tok::AndAnd => "&&",
             Tok::OrOr => "||",
             Tok::Pipe => "|",
         };
         format!("`{s}`")
+    }
+}
+
+/// The operator of a compound assignment like `+=`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpEq {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+}
+
+impl OpEq {
+    pub fn symbol(self) -> &'static str {
+        match self {
+            OpEq::Add => "+",
+            OpEq::Sub => "-",
+            OpEq::Mul => "*",
+            OpEq::Div => "/",
+            OpEq::Rem => "%",
+        }
     }
 }
 
@@ -182,8 +216,23 @@ pub fn lex_with_comments(src: &str) -> Result<(Vec<Token>, Vec<Comment>), Error>
                 "struct" => Tok::Struct,
                 "enum" => Tok::Enum,
                 "match" => Tok::Match,
+                "mut" => Tok::Mut,
+                "while" => Tok::While,
                 name => Tok::Ident(name.to_string()),
             }
+        } else if c == b'\'' {
+            i += 1;
+            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                i += 1;
+            }
+            if i == start + 1 || bytes[start + 1].is_ascii_digit() {
+                let span = Span::new(start, start + 1);
+                return Err(Error::syntax(
+                    span,
+                    "expected a lifetime name after `'`, like `'a`",
+                ));
+            }
+            Tok::Lifetime(src[start..i].to_string())
         } else {
             let next = bytes.get(i + 1).copied();
             let third = bytes.get(i + 2).copied();
@@ -199,6 +248,12 @@ pub fn lex_with_comments(src: &str) -> Result<(Vec<Token>, Vec<Comment>), Error>
                 (b'>', Some(b'=')) => (Tok::Ge, 2),
                 (b'&', Some(b'&')) => (Tok::AndAnd, 2),
                 (b'|', Some(b'|')) => (Tok::OrOr, 2),
+                (b'+', Some(b'=')) => (Tok::OpEq(OpEq::Add), 2),
+                (b'-', Some(b'=')) => (Tok::OpEq(OpEq::Sub), 2),
+                (b'*', Some(b'=')) => (Tok::OpEq(OpEq::Mul), 2),
+                (b'/', Some(b'=')) => (Tok::OpEq(OpEq::Div), 2),
+                (b'%', Some(b'=')) => (Tok::OpEq(OpEq::Rem), 2),
+                (b'&', _) => (Tok::Amp, 1),
                 (b'|', _) => (Tok::Pipe, 1),
                 (b'(', _) => (Tok::LParen, 1),
                 (b')', _) => (Tok::RParen, 1),

@@ -31,16 +31,16 @@ use lsp_types::request::{
 };
 use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOptions, CodeActionOrCommand, CodeActionParams,
-    CodeActionProviderCapability, Diagnostic, DiagnosticSeverity, DiagnosticTag,
-    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DocumentFormattingParams, DocumentHighlight, DocumentHighlightKind, DocumentHighlightParams,
-    DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams,
-    GotoDefinitionResponse, Hover, HoverContents, HoverParams, HoverProviderCapability, InlayHint,
-    InlayHintKind, InlayHintLabel, InlayHintParams, Location, MarkupContent, MarkupKind,
-    NumberOrString, OneOf, Position, PrepareRenameResponse, PublishDiagnosticsParams, Range,
-    ReferenceParams, RenameOptions, RenameParams, ServerCapabilities, SymbolKind,
-    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit,
-    TypeDefinitionProviderCapability, Uri, WorkspaceEdit,
+    CodeActionProviderCapability, Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity,
+    DiagnosticTag, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
+    DidOpenTextDocumentParams, DocumentFormattingParams, DocumentHighlight, DocumentHighlightKind,
+    DocumentHighlightParams, DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse,
+    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams,
+    HoverProviderCapability, InlayHint, InlayHintKind, InlayHintLabel, InlayHintParams, Location,
+    MarkupContent, MarkupKind, NumberOrString, OneOf, Position, PrepareRenameResponse,
+    PublishDiagnosticsParams, Range, ReferenceParams, RenameOptions, RenameParams,
+    ServerCapabilities, SymbolKind, TextDocumentPositionParams, TextDocumentSyncCapability,
+    TextDocumentSyncKind, TextEdit, TypeDefinitionProviderCapability, Uri, WorkspaceEdit,
 };
 use std::collections::HashMap;
 
@@ -85,7 +85,10 @@ pub fn run() -> Result<()> {
                 DidOpenTextDocument::METHOD => {
                     let p: DidOpenTextDocumentParams = serde_json::from_value(n.params)?;
                     let doc = p.text_document;
-                    let diags = diagnose(&doc.text).into_iter().map(|(d, _)| d).collect();
+                    let diags = diagnose(&doc.uri, &doc.text)
+                        .into_iter()
+                        .map(|(d, _)| d)
+                        .collect();
                     publish(&conn, doc.uri.clone(), Some(doc.version), diags)?;
                     docs.insert(doc.uri.as_str().to_string(), doc.text);
                 }
@@ -94,7 +97,10 @@ pub fn run() -> Result<()> {
                     // With FULL sync, the last change holds the whole new text.
                     if let Some(change) = p.content_changes.into_iter().last() {
                         let doc = p.text_document;
-                        let diags = diagnose(&change.text).into_iter().map(|(d, _)| d).collect();
+                        let diags = diagnose(&doc.uri, &change.text)
+                            .into_iter()
+                            .map(|(d, _)| d)
+                            .collect();
                         publish(&conn, doc.uri.clone(), Some(doc.version), diags)?;
                         docs.insert(doc.uri.as_str().to_string(), change.text);
                     }
@@ -327,8 +333,8 @@ fn publish(
     Ok(())
 }
 
-/// Every diagnostic for `src`, each with its fixes.
-fn diagnose(src: &str) -> Vec<(Diagnostic, Vec<Fix>)> {
+/// Every diagnostic for `src`, the document at `uri`, each with its fixes.
+fn diagnose(uri: &Uri, src: &str) -> Vec<(Diagnostic, Vec<Fix>)> {
     let checked = crate::check_source(src);
     let mut out: Vec<_> = checked
         .warnings
@@ -336,7 +342,7 @@ fn diagnose(src: &str) -> Vec<(Diagnostic, Vec<Fix>)> {
         .map(|w| (warning_diagnostic(w, src), w.fixes.clone()))
         .collect();
     if let Err(e) = &checked.result {
-        out.push((error_diagnostic(e, src), e.fixes.clone()));
+        out.push((error_diagnostic(uri, e, src), e.fixes.clone()));
     }
     out
 }
@@ -344,7 +350,7 @@ fn diagnose(src: &str) -> Vec<(Diagnostic, Vec<Fix>)> {
 /// A quick fix for each fix of each diagnostic that touches `range`.
 fn code_actions(uri: &Uri, src: &str, range: Range) -> Vec<CodeActionOrCommand> {
     let mut actions = Vec::new();
-    for (diag, fixes) in diagnose(src) {
+    for (diag, fixes) in diagnose(uri, src) {
         if diag.range.start > range.end || range.start > diag.range.end {
             continue;
         }
@@ -399,7 +405,7 @@ fn type_definitions(info: &Info, offset: usize) -> Vec<Span> {
 
 /// Adds the symbol of every struct and enum `t` mentions to `out`, in order.
 fn adts<'t>(t: &'t Type, out: &mut Vec<&'t str>) {
-    if let Type::Adt(symbol, _) = t {
+    if let Type::Adt(symbol, ..) = t {
         out.push(symbol);
     }
     for p in t.parts() {
@@ -537,17 +543,28 @@ fn inlay_hints(src: &str, range: Range) -> Vec<InlayHint> {
         .collect()
 }
 
-fn error_diagnostic(e: &Error, src: &str) -> Diagnostic {
+/// The diagnostic for `e`, in `src`, the document at `uri`. Its notes, like
+/// "`x` is borrowed here", are related information.
+fn error_diagnostic(uri: &Uri, e: &Error, src: &str) -> Diagnostic {
     let phase = match e.phase {
         Phase::Syntax => "syntax error",
         Phase::Type => "type error",
         Phase::Runtime => "runtime error",
     };
+    let related = e
+        .notes
+        .iter()
+        .map(|(span, note)| DiagnosticRelatedInformation {
+            location: Location::new(uri.clone(), lsp_range(src, *span)),
+            message: note.clone(),
+        })
+        .collect::<Vec<_>>();
     Diagnostic {
         range: lsp_range(src, e.span),
         severity: Some(DiagnosticSeverity::ERROR),
         source: Some("t".to_string()),
         message: format!("{phase}: {}", e.message),
+        related_information: (!related.is_empty()).then_some(related),
         ..Default::default()
     }
 }

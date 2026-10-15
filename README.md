@@ -87,15 +87,17 @@ fn main() {
 ```
 
 As in Rust, a name that isn't a lint's is a warning (`unknown_lints`), not
-an error. The lints are `unused_variables`, `dead_code`,
+an error. The lints are `unused_variables`, `unused_mut`, `dead_code`,
 `unreachable_patterns`, `overlapping_ranges`, `mergeable_ranges`,
 `unused_doc_comments`, `non_camel_case_types`, `non_snake_case` and
 `unknown_lints`.
 
-Pipeline: `lexer` → `parser` → `check` (type checker) → `lift` (nested
-functions and types moved to the top level) → `mono` (monomorphisation: a copy of
-each generic function and type per type it's used at) → `interp` (tree-walking interpreter). A real backend (emitting C) comes once the type system has
-enough in it to be worth compiling.
+Pipeline: `lexer` → `parser` → `check` (type checker, then `borrowck`, the
+borrow checker) → `lift` (nested functions and types moved to the top
+level) → `mono` (monomorphisation: a copy of each generic function and type
+per type it's used at) → `interp` (tree-walking interpreter, which checks
+memory as it goes). A real backend (emitting C) comes once the type system
+has enough in it to be worth compiling.
 
 ## Editor support
 
@@ -248,9 +250,12 @@ has to fit that:
 
 - **Every value has a size known at compile time.** Generics are
   monomorphized, so there's no boxing and no type information at run time.
-- **Nothing allocates behind your back.** The core language never touches
-  the heap; allocation will live in a library, as in Rust's split between
-  `core`, `alloc` and `std`.
+- **Nothing allocates behind your back.** `Box::new(x)` is the only thing
+  that touches the heap, and the box is freed when its owner goes away,
+  which the borrow checker works out at compile time: no garbage collector,
+  no reference counting. `Box` will move to a library, as in Rust's split
+  between `core`, `alloc` and `std`. See
+  [docs/05-ownership.md](docs/05-ownership.md).
 - **Closures that capture are downward-only:** they can be passed to
   functions but not returned or stored, since their variables live on the
   stack. A `fn` nested in a block captures nothing, so it can go anywhere.
@@ -269,7 +274,7 @@ combine features in ways nobody planned for.
 | 2 ✅ | structs, enums, `match` | algebraic data types, exhaustiveness | [docs/02-adts.md](docs/02-adts.md) |
 | 3 ✅ | inference, closures, nested `fn`s and types | unification / bidirectional typing | [docs/03-inference.md](docs/03-inference.md) |
 | 4 ✅ | generics | rank-1 (prenex) parametric polymorphism, monomorphization | [docs/04-generics.md](docs/04-generics.md) |
-| 5 | ownership, borrowing, pointers | affine types, regions/lifetimes; types that hold themselves through a pointer | |
+| 5 ✅ | ownership, borrowing, pointers | affine types, regions/lifetimes; types that hold themselves through a pointer | [docs/05-ownership.md](docs/05-ownership.md) |
 | 6 | traits | ad-hoc polymorphism, typeclasses, coherence; closures as `Fn` traits | |
 | 7 | effects | effect systems: which functions can panic, allocate or diverge | |
 | 8 | refinement types | proving indexes in bounds, so indexing can't panic | |

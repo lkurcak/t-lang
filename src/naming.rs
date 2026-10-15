@@ -162,7 +162,7 @@ fn decls(prog: &Program) -> Vec<Decl<'_>> {
     }
     for (f, _) in prog.all_fns() {
         out.push(ident(&f.name, "function", Case::Snake));
-        params(&f.type_params, &mut out);
+        params(&f.generics.types, &mut out);
         out.extend(
             f.params
                 .iter()
@@ -219,9 +219,9 @@ fn variables<'a>(e: &'a Expr, out: &mut Vec<Decl<'a>>) {
 
 fn bindings<'a>(p: &'a Pattern, out: &mut Vec<Decl<'a>>) {
     match &p.kind {
-        PatternKind::Bind(name) => out.push(Decl {
+        PatternKind::Bind(name, _) => out.push(Decl {
             name,
-            span: p.span,
+            span: p.name_span(),
             what: "variable",
             case: Case::Snake,
         }),

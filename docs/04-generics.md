@@ -304,8 +304,9 @@ capture can only be passed down, not returned
 That includes `id(inc)` for a top-level `inc`, just as step 3 rejects a
 non-generic `fn id(f: fn(int) -> int) -> fn(int) -> int { f }`. This is a
 small taste of C++'s errors-at-instantiation, kept to one rule. It goes away
-when the type says where a value may live: lifetimes, step 5, where a `T`
-that holds a borrow is written `T: 'a` and checked like any other bound.
+when the type says where a value may live. Step 5 does that for references,
+with lifetimes, where a `T` that holds one is written `T: 'a` and checked
+like any other bound; function values get lifetimes with traits, in step 6.
 
 ## Leaving room for effects
 
@@ -386,8 +387,8 @@ reads the same table.
 4. Rewrite `nest` from *Polymorphic recursion* so that it's allowed, by
    counting the levels instead of wrapping the value in them. What did that
    cost?
-5. With `struct Box<T> { x: T }`, draw the parameter graph for
-   `fn f<A, B>(a: A, b: B) { f(b, Box { x: a }) }`. Does it have a cycle
+5. With `struct Wrap<T> { x: T }`, draw the parameter graph for
+   `fn f<A, B>(a: A, b: B) { f(b, Wrap { x: a }) }`. Does it have a cycle
    that grows? Check with the checker.
 6. Boxing instead: suppose every value of a type parameter were a pointer.
    What would the interpreter need to change? What would a compiler?

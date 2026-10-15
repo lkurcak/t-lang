@@ -41,6 +41,9 @@ pub struct Error {
     pub message: String,
     /// Changes that would fix it, if there are any obvious ones.
     pub fixes: Vec<Fix>,
+    /// Other places that explain it, each with what happens there: "`x`
+    /// is borrowed here".
+    pub notes: Vec<(Span, String)>,
 }
 
 impl Error {
@@ -62,11 +65,17 @@ impl Error {
             span,
             message: message.into(),
             fixes: Vec::new(),
+            notes: Vec::new(),
         }
     }
 
     pub fn with_fix(mut self, fix: Fix) -> Error {
         self.fixes.push(fix);
+        self
+    }
+
+    pub fn with_note(mut self, span: Span, note: impl Into<String>) -> Error {
+        self.notes.push((span, note.into()));
         self
     }
 
@@ -77,7 +86,7 @@ impl Error {
             Phase::Type => "type error",
             Phase::Runtime => "runtime error",
         };
-        render(
+        let mut out = render(
             label,
             self.span,
             &self.message,
@@ -85,7 +94,12 @@ impl Error {
             None,
             path,
             src,
-        )
+        );
+        for (span, note) in &self.notes {
+            out.push('\n');
+            out.push_str(&render("note", *span, note, &[], None, path, src));
+        }
+        out
     }
 }
 
@@ -149,6 +163,8 @@ pub enum Lint {
     NonSnakeCase,
     /// A name in `#[allow(..)]` that isn't a lint's.
     UnknownLints,
+    /// A variable declared `mut` that's never changed.
+    UnusedMut,
 }
 
 impl Lint {
@@ -163,10 +179,11 @@ impl Lint {
             Lint::NonCamelCaseTypes => "non_camel_case_types",
             Lint::NonSnakeCase => "non_snake_case",
             Lint::UnknownLints => "unknown_lints",
+            Lint::UnusedMut => "unused_mut",
         }
     }
 
-    pub const ALL: [Lint; 9] = [
+    pub const ALL: [Lint; 10] = [
         Lint::UnreachablePatterns,
         Lint::OverlappingRanges,
         Lint::MergeableRanges,
@@ -176,6 +193,7 @@ impl Lint {
         Lint::NonCamelCaseTypes,
         Lint::NonSnakeCase,
         Lint::UnknownLints,
+        Lint::UnusedMut,
     ];
 
     pub fn from_name(name: &str) -> Option<Lint> {

@@ -183,6 +183,7 @@ impl Checker {
     /// and how to pass it, so like Rust, T asks for an annotation.
     pub(super) fn solve_all(&mut self, vars: usize) -> Result<(), Error> {
         self.check_escapes()?;
+        self.check_captures()?;
         for (t, span, op) in std::mem::take(&mut self.comparisons) {
             let t = self.solved(&t);
             // If it's still not fully known, that's reported below.

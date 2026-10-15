@@ -4,38 +4,43 @@
 //!
 //! ```text
 //! program  = (head (fn_decl | struct | enum))*
-//! head     = ("#" "[" "allow" "(" (IDENT ("," IDENT)* ","?)? ")" "]")*
+//! head     = attr*
+//! attr     = "#" "[" ("allow" | "derive") "(" (IDENT ("," IDENT)* ","?)? ")" "]"
 //! fn_decl  = "fn" IDENT generics? "(" (param ("," param)* ","?)? ")" ("->" type)? block
-//! generics = "<" (IDENT ("," IDENT)* ","?)? ">"
-//! param    = IDENT ":" type
+//! generics = "<" (gparam ("," gparam)* ","?)? ">"     -- lifetimes before types
+//! gparam   = LIFETIME (":" LIFETIME ("+" LIFETIME)*)? | IDENT (":" LIFETIME ("+" LIFETIME)*)?
+//! param    = "mut"? IDENT ":" type
 //! struct   = "struct" IDENT generics? "{" (head param ("," head param)* ","?)? "}"
 //! enum     = "enum" IDENT generics? "{" (head variant ("," head variant)* ","?)? "}"
 //! variant  = IDENT ("(" type ("," type)* ","? ")")?
-//! type     = IDENT ("<" type ("," type)* ","? ">")? | "(" ")"
+//! type     = IDENT ("<" targ ("," targ)* ","? ">")? | "(" ")"
 //!          | "fn" "(" (type ("," type)*)? ")" ("->" type)?
+//!          | "&" LIFETIME? "mut"? type
+//! targ     = LIFETIME | type
 //! block    = "{" (let | head (fn_decl | struct | enum) | expr ";" | block_like ";"?)* expr? "}"
-//! block_like = if | match | block
+//! block_like = if | match | while | block
 //! let      = "let" pattern (":" type)? "=" expr ";"
-//! expr     = or
+//! expr     = or (("=" | "+=" | "-=" | "*=" | "/=" | "%=") expr)?  -- assignment
 //! or       = and ("||" and)*
 //! and      = cmp ("&&" cmp)*
 //! cmp      = add (("==" | "!=" | "<" | "<=" | ">" | ">=") add)?   -- no chaining
 //! add      = mul (("+" | "-") mul)*
 //! mul      = unary (("*" | "/" | "%") unary)*
-//! unary    = ("-" | "!") unary | call
+//! unary    = ("-" | "!" | "*" | "&" "mut"?) unary | call
 //! postfix  = primary ("(" args ")" | "." IDENT)*
 //! primary  = INT | "true" | "false" | IDENT targs? | "(" ")" | "(" expr ")" | block
 //!          | if | match | IDENT targs? "{" field_init,* "}"
 //!          | IDENT targs? "::" IDENT ("(" args ")")? | lambda
 //! targs    = "::" "<" type ("," type)* ","? ">"            -- the "turbofish"
 //! lambda   = ("||" | "|" (lparam ("," lparam)* ","?)? "|") ("->" type block | expr)
-//! lparam   = IDENT (":" type)?
+//! lparam   = "mut"? IDENT (":" type)?
 //! if       = "if" expr block ("else" (block | if))?
+//! while    = "while" expr block
 //! match    = "match" expr "{" (pattern "=>" expr ","?)* "}"  -- `,` optional after a block/if/match
 //! field_init = IDENT (":" expr)?                             -- `x` is short for `x: x`
 //!
 //! pattern  = pat_atom ("|" pat_atom)*
-//! pat_atom = "_" | IDENT | int | range | "true" | "false" | "(" ")"
+//! pat_atom = "_" | "mut"? IDENT | int | range | "true" | "false" | "(" ")"
 //!          | IDENT targs? "::" IDENT ("(" pattern,* ")")?
 //!          | IDENT targs? "{" (IDENT (":" pattern)?),* ".."? "}"
 //! range    = int ".." int? | int "..=" int | ".." int | "..=" int
@@ -50,6 +55,9 @@
 //!
 //! A `fn`, `struct` or `enum` in a block is local to it (see `ast::Stmt`).
 //!
+//! `&&` is one token, for "and", so where a `&` starts a type or an
+//! expression, `&&` is two of them: `&&x` is `&(&x)`.
+//!
 //! A `///` doc comment documents the `fn`, `struct`, `enum`, field or
 //! variant after it. The parser takes doc comments out of the tokens first,
 //! and attaches each run of them to what starts right after it (`doc`). The
@@ -62,7 +70,7 @@
 
 use crate::ast::*;
 use crate::error::{Edit, Error, Fix, Span};
-use crate::lexer::{Tok, Token};
+use crate::lexer::{OpEq, Tok, Token};
 use std::sync::Arc;
 
 pub fn parse(tokens: Vec<Token>) -> Result<Program, Error> {
@@ -86,7 +94,7 @@ pub fn parse(tokens: Vec<Token>) -> Result<Program, Error> {
         match p.peek() {
             Tok::Struct => types.push(TypeDecl::Struct(p.struct_decl(head)?)),
             Tok::Enum => types.push(TypeDecl::Enum(p.enum_decl(head)?)),
-            _ => fns.push(p.fn_decl(head)?),
+            _ => fns.push(p.fn_decl(head.no_derives()?)?),
         }
     }
     let stray_docs = p.stray_docs();
@@ -154,28 +162,41 @@ impl Parser {
     fn head(&mut self) -> Result<Head, Error> {
         let mut doc = self.doc();
         let mut allows = Vec::new();
+        let mut derives = Vec::new();
         while *self.peek() == Tok::Hash {
             let start = self.bump().span;
             self.expect(Tok::LBracket)?;
-            match self.peek() {
-                Tok::Ident(name) if name == "allow" => {
-                    self.bump();
-                }
+            let derive = match self.peek() {
+                Tok::Ident(name) if name == "allow" || name == "derive" => name == "derive",
                 Tok::Ident(name) => {
-                    let message = format!("unknown attribute `{name}`; the only one is `allow`");
+                    let message = format!(
+                        "unknown attribute `{name}`; the only ones are `allow` and `derive`"
+                    );
                     return Err(Error::syntax(self.span(), message));
                 }
-                _ => return Err(self.unexpected("`allow`")),
-            }
+                _ => return Err(self.unexpected("`allow` or `derive`")),
+            };
+            self.bump();
             self.expect(Tok::LParen)?;
-            let (lints, _) = self.comma_list(Tok::RParen, Self::ident)?;
+            let (names, _) = self.comma_list(Tok::RParen, Self::ident)?;
             let end = self.expect(Tok::RBracket)?;
-            allows.push(Allow {
-                span: start.to(end),
-                lints,
-            });
+            let span = start.to(end);
+            if derive {
+                if let Some(n) = names.iter().find(|n| n.name != "Copy") {
+                    return Err(Error::syntax(
+                        n.span,
+                        format!(
+                            "can't derive `{}`; `Copy` is the only thing that can be",
+                            n.name
+                        ),
+                    ));
+                }
+                derives.push(Derive { span, names });
+            } else {
+                allows.push(Allow { span, lints: names });
+            }
         }
-        if !allows.is_empty()
+        if !(allows.is_empty() && derives.is_empty())
             && let Some(after) = self.doc()
         {
             match &mut doc {
@@ -183,7 +204,11 @@ impl Parser {
                 None => doc = Some(after),
             }
         }
-        Ok(Head { doc, allows })
+        Ok(Head {
+            doc,
+            allows,
+            derives,
+        })
     }
 
     /// The doc comments nothing took, each run of lines with no other token
@@ -272,7 +297,7 @@ impl Parser {
         }
         let start = self.bump().span;
         let name = self.ident()?;
-        let type_params = self.generics()?;
+        let generics = self.generics()?;
         let open = self.expect(Tok::LParen)?;
         let (params, close) = self.comma_list(Tok::RParen, Self::param)?;
         let ret = if self.eat(&Tok::Arrow) {
@@ -289,7 +314,7 @@ impl Parser {
             allows: head.allows,
             span: start.to(body.span),
             name,
-            type_params,
+            generics,
             params,
             parens: open.to(close),
             ret,
@@ -297,22 +322,67 @@ impl Parser {
         })
     }
 
-    /// `<T, U>` after the name of a function, struct or enum, if it's there.
-    fn generics(&mut self) -> Result<Vec<Ident>, Error> {
-        if self.eat(&Tok::Lt) {
-            Ok(self.comma_list(Tok::Gt, Self::ident)?.0)
-        } else {
-            Ok(Vec::new())
+    /// `<'a, T: 'a>` after the name of a function, struct or enum, if it's
+    /// there.
+    fn generics(&mut self) -> Result<Generics, Error> {
+        let mut g = Generics::default();
+        if *self.peek() != Tok::Lt {
+            return Ok(g);
+        }
+        let start = self.bump().span;
+        let (_, end) = self.comma_list(Tok::Gt, |p| {
+            let param = match p.peek() {
+                Tok::Lifetime(_) if !g.types.is_empty() => {
+                    return Err(Error::syntax(
+                        p.span(),
+                        "lifetime parameters must come before type parameters",
+                    ));
+                }
+                Tok::Lifetime(_) => {
+                    let l = p.lifetime()?;
+                    g.lifetimes.push(l.clone());
+                    l
+                }
+                _ => {
+                    let t = p.ident()?;
+                    g.types.push(t.clone());
+                    t
+                }
+            };
+            if p.eat(&Tok::Colon) {
+                let mut bounds = vec![p.lifetime()?];
+                while p.eat(&Tok::Plus) {
+                    bounds.push(p.lifetime()?);
+                }
+                g.bounds.push((param, bounds));
+            }
+            Ok(())
+        })?;
+        g.span = Some(start.to(end));
+        Ok(g)
+    }
+
+    /// `'a`
+    fn lifetime(&mut self) -> Result<Ident, Error> {
+        match self.peek().clone() {
+            Tok::Lifetime(name) => Ok(Ident {
+                name,
+                span: self.bump().span,
+            }),
+            _ => Err(self.unexpected("a lifetime, like `'a`")),
         }
     }
 
+    /// A function parameter: `x: int` or `mut x: int`.
     fn param(&mut self) -> Result<Param, Error> {
+        let mutable = (*self.peek() == Tok::Mut).then(|| self.bump().span);
         let name = self.ident()?;
         self.expect(Tok::Colon)?;
         let ty = self.ty()?;
         Ok(Param {
             doc: None,
             allows: Vec::new(),
+            mutable,
             name,
             ty,
         })
@@ -321,10 +391,17 @@ impl Parser {
     fn struct_decl(&mut self, head: Head) -> Result<StructDecl, Error> {
         let start = self.expect(Tok::Struct)?;
         let name = self.ident()?;
-        let type_params = self.generics()?;
+        let generics = self.generics()?;
         self.expect(Tok::LBrace)?;
         let (fields, end) = self.comma_list(Tok::RBrace, |p| {
-            let Head { doc, allows } = p.head()?;
+            let Head { doc, allows, .. } = p.head()?.no_derives()?;
+            if *p.peek() == Tok::Mut {
+                return Err(Error::syntax(
+                    p.span(),
+                    "a field can't be `mut`: whether it can change depends on where its \
+                     struct is",
+                ));
+            }
             Ok(Param {
                 doc,
                 allows,
@@ -336,7 +413,8 @@ impl Parser {
             allows: head.allows,
             span: start.to(end),
             name,
-            type_params,
+            generics,
+            derives: head.derives,
             fields,
         })
     }
@@ -344,10 +422,10 @@ impl Parser {
     fn enum_decl(&mut self, head: Head) -> Result<EnumDecl, Error> {
         let start = self.expect(Tok::Enum)?;
         let name = self.ident()?;
-        let type_params = self.generics()?;
+        let generics = self.generics()?;
         self.expect(Tok::LBrace)?;
         let (variants, end) = self.comma_list(Tok::RBrace, |p| {
-            let Head { doc, allows } = p.head()?;
+            let Head { doc, allows, .. } = p.head()?.no_derives()?;
             let name = p.ident()?;
             let (fields, span) = if p.eat(&Tok::LParen) {
                 let (fields, close) = p.comma_list(Tok::RParen, Self::ty)?;
@@ -368,7 +446,8 @@ impl Parser {
             allows: head.allows,
             span: start.to(end),
             name,
-            type_params,
+            generics,
+            derives: head.derives,
             variants,
         })
     }
@@ -381,7 +460,7 @@ impl Parser {
                 // There's no `<` operator in a type, so this can only start
                 // type arguments.
                 let (args, span) = if self.eat(&Tok::Lt) {
-                    let (args, end) = self.comma_list(Tok::Gt, Self::ty)?;
+                    let (args, end) = self.comma_list(Tok::Gt, Self::type_arg)?;
                     (args, start.to(end))
                 } else {
                     (Vec::new(), start)
@@ -417,7 +496,47 @@ impl Parser {
                     span,
                 })
             }
+            Tok::Amp => {
+                self.bump();
+                self.ref_type(start)
+            }
+            // `&&T` is `&(&T)`.
+            Tok::AndAnd => {
+                self.bump();
+                let inner = self.ref_type(Span::new(start.start + 1, start.end))?;
+                let span = start.to(inner.span);
+                Ok(TypeExpr {
+                    kind: TypeExprKind::Ref(None, false, Box::new(inner)),
+                    span,
+                })
+            }
             _ => Err(self.unexpected("a type")),
+        }
+    }
+
+    /// `&'a mut T`, after the `&`, which is at `start`.
+    fn ref_type(&mut self, start: Span) -> Result<TypeExpr, Error> {
+        let lifetime = match self.peek() {
+            Tok::Lifetime(_) => Some(self.lifetime()?),
+            _ => None,
+        };
+        let mutable = self.eat(&Tok::Mut);
+        let inner = self.ty()?;
+        let span = start.to(inner.span);
+        Ok(TypeExpr {
+            kind: TypeExprKind::Ref(lifetime, mutable, Box::new(inner)),
+            span,
+        })
+    }
+
+    /// A type argument: a type, or a lifetime.
+    fn type_arg(&mut self) -> Result<TypeExpr, Error> {
+        match self.peek().clone() {
+            Tok::Lifetime(name) => Ok(TypeExpr {
+                kind: TypeExprKind::Lifetime(name),
+                span: self.bump().span,
+            }),
+            _ => self.ty(),
         }
     }
 
@@ -439,22 +558,21 @@ impl Parser {
             if matches!(self.peek(), Tok::Fn | Tok::Struct | Tok::Enum | Tok::Hash) {
                 let head = self.head()?;
                 let stmt = match self.peek() {
-                    Tok::Fn => Stmt::Fn(Box::new(self.fn_decl(head)?)),
+                    Tok::Fn => Stmt::Fn(Box::new(self.fn_decl(head.no_derives()?)?)),
                     Tok::Struct => Stmt::Type(Box::new(TypeDecl::Struct(self.struct_decl(head)?))),
                     Tok::Enum => Stmt::Type(Box::new(TypeDecl::Enum(self.enum_decl(head)?))),
                     _ => {
-                        return Err(
-                            self.unexpected("`fn`, `struct` or `enum` after `#[allow(..)]`")
-                        );
+                        return Err(self.unexpected("`fn`, `struct` or `enum` after an attribute"));
                     }
                 };
                 stmts.push(stmt);
                 continue;
             }
-            let block_like = matches!(self.peek(), Tok::If | Tok::Match | Tok::LBrace);
+            let block_like = matches!(self.peek(), Tok::If | Tok::Match | Tok::While | Tok::LBrace);
             let e = match self.peek() {
                 Tok::If => self.if_expr()?,
                 Tok::Match => self.match_expr()?,
+                Tok::While => self.while_expr()?,
                 Tok::LBrace => self.block()?,
                 _ => self.expr()?,
             };
@@ -494,8 +612,28 @@ impl Parser {
         })
     }
 
+    /// An expression, which may be an assignment: `x = 1`, `p.x += 2`.
+    /// Assignment binds less tightly than anything, and to the right.
     fn expr(&mut self) -> Result<Expr, Error> {
-        self.binary(0)
+        let lhs = self.binary(0)?;
+        let op = match self.peek() {
+            Tok::Eq => None,
+            Tok::OpEq(op) => Some(match op {
+                OpEq::Add => BinOp::Add,
+                OpEq::Sub => BinOp::Sub,
+                OpEq::Mul => BinOp::Mul,
+                OpEq::Div => BinOp::Div,
+                OpEq::Rem => BinOp::Rem,
+            }),
+            _ => return Ok(lhs),
+        };
+        self.bump();
+        let rhs = self.expr()?;
+        let span = lhs.span.to(rhs.span);
+        Ok(Expr {
+            kind: ExprKind::Assign(op, Box::new(lhs), Box::new(rhs)),
+            span,
+        })
     }
 
     /// Precedence climbing: parses an expression whose operators all bind at
@@ -528,9 +666,38 @@ impl Parser {
         let op = match self.peek() {
             Tok::Minus => UnOp::Neg,
             Tok::Bang => UnOp::Not,
+            Tok::Star => UnOp::Deref,
+            Tok::Amp => UnOp::Ref,
+            // `&&x` is `&(&x)`.
+            Tok::AndAnd => {
+                let start = self.bump().span;
+                let inner = self.borrow(Span::new(start.start + 1, start.end))?;
+                let span = start.to(inner.span);
+                return Ok(Expr {
+                    kind: ExprKind::Unary(UnOp::Ref, Box::new(inner)),
+                    span,
+                });
+            }
             _ => return self.postfix(),
         };
         let start = self.bump().span;
+        if op == UnOp::Ref {
+            return self.borrow(start);
+        }
+        let operand = self.unary()?;
+        let span = start.to(operand.span);
+        Ok(Expr {
+            kind: ExprKind::Unary(op, Box::new(operand)),
+            span,
+        })
+    }
+
+    /// `&x` or `&mut x`, after the `&`, which is at `start`.
+    fn borrow(&mut self, start: Span) -> Result<Expr, Error> {
+        let op = match self.eat(&Tok::Mut) {
+            true => UnOp::RefMut,
+            false => UnOp::Ref,
+        };
         let operand = self.unary()?;
         let span = start.to(operand.span);
         Ok(Expr {
@@ -600,6 +767,7 @@ impl Parser {
             Tok::LBrace => return self.block(),
             Tok::If => return self.if_expr(),
             Tok::Match => return self.match_expr(),
+            Tok::While => return self.while_expr(),
             Tok::Pipe | Tok::OrOr => return self.lambda(),
             _ => return Err(self.unexpected("an expression")),
         };
@@ -627,6 +795,17 @@ impl Parser {
         })
     }
 
+    fn while_expr(&mut self) -> Result<Expr, Error> {
+        let start = self.expect(Tok::While)?;
+        let cond = self.structs(false, Self::expr)?;
+        let body = self.block()?;
+        let span = start.to(body.span);
+        Ok(Expr {
+            kind: ExprKind::While(Box::new(cond), Box::new(body)),
+            span,
+        })
+    }
+
     fn match_expr(&mut self) -> Result<Expr, Error> {
         let start = self.expect(Tok::Match)?;
         let scrutinee = self.structs(false, Self::expr)?;
@@ -638,7 +817,7 @@ impl Parser {
             let body = self.structs(true, Self::expr)?;
             let block_like = matches!(
                 body.kind,
-                ExprKind::Block(..) | ExprKind::If(..) | ExprKind::Match(..)
+                ExprKind::Block(..) | ExprKind::If(..) | ExprKind::Match(..) | ExprKind::While(..)
             );
             arms.push(Arm { pat, body });
             if !self.eat(&Tok::Comma) && !block_like && *self.peek() != Tok::RBrace {
@@ -658,7 +837,7 @@ impl Parser {
         if *self.peek() == Tok::ColonColon && *self.peek2() == Tok::Lt {
             self.bump();
             self.bump();
-            let (args, end) = self.comma_list(Tok::Gt, Self::ty)?;
+            let (args, end) = self.comma_list(Tok::Gt, Self::type_arg)?;
             Ok((args, Some(end)))
         } else {
             Ok((Vec::new(), None))
@@ -730,13 +909,14 @@ impl Parser {
         } else {
             self.expect(Tok::Pipe)?;
             self.comma_list(Tok::Pipe, |p| {
+                let mutable = (*p.peek() == Tok::Mut).then(|| p.bump().span);
                 let name = p.ident()?;
                 let ty = if p.eat(&Tok::Colon) {
                     Some(p.ty()?)
                 } else {
                     None
                 };
-                Ok(LambdaParam { name, ty })
+                Ok(LambdaParam { mutable, name, ty })
             })?
             .0
         };
@@ -822,6 +1002,20 @@ impl Parser {
             }
             Tok::True => PatternKind::Bool(true),
             Tok::False => PatternKind::Bool(false),
+            Tok::Mut => {
+                self.bump();
+                let name = self.ident()?;
+                if name.name == "_" {
+                    return Err(Error::syntax(
+                        name.span,
+                        "`_` binds nothing, so it can't be `mut`",
+                    ));
+                }
+                return Ok(Pattern {
+                    kind: PatternKind::Bind(name.name, true),
+                    span: start.to(name.span),
+                });
+            }
             Tok::LParen => {
                 self.bump();
                 let end = self.expect(Tok::RParen)?;
@@ -855,7 +1049,7 @@ impl Parser {
                     return self.struct_pattern(ty, Vec::new());
                 }
                 _ if name == "_" => PatternKind::Wild,
-                _ => PatternKind::Bind(name),
+                _ => PatternKind::Bind(name, false),
             },
             _ => return Err(self.unexpected("a pattern")),
         };
@@ -887,12 +1081,19 @@ impl Parser {
                 rest = true;
                 break;
             }
+            if *self.peek() == Tok::Mut {
+                let message = match self.peek2() {
+                    Tok::Ident(x) => format!("write `{x}: mut {x}` to bind field `{x}` mutably"),
+                    _ => "expected a field name, found `mut`".to_string(),
+                };
+                return Err(Error::syntax(self.span(), message));
+            }
             let name = self.ident()?;
             let pat = if self.eat(&Tok::Colon) {
                 self.pattern()?
             } else {
                 Pattern {
-                    kind: PatternKind::Bind(name.name.clone()),
+                    kind: PatternKind::Bind(name.name.clone(), false),
                     span: name.span,
                 }
             };
@@ -934,6 +1135,21 @@ fn binop(tok: &Tok) -> Option<(BinOp, u8)> {
 struct Head {
     doc: Option<DocComment>,
     allows: Vec<Allow>,
+    derives: Vec<Derive>,
+}
+
+impl Head {
+    /// This head, for something that isn't a struct or enum, so can't
+    /// have a `#[derive(..)]`.
+    fn no_derives(self) -> Result<Head, Error> {
+        match self.derives.first() {
+            Some(d) => Err(Error::syntax(
+                d.span,
+                "`#[derive(..)]` can only be on a struct or enum",
+            )),
+            None => Ok(self),
+        }
+    }
 }
 
 /// One doc comment from a run of `///` lines.

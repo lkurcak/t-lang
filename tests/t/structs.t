@@ -1,5 +1,6 @@
 // Structs: product types. A value has every field.
 
+#[derive(Copy)]
 struct Point { x: int, y: int }
 struct Rect { min: Point, max: Point }
 

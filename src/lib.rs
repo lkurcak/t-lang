@@ -1,8 +1,10 @@
-//! The T compiler. Pipeline: source → `lexer` → `parser` → `check` → `lift`
-//! → `mono` → `interp`.
+//! The T compiler. Pipeline: source → `lexer` → `parser` → `check` (and
+//! `borrowck`, once each function's types are known) → `lift` → `mono` →
+//! `interp`.
 
 mod allow;
 pub mod ast;
+mod borrowck;
 pub mod check;
 mod doc;
 pub mod error;

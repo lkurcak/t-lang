@@ -7,6 +7,10 @@
 //! level, under a name of its own. After this, nothing needs to know there
 //! were nested functions or local types, or that two of them can share a
 //! name: not monomorphisation, not the interpreter, and not a backend.
+//!
+//! It also writes out the references the checker made into others
+//! (*coercions*, see `Checker::coerce`): `r` used as a `&T` when it's a
+//! `&Box<T>` becomes `&**r`, so what comes after needn't know about them.
 
 use crate::ast::*;
 use crate::check::Info;
@@ -49,7 +53,7 @@ impl<'p> Cx<'p> {
             allows: f.allows.clone(),
             span: f.span,
             name: self.ident(&f.name),
-            type_params: f.type_params.clone(),
+            generics: f.generics.clone(),
             params: f.params.iter().map(|p| self.param(p)).collect(),
             parens: f.parens,
             ret: self.ty(&f.ret),
@@ -67,7 +71,8 @@ impl<'p> Cx<'p> {
                 allows: s.allows.clone(),
                 span: s.span,
                 name: self.ident(&s.name),
-                type_params: s.type_params.clone(),
+                generics: s.generics.clone(),
+                derives: s.derives.clone(),
                 fields: s.fields.iter().map(|f| self.param(f)).collect(),
             }),
             TypeDecl::Enum(e) => TypeDecl::Enum(EnumDecl {
@@ -75,7 +80,8 @@ impl<'p> Cx<'p> {
                 allows: e.allows.clone(),
                 span: e.span,
                 name: self.ident(&e.name),
-                type_params: e.type_params.clone(),
+                generics: e.generics.clone(),
+                derives: e.derives.clone(),
                 variants: e
                     .variants
                     .iter()
@@ -111,6 +117,7 @@ impl<'p> Cx<'p> {
         Param {
             doc: p.doc.clone(),
             allows: p.allows.clone(),
+            mutable: p.mutable,
             name: p.name.clone(),
             ty: self.ty(&p.ty),
         }
@@ -121,9 +128,12 @@ impl<'p> Cx<'p> {
             TypeExprKind::Named(name, args) => {
                 TypeExprKind::Named(self.renamed(name, t.span), self.types(args))
             }
-            TypeExprKind::Unit => TypeExprKind::Unit,
+            TypeExprKind::Unit | TypeExprKind::Lifetime(_) => t.kind.clone(),
             TypeExprKind::Fn(params, ret) => {
                 TypeExprKind::Fn(self.types(params), Box::new(self.ty(ret)))
+            }
+            TypeExprKind::Ref(lifetime, mutable, inner) => {
+                TypeExprKind::Ref(lifetime.clone(), *mutable, Box::new(self.ty(inner)))
             }
         };
         TypeExpr { kind, span: t.span }
@@ -213,6 +223,7 @@ impl<'p> Cx<'p> {
                     .params
                     .iter()
                     .map(|p| LambdaParam {
+                        mutable: p.mutable,
                         name: p.name.clone(),
                         ty: p.ty.as_ref().map(|t| self.ty(t)),
                     })
@@ -221,8 +232,33 @@ impl<'p> Cx<'p> {
                 let body = self.expr(&l.body, nested);
                 ExprKind::Lambda(Arc::new(Lambda::new(params, ret, body)))
             }
+            ExprKind::Assign(op, place, value) => ExprKind::Assign(
+                *op,
+                Box::new(self.expr(place, nested)),
+                Box::new(self.expr(value, nested)),
+            ),
+            ExprKind::While(c, body) => ExprKind::While(
+                Box::new(self.expr(c, nested)),
+                Box::new(self.expr(body, nested)),
+            ),
         };
-        Expr { kind, span: e.span }
+        let e = Expr { kind, span: e.span };
+        match self.info.coercions.get(&e.span) {
+            None => e,
+            Some(&(derefs, mutable)) => {
+                let span = e.span;
+                let mut inner = e;
+                for _ in 0..=derefs {
+                    let kind = ExprKind::Unary(UnOp::Deref, Box::new(inner));
+                    inner = Expr { kind, span };
+                }
+                let op = if mutable { UnOp::RefMut } else { UnOp::Ref };
+                Expr {
+                    kind: ExprKind::Unary(op, Box::new(inner)),
+                    span,
+                }
+            }
+        }
     }
 
     fn pattern(&self, p: &Pattern) -> Pattern {

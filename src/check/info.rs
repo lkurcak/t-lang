@@ -5,7 +5,7 @@
 //! rename, see `lsp.rs` and `rename.rs`), and monomorphisation reads the
 //! type arguments (see `mono.rs`).
 
-use super::Checker;
+use super::{Checker, Lifetimes};
 use crate::ast::*;
 use crate::error::Span;
 use crate::types::{Type, comma_list};
@@ -30,6 +30,11 @@ pub struct Info {
     /// Where each struct and enum is declared, by symbol: the span of its
     /// name.
     pub types: HashMap<String, Span>,
+    /// The references the checker made into others, by the span of the
+    /// expression: `r` used as a `&T` when it's a `&Box<T>`, a `&&T` or a
+    /// `&mut T`, with how many more `*`s it takes to get to the `T`, and
+    /// whether the result is `&mut`. `lift` writes them out: `&**r`.
+    pub coercions: HashMap<Span, (usize, bool)>,
 }
 
 impl Info {
@@ -128,16 +133,18 @@ impl Note {
 
     /// What an editor might show right after it, if anything: the type of a
     /// variable whose type was inferred (`: int`), or the type arguments of a
-    /// use of something generic (`::<int>`).
+    /// use of something generic (`::<int>`). Without lifetimes: inferred
+    /// ones are the borrow checker's business, and have no names.
     pub fn hint(&self) -> Option<String> {
         if !self.inferred {
             return None;
         }
         match self.kind {
             NoteKind::Fn(_) | NoteKind::Struct(_) | NoteKind::Enum(_) => {
-                Some(format!("::<{}>", comma_list(&self.args)))
+                let args: Vec<Type> = self.args.iter().map(Type::erased).collect();
+                Some(format!("::<{}>", comma_list(&args)))
             }
-            _ => self.ty.as_ref().map(|t| format!(": {t}")),
+            _ => self.ty.as_ref().map(|t| format!(": {}", t.erased())),
         }
     }
 }
@@ -305,10 +312,15 @@ impl Checker {
         for (i, (d, _)) in prog.all_types().into_iter().enumerate() {
             let params = d.type_params();
             let name = &d.name().name;
-            let generic = Type::Adt(
-                self.types[i].symbol.clone(),
-                params.iter().map(|p| Type::Param(p.name.clone())).collect(),
-            );
+            let symbol = &self.types[i].symbol;
+            let generic = match self.adts.get(symbol) {
+                Some(def) => def.generic(symbol),
+                None => Type::Adt(
+                    symbol.clone(),
+                    Vec::new(),
+                    params.iter().map(|p| Type::Param(p.name.clone())).collect(),
+                ),
+            };
             let kind = match d {
                 TypeDecl::Struct(_) => NoteKind::Struct(name.clone()),
                 TypeDecl::Enum(_) => NoteKind::Enum(name.clone()),
@@ -319,7 +331,7 @@ impl Checker {
             match d {
                 TypeDecl::Struct(s) => {
                     for f in &s.fields {
-                        let ty = self.resolve_with(&f.ty, &names(params));
+                        let ty = self.resolve_with(&f.ty, &names(params), &mut Lifetimes::Any);
                         let kind = NoteKind::Field(f.name.name.clone());
                         self.note(f.name.span, kind, ty.ok(), Some(f.name.span));
                         self.type_expr_notes(&f.ty, params);
@@ -330,7 +342,7 @@ impl Checker {
                         let fields: Result<Vec<Type>, _> = v
                             .fields
                             .iter()
-                            .map(|t| self.resolve_with(t, &names(params)))
+                            .map(|t| self.resolve_with(t, &names(params), &mut Lifetimes::Any))
                             .collect();
                         let ty = fields.ok().map(|fields| match fields.is_empty() {
                             true => generic.clone(),
@@ -346,7 +358,7 @@ impl Checker {
             }
         }
         for (f, _) in prog.all_fns() {
-            let params = &f.type_params;
+            let params = &f.generics.types;
             self.param_notes(params);
             for p in &f.params {
                 self.type_expr_notes(&p.ty, params);
@@ -376,7 +388,7 @@ impl Checker {
                         Some(crate::types::AdtKind::Enum(_)) => NoteKind::Enum(name.clone()),
                         _ => NoteKind::Struct(name.clone()),
                     };
-                    let ty = self.resolve_with(t, &names(params));
+                    let ty = self.resolve_with(t, &names(params), &mut Lifetimes::Any);
                     self.note(span, kind, ty.ok(), def);
                 } else if let Some(p) = params.iter().find(|p| p.name == *name) {
                     let kind = NoteKind::TypeParam(name.clone());
@@ -386,13 +398,14 @@ impl Checker {
                     self.type_expr_notes(a, params);
                 }
             }
-            TypeExprKind::Unit => {}
+            TypeExprKind::Unit | TypeExprKind::Lifetime(_) => {}
             TypeExprKind::Fn(ps, r) => {
                 for p in ps {
                     self.type_expr_notes(p, params);
                 }
                 self.type_expr_notes(r, params);
             }
+            TypeExprKind::Ref(_, _, inner) => self.type_expr_notes(inner, params),
         }
     }
 }
@@ -409,7 +422,7 @@ fn each_annotation(e: &Expr, f: &mut impl FnMut(&TypeExpr)) {
         ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit => {}
         ExprKind::Var(_, targs) => targs.iter().for_each(&mut *f),
         ExprKind::Unary(_, x) | ExprKind::Field(x, _) => each_annotation(x, f),
-        ExprKind::Binary(_, l, r) => {
+        ExprKind::Binary(_, l, r) | ExprKind::Assign(_, l, r) | ExprKind::While(l, r) => {
             each_annotation(l, f);
             each_annotation(r, f);
         }
@@ -482,7 +495,7 @@ fn pattern_annotations(p: &Pattern, f: &mut impl FnMut(&TypeExpr)) {
         }
         PatternKind::Or(alts) => alts.iter().for_each(|p| pattern_annotations(p, f)),
         PatternKind::Wild
-        | PatternKind::Bind(_)
+        | PatternKind::Bind(..)
         | PatternKind::Int(_)
         | PatternKind::Range(..)
         | PatternKind::Bool(_)

@@ -1,5 +1,5 @@
-#[derive(Debug)]
-struct P { x: int }
+#[inline]
+fn helper() {}
 
 fn main() {}
-// error: unknown attribute `derive`; the only one is `allow`
+// error: unknown attribute `inline`; the only ones are `allow` and `derive`

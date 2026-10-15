@@ -21,7 +21,7 @@ pub enum Type {
     /// and `struct B { x: int }` are different types even though they look
     /// the same. The alternative, structural typing, would compare what's
     /// inside instead.
-    Adt(String, Vec<Type>),
+    Adt(String, Vec<Region>, Vec<Type>),
     /// A type parameter, like the `T` in `fn id<T>(x: T) -> T`, inside the
     /// function or type that declares it. There it stands for a type the
     /// caller picks, so nothing is known about it: it's equal only to itself
@@ -32,6 +32,58 @@ pub enum Type {
     /// The number indexes the checker's table of what each one has turned out
     /// to be. Variables only ever exist while a function body is checked.
     Var(u32),
+    /// `&'a T` or `&'a mut T` (the `bool`): a *reference*, borrowing a `T`
+    /// that lives somewhere else, for as long as region `'a` says. See
+    /// docs/05-ownership.md.
+    Ref(Region, bool, Box<Type>),
+    /// `Box<T>`: a `T` on the heap, which the box *owns*: it's freed when
+    /// the box is.
+    Box(Box<Type>),
+}
+
+/// A *region*, or *lifetime*: the stretch of the program during which a
+/// reference may be used. Type checking ignores them; the borrow checker
+/// (`borrowck`) works them out.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Region {
+    /// A lifetime parameter, like `'a` in `fn first<'a>(..)`, with its `'`.
+    /// Elision gives each elided lifetime in a signature a name of its own,
+    /// which no program can write: `'_0`, `'_1`, and so on.
+    Named(String),
+    /// `'static`: the whole run of the program.
+    Static,
+    /// A lifetime nobody wrote, in a function body. The borrow checker
+    /// works out what it must be.
+    Erased,
+    /// One of the borrow checker's region variables.
+    Var(usize),
+}
+
+impl Region {
+    /// Was it made up by elision, rather than written?
+    pub fn is_elided(&self) -> bool {
+        matches!(self, Region::Named(n) if n.starts_with("'_"))
+    }
+}
+
+impl fmt::Display for Region {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Region::Named(n) if self.is_elided() => write!(f, "'{}", &n[2..]),
+            Region::Named(n) => f.write_str(n),
+            Region::Static => f.write_str("'static"),
+            Region::Erased => f.write_str("'_"),
+            Region::Var(v) => write!(f, "'?{v}"),
+        }
+    }
+}
+
+/// `'a: 'b` or `T: 'b`: what's before the `:` *outlives* the region after
+/// it. For a type, that means every region in it does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Bound {
+    Region(Region, Region),
+    Param(String, Region),
 }
 
 /// A function type's parts. A struct rather than fields of `Type::Fn`, so
@@ -42,6 +94,11 @@ pub enum Type {
 pub struct FnType {
     pub params: Vec<Type>,
     pub ret: Box<Type>,
+    /// The lifetimes it's generic over, named `'^0`, `'^1` and so on in it:
+    /// those left out where it's written. `fn(&int) -> int` takes a
+    /// reference of *any* lifetime, as `for<'x> fn(&'x int) -> int` would
+    /// say in Rust: it's *higher-ranked*. Each call picks the lifetimes.
+    pub bound: Vec<String>,
 }
 
 impl Type {
@@ -50,7 +107,23 @@ impl Type {
         Type::Fn(FnType {
             params,
             ret: Box::new(ret),
+            bound: Vec::new(),
         })
+    }
+}
+
+impl FnType {
+    /// Its parameters and result, with its lifetimes `regions`.
+    pub fn instantiate(&self, regions: &[Region]) -> (Vec<Type>, Type) {
+        let mut f = |r: &Region| match r {
+            Region::Named(n) => match self.bound.iter().position(|b| b == n) {
+                Some(i) => regions[i].clone(),
+                None => r.clone(),
+            },
+            r => r.clone(),
+        };
+        let params = self.params.iter().map(|p| p.map_regions(&mut f)).collect();
+        (params, self.ret.map_regions(&mut f))
     }
 }
 
@@ -60,7 +133,26 @@ pub struct AdtDef {
     /// Its type parameters: `["T"]` for `enum Option<T>`. Field types use
     /// them as `Type::Param`.
     pub params: Vec<String>,
+    /// Its lifetime parameters, with their `'`. Field types use them as
+    /// `Region::Named`.
+    pub lifetimes: Vec<String>,
+    /// The bounds it declares, like `T: 'a`.
+    pub bounds: Vec<Bound>,
+    /// Is it `#[derive(Copy)]`?
+    pub copy: bool,
     pub kind: AdtKind,
+}
+
+impl AdtDef {
+    /// The type `symbol` names with its own parameters as arguments, as
+    /// its fields see it: `Option<T>`, `Holder<'a, T>`.
+    pub fn generic(&self, symbol: &str) -> Type {
+        Type::Adt(
+            symbol.to_string(),
+            self.lifetimes.iter().cloned().map(Region::Named).collect(),
+            self.params.iter().cloned().map(Type::Param).collect(),
+        )
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -80,10 +172,11 @@ pub type Adts = HashMap<String, AdtDef>;
 // `AdtDef` holds mention its type parameters, and these put the type's
 // arguments in their place: the field of `Option<int>::Some` is an `int`.
 
-/// What `name<args>` is made of, with `args` substituted for the parameters.
-fn instantiate(adts: &Adts, name: &str, args: &[Type]) -> AdtKind {
+/// What `name<regions, args>` is made of, with `regions` and `args`
+/// substituted for the parameters.
+fn instantiate(adts: &Adts, name: &str, regions: &[Region], args: &[Type]) -> AdtKind {
     let def = &adts[name];
-    let s = Subst::new(&def.params, args);
+    let s = Subst::new(&def.params, args).with_regions(&def.lifetimes, regions);
     match &def.kind {
         AdtKind::Struct(fields) => AdtKind::Struct(
             fields
@@ -103,7 +196,7 @@ fn instantiate(adts: &Adts, name: &str, args: &[Type]) -> AdtKind {
 /// The fields of `ty`, if it's a struct.
 pub fn struct_fields(adts: &Adts, ty: &Type) -> Option<Vec<(String, Type)>> {
     match ty {
-        Type::Adt(name, args) => match instantiate(adts, name, args) {
+        Type::Adt(name, regions, args) => match instantiate(adts, name, regions, args) {
             AdtKind::Struct(fields) => Some(fields),
             AdtKind::Enum(_) => None,
         },
@@ -114,7 +207,7 @@ pub fn struct_fields(adts: &Adts, ty: &Type) -> Option<Vec<(String, Type)>> {
 /// The fields of variant `i` of `ty`, which must be an enum.
 pub fn variant_fields(adts: &Adts, ty: &Type, i: usize) -> Vec<Type> {
     match ty {
-        Type::Adt(name, args) => match instantiate(adts, name, args) {
+        Type::Adt(name, regions, args) => match instantiate(adts, name, regions, args) {
             AdtKind::Enum(mut variants) => variants.swap_remove(i).1,
             AdtKind::Struct(_) => unreachable!("variant of struct `{name}`"),
         },
@@ -126,7 +219,7 @@ pub fn variant_fields(adts: &Adts, ty: &Type, i: usize) -> Vec<Type> {
 /// struct or enum.
 pub fn all_fields(adts: &Adts, ty: &Type) -> Vec<Type> {
     match ty {
-        Type::Adt(name, args) => match instantiate(adts, name, args) {
+        Type::Adt(name, regions, args) => match instantiate(adts, name, regions, args) {
             AdtKind::Struct(fields) => fields.into_iter().map(|(_, t)| t).collect(),
             AdtKind::Enum(variants) => variants.into_iter().flat_map(|(_, ts)| ts).collect(),
         },
@@ -134,23 +227,54 @@ pub fn all_fields(adts: &Adts, ty: &Type) -> Vec<Type> {
     }
 }
 
-/// A *substitution*: which type each type parameter stands for. Applying
-/// one to `fn(T) -> Option<T>` with `T := int` gives `fn(int) -> Option<int>`.
+/// A *substitution*: which type each type parameter stands for, and which
+/// region each lifetime parameter does. Applying one to `fn(T) -> Option<T>`
+/// with `T := int` gives `fn(int) -> Option<int>`.
 #[derive(Debug, Clone, Default)]
-pub struct Subst(HashMap<String, Type>);
+pub struct Subst {
+    types: HashMap<String, Type>,
+    regions: HashMap<String, Region>,
+}
 
 impl Subst {
     /// Parameter `params[i]` is `args[i]`.
     pub fn new(params: &[String], args: &[Type]) -> Subst {
         assert_eq!(params.len(), args.len(), "wrong number of type arguments");
-        Subst(params.iter().cloned().zip(args.iter().cloned()).collect())
+        Subst {
+            types: params.iter().cloned().zip(args.iter().cloned()).collect(),
+            regions: HashMap::new(),
+        }
+    }
+
+    /// This, and lifetime parameter `lifetimes[i]` is `regions[i]`. With no
+    /// `regions`, each is `Region::Erased`: not known yet.
+    pub fn with_regions(mut self, lifetimes: &[String], regions: &[Region]) -> Subst {
+        for (i, l) in lifetimes.iter().enumerate() {
+            let r = regions.get(i).cloned().unwrap_or(Region::Erased);
+            self.regions.insert(l.clone(), r);
+        }
+        self
     }
 
     /// `t`, with every parameter this substitution knows replaced.
     pub fn apply(&self, t: &Type) -> Type {
         match t {
-            Type::Param(p) => self.0.get(p).cloned().unwrap_or_else(|| t.clone()),
+            Type::Param(p) => self.types.get(p).cloned().unwrap_or_else(|| t.clone()),
+            Type::Ref(r, m, inner) => Type::Ref(self.region(r), *m, Box::new(self.apply(inner))),
+            Type::Adt(name, regions, args) => Type::Adt(
+                name.clone(),
+                regions.iter().map(|r| self.region(r)).collect(),
+                args.iter().map(|a| self.apply(a)).collect(),
+            ),
             t => t.map(|p| self.apply(p)),
+        }
+    }
+
+    /// Region `r`, replaced if it's a lifetime parameter this knows.
+    pub fn region(&self, r: &Region) -> Region {
+        match r {
+            Region::Named(n) => self.regions.get(n).cloned().unwrap_or_else(|| r.clone()),
+            r => r.clone(),
         }
     }
 }
@@ -163,30 +287,160 @@ impl Type {
     pub fn parts(&self) -> impl Iterator<Item = &Type> {
         let (params, ret): (&[Type], Option<&Type>) = match self {
             Type::Fn(f) => (&f.params, Some(&f.ret)),
-            Type::Adt(_, args) => (args, None),
+            Type::Adt(_, _, args) => (args, None),
+            Type::Ref(_, _, t) | Type::Box(t) => (&[], Some(t)),
             Type::Int | Type::Bool | Type::Unit | Type::Param(_) | Type::Var(_) => (&[], None),
         };
         params.iter().chain(ret)
     }
 
-    /// This type, with each of its parts replaced by `f(part)`.
+    /// This type, with each of its parts replaced by `f(part)`. Its regions
+    /// stay as they are.
     pub fn map(&self, mut f: impl FnMut(&Type) -> Type) -> Type {
         match self {
-            Type::Fn(sig) => Type::func(sig.params.iter().map(&mut f).collect(), f(&sig.ret)),
-            Type::Adt(name, args) => Type::Adt(name.clone(), args.iter().map(f).collect()),
+            Type::Fn(sig) => Type::Fn(FnType {
+                params: sig.params.iter().map(&mut f).collect(),
+                ret: Box::new(f(&sig.ret)),
+                bound: sig.bound.clone(),
+            }),
+            Type::Adt(name, regions, args) => {
+                Type::Adt(name.clone(), regions.clone(), args.iter().map(f).collect())
+            }
+            Type::Ref(r, m, t) => Type::Ref(r.clone(), *m, Box::new(f(t))),
+            Type::Box(t) => Type::Box(Box::new(f(t))),
             Type::Int | Type::Bool | Type::Unit | Type::Param(_) | Type::Var(_) => self.clone(),
         }
     }
 
     /// Do `self` and `other` have the same outermost shape, so that they're
     /// equal exactly when their `parts` are? `fn(A) -> B` and `fn(C) -> D`
-    /// do, `Option<A>` and `Option<B>` do, `int` and `bool` don't.
+    /// do, `Option<A>` and `Option<B>` do, `int` and `bool` don't. Regions
+    /// don't count: `&'a int` and `&'b int` have the same shape, and type
+    /// checking treats them as the same type.
     pub fn same_shape(&self, other: &Type) -> bool {
         match (self, other) {
             (Type::Fn(f), Type::Fn(g)) => f.params.len() == g.params.len(),
-            (Type::Adt(a, xs), Type::Adt(b, ys)) => a == b && xs.len() == ys.len(),
+            (Type::Adt(a, _, xs), Type::Adt(b, _, ys)) => a == b && xs.len() == ys.len(),
+            (Type::Ref(_, m, _), Type::Ref(_, n, _)) => m == n,
+            (Type::Box(_), Type::Box(_)) => true,
             (Type::Var(_), _) | (_, Type::Var(_)) => false,
             (a, b) => a == b,
+        }
+    }
+
+    /// This type with every region in it replaced by `f(region)`, but for
+    /// those a function type in it is generic over.
+    pub fn map_regions(&self, f: &mut impl FnMut(&Region) -> Region) -> Type {
+        self.map_free_regions(f, &mut Vec::new())
+    }
+
+    /// `map_regions`, inside function types that are generic over `bound`.
+    fn map_free_regions(
+        &self,
+        f: &mut impl FnMut(&Region) -> Region,
+        bound: &mut Vec<String>,
+    ) -> Type {
+        let free =
+            |r: &Region, bound: &[String]| !matches!(r, Region::Named(n) if bound.contains(n));
+        match self {
+            Type::Ref(r, m, t) => {
+                let r = if free(r, bound) { f(r) } else { r.clone() };
+                Type::Ref(r, *m, Box::new(t.map_free_regions(f, bound)))
+            }
+            Type::Adt(name, regions, args) => {
+                let regions = regions
+                    .iter()
+                    .map(|r| if free(r, bound) { f(r) } else { r.clone() })
+                    .collect();
+                let args = args.iter().map(|a| a.map_free_regions(f, bound)).collect();
+                Type::Adt(name.clone(), regions, args)
+            }
+            Type::Fn(sig) => {
+                let outer = bound.len();
+                bound.extend(sig.bound.iter().cloned());
+                let params = sig
+                    .params
+                    .iter()
+                    .map(|p| p.map_free_regions(f, bound))
+                    .collect();
+                let ret = sig.ret.map_free_regions(f, bound);
+                bound.truncate(outer);
+                Type::Fn(FnType {
+                    params,
+                    ret: Box::new(ret),
+                    bound: sig.bound.clone(),
+                })
+            }
+            t => t.map(|p| p.map_free_regions(f, bound)),
+        }
+    }
+
+    /// This type with no regions in it: each is `Region::Erased`.
+    pub fn erased(&self) -> Type {
+        self.map_regions(&mut |_| Region::Erased)
+    }
+
+    /// Every region in this type, in order, at any depth, but for those a
+    /// function type in it is generic over.
+    pub fn regions(&self) -> Vec<&Region> {
+        let mut out = Vec::new();
+        self.each_region(&mut |r| out.push(r), &mut Vec::new());
+        out
+    }
+
+    fn each_region<'t>(&'t self, f: &mut impl FnMut(&'t Region), bound: &mut Vec<&'t String>) {
+        let mut free = |r: &'t Region| {
+            if !matches!(r, Region::Named(n) if bound.contains(&n)) {
+                f(r)
+            }
+        };
+        match self {
+            Type::Ref(r, _, _) => free(r),
+            Type::Adt(_, regions, _) => regions.iter().for_each(free),
+            _ => {}
+        }
+        let outer = bound.len();
+        if let Type::Fn(sig) = self {
+            bound.extend(&sig.bound);
+        }
+        for p in self.parts() {
+            p.each_region(f, bound);
+        }
+        bound.truncate(outer);
+    }
+
+    /// Does this type mention a region, or a type parameter, which may
+    /// stand for a type that does? Then a value of it may hold a reference,
+    /// or be a function that's only good with references of a certain
+    /// lifetime. Not if the regions are those a function type is generic
+    /// over: `fn(&int) -> int` takes references of any lifetime.
+    pub fn may_borrow(&self) -> bool {
+        fn has_param(t: &Type) -> bool {
+            matches!(t, Type::Param(_)) || t.parts().any(has_param)
+        }
+        !self.regions().is_empty() || has_param(self)
+    }
+}
+
+/// Is a value of type `ty` *copied* when it's used, rather than *moved*?
+/// `int`, `bool`, `()`, functions and shared references are; mutable
+/// references and boxes aren't, since there must only ever be one of each.
+/// A struct or enum is if it's `#[derive(Copy)]` and its fields are, at
+/// these type arguments. A type parameter isn't, since it may stand for a
+/// type that isn't, unless `params` says to assume it is (for checking a
+/// `#[derive(Copy)]` itself).
+pub fn is_copy(adts: &Adts, ty: &Type, params: bool) -> bool {
+    match ty {
+        Type::Int | Type::Bool | Type::Unit | Type::Fn(_) | Type::Ref(_, false, _) => true,
+        Type::Ref(_, true, _) | Type::Box(_) | Type::Var(_) => false,
+        Type::Param(_) => params,
+        // Can't recurse forever: a type holds itself only through a box or
+        // a reference, and neither of those leads back here.
+        Type::Adt(name, ..) => {
+            adts[name].copy
+                && all_fields(adts, ty)
+                    .iter()
+                    .all(|t| is_copy(adts, t, params))
         }
     }
 }
@@ -195,17 +449,22 @@ impl Type {
     /// Like `to_string`, but with the symbols of structs and enums rather
     /// than their names, so that two types of the same name show
     /// differently.
+    ///
+    /// Regions aren't shown: monomorphisation names copies with this, and
+    /// a copy doesn't depend on them.
     pub fn symbols(&self) -> String {
         match self {
             Type::Fn(sig) => {
                 let params: Vec<String> = sig.params.iter().map(Type::symbols).collect();
                 format!("fn({}) -> {}", params.join(", "), sig.ret.symbols())
             }
-            Type::Adt(name, args) if args.is_empty() => name.clone(),
-            Type::Adt(name, args) => {
+            Type::Adt(name, _, args) if args.is_empty() => name.clone(),
+            Type::Adt(name, _, args) => {
                 let args: Vec<String> = args.iter().map(Type::symbols).collect();
                 format!("{name}<{}>", args.join(", "))
             }
+            Type::Ref(_, m, t) => format!("&{}{}", if *m { "mut " } else { "" }, t.symbols()),
+            Type::Box(t) => format!("Box<{}>", t.symbols()),
             t => t.to_string(),
         }
     }
@@ -224,13 +483,42 @@ impl fmt::Display for Type {
             Type::Bool => f.write_str("bool"),
             Type::Unit => f.write_str("()"),
             Type::Fn(sig) => write!(f, "fn({}) -> {}", comma_list(&sig.params), sig.ret),
-            Type::Adt(name, args) if args.is_empty() => f.write_str(&source_name(name)),
-            Type::Adt(name, args) => write!(f, "{}<{}>", source_name(name), comma_list(args)),
+            Type::Adt(name, regions, args) => {
+                f.write_str(&source_name(name))?;
+                // Lifetimes only if some were written.
+                let mut all: Vec<String> = match regions.iter().all(hidden) {
+                    true => Vec::new(),
+                    false => regions.iter().map(Region::to_string).collect(),
+                };
+                all.extend(args.iter().map(Type::to_string));
+                match all.is_empty() {
+                    true => Ok(()),
+                    false => write!(f, "<{}>", all.join(", ")),
+                }
+            }
+            Type::Ref(r, m, t) => {
+                f.write_str("&")?;
+                if !hidden(r) {
+                    write!(f, "{r} ")?;
+                }
+                if *m {
+                    f.write_str("mut ")?;
+                }
+                write!(f, "{t}")
+            }
+            Type::Box(t) => write!(f, "Box<{t}>"),
             Type::Param(name) => f.write_str(name),
             // Like Rust: "some type, not known yet".
             Type::Var(_) => f.write_str("_"),
         }
     }
+}
+
+/// Is region `r` one that types are shown without? Those that nobody wrote.
+fn hidden(r: &Region) -> bool {
+    matches!(r, Region::Erased | Region::Var(_))
+        || r.is_elided()
+        || matches!(r, Region::Named(n) if n.starts_with("'^"))
 }
 
 /// The type of a function, which may be generic: `∀T. fn(T) -> T`
@@ -241,8 +529,27 @@ impl fmt::Display for Type {
 /// at the very front, around a whole function type. Everything else has a
 /// plain `Type`, with no `∀` inside. That's *rank-1* (or *prenex*)
 /// polymorphism (see docs/04-generics.md).
+///
+/// It's generic over lifetimes too: `fn first<'a>(x: &'a P) -> &'a int`
+/// has `lifetimes: ["'a"]`, as does `fn first(x: &P) -> &int`, where
+/// elision named it `'_0`. Type checking ignores those; the borrow checker
+/// instantiates them at each use.
 #[derive(Debug, Clone)]
 pub struct Scheme {
     pub params: Vec<String>,
+    pub lifetimes: Vec<String>,
+    pub bounds: Vec<Bound>,
     pub ty: Type,
+}
+
+impl Scheme {
+    /// A scheme with no parameters.
+    pub fn mono(ty: Type) -> Scheme {
+        Scheme {
+            params: Vec::new(),
+            lifetimes: Vec::new(),
+            bounds: Vec::new(),
+            ty,
+        }
+    }
 }

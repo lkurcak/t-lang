@@ -107,12 +107,69 @@ impl TypeDecl {
         }
     }
 
-    pub fn type_params(&self) -> &[Ident] {
+    pub fn generics(&self) -> &Generics {
         match self {
-            TypeDecl::Struct(s) => &s.type_params,
-            TypeDecl::Enum(e) => &e.type_params,
+            TypeDecl::Struct(s) => &s.generics,
+            TypeDecl::Enum(e) => &e.generics,
         }
     }
+
+    pub fn type_params(&self) -> &[Ident] {
+        &self.generics().types
+    }
+
+    pub fn derives(&self) -> &[Derive] {
+        match self {
+            TypeDecl::Struct(s) => &s.derives,
+            TypeDecl::Enum(e) => &e.derives,
+        }
+    }
+
+    /// Is it `#[derive(Copy)]`?
+    pub fn is_copy(&self) -> bool {
+        self.derives()
+            .iter()
+            .any(|d| d.names.iter().any(|n| n.name == "Copy"))
+    }
+}
+
+/// `<'a, 'b: 'a, T: 'a>` after the name of a function, struct or enum:
+/// lifetime parameters first, then type parameters, each maybe with
+/// lifetimes it must outlive.
+#[derive(Debug, Clone, Default)]
+pub struct Generics {
+    /// With their `'`: `'a`.
+    pub lifetimes: Vec<Ident>,
+    pub types: Vec<Ident>,
+    /// `'b: 'a` and `T: 'a`, in the order written, each with what's before
+    /// its `:` and the lifetimes after it.
+    pub bounds: Vec<(Ident, Vec<Ident>)>,
+    /// From the `<` to the `>`, if they're there.
+    pub span: Option<Span>,
+}
+
+impl Generics {
+    pub fn is_empty(&self) -> bool {
+        self.lifetimes.is_empty() && self.types.is_empty()
+    }
+
+    /// The bounds on `name`, a lifetime or type parameter.
+    pub fn bounds_of(&self, name: &str) -> Vec<&Ident> {
+        self.bounds
+            .iter()
+            .filter(|(p, _)| p.name == name)
+            .flat_map(|(_, b)| b)
+            .collect()
+    }
+}
+
+/// `#[derive(Copy)]` before a struct or enum. `Copy` is the only thing that
+/// can be derived.
+#[derive(Debug, Clone)]
+pub struct Derive {
+    /// From the `#` to the `]`.
+    pub span: Span,
+    pub names: Vec<Ident>,
 }
 
 #[derive(Debug, Clone)]
@@ -122,8 +179,10 @@ pub struct StructDecl {
     /// From the `struct` to the `}`, without the doc comment or attributes.
     pub span: Span,
     pub name: Ident,
-    /// `<A, B>` in `struct Pair<A, B> { .. }`; empty if it isn't generic.
-    pub type_params: Vec<Ident>,
+    /// Its lifetime parameters, type parameters and bounds.
+    pub generics: Generics,
+    /// `#[derive(Copy)]`: its values are copied rather than moved.
+    pub derives: Vec<Derive>,
     pub fields: Vec<Param>,
 }
 
@@ -134,7 +193,8 @@ pub struct EnumDecl {
     /// From the `enum` to the `}`, without the doc comment or attributes.
     pub span: Span,
     pub name: Ident,
-    pub type_params: Vec<Ident>,
+    pub generics: Generics,
+    pub derives: Vec<Derive>,
     pub variants: Vec<Variant>,
 }
 
@@ -160,8 +220,8 @@ pub struct FnDecl {
     /// attributes.
     pub span: Span,
     pub name: Ident,
-    /// `<T>` in `fn id<T>(x: T) -> T`; empty if it isn't generic.
-    pub type_params: Vec<Ident>,
+    /// `<'a, T>` in `fn id<'a, T>(x: &'a T) -> &'a T`.
+    pub generics: Generics,
     pub params: Vec<Param>,
     /// From the `(` before the parameters to the `)` after them.
     pub parens: Span,
@@ -236,6 +296,7 @@ impl Expr {
                 .chain(arms.iter().map(|a| &a.body))
                 .collect(),
             ExprKind::Lambda(l) => vec![&l.body],
+            ExprKind::Assign(_, l, r) | ExprKind::While(l, r) => vec![l, r],
         }
     }
 
@@ -263,6 +324,9 @@ pub struct Param {
     /// Only a struct field can have one, or attributes.
     pub doc: Option<DocComment>,
     pub allows: Vec<Allow>,
+    /// `mut name: type`, with where the `mut` is: only a function parameter
+    /// can be `mut`.
+    pub mutable: Option<Span>,
     pub name: Ident,
     pub ty: TypeExpr,
 }
@@ -289,6 +353,12 @@ pub enum TypeExprKind {
     Unit,
     /// `fn(int, bool) -> int`
     Fn(Vec<TypeExpr>, Box<TypeExpr>),
+    /// `&T`, `&'a T`, `&mut T` or `&'a mut T`: a reference, with its
+    /// lifetime if it's written, and whether it's `mut`.
+    Ref(Option<Ident>, bool, Box<TypeExpr>),
+    /// `'a`, as a lifetime argument: the `'a` of `Holder<'a, int>`. Lifetime
+    /// arguments come before type arguments, and can only be there.
+    Lifetime(String),
 }
 
 /// As written: `Option<int>`, `fn(int) -> bool`, `()`.
@@ -299,6 +369,17 @@ impl fmt::Display for TypeExpr {
             TypeExprKind::Named(name, args) => write!(f, "{name}<{}>", comma_list(args)),
             TypeExprKind::Unit => f.write_str("()"),
             TypeExprKind::Fn(params, ret) => write!(f, "fn({}) -> {ret}", comma_list(params)),
+            TypeExprKind::Ref(lifetime, mutable, t) => {
+                f.write_str("&")?;
+                if let Some(l) = lifetime {
+                    write!(f, "{} ", l.name)?;
+                }
+                if *mutable {
+                    f.write_str("mut ")?;
+                }
+                write!(f, "{t}")
+            }
+            TypeExprKind::Lifetime(name) => f.write_str(name),
         }
     }
 }
@@ -337,6 +418,25 @@ pub enum ExprKind {
     /// `|x, y: int| x + y`. Shared, because the closure values the
     /// interpreter makes from it point to it.
     Lambda(Arc<Lambda>),
+    /// `place = value`, or `place += value` and the like with an operator.
+    /// The place is a variable, a field or a `*`.
+    Assign(Option<BinOp>, Box<Expr>, Box<Expr>),
+    /// `while c { .. }`
+    While(Box<Expr>, Box<Expr>),
+}
+
+impl Expr {
+    /// Is it a *place*: something that names where a value is, rather than
+    /// computing a new one? A variable, a field of a place, or what a `*`
+    /// points to. Others are *values*. (A variable may name a function,
+    /// which isn't a place; only the checker can tell.)
+    pub fn is_place(&self) -> bool {
+        match &self.kind {
+            ExprKind::Var(..) | ExprKind::Unary(UnOp::Deref, _) => true,
+            ExprKind::Field(x, _) => x.is_place(),
+            _ => false,
+        }
+    }
 }
 
 /// An anonymous function: `|x| x + 1`, `|x: int| -> int { x + 1 }`, or `|| 1`
@@ -428,13 +528,17 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
             go(&l.body, bound);
             bound.truncate(scope);
         }
+        ExprKind::Assign(_, l, r) | ExprKind::While(l, r) => {
+            go(l, bound);
+            go(r, bound);
+        }
     }
 }
 
 /// Adds the variables `p` binds to `out`.
 fn pattern_binds(p: &Pattern, out: &mut Vec<String>) {
     match &p.kind {
-        PatternKind::Bind(name) => out.push(name.clone()),
+        PatternKind::Bind(name, _) => out.push(name.clone()),
         PatternKind::Variant(_, _, _, pats) | PatternKind::Or(pats) => {
             pats.iter().for_each(|p| pattern_binds(p, out));
         }
@@ -451,6 +555,8 @@ fn pattern_binds(p: &Pattern, out: &mut Vec<String>) {
 
 #[derive(Debug)]
 pub struct LambdaParam {
+    /// Where the `mut` is, if it's `mut`.
+    pub mutable: Option<Span>,
     pub name: Ident,
     pub ty: Option<TypeExpr>,
 }
@@ -515,6 +621,14 @@ pub struct Pattern {
 }
 
 impl Pattern {
+    /// Where the name is, in a binding: `x` in `mut x`.
+    pub fn name_span(&self) -> Span {
+        match &self.kind {
+            PatternKind::Bind(name, _) => Span::new(self.span.end - name.len(), self.span.end),
+            _ => self.span,
+        }
+    }
+
     /// The variables it binds.
     pub fn binds(&self) -> Vec<String> {
         let mut out = Vec::new();
@@ -527,8 +641,9 @@ impl Pattern {
 pub enum PatternKind {
     /// `_`: matches anything, binds nothing.
     Wild,
-    /// `x`: matches anything and names it.
-    Bind(String),
+    /// `x`: matches anything and names it. `mut x` if the `bool` is set:
+    /// then the variable can be changed.
+    Bind(String, bool),
     Int(i64),
     /// An int range, with both bounds inclusive: `1..=9` is `Range(1, 9, true)`,
     /// `1..10` is `Range(1, 9, false)`, `10..` runs to the largest int and
@@ -559,6 +674,12 @@ pub struct FieldPat {
 pub enum UnOp {
     Neg,
     Not,
+    /// `*x`: what reference or box `x` points to.
+    Deref,
+    /// `&x`: a shared reference to `x`.
+    Ref,
+    /// `&mut x`: a unique, mutable reference to `x`.
+    RefMut,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -583,6 +704,9 @@ impl fmt::Display for UnOp {
         f.write_str(match self {
             UnOp::Neg => "-",
             UnOp::Not => "!",
+            UnOp::Deref => "*",
+            UnOp::Ref => "&",
+            UnOp::RefMut => "&mut ",
         })
     }
 }
