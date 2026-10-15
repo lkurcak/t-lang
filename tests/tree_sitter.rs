@@ -193,3 +193,26 @@ fn parses_local_types() {
         .unwrap();
     assert_eq!(name.utf8_text(src.as_bytes()).unwrap(), "P");
 }
+
+/// The `x` of a shorthand `P { x }`, in a literal or a pattern, is
+/// highlighted as a variable, so not at all; the `y` of `y: 1` is a field.
+#[test]
+fn highlights_shorthand_fields_as_variables() {
+    let src = "struct P { x: int, y: int }\nfn main() {\n    let x = 1;\n    let P { x, y: _ } = P { x, y: 1 };\n    x\n}\n";
+    let tree = parser().parse(src, None).unwrap();
+    let root = tree.root_node();
+    assert!(first_error(root).is_none(), "{}", root.to_sexp());
+    let language = tree_sitter_t::LANGUAGE.into();
+    let query = Query::new(&language, tree_sitter_t::HIGHLIGHTS_QUERY).unwrap();
+    let mut cursor = QueryCursor::new();
+    let mut captures = cursor.captures(&query, root, src.as_bytes());
+    let mut members = Vec::new();
+    while let Some((m, i)) = captures.next() {
+        let c = m.captures[*i];
+        if query.capture_names()[c.index as usize] == "variable.other.member" {
+            let line = c.node.start_position().row + 1;
+            members.push((line, c.node.utf8_text(src.as_bytes()).unwrap()));
+        }
+    }
+    assert_eq!(members, [(1, "x"), (1, "y"), (4, "y"), (4, "y")]);
+}

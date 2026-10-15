@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Syntax highlighting: the `x` of a shorthand `P { x }`, in a struct
+  literal or pattern, is highlighted as the variable it is rather than as
+  a field, as `t lsp` takes it for hover and rename.
+
 ## 0.4.3 (2026-10-15)
 
 ### Added

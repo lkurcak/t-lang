@@ -42,9 +42,9 @@
 
 ; Structs and enums
 
+; The `x` of a shorthand `P { x }` is a field and a variable at once, and
+; is left as a variable, as `t lsp` takes it for hover and rename.
 (field_identifier) @variable.other.member
-(shorthand_field_initializer (identifier) @variable.other.member)
-(field_pattern name: (identifier) @variable.other.member)
 
 (enum_variant name: (identifier) @constructor)
 (variant_expression variant: (identifier) @constructor)
