@@ -225,6 +225,25 @@ is a `Comment`, which `render` holds back and puts at the end of the line
 when the line ends. Comments don't count toward the line width, so adding
 or editing one never changes how the code around it is laid out.
 
+### Doc comments
+
+A `///` comment is different: it documents the `fn`, `struct`, `enum`,
+field or variant after it, and editors show it on hover. So it's part of
+the program, not trivia. The lexer makes each `///` line a token, the
+parser attaches each run of them to what comes next (`DocComment`, in the
+AST), and the printer prints it from there, just before what it documents.
+That puts doc comments under the check before writing (below): moving one
+to something else would change the AST, so `t fmt` would refuse.
+
+A `///` before anything else, like a statement, or at the end of a block,
+documents nothing. The checker warns about it (`unused_doc_comments`, as
+in Rust), and `t fmt` keeps it as it would a plain comment, with one
+difference. A comment the printer never asks about moves to the next place
+it does, and inside a struct or enum that's before a field or variant,
+which a `///` would then document. So inside one, such a `///` waits for
+the `}` instead (`Trivia::hold_docs`). `////` is a plain comment, as in
+Rust.
+
 ### Lining up comments at line ends
 
 Comments at the ends of consecutive lines are lined up, one space after the

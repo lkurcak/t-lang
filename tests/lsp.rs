@@ -257,6 +257,74 @@ fn hovers_hints_and_goes_to_definitions() {
 }
 
 #[test]
+fn hovers_show_doc_comments() {
+    let (child, mut c) = start();
+    let uri = "file:///tmp/docs.t";
+    let src = "\
+/// A point.
+///
+///     Indented, so code.
+struct P {
+    /// Across.
+    x: int,
+}
+enum E {
+    /// The only one.
+    A(int),
+}
+/// Reads `x`.
+fn get(p: P) -> int { p.x }
+fn main() {
+    print(get(P { x: 1 }));
+    match E::A(2) {
+        E::A(n) => print(n),
+    }
+}
+";
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
+        }}),
+    );
+    assert_eq!(c.diagnostics(), Vec::<Value>::new());
+    let mut id = 1;
+    let mut hover = |c: &mut Client, needle: &str, nth: usize| {
+        // The `nth` place `needle` is in the source.
+        let offset = src.match_indices(needle).nth(nth).unwrap().0;
+        let line = src[..offset].matches('\n').count();
+        let character = offset - src[..offset].rfind('\n').map_or(0, |i| i + 1);
+        id += 1;
+        c.send(
+            json!({"jsonrpc": "2.0", "id": id, "method": "textDocument/hover", "params": {
+                "textDocument": {"uri": uri}, "position": {"line": line, "character": character}
+            }}),
+        );
+        c.response(id)["result"]["contents"]["value"].clone()
+    };
+
+    // The signature, then the doc as Markdown, without the indentation
+    // all its lines share.
+    let get = "```t\nfn get: fn(P) -> int\n```\n\n---\n\nReads `x`.";
+    assert_eq!(hover(&mut c, "get", 0), get, "the declaration");
+    assert_eq!(hover(&mut c, "get", 1), get, "a use");
+    let p = "```t\nstruct P\n```\n\n---\n\nA point.\n\n    Indented, so code.";
+    assert_eq!(hover(&mut c, "P {", 0), p);
+    assert_eq!(hover(&mut c, "P {", 1), p, "a struct literal");
+    assert_eq!(hover(&mut c, "P)", 0), p, "a type in a signature");
+    let x = "```t\nfield x: int\n```\n\n---\n\nAcross.";
+    assert_eq!(hover(&mut c, "x: int", 0), x);
+    assert_eq!(hover(&mut c, "x }", 0), x, "a field read");
+    let a = "```t\nE::A: fn(int) -> E\n```\n\n---\n\nThe only one.";
+    assert_eq!(hover(&mut c, "A(", 1), a, "a variant built");
+    assert_eq!(hover(&mut c, "A(", 2), a, "a variant matched");
+    // Nothing documents `E` or `main`: just the signature.
+    assert_eq!(hover(&mut c, "E {", 0), "```t\nenum E\n```");
+    assert_eq!(hover(&mut c, "main", 0), "```t\nfn main: fn() -> ()\n```");
+
+    stop(child, c);
+}
+
+#[test]
 fn formats_documents() {
     let (child, mut c) = start();
     let uri = "file:///tmp/fmt.t";

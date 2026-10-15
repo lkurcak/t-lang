@@ -4,6 +4,15 @@
 
 ### Added
 
+- Doc comments: `///` before a `fn`, `struct`, `enum`, struct field or enum
+  variant documents it, in Markdown. `t lsp` shows it on hover, after the
+  signature, on the declaration and on every use. Doc comments are part of
+  the AST, so `t fmt` prints them from there and its check that the output
+  is the same program covers them. `////` is a plain comment, as in Rust.
+- A warning, `unused_doc_comments`, for a `///` that documents nothing, such
+  as one before a statement. Its fix makes it a plain `//` comment.
+- The tree-sitter grammar tells doc comments from plain comments, and the
+  highlight queries capture them as `@comment.documentation`.
 - `cargo test` checks the T code in the README and `docs/`: every
   ```` ```rust ```` block must parse and be formatted, and a whole program
   must run and print what its `// expect:` comments say, as in `tests/t`.

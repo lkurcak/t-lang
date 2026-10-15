@@ -1,9 +1,9 @@
 //! `t fmt`: prints a program in the one T style, keeping its comments and
 //! single blank lines. There are no options. See docs/fmt.md.
 
-use crate::ast::Program;
+use crate::ast::{DocComment, Program};
 use crate::error::Error;
-use crate::lexer::{self, Comment};
+use crate::lexer::{self, Comment, Tok, Token};
 use crate::parser;
 use crate::trivia::Trivia;
 
@@ -22,7 +22,8 @@ pub fn format(src: &str) -> Result<String, FmtError> {
     let (toks, comments) = lexer::lex_with_comments(src).map_err(FmtError::Syntax)?;
     let program = parser::parse(toks.clone()).map_err(FmtError::Syntax)?;
     let texts = comment_texts(src, &comments);
-    let out = crate::pretty::format(&program, Trivia::new(src, toks, comments));
+    let trivia = trivia(src, toks, comments, &program);
+    let out = crate::pretty::format(&program, trivia);
 
     let changed = |why: &str| FmtError::Changed(format!("{why}; this is a bug in `t fmt`"));
     let (toks, comments) =
@@ -37,6 +38,25 @@ pub fn format(src: &str) -> Result<String, FmtError> {
     Ok(out)
 }
 
+/// The comments and blank lines to keep. The printer prints doc comments
+/// from the AST, but a doc comment that documents nothing isn't in a place
+/// the printer knows to put it, so it's kept like a plain comment.
+fn trivia<'s>(
+    src: &'s str,
+    toks: Vec<Token>,
+    mut comments: Vec<Comment>,
+    program: &Program,
+) -> Trivia<'s> {
+    let toks = toks
+        .into_iter()
+        .filter(|t| !matches!(t.tok, Tok::Doc(_)))
+        .collect();
+    let stray = program.stray_docs.iter().flat_map(|d| &d.lines);
+    comments.extend(stray.map(|l| Comment { span: l.span }));
+    comments.sort_by_key(|c| c.span.start);
+    Trivia::new(src, toks, comments)
+}
+
 fn comment_texts<'s>(src: &'s str, comments: &[Comment]) -> Vec<&'s str> {
     comments
         .iter()
@@ -48,7 +68,17 @@ fn comment_texts<'s>(src: &'s str, comments: &[Comment]) -> Vec<&'s str> {
 /// is derived for every AST type, so this shows every other field. A span
 /// prints as `Span { start: 1, end: 2 }`, which nothing else can: names
 /// print in quotes.
+///
+/// Doc comments that document nothing are compared line by line: which
+/// lines they are matters, not how they're grouped into runs, which moving
+/// them to the end of a struct can change.
 pub fn shape(program: &Program) -> String {
+    let mut program = program.clone();
+    program.stray_docs = std::mem::take(&mut program.stray_docs)
+        .into_iter()
+        .flat_map(|d| d.lines)
+        .map(|l| DocComment { lines: vec![l] })
+        .collect();
     let debug = format!("{program:?}");
     let mut out = String::with_capacity(debug.len());
     let mut rest = debug.as_str();

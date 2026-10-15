@@ -47,6 +47,9 @@ pub enum Tok {
     AndAnd,
     OrOr,
     Pipe,
+    /// A `///` doc comment line: the text after the `///`. The parser sets
+    /// these aside, and attaches them to what comes after.
+    Doc(String),
     Eof,
 }
 
@@ -56,6 +59,7 @@ impl Tok {
         let s = match self {
             Tok::Int(n) => return format!("`{n}`"),
             Tok::Ident(name) => return format!("`{name}`"),
+            Tok::Doc(_) => return "a doc comment".to_string(),
             Tok::Eof => return "end of file".to_string(),
             Tok::Fn => "fn",
             Tok::Let => "let",
@@ -107,6 +111,7 @@ pub struct Token {
 }
 
 /// A `// ...` comment. The parser never sees these; `t fmt` keeps them.
+/// A `///` doc comment is a token instead (`Tok::Doc`).
 #[derive(Debug, Clone)]
 pub struct Comment {
     pub span: Span,
@@ -136,9 +141,15 @@ pub fn lex_with_comments(src: &str) -> Result<(Vec<Token>, Vec<Comment>), Error>
                 i += 1;
             }
             let end = start + src[start..i].trim_end().len();
-            comments.push(Comment {
-                span: Span::new(start, end),
-            });
+            let span = Span::new(start, end);
+            // `///`, but not `////`, which is a plain comment, as in Rust.
+            match src[start..end].strip_prefix("///") {
+                Some(text) if !text.starts_with('/') => toks.push(Token {
+                    tok: Tok::Doc(text.to_string()),
+                    span,
+                }),
+                _ => comments.push(Comment { span }),
+            }
             continue;
         }
 

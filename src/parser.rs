@@ -47,6 +47,11 @@
 //! `check.rs`), which turns that mistake into a type error. Parenthesize to
 //! use one in a larger expression: `(if c { a } else { b }) - x`.
 //!
+//! A `///` doc comment documents the `fn`, `struct`, `enum`, field or
+//! variant after it. The parser takes doc comments out of the tokens first,
+//! and attaches each run of them to what starts right after it (`doc`). The
+//! ones nothing takes are `Program::stray_docs`.
+//!
 //! One ambiguity: in `if x { .. }` the `x {` could start a struct literal. Like
 //! Rust, struct literals aren't allowed directly in the head of an `if` or
 //! `match` (write `if (P { .. }) == p` instead). `no_struct` tracks that.
@@ -57,8 +62,13 @@ use crate::lexer::{Tok, Token};
 use std::sync::Arc;
 
 pub fn parse(tokens: Vec<Token>) -> Result<Program, Error> {
+    let (docs, toks): (Vec<Token>, Vec<Token>) = tokens
+        .into_iter()
+        .partition(|t| matches!(t.tok, Tok::Doc(_)));
     let mut p = Parser {
-        toks: tokens,
+        toks,
+        attached: vec![false; docs.len()],
+        docs,
         pos: 0,
         no_struct: false,
     };
@@ -72,11 +82,20 @@ pub fn parse(tokens: Vec<Token>) -> Result<Program, Error> {
             _ => fns.push(p.fn_decl()?),
         }
     }
-    Ok(Program { types, fns })
+    let stray_docs = p.stray_docs();
+    Ok(Program {
+        types,
+        fns,
+        stray_docs,
+    })
 }
 
 struct Parser {
+    /// Every token but doc comments.
     toks: Vec<Token>,
+    /// The doc comments, and whether each is attached to something yet.
+    docs: Vec<Token>,
+    attached: Vec<bool>,
     pos: usize,
     /// Set while parsing the head of an `if` or `match`, where `x {` must not
     /// be read as a struct literal.
@@ -104,6 +123,41 @@ impl Parser {
 
     fn span(&self) -> Span {
         self.toks[self.pos].span
+    }
+
+    /// The doc comment for what starts at the next token: the `///` lines
+    /// between the token before and it, if there are any.
+    fn doc(&mut self) -> Option<DocComment> {
+        let from = match self.pos {
+            0 => 0,
+            i => self.toks[i - 1].span.end,
+        };
+        let to = self.span().start;
+        let first = self.docs.partition_point(|d| d.span.start < from);
+        let last = self.docs.partition_point(|d| d.span.start < to);
+        if first == last {
+            return None;
+        }
+        self.attached[first..last].fill(true);
+        Some(doc_comment(&self.docs[first..last]))
+    }
+
+    /// The doc comments nothing took, each run of lines with no other token
+    /// between them as one.
+    fn stray_docs(&self) -> Vec<DocComment> {
+        let mut runs: Vec<Vec<Token>> = Vec::new();
+        let mut prev_next_tok = None;
+        for (d, _) in self.docs.iter().zip(&self.attached).filter(|(_, a)| !**a) {
+            // The first token after it: the same for lines with nothing
+            // between them.
+            let next_tok = self.toks.partition_point(|t| t.span.start < d.span.start);
+            match runs.last_mut() {
+                Some(run) if prev_next_tok == Some(next_tok) => run.push(d.clone()),
+                _ => runs.push(vec![d.clone()]),
+            }
+            prev_next_tok = Some(next_tok);
+        }
+        runs.iter().map(|run| doc_comment(run)).collect()
     }
 
     fn bump(&mut self) -> Token {
@@ -172,6 +226,7 @@ impl Parser {
         if *self.peek() != Tok::Fn {
             return Err(self.unexpected("`fn`, `struct` or `enum`"));
         }
+        let doc = self.doc();
         self.bump();
         let name = self.ident()?;
         let type_params = self.generics()?;
@@ -187,6 +242,7 @@ impl Parser {
         };
         let body = self.block()?;
         Ok(FnDecl {
+            doc,
             name,
             type_params,
             params,
@@ -208,16 +264,25 @@ impl Parser {
         let name = self.ident()?;
         self.expect(Tok::Colon)?;
         let ty = self.ty()?;
-        Ok(Param { name, ty })
+        Ok(Param {
+            doc: None,
+            name,
+            ty,
+        })
     }
 
     fn struct_decl(&mut self) -> Result<StructDecl, Error> {
+        let doc = self.doc();
         self.expect(Tok::Struct)?;
         let name = self.ident()?;
         let type_params = self.generics()?;
         self.expect(Tok::LBrace)?;
-        let (fields, _) = self.comma_list(Tok::RBrace, Self::param)?;
+        let (fields, _) = self.comma_list(Tok::RBrace, |p| {
+            let doc = p.doc();
+            Ok(Param { doc, ..p.param()? })
+        })?;
         Ok(StructDecl {
+            doc,
             name,
             type_params,
             fields,
@@ -225,20 +290,23 @@ impl Parser {
     }
 
     fn enum_decl(&mut self) -> Result<EnumDecl, Error> {
+        let doc = self.doc();
         self.expect(Tok::Enum)?;
         let name = self.ident()?;
         let type_params = self.generics()?;
         self.expect(Tok::LBrace)?;
         let (variants, _) = self.comma_list(Tok::RBrace, |p| {
+            let doc = p.doc();
             let name = p.ident()?;
             let fields = if p.eat(&Tok::LParen) {
                 p.comma_list(Tok::RParen, Self::ty)?.0
             } else {
                 Vec::new()
             };
-            Ok(Variant { name, fields })
+            Ok(Variant { doc, name, fields })
         })?;
         Ok(EnumDecl {
+            doc,
             name,
             type_params,
             variants,
@@ -785,4 +853,21 @@ fn binop(tok: &Tok) -> Option<(BinOp, u8)> {
         Tok::Percent => (BinOp::Rem, 5),
         _ => return None,
     })
+}
+
+/// One doc comment from a run of `///` lines.
+fn doc_comment(lines: &[Token]) -> DocComment {
+    let text = |t: &Token| match &t.tok {
+        Tok::Doc(text) => text.clone(),
+        _ => unreachable!("only doc comments are set aside"),
+    };
+    DocComment {
+        lines: lines
+            .iter()
+            .map(|t| DocLine {
+                text: text(t),
+                span: t.span,
+            })
+            .collect(),
+    }
 }

@@ -12,6 +12,51 @@ use std::sync::Arc;
 pub struct Program {
     pub types: Vec<TypeDecl>,
     pub fns: Vec<FnDecl>,
+    /// Doc comments that aren't before anything they can document, in
+    /// order. The checker warns about each.
+    pub stray_docs: Vec<DocComment>,
+}
+
+/// A `///` doc comment, of one or more lines in a row, before the `fn`,
+/// `struct`, `enum`, field or variant it documents.
+#[derive(Debug, Clone)]
+pub struct DocComment {
+    pub lines: Vec<DocLine>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DocLine {
+    /// What's after the `///`, as written: `/// Adds one.` is `" Adds one."`.
+    pub text: String,
+    /// The whole line, `///` and all.
+    pub span: Span,
+}
+
+impl DocComment {
+    /// From the start of its first line to the end of its last.
+    pub fn span(&self) -> Span {
+        let (first, last) = (&self.lines[0], &self.lines[self.lines.len() - 1]);
+        first.span.to(last.span)
+    }
+
+    /// The text as Markdown: the lines, without the indentation they all
+    /// share, as rustdoc does.
+    pub fn markdown(&self) -> String {
+        let indent = self
+            .lines
+            .iter()
+            .map(|l| &l.text)
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| l.len() - l.trim_start().len())
+            .min()
+            .unwrap_or(0);
+        let lines: Vec<&str> = self
+            .lines
+            .iter()
+            .map(|l| l.text.get(indent..).unwrap_or(""))
+            .collect();
+        lines.join("\n")
+    }
 }
 
 /// `struct Point { x: int, y: int }` or `enum Shape { Circle(int), Empty }`.
@@ -29,6 +74,13 @@ impl TypeDecl {
         }
     }
 
+    pub fn doc(&self) -> Option<&DocComment> {
+        match self {
+            TypeDecl::Struct(s) => s.doc.as_ref(),
+            TypeDecl::Enum(e) => e.doc.as_ref(),
+        }
+    }
+
     pub fn type_params(&self) -> &[Ident] {
         match self {
             TypeDecl::Struct(s) => &s.type_params,
@@ -39,6 +91,7 @@ impl TypeDecl {
 
 #[derive(Debug, Clone)]
 pub struct StructDecl {
+    pub doc: Option<DocComment>,
     pub name: Ident,
     /// `<A, B>` in `struct Pair<A, B> { .. }`; empty if it isn't generic.
     pub type_params: Vec<Ident>,
@@ -47,6 +100,7 @@ pub struct StructDecl {
 
 #[derive(Debug, Clone)]
 pub struct EnumDecl {
+    pub doc: Option<DocComment>,
     pub name: Ident,
     pub type_params: Vec<Ident>,
     pub variants: Vec<Variant>,
@@ -55,12 +109,14 @@ pub struct EnumDecl {
 /// One case of an enum: `Rect(int, int)`, or `Empty` with no fields.
 #[derive(Debug, Clone)]
 pub struct Variant {
+    pub doc: Option<DocComment>,
     pub name: Ident,
     pub fields: Vec<TypeExpr>,
 }
 
 #[derive(Debug, Clone)]
 pub struct FnDecl {
+    pub doc: Option<DocComment>,
     pub name: Ident,
     /// `<T>` in `fn id<T>(x: T) -> T`; empty if it isn't generic.
     pub type_params: Vec<Ident>,
@@ -72,6 +128,8 @@ pub struct FnDecl {
 #[derive(Debug, Clone)]
 /// `name: type`. Used for function parameters and struct fields.
 pub struct Param {
+    /// Only a struct field can have one.
+    pub doc: Option<DocComment>,
     pub name: Ident,
     pub ty: TypeExpr,
 }

@@ -1,6 +1,6 @@
 //! Warnings: unused variables, unreachable patterns, ranges that can be
-//! narrowed or merged, and dead code. None of these make a program wrong,
-//! so none of them stop it.
+//! narrowed or merged, dead code, and doc comments that document nothing.
+//! None of these make a program wrong, so none of them stop it.
 
 use super::{Checker, Local, adt_names};
 use crate::ast::*;
@@ -179,6 +179,24 @@ fn written_inclusive(p: &Pattern, span: Span) -> Option<bool> {
             fields.iter().find_map(|f| written_inclusive(&f.pat, span))
         }
         _ => None,
+    }
+}
+
+/// A doc comment before something that can't have one, like a statement,
+/// or before nothing at all. The fix makes it a plain comment, which says
+/// that's what was meant, by taking a `/` off each line.
+pub(super) fn unused_doc(doc: &DocComment) -> Warning {
+    let edits = doc
+        .lines
+        .iter()
+        .map(|l| Edit::delete(Span::new(l.span.start + 2, l.span.start + 3)))
+        .collect();
+    Warning {
+        lint: Lint::UnusedDocComments,
+        span: doc.span(),
+        message: "unused doc comment: only a `fn`, `struct`, `enum`, field or variant can have one"
+            .into(),
+        fixes: vec![Fix::new("make it a plain `//` comment", edits)],
     }
 }
 

@@ -9,6 +9,7 @@ they matter.
 ```rust
 enum Shape { Circle(int), Rect(int, int), Empty }
 
+/// The area of `s`, with π rounded down to 3.
 fn area(s: Shape) -> int {
     match s {
         Shape::Circle(r) => 3 * r * r,
@@ -72,9 +73,11 @@ enough in it to be worth compiling.
 
 `t lsp` is a Language Server Protocol server over stdio. It reports errors and
 warnings as you type, and offers their fixes as quick fixes (code actions).
-Hovering shows types, go to definition works for variables, functions,
-types, fields and variants, and inlay hints show inferred types and type
-arguments. It formats files as `t fmt` does (see below).
+Hovering shows types, and the doc comment of a function, struct, enum,
+field or variant: a `///` comment just before it, written in Markdown.
+Go to definition works for variables, functions, types, fields and
+variants, and inlay hints show inferred types and type arguments. It
+formats files as `t fmt` does (see below).
 
 **Neovim (0.11+):** install
 [t-lang.nvim](https://github.com/lkurcak/t-lang.nvim), e.g.
@@ -175,6 +178,10 @@ they don't show:
 
 They combine, as in ```` ```rust,fragment,unformatted ````. Blocks in other
 languages, such as ```` ```text ````, aren't checked.
+
+Code in doc comments (`///`) isn't run yet. Doctests are the natural next
+step: the code blocks in a doc comment are Markdown like these, and
+`tests/docs.rs` already knows how to check one.
 
 ## Design constraints
 

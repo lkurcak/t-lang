@@ -113,6 +113,8 @@ pub enum Lint {
     /// A function `main` never reaches, or a struct, enum or variant it
     /// never constructs.
     DeadCode,
+    /// A `///` doc comment that isn't before anything it can document.
+    UnusedDocComments,
 }
 
 impl Lint {
@@ -123,6 +125,7 @@ impl Lint {
             Lint::MergeableRanges => "mergeable_ranges",
             Lint::UnusedVariables => "unused_variables",
             Lint::DeadCode => "dead_code",
+            Lint::UnusedDocComments => "unused_doc_comments",
         }
     }
 }

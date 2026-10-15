@@ -8,6 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use t_lang::fmt::{FmtError, format};
+use t_lang::lexer::{Tok, Token};
 
 /// Every `*.t` file in `dir`, in order.
 fn programs(dir: &str) -> Vec<PathBuf> {
@@ -54,7 +55,10 @@ fn formatting_keeps_the_program_and_is_idempotent() {
 
 /// One style whatever the input looks like: a program's tokens all on one
 /// line, and each on a line of its own, format the same. (Without comments
-/// or blank lines, which `t fmt` keeps from the input.)
+/// or blank lines, which `t fmt` keeps from the input, and so without doc
+/// comments that document nothing, which it keeps like comments. A doc
+/// comment that documents something is part of the program, but it runs to
+/// the end of its line, so one ends the line.)
 #[test]
 fn layout_does_not_depend_on_the_input() {
     let mut failures = Vec::new();
@@ -65,9 +69,20 @@ fn layout_does_not_depend_on_the_input() {
         let Ok(toks) = t_lang::lexer::lex(&src) else {
             continue;
         };
-        let words: Vec<&str> = toks
+        let Ok(program) = t_lang::parser::parse(toks.clone()) else {
+            continue;
+        };
+        let stray = |t: &&Token| {
+            let mut lines = program.stray_docs.iter().flat_map(|d| &d.lines);
+            lines.any(|l| l.span == t.span)
+        };
+        let words: Vec<String> = toks
             .iter()
-            .map(|t| &src[t.span.start..t.span.end])
+            .filter(|t| !stray(t))
+            .map(|t| match t.tok {
+                Tok::Doc(_) => format!("{}\n", &src[t.span.start..t.span.end]),
+                _ => src[t.span.start..t.span.end].to_string(),
+            })
             .collect();
         let (Ok(one_line), Ok(tall)) = (format(&words.join(" ")), format(&words.join("\n"))) else {
             continue;
@@ -138,6 +153,108 @@ fn main() { // after the brace
 }
 // at the end
 "
+    );
+}
+
+#[test]
+fn prints_doc_comments_from_the_ast() {
+    let src = "\
+///   Pairs.
+///
+/// With `b`.
+struct P { /// The first.
+a: int, b: int }
+enum E { /// One.
+A, B }
+/// Adds.
+// plain
+fn add(p: P) -> int {
+    /// documents nothing
+    p.a + p.b
+}
+//// plain, not a doc
+";
+    assert_eq!(
+        fmt(src),
+        "\
+///   Pairs.
+///
+/// With `b`.
+struct P {
+    /// The first.
+    a: int,
+    b: int,
+}
+enum E {
+    /// One.
+    A,
+    B,
+}
+/// Adds.
+// plain
+fn add(p: P) -> int {
+    /// documents nothing
+    p.a + p.b
+}
+//// plain, not a doc
+"
+    );
+}
+
+/// A `///` that documents nothing is kept like a comment, but a comment
+/// that can't stay where it is moves to the next place one can go, and
+/// before a field a `///` would document it. Inside a struct or enum, they
+/// go to the end instead.
+#[test]
+fn docs_that_document_nothing_keep_documenting_nothing() {
+    let src = "\
+struct P /// before the brace
+{ a: int /// before the comma
+, b: int, /// after the comma, so it documents c
+c: int }
+enum E { A(int /// in a variant's fields
+), /// documents B
+B }
+fn f(/// before a parameter
+x: int) {}
+";
+    assert_eq!(
+        fmt(src),
+        "\
+struct P {
+    a: int,
+    b: int,
+    /// after the comma, so it documents c
+    c: int,
+    /// before the brace
+    /// before the comma
+}
+enum E {
+    A(int),
+    /// documents B
+    B,
+    /// in a variant's fields
+}
+fn f(
+    /// before a parameter
+    x: int,
+) {}
+"
+    );
+}
+
+/// The check before writing compares doc comments as part of the program,
+/// so moving one to something else would be refused, not written.
+#[test]
+fn doc_comments_are_part_of_the_program() {
+    let parse = |src: &str| t_lang::parser::parse(t_lang::lexer::lex(src).unwrap()).unwrap();
+    let documented = parse("/// A.\nfn a() {}\nfn b() {}\n");
+    let moved = parse("fn a() {}\n/// A.\nfn b() {}\n");
+    assert_ne!(t_lang::fmt::shape(&documented), t_lang::fmt::shape(&moved));
+    let stray = parse("fn a() {\n    /// A.\n}\n");
+    assert_ne!(
+        t_lang::fmt::shape(&stray),
+        t_lang::fmt::shape(&parse("fn a() {}\n"))
     );
 }
 

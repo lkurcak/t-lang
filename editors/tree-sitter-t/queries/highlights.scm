@@ -8,6 +8,7 @@
 ; so `@constant.numeric` (Helix's name) is `@constant` in Neovim.
 
 (line_comment) @comment
+(doc_comment) @comment.documentation
 
 ; Literals
 

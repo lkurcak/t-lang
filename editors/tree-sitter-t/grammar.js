@@ -39,7 +39,7 @@ function commaSep1(rule) {
 module.exports = grammar({
   name: 't',
 
-  extras: $ => [/\s/, $.line_comment],
+  extras: $ => [/\s/, $.line_comment, $.doc_comment],
 
   word: $ => $.identifier,
 
@@ -59,7 +59,14 @@ module.exports = grammar({
 
     _item: $ => choice($.function_item, $.struct_item, $.enum_item),
 
-    line_comment: _ => token(seq('//', /.*/)),
+    // `//`, but not `///` followed by anything but another `/`: `////` is
+    // a plain comment, as in Rust. The two never match the same line, so
+    // the longer match decides, with no precedence needed.
+    line_comment: _ => token(seq('//', optional(choice(/[^/\n].*/, /\/\/.*/)))),
+
+    // `///` documents the item, field or variant after it. Here it's only
+    // for highlighting, so it can go anywhere a comment can.
+    doc_comment: _ => token(seq('///', optional(/[^/\n].*/))),
 
     // Items
 

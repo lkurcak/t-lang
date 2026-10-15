@@ -43,7 +43,7 @@ use crate::types::{
 use escape::{Escape, Exit, Origin, bound_origin};
 use generics::Use;
 use info::Defs;
-use lints::{Uses, mergeable, narrowable, unreachable_alt, unreachable_arm, unused};
+use lints::{Uses, mergeable, narrowable, unreachable_alt, unreachable_arm, unused, unused_doc};
 use std::collections::{HashMap, HashSet};
 use unify::Var;
 
@@ -65,6 +65,7 @@ fn builtin_type(name: &str) -> Type {
 /// the program up to it.
 pub fn check(prog: &Program, warnings: &mut Vec<Warning>) -> (Info, Result<(), Error>) {
     let mut cx = Checker::new(prog);
+    cx.warnings.extend(prog.stray_docs.iter().map(unused_doc));
     let result = cx.program(prog);
     cx.type_notes(prog);
     cx.warnings.sort_by_key(|w| w.span.start);

@@ -112,3 +112,27 @@ fn highlights_capture_each_node_once() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+/// `///` is a doc comment, highlighted as documentation; `//` and `////`
+/// are plain comments.
+#[test]
+fn tells_doc_comments_from_comments() {
+    let src = "/// doc\n///\n// plain\n//\n//// plain too\nfn main() {}\n";
+    let tree = parser().parse(src, None).unwrap();
+    let mut cursor = tree.root_node().walk();
+    let kinds: Vec<(&str, &str)> = tree
+        .root_node()
+        .children(&mut cursor)
+        .map(|n| (n.kind(), n.utf8_text(src.as_bytes()).unwrap()))
+        .collect();
+    assert_eq!(
+        kinds[..5],
+        [
+            ("doc_comment", "/// doc"),
+            ("doc_comment", "///"),
+            ("line_comment", "// plain"),
+            ("line_comment", "//"),
+            ("line_comment", "//// plain too"),
+        ]
+    );
+}

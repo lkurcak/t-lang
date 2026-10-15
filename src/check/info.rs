@@ -1,8 +1,8 @@
 //! What the checker learns about each name in a program, kept for later:
-//! the type of every variable and use, what each name refers to, and which
-//! type arguments each use of something generic has. Editors show it (hover,
-//! inlay hints, go to definition, see `lsp.rs`), and monomorphisation reads
-//! the type arguments (see `mono.rs`).
+//! the type of every variable and use, what each name refers to and its doc
+//! comment, and which type arguments each use of something generic has.
+//! Editors show it (hover, inlay hints, go to definition, see `lsp.rs`),
+//! and monomorphisation reads the type arguments (see `mono.rs`).
 
 use super::Checker;
 use crate::ast::*;
@@ -44,6 +44,8 @@ pub struct Note {
     pub args: Vec<Type>,
     /// Where it's defined, if anywhere: a built-in isn't.
     pub def: Option<Span>,
+    /// The doc comment where it's defined, as Markdown, if it has one.
+    pub doc: Option<String>,
     /// Whether nothing in the source says what `ty` is, or for a use of
     /// something generic, what `args` are, so an editor might show it: a
     /// `let` without an annotation, say, or `id(1)` without `::<int>`.
@@ -106,12 +108,30 @@ pub(super) struct Defs {
     pub(super) fields: HashMap<(String, String), Span>,
     /// By `(enum, variant)`.
     pub(super) variants: HashMap<(String, String), Span>,
+    /// The doc comment of each function, type, field and variant that has
+    /// one, as Markdown, by where it's declared.
+    pub(super) docs: HashMap<Span, String>,
 }
 
 impl Defs {
     /// The first declaration of each name: the checker rejects the others.
     pub(super) fn new(prog: &Program) -> Defs {
         let mut defs = Defs::default();
+        let mut doc = |name: &Ident, doc: Option<&DocComment>| {
+            if let Some(d) = doc {
+                defs.docs.insert(name.span, d.markdown());
+            }
+        };
+        for f in &prog.fns {
+            doc(&f.name, f.doc.as_ref());
+        }
+        for d in &prog.types {
+            doc(d.name(), d.doc());
+            match d {
+                TypeDecl::Struct(s) => s.fields.iter().for_each(|f| doc(&f.name, f.doc.as_ref())),
+                TypeDecl::Enum(e) => e.variants.iter().for_each(|v| doc(&v.name, v.doc.as_ref())),
+            }
+        }
         for f in &prog.fns {
             defs.fns.entry(f.name.name.clone()).or_insert(f.name.span);
         }
@@ -147,8 +167,14 @@ impl Checker {
             ty,
             args: Vec::new(),
             def,
+            doc: self.doc(def),
             inferred: false,
         });
+    }
+
+    /// The doc comment of what's defined at `def`.
+    fn doc(&self, def: Option<Span>) -> Option<String> {
+        self.defs.docs.get(&def?).cloned()
     }
 
     /// Like `note`, for a use of something generic with type arguments
@@ -180,6 +206,7 @@ impl Checker {
             inferred: inferred && !args.is_empty(),
             args,
             def,
+            doc: self.doc(def),
         });
     }
 
@@ -194,6 +221,7 @@ impl Checker {
                     ty: Some(l.ty.clone()),
                     args: Vec::new(),
                     def: Some(l.sites[0].span),
+                    doc: None,
                     // `P { x }` binds `x`, but `P { x: int }` would read as
                     // a field holding the pattern `int`.
                     inferred: inferred && !site.shorthand,

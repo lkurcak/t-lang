@@ -6,6 +6,11 @@
 //! handed out once, in order, so none is lost or duplicated; one that sits
 //! somewhere the printer never asks about (inside `a + b`, say) comes out at
 //! the next place it does ask, on a line of its own.
+//!
+//! A `///` that documents nothing (`Program::stray_docs`) is trivia too,
+//! but moving one can make it document something: before a field, it
+//! would document the field. So inside a struct or enum, they're held back
+//! until its `}` (`hold_docs`).
 
 use crate::error::Span;
 use crate::lexer::{Comment, Tok, Token};
@@ -13,9 +18,13 @@ use crate::lexer::{Comment, Tok, Token};
 pub struct Trivia<'s> {
     src: &'s str,
     toks: Vec<Token>,
-    comments: Vec<Comment>,
+    /// The comments, in the order they're printed, each with the place in
+    /// the source to print it at: where it is, unless it's held back.
+    comments: Vec<(usize, Comment)>,
     /// The first comment not printed yet.
     next: usize,
+    /// Where each comment is in the source, in order.
+    spans: Vec<Span>,
 }
 
 /// A comment after code on the same line, with any comments lined up under
@@ -42,9 +51,28 @@ impl<'s> Trivia<'s> {
         Trivia {
             src,
             toks,
-            comments,
+            spans: comments.iter().map(|c| c.span).collect(),
+            comments: comments.into_iter().map(|c| (c.span.start, c)).collect(),
             next: 0,
         }
+    }
+
+    /// Holds back the doc comments not printed yet that are between `from`
+    /// and `to`, the `}` that ends a struct or enum, to print there, where
+    /// they can't document a field or variant.
+    pub fn hold_docs(&mut self, from: usize, to: usize) {
+        let src = self.src;
+        let is_doc = |c: &Comment| {
+            let text = &src[c.span.start..c.span.end];
+            text.starts_with("///") && !text.starts_with("////")
+        };
+        for (at, c) in &mut self.comments[self.next..] {
+            if from <= c.span.start && c.span.start < to && is_doc(c) {
+                *at = to - 1;
+            }
+        }
+        // Stable, so comments printed at the same place keep their order.
+        self.comments[self.next..].sort_by_key(|(at, _)| *at);
     }
 
     fn text(&self, c: &Comment) -> String {
@@ -71,14 +99,14 @@ impl<'s> Trivia<'s> {
     pub fn any_before(&self, pos: usize) -> bool {
         self.comments
             .get(self.next)
-            .is_some_and(|c| c.span.start < pos)
+            .is_some_and(|(at, _)| *at < pos)
     }
 
     /// Takes the comments not printed yet that start before `pos`.
     pub fn leading(&mut self, pos: usize) -> Vec<Leading> {
         let mut out = Vec::new();
-        while let Some(c) = self.comments.get(self.next)
-            && c.span.start < pos
+        while let Some((at, c)) = self.comments.get(self.next)
+            && *at < pos
         {
             out.push(Leading {
                 text: self.text(c),
@@ -92,8 +120,12 @@ impl<'s> Trivia<'s> {
     /// Takes the comment after the code that ends at `end`, if it's on the
     /// same line with nothing but `,` or `;` between.
     pub fn trailing(&mut self, end: usize) -> Option<Trailing> {
-        let c = self.comments.get(self.next)?;
-        if c.span.start < end || self.own_line(c) || self.src[end..c.span.start].contains('\n') {
+        let (at, c) = self.comments.get(self.next)?;
+        if *at != c.span.start
+            || c.span.start < end
+            || self.own_line(c)
+            || self.src[end..c.span.start].contains('\n')
+        {
             return None;
         }
         let between = &self.toks[self.tok_index(end)..self.tok_index(c.span.start)];
@@ -109,7 +141,8 @@ impl<'s> Trivia<'s> {
         self.next += 1;
 
         let mut more = Vec::new();
-        while let Some(c) = self.comments.get(self.next)
+        while let Some((at, c)) = self.comments.get(self.next)
+            && *at == c.span.start
             && self.src[prev_end..c.span.start].matches('\n').count() == 1
             && self.own_line(c)
             && self.column(c.span.start) == column
@@ -126,12 +159,8 @@ impl<'s> Trivia<'s> {
     pub fn blank_before(&self, pos: usize) -> bool {
         let i = self.tok_index(pos);
         let tok_end = if i == 0 { 0 } else { self.toks[i - 1].span.end };
-        let c = self.comments.partition_point(|c| c.span.start < pos);
-        let comment_end = if c == 0 {
-            0
-        } else {
-            self.comments[c - 1].span.end
-        };
+        let c = self.spans.partition_point(|c| c.start < pos);
+        let comment_end = if c == 0 { 0 } else { self.spans[c - 1].end };
         let prev = tok_end.max(comment_end).min(pos);
         // Only whitespace in between, so two newlines make a blank line.
         prev > 0 && self.src[prev..pos].matches('\n').count() >= 2

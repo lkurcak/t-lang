@@ -52,8 +52,14 @@ pub fn format(program: &Program, trivia: Trivia) -> String {
         if i > 0 {
             doc = doc + Doc::HardLine;
         }
-        // It starts at the `struct`, `enum` or `fn` before the name.
-        doc = doc + p.element(p.before(pos), i == 0);
+        // It starts at its doc comment, or else at the `struct`, `enum` or
+        // `fn` before the name.
+        let item_doc = match item {
+            Item::Type(d) => d.doc(),
+            Item::Fn(f) => f.doc.as_ref(),
+        };
+        let start = item_doc.map_or(p.before(pos), |d| d.span().start);
+        doc = doc + p.element(start, i == 0);
         let end = match item {
             Item::Type(_) => p.find(pos, &Tok::RBrace) + 1,
             Item::Fn(f) => f.body.span.end,
@@ -182,6 +188,21 @@ impl Printer<'_> {
         doc
     }
 
+    /// The doc comment of something that starts at `pos` in the source
+    /// (after the doc), each line on a line of its own, then any comments
+    /// between the doc and it.
+    fn doc(&mut self, doc: Option<&DocComment>, pos: usize) -> Doc {
+        let Some(d) = doc else {
+            return Doc::nil();
+        };
+        let lines = concat(
+            d.lines
+                .iter()
+                .map(|l| text(format!("///{}", l.text)) + Doc::HardLine),
+        );
+        lines + self.element(pos, true)
+    }
+
     /// The comment after something that ends at `end`, if it's on the same
     /// line, and those lined up under it.
     fn trailing(&mut self, end: usize) -> Doc {
@@ -307,17 +328,21 @@ impl Printer<'_> {
             TypeDecl::Enum(_) => "enum ",
         };
         let name = d.name();
-        let head = text(keyword) + &name.name + self.generics(name, d.type_params()) + " ";
+        let doc = self.doc(d.doc(), self.before(name.span.start));
         let open = self.find(name.span.end, &Tok::LBrace);
         let close = self.find(open, &Tok::RBrace);
+        if let Some(t) = &mut self.trivia {
+            t.hold_docs(name.span.start, close);
+        }
+        let head = doc + keyword + &name.name + self.generics(name, d.type_params()) + " ";
         let body = match d {
             TypeDecl::Struct(s) => self.list(
                 BRACES,
                 close,
                 &s.fields,
-                |f| (f.name.span.start, f.ty.span.end),
+                |f| (doc_start(&f.doc, f.name.span), f.ty.span.end),
                 None,
-                |p, f| p.param(f),
+                |p, f| p.doc(f.doc.as_ref(), f.name.span.start) + p.param(f),
             ),
             TypeDecl::Enum(e) => {
                 let variants: Vec<(&Variant, usize)> = e
@@ -332,14 +357,15 @@ impl Printer<'_> {
                     BRACES,
                     close,
                     &variants,
-                    |(v, end)| (v.name.span.start, *end),
+                    |(v, end)| (doc_start(&v.doc, v.name.span), *end),
                     None,
                     |p, (v, end)| {
+                        let doc = p.doc(v.doc.as_ref(), v.name.span.start);
                         let fields = match v.fields.is_empty() {
                             true => Doc::nil(),
                             false => p.types(PARENS, end - 1, &v.fields),
                         };
-                        text(&v.name.name) + fields
+                        doc + &v.name.name + fields
                     },
                 )
             }
@@ -353,6 +379,7 @@ impl Printer<'_> {
     }
 
     fn fn_decl(&mut self, f: &FnDecl) -> Doc {
+        let doc = self.doc(f.doc.as_ref(), self.before(f.name.span.start));
         let generics = self.generics(&f.name, &f.type_params);
         let open = self.find(f.name.span.end, &Tok::LParen);
         let close = self.close(open, f.params.last().map(|p| p.ty.span.end), &Tok::RParen);
@@ -368,7 +395,7 @@ impl Printer<'_> {
             TypeExprKind::Unit => Doc::nil(),
             _ => text(" -> ") + self.ty(&f.ret),
         };
-        text("fn ")
+        doc + "fn "
             + &f.name.name
             + generics
             + params
@@ -796,6 +823,11 @@ impl Printer<'_> {
             }
         }
     }
+}
+
+/// Where something documented by `doc` starts, if its name is at `name`.
+fn doc_start(doc: &Option<DocComment>, name: Span) -> usize {
+    doc.as_ref().map_or(name.start, |d| d.span().start)
 }
 
 /// A range pattern as written. Unlike `exhaust::show_range`, which tidies

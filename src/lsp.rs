@@ -6,10 +6,10 @@
 //! reports every warning and the first error. Asked for anything else, it
 //! checks the file again and answers from what the checker found out
 //! (`check::Info`): the fixes of the diagnostics in range as code actions,
-//! the type of what's under the cursor on hover, where that's defined, and
-//! inferred types and type arguments as inlay hints. It formats a file
-//! like `t fmt`, ignoring the editor's formatting options: there's one
-//! style. It never runs the program.
+//! the type and doc comment of what's under the cursor on hover, where
+//! that's defined, and inferred types and type arguments as inlay hints.
+//! It formats a file like `t fmt`, ignoring the editor's formatting
+//! options: there's one style. It never runs the program.
 
 use crate::check::Note;
 use crate::error::{Error, Fix, Lint, Phase, Span, Warning};
@@ -115,10 +115,16 @@ fn respond(req: Request, docs: &HashMap<String, String>) -> Result<Response> {
             let hover = docs.get(at.text_document.uri.as_str()).and_then(|src| {
                 let notes = crate::check_source(src).info.notes;
                 let note = note_at(&notes, src, at.position)?;
+                // The signature, then the doc comment, as rust-analyzer
+                // shows them.
+                let mut value = format!("```t\n{}\n```", note.hover());
+                if let Some(doc) = &note.doc {
+                    value.push_str(&format!("\n\n---\n\n{doc}"));
+                }
                 Some(Hover {
                     contents: HoverContents::Markup(MarkupContent {
                         kind: MarkupKind::Markdown,
-                        value: format!("```t\n{}\n```", note.hover()),
+                        value,
                     }),
                     range: Some(lsp_range(src, note.span)),
                 })

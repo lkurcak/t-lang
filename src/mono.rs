@@ -139,9 +139,11 @@ impl<'p> Mono<'p> {
         }
 
         // In source order, with each generic one's copies where it was.
+        // Doc comments that document nothing don't matter to the program.
         let mut out = Program {
             types: Vec::new(),
             fns: Vec::new(),
+            stray_docs: Vec::new(),
         };
         for d in &prog.types {
             let name = &d.name().name;
@@ -210,6 +212,7 @@ impl<'p> Mono<'p> {
             copy: name,
         };
         FnDecl {
+            doc: f.doc.clone(),
             name: Ident {
                 name: name.unwrap_or(&f.name.name).to_string(),
                 span: f.name.span,
@@ -219,6 +222,7 @@ impl<'p> Mono<'p> {
                 .params
                 .iter()
                 .map(|p| Param {
+                    doc: None,
                     name: p.name.clone(),
                     ty: cx.ty(&p.ty),
                 })
@@ -244,24 +248,28 @@ impl<'p> Mono<'p> {
         };
         match d {
             TypeDecl::Struct(st) => TypeDecl::Struct(StructDecl {
+                doc: st.doc.clone(),
                 name,
                 type_params: Vec::new(),
                 fields: st
                     .fields
                     .iter()
                     .map(|f| Param {
+                        doc: f.doc.clone(),
                         name: f.name.clone(),
                         ty: cx.ty(&f.ty),
                     })
                     .collect(),
             }),
             TypeDecl::Enum(e) => TypeDecl::Enum(EnumDecl {
+                doc: e.doc.clone(),
                 name,
                 type_params: Vec::new(),
                 variants: e
                     .variants
                     .iter()
                     .map(|v| Variant {
+                        doc: v.doc.clone(),
                         name: v.name.clone(),
                         fields: v.fields.iter().map(|t| cx.ty(t)).collect(),
                     })
