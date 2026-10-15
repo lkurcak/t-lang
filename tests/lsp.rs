@@ -79,6 +79,7 @@ fn start() -> (std::process::Child, Client) {
         json!(["quickfix"]),
         "{init}"
     );
+    assert_eq!(caps["documentFormattingProvider"], true, "{init}");
     c.send(json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}));
     (child, c)
 }
@@ -251,6 +252,55 @@ fn hovers_hints_and_goes_to_definitions() {
             (json!({"line": 2, "character": 14}), json!("::<int>")),
         ]
     );
+
+    stop(child, c);
+}
+
+#[test]
+fn formats_documents() {
+    let (child, mut c) = start();
+    let uri = "file:///tmp/fmt.t";
+    let open = |c: &mut Client, text: &str| {
+        c.send(
+            json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+                "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": text}
+            }}),
+        );
+        c.diagnostics();
+    };
+    // The editor's options are ignored: there's one style.
+    let format = |c: &mut Client, id: i64| {
+        c.send(
+            json!({"jsonrpc": "2.0", "id": id, "method": "textDocument/formatting", "params": {
+                "textDocument": {"uri": uri},
+                "options": {"tabSize": 2, "insertSpaces": false}
+            }}),
+        );
+        c.response(id)
+    };
+
+    // One edit, replacing the whole file.
+    let messy = "fn main()   {\n  print(1) // expect: 1\n}\n\n";
+    open(&mut c, messy);
+    let response = format(&mut c, 2);
+    assert_eq!(
+        response["result"],
+        json!([{
+            "range": {"start": {"line": 0, "character": 0}, "end": {"line": 4, "character": 0}},
+            "newText": "fn main() {\n    print(1) // expect: 1\n}\n"
+        }]),
+        "{response}"
+    );
+
+    // Nothing to do if it's formatted already.
+    open(&mut c, "fn main() { print(1) }\n");
+    assert_eq!(format(&mut c, 3)["result"], json!([]));
+
+    // Nothing to do if it doesn't parse: the diagnostic says why.
+    open(&mut c, "fn main() {");
+    let response = format(&mut c, 4);
+    assert_eq!(response["result"], Value::Null, "{response}");
+    assert!(response.get("error").is_none(), "{response}");
 
     stop(child, c);
 }

@@ -7,28 +7,30 @@
 //! checks the file again and answers from what the checker found out
 //! (`check::Info`): the fixes of the diagnostics in range as code actions,
 //! the type of what's under the cursor on hover, where that's defined, and
-//! inferred types and type arguments as inlay hints. It never runs the
-//! program.
+//! inferred types and type arguments as inlay hints. It formats a file
+//! like `t fmt`, ignoring the editor's formatting options: there's one
+//! style. It never runs the program.
 
 use crate::check::Note;
 use crate::error::{Error, Fix, Lint, Phase, Span, Warning};
+use crate::fmt::FmtError;
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, Response};
 use lsp_types::notification::{
     DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, Notification as _,
     PublishDiagnostics,
 };
 use lsp_types::request::{
-    CodeActionRequest, GotoDefinition, HoverRequest, InlayHintRequest, Request as _,
+    CodeActionRequest, Formatting, GotoDefinition, HoverRequest, InlayHintRequest, Request as _,
 };
 use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOptions, CodeActionOrCommand, CodeActionParams,
     CodeActionProviderCapability, Diagnostic, DiagnosticSeverity, DiagnosticTag,
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams,
-    HoverProviderCapability, InlayHint, InlayHintKind, InlayHintLabel, InlayHintParams, Location,
-    MarkupContent, MarkupKind, NumberOrString, OneOf, Position, PublishDiagnosticsParams, Range,
-    ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Uri,
-    WorkspaceEdit,
+    DocumentFormattingParams, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents,
+    HoverParams, HoverProviderCapability, InlayHint, InlayHintKind, InlayHintLabel,
+    InlayHintParams, Location, MarkupContent, MarkupKind, NumberOrString, OneOf, Position,
+    PublishDiagnosticsParams, Range, ServerCapabilities, TextDocumentSyncCapability,
+    TextDocumentSyncKind, TextEdit, Uri, WorkspaceEdit,
 };
 use std::collections::HashMap;
 
@@ -46,6 +48,7 @@ pub fn run() -> Result<()> {
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         definition_provider: Some(OneOf::Left(true)),
         inlay_hint_provider: Some(OneOf::Left(true)),
+        document_formatting_provider: Some(OneOf::Left(true)),
         ..Default::default()
     };
     conn.initialize(serde_json::to_value(capabilities)?)?;
@@ -142,6 +145,33 @@ fn respond(req: Request, docs: &HashMap<String, String>) -> Result<Response> {
                 None => Vec::new(),
             };
             Ok(Response::new_ok(req.id, hints))
+        }
+        Formatting::METHOD => {
+            let p: DocumentFormattingParams = serde_json::from_value(req.params)?;
+            let Some(src) = docs.get(p.text_document.uri.as_str()) else {
+                return Ok(Response::new_ok(req.id, ()));
+            };
+            match crate::fmt::format(src) {
+                // One edit replacing the whole file: simpler than a diff, and
+                // editors keep the cursor where it was well enough.
+                Ok(formatted) => {
+                    let edits = match formatted == *src {
+                        true => Vec::new(),
+                        false => vec![TextEdit::new(
+                            Range::new(Position::new(0, 0), position(src, src.len())),
+                            formatted,
+                        )],
+                    };
+                    Ok(Response::new_ok(req.id, edits))
+                }
+                // The syntax error is already showing as a diagnostic.
+                Err(FmtError::Syntax(_)) => Ok(Response::new_ok(req.id, ())),
+                Err(FmtError::Changed(why)) => Ok(Response::new_err(
+                    req.id,
+                    ErrorCode::RequestFailed as i32,
+                    format!("not formatting: {why}"),
+                )),
+            }
         }
         _ => {
             let msg = format!("unsupported request `{}`", req.method);

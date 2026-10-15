@@ -69,7 +69,7 @@ enough in it to be worth compiling.
 warnings as you type, and offers their fixes as quick fixes (code actions).
 Hovering shows types, go to definition works for variables, functions,
 types, fields and variants, and inlay hints show inferred types and type
-arguments.
+arguments. It formats files as `t fmt` does (see below).
 
 **Neovim (0.11+):** install
 [t-lang.nvim](https://github.com/lkurcak/t-lang.nvim), e.g.
@@ -79,6 +79,26 @@ arguments.
 into `~/.config/helix/languages.toml`.
 
 **Anything else with an LSP client:** run `t lsp` for files ending in `.t`.
+
+### Formatting
+
+`t lsp` answers "format document" requests with `t fmt`'s formatting. It
+ignores the editor's formatting options, such as tab size: there's one
+style, with no options.
+
+**Neovim:** `:lua vim.lsp.buf.format()` formats the current file. To format
+on every save:
+
+```lua
+vim.api.nvim_create_autocmd("BufWritePre", {
+  pattern = "*.t",
+  callback = function() vim.lsp.buf.format() end,
+})
+```
+
+**Helix:** `:format` (`:fmt`) formats the current file.
+[editors/helix/languages.toml](editors/helix/languages.toml) sets
+`auto-format = true`, so Helix also formats on every save.
 
 ### Syntax highlighting
 

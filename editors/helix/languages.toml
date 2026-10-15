@@ -12,6 +12,8 @@ file-types = ["t"]
 comment-token = "//"
 indent = { tab-width = 4, unit = "    " }
 language-servers = ["t"]
+# Format with `t lsp` (as `t fmt` does) on every save.
+auto-format = true
 
 [[grammar]]
 name = "t"
