@@ -11,6 +11,7 @@ fn count<T>(n: int) -> int { n }
 struct Id<T> { n: int }
 
 fn id<T>(x: T) -> T { x }
+fn second<A, B>(_a: A, b: B) -> B { b }
 fn apply<T>(f: fn(T) -> T, x: T) -> T { f(x) }
 fn is_some<T>(o: Option<T>) -> bool {
     match o {
@@ -37,4 +38,14 @@ fn main() {
     }
     let Pair::<int, bool> { first, .. } = p;
     print(first);                                       // expect: 5
+    // `_` stands for a type to infer: write some type arguments, not all.
+    print(second::<bool, _>(true, 9));                  // expect: 9
+    print(unwrap(id::<Option<_>>(Option::Some(10))));   // expect: 10
+}
+
+fn unwrap(o: Option<int>) -> int {
+    match o {
+        Option::Some(n) => n,
+        Option::None => 0,
+    }
 }

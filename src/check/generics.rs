@@ -34,6 +34,10 @@ pub(crate) fn resolve(
     params: &[String],
 ) -> Result<Type, Error> {
     match &t.kind {
+        TypeExprKind::Named(name, _) if name == "_" => Err(Error::ty(
+            t.span,
+            "`_` can only stand for a type in type arguments, like `id::<_>`",
+        )),
         TypeExprKind::Named(name, args) => {
             let arity = if params.contains(name) || matches!(name.as_str(), "int" | "bool") {
                 0
@@ -72,11 +76,39 @@ pub(crate) fn resolve(
     }
 }
 
+/// `t`, with each `_` in it renamed to a type parameter no program can
+/// name (`?0`, `?1`, ..), which are added to `holes` with where they were.
+pub(super) fn name_holes(t: &TypeExpr, holes: &mut Vec<(String, Span)>) -> TypeExpr {
+    let kind = match &t.kind {
+        TypeExprKind::Named(name, args) if name == "_" && args.is_empty() => {
+            let name = format!("?{}", holes.len());
+            holes.push((name.clone(), t.span));
+            TypeExprKind::Named(name, Vec::new())
+        }
+        TypeExprKind::Named(name, args) => TypeExprKind::Named(
+            name.clone(),
+            args.iter().map(|a| name_holes(a, holes)).collect(),
+        ),
+        TypeExprKind::Unit => TypeExprKind::Unit,
+        TypeExprKind::Fn(params, ret) => TypeExprKind::Fn(
+            params.iter().map(|p| name_holes(p, holes)).collect(),
+            Box::new(name_holes(ret, holes)),
+        ),
+    };
+    TypeExpr { kind, span: t.span }
+}
+
 /// Checks the type parameters declared by a function, struct or enum, and
 /// returns their names.
 pub(super) fn declare(params: &[Ident]) -> Result<Vec<String>, Error> {
     let mut names: Vec<String> = Vec::new();
     for p in params {
+        if p.name == "_" {
+            return Err(Error::ty(
+                p.span,
+                "a type parameter needs a name; `_` means \"infer this\" in type arguments",
+            ));
+        }
         if matches!(p.name.as_str(), "int" | "bool") {
             return Err(Error::ty(
                 p.span,

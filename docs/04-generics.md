@@ -331,8 +331,13 @@ reads the same table.
 
 - **Explicit type parameters, rank 1.** `<T>` on top-level items only. See
   *System F, Hindley–Milner, and what T does*.
-- **Type arguments are inferred, or written with a turbofish**, never
-  partly: `pair::<int, _>` isn't a thing (yet: see the exercises).
+- **Type arguments are inferred, written with a turbofish, or some of
+  each**: `_` in `::<..>` means "infer this part", as in
+  `second::<bool, _>(..)` or `id::<Option<_>>(..)`. `Checker::type_arg`
+  renames each `_` to a type parameter no program can name, resolves the
+  type as usual, and puts a fresh variable in its place. It's only
+  allowed in type arguments, which monomorphisation drops; see the
+  exercises.
 - **The checker's opinion of a type parameter is fixed.** `Type::Param`
   isn't a variable; the body can't learn anything about it. A *rigid* or
   *skolem* variable, in the jargon.
@@ -366,9 +371,10 @@ reads the same table.
    can't it add them, and why can't it compare them?
 2. Monomorphise `tests/t/generics.t` by hand, then check with `t mono`.
    How many copies of `Option` are there, and why that many?
-3. Allow `_` in written type arguments, as in `pair::<int, _>(1, true)`:
-   write some and infer the rest. Where in `Checker::type_args` does it
-   go, and why can't `resolve` do it?
+3. Allow `_` in `let` annotations too, as in `let x: Option<_> = ..`.
+   The checker part is easy (`Checker::type_arg`). Why does
+   monomorphisation then need the checker's help, when it can resolve
+   every other annotation by itself?
 4. Rewrite `nest` from *Polymorphic recursion* so that it's allowed, by
    counting the levels instead of wrapping the value in them. What did that
    cost?

@@ -9,7 +9,8 @@ Step 4: generics. See [docs/04-generics.md](docs/04-generics.md).
 - Generic functions, structs and enums: `fn id<T>(x: T) -> T`,
   `struct Pair<A, B> { .. }`, `enum Option<T> { Some(T), None }`, and
   types like `Option<int>`. Type arguments are inferred at each use, or
-  written out with a turbofish: `id::<int>(1)`, `Option::<int>::None`. Inside
+  written out with a turbofish: `id::<int>(1)`, `Option::<int>::None`, with
+  `_` for parts to infer (`second::<bool, _>(..)`). Inside
   a generic body a type parameter is opaque, and `==` on one is an error
   until traits. Closures and `let`s stay monomorphic.
 - Monomorphisation, as a pass between checking and running: each generic

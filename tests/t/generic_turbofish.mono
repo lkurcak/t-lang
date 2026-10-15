@@ -38,6 +38,14 @@ fn id::<int>(x: int) -> int {
     x
 }
 
+fn id::<Option<int>>(x: Option::<int>) -> Option::<int> {
+    x
+}
+
+fn second::<bool, int>(_a: bool, b: int) -> int {
+    b
+}
+
 fn apply::<int>(f: fn(int) -> int, x: int) -> int {
     f(x)
 }
@@ -74,4 +82,13 @@ fn main() {
     }
     let Pair::<int, bool> { first, .. } = p;
     print(first);
+    print(second::<bool, int>(true, 9));
+    print(unwrap(id::<Option<int>>(Option::<int>::Some(10))));
+}
+
+fn unwrap(o: Option::<int>) -> int {
+    match o {
+        Option::<int>::Some(n) => n,
+        Option::<int>::None => 0,
+    }
 }

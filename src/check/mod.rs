@@ -585,7 +585,30 @@ impl Checker {
                 span,
             ));
         }
-        targs.iter().map(|t| self.resolve(t)).collect()
+        targs.iter().map(|t| self.type_arg(t)).collect()
+    }
+
+    /// A type argument written in `::<..>`, where `_` may stand for any part
+    /// of it, to be inferred: `pair::<int, _>`, `id::<Option<_>>`.
+    ///
+    /// `resolve` can't make type variables, so each `_` is renamed to a
+    /// type parameter no source program can name, resolved like any other,
+    /// and then replaced by a fresh variable.
+    fn type_arg(&mut self, t: &TypeExpr) -> Result<Type, Error> {
+        let mut holes = Vec::new();
+        let t = generics::name_holes(t, &mut holes);
+        let mut params = self.type_params.clone();
+        params.extend(holes.iter().map(|(name, _)| name.clone()));
+        let ty = resolve(&t, &self.arities, &params)?;
+        let (names, vars): (Vec<String>, Vec<Type>) = holes
+            .into_iter()
+            .map(|(name, span)| {
+                let what = "the type `_` stands for here".to_string();
+                let var = self.fresh(span, what, "write it out instead".into());
+                (name, var)
+            })
+            .unzip();
+        Ok(Subst::new(&names, &vars).apply(&ty))
     }
 
     /// What the function being checked refers to.
