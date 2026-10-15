@@ -1,6 +1,6 @@
 # Step 3: type inference and closures
 
-Code: `src/check/unify.rs` (`Checker::unify`), `src/check/mod.rs`
+Code: `src/check/unify.rs` (`Checker::unify`), `src/check.rs`
 (`Checker::lambda` and `Checker::check`) and `src/interp.rs` (`Closure`).
 
 ```rust

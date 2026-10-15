@@ -22,3 +22,6 @@ serde_json = "1.0.154"
 [dev-dependencies]
 tree-sitter = "0.26"
 tree-sitter-t = { path = "editors/tree-sitter-t" }
+
+[lints.clippy]
+mod_module_files = "warn"

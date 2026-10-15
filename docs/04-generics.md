@@ -1,6 +1,6 @@
 # Step 4: generics
 
-Code: `src/types.rs` (`Type::Param`, `Subst`, `Scheme`), `src/check/mod.rs`
+Code: `src/types.rs` (`Type::Param`, `Subst`, `Scheme`), `src/check.rs`
 (`Checker::lookup` and `Checker::instantiate`), `src/check/generics.rs`, and
 `src/mono.rs`.
 
