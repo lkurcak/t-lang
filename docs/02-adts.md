@@ -98,8 +98,10 @@ set. That's a stuck state, so this rule matters for soundness too.
 The last premise of T-Match, "p1..pn cover T", says every value of type `T`
 matches at least one pattern. Without it:
 
-```rust
-match s { Shape::Circle(r) => r }   // and s is Shape::Empty?
+```rust,fragment
+match s {
+    Shape::Circle(r) => r, // and if s is Shape::Empty?
+}
 ```
 
 the program would be **stuck**, with no rule saying what happens next. That's
@@ -155,9 +157,12 @@ exactly the values either of those would.
 Unreachable *alternatives* need more care than unreachable arms.
 `Opt::Some(1 | 1)` hides its duplicate inside a variant. In
 
-```rust
-Opt::Some(1) => ..,
-Opt::Some(1 | 2) | Opt::None => ..,
+```rust,fragment
+match o {
+    Opt::Some(1) => 1,
+    Opt::Some(1 | 2) | Opt::None => 2,
+    _ => 3,
+}
 ```
 
 the inner `1` is dead because of the arm above, but the second arm as a whole
@@ -213,9 +218,12 @@ one surrounds the earlier, as a fallback around a special case
 (`5..10 => .., 0..20 => ..`), but if earlier patterns cover one of its ends,
 the range claims ints it can never get:
 
-```rust
-0..=5 => ..,
-5..=10 => ..,   // warning: this range can be narrowed to `6..=10`
+```rust,fragment
+match n {
+    0..=5 => 1,
+    5..=10 => 2, // warning: this range can be narrowed to `6..=10`
+    _ => 3,
+}
 ```
 
 So `exhaust::redundant` also asks, for each range in each useful combination,
@@ -244,7 +252,9 @@ constructors: `_` is never useful), and since that match can never run, it
 can have *any* type:
 
 ```rust
-fn absurd(n: Never) -> int { match n {} }
+fn absurd(n: Never) -> int {
+    match n {}
+}
 ```
 
 In logic this is "from a contradiction, anything follows". Rust's `!` and

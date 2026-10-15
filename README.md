@@ -25,11 +25,11 @@ fn twice(f: fn(int) -> int, x: int) -> int { f(f(x)) }
 
 fn main() {
     let n = 5;
-    print(fact(10));
-    print(twice(fact, 3));
-    print(twice(|x| x + n, 0));
-    print(area(Shape::Rect(3, 4)));
-    print(area(Shape::Circle(2)) + area(Shape::Empty));
+    print(fact(10));                                    // expect: 3628800
+    print(twice(fact, 3));                              // expect: 720
+    print(twice(|x| x + n, 0));                         // expect: 10
+    print(area(Shape::Rect(3, 4)));                     // expect: 12
+    print(area(Shape::Circle(2)) + area(Shape::Empty)); // expect: 12
 }
 ```
 
@@ -56,7 +56,7 @@ t lsp                       # language server (see below)
 ```
 
 From a checkout, use `cargo run -- <args>` instead, and `cargo test` to run
-every program in `tests/t/`.
+every program in `tests/t/` and the code in the docs (see [Tests](#tests)).
 
 `t fmt` formats T in one style, with no options, at 100 columns, keeping
 comments and single blank lines. It refuses to write anything that would
@@ -150,8 +150,8 @@ vim.api.nvim_create_autocmd("FileType", {
 
 Each `tests/t/*.t` file is a program with its expectations in comments:
 
-```rust
-print(1 + 2);   // expect: 3
+```rust,fragment
+print(1 + 2); // expect: 3
 // error: expected `int`, found `bool`
 // warning: unreachable pattern
 ```
@@ -159,6 +159,22 @@ print(1 + 2);   // expect: 3
 Every warning must be expected, and applying the warnings' fixes must not
 change what the program does. A `tests/t/<name>.mono` file holds what
 `t mono` prints for that test; `BLESS=1 cargo test` rewrites them.
+
+The T code in this README and in `docs/` is tested too (`tests/docs.rs`).
+Every ```` ```rust ```` block must parse and be formatted as `t fmt` would,
+and one with a `fn main` must run, with the same comments as above. Words
+after `rust` say what else a block is; GitHub reads only the first word, so
+they don't show:
+
+| Fence | The block is | Checked |
+|---|---|---|
+| ```` ```rust ```` | items, or a whole program | it runs if it has a `fn main` |
+| ```` ```rust,fragment ```` | statements, as in a function body | as the body of a `fn main`, not run |
+| ```` ```rust,error ```` | a program shown for its error | it fails with its `// error:`; an empty `main` is added if it has none |
+| ```` ```rust,unformatted ```` | laid out badly on purpose | not for formatting |
+
+They combine, as in ```` ```rust,fragment,unformatted ````. Blocks in other
+languages, such as ```` ```text ````, aren't checked.
 
 ## Design constraints
 

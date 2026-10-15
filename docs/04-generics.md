@@ -16,7 +16,10 @@ fn map<T, U>(o: Option<T>, f: fn(T) -> U) -> Option<U> {
 
 fn main() {
     let n = 10;
-    let o = map(Option::Some(4), |x| x * n);    // Option::Some(40)
+    match map(Option::Some(4), |x| x * n) {
+        Option::Some(y) => print(y), // expect: 40
+        Option::None => {},
+    }
 }
 ```
 
@@ -67,9 +70,9 @@ is a type the checker knows nothing about. `Type::Param("T")` unifies with
 itself and nothing else: not `int`, not `bool`, not `U`
 (`err_generic_opaque.t`, `err_generic_param_distinct.t`):
 
-```rust
+```rust,error
 fn add_one<T>(x: T) -> int { x + 1 }
-// type error: expected `int`, found `T`
+// error: expected `int`, found `T`
 ```
 
 If the body checks with `T` opaque, it checks for every `T`, and callers only
@@ -83,9 +86,9 @@ says what the function does.
 T-Eq (step 1) bans `==` on functions, so it can't allow `==` on a `T`
 either: the caller could pick a function type.
 
-```rust
+```rust,error
 fn same<T>(a: T, b: T) -> bool { a == b }
-// type error: cannot compare values of type `T` with `==`: `T` is a type
+// error: cannot compare values of type `T` with `==`: `T` is a type
 // parameter, so it may be a function; ...
 ```
 
@@ -168,11 +171,14 @@ So only top-level functions, structs and enums can be generic, and only by
 saying so with `<T>`. A closure, and any `let`, has one type
 (`err_infer_monomorphic.t`, `err_generic_let_mono.t`):
 
-```rust
+```rust,error
 fn id<T>(x: T) -> T { x }
-let f = id;          // id instantiated once: f : fn(α) -> α
-print(f(1));         // α = int
-print_bool(f(true)); // type error: expected `int`, found `bool`
+
+fn main() {
+    let f = id;          // id instantiated once: f : fn(α) -> α
+    print(f(1));         // α = int
+    print_bool(f(true)); // error: expected `int`, found `bool`
+}
 ```
 
 Why not generalise `let`, when HM shows how? It would make closures generic,

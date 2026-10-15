@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `cargo test` checks the T code in the README and `docs/`: every
+  ```` ```rust ```` block must parse and be formatted, and a whole program
+  must run and print what its `// expect:` comments say, as in `tests/t`.
+  Fragments and deliberate errors are marked in the fence
+  (```` ```rust,fragment ````, ```` ```rust,error ````,
+  ```` ```rust,unformatted ````); see the README's Tests section.
+
+### Fixed
+
+- Docs whose code no longer worked: step 3 opened with an `adder` that
+  returns a closure capturing `n`, an error since 0.4.0, and step 4's
+  opening program left a variable unused. Several examples weren't
+  formatted, and some mixed items with statements, which doesn't parse.
+
 ## 0.4.1 (2026-10-15)
 
 ### Added

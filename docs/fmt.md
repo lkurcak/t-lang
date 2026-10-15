@@ -4,7 +4,7 @@ Code: `src/fmt.rs` (the command, and the check before writing),
 `src/trivia.rs` (comments and blank lines), `src/pretty.rs` (AST to
 layout), `src/doc.rs` (the layout engine), and `tests/fmt.rs`.
 
-```rust
+```rust,unformatted
 struct Point{x:int,y:int}
 fn dist(p:Point,q:Point)->int{
 let dx=p.x-q.x;let dy=p.y-q.y;  // no square roots yet
@@ -108,7 +108,7 @@ A call `f(a, b)` is a group: `f(`, then nested `SoftLine a, Line b,` (a
 `SoftLine` is nothing when flat), then `SoftLine )`. Flat, that's
 `f(a, b)`. Broken, it's:
 
-```rust
+```rust,fragment,unformatted
 f(
     a,
     b,
@@ -123,7 +123,7 @@ next possible line break, fit in what's left of the line? So the outermost
 group that doesn't fit breaks first, and the ones inside get the whole of
 their new lines to fit in:
 
-```rust
+```rust,fragment
 print(compute_something_long(
     first_argument,
     second_argument,
@@ -170,7 +170,7 @@ break:
   struct literal breaks inside, not between arguments.** This is the one
   rule Wadler's groups can't express:
 
-  ```rust
+  ```rust,fragment
   apply(first_argument, second_argument, |x: int| -> int {
       let y = x * 2;
       y + 1
@@ -205,7 +205,7 @@ comment can go, it asks for the comments up to that point in the source:
   how `tests/t/block_like_stmts.t` writes several expected lines for one
   statement:
 
-  ```rust
+  ```rust,fragment
   print(h(true)); // expect: 1
                   // expect: 2
   ```
@@ -230,7 +230,7 @@ or editing one never changes how the code around it is laid out.
 Comments at the ends of consecutive lines are lined up, one space after the
 longest line:
 
-```rust
+```rust,fragment
 print(add5(1));                       // expect: 6
 print(compose(add5, |x| x + 100, 0)); // expect: 105
 ```

@@ -4,11 +4,10 @@ Code: `src/check/unify.rs` (`Checker::unify`), `src/check.rs`
 (`Checker::lambda` and `Checker::check`) and `src/interp.rs` (`Closure`).
 
 ```rust
-fn adder(n: int) -> fn(int) -> int { |x| x + n }
-
 fn main() {
+    let n = 5;
     let twice = |f, x| f(f(x));
-    print(twice(adder(5), 0));   // 10
+    print(twice(|x| x + n, 0)); // expect: 10
 }
 ```
 
@@ -118,12 +117,14 @@ Unification is order-independent only for constraints of the form "these two
 types are equal". Some rules need to *decide* something with a type, and
 need it known right then:
 
-```rust
+```rust,error
 struct P { x: int, y: int }
 fn on_point(f: fn(P) -> int) -> int { f(P { x: 3, y: 4 }) }
 
-on_point(|p| p.x)       // fine
-let get = |p| p.x;      // error: the type of this must be known
+fn main() {
+    print(on_point(|p| p.x)); // fine
+    let get = |p| p.x;        // error: the type of this must be known
+}
 ```
 
 T-Field asks *which struct* `p` is, to find its field `x`. A variable is no
@@ -168,10 +169,12 @@ infer top-level types as well.
 
 And a variable has *one* type:
 
-```rust
-let id = |x| x;
-print(id(1));            // id : fn(int) -> int from here on
-print_bool(id(true));    // error: expected `int`, found `bool`
+```rust,error
+fn main() {
+    let id = |x| x;
+    print(id(1));         // id : fn(int) -> int from here on
+    print_bool(id(true)); // error: expected `int`, found `bool`
+}
 ```
 
 In Hindley–Milner, `let` would *generalize* `id` to `∀α. fn(α) -> α`, a type
@@ -193,11 +196,11 @@ Since nothing in T can change a variable once it's bound, a copy can never
 disagree with the original, so copying is the same as sharing. The order
 still shows (`closures.t`):
 
-```rust
+```rust,fragment
 let n = 1;
 let get = || n;
-let n = 2;          // a new `n`, shadowing the old one
-get() + n           // 3
+let n = 2; // a new `n`, shadowing the old one
+get() + n  // 3
 ```
 
 The hard part is where the environment *lives*. Take
