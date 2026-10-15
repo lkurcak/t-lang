@@ -80,6 +80,15 @@ fn start() -> (std::process::Child, Client) {
         "{init}"
     );
     assert_eq!(caps["documentFormattingProvider"], true, "{init}");
+    for cap in [
+        "referencesProvider",
+        "documentHighlightProvider",
+        "typeDefinitionProvider",
+        "documentSymbolProvider",
+    ] {
+        assert_eq!(caps[cap], true, "{cap}: {init}");
+    }
+    assert_eq!(caps["renameProvider"]["prepareProvider"], true, "{init}");
     c.send(json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}));
     (child, c)
 }
@@ -521,6 +530,608 @@ fn top(x: int) -> P { P { x } }
     // A field of `other`'s, by the type of what it's read from.
     assert_eq!(ask(&mut c, def, "z", 2)["range"]["start"], at("z", 1));
     assert_eq!(ask(&mut c, def, "z", 0)["range"]["start"], at("z", 1));
+
+    stop(child, c);
+}
+
+/// A file open in `t lsp`, for asking about places in it.
+struct Doc {
+    uri: &'static str,
+    src: &'static str,
+    id: i64,
+}
+
+impl Doc {
+    /// Opens `src` and checks it has the diagnostics `want` (by message).
+    fn open(c: &mut Client, uri: &'static str, src: &'static str) -> (Doc, Vec<Value>) {
+        c.send(
+            json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+                "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
+            }}),
+        );
+        let diags = c.diagnostics();
+        (Doc { uri, src, id: 1 }, diags)
+    }
+
+    /// The position of the `nth` place `needle` is in the source.
+    fn at(&self, needle: &str, nth: usize) -> Value {
+        let offset = self
+            .src
+            .match_indices(needle)
+            .nth(nth)
+            .unwrap_or_else(|| panic!("no {nth}th {needle:?}"))
+            .0;
+        let line = self.src[..offset].matches('\n').count();
+        let character = offset - self.src[..offset].rfind('\n').map_or(0, |i| i + 1);
+        json!({"line": line, "character": character})
+    }
+
+    /// The range of the `nth` `needle`.
+    fn range(&self, needle: &str, nth: usize) -> Value {
+        let start = self.at(needle, nth);
+        let end = json!({
+            "line": start["line"],
+            "character": start["character"].as_u64().unwrap() + needle.len() as u64
+        });
+        json!({"start": start, "end": end})
+    }
+
+    /// The response to `method` at the `nth` `needle`, with `params` added.
+    fn ask(
+        &mut self,
+        c: &mut Client,
+        method: &str,
+        needle: &str,
+        nth: usize,
+        params: Value,
+    ) -> Value {
+        self.id += 1;
+        let mut p = json!({"textDocument": {"uri": self.uri}, "position": self.at(needle, nth)});
+        for (k, v) in params.as_object().unwrap() {
+            p[k] = v.clone();
+        }
+        c.send(json!({"jsonrpc": "2.0", "id": self.id, "method": method, "params": p}));
+        c.response(self.id)
+    }
+
+    /// The ranges `textDocument/references` gives at the `nth` `needle`.
+    fn references(&mut self, c: &mut Client, needle: &str, nth: usize, decl: bool) -> Vec<Value> {
+        let context = json!({"context": {"includeDeclaration": decl}});
+        let r = self.ask(c, "textDocument/references", needle, nth, context);
+        let refs = r["result"].as_array().unwrap_or_else(|| panic!("{r}"));
+        refs.iter()
+            .map(|l| {
+                assert_eq!(l["uri"], self.uri);
+                l["range"].clone()
+            })
+            .collect()
+    }
+
+    /// The source after renaming at the `nth` `needle` to `new`, or the
+    /// error message.
+    fn rename(
+        &mut self,
+        c: &mut Client,
+        needle: &str,
+        nth: usize,
+        new: &str,
+    ) -> Result<String, String> {
+        let r = self.ask(
+            c,
+            "textDocument/rename",
+            needle,
+            nth,
+            json!({"newName": new}),
+        );
+        if let Some(e) = r.get("error") {
+            return Err(e["message"].as_str().unwrap().to_string());
+        }
+        let edits = r["result"]["changes"][self.uri]
+            .as_array()
+            .unwrap_or_else(|| panic!("{r}"));
+        let offset = |p: &Value| {
+            let line = p["line"].as_u64().unwrap() as usize;
+            let start: usize = self
+                .src
+                .split_inclusive('\n')
+                .take(line)
+                .map(str::len)
+                .sum();
+            start + p["character"].as_u64().unwrap() as usize
+        };
+        let mut edits: Vec<(usize, usize, &str)> = edits
+            .iter()
+            .map(|e| {
+                let r = &e["range"];
+                (
+                    offset(&r["start"]),
+                    offset(&r["end"]),
+                    e["newText"].as_str().unwrap(),
+                )
+            })
+            .collect();
+        edits.sort_by_key(|e| std::cmp::Reverse(e.0));
+        let mut out = self.src.to_string();
+        for (start, end, text) in edits {
+            out.replace_range(start..end, text);
+        }
+        Ok(out)
+    }
+}
+
+/// References, highlights and renames follow what names refer to, when
+/// nested functions and local types share a name with others.
+#[test]
+fn references_highlights_and_renames_follow_scopes() {
+    let (child, mut c) = start();
+    let src = "\
+fn helper() -> int { 1 }
+fn main() {
+    print(helper());
+    {
+        print_bool(helper(2));
+        // helper is nested here.
+        fn helper(x: int) -> bool { x > 1 }
+    }
+    let p = P { x: 1 };
+    print(p.x + other());
+    {
+        let q = P { y: true };
+        print_bool(q.y);
+        struct P { y: bool }
+    }
+}
+fn other() -> int {
+    fn helper() -> int { 3 }
+    helper()
+}
+struct P { x: int }
+";
+    let (mut d, diags) = Doc::open(&mut c, "file:///tmp/refs.t", src);
+    assert_eq!(diags, Vec::<Value>::new());
+
+    // `helper`s in order: 0 the top-level one, 1 its use, 2 the nested
+    // one's use before it, 3 a comment, 4 the nested one, 5 `other`'s, 6
+    // its use.
+    let nested = vec![d.range("helper", 2), d.range("helper", 4)];
+    assert_eq!(d.references(&mut c, "helper", 2, true), nested);
+    assert_eq!(d.references(&mut c, "helper", 4, true), nested);
+    assert_eq!(d.references(&mut c, "helper", 4, false), nested[..1]);
+    let top = vec![d.range("helper", 0), d.range("helper", 1)];
+    assert_eq!(d.references(&mut c, "helper", 1, true), top);
+
+    // The declaration is written, the uses read.
+    let h = d.ask(
+        &mut c,
+        "textDocument/documentHighlight",
+        "helper",
+        6,
+        json!({}),
+    );
+    assert_eq!(
+        h["result"],
+        json!([
+            {"range": d.range("helper", 5), "kind": 3},
+            {"range": d.range("helper", 6), "kind": 2},
+        ])
+    );
+
+    // Renaming the nested one renames it and its use, not the comment.
+    let renamed = d.rename(&mut c, "helper", 2, "big").unwrap();
+    assert_eq!(
+        renamed,
+        src.replace("helper(2)", "big(2)")
+            .replace("fn helper(x", "fn big(x")
+    );
+
+    // `P`s in order: 0 the top-level one's literal, 1 the local one's
+    // literal, 2 the local one, 3 the top-level one.
+    assert_eq!(
+        d.references(&mut c, "P", 1, true),
+        vec![d.range("P", 1), d.range("P", 2)]
+    );
+    let renamed = d.rename(&mut c, "P", 3, "Point").unwrap();
+    assert_eq!(renamed, src.replace("P { x", "Point { x"));
+    // A field of the local one.
+    assert_eq!(
+        d.references(&mut c, "y", 2, true),
+        vec![d.range("y", 0), d.range("y", 1), d.range("y", 2)]
+    );
+
+    stop(child, c);
+}
+
+/// Renaming either side of a shorthand `P { x }` spells out the other.
+#[test]
+fn renames_shorthand_fields_and_variables() {
+    let (child, mut c) = start();
+    let src = "\
+struct P { x: int }
+fn main() {
+    let x = 1;
+    let p = P { x };
+    let P { x } = p;
+    print(x);
+}
+";
+    let (mut d, diags) = Doc::open(&mut c, "file:///tmp/shorthand.t", src);
+    assert_eq!(diags, Vec::<Value>::new());
+    // `x`s in order: 0 the field, 1 the first variable, 2 the literal, 3
+    // the pattern, binding the second variable, 4 its use.
+    assert_eq!(
+        d.rename(&mut c, "x", 1, "a").unwrap(),
+        src.replace("let x = 1", "let a = 1")
+            .replace("P { x };", "P { x: a };")
+    );
+    assert_eq!(
+        d.rename(&mut c, "x", 2, "a").unwrap(),
+        d.rename(&mut c, "x", 1, "a").unwrap(),
+        "from the shorthand, the variable"
+    );
+    assert_eq!(
+        d.rename(&mut c, "x", 3, "b").unwrap(),
+        src.replace("P { x } =", "P { x: b } =")
+            .replace("print(x)", "print(b)")
+    );
+    assert_eq!(
+        d.rename(&mut c, "x", 0, "y").unwrap(),
+        src.replace("{ x: int", "{ y: int")
+            .replace("P { x };", "P { y: x };")
+            .replace("P { x } =", "P { y: x } =")
+    );
+
+    stop(child, c);
+}
+
+/// Fields, variants and type parameters rename too, a type parameter only
+/// in what declares it.
+#[test]
+fn renames_fields_variants_and_type_parameters() {
+    let (child, mut c) = start();
+    let src = "\
+enum Shape<T> {
+    Circle(T),
+    Empty,
+}
+struct Wrap<T> { inner: T }
+fn area<T>(s: Shape<T>, w: Wrap<T>) -> T {
+    match s {
+        Shape::Circle(r) => r,
+        Shape::Empty => w.inner,
+    }
+}
+fn main() {
+    print(area(Shape::Circle(2), Wrap { inner: 1 }));
+    print(area(Shape::Empty, Wrap::<int> { inner: 3 }));
+}
+";
+    let (mut d, diags) = Doc::open(&mut c, "file:///tmp/kinds.t", src);
+    assert_eq!(diags, Vec::<Value>::new());
+    assert_eq!(
+        d.rename(&mut c, "Circle", 0, "Round").unwrap(),
+        src.replace("Circle", "Round")
+    );
+    assert_eq!(
+        d.rename(&mut c, "inner", 1, "value").unwrap(),
+        src.replace("inner", "value")
+    );
+    // `T`s in order: 0 and 1 `Shape`'s, 2 and 3 `Wrap`'s, then `area`'s.
+    assert_eq!(
+        d.rename(&mut c, "T", 4, "U").unwrap(),
+        src.replace(
+            "area<T>(s: Shape<T>, w: Wrap<T>) -> T",
+            "area<U>(s: Shape<U>, w: Wrap<U>) -> U"
+        )
+    );
+    assert_eq!(
+        d.rename(&mut c, "T", 1, "Item").unwrap(),
+        src.replace(
+            "Shape<T> {\n    Circle(T)",
+            "Shape<Item> {\n    Circle(Item)"
+        )
+    );
+
+    stop(child, c);
+}
+
+/// What can't be renamed, and renames that are refused.
+#[test]
+fn refuses_bad_renames() {
+    let (child, mut c) = start();
+    let src = "\
+struct P { x: int }
+fn main() {
+    let a = 1;
+    let b = 2;
+    let p = P { x: 4 };
+    fn helper() -> int { c() }
+    print(a + b + p.x + helper());
+}
+fn c() -> int { 3 }
+";
+    let (mut d, diags) = Doc::open(&mut c, "file:///tmp/bad.t", src);
+    assert_eq!(diags, Vec::<Value>::new());
+    let mut prepare = |c: &mut Client, needle: &str, nth: usize| {
+        let r = d.ask(c, "textDocument/prepareRename", needle, nth, json!({}));
+        match r.get("error") {
+            Some(e) => Err(e["message"].clone()),
+            None => Ok(r["result"].clone()),
+        }
+    };
+    assert_eq!(
+        prepare(&mut c, "print", 0),
+        Err(json!("`print` is a built-in function"))
+    );
+    assert_eq!(
+        prepare(&mut c, "int", 0),
+        Err(json!("`int` is a built-in type"))
+    );
+    assert_eq!(
+        prepare(&mut c, "let", 0),
+        Err(json!("there's nothing here to rename"))
+    );
+    assert_eq!(
+        prepare(&mut c, "1", 0),
+        Err(json!("there's nothing here to rename"))
+    );
+    assert_eq!(
+        prepare(&mut c, "main", 0),
+        Err(json!(
+            "`main` can't be renamed: it's where the program starts"
+        ))
+    );
+    let a = prepare(&mut c, "a", 1);
+    assert_eq!(a, Ok(d.range("a", 1)));
+
+    assert_eq!(
+        d.rename(&mut c, "a", 1, "1a"),
+        Err("`1a` isn't a name".into())
+    );
+    assert_eq!(
+        d.rename(&mut c, "a", 1, "a b"),
+        Err("`a b` isn't a name".into())
+    );
+    assert_eq!(
+        d.rename(&mut c, "a", 1, "match"),
+        Err("`match` is a keyword".into())
+    );
+    assert_eq!(
+        d.rename(&mut c, "a", 1, "_"),
+        Err("`_` can't be a name".into())
+    );
+    assert_eq!(
+        d.rename(&mut c, "P", 0, "int"),
+        Err("`int` is a built-in type".into())
+    );
+    // A variable shadowed by another of the new name.
+    assert_eq!(
+        d.rename(&mut c, "a", 1, "b"),
+        Err(
+            "can't rename `a` to `b`: `b` on line 7 would refer to the variable `b` on line 4 \
+             instead"
+                .into()
+        )
+    );
+    // A function that would be shadowed by the renamed variable.
+    assert_eq!(
+        d.rename(&mut c, "a", 1, "print"),
+        Err(
+            "can't rename `a` to `print`: line 7 would be an error: `int` is not a function".into()
+        )
+    );
+    // A nested `fn` would then capture it.
+    assert_eq!(
+        d.rename(&mut c, "a", 1, "c"),
+        Err(
+            "can't rename `a` to `c`: line 6 would be an error: can't capture `c` in a nested \
+             `fn`; use a closure"
+                .into()
+        )
+    );
+    // A use of the renamed one would refer to another.
+    assert_eq!(
+        d.rename(&mut c, "c() -> int { 3", 0, "helper"),
+        Err(
+            "can't rename `c` to `helper`: `helper` on line 6 would refer to the function \
+             `helper` on line 6 instead"
+                .into()
+        )
+    );
+    // The renamed one would shadow another.
+    assert_eq!(
+        d.rename(&mut c, "helper", 0, "c"),
+        Err(
+            "can't rename `helper` to `c`: it would shadow the function `c` on line 9, used \
+             on line 6"
+                .into()
+        )
+    );
+    // Two of one name.
+    assert_eq!(
+        d.rename(&mut c, "c() -> int { 3", 0, "main"),
+        Err(
+            "can't rename `c` to `main`: line 9 would be an error: `main` is already defined"
+                .into()
+        )
+    );
+
+    stop(child, c);
+}
+
+/// Go to type definition finds every struct and enum in a type.
+#[test]
+fn goes_to_type_definitions() {
+    let (child, mut c) = start();
+    let src = "\
+enum Option<T> {
+    Some(T),
+    None,
+}
+struct P { x: int }
+fn get(o: Option<P>) -> int {
+    match o {
+        Option::Some(p) => p.x,
+        Option::None => 0,
+    }
+}
+fn id<T>(t: T) -> T { t }
+fn main() {
+    let o = Option::Some(P { x: 1 });
+    print(get(o));
+    print(get(Option::None));
+    print(id(2));
+}
+";
+    let (mut d, diags) = Doc::open(&mut c, "file:///tmp/typedef.t", src);
+    assert_eq!(diags, Vec::<Value>::new());
+    let mut ty = |c: &mut Client, needle: &str, nth: usize| {
+        let r = d.ask(c, "textDocument/typeDefinition", needle, nth, json!({}));
+        let r = r["result"].clone();
+        match r.as_array() {
+            Some(locations) => locations
+                .iter()
+                .map(|l| l["range"]["start"].clone())
+                .collect(),
+            None => {
+                assert_eq!(r, Value::Null);
+                Vec::new()
+            }
+        }
+    };
+    let (option, p) = (
+        json!({"line": 0, "character": 5}),
+        json!({"line": 4, "character": 7}),
+    );
+    // `o`s: 0 the parameter, 1 its use, 2 the variable, 3 its use.
+    assert_eq!(ty(&mut c, "o:", 0), vec![option.clone(), p.clone()]);
+    assert_eq!(ty(&mut c, "o))", 0), vec![option.clone(), p.clone()]);
+    assert_eq!(ty(&mut c, "p)", 0), vec![p.clone()], "a pattern binding");
+    assert_eq!(ty(&mut c, "get", 1), vec![option, p], "a function");
+    assert_eq!(ty(&mut c, "x", 1), Vec::<Value>::new(), "an `int` field");
+    assert_eq!(
+        ty(&mut c, "t }", 0),
+        Vec::<Value>::new(),
+        "a type parameter"
+    );
+    assert_eq!(ty(&mut c, "main", 0), Vec::<Value>::new(), "`fn() -> ()`");
+
+    stop(child, c);
+}
+
+/// The outline: items, with what's in them under them, from the parse
+/// alone.
+#[test]
+fn outlines_documents() {
+    let (child, mut c) = start();
+    let mut id = 1;
+    let mut outline = |c: &mut Client, uri: &str| {
+        id += 1;
+        c.send(
+            json!({"jsonrpc": "2.0", "id": id, "method": "textDocument/documentSymbol", "params": {
+                "textDocument": {"uri": uri}
+            }}),
+        );
+        c.response(id)["result"].clone()
+    };
+    // Name, kind, detail and children, for comparing.
+    fn tree(symbols: &Value) -> Vec<Value> {
+        symbols
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| json!([s["name"], s["kind"], s["detail"], tree(&s["children"])]))
+            .collect()
+    }
+
+    let src = "\
+struct Pair<A, B> {
+    first: A,
+    second: B,
+}
+fn main() {
+    print(helper(1));
+    fn helper(x: int) -> int {
+        enum E { A(int), B }
+        fn inner() {}
+        x
+    }
+    struct P { x: int }
+}
+enum Option<T> {
+    Some(T),
+    None,
+}
+";
+    let (d, diags) = Doc::open(&mut c, "file:///tmp/outline.t", src);
+    assert!(!diags.is_empty(), "dead code");
+    let symbols = outline(&mut c, d.uri);
+    assert_eq!(
+        tree(&symbols),
+        vec![
+            json!([
+                "Pair",
+                23,
+                "struct Pair<A, B>",
+                [["first", 8, "A", []], ["second", 8, "B", []],]
+            ]),
+            json!([
+                "main",
+                12,
+                "fn() -> ()",
+                [
+                    [
+                        "helper",
+                        12,
+                        "fn(int) -> int",
+                        [
+                            [
+                                "E",
+                                10,
+                                "enum E",
+                                [["A", 22, "fn(int) -> E", []], ["B", 22, "E", []],]
+                            ],
+                            ["inner", 12, "fn() -> ()", []],
+                        ]
+                    ],
+                    ["P", 23, "struct P", [["x", 8, "int", []]]],
+                ]
+            ]),
+            json!([
+                "Option",
+                10,
+                "enum Option<T>",
+                [
+                    ["Some", 22, "fn(T) -> Option<T>", []],
+                    ["None", 22, "Option<T>", []],
+                ]
+            ]),
+        ]
+    );
+    // The whole of `Pair`, and its name.
+    assert_eq!(
+        symbols[0]["range"],
+        json!({"start": {"line": 0, "character": 0}, "end": {"line": 3, "character": 1}})
+    );
+    assert_eq!(symbols[0]["selectionRange"], d.range("Pair", 0));
+    assert_eq!(
+        symbols[2]["children"][0]["range"],
+        json!({"start": {"line": 14, "character": 4}, "end": {"line": 14, "character": 11}})
+    );
+
+    // With a type error, from the parse.
+    let (d, diags) = Doc::open(
+        &mut c,
+        "file:///tmp/outline_err.t",
+        "fn main() { let x: int = true; }\nstruct S {}\n",
+    );
+    assert_eq!(diags.len(), 1);
+    assert_eq!(
+        tree(&outline(&mut c, d.uri)),
+        vec![
+            json!(["main", 12, "fn() -> ()", []]),
+            json!(["S", 23, "struct S", []]),
+        ]
+    );
 
     stop(child, c);
 }

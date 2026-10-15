@@ -28,6 +28,29 @@
 - "Never used" warnings for nested functions that nothing in their block
   uses, and the dead-code warnings for structs, enums and variants cover
   local ones.
+- `t lsp` finds references, highlights every place something is named
+  (its declaration as written, its uses as read), and renames: variables
+  and parameters (of closures and patterns too, every alternative of an
+  or-pattern), functions, structs, enums, variants, fields and type
+  parameters, top-level or local. All of these follow what each name
+  refers to, not how it's spelled, through the same query
+  (`Info::occurrences`). Renaming either side of a shorthand `P { x }`
+  spells out the other. A rename is refused if the new name isn't an
+  identifier, is a keyword, or is `int` or `bool` for a type, and if it
+  would change what any name refers to: the renamed program is checked
+  again, and the message says what it would clash with. Built-ins and
+  `main` can't be renamed, and a file that doesn't check can't be renamed
+  in.
+- `t lsp` goes to type definitions, from a variable, parameter, field or
+  function to each struct and enum in its type, and gives an outline of
+  the file (document symbols): functions, structs and enums, with fields
+  and variants under their type and nested functions and local types
+  under their function, each with its signature. The outline comes from
+  the parse alone, so it's there while the file has a type error.
+- In a shorthand `P { x }`, hover, go to definition and the rest take
+  `x` to be the variable rather than the field, as renaming does. The use
+  of a function with type arguments, like `id::<int>`, is just `id` to
+  them.
 - `t fmt` formats nested functions and local types like top-level ones,
   with their doc comments, and keeps blank lines around them as around any
   statement. The tree-sitter grammar parses them.

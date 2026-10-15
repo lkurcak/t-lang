@@ -63,12 +63,14 @@ impl<'p> Cx<'p> {
         match d {
             TypeDecl::Struct(s) => TypeDecl::Struct(StructDecl {
                 doc: s.doc.clone(),
+                span: s.span,
                 name: self.ident(&s.name),
                 type_params: s.type_params.clone(),
                 fields: s.fields.iter().map(|f| self.param(f)).collect(),
             }),
             TypeDecl::Enum(e) => TypeDecl::Enum(EnumDecl {
                 doc: e.doc.clone(),
+                span: e.span,
                 name: self.ident(&e.name),
                 type_params: e.type_params.clone(),
                 variants: e
@@ -76,6 +78,7 @@ impl<'p> Cx<'p> {
                     .iter()
                     .map(|v| Variant {
                         doc: v.doc.clone(),
+                        span: v.span,
                         name: v.name.clone(),
                         fields: v.fields.iter().map(|t| self.ty(t)).collect(),
                     })

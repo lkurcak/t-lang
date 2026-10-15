@@ -79,9 +79,23 @@ enough in it to be worth compiling.
 warnings as you type, and offers their fixes as quick fixes (code actions).
 Hovering shows types, and the doc comment of a function, struct, enum,
 field or variant: a `///` comment just before it, written in Markdown.
-Go to definition works for variables, functions, types, fields and
-variants, and inlay hints show inferred types and type arguments. It
-formats files as `t fmt` does (see below).
+Go to definition works for variables, functions, types, fields,
+variants and type parameters, and go to type definition jumps from a
+variable, field or function to the structs and enums in its type (each of
+them, for one like `Option<Point>`). Find references and document
+highlights show everywhere something is named, and rename renames it
+there, following what each name refers to rather than its spelling: of
+two nested `fn helper`s, or a local `struct P` and a top-level one, only
+the one you're on. Renaming a variable in a shorthand `P { x }` gives
+`P { x: new }`, and renaming the field gives `P { new: x }`. A rename that
+would change what any name refers to, such as one that shadows or clashes
+with something, is refused with what it would clash with, and comments
+are left alone. The outline (document symbols) lists the functions,
+structs and enums, with the fields and variants of each type and the
+nested functions and local types of each function under them; it comes
+from the parse alone, so it's there while the file has a type error. Inlay
+hints show inferred types and type arguments. It formats files as `t fmt`
+does (see below).
 
 **Neovim (0.11+):** install
 [t-lang.nvim](https://github.com/lkurcak/t-lang.nvim), e.g.

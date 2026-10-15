@@ -260,6 +260,7 @@ impl<'p> Mono<'p> {
         match d {
             TypeDecl::Struct(st) => TypeDecl::Struct(StructDecl {
                 doc: st.doc.clone(),
+                span: st.span,
                 name,
                 type_params: Vec::new(),
                 fields: st
@@ -274,6 +275,7 @@ impl<'p> Mono<'p> {
             }),
             TypeDecl::Enum(e) => TypeDecl::Enum(EnumDecl {
                 doc: e.doc.clone(),
+                span: e.span,
                 name,
                 type_params: Vec::new(),
                 variants: e
@@ -281,6 +283,7 @@ impl<'p> Mono<'p> {
                     .iter()
                     .map(|v| Variant {
                         doc: v.doc.clone(),
+                        span: v.span,
                         name: v.name.clone(),
                         fields: v.fields.iter().map(|t| cx.ty(t)).collect(),
                     })

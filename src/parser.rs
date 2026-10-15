@@ -277,16 +277,17 @@ impl Parser {
 
     fn struct_decl(&mut self) -> Result<StructDecl, Error> {
         let doc = self.doc();
-        self.expect(Tok::Struct)?;
+        let start = self.expect(Tok::Struct)?;
         let name = self.ident()?;
         let type_params = self.generics()?;
         self.expect(Tok::LBrace)?;
-        let (fields, _) = self.comma_list(Tok::RBrace, |p| {
+        let (fields, end) = self.comma_list(Tok::RBrace, |p| {
             let doc = p.doc();
             Ok(Param { doc, ..p.param()? })
         })?;
         Ok(StructDecl {
             doc,
+            span: start.to(end),
             name,
             type_params,
             fields,
@@ -295,22 +296,29 @@ impl Parser {
 
     fn enum_decl(&mut self) -> Result<EnumDecl, Error> {
         let doc = self.doc();
-        self.expect(Tok::Enum)?;
+        let start = self.expect(Tok::Enum)?;
         let name = self.ident()?;
         let type_params = self.generics()?;
         self.expect(Tok::LBrace)?;
-        let (variants, _) = self.comma_list(Tok::RBrace, |p| {
+        let (variants, end) = self.comma_list(Tok::RBrace, |p| {
             let doc = p.doc();
             let name = p.ident()?;
-            let fields = if p.eat(&Tok::LParen) {
-                p.comma_list(Tok::RParen, Self::ty)?.0
+            let (fields, span) = if p.eat(&Tok::LParen) {
+                let (fields, close) = p.comma_list(Tok::RParen, Self::ty)?;
+                (fields, name.span.to(close))
             } else {
-                Vec::new()
+                (Vec::new(), name.span)
             };
-            Ok(Variant { doc, name, fields })
+            Ok(Variant {
+                doc,
+                span,
+                name,
+                fields,
+            })
         })?;
         Ok(EnumDecl {
             doc,
+            span: start.to(end),
             name,
             type_params,
             variants,

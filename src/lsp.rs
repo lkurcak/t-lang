@@ -7,30 +7,40 @@
 //! checks the file again and answers from what the checker found out
 //! (`check::Info`): the fixes of the diagnostics in range as code actions,
 //! the type and doc comment of what's under the cursor on hover, where
-//! that's defined, and inferred types and type arguments as inlay hints.
+//! that's defined and where its type is, every place it's named (as
+//! references and highlights), and inferred types and type arguments as
+//! inlay hints. It renames as `rename.rs` does. The outline of a file comes
+//! from parsing it alone, so it's there even when the file doesn't check.
 //! It formats a file like `t fmt`, ignoring the editor's formatting
 //! options: there's one style. It never runs the program.
 
-use crate::check::Note;
+use crate::ast::{FnDecl, Program, TypeDecl};
+use crate::check::{Info, NoteKind};
 use crate::error::{Error, Fix, Lint, Phase, Span, Warning};
 use crate::fmt::FmtError;
+use crate::types::{Type, comma_list};
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, Response};
 use lsp_types::notification::{
     DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, Notification as _,
     PublishDiagnostics,
 };
 use lsp_types::request::{
-    CodeActionRequest, Formatting, GotoDefinition, HoverRequest, InlayHintRequest, Request as _,
+    CodeActionRequest, DocumentHighlightRequest, DocumentSymbolRequest, Formatting, GotoDefinition,
+    GotoTypeDefinition, HoverRequest, InlayHintRequest, PrepareRenameRequest, References, Rename,
+    Request as _,
 };
 use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOptions, CodeActionOrCommand, CodeActionParams,
     CodeActionProviderCapability, Diagnostic, DiagnosticSeverity, DiagnosticTag,
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DocumentFormattingParams, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents,
-    HoverParams, HoverProviderCapability, InlayHint, InlayHintKind, InlayHintLabel,
-    InlayHintParams, Location, MarkupContent, MarkupKind, NumberOrString, OneOf, Position,
-    PublishDiagnosticsParams, Range, ServerCapabilities, TextDocumentSyncCapability,
-    TextDocumentSyncKind, TextEdit, Uri, WorkspaceEdit,
+    DocumentFormattingParams, DocumentHighlight, DocumentHighlightKind, DocumentHighlightParams,
+    DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams,
+    GotoDefinitionResponse, Hover, HoverContents, HoverParams, HoverProviderCapability, InlayHint,
+    InlayHintKind, InlayHintLabel, InlayHintParams, Location, MarkupContent, MarkupKind,
+    NumberOrString, OneOf, Position, PrepareRenameResponse, PublishDiagnosticsParams, Range,
+    ReferenceParams, RenameOptions, RenameParams, ServerCapabilities, SymbolKind,
+    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit,
+    TypeDefinitionProviderCapability, Uri, WorkspaceEdit,
 };
 use std::collections::HashMap;
 
@@ -47,6 +57,14 @@ pub fn run() -> Result<()> {
         })),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         definition_provider: Some(OneOf::Left(true)),
+        type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
+        references_provider: Some(OneOf::Left(true)),
+        document_highlight_provider: Some(OneOf::Left(true)),
+        rename_provider: Some(OneOf::Right(RenameOptions {
+            prepare_provider: Some(true),
+            work_done_progress_options: Default::default(),
+        })),
+        document_symbol_provider: Some(OneOf::Left(true)),
         inlay_hint_provider: Some(OneOf::Left(true)),
         document_formatting_provider: Some(OneOf::Left(true)),
         ..Default::default()
@@ -113,8 +131,8 @@ fn respond(req: Request, docs: &HashMap<String, String>) -> Result<Response> {
             let p: HoverParams = serde_json::from_value(req.params)?;
             let at = p.text_document_position_params;
             let hover = docs.get(at.text_document.uri.as_str()).and_then(|src| {
-                let notes = crate::check_source(src).info.notes;
-                let note = note_at(&notes, src, at.position)?;
+                let info = crate::check_source(src).info;
+                let note = info.note_at(offset(src, at.position))?;
                 // The signature, then the doc comment, as rust-analyzer
                 // shows them.
                 let mut value = format!("```t\n{}\n```", note.hover());
@@ -136,13 +154,116 @@ fn respond(req: Request, docs: &HashMap<String, String>) -> Result<Response> {
             let at = p.text_document_position_params;
             let uri = at.text_document.uri;
             let def = docs.get(uri.as_str()).and_then(|src| {
-                let def = note_at(&crate::check_source(src).info.notes, src, at.position)?.def?;
+                let info = crate::check_source(src).info;
+                let def = info.note_at(offset(src, at.position))?.def?;
                 Some(GotoDefinitionResponse::Scalar(Location {
                     uri: uri.clone(),
                     range: lsp_range(src, def),
                 }))
             });
             Ok(Response::new_ok(req.id, def))
+        }
+        GotoTypeDefinition::METHOD => {
+            let p: GotoDefinitionParams = serde_json::from_value(req.params)?;
+            let at = p.text_document_position_params;
+            let uri = at.text_document.uri;
+            let defs = docs.get(uri.as_str()).and_then(|src| {
+                let info = crate::check_source(src).info;
+                let spans = type_definitions(&info, offset(src, at.position));
+                let locations: Vec<Location> = spans
+                    .into_iter()
+                    .map(|span| Location::new(uri.clone(), lsp_range(src, span)))
+                    .collect();
+                (!locations.is_empty()).then_some(GotoDefinitionResponse::Array(locations))
+            });
+            Ok(Response::new_ok(req.id, defs))
+        }
+        References::METHOD => {
+            let p: ReferenceParams = serde_json::from_value(req.params)?;
+            let at = p.text_document_position;
+            let uri = at.text_document.uri;
+            let refs = docs.get(uri.as_str()).and_then(|src| {
+                let info = crate::check_source(src).info;
+                let def = info.note_at(offset(src, at.position))?.def?;
+                let spans = info.occurrences(def).into_iter();
+                let spans = spans.filter(|&s| p.context.include_declaration || s != def);
+                let refs = spans.map(|span| Location::new(uri.clone(), lsp_range(src, span)));
+                Some(refs.collect::<Vec<_>>())
+            });
+            Ok(Response::new_ok(req.id, refs))
+        }
+        DocumentHighlightRequest::METHOD => {
+            let p: DocumentHighlightParams = serde_json::from_value(req.params)?;
+            let at = p.text_document_position_params;
+            let highlights = docs.get(at.text_document.uri.as_str()).and_then(|src| {
+                let info = crate::check_source(src).info;
+                let def = info.note_at(offset(src, at.position))?.def?;
+                let highlights = info
+                    .occurrences(def)
+                    .into_iter()
+                    .map(|span| DocumentHighlight {
+                        range: lsp_range(src, span),
+                        kind: Some(match span == def {
+                            true => DocumentHighlightKind::WRITE,
+                            false => DocumentHighlightKind::READ,
+                        }),
+                    });
+                Some(highlights.collect::<Vec<_>>())
+            });
+            Ok(Response::new_ok(req.id, highlights))
+        }
+        PrepareRenameRequest::METHOD => {
+            let at: TextDocumentPositionParams = serde_json::from_value(req.params)?;
+            let Some(src) = docs.get(at.text_document.uri.as_str()) else {
+                return Ok(Response::new_ok(req.id, ()));
+            };
+            let target = crate::rename::checked(src).and_then(|(prog, info)| {
+                let note = crate::rename::target(src, &prog, &info, offset(src, at.position))?;
+                Ok(note.span)
+            });
+            Ok(match target {
+                Ok(span) => {
+                    Response::new_ok(req.id, PrepareRenameResponse::Range(lsp_range(src, span)))
+                }
+                Err(why) => Response::new_err(req.id, ErrorCode::RequestFailed as i32, why),
+            })
+        }
+        Rename::METHOD => {
+            let p: RenameParams = serde_json::from_value(req.params)?;
+            let at = p.text_document_position;
+            let uri = at.text_document.uri;
+            let Some(src) = docs.get(uri.as_str()) else {
+                return Ok(Response::new_ok(req.id, ()));
+            };
+            let edits = crate::rename::checked(src).and_then(|(prog, info)| {
+                let note = crate::rename::target(src, &prog, &info, offset(src, at.position))?;
+                let def = note.def.expect("a target is defined somewhere");
+                crate::rename::rename(src, &prog, &info, def, &p.new_name)
+            });
+            Ok(match edits {
+                Ok(edits) => {
+                    let edits = edits
+                        .iter()
+                        .map(|e| TextEdit::new(lsp_range(src, e.span), e.text.clone()))
+                        .collect();
+                    Response::new_ok(
+                        req.id,
+                        WorkspaceEdit {
+                            changes: Some(HashMap::from([(uri, edits)])),
+                            ..Default::default()
+                        },
+                    )
+                }
+                Err(why) => Response::new_err(req.id, ErrorCode::RequestFailed as i32, why),
+            })
+        }
+        DocumentSymbolRequest::METHOD => {
+            let p: DocumentSymbolParams = serde_json::from_value(req.params)?;
+            let outline = docs.get(p.text_document.uri.as_str()).and_then(|src| {
+                let prog = crate::lexer::lex(src).and_then(crate::parser::parse).ok()?;
+                Some(DocumentSymbolResponse::Nested(outline(src, &prog)))
+            });
+            Ok(Response::new_ok(req.id, outline))
         }
         InlayHintRequest::METHOD => {
             let p: InlayHintParams = serde_json::from_value(req.params)?;
@@ -252,13 +373,144 @@ fn code_actions(uri: &Uri, src: &str, range: Range) -> Vec<CodeActionOrCommand> 
     actions
 }
 
-/// What's at `pos`: the innermost name there, if there's one.
-fn note_at<'n>(notes: &'n [Note], src: &str, pos: Position) -> Option<&'n Note> {
-    let at = offset(src, pos);
-    notes
-        .iter()
-        .filter(|n| n.span.contains(at))
-        .min_by_key(|n| n.span.end - n.span.start)
+/// Where the structs and enums in the type of the variable, field or
+/// function at `offset` are declared, in the order the type mentions them.
+fn type_definitions(info: &Info, offset: usize) -> Vec<Span> {
+    let Some(note) = info.note_at(offset) else {
+        return Vec::new();
+    };
+    let (NoteKind::Var(_) | NoteKind::Field(_) | NoteKind::Fn(_)) = note.kind else {
+        return Vec::new();
+    };
+    let mut symbols = Vec::new();
+    if let Some(ty) = &note.ty {
+        adts(ty, &mut symbols);
+    }
+    let mut out: Vec<Span> = Vec::new();
+    for symbol in symbols {
+        if let Some(&span) = info.types.get(symbol)
+            && !out.contains(&span)
+        {
+            out.push(span);
+        }
+    }
+    out
+}
+
+/// Adds the symbol of every struct and enum `t` mentions to `out`, in order.
+fn adts<'t>(t: &'t Type, out: &mut Vec<&'t str>) {
+    if let Type::Adt(symbol, _) = t {
+        out.push(symbol);
+    }
+    for p in t.parts() {
+        adts(p, out);
+    }
+}
+
+/// The outline of `prog`: its functions, structs and enums, with the
+/// fields and variants of each type, and the nested functions and local
+/// types of each function, under it. In source order.
+fn outline(src: &str, prog: &Program) -> Vec<DocumentSymbol> {
+    let fns = prog.all_fns();
+    let mut inside: Vec<Vec<DocumentSymbol>> = vec![Vec::new(); fns.len()];
+    let mut top = Vec::new();
+    for (d, f) in prog.all_types() {
+        let s = type_symbol(src, d);
+        match f {
+            Some(f) => inside[f].push(s),
+            None => top.push(s),
+        }
+    }
+    // Nested functions come after the ones they're in.
+    for (i, &(f, parent)) in fns.iter().enumerate().rev() {
+        let mut children = std::mem::take(&mut inside[i]);
+        sort(&mut children);
+        let s = fn_symbol(src, f, children);
+        match parent {
+            Some(p) => inside[p].push(s),
+            None => top.push(s),
+        }
+    }
+    sort(&mut top);
+    top
+}
+
+fn sort(symbols: &mut [DocumentSymbol]) {
+    symbols.sort_by_key(|s| (s.range.start.line, s.range.start.character));
+}
+
+/// A symbol for the outline. `detail` is the signature, as hover shows it.
+fn symbol(
+    src: &str,
+    name: &crate::ast::Ident,
+    detail: String,
+    kind: SymbolKind,
+    span: Span,
+    children: Vec<DocumentSymbol>,
+) -> DocumentSymbol {
+    #[allow(deprecated)]
+    DocumentSymbol {
+        name: name.name.clone(),
+        detail: Some(detail),
+        kind,
+        tags: None,
+        deprecated: None,
+        range: lsp_range(src, span),
+        selection_range: lsp_range(src, name.span),
+        children: Some(children),
+    }
+}
+
+fn fn_symbol(src: &str, f: &FnDecl, children: Vec<DocumentSymbol>) -> DocumentSymbol {
+    let params: Vec<&crate::ast::TypeExpr> = f.params.iter().map(|p| &p.ty).collect();
+    let detail = format!("fn({}) -> {}", comma_list(&params), f.ret);
+    symbol(src, &f.name, detail, SymbolKind::FUNCTION, f.span, children)
+}
+
+fn type_symbol(src: &str, d: &TypeDecl) -> DocumentSymbol {
+    let name = &d.name().name;
+    let ty = match d.type_params() {
+        [] => name.clone(),
+        params => {
+            let params: Vec<&str> = params.iter().map(|p| p.name.as_str()).collect();
+            format!("{name}<{}>", params.join(", "))
+        }
+    };
+    let (keyword, kind, children) = match d {
+        TypeDecl::Struct(s) => {
+            let fields = s.fields.iter().map(|f| {
+                let span = f.name.span.to(f.ty.span);
+                symbol(
+                    src,
+                    &f.name,
+                    f.ty.to_string(),
+                    SymbolKind::FIELD,
+                    span,
+                    Vec::new(),
+                )
+            });
+            ("struct", SymbolKind::STRUCT, fields.collect())
+        }
+        TypeDecl::Enum(e) => {
+            let variants = e.variants.iter().map(|v| {
+                let detail = match v.fields.as_slice() {
+                    [] => ty.clone(),
+                    fields => format!("fn({}) -> {ty}", comma_list(fields)),
+                };
+                symbol(
+                    src,
+                    &v.name,
+                    detail,
+                    SymbolKind::ENUM_MEMBER,
+                    v.span,
+                    Vec::new(),
+                )
+            });
+            ("enum", SymbolKind::ENUM, variants.collect())
+        }
+    };
+    let detail = format!("{keyword} {ty}");
+    symbol(src, d.name(), detail, kind, d.span(), children)
 }
 
 /// The types the checker inferred, and the type arguments it worked out for

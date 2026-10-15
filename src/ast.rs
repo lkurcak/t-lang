@@ -5,6 +5,7 @@
 //! one into the other and rejects names that don't mean anything.
 
 use crate::error::Span;
+use crate::types::comma_list;
 use std::fmt;
 use std::sync::Arc;
 
@@ -81,6 +82,14 @@ impl TypeDecl {
         }
     }
 
+    /// From the `struct` or `enum` to the `}`.
+    pub fn span(&self) -> Span {
+        match self {
+            TypeDecl::Struct(s) => s.span,
+            TypeDecl::Enum(e) => e.span,
+        }
+    }
+
     pub fn type_params(&self) -> &[Ident] {
         match self {
             TypeDecl::Struct(s) => &s.type_params,
@@ -92,6 +101,8 @@ impl TypeDecl {
 #[derive(Debug, Clone)]
 pub struct StructDecl {
     pub doc: Option<DocComment>,
+    /// From the `struct` to the `}`, without the doc comment.
+    pub span: Span,
     pub name: Ident,
     /// `<A, B>` in `struct Pair<A, B> { .. }`; empty if it isn't generic.
     pub type_params: Vec<Ident>,
@@ -101,6 +112,8 @@ pub struct StructDecl {
 #[derive(Debug, Clone)]
 pub struct EnumDecl {
     pub doc: Option<DocComment>,
+    /// From the `enum` to the `}`, without the doc comment.
+    pub span: Span,
     pub name: Ident,
     pub type_params: Vec<Ident>,
     pub variants: Vec<Variant>,
@@ -110,6 +123,8 @@ pub struct EnumDecl {
 #[derive(Debug, Clone)]
 pub struct Variant {
     pub doc: Option<DocComment>,
+    /// From the name to the `)` after the fields, if it has any.
+    pub span: Span,
     pub name: Ident,
     pub fields: Vec<TypeExpr>,
 }
@@ -251,6 +266,18 @@ pub enum TypeExprKind {
     Unit,
     /// `fn(int, bool) -> int`
     Fn(Vec<TypeExpr>, Box<TypeExpr>),
+}
+
+/// As written: `Option<int>`, `fn(int) -> bool`, `()`.
+impl fmt::Display for TypeExpr {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match &self.kind {
+            TypeExprKind::Named(name, args) if args.is_empty() => f.write_str(name),
+            TypeExprKind::Named(name, args) => write!(f, "{name}<{}>", comma_list(args)),
+            TypeExprKind::Unit => f.write_str("()"),
+            TypeExprKind::Fn(params, ret) => write!(f, "fn({}) -> {ret}", comma_list(params)),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

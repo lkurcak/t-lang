@@ -1,8 +1,9 @@
 //! What the checker learns about each name in a program, kept for later:
 //! the type of every variable and use, what each name refers to and its doc
 //! comment, and which type arguments each use of something generic has.
-//! Editors show it (hover, inlay hints, go to definition, see `lsp.rs`),
-//! and monomorphisation reads the type arguments (see `mono.rs`).
+//! Editors show it (hover, inlay hints, go to definition, references and
+//! rename, see `lsp.rs` and `rename.rs`), and monomorphisation reads the
+//! type arguments (see `mono.rs`).
 
 use super::Checker;
 use crate::ast::*;
@@ -26,6 +27,43 @@ pub struct Info {
     /// unique in the program, unlike the one it's written with (see
     /// `check/scope.rs` and `check/names.rs`).
     pub symbols: HashMap<Span, String>,
+    /// Where each struct and enum is declared, by symbol: the span of its
+    /// name.
+    pub types: HashMap<String, Span>,
+}
+
+impl Info {
+    /// The name at `offset`, if there's one: the innermost. In a shorthand
+    /// `P { x }`, which names both a field and a variable, the variable.
+    pub fn note_at(&self, offset: usize) -> Option<&Note> {
+        self.notes
+            .iter()
+            .filter(|n| n.span.contains(offset))
+            .min_by_key(|n| {
+                (
+                    n.span.end - n.span.start,
+                    !matches!(n.kind, NoteKind::Var(_)),
+                )
+            })
+    }
+
+    /// Every place that names what's declared at `def`: the declaration and
+    /// every use, in order. What counts is what each name refers to, not
+    /// how it's spelled, so a nested `fn` or local type is told apart from
+    /// another of the same name, and a variable from one it shadows or that
+    /// shadows it.
+    pub fn occurrences(&self, def: Span) -> Vec<Span> {
+        let mut out: Vec<Span> = self
+            .notes
+            .iter()
+            .filter(|n| n.def == Some(def))
+            .map(|n| n.span)
+            .chain([def])
+            .collect();
+        out.sort_by_key(|s| (s.start, s.end));
+        out.dedup();
+        out
+    }
 }
 
 /// A use of something generic, with its type arguments: `id` in `id(1)` is
@@ -181,8 +219,9 @@ impl Checker {
         self.defs.docs.get(&def?).cloned()
     }
 
-    /// Like `note`, for a use of something generic with type arguments
-    /// `args`, which monomorphisation will need. Uses of things that
+    /// Like `note`, for a use of something with type arguments `args`, if
+    /// it's generic, which monomorphisation will need, by the span of the
+    /// whole use: `id::<int>` rather than just `id`. Uses of things that
     /// aren't generic need nothing. The type arguments were `inferred`
     /// unless they were written out.
     pub(super) fn note_use(
@@ -191,17 +230,17 @@ impl Checker {
         kind: NoteKind,
         ty: Type,
         def: Option<Span>,
-        instance: Option<Instance>,
+        instance: Option<(Span, Instance)>,
         inferred: bool,
     ) {
         let args = match &instance {
-            Some(Instance::Fn(_, args) | Instance::Adt(_, args)) => args.clone(),
+            Some((_, Instance::Fn(_, args) | Instance::Adt(_, args))) => args.clone(),
             None => Vec::new(),
         };
         if let Some(instance) = instance
             && !args.is_empty()
         {
-            self.pending.push((span, instance));
+            self.pending.push(instance);
         }
         self.info.notes.push(Note {
             span,

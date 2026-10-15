@@ -74,6 +74,7 @@ pub fn check(prog: &Program, warnings: &mut Vec<Warning>) -> (Info, Result<(), E
     cx.warnings.extend(prog.stray_docs.iter().map(unused_doc));
     let result = cx.program(prog);
     cx.type_notes(prog);
+    cx.info.types = cx.defs.types.clone();
     cx.warnings.sort_by_key(|w| w.span.start);
     warnings.append(&mut cx.warnings);
     (cx.info, result)
@@ -618,6 +619,8 @@ impl Checker {
         targs: &[TypeExpr],
         span: Span,
     ) -> Result<Option<Type>, Error> {
+        // Notes are for the name, not any `::<..>` after it.
+        let at = Span::new(span.start, span.start + name.len());
         let (scheme, def, symbol) = match self.binding(name) {
             None => return Ok(None),
             Some(Binding::Local(i)) => {
@@ -637,7 +640,7 @@ impl Checker {
                 local.used = true;
                 let (ty, def) = (local.ty.clone(), local.sites[0].span);
                 self.note(
-                    span,
+                    at,
                     NoteKind::Var(name.to_string()),
                     Some(ty.clone()),
                     Some(def),
@@ -662,10 +665,10 @@ impl Checker {
         let ty = Subst::new(&scheme.params, &args).apply(&scheme.ty);
         let instance = symbol.map(|symbol| {
             self.info.symbols.insert(span, symbol.clone());
-            Instance::Fn(symbol, args)
+            (span, Instance::Fn(symbol, args))
         });
         let kind = NoteKind::Fn(name.to_string());
-        self.note_use(span, kind, ty.clone(), def, instance, targs.is_empty());
+        self.note_use(at, kind, ty.clone(), def, instance, targs.is_empty());
         Ok(Some(ty))
     }
 
@@ -1554,7 +1557,7 @@ impl Checker {
             kind,
             ty.clone(),
             def,
-            Some(instance),
+            Some((name.span, instance)),
             targs.is_empty(),
         );
         Ok(ty)

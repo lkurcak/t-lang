@@ -14,6 +14,7 @@ pub mod lsp;
 pub mod mono;
 pub mod parser;
 mod pretty;
+pub mod rename;
 mod trivia;
 pub mod types;
 
