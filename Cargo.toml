@@ -2,7 +2,7 @@
 name = "t-lang"
 version = "0.4.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.99"
 description = "T: like C, but a different letter. A small no-GC language built one type-theory concept at a time."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/lkurcak/t-lang"

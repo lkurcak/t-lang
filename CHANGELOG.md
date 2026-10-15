@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Building T needs Rust 1.99 or later, up from 1.88. T is an application, so
+  it tracks the Rust it's built with rather than holding to an old one.
+
 ## 0.4.0 (2026-10-15)
 
 Step 4: generics. See [docs/04-generics.md](docs/04-generics.md).

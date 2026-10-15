@@ -1,0 +1,10 @@
+# T programs and what `t mono` prints for them are compared byte for byte by
+# the tests, so keep LF line endings even in a Windows checkout.
+*.t     text eol=lf
+*.mono  text eol=lf
+
+# Written by `tree-sitter generate`: collapse their diffs, and hide them on
+# GitHub (see `git diff --text` for the real thing).
+editors/tree-sitter-t/src/parser.c          linguist-generated -diff
+editors/tree-sitter-t/src/grammar.json      linguist-generated -diff
+editors/tree-sitter-t/src/node-types.json   linguist-generated -diff
