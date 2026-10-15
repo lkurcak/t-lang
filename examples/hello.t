@@ -1,8 +1,4 @@
-enum Shape {
-    Circle(int),
-    Rect(int, int),
-    Empty,
-}
+enum Shape { Circle(int), Rect(int, int), Empty }
 
 fn area(s: Shape) -> int {
     match s {
@@ -13,16 +9,10 @@ fn area(s: Shape) -> int {
 }
 
 fn fact(n: int) -> int {
-    if n <= 1 {
-        1
-    } else {
-        n * fact(n - 1)
-    }
+    if n <= 1 { 1 } else { n * fact(n - 1) }
 }
 
-fn twice(f: fn(int) -> int, x: int) -> int {
-    f(f(x))
-}
+fn twice(f: fn(int) -> int, x: int) -> int { f(f(x)) }
 
 fn main() {
     let n = 5;

@@ -3,6 +3,7 @@
 
 pub mod ast;
 pub mod check;
+mod doc;
 pub mod error;
 pub mod exhaust;
 pub mod fmt;

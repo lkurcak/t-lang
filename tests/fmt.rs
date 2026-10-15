@@ -52,6 +52,35 @@ fn formatting_keeps_the_program_and_is_idempotent() {
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
 
+/// One style whatever the input looks like: a program's tokens all on one
+/// line, and each on a line of its own, format the same. (Without comments
+/// or blank lines, which `t fmt` keeps from the input.)
+#[test]
+fn layout_does_not_depend_on_the_input() {
+    let mut failures = Vec::new();
+    let mut compared = 0;
+    for path in programs("tests/t").into_iter().chain(programs("examples")) {
+        let name = path.display().to_string();
+        let src = fs::read_to_string(&path).unwrap();
+        let Ok(toks) = t_lang::lexer::lex(&src) else {
+            continue;
+        };
+        let words: Vec<&str> = toks
+            .iter()
+            .map(|t| &src[t.span.start..t.span.end])
+            .collect();
+        let (Ok(one_line), Ok(tall)) = (format(&words.join(" ")), format(&words.join("\n"))) else {
+            continue;
+        };
+        compared += 1;
+        if one_line != tall {
+            failures.push(t_lang::fmt::diff(&name, &one_line, &tall));
+        }
+    }
+    assert!(compared > 100, "only {compared} programs compared");
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
 #[test]
 fn examples_are_formatted() {
     for path in programs("examples") {
@@ -101,8 +130,8 @@ struct P {
 fn main() { // after the brace
     // before a statement
     let p = P { x: 1, y: 2 }; // trailing
-    print(p.x); // expect: 1
-                // expect: 2
+    print(p.x);               // expect: 1
+                              // expect: 2
     // before the tail
     p.y
     // dangling at the end
@@ -159,6 +188,190 @@ fn keeps_the_order_of_items() {
     let p = out.find("struct P").unwrap();
     let f = out.find("fn f").unwrap();
     assert!(main < p && p < f, "{out}");
+}
+
+/// `fn main() { <body> }`, formatted, with the `fn main() {` and `}` lines
+/// taken off and the rest unindented.
+fn fmt_body(body: &str) -> String {
+    let out = fmt(&format!("fn main() {{\n{body}\n}}\n"));
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.first(), Some(&"fn main() {"), "{out}");
+    assert_eq!(lines.last(), Some(&"}"), "{out}");
+    let body: Vec<&str> = lines[1..lines.len() - 1]
+        .iter()
+        .map(|l| l.strip_prefix("    ").unwrap_or(l))
+        .collect();
+    body.join("\n") + "\n"
+}
+
+#[test]
+fn lines_break_after_100_columns() {
+    // 100 columns exactly: stays on one line.
+    let call = format!("f({}, 1);", "a".repeat(89));
+    assert_eq!(4 + call.len(), 100);
+    assert_eq!(fmt_body(&call), format!("{call}\n"));
+    // 101: breaks, one argument per line, with a comma after the last.
+    let call = format!("f({}, 12);", "a".repeat(89));
+    assert_eq!(
+        fmt_body(&call),
+        format!("f(\n    {},\n    12,\n);\n", "a".repeat(89))
+    );
+}
+
+#[test]
+fn groups_break_outermost_first() {
+    let src = "let p = Pair { first: compute(alpha, beta, gamma), second: compute(delta, epsilon, zeta, eta, theta) };";
+    assert_eq!(
+        fmt_body(src),
+        "\
+let p = Pair {
+    first: compute(alpha, beta, gamma),
+    second: compute(delta, epsilon, zeta, eta, theta),
+};
+"
+    );
+}
+
+#[test]
+fn signatures_and_declarations_break_like_lists() {
+    let src = "\
+struct Configuration { width_in_columns: int, height_in_rows: int, depth_in_layers: int, colour: bool }
+enum E<A> { One(A), Two(int, int) }
+fn combine<Alpha, Beta>(first_argument: Alpha, second_argument: Beta, third_argument: int) -> int { 1 }
+fn combine<Alpha, Beta>(first_argument: Alpha, second_argument: Beta, third_argument: int) -> Option<Beta> { 1 }
+";
+    assert_eq!(
+        fmt(src),
+        "\
+struct Configuration {
+    width_in_columns: int,
+    height_in_rows: int,
+    depth_in_layers: int,
+    colour: bool,
+}
+enum E<A> { One(A), Two(int, int) }
+fn combine<Alpha, Beta>(first_argument: Alpha, second_argument: Beta, third_argument: int) -> int {
+    1
+}
+fn combine<Alpha, Beta>(
+    first_argument: Alpha,
+    second_argument: Beta,
+    third_argument: int,
+) -> Option<Beta> { 1 }
+"
+    );
+}
+
+#[test]
+fn a_last_closure_or_block_argument_breaks_inside() {
+    let src = "\
+apply(first_argument, second_argument, |x: int| -> int { let y = x * 2; y + 1 });
+print(match some_long_scrutinee { Shape::Circle(radius) => radius, Shape::Empty => 0 });
+print(compute_something_long(first_argument, second_argument, third_argument, fourth_argument, fifth));
+";
+    assert_eq!(
+        fmt_body(src),
+        "\
+apply(first_argument, second_argument, |x: int| -> int {
+    let y = x * 2;
+    y + 1
+});
+print(match some_long_scrutinee {
+    Shape::Circle(radius) => radius,
+    Shape::Empty => 0,
+});
+print(compute_something_long(
+    first_argument,
+    second_argument,
+    third_argument,
+    fourth_argument,
+    fifth,
+));
+"
+    );
+}
+
+#[test]
+fn operators_break_before_each_in_a_run() {
+    let src = "\
+let total = width_in_columns + height_in_rows * depth_in_layers + width_in_columns - height_in_rows;
+if total > 1000 && colour || width_in_columns == height_in_rows && depth_in_layers != 100000 { print(1) }
+";
+    assert_eq!(
+        fmt_body(src),
+        "\
+let total = width_in_columns
+    + height_in_rows * depth_in_layers
+    + width_in_columns
+    - height_in_rows;
+if (total > 1000 && colour)
+    || (width_in_columns == height_in_rows && depth_in_layers != 100000)
+{
+    print(1)
+}
+"
+    );
+}
+
+#[test]
+fn short_blocks_go_on_one_line() {
+    let src = "\
+let a = if c { 1 } else { 2 };
+let b = if c { if d { 1 } else { 2 } } else { 3 };
+let f = |x| { x + 1 };
+let g = |x| { let y = x; y };
+";
+    assert_eq!(
+        fmt_body(src),
+        "\
+let a = if c { 1 } else { 2 };
+let b = if c {
+    if d { 1 } else { 2 }
+} else {
+    3
+};
+let f = |x| { x + 1 };
+let g = |x| {
+    let y = x;
+    y
+};
+"
+    );
+}
+
+#[test]
+fn comments_at_line_ends_line_up_in_runs() {
+    // A line without one ends the run, so `long_name_here(1)`'s comment
+    // only moves its neighbour's.
+    let src = "\
+print(1); // expect: 1
+print(22);   // expect: 22
+let x = 1;
+long_name_here(1);  // a
+f(); // b
+";
+    assert_eq!(
+        fmt_body(src),
+        "\
+print(1);  // expect: 1
+print(22); // expect: 22
+let x = 1;
+long_name_here(1); // a
+f();               // b
+"
+    );
+    // A line that would push a comment past 100 columns starts a new run.
+    let long = format!("print({});", "x".repeat(70));
+    let src = format!(
+        "print(1); // expect: 1\n{long} // expect: 2\nprint(3); // a comment, with more to say\n"
+    );
+    assert_eq!(
+        fmt_body(&src),
+        format!(
+            "print(1);{} // expect: 1\n{long} // expect: 2\nprint(3); // a comment, with more to say\n",
+            " ".repeat(long.len() - 9)
+        )
+    );
 }
 
 #[test]

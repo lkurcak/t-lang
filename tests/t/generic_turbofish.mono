@@ -1,54 +1,26 @@
-enum Option::<int> {
-    Some(int),
-    None,
-}
+enum Option::<int> { Some(int), None }
 
-enum Option::<bool> {
-    Some(bool),
-    None,
-}
+enum Option::<bool> { Some(bool), None }
 
-struct Pair::<int, bool> {
-    first: int,
-    second: bool,
-}
+struct Pair::<int, bool> { first: int, second: bool }
 
-struct Pair::<int, int> {
-    first: int,
-    second: int,
-}
+struct Pair::<int, int> { first: int, second: int }
 
-struct Id::<Pair<int, int>> {
-    n: int,
-}
+struct Id::<Pair<int, int>> { n: int }
 
-struct Id::<bool> {
-    n: int,
-}
+struct Id::<bool> { n: int }
 
-fn none::<bool>() -> Option::<bool> {
-    Option::<bool>::None
-}
+fn none::<bool>() -> Option::<bool> { Option::<bool>::None }
 
-fn count::<Pair<int, bool>>(n: int) -> int {
-    n
-}
+fn count::<Pair<int, bool>>(n: int) -> int { n }
 
-fn id::<int>(x: int) -> int {
-    x
-}
+fn id::<int>(x: int) -> int { x }
 
-fn id::<Option<int>>(x: Option::<int>) -> Option::<int> {
-    x
-}
+fn id::<Option<int>>(x: Option::<int>) -> Option::<int> { x }
 
-fn second::<bool, int>(_a: bool, b: int) -> int {
-    b
-}
+fn second::<bool, int>(_a: bool, b: int) -> int { b }
 
-fn apply::<int>(f: fn(int) -> int, x: int) -> int {
-    f(x)
-}
+fn apply::<int>(f: fn(int) -> int, x: int) -> int { f(x) }
 
 fn is_some::<int>(o: Option::<int>) -> bool {
     match o {

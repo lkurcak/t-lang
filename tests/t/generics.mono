@@ -1,40 +1,18 @@
-enum Option::<int> {
-    Some(int),
-    None,
-}
+enum Option::<int> { Some(int), None }
 
-enum Option::<Pair<Option<int>, int>> {
-    Some(Pair::<Option<int>, int>),
-    None,
-}
+enum Option::<Pair<Option<int>, int>> { Some(Pair::<Option<int>, int>), None }
 
-enum Option::<bool> {
-    Some(bool),
-    None,
-}
+enum Option::<bool> { Some(bool), None }
 
-struct Pair::<int, bool> {
-    first: int,
-    second: bool,
-}
+struct Pair::<int, bool> { first: int, second: bool }
 
-struct Pair::<Option<int>, int> {
-    first: Option::<int>,
-    second: int,
-}
+struct Pair::<Option<int>, int> { first: Option::<int>, second: int }
 
-struct Pair::<bool, int> {
-    first: bool,
-    second: int,
-}
+struct Pair::<bool, int> { first: bool, second: int }
 
-fn id::<int>(x: int) -> int {
-    x
-}
+fn id::<int>(x: int) -> int { x }
 
-fn id::<bool>(x: bool) -> bool {
-    x
-}
+fn id::<bool>(x: bool) -> bool { x }
 
 fn swap::<int, bool>(p: Pair::<int, bool>) -> Pair::<bool, int> {
     Pair::<bool, int> { first: p.second, second: p.first }
@@ -68,21 +46,13 @@ fn unwrap_or::<bool>(o: Option::<bool>, default: bool) -> bool {
     }
 }
 
-fn twice::<int>(f: fn(int) -> int, x: int) -> int {
-    f(id::<int>(f(x)))
-}
+fn twice::<int>(f: fn(int) -> int, x: int) -> int { f(id::<int>(f(x))) }
 
 fn repeat::<int>(f: fn(int) -> int, x: int, n: int) -> int {
-    if n == 0 {
-        x
-    } else {
-        repeat::<int>(f, f(x), n - 1)
-    }
+    if n == 0 { x } else { repeat::<int>(f, f(x), n - 1) }
 }
 
-fn inc(x: int) -> int {
-    x + 1
-}
+fn inc(x: int) -> int { x + 1 }
 
 fn main() {
     print(id::<int>(1));
@@ -98,9 +68,14 @@ fn main() {
     print_bool(unwrap_or::<bool>(map::<int, bool>(Option::<int>::Some(3), |x| x > 2), false));
     print(twice::<int>(inc, 0));
     print(repeat::<int>(|x| x * 2, 1, 10));
-    let nested = Option::<Pair<Option<int>, int>>::Some(Pair::<Option<int>, int> { first: Option::<int>::Some(1), second: 2 });
+    let nested = Option::<Pair<Option<int>, int>>::Some(Pair::<Option<int>, int> {
+        first: Option::<int>::Some(1),
+        second: 2,
+    });
     match nested {
-        Option::<Pair<Option<int>, int>>::Some(Pair::<Option<int>, int> { first: Option::<int>::Some(a), second: b }) => print(a + b),
+        Option::<Pair<Option<int>, int>>::Some(
+            Pair::<Option<int>, int> { first: Option::<int>::Some(a), second: b },
+        ) => print(a + b),
         _ => print(0),
     }
     print(twice::<int>(id::<int>, 7));
