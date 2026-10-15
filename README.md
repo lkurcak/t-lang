@@ -105,6 +105,13 @@ otherwise gets a warning where it's declared (`non_camel_case_types` or
 `non_snake_case`), whose fix is the rename above, unless the new name
 would be a keyword or clash with something.
 
+Acronyms are one word even when the whole name is one: `Io`, `Id`, `Ui`,
+not `IO`, `ID`, `UI`. Rust's style guide says the same (`Uuid`,
+`TcpStream`), but rustc doesn't enforce it; T does, so that each name has
+one right spelling and its case says what it is. `Io` is a type, `io` a
+function or variable, and all capitals are kept for globals, should T get
+them.
+
 **Neovim (0.11+):** install
 [t-lang.nvim](https://github.com/lkurcak/t-lang.nvim), e.g.
 `vim.pack.add({ "https://github.com/lkurcak/t-lang.nvim" })`.
