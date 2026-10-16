@@ -132,6 +132,7 @@ impl<'a> Builder<'a> {
             name,
             span,
             mut_span: None,
+            deferred: false,
         });
         Local(self.body.locals.len() - 1)
     }
@@ -615,7 +616,7 @@ impl<'a> Builder<'a> {
         self.scopes.push(Vec::new());
         for stmt in stmts {
             match stmt {
-                Stmt::Let { pat, ty, init } => self.let_stmt(pat, ty.as_deref(), init),
+                Stmt::Let { pat, ty, init } => self.let_stmt(pat, ty.as_deref(), init.as_ref()),
                 Stmt::Expr(e) | Stmt::BlockLike(e) => {
                     self.temps.push(Vec::new());
                     let t = self.ty(e);
@@ -644,7 +645,17 @@ impl<'a> Builder<'a> {
     /// takes it apart where it is. If `init` is `&x` of a value that isn't a
     /// place, the temporary holding it lives to the end of the block, as in
     /// the interpreter.
-    fn let_stmt(&mut self, pat: &'a Pattern, ann: Option<&TypeExpr>, init: &'a Expr) {
+    fn let_stmt(&mut self, pat: &'a Pattern, ann: Option<&TypeExpr>, init: Option<&'a Expr>) {
+        let Some(init) = init else {
+            let l = self.declare_var(pat, ann);
+            let decl = &mut self.body.locals[l.0];
+            decl.deferred = true;
+            // It has no value yet, as if it had just gone out of scope: not
+            // even one from the last time round a loop.
+            let span = decl.span;
+            self.push(StmtKind::Dead(l), span);
+            return;
+        };
         if let ExprKind::Unary(op @ (UnOp::Ref | UnOp::RefMut), x) = &init.kind
             && !x.is_place()
         {
@@ -668,10 +679,7 @@ impl<'a> Builder<'a> {
         self.temps.push(Vec::new());
         match &pat.kind {
             PatternKind::Bind(..) => {
-                let l = self.declare_var(pat);
-                if let Some(t) = ann.and_then(|t| self.cx.written_type(t)) {
-                    self.body.locals[l.0].ty = self.regions.renumber(&t);
-                }
+                let l = self.declare_var(pat, ann);
                 let t = self.ty(init);
                 let tmp = self.temp(t.clone(), init.span);
                 self.expr_into(init, &Place::local(tmp));
@@ -757,7 +765,7 @@ impl<'a> Builder<'a> {
     fn declare(&mut self, p: &Pattern) {
         match &p.kind {
             PatternKind::Bind(..) => {
-                self.declare_var(p);
+                self.declare_var(p, None);
             }
             PatternKind::Variant(_, _, _, pats) => pats.iter().for_each(|q| self.declare(q)),
             PatternKind::Struct(_, _, fields, _) => {
@@ -769,8 +777,9 @@ impl<'a> Builder<'a> {
         }
     }
 
-    /// Declares the variable binding pattern `p` binds, if it isn't yet.
-    fn declare_var(&mut self, p: &Pattern) -> Local {
+    /// Declares the variable binding pattern `p` binds, if it isn't yet,
+    /// with the type annotation `ann` says, lifetimes and all.
+    fn declare_var(&mut self, p: &Pattern, ann: Option<&TypeExpr>) -> Local {
         let typed = self.cx.typed();
         let id = typed.sites[&p.name_span()];
         if let Some(l) = self.vars.get(&id) {
@@ -782,6 +791,9 @@ impl<'a> Builder<'a> {
         let l = self.new_local(t, LocalKind::Var, Some(bind.name.clone()), id);
         self.body.locals[l.0].mutable = bind.mutable;
         self.body.locals[l.0].mut_span = bind.mut_span;
+        if let Some(t) = ann.and_then(|t| self.cx.written_type(t)) {
+            self.body.locals[l.0].ty = self.regions.renumber(&t);
+        }
         self.vars.insert(id, l);
         self.scopes.last_mut().expect("a scope").push(l);
         l

@@ -245,7 +245,7 @@ impl Walk<'_> {
                         Stmt::Let { pat, ty, init } => {
                             self.pattern(pat);
                             ty.iter().for_each(|t| self.ty(t));
-                            self.expr(init);
+                            init.iter().for_each(|e| self.expr(e));
                         }
                         Stmt::Expr(e) | Stmt::BlockLike(e) => self.expr(e),
                         Stmt::Fn(f) => self.function(f),

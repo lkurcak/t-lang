@@ -86,7 +86,7 @@ pub(crate) fn mutability(b: &Builder) -> Result<Vec<Local>, Error> {
                 if let Rvalue::Ref(_, true, place) = value {
                     out.push((s, place, true));
                 }
-                if !declare {
+                if !declare && !first_value(b, place) {
                     out.push((s, place, false));
                 }
             }
@@ -163,7 +163,98 @@ pub(crate) fn mutability(b: &Builder) -> Result<Vec<Local>, Error> {
             return Err(e);
         }
     }
+    deferred(b, &mut needed)?;
     Ok(needed)
+}
+
+/// Is assigning to `place` maybe giving a variable declared with no value,
+/// `let x;`, its first one? `deferred` checks it is.
+fn first_value(b: &Builder, place: &Place) -> bool {
+    place.proj.is_empty() && b.body.locals[place.local.0].deferred
+}
+
+/// Checks that what's assigned to a variable declared with no value, and
+/// not `mut`, doesn't have one already, and adds those that are `mut` to
+/// `needed` where they may.
+///
+/// Which may have a value depends on the path taken, so it's another
+/// forward dataflow problem: where each variable may have been given one
+/// flows forward, and where paths meet, it's what either brings.
+fn deferred(b: &Builder, needed: &mut Vec<Local>) -> Result<(), Error> {
+    let body = &b.body;
+    if !body.locals.iter().any(|l| l.deferred) {
+        return Ok(());
+    }
+    type Given = Vec<Option<Span>>;
+    let step = |state: &mut Given, s: &Statement| match &s.kind {
+        StmtKind::Assign { place, .. } if first_value(b, place) => {
+            state[place.local.0].get_or_insert(s.span);
+        }
+        StmtKind::Dead(l) => state[l.0] = None,
+        _ => {}
+    };
+    let mut ins: Vec<Option<Given>> = vec![None; body.blocks.len()];
+    ins[0] = Some(vec![None; body.locals.len()]);
+    let mut todo = vec![0];
+    while let Some(bb) = todo.pop() {
+        let mut state = ins[bb].clone().expect("reached");
+        body.blocks[bb]
+            .stmts
+            .iter()
+            .for_each(|s| step(&mut state, s));
+        for succ in body.successors(Bb(bb)) {
+            let new = match &ins[succ.0] {
+                None => state.clone(),
+                Some(old) => old.iter().zip(&state).map(|(a, b)| a.or(*b)).collect(),
+            };
+            if ins[succ.0].as_ref() != Some(&new) {
+                ins[succ.0] = Some(new);
+                todo.push(succ.0);
+            }
+        }
+    }
+    let mut first: Option<Error> = None;
+    for (bb, block) in body.blocks.iter().enumerate() {
+        let Some(mut state) = ins[bb].clone() else {
+            continue;
+        };
+        for s in &block.stmts {
+            if let StmtKind::Assign { place, .. } = &s.kind
+                && first_value(b, place)
+                && let Some(given) = state[place.local.0]
+            {
+                let decl = &body.locals[place.local.0];
+                if decl.mutable {
+                    needed.push(place.local);
+                } else if first.as_ref().is_none_or(|f| s.span.start < f.span.start) {
+                    let name = decl.name.clone().unwrap_or_default();
+                    let note = match given.start >= s.span.start {
+                        true => "given a value here, in an earlier time round the loop",
+                        false => "given a value here",
+                    };
+                    first = Some(
+                        Error::ty(
+                            s.span,
+                            format!(
+                                "cannot assign twice to `{name}`, as it isn't declared `mut`: it \
+                                 may have a value already"
+                            ),
+                        )
+                        .with_note(given, note)
+                        .with_fix(Fix::new(
+                            format!("make `{name}` mutable"),
+                            vec![Edit::insert(decl.span.start, "mut ")],
+                        )),
+                    );
+                }
+            }
+            step(&mut state, s);
+        }
+    }
+    match first {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
 }
 
 /// Checks that nothing is used while it may have been moved out of.
@@ -232,11 +323,16 @@ fn step(b: &Builder, state: &mut Moved, s: &Statement) -> Result<(), Found> {
                 // Through a reference: the reference itself must be there.
                 used(b, state, &owned, false, s.span)?;
             } else {
-                if let Some((m, _)) = state.iter().find(|(m, _)| owned.within(m) && **m != owned) {
+                if let Some((m, at)) = state.iter().find(|(m, _)| owned.within(m) && **m != owned) {
+                    let decl = &b.body.locals[m.local.0];
+                    let why = match *m == Place::local(m.local) && *at == decl.span {
+                        true => "which has no value here".to_string(),
+                        false => "which was moved out of".to_string(),
+                    };
                     return Err(Found(Error::ty(
                         s.span,
                         format!(
-                            "cannot assign to `{}`, part of `{}`, which was moved out of",
+                            "cannot assign to `{}`, part of `{}`, {why}",
                             describe(b, place),
                             describe(b, m)
                         ),

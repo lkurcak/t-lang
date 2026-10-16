@@ -89,8 +89,8 @@ fn main() {
 As in Rust, a name that isn't a lint's is a warning (`unknown_lints`), not
 an error. The lints are `unused_variables`, `unused_mut`, `dead_code`,
 `unreachable_patterns`, `overlapping_ranges`, `mergeable_ranges`,
-`unused_doc_comments`, `non_camel_case_types`, `non_snake_case` and
-`unknown_lints`.
+`unused_doc_comments`, `non_camel_case_types`, `non_snake_case`,
+`infinite_types` and `unknown_lints`.
 
 Pipeline: `lexer` → `parser` → `check` (type checker, then `borrowck`, the
 borrow checker) → `lift` (nested functions and types moved to the top

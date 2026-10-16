@@ -165,6 +165,9 @@ pub enum Lint {
     UnknownLints,
     /// A variable declared `mut` that's never changed.
     UnusedMut,
+    /// A struct or enum with no values, since each would hold another,
+    /// without end.
+    InfiniteTypes,
 }
 
 impl Lint {
@@ -180,10 +183,11 @@ impl Lint {
             Lint::NonSnakeCase => "non_snake_case",
             Lint::UnknownLints => "unknown_lints",
             Lint::UnusedMut => "unused_mut",
+            Lint::InfiniteTypes => "infinite_types",
         }
     }
 
-    pub const ALL: [Lint; 10] = [
+    pub const ALL: [Lint; 11] = [
         Lint::UnreachablePatterns,
         Lint::OverlappingRanges,
         Lint::MergeableRanges,
@@ -194,6 +198,7 @@ impl Lint {
         Lint::NonSnakeCase,
         Lint::UnknownLints,
         Lint::UnusedMut,
+        Lint::InfiniteTypes,
     ];
 
     pub fn from_name(name: &str) -> Option<Lint> {

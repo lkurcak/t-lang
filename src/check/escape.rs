@@ -165,8 +165,8 @@ impl Checker {
                 inner.extend(fns.map(|f| (f.name.name.clone(), None)));
                 for stmt in stmts {
                     if let Stmt::Let { pat, init, .. } = stmt {
-                        let origin = self.origin(init, inner).map(|(o, _)| o);
-                        bind(pat, origin, inner);
+                        let origin = init.as_ref().and_then(|e| self.origin(e, inner));
+                        bind(pat, origin.map(|(o, _)| o), inner);
                     }
                 }
                 let found = tail.as_ref().and_then(|tail| self.origin(tail, inner));

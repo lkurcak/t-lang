@@ -347,6 +347,8 @@ impl Checker {
         check_main(prog)?;
         // What's dead depends on the whole program, so only once it all checks.
         self.dead_code(prog);
+        // Needs there to be no polymorphic recursion, to end.
+        self.infinite_types(prog);
         Ok(())
     }
 
@@ -1557,18 +1559,44 @@ impl Checker {
                 // Checked with the others, before any function.
                 Stmt::Type(_) => {}
                 Stmt::Let { pat, ty, init } => {
-                    let t = match ty {
-                        Some(ann) => {
+                    // `let x;`: given its value later, by assignment, which
+                    // can only give a whole variable one.
+                    let deferred = match (&pat.kind, init) {
+                        (_, Some(_)) => None,
+                        (PatternKind::Bind(name, _), None) => Some(name),
+                        (_, None) => {
+                            return Err(Error::ty(
+                                pat.span,
+                                "a `let` with no value can only declare a variable, like \
+                                 `let x;`, as assignment gives a variable its value",
+                            ));
+                        }
+                    };
+                    let t = match (ty, init) {
+                        (Some(ann), init) => {
                             let t = self.resolve(ann)?;
                             self.mention(&t);
-                            self.check(init, &t)?;
+                            if let Some(init) = init {
+                                self.check(init, &t)?;
+                            }
                             t
                         }
-                        None => self.synth(init)?,
+                        (None, Some(init)) => self.synth(init)?,
+                        (None, None) => {
+                            let name = deferred.expect("a variable");
+                            self.fresh(
+                                pat.span,
+                                format!("the type of `{name}`"),
+                                format!("annotate it, e.g. `let {name}: int;`"),
+                            )
+                        }
                     };
                     let mut binds = Vec::new();
                     let p = self.pattern(pat, &t, None, &mut binds)?;
-                    let origin = self.origin(init, &mut Vec::new()).map(|(o, _)| o);
+                    let origin = init
+                        .as_ref()
+                        .and_then(|init| self.origin(init, &mut Vec::new()))
+                        .map(|(o, _)| o);
                     if let Some(origin) = bound_origin(pat, origin) {
                         binds[0].origin = Some(origin);
                     }

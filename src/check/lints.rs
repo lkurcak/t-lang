@@ -1,5 +1,6 @@
 //! Warnings: unused variables, unreachable patterns, ranges that can be
-//! narrowed or merged, dead code, and doc comments that document nothing.
+//! narrowed or merged, dead code, doc comments that document nothing, and
+//! types with no values since each would hold another without end.
 //! None of these make a program wrong, so none of them stop it. The naming
 //! lints are in `naming.rs`, since their fixes rename, which checks the
 //! renamed source, and `unused_mut` is the borrow checker's, which knows
@@ -315,4 +316,69 @@ impl Checker {
             }
         }
     }
+}
+
+impl Checker {
+    /// Warns about structs and enums that hold themselves with no way to
+    /// stop, so that they have no values: `struct Stream { next:
+    /// Box<Stream> }`, or `A` and `B` that each hold the other. Each is
+    /// likely missing a variant that doesn't, like a list's `Nil`. A type
+    /// with no values for another reason, like `enum Never {}` or one that
+    /// holds a `Never`, is fine, and so is one that only holds one of these,
+    /// which the warning on that covers.
+    ///
+    /// Such a type can't be constructed, so `dead_code` says so too: this
+    /// says why instead.
+    pub(super) fn infinite_types(&mut self, prog: &Program) {
+        for ((d, _), def) in prog.all_types().into_iter().zip(&self.types) {
+            let symbol = &def.symbol;
+            let generic = self.adts[symbol].generic(symbol);
+            if d.name().name.starts_with('_')
+                || !exhaust::endless(&self.adts, &generic)
+                || !holds_itself(&self.adts, symbol)
+            {
+                continue;
+            }
+            let (kind, name, variants) = match d {
+                TypeDecl::Struct(s) => ("struct", &s.name, &[][..]),
+                TypeDecl::Enum(e) => ("enum", &e.name, &e.variants[..]),
+            };
+            let spans: Vec<Span> = std::iter::once(name.span)
+                .chain(variants.iter().map(|v| v.name.span))
+                .collect();
+            self.warnings
+                .retain(|w| !(w.lint == Lint::DeadCode && spans.contains(&w.span)));
+            self.warnings.push(Warning {
+                lint: Lint::InfiniteTypes,
+                span: name.span,
+                message: format!(
+                    "{kind} `{n}` has no values: each would hold another `{n}`, without end; it \
+                     needs a way to stop, like a variant that doesn't hold one",
+                    n = name.name
+                ),
+                fixes: Vec::new(),
+            });
+        }
+    }
+}
+
+/// Does the type `symbol` hold itself, through its fields' types?
+fn holds_itself(adts: &crate::types::Adts, symbol: &str) -> bool {
+    let mut seen = HashSet::new();
+    let mut todo = vec![symbol.to_string()];
+    while let Some(t) = todo.pop() {
+        let mut inner = HashSet::new();
+        for ft in all_fields(adts, &adts[&t].generic(&t)) {
+            adt_names(&ft, &mut inner);
+        }
+        for name in inner {
+            if name == symbol {
+                return true;
+            }
+            if seen.insert(name.clone()) {
+                todo.push(name);
+            }
+        }
+    }
+    false
 }

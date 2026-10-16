@@ -641,7 +641,21 @@ impl Interp<'_, '_> {
     fn block_inner(&mut self, stmts: &[Stmt], tail: Option<&Expr>) -> Result<Value, Error> {
         for stmt in stmts {
             match stmt {
-                Stmt::Let { pat, init, .. } => self.let_stmt(pat, init)?,
+                Stmt::Let {
+                    pat,
+                    init: Some(init),
+                    ..
+                } => self.let_stmt(pat, init)?,
+                // No value yet: as if it had been moved out of.
+                Stmt::Let {
+                    pat, init: None, ..
+                } => {
+                    let PatternKind::Bind(name, _) = &pat.kind else {
+                        unsound("`let` with no value of a pattern");
+                    };
+                    let slot = self.memory.alloc(Value::Moved, false);
+                    self.locals.push((name.clone(), slot));
+                }
                 Stmt::Expr(e) | Stmt::BlockLike(e) => {
                     self.statement(|i| {
                         let v = i.eval(e)?;

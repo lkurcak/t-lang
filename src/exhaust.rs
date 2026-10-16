@@ -246,6 +246,15 @@ pub fn missing(adts: &Adts, ty: &Type, arms: &[Pat]) -> Option<String> {
     Some(cx.show(&witness[0], ty))
 }
 
+/// Does `ty` have no values only because each would hold another value of
+/// a type it's inside, without end? Like `struct Stream { next:
+/// Box<Stream> }`: it would have some if values could be infinite, as
+/// they can in a lazy language, where that's a stream.
+pub fn endless(adts: &Adts, ty: &Type) -> bool {
+    let cx = Cx { adts };
+    !cx.inhabited_in(ty, &mut Vec::new(), false) && cx.inhabited_in(ty, &mut Vec::new(), true)
+}
+
 struct Cx<'a> {
     adts: &'a Adts,
 }
@@ -357,8 +366,11 @@ impl Cx<'_> {
                     // Note that an enum with no variants always lands here,
                     // and then there's nothing to try: `_` is useless because
                     // there are no values at all.
+                    // Only the constructors that can build a value can
+                    // build one that gets past the rows.
                     (Some(all), Some(unseen)) if unseen.is_empty() => {
-                        all.into_iter().find_map(|c| {
+                        let mut all = all.into_iter().filter(|c| self.inhabited_ctor(*c, ty));
+                        all.find_map(|c| {
                             let wilds = vec![Pat::Wild; self.fields(c, ty).len()];
                             let q: Vec<Pat> = [vec![Pat::Ctor(c, wilds)], q[1..].to_vec()].concat();
                             self.useful(rows, &q, tys)
@@ -410,27 +422,60 @@ impl Cx<'_> {
         }
     }
 
-    /// Does `ty` have any values at all? `enum Never {}` doesn't, and neither
-    /// does anything that must hold a `Never`.
-    ///
-    /// A type can hold itself only through a reference or a box, and those
-    /// are taken to have values, whatever they point to, so this terminates.
-    /// That's not quite right: a stream that always holds a box with
-    /// another stream in it has no finite values. But it's on the safe
-    /// side, since it can only ask for more arms than needed, never fewer.
-    fn inhabited(&self, ty: &Type) -> bool {
-        if let Type::Ref(..) | Type::Box(_) = ty {
-            return true;
-        }
-        match self.all_ctors(ty, &[]) {
-            Some(all) => all.into_iter().any(|c| self.inhabited_ctor(c, ty)),
-            None => true,
-        }
+    /// Can constructor `c` build a value? Only if every field has a value.
+    /// `enum Never {}` has none, and neither does anything that must hold a
+    /// `Never`, a reference to one or a box with one in it included: a
+    /// reference always points to a value.
+    fn inhabited_ctor(&self, c: Ctor, ty: &Type) -> bool {
+        self.inhabited_ctor_in(c, ty, &mut Vec::new(), false)
     }
 
-    /// Can constructor `c` build a value? Only if every field has a value.
-    fn inhabited_ctor(&self, c: Ctor, ty: &Type) -> bool {
-        self.fields(c, ty).iter().all(|t| self.inhabited(t))
+    /// Does `ty` have any values, inside the types in `building`, each of which is being
+    /// built a value of, and that holds the next.
+    ///
+    /// A type can hold itself, through a reference or a box, and a value of
+    /// it has to stop doing that somewhere, since it's finite. So a value
+    /// of a type that's already being built can't be needed to build one:
+    /// a smaller one, with the inner value in place of the outer, would do.
+    /// `struct Stream { next: Box<Stream> }` has no values at all. Types
+    /// can't grow as they hold themselves (no polymorphic recursion), so
+    /// there are only so many to build, and this ends.
+    ///
+    /// That a `&Never` can't exist is a promise unsafe code will have to
+    /// keep too, once there is any: Rust doesn't make it, so it asks for
+    /// arms here that T doesn't.
+    ///
+    /// With `endless`, a type already being built is taken to have values
+    /// instead, as if values could be infinite: then only an empty enum
+    /// makes a type have none.
+    fn inhabited_in(&self, ty: &Type, building: &mut Vec<Type>, endless: bool) -> bool {
+        if let Type::Ref(_, _, t) | Type::Box(t) = ty {
+            return self.inhabited_in(t, building, endless);
+        }
+        if building.contains(ty) {
+            return endless;
+        }
+        let Some(all) = self.all_ctors(ty, &[]) else {
+            return true;
+        };
+        building.push(ty.clone());
+        let found = all
+            .into_iter()
+            .any(|c| self.inhabited_ctor_in(c, ty, building, endless));
+        building.pop();
+        found
+    }
+
+    fn inhabited_ctor_in(
+        &self,
+        c: Ctor,
+        ty: &Type,
+        building: &mut Vec<Type>,
+        endless: bool,
+    ) -> bool {
+        self.fields(c, ty)
+            .iter()
+            .all(|t| self.inhabited_in(t, building, endless))
     }
 
     /// The types of the fields that constructor `c` of type `ty` holds.

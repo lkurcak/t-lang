@@ -170,6 +170,40 @@ Assigning drops what was there: `b = Box::new(2)` frees `b`'s old box. A
 variable declared `mut` that's never changed gets a warning, whose fix
 removes the `mut` (`unused_mut`).
 
+### Declaring a variable without a value
+
+`let r;` declares a variable with no value: an assignment gives it one
+later. Its type is a new type variable, which that assignment solves
+(`let r: int;` says it up front). It's as if it had been moved out of, so
+the move check already rejects using it before then
+(`err_let_deferred_unset.t`), and an assignment gives it a value as it
+would a moved-out variable. Only a whole variable can be declared this way:
+an assignment can't give `x` and `y` of `let P { x, y };` their values.
+
+```rust
+fn main() {
+    let x = 1;
+    let y = 2;
+    let r;
+    if x < y {
+        r = &x;
+    } else {
+        r = &y;
+    }
+    print(*r); // expect: 1
+}
+```
+
+`r` isn't `mut`, but assigning to it is fine, since the assignment is how
+it gets its value. That needs one more thing, though: that `r` *can't* have
+a value already. If it could, the assignment would be changing it, which
+needs `mut` (`err_let_deferred_twice.t`, and `err_let_deferred_loop.t` for
+the second time round a loop). That's the opposite of the move check, which
+asks whether a place *may* have no value, so it's another forward dataflow
+problem: which variables *may* have a value (`moves::deferred`). Where it
+may not, the assignment doesn't need `mut`, so `let mut r; r = 1;` gets
+the `unused_mut` warning.
+
 ## Borrowing
 
 Moving a value into a function and back out again to let it look at it
@@ -452,6 +486,24 @@ nothing is moved out of `*l`, which would be an error, since it's behind a
 reference (`err_move_behind_ref.t`). Through a `&mut`, they're `&mut`s,
 which is how `bump` changes the list in place.
 
+### Types with no values
+
+A `match` needn't cover what can't exist (docs/02-adts.md), and pointers
+add to that. A reference always points to a value, and a box always holds
+one, so a `&Never` or `Box<Never>` can't exist either. Neither can a value
+of `struct Stream { next: Box<Stream> }`: values are finite, so a chain of
+boxes has to end somewhere, and a `Stream`'s can't
+(`match_uninhabited_pointer.t`). In a lazy language like Haskell, where a
+value can be infinite, that's a perfectly good stream. In T it's almost
+certainly a list missing its `Nil`, so it gets a warning
+(`infinite_types`), as do types that hold each other that way
+(`warn_infinite_types.t`).
+
+Rust asks for the arms anyway, for references: unsafe code there may make
+a `&Never` out of raw memory, and it hasn't settled whether that's allowed.
+T settles it: a reference to something that isn't a valid value is wrong,
+in unsafe code too, once there is any.
+
 ## The interpreter keeps memory honestly
 
 The interpreter's job is to give programs a meaning to check the type
@@ -519,15 +571,16 @@ for as long as `r` (`err_borrow_temp.t`).
 4. Walk the borrow checker through `nll.t`'s loop by hand: which region
    holds which points, and why is each loan out of scope by the next time
    round?
-5. Add deferred initialisation, `let r;`. The type checker part is a fresh
-   type variable. What does the move analysis need to know to allow
-   assigning to an immutable `r` once?
+5. `let r;` works for a variable only. Make it work for any irrefutable
+   pattern, `let P { x, y };`, each variable given its value by an
+   assignment of its own. What does `moves::deferred` need to change?
 6. `fn f<'a>(x: &'a mut int) -> &'a int { x }` takes a mutable reference
    and returns a shared one. Is `x`'s referent still mutably borrowed while
    the result is in use? Should it be?
-7. `Cx::inhabited` in `exhaust.rs` takes a pointer to have values,
-   whatever it points to. Find a type that has none, and a `match` on it
-   that's rejected though it needn't be.
+7. `Cx::inhabited_in` in `exhaust.rs` says `struct Stream { next:
+   Box<Stream> }` has no values, by taking a type it's already building a
+   value of to have none. Why is that right? Would taking it to have some
+   be wrong, or just less useful?
 8. Read rust#25860. Write the T version of the program in it, and say
    which check stops it.
 

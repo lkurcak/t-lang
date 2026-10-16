@@ -63,6 +63,9 @@ pub(crate) struct LocalDecl {
     /// For a variable that's `mut`, where the `mut` is, from the `mut` to
     /// the name.
     pub(crate) mut_span: Option<Span>,
+    /// Declared with no value, `let x;`: an assignment gives it its first
+    /// one, whether it's `mut` or not.
+    pub(crate) deferred: bool,
 }
 
 #[derive(Default)]

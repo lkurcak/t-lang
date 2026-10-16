@@ -285,7 +285,8 @@ impl Expr {
             ExprKind::Block(stmts, tail) => stmts
                 .iter()
                 .filter_map(|s| match s {
-                    Stmt::Let { init: e, .. } | Stmt::Expr(e) | Stmt::BlockLike(e) => Some(e),
+                    Stmt::Let { init, .. } => init.as_ref(),
+                    Stmt::Expr(e) | Stmt::BlockLike(e) => Some(e),
                     Stmt::Fn(_) | Stmt::Type(_) => None,
                 })
                 .chain(tail.as_deref())
@@ -501,7 +502,7 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
             for stmt in stmts {
                 match stmt {
                     Stmt::Let { pat, init, .. } => {
-                        go(init, bound);
+                        init.iter().for_each(|e| go(e, bound));
                         pattern_binds(pat, bound);
                     }
                     Stmt::Expr(e) | Stmt::BlockLike(e) => go(e, bound),
@@ -581,7 +582,9 @@ pub enum Stmt {
         pat: Pattern,
         /// Boxed, since it's rare and would make every `Stmt` bigger.
         ty: Option<Box<TypeExpr>>,
-        init: Expr,
+        /// `None` for `let x;`, a variable given its value later, which
+        /// only a variable can be.
+        init: Option<Expr>,
     },
     /// `e;`: any type, value discarded.
     Expr(Expr),

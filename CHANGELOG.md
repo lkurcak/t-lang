@@ -22,6 +22,16 @@ Step 5: ownership, borrowing and pointers. See
 - Mutation: `let mut`, `mut` parameters and pattern bindings, assignment to
   variables, fields and `*r`, and `+=`, `-=`, `*=`, `/=` and `%=`.
 - `while` loops.
+- A reference or box to something with no values, like `&Never`, has
+  none either, and nor does a type that must hold itself forever, like
+  `struct Stream { next: Box<Stream> }`: a `match` needn't cover them.
+  Rust asks for those arms, since unsafe code there may make a `&Never`.
+- A warning, `infinite_types`, for a struct or enum that holds itself with
+  no way to stop, like `struct Stream { next: Box<Stream> }`, or two that
+  hold each other: it has no values.
+- `let x;`: a variable declared with no value, given one later by
+  assignment. It can't be used before then, and it can be assigned once
+  without being `mut`.
 - Moves: using a value whose type isn't `Copy` moves it, and it can't be
   used again until it gets a new value. `int`, `bool`, `()`, functions and
   shared references are `Copy`, and so are structs and enums with

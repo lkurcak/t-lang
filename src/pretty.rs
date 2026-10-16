@@ -748,7 +748,14 @@ impl Printer<'_> {
         let mut body = self.trailing(span.start + 1);
         for (i, stmt) in stmts.iter().enumerate() {
             let (start, end) = match stmt {
-                Stmt::Let { pat, init, .. } => (self.before(pat.span.start), init.span.end),
+                Stmt::Let { pat, ty, init } => {
+                    let end = match (init, ty) {
+                        (Some(init), _) => init.span.end,
+                        (None, Some(t)) => t.span.end,
+                        (None, None) => pat.span.end,
+                    };
+                    (self.before(pat.span.start), end)
+                }
                 Stmt::Expr(e) | Stmt::BlockLike(e) => (e.span.start, e.span.end),
                 Stmt::Fn(f) => (
                     lead_start(f.doc.as_ref(), &f.allows, f.span.start),
@@ -767,8 +774,11 @@ impl Printer<'_> {
                         Some(t) => text(": ") + self.ty(t),
                         None => Doc::nil(),
                     };
-                    let head = text("let ") + self.pattern(pat) + ty + " =";
-                    head + " " + self.expr(init, 0, Ctx::default()) + ";"
+                    let head = text("let ") + self.pattern(pat) + ty;
+                    match init {
+                        Some(init) => head + " = " + self.expr(init, 0, Ctx::default()) + ";",
+                        None => head + ";",
+                    }
                 }
                 Stmt::Expr(e) => self.statement(e) + ";",
                 Stmt::BlockLike(e) => self.expr(e, 0, Ctx::default()),

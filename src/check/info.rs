@@ -443,7 +443,7 @@ fn each_annotation(e: &Expr, f: &mut impl FnMut(&TypeExpr)) {
                         if let Some(t) = ty {
                             f(t);
                         }
-                        each_annotation(init, f);
+                        init.iter().for_each(|e| each_annotation(e, f));
                     }
                     Stmt::Expr(e) | Stmt::BlockLike(e) => each_annotation(e, f),
                     // A function or type of its own, with its own type

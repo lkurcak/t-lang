@@ -222,8 +222,7 @@ module.exports = grammar({
       'let',
       field('pattern', $._pattern),
       optional(seq(':', field('type', $._type))),
-      '=',
-      field('value', $._expression),
+      optional(seq('=', field('value', $._expression))),
       ';',
     ),
 

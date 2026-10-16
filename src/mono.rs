@@ -490,7 +490,7 @@ impl Cx<'_, '_, '_> {
                         Stmt::Let { pat, ty, init } => Stmt::Let {
                             pat: self.pattern(pat),
                             ty: ty.as_ref().map(|t| Box::new(self.ty(t))),
-                            init: self.expr(init),
+                            init: init.as_ref().map(|e| self.expr(e)),
                         },
                         Stmt::Expr(e) => Stmt::Expr(self.expr(e)),
                         Stmt::BlockLike(e) => Stmt::BlockLike(self.expr(e)),

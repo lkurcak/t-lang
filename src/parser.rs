@@ -602,8 +602,10 @@ impl Parser {
         } else {
             None
         };
-        self.expect(Tok::Eq)?;
-        let init = self.expr()?;
+        let init = match self.eat(&Tok::Eq) {
+            true => Some(self.expr()?),
+            false => None,
+        };
         self.expect(Tok::Semi)?;
         Ok(Stmt::Let {
             pat,

@@ -174,7 +174,7 @@ impl<'p> Cx<'p> {
                             Stmt::Let { pat, ty, init } => Stmt::Let {
                                 pat: self.pattern(pat),
                                 ty: ty.as_ref().map(|t| Box::new(self.ty(t))),
-                                init: self.expr(init, nested),
+                                init: init.as_ref().map(|e| self.expr(e, nested)),
                             },
                             Stmt::Expr(e) => Stmt::Expr(self.expr(e, nested)),
                             Stmt::BlockLike(e) => Stmt::BlockLike(self.expr(e, nested)),
