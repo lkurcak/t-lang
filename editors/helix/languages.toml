@@ -9,7 +9,9 @@ args = ["lsp"]
 name = "t"
 scope = "source.t"
 file-types = ["t"]
-comment-token = "//"
+# The first is what commenting out a line uses; Enter in a comment continues
+# any of them, `///` doc comments included.
+comment-tokens = ["//", "///"]
 indent = { tab-width = 4, unit = "    " }
 language-servers = ["t"]
 # Format with `t lsp` (as `t fmt` does) on every save.
