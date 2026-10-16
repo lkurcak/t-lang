@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 (2026-10-16)
 
 Step 5: ownership, borrowing and pointers. See
 [docs/05-ownership.md](docs/05-ownership.md).
