@@ -562,10 +562,12 @@ for as long as `r` (`err_borrow_temp.t`).
 
 1. Write a program that the borrow checker rejects but that would run
    fine. (There are plenty: the checker can't see which branch an `if`
-   takes.) Then one that runs fine because it's rejected.
-2. Turn off the move check (`moves::moves`) and write a program that makes
-   the interpreter report a double free. Then turn off the loans check and
-   make it report a dangling reference.
+   takes.) Then one it rejects that would go wrong if it ran: exercise 2
+   shows how to see what would happen.
+2. Turn off the move check (`moves::moves`) and write a program that moves
+   a box twice. The interpreter reports a use after move, not a double
+   free: why? Then turn off the loans check and make it report a dangling
+   reference.
 3. Give `&mut T` the variance of `&T`, covariant in `T`, and make the
    program in *Variance* run. What does the interpreter say?
 4. Walk the borrow checker through `nll.t`'s loop by hand: which region
