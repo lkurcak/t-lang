@@ -62,8 +62,7 @@
 "let" @keyword
 ["struct" "enum"] @keyword.type
 ["if" "else" "match"] @keyword.conditional
-["while" "loop" "break"] @keyword.repeat
-(continue_expression) @keyword.repeat
+["while" "loop" "break" "continue"] @keyword.repeat
 "return" @keyword.return
 (mutable_specifier) @keyword.storage.modifier
 

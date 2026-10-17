@@ -171,6 +171,8 @@ pub enum Lint {
     /// Code after something that never finishes, like a `return`, so it
     /// never runs.
     UnreachableCode,
+    /// A loop's label that no `break` or `continue` uses.
+    UnusedLabels,
 }
 
 impl Lint {
@@ -188,10 +190,11 @@ impl Lint {
             Lint::UnusedMut => "unused_mut",
             Lint::InfiniteTypes => "infinite_types",
             Lint::UnreachableCode => "unreachable_code",
+            Lint::UnusedLabels => "unused_labels",
         }
     }
 
-    pub const ALL: [Lint; 12] = [
+    pub const ALL: [Lint; 13] = [
         Lint::UnreachablePatterns,
         Lint::OverlappingRanges,
         Lint::MergeableRanges,
@@ -204,6 +207,7 @@ impl Lint {
         Lint::UnusedMut,
         Lint::InfiniteTypes,
         Lint::UnreachableCode,
+        Lint::UnusedLabels,
     ];
 
     pub fn from_name(name: &str) -> Option<Lint> {

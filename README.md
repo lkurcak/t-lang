@@ -90,7 +90,7 @@ As in Rust, a name that isn't a lint's is a warning (`unknown_lints`), not
 an error. The lints are `unused_variables`, `unused_mut`, `dead_code`,
 `unreachable_patterns`, `overlapping_ranges`, `mergeable_ranges`,
 `unused_doc_comments`, `non_camel_case_types`, `non_snake_case`,
-`infinite_types`, `unreachable_code` and `unknown_lints`.
+`infinite_types`, `unreachable_code`, `unused_labels` and `unknown_lints`.
 
 Pipeline: `lexer` → `parser` → `check` (type checker, then `borrowck`, the
 borrow checker) → `lift` (nested functions and types moved to the top
@@ -275,7 +275,7 @@ combine features in ways nobody planned for.
 | 3 ✅ | inference, closures, nested `fn`s and types | unification / bidirectional typing | [docs/03-inference.md](docs/03-inference.md) |
 | 4 ✅ | generics | rank-1 (prenex) parametric polymorphism, monomorphization | [docs/04-generics.md](docs/04-generics.md) |
 | 5 ✅ | ownership, borrowing, pointers | affine types, regions/lifetimes; types that hold themselves through a pointer | [docs/05-ownership.md](docs/05-ownership.md) |
-| 5.1 ✅ | `return`, `break`, `continue`, `loop` | the empty type `!`, divergence | [docs/05.1-control-flow.md](docs/05.1-control-flow.md) |
+| 5.1 ✅ | `return`, `break`, `continue`, `loop`, labels | the empty type `!`, divergence | [docs/05.1-control-flow.md](docs/05.1-control-flow.md) |
 | 6 | traits | ad-hoc polymorphism, typeclasses, coherence; closures as `Fn` traits | |
 | 7 | effects | effect systems: which functions can panic, allocate or diverge | |
 | 8 | refinement types | proving indexes in bounds, so indexing can't panic | |

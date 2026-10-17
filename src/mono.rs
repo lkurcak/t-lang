@@ -464,7 +464,7 @@ impl Cx<'_, '_, '_> {
 
     fn expr(&mut self, e: &Expr) -> Expr {
         let kind = match &e.kind {
-            ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit | ExprKind::Continue => {
+            ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit | ExprKind::Continue(_) => {
                 e.kind.clone()
             }
             // Type arguments written in the source are in `info.instances`
@@ -553,12 +553,16 @@ impl Cx<'_, '_, '_> {
             ExprKind::Assign(op, place, value) => {
                 ExprKind::Assign(*op, Box::new(self.expr(place)), Box::new(self.expr(value)))
             }
-            ExprKind::While(c, body) => {
-                ExprKind::While(Box::new(self.expr(c)), Box::new(self.expr(body)))
-            }
-            ExprKind::Loop(body) => ExprKind::Loop(Box::new(self.expr(body))),
+            ExprKind::While(label, c, body) => ExprKind::While(
+                label.clone(),
+                Box::new(self.expr(c)),
+                Box::new(self.expr(body)),
+            ),
+            ExprKind::Loop(label, body) => ExprKind::Loop(label.clone(), Box::new(self.expr(body))),
             ExprKind::Return(x) => ExprKind::Return(x.as_ref().map(|x| Box::new(self.expr(x)))),
-            ExprKind::Break(x) => ExprKind::Break(x.as_ref().map(|x| Box::new(self.expr(x)))),
+            ExprKind::Break(label, x) => {
+                ExprKind::Break(label.clone(), x.as_ref().map(|x| Box::new(self.expr(x))))
+            }
         };
         Expr { kind, span: e.span }
     }

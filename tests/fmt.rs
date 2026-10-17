@@ -601,6 +601,7 @@ let a = loop { break (return) - 1; };
 let b = 1 + (return 2);
 let c = (break) || true;
 loop { continue; }
+'outer:   while c { loop { continue   'outer; } break 'outer; }
 return a+b;
 ";
     assert_eq!(
@@ -613,6 +614,12 @@ let b = 1 + (return 2);
 let c = (break) || true;
 loop {
     continue;
+}
+'outer: while c {
+    loop {
+        continue 'outer;
+    }
+    break 'outer;
 }
 return a + b;
 "

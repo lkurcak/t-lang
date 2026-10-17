@@ -56,7 +56,7 @@ use generics::Use;
 use info::Defs;
 use lints::{
     Uses, mergeable, narrowable, unreachable_alt, unreachable_arm, unreachable_code, unused,
-    unused_doc,
+    unused_doc, unused_label,
 };
 use names::{Scoped, TypeDef};
 use scope::{Binding, FnDef, FnId, FnScope, to_closure};
@@ -320,7 +320,7 @@ pub(crate) struct Checker {
 /// What a `break` or `continue` goes to.
 #[derive(Debug)]
 pub(crate) enum Target {
-    Loop(LoopCx),
+    Loop(Box<LoopCx>),
     /// The start of a closure's body, which is a function of its own: no
     /// `break` gets out of it.
     Closure,
@@ -329,6 +329,9 @@ pub(crate) enum Target {
 /// A loop being checked.
 #[derive(Debug)]
 pub(crate) struct LoopCx {
+    label: Option<Label>,
+    /// Whether a `break` or `continue` has used its label.
+    used: bool,
     /// A `while`, whose `break` can't give a value, rather than a `loop`.
     is_while: bool,
     /// The type of the loop's value wanted from it, when checking.
@@ -1008,7 +1011,7 @@ impl Checker {
         let got = match &e.kind {
             ExprKind::Block(stmts, tail) => self.block(stmts, tail.as_deref(), Some(want))?,
             ExprKind::Match(scrutinee, arms) => self.match_expr(e, scrutinee, arms, Some(want))?,
-            ExprKind::Loop(body) => self.loop_expr(body, Some(want))?,
+            ExprKind::Loop(label, body) => self.loop_expr(label, None, body, Some(want))?,
             ExprKind::Lambda(l) => {
                 let sig = match self.shallow(want) {
                     Type::Fn(sig) if sig.params.len() == l.params.len() => {
@@ -1268,22 +1271,9 @@ impl Checker {
             //
             // The body may not run at all, so whether it diverges doesn't
             // matter to what comes after, and nor does a `break` in it.
-            ExprKind::While(c, body) => {
-                self.check(c, &Type::Bool)?;
-                let before = self.diverges.take();
-                self.loops.push(Target::Loop(LoopCx {
-                    is_while: true,
-                    want: None,
-                    value: None,
-                }));
-                let result = self.loop_body(body, "a `while` loop's body");
-                self.loops.pop();
-                self.diverges = before;
-                result?;
-                Ok(Type::Unit)
-            }
+            ExprKind::While(label, c, body) => self.loop_expr(label, Some(c), body, None),
 
-            ExprKind::Loop(body) => self.loop_expr(body, None),
+            ExprKind::Loop(label, body) => self.loop_expr(label, None, body, None),
 
             //   Γ ⊢ e : R    R is what the function returns
             //  -------------------------------------------- (T-Return)
@@ -1328,8 +1318,10 @@ impl Checker {
             //   there's a loop around
             //  ----------------------- (T-Continue)
             //   Γ ⊢ continue : !
-            ExprKind::Break(value) => {
-                let i = self.target(e.span, "break")?;
+            //
+            // The loop is the innermost, or with a label, the one with it.
+            ExprKind::Break(label, value) => {
+                let i = self.target(e.span, "break", label.as_ref())?;
                 let Target::Loop(lp) = &self.loops[i] else {
                     unreachable!("a loop")
                 };
@@ -1368,8 +1360,8 @@ impl Checker {
                 }
                 Ok(Type::Never)
             }
-            ExprKind::Continue => {
-                self.target(e.span, "continue")?;
+            ExprKind::Continue(label) => {
+                self.target(e.span, "continue", label.as_ref())?;
                 Ok(Type::Never)
             }
 
@@ -1659,20 +1651,67 @@ impl Checker {
     //
     // The only way out of a `loop` is a `break`, so its value is what they
     // give it. With none, it never ends.
-    fn loop_expr(&mut self, body: &Expr, want: Option<&Type>) -> Result<Type, Error> {
+    //
+    // `loop_expr` checks a `while` too, with its condition `cond`: T-While.
+    // A `break` in the condition is for a loop around the `while`, as the
+    // condition isn't part of its body. A loop's label can't be one a loop
+    // around it has, which `break` couldn't get to past it, and one that
+    // nothing uses gets a warning.
+    fn loop_expr(
+        &mut self,
+        label: &Option<Label>,
+        cond: Option<&Expr>,
+        body: &Expr,
+        want: Option<&Type>,
+    ) -> Result<Type, Error> {
+        if let Some(c) = cond {
+            self.check(c, &Type::Bool)?;
+        }
+        if let Some(l) = label {
+            let outer = self.loops.iter().rev().map_while(|t| match t {
+                Target::Loop(lp) => Some(lp),
+                Target::Closure => None,
+            });
+            if let Some(outer) = outer
+                .filter_map(|lp| lp.label.as_ref())
+                .find(|o| o.name.name == l.name.name)
+            {
+                let name = &l.name.name;
+                return Err(Error::ty(
+                    l.name.span,
+                    format!(
+                        "a loop around this one is labelled `{name}` already, so a `break {name}` \
+                         in here couldn't get to it; give this one another label"
+                    ),
+                )
+                .with_note(outer.name.span, format!("`{name}` is that loop's label")));
+            }
+        }
         let before = self.diverges.take();
-        self.loops.push(Target::Loop(LoopCx {
-            is_while: false,
+        self.loops.push(Target::Loop(Box::new(LoopCx {
+            label: label.clone(),
+            used: false,
+            is_while: cond.is_some(),
             want: want.cloned(),
             value: None,
-        }));
-        let result = self.loop_body(body, "a `loop`'s body");
+        })));
+        let what = match cond {
+            Some(_) => "a `while` loop's body",
+            None => "a `loop`'s body",
+        };
+        let result = self.loop_body(body, what);
         let Some(Target::Loop(lp)) = self.loops.pop() else {
             unreachable!("pushed a loop")
         };
         self.diverges = before;
         result?;
-        Ok(lp.value.unwrap_or(Type::Never))
+        if let (Some(l), false) = (&lp.label, lp.used) {
+            self.warnings.push(unused_label(l));
+        }
+        Ok(match cond {
+            Some(_) => Type::Unit,
+            None => lp.value.unwrap_or(Type::Never),
+        })
     }
 
     /// Checks the body of a `while` or `loop`, which must be a `()`, as a
@@ -1688,19 +1727,42 @@ impl Checker {
     }
 
     /// The index in `loops` of the loop a `break` or `continue` (`what`) at
-    /// `span` goes to: the innermost.
-    fn target(&self, span: Span, what: &str) -> Result<usize, Error> {
-        match self.loops.last() {
-            Some(Target::Loop(_)) => Ok(self.loops.len() - 1),
-            Some(Target::Closure) => Err(Error::ty(
+    /// `span` goes to: the innermost, or the one with `label`, which is then
+    /// used.
+    fn target(&mut self, span: Span, what: &str, label: Option<&Ident>) -> Result<usize, Error> {
+        let closure = || {
+            Error::ty(
                 span,
                 format!(
                     "can't `{what}` out of a closure: its body is a function of its own, so the \
                      loop around it isn't its to leave"
                 ),
-            )),
-            None => Err(Error::ty(span, format!("`{what}` outside of a loop"))),
+            )
+        };
+        let Some(label) = label else {
+            return match self.loops.last() {
+                Some(Target::Loop(_)) => Ok(self.loops.len() - 1),
+                Some(Target::Closure) => Err(closure()),
+                None => Err(Error::ty(span, format!("`{what}` outside of a loop"))),
+            };
+        };
+        let named = |t: &Target| match t {
+            Target::Loop(lp) => lp.label.as_ref().is_some_and(|l| l.name.name == label.name),
+            Target::Closure => false,
+        };
+        let Some(i) = self.loops.iter().rposition(named) else {
+            return Err(Error::ty(
+                label.span,
+                format!("no loop around this `{what}` is labelled `{}`", label.name),
+            ));
+        };
+        if self.loops[i..].iter().any(|t| matches!(t, Target::Closure)) {
+            return Err(closure());
         }
+        if let Target::Loop(lp) = &mut self.loops[i] {
+            lp.used = true;
+        }
+        Ok(i)
     }
 
     //   Γ, x1 : T1, .., xn : Tn ⊢ e : R

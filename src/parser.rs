@@ -18,7 +18,7 @@
 //!          | "&" LIFETIME? "mut"? type | "!"
 //! targ     = LIFETIME | type
 //! block    = "{" (let | head (fn_decl | struct | enum) | expr ";" | block_like ";"?)* expr? "}"
-//! block_like = if | match | while | loop | block
+//! block_like = if | match | label? (while | loop) | block
 //! let      = "let" pattern (":" type)? "=" expr ";"
 //! expr     = or (("=" | "+=" | "-=" | "*=" | "/=" | "%=") expr)?  -- assignment
 //! or       = and ("||" and)*
@@ -29,9 +29,10 @@
 //! unary    = ("-" | "!" | "*" | "&" "mut"?) unary | call
 //! postfix  = primary ("(" args ")" | "." IDENT)*
 //! primary  = INT | "true" | "false" | IDENT targs? | "(" ")" | "(" expr ")" | block
-//!          | if | match | while | loop | IDENT targs? "{" field_init,* "}"
+//!          | if | match | label? (while | loop) | IDENT targs? "{" field_init,* "}"
 //!          | IDENT targs? "::" IDENT ("(" args ")")? | lambda
-//!          | ("return" | "break") expr? | "continue"    -- `expr` if one can start here
+//!          | "return" expr? | "break" LIFETIME? expr? | "continue" LIFETIME?
+//! label    = LIFETIME ":"
 //! targs    = "::" "<" type ("," type)* ","? ">"            -- the "turbofish"
 //! lambda   = ("||" | "|" (lparam ("," lparam)* ","?)? "|") ("->" type block | expr)
 //! lparam   = "mut"? IDENT (":" type)?
@@ -56,7 +57,7 @@
 //! use one in a larger expression: `(if c { a } else { b }) - x`.
 //!
 //! `return` and `break` take an expression after them if one can start
-//! there, and it runs as far right as an expression can, as a closure's
+//! there (after `break`'s label, if it has one), and it runs as far right as an expression can, as a closure's
 //! body does: `return a + b` returns `a + b`.
 //!
 //! A `fn`, `struct` or `enum` in a block is local to it (see `ast::Stmt`).
@@ -580,13 +581,12 @@ impl Parser {
             }
             let block_like = matches!(
                 self.peek(),
-                Tok::If | Tok::Match | Tok::While | Tok::Loop | Tok::LBrace
+                Tok::If | Tok::Match | Tok::While | Tok::Loop | Tok::Lifetime(_) | Tok::LBrace
             );
             let e = match self.peek() {
                 Tok::If => self.if_expr()?,
                 Tok::Match => self.match_expr()?,
-                Tok::While => self.while_expr()?,
-                Tok::Loop => self.loop_expr()?,
+                Tok::While | Tok::Loop | Tok::Lifetime(_) => self.loop_expr()?,
                 Tok::LBrace => self.block()?,
                 _ => self.expr()?,
             };
@@ -784,10 +784,8 @@ impl Parser {
             Tok::LBrace => return self.block(),
             Tok::If => return self.if_expr(),
             Tok::Match => return self.match_expr(),
-            Tok::While => return self.while_expr(),
-            Tok::Loop => return self.loop_expr(),
-            Tok::Return | Tok::Break => return self.jump(),
-            Tok::Continue => ExprKind::Continue,
+            Tok::While | Tok::Loop | Tok::Lifetime(_) => return self.loop_expr(),
+            Tok::Return | Tok::Break | Tok::Continue => return self.jump(),
             Tok::Pipe | Tok::OrOr => return self.lambda(),
             _ => return Err(self.unexpected("an expression")),
         };
@@ -815,43 +813,64 @@ impl Parser {
         })
     }
 
-    fn while_expr(&mut self) -> Result<Expr, Error> {
-        let start = self.expect(Tok::While)?;
-        let cond = self.structs(false, Self::expr)?;
-        let body = self.block()?;
-        let span = start.to(body.span);
-        Ok(Expr {
-            kind: ExprKind::While(Box::new(cond), Box::new(body)),
-            span,
-        })
-    }
-
+    /// `while c { .. }` or `loop { .. }`, maybe after a label, `'a:`.
     fn loop_expr(&mut self) -> Result<Expr, Error> {
-        let start = self.expect(Tok::Loop)?;
-        let body = self.block()?;
+        let start = self.span();
+        let label = match self.peek() {
+            Tok::Lifetime(_) => {
+                let name = self.lifetime()?;
+                self.expect(Tok::Colon)?;
+                let head = Span::new(name.span.start, self.span().start);
+                Some(Label { name, head })
+            }
+            _ => None,
+        };
+        let (cond, body) = match self.peek() {
+            Tok::While => {
+                self.bump();
+                (Some(self.structs(false, Self::expr)?), self.block()?)
+            }
+            Tok::Loop => {
+                self.bump();
+                (None, self.block()?)
+            }
+            _ => return Err(self.unexpected("`loop` or `while` after a label")),
+        };
         let span = start.to(body.span);
-        Ok(Expr {
-            kind: ExprKind::Loop(Box::new(body)),
-            span,
-        })
+        let kind = match cond {
+            Some(c) => ExprKind::While(label, Box::new(c), Box::new(body)),
+            None => ExprKind::Loop(label, Box::new(body)),
+        };
+        Ok(Expr { kind, span })
     }
 
-    /// `return e` or `break e`, where `e` is there if an expression can
-    /// start after the keyword.
+    /// `return e`, `break 'a e` or `continue 'a`, where the label is there
+    /// if a lifetime comes next, and `e` if an expression can start after
+    /// that.
     fn jump(&mut self) -> Result<Expr, Error> {
         let keyword = self.bump();
-        let value = match starts_expr(self.peek()) {
+        let label = match (&keyword.tok, self.peek()) {
+            (Tok::Break | Tok::Continue, Tok::Lifetime(_)) => Some(self.lifetime()?),
+            _ => None,
+        };
+        let value = match keyword.tok != Tok::Continue && starts_expr(self.peek()) {
             true => Some(Box::new(self.expr()?)),
             false => None,
         };
-        let span = value
-            .as_ref()
-            .map_or(keyword.span, |v| keyword.span.to(v.span));
+        let end = match (&value, &label) {
+            (Some(v), _) => v.span,
+            (None, Some(l)) => l.span,
+            (None, None) => keyword.span,
+        };
         let kind = match keyword.tok {
             Tok::Return => ExprKind::Return(value),
-            _ => ExprKind::Break(value),
+            Tok::Break => ExprKind::Break(label, value),
+            _ => ExprKind::Continue(label),
         };
-        Ok(Expr { kind, span })
+        Ok(Expr {
+            kind,
+            span: keyword.span.to(end),
+        })
     }
 
     fn match_expr(&mut self) -> Result<Expr, Error> {
@@ -1176,6 +1195,7 @@ fn starts_expr(tok: &Tok) -> bool {
             | Tok::Match
             | Tok::While
             | Tok::Loop
+            | Tok::Lifetime(_)
             | Tok::Return
             | Tok::Break
             | Tok::Continue

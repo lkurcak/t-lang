@@ -31,6 +31,13 @@ Step 5.1: control flow, and the type with no values. See
   code isn't borrow checked.
 - The interpreter frees what a jump leaves, the parts of an expression it
   had worked out included, as in `f(Box::new(1), return 2)`.
+- Labels on loops: `'outer: loop { .. }` and `'outer: while c { .. }`,
+  and `break 'outer`, `break 'outer x` and `continue 'outer` to leave or
+  go round a loop around the innermost. A loop can't have the label of
+  one around it. See
+  [docs/05.1-control-flow.md](docs/05.1-control-flow.md#labels).
+- A warning, `unused_labels`, for a label no `break` or `continue` names.
+  Its fix removes it.
 - Syntax highlighting for all of the above.
 
 ### Changed

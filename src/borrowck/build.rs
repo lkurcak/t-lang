@@ -71,10 +71,12 @@ struct Scope {
     temps: usize,
 }
 
-/// A loop being lowered: where a `continue` and a `break` in it go, where
-/// a `break` puts the value it gives a `loop`, and how many scopes and
-/// statements it's inside, which those leave the rest of.
+/// A loop being lowered: its label, if it has one, where a `continue` and
+/// a `break` in it go, where a `break` puts the value it gives a `loop`,
+/// and how many scopes and statements it's inside, which those leave the
+/// rest of.
 struct LoopFrame {
+    label: Option<String>,
     head: Bb,
     after: Bb,
     dest: Option<Place>,
@@ -422,12 +424,12 @@ impl<'a> Builder<'a> {
                 self.goto(join);
                 self.block = join;
             }
-            ExprKind::While(c, body) => {
-                self.loop_into(Some(c), body, None);
+            ExprKind::While(label, c, body) => {
+                self.loop_into(label, Some(c), body, None);
                 let unit = Rvalue::Use(Operand::Const);
                 self.assign(dest, unit, &Type::Unit, span, false);
             }
-            ExprKind::Loop(body) => self.loop_into(None, body, Some(dest)),
+            ExprKind::Loop(label, body) => self.loop_into(label, None, body, Some(dest)),
             // The value goes where the function's result does, then
             // everything in scope goes away, the parameters too.
             ExprKind::Return(value) => {
@@ -441,8 +443,8 @@ impl<'a> Builder<'a> {
                 self.unwind(0, 0, span);
                 self.diverge(Term::Return);
             }
-            ExprKind::Break(value) => {
-                let lp = self.loops.last().expect("the checker found the loop");
+            ExprKind::Break(label, value) => {
+                let lp = self.target(label);
                 let (after, scopes, temps) = (lp.after, lp.scopes, lp.temps);
                 if let Some(dest) = lp.dest.clone() {
                     match value {
@@ -456,8 +458,8 @@ impl<'a> Builder<'a> {
                 self.unwind(scopes, temps, span);
                 self.diverge(Term::Goto(after));
             }
-            ExprKind::Continue => {
-                let lp = self.loops.last().expect("the checker found the loop");
+            ExprKind::Continue(label) => {
+                let lp = self.target(label);
                 let (head, scopes, temps) = (lp.head, lp.scopes, lp.temps);
                 self.unwind(scopes, temps, span);
                 self.diverge(Term::Goto(head));
@@ -535,7 +537,13 @@ impl<'a> Builder<'a> {
 
     /// A `while c { body }`, or with no `c`, a `loop { body }`, whose
     /// `break`s put the value they give it in `dest`.
-    fn loop_into(&mut self, c: Option<&'a Expr>, body: &'a Expr, dest: Option<&Place>) {
+    fn loop_into(
+        &mut self,
+        label: &Option<Label>,
+        c: Option<&'a Expr>,
+        body: &'a Expr,
+        dest: Option<&Place>,
+    ) {
         let (head, after) = (self.new_block(), self.new_block());
         self.goto(head);
         self.block = head;
@@ -546,6 +554,7 @@ impl<'a> Builder<'a> {
             self.block = inside;
         }
         self.loops.push(LoopFrame {
+            label: label.as_ref().map(|l| l.name.name.clone()),
             head,
             after,
             dest: dest.cloned(),
@@ -560,6 +569,20 @@ impl<'a> Builder<'a> {
         self.goto(head);
         self.loops.pop();
         self.block = after;
+    }
+
+    /// The loop a `break` or `continue` with `label` goes to: the innermost,
+    /// or the one with that label.
+    fn target(&self, label: &Option<Ident>) -> &LoopFrame {
+        let lp = match label {
+            None => self.loops.last(),
+            Some(l) => self
+                .loops
+                .iter()
+                .rev()
+                .find(|lp| lp.label.as_ref() == Some(&l.name)),
+        };
+        lp.expect("the checker found the loop")
     }
 
     /// Ends the statements and scopes inside the first `scopes` scopes and

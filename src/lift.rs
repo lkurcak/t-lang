@@ -147,7 +147,7 @@ impl<'p> Cx<'p> {
     /// order. Local types are taken out too: `lift` has them already.
     fn expr(&self, e: &'p Expr, nested: &mut Vec<&'p FnDecl>) -> Expr {
         let kind = match &e.kind {
-            ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit | ExprKind::Continue => {
+            ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit | ExprKind::Continue(_) => {
                 e.kind.clone()
             }
             ExprKind::Var(name, targs) => {
@@ -245,17 +245,21 @@ impl<'p> Cx<'p> {
                 Box::new(self.expr(place, nested)),
                 Box::new(self.expr(value, nested)),
             ),
-            ExprKind::While(c, body) => ExprKind::While(
+            ExprKind::While(label, c, body) => ExprKind::While(
+                label.clone(),
                 Box::new(self.expr(c, nested)),
                 Box::new(self.expr(body, nested)),
             ),
-            ExprKind::Loop(body) => ExprKind::Loop(Box::new(self.expr(body, nested))),
+            ExprKind::Loop(label, body) => {
+                ExprKind::Loop(label.clone(), Box::new(self.expr(body, nested)))
+            }
             ExprKind::Return(x) => {
                 ExprKind::Return(x.as_ref().map(|x| Box::new(self.expr(x, nested))))
             }
-            ExprKind::Break(x) => {
-                ExprKind::Break(x.as_ref().map(|x| Box::new(self.expr(x, nested))))
-            }
+            ExprKind::Break(label, x) => ExprKind::Break(
+                label.clone(),
+                x.as_ref().map(|x| Box::new(self.expr(x, nested))),
+            ),
         };
         let e = Expr { kind, span: e.span };
         match self.info.coercions.get(&e.span) {

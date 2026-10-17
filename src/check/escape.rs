@@ -185,23 +185,42 @@ impl Checker {
                 })
             }
             // A `loop`'s value is what a `break` gives it.
-            ExprKind::Loop(body) => self.break_origin(body, inner),
+            ExprKind::Loop(label, body) => {
+                let label = label.as_ref().map(|l| l.name.name.as_str());
+                self.break_origin(
+                    body,
+                    Breaks {
+                        label,
+                        nested: false,
+                    },
+                    inner,
+                )
+            }
             _ => None,
         }
     }
 
     /// `origin`, for the values the `break`s in `e` give the `loop` whose
-    /// body `e` is in: the first that may be a closure that has to stay
-    /// where it was made.
-    fn break_origin(&self, e: &Expr, inner: &mut Inner) -> Option<(Origin, Span)> {
+    /// body `e` is in, which `b` says how to tell: the first that may be a
+    /// closure that has to stay where it was made.
+    fn break_origin(&self, e: &Expr, b: Breaks, inner: &mut Inner) -> Option<(Origin, Span)> {
         match &e.kind {
-            ExprKind::Break(Some(v)) => self
-                .origin(v, inner)
-                .or_else(|| self.break_origin(v, inner)),
-            // The `break`s in another loop's body are that loop's, and a
-            // closure's body is a function of its own.
-            ExprKind::Loop(_) | ExprKind::Lambda(_) => None,
-            ExprKind::While(c, _) => self.break_origin(c, inner),
+            ExprKind::Break(label, Some(v)) => {
+                let ours = match label {
+                    Some(l) => b.label == Some(l.name.as_str()),
+                    None => !b.nested,
+                };
+                let found = ours.then(|| self.origin(v, inner)).flatten();
+                found.or_else(|| self.break_origin(v, b, inner))
+            }
+            // A closure's body is a function of its own.
+            ExprKind::Lambda(_) => None,
+            // In another loop's body, only a `break` with the label is for
+            // this loop. Another loop's condition isn't in its body.
+            ExprKind::Loop(_, body) => self.break_origin(body, b.nested(), inner),
+            ExprKind::While(_, c, body) => self
+                .break_origin(c, b, inner)
+                .or_else(|| self.break_origin(body, b.nested(), inner)),
             ExprKind::Block(stmts, tail) => {
                 let scope = inner.len();
                 let fns = stmts.iter().filter_map(Stmt::as_fn);
@@ -211,32 +230,32 @@ impl Checker {
                     match stmt {
                         Stmt::Let { pat, init, .. } => {
                             if let Some(init) = init {
-                                found = found.or_else(|| self.break_origin(init, inner));
+                                found = found.or_else(|| self.break_origin(init, b, inner));
                             }
                             let origin = init.as_ref().and_then(|e| self.origin(e, inner));
                             bind(pat, origin.map(|(o, _)| o), inner);
                         }
                         Stmt::Expr(e) | Stmt::BlockLike(e) => {
-                            found = found.or_else(|| self.break_origin(e, inner));
+                            found = found.or_else(|| self.break_origin(e, b, inner));
                         }
                         Stmt::Fn(_) | Stmt::Type(_) => {}
                     }
                 }
                 let found = found.or_else(|| {
                     tail.as_ref()
-                        .and_then(|tail| self.break_origin(tail, inner))
+                        .and_then(|tail| self.break_origin(tail, b, inner))
                 });
                 inner.truncate(scope);
                 found
             }
             ExprKind::Match(scrutinee, arms) => {
-                let found = self.break_origin(scrutinee, inner);
+                let found = self.break_origin(scrutinee, b, inner);
                 let origin = self.origin(scrutinee, inner).map(|(o, _)| o);
                 found.or_else(|| {
                     arms.iter().find_map(|arm| {
                         let scope = inner.len();
                         bind(&arm.pat, origin.clone(), inner);
-                        let found = self.break_origin(&arm.body, inner);
+                        let found = self.break_origin(&arm.body, b, inner);
                         inner.truncate(scope);
                         found
                     })
@@ -245,7 +264,25 @@ impl Checker {
             _ => e
                 .children()
                 .into_iter()
-                .find_map(|c| self.break_origin(c, inner)),
+                .find_map(|c| self.break_origin(c, b, inner)),
+        }
+    }
+}
+
+/// Which `break`s are for the loop `break_origin` is looking at: its label,
+/// and whether it's looking inside another loop in its body, where a
+/// `break` with no label is that loop's.
+#[derive(Clone, Copy)]
+struct Breaks<'a> {
+    label: Option<&'a str>,
+    nested: bool,
+}
+
+impl Breaks<'_> {
+    fn nested(self) -> Self {
+        Breaks {
+            nested: true,
+            ..self
         }
     }
 }

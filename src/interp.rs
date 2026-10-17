@@ -200,12 +200,13 @@ pub fn run(prog: &Program, out: &mut Vec<String>) -> Result<Value, Error> {
 }
 
 /// Why evaluating an expression didn't finish with a value: an error, or a
-/// jump to somewhere outside it, with the value it takes there.
+/// jump to somewhere outside it, with the value it takes there, and for
+/// `break` and `continue`, the label of the loop it's for, if it says.
 enum Flow {
     Error(Error),
     Return(Value),
-    Break(Value),
-    Continue,
+    Break(Option<String>, Value),
+    Continue(Option<String>),
 }
 
 impl From<Error> for Flow {
@@ -521,7 +522,7 @@ impl Interp<'_, '_> {
         match result {
             Ok(v) | Err(Flow::Return(v)) => Ok(v),
             Err(Flow::Error(e)) => Err(e),
-            Err(Flow::Break(_) | Flow::Continue) => {
+            Err(Flow::Break(..) | Flow::Continue(_)) => {
                 unsound("a `break` or `continue` out of a function")
             }
         }
@@ -545,7 +546,20 @@ impl Interp<'_, '_> {
 
     /// Runs the body of a loop again and again, until a `break`, whose
     /// value it returns, or for a `while`, until its condition `c` is false.
-    fn repeat(&mut self, c: Option<&Expr>, body: &Expr) -> Result<Value, Flow> {
+    ///
+    /// A `break` or `continue` with another loop's label goes on out, to
+    /// that loop.
+    fn repeat(
+        &mut self,
+        label: &Option<Label>,
+        c: Option<&Expr>,
+        body: &Expr,
+    ) -> Result<Value, Flow> {
+        let ours = |l: &Option<String>| match (l, label) {
+            (None, _) => true,
+            (Some(l), Some(label)) => *l == label.name.name,
+            (Some(_), None) => false,
+        };
         loop {
             if let Some(c) = c
                 && !bool(self.statement(|i| i.eval(c))?)
@@ -554,8 +568,8 @@ impl Interp<'_, '_> {
             }
             match self.eval(body) {
                 Ok(v) => self.drop(v),
-                Err(Flow::Break(v)) => return Ok(v),
-                Err(Flow::Continue) => {}
+                Err(Flow::Break(l, v)) if ours(&l) => return Ok(v),
+                Err(Flow::Continue(l)) if ours(&l) => {}
                 Err(flow) => return Err(flow),
             }
         }
@@ -628,8 +642,8 @@ impl Interp<'_, '_> {
                 }
             }
 
-            ExprKind::While(c, body) => self.repeat(Some(c), body)?,
-            ExprKind::Loop(body) => self.repeat(None, body)?,
+            ExprKind::While(label, c, body) => self.repeat(label, Some(c), body)?,
+            ExprKind::Loop(label, body) => self.repeat(label, None, body)?,
             ExprKind::Return(value) => {
                 let v = match value {
                     Some(v) => self.eval(v)?,
@@ -637,14 +651,16 @@ impl Interp<'_, '_> {
                 };
                 return Err(Flow::Return(v));
             }
-            ExprKind::Break(value) => {
+            ExprKind::Break(label, value) => {
                 let v = match value {
                     Some(v) => self.eval(v)?,
                     None => Value::Unit,
                 };
-                return Err(Flow::Break(v));
+                return Err(Flow::Break(label.as_ref().map(|l| l.name.clone()), v));
             }
-            ExprKind::Continue => return Err(Flow::Continue),
+            ExprKind::Continue(label) => {
+                return Err(Flow::Continue(label.as_ref().map(|l| l.name.clone())));
+            }
 
             // The value first, then the place, as in Rust. What was there
             // is dropped.

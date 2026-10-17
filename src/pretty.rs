@@ -113,6 +113,14 @@ fn block_like(e: &Expr) -> bool {
     )
 }
 
+/// `'a: ` before a loop, if it has a label.
+fn label_doc(label: &Option<Label>) -> Doc {
+    match label {
+        Some(l) => text(format!("{}: ", l.name.name)),
+        None => Doc::nil(),
+    }
+}
+
 /// Is the last of `args` worth breaking inside rather than between the
 /// arguments? See `Doc::Hug`.
 fn huggable(args: &[Expr]) -> bool {
@@ -471,7 +479,7 @@ impl Printer<'_> {
             ExprKind::Lambda(_)
             | ExprKind::Assign(..)
             | ExprKind::Return(_)
-            | ExprKind::Break(_) => 0,
+            | ExprKind::Break(..) => 0,
             _ => UNARY,
         };
         let parens = own < min
@@ -512,21 +520,30 @@ impl Printer<'_> {
                 self.expr(x, min, ctx) + "." + &field.name
             }
             ExprKind::If(..) => self.if_chain(e),
-            ExprKind::While(c, body) => {
-                group(text("while ") + self.head(c) + self.block_or_expr(body))
+            ExprKind::While(label, c, body) => {
+                group(label_doc(label) + "while " + self.head(c) + self.block_or_expr(body))
             }
-            ExprKind::Loop(body) => group(text("loop ") + self.block_or_expr(body)),
-            ExprKind::Return(value) | ExprKind::Break(value) => {
-                let keyword = match e.kind {
-                    ExprKind::Return(_) => "return",
-                    _ => "break",
+            ExprKind::Loop(label, body) => {
+                group(label_doc(label) + "loop " + self.block_or_expr(body))
+            }
+            ExprKind::Return(value) | ExprKind::Break(_, value) => {
+                let mut head = match &e.kind {
+                    ExprKind::Break(Some(label), _) => format!("break {}", label.name),
+                    ExprKind::Break(None, _) => "break".to_string(),
+                    _ => "return".to_string(),
                 };
                 match value {
-                    Some(v) => text(keyword) + " " + self.expr(v, 0, ctx.inner()),
-                    None => text(keyword),
+                    Some(v) => {
+                        head.push(' ');
+                        text(head) + self.expr(v, 0, ctx.inner())
+                    }
+                    None => text(head),
                 }
             }
-            ExprKind::Continue => text("continue"),
+            ExprKind::Continue(label) => match label {
+                Some(label) => text(format!("continue {}", label.name)),
+                None => text("continue"),
+            },
             ExprKind::Assign(op, place, value) => {
                 let op = op.map_or(String::new(), |op| op.to_string());
                 let place = self.expr(place, 1, ctx);

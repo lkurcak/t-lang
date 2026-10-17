@@ -389,12 +389,18 @@ module.exports = grammar({
     else_clause: $ => seq('else', choice($.block, $.if_expression)),
 
     while_expression: $ => seq(
+      optional(seq(field('label', $.lifetime), ':')),
       'while',
       field('condition', $._expression),
       field('body', $.block),
     ),
 
-    loop_expression: $ => seq('loop', field('body', $.block)),
+    // `'a: loop { .. }`, with a label for `break 'a` to name.
+    loop_expression: $ => seq(
+      optional(seq(field('label', $.lifetime), ':')),
+      'loop',
+      field('body', $.block),
+    ),
 
     // What follows a `return` or `break` runs as far right as it can.
     return_expression: $ => choice(
@@ -403,11 +409,11 @@ module.exports = grammar({
     ),
 
     break_expression: $ => choice(
-      prec.left(seq('break', $._expression)),
-      prec(-1, 'break'),
+      prec.left(seq('break', optional(field('label', $.lifetime)), $._expression)),
+      prec(-1, seq('break', optional(field('label', $.lifetime)))),
     ),
 
-    continue_expression: _ => 'continue',
+    continue_expression: $ => seq('continue', optional(field('label', $.lifetime))),
 
     match_expression: $ => seq(
       'match',

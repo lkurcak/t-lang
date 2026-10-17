@@ -1,5 +1,6 @@
 //! Warnings: unused variables, unreachable patterns, ranges that can be
 //! narrowed or merged, dead code, code after something that never finishes,
+//! loop labels nothing uses,
 //! doc comments that document nothing, and types with no values since each
 //! would hold another without end.
 //! None of these make a program wrong, so none of them stop it. The naming
@@ -43,6 +44,20 @@ pub(super) fn unreachable_code(span: Span) -> Warning {
         span,
         message: "unreachable code: what comes before it never finishes, so this never runs".into(),
         fixes: Vec::new(),
+    }
+}
+
+/// A loop's label that no `break` or `continue` uses. The fix removes it.
+pub(super) fn unused_label(label: &Label) -> Warning {
+    let name = &label.name.name;
+    Warning {
+        lint: Lint::UnusedLabels,
+        span: label.name.span,
+        message: format!("unused label `{name}`: no `break` or `continue` names it"),
+        fixes: vec![Fix::new(
+            format!("remove `{name}:`"),
+            vec![Edit::delete(label.head)],
+        )],
     }
 }
 

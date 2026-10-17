@@ -281,9 +281,9 @@ impl Expr {
             | ExprKind::Bool(_)
             | ExprKind::Unit
             | ExprKind::Var(..)
-            | ExprKind::Continue => Vec::new(),
-            ExprKind::Unary(_, x) | ExprKind::Field(x, _) | ExprKind::Loop(x) => vec![x],
-            ExprKind::Return(x) | ExprKind::Break(x) => x.iter().map(|x| &**x).collect(),
+            | ExprKind::Continue(_) => Vec::new(),
+            ExprKind::Unary(_, x) | ExprKind::Field(x, _) | ExprKind::Loop(_, x) => vec![x],
+            ExprKind::Return(x) | ExprKind::Break(_, x) => x.iter().map(|x| &**x).collect(),
             ExprKind::Binary(_, l, r) => vec![l, r],
             ExprKind::Call(f, args) => std::iter::once(&**f).chain(args).collect(),
             ExprKind::If(c, then, els) => [&**c, then].into_iter().chain(els.as_deref()).collect(),
@@ -302,7 +302,7 @@ impl Expr {
                 .chain(arms.iter().map(|a| &a.body))
                 .collect(),
             ExprKind::Lambda(l) => vec![&l.body],
-            ExprKind::Assign(_, l, r) | ExprKind::While(l, r) => vec![l, r],
+            ExprKind::Assign(_, l, r) | ExprKind::While(_, l, r) => vec![l, r],
         }
     }
 
@@ -430,17 +430,29 @@ pub enum ExprKind {
     /// `place = value`, or `place += value` and the like with an operator.
     /// The place is a variable, a field or a `*`.
     Assign(Option<BinOp>, Box<Expr>, Box<Expr>),
-    /// `while c { .. }`
-    While(Box<Expr>, Box<Expr>),
+    /// `while c { .. }`, or `'a: while c { .. }` with a label.
+    While(Option<Label>, Box<Expr>, Box<Expr>),
     /// `loop { .. }`: runs its body again and again, until a `break`.
-    Loop(Box<Expr>),
+    Loop(Option<Label>, Box<Expr>),
     /// `return e`, or `return` for `return ()`.
     Return(Option<Box<Expr>>),
     /// `break e` out of a `loop`, giving it the value of `e`, or `break`
-    /// out of any loop.
-    Break(Option<Box<Expr>>),
-    /// `continue`: on to the next time round the loop.
-    Continue,
+    /// out of any loop. Out of the innermost, or with a label, `break 'a`,
+    /// out of the one with that label.
+    Break(Option<Ident>, Option<Box<Expr>>),
+    /// `continue`: on to the next time round the loop, the innermost or
+    /// `continue 'a`, the one labelled `'a`.
+    Continue(Option<Ident>),
+}
+
+/// `'a:` before a `loop` or `while`, for a `break` or `continue` in it to
+/// say which loop it's for.
+#[derive(Debug, Clone)]
+pub struct Label {
+    /// With its `'`: `'a`.
+    pub name: Ident,
+    /// From the label to the `loop` or `while`, `:` and all.
+    pub head: Span,
 }
 
 impl Expr {
@@ -490,14 +502,14 @@ impl Lambda {
 fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
     let mut go = |e: &Expr, bound: &mut Vec<String>| free_vars(e, bound, out);
     match &e.kind {
-        ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit | ExprKind::Continue => {}
+        ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit | ExprKind::Continue(_) => {}
         ExprKind::Var(name, _) => {
             if !bound.contains(name) && !out.contains(name) {
                 out.push(name.clone());
             }
         }
-        ExprKind::Unary(_, x) | ExprKind::Field(x, _) | ExprKind::Loop(x) => go(x, bound),
-        ExprKind::Return(x) | ExprKind::Break(x) => x.iter().for_each(|x| go(x, bound)),
+        ExprKind::Unary(_, x) | ExprKind::Field(x, _) | ExprKind::Loop(_, x) => go(x, bound),
+        ExprKind::Return(x) | ExprKind::Break(_, x) => x.iter().for_each(|x| go(x, bound)),
         ExprKind::Binary(_, l, r) => {
             go(l, bound);
             go(r, bound);
@@ -547,7 +559,7 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
             go(&l.body, bound);
             bound.truncate(scope);
         }
-        ExprKind::Assign(_, l, r) | ExprKind::While(l, r) => {
+        ExprKind::Assign(_, l, r) | ExprKind::While(_, l, r) => {
             go(l, bound);
             go(r, bound);
         }
