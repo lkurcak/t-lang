@@ -18,6 +18,10 @@ pub enum Tok {
     Match,
     Mut,
     While,
+    Loop,
+    Return,
+    Break,
+    Continue,
     /// `'a`: a lifetime, with its `'`.
     Lifetime(String),
     // punctuation
@@ -84,6 +88,10 @@ impl Tok {
             Tok::Match => "match",
             Tok::Mut => "mut",
             Tok::While => "while",
+            Tok::Loop => "loop",
+            Tok::Return => "return",
+            Tok::Break => "break",
+            Tok::Continue => "continue",
             Tok::LParen => "(",
             Tok::RParen => ")",
             Tok::LBrace => "{",
@@ -218,6 +226,10 @@ pub fn lex_with_comments(src: &str) -> Result<(Vec<Token>, Vec<Comment>), Error>
                 "match" => Tok::Match,
                 "mut" => Tok::Mut,
                 "while" => Tok::While,
+                "loop" => Tok::Loop,
+                "return" => Tok::Return,
+                "break" => Tok::Break,
+                "continue" => Tok::Continue,
                 name => Tok::Ident(name.to_string()),
             }
         } else if c == b'\'' {

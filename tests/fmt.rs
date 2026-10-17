@@ -592,6 +592,34 @@ f();               // b
 }
 
 #[test]
+fn jumps_keep_what_they_take() {
+    // What follows `return` or `break` runs as far right as it can, so as
+    // an operand one needs parentheses, even with nothing after it:
+    // `return - 1` would return `-1`.
+    let src = "\
+let a = loop { break (return) - 1; };
+let b = 1 + (return 2);
+let c = (break) || true;
+loop { continue; }
+return a+b;
+";
+    assert_eq!(
+        fmt_body(src),
+        "\
+let a = loop {
+    break (return) - 1;
+};
+let b = 1 + (return 2);
+let c = (break) || true;
+loop {
+    continue;
+}
+return a + b;
+"
+    );
+}
+
+#[test]
 fn refuses_what_does_not_parse() {
     assert!(matches!(
         format("fn main() { let }"),

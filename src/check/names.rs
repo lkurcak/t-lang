@@ -220,7 +220,7 @@ impl Walk<'_> {
                 self.name(name, t.span);
                 args.iter().for_each(|a| self.ty(a));
             }
-            TypeExprKind::Unit | TypeExprKind::Lifetime(_) => {}
+            TypeExprKind::Unit | TypeExprKind::Never | TypeExprKind::Lifetime(_) => {}
             TypeExprKind::Fn(params, ret) => {
                 params.iter().for_each(|p| self.ty(p));
                 self.ty(ret);
@@ -242,7 +242,7 @@ impl Walk<'_> {
                 self.declare(decls.map(|d| (d, Some(f))).collect());
                 for stmt in stmts {
                     match stmt {
-                        Stmt::Let { pat, ty, init } => {
+                        Stmt::Let { pat, ty, init, .. } => {
                             self.pattern(pat);
                             ty.iter().for_each(|t| self.ty(t));
                             init.iter().for_each(|e| self.expr(e));

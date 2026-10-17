@@ -277,8 +277,13 @@ impl Expr {
     /// of the functions declared in it, which are separate functions.
     pub fn children(&self) -> Vec<&Expr> {
         match &self.kind {
-            ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit | ExprKind::Var(..) => Vec::new(),
-            ExprKind::Unary(_, x) | ExprKind::Field(x, _) => vec![x],
+            ExprKind::Int(_)
+            | ExprKind::Bool(_)
+            | ExprKind::Unit
+            | ExprKind::Var(..)
+            | ExprKind::Continue => Vec::new(),
+            ExprKind::Unary(_, x) | ExprKind::Field(x, _) | ExprKind::Loop(x) => vec![x],
+            ExprKind::Return(x) | ExprKind::Break(x) => x.iter().map(|x| &**x).collect(),
             ExprKind::Binary(_, l, r) => vec![l, r],
             ExprKind::Call(f, args) => std::iter::once(&**f).chain(args).collect(),
             ExprKind::If(c, then, els) => [&**c, then].into_iter().chain(els.as_deref()).collect(),
@@ -360,6 +365,8 @@ pub enum TypeExprKind {
     /// `'a`, as a lifetime argument: the `'a` of `Holder<'a, int>`. Lifetime
     /// arguments come before type arguments, and can only be there.
     Lifetime(String),
+    /// `!`, the type with no values.
+    Never,
 }
 
 /// As written: `Option<int>`, `fn(int) -> bool`, `()`.
@@ -381,6 +388,7 @@ impl fmt::Display for TypeExpr {
                 write!(f, "{t}")
             }
             TypeExprKind::Lifetime(name) => f.write_str(name),
+            TypeExprKind::Never => f.write_str("!"),
         }
     }
 }
@@ -424,6 +432,15 @@ pub enum ExprKind {
     Assign(Option<BinOp>, Box<Expr>, Box<Expr>),
     /// `while c { .. }`
     While(Box<Expr>, Box<Expr>),
+    /// `loop { .. }`: runs its body again and again, until a `break`.
+    Loop(Box<Expr>),
+    /// `return e`, or `return` for `return ()`.
+    Return(Option<Box<Expr>>),
+    /// `break e` out of a `loop`, giving it the value of `e`, or `break`
+    /// out of any loop.
+    Break(Option<Box<Expr>>),
+    /// `continue`: on to the next time round the loop.
+    Continue,
 }
 
 impl Expr {
@@ -473,13 +490,14 @@ impl Lambda {
 fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
     let mut go = |e: &Expr, bound: &mut Vec<String>| free_vars(e, bound, out);
     match &e.kind {
-        ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit => {}
+        ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit | ExprKind::Continue => {}
         ExprKind::Var(name, _) => {
             if !bound.contains(name) && !out.contains(name) {
                 out.push(name.clone());
             }
         }
-        ExprKind::Unary(_, x) | ExprKind::Field(x, _) => go(x, bound),
+        ExprKind::Unary(_, x) | ExprKind::Field(x, _) | ExprKind::Loop(x) => go(x, bound),
+        ExprKind::Return(x) | ExprKind::Break(x) => x.iter().for_each(|x| go(x, bound)),
         ExprKind::Binary(_, l, r) => {
             go(l, bound);
             go(r, bound);
@@ -585,6 +603,8 @@ pub enum Stmt {
         /// `None` for `let x;`, a variable given its value later, which
         /// only a variable can be.
         init: Option<Expr>,
+        /// From the `let` to the `;`.
+        span: Span,
     },
     /// `e;`: any type, value discarded.
     Expr(Expr),

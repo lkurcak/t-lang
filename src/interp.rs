@@ -20,6 +20,12 @@
 //! *double free*. And at the end, the heap must be empty: anything left is
 //! a *leak*. The borrow checker promises none of those happen
 //! (docs/05-ownership.md).
+//!
+//! `return`, `break` and `continue` unwind: each is a `Flow` that runs back
+//! up through the expressions it's in, ending their statements and scopes
+//! on the way, to the call or loop it goes to. What those expressions had
+//! worked out so far is dropped, as a compiled program would: in
+//! `f(Box::new(1), return 2)`, the box.
 
 use crate::ast::*;
 use crate::check::BUILTINS;
@@ -191,6 +197,21 @@ pub fn run(prog: &Program, out: &mut Vec<String>) -> Result<Value, Error> {
         ));
     }
     Ok(result)
+}
+
+/// Why evaluating an expression didn't finish with a value: an error, or a
+/// jump to somewhere outside it, with the value it takes there.
+enum Flow {
+    Error(Error),
+    Return(Value),
+    Break(Value),
+    Continue,
+}
+
+impl From<Error> for Flow {
+    fn from(e: Error) -> Flow {
+        Flow::Error(e)
+    }
 }
 
 #[track_caller]
@@ -379,7 +400,7 @@ impl Interp<'_, '_> {
 
     /// Runs `f` as a statement: the temporaries it makes are dropped, in
     /// reverse, when it's done.
-    fn statement<T>(&mut self, f: impl FnOnce(&mut Self) -> Result<T, Error>) -> Result<T, Error> {
+    fn statement<T>(&mut self, f: impl FnOnce(&mut Self) -> Result<T, Flow>) -> Result<T, Flow> {
         self.temps.push(Vec::new());
         let result = f(self);
         for p in self.temps.pop().expect("pushed").into_iter().rev() {
@@ -401,7 +422,7 @@ impl Interp<'_, '_> {
 
     /// Where the value of place expression `e` is. Anything else is
     /// evaluated into a temporary, which is where it is.
-    fn place(&mut self, e: &Expr) -> Result<Ptr, Error> {
+    fn place(&mut self, e: &Expr) -> Result<Ptr, Flow> {
         match &e.kind {
             ExprKind::Var(name, _) => match self.local(name) {
                 Some(p) => Ok(p),
@@ -497,10 +518,50 @@ impl Interp<'_, '_> {
         self.end_scope(0);
         self.locals = saved;
         self.temps = saved_temps;
-        result
+        match result {
+            Ok(v) | Err(Flow::Return(v)) => Ok(v),
+            Err(Flow::Error(e)) => Err(e),
+            Err(Flow::Break(_) | Flow::Continue) => {
+                unsound("a `break` or `continue` out of a function")
+            }
+        }
     }
 
-    fn eval(&mut self, e: &Expr) -> Result<Value, Error> {
+    /// Evaluates `es` in order. If one doesn't finish, what the ones before
+    /// it gave is dropped.
+    fn eval_all<'e>(&mut self, es: impl IntoIterator<Item = &'e Expr>) -> Result<Vec<Value>, Flow> {
+        let mut values = Vec::new();
+        for e in es {
+            match self.eval(e) {
+                Ok(v) => values.push(v),
+                Err(flow) => {
+                    values.into_iter().rev().for_each(|v| self.drop(v));
+                    return Err(flow);
+                }
+            }
+        }
+        Ok(values)
+    }
+
+    /// Runs the body of a loop again and again, until a `break`, whose
+    /// value it returns, or for a `while`, until its condition `c` is false.
+    fn repeat(&mut self, c: Option<&Expr>, body: &Expr) -> Result<Value, Flow> {
+        loop {
+            if let Some(c) = c
+                && !bool(self.statement(|i| i.eval(c))?)
+            {
+                return Ok(Value::Unit);
+            }
+            match self.eval(body) {
+                Ok(v) => self.drop(v),
+                Err(Flow::Break(v)) => return Ok(v),
+                Err(Flow::Continue) => {}
+                Err(flow) => return Err(flow),
+            }
+        }
+    }
+
+    fn eval(&mut self, e: &Expr) -> Result<Value, Flow> {
         Ok(match &e.kind {
             ExprKind::Int(n) => Value::Int(*n),
             ExprKind::Bool(b) => Value::Bool(*b),
@@ -549,12 +610,11 @@ impl Interp<'_, '_> {
                 self.arith(*op, int(l), int(r), e.span)?
             }
 
+            // A function value owns nothing, so there's nothing to drop if
+            // an argument doesn't finish.
             ExprKind::Call(f, args) => {
                 let f = self.eval(f)?;
-                let args = args
-                    .iter()
-                    .map(|a| self.eval(a))
-                    .collect::<Result<_, _>>()?;
+                let args = self.eval_all(args)?;
                 self.call(f, args, e.span)?
             }
 
@@ -568,18 +628,35 @@ impl Interp<'_, '_> {
                 }
             }
 
-            ExprKind::While(c, body) => {
-                while bool(self.statement(|i| i.eval(c))?) {
-                    self.eval(body)?;
-                }
-                Value::Unit
+            ExprKind::While(c, body) => self.repeat(Some(c), body)?,
+            ExprKind::Loop(body) => self.repeat(None, body)?,
+            ExprKind::Return(value) => {
+                let v = match value {
+                    Some(v) => self.eval(v)?,
+                    None => Value::Unit,
+                };
+                return Err(Flow::Return(v));
             }
+            ExprKind::Break(value) => {
+                let v = match value {
+                    Some(v) => self.eval(v)?,
+                    None => Value::Unit,
+                };
+                return Err(Flow::Break(v));
+            }
+            ExprKind::Continue => return Err(Flow::Continue),
 
             // The value first, then the place, as in Rust. What was there
             // is dropped.
             ExprKind::Assign(op, place, value) => {
                 let v = self.eval(value)?;
-                let p = self.place(place)?;
+                let p = match self.place(place) {
+                    Ok(p) => p,
+                    Err(flow) => {
+                        self.drop(v);
+                        return Err(flow);
+                    }
+                };
                 let v = match op {
                     Some(op) => {
                         let old = int(self.memory.get(&p).clone());
@@ -603,10 +680,7 @@ impl Interp<'_, '_> {
                 Value::Box(self.memory.alloc(v, true))
             }
             ExprKind::Variant(ty, _, variant, args) => {
-                let args = args
-                    .iter()
-                    .map(|a| self.eval(a))
-                    .collect::<Result<_, _>>()?;
+                let args = self.eval_all(args)?;
                 Value::Variant(ty.name.clone(), variant.name.clone(), args)
             }
             ExprKind::Match(scrutinee, arms) => self.match_expr(scrutinee, arms)?,
@@ -631,14 +705,14 @@ impl Interp<'_, '_> {
     /// A block: each statement's temporaries are dropped at its end, and
     /// the block's variables at the block's end, after the value of its
     /// tail is worked out, and the tail's temporaries dropped.
-    fn block(&mut self, stmts: &[Stmt], tail: Option<&Expr>) -> Result<Value, Error> {
+    fn block(&mut self, stmts: &[Stmt], tail: Option<&Expr>) -> Result<Value, Flow> {
         let scope = self.locals.len();
         let result = self.block_inner(stmts, tail);
         self.end_scope(scope);
         result
     }
 
-    fn block_inner(&mut self, stmts: &[Stmt], tail: Option<&Expr>) -> Result<Value, Error> {
+    fn block_inner(&mut self, stmts: &[Stmt], tail: Option<&Expr>) -> Result<Value, Flow> {
         for stmt in stmts {
             match stmt {
                 Stmt::Let {
@@ -677,7 +751,7 @@ impl Interp<'_, '_> {
     /// `let pat = init;`. If `init` is `&e` of a value that isn't a place,
     /// the temporary holding it lives as long as a variable would, to the
     /// end of the block, as in Rust: `let r = &make();` is fine.
-    fn let_stmt(&mut self, pat: &Pattern, init: &Expr) -> Result<(), Error> {
+    fn let_stmt(&mut self, pat: &Pattern, init: &Expr) -> Result<(), Flow> {
         if let ExprKind::Unary(UnOp::Ref | UnOp::RefMut, x) = &init.kind
             && !x.is_place()
         {
@@ -703,13 +777,15 @@ impl Interp<'_, '_> {
         })
     }
 
-    fn struct_lit(&mut self, name: &Ident, inits: &[FieldInit]) -> Result<Value, Error> {
+    fn struct_lit(&mut self, name: &Ident, inits: &[FieldInit]) -> Result<Value, Flow> {
         let decl = self.structs[name.name.as_str()];
         // Evaluate in the order written, store in the order declared.
-        let mut values = Vec::new();
-        for init in inits {
-            values.push((init.name.name.as_str(), Some(self.eval(&init.value)?)));
-        }
+        let values = self.eval_all(inits.iter().map(|i| &i.value))?;
+        let mut values: Vec<(&str, Option<Value>)> = inits
+            .iter()
+            .map(|i| i.name.name.as_str())
+            .zip(values.into_iter().map(Some))
+            .collect();
         let fields = decl
             .fields
             .iter()
@@ -725,7 +801,7 @@ impl Interp<'_, '_> {
     /// Picks the first arm whose pattern matches, without moving anything,
     /// then binds its variables, moving or borrowing from the scrutinee.
     /// The scrutinee is looked at where it is, if it's a place.
-    fn match_expr(&mut self, scrutinee: &Expr, arms: &[Arm]) -> Result<Value, Error> {
+    fn match_expr(&mut self, scrutinee: &Expr, arms: &[Arm]) -> Result<Value, Flow> {
         self.statement(|i| {
             let p = i.place(scrutinee)?;
             let Some(arm) = arms.iter().find(|arm| i.matches(&arm.pat, &p)) else {

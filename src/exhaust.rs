@@ -411,6 +411,7 @@ impl Cx<'_> {
             Type::Int => Some(split(i64::MIN, i64::MAX, seen)),
             Type::Bool => Some(vec![Ctor::Bool(false), Ctor::Bool(true)]),
             Type::Unit => Some(vec![Ctor::Unit]),
+            Type::Never => Some(Vec::new()),
             Type::Adt(name, ..) => Some(match &self.adts[name].kind {
                 AdtKind::Struct(_) => vec![Ctor::Struct],
                 AdtKind::Enum(variants) => (0..variants.len()).map(Ctor::Variant).collect(),

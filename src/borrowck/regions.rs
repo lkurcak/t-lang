@@ -202,7 +202,7 @@ fn vary(
                 vary(a, v.then(vs[regions.len() + i]), d, variances, out);
             }
         }
-        Type::Int | Type::Bool | Type::Unit | Type::Var(_) => {}
+        Type::Int | Type::Bool | Type::Unit | Type::Never | Type::Var(_) => {}
     }
 }
 
@@ -243,7 +243,13 @@ fn wf_into(t: &Type, adts: &Adts, outlives: &HashMap<String, Vec<Bound>>, out: &
                 wf_into(a, adts, outlives, out);
             }
         }
-        Type::Fn(_) | Type::Int | Type::Bool | Type::Unit | Type::Param(_) | Type::Var(_) => {}
+        Type::Fn(_)
+        | Type::Int
+        | Type::Bool
+        | Type::Unit
+        | Type::Never
+        | Type::Param(_)
+        | Type::Var(_) => {}
     }
 }
 
@@ -271,7 +277,7 @@ pub(crate) fn type_outlives(t: &Type, r: &Region, out: &mut Vec<Bound>) {
         }
         Type::Param(p) => push(out, Bound::Param(p.clone(), r.clone())),
         Type::Box(inner) => type_outlives(inner, r, out),
-        Type::Fn(_) | Type::Int | Type::Bool | Type::Unit | Type::Var(_) => {}
+        Type::Fn(_) | Type::Int | Type::Bool | Type::Unit | Type::Never | Type::Var(_) => {}
     }
 }
 

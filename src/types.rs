@@ -10,6 +10,11 @@ pub enum Type {
     Bool,
     /// The type with exactly one value, `()`. "Nothing interesting to return."
     Unit,
+    /// `!`, the type with no values at all: *never*. It's the type of what
+    /// never finishes, like `return x` or a `loop` with no `break`, so a
+    /// value of it can be used as any type, since there won't be one (see
+    /// docs/05.1-control-flow.md).
+    Never,
     /// `fn(A, B) -> R`. The arrow type `A × B → R` of the lambda calculus.
     Fn(FnType),
     /// A struct or enum, by its symbol, with its type arguments: `Shape`,
@@ -289,7 +294,9 @@ impl Type {
             Type::Fn(f) => (&f.params, Some(&f.ret)),
             Type::Adt(_, _, args) => (args, None),
             Type::Ref(_, _, t) | Type::Box(t) => (&[], Some(t)),
-            Type::Int | Type::Bool | Type::Unit | Type::Param(_) | Type::Var(_) => (&[], None),
+            Type::Int | Type::Bool | Type::Unit | Type::Never | Type::Param(_) | Type::Var(_) => {
+                (&[], None)
+            }
         };
         params.iter().chain(ret)
     }
@@ -308,7 +315,9 @@ impl Type {
             }
             Type::Ref(r, m, t) => Type::Ref(r.clone(), *m, Box::new(f(t))),
             Type::Box(t) => Type::Box(Box::new(f(t))),
-            Type::Int | Type::Bool | Type::Unit | Type::Param(_) | Type::Var(_) => self.clone(),
+            Type::Int | Type::Bool | Type::Unit | Type::Never | Type::Param(_) | Type::Var(_) => {
+                self.clone()
+            }
         }
     }
 
@@ -423,7 +432,7 @@ impl Type {
 }
 
 /// Is a value of type `ty` *copied* when it's used, rather than *moved*?
-/// `int`, `bool`, `()`, functions and shared references are; mutable
+/// `int`, `bool`, `()`, `!`, functions and shared references are; mutable
 /// references and boxes aren't, since there must only ever be one of each.
 /// A struct or enum is if it's `#[derive(Copy)]` and its fields are, at
 /// these type arguments. A type parameter isn't, since it may stand for a
@@ -431,7 +440,12 @@ impl Type {
 /// `#[derive(Copy)]` itself).
 pub fn is_copy(adts: &Adts, ty: &Type, params: bool) -> bool {
     match ty {
-        Type::Int | Type::Bool | Type::Unit | Type::Fn(_) | Type::Ref(_, false, _) => true,
+        Type::Int
+        | Type::Bool
+        | Type::Unit
+        | Type::Never
+        | Type::Fn(_)
+        | Type::Ref(_, false, _) => true,
         Type::Ref(_, true, _) | Type::Box(_) | Type::Var(_) => false,
         Type::Param(_) => params,
         // Can't recurse forever: a type holds itself only through a box or
@@ -482,6 +496,7 @@ impl fmt::Display for Type {
             Type::Int => f.write_str("int"),
             Type::Bool => f.write_str("bool"),
             Type::Unit => f.write_str("()"),
+            Type::Never => f.write_str("!"),
             Type::Fn(sig) => write!(f, "fn({}) -> {}", comma_list(&sig.params), sig.ret),
             Type::Adt(name, regions, args) => {
                 f.write_str(&source_name(name))?;

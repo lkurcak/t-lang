@@ -25,10 +25,9 @@ fn main() {
     print(call(inc, 9));                    // expect: 10
 }
 
-// A match with no arms takes the type it's used at. (It can never run, so
-// neither can this function: `_` says that's on purpose.)
+// A match with no arms is a `!`, which fits any type: `int` here. (It can
+// never run, so neither can this function: `_` says that's on purpose.)
 enum _Never {}
 fn _absurd(n: _Never) -> int {
-    let x = match n {};
-    x + 1
+    match n {}
 }

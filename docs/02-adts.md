@@ -274,7 +274,8 @@ type was always "synthesize `e`'s type, compare". An empty match has no arm to
 synthesize a type from, so blocks and `match` now push the *expected* type down
 to their results instead (`Checker::check`). This is a first glimpse of
 bidirectional typing, which is step 3. Without an expected type, say in
-`let x = match n {};`, it's an error.
+`let x = match n {};`, it was an error, until the empty type got a name of
+its own, `!` (docs/05.1-control-flow.md). Now that's what an empty match is.
 
 ## Design decisions worth noticing
 

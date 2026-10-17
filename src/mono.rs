@@ -392,6 +392,7 @@ impl Cx<'_, '_, '_> {
             Type::Int => TypeExprKind::Named("int".into(), Vec::new()),
             Type::Bool => TypeExprKind::Named("bool".into(), Vec::new()),
             Type::Unit => TypeExprKind::Unit,
+            Type::Never => TypeExprKind::Never,
             Type::Fn(sig) => TypeExprKind::Fn(
                 sig.params.iter().map(|p| self.written(p, span)).collect(),
                 Box::new(self.written(&sig.ret, span)),
@@ -463,7 +464,9 @@ impl Cx<'_, '_, '_> {
 
     fn expr(&mut self, e: &Expr) -> Expr {
         let kind = match &e.kind {
-            ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit => e.kind.clone(),
+            ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit | ExprKind::Continue => {
+                e.kind.clone()
+            }
             // Type arguments written in the source are in `info.instances`
             // like the inferred ones, and the copy's name says them.
             ExprKind::Var(name, _) => ExprKind::Var(
@@ -487,7 +490,13 @@ impl Cx<'_, '_, '_> {
                 stmts
                     .iter()
                     .map(|s| match s {
-                        Stmt::Let { pat, ty, init } => Stmt::Let {
+                        Stmt::Let {
+                            pat,
+                            ty,
+                            init,
+                            span,
+                        } => Stmt::Let {
+                            span: *span,
                             pat: self.pattern(pat),
                             ty: ty.as_ref().map(|t| Box::new(self.ty(t))),
                             init: init.as_ref().map(|e| self.expr(e)),
@@ -547,6 +556,9 @@ impl Cx<'_, '_, '_> {
             ExprKind::While(c, body) => {
                 ExprKind::While(Box::new(self.expr(c)), Box::new(self.expr(body)))
             }
+            ExprKind::Loop(body) => ExprKind::Loop(Box::new(self.expr(body))),
+            ExprKind::Return(x) => ExprKind::Return(x.as_ref().map(|x| Box::new(self.expr(x)))),
+            ExprKind::Break(x) => ExprKind::Break(x.as_ref().map(|x| Box::new(self.expr(x)))),
         };
         Expr { kind, span: e.span }
     }

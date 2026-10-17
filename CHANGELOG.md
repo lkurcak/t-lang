@@ -1,5 +1,44 @@
 # Changelog
 
+## Unreleased
+
+Step 5.1: control flow, and the type with no values. See
+[docs/05.1-control-flow.md](docs/05.1-control-flow.md).
+
+### Added
+
+- `return e`, and `return` for `return ()`, from a function or closure. A
+  closure's result type is worked out from its `return`s as well as its
+  body.
+- `loop { .. }`, which runs until a `break`. `break e` gives it the value
+  of `e`, and `break` gives it `()`; with no `break` that gets out, it never
+  ends.
+- `break` and `continue`, in a `loop` or `while`. A `while` loop's `break`
+  can't have a value, since the loop can also end without one. Neither can
+  get out of a closure.
+- `!`, the type with no values, said *never*. `return`, `break` and
+  `continue` are of type `!`, as is a `loop` that never ends and a `match`
+  with no arms, and a `!` can be used as any type, as it never gives a
+  value: `None => return -1` fits as an arm of an `int` `match`. It can be
+  written, as in `fn forever() -> ! { loop {} }`, and anywhere else a type
+  can: an `Option<!>` is never `Some`, so a `match` needn't cover it.
+- A block that never gets to its end, say as it ends with a `return`, is a
+  `!`, so a function can end with `return x;`.
+- A warning, `unreachable_code`, for code after something that never
+  finishes, like a `return`, as rustc gives.
+- The borrow checker follows jumps: a `return`, `break` or `continue` ends
+  the scopes it leaves, so a box moved just before a `break` is fine. Dead
+  code isn't borrow checked.
+- The interpreter frees what a jump leaves, the parts of an expression it
+  had worked out included, as in `f(Box::new(1), return 2)`.
+- Syntax highlighting for all of the above.
+
+### Changed
+
+- `return`, `break`, `continue` and `loop` are keywords.
+- `let x = match n {};` makes `x` a `!`, rather than being an error for
+  not saying what type it is.
+
 ## 0.5.0 (2026-10-16)
 
 Step 5: ownership, borrowing and pointers. See

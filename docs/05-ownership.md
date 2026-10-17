@@ -538,9 +538,9 @@ for as long as `r` (`err_borrow_temp.t`).
 - **No `Drop`.** Dropping only ever frees boxes, so it never uses the
   references in what it drops, and a struct can hold references to things
   that go away before it does, as long as it isn't used after.
-- **No deferred initialisation.** Every `let` has a value. `let r;` would
-  need "definitely assigned" tracking, which is the same dataflow as moves,
-  but isn't needed yet.
+- **Deferred initialisation for whole variables only.** `let r;` reuses
+  the move check, which already knows what has no value. A pattern would
+  need each of its variables assigned on its own (exercise 5).
 - **`Box` is built in, and allocation can't fail.** In step 7, allocating is
   an effect, and running out of memory a panic that a function's type says
   it may have.
@@ -552,11 +552,13 @@ for as long as `r` (`err_borrow_temp.t`).
 | `Rc`, `RefCell`, sharing that's checked at run time | a library, once there's `alloc`; `RefCell` panics | — |
 | raw pointers, `unsafe` | for writing what the checker can't see is safe, like `Vec` itself | — |
 | a resizable array (`Vec`) | needs raw pointers, generics over sizes, and `alloc` | — |
-| `break`, `continue`, `return`, `loop` | control flow the MIR already has room for | — |
 | closures capturing references, returning closures | function types with lifetimes, a type per closure | 6 |
 | `Drop`, destructors | traits | 6 |
 | allocation that may fail | effects | 7 |
 | two-phase borrows: `v.push(v.len())` | no methods yet | 6 |
+
+`break`, `continue`, `return` and `loop`, control flow the MIR already had
+room for, came right after: docs/05.1-control-flow.md.
 
 ## Exercises
 

@@ -15,10 +15,10 @@
 //! variant  = IDENT ("(" type ("," type)* ","? ")")?
 //! type     = IDENT ("<" targ ("," targ)* ","? ">")? | "(" ")"
 //!          | "fn" "(" (type ("," type)*)? ")" ("->" type)?
-//!          | "&" LIFETIME? "mut"? type
+//!          | "&" LIFETIME? "mut"? type | "!"
 //! targ     = LIFETIME | type
 //! block    = "{" (let | head (fn_decl | struct | enum) | expr ";" | block_like ";"?)* expr? "}"
-//! block_like = if | match | while | block
+//! block_like = if | match | while | loop | block
 //! let      = "let" pattern (":" type)? "=" expr ";"
 //! expr     = or (("=" | "+=" | "-=" | "*=" | "/=" | "%=") expr)?  -- assignment
 //! or       = and ("||" and)*
@@ -29,13 +29,15 @@
 //! unary    = ("-" | "!" | "*" | "&" "mut"?) unary | call
 //! postfix  = primary ("(" args ")" | "." IDENT)*
 //! primary  = INT | "true" | "false" | IDENT targs? | "(" ")" | "(" expr ")" | block
-//!          | if | match | IDENT targs? "{" field_init,* "}"
+//!          | if | match | while | loop | IDENT targs? "{" field_init,* "}"
 //!          | IDENT targs? "::" IDENT ("(" args ")")? | lambda
+//!          | ("return" | "break") expr? | "continue"    -- `expr` if one can start here
 //! targs    = "::" "<" type ("," type)* ","? ">"            -- the "turbofish"
 //! lambda   = ("||" | "|" (lparam ("," lparam)* ","?)? "|") ("->" type block | expr)
 //! lparam   = "mut"? IDENT (":" type)?
 //! if       = "if" expr block ("else" (block | if))?
 //! while    = "while" expr block
+//! loop     = "loop" block
 //! match    = "match" expr "{" (pattern "=>" expr ","?)* "}"  -- `,` optional after a block/if/match
 //! field_init = IDENT (":" expr)?                             -- `x` is short for `x: x`
 //!
@@ -52,6 +54,10 @@
 //! subtraction. Without a `;` such a statement must have type `()` (checked in
 //! `check.rs`), which turns that mistake into a type error. Parenthesize to
 //! use one in a larger expression: `(if c { a } else { b }) - x`.
+//!
+//! `return` and `break` take an expression after them if one can start
+//! there, and it runs as far right as an expression can, as a closure's
+//! body does: `return a + b` returns `a + b`.
 //!
 //! A `fn`, `struct` or `enum` in a block is local to it (see `ast::Stmt`).
 //!
@@ -510,6 +516,10 @@ impl Parser {
                     span,
                 })
             }
+            Tok::Bang => Ok(TypeExpr {
+                kind: TypeExprKind::Never,
+                span: self.bump().span,
+            }),
             _ => Err(self.unexpected("a type")),
         }
     }
@@ -568,11 +578,15 @@ impl Parser {
                 stmts.push(stmt);
                 continue;
             }
-            let block_like = matches!(self.peek(), Tok::If | Tok::Match | Tok::While | Tok::LBrace);
+            let block_like = matches!(
+                self.peek(),
+                Tok::If | Tok::Match | Tok::While | Tok::Loop | Tok::LBrace
+            );
             let e = match self.peek() {
                 Tok::If => self.if_expr()?,
                 Tok::Match => self.match_expr()?,
                 Tok::While => self.while_expr()?,
+                Tok::Loop => self.loop_expr()?,
                 Tok::LBrace => self.block()?,
                 _ => self.expr()?,
             };
@@ -595,7 +609,7 @@ impl Parser {
     }
 
     fn let_stmt(&mut self) -> Result<Stmt, Error> {
-        self.expect(Tok::Let)?;
+        let start = self.expect(Tok::Let)?;
         let pat = self.pattern()?;
         let ty = if self.eat(&Tok::Colon) {
             Some(self.ty()?)
@@ -606,11 +620,12 @@ impl Parser {
             true => Some(self.expr()?),
             false => None,
         };
-        self.expect(Tok::Semi)?;
+        let end = self.expect(Tok::Semi)?;
         Ok(Stmt::Let {
             pat,
             ty: ty.map(Box::new),
             init,
+            span: start.to(end),
         })
     }
 
@@ -770,6 +785,9 @@ impl Parser {
             Tok::If => return self.if_expr(),
             Tok::Match => return self.match_expr(),
             Tok::While => return self.while_expr(),
+            Tok::Loop => return self.loop_expr(),
+            Tok::Return | Tok::Break => return self.jump(),
+            Tok::Continue => ExprKind::Continue,
             Tok::Pipe | Tok::OrOr => return self.lambda(),
             _ => return Err(self.unexpected("an expression")),
         };
@@ -808,6 +826,34 @@ impl Parser {
         })
     }
 
+    fn loop_expr(&mut self) -> Result<Expr, Error> {
+        let start = self.expect(Tok::Loop)?;
+        let body = self.block()?;
+        let span = start.to(body.span);
+        Ok(Expr {
+            kind: ExprKind::Loop(Box::new(body)),
+            span,
+        })
+    }
+
+    /// `return e` or `break e`, where `e` is there if an expression can
+    /// start after the keyword.
+    fn jump(&mut self) -> Result<Expr, Error> {
+        let keyword = self.bump();
+        let value = match starts_expr(self.peek()) {
+            true => Some(Box::new(self.expr()?)),
+            false => None,
+        };
+        let span = value
+            .as_ref()
+            .map_or(keyword.span, |v| keyword.span.to(v.span));
+        let kind = match keyword.tok {
+            Tok::Return => ExprKind::Return(value),
+            _ => ExprKind::Break(value),
+        };
+        Ok(Expr { kind, span })
+    }
+
     fn match_expr(&mut self) -> Result<Expr, Error> {
         let start = self.expect(Tok::Match)?;
         let scrutinee = self.structs(false, Self::expr)?;
@@ -819,7 +865,11 @@ impl Parser {
             let body = self.structs(true, Self::expr)?;
             let block_like = matches!(
                 body.kind,
-                ExprKind::Block(..) | ExprKind::If(..) | ExprKind::Match(..) | ExprKind::While(..)
+                ExprKind::Block(..)
+                    | ExprKind::If(..)
+                    | ExprKind::Match(..)
+                    | ExprKind::While(..)
+                    | ExprKind::Loop(..)
             );
             arms.push(Arm { pat, body });
             if !self.eat(&Tok::Comma) && !block_like && *self.peek() != Tok::RBrace {
@@ -1110,6 +1160,33 @@ impl Parser {
             span,
         })
     }
+}
+
+/// Can an expression start with `tok`?
+fn starts_expr(tok: &Tok) -> bool {
+    matches!(
+        tok,
+        Tok::Int(_)
+            | Tok::Ident(_)
+            | Tok::True
+            | Tok::False
+            | Tok::LParen
+            | Tok::LBrace
+            | Tok::If
+            | Tok::Match
+            | Tok::While
+            | Tok::Loop
+            | Tok::Return
+            | Tok::Break
+            | Tok::Continue
+            | Tok::Pipe
+            | Tok::OrOr
+            | Tok::Minus
+            | Tok::Bang
+            | Tok::Star
+            | Tok::Amp
+            | Tok::AndAnd
+    )
 }
 
 const CMP_PREC: u8 = 3;

@@ -173,6 +173,7 @@ module.exports = grammar({
       $.unit_type,
       $.function_type,
       $.reference_type,
+      $.never_type,
     ),
 
     // `&T`, `&'a mut T`
@@ -196,6 +197,8 @@ module.exports = grammar({
     _turbofish: $ => seq('::', field('type_arguments', $.type_arguments)),
 
     unit_type: _ => seq('(', ')'),
+
+    never_type: _ => '!',
 
     function_type: $ => prec.right(seq(
       'fn',
@@ -231,7 +234,13 @@ module.exports = grammar({
       prec(PREC.block_statement, $._block_like),
     ),
 
-    _block_like: $ => choice($.if_expression, $.match_expression, $.while_expression, $.block),
+    _block_like: $ => choice(
+      $.if_expression,
+      $.match_expression,
+      $.while_expression,
+      $.loop_expression,
+      $.block,
+    ),
 
     // Expressions
 
@@ -252,6 +261,9 @@ module.exports = grammar({
       $.struct_expression,
       $.variant_expression,
       $.closure_expression,
+      $.return_expression,
+      $.break_expression,
+      $.continue_expression,
       $._block_like,
     ),
 
@@ -381,6 +393,21 @@ module.exports = grammar({
       field('condition', $._expression),
       field('body', $.block),
     ),
+
+    loop_expression: $ => seq('loop', field('body', $.block)),
+
+    // What follows a `return` or `break` runs as far right as it can.
+    return_expression: $ => choice(
+      prec.left(seq('return', $._expression)),
+      prec(-1, 'return'),
+    ),
+
+    break_expression: $ => choice(
+      prec.left(seq('break', $._expression)),
+      prec(-1, 'break'),
+    ),
+
+    continue_expression: _ => 'continue',
 
     match_expression: $ => seq(
       'match',

@@ -168,6 +168,9 @@ pub enum Lint {
     /// A struct or enum with no values, since each would hold another,
     /// without end.
     InfiniteTypes,
+    /// Code after something that never finishes, like a `return`, so it
+    /// never runs.
+    UnreachableCode,
 }
 
 impl Lint {
@@ -184,10 +187,11 @@ impl Lint {
             Lint::UnknownLints => "unknown_lints",
             Lint::UnusedMut => "unused_mut",
             Lint::InfiniteTypes => "infinite_types",
+            Lint::UnreachableCode => "unreachable_code",
         }
     }
 
-    pub const ALL: [Lint; 11] = [
+    pub const ALL: [Lint; 12] = [
         Lint::UnreachablePatterns,
         Lint::OverlappingRanges,
         Lint::MergeableRanges,
@@ -199,6 +203,7 @@ impl Lint {
         Lint::UnknownLints,
         Lint::UnusedMut,
         Lint::InfiniteTypes,
+        Lint::UnreachableCode,
     ];
 
     pub fn from_name(name: &str) -> Option<Lint> {

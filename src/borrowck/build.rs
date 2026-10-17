@@ -10,7 +10,9 @@
 //! Each statement's temporaries go out of scope at its end, as in the
 //! interpreter: the two have to agree on when memory goes away, or the
 //! borrow checker would be checking a different program than the one that
-//! runs.
+//! runs. That goes for `return`, `break` and `continue` too: each ends the
+//! statements and scopes it leaves, innermost first, as the interpreter
+//! does as it unwinds to where they go.
 
 use super::mir::*;
 use super::regions::{AdtInfo, Regions};
@@ -49,11 +51,35 @@ pub(crate) struct Builder<'a> {
     pub(crate) closure: bool,
     block: Bb,
     /// The locals of each scope being lowered, innermost last.
-    scopes: Vec<Vec<Local>>,
+    scopes: Vec<Scope>,
     /// The temporaries of each statement being lowered, innermost last.
     temps: Vec<Vec<Local>>,
     /// Each variable's local, by its id.
     vars: HashMap<Span, Local>,
+    /// The loops being lowered, innermost last.
+    loops: Vec<LoopFrame>,
+    /// Whether control can get to each block, as far as is known: a block
+    /// is lowered after every block that jumps to it but those that jump
+    /// back to the start of a loop, which control gets to anyway.
+    live: Vec<bool>,
+}
+
+/// A scope's locals, and how many statements were being lowered when it
+/// started: those it's inside.
+struct Scope {
+    locals: Vec<Local>,
+    temps: usize,
+}
+
+/// A loop being lowered: where a `continue` and a `break` in it go, where
+/// a `break` puts the value it gives a `loop`, and how many scopes and
+/// statements it's inside, which those leave the rest of.
+struct LoopFrame {
+    head: Bb,
+    after: Bb,
+    dest: Option<Place>,
+    scopes: usize,
+    temps: usize,
 }
 
 impl<'a> Builder<'a> {
@@ -71,9 +97,14 @@ impl<'a> Builder<'a> {
             closures: Vec::new(),
             closure: false,
             block: Bb(0),
-            scopes: vec![Vec::new()],
+            scopes: vec![Scope {
+                locals: Vec::new(),
+                temps: 0,
+            }],
             temps: Vec::new(),
             vars: HashMap::new(),
+            loops: Vec::new(),
+            live: vec![true],
         }
     }
 
@@ -98,7 +129,7 @@ impl<'a> Builder<'a> {
             self.body.locals[l.0].mutable = mutable;
             self.body.locals[l.0].mut_span = mut_span;
             self.vars.insert(*id, l);
-            self.scopes.last_mut().expect("a scope").push(l);
+            self.scope().push(l);
         }
         self.body.params = params.len();
         // A closure's copies of what it captured are made for each call,
@@ -106,22 +137,56 @@ impl<'a> Builder<'a> {
         for (name, id, ty) in captured {
             let l = self.new_local(ty.clone(), LocalKind::Captured, Some(name.clone()), *id);
             self.vars.insert(*id, l);
-            self.scopes.last_mut().expect("a scope").push(l);
+            self.scope().push(l);
         }
     }
 
     /// Lowers `body` as what the function returns, then drops the
-    /// parameters, and returns.
+    /// parameters, and returns. Code control can't get to, like that after
+    /// a `return`, is left out, as it never runs.
     pub(crate) fn lower(&mut self, body: &'a Expr) {
         self.temps.push(Vec::new());
         self.expr_into(body, &Place::local(RETURN));
         self.end_temps(body.span);
-        let params = std::mem::take(&mut self.scopes[0]);
+        let params = std::mem::take(&mut self.scopes[0].locals);
         let end = Span::new(body.span.end.saturating_sub(1), body.span.end);
         for l in params.into_iter().rev() {
             self.push(StmtKind::Dead(l), end);
         }
         self.terminate(Term::Return);
+        self.prune();
+    }
+
+    /// Empties the blocks control never gets to, and forgets the loans made
+    /// in them: what's left of an expression that a jump in it leaves, like
+    /// the `&x` of `f(return 1, &x)`.
+    fn prune(&mut self) {
+        let mut reached = vec![false; self.body.blocks.len()];
+        let mut todo = vec![Bb(0)];
+        while let Some(b) = todo.pop() {
+            if !std::mem::replace(&mut reached[b.0], true) {
+                todo.extend(self.body.successors(b));
+            }
+        }
+        for (block, reached) in self.body.blocks.iter_mut().zip(&reached) {
+            if !reached {
+                *block = Block::default();
+            }
+        }
+        self.loans.retain(|l| reached[l.point.block.0]);
+    }
+
+    /// The innermost scope's locals.
+    fn scope(&mut self) -> &mut Vec<Local> {
+        &mut self.scopes.last_mut().expect("a scope").locals
+    }
+
+    fn push_scope(&mut self) {
+        let temps = self.temps.len();
+        self.scopes.push(Scope {
+            locals: Vec::new(),
+            temps,
+        });
     }
 
     fn new_local(&mut self, ty: Type, kind: LocalKind, name: Option<String>, span: Span) -> Local {
@@ -143,7 +208,7 @@ impl<'a> Builder<'a> {
         let l = self.new_local(ty, LocalKind::Temp, None, span);
         match self.temps.last_mut() {
             Some(temps) => temps.push(l),
-            None => self.scopes.last_mut().expect("a scope").push(l),
+            None => self.scope().push(l),
         }
         l
     }
@@ -163,14 +228,28 @@ impl<'a> Builder<'a> {
 
     fn new_block(&mut self) -> Bb {
         self.body.blocks.push(Block::default());
+        self.live.push(false);
         Bb(self.body.blocks.len() - 1)
     }
 
     fn terminate(&mut self, t: Term) {
         let block = &mut self.body.blocks[self.block.0];
-        if block.term.is_none() {
-            block.term = Some(t);
+        if block.term.is_some() {
+            return;
         }
+        block.term = Some(t);
+        if self.live[self.block.0] {
+            for b in self.body.successors(self.block) {
+                self.live[b.0] = true;
+            }
+        }
+    }
+
+    /// Can control get to what's being lowered? Not after a jump, until
+    /// somewhere another path gets to. Code it can't get to never runs, so
+    /// it isn't lowered, or borrow checked.
+    fn reachable(&self) -> bool {
+        self.live[self.block.0]
     }
 
     fn goto(&mut self, b: Bb) {
@@ -204,7 +283,7 @@ impl<'a> Builder<'a> {
     /// Ends the innermost scope, of the block at `span`: its locals go out
     /// of scope, the last declared first, at its `}`.
     fn end_scope(&mut self, span: Span) {
-        let locals = self.scopes.pop().expect("a scope");
+        let locals = self.scopes.pop().expect("a scope").locals;
         let end = Span::new(span.end.saturating_sub(1), span.end);
         for l in locals.into_iter().rev() {
             self.push(StmtKind::Dead(l), end);
@@ -234,6 +313,9 @@ impl<'a> Builder<'a> {
 
     /// Lowers `e` to write its value to `dest`.
     fn expr_into(&mut self, e: &'a Expr, dest: &Place) {
+        if !self.reachable() {
+            return;
+        }
         if self.cx.typed().coerced.contains_key(&std::ptr::from_ref(e)) {
             let (o, t) = self.operand(e);
             self.assign(dest, Rvalue::Use(o), &t, e.span, false);
@@ -243,6 +325,9 @@ impl<'a> Builder<'a> {
     }
 
     fn expr_into_uncoerced(&mut self, e: &'a Expr, dest: &Place) {
+        if !self.reachable() {
+            return;
+        }
         let span = e.span;
         match &e.kind {
             ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit => {
@@ -314,6 +399,10 @@ impl<'a> Builder<'a> {
                     ops.push(o);
                 }
                 self.assign(dest, Rvalue::Call(f, ops), &ret, span, false);
+                // A function that returns a `!` never does.
+                if ret == Type::Never {
+                    self.diverge(Term::Switch(Vec::new()));
+                }
             }
             ExprKind::If(c, then, els) => {
                 let test = self.condition(c);
@@ -334,22 +423,44 @@ impl<'a> Builder<'a> {
                 self.block = join;
             }
             ExprKind::While(c, body) => {
-                let head = self.new_block();
-                self.goto(head);
-                self.block = head;
-                let test = self.condition(c);
-                let (inside, after) = (self.new_block(), self.new_block());
-                self.terminate(Term::Branch(test, inside, after));
-                self.block = inside;
-                self.temps.push(Vec::new());
-                let t = self.ty(body);
-                let unit = self.temp(t, body.span);
-                self.expr_into(body, &Place::local(unit));
-                self.end_temps(body.span);
-                self.goto(head);
-                self.block = after;
+                self.loop_into(Some(c), body, None);
                 let unit = Rvalue::Use(Operand::Const);
                 self.assign(dest, unit, &Type::Unit, span, false);
+            }
+            ExprKind::Loop(body) => self.loop_into(None, body, Some(dest)),
+            // The value goes where the function's result does, then
+            // everything in scope goes away, the parameters too.
+            ExprKind::Return(value) => {
+                let ret = Place::local(RETURN);
+                match value {
+                    Some(v) => self.expr_into(v, &ret),
+                    None => {
+                        self.assign(&ret, Rvalue::Use(Operand::Const), &Type::Unit, span, false)
+                    }
+                }
+                self.unwind(0, 0, span);
+                self.diverge(Term::Return);
+            }
+            ExprKind::Break(value) => {
+                let lp = self.loops.last().expect("the checker found the loop");
+                let (after, scopes, temps) = (lp.after, lp.scopes, lp.temps);
+                if let Some(dest) = lp.dest.clone() {
+                    match value {
+                        Some(v) => self.expr_into(v, &dest),
+                        None => {
+                            let unit = Rvalue::Use(Operand::Const);
+                            self.assign(&dest, unit, &Type::Unit, span, false);
+                        }
+                    }
+                }
+                self.unwind(scopes, temps, span);
+                self.diverge(Term::Goto(after));
+            }
+            ExprKind::Continue => {
+                let lp = self.loops.last().expect("the checker found the loop");
+                let (head, scopes, temps) = (lp.head, lp.scopes, lp.temps);
+                self.unwind(scopes, temps, span);
+                self.diverge(Term::Goto(head));
             }
             // The value first, then the place, as in the interpreter.
             ExprKind::Assign(op, place, value) => {
@@ -420,6 +531,65 @@ impl<'a> Builder<'a> {
                 self.assign(dest, Rvalue::Aggregate(ops), &t, span, false);
             }
         }
+    }
+
+    /// A `while c { body }`, or with no `c`, a `loop { body }`, whose
+    /// `break`s put the value they give it in `dest`.
+    fn loop_into(&mut self, c: Option<&'a Expr>, body: &'a Expr, dest: Option<&Place>) {
+        let (head, after) = (self.new_block(), self.new_block());
+        self.goto(head);
+        self.block = head;
+        if let Some(c) = c {
+            let test = self.condition(c);
+            let inside = self.new_block();
+            self.terminate(Term::Branch(test, inside, after));
+            self.block = inside;
+        }
+        self.loops.push(LoopFrame {
+            head,
+            after,
+            dest: dest.cloned(),
+            scopes: self.scopes.len(),
+            temps: self.temps.len(),
+        });
+        self.temps.push(Vec::new());
+        let t = self.ty(body);
+        let unit = self.temp(t, body.span);
+        self.expr_into(body, &Place::local(unit));
+        self.end_temps(body.span);
+        self.goto(head);
+        self.loops.pop();
+        self.block = after;
+    }
+
+    /// Ends the statements and scopes inside the first `scopes` scopes and
+    /// `temps` statements, innermost first, for a jump at `span` out of
+    /// them.
+    fn unwind(&mut self, scopes: usize, temps: usize, span: Span) {
+        let mut dead = Vec::new();
+        let mut t = self.temps.len();
+        for scope in self.scopes[scopes..].iter().rev() {
+            while t > scope.temps.max(temps) {
+                t -= 1;
+                dead.extend(self.temps[t].iter().rev());
+            }
+            dead.extend(scope.locals.iter().rev());
+        }
+        while t > temps {
+            t -= 1;
+            dead.extend(self.temps[t].iter().rev());
+        }
+        for l in dead {
+            self.push(StmtKind::Dead(l), span);
+        }
+    }
+
+    /// Ends the block being lowered with `t`, which never goes on to what
+    /// comes next. What does, if anything, is in a new block nothing goes
+    /// to, so it isn't lowered.
+    fn diverge(&mut self, t: Term) {
+        self.terminate(t);
+        self.block = self.new_block();
     }
 
     /// Lowers condition `c` of an `if` or `while`, as a statement of its
@@ -613,10 +783,13 @@ impl<'a> Builder<'a> {
     // Blocks and statements.
 
     fn block(&mut self, stmts: &'a [Stmt], tail: Option<&'a Expr>, dest: &Place, span: Span) {
-        self.scopes.push(Vec::new());
+        self.push_scope();
         for stmt in stmts {
+            if !self.reachable() {
+                break;
+            }
             match stmt {
-                Stmt::Let { pat, ty, init } => self.let_stmt(pat, ty.as_deref(), init.as_ref()),
+                Stmt::Let { pat, ty, init, .. } => self.let_stmt(pat, ty.as_deref(), init.as_ref()),
                 Stmt::Expr(e) | Stmt::BlockLike(e) => {
                     self.temps.push(Vec::new());
                     let t = self.ty(e);
@@ -628,6 +801,7 @@ impl<'a> Builder<'a> {
             }
         }
         match tail {
+            _ if !self.reachable() => {}
             Some(tail) => {
                 self.temps.push(Vec::new());
                 self.expr_into(tail, dest);
@@ -661,7 +835,7 @@ impl<'a> Builder<'a> {
         {
             let t = self.ty(x);
             let kept = self.new_local(t, LocalKind::Temp, None, x.span);
-            self.scopes.last_mut().expect("a scope").push(kept);
+            self.scope().push(kept);
             self.temps.push(Vec::new());
             self.expr_into(x, &Place::local(kept));
             self.end_temps(x.span);
@@ -712,7 +886,7 @@ impl<'a> Builder<'a> {
         self.terminate(Term::Switch(blocks.clone()));
         for (arm, b) in arms.iter().zip(blocks) {
             self.block = b;
-            self.scopes.push(Vec::new());
+            self.push_scope();
             self.declare(&arm.pat);
             self.bind(&arm.pat, &p);
             self.expr_into(&arm.body, dest);
@@ -795,7 +969,7 @@ impl<'a> Builder<'a> {
             self.body.locals[l.0].ty = self.regions.renumber(&t);
         }
         self.vars.insert(id, l);
-        self.scopes.last_mut().expect("a scope").push(l);
+        self.scope().push(l);
         l
     }
 

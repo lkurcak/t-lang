@@ -1,6 +1,7 @@
 //! Warnings: unused variables, unreachable patterns, ranges that can be
-//! narrowed or merged, dead code, doc comments that document nothing, and
-//! types with no values since each would hold another without end.
+//! narrowed or merged, dead code, code after something that never finishes,
+//! doc comments that document nothing, and types with no values since each
+//! would hold another without end.
 //! None of these make a program wrong, so none of them stop it. The naming
 //! lints are in `naming.rs`, since their fixes rename, which checks the
 //! renamed source, and `unused_mut` is the borrow checker's, which knows
@@ -31,6 +32,17 @@ pub(super) fn unused(local: &Local) -> Warning {
         span: local.sites[0].span,
         message: format!("unused variable `{name}`"),
         fixes: vec![Fix::new(format!("rename to `_{name}`"), edits)],
+    }
+}
+
+/// The statement or expression at `span` never runs: what comes before it
+/// never finishes.
+pub(super) fn unreachable_code(span: Span) -> Warning {
+    Warning {
+        lint: Lint::UnreachableCode,
+        span,
+        message: "unreachable code: what comes before it never finishes, so this never runs".into(),
+        fixes: Vec::new(),
     }
 }
 

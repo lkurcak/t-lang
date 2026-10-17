@@ -278,6 +278,7 @@ fn resolve_in(
             })
         }
         TypeExprKind::Unit => Ok(Type::Unit),
+        TypeExprKind::Never => Ok(Type::Never),
         // A function type of its own, generic over what it leaves out.
         TypeExprKind::Fn(params_, ret) => {
             let mut b = Binder {
@@ -321,7 +322,7 @@ pub(super) fn name_holes(t: &TypeExpr, holes: &mut Vec<(String, Span)>) -> TypeE
             name.clone(),
             args.iter().map(|a| name_holes(a, holes)).collect(),
         ),
-        TypeExprKind::Unit | TypeExprKind::Lifetime(_) => t.kind.clone(),
+        TypeExprKind::Unit | TypeExprKind::Never | TypeExprKind::Lifetime(_) => t.kind.clone(),
         TypeExprKind::Fn(params, ret) => TypeExprKind::Fn(
             params.iter().map(|p| name_holes(p, holes)).collect(),
             Box::new(name_holes(ret, holes)),

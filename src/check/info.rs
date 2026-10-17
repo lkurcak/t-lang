@@ -398,7 +398,7 @@ impl Checker {
                     self.type_expr_notes(a, params);
                 }
             }
-            TypeExprKind::Unit | TypeExprKind::Lifetime(_) => {}
+            TypeExprKind::Unit | TypeExprKind::Never | TypeExprKind::Lifetime(_) => {}
             TypeExprKind::Fn(ps, r) => {
                 for p in ps {
                     self.type_expr_notes(p, params);
@@ -419,9 +419,10 @@ fn names(params: &[Ident]) -> Vec<String> {
 /// the functions nested in it.
 fn each_annotation(e: &Expr, f: &mut impl FnMut(&TypeExpr)) {
     match &e.kind {
-        ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit => {}
+        ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit | ExprKind::Continue => {}
         ExprKind::Var(_, targs) => targs.iter().for_each(&mut *f),
-        ExprKind::Unary(_, x) | ExprKind::Field(x, _) => each_annotation(x, f),
+        ExprKind::Unary(_, x) | ExprKind::Field(x, _) | ExprKind::Loop(x) => each_annotation(x, f),
+        ExprKind::Return(x) | ExprKind::Break(x) => x.iter().for_each(|x| each_annotation(x, f)),
         ExprKind::Binary(_, l, r) | ExprKind::Assign(_, l, r) | ExprKind::While(l, r) => {
             each_annotation(l, f);
             each_annotation(r, f);
@@ -438,7 +439,7 @@ fn each_annotation(e: &Expr, f: &mut impl FnMut(&TypeExpr)) {
         ExprKind::Block(stmts, tail) => {
             for stmt in stmts {
                 match stmt {
-                    Stmt::Let { pat, ty, init } => {
+                    Stmt::Let { pat, ty, init, .. } => {
                         pattern_annotations(pat, f);
                         if let Some(t) = ty {
                             f(t);

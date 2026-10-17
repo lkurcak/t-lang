@@ -24,6 +24,7 @@
 ((type_identifier) @type
   (#not-match? @type "^(int|bool)$"))
 (unit_type) @type.builtin
+(never_type) @type.builtin
 (type_parameter) @type.parameter
 (lifetime) @label
 
@@ -61,7 +62,9 @@
 "let" @keyword
 ["struct" "enum"] @keyword.type
 ["if" "else" "match"] @keyword.conditional
-"while" @keyword.repeat
+["while" "loop" "break"] @keyword.repeat
+(continue_expression) @keyword.repeat
+"return" @keyword.return
 (mutable_specifier) @keyword.storage.modifier
 
 ; Operators and punctuation

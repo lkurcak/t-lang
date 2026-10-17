@@ -105,7 +105,11 @@ const UNARY: u8 = 6;
 fn block_like(e: &Expr) -> bool {
     matches!(
         e.kind,
-        ExprKind::If(..) | ExprKind::Match(..) | ExprKind::While(..) | ExprKind::Block(..)
+        ExprKind::If(..)
+            | ExprKind::Match(..)
+            | ExprKind::While(..)
+            | ExprKind::Loop(..)
+            | ExprKind::Block(..)
     )
 }
 
@@ -460,9 +464,14 @@ impl Printer<'_> {
     fn expr(&mut self, e: &Expr, min: u8, ctx: Ctx) -> Doc {
         let own = match &e.kind {
             ExprKind::Binary(op, ..) => prec(*op),
-            // A closure's body runs as far right as it can, and so does
-            // the value of an assignment.
-            ExprKind::Lambda(_) | ExprKind::Assign(..) => 0,
+            // A closure's body runs as far right as it can, and so do the
+            // value of an assignment, `return` and `break`. Even without a
+            // value they need parentheses as an operand: `return - 1`
+            // returns `-1`.
+            ExprKind::Lambda(_)
+            | ExprKind::Assign(..)
+            | ExprKind::Return(_)
+            | ExprKind::Break(_) => 0,
             _ => UNARY,
         };
         let parens = own < min
@@ -506,6 +515,18 @@ impl Printer<'_> {
             ExprKind::While(c, body) => {
                 group(text("while ") + self.head(c) + self.block_or_expr(body))
             }
+            ExprKind::Loop(body) => group(text("loop ") + self.block_or_expr(body)),
+            ExprKind::Return(value) | ExprKind::Break(value) => {
+                let keyword = match e.kind {
+                    ExprKind::Return(_) => "return",
+                    _ => "break",
+                };
+                match value {
+                    Some(v) => text(keyword) + " " + self.expr(v, 0, ctx.inner()),
+                    None => text(keyword),
+                }
+            }
+            ExprKind::Continue => text("continue"),
             ExprKind::Assign(op, place, value) => {
                 let op = op.map_or(String::new(), |op| op.to_string());
                 let place = self.expr(place, 1, ctx);
@@ -748,7 +769,7 @@ impl Printer<'_> {
         let mut body = self.trailing(span.start + 1);
         for (i, stmt) in stmts.iter().enumerate() {
             let (start, end) = match stmt {
-                Stmt::Let { pat, ty, init } => {
+                Stmt::Let { pat, ty, init, .. } => {
                     let end = match (init, ty) {
                         (Some(init), _) => init.span.end,
                         (None, Some(t)) => t.span.end,
@@ -769,7 +790,7 @@ impl Printer<'_> {
             };
             body = body + line.clone() + self.element(start, i == 0);
             let doc = match stmt {
-                Stmt::Let { pat, ty, init } => {
+                Stmt::Let { pat, ty, init, .. } => {
                     let ty = match ty {
                         Some(t) => text(": ") + self.ty(t),
                         None => Doc::nil(),
@@ -845,6 +866,7 @@ impl Printer<'_> {
                 text(name) + self.types(ANGLES, close, args)
             }
             TypeExprKind::Unit => text("()"),
+            TypeExprKind::Never => text("!"),
             TypeExprKind::Lifetime(name) => text(name),
             TypeExprKind::Ref(lifetime, mutable, inner) => {
                 let mut head = String::from("&");

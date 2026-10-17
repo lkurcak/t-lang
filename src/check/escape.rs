@@ -4,7 +4,8 @@
 //! in a struct or enum. See docs/03-inference.md.
 //!
 //! Returning, storing in a struct, enum or box, and assigning are the only
-//! ways a value can outlive the frame it's in. Calls and fields are always
+//! ways a value can outlive the frame it's in, whether the return is a
+//! function's result or a `return`. Calls and fields are always
 //! safe: every function's result and every field were checked here too.
 //! What a reference points to isn't: it may be a variable of a function
 //! further up, holding a closure that captures from that function's frame,
@@ -183,7 +184,68 @@ impl Checker {
                     found
                 })
             }
+            // A `loop`'s value is what a `break` gives it.
+            ExprKind::Loop(body) => self.break_origin(body, inner),
             _ => None,
+        }
+    }
+
+    /// `origin`, for the values the `break`s in `e` give the `loop` whose
+    /// body `e` is in: the first that may be a closure that has to stay
+    /// where it was made.
+    fn break_origin(&self, e: &Expr, inner: &mut Inner) -> Option<(Origin, Span)> {
+        match &e.kind {
+            ExprKind::Break(Some(v)) => self
+                .origin(v, inner)
+                .or_else(|| self.break_origin(v, inner)),
+            // The `break`s in another loop's body are that loop's, and a
+            // closure's body is a function of its own.
+            ExprKind::Loop(_) | ExprKind::Lambda(_) => None,
+            ExprKind::While(c, _) => self.break_origin(c, inner),
+            ExprKind::Block(stmts, tail) => {
+                let scope = inner.len();
+                let fns = stmts.iter().filter_map(Stmt::as_fn);
+                inner.extend(fns.map(|f| (f.name.name.clone(), None)));
+                let mut found = None;
+                for stmt in stmts {
+                    match stmt {
+                        Stmt::Let { pat, init, .. } => {
+                            if let Some(init) = init {
+                                found = found.or_else(|| self.break_origin(init, inner));
+                            }
+                            let origin = init.as_ref().and_then(|e| self.origin(e, inner));
+                            bind(pat, origin.map(|(o, _)| o), inner);
+                        }
+                        Stmt::Expr(e) | Stmt::BlockLike(e) => {
+                            found = found.or_else(|| self.break_origin(e, inner));
+                        }
+                        Stmt::Fn(_) | Stmt::Type(_) => {}
+                    }
+                }
+                let found = found.or_else(|| {
+                    tail.as_ref()
+                        .and_then(|tail| self.break_origin(tail, inner))
+                });
+                inner.truncate(scope);
+                found
+            }
+            ExprKind::Match(scrutinee, arms) => {
+                let found = self.break_origin(scrutinee, inner);
+                let origin = self.origin(scrutinee, inner).map(|(o, _)| o);
+                found.or_else(|| {
+                    arms.iter().find_map(|arm| {
+                        let scope = inner.len();
+                        bind(&arm.pat, origin.clone(), inner);
+                        let found = self.break_origin(&arm.body, inner);
+                        inner.truncate(scope);
+                        found
+                    })
+                })
+            }
+            _ => e
+                .children()
+                .into_iter()
+                .find_map(|c| self.break_origin(c, inner)),
         }
     }
 }

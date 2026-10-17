@@ -4,7 +4,9 @@
 //! (step 2, see docs/02-adts.md), plus closures, nested functions and types,
 //! and type inference (step 3, see docs/03-inference.md), plus generics
 //! (step 4, see docs/04-generics.md), plus references, boxes, mutation and
-//! moves (step 5, see docs/05-ownership.md). Whether a program uses its
+//! moves (step 5, see docs/05-ownership.md), plus `return`, `break`,
+//! `continue`, `loop` and the never type `!` (see
+//! docs/05.1-control-flow.md). Whether a program uses its
 //! references and moved values correctly is checked after its types are,
 //! by the borrow checker (`borrowck`), from what `typed` records here.
 //!
@@ -52,7 +54,10 @@ use crate::types::{
 use escape::{Escape, Exit, Origin, bound_origin};
 use generics::Use;
 use info::Defs;
-use lints::{Uses, mergeable, narrowable, unreachable_alt, unreachable_arm, unused, unused_doc};
+use lints::{
+    Uses, mergeable, narrowable, unreachable_alt, unreachable_arm, unreachable_code, unused,
+    unused_doc,
+};
 use names::{Scoped, TypeDef};
 use scope::{Binding, FnDef, FnId, FnScope, to_closure};
 use std::collections::{HashMap, HashSet};
@@ -295,6 +300,43 @@ pub(crate) struct Checker {
     pending: Vec<(Span, Instance)>,
     /// The function the first error was in, if it was in one.
     failed_in: Option<String>,
+    /// What a `return` in the code being checked returns from: the type of
+    /// the function's or closure's result. `None` in a closure whose result
+    /// type is still to be inferred, until a `return` needs it.
+    ret: Option<Type>,
+    /// The loops around the code being checked, innermost last, up to the
+    /// function's start: what a `break` or `continue` there goes to.
+    loops: Vec<Target>,
+    /// Whether the code checked so far, in the function being checked,
+    /// certainly never gets to what comes next, *diverges*: it returns,
+    /// breaks out, or loops forever on every path. With where. See
+    /// `block`.
+    diverges: Option<Span>,
+    /// The types a `!` was wanted as while they were still unknown. Those
+    /// that nothing else decides by the end of the function are `!`.
+    diverging: Vec<Type>,
+}
+
+/// What a `break` or `continue` goes to.
+#[derive(Debug)]
+pub(crate) enum Target {
+    Loop(LoopCx),
+    /// The start of a closure's body, which is a function of its own: no
+    /// `break` gets out of it.
+    Closure,
+}
+
+/// A loop being checked.
+#[derive(Debug)]
+pub(crate) struct LoopCx {
+    /// A `while`, whose `break` can't give a value, rather than a `loop`.
+    is_while: bool,
+    /// The type of the loop's value wanted from it, when checking.
+    want: Option<Type>,
+    /// The type of the values its `break`s give it, once one is seen. It
+    /// stays `None` if none ever gets out, so then the loop never ends, and
+    /// is a `!`.
+    value: Option<Type>,
 }
 
 impl Checker {
@@ -336,6 +378,10 @@ impl Checker {
             info,
             pending: Vec::new(),
             failed_in: None,
+            ret: None,
+            loops: Vec::new(),
+            diverges: None,
+            diverging: Vec::new(),
         }
     }
 
@@ -516,6 +562,9 @@ impl Checker {
         let ret = (*sig.ret).clone();
         self.mention(&ret);
         let vars = self.vars.len();
+        self.ret = Some(ret.clone());
+        self.loops.clear();
+        self.diverges = None;
         self.check(&f.body, &ret)?;
         self.leaves(&f.body, &ret, Exit::Return);
         self.end_scope(scope);
@@ -951,12 +1000,15 @@ impl Checker {
     ///
     /// That matters for closures: in `apply(|p| p.x, ..)`, `p` gets its type
     /// from `apply`'s signature before the body reads `p.x`, which needs it.
-    /// Blocks and `match` pass `want` on to their results, so that reaches
-    /// closures inside them too.
+    /// Blocks, `match` and `loop` pass `want` on to their results, so that
+    /// reaches closures inside them too.
+    ///
+    /// A `!` fits whatever is wanted (T-Never).
     fn check(&mut self, e: &Expr, want: &Type) -> Result<(), Error> {
         let got = match &e.kind {
             ExprKind::Block(stmts, tail) => self.block(stmts, tail.as_deref(), Some(want))?,
             ExprKind::Match(scrutinee, arms) => self.match_expr(e, scrutinee, arms, Some(want))?,
+            ExprKind::Loop(body) => self.loop_expr(body, Some(want))?,
             ExprKind::Lambda(l) => {
                 let sig = match self.shallow(want) {
                     Type::Fn(sig) if sig.params.len() == l.params.len() => {
@@ -977,6 +1029,7 @@ impl Checker {
             _ => self.synth(e)?,
         };
         self.typed.exprs.insert(e, got.clone());
+        self.note_never(e, &got);
         if let Some(target) = self.coerce(e, &got, want) {
             return match self.unify(&target, want) {
                 Ok(()) => Ok(()),
@@ -990,9 +1043,68 @@ impl Checker {
                 )),
             };
         }
-        self.unify_or(&got, want, result_span(e), |got, want| {
+        self.fits(&got, want, result_span(e), |got, want| {
             format!("expected `{want}`, found `{got}`")
         })
+    }
+
+    //   Γ ⊢ e : !
+    //  ----------- (T-Never)
+    //   Γ ⊢ e : T
+    //
+    // An expression of type `!` never finishes, so it never gives a value of
+    // the wrong type, or any: it can be used as one of any type. That's
+    // *ex falso quodlibet*, from nothing, anything.
+    //
+    // This rule isn't syntax-directed: it applies to any expression. So it's
+    // only used where the type wanted is known, as `fits`, rather than by
+    // `unify`, which would have to guess.
+
+    /// Like `unify_or`, but `got` fits if it's `!`, by T-Never, whatever
+    /// `want` is. If `want` is a type not known yet, it's noted, to be `!`
+    /// if nothing else decides it (see `solve_all`): in `let x = id(return);`
+    /// the type argument of `id` is `!`.
+    fn fits(
+        &mut self,
+        got: &Type,
+        want: &Type,
+        span: Span,
+        mismatch: impl FnOnce(&Type, &Type) -> String,
+    ) -> Result<(), Error> {
+        if self.shallow(got) != Type::Never {
+            return self.unify_or(got, want, span, mismatch);
+        }
+        if let Type::Var(_) = self.shallow(want) {
+            self.diverging.push(want.clone());
+        }
+        Ok(())
+    }
+
+    /// The type of two branches of types `a` and `b`, one of which runs:
+    /// the other's, if one is `!`, or else both, which must be the same.
+    fn join(
+        &mut self,
+        a: &Type,
+        b: &Type,
+        span: Span,
+        mismatch: impl FnOnce(&Type, &Type) -> String,
+    ) -> Result<Type, Error> {
+        match (self.shallow(a), self.shallow(b)) {
+            (Type::Never, _) => Ok(b.clone()),
+            (_, Type::Never) => Ok(a.clone()),
+            _ => {
+                self.unify_or(a, b, span, mismatch)?;
+                Ok(a.clone())
+            }
+        }
+    }
+
+    /// Notes that the code checked so far diverges if `e` has type `t`, a
+    /// `!`, which has no values to finish with.
+    fn note_never(&mut self, e: &Expr, t: &Type) {
+        if self.shallow(t) == Type::Never && self.diverges.is_none() {
+            self.diverges = Some(e.span);
+        }
     }
 
     /// If `e`, a reference of type `got`, is wanted as a reference of type
@@ -1036,6 +1148,7 @@ impl Checker {
     fn synth(&mut self, e: &Expr) -> Result<Type, Error> {
         let t = self.synth_inner(e)?;
         self.typed.exprs.insert(e, t.clone());
+        self.note_never(e, &t);
         Ok(t)
     }
 
@@ -1152,16 +1265,112 @@ impl Checker {
             //   Γ ⊢ c : bool    Γ ⊢ body : ()
             //  ------------------------------- (T-While)
             //     Γ ⊢ while c { body } : ()
+            //
+            // The body may not run at all, so whether it diverges doesn't
+            // matter to what comes after, and nor does a `break` in it.
             ExprKind::While(c, body) => {
                 self.check(c, &Type::Bool)?;
-                let t = self.synth(body)?;
-                self.unify_or(&t, &Type::Unit, result_span(body), |t, _| {
-                    format!(
-                        "expected `()`, found `{t}`: a `while` loop's body has nowhere for a \
-                         value to go; add `;` to discard it"
-                    )
-                })?;
+                let before = self.diverges.take();
+                self.loops.push(Target::Loop(LoopCx {
+                    is_while: true,
+                    want: None,
+                    value: None,
+                }));
+                let result = self.loop_body(body, "a `while` loop's body");
+                self.loops.pop();
+                self.diverges = before;
+                result?;
                 Ok(Type::Unit)
+            }
+
+            ExprKind::Loop(body) => self.loop_expr(body, None),
+
+            //   Γ ⊢ e : R    R is what the function returns
+            //  -------------------------------------------- (T-Return)
+            //               Γ ⊢ return e : !
+            //
+            // `return` is short for `return ()`. Its own type is `!`: it
+            // never finishes, as control leaves for the caller.
+            ExprKind::Return(value) => {
+                let ret = match self.ret.clone() {
+                    Some(ret) => ret,
+                    None => {
+                        let what = "the type of what this closure returns".to_string();
+                        let ret = self.fresh(
+                            e.span,
+                            what,
+                            "annotate it, e.g. `|x| -> int { .. }`".into(),
+                        );
+                        self.ret = Some(ret.clone());
+                        ret
+                    }
+                };
+                match value {
+                    Some(v) => {
+                        self.check(v, &ret)?;
+                        self.leaves(v, &ret, Exit::Return);
+                    }
+                    None => self.unify_or(&Type::Unit, &ret, e.span, |_, ret| {
+                        format!("a `return` with no value returns `()`, but this returns `{ret}`")
+                    })?,
+                }
+                Ok(Type::Never)
+            }
+
+            //   Γ ⊢ e : T    the loop around is a `loop` of type T
+            //  --------------------------------------------------- (T-Break)
+            //                 Γ ⊢ break e : !
+            //
+            //   the loop around is a `loop` of type () or a `while`
+            //  ---------------------------------------------------- (T-Break-Unit)
+            //                  Γ ⊢ break : !
+            //
+            //   there's a loop around
+            //  ----------------------- (T-Continue)
+            //   Γ ⊢ continue : !
+            ExprKind::Break(value) => {
+                let i = self.target(e.span, "break")?;
+                let Target::Loop(lp) = &self.loops[i] else {
+                    unreachable!("a loop")
+                };
+                if lp.is_while && value.is_some() {
+                    return Err(Error::ty(
+                        e.span,
+                        "a `break` with a value only works in a `loop`: a `while` loop can end \
+                         without a `break`, and then it has no value to give",
+                    ));
+                }
+                let target = lp.value.clone().or_else(|| lp.want.clone());
+                let t = match (value, target) {
+                    (Some(v), Some(t)) => {
+                        self.check(v, &t)?;
+                        Some(t)
+                    }
+                    (Some(v), None) => Some(self.synth(v)?),
+                    (None, target) => {
+                        if let Some(t) = &target {
+                            self.unify_or(&Type::Unit, t, e.span, |_, t| {
+                                format!(
+                                    "a `break` with no value gives the loop `()`, but it should \
+                                     be `{t}`"
+                                )
+                            })?;
+                        }
+                        Some(Type::Unit)
+                    }
+                };
+                // A value of type `!` never gets as far as the `break`.
+                let t = t.filter(|t| self.shallow(t) != Type::Never);
+                if let (Some(t), Target::Loop(lp)) = (t, &mut self.loops[i])
+                    && lp.value.is_none()
+                {
+                    lp.value = Some(t);
+                }
+                Ok(Type::Never)
+            }
+            ExprKind::Continue => {
+                self.target(e.span, "continue")?;
+                Ok(Type::Never)
             }
 
             ExprKind::Binary(op, l, r) => match op {
@@ -1186,9 +1395,14 @@ impl Checker {
                 //   Γ ⊢ l : bool   Γ ⊢ r : bool
                 //  ----------------------------- (T-Logic) for && ||
                 //       Γ ⊢ l && r : bool
+                //
+                // The right side may not run, so whether it diverges doesn't
+                // matter to what comes after.
                 BinOp::And | BinOp::Or => {
                     self.check(l, &Type::Bool)?;
+                    let before = self.diverges.take();
                     self.check(r, &Type::Bool)?;
+                    self.diverges = before;
                     Ok(Type::Bool)
                 }
 
@@ -1264,25 +1478,33 @@ impl Checker {
             //   Γ ⊢ c : bool   Γ ⊢ a : ()
             //  --------------------------- (T-If-NoElse)
             //     Γ ⊢ if c { a } : ()
+            //
+            // If one branch is a `!`, the `if` has the other's type (T-Never).
+            // It diverges if both branches do.
             ExprKind::If(c, then, els) => {
                 self.check(c, &Type::Bool)?;
-                match els {
+                let before = self.diverges.take();
+                let t = match els {
                     Some(els) => {
                         let t = self.synth(then)?;
+                        let then_diverges = self.diverges.take();
                         let u = self.synth(els)?;
-                        self.unify_or(&t, &u, result_span(els), |t, u| {
+                        let both = then_diverges.is_some() && self.diverges.is_some();
+                        self.diverges = before.or(both.then_some(e.span));
+                        self.join(&t, &u, result_span(els), |t, u| {
                             format!("`if` and `else` have different types: `{t}` and `{u}`")
-                        })?;
-                        Ok(t)
+                        })?
                     }
                     None => {
                         let t = self.synth(then)?;
-                        self.unify_or(&t, &Type::Unit, result_span(then), |t, _| {
+                        self.diverges = before;
+                        self.fits(&t, &Type::Unit, result_span(then), |t, _| {
                             format!("`if` without `else` must have type `()`, found `{t}`")
                         })?;
-                        Ok(Type::Unit)
+                        Type::Unit
                     }
-                }
+                };
+                Ok(t)
             }
 
             ExprKind::Block(stmts, tail) => self.block(stmts, tail.as_deref(), None),
@@ -1427,6 +1649,60 @@ impl Checker {
         }
     }
 
+    //   Γ ⊢ body : ()    the `break`s in body give T
+    //  ---------------------------------------------- (T-Loop)
+    //            Γ ⊢ loop { body } : T
+    //
+    //   Γ ⊢ body : ()    no `break` in body gets out
+    //  -------------------------------------------- (T-Loop-Never)
+    //            Γ ⊢ loop { body } : !
+    //
+    // The only way out of a `loop` is a `break`, so its value is what they
+    // give it. With none, it never ends.
+    fn loop_expr(&mut self, body: &Expr, want: Option<&Type>) -> Result<Type, Error> {
+        let before = self.diverges.take();
+        self.loops.push(Target::Loop(LoopCx {
+            is_while: false,
+            want: want.cloned(),
+            value: None,
+        }));
+        let result = self.loop_body(body, "a `loop`'s body");
+        let Some(Target::Loop(lp)) = self.loops.pop() else {
+            unreachable!("pushed a loop")
+        };
+        self.diverges = before;
+        result?;
+        Ok(lp.value.unwrap_or(Type::Never))
+    }
+
+    /// Checks the body of a `while` or `loop`, which must be a `()`, as a
+    /// value would have nowhere to go. `what` names it in the message.
+    fn loop_body(&mut self, body: &Expr, what: &str) -> Result<(), Error> {
+        let t = self.synth(body)?;
+        self.fits(&t, &Type::Unit, result_span(body), |t, _| {
+            format!(
+                "expected `()`, found `{t}`: {what} has nowhere for a value to go; add `;` to \
+                 discard it"
+            )
+        })
+    }
+
+    /// The index in `loops` of the loop a `break` or `continue` (`what`) at
+    /// `span` goes to: the innermost.
+    fn target(&self, span: Span, what: &str) -> Result<usize, Error> {
+        match self.loops.last() {
+            Some(Target::Loop(_)) => Ok(self.loops.len() - 1),
+            Some(Target::Closure) => Err(Error::ty(
+                span,
+                format!(
+                    "can't `{what}` out of a closure: its body is a function of its own, so the \
+                     loop around it isn't its to leave"
+                ),
+            )),
+            None => Err(Error::ty(span, format!("`{what}` outside of a loop"))),
+        }
+    }
+
     //   Γ, x1 : T1, .., xn : Tn ⊢ e : R
     //  ---------------------------------- (T-Abs)
     //   Γ ⊢ |x1, .., xn| e : fn(T1, .., Tn) -> R
@@ -1439,7 +1715,23 @@ impl Checker {
     // signature wanted when checking (see `check`). Failing those, each is a
     // fresh variable, for `unify` to solve from how the body and the callers
     // use it.
+    //
+    // A `return` in the body returns from the closure, and nothing in it can
+    // `break` out of a loop around it: the body is a function of its own.
+    // Whether it diverges doesn't matter to the code around: making a
+    // closure doesn't run it.
     fn lambda(&mut self, l: &Lambda, sig: Option<(Vec<Type>, Type)>) -> Result<Type, Error> {
+        let outer_ret = self.ret.take();
+        let outer_diverges = self.diverges.take();
+        self.loops.push(Target::Closure);
+        let result = self.lambda_inner(l, sig);
+        self.loops.pop();
+        self.ret = outer_ret;
+        self.diverges = outer_diverges;
+        result
+    }
+
+    fn lambda_inner(&mut self, l: &Lambda, sig: Option<(Vec<Type>, Type)>) -> Result<Type, Error> {
         // What it captures is copied into it, so must be `Copy`, and must
         // not hold a reference, which the closure could outlive: whether it
         // does is checked once their types are known.
@@ -1488,12 +1780,25 @@ impl Checker {
             Some(ann) => Some(self.annotation(ann, wanted)?),
             None => wanted,
         };
+        self.ret = ret.clone();
         let ret = match ret {
             Some(r) => {
                 self.check(&l.body, &r)?;
                 r
             }
-            None => self.synth(&l.body)?,
+            // Its result is that of the body, and of any `return` in it.
+            None => {
+                let t = self.synth(&l.body)?;
+                match self.ret.clone() {
+                    Some(r) => {
+                        self.fits(&t, &r, result_span(&l.body), |t, r| {
+                            format!("this closure returns `{r}`, but its body is `{t}`")
+                        })?;
+                        r
+                    }
+                    None => t,
+                }
+            }
         };
         self.leaves(&l.body, &ret, Exit::Return);
         self.end_scope(scope);
@@ -1530,6 +1835,14 @@ impl Checker {
     // A nested `fn` extends the context of the whole block, before it as
     // well as after, so that it can be recursive, and nested functions can
     // call each other. Its body is checked as if it were at the top level.
+    //
+    //   Γ ⊢ { stmts } diverges
+    //  ------------------------ (T-Block-Never)
+    //    Γ ⊢ { stmts } : !
+    //
+    // A block with no tail is a `()`, unless it never gets to its end, say
+    // as it ends with a `return`: then it's a `!`. Code that comes after
+    // something that diverges never runs, and gets a warning.
     fn block(
         &mut self,
         stmts: &[Stmt],
@@ -1550,7 +1863,17 @@ impl Checker {
             let fns = fns.iter().map(|f| self.nested_ids[&f.name.span]).collect();
             self.scopes.push(FnScope { at: scope, fns });
         }
+        // If the code before the block diverges, that's for the code
+        // around it to warn about.
+        let mut warned = self.diverges.is_some();
         for (k, stmt) in stmts.iter().enumerate() {
+            if !warned
+                && self.diverges.is_some()
+                && let Some(span) = stmt_span(stmt)
+            {
+                self.warnings.push(unreachable_code(span));
+                warned = true;
+            }
             match stmt {
                 Stmt::Fn(f) => {
                     let fix = to_closure(f, stmts, k, tail);
@@ -1558,7 +1881,7 @@ impl Checker {
                 }
                 // Checked with the others, before any function.
                 Stmt::Type(_) => {}
-                Stmt::Let { pat, ty, init } => {
+                Stmt::Let { pat, ty, init, .. } => {
                     // `let x;`: given its value later, by assignment, which
                     // can only give a whole variable one.
                     let deferred = match (&pat.kind, init) {
@@ -1638,10 +1961,11 @@ impl Checker {
                     let what = match e.kind {
                         ExprKind::If(..) => "`if`",
                         ExprKind::Match(..) => "`match`",
+                        ExprKind::Loop(..) => "`loop`",
                         _ => "block",
                     };
                     let (start, end) = (e.span.start, e.span.end);
-                    self.unify_or(&t, &Type::Unit, result_span(e), |t, _| {
+                    self.fits(&t, &Type::Unit, result_span(e), |t, _| {
                         format!(
                             "expected `()`, found `{t}`: this {what} is a statement, so its \
                              value would be lost; add `;` to discard it, or wrap it in \
@@ -1661,12 +1985,16 @@ impl Checker {
                 }
             }
         }
+        if let (false, Some(_), Some(tail)) = (warned, self.diverges, tail) {
+            self.warnings.push(unreachable_code(tail.span));
+        }
         let t = match (tail, want) {
             (Some(tail), Some(want)) => {
                 self.check(tail, want)?;
                 want.clone()
             }
             (Some(tail), None) => self.synth(tail)?,
+            (None, _) if self.diverges.is_some() => Type::Never,
             (None, _) => Type::Unit,
         };
         self.end_scope(scope);
@@ -1724,7 +2052,15 @@ impl Checker {
             ));
         }
 
-        let mut result = want.cloned();
+        // No arms: `match n {}`, on a value that can't exist, so it's
+        // never run. It's a `!`, the type with no values, as it should be,
+        // and diverges, as all of its arms do.
+        let mut result = match arms.is_empty() {
+            true => Some(Type::Never),
+            false => want.cloned(),
+        };
+        let before = self.diverges.take();
+        let mut all_diverge = true;
         for (arm, b) in arms.iter().zip(binds) {
             let scope = self.locals.len();
             self.locals.extend(b);
@@ -1733,23 +2069,18 @@ impl Checker {
                 (Some(r), None) => {
                     let r = r.clone();
                     let u = self.synth(&arm.body)?;
-                    self.unify_or(&r, &u, result_span(&arm.body), |r, u| {
+                    let joined = self.join(&r, &u, result_span(&arm.body), |r, u| {
                         format!("`match` arms have different types: `{r}` and `{u}`")
                     })?;
+                    result = Some(joined);
                 }
                 (None, _) => result = Some(self.synth(&arm.body)?),
             }
+            all_diverge &= self.diverges.take().is_some();
             self.end_scope(scope);
         }
-        // No arms and no type wanted: `let x = match n {};`. Its type is
-        // whatever the rest of the function needs it to be.
-        Ok(result.unwrap_or_else(|| {
-            self.fresh(
-                e.span,
-                "the type of this `match`".into(),
-                "it has no arms to tell, so give it a type, e.g. `let x: int = match ..`".into(),
-            )
-        }))
+        self.diverges = before.or(all_diverge.then_some(e.span));
+        Ok(result.expect("an arm, or none and `!`"))
     }
 
     /// Checks that pattern `p` can match values of type `ty`, and adds the
@@ -2127,7 +2458,7 @@ impl Checker {
             }
             Type::Ref(_, _, inner) | Type::Box(inner) => self.incomparable_in(inner, seen),
             // Only called on types with no variables in them.
-            Type::Int | Type::Bool | Type::Unit | Type::Var(_) => None,
+            Type::Int | Type::Bool | Type::Unit | Type::Never | Type::Var(_) => None,
         }
     }
 
@@ -2248,6 +2579,16 @@ fn derive_copy(
         }
     }
     Ok(())
+}
+
+/// Where a statement is, if it's code, which runs, rather than a nested
+/// function or type.
+fn stmt_span(stmt: &Stmt) -> Option<Span> {
+    match stmt {
+        Stmt::Let { span, .. } => Some(*span),
+        Stmt::Expr(e) | Stmt::BlockLike(e) => Some(e.span),
+        Stmt::Fn(_) | Stmt::Type(_) => None,
+    }
 }
 
 /// Where variable `name` is first used in `e`, if it is.

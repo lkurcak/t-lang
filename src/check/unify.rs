@@ -181,7 +181,15 @@ impl Checker {
     /// Leaving a variable unsolved would be harmless to the interpreter, which
     /// never looks at types. But a compiler has to know how big a value is
     /// and how to pass it, so like Rust, T asks for an annotation.
+    ///
+    /// A type a `!` was wanted as that nothing decided is `!` (see `fits`).
     pub(super) fn solve_all(&mut self, vars: usize) -> Result<(), Error> {
+        for t in std::mem::take(&mut self.diverging) {
+            if let Type::Var(_) = self.shallow(&t) {
+                self.unify(&t, &Type::Never)
+                    .unwrap_or_else(|_| unreachable!("a variable fits anything"));
+            }
+        }
         self.check_escapes()?;
         self.check_captures()?;
         for (t, span, op) in std::mem::take(&mut self.comparisons) {

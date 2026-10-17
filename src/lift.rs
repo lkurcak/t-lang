@@ -128,7 +128,7 @@ impl<'p> Cx<'p> {
             TypeExprKind::Named(name, args) => {
                 TypeExprKind::Named(self.renamed(name, t.span), self.types(args))
             }
-            TypeExprKind::Unit | TypeExprKind::Lifetime(_) => t.kind.clone(),
+            TypeExprKind::Unit | TypeExprKind::Never | TypeExprKind::Lifetime(_) => t.kind.clone(),
             TypeExprKind::Fn(params, ret) => {
                 TypeExprKind::Fn(self.types(params), Box::new(self.ty(ret)))
             }
@@ -147,7 +147,9 @@ impl<'p> Cx<'p> {
     /// order. Local types are taken out too: `lift` has them already.
     fn expr(&self, e: &'p Expr, nested: &mut Vec<&'p FnDecl>) -> Expr {
         let kind = match &e.kind {
-            ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit => e.kind.clone(),
+            ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit | ExprKind::Continue => {
+                e.kind.clone()
+            }
             ExprKind::Var(name, targs) => {
                 ExprKind::Var(self.renamed(name, e.span), self.types(targs))
             }
@@ -171,7 +173,13 @@ impl<'p> Cx<'p> {
                     .iter()
                     .filter_map(|s| {
                         Some(match s {
-                            Stmt::Let { pat, ty, init } => Stmt::Let {
+                            Stmt::Let {
+                                pat,
+                                ty,
+                                init,
+                                span,
+                            } => Stmt::Let {
+                                span: *span,
                                 pat: self.pattern(pat),
                                 ty: ty.as_ref().map(|t| Box::new(self.ty(t))),
                                 init: init.as_ref().map(|e| self.expr(e, nested)),
@@ -241,6 +249,13 @@ impl<'p> Cx<'p> {
                 Box::new(self.expr(c, nested)),
                 Box::new(self.expr(body, nested)),
             ),
+            ExprKind::Loop(body) => ExprKind::Loop(Box::new(self.expr(body, nested))),
+            ExprKind::Return(x) => {
+                ExprKind::Return(x.as_ref().map(|x| Box::new(self.expr(x, nested))))
+            }
+            ExprKind::Break(x) => {
+                ExprKind::Break(x.as_ref().map(|x| Box::new(self.expr(x, nested))))
+            }
         };
         let e = Expr { kind, span: e.span };
         match self.info.coercions.get(&e.span) {

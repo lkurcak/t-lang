@@ -234,6 +234,10 @@ pub(super) struct Outer {
     captures: Vec<(String, crate::types::Type, Span)>,
     escapes: Vec<super::escape::Escape>,
     closure_fix: Option<(usize, Fix)>,
+    ret: Option<crate::types::Type>,
+    loops: Vec<super::Target>,
+    diverges: Option<Span>,
+    diverging: Vec<crate::types::Type>,
 }
 
 impl Checker {
@@ -255,6 +259,10 @@ impl Checker {
             captures: std::mem::take(&mut self.captures),
             escapes: std::mem::take(&mut self.escapes),
             closure_fix: std::mem::take(&mut self.closure_fix),
+            ret: self.ret.take(),
+            loops: std::mem::take(&mut self.loops),
+            diverges: self.diverges.take(),
+            diverging: std::mem::take(&mut self.diverging),
         };
         self.closure_fix = fix.map(|fix| (outer.barrier, fix));
         let result = self.body(f, id);
@@ -266,6 +274,10 @@ impl Checker {
         self.captures = outer.captures;
         self.escapes = outer.escapes;
         self.closure_fix = outer.closure_fix;
+        self.ret = outer.ret;
+        self.loops = outer.loops;
+        self.diverges = outer.diverges;
+        self.diverging = outer.diverging;
         result
     }
 }
