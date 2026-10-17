@@ -14,7 +14,7 @@
 //! It formats a file like `t fmt`, ignoring the editor's formatting
 //! options: there's one style. It never runs the program.
 
-use crate::ast::{FnDecl, Program, TypeDecl};
+use crate::ast::{FnDecl, MethodOf, Program, TypeDecl};
 use crate::check::{Info, NoteKind};
 use crate::error::{Error, Fix, Lint, Phase, Span, Warning};
 use crate::fmt::FmtError;
@@ -413,12 +413,24 @@ fn adts<'t>(t: &'t Type, out: &mut Vec<&'t str>) {
     }
 }
 
-/// The outline of `prog`: its functions, structs and enums, with the
-/// fields and variants of each type, and the nested functions and local
-/// types of each function, under it. In source order.
+/// The outline of `prog`: its functions, structs, enums, traits and
+/// impls, with the fields and variants of each type, the methods of each
+/// trait and impl, and the nested functions and local types of each
+/// function, under it. In source order.
 fn outline(src: &str, prog: &Program) -> Vec<DocumentSymbol> {
     let fns = prog.all_fns();
+    let methods = prog.methods();
     let mut inside: Vec<Vec<DocumentSymbol>> = vec![Vec::new(); fns.len()];
+    let mut impls: Vec<Vec<DocumentSymbol>> = vec![Vec::new(); prog.impls.len()];
+    let mut traits: Vec<Vec<DocumentSymbol>> = vec![Vec::new(); prog.traits.len()];
+    // Those with a default are among the functions.
+    for (t, children) in prog.traits.iter().zip(&mut traits) {
+        for m in t.methods.iter().filter(|m| !m.provided) {
+            let mut s = fn_symbol(src, &m.decl, Vec::new());
+            s.kind = SymbolKind::METHOD;
+            children.push(s);
+        }
+    }
     let mut top = Vec::new();
     for (d, f) in prog.all_types() {
         let s = type_symbol(src, d);
@@ -431,11 +443,50 @@ fn outline(src: &str, prog: &Program) -> Vec<DocumentSymbol> {
     for (i, &(f, parent)) in fns.iter().enumerate().rev() {
         let mut children = std::mem::take(&mut inside[i]);
         sort(&mut children);
-        let s = fn_symbol(src, f, children);
-        match parent {
-            Some(p) => inside[p].push(s),
-            None => top.push(s),
+        let mut s = fn_symbol(src, f, children);
+        let method = i.checked_sub(prog.fns.len()).and_then(|j| methods.get(j));
+        match (parent, method) {
+            (Some(p), _) => inside[p].push(s),
+            (None, Some(&(_, of))) => {
+                s.kind = SymbolKind::METHOD;
+                match of {
+                    MethodOf::Impl(k) => impls[k].push(s),
+                    MethodOf::Trait(k) => traits[k].push(s),
+                }
+            }
+            (None, None) => top.push(s),
         }
+    }
+    for (t, mut children) in prog.traits.iter().zip(traits) {
+        sort(&mut children);
+        let detail = format!("trait {}", t.name.name);
+        top.push(symbol(
+            src,
+            &t.name,
+            detail,
+            SymbolKind::INTERFACE,
+            t.span,
+            children,
+        ));
+    }
+    for (d, mut children) in prog.impls.iter().zip(impls) {
+        sort(&mut children);
+        let header = match &d.trait_name {
+            Some(t) => format!("impl {} for {}", t.name, d.self_ty),
+            None => format!("impl {}", d.self_ty),
+        };
+        let name = crate::ast::Ident {
+            name: header.clone(),
+            span: d.self_ty.span,
+        };
+        top.push(symbol(
+            src,
+            &name,
+            header,
+            SymbolKind::OBJECT,
+            d.span,
+            children,
+        ));
     }
     sort(&mut top);
     top

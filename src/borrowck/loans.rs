@@ -8,6 +8,14 @@
 //! meet. Then each access to a place is checked against the loans in scope
 //! there: reading clashes with a `&mut` loan of an overlapping place, and
 //! writing, moving or dropping clashes with any.
+//!
+//! A *two-phase* loan, the `&mut` a method call takes of its receiver, is
+//! only *reserved* where it's made, and clashes only as a shared one would
+//! until it's *activated*, at the call. Then it's checked as a `&mut`
+//! borrow made there. So `v.push(v.len())` is fine: `v.len()` only reads
+//! `v`, between the two. Without that, the `&mut v` made first, as the
+//! receiver is the first argument, would be in the way. Only those loans
+//! are two-phase, as in Rust, where it was added for the same reason.
 
 use super::build::{Builder, Loan, project};
 use super::describe;
@@ -15,6 +23,16 @@ use super::mir::*;
 use super::regions::Solution;
 use crate::error::{Error, Span};
 use crate::types::Type;
+
+/// Where a loan is: not in scope, in scope but only reserved (a
+/// two-phase `&mut` not activated yet), or in scope. Where paths meet, a
+/// loan is as far along as it is on either.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Phase {
+    Out,
+    Reserved,
+    In,
+}
 
 /// How a statement uses a place.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +92,8 @@ fn accesses(s: &Statement) -> Vec<(Place, Access)> {
         }
         StmtKind::Inspect(p) => out.push((p.clone(), Access::Inspect)),
         StmtKind::Dead(l) => out.push((Place::local(*l), Access::Dead)),
+        // Checked in `conflicts`, against the other loans.
+        StmtKind::Activate(_) => {}
     }
     out
 }
@@ -112,8 +132,8 @@ fn overlaps(b: &Builder, loan: &Place, place: &Place, access: Access) -> bool {
 pub(crate) fn check(b: &Builder, sol: &Solution) -> Result<(), Error> {
     let body = &b.body;
     let n = b.loans.len();
-    let mut ins: Vec<Option<Vec<bool>>> = vec![None; body.blocks.len()];
-    ins[0] = Some(vec![false; n]);
+    let mut ins: Vec<Option<Vec<Phase>>> = vec![None; body.blocks.len()];
+    ins[0] = Some(vec![Phase::Out; n]);
     let mut todo = vec![0];
     let mut first: Option<Error> = None;
     while let Some(bb) = todo.pop() {
@@ -139,7 +159,7 @@ pub(crate) fn check(b: &Builder, sol: &Solution) -> Result<(), Error> {
         for succ in body.successors(Bb(bb)) {
             let new = match &ins[succ.0] {
                 None => live.clone(),
-                Some(old) => old.iter().zip(&live).map(|(a, b)| *a || *b).collect(),
+                Some(old) => old.iter().zip(&live).map(|(a, b)| *a.max(b)).collect(),
             };
             if ins[succ.0].as_ref() != Some(&new) {
                 ins[succ.0] = Some(new);
@@ -154,55 +174,77 @@ pub(crate) fn check(b: &Builder, sol: &Solution) -> Result<(), Error> {
 }
 
 /// Drops the loans whose regions don't hold `point` from `live`.
-fn in_region(b: &Builder, sol: &Solution, live: &mut [bool], point: Point) {
+fn in_region(b: &Builder, sol: &Solution, live: &mut [Phase], point: Point) {
     for (i, l) in b.loans.iter().enumerate() {
-        if live[i] && !sol.holds(l.region, point) {
-            live[i] = false;
+        if live[i] != Phase::Out && !sol.holds(l.region, point) {
+            live[i] = Phase::Out;
         }
     }
 }
 
 /// What statement `s`, at `point`, does to the loans in scope: those of
-/// places it gives new values go, and the one it makes comes.
-fn effect(b: &Builder, live: &mut [bool], s: &Statement, point: Point) {
+/// places it gives new values go, the one it makes comes, and the one it
+/// activates is a `&mut` from then on.
+fn effect(b: &Builder, live: &mut [Phase], s: &Statement, point: Point) {
     let gone = match &s.kind {
         StmtKind::Assign { place, .. } => Some(place.clone()),
         StmtKind::Dead(l) => Some(Place::local(*l)),
         StmtKind::Inspect(_) => None,
+        StmtKind::Activate(i) => {
+            live[*i] = Phase::In;
+            None
+        }
     };
     for (i, l) in b.loans.iter().enumerate() {
         if let Some(p) = &gone
             && l.place.within(p)
         {
-            live[i] = false;
+            live[i] = Phase::Out;
         }
         if l.point == point {
-            live[i] = true;
+            live[i] = match l.two_phase {
+                true => Phase::Reserved,
+                false => Phase::In,
+            };
         }
     }
 }
 
 /// The first clash between what `s` does and the loans in `live`.
-fn conflicts(b: &Builder, sol: &Solution, live: &[bool], s: &Statement) -> Result<(), Error> {
-    for (place, access) in accesses(s) {
+fn conflicts(b: &Builder, sol: &Solution, live: &[Phase], s: &Statement) -> Result<(), Error> {
+    let mut accesses = accesses(s);
+    // Activating a loan borrows its place `&mut`, here, but it doesn't
+    // clash with itself.
+    let activated = match s.kind {
+        StmtKind::Activate(i) => {
+            accesses.push((b.loans[i].place.clone(), Access::BorrowMut));
+            Some(i)
+        }
+        _ => None,
+    };
+    for (place, access) in accesses {
         for (i, loan) in b.loans.iter().enumerate() {
-            if !live[i] || !(loan.mutable || access.writes()) {
+            // A reserved loan is only shared, so far.
+            let mutable = loan.mutable && live[i] == Phase::In;
+            if live[i] == Phase::Out || !(mutable || access.writes()) || activated == Some(i) {
                 continue;
             }
             if overlaps(b, &loan.place, &place, access) {
                 let escapes = !sol.ends(loan.region, b.regions.universal.len()).is_empty();
-                return Err(clash(b, loan, &place, access, s.span, escapes));
+                return Err(clash(b, loan, mutable, &place, access, s.span, escapes));
             }
         }
     }
     Ok(())
 }
 
-/// The error for `access` to `place` at `span` while `loan` is in scope.
-/// `escapes` says the loan lasts past the end of the function.
+/// The error for `access` to `place` at `span` while `loan` is in scope,
+/// as a `&mut` if `mutable`. `escapes` says the loan lasts past the end of
+/// the function.
 fn clash(
     b: &Builder,
     loan: &Loan,
+    mutable: bool,
     place: &Place,
     access: Access,
     span: Span,
@@ -210,7 +252,7 @@ fn clash(
 ) -> Error {
     let target = describe(b, place);
     let borrowed = describe(b, &loan.place);
-    let kind = match loan.mutable {
+    let kind = match mutable {
         true => "mutably borrowed",
         false => "borrowed",
     };
@@ -224,7 +266,7 @@ fn clash(
         Access::Borrow => {
             format!("cannot borrow `{target}` while `{borrowed}` is mutably borrowed")
         }
-        Access::BorrowMut if loan.mutable => format!(
+        Access::BorrowMut if mutable => format!(
             "cannot borrow `{target}` as mutable more than once at a time: `{borrowed}` is \
              already mutably borrowed"
         ),

@@ -17,11 +17,24 @@
 //! It works on a program with no nested functions or local types left (see
 //! `lift.rs`), so everything has a name of its own.
 //!
+//! A call of a trait's method, like `<Show>::show` at `Self = T`, becomes a
+//! call of the impl's: once `T` is known, as it is in each copy, trait
+//! resolution finds the one impl of `Show` for it (see `traits.rs`), and the
+//! copy is of that impl's `show`, or the trait's default if it has none.
+//! It's named after the type and trait, as `<Point as Show>::show`, and an
+//! inherent method's after the type, as `<Point>::len`. Traits and impls
+//! are gone after this: all that's left of them is plain functions, and
+//! which types are `Copy` and `Eq`, which each type's copy says with a
+//! `#[derive(..)]`. The `eq` of a built-in or derived `Eq` is `==`, which
+//! the interpreter does field by field, calling `<T as Eq>::eq` for a type
+//! `T` with an `eq` of its own.
+//!
 //! The interpreter runs what comes out of here, and `t mono` prints it.
 
 use crate::ast::*;
 use crate::check::{self, Info, Instance};
 use crate::error::{Error, Span};
+use crate::traits::Source;
 use crate::types::{Region, Subst, Type};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -75,11 +88,29 @@ struct Copy {
     needed_by: Option<String>,
 }
 
+/// A function to make copies of: its declaration, all its type parameters
+/// (for a method, its impl's or `Self` first), what `Self` is in it, for a
+/// method of an impl, and its impl's lifetime parameters.
+struct Decl<'p> {
+    f: &'p FnDecl,
+    params: Vec<String>,
+    self_ty: Option<Type>,
+    lifetimes: Vec<Ident>,
+}
+
+/// What a call of a method names, once it's known what type it's of.
+enum Target {
+    /// Function `.0` at type arguments `.1`, whose copy is called `.2`.
+    Fn(String, Vec<Type>, String),
+    /// The `eq` of a built-in or derived `Eq`, of the type: `==`.
+    Eq(Type),
+}
+
 struct Mono<'p> {
     prog: &'p Program,
     info: &'p Info,
     arities: HashMap<String, (usize, usize)>,
-    fns: HashMap<&'p str, &'p FnDecl>,
+    fns: HashMap<&'p str, Decl<'p>>,
     types: HashMap<&'p str, &'p TypeDecl>,
     /// Every copy of a generic function so far, by name, and their names in
     /// the order they were first needed.
@@ -106,7 +137,7 @@ impl<'p> Mono<'p> {
                     (d.name().name.clone(), arity)
                 })
                 .collect(),
-            fns: prog.fns.iter().map(|f| (f.name.name.as_str(), f)).collect(),
+            fns: decls(prog, info),
             types: prog
                 .types
                 .iter()
@@ -128,7 +159,7 @@ impl<'p> Mono<'p> {
         for f in prog.fns.iter().filter(|f| f.generics.types.is_empty()) {
             fns.insert(
                 f.name.name.clone(),
-                self.function(f, &Subst::default(), None),
+                self.function(f, &Subst::default(), &[], None),
             );
         }
         let mut types: HashMap<String, TypeDecl> = HashMap::new();
@@ -138,9 +169,16 @@ impl<'p> Mono<'p> {
         loop {
             if let Some(name) = self.fn_queue.pop() {
                 let copy = &self.copies[&name];
-                let f = self.fns[copy.of.as_str()];
-                let s = Subst::new(&names(&f.generics.types), &copy.args.clone());
-                let decl = self.function(f, &s, Some(&name));
+                let d = &self.fns[copy.of.as_str()];
+                let (f, params) = (d.f, d.params.clone());
+                let lifetimes = d.lifetimes.clone();
+                let mut s = Subst::new(&params, &copy.args.clone());
+                if let Some(t) = &d.self_ty {
+                    let t = s.apply(t);
+                    s = s.with_type("Self", t);
+                }
+                let mut decl = self.function(f, &s, &params, Some(&name));
+                decl.generics.lifetimes.splice(0..0, lifetimes);
                 fns.insert(name, decl);
             } else if let Some((name, args)) = self.type_queue.pop() {
                 let d = self.types[name.as_str()];
@@ -154,6 +192,8 @@ impl<'p> Mono<'p> {
         // Doc comments that document nothing don't matter to the program.
         let mut out = Program {
             types: Vec::new(),
+            traits: Vec::new(),
+            impls: Vec::new(),
             fns: Vec::new(),
             stray_docs: Vec::new(),
         };
@@ -179,13 +219,24 @@ impl<'p> Mono<'p> {
                 }
             }
         }
+        // Then the methods, in the order they were first needed.
+        for copy in &self.copy_order {
+            out.fns.extend(fns.remove(copy));
+        }
         out
     }
 
-    /// The name of the copy of function `name` for `args`, making it if
-    /// it's new. `at` is the use that needs it, in copy `by`, if any.
-    fn fn_copy(&mut self, name: &str, args: Vec<Type>, at: Span, by: Option<&str>) -> String {
-        let mangled = mangle(name, &args);
+    /// The name of the copy of function `name` for `args`, `mangled`,
+    /// making it if it's new. `at` is the use that needs it, in copy `by`,
+    /// if any.
+    fn named_copy(
+        &mut self,
+        name: &str,
+        args: Vec<Type>,
+        mangled: String,
+        at: Span,
+        by: Option<&str>,
+    ) -> String {
         if !self.copies.contains_key(&mangled) {
             self.fn_queue.push(mangled.clone());
             let copy = Copy {
@@ -214,13 +265,16 @@ impl<'p> Mono<'p> {
         mangled
     }
 
-    /// The copy of `f` with type parameters replaced as `s` says, named
-    /// `name` (or as it was, if it isn't generic).
-    fn function(&mut self, f: &FnDecl, s: &Subst, name: Option<&str>) -> FnDecl {
+    /// The copy of `f`, which has type parameters `params`, with them
+    /// replaced as `s` says, named `name` (or as it was, if it isn't
+    /// generic).
+    fn function(&mut self, f: &FnDecl, s: &Subst, params: &[String], name: Option<&str>) -> FnDecl {
+        let mut params = params.to_vec();
+        params.push("Self".into());
         let mut cx = Cx {
             m: self,
             s,
-            params: names(&f.generics.types),
+            params,
             copy: name,
         };
         FnDecl {
@@ -263,6 +317,25 @@ impl<'p> Mono<'p> {
             name: mangle(&d.name().name, args),
             span: d.name().span,
         };
+        // Whether it's `Copy` and `Eq`, which the checker of what this
+        // makes takes the copy's word for.
+        let ty = Type::Adt(d.name().name.clone(), Vec::new(), args.to_vec());
+        let traits = &cx.m.info.traits;
+        let names: Vec<Ident> = ["Copy", "Eq"]
+            .into_iter()
+            .filter(|tr| traits.implements(&ty, tr, &[]).is_ok())
+            .map(|tr| Ident {
+                name: tr.into(),
+                span: d.name().span,
+            })
+            .collect();
+        let derives = match names.is_empty() {
+            true => Vec::new(),
+            false => vec![Derive {
+                span: d.name().span,
+                names,
+            }],
+        };
         match d {
             TypeDecl::Struct(st) => TypeDecl::Struct(StructDecl {
                 doc: st.doc.clone(),
@@ -270,7 +343,7 @@ impl<'p> Mono<'p> {
                 span: st.span,
                 name,
                 generics: lifetimes_only(&st.generics),
-                derives: st.derives.clone(),
+                derives,
                 fields: st
                     .fields
                     .iter()
@@ -289,7 +362,7 @@ impl<'p> Mono<'p> {
                 span: e.span,
                 name,
                 generics: lifetimes_only(&e.generics),
-                derives: e.derives.clone(),
+                derives,
                 variants: e
                     .variants
                     .iter()
@@ -315,13 +388,12 @@ impl<'p> Mono<'p> {
             top = by;
         }
         let copy = &self.copies[top];
-        let decl = self.fns[copy.of.as_str()];
+        let decl = &self.fns[copy.of.as_str()];
         let bindings: Vec<String> = decl
-            .generics
-            .types
+            .params
             .iter()
             .zip(&copy.args)
-            .map(|(p, a)| format!("`{}` = `{a}`", p.name))
+            .map(|(p, a)| format!("`{p}` = `{a}`"))
             .collect();
         let inside = match top == f {
             true => "in that copy of it".to_string(),
@@ -341,6 +413,58 @@ impl<'p> Mono<'p> {
 
 fn names(params: &[Ident]) -> Vec<String> {
     params.iter().map(|p| p.name.clone()).collect()
+}
+
+/// Every function of `prog`, which checked with `info` and was lifted, by
+/// its name: its symbol. Methods too, those of impls and traits' defaults.
+fn decls<'p>(prog: &'p Program, info: &Info) -> HashMap<&'p str, Decl<'p>> {
+    let mut out: HashMap<&str, Decl> = prog
+        .fns
+        .iter()
+        .map(|f| {
+            let d = Decl {
+                f,
+                params: names(&f.generics.types),
+                self_ty: None,
+                lifetimes: Vec::new(),
+            };
+            (f.name.name.as_str(), d)
+        })
+        .collect();
+    for d in &prog.impls {
+        for f in &d.methods {
+            let symbol = f.name.name.as_str();
+            let def = info
+                .traits
+                .impls
+                .iter()
+                .find(|i| i.methods.iter().any(|(_, s)| s == symbol))
+                .expect("a method of an impl");
+            let mut params = def.params.clone();
+            params.extend(names(&f.generics.types));
+            let decl = Decl {
+                f,
+                params,
+                self_ty: Some(def.self_ty.clone()),
+                lifetimes: d.generics.lifetimes.clone(),
+            };
+            out.insert(symbol, decl);
+        }
+    }
+    for t in &prog.traits {
+        for m in t.methods.iter().filter(|m| m.provided) {
+            let mut params = vec!["Self".to_string()];
+            params.extend(names(&m.decl.generics.types));
+            let decl = Decl {
+                f: &m.decl,
+                params,
+                self_ty: None,
+                lifetimes: Vec::new(),
+            };
+            out.insert(m.decl.name.name.as_str(), decl);
+        }
+    }
+    out
 }
 
 /// `g` without its type parameters, which a copy doesn't have, and the
@@ -443,7 +567,12 @@ impl Cx<'_, '_, '_> {
             // A copy doesn't depend on lifetimes, so they're left out.
             Instance::Fn(name, args) => {
                 let args = args.iter().map(|a| self.s.apply(a).erased()).collect();
-                self.m.fn_copy(&name, args, span, self.copy)
+                match self.target(&name, args) {
+                    Target::Fn(of, args, copy) => {
+                        self.m.named_copy(&of, args, copy, span, self.copy)
+                    }
+                    Target::Eq(_) => unreachable!("`eq` of a built-in `Eq` is `==`"),
+                }
             }
             Instance::Adt(name, args) => {
                 let args: Vec<Type> = args.iter().map(|a| self.s.apply(a).erased()).collect();
@@ -452,6 +581,122 @@ impl Cx<'_, '_, '_> {
                 self.m.type_copy(&name, args)
             }
         })
+    }
+
+    /// What function `name`, at type arguments `args` with no type
+    /// parameters left in them, is: itself, unless it's a trait's method,
+    /// which is the method of the impl for its `Self`. Named for its copy.
+    fn target(&mut self, name: &str, args: Vec<Type>) -> Target {
+        let traits = &self.m.info.traits;
+        let of_trait = traits
+            .traits
+            .iter()
+            .find_map(|(t, d)| Some((t.clone(), d.methods.iter().find(|m| m.symbol == name)?)));
+        let impl_of = || {
+            let d = traits
+                .impls
+                .iter()
+                .find(|d| d.methods.iter().any(|(_, s)| s == name))?;
+            let m = d.methods.iter().find(|(_, s)| s == name)?.0.clone();
+            Some((d.clone(), m))
+        };
+        let (tr, method, self_ty, own) = match (of_trait, impl_of()) {
+            (Some((tr, m)), _) => {
+                let (self_ty, own) = args.split_first().expect("`Self` first");
+                (Some(tr), m.name.clone(), self_ty.clone(), own.to_vec())
+            }
+            (None, Some((d, m))) => {
+                let (of_impl, own) = args.split_at(d.params.len());
+                let self_ty = Subst::new(&d.params, of_impl).apply(&d.self_ty);
+                // A method of an impl of a trait is only called through
+                // the trait's, so this is an inherent one.
+                (None, m, self_ty, own.to_vec())
+            }
+            (None, None) => {
+                let copy = mangle(name, &args);
+                return Target::Fn(name.to_string(), args, copy);
+            }
+        };
+        let header = match &tr {
+            Some(tr) => format!("{} as {tr}", self.copy_name(&self_ty)),
+            None => self.copy_name(&self_ty),
+        };
+        let copy = mangle(&format!("<{header}>::{method}"), &own);
+        let Some(tr) = tr else {
+            return Target::Fn(name.to_string(), args, copy);
+        };
+        let traits = &self.m.info.traits;
+        match traits.implements(&self_ty, &tr, &[]) {
+            Ok(Source::Impl(i, impl_args)) if !traits.impls[i].derived => {
+                let d = &traits.impls[i];
+                match d.methods.iter().find(|(m, _)| *m == method) {
+                    Some((_, symbol)) => {
+                        let mut args = impl_args;
+                        args.extend(own);
+                        Target::Fn(symbol.clone(), args, copy)
+                    }
+                    // The trait's default.
+                    None => Target::Fn(name.to_string(), args, copy),
+                }
+            }
+            Ok(Source::Impl(..) | Source::Builtin) => Target::Eq(self_ty),
+            r => unreachable!("`{self_ty}: {tr}` in a copy: {r:?}"),
+        }
+    }
+
+    /// How type `t`, with no type parameters left in it, is named in the
+    /// name of a copy of a method: with the names of copies of structs and
+    /// enums, as values of them are, and no lifetimes.
+    fn copy_name(&mut self, t: &Type) -> String {
+        match t {
+            Type::Adt(name, _, args) => {
+                let args: Vec<Type> = args.iter().map(Type::erased).collect();
+                self.written(t, Span::new(0, 0));
+                mangle(name, &args)
+            }
+            Type::Ref(_, m, inner) => {
+                format!("&{}{}", if *m { "mut " } else { "" }, self.copy_name(inner))
+            }
+            Type::Box(inner) => format!("Box<{}>", self.copy_name(inner)),
+            Type::Fn(sig) => {
+                let params: Vec<String> = sig.params.iter().map(|p| self.copy_name(p)).collect();
+                format!("fn({}) -> {}", params.join(", "), self.copy_name(&sig.ret))
+            }
+            t => t.to_string(),
+        }
+    }
+
+    /// `|a: &T, b: &T| *a == *b`, at `span`: the `eq` of a built-in or
+    /// derived `Eq` of `T`, as a function.
+    fn eq_fn(&mut self, t: &Type, span: Span) -> ExprKind {
+        let r = Type::Ref(Region::Erased, false, Box::new(t.clone()));
+        let var = |name: &str| Expr {
+            kind: ExprKind::Var(name.into(), Vec::new()),
+            span,
+        };
+        let deref = |e: Expr| Expr {
+            kind: ExprKind::Unary(UnOp::Deref, Box::new(e)),
+            span,
+        };
+        let params = ["a", "b"]
+            .map(|name| LambdaParam {
+                mutable: None,
+                name: Ident {
+                    name: name.into(),
+                    span,
+                },
+                ty: Some(self.written(&r, span)),
+            })
+            .into();
+        let body = Expr {
+            kind: ExprKind::Binary(
+                BinOp::Eq,
+                Box::new(deref(var("a"))),
+                Box::new(deref(var("b"))),
+            ),
+            span,
+        };
+        ExprKind::Lambda(Arc::new(Lambda::new(params, None, body)))
     }
 
     /// `id`, renamed to its copy if it names something generic.
@@ -469,10 +714,37 @@ impl Cx<'_, '_, '_> {
             }
             // Type arguments written in the source are in `info.instances`
             // like the inferred ones, and the copy's name says them.
-            ExprKind::Var(name, _) => ExprKind::Var(
-                self.instance(e.span).unwrap_or_else(|| name.clone()),
-                Vec::new(),
-            ),
+            ExprKind::Var(name, _) => match self.m.info.instances.get(&e.span).cloned() {
+                Some(Instance::Fn(f, args)) => {
+                    let args = args.iter().map(|a| self.s.apply(a).erased()).collect();
+                    match self.target(&f, args) {
+                        Target::Fn(of, args, copy) => {
+                            let name = self.m.named_copy(&of, args, copy, e.span, self.copy);
+                            ExprKind::Var(name, Vec::new())
+                        }
+                        Target::Eq(t) => self.eq_fn(&t, e.span),
+                    }
+                }
+                // A method that isn't generic still needs its copy made.
+                None if self
+                    .m
+                    .fns
+                    .get(name.as_str())
+                    .is_some_and(|d| d.self_ty.is_some()) =>
+                {
+                    match self.target(name, Vec::new()) {
+                        Target::Fn(of, args, copy) => {
+                            let name = self.m.named_copy(&of, args, copy, e.span, self.copy);
+                            ExprKind::Var(name, Vec::new())
+                        }
+                        Target::Eq(_) => unreachable!("an inherent method"),
+                    }
+                }
+                _ => ExprKind::Var(
+                    self.instance(e.span).unwrap_or_else(|| name.clone()),
+                    Vec::new(),
+                ),
+            },
             ExprKind::Unary(op, x) => ExprKind::Unary(*op, Box::new(self.expr(x))),
             ExprKind::Binary(op, l, r) => {
                 ExprKind::Binary(*op, Box::new(self.expr(l)), Box::new(self.expr(r)))
@@ -481,6 +753,7 @@ impl Cx<'_, '_, '_> {
                 Box::new(self.expr(f)),
                 args.iter().map(|a| self.expr(a)).collect(),
             ),
+            ExprKind::MethodCall(..) => unreachable!("lifting makes method calls plain calls"),
             ExprKind::If(c, then, els) => ExprKind::If(
                 Box::new(self.expr(c)),
                 Box::new(self.expr(then)),
@@ -522,11 +795,12 @@ impl Cx<'_, '_, '_> {
                     .collect(),
             ),
             ExprKind::Field(x, field) => ExprKind::Field(Box::new(self.expr(x)), field.clone()),
-            ExprKind::Variant(ty, _, variant, args) => ExprKind::Variant(
+            ExprKind::Variant(ty, _, variant, args, parens) => ExprKind::Variant(
                 self.ident(ty),
                 Vec::new(),
                 variant.clone(),
                 args.iter().map(|a| self.expr(a)).collect(),
+                *parens,
             ),
             ExprKind::Match(scrutinee, arms) => ExprKind::Match(
                 Box::new(self.expr(scrutinee)),

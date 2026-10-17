@@ -44,8 +44,15 @@ pub fn target<'i>(
         });
     };
     let Some(def) = note.def else {
-        return Err(format!("`{}` is a built-in function", name(&note.kind)));
+        return Err(match &note.kind {
+            NoteKind::Trait(t) => format!("`{t}` is a built-in trait"),
+            NoteKind::Fn(m) => format!("`{m}` is a built-in function"),
+            kind => format!("`{}` is built in", name(kind)),
+        });
     };
+    if matches!(&note.kind, NoteKind::Var(n) if n == "self") {
+        return Err("`self` can't be renamed: it's what a method's receiver is called".into());
+    }
     let main = prog.fns.iter().find(|f| f.name.name == "main");
     if main.is_some_and(|m| m.name.span == def) {
         return Err("`main` can't be renamed: it's where the program starts".to_string());
@@ -247,6 +254,7 @@ fn name(kind: &NoteKind) -> &str {
     match kind {
         NoteKind::Var(n)
         | NoteKind::Fn(n)
+        | NoteKind::Trait(n)
         | NoteKind::Struct(n)
         | NoteKind::Enum(n)
         | NoteKind::TypeParam(n)
@@ -260,6 +268,7 @@ fn what(kind: &NoteKind) -> &'static str {
     match kind {
         NoteKind::Var(_) => "variable",
         NoteKind::Fn(_) => "function",
+        NoteKind::Trait(_) => "trait",
         NoteKind::Struct(_) => "struct",
         NoteKind::Enum(_) => "enum",
         NoteKind::TypeParam(_) => "type parameter",

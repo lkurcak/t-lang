@@ -3,13 +3,19 @@
 //! Grammar (lowest to highest precedence for operators):
 //!
 //! ```text
-//! program  = (head (fn_decl | struct | enum))*
+//! program  = (head (fn_decl | struct | enum | trait | impl))*
 //! head     = attr*
 //! attr     = "#" "[" ("allow" | "derive") "(" (IDENT ("," IDENT)* ","?)? ")" "]"
 //! fn_decl  = "fn" IDENT generics? "(" (param ("," param)* ","?)? ")" ("->" type)? block
 //! generics = "<" (gparam ("," gparam)* ","?)? ">"     -- lifetimes before types
-//! gparam   = LIFETIME (":" LIFETIME ("+" LIFETIME)*)? | IDENT (":" LIFETIME ("+" LIFETIME)*)?
+//! gparam   = LIFETIME (":" LIFETIME ("+" LIFETIME)*)? | IDENT (":" bound ("+" bound)*)?
+//! bound    = LIFETIME | IDENT                         -- a lifetime, or a trait
 //! param    = "mut"? IDENT ":" type
+//! trait    = "trait" IDENT (":" IDENT ("+" IDENT)*)? "{" (head method)* "}"
+//! impl     = "impl" generics? (IDENT "for")? type "{" (head method)* "}"
+//! method   = "fn" IDENT generics? "(" ((receiver | param) ("," param)* ","?)? ")"
+//!            ("->" type)? (block | ";")               -- `;` only in a trait
+//! receiver = "mut"? "self" | "&" LIFETIME? "mut"? "self"
 //! struct   = "struct" IDENT generics? "{" (head param ("," head param)* ","?)? "}"
 //! enum     = "enum" IDENT generics? "{" (head variant ("," head variant)* ","?)? "}"
 //! variant  = IDENT ("(" type ("," type)* ","? ")")?
@@ -27,7 +33,7 @@
 //! add      = mul (("+" | "-") mul)*
 //! mul      = unary (("*" | "/" | "%") unary)*
 //! unary    = ("-" | "!" | "*" | "&" "mut"?) unary | call
-//! postfix  = primary ("(" args ")" | "." IDENT)*
+//! postfix  = primary ("(" args ")" | "." IDENT | "." IDENT targs? "(" args ")")*
 //! primary  = INT | "true" | "false" | IDENT targs? | "(" ")" | "(" expr ")" | block
 //!          | if | match | label? (while | loop) | IDENT targs? "{" field_init,* "}"
 //!          | IDENT targs? "::" IDENT ("(" args ")")? | lambda
@@ -61,6 +67,10 @@
 //! body does: `return a + b` returns `a + b`.
 //!
 //! A `fn`, `struct` or `enum` in a block is local to it (see `ast::Stmt`).
+//! A `trait` or `impl` can only be at the top level.
+//!
+//! `self` and `Self` are names, not keywords, but `self` can only be a
+//! method's receiver: no other parameter or pattern can bind it.
 //!
 //! `&&` is one token, for "and", so where a `&` starts a type or an
 //! expression, `&&` is two of them: `&&x` is `&(&x)`.
@@ -92,6 +102,8 @@ pub fn parse(tokens: Vec<Token>) -> Result<Program, Error> {
         no_struct: false,
     };
     let mut types = Vec::new();
+    let mut traits = Vec::new();
+    let mut impls = Vec::new();
     let mut fns = Vec::new();
     loop {
         if *p.peek() == Tok::Eof {
@@ -101,12 +113,16 @@ pub fn parse(tokens: Vec<Token>) -> Result<Program, Error> {
         match p.peek() {
             Tok::Struct => types.push(TypeDecl::Struct(p.struct_decl(head)?)),
             Tok::Enum => types.push(TypeDecl::Enum(p.enum_decl(head)?)),
+            Tok::Trait => traits.push(p.trait_decl(head.no_derives()?)?),
+            Tok::Impl => impls.push(p.impl_decl(head.no_derives()?)?),
             _ => fns.push(p.fn_decl(head.no_derives()?)?),
         }
     }
     let stray_docs = p.stray_docs();
     Ok(Program {
         types,
+        traits,
+        impls,
         fns,
         stray_docs,
     })
@@ -189,11 +205,14 @@ impl Parser {
             let end = self.expect(Tok::RBracket)?;
             let span = start.to(end);
             if derive {
-                if let Some(n) = names.iter().find(|n| n.name != "Copy") {
+                if let Some(n) = names
+                    .iter()
+                    .find(|n| !matches!(n.name.as_str(), "Copy" | "Eq"))
+                {
                     return Err(Error::syntax(
                         n.span,
                         format!(
-                            "can't derive `{}`; `Copy` is the only thing that can be",
+                            "can't derive `{}`; only `Copy` and `Eq` can be derived",
                             n.name
                         ),
                     ));
@@ -268,6 +287,19 @@ impl Parser {
         )
     }
 
+    /// A name being bound: anything but `self`, which only a receiver
+    /// binds.
+    fn binder(&mut self) -> Result<Ident, Error> {
+        let name = self.ident()?;
+        match name.name.as_str() {
+            "self" => Err(Error::syntax(
+                name.span,
+                "only a method's receiver can be called `self`",
+            )),
+            _ => Ok(name),
+        }
+    }
+
     fn ident(&mut self) -> Result<Ident, Error> {
         match self.peek().clone() {
             Tok::Ident(name) => Ok(Ident {
@@ -300,13 +332,35 @@ impl Parser {
 
     fn fn_decl(&mut self, head: Head) -> Result<FnDecl, Error> {
         if *self.peek() != Tok::Fn {
-            return Err(self.unexpected("`fn`, `struct` or `enum`"));
+            return Err(self.unexpected("`fn`, `struct`, `enum`, `trait` or `impl`"));
         }
-        let start = self.bump().span;
+        Ok(self.function(head, false, false)?.0)
+    }
+
+    /// A function, after its head. A method (`method`) can take `self` and,
+    /// in a trait (`in_trait`), have no body. Says whether it has one.
+    fn function(
+        &mut self,
+        head: Head,
+        method: bool,
+        in_trait: bool,
+    ) -> Result<(FnDecl, bool), Error> {
+        let start = self.expect(Tok::Fn)?;
         let name = self.ident()?;
         let generics = self.generics()?;
         let open = self.expect(Tok::LParen)?;
-        let (params, close) = self.comma_list(Tok::RParen, Self::param)?;
+        let mut first = true;
+        let (params, close) = self.comma_list(Tok::RParen, |p| {
+            let receiver = std::mem::take(&mut first) && p.at_receiver();
+            match receiver {
+                true if method => p.receiver(),
+                true => Err(Error::syntax(
+                    p.span(),
+                    "only a method can take `self`: a function in a `trait` or `impl`",
+                )),
+                false => p.param(),
+            }
+        })?;
         let ret = if self.eat(&Tok::Arrow) {
             self.ty()?
         } else {
@@ -315,8 +369,24 @@ impl Parser {
                 span: close,
             }
         };
-        let body = self.block()?;
-        Ok(FnDecl {
+        let (body, provided) = match self.peek() {
+            Tok::Semi if in_trait => {
+                let span = self.bump().span;
+                let body = Expr {
+                    kind: ExprKind::Block(Vec::new(), None),
+                    span,
+                };
+                (body, false)
+            }
+            Tok::Semi => {
+                return Err(Error::syntax(
+                    self.span(),
+                    "a function needs a body; only a method in a `trait` can have none",
+                ));
+            }
+            _ => (self.block()?, true),
+        };
+        let f = FnDecl {
             doc: head.doc,
             allows: head.allows,
             span: start.to(body.span),
@@ -326,11 +396,149 @@ impl Parser {
             parens: open.to(close),
             ret,
             body,
+        };
+        Ok((f, provided))
+    }
+
+    /// Is a receiver next: `self`, `mut self`, `&self`, `&'a mut self`..?
+    fn at_receiver(&self) -> bool {
+        let at = |i: usize| &self.toks[(self.pos + i).min(self.toks.len() - 1)].tok;
+        let mut i = 0;
+        if *at(i) == Tok::Amp {
+            i += 1;
+            if let Tok::Lifetime(_) = at(i) {
+                i += 1;
+            }
+        }
+        if *at(i) == Tok::Mut {
+            i += 1;
+        }
+        matches!(at(i), Tok::Ident(n) if n == "self")
+    }
+
+    /// A method's receiver, as a parameter named `self` of type `Self`,
+    /// `&Self` or `&mut Self`, the type spanning what's written.
+    fn receiver(&mut self) -> Result<Param, Error> {
+        let start = self.span();
+        let by_ref = self.eat(&Tok::Amp);
+        let lifetime = match self.peek() {
+            Tok::Lifetime(_) => Some(self.lifetime()?),
+            _ => None,
+        };
+        let mut_span = (*self.peek() == Tok::Mut).then(|| self.bump().span);
+        let name = self.ident()?;
+        if *self.peek() == Tok::Colon {
+            return Err(Error::syntax(
+                self.span(),
+                "a receiver's type isn't written: it's `self`, `&self` or `&mut self`",
+            ));
+        }
+        let self_ty = TypeExpr {
+            kind: TypeExprKind::Named("Self".into(), Vec::new()),
+            span: name.span,
+        };
+        let (mutable, ty) = match by_ref {
+            false => (mut_span, self_ty),
+            true => {
+                let kind = TypeExprKind::Ref(lifetime, mut_span.is_some(), Box::new(self_ty));
+                let span = start.to(name.span);
+                (None, TypeExpr { kind, span })
+            }
+        };
+        Ok(Param {
+            doc: None,
+            allows: Vec::new(),
+            mutable,
+            name,
+            ty,
         })
     }
 
-    /// `<'a, T: 'a>` after the name of a function, struct or enum, if it's
-    /// there.
+    /// `trait Show: Super { .. }`, after its head.
+    fn trait_decl(&mut self, head: Head) -> Result<TraitDecl, Error> {
+        let start = self.expect(Tok::Trait)?;
+        let name = self.ident()?;
+        if *self.peek() == Tok::Lt {
+            return Err(Error::syntax(
+                self.span(),
+                "a trait can't have type parameters (yet); its methods can",
+            ));
+        }
+        let mut supers = Vec::new();
+        if self.eat(&Tok::Colon) {
+            supers.push(self.ident()?);
+            while self.eat(&Tok::Plus) {
+                supers.push(self.ident()?);
+            }
+        }
+        self.expect(Tok::LBrace)?;
+        let mut methods = Vec::new();
+        while *self.peek() != Tok::RBrace {
+            let head = self.head()?.no_derives()?;
+            if *self.peek() != Tok::Fn {
+                return Err(self.unexpected("`fn` or `}`"));
+            }
+            let (decl, provided) = self.function(head, true, true)?;
+            methods.push(TraitMethod { decl, provided });
+        }
+        let end = self.expect(Tok::RBrace)?;
+        Ok(TraitDecl {
+            doc: head.doc,
+            allows: head.allows,
+            span: start.to(end),
+            name,
+            supers,
+            methods,
+        })
+    }
+
+    /// `impl<T> Show for Option<T> { .. }` or `impl Point { .. }`, after
+    /// its head.
+    fn impl_decl(&mut self, head: Head) -> Result<ImplDecl, Error> {
+        let start = self.expect(Tok::Impl)?;
+        let generics = self.generics()?;
+        let first = self.ty()?;
+        let (trait_name, self_ty) = match self.eat(&Tok::For) {
+            false => (None, first),
+            true => match first.kind {
+                TypeExprKind::Named(name, args) if args.is_empty() => {
+                    let name = Ident {
+                        name,
+                        span: first.span,
+                    };
+                    (Some(name), self.ty()?)
+                }
+                _ => {
+                    return Err(Error::syntax(
+                        first.span,
+                        "expected the name of a trait before `for`",
+                    ));
+                }
+            },
+        };
+        self.expect(Tok::LBrace)?;
+        let mut methods = Vec::new();
+        while *self.peek() != Tok::RBrace {
+            let head = self.head()?.no_derives()?;
+            if *self.peek() != Tok::Fn {
+                return Err(self.unexpected("`fn` or `}`"));
+            }
+            methods.push(self.function(head, true, false)?.0);
+        }
+        let end = self.expect(Tok::RBrace)?;
+        Ok(ImplDecl {
+            doc: head.doc,
+            allows: head.allows,
+            span: start.to(end),
+            generics,
+            trait_name,
+            self_ty,
+            methods,
+        })
+    }
+
+    /// `<'a, T: Show + 'a>` after the name of a function, struct or enum,
+    /// or after `impl`, if it's there.
     fn generics(&mut self) -> Result<Generics, Error> {
         let mut g = Generics::default();
         if *self.peek() != Tok::Lt {
@@ -357,9 +565,20 @@ impl Parser {
                 }
             };
             if p.eat(&Tok::Colon) {
-                let mut bounds = vec![p.lifetime()?];
-                while p.eat(&Tok::Plus) {
-                    bounds.push(p.lifetime()?);
+                // A lifetime outlives lifetimes; a type parameter can
+                // also implement traits.
+                let lifetime = param.name.starts_with('\'');
+                let mut bounds = Vec::new();
+                loop {
+                    bounds.push(match p.peek() {
+                        Tok::Ident(_) if !lifetime => p.ident()?,
+                        _ if lifetime => p.lifetime()?,
+                        Tok::Lifetime(_) => p.lifetime()?,
+                        _ => return Err(p.unexpected("a lifetime or a trait")),
+                    });
+                    if !p.eat(&Tok::Plus) {
+                        break;
+                    }
                 }
                 g.bounds.push((param, bounds));
             }
@@ -383,7 +602,7 @@ impl Parser {
     /// A function parameter: `x: int` or `mut x: int`.
     fn param(&mut self) -> Result<Param, Error> {
         let mutable = (*self.peek() == Tok::Mut).then(|| self.bump().span);
-        let name = self.ident()?;
+        let name = self.binder()?;
         self.expect(Tok::Colon)?;
         let ty = self.ty()?;
         Ok(Param {
@@ -566,6 +785,18 @@ impl Parser {
                 stmts.push(self.let_stmt()?);
                 continue;
             }
+            if matches!(self.peek(), Tok::Trait | Tok::Impl) {
+                return Err(Error::syntax(
+                    self.span(),
+                    format!(
+                        "{} can only be at the top level, not in a block",
+                        match self.peek() {
+                            Tok::Trait => "a `trait`",
+                            _ => "an `impl`",
+                        }
+                    ),
+                ));
+            }
             if matches!(self.peek(), Tok::Fn | Tok::Struct | Tok::Enum | Tok::Hash) {
                 let head = self.head()?;
                 let stmt = match self.peek() {
@@ -734,11 +965,23 @@ impl Parser {
                     span,
                 };
             } else if self.eat(&Tok::Dot) {
-                let field = self.ident()?;
-                let span = e.span.to(field.span);
-                e = Expr {
-                    kind: ExprKind::Field(Box::new(e), field),
-                    span,
+                let name = self.ident()?;
+                let (targs, _) = self.turbofish()?;
+                e = match self.eat(&Tok::LParen) {
+                    true => {
+                        let (args, end) = self.args()?;
+                        let span = e.span.to(end);
+                        let kind = ExprKind::MethodCall(Box::new(e), name, targs, args);
+                        Expr { kind, span }
+                    }
+                    false if !targs.is_empty() => {
+                        return Err(self.unexpected("`(`: only a method call has type arguments"));
+                    }
+                    false => {
+                        let span = e.span.to(name.span);
+                        let kind = ExprKind::Field(Box::new(e), name);
+                        Expr { kind, span }
+                    }
                 };
             } else {
                 return Ok(e);
@@ -933,14 +1176,14 @@ impl Parser {
         }
         self.expect(Tok::ColonColon)?;
         let variant = self.ident()?;
-        let (args, end) = if self.eat(&Tok::LParen) {
-            self.args()?
-        } else {
-            (Vec::new(), variant.span)
+        let parens = self.eat(&Tok::LParen);
+        let (args, end) = match parens {
+            true => self.args()?,
+            false => (Vec::new(), variant.span),
         };
         let span = name.span.to(end);
         Ok(Expr {
-            kind: ExprKind::Variant(name, targs, variant, args),
+            kind: ExprKind::Variant(name, targs, variant, args, parens),
             span,
         })
     }
@@ -981,7 +1224,7 @@ impl Parser {
             self.expect(Tok::Pipe)?;
             self.comma_list(Tok::Pipe, |p| {
                 let mutable = (*p.peek() == Tok::Mut).then(|| p.bump().span);
-                let name = p.ident()?;
+                let name = p.binder()?;
                 let ty = if p.eat(&Tok::Colon) {
                     Some(p.ty()?)
                 } else {
@@ -1075,7 +1318,7 @@ impl Parser {
             Tok::False => PatternKind::Bool(false),
             Tok::Mut => {
                 self.bump();
-                let name = self.ident()?;
+                let name = self.binder()?;
                 if name.name == "_" {
                     return Err(Error::syntax(
                         name.span,
@@ -1120,7 +1363,13 @@ impl Parser {
                     return self.struct_pattern(ty, Vec::new());
                 }
                 _ if name == "_" => PatternKind::Wild,
-                _ => PatternKind::Bind(name, false),
+                _ => {
+                    let name = self.binder()?;
+                    return Ok(Pattern {
+                        kind: PatternKind::Bind(name.name, false),
+                        span: name.span,
+                    });
+                }
             },
             _ => return Err(self.unexpected("a pattern")),
         };

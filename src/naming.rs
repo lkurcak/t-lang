@@ -1,6 +1,7 @@
 //! The naming lints, as in Rust: `UpperCamelCase` for structs, enums,
-//! variants and type parameters (`non_camel_case_types`), and `snake_case`
-//! for functions, parameters, variables and fields (`non_snake_case`).
+//! variants, traits and type parameters (`non_camel_case_types`), and
+//! `snake_case` for functions, methods, parameters, variables and fields
+//! (`non_snake_case`).
 //! Underscores before or after a name don't count, and digits are fine
 //! (`Vec2`, `x1`). An acronym is one word, so `HTTPServer` should be
 //! `HttpServer`.
@@ -160,8 +161,28 @@ fn decls(prog: &Program) -> Vec<Decl<'_>> {
             }
         }
     }
-    for (f, _) in prog.all_fns() {
-        out.push(ident(&f.name, "function", Case::Snake));
+    for t in &prog.traits {
+        out.push(ident(&t.name, "trait", Case::Camel));
+        // Those with a default are among the functions.
+        for m in t.methods.iter().filter(|m| !m.provided) {
+            out.push(ident(&m.decl.name, "method", Case::Snake));
+            params(&m.decl.generics.types, &mut out);
+            let ps = m.decl.params.iter().filter(|p| p.name.name != "self");
+            out.extend(ps.map(|p| ident(&p.name, "variable", Case::Snake)));
+        }
+    }
+    for d in &prog.impls {
+        params(&d.generics.types, &mut out);
+    }
+    let methods = prog.methods();
+    for (i, (f, _)) in prog.all_fns().into_iter().enumerate() {
+        let method = i.checked_sub(prog.fns.len()).and_then(|j| methods.get(j));
+        match method {
+            // Named by the trait: the warning is there.
+            Some((_, MethodOf::Impl(k))) if prog.impls[*k].trait_name.is_some() => {}
+            Some(_) => out.push(ident(&f.name, "method", Case::Snake)),
+            None => out.push(ident(&f.name, "function", Case::Snake)),
+        }
         params(&f.generics.types, &mut out);
         out.extend(
             f.params

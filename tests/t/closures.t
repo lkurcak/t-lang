@@ -38,7 +38,7 @@ fn main() {
     print(get() + n);                       // expect: 3
     // Closures in data, if they capture nothing.
     let fs = Fs { a: |x| x - 1, b: pick(true) };
-    print((fs.a)(fs.b(3)));                 // expect: 5
+    print((fs.a)((fs.b)(3)));               // expect: 5
     print(apply(fs.a, 1));                  // expect: 0
     // Immediately called.
     print((|x| x + 1)(41));                 // expect: 42

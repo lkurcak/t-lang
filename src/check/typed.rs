@@ -17,7 +17,8 @@ use std::collections::HashMap;
 pub(crate) struct Typed {
     /// The type of every expression.
     pub(crate) exprs: HashMap<*const Expr, Type>,
-    /// What each variable names.
+    /// What each variable names, and each path `T::m` that names a method
+    /// rather than a variant.
     pub(crate) vars: HashMap<*const Expr, Res>,
     /// Every variable, by its *id*: where its name is first bound.
     pub(crate) binds: HashMap<Span, Bind>,
@@ -38,6 +39,10 @@ pub(crate) struct Typed {
     pub(crate) fields: HashMap<*const Expr, (usize, usize)>,
     /// The variables each closure captures, by id.
     pub(crate) captures: HashMap<*const Lambda, Vec<Span>>,
+    /// For each method call, the method it calls, and how its receiver is
+    /// got from what's before the `.`: through how many `*`s, and then
+    /// maybe a `&` (`Some(false)`) or `&mut` (`Some(true)`).
+    pub(crate) methods: HashMap<*const Expr, (Res, usize, Option<bool>)>,
 }
 
 /// What a variable names.

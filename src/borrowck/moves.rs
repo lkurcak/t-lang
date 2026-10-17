@@ -347,6 +347,7 @@ fn step(b: &Builder, state: &mut Moved, s: &Statement) -> Result<(), Found> {
             state.retain(|m, _| !m.within(&p));
             state.insert(p, s.span);
         }
+        StmtKind::Activate(_) => {}
     }
     Ok(())
 }

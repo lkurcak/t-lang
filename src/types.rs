@@ -1,6 +1,7 @@
 //! Types as the checker understands them.
 
 use crate::check::source_name;
+use crate::traits::Pred;
 use std::collections::HashMap;
 use std::fmt;
 
@@ -143,8 +144,14 @@ pub struct AdtDef {
     pub lifetimes: Vec<String>,
     /// The bounds it declares, like `T: 'a`.
     pub bounds: Vec<Bound>,
-    /// Is it `#[derive(Copy)]`?
+    /// The traits it needs its type parameters to implement, like
+    /// `T: Show`: every use of it must show they do.
+    pub preds: Vec<Pred>,
+    /// Is it `#[derive(Copy)]`, and `#[derive(Eq)]`? Only for what
+    /// monomorphisation made, which says so for each copy that implements
+    /// them. Before that, the impls of `Copy` and `Eq` say.
     pub copy: bool,
+    pub eq: bool,
     pub kind: AdtKind,
 }
 
@@ -258,6 +265,12 @@ impl Subst {
             let r = regions.get(i).cloned().unwrap_or(Region::Erased);
             self.regions.insert(l.clone(), r);
         }
+        self
+    }
+
+    /// This, and type parameter `name` is `ty`.
+    pub fn with_type(mut self, name: &str, ty: Type) -> Subst {
+        self.types.insert(name.to_string(), ty);
         self
     }
 
@@ -431,13 +444,12 @@ impl Type {
     }
 }
 
-/// Is a value of type `ty` *copied* when it's used, rather than *moved*?
-/// `int`, `bool`, `()`, `!`, functions and shared references are; mutable
-/// references and boxes aren't, since there must only ever be one of each.
-/// A struct or enum is if it's `#[derive(Copy)]` and its fields are, at
-/// these type arguments. A type parameter isn't, since it may stand for a
-/// type that isn't, unless `params` says to assume it is (for checking a
-/// `#[derive(Copy)]` itself).
+/// Is a value of type `ty` *copied* when it's used, rather than *moved*,
+/// in what monomorphisation made? `int`, `bool`, `()`, `!`, functions and
+/// shared references are; mutable references and boxes aren't, since there
+/// must only ever be one of each. A struct or enum is if it's
+/// `#[derive(Copy)]` and its fields are. Before monomorphisation, whether a
+/// type is `Copy` is up to the impls of `Copy` (see `traits.rs`).
 pub fn is_copy(adts: &Adts, ty: &Type, params: bool) -> bool {
     match ty {
         Type::Int
@@ -554,6 +566,10 @@ pub struct Scheme {
     pub params: Vec<String>,
     pub lifetimes: Vec<String>,
     pub bounds: Vec<Bound>,
+    /// The traits it needs its type parameters to implement: `T: Show` in
+    /// `fn f<T: Show>`. Every use has to show they do, for the type
+    /// arguments it picks.
+    pub preds: Vec<Pred>,
     pub ty: Type,
 }
 
@@ -564,6 +580,7 @@ impl Scheme {
             params: Vec::new(),
             lifetimes: Vec::new(),
             bounds: Vec::new(),
+            preds: Vec::new(),
             ty,
         }
     }

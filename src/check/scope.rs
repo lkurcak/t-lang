@@ -11,6 +11,11 @@
 //! once checked, the nested functions can be moved to the top level under
 //! them (see `lift.rs`), and nothing after that needs to know they were
 //! ever nested. Local types get symbols the same way.
+//!
+//! A method's symbol says what type and trait it's for: `<Point>::len` in
+//! `impl Point`, `<Point as Show>::show` in `impl Show for Point`, and
+//! `<Show>::show` for a trait's default, which is also what a call of the
+//! trait's method names.
 
 use super::Checker;
 use crate::ast::*;
@@ -64,14 +69,37 @@ pub(super) fn symbol(parent: &str, name: &str, taken: &HashSet<String>) -> Strin
         .expect("there are always more numbers")
 }
 
-/// The symbol of each of `fns`, which are as `Program::all_fns` gives them.
-pub(super) fn symbols(fns: &[(&FnDecl, Option<usize>)]) -> Vec<String> {
+/// The symbol of each function of `prog`, in the order of
+/// `Program::all_fns`.
+pub(super) fn symbols(prog: &Program) -> Vec<String> {
+    let methods = prog.methods();
     let mut out: Vec<String> = Vec::new();
     let mut taken = HashSet::new();
-    for &(f, parent) in fns {
-        let symbol = match parent {
-            None => f.name.name.clone(),
-            Some(p) => symbol(&out[p], &f.name.name, &taken),
+    for (i, (f, parent)) in prog.all_fns().into_iter().enumerate() {
+        let method = i.checked_sub(prog.fns.len()).and_then(|j| methods.get(j));
+        let symbol = match (parent, method) {
+            (Some(p), _) => symbol(&out[p], &f.name.name, &taken),
+            (None, Some(&(_, MethodOf::Impl(k)))) => {
+                let d = &prog.impls[k];
+                let header = match &d.trait_name {
+                    Some(t) => format!("{} as {}", d.self_ty, t.name),
+                    None => d.self_ty.to_string(),
+                };
+                let symbol = format!("<{header}>::{}", f.name.name);
+                // Two impls can only have the same header by mistake, which
+                // the checker rejects.
+                (1..)
+                    .map(|n| match n {
+                        1 => symbol.clone(),
+                        n => format!("{symbol}#{n}"),
+                    })
+                    .find(|s| !taken.contains(s))
+                    .expect("there are always more numbers")
+            }
+            (None, Some(&(_, MethodOf::Trait(k)))) => {
+                super::traits::trait_method_symbol(&prog.traits[k].name.name, &f.name.name)
+            }
+            (None, None) => f.name.name.clone(),
         };
         taken.insert(symbol.clone());
         out.push(symbol);
@@ -86,6 +114,25 @@ pub(super) fn symbols(fns: &[(&FnDecl, Option<usize>)]) -> Vec<String> {
 /// symbols. Anything else in `symbol`, like the `fn(..) -> ..` of a type,
 /// stays as it is.
 pub fn source_name(symbol: &str) -> String {
+    // A method: `<Point>::len` is `Point::len`, and `<Point as Show>::show`
+    // stays as it is. One nested in a method is only its own name.
+    if let Some(rest) = symbol.strip_prefix('<')
+        && let Some(end) = closing(rest)
+        && let Some(method) = rest[end + 1..].strip_prefix("::")
+    {
+        let header = &rest[..end];
+        let name = source_name(method);
+        let own = method
+            .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .next();
+        if !own.is_some_and(|own| name.starts_with(own)) {
+            return name;
+        }
+        return match header.split_once(" as ") {
+            Some((ty, tr)) => format!("<{} as {tr}>::{name}", source_name(ty)),
+            None => format!("{}::{name}", source_name(header)),
+        };
+    }
     let mut out = String::new();
     let mut rest = symbol;
     while let Some(c) = rest.chars().next() {
@@ -114,6 +161,22 @@ pub fn source_name(symbol: &str) -> String {
         }
     }
     out
+}
+
+/// Where the `>` is that closes the `<` before `s`.
+fn closing(s: &str) -> Option<usize> {
+    let mut depth = 0;
+    for (i, c) in s.char_indices() {
+        match c {
+            '<' => depth += 1,
+            // Not the `>` of a `->`.
+            '>' if i > 0 && s.as_bytes()[i - 1] == b'-' => {}
+            '>' if depth == 0 => return Some(i),
+            '>' => depth -= 1,
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Where the function or type with symbol `symbol` is declared, for telling
@@ -230,7 +293,9 @@ pub(super) struct Outer {
     type_params: Vec<String>,
     lifetimes: Vec<String>,
     barrier: usize,
-    comparisons: Vec<(crate::types::Type, Span, BinOp)>,
+    env: Vec<crate::traits::Pred>,
+    self_ty: Option<crate::types::Type>,
+    obligations: Vec<super::traits::Obligation>,
     captures: Vec<(String, crate::types::Type, Span)>,
     escapes: Vec<super::escape::Escape>,
     closure_fix: Option<(usize, Fix)>,
@@ -255,7 +320,9 @@ impl Checker {
             type_params: std::mem::take(&mut self.type_params),
             lifetimes: std::mem::take(&mut self.lifetimes),
             barrier: std::mem::replace(&mut self.barrier, barrier),
-            comparisons: std::mem::take(&mut self.comparisons),
+            env: std::mem::take(&mut self.env),
+            self_ty: self.self_ty.take(),
+            obligations: std::mem::take(&mut self.obligations),
             captures: std::mem::take(&mut self.captures),
             escapes: std::mem::take(&mut self.escapes),
             closure_fix: std::mem::take(&mut self.closure_fix),
@@ -270,7 +337,9 @@ impl Checker {
         self.type_params = outer.type_params;
         self.lifetimes = outer.lifetimes;
         self.barrier = outer.barrier;
-        self.comparisons = outer.comparisons;
+        self.env = outer.env;
+        self.self_ty = outer.self_ty;
+        self.obligations = outer.obligations;
         self.captures = outer.captures;
         self.escapes = outer.escapes;
         self.closure_fix = outer.closure_fix;

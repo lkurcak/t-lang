@@ -23,6 +23,8 @@ impl fmt::Display for Program {
             .types
             .iter()
             .map(Item::Type)
+            .chain(self.traits.iter().map(Item::Trait))
+            .chain(self.impls.iter().map(Item::Impl))
             .chain(self.fns.iter().map(Item::Fn));
         let mut doc = Doc::nil();
         for (i, item) in items.enumerate() {
@@ -45,6 +47,13 @@ pub fn format(program: &Program, trivia: Trivia) -> String {
         .types
         .iter()
         .map(|d| (d.name().span.start, Item::Type(d)))
+        .chain(
+            program
+                .traits
+                .iter()
+                .map(|t| (t.span.start, Item::Trait(t))),
+        )
+        .chain(program.impls.iter().map(|i| (i.span.start, Item::Impl(i))))
         .chain(program.fns.iter().map(|f| (f.name.span.start, Item::Fn(f))))
         .collect();
     items.sort_by_key(|(pos, _)| *pos);
@@ -58,11 +67,15 @@ pub fn format(program: &Program, trivia: Trivia) -> String {
         let start = match item {
             Item::Type(d) => type_lead_start(d, p.before(pos)),
             Item::Fn(f) => lead_start(f.doc.as_ref(), &f.allows, f.span.start),
+            Item::Trait(t) => lead_start(t.doc.as_ref(), &t.allows, t.span.start),
+            Item::Impl(d) => lead_start(d.doc.as_ref(), &d.allows, d.span.start),
         };
         doc = doc + p.element(start, i == 0);
         let end = match item {
             Item::Type(_) => p.find(pos, &Tok::RBrace) + 1,
             Item::Fn(f) => f.body.span.end,
+            Item::Trait(t) => t.span.end,
+            Item::Impl(d) => d.span.end,
         };
         doc = doc + p.item(item) + p.trailing(end);
     }
@@ -82,6 +95,8 @@ pub fn format(program: &Program, trivia: Trivia) -> String {
 #[derive(Clone, Copy)]
 enum Item<'a> {
     Type(&'a TypeDecl),
+    Trait(&'a TraitDecl),
+    Impl(&'a ImplDecl),
     Fn(&'a FnDecl),
 }
 
@@ -133,8 +148,8 @@ fn huggable(args: &[Expr]) -> bool {
         ExprKind::Lambda(l) => matches!(l.body.kind, ExprKind::Block(..)),
         // `f(g(..))`, but not `f(x, g(..))`, which would hide `x` at the end
         // of the line.
-        ExprKind::Call(..) => args.len() == 1,
-        ExprKind::Variant(_, _, _, args_) => args.len() == 1 && !args_.is_empty(),
+        ExprKind::Call(..) | ExprKind::MethodCall(..) => args.len() == 1,
+        ExprKind::Variant(_, _, _, args_, ..) => args.len() == 1 && !args_.is_empty(),
         _ => false,
     }
 }
@@ -334,11 +349,70 @@ impl Printer<'_> {
     fn item(&mut self, item: Item) -> Doc {
         match item {
             Item::Type(d) => self.type_decl(d),
+            Item::Trait(t) => self.trait_decl(t),
+            Item::Impl(d) => self.impl_decl(d),
             Item::Fn(f) => self.fn_decl(f),
         }
     }
 
-    /// `<'a, T: 'a>` after the name of a generic function, struct or enum.
+    /// `trait Ord: Eq { .. }`
+    fn trait_decl(&mut self, t: &TraitDecl) -> Doc {
+        let doc = self.lead(t.doc.as_ref(), &t.allows, t.span.start);
+        let supers: Vec<&str> = t.supers.iter().map(|s| s.name.as_str()).collect();
+        let supers = match supers.is_empty() {
+            true => String::new(),
+            false => format!(": {}", supers.join(" + ")),
+        };
+        let open = self.find(t.name.span.end, &Tok::LBrace);
+        let methods: Vec<(&FnDecl, bool)> =
+            t.methods.iter().map(|m| (&m.decl, m.provided)).collect();
+        let body = self.methods(open, t.span.end - 1, &methods);
+        doc + "trait " + &t.name.name + supers + " " + body
+    }
+
+    /// `impl<T: Show> Show for Option<T> { .. }` or `impl Point { .. }`
+    fn impl_decl(&mut self, d: &ImplDecl) -> Doc {
+        let doc = self.lead(d.doc.as_ref(), &d.allows, d.span.start);
+        let keyword = Ident {
+            name: "impl".into(),
+            span: Span::new(d.span.start, d.span.start + 4),
+        };
+        let generics = self.generics(&keyword, &d.generics);
+        let header = match &d.trait_name {
+            Some(t) => text(format!(" {} for ", t.name)),
+            None => text(" "),
+        };
+        let open = self.find(d.self_ty.span.end, &Tok::LBrace);
+        let methods: Vec<(&FnDecl, bool)> = d.methods.iter().map(|f| (f, true)).collect();
+        let body = self.methods(open, d.span.end - 1, &methods);
+        doc + "impl" + generics + header + self.ty(&d.self_ty) + " " + body
+    }
+
+    /// The `{ .. }` of a trait or impl, with the `{` at `open` and the `}`
+    /// at `close` in the source: its methods, each with whether it has a
+    /// body, one after another.
+    fn methods(&mut self, open: usize, close: usize, methods: &[(&FnDecl, bool)]) -> Doc {
+        if methods.is_empty() && !self.comments_before(close) {
+            return text("{}");
+        }
+        let mut body = self.trailing(open + 1);
+        for (i, &(f, provided)) in methods.iter().enumerate() {
+            let start = lead_start(f.doc.as_ref(), &f.allows, f.span.start);
+            body = body + Doc::HardLine + self.element(start, i == 0);
+            let doc = match provided {
+                true => self.fn_decl(f),
+                false => self.signature(f) + ";",
+            };
+            body = body + doc + self.trailing(f.span.end);
+        }
+        for c in self.dangling(close, methods.is_empty()) {
+            body = body + Doc::HardLine + c;
+        }
+        text("{") + nest(body) + Doc::HardLine + "}"
+    }
+
+    /// `<'a, T: Show + 'a>` after the name of a generic function, struct or
+    /// enum, or after `impl`.
     fn generics(&mut self, name: &Ident, g: &Generics) -> Doc {
         if g.is_empty() {
             return Doc::nil();
@@ -432,8 +506,21 @@ impl Printer<'_> {
         head + body
     }
 
-    /// `name: type`, or `mut name: type`
+    /// `name: type`, or `mut name: type`. A receiver as it's written:
+    /// `self`, `mut self`, `&self`, `&'a mut self`.
     fn param(&mut self, p: &Param) -> Doc {
+        if p.name.name == "self" {
+            let shorthand = match &p.ty.kind {
+                TypeExprKind::Ref(lifetime, m, _) => {
+                    let lifetime = lifetime.as_ref().map(|l| format!("{} ", l.name));
+                    let m = if *m { "mut " } else { "" };
+                    format!("&{}{m}self", lifetime.unwrap_or_default())
+                }
+                _ if p.mutable.is_some() => "mut self".to_string(),
+                _ => "self".to_string(),
+            };
+            return text(shorthand);
+        }
         let name = match p.mutable {
             Some(_) => format!("mut {}", p.name.name),
             None => p.name.name.clone(),
@@ -442,6 +529,11 @@ impl Printer<'_> {
     }
 
     fn fn_decl(&mut self, f: &FnDecl) -> Doc {
+        self.signature(f) + " " + self.expr(&f.body, 0, Ctx::default())
+    }
+
+    /// A function, up to its body.
+    fn signature(&mut self, f: &FnDecl) -> Doc {
         let doc = self.lead(f.doc.as_ref(), &f.allows, f.span.start);
         let generics = self.generics(&f.name, &f.generics);
         let open = self.find(f.name.span.end, &Tok::LParen);
@@ -458,13 +550,7 @@ impl Printer<'_> {
             TypeExprKind::Unit => Doc::nil(),
             _ => text(" -> ") + self.ty(&f.ret),
         };
-        doc + "fn "
-            + &f.name.name
-            + generics
-            + params
-            + ret
-            + " "
-            + self.expr(&f.body, 0, Ctx::default())
+        doc + "fn " + &f.name.name + generics + params + ret
     }
 
     /// Prints `e`, in parentheses if it binds less tightly than `min`, or if
@@ -504,20 +590,23 @@ impl Printer<'_> {
             ExprKind::Unary(op, x) => text(op.to_string()) + self.expr(x, UNARY, ctx.inner()),
             ExprKind::Binary(..) => self.binary(e, ctx),
             ExprKind::Call(f, args) => {
-                // Something more than a name or a field needs parentheses to
-                // be called: `(|x| x)(1)`.
+                // Something more than a name or a call needs parentheses to
+                // be called: `(|x| x)(1)`, and `(s.f)(1)`, as `s.f(1)` is a
+                // method call.
                 let min = match f.kind {
-                    ExprKind::Var(..) | ExprKind::Field(..) | ExprKind::Call(..) => UNARY,
+                    ExprKind::Var(..) | ExprKind::Call(..) | ExprKind::MethodCall(..) => UNARY,
                     _ => UNARY + 1,
                 };
                 self.expr(f, min, ctx) + self.args(f.span.end, args)
             }
-            ExprKind::Field(x, field) => {
-                let min = match x.kind {
-                    ExprKind::Var(..) | ExprKind::Field(..) | ExprKind::Call(..) => UNARY,
-                    _ => UNARY + 1,
-                };
-                self.expr(x, min, ctx) + "." + &field.name
+            ExprKind::Field(x, field) => self.receiver(x, ctx) + "." + &field.name,
+            ExprKind::MethodCall(x, method, targs, args) => {
+                let end = targs.last().map_or(method.span.end, |t| t.span.end);
+                self.receiver(x, ctx)
+                    + "."
+                    + &method.name
+                    + self.turbofish(targs)
+                    + self.args(end, args)
             }
             ExprKind::If(..) => self.if_chain(e),
             ExprKind::While(label, c, body) => {
@@ -573,11 +662,11 @@ impl Printer<'_> {
                 );
                 text(&name.name) + self.turbofish(targs) + " " + fields
             }
-            ExprKind::Variant(ty, targs, variant, args) => {
+            ExprKind::Variant(ty, targs, variant, args, parens) => {
                 let head = text(&ty.name) + self.turbofish(targs) + "::" + &variant.name;
-                match args.is_empty() {
-                    true => head,
-                    false => head + self.args(variant.span.end, args),
+                match parens {
+                    false => head,
+                    true => head + self.args(variant.span.end, args),
                 }
             }
             ExprKind::Match(scrutinee, arms) => {
@@ -682,6 +771,23 @@ impl Printer<'_> {
             rest = rest + Doc::Line + op.to_string() + " " + self.expr(r, min, inner);
         }
         group(first + nest(rest))
+    }
+
+    /// What's before the `.` of a field or method call, in parentheses if
+    /// it binds less tightly than the `.`, or would be hard to read without
+    /// them: `(*r).x`, `(a + b).len()`, `(P { x: 1 }).x`.
+    fn receiver(&mut self, x: &Expr, ctx: Ctx) -> Doc {
+        let min = match x.kind {
+            ExprKind::Unary(..)
+            | ExprKind::StructLit(..)
+            | ExprKind::Block(..)
+            | ExprKind::If(..)
+            | ExprKind::Match(..)
+            | ExprKind::While(..)
+            | ExprKind::Loop(..) => UNARY + 1,
+            _ => UNARY,
+        };
+        self.expr(x, min, ctx)
     }
 
     /// Call arguments, after the callee or variant that ends at `after`.
@@ -965,7 +1071,7 @@ impl Printer<'_> {
 
 /// Where a function parameter starts: at its `mut`, if it has one.
 fn param_start(p: &Param) -> usize {
-    p.mutable.unwrap_or(p.name.span).start
+    p.mutable.unwrap_or(p.name.span).start.min(p.ty.span.start)
 }
 
 /// Where something with the doc comment `doc` and attributes `allows`

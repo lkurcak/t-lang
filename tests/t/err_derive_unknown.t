@@ -2,4 +2,4 @@
 struct P { x: int }
 
 fn main() {}
-// error: can't derive `Debug`; `Copy` is the only thing that can be
+// error: can't derive `Debug`; only `Copy` and `Eq` can be derived

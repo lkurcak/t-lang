@@ -62,7 +62,32 @@ pub(super) fn names(
     let top = prog.types.iter().map(|d| (d, None)).collect();
     w.declare(top);
     for f in &prog.fns {
-        w.function(f);
+        w.function(f, &[]);
+    }
+    // A method can use its impl's type parameters as well as its own.
+    for d in &prog.impls {
+        let params: Vec<String> = d.generics.types.iter().map(|p| p.name.clone()).collect();
+        w.levels.push(Level::Params(params.clone(), w.items.len()));
+        w.items.push(("impl", "impl".into()));
+        w.ty(&d.self_ty);
+        w.leave();
+        for f in &d.methods {
+            w.function(f, &params);
+        }
+    }
+    for t in &prog.traits {
+        for m in &t.methods {
+            match m.provided {
+                true => w.function(&m.decl, &[]),
+                // No body, so not a function of its own: just its types.
+                false => {
+                    w.enter("fn", &m.decl.name, &m.decl.generics.types);
+                    m.decl.params.iter().for_each(|p| w.ty(&p.ty));
+                    w.ty(&m.decl.ret);
+                    w.leave();
+                }
+            }
+        }
     }
     w.levels.pop();
     let defs = prog
@@ -171,10 +196,14 @@ impl Walk<'_> {
     }
 
     /// Walks `f`, with what's in it. Each item opens a scope for its type
-    /// parameters, which the items in it can't use.
-    fn function(&mut self, f: &FnDecl) {
+    /// parameters, which the items in it can't use. A method's has its
+    /// impl's, `outer`, too.
+    fn function(&mut self, f: &FnDecl, outer: &[String]) {
         self.current.push(self.fn_ids[&std::ptr::from_ref(f)]);
         self.enter("fn", &f.name, &f.generics.types);
+        if let Some(Level::Params(params, _)) = self.levels.last_mut() {
+            params.extend(outer.iter().cloned());
+        }
         for p in &f.params {
             self.ty(&p.ty);
         }
@@ -248,7 +277,7 @@ impl Walk<'_> {
                             init.iter().for_each(|e| self.expr(e));
                         }
                         Stmt::Expr(e) | Stmt::BlockLike(e) => self.expr(e),
-                        Stmt::Fn(f) => self.function(f),
+                        Stmt::Fn(f) => self.function(f, &[]),
                         // Walked by `declare`.
                         Stmt::Type(_) => {}
                     }

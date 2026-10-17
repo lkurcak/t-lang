@@ -614,7 +614,7 @@ impl Interp<'_, '_> {
             ExprKind::Binary(op @ (BinOp::Eq | BinOp::Ne), l, r) => {
                 let l = self.place(l)?;
                 let r = self.place(r)?;
-                let same = self.equal(self.memory.get(&l), self.memory.get(&r));
+                let same = self.equal(&l, &r, e.span)?;
                 Value::Bool(same == (*op == BinOp::Eq))
             }
 
@@ -691,11 +691,12 @@ impl Interp<'_, '_> {
             // small: in debug builds every temporary in this `match` gets its
             // own slot, and deep recursion multiplies the frame size.
             ExprKind::StructLit(name, _, inits) => self.struct_lit(name, inits)?,
-            ExprKind::Variant(ty, _, _, args) if ty.name == "Box" => {
+            ExprKind::MethodCall(..) => unreachable!("lifting makes method calls plain calls"),
+            ExprKind::Variant(ty, _, _, args, ..) if ty.name == "Box" => {
                 let v = self.eval(&args[0])?;
                 Value::Box(self.memory.alloc(v, true))
             }
-            ExprKind::Variant(ty, _, variant, args) => {
+            ExprKind::Variant(ty, _, variant, args, ..) => {
                 let args = self.eval_all(args)?;
                 Value::Variant(ty.name.clone(), variant.name.clone(), args)
             }
@@ -920,20 +921,50 @@ impl Interp<'_, '_> {
 
     /// Are `a` and `b` equal, looking through references and boxes to what
     /// they point to?
-    fn equal(&self, a: &Value, b: &Value) -> bool {
-        match (a, b) {
+    /// `==` on the values at `p` and `q`, at `span`. References and boxes
+    /// compare what they point to. A struct or enum with an `eq` of its
+    /// own, a function `<T as Eq>::eq` for its type `T`, compares by that;
+    /// one with `#[derive(Eq)]` compares field by field, each by its own
+    /// type's `==`.
+    fn equal(&mut self, p: &Ptr, q: &Ptr, span: Span) -> Result<bool, Error> {
+        // The type, and how many fields to compare: none if they're
+        // different variants.
+        let (ty, fields) = match (self.memory.get(p), self.memory.get(q)) {
             (Value::Ref(p) | Value::Box(p), Value::Ref(q) | Value::Box(q)) => {
-                self.equal(self.memory.get(p), self.memory.get(q))
+                let (p, q) = (p.clone(), q.clone());
+                return self.equal(&p, &q, span);
             }
-            (Value::Struct(s, xs), Value::Struct(t, ys)) => {
-                s == t && xs.iter().zip(ys).all(|((_, x), (_, y))| self.equal(x, y))
-            }
-            (Value::Variant(s, v, xs), Value::Variant(t, w, ys)) => {
-                s == t && v == w && xs.iter().zip(ys).all(|(x, y)| self.equal(x, y))
+            (Value::Struct(s, xs), Value::Struct(..)) => (s.clone(), Some(xs.len())),
+            (Value::Variant(s, v, xs), Value::Variant(_, w, _)) => {
+                (s.clone(), (v == w).then_some(xs.len()))
             }
             (Value::Moved, _) | (_, Value::Moved) => unsound("comparing a moved value"),
-            (a, b) => a == b,
+            (a, b) => return Ok(a == b),
+        };
+        if let Some(f) = self.user_eq(&ty) {
+            return self.call_eq(f, p, q, span);
         }
+        let Some(n) = fields else {
+            return Ok(false);
+        };
+        for i in 0..n {
+            if !self.equal(&p.field(i), &q.field(i), span)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// The `eq` of a struct or enum's own, if type `ty` has one.
+    fn user_eq(&self, ty: &str) -> Option<String> {
+        let name = format!("<{ty} as Eq>::eq");
+        self.fns.contains_key(name.as_str()).then_some(name)
+    }
+
+    /// Calls `eq` `f` on what's at `p` and `q`.
+    fn call_eq(&mut self, f: String, p: &Ptr, q: &Ptr, span: Span) -> Result<bool, Error> {
+        let args = vec![Value::Ref(p.clone()), Value::Ref(q.clone())];
+        Ok(bool(self.call(Value::Fn(f), args, span)?))
     }
 
     fn arith(&self, op: BinOp, l: i64, r: i64, span: Span) -> Result<Value, Error> {

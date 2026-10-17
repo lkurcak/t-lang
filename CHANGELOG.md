@@ -1,5 +1,60 @@
 # Changelog
 
+## Unreleased
+
+Step 6a: traits. See [docs/06-traits.md](docs/06-traits.md).
+
+### Added
+
+- `trait` declarations, with methods, default methods and supertraits
+  (`trait Ord: Eq`), and `impl Trait for Type`, generic ones too
+  (`impl<T: Show> Show for Option<T>`), for any type.
+- Bounds on type parameters of functions, structs, enums and impls:
+  `T: Show`, `T: Show + Eq + 'a`. Every use must show they hold; none are
+  implied.
+- Inherent impls, `impl Point { .. }`, for structs and enums, with methods
+  that take `self`, `mut self`, `&self` or `&mut self`, and ones that take
+  none. `Self` is the impl's type in it.
+- Method calls `x.m(..)`, and `x.m::<int>(..)` for a method's own type
+  parameters. They look through references and boxes to what `x` is, and
+  take `&` or `&mut` of that if the method's receiver wants it. Inherent
+  methods come before traits'; two traits with a method of the name are
+  ambiguous.
+- Paths to methods: `Point::new(1, 2)`, `Show::show(&x)`, `T::m(..)`, and
+  `Point::len` without `(..)` as a function value.
+- Two-phase borrows: the `&mut` a method call takes of its receiver is only
+  reserved until the call, so `v.push(v.len())` works.
+- `Eq` is a trait, behind `==` and `!=`, and `#[derive(Eq)]` compares field
+  by field. An impl of `Eq` can compare as it likes, and a derived one uses
+  it for that field.
+- `Copy` is a trait; `#[derive(Copy)]` is an impl of it, and so is
+  `impl Copy for P {}`. `T: Copy` lets generic code copy a `T`. A derived
+  impl needs of the type parameters only what the fields do.
+- Coherence: no two impls of a trait for types that could be the same. And
+  resolution always ends: impls need things of smaller types, or, for
+  blanket impls like `impl<T: A> B for T`, of other traits with no way back.
+- A trait impl holds at every lifetime: each lifetime and type parameter in
+  its type appears once, with no `'static` and no lifetime bounds, since
+  resolution doesn't look at lifetimes.
+- The polymorphic recursion check follows calls of traits' methods to the
+  impls they may run.
+- Lint warnings for methods: `dead_code` for inherent methods nothing uses,
+  and the naming lints for traits and methods. No `unused_variables` for an
+  unused `self`.
+- `t lsp`: hover, go to definition, references and rename for traits and
+  methods (renaming a trait's method renames its impls'), and traits and
+  impls with their methods in the outline.
+- The tree-sitter grammar knows traits, impls, receivers and method calls.
+
+### Changed
+
+- `==` on a struct or enum needs it to implement `Eq`: add
+  `#[derive(Eq)]`. `==` on a `T` needs a bound `T: Eq`.
+- `s.f(x)` is a call of method `f`. To call a function held in field `f`,
+  write `(s.f)(x)`; the error says so.
+- `trait`, `impl` and `for` are keywords, and `self` can only be a method's
+  receiver.
+
 ## 0.5.1 (2026-10-17)
 
 Step 5.1: control flow, and the type with no values. See

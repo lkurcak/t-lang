@@ -6,7 +6,7 @@ use super::scope::source_name;
 use crate::ast::*;
 use crate::error::{Error, Span};
 use crate::types::{FnType, Region, Type};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// "1 type argument", "2 type arguments".
 fn type_args(n: usize) -> String {
@@ -351,6 +351,13 @@ pub(super) fn declare(params: &[Ident]) -> Result<Vec<String>, Error> {
                 format!("`{}` is a built-in type", p.name),
             ));
         }
+        if p.name == "Self" {
+            return Err(Error::ty(
+                p.span,
+                "`Self` means the type of the impl or trait it's in, so it can't be a type \
+                 parameter's name",
+            ));
+        }
         if names.contains(&p.name) {
             return Err(Error::ty(
                 p.span,
@@ -384,8 +391,8 @@ pub(super) fn declare_lifetimes(params: &[Ident]) -> Result<Vec<String>, Error> 
     Ok(names)
 }
 
-/// The bounds in `g`, whose lifetime parameters are `lifetimes` and type
-/// parameters `params`.
+/// The lifetime bounds in `g`, whose lifetime parameters are `lifetimes`
+/// and type parameters `params`.
 pub(super) fn bounds(
     g: &Generics,
     lifetimes: &[String],
@@ -397,7 +404,8 @@ pub(super) fn bounds(
     };
     let mut out = Vec::new();
     for (subject, after) in &g.bounds {
-        for b in after {
+        // The traits are for `Checker::preds`.
+        for b in after.iter().filter(|b| b.name.starts_with('\'')) {
             let r = l.region(Some(&b.name), b.span)?;
             if subject.name.starts_with('\'') {
                 let s = l.region(Some(&subject.name), subject.span)?;
@@ -410,9 +418,17 @@ pub(super) fn bounds(
     Ok(out)
 }
 
-/// Does `t` mention type parameter `p`?
-fn mentions(t: &Type, p: &str) -> bool {
-    matches!(t, Type::Param(q) if q == p) || t.parts().any(|t| mentions(t, p))
+/// How deep type parameter `p` is in `t`, at its deepest, if it's there:
+/// 0 for `p` itself, 1 in `Option<p>`.
+fn depth_of(t: &Type, p: &str) -> Option<i64> {
+    match t {
+        Type::Param(q) if q == p => Some(0),
+        t => t
+            .parts()
+            .filter_map(|t| depth_of(t, p))
+            .max()
+            .map(|d| d + 1),
+    }
 }
 
 /// One generic thing using another: function `from` calls or names
@@ -422,7 +438,13 @@ fn mentions(t: &Type, p: &str) -> bool {
 pub(super) struct Use<'a> {
     pub(super) from: &'a str,
     pub(super) to: &'a str,
-    pub(super) args: &'a [Type],
+    pub(super) args: Vec<Type>,
+    /// `(j, i, depth)`: `to`'s `j`-th type parameter is a part of what
+    /// `from`'s `i`-th stands for, `depth` type constructors inside it,
+    /// rather than an argument built from those. That's how a call of a
+    /// trait's method at `Self = T` gets to an impl's method: for `impl<U>
+    /// Show for Option<U>`, `U` is inside `T`, one down.
+    pub(super) inside: Vec<(usize, usize, usize)>,
     pub(super) span: Span,
 }
 
@@ -431,68 +453,106 @@ pub(super) struct Use<'a> {
 /// `f<Option<int>>`, which needs `f<Option<Option<int>>>`, and so on.
 ///
 /// Every copy monomorphisation makes is of some item with arguments built
-/// from the arguments of the copy that needed it. So it only goes on
-/// forever if some type parameter flows, through uses, back into itself
-/// with something wrapped around it. That's a graph problem: there's a node
-/// for each parameter of each item, and a use of `to<.., A, ..>` in `from`
-/// gives an edge from each parameter of `from` that `A` mentions to `to`'s
-/// parameter. The edge *grows* if `A` is more than just that parameter.
-/// Monomorphisation finishes exactly when no cycle has an edge that grows.
-/// (This is how .NET's ECMA-335 spec rules out "expansive" generic types.)
+/// from the arguments of the copy that needed it, or found inside them.
+/// That's a graph problem: there's a node for each parameter of each item,
+/// and a use of `to<.., A, ..>` in `from` gives an edge from each parameter
+/// `p` of `from` that `A` mentions to `to`'s parameter, *weighed* by how
+/// deep in `A` `p` is: how many type constructors it adds. A parameter
+/// found inside another, as a call of a trait's method finds an impl's,
+/// gives an edge of negative weight: it takes constructors away. Along a
+/// path, the weights bound how much deeper the types get. So
+/// monomorphisation finishes exactly when no cycle weighs more than 0:
+/// then the types stay as deep as some bound, and there are only so many
+/// of those. (This extends how .NET's ECMA-335 spec rules out "expansive"
+/// generic types, where an edge only either grows or doesn't.)
 ///
 /// `params` holds each item's type parameters.
 pub(super) fn polymorphic_recursion(
     uses: &[Use],
     params: &HashMap<&str, &[String]>,
 ) -> Result<(), Error> {
-    // Edges between `(item, parameter index)` nodes, and whether each grows.
+    // Edges between `(item, parameter index)` nodes, with their weights.
     type Node<'a> = (&'a str, usize);
-    let mut edges: Vec<(Node, Node, bool, &Use)> = Vec::new();
+    let mut edges: Vec<(Node, Node, i64, &Use)> = Vec::new();
     for u in uses {
         let Some(from_params) = params.get(u.from) else {
             continue;
         };
         for (j, arg) in u.args.iter().enumerate() {
             for (i, p) in from_params.iter().enumerate() {
-                if mentions(arg, p) {
-                    let grows = *arg != Type::Param(p.clone());
-                    edges.push(((u.from, i), (u.to, j), grows, u));
+                if let Some(d) = depth_of(arg, p) {
+                    edges.push(((u.from, i), (u.to, j), d, u));
                 }
             }
         }
+        for &(j, i, d) in &u.inside {
+            edges.push(((u.from, i), (u.to, j), -(d as i64), u));
+        }
     }
-    let reaches = |start: (&str, usize), goal: (&str, usize)| {
-        let mut seen = HashSet::new();
-        let mut todo = vec![start];
-        while let Some(n) = todo.pop() {
-            if n == goal {
-                return true;
+    let mut nodes: Vec<Node> = edges.iter().flat_map(|e| [e.0, e.1]).collect();
+    nodes.sort();
+    nodes.dedup();
+    let index = |n: &Node| nodes.binary_search(n).expect("a node");
+    // The heaviest path from `start` to each node, or `None` if there's
+    // none, by Bellman-Ford. `i64::MAX` if it can be as heavy as you like,
+    // through a cycle that weighs more than 0.
+    let heaviest = |start: Option<Node>| -> Vec<Option<i64>> {
+        let mut dist: Vec<Option<i64>> = match start {
+            Some(s) => (0..nodes.len())
+                .map(|i| (i == index(&s)).then_some(0))
+                .collect(),
+            None => vec![Some(0); nodes.len()],
+        };
+        // After as many rounds as there are nodes, a path that still gets
+        // heavier goes round such a cycle, and so does what it leads to.
+        for round in 0..2 * nodes.len() + 1 {
+            let mut changed = false;
+            for &(a, b, w, _) in &edges {
+                let (a, b) = (index(&a), index(&b));
+                let Some(da) = dist[a] else {
+                    continue;
+                };
+                let new = match round >= nodes.len() || da == i64::MAX {
+                    true => i64::MAX,
+                    false => da + w,
+                };
+                if dist[b].is_none_or(|db| new > db) {
+                    dist[b] = Some(new);
+                    changed = true;
+                }
             }
-            if seen.insert(n) {
-                todo.extend(edges.iter().filter(|e| e.0 == n).map(|e| e.1));
+            if !changed {
+                break;
             }
         }
-        false
+        dist
     };
-    for &(a, b, grows, u) in &edges {
-        if grows && reaches(b, a) {
-            let arg = &u.args[b.1];
-            let to_p = &params[u.to][b.1];
-            let (from, to) = (source_name(u.from), source_name(u.to));
-            let message = if u.from == u.to {
-                format!(
-                    "polymorphic recursion: `{from}` uses itself with `{to_p}` = `{arg}`, a bigger \
-                     type each time round, so monomorphising it would never end"
-                )
-            } else {
-                format!(
-                    "polymorphic recursion: this use of `{to}` with `{to_p}` = `{arg}` leads \
-                     back to `{from}`, with a bigger type each time round, so monomorphising \
-                     them would never end"
-                )
-            };
-            return Err(Error::ty(u.span, message));
-        }
+    if !heaviest(None).contains(&Some(i64::MAX)) {
+        return Ok(());
     }
-    Ok(())
+    // An edge that makes types deeper on a cycle that does, in source
+    // order, to point at.
+    for &(a, b, w, u) in edges.iter().filter(|e| e.2 > 0) {
+        let back = heaviest(Some(b))[index(&a)];
+        if back.is_none_or(|back| back != i64::MAX && back + w <= 0) {
+            continue;
+        }
+        let arg = &u.args[b.1];
+        let to_p = &params[u.to][b.1];
+        let (from, to) = (source_name(u.from), source_name(u.to));
+        let message = if u.from == u.to {
+            format!(
+                "polymorphic recursion: `{from}` uses itself with `{to_p}` = `{arg}`, a bigger \
+                 type each time round, so monomorphising it would never end"
+            )
+        } else {
+            format!(
+                "polymorphic recursion: this use of `{to}` with `{to_p}` = `{arg}` leads \
+                 back to `{from}`, with a bigger type each time round, so monomorphising \
+                 them would never end"
+            )
+        };
+        return Err(Error::ty(u.span, message));
+    }
+    unreachable!("a cycle that weighs more than 0 has an edge that does")
 }

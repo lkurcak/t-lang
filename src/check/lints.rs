@@ -265,14 +265,26 @@ impl Checker {
     ///
     /// There's no fix: removing one dead function can break another that
     /// calls it.
+    ///
+    /// The methods of impls of traits, and the defaults of traits, are
+    /// taken to be live: which ones a call of a trait's method runs depends
+    /// on types, which may be decided far away. An inherent method is dead
+    /// if nothing live calls it.
     pub(super) fn dead_code(&mut self, prog: &Program) {
         // Everything reachable from `main`, by following which function
         // names which. Functions that only call each other aren't. The
         // top-level ones come first, so `main`'s id is where it is in
-        // `prog.fns`.
+        // `prog.fns`, and the methods right after.
         let main = prog.fns.iter().position(|f| f.name.name == "main");
         let mut live = vec![false; self.fns.len()];
         let mut todo = vec![FnId(main.expect("checked that there's a `main`"))];
+        let methods = prog.methods();
+        for (j, (_, of)) in methods.iter().enumerate() {
+            let inherent = matches!(of, MethodOf::Impl(k) if prog.impls[*k].trait_name.is_none());
+            if !inherent {
+                todo.push(FnId(prog.fns.len() + j));
+            }
+        }
         while let Some(f) = todo.pop() {
             if !std::mem::replace(&mut live[f.0], true) {
                 todo.extend(self.uses[f.0].fns.iter().copied());
@@ -304,10 +316,16 @@ impl Checker {
         }
 
         let on_purpose = |id: &Ident| id.name.starts_with('_');
-        for (f, is_live) in self.fns.iter().zip(&live) {
+        let method_ids = prog.fns.len()..prog.fns.len() + methods.len();
+        for (i, (f, is_live)) in self.fns.iter().zip(&live).enumerate() {
             let in_live = f.parent.is_none_or(|p| live[p.0]);
             if !is_live && in_live && !on_purpose(&f.name) {
-                let message = format!("function `{}` is never used", f.name.name);
+                let what = if method_ids.contains(&i) {
+                    "method"
+                } else {
+                    "function"
+                };
+                let message = format!("{what} `{}` is never used", f.name.name);
                 self.warnings.push(dead(f.name.span, message));
             }
         }

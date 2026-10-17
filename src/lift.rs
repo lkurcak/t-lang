@@ -11,6 +11,11 @@
 //! It also writes out the references the checker made into others
 //! (*coercions*, see `Checker::coerce`): `r` used as a `&T` when it's a
 //! `&Box<T>` becomes `&**r`, so what comes after needn't know about them.
+//! And method calls and paths become plain calls of the methods, named by
+//! their symbols, with the receiver as the first argument, as the method
+//! takes it: `v.push(1)` becomes `<V>::push(&mut v, 1)`. The methods stay
+//! in their impls and traits, renamed the same way, for monomorphisation
+//! to pick from.
 
 use crate::ast::*;
 use crate::check::Info;
@@ -32,8 +37,37 @@ pub fn lift(prog: &Program, info: &Info) -> Program {
     for f in &prog.fns {
         cx.function(f, &mut fns);
     }
+    let impls = prog
+        .impls
+        .iter()
+        .map(|d| ImplDecl {
+            self_ty: cx.ty(&d.self_ty),
+            methods: d.methods.iter().map(|f| cx.method(f, &mut fns)).collect(),
+            ..d.clone()
+        })
+        .collect();
+    let traits = prog
+        .traits
+        .iter()
+        .map(|t| TraitDecl {
+            methods: t
+                .methods
+                .iter()
+                .map(|m| TraitMethod {
+                    decl: match m.provided {
+                        true => cx.method(&m.decl, &mut fns),
+                        false => m.decl.clone(),
+                    },
+                    provided: m.provided,
+                })
+                .collect(),
+            ..t.clone()
+        })
+        .collect();
     Program {
         types,
+        traits,
+        impls,
         fns,
         stray_docs: prog.stray_docs.clone(),
     }
@@ -46,9 +80,28 @@ struct Cx<'p> {
 impl<'p> Cx<'p> {
     /// Adds `f`, named by its symbol, to `out`, then those nested in it.
     fn function(&self, f: &'p FnDecl, out: &mut Vec<FnDecl>) {
+        let (decl, nested) = self.lifted(f);
+        out.push(decl);
+        for g in nested {
+            self.function(g, out);
+        }
+    }
+
+    /// Method `f`, named by its symbol, adding the functions nested in it
+    /// to `out`.
+    fn method(&self, f: &'p FnDecl, out: &mut Vec<FnDecl>) -> FnDecl {
+        let (decl, nested) = self.lifted(f);
+        for g in nested {
+            self.function(g, out);
+        }
+        decl
+    }
+
+    /// `f`, named by its symbol, and the functions nested in it.
+    fn lifted(&self, f: &'p FnDecl) -> (FnDecl, Vec<&'p FnDecl>) {
         let mut nested = Vec::new();
         let body = self.expr(&f.body, &mut nested);
-        out.push(FnDecl {
+        let decl = FnDecl {
             doc: f.doc.clone(),
             allows: f.allows.clone(),
             span: f.span,
@@ -58,10 +111,8 @@ impl<'p> Cx<'p> {
             parens: f.parens,
             ret: self.ty(&f.ret),
             body,
-        });
-        for g in nested {
-            self.function(g, out);
-        }
+        };
+        (decl, nested)
     }
 
     fn type_decl(&self, d: &TypeDecl) -> TypeDecl {
@@ -163,6 +214,45 @@ impl<'p> Cx<'p> {
                 Box::new(self.expr(f, nested)),
                 args.iter().map(|a| self.expr(a, nested)).collect(),
             ),
+            ExprKind::MethodCall(x, name, _, args) => {
+                let m = &self.info.methods[&name.span];
+                let mut recv = self.expr(x, nested);
+                let span = recv.span;
+                for _ in 0..m.derefs {
+                    let kind = ExprKind::Unary(UnOp::Deref, Box::new(recv));
+                    recv = Expr { kind, span };
+                }
+                if let Some(mutable) = m.autoref {
+                    let op = if mutable { UnOp::RefMut } else { UnOp::Ref };
+                    let kind = ExprKind::Unary(op, Box::new(recv));
+                    recv = Expr { kind, span };
+                }
+                let f = Expr {
+                    kind: ExprKind::Var(m.symbol.clone(), Vec::new()),
+                    span: name.span,
+                };
+                let args = std::iter::once(recv)
+                    .chain(args.iter().map(|a| self.expr(a, nested)))
+                    .collect();
+                ExprKind::Call(Box::new(f), args)
+            }
+            ExprKind::Variant(_, _, name, args, parens)
+                if self.info.methods.contains_key(&name.span) =>
+            {
+                let f = ExprKind::Var(self.info.methods[&name.span].symbol.clone(), Vec::new());
+                let f = Expr {
+                    kind: f,
+                    span: name.span,
+                };
+                match parens {
+                    true => {
+                        let args = args.iter().map(|a| self.expr(a, nested)).collect();
+                        ExprKind::Call(Box::new(f), args)
+                    }
+                    // Named by the whole of it, as the checker noted.
+                    false => f.kind,
+                }
+            }
             ExprKind::If(c, then, els) => ExprKind::If(
                 Box::new(self.expr(c, nested)),
                 Box::new(self.expr(then, nested)),
@@ -210,11 +300,12 @@ impl<'p> Cx<'p> {
             ExprKind::Field(x, field) => {
                 ExprKind::Field(Box::new(self.expr(x, nested)), field.clone())
             }
-            ExprKind::Variant(ty, targs, variant, args) => ExprKind::Variant(
+            ExprKind::Variant(ty, targs, variant, args, parens) => ExprKind::Variant(
                 self.ident(ty),
                 self.types(targs),
                 variant.clone(),
                 args.iter().map(|a| self.expr(a, nested)).collect(),
+                *parens,
             ),
             ExprKind::Match(scrutinee, arms) => ExprKind::Match(
                 Box::new(self.expr(scrutinee, nested)),

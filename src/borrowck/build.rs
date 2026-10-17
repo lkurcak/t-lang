@@ -20,7 +20,7 @@ use crate::ast::*;
 use crate::check::Checker;
 use crate::check::typed::Res;
 use crate::error::Span;
-use crate::types::{AdtKind, Adts, Region, Subst, Type, is_copy, struct_fields, variant_fields};
+use crate::types::{AdtKind, Adts, Region, Subst, Type, struct_fields, variant_fields};
 use std::collections::HashMap;
 
 /// A borrow: of `place`, `&mut` or not, for as long as region variable
@@ -28,6 +28,8 @@ use std::collections::HashMap;
 pub(crate) struct Loan {
     pub(crate) place: Place,
     pub(crate) mutable: bool,
+    /// Is it a two-phase `&mut`, only reserved until a `StmtKind::Activate`?
+    pub(crate) two_phase: bool,
     pub(crate) region: usize,
     pub(crate) point: Point,
     pub(crate) span: Span,
@@ -384,26 +386,55 @@ impl<'a> Builder<'a> {
             }
             ExprKind::Call(f, args) => {
                 let (f, ft) = self.operand(f);
-                let Type::Fn(sig) = ft else {
-                    unreachable!("calling `{ft}`")
+                self.call_into(f, ft, None, args, dest, span);
+            }
+            // The receiver first: what's before the `.`, through its `*`s,
+            // borrowed if the method takes `&self` or `&mut self`. A `&mut`
+            // is a two-phase borrow, only reserved until the call, so the
+            // arguments can still read what it borrows.
+            ExprKind::MethodCall(x, _, _, args) => {
+                let (res, derefs, autoref) =
+                    self.cx.typed().methods[&std::ptr::from_ref(e)].clone();
+                let Res::Fn(symbol, targs) = res else {
+                    unreachable!("a method is a function")
                 };
-                // A higher-ranked function type is called at new lifetimes.
-                let vars: Vec<Region> = sig
-                    .bound
-                    .iter()
-                    .map(|_| Region::Var(self.regions.fresh()))
-                    .collect();
-                let (params, ret) = sig.instantiate(&vars);
-                let mut ops = Vec::new();
-                for (a, p) in args.iter().zip(&params) {
-                    let (o, t) = self.operand(a);
-                    self.regions.subtype(self.info, &t, p, a.span);
-                    ops.push(o);
+                let ft = self.fn_value(&symbol, &targs, span);
+                let mut recv = self.place(x);
+                for _ in 0..derefs {
+                    recv = recv.project(Proj::Deref);
                 }
-                self.assign(dest, Rvalue::Call(f, ops), &ret, span, false);
-                // A function that returns a `!` never does.
-                if ret == Type::Never {
-                    self.diverge(Term::Switch(Vec::new()));
+                let receiver = match autoref {
+                    Some(m) => {
+                        let (r, t) = self.borrow(&recv, m, x.span);
+                        let loan = self.loans.len() - 1;
+                        self.loans[loan].two_phase = m;
+                        let tmp = self.temp(t.clone(), x.span);
+                        self.assign(
+                            &Place::local(tmp),
+                            Rvalue::Ref(r, m, recv),
+                            &t,
+                            x.span,
+                            false,
+                        );
+                        let o = Operand::Move(Place::local(tmp));
+                        (o, t, x.span, m.then_some(loan))
+                    }
+                    None => {
+                        let (o, t) = self.use_place(recv, x.span);
+                        (o, t, x.span, None)
+                    }
+                };
+                self.call_into(Operand::Const, ft, Some(receiver), args, dest, span);
+            }
+            // A path to a method: the method, as a function, maybe called.
+            ExprKind::Variant(_, _, _, args, parens)
+                if let Some(Res::Fn(symbol, targs)) =
+                    self.cx.typed().vars.get(&std::ptr::from_ref(e)) =>
+            {
+                let ft = self.fn_value(symbol, targs, span);
+                match parens {
+                    true => self.call_into(Operand::Const, ft, None, args, dest, span),
+                    false => self.assign(dest, Rvalue::Use(Operand::Const), &ft, span, false),
                 }
             }
             ExprKind::If(c, then, els) => {
@@ -495,7 +526,7 @@ impl<'a> Builder<'a> {
                 let ops = ops.into_iter().map(|o| o.expect("every field")).collect();
                 self.assign(dest, Rvalue::Aggregate(ops), &t, span, false);
             }
-            ExprKind::Variant(ty, _, _, args) if ty.name == "Box" => {
+            ExprKind::Variant(ty, _, _, args, ..) if ty.name == "Box" => {
                 let t = self.ty(e);
                 let Type::Box(inner) = &t else {
                     unreachable!("`Box::new` makes a box")
@@ -504,7 +535,7 @@ impl<'a> Builder<'a> {
                 self.regions.subtype(self.info, &ot, inner, args[0].span);
                 self.assign(dest, Rvalue::Aggregate(vec![o]), &t, span, false);
             }
-            ExprKind::Variant(_, _, variant, args) => {
+            ExprKind::Variant(_, _, variant, args, ..) => {
                 let t = self.ty(e);
                 self.regions.well_formed(self.adts(), self.info, &t, span);
                 let i = variant_index(self.adts(), &t, &variant.name);
@@ -532,6 +563,53 @@ impl<'a> Builder<'a> {
                 });
                 self.assign(dest, Rvalue::Aggregate(ops), &t, span, false);
             }
+        }
+    }
+
+    /// A call of `f`, of type `ft`, with arguments `args`, after `first`
+    /// if there is one: a method's receiver, as an operand, its type and
+    /// where it is, and the two-phase loan it took to activate at the call,
+    /// if it did.
+    fn call_into(
+        &mut self,
+        f: Operand,
+        ft: Type,
+        first: Option<(Operand, Type, Span, Option<usize>)>,
+        args: &'a [Expr],
+        dest: &Place,
+        span: Span,
+    ) {
+        let Type::Fn(sig) = ft else {
+            unreachable!("calling `{ft}`")
+        };
+        // A higher-ranked function type is called at new lifetimes.
+        let vars: Vec<Region> = sig
+            .bound
+            .iter()
+            .map(|_| Region::Var(self.regions.fresh()))
+            .collect();
+        let (params, ret) = sig.instantiate(&vars);
+        let mut params = params.iter();
+        let mut ops = Vec::new();
+        let mut activate = None;
+        if let Some((o, t, at, loan)) = first {
+            let p = params.next().expect("a method takes its receiver");
+            self.regions.subtype(self.info, &t, p, at);
+            ops.push(o);
+            activate = loan;
+        }
+        for (a, p) in args.iter().zip(params) {
+            let (o, t) = self.operand(a);
+            self.regions.subtype(self.info, &t, p, a.span);
+            ops.push(o);
+        }
+        if let Some(loan) = activate {
+            self.push(StmtKind::Activate(loan), span);
+        }
+        self.assign(dest, Rvalue::Call(f, ops), &ret, span, false);
+        // A function that returns a `!` never does.
+        if ret == Type::Never {
+            self.diverge(Term::Switch(Vec::new()));
         }
     }
 
@@ -645,21 +723,9 @@ impl<'a> Builder<'a> {
         );
         if place || (e.is_place() && local_var(self)) {
             let p = self.place(e);
-            let t = self.place_ty(&p);
-            return match (t, coerced) {
-                (_, Some((derefs, m))) => self.reborrow(&p, derefs, m, e.span),
-                (Type::Ref(_, true, _), None) => self.reborrow(&p, 0, true, e.span),
-                (t, _) => match t {
-                    t if is_copy(self.adts(), &t, false) => (Operand::Copy(p), t),
-                    // Moved into a temporary of its own, so that where it's
-                    // moved is this expression.
-                    t => {
-                        let tmp = self.temp(t.clone(), e.span);
-                        let value = Rvalue::Use(Operand::Move(p));
-                        self.assign(&Place::local(tmp), value, &t, e.span, false);
-                        (Operand::Move(Place::local(tmp)), t)
-                    }
-                },
+            return match coerced {
+                Some((derefs, m)) => self.reborrow(&p, derefs, m, e.span),
+                None => self.use_place(p, e.span),
             };
         }
         let (o, t) = match &e.kind {
@@ -686,6 +752,23 @@ impl<'a> Builder<'a> {
         match (coerced, o) {
             (Some((derefs, m)), Operand::Move(p)) => self.reborrow(&p, derefs, m, e.span),
             (_, o) => (o, t),
+        }
+    }
+
+    /// Place `p`, used as a value at `span`: copied, or a `&mut` reborrowed,
+    /// or else moved out of.
+    fn use_place(&mut self, p: Place, span: Span) -> (Operand, Type) {
+        match self.place_ty(&p) {
+            Type::Ref(_, true, _) => self.reborrow(&p, 0, true, span),
+            t if self.cx.is_copy(&t) => (Operand::Copy(p), t),
+            // Moved into a temporary of its own, so that where it's moved is
+            // this expression.
+            t => {
+                let tmp = self.temp(t.clone(), span);
+                let value = Rvalue::Use(Operand::Move(p));
+                self.assign(&Place::local(tmp), value, &t, span, false);
+                (Operand::Move(Place::local(tmp)), t)
+            }
         }
     }
 
@@ -768,6 +851,7 @@ impl<'a> Builder<'a> {
         self.loans.push(Loan {
             place: place.clone(),
             mutable,
+            two_phase: false,
             region: r,
             point: self.point(),
             span,
@@ -880,7 +964,7 @@ impl<'a> Builder<'a> {
                 let t = self.ty(init);
                 let tmp = self.temp(t.clone(), init.span);
                 self.expr_into(init, &Place::local(tmp));
-                let value = match is_copy(self.adts(), &t, false) {
+                let value = match self.cx.is_copy(&t) {
                     true => Operand::Copy(Place::local(tmp)),
                     false => Operand::Move(Place::local(tmp)),
                 };
@@ -1013,7 +1097,7 @@ impl<'a> Builder<'a> {
                 match typed.binds[&id].by_ref {
                     None => {
                         let t = self.place_ty(&place);
-                        let o = match is_copy(self.adts(), &t, false) {
+                        let o = match self.cx.is_copy(&t) {
                             true => Operand::Copy(place),
                             false => Operand::Move(place),
                         };

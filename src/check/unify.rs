@@ -175,8 +175,8 @@ impl Checker {
 
     /// At the end of a function: every variable made since `vars` must be
     /// solved (including those for the type arguments of generic things it
-    /// uses), every comparison must be on a type that allows it, and no
-    /// closure that captures may leave the frame that made it.
+    /// uses), every obligation must hold, and no closure that captures may
+    /// leave the frame that made it.
     ///
     /// Leaving a variable unsolved would be harmless to the interpreter, which
     /// never looks at types. But a compiler has to know how big a value is
@@ -192,13 +192,7 @@ impl Checker {
         }
         self.check_escapes()?;
         self.check_captures()?;
-        for (t, span, op) in std::mem::take(&mut self.comparisons) {
-            let t = self.solved(&t);
-            // If it's still not fully known, that's reported below.
-            if !has_vars(&t) {
-                self.comparable(&t, span, op)?;
-            }
-        }
+        self.prove_all()?;
         for v in vars..self.vars.len() {
             let t = self.solved(&Type::Var(v as u32));
             if has_vars(&t) {

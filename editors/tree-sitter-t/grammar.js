@@ -58,7 +58,13 @@ module.exports = grammar({
   rules: {
     source_file: $ => repeat(choice($._item, $.attribute_item)),
 
-    _item: $ => choice($.function_item, $.struct_item, $.enum_item),
+    _item: $ => choice(
+      $.function_item,
+      $.struct_item,
+      $.enum_item,
+      $.trait_item,
+      $.impl_item,
+    ),
 
     // `//`, but not `///` followed by anything but another `/`: `////` is
     // a plain comment, as in Rust. The two never match the same line, so
@@ -93,7 +99,48 @@ module.exports = grammar({
       field('body', $.block),
     ),
 
-    // `<'a, T: 'a>` after the name of a function, struct or enum.
+    // A method of a trait with no default: `fn show(&self);`.
+    function_signature_item: $ => seq(
+      'fn',
+      field('name', $.identifier),
+      optional(field('type_parameters', $.type_parameters)),
+      field('parameters', $.parameters),
+      optional(seq('->', field('return_type', $._type))),
+      ';',
+    ),
+
+    // `trait Ord: Eq { .. }`
+    trait_item: $ => seq(
+      'trait',
+      field('name', $._type_identifier),
+      optional(field('bounds', $.trait_bounds)),
+      field('body', $.declaration_list),
+    ),
+
+    // `impl<T: Show> Show for Option<T> { .. }` or `impl Point { .. }`
+    impl_item: $ => seq(
+      'impl',
+      optional(field('type_parameters', $.type_parameters)),
+      optional(seq(field('trait', $._type_identifier), 'for')),
+      field('type', $._type),
+      field('body', $.declaration_list),
+    ),
+
+    declaration_list: $ => seq(
+      '{',
+      repeat(choice($.function_item, $.function_signature_item, $.attribute_item)),
+      '}',
+    ),
+
+    // `: Show + 'a`
+    trait_bounds: $ => seq(
+      ':',
+      choice($.lifetime, $._type_identifier),
+      repeat(seq('+', choice($.lifetime, $._type_identifier))),
+    ),
+
+    // `<'a, T: Show + 'a>` after the name of a function, struct or enum,
+    // or after `impl`.
     type_parameters: $ => seq(
       '<',
       commaSep(choice($.lifetime_parameter, $.constrained_type_parameter)),
@@ -107,7 +154,7 @@ module.exports = grammar({
 
     constrained_type_parameter: $ => seq(
       field('name', alias($.identifier, $.type_parameter)),
-      optional(field('bounds', $.lifetime_bounds)),
+      optional(field('bounds', $.trait_bounds)),
     ),
 
     // `: 'a + 'b`
@@ -117,7 +164,16 @@ module.exports = grammar({
 
     mutable_specifier: _ => 'mut',
 
-    parameters: $ => seq('(', commaSep($.parameter), ')'),
+    parameters: $ => seq('(', commaSep(choice($.self_parameter, $.parameter)), ')'),
+
+    // A method's receiver: `self`, `mut self`, `&self`, `&'a mut self`.
+    self_parameter: $ => seq(
+      optional(seq('&', optional($.lifetime))),
+      optional($.mutable_specifier),
+      $.self,
+    ),
+
+    self: _ => 'self',
 
     parameter: $ => seq(
       optional($.mutable_specifier),
@@ -249,6 +305,7 @@ module.exports = grammar({
       $.boolean_literal,
       $.unit_expression,
       $.identifier,
+      $.self,
       $.generic_function,
       $.unary_expression,
       $.reference_expression,
@@ -256,6 +313,7 @@ module.exports = grammar({
       $.assignment_expression,
       $.compound_assignment_expr,
       $.call_expression,
+      $.method_call_expression,
       $.field_expression,
       $.parenthesized_expression,
       $.struct_expression,
@@ -322,6 +380,15 @@ module.exports = grammar({
 
     arguments: $ => seq('(', commaSep($._expression), ')'),
 
+    // `v.push(1)`, `x.m::<int>()`
+    method_call_expression: $ => prec(PREC.call, seq(
+      field('receiver', $._expression),
+      '.',
+      field('method', $.identifier),
+      optional($._turbofish),
+      field('arguments', $.arguments),
+    )),
+
     field_expression: $ => prec(PREC.field, seq(
       field('value', $._expression),
       '.',
@@ -351,7 +418,8 @@ module.exports = grammar({
 
     shorthand_field_initializer: $ => $.identifier,
 
-    // `Shape::Rect(2, 3)` or `Shape::Empty`
+    // `Shape::Rect(2, 3)` or `Shape::Empty`, or a path to a method,
+    // `Point::new(1, 2)` or `Show::show`, which look the same.
     variant_expression: $ => prec.right(seq(
       field('type', $._type_identifier),
       optional($._turbofish),

@@ -1,5 +1,6 @@
 // Types left out are inferred from how values are used.
 
+#[derive(Eq)]
 enum Opt { None, Some(int) }
 
 fn main() {

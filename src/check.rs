@@ -6,7 +6,8 @@
 //! (step 4, see docs/04-generics.md), plus references, boxes, mutation and
 //! moves (step 5, see docs/05-ownership.md), plus `return`, `break`,
 //! `continue`, `loop` and the never type `!` (see
-//! docs/05.1-control-flow.md). Whether a program uses its
+//! docs/05.1-control-flow.md), plus traits, impls and methods (step 6,
+//! see docs/06-traits.md, and `check/traits.rs`). Whether a program uses its
 //! references and moved values correctly is checked after its types are,
 //! by the borrow checker (`borrowck`), from what `typed` records here.
 //!
@@ -37,6 +38,7 @@ mod info;
 mod lints;
 mod names;
 mod scope;
+mod traits;
 pub(crate) mod typed;
 mod unify;
 
@@ -47,13 +49,14 @@ pub use scope::source_name;
 use crate::ast::*;
 use crate::error::{Edit, Error, Fix, Span, Warning};
 use crate::exhaust::{self, Ctor, Pat, Redundant};
+use crate::traits::{Pred, Traits};
 use crate::types::{
-    AdtDef, AdtKind, Adts, Region, Scheme, Subst, Type, all_fields, is_copy, struct_fields,
-    variant_fields,
+    AdtDef, AdtKind, Adts, Region, Scheme, Subst, Type, all_fields, struct_fields, variant_fields,
 };
 use escape::{Escape, Exit, Origin, bound_origin};
 use generics::Use;
 use info::Defs;
+use info::Resolved;
 use lints::{
     Uses, mergeable, narrowable, unreachable_alt, unreachable_arm, unreachable_code, unused,
     unused_doc, unused_label,
@@ -280,10 +283,25 @@ pub(crate) struct Checker {
     closure_fix: Option<(usize, Fix)>,
     /// Every type variable, indexed by `Type::Var`'s number.
     vars: Vec<Var>,
-    /// `==` and `!=` on values whose type wasn't fully known yet, as the
-    /// type, the span and the operator. Checked once the function's types
-    /// are.
-    comparisons: Vec<(Type, Span, BinOp)>,
+    /// Every trait and impl, the built-in ones too.
+    traits: Traits,
+    /// Where each impl of the program is in `traits.impls`.
+    impl_ids: Vec<usize>,
+    /// Each method's id, by where its name is declared.
+    method_ids: HashMap<Span, FnId>,
+    /// Whether each function, by `FnId`, takes `self`: a method that does.
+    receivers: Vec<bool>,
+    /// The bounds that hold in what's being checked: its own, its impl's,
+    /// and in a trait's default method, `Self: Trait`. The *environment*
+    /// obligations are proved in.
+    env: Vec<Pred>,
+    /// What `Self` is in the function being checked: the type of the impl
+    /// it's in, or in a trait, `Self` as a type parameter.
+    self_ty: Option<Type>,
+    /// Obligations whose types weren't fully known yet when they came up,
+    /// like `==` on a value of a type to be inferred. Proved once the
+    /// function's types are.
+    obligations: Vec<traits::Obligation>,
     /// Values that may be closures leaving the frame that made them, checked
     /// once the function's types are known.
     escapes: Vec<Escape>,
@@ -345,7 +363,7 @@ pub(crate) struct LoopCx {
 impl Checker {
     /// `mono` says whether `prog` is what monomorphisation made.
     fn new(prog: &Program, mono: bool) -> Checker {
-        let fn_symbols = scope::symbols(&prog.all_fns());
+        let fn_symbols = scope::symbols(prog);
         let (types, type_names) = names::names(prog, &prog.all_fns(), &fn_symbols);
         let type_names = (!mono).then_some(type_names);
         let mut info = Info::default();
@@ -374,7 +392,13 @@ impl Checker {
             barrier: 0,
             closure_fix: None,
             vars: Vec::new(),
-            comparisons: Vec::new(),
+            traits: Traits::new(),
+            impl_ids: Vec::new(),
+            method_ids: HashMap::new(),
+            receivers: Vec::new(),
+            env: Vec::new(),
+            self_ty: None,
+            obligations: Vec::new(),
             escapes: Vec::new(),
             uses: Vec::new(),
             warnings: Vec::new(),
@@ -389,8 +413,23 @@ impl Checker {
     }
 
     fn program(&mut self, prog: &Program) -> Result<(), Error> {
+        self.trait_names(prog)?;
         self.collect_adts(prog)?;
-        self.signatures(&prog.all_fns())?;
+        self.collect_traits(prog)?;
+        let fns = prog.all_fns();
+        for (i, (f, _)) in fns
+            .iter()
+            .enumerate()
+            .skip(prog.fns.len())
+            .take(prog.methods().len())
+        {
+            self.method_ids.insert(f.name.span, FnId(i));
+        }
+        self.collect_impls(prog)?;
+        self.derive(prog)?;
+        self.signatures(prog, &fns)?;
+        self.check_impls(prog)?;
+        self.info.traits = self.traits.clone();
         self.bodies(prog)?;
         self.no_polymorphic_recursion()?;
         check_main(prog)?;
@@ -405,37 +444,48 @@ impl Checker {
     /// refer to functions defined later in the file (and to themselves:
     /// recursion). Nested ones too, which can be used anywhere in their
     /// block, and by each other. `fns` are all of them, with the index of the
-    /// one each is nested in, if it is (see `Program::all_fns`).
-    fn signatures(&mut self, fns: &[(&FnDecl, Option<usize>)]) -> Result<(), Error> {
+    /// one each is nested in, if it is (see `Program::all_fns`). Methods
+    /// too, which are generic over their impl's type parameters as well as
+    /// their own, but aren't in scope anywhere: a call names them through
+    /// a type or a value.
+    fn signatures(
+        &mut self,
+        prog: &Program,
+        fns: &[(&FnDecl, Option<usize>)],
+    ) -> Result<(), Error> {
+        let methods = prog.methods();
         let mut top: Vec<FnId> = Vec::new();
         for (i, &(f, parent)) in fns.iter().enumerate() {
             let parent = parent.map(FnId);
-            if parent.is_none() && f.name.name == "main" && !f.generics.types.is_empty() {
+            let method = i.checked_sub(prog.fns.len()).and_then(|j| methods.get(j));
+            if parent.is_none()
+                && method.is_none()
+                && f.name.name == "main"
+                && !f.generics.types.is_empty()
+            {
                 return Err(Error::ty(
                     f.generics.types[0].span,
                     "`main` must not have type parameters: nothing could say what they are",
                 ));
             }
-            let params = generics::declare(&f.generics.types)?;
-            let declared = generics::declare_lifetimes(&f.generics.lifetimes)?;
-            let bounds = generics::bounds(&f.generics, &declared, &params)?;
-            let (param_tys, ret, lifetimes) = match self.mono {
-                // Lifetimes don't matter any more.
-                true => {
-                    let mut any = Lifetimes::Any;
-                    let ps = f
-                        .params
-                        .iter()
-                        .map(|p| self.resolve_with(&p.ty, &params, &mut any));
-                    let ps = ps.collect::<Result<Vec<_>, _>>()?;
-                    (ps, self.resolve_with(&f.ret, &params, &mut any)?, declared)
+            let scheme = match method {
+                Some(&(_, MethodOf::Impl(k))) => {
+                    let d = self.traits.impls[self.impl_ids[k]].clone();
+                    let (ps, ls, bs, preds) = (&d.params, &d.lifetimes, &d.bounds, &d.preds);
+                    self.method_scheme(f, ps, ls, bs, preds, Some(&d.self_ty))?
                 }
-                false => self.signature(f, &params, &declared)?,
+                Some(&(_, MethodOf::Trait(k))) => {
+                    let tr = &prog.traits[k].name.name;
+                    let m = self.traits.method(tr, &f.name.name).expect("collected");
+                    m.scheme.clone()
+                }
+                None => self.fn_scheme(f)?,
             };
-            let ty = Type::func(param_tys, ret);
             let name = &f.name.name;
             let symbol = self.fn_symbols[i].clone();
+            self.receivers.push(f.receiver().is_some());
             match parent {
+                None if method.is_some() => {}
                 None => {
                     if BUILTINS.contains(&name.as_str())
                         || top.iter().any(|id| self.fns[id.0].name.name == *name)
@@ -455,12 +505,7 @@ impl Checker {
             self.fns.push(FnDef {
                 name: f.name.clone(),
                 symbol,
-                scheme: Scheme {
-                    params,
-                    lifetimes,
-                    bounds,
-                    ty,
-                },
+                scheme,
                 parent,
                 body: f.body.span,
             });
@@ -468,6 +513,34 @@ impl Checker {
         self.scopes.push(FnScope { at: 0, fns: top });
         self.uses = (0..fns.len()).map(|_| Uses::default()).collect();
         Ok(())
+    }
+
+    /// The type of function `f`, which isn't a method.
+    fn fn_scheme(&mut self, f: &FnDecl) -> Result<Scheme, Error> {
+        let params = generics::declare(&f.generics.types)?;
+        let declared = generics::declare_lifetimes(&f.generics.lifetimes)?;
+        let bounds = generics::bounds(&f.generics, &declared, &params)?;
+        let preds = self.preds(&f.generics, &params)?;
+        let (param_tys, ret, lifetimes) = match self.mono {
+            // Lifetimes don't matter any more.
+            true => {
+                let mut any = Lifetimes::Any;
+                let ps = f
+                    .params
+                    .iter()
+                    .map(|p| self.resolve_with(&p.ty, &params, &mut any));
+                let ps = ps.collect::<Result<Vec<_>, _>>()?;
+                (ps, self.resolve_with(&f.ret, &params, &mut any)?, declared)
+            }
+            false => self.signature(f, &params, &declared)?,
+        };
+        Ok(Scheme {
+            params,
+            lifetimes,
+            bounds,
+            preds,
+            ty: Type::func(param_tys, ret),
+        })
     }
 
     /// The parameter and return types of `f`, which has type parameters
@@ -478,7 +551,8 @@ impl Checker {
     /// That's *lifetime elision*, as in Rust. A lifetime its return type
     /// leaves out is the one lifetime its parameters have, if they have
     /// exactly one: `fn first(p: &Pair) -> &int` returns something borrowed
-    /// from `p`. Otherwise it has to be written.
+    /// from `p`. Or a method's, if it takes `&self` or `&mut self`: what it
+    /// returns is borrowed from that. Otherwise it has to be written.
     fn signature(
         &self,
         f: &FnDecl,
@@ -503,8 +577,9 @@ impl Checker {
                 inputs.push(r);
             }
         }
-        let input = match inputs[..] {
-            [r] => Ok(r.clone()),
+        let input = match (f.receiver(), param_tys.first(), &inputs[..]) {
+            (Some(_), Some(Type::Ref(r, _, _)), _) => Ok(r.clone()),
+            (_, _, [r]) => Ok((*r).clone()),
             _ => Err(inputs.len()),
         };
         let mut lts = Lifetimes::Return { declared, input };
@@ -513,9 +588,19 @@ impl Checker {
         Ok((param_tys, ret, lifetimes))
     }
 
-    /// Pass 2: checks each function's body against its declared return type.
+    /// Pass 5: checks each function's body against its declared return
+    /// type. The methods' too, which come right after the top-level
+    /// functions in `Program::all_fns`.
     fn bodies(&mut self, prog: &Program) -> Result<(), Error> {
-        for (i, f) in prog.fns.iter().enumerate() {
+        let methods = prog.methods();
+        let fns = prog.fns.iter().chain(methods.iter().map(|&(f, _)| f));
+        for (i, f) in fns.enumerate() {
+            self.self_ty = match methods.get(i.wrapping_sub(prog.fns.len())) {
+                Some(&(_, MethodOf::Impl(k))) => {
+                    Some(self.traits.impls[self.impl_ids[k]].self_ty.clone())
+                }
+                _ => None,
+            };
             let notes = self.info.notes.len();
             let result = self.body(f, FnId(i));
             self.finish_notes(notes);
@@ -535,16 +620,13 @@ impl Checker {
             unreachable!("a function has a function type")
         };
         let kind = NoteKind::Fn(f.name.name.clone());
-        self.note(
-            f.name.span,
-            kind,
-            Some(scheme.ty.clone()),
-            Some(f.name.span),
-        );
+        let def = self.method_decl(id).unwrap_or(Some(f.name.span));
+        self.note(f.name.span, kind, Some(scheme.ty.clone()), def);
         // Inside the body its type parameters are in scope, and opaque:
-        // `Type::Param` is equal only to itself.
+        // `Type::Param` is equal only to itself. Its bounds hold.
         self.type_params = scheme.params.clone();
         self.lifetimes = scheme.lifetimes.clone();
+        self.env = scheme.preds.clone();
         let scope = self.locals.len();
         for (i, p) in f.params.iter().enumerate() {
             if f.params[..i].iter().any(|q| q.name.name == p.name.name) {
@@ -555,6 +637,7 @@ impl Checker {
             }
             let ty = sig.params[i].clone();
             self.mention(&ty);
+            self.well_formed(&ty, p.ty.span)?;
             let mut local = Local::param(&p.name.name, ty, p.name.span);
             local.mutable = p.mutable.is_some();
             local.mut_span = p.mutable.map(|m| Span::new(m.start, p.name.span.start));
@@ -564,6 +647,7 @@ impl Checker {
         }
         let ret = (*sig.ret).clone();
         self.mention(&ret);
+        self.well_formed(&ret, f.ret.span)?;
         let vars = self.vars.len();
         self.ret = Some(ret.clone());
         self.loops.clear();
@@ -596,10 +680,27 @@ impl Checker {
         self.solved(t)
     }
 
-    /// The type of function `symbol`.
+    /// The type of function `symbol`, which may be a method of a trait.
     pub(crate) fn scheme(&self, symbol: &str) -> &Scheme {
-        let f = self.fns.iter().find(|f| f.symbol == symbol);
-        &f.expect("a function the checker saw").scheme
+        if let Some(f) = self.fns.iter().find(|f| f.symbol == symbol) {
+            return &f.scheme;
+        }
+        let methods = self.traits.traits.values().flat_map(|t| &t.methods);
+        let m = methods.into_iter().find(|m| m.symbol == symbol);
+        &m.expect("a function the checker saw").scheme
+    }
+
+    /// If function `id` is a method of an impl of a trait, where the
+    /// trait declares it, if anywhere: renaming either renames the other.
+    fn method_decl(&self, id: FnId) -> Option<Option<Span>> {
+        let symbol = &self.fns[id.0].symbol;
+        let d = self
+            .traits
+            .impls
+            .iter()
+            .find(|d| d.methods.iter().any(|(_, s)| s == symbol))?;
+        let name = &self.fns[id.0].name.name;
+        Some(self.traits.method(d.trait_name.as_ref()?, name)?.span)
     }
 
     /// Type `t`, written inside the function being checked, with lifetimes
@@ -634,7 +735,7 @@ impl Checker {
         let mut declared = HashSet::new();
         for ((d, _), def) in decls.iter().zip(&self.types) {
             let name = d.name();
-            if matches!(name.name.as_str(), "int" | "bool" | "Box") {
+            if matches!(name.name.as_str(), "int" | "bool" | "Box" | "Self") {
                 return Err(Error::ty(
                     name.span,
                     format!("`{}` is a built-in type", name.name),
@@ -654,10 +755,12 @@ impl Checker {
         // Every field's type, with the symbol of the type it's in and where
         // it was written, for the recursion checks.
         let mut field_types = Vec::new();
-        for ((d, _), def) in decls.iter().zip(&self.types) {
+        let symbols: Vec<String> = self.types.iter().map(|t| t.symbol.clone()).collect();
+        for ((d, _), symbol) in decls.iter().zip(&symbols) {
             let params = generics::declare(d.type_params())?;
             let lifetimes = generics::declare_lifetimes(&d.generics().lifetimes)?;
             let bounds = generics::bounds(d.generics(), &lifetimes, &params)?;
+            let preds = self.preds(d.generics(), &params)?;
             let mut lts = match self.mono {
                 true => Lifetimes::Any,
                 false => Lifetimes::Fields {
@@ -675,7 +778,7 @@ impl Checker {
                             ));
                         }
                         let t = self.resolve_with(&f.ty, &params, &mut lts)?;
-                        field_types.push((def.symbol.as_str(), f.ty.span, t.clone()));
+                        field_types.push((symbol.as_str(), f.ty.span, t.clone()));
                         fields.push((f.name.name.clone(), t));
                     }
                     AdtKind::Struct(fields)
@@ -692,7 +795,7 @@ impl Checker {
                         let mut tys = Vec::new();
                         for f in &v.fields {
                             let t = self.resolve_with(f, &params, &mut lts)?;
-                            field_types.push((def.symbol.as_str(), f.span, t.clone()));
+                            field_types.push((symbol.as_str(), f.span, t.clone()));
                             tys.push(t);
                         }
                         variants.push((v.name.name.clone(), tys));
@@ -704,10 +807,12 @@ impl Checker {
                 params,
                 lifetimes,
                 bounds,
-                copy: d.is_copy(),
+                preds,
+                copy: self.mono && d.derive_of("Copy").is_some(),
+                eq: self.mono && d.derive_of("Eq").is_some(),
                 kind,
             };
-            adts.insert(def.symbol.clone(), adt);
+            adts.insert(symbol.clone(), adt);
         }
 
         // `struct S<T> { f: fn(S<Option<T>>) -> int }` would need `S<int>`,
@@ -718,7 +823,8 @@ impl Checker {
                 uses.push(Use {
                     from: owner,
                     to: name,
-                    args,
+                    args: args.to_vec(),
+                    inside: Vec::new(),
                     span: *span,
                 })
             });
@@ -745,7 +851,6 @@ impl Checker {
                 ));
             }
         }
-        derive_copy(&adts, &decls, &self.types)?;
         self.adts = adts;
         Ok(())
     }
@@ -810,7 +915,9 @@ impl Checker {
     }
 
     /// Rejects polymorphic recursion between functions: see
-    /// `generics::polymorphic_recursion`.
+    /// `generics::polymorphic_recursion`. A call of a trait's method may
+    /// run any impl's that could be for its `Self`, so it uses each of
+    /// those (`traits::dispatch`).
     fn no_polymorphic_recursion(&self) -> Result<(), Error> {
         // Which function each use is in, from where they are.
         let mut uses = Vec::new();
@@ -824,12 +931,17 @@ impl Checker {
             if let Instance::Fn(to, args) = instance
                 && let Some(from) = from
             {
-                uses.push(Use {
-                    from: &from.symbol,
-                    to,
-                    args,
-                    span: *span,
-                });
+                let mut dispatched = self.dispatch(&from.symbol, to, args, *span);
+                if dispatched.is_empty() {
+                    dispatched.push(Use {
+                        from: &from.symbol,
+                        to,
+                        args: args.clone(),
+                        inside: Vec::new(),
+                        span: *span,
+                    });
+                }
+                uses.extend(dispatched);
             }
         }
         // In source order, so the first one is reported.
@@ -890,7 +1002,23 @@ impl Checker {
             Some(Binding::Builtin(b)) => (Scheme::mono(builtin_type(b)), None, None, Some(b)),
         };
         let args = self.type_args(name, &scheme.params, targs, span, "(..)")?;
-        let ty = Subst::new(&scheme.params, &args).apply(&scheme.ty);
+        let s = Subst::new(&scheme.params, &args);
+        let ty = s.apply(&scheme.ty);
+        // What it needs of its type arguments, by its bounds.
+        for p in &scheme.preds {
+            let Type::Param(param) = &p.ty else {
+                unreachable!("bounds are on type parameters")
+            };
+            let pred = Pred {
+                ty: s.apply(&p.ty),
+                trait_name: p.trait_name.clone(),
+            };
+            self.oblige(
+                pred,
+                at,
+                traits::Why::Bound(name.to_string(), param.clone()),
+            )?;
+        }
         let res = match (&symbol, builtin) {
             (Some(symbol), _) => Res::Fn(symbol.clone(), args.clone()),
             (None, Some(_)) => Res::Builtin,
@@ -985,10 +1113,11 @@ impl Checker {
     }
 
     /// Leaves a scope: drops the locals from `scope` on, warning about any
-    /// that were never used. A name starting with `_` says that's on purpose.
+    /// that were never used. A name starting with `_` says that's on purpose,
+    /// and a method that doesn't use `self` can't do without it.
     fn end_scope(&mut self, scope: usize) {
         for local in self.locals.split_off(scope) {
-            if !local.used && !local.name.starts_with('_') {
+            if !local.used && !local.name.starts_with('_') && local.name != "self" {
                 self.warnings.push(unused(&local));
             }
         }
@@ -1398,22 +1527,31 @@ impl Checker {
                     Ok(Type::Bool)
                 }
 
-                //   Γ ⊢ l : T   Γ ⊢ r : T   T contains no function type or type parameter
-                //  ------------------------------------------------------------------ (T-Eq) for == !=
-                //                         Γ ⊢ l == r : bool
+                //   Γ ⊢ l : T   Γ ⊢ r : T   T: Eq
+                //  ------------------------------- (T-Eq) for == !=
+                //         Γ ⊢ l == r : bool
                 //
-                // See `comparable` for why those are excluded. If T isn't
-                // fully known yet, as in `|a, b| a == b`, this premise waits
-                // until it is, at the end of the function.
+                // `==` is `Eq::eq(&l, &r)`, and `!=` its negation, so T
+                // must implement `Eq`. `int`, `bool` and `()` do, and
+                // references and boxes if what they point to does: they
+                // compare that, not addresses. A struct or enum does if
+                // it says so, with `#[derive(Eq)]` to compare field by
+                // field, or an impl of its own. Functions don't, and can't:
+                // whether two functions do the same for every argument is
+                // undecidable, and comparing them by address would make
+                // `==` depend on how the compiler laid out the code. A type
+                // parameter `T` does if a bound says so, `T: Eq`.
+                //
+                // If T isn't fully known yet, as in `|a, b| a == b`, the
+                // obligation waits until it is, at the end of the function.
                 BinOp::Eq | BinOp::Ne => {
                     let t = self.synth(l)?;
                     self.check(r, &t)?;
-                    let t = self.solved(&t);
-                    if unify::has_vars(&t) {
-                        self.comparisons.push((t, e.span, *op));
-                    } else {
-                        self.comparable(&t, e.span, *op)?;
-                    }
+                    let pred = Pred {
+                        ty: t,
+                        trait_name: "Eq".into(),
+                    };
+                    self.oblige(pred, e.span, traits::Why::Compare(*op))?;
                     Ok(Type::Bool)
                 }
             },
@@ -1459,6 +1597,122 @@ impl Checker {
                 }
                 for (arg, param) in args.iter().zip(&params) {
                     self.check(arg, param)?;
+                }
+                Ok(ret)
+            }
+
+            //   Γ ⊢ e : &..&S    m is a method of S of type fn(R, T1, .., Tn) -> U
+            //   R is S, &S or &mut S    Γ ⊢ a1 : T1  ..  Γ ⊢ an : Tn
+            //  ------------------------------------------------------------------ (T-Method)
+            //                   Γ ⊢ e.m(a1, .., an) : U
+            //
+            // A method call is a call of the method with `e` as its first
+            // argument, its *receiver*: what `e` points to, through any
+            // number of references and boxes, as a field is (T-Field), and
+            // then borrowed, if the method takes `&self` or `&mut self`. So
+            // `v.push(1)` is `<V>::push(&mut v, 1)`, and for `r: &&V`,
+            // `r.len()` is `<V>::len(&**r)`. That's all the adjusting there
+            // is: at most one `&` or `&mut`.
+            //
+            // Which method `m` is depends on S, so S must be known here, as
+            // for a field. See `lookup_method` for how it's found.
+            ExprKind::MethodCall(x, name, targs, args) => {
+                let t = self.synth(x)?;
+                let mut base = self.solved(&t);
+                let mut derefs = 0;
+                while let Type::Ref(_, _, inner) | Type::Box(inner) = base {
+                    base = *inner;
+                    derefs += 1;
+                }
+                if let Type::Var(_) = base {
+                    return Err(Error::ty(
+                        x.span,
+                        format!(
+                            "the type of this must be known to call its method `{}`; add a \
+                             type annotation",
+                            name.name
+                        ),
+                    ));
+                }
+                let found = match self.method_of(&base, name, targs) {
+                    Ok(found) => found,
+                    // `s.f(1)` for a field `f` that holds a function.
+                    Err(err) => match struct_fields(&self.adts, &base)
+                        .and_then(|fs| fs.into_iter().find(|(f, _)| *f == name.name))
+                    {
+                        Some((_, Type::Fn(_))) => {
+                            let field = Span::new(x.span.start, name.span.end);
+                            return Err(Error::ty(
+                                name.span,
+                                format!(
+                                    "`{base}` has no method `{0}`, but it has a field `{0}`, which \
+                                     holds a function; to call that, put the field in \
+                                     parentheses",
+                                    name.name
+                                ),
+                            )
+                            .with_fix(Fix::new(
+                                "put the field in parentheses",
+                                vec![Edit::insert(field.start, "("), Edit::insert(field.end, ")")],
+                            )));
+                        }
+                        _ => return Err(err),
+                    },
+                };
+                if !found.receiver {
+                    return Err(Error::ty(
+                        name.span,
+                        format!(
+                            "`{}` doesn't take `self`, so it can't be called with `.`; call it \
+                             as `{}::{}(..)`",
+                            name.name,
+                            source_name(&base.to_string()),
+                            name.name
+                        ),
+                    ));
+                }
+                let Type::Fn(sig) = &found.ty else {
+                    unreachable!("a method has a function type")
+                };
+                let autoref = match self.shallow(&sig.params[0]) {
+                    Type::Ref(_, m, _) => Some(m),
+                    _ => None,
+                };
+                let receiver = match autoref {
+                    Some(m) => Type::Ref(Region::Erased, m, Box::new(base.clone())),
+                    None => base.clone(),
+                };
+                self.unify(&receiver, &sig.params[0])
+                    .unwrap_or_else(|_| unreachable!("the method is of what's before the `.`"));
+                let params = &sig.params[1..];
+                if params.len() != args.len() {
+                    return Err(Error::ty(
+                        e.span,
+                        format!(
+                            "method `{}` takes {} but {} {} supplied",
+                            name.name,
+                            plural(params.len(), "argument"),
+                            args.len(),
+                            if args.len() == 1 { "was" } else { "were" },
+                        ),
+                    ));
+                }
+                let ret = (*sig.ret).clone();
+                let params = params.to_vec();
+                self.resolved(name, &found, targs.is_empty());
+                for (arg, param) in args.iter().zip(&params) {
+                    self.check(arg, param)?;
+                }
+                let res = Res::Fn(found.symbol.clone(), found.args.clone());
+                self.typed.methods.insert(e, (res, derefs, autoref));
+                let resolved = Resolved {
+                    symbol: found.symbol.clone(),
+                    derefs,
+                    autoref,
+                };
+                self.info.methods.insert(name.span, resolved);
+                if let Some(pred) = found.of_trait {
+                    self.oblige(pred, name.span, traits::Why::Method(name.name.clone()))?;
                 }
                 Ok(ret)
             }
@@ -1603,10 +1857,13 @@ impl Checker {
             //
             // A sum type is *introduced* by picking one variant and giving its
             // fields. Its eliminator is `match`.
-            ExprKind::Variant(ty, targs, variant, args) if self.is_box(ty) => {
+            ExprKind::Variant(ty, targs, variant, args, ..) if self.is_box(ty) => {
                 self.box_new(e, targs, variant, args)
             }
-            ExprKind::Variant(ty, targs, variant, args) => {
+            ExprKind::Variant(ty, targs, method, args, parens) if !self.is_variant(ty, method) => {
+                self.path(e, ty, targs, method, args, *parens)
+            }
+            ExprKind::Variant(ty, targs, variant, args, ..) => {
                 let (t, i) = self.variant(ty, targs, variant)?;
                 let fields = variant_fields(&self.adts, &t, i);
                 if fields.len() != args.len() {
@@ -2401,6 +2658,7 @@ impl Checker {
             vec![Region::Erased; lifetimes],
             args.clone(),
         );
+        self.well_formed(&ty, name.span)?;
         let def = self.defs.types.get(&symbol).copied();
         let instance = Instance::Adt(symbol, args);
         let kind = kind(name.name.clone());
@@ -2468,60 +2726,167 @@ impl Checker {
         self.note(field.span, kind, Some(ty.clone()), def.copied());
     }
 
-    /// The rest of T-Eq's premise: `t`, which is known, contains no
-    /// function type or type parameter.
-    ///
-    /// Equality on functions is excluded: deciding whether two functions
-    /// behave the same on every input is undecidable, and comparing them by
-    /// address would make `==` depend on how the compiler happened to lay out
-    /// code. Structs and enums compare field by field, so they're excluded if
-    /// any field is (or holds) a function.
-    ///
-    /// A type parameter `T` could be any type, functions included, so `==`
-    /// on a `T` can't be allowed either. Saying "any type that has `==`"
-    /// takes a bound, `T: Eq`, which comes with traits (step 6).
-    fn comparable(&self, t: &Type, span: Span, op: BinOp) -> Result<(), Error> {
-        let message = match (t, self.incomparable(t)) {
-            (_, None) => return Ok(()),
-            (Type::Fn(..), _) => format!("cannot compare functions with `{op}`"),
-            (Type::Param(p), _) => format!(
-                "cannot compare values of type `{p}` with `{op}`: `{p}` is a type \
-                 parameter, so it may be a function; that takes a bound like `{p}: Eq`, \
-                 which comes with traits (step 6)"
-            ),
-            (_, Some(Type::Param(p))) => format!(
-                "cannot compare `{t}` with `{op}`: it contains `{p}`, a type parameter, \
-                 which may be a function"
-            ),
-            (_, Some(_)) => format!("cannot compare `{t}` with `{op}`: it contains a function"),
-        };
-        Err(Error::ty(span, message))
+    /// Notes the use of method `found`, named at `name`, for editors and for
+    /// monomorphisation. Its type arguments were `inferred` unless they
+    /// were written.
+    fn resolved(&mut self, name: &Ident, found: &traits::Found, inferred: bool) {
+        let instance = Instance::Fn(found.symbol.clone(), found.args.clone());
+        let kind = NoteKind::Fn(name.name.clone());
+        let ty = found.ty.clone();
+        self.note_use(
+            name.span,
+            kind,
+            ty,
+            found.def,
+            Some((name.span, instance)),
+            inferred,
+        );
     }
 
-    /// The first function type or type parameter in `t` or, if it's a
-    /// struct or enum, in its fields, or in what a reference or box in it
-    /// points to: `==` compares those, not addresses.
-    fn incomparable(&self, t: &Type) -> Option<Type> {
-        self.incomparable_in(t, &mut HashSet::new())
-    }
-
-    /// `incomparable`, where the types in `seen` are being looked at
-    /// already: a type can hold itself through a box or reference.
-    fn incomparable_in(&self, t: &Type, seen: &mut HashSet<Type>) -> Option<Type> {
-        match t {
-            Type::Fn(..) | Type::Param(_) => Some(t.clone()),
-            Type::Adt(..) => {
-                if !seen.insert(t.erased()) {
-                    return None;
-                }
-                all_fields(&self.adts, t)
-                    .iter()
-                    .find_map(|t| self.incomparable_in(t, seen))
-            }
-            Type::Ref(_, _, inner) | Type::Box(inner) => self.incomparable_in(inner, seen),
-            // Only called on types with no variables in them.
-            Type::Int | Type::Bool | Type::Unit | Type::Never | Type::Var(_) => None,
+    /// Is `ty::name` a variant of an enum, rather than a path to a method?
+    fn is_variant(&self, ty: &Ident, name: &Ident) -> bool {
+        let def = self
+            .adt_symbol(&ty.name, ty.span)
+            .and_then(|s| self.adts.get(s));
+        match def.map(|d| &d.kind) {
+            Some(AdtKind::Enum(variants)) => variants.iter().any(|(v, _)| *v == name.name),
+            // Not a method either, but the variant rule says what's wrong.
+            _ => def.is_none() && self.path_type(ty).is_none(),
         }
+    }
+
+    /// What `ty` in a path `ty::m` names, if it's a type: `Self`, a type
+    /// parameter, or `int` or `bool`. Structs and enums are instantiated by
+    /// `path`, as they may be generic.
+    fn path_type(&self, ty: &Ident) -> Option<Type> {
+        match ty.name.as_str() {
+            "Self" if self.self_ty.is_some() => self.self_ty.clone(),
+            "int" => Some(Type::Int),
+            "bool" => Some(Type::Bool),
+            n if self.type_params.iter().any(|p| p == n) => Some(Type::Param(n.into())),
+            n if self.traits.traits.contains_key(n) => Some(Type::Unit),
+            _ => None,
+        }
+    }
+
+    //   m is a method of T of type F
+    //  ------------------------------ (T-Path)
+    //          Γ ⊢ T::m : F
+    //
+    //   m is a method of trait Tr of type F, at Self = S    S: Tr
+    //  ---------------------------------------------------------- (T-Path-Trait)
+    //                    Γ ⊢ Tr::m : F
+    //
+    // A path names a method as a function, with its receiver, if it has
+    // one, as its first parameter: `Point::len(&p)` is `p.len()`. It's
+    // found as for a call, without going through references (see
+    // `lookup_method`). In `Show::show(x)`, `Self` is worked out from how
+    // it's used, here from `x`, as for any type parameter. With `(..)` it's
+    // called (T-App).
+    fn path(
+        &mut self,
+        e: &Expr,
+        ty: &Ident,
+        targs: &[TypeExpr],
+        name: &Ident,
+        args: &[Expr],
+        parens: bool,
+    ) -> Result<Type, Error> {
+        let found = match self.traits.traits.contains_key(&ty.name)
+            && self.adt_symbol(&ty.name, ty.span).is_none()
+            && !self.type_params.contains(&ty.name)
+        {
+            true => {
+                let tr = self.trait_named(ty)?;
+                if let Some(t) = targs.first() {
+                    return Err(Error::ty(
+                        t.span,
+                        format!("trait `{tr}` takes no type arguments; its methods may"),
+                    ));
+                }
+                let what = format!("`Self` for this use of `{tr}::{}`", name.name);
+                let hint = "annotate the type of its argument".to_string();
+                let s = self.fresh(name.span, what, hint);
+                self.lookup_method(&s, Some(&tr), name, &[], "trait")?
+            }
+            false => {
+                let t = match self.adt_symbol(&ty.name, ty.span) {
+                    Some(_) => {
+                        let rest = format!("::{}", name.name);
+                        let kind = match self.adts[self.adt_symbol(&ty.name, ty.span).unwrap()].kind
+                        {
+                            AdtKind::Struct(_) => NoteKind::Struct,
+                            AdtKind::Enum(_) => NoteKind::Enum,
+                        };
+                        self.instantiate(ty, targs, &rest, kind)?
+                    }
+                    None => {
+                        let t = self.path_type(ty).expect("checked by `is_variant`");
+                        if let Some(t) = targs.first() {
+                            return Err(Error::ty(
+                                t.span,
+                                format!("`{}` takes no type arguments", ty.name),
+                            ));
+                        }
+                        t
+                    }
+                };
+                let what = match self
+                    .adt_symbol(&ty.name, ty.span)
+                    .map(|s| &self.adts[s].kind)
+                {
+                    Some(AdtKind::Enum(_)) => "enum",
+                    _ => "type",
+                };
+                self.lookup_method(&t, None, name, &[], what)
+                    .map_err(|err| match what {
+                        "enum" => Error::ty(
+                            name.span,
+                            format!("`{}` has no variant or method `{}`", ty.name, name.name),
+                        ),
+                        _ => err,
+                    })?
+            }
+        };
+        self.resolved(name, &found, targs.is_empty());
+        self.typed
+            .vars
+            .insert(e, Res::Fn(found.symbol.clone(), found.args.clone()));
+        let resolved = Resolved {
+            symbol: found.symbol.clone(),
+            derefs: 0,
+            autoref: None,
+        };
+        self.info.methods.insert(name.span, resolved);
+        if let Some(pred) = found.of_trait.clone() {
+            self.oblige(pred, name.span, traits::Why::Method(name.name.clone()))?;
+        }
+        if !parens {
+            // Without `(..)`, it's this whole expression that names it.
+            let instance = Instance::Fn(found.symbol.clone(), found.args.clone());
+            self.pending.push((e.span, instance));
+            return Ok(found.ty);
+        }
+        let Type::Fn(sig) = &found.ty else {
+            unreachable!("a method has a function type")
+        };
+        if sig.params.len() != args.len() {
+            return Err(Error::ty(
+                e.span,
+                format!(
+                    "`{}::{}` takes {} but {} {} supplied",
+                    ty.name,
+                    name.name,
+                    plural(sig.params.len(), "argument"),
+                    args.len(),
+                    if args.len() == 1 { "was" } else { "were" },
+                ),
+            ));
+        }
+        for (arg, param) in args.iter().zip(&sig.params) {
+            self.check(arg, param)?;
+        }
+        Ok((*sig.ret).clone())
     }
 
     /// Does `name`, written as the type in `name::new(..)`, mean `Box`?
@@ -2591,7 +2956,7 @@ impl Checker {
                     "it's a `{t}`, which holds a reference, and the closure could outlive what \
                      that points to"
                 )
-            } else if !is_copy(&self.adts, &t, false) {
+            } else if !self.is_copy(&t) {
                 format!("closures copy what they capture, and a `{t}` can't be copied")
             } else {
                 continue;
@@ -2605,42 +2970,6 @@ impl Checker {
         }
         Ok(())
     }
-}
-
-/// Checks that each `#[derive(Copy)]` among `decls` (with their symbols in
-/// `types`) is on a type whose fields are all `Copy`, whatever its type
-/// parameters are. Those are assumed to be: `Pair<A, B>` is only copied where
-/// its type arguments are.
-fn derive_copy(
-    adts: &Adts,
-    decls: &[(&TypeDecl, Option<usize>)],
-    types: &[TypeDef],
-) -> Result<(), Error> {
-    for ((d, _), def) in decls.iter().zip(types) {
-        let Some(derive) = d.derives().first() else {
-            continue;
-        };
-        let bad = match &adts[&def.symbol].kind {
-            AdtKind::Struct(fields) => fields
-                .iter()
-                .find(|(_, t)| !is_copy(adts, t, true))
-                .map(|(f, t)| (format!("field `{f}`"), t)),
-            AdtKind::Enum(variants) => variants.iter().find_map(|(v, ts)| {
-                let t = ts.iter().find(|t| !is_copy(adts, t, true))?;
-                Some((format!("variant `{v}`"), t))
-            }),
-        };
-        if let Some((what, t)) = bad {
-            return Err(Error::ty(
-                derive.span,
-                format!(
-                    "`{}` can't be `Copy`: its {what} holds a `{t}`, which isn't",
-                    d.name().name
-                ),
-            ));
-        }
-    }
-    Ok(())
 }
 
 /// Where a statement is, if it's code, which runs, rather than a nested

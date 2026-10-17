@@ -1164,3 +1164,96 @@ enum Option<T> {
 
     stop(child, c);
 }
+
+/// Hover, go to definition, rename and the outline know traits, impls and
+/// methods. A method of an impl of a trait is renamed with the trait's.
+#[test]
+fn traits_and_methods() {
+    let (child, mut c) = start();
+    let src = "\
+trait Show {
+    fn show(&self) -> int;
+}
+struct P { x: int }
+impl P {
+    fn get(&self) -> int { self.x }
+}
+impl Show for P {
+    fn show(&self) -> int { self.get() }
+}
+fn twice<T: Show>(t: T) -> int { t.show() * 2 }
+fn main() {
+    let p = P { x: 1 };
+    print(twice(p));
+    print(P { x: 2 }.show());
+}
+";
+    let (mut d, diags) = Doc::open(&mut c, "file:///tmp/traits.t", src);
+    assert_eq!(diags, Vec::<Value>::new());
+    let hover = d.ask(&mut c, "textDocument/hover", "Show>", 0, json!({}));
+    assert_eq!(
+        hover["result"]["contents"]["value"],
+        "```t\ntrait Show\n```"
+    );
+    let hover = d.ask(&mut c, "textDocument/hover", "get()", 0, json!({}));
+    assert_eq!(
+        hover["result"]["contents"]["value"],
+        "```t\nfn get: fn(&P) -> int\n```"
+    );
+
+    // A call of a trait's method goes to the trait's, and `get` to the impl's.
+    let def = d.ask(&mut c, "textDocument/definition", "show()", 1, json!({}));
+    assert_eq!(def["result"]["range"], d.range("show", 0));
+    let def = d.ask(&mut c, "textDocument/definition", "get()", 0, json!({}));
+    assert_eq!(def["result"]["range"], d.range("get", 0));
+    let def = d.ask(&mut c, "textDocument/definition", "Show for", 0, json!({}));
+    assert_eq!(def["result"]["range"], d.range("Show", 0));
+
+    assert_eq!(
+        d.rename(&mut c, "show", 2, "display").unwrap(),
+        src.replace("show", "display")
+    );
+    assert_eq!(
+        d.rename(&mut c, "Show", 2, "Display").unwrap(),
+        src.replace("Show", "Display")
+    );
+    assert_eq!(
+        d.rename(&mut c, "get", 0, "value").unwrap(),
+        src.replace("get", "value")
+    );
+
+    d.id += 1;
+    c.send(
+        json!({"jsonrpc": "2.0", "id": d.id, "method": "textDocument/documentSymbol", "params": {
+            "textDocument": {"uri": d.uri}
+        }}),
+    );
+    let symbols = c.response(d.id)["result"].clone();
+    let names: Vec<Value> = symbols
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| {
+            let children: Vec<Value> = s["children"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|c| c["name"].clone())
+                .collect();
+            json!([s["name"], s["kind"], children])
+        })
+        .collect();
+    assert_eq!(
+        names,
+        vec![
+            json!(["Show", 11, ["show"]]),
+            json!(["P", 23, ["x"]]),
+            json!(["impl P", 19, ["get"]]),
+            json!(["impl Show for P", 19, ["show"]]),
+            json!(["twice", 12, []]),
+            json!(["main", 12, []]),
+        ]
+    );
+
+    stop(child, c);
+}

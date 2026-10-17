@@ -88,12 +88,12 @@ either: the caller could pick a function type.
 
 ```rust,error
 fn same<T>(a: T, b: T) -> bool { a == b }
-// error: cannot compare values of type `T` with `==`: `T` is a type
-// parameter, so it may be a function; ...
+// error: cannot compare values of type `T` with `==`: `T` doesn't implement `Eq`
 ```
 
 Saying "any `T` that has `==`" takes a *bound*, `T: Eq`. That's a trait, and
-traits are step 6. The same goes for `Option<T>`, which contains a `T`.
+traits are step 6 (docs/06-traits.md). The same goes for `Option<T>`, which
+contains a `T`.
 
 ## Using a generic: instantiation
 

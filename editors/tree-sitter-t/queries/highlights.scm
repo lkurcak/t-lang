@@ -31,6 +31,9 @@
 ; Functions
 
 (function_item name: (identifier) @function)
+(function_signature_item name: (identifier) @function)
+(method_call_expression method: (identifier) @function.method)
+(self) @variable.builtin
 
 ((call_expression function: (identifier) @function.builtin)
   (#match? @function.builtin "^(print|print_bool)$"))
@@ -59,6 +62,7 @@
 ; Keywords
 
 "fn" @keyword.function
+["trait" "impl" "for"] @keyword
 "let" @keyword
 ["struct" "enum"] @keyword.type
 ["if" "else" "match"] @keyword.conditional

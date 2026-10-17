@@ -276,7 +276,9 @@ combine features in ways nobody planned for.
 | 4 ✅ | generics | rank-1 (prenex) parametric polymorphism, monomorphization | [docs/04-generics.md](docs/04-generics.md) |
 | 5 ✅ | ownership, borrowing, pointers | affine types, regions/lifetimes; types that hold themselves through a pointer | [docs/05-ownership.md](docs/05-ownership.md) |
 | 5.1 ✅ | `return`, `break`, `continue`, `loop`, labels | the empty type `!`, divergence | [docs/05.1-control-flow.md](docs/05.1-control-flow.md) |
-| 6 | traits | ad-hoc polymorphism, typeclasses, coherence; closures as `Fn` traits | |
+| 6a ✅ | traits, impls, methods, `Eq` and `Copy` | ad-hoc polymorphism, type classes, coherence, termination of resolution; two-phase borrows | [docs/06-traits.md](docs/06-traits.md) |
+| 6b | associated types | type-level functions | |
+| 6c | closures as `Fn` traits | a type per closure, capturing by reference | |
 | 7 | effects | effect systems: which functions can panic, allocate or diverge | |
 | 8 | refinement types | proving indexes in bounds, so indexing can't panic | |
 | — | C backend | | when it's worth it |

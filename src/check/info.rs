@@ -35,6 +35,23 @@ pub struct Info {
     /// `&mut T`, with how many more `*`s it takes to get to the `T`, and
     /// whether the result is `&mut`. `lift` writes them out: `&**r`.
     pub coercions: HashMap<Span, (usize, bool)>,
+    /// Every trait and impl, for monomorphisation to find impls by.
+    pub traits: crate::traits::Traits,
+    /// The method each method call and path names, by the span of its
+    /// name, for `lift` to write out as a plain call.
+    pub methods: HashMap<Span, Resolved>,
+}
+
+/// What a method call `x.m(..)` or path `T::m` names: method `symbol`.
+/// For a call, how many `*`s it took to get from `x` to what the method is
+/// of, and whether a `&` (`Some(false)`) or `&mut` (`Some(true)`) was
+/// then taken of that, as the method's receiver wants: `x.len()` is
+/// `<Point>::len(&*x)` for `x: &Point`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Resolved {
+    pub symbol: String,
+    pub derefs: usize,
+    pub autoref: Option<bool>,
 }
 
 impl Info {
@@ -104,6 +121,7 @@ pub struct Note {
 pub enum NoteKind {
     Var(String),
     Fn(String),
+    Trait(String),
     Struct(String),
     Enum(String),
     TypeParam(String),
@@ -123,6 +141,7 @@ impl Note {
         match &self.kind {
             NoteKind::Var(name) => format!("{name}: {ty}"),
             NoteKind::Fn(name) => format!("fn {name}{args}: {ty}"),
+            NoteKind::Trait(name) => format!("trait {name}"),
             NoteKind::Struct(_) => format!("struct {ty}"),
             NoteKind::Enum(_) => format!("enum {ty}"),
             NoteKind::TypeParam(name) => format!("type parameter {name}"),
@@ -357,14 +376,45 @@ impl Checker {
                 }
             }
         }
-        for (f, _) in prog.all_fns() {
-            let params = &f.generics.types;
+        // A method can use its impl's type parameters too.
+        let mut outer: HashMap<Span, Vec<Ident>> = HashMap::new();
+        for d in &prog.impls {
+            let params = &d.generics.types;
             self.param_notes(params);
+            self.type_expr_notes(&d.self_ty, params);
+            for f in &d.methods {
+                outer.insert(f.name.span, params.clone());
+            }
+        }
+        for (f, _) in prog.all_fns() {
+            let mut params = outer.get(&f.name.span).cloned().unwrap_or_default();
+            params.extend(f.generics.types.iter().cloned());
+            let params = &params;
+            self.param_notes(&f.generics.types);
             for p in &f.params {
                 self.type_expr_notes(&p.ty, params);
             }
             self.type_expr_notes(&f.ret, params);
             each_annotation(&f.body, &mut |t| self.type_expr_notes(t, params));
+        }
+        for t in &prog.traits {
+            let kind = NoteKind::Trait(t.name.name.clone());
+            self.note(t.name.span, kind, None, Some(t.name.span));
+            for m in t.methods.iter().filter(|m| !m.provided) {
+                let f = &m.decl;
+                let params = &f.generics.types;
+                self.param_notes(params);
+                let ty = self
+                    .traits
+                    .method(&t.name.name, &f.name.name)
+                    .map(|m| m.scheme.ty.clone());
+                let kind = NoteKind::Fn(f.name.name.clone());
+                self.note(f.name.span, kind, ty, Some(f.name.span));
+                for p in &f.params {
+                    self.type_expr_notes(&p.ty, params);
+                }
+                self.type_expr_notes(&f.ret, params);
+            }
         }
     }
 
@@ -433,6 +483,11 @@ fn each_annotation(e: &Expr, f: &mut impl FnMut(&TypeExpr)) {
             each_annotation(callee, f);
             args.iter().for_each(|a| each_annotation(a, f));
         }
+        ExprKind::MethodCall(x, _, targs, args) => {
+            each_annotation(x, f);
+            targs.iter().for_each(&mut *f);
+            args.iter().for_each(|a| each_annotation(a, f));
+        }
         ExprKind::If(c, then, els) => {
             each_annotation(c, f);
             each_annotation(then, f);
@@ -460,7 +515,7 @@ fn each_annotation(e: &Expr, f: &mut impl FnMut(&TypeExpr)) {
             targs.iter().for_each(&mut *f);
             inits.iter().for_each(|i| each_annotation(&i.value, f));
         }
-        ExprKind::Variant(_, targs, _, args) => {
+        ExprKind::Variant(_, targs, _, args, ..) => {
             targs.iter().for_each(&mut *f);
             args.iter().for_each(|a| each_annotation(a, f));
         }

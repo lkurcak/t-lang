@@ -19,6 +19,7 @@ mod naming;
 pub mod parser;
 mod pretty;
 pub mod rename;
+pub mod traits;
 mod trivia;
 pub mod types;
 

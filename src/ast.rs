@@ -12,6 +12,8 @@ use std::sync::Arc;
 #[derive(Debug, Clone)]
 pub struct Program {
     pub types: Vec<TypeDecl>,
+    pub traits: Vec<TraitDecl>,
+    pub impls: Vec<ImplDecl>,
     pub fns: Vec<FnDecl>,
     /// Doc comments that aren't before anything they can document, in
     /// order. The checker warns about each.
@@ -125,24 +127,27 @@ impl TypeDecl {
         }
     }
 
-    /// Is it `#[derive(Copy)]`?
-    pub fn is_copy(&self) -> bool {
+    /// The `#[derive(..)]` of trait `name` on it, if it has one.
+    pub fn derive_of(&self, name: &str) -> Option<&Ident> {
         self.derives()
             .iter()
-            .any(|d| d.names.iter().any(|n| n.name == "Copy"))
+            .flat_map(|d| &d.names)
+            .find(|n| n.name == name)
     }
 }
 
-/// `<'a, 'b: 'a, T: 'a>` after the name of a function, struct or enum:
-/// lifetime parameters first, then type parameters, each maybe with
-/// lifetimes it must outlive.
+/// `<'a, 'b: 'a, T: Show + 'a>` after the name of a function, struct or
+/// enum, or after `impl`: lifetime parameters first, then type parameters,
+/// each maybe with lifetimes it must outlive and, for a type parameter,
+/// traits it must implement.
 #[derive(Debug, Clone, Default)]
 pub struct Generics {
     /// With their `'`: `'a`.
     pub lifetimes: Vec<Ident>,
     pub types: Vec<Ident>,
-    /// `'b: 'a` and `T: 'a`, in the order written, each with what's before
-    /// its `:` and the lifetimes after it.
+    /// `'b: 'a` and `T: Show + 'a`, in the order written, each with what's
+    /// before its `:` and the lifetimes and traits after it. Lifetimes start
+    /// with a `'`, and traits don't.
     pub bounds: Vec<(Ident, Vec<Ident>)>,
     /// From the `<` to the `>`, if they're there.
     pub span: Option<Span>,
@@ -153,7 +158,8 @@ impl Generics {
         self.lifetimes.is_empty() && self.types.is_empty()
     }
 
-    /// The bounds on `name`, a lifetime or type parameter.
+    /// The bounds on `name`, a lifetime or type parameter: lifetimes and
+    /// traits.
     pub fn bounds_of(&self, name: &str) -> Vec<&Ident> {
         self.bounds
             .iter()
@@ -163,8 +169,9 @@ impl Generics {
     }
 }
 
-/// `#[derive(Copy)]` before a struct or enum. `Copy` is the only thing that
-/// can be derived.
+/// `#[derive(Copy, Eq)]` before a struct or enum: implementations of those
+/// traits, worked out from its fields. `Copy` and `Eq` are the only traits
+/// that can be derived.
 #[derive(Debug, Clone)]
 pub struct Derive {
     /// From the `#` to the `]`.
@@ -181,7 +188,7 @@ pub struct StructDecl {
     pub name: Ident,
     /// Its lifetime parameters, type parameters and bounds.
     pub generics: Generics,
-    /// `#[derive(Copy)]`: its values are copied rather than moved.
+    /// `#[derive(Copy)]`, say: its values are copied rather than moved.
     pub derives: Vec<Derive>,
     pub fields: Vec<Param>,
 }
@@ -209,9 +216,14 @@ pub struct Variant {
     pub fields: Vec<TypeExpr>,
 }
 
-/// A function: at the top level, or in a block, where it's *nested*. A
-/// nested `fn` means what it would at the top level, so it can't use the
-/// locals around it; only its name is scoped, to the block it's in.
+/// A function: at the top level, in a block, where it's *nested*, or in a
+/// `trait` or `impl`, where it's a *method*. A nested `fn` means what it
+/// would at the top level, so it can't use the locals around it; only its
+/// name is scoped, to the block it's in.
+///
+/// A method's first parameter can be `self`, `mut self`, `&self` or
+/// `&mut self` (or `&'a self`), its *receiver*: a parameter named `self`,
+/// of type `Self`, `&Self` or `&mut Self`.
 #[derive(Debug, Clone)]
 pub struct FnDecl {
     pub doc: Option<DocComment>,
@@ -229,12 +241,89 @@ pub struct FnDecl {
     pub body: Expr,
 }
 
+impl FnDecl {
+    /// Its receiver, if it's a method that has one.
+    pub fn receiver(&self) -> Option<&Param> {
+        self.params.first().filter(|p| p.name.name == "self")
+    }
+}
+
+/// `trait Show { fn show(&self); }`: a set of methods that types can
+/// implement, each in an `impl Show for T`.
+#[derive(Debug, Clone)]
+pub struct TraitDecl {
+    pub doc: Option<DocComment>,
+    pub allows: Vec<Allow>,
+    /// From the `trait` to the `}`.
+    pub span: Span,
+    pub name: Ident,
+    /// `Eq` in `trait Ord: Eq`: traits a type must implement to implement
+    /// this one, its *supertraits*.
+    pub supers: Vec<Ident>,
+    pub methods: Vec<TraitMethod>,
+}
+
+/// A method of a trait: `fn show(&self);`, which each impl must have, or
+/// `fn twice(&self) { .. }` with a *default* body, which an impl may leave
+/// out to use that.
+#[derive(Debug, Clone)]
+pub struct TraitMethod {
+    /// Without a default, its body is an empty block where the `;` is,
+    /// which means nothing.
+    pub decl: FnDecl,
+    /// Does it have a default?
+    pub provided: bool,
+}
+
+/// `impl Show for Point { .. }`, an implementation of a trait for a type,
+/// or `impl Point { .. }`, an *inherent* impl: methods of the type itself.
+/// `impl<T: Show> Show for Option<T> { .. }` implements it for many types.
+#[derive(Debug, Clone)]
+pub struct ImplDecl {
+    pub doc: Option<DocComment>,
+    pub allows: Vec<Allow>,
+    /// From the `impl` to the `}`.
+    pub span: Span,
+    pub generics: Generics,
+    /// The trait, if it implements one.
+    pub trait_name: Option<Ident>,
+    /// The type it's for, which `Self` means in it.
+    pub self_ty: TypeExpr,
+    pub methods: Vec<FnDecl>,
+}
+
+/// Which `impl` or `trait` a method is in, by its index in the program.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MethodOf {
+    Impl(usize),
+    Trait(usize),
+}
+
 impl Program {
+    /// Every method with a body: those of each impl in order, then the
+    /// defaults of each trait.
+    pub fn methods(&self) -> Vec<(&FnDecl, MethodOf)> {
+        let impls = self
+            .impls
+            .iter()
+            .enumerate()
+            .flat_map(|(i, d)| d.methods.iter().map(move |f| (f, MethodOf::Impl(i))));
+        let traits = self.traits.iter().enumerate().flat_map(|(i, t)| {
+            t.methods
+                .iter()
+                .filter(|m| m.provided)
+                .map(move |m| (&m.decl, MethodOf::Trait(i)))
+        });
+        impls.chain(traits).collect()
+    }
+
     /// Every function, nested ones too: the top-level ones in order, then
-    /// the ones nested in those, and so on. Each comes with the index in
-    /// this list of the function it's nested in, if it's nested.
+    /// the methods (as `methods` gives them), then the ones nested in
+    /// those, and so on. Each comes with the index in this list of the
+    /// function it's nested in, if it's nested.
     pub fn all_fns(&self) -> Vec<(&FnDecl, Option<usize>)> {
         let mut out: Vec<(&FnDecl, Option<usize>)> = self.fns.iter().map(|f| (f, None)).collect();
+        out.extend(self.methods().into_iter().map(|(f, _)| (f, None)));
         let mut i = 0;
         while i < out.len() {
             let mut fns = Vec::new();
@@ -285,7 +374,9 @@ impl Expr {
             ExprKind::Unary(_, x) | ExprKind::Field(x, _) | ExprKind::Loop(_, x) => vec![x],
             ExprKind::Return(x) | ExprKind::Break(_, x) => x.iter().map(|x| &**x).collect(),
             ExprKind::Binary(_, l, r) => vec![l, r],
-            ExprKind::Call(f, args) => std::iter::once(&**f).chain(args).collect(),
+            ExprKind::Call(f, args) | ExprKind::MethodCall(f, _, _, args) => {
+                std::iter::once(&**f).chain(args).collect()
+            }
             ExprKind::If(c, then, els) => [&**c, then].into_iter().chain(els.as_deref()).collect(),
             ExprKind::Block(stmts, tail) => stmts
                 .iter()
@@ -297,7 +388,7 @@ impl Expr {
                 .chain(tail.as_deref())
                 .collect(),
             ExprKind::StructLit(_, _, inits) => inits.iter().map(|i| &i.value).collect(),
-            ExprKind::Variant(_, _, _, args) => args.iter().collect(),
+            ExprKind::Variant(_, _, _, args, ..) => args.iter().collect(),
             ExprKind::Match(scrutinee, arms) => std::iter::once(&**scrutinee)
                 .chain(arms.iter().map(|a| &a.body))
                 .collect(),
@@ -411,6 +502,9 @@ pub enum ExprKind {
     Unary(UnOp, Box<Expr>),
     Binary(BinOp, Box<Expr>, Box<Expr>),
     Call(Box<Expr>, Vec<Expr>),
+    /// `x.m(a, b)`, or `x.m::<int>(a, b)` with type arguments: a call of
+    /// method `m` of what `x` is, which gets `x` as its receiver.
+    MethodCall(Box<Expr>, Ident, Vec<TypeExpr>, Vec<Expr>),
     /// `if c { .. } else { .. }`; the `else` is optional.
     If(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
     /// `{ stmt; stmt; tail }`; without a tail the block's value is `()`.
@@ -420,8 +514,12 @@ pub enum ExprKind {
     /// `p.x`
     Field(Box<Expr>, Ident),
     /// `Shape::Rect(2, 3)`, `Shape::Empty` with no arguments, or
-    /// `Option::<int>::None` with type arguments.
-    Variant(Ident, Vec<TypeExpr>, Ident, Vec<Expr>),
+    /// `Option::<int>::None` with type arguments. Or a *path*, which looks
+    /// the same: `Point::new(1, 2)` calls a method of `Point`, `Show::show(x)`
+    /// one of trait `Show`, and `Point::len` with no `(..)` is that method,
+    /// as a function value. Only the checker can tell which it is. The
+    /// `bool` says whether the `(..)` is there.
+    Variant(Ident, Vec<TypeExpr>, Ident, Vec<Expr>, bool),
     /// `match e { pat => e, .. }`
     Match(Box<Expr>, Vec<Arm>),
     /// `|x, y: int| x + y`. Shared, because the closure values the
@@ -514,7 +612,7 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
             go(l, bound);
             go(r, bound);
         }
-        ExprKind::Call(f, args) => {
+        ExprKind::Call(f, args) | ExprKind::MethodCall(f, _, _, args) => {
             go(f, bound);
             args.iter().for_each(|a| go(a, bound));
         }
@@ -543,7 +641,7 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
             bound.truncate(scope);
         }
         ExprKind::StructLit(_, _, inits) => inits.iter().for_each(|i| go(&i.value, bound)),
-        ExprKind::Variant(_, _, _, args) => args.iter().for_each(|a| go(a, bound)),
+        ExprKind::Variant(_, _, _, args, ..) => args.iter().for_each(|a| go(a, bound)),
         ExprKind::Match(scrutinee, arms) => {
             go(scrutinee, bound);
             for arm in arms {
