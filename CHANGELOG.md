@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.1 (2026-10-17)
 
 Step 5.1: control flow, and the type with no values. See
 [docs/05.1-control-flow.md](docs/05.1-control-flow.md).
