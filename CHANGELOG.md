@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.0 (2026-10-18)
 
 Step 6b: associated types. See
 [docs/06b-associated-types.md](docs/06b-associated-types.md).
