@@ -70,6 +70,10 @@ pub(super) fn names(
         w.levels.push(Level::Params(params.clone(), w.items.len()));
         w.items.push(("impl", "impl".into()));
         w.ty(&d.self_ty);
+        w.bounds(&d.generics);
+        for a in &d.assoc {
+            w.ty(&a.ty);
+        }
         w.leave();
         for f in &d.methods {
             w.function(f, &params);
@@ -82,6 +86,7 @@ pub(super) fn names(
                 // No body, so not a function of its own: just its types.
                 false => {
                     w.enter("fn", &m.decl.name, &m.decl.generics.types);
+                    w.bounds(&m.decl.generics);
                     m.decl.params.iter().for_each(|p| w.ty(&p.ty));
                     w.ty(&m.decl.ret);
                     w.leave();
@@ -204,6 +209,7 @@ impl Walk<'_> {
         if let Some(Level::Params(params, _)) = self.levels.last_mut() {
             params.extend(outer.iter().cloned());
         }
+        self.bounds(&f.generics);
         for p in &f.params {
             self.ty(&p.ty);
         }
@@ -211,6 +217,18 @@ impl Walk<'_> {
         self.expr(&f.body);
         self.leave();
         self.current.pop();
+    }
+
+    /// The types in the equality bounds of `g`, like `int` in `T: Iter<Item
+    /// = int>`.
+    fn bounds(&mut self, g: &Generics) {
+        for (_, items) in &g.bounds {
+            for a in items.iter().flat_map(|b| &b.assoc) {
+                if let AssocBoundKind::Eq(t) = &a.kind {
+                    self.ty(t);
+                }
+            }
+        }
     }
 
     fn type_decl(&mut self, d: &TypeDecl) {
@@ -228,6 +246,7 @@ impl Walk<'_> {
                 }
             }
         }
+        self.bounds(d.generics());
         self.leave();
     }
 
@@ -254,7 +273,7 @@ impl Walk<'_> {
                 params.iter().for_each(|p| self.ty(p));
                 self.ty(ret);
             }
-            TypeExprKind::Ref(_, _, inner) => self.ty(inner),
+            TypeExprKind::Ref(_, _, inner) | TypeExprKind::Proj(inner, ..) => self.ty(inner),
         }
     }
 

@@ -8,9 +8,36 @@ use super::generics::{self, Lifetimes};
 use super::{Checker, plural};
 use crate::ast::*;
 use crate::error::{Edit, Error, Fix, Span};
-use crate::traits::{ImplDef, MethodDef, Pred, TraitDef, eq_subject, overlap};
+use crate::traits::{AssocDecl, ImplDef, MethodDef, Pred, TraitDef, eq_subject, overlap};
 use crate::types::{AdtKind, Bound, Region, Scheme, Subst, Type};
 use std::collections::{HashMap, HashSet};
+
+/// What a method of an impl is inside of: the impl's parameters, bounds
+/// and equality bounds, which it's generic over too. Nothing, in a trait.
+#[derive(Debug, Clone, Default)]
+pub(super) struct Outer {
+    pub(super) params: Vec<String>,
+    pub(super) lifetimes: Vec<String>,
+    pub(super) bounds: Vec<Bound>,
+    pub(super) preds: Vec<Pred>,
+    pub(super) eqs: Vec<(Type, Type)>,
+}
+
+/// What an equality bound says: projection `.0` is type `.1`.
+pub(super) type Equality = (Type, Type);
+
+/// A stand-in for a projection, for `dispatch`: its name, the projection,
+/// and which parameters of the function it's in the projection mentions.
+type Hidden = (String, Type, Vec<usize>);
+
+/// A use in `assoc_regular`: from what, to what, with what arguments, what
+/// of `to`'s parameters is inside `from`'s, and where.
+type Edge<'a> = (String, &'a str, Vec<Type>, Vec<(usize, usize, usize)>, Span);
+
+/// Does `t` have a projection in it?
+pub(super) fn has_proj(t: &Type) -> bool {
+    matches!(t, Type::Proj(..)) || t.parts().any(has_proj)
+}
 
 /// Why the checker has to prove an obligation, for saying what's wrong if
 /// it can't.
@@ -69,10 +96,46 @@ impl Checker {
             let def = TraitDef {
                 span: Some(name.span),
                 supers: Vec::new(),
+                assoc: Vec::new(),
                 methods: Vec::new(),
             };
             self.traits.traits.insert(name.name.clone(), def);
             self.info.symbols.insert(name.span, name.name.clone());
+        }
+        // Each trait's supertraits and associated types, which a type
+        // anywhere can mention, as `T::Item`.
+        for t in &prog.traits {
+            let mut supers = Vec::new();
+            for s in &t.supers {
+                let s = self.trait_named(s)?;
+                if !supers.contains(&s) {
+                    supers.push(s);
+                }
+            }
+            let mut assoc: Vec<AssocDecl> = Vec::new();
+            for a in &t.assoc {
+                if assoc.iter().any(|b| b.name == a.name.name) {
+                    return Err(Error::ty(
+                        a.name.span,
+                        format!("associated type `{}` is declared twice", a.name.name),
+                    ));
+                }
+                let mut bounds = Vec::new();
+                for b in &a.bounds {
+                    let b = self.trait_named(b)?;
+                    if !bounds.contains(&b) {
+                        bounds.push(b);
+                    }
+                }
+                assoc.push(AssocDecl {
+                    name: a.name.name.clone(),
+                    bounds,
+                    span: a.name.span,
+                });
+            }
+            let def = self.traits.traits.get_mut(&t.name.name).expect("named");
+            def.supers = supers;
+            def.assoc = assoc;
         }
         Ok(())
     }
@@ -93,44 +156,252 @@ impl Checker {
         }
     }
 
-    /// The trait bounds in `g`, whose type parameters are `params`.
-    pub(super) fn preds(&mut self, g: &Generics, params: &[String]) -> Result<Vec<Pred>, Error> {
-        let mut out = Vec::new();
+    /// The trait bounds in `g`, whose type parameters are `params` and
+    /// lifetimes `lifetimes`, and what its equality bounds say: `T: Iter`
+    /// and `(T::Item, int)` for `T: Iter<Item = int>`. Bounds on
+    /// projections, like `T::Item: Discard` for `T: Iter<Item: Discard>`,
+    /// only if `on_projections`: a function's, not an impl's or a struct's,
+    /// whose bounds resolution would then have to prove of what `T::Item`
+    /// stands for, which may be a bigger type than the impl's.
+    pub(super) fn preds(
+        &mut self,
+        g: &Generics,
+        params: &[String],
+        lifetimes: &[String],
+        on_projections: bool,
+    ) -> Result<(Vec<Pred>, Vec<Equality>), Error> {
+        let mut out: Vec<Pred> = Vec::new();
+        let mut eqs: Vec<(Type, Type)> = Vec::new();
+        let push = |out: &mut Vec<Pred>, pred: Pred| {
+            if !out.contains(&pred) {
+                out.push(pred);
+            }
+        };
         for (subject, after) in &g.bounds {
-            for b in after.iter().filter(|b| !b.name.starts_with('\'')) {
-                let tr = self.trait_named(b)?;
-                if params.contains(&subject.name) {
-                    let pred = Pred {
-                        ty: Type::Param(subject.name.clone()),
-                        trait_name: tr,
+            for b in after.iter().filter(|b| !b.name.name.starts_with('\'')) {
+                let tr = self.trait_named(&b.name)?;
+                if !params.contains(&subject.name) {
+                    continue;
+                }
+                let ty = Type::Param(subject.name.clone());
+                push(
+                    &mut out,
+                    Pred {
+                        ty: ty.clone(),
+                        trait_name: tr.clone(),
+                    },
+                );
+                for a in &b.assoc {
+                    let owner = match self.traits.assoc_owner(&tr, &a.name.name)[..] {
+                        [ref o] => o.clone(),
+                        [] => {
+                            return Err(Error::ty(
+                                a.name.span,
+                                format!("trait `{tr}` has no associated type `{}`", a.name.name),
+                            ));
+                        }
+                        ref more => {
+                            return Err(Error::ty(
+                                a.name.span,
+                                format!(
+                                    "`{}` is an associated type of several of `{tr}`'s traits: \
+                                     {}; bound it on one of those",
+                                    a.name.name,
+                                    more.join(", ")
+                                ),
+                            ));
+                        }
                     };
-                    if !out.contains(&pred) {
-                        out.push(pred);
+                    let lhs = Type::Proj(Box::new(ty.clone()), owner, a.name.name.clone());
+                    match &a.kind {
+                        AssocBoundKind::Eq(t) => {
+                            let mut lts = match self.mono {
+                                true => Lifetimes::Any,
+                                false => Lifetimes::Assoc {
+                                    declared: lifetimes,
+                                },
+                            };
+                            let rhs = self.resolve_with(t, params, &mut lts)?;
+                            if has_proj(&rhs) {
+                                return Err(Error::ty(
+                                    t.span,
+                                    "an equality bound can only say a projection is a type \
+                                     without projections in it (for now)",
+                                ));
+                            }
+                            if eqs.iter().any(|(l, _)| *l == lhs) {
+                                return Err(Error::ty(
+                                    a.name.span,
+                                    format!("`{lhs}` is said to be something twice"),
+                                ));
+                            }
+                            eqs.push((lhs, rhs));
+                        }
+                        AssocBoundKind::Bounds(traits) => {
+                            if !on_projections {
+                                return Err(Error::ty(
+                                    a.name.span,
+                                    format!(
+                                        "a bound on an associated type, like `{}: {}`, can only \
+                                         be on a function's type parameter: proving an impl's or \
+                                         a type's bounds would then be about what `{lhs}` \
+                                         stands for, which can be a bigger type",
+                                        a.name.name, traits[0].name
+                                    ),
+                                ));
+                            }
+                            for t in traits {
+                                let t = self.trait_named(t)?;
+                                push(
+                                    &mut out,
+                                    Pred {
+                                        ty: lhs.clone(),
+                                        trait_name: t,
+                                    },
+                                );
+                            }
+                        }
                     }
                 }
             }
         }
-        Ok(out)
+        Ok((out, eqs))
+    }
+
+    /// The type of projection `<s as tr>::name`, written at `span`, or
+    /// `s::name` if `tr` isn't written: what it normalises to, or the
+    /// projection itself, *rigid*, if it doesn't, as on a type parameter.
+    /// `s` must implement the trait, and the shorthand is only for type
+    /// parameters (and projections), whose bounds say which trait it means.
+    pub(super) fn projection(
+        &self,
+        s: Type,
+        tr: Option<&Ident>,
+        name: &Ident,
+        span: Span,
+    ) -> Result<Type, Error> {
+        let n = &name.name;
+        // What the bounds in scope, and the trait's own for a projection,
+        // say `s` implements.
+        let traits_of = |s: &Type| -> Vec<String> {
+            let mut out: Vec<String> = Vec::new();
+            let mut bounds: Vec<String> = self
+                .env
+                .iter()
+                .filter(|p| p.ty == *s)
+                .map(|p| p.trait_name.clone())
+                .collect();
+            if let Type::Proj(_, of, a) = s
+                && let Some(d) = self.traits.traits[of].assoc.iter().find(|d| d.name == *a)
+            {
+                bounds.extend(d.bounds.iter().cloned());
+            }
+            for b in bounds {
+                for t in self.traits.implied(&b) {
+                    if !out.contains(&t) {
+                        out.push(t);
+                    }
+                }
+            }
+            out
+        };
+        let hole = matches!(&s, Type::Param(p) if p.starts_with('?'));
+        let tr = match tr {
+            Some(tr) => {
+                let Some(def) = self.traits.traits.get(&tr.name) else {
+                    return Err(Error::ty(tr.span, format!("unknown trait `{}`", tr.name)));
+                };
+                let owner = self.traits.assoc_owner(&tr.name, n);
+                match owner.first() {
+                    Some(o) if def.assoc.iter().any(|a| a.name == *n) || owner.len() == 1 => {
+                        o.clone()
+                    }
+                    _ => {
+                        return Err(Error::ty(
+                            name.span,
+                            format!("trait `{}` has no associated type `{n}`", tr.name),
+                        ));
+                    }
+                }
+            }
+            None if !matches!(s, Type::Param(_) | Type::Proj(..)) || hole => {
+                let mut with: Vec<&String> = self
+                    .traits
+                    .traits
+                    .iter()
+                    .filter(|(_, d)| d.assoc.iter().any(|a| a.name == *n))
+                    .map(|(t, _)| t)
+                    .collect();
+                with.sort();
+                let tr = with.first().map_or("Trait", |t| t.as_str());
+                return Err(Error::ty(
+                    span,
+                    format!(
+                        "`{s}::{n}` is short for a projection on a type parameter; on `{s}`, \
+                         say which trait's `{n}` it is: write `<{s} as {tr}>::{n}`"
+                    ),
+                ));
+            }
+            None => {
+                let mut owners: Vec<String> = Vec::new();
+                for t in traits_of(&s) {
+                    if self.traits.traits[&t].assoc.iter().any(|a| a.name == *n) {
+                        owners.push(t);
+                    }
+                }
+                owners.sort();
+                match &owners[..] {
+                    [o] => o.clone(),
+                    [] => {
+                        return Err(Error::ty(
+                            span,
+                            format!("none of `{s}`'s traits has an associated type `{n}`"),
+                        ));
+                    }
+                    more => {
+                        let all: Vec<String> = more
+                            .iter()
+                            .map(|t| format!("`<{s} as {t}>::{n}`"))
+                            .collect();
+                        return Err(Error::ty(
+                            span,
+                            format!("`{s}::{n}` could be {}; write which", all.join(" or ")),
+                        ));
+                    }
+                }
+            }
+        };
+        if !hole {
+            let known = match &s {
+                Type::Param(_) | Type::Proj(..) => traits_of(&s).contains(&tr),
+                s => {
+                    let local = &self.adts.proj.local;
+                    self.collecting
+                        || super::unify::has_vars(s)
+                        || self.traits.implements(s, &tr, &self.env, local).is_ok()
+                }
+            };
+            if !known {
+                let fix = match &s {
+                    Type::Param(p) => format!("; add a bound: `{p}: {tr}`"),
+                    _ => String::new(),
+                };
+                return Err(Error::ty(
+                    span,
+                    format!(
+                        "`{s}` doesn't implement `{tr}`, so `<{s} as {tr}>::{n}` means nothing{fix}"
+                    ),
+                ));
+            }
+        }
+        self.proj_traits.borrow_mut().insert(span, tr.clone());
+        Ok(self.adts.normalise(&Type::Proj(Box::new(s), tr, n.clone())))
     }
 
     /// Pass 1: each trait's supertraits and the signatures of its methods.
     /// No trait can be its own supertrait, even through others: then
     /// implementing it would need it implemented already.
     pub(super) fn collect_traits(&mut self, prog: &Program) -> Result<(), Error> {
-        for t in &prog.traits {
-            let mut supers = Vec::new();
-            for s in &t.supers {
-                let s = self.trait_named(s)?;
-                if !supers.contains(&s) {
-                    supers.push(s);
-                }
-            }
-            self.traits
-                .traits
-                .get_mut(&t.name.name)
-                .expect("named")
-                .supers = supers;
-        }
         for t in &prog.traits {
             if let Some(i) = t
                 .supers
@@ -157,7 +428,11 @@ impl Checker {
                         format!("method `{}` is declared twice", f.name.name),
                     ));
                 }
-                let mut scheme = self.method_scheme(f, &[], &[], &[], &[], None)?;
+                let this = Pred {
+                    ty: Type::Param("Self".into()),
+                    trait_name: t.name.name.clone(),
+                };
+                let mut scheme = self.method_scheme(f, &Outer::default(), Some(this), None)?;
                 scheme.params.insert(0, "Self".into());
                 scheme.preds.insert(
                     0,
@@ -184,20 +459,26 @@ impl Checker {
         Ok(())
     }
 
-    /// The type of method `f`, in an impl with type parameters
-    /// `impl_params`, lifetimes `impl_lifetimes`, bounds `impl_bounds` and
-    /// `impl_preds`, for type `self_ty`, or in a trait if that's `None`,
-    /// where `Self` is a type parameter. Generic over the impl's
-    /// parameters and then its own.
+    /// The type of method `f`, in an impl with parameters, bounds and so
+    /// on `outer`, for type `self_ty`, or in a trait if that's `None`,
+    /// where `Self` is a type parameter. Generic over the impl's parameters
+    /// and then its own. `this` is `Self: Trait`, which holds in it, if
+    /// it's of a trait or an impl of one, so that `Self::Item` means
+    /// something.
     pub(super) fn method_scheme(
         &mut self,
         f: &FnDecl,
-        impl_params: &[String],
-        impl_lifetimes: &[String],
-        impl_bounds: &[Bound],
-        impl_preds: &[Pred],
+        outer: &Outer,
+        this: Option<Pred>,
         self_ty: Option<&Type>,
     ) -> Result<Scheme, Error> {
+        let Outer {
+            params: impl_params,
+            lifetimes: impl_lifetimes,
+            bounds: impl_bounds,
+            preds: impl_preds,
+            eqs: impl_eqs,
+        } = outer;
         let own = generics::declare(&f.generics.types)?;
         if let Some(p) = f
             .generics
@@ -221,21 +502,30 @@ impl Checker {
         let mut bounds = impl_bounds.to_vec();
         bounds.extend(generics::bounds(&f.generics, &lifetimes, &params)?);
         let mut preds = impl_preds.to_vec();
-        preds.extend(self.preds(&f.generics, &own)?);
+        let mut eqs = impl_eqs.to_vec();
+        let (own_preds, own_eqs) = self.preds(&f.generics, &own, &lifetimes, true)?;
+        preds.extend(own_preds);
+        eqs.extend(own_eqs);
         // `Self` resolves as a type parameter, and in an impl is then
         // replaced by the impl's type.
         let mut with_self = params.clone();
         with_self.push("Self".into());
+        self.env = preds.iter().cloned().chain(this).collect();
+        self.adts.proj.local = eqs.clone();
         let (param_tys, ret, lts) = self.signature(f, &with_self, &lifetimes)?;
         let mut ty = Type::func(param_tys, ret);
         if let Some(s) = self_ty {
             ty = Subst::new(&["Self".to_string()], std::slice::from_ref(s)).apply(&ty);
+            ty = self.adts.normalise(&ty);
         }
+        self.env.clear();
+        self.adts.proj.local.clear();
         Ok(Scheme {
             params,
             lifetimes: lts,
             bounds,
             preds,
+            eqs,
             ty,
         })
     }
@@ -243,6 +533,13 @@ impl Checker {
     /// Pass 2: every impl's parameters, type and bounds, and that it's for
     /// something it can be.
     pub(super) fn collect_impls(&mut self, prog: &Program) -> Result<(), Error> {
+        self.collecting = true;
+        let result = self.collect_impls_in(prog);
+        self.collecting = false;
+        result
+    }
+
+    fn collect_impls_in(&mut self, prog: &Program) -> Result<(), Error> {
         for d in &prog.impls {
             let params = generics::declare(&d.generics.types)?;
             let declared = generics::declare_lifetimes(&d.generics.lifetimes)?;
@@ -259,13 +556,20 @@ impl Checker {
                     "`Self` is the type an impl is for, so it can't be used to say what that is",
                 ));
             }
+            if let Some(s) = proj_in(&d.self_ty) {
+                return Err(Error::ty(
+                    s,
+                    "an impl can't be for a projection: what type it's for would depend on \
+                     other impls, and two impls could then be for the same type",
+                ));
+            }
             let self_ty = self.resolve_with(&d.self_ty, &params, &mut lts)?;
             let mut lifetimes = declared.clone();
             if let Lifetimes::Params { elided, .. } = lts {
                 lifetimes.extend(elided);
             }
             let bounds = generics::bounds(&d.generics, &lifetimes, &params)?;
-            let preds = self.preds(&d.generics, &params)?;
+            let (preds, eqs) = self.preds(&d.generics, &params, &lifetimes, false)?;
             let trait_name = match &d.trait_name {
                 Some(t) => Some(self.trait_named(t)?),
                 None => None,
@@ -353,6 +657,16 @@ impl Checker {
                     ));
                 }
             }
+            let assoc = self.assoc_defs(
+                d,
+                trait_name.as_deref(),
+                &self_ty,
+                &params,
+                &lifetimes,
+                &preds,
+                &eqs,
+                header,
+            )?;
             self.impl_ids.push(self.traits.impls.len());
             self.traits.impls.push(ImplDef {
                 span: header,
@@ -362,11 +676,149 @@ impl Checker {
                 bounds,
                 self_ty,
                 preds,
+                eqs,
+                assoc,
                 methods,
                 derived: false,
             });
         }
         Ok(())
+    }
+
+    /// What impl `d`, of trait `tr` (if it's of one) for `self_ty`, says
+    /// the trait's associated types are, with the rules that keep working
+    /// them out sound (see `traits::Projections`):
+    ///
+    /// - One for each of the trait's, and no others.
+    /// - Every lifetime, as anywhere in an impl, is one of the impl's or
+    ///   `'static`, and none is left out. So its regions are those of the
+    ///   type the impl is for, or `'static`, and the borrow checker can
+    ///   say `T: 'r` makes `T::Out: 'r`.
+    /// - *Constrained*: each parameter it mentions is in `self_ty` outside
+    ///   every function type, where matching the type decides it. Not in it
+    ///   at all, `<S as Tr>::Out` could be a reference of any lifetime, a
+    ///   new one each time it's mentioned. Only inside a function type, it
+    ///   would be decided as a region only that function type means, as
+    ///   finding an impl doesn't look at what function types are generic
+    ///   over: `impl<A, B> Tr for fn(A) -> B` is found for `fn(&int) ->
+    ///   &int`, with `B` the result's `&int`, of whatever lifetime a call
+    ///   picks.
+    /// - It *terminates*: each projection in it is on a type smaller than
+    ///   `self_ty`, with no type parameter more often, and no projection in
+    ///   that, or, in a blanket impl, on its parameter itself (see
+    ///   `assoc_termination`). Then working out a projection ends.
+    #[allow(clippy::too_many_arguments)]
+    fn assoc_defs(
+        &mut self,
+        d: &ImplDecl,
+        tr: Option<&str>,
+        self_ty: &Type,
+        params: &[String],
+        lifetimes: &[String],
+        preds: &[Pred],
+        eqs: &[(Type, Type)],
+        header: Span,
+    ) -> Result<Vec<(String, Type)>, Error> {
+        let Some(tr) = tr else {
+            return match d.assoc.first() {
+                Some(a) => Err(Error::ty(
+                    a.name.span,
+                    "only an impl of a trait can have associated types",
+                )),
+                None => Ok(Vec::new()),
+            };
+        };
+        let decls = self.traits.traits[tr].assoc.clone();
+        let mut out: Vec<(String, Type)> = Vec::new();
+        for a in &d.assoc {
+            let n = &a.name.name;
+            if !decls.iter().any(|x| x.name == *n) {
+                return Err(Error::ty(
+                    a.name.span,
+                    format!("`{n}` isn't an associated type of trait `{tr}`"),
+                ));
+            }
+            if out.iter().any(|(m, _)| m == n) {
+                return Err(Error::ty(
+                    a.name.span,
+                    format!("associated type `{n}` is defined twice"),
+                ));
+            }
+            let mut with_self = params.to_vec();
+            with_self.push("Self".into());
+            let mut lts = match self.mono {
+                true => Lifetimes::Any,
+                false => Lifetimes::Assoc {
+                    declared: lifetimes,
+                },
+            };
+            self.env = preds.to_vec();
+            self.env.push(Pred {
+                ty: Type::Param("Self".into()),
+                trait_name: tr.to_string(),
+            });
+            self.adts.proj.local = eqs.to_vec();
+            let resolved = self.resolve_with(&a.ty, &with_self, &mut lts);
+            self.env.clear();
+            self.adts.proj.local.clear();
+            let t =
+                Subst::new(&["Self".to_string()], std::slice::from_ref(self_ty)).apply(&resolved?);
+            if !self.mono {
+                constrained(&t, self_ty, params, a.ty.span)?;
+                terminates(&t, self_ty, params, a.ty.span)?;
+            }
+            out.push((n.clone(), t));
+        }
+        let missing: Vec<String> = decls
+            .iter()
+            .filter(|x| !out.iter().any(|(n, _)| *n == x.name))
+            .map(|x| format!("`{}`", x.name))
+            .collect();
+        if !missing.is_empty() {
+            return Err(Error::ty(
+                header,
+                format!(
+                    "this impl of `{tr}` for `{self_ty}` is missing {}: {}",
+                    match missing.len() {
+                        1 => "an associated type".to_string(),
+                        n => plural(n, "associated type"),
+                    },
+                    missing.join(", ")
+                ),
+            ));
+        }
+        Ok(out)
+    }
+
+    /// Once every impl is collected, what each projection stands for is
+    /// known: the types already resolved, of fields and of trait methods,
+    /// get theirs worked out.
+    pub(super) fn projections_known(&mut self) {
+        let local = std::mem::take(&mut self.adts.proj.local);
+        self.adts.proj = crate::traits::Projections::new(&self.traits);
+        let proj = self.adts.proj.clone();
+        for def in self.adts.values_mut() {
+            let mut p = proj.clone();
+            p.local = def.eqs.clone();
+            match &mut def.kind {
+                AdtKind::Struct(fields) => {
+                    for (_, t) in fields {
+                        *t = p.normalise(t);
+                    }
+                }
+                AdtKind::Enum(variants) => {
+                    for t in variants.iter_mut().flat_map(|(_, ts)| ts) {
+                        *t = p.normalise(t);
+                    }
+                }
+            }
+        }
+        for def in self.traits.traits.values_mut() {
+            for m in &mut def.methods {
+                m.scheme.ty = proj.normalise(&m.scheme.ty);
+            }
+        }
+        self.adts.proj.local = local;
     }
 
     /// The impl of each `#[derive(..)]`. What it needs of the type's
@@ -407,6 +859,8 @@ impl Checker {
                     bounds: def.bounds.clone(),
                     self_ty: def.generic(symbol),
                     preds: Vec::new(),
+                    eqs: def.eqs.clone(),
+                    assoc: Vec::new(),
                     methods: Vec::new(),
                     derived: true,
                 });
@@ -425,6 +879,23 @@ impl Checker {
                 let mut needed: Vec<Pred> = Vec::new();
                 for (what, t) in fields(&def.kind) {
                     if let Err(bad) = self.needs(&t, tr, &def.params, &mut needed) {
+                        // A derived impl can't have a bound on a projection
+                        // (see `preds`): only the trait's own will do.
+                        if let Type::Proj(_, of, a) = &bad.ty {
+                            let p = &bad.ty;
+                            let held = match bad.ty == t {
+                                true => format!("holds a `{t}`"),
+                                false => format!("holds a `{t}`, which has a `{p}` in it"),
+                            };
+                            return Err(Error::ty(
+                                derived.iter().find(|x| x.0 == k).expect("it").2,
+                                format!(
+                                    "`{}` can't be `{tr}`: its {what} {held}, and `{of}` \
+                                     doesn't say that's `{tr}`; declare it as `type {a}: {tr};`",
+                                    d.name().name
+                                ),
+                            ));
+                        }
                         let why = match (&bad.ty, tr) {
                             (Type::Fn(_), "Eq") => " (functions can't be compared)".to_string(),
                             (b, _) if *b == t => String::new(),
@@ -464,7 +935,7 @@ impl Checker {
             if tr != "Copy"
                 || self
                     .traits
-                    .implements(&def.self_ty, "Discard", &def.preds)
+                    .implements(&def.self_ty, "Discard", &def.preds, &def.eqs)
                     .is_ok()
             {
                 continue;
@@ -519,7 +990,7 @@ impl Checker {
             t => {
                 return self
                     .traits
-                    .implements(t, tr, &[])
+                    .implements(t, tr, &[], &[])
                     .map(|_| ())
                     .map_err(|_| Pred {
                         ty: t.clone(),
@@ -567,7 +1038,7 @@ impl Checker {
             for s in self.traits.traits[tr].supers.clone() {
                 if self
                     .traits
-                    .implements(&def.self_ty, &s, &def.preds)
+                    .implements(&def.self_ty, &s, &def.preds, &def.eqs)
                     .is_err()
                 {
                     return Err(Error::ty(
@@ -581,6 +1052,7 @@ impl Checker {
                     ));
                 }
             }
+            self.assoc_bounds(&def, d)?;
             if tr == "Copy" || tr == "Discard" {
                 let Type::Adt(symbol, ..) = &def.self_ty else {
                     unreachable!("checked")
@@ -588,8 +1060,12 @@ impl Checker {
                 let adt = &self.adts[symbol];
                 let s = Subst::new(&adt.params, &args_of(&def.self_ty));
                 for (what, t) in fields(&adt.kind) {
-                    let t = s.apply(&t);
-                    if self.traits.implements(&t, tr, &def.preds).is_err() {
+                    let t = self.adts.normalise(&s.apply(&t));
+                    if self
+                        .traits
+                        .implements(&t, tr, &def.preds, &def.eqs)
+                        .is_err()
+                    {
                         return Err(Error::ty(
                             def.span,
                             format!(
@@ -602,8 +1078,305 @@ impl Checker {
             }
         }
         self.env.clear();
+        self.adts.proj.local.clear();
         self.coherence()?;
-        self.termination()
+        self.termination()?;
+        self.assoc_termination()?;
+        self.assoc_sizes()?;
+        self.assoc_regular()
+    }
+
+    /// Monomorphisation makes a copy of every struct and enum type a copy
+    /// mentions, even through a box, and a field's projection is what an
+    /// impl says it is, which can mention more: `struct S<T: Tr> { b:
+    /// Box<T::Out> }` with `type Out = S<W<W<U>>>` for `W<U>` makes
+    /// `S<W<int>>` need `S<W<W<int>>>`, and so on, with no end. So that's
+    /// polymorphic recursion too (`generics::polymorphic_recursion`), with
+    /// each impl's associated type a node of its own, generic over the
+    /// impl's parameters, which a projection in a field gets to the way a
+    /// method call gets to an impl's method (`dispatch`), and which uses
+    /// the types and projections in what it says.
+    fn assoc_regular(&self) -> Result<(), Error> {
+        // A name for each associated type of each impl.
+        let nodes: Vec<(usize, String, String)> = self
+            .traits
+            .impls
+            .iter()
+            .enumerate()
+            .flat_map(|(k, d)| {
+                let tr = d.trait_name.clone().unwrap_or_default();
+                d.assoc
+                    .iter()
+                    .map(move |(n, _)| (k, n.clone(), format!("<{} as {tr}>::{n}", d.self_ty)))
+            })
+            .collect();
+        let mut uses: Vec<generics::Use> = Vec::new();
+        // To each impl a projection on `s` in `from` may be worked out by.
+        let through = |from_params: &[String], s: &Type, tr: &str, name: &str, span: Span| {
+            let mut out = Vec::new();
+            let mut hidden: Vec<Hidden> = Vec::new();
+            let s = &hide_projections(s, from_params, &mut hidden);
+            for (k, n, node) in &nodes {
+                let d = &self.traits.impls[*k];
+                if n != name || d.trait_name.as_deref() != Some(tr) {
+                    continue;
+                }
+                let renamed: Vec<Type> = d
+                    .params
+                    .iter()
+                    .map(|p| Type::Param(format!("{p}'")))
+                    .collect();
+                let header = Subst::new(&d.params, &renamed).apply(&d.self_ty);
+                let mut vars: Vec<String> = d.params.iter().map(|p| format!("{p}'")).collect();
+                vars.extend(from_params.iter().cloned());
+                vars.extend(hidden.iter().map(|h| h.0.clone()));
+                if !overlap(&header, s, &vars) {
+                    continue;
+                }
+                let mut found: Vec<Option<Type>> = vec![None; d.params.len()];
+                let mut inside = Vec::new();
+                split(
+                    &d.self_ty,
+                    s,
+                    &d.params,
+                    (from_params, &hidden),
+                    &mut found,
+                    &mut inside,
+                );
+                let args = found
+                    .into_iter()
+                    .map(|t| shown_projections(&t.unwrap_or(Type::Unit), &hidden))
+                    .collect();
+                out.push((node.as_str(), args, inside, span));
+            }
+            out
+        };
+        let mut edges: Vec<Edge> = Vec::new();
+        let mut names: Vec<&String> = self.adts.keys().collect();
+        names.sort();
+        for a in &names {
+            let def = &self.adts[*a];
+            // Its name, where it's declared.
+            let at = self.defs.types.get(*a).copied().unwrap_or(Span::new(0, 0));
+            for (_, f) in fields(&def.kind) {
+                super::each_adt(&f, &mut |to, args| {
+                    edges.push((
+                        (*a).clone(),
+                        self.adt_key(to),
+                        args.to_vec(),
+                        Vec::new(),
+                        at,
+                    ));
+                });
+                each_proj(&f, &mut |s, tr| {
+                    if let Some(name) = proj_name(&f, s, tr) {
+                        for (to, args, inside, span) in through(&def.params, s, tr, &name, at) {
+                            edges.push(((*a).clone(), to, args, inside, span));
+                        }
+                    }
+                });
+            }
+        }
+        for (k, n, node) in &nodes {
+            let d = &self.traits.impls[*k];
+            let (_, t) = d.assoc.iter().find(|(m, _)| m == n).expect("it");
+            super::each_adt(t, &mut |to, args| {
+                edges.push((
+                    node.clone(),
+                    self.adt_key(to),
+                    args.to_vec(),
+                    Vec::new(),
+                    d.span,
+                ));
+            });
+            each_proj(t, &mut |s, tr| {
+                if let Some(name) = proj_name(t, s, tr) {
+                    for (to, args, inside, span) in through(&d.params, s, tr, &name, d.span) {
+                        edges.push((node.clone(), to, args, inside, span));
+                    }
+                }
+            });
+        }
+        if nodes.is_empty() {
+            return Ok(());
+        }
+        uses.extend(
+            edges
+                .iter()
+                .map(|(from, to, args, inside, span)| generics::Use {
+                    from,
+                    to,
+                    args: args.clone(),
+                    inside: inside.clone(),
+                    span: *span,
+                }),
+        );
+        uses.sort_by_key(|u| u.span.start);
+        let mut params: HashMap<&str, &[String]> = self
+            .adts
+            .iter()
+            .map(|(name, def)| (name.as_str(), def.params.as_slice()))
+            .collect();
+        for (k, _, node) in &nodes {
+            params.insert(node, &self.traits.impls[*k].params);
+        }
+        generics::polymorphic_recursion(&uses, &params)
+    }
+
+    /// The name a struct or enum's symbol is a node by, in `assoc_regular`.
+    fn adt_key<'a>(&'a self, symbol: &str) -> &'a str {
+        self.adts.get_key_value(symbol).expect("a type").0
+    }
+
+    /// What impl `def` (written as `d`) says its trait's associated types
+    /// are must make sense where it's used: what's in them implements what
+    /// it must, projections in them are worked out, and they implement what
+    /// the trait declares of them, which generic code assumes.
+    fn assoc_bounds(&mut self, def: &ImplDef, d: &ImplDecl) -> Result<(), Error> {
+        let Some(tr) = &def.trait_name else {
+            return Ok(());
+        };
+        self.env = def.preds.clone();
+        self.adts.proj.local = def.eqs.clone();
+        for (name, rhs) in &def.assoc {
+            let span = d
+                .assoc
+                .iter()
+                .find(|a| a.name.name == *name)
+                .map_or(def.span, |a| a.ty.span);
+            let t = self.adts.normalise(rhs);
+            if let Some(p) = rigid_on_type(&t) {
+                let Type::Proj(s, of, _) = &p else {
+                    unreachable!("a projection")
+                };
+                return Err(Error::ty(
+                    span,
+                    format!("`{s}` doesn't implement `{of}`, so `{p}` means nothing"),
+                ));
+            }
+            self.well_formed_now(&t, span)?;
+            let decl = self.traits.traits[tr]
+                .assoc
+                .iter()
+                .find(|a| a.name == *name)
+                .expect("checked")
+                .clone();
+            for b in &decl.bounds {
+                let local = &self.adts.proj.local;
+                if let Err(bad) = self.traits.implements(&t, b, &self.env, local) {
+                    let needs = match bad.ty == t {
+                        true => String::new(),
+                        false => format!(" (that needs `{bad}`)"),
+                    };
+                    return Err(Error::ty(
+                        span,
+                        format!(
+                            "`{t}` doesn't implement `{b}`, which `{tr}` needs of `{name}`, as \
+                             it declares `type {name}: {}`{needs}",
+                            decl.bounds.join(" + ")
+                        ),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Working out a projection ends (see `Projections`): each step, by an
+    /// impl, is to projections on smaller types (checked where each impl's
+    /// associated types are, in `terminates`), or, by a blanket impl `impl<T>
+    /// B for T`, on `T` itself, to another trait's. Those steps are edges
+    /// between traits, and like the blanket impls' bounds (`termination`)
+    /// can't go round in a cycle. Then each step goes down in size, or stays
+    /// the same size and goes down in an order of the traits, and that
+    /// can't go on forever.
+    fn assoc_termination(&self) -> Result<(), Error> {
+        let mut edges: Vec<(&str, &str, &ImplDef)> = Vec::new();
+        for d in &self.traits.impls {
+            let (Some(tr), Type::Param(_)) = (&d.trait_name, &d.self_ty) else {
+                continue;
+            };
+            for (_, t) in &d.assoc {
+                each_proj(t, &mut |s, to| {
+                    if *s == d.self_ty {
+                        edges.push((tr, to, d));
+                    }
+                });
+            }
+        }
+        for &(from, to, d) in &edges {
+            let mut seen = HashSet::new();
+            if reach(&edges, to, from, &mut seen).is_some() {
+                return Err(Error::ty(
+                    d.span,
+                    format!(
+                        "working out an associated type of `{from}` could go on forever: \
+                         blanket impls work out `{from}`'s from `{to}`'s and `{to}`'s from \
+                         `{from}`'s, for the same type, which isn't smaller each time"
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// No type holds itself by value through a projection: `struct S<T:
+    /// Tr> { x: T::Out }` with `impl Tr for int { type Out = S<int>; }` has
+    /// an `S<int>` hold an `S<int>`, so it would have infinite size, which
+    /// neither says alone (`collect_adts` checks each struct and enum on
+    /// its own). Every such cycle goes through some impl's associated type,
+    /// so from each, what it holds by value is followed, through fields and
+    /// the impls projections are worked out by: getting back to an impl
+    /// already on the way is a type that holds itself, or holds a bigger
+    /// one of itself, again and again, which is as infinite.
+    fn assoc_sizes(&self) -> Result<(), Error> {
+        for (k, d) in self.traits.impls.iter().enumerate() {
+            for (name, t) in &d.assoc {
+                let mut path = vec![k];
+                if let Some(back) = self.holds(t, &mut path, &mut HashSet::new()) {
+                    let tr = d.trait_name.as_deref().unwrap_or_default();
+                    return Err(Error::ty(
+                        d.span,
+                        format!(
+                            "`{t}`, which this impl says `<{} as {tr}>::{name}` is, contains \
+                             itself through `{back}`, so it would have infinite size; hold it \
+                             through a pointer, like `Box<{t}>`, instead",
+                            d.self_ty
+                        ),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The projection by which `t` holds by value what an impl on `path`
+    /// says an associated type is, if it does.
+    fn holds(&self, t: &Type, path: &mut Vec<usize>, done: &mut HashSet<Type>) -> Option<Type> {
+        match t {
+            Type::Adt(name, regions, args) => {
+                if !done.insert(t.erased()) {
+                    return None;
+                }
+                let def = &self.adts[name];
+                let s = Subst::new(&def.params, args).with_regions(&def.lifetimes, regions);
+                fields(&def.kind)
+                    .iter()
+                    .find_map(|(_, f)| self.holds(&s.apply(f), path, done))
+            }
+            Type::Proj(s, tr, name) => {
+                let (k, _) = self.traits.select(s, Some(tr))?;
+                if path.contains(&k) {
+                    return Some(t.clone());
+                }
+                let u = crate::traits::project(&self.traits.impls, s, tr, name)?;
+                path.push(k);
+                let found = self.holds(&u, path, &mut HashSet::new());
+                path.pop();
+                found
+            }
+            _ => None,
+        }
     }
 
     /// Checks that method `f`, of type `got`, of impl `d`, is method
@@ -647,7 +1420,8 @@ impl Checker {
         let mut args = vec![d.self_ty.clone()];
         args.extend(own.iter().cloned().map(Type::Param));
         let s = Subst::new(&want.scheme.params, &args);
-        let wanted = s.apply(&want.scheme.ty);
+        // `Self::Item` in the trait's is what this impl says it is.
+        let wanted = self.adts.normalise(&s.apply(&want.scheme.ty));
         let (Type::Fn(g), Type::Fn(w)) = (&got.ty, &wanted) else {
             unreachable!("methods have function types")
         };
@@ -687,6 +1461,7 @@ impl Checker {
                         let p = s.apply(&Type::Param(p.clone()));
                         format!("{p}: {}", c.region(y))
                     }
+                    Bound::Proj(p, y) => format!("{}: {}", s.apply(p), c.region(y)),
                 })
                 .collect();
             v.sort();
@@ -871,7 +1646,10 @@ impl Checker {
     pub(crate) fn is_copy(&self, t: &Type) -> bool {
         match self.mono {
             true => crate::types::is_copy(&self.adts, t, false),
-            false => self.traits.implements(t, "Copy", &self.env).is_ok(),
+            false => self
+                .traits
+                .implements(t, "Copy", &self.env, &self.adts.proj.local)
+                .is_ok(),
         }
     }
 
@@ -879,7 +1657,9 @@ impl Checker {
     /// thrown away, with the bounds in scope? Only asked before
     /// monomorphisation: the borrow checker asks it, and it's done by then.
     pub(crate) fn is_discard(&self, t: &Type) -> bool {
-        self.traits.implements(t, "Discard", &self.env).is_ok()
+        self.traits
+            .implements(t, "Discard", &self.env, &self.adts.proj.local)
+            .is_ok()
     }
 
     /// What `t`, which isn't `Discard`, would need to be, for messages to
@@ -887,9 +1667,12 @@ impl Checker {
     /// enum that deriving `Discard` would make so, if its fields allow
     /// that. `None` if it's neither, as a fix that wouldn't work is no fix.
     pub(crate) fn missing_discard(&self, t: &Type) -> Option<Type> {
-        let bad = self.traits.implements(t, "Discard", &self.env).err()?;
+        let bad = self
+            .traits
+            .implements(t, "Discard", &self.env, &self.adts.proj.local)
+            .err()?;
         let Type::Adt(symbol, ..) = &bad.ty else {
-            return matches!(bad.ty, Type::Param(_)).then_some(bad.ty);
+            return matches!(bad.ty, Type::Param(_) | Type::Proj(..)).then_some(bad.ty);
         };
         if self.traits.select(&bad.ty, Some("Discard")).is_some() {
             return None;
@@ -914,13 +1697,19 @@ impl Checker {
             bounds: adt.bounds.clone(),
             self_ty: adt.generic(symbol),
             preds: assumed.clone(),
+            eqs: adt.eqs.clone(),
+            assoc: Vec::new(),
             methods: Vec::new(),
             derived: true,
         });
         let fields_may = fields(&adt.kind)
             .iter()
-            .all(|(_, f)| traits.implements(f, "Discard", &assumed).is_ok());
-        (fields_may && traits.implements(t, "Discard", &self.env).is_ok()).then_some(bad.ty)
+            .all(|(_, f)| traits.implements(f, "Discard", &assumed, &[]).is_ok());
+        (fields_may
+            && traits
+                .implements(t, "Discard", &self.env, &self.adts.proj.local)
+                .is_ok())
+        .then_some(bad.ty)
     }
 
     /// Requires `pred`, at `span` because of `why`: now, if its type is
@@ -949,7 +1738,10 @@ impl Checker {
     /// it's simple.
     pub(super) fn prove(&self, o: &Obligation) -> Result<(), Error> {
         let Pred { ty, trait_name: tr } = &o.pred;
-        let bad = match self.traits.implements(ty, tr, &self.env) {
+        let bad = match self
+            .traits
+            .implements(ty, tr, &self.env, &self.adts.proj.local)
+        {
             Ok(_) => return Ok(()),
             Err(bad) => bad,
         };
@@ -1021,26 +1813,28 @@ impl Checker {
     /// `int: Show`.
     pub(super) fn well_formed(&mut self, t: &Type, span: Span) -> Result<(), Error> {
         let mut preds = Vec::new();
+        let mut eqs = Vec::new();
         super::each_adt(t, &mut |name, args| {
-            if let Some(def) = self.adts.get(name)
-                && !def.preds.is_empty()
-            {
+            if let Some(def) = self.adts.get(name) {
                 let s = Subst::new(&def.params, args);
                 for p in &def.preds {
-                    let Type::Param(param) = &p.ty else {
-                        unreachable!("bounds are on type parameters")
-                    };
-                    let why = Why::Bound(super::source_name(name), param.clone());
+                    let why = Why::Bound(super::source_name(name), p.ty.to_string());
                     let pred = Pred {
                         ty: s.apply(&p.ty),
                         trait_name: p.trait_name.clone(),
                     };
                     preds.push((pred, why));
                 }
+                for (lhs, rhs) in &def.eqs {
+                    eqs.push((s.apply(lhs), s.apply(rhs), super::source_name(name)));
+                }
             }
         });
         for (pred, why) in preds {
             self.oblige(pred, span, why)?;
+        }
+        for (lhs, rhs, who) in eqs {
+            self.require_eq(lhs, rhs, span, &who)?;
         }
         Ok(())
     }
@@ -1109,10 +1903,23 @@ impl Checker {
         }
         let traits: Vec<String> = match (tr, &ty) {
             (Some(tr), _) => vec![tr.to_string()],
-            (None, Type::Param(_)) => {
+            (None, Type::Param(_) | Type::Proj(..)) => {
+                let mut bounds: Vec<String> = self
+                    .env
+                    .iter()
+                    .filter(|p| p.ty == ty)
+                    .map(|p| p.trait_name.clone())
+                    .collect();
+                // What the trait says of its associated type, for a
+                // projection.
+                if let Type::Proj(_, of, a) = &ty
+                    && let Some(d) = self.traits.traits[of].assoc.iter().find(|d| d.name == *a)
+                {
+                    bounds.extend(d.bounds.iter().cloned());
+                }
                 let mut out = Vec::new();
-                for p in self.env.iter().filter(|p| p.ty == ty) {
-                    for t in self.traits.implied(&p.trait_name) {
+                for b in bounds {
+                    for t in self.traits.implied(&b) {
                         if !out.contains(&t) {
                             out.push(t);
                         }
@@ -1206,17 +2013,17 @@ impl Checker {
         args.extend(self.type_args(m, own, targs, name.span, "(..)")?);
         let fn_ty = Subst::new(&def.scheme.params, &args).apply(&def.scheme.ty);
         // Its own bounds, besides `Self: Trait`.
+        let s = Subst::new(&def.scheme.params, &args);
         for p in &def.scheme.preds[1..] {
-            let s = Subst::new(&def.scheme.params, &args);
-            let Type::Param(param) = &p.ty else {
-                unreachable!("bounds are on type parameters")
-            };
-            let why = Why::Bound(m.clone(), param.clone());
+            let why = Why::Bound(m.clone(), p.ty.to_string());
             let pred = Pred {
-                ty: s.apply(&p.ty),
+                ty: self.adts.normalise(&s.apply(&p.ty)),
                 trait_name: p.trait_name.clone(),
             };
             self.oblige(pred, name.span, why)?;
+        }
+        for (lhs, rhs) in &def.scheme.eqs {
+            self.require_eq(s.apply(lhs), s.apply(rhs), name.span, m)?;
         }
         Ok(Found {
             symbol: def.symbol.clone(),
@@ -1272,16 +2079,17 @@ impl Checker {
         let self_ty = s.apply(&d.self_ty);
         self.unify(&self_ty, ty)
             .unwrap_or_else(|_| unreachable!("it could match"));
+        let who = format!("{}::{}", d.self_ty, name.name);
         for p in &scheme.preds {
-            let Type::Param(param) = &p.ty else {
-                unreachable!("bounds are on type parameters")
-            };
-            let why = Why::Bound(format!("{}::{}", d.self_ty, name.name), param.clone());
+            let why = Why::Bound(who.clone(), p.ty.to_string());
             let pred = Pred {
-                ty: s.apply(&p.ty),
+                ty: self.adts.normalise(&s.apply(&p.ty)),
                 trait_name: p.trait_name.clone(),
             };
             self.oblige(pred, name.span, why)?;
+        }
+        for (lhs, rhs) in &scheme.eqs {
+            self.require_eq(s.apply(lhs), s.apply(rhs), name.span, &who)?;
         }
         Ok(Found {
             symbol,
@@ -1329,6 +2137,13 @@ impl Checker {
             "Eq" => eq_subject(self_ty),
             _ => self_ty,
         };
+        // A projection in it can be any type, so any impl may be for it,
+        // and the impl's parameters are inside what it stands for, which
+        // can be bigger than the type it's on by any amount: each is a
+        // stand-in, a variable for `overlap`, whose parts are an unbounded
+        // edge away from the parameters the projection mentions.
+        let mut hidden: Vec<Hidden> = Vec::new();
+        let self_ty = &hide_projections(self_ty, from_params, &mut hidden);
         let mut out = Vec::new();
         for (k, d) in self.traits.impls.iter().enumerate() {
             if d.trait_name.as_deref() != Some(tr) {
@@ -1342,6 +2157,7 @@ impl Checker {
             let header = Subst::new(&d.params, &renamed).apply(&d.self_ty);
             let mut vars: Vec<String> = d.params.iter().map(|p| format!("{p}'")).collect();
             vars.extend(from_params.iter().cloned());
+            vars.extend(hidden.iter().map(|h| h.0.clone()));
             if !overlap(&header, self_ty, &vars) {
                 continue;
             }
@@ -1378,11 +2194,14 @@ impl Checker {
                 &d.self_ty,
                 self_ty,
                 &d.params,
-                from_params,
+                (from_params, &hidden),
                 &mut found,
                 &mut inside,
             );
-            let mut args: Vec<Type> = found.into_iter().map(|t| t.unwrap_or(Type::Unit)).collect();
+            let mut args: Vec<Type> = found
+                .into_iter()
+                .map(|t| shown_projections(&t.unwrap_or(Type::Unit), &hidden))
+                .collect();
             args.extend(own.iter().cloned());
             out.push(generics::Use {
                 from,
@@ -1401,11 +2220,15 @@ impl Checker {
 /// a part of `t`, put in `found`, or inside what one of `outer` stands for,
 /// some constructors below, which goes in `inside` as `(param, outer,
 /// depth)`. Where they don't fit, nothing: the impl can't be for `t`.
+///
+/// `outer` comes with the stand-ins for the projections in `t` (see
+/// `dispatch`): each of `params` inside one is inside what it stands for,
+/// as much bigger than the parameters it mentions as an impl likes.
 fn split(
     header: &Type,
     t: &Type,
     params: &[String],
-    outer: &[String],
+    (outer, hidden): (&[String], &[Hidden]),
     found: &mut [Option<Type>],
     inside: &mut Vec<(usize, usize, usize)>,
 ) {
@@ -1413,6 +2236,16 @@ fn split(
         (Type::Param(p), _) if params.contains(p) => {
             let j = params.iter().position(|q| q == p).expect("it");
             found[j].get_or_insert_with(|| t.clone());
+        }
+        (h, Type::Param(p)) if hidden.iter().any(|x| x.0 == *p) => {
+            let (_, _, mentions) = hidden.iter().find(|x| x.0 == *p).expect("it");
+            let mut below = Vec::new();
+            params_below(h, params, 0, &mut below);
+            for (j, _) in below {
+                for &i in mentions {
+                    inside.push((j, i, usize::MAX));
+                }
+            }
         }
         (h, Type::Param(p)) if outer.contains(p) => {
             let i = outer.iter().position(|q| q == p).expect("it");
@@ -1426,7 +2259,7 @@ fn split(
         }
         (h, t) if h.same_shape(t) => {
             for (a, b) in h.parts().zip(t.parts()) {
-                split(a, b, params, outer, found, inside);
+                split(a, b, params, (outer, hidden), found, inside);
             }
         }
         _ => {}
@@ -1571,6 +2404,7 @@ fn parametric(
         let b = match b {
             Bound::Region(x, y) => format!("{x}: {y}"),
             Bound::Param(p, r) => format!("{p}: {r}"),
+            Bound::Proj(p, r) => format!("{p}: {r}"),
         };
         return err(format!("`{b}` says how long something lives"));
     }
@@ -1599,7 +2433,7 @@ fn mentions_self(t: &TypeExpr) -> Option<Span> {
             .iter()
             .find_map(mentions_self)
             .or_else(|| mentions_self(r)),
-        TypeExprKind::Ref(_, _, inner) => mentions_self(inner),
+        TypeExprKind::Ref(_, _, inner) | TypeExprKind::Proj(inner, ..) => mentions_self(inner),
         TypeExprKind::Unit | TypeExprKind::Never | TypeExprKind::Lifetime(_) => None,
     }
 }
@@ -1664,5 +2498,172 @@ impl<'a> Canon<'a> {
 
     fn ty(&mut self, t: &Type) -> Type {
         t.map_regions(&mut |r| self.region(r))
+    }
+}
+
+/// Where a projection is written in `t`, if one is.
+fn proj_in(t: &TypeExpr) -> Option<Span> {
+    match &t.kind {
+        TypeExprKind::Proj(..) => Some(t.span),
+        TypeExprKind::Named(_, args) => args.iter().find_map(proj_in),
+        TypeExprKind::Fn(ps, r) => ps.iter().find_map(proj_in).or_else(|| proj_in(r)),
+        TypeExprKind::Ref(_, _, inner) => proj_in(inner),
+        TypeExprKind::Unit | TypeExprKind::Never | TypeExprKind::Lifetime(_) => None,
+    }
+}
+
+/// Checks that associated type `t`, written at `span` in an impl for
+/// `self_ty` with type parameters `params`, only mentions parameters that
+/// are in `self_ty` outside every function type (see `assoc_defs`).
+fn constrained(t: &Type, self_ty: &Type, params: &[String], span: Span) -> Result<(), Error> {
+    // The parameters and regions `self_ty` has outside function types.
+    fn outside(t: &Type, types: &mut Vec<String>, regions: &mut Vec<Region>) {
+        match t {
+            Type::Fn(_) => {}
+            Type::Param(p) => types.push(p.clone()),
+            t => {
+                match t {
+                    Type::Ref(r, ..) => regions.push(r.clone()),
+                    Type::Adt(_, rs, _) => regions.extend(rs.iter().cloned()),
+                    _ => {}
+                }
+                t.parts().for_each(|p| outside(p, types, regions));
+            }
+        }
+    }
+    let (mut types, mut regions) = (Vec::new(), Vec::new());
+    outside(self_ty, &mut types, &mut regions);
+    let anywhere: Vec<&Region> = self_ty.regions();
+    for r in t.regions() {
+        match r {
+            Region::Static => {}
+            r if regions.contains(r) => {}
+            r if anywhere.contains(&r) => {
+                return Err(Error::ty(
+                    span,
+                    format!(
+                        "`{r}` is only inside a function type in `{self_ty}`, so finding the \
+                         impl doesn't say what it is: a function type's lifetimes can be any a \
+                         call picks; an associated type can only use lifetimes that are in \
+                         the type outside function types"
+                    ),
+                ));
+            }
+            r => {
+                return Err(Error::ty(
+                    span,
+                    format!(
+                        "`{r}` isn't in `{self_ty}`, so nothing would say what it is where \
+                         this is used: `Out` would be a different type at each use; use a \
+                         lifetime of the type, or `'static`"
+                    ),
+                ));
+            }
+        }
+    }
+    for p in params {
+        if mentions(t, p) && !types.contains(p) {
+            return Err(Error::ty(
+                span,
+                format!(
+                    "`{p}` is only inside a function type in `{self_ty}`, and finding the impl \
+                     doesn't look at what function types are generic over, so `{p}` may hold \
+                     a lifetime that only means something inside it; an associated type can \
+                     only use parameters that are in the type outside function types"
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// How many type constructors `t` is made of.
+fn size(t: &Type) -> usize {
+    1 + t.parts().map(size).sum::<usize>()
+}
+
+/// Checks that working out the projections in associated type `t`,
+/// written at `span` in an impl for `self_ty` with type parameters
+/// `params`, ends: each is on a smaller type than `self_ty`, with no
+/// parameter more often, and no projection inside (GHC's conditions for
+/// type families). In a blanket impl, one on its parameter itself is fine
+/// too: `assoc_termination` sees to that.
+fn terminates(t: &Type, self_ty: &Type, params: &[String], span: Span) -> Result<(), Error> {
+    if let Type::Proj(s, tr, name) = t {
+        let blanket = matches!(self_ty, Type::Param(_)) && **s == *self_ty;
+        let ok = blanket
+            || (!has_proj(s)
+                && size(s) < size(self_ty)
+                && params
+                    .iter()
+                    .all(|p| occurrences(s, p) <= occurrences(self_ty, p)));
+        if !ok {
+            return Err(Error::ty(
+                span,
+                format!(
+                    "working out `<{s} as {tr}>::{name}` here might never end: it must be on \
+                     a smaller type than `{self_ty}`, the type the impl is for, built from its \
+                     parts, so that each step is about a smaller type"
+                ),
+            ));
+        }
+        return Ok(());
+    }
+    t.parts()
+        .try_for_each(|p| terminates(p, self_ty, params, span))
+}
+
+/// Calls `f` with the type and trait of each projection in `t`.
+fn each_proj<'t>(t: &'t Type, f: &mut impl FnMut(&'t Type, &'t str)) {
+    if let Type::Proj(s, tr, _) = t {
+        f(s, tr);
+    }
+    t.parts().for_each(|p| each_proj(p, f));
+}
+
+/// A projection in `t` on a type that isn't a parameter, or a projection
+/// on one: one with no impl to work it out by.
+fn rigid_on_type(t: &Type) -> Option<Type> {
+    match t {
+        Type::Proj(s, ..) if !matches!(**s, Type::Param(_) | Type::Proj(..)) => Some(t.clone()),
+        t => t.parts().find_map(rigid_on_type),
+    }
+}
+
+/// `t` with each projection in it a stand-in type parameter, `?p0`, `?p1`
+/// and so on, added to `hidden` with the projection and the indices of the
+/// parameters of `params` it mentions (see `dispatch`).
+fn hide_projections(t: &Type, params: &[String], hidden: &mut Vec<Hidden>) -> Type {
+    match t {
+        Type::Proj(..) => {
+            let name = format!("?p{}", hidden.len());
+            let mentions = (0..params.len())
+                .filter(|&i| mentions(t, &params[i]))
+                .collect();
+            hidden.push((name.clone(), t.clone(), mentions));
+            Type::Param(name)
+        }
+        t => t.map(|p| hide_projections(p, params, hidden)),
+    }
+}
+
+/// `t` with the stand-ins of `hide_projections` back as the projections
+/// they stand for.
+fn shown_projections(t: &Type, hidden: &[Hidden]) -> Type {
+    match t {
+        Type::Param(p) => match hidden.iter().find(|x| x.0 == *p) {
+            Some((_, proj, _)) => proj.clone(),
+            None => t.clone(),
+        },
+        t => t.map(|p| shown_projections(p, hidden)),
+    }
+}
+
+/// The name of the associated type of the projection in `t` on `s` of
+/// trait `tr`.
+fn proj_name(t: &Type, s: &Type, tr: &str) -> Option<String> {
+    match t {
+        Type::Proj(x, y, name) if **x == *s && y == tr => Some(name.clone()),
+        t => t.parts().find_map(|p| proj_name(p, s, tr)),
     }
 }

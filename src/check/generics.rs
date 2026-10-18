@@ -60,6 +60,9 @@ pub(crate) enum Lifetimes<'a> {
     Body { declared: &'a [String] },
     /// In the fields of a struct or enum, where none can be left out.
     Fields { declared: &'a [String] },
+    /// In what an impl says an associated type is, or an equality bound
+    /// does, where none can be left out either.
+    Assoc { declared: &'a [String] },
     /// Anywhere, as written: in what monomorphisation made, and where types
     /// are only being shown.
     Any,
@@ -73,7 +76,8 @@ impl Lifetimes<'_> {
             Lifetimes::Params { declared, .. }
             | Lifetimes::Return { declared, .. }
             | Lifetimes::Body { declared }
-            | Lifetimes::Fields { declared } => *declared,
+            | Lifetimes::Fields { declared }
+            | Lifetimes::Assoc { declared } => *declared,
             Lifetimes::Any => &[],
         };
         match l {
@@ -117,21 +121,34 @@ impl Lifetimes<'_> {
                 "missing lifetime: a reference in a struct or enum needs one, as in \
                  `struct S<'a> { r: &'a int }`",
             )),
+            Lifetimes::Assoc { .. } => Err(Error::ty(
+                span,
+                "missing lifetime: a reference here needs one, a lifetime of the type the impl \
+                 is for, as in `impl<'a> Tr for &'a int { type Out = &'a int; }`, or \
+                 `'static`",
+            )),
         }
     }
 }
 
+/// What a projection `<T as Tr>::Item` or `T::Item` written at a span is,
+/// given what's before the `as` (`T`), the trait if it's written, and the
+/// associated type's name.
+pub(crate) type ProjNames<'a> =
+    dyn Fn(Type, Option<&Ident>, &Ident, Span) -> Result<Type, Error> + 'a;
+
 /// Turns a type as written (`TypeExpr`) into a type as understood (`Type`).
 /// `names` says what the name at a span refers to, and `params` are the type
-/// parameters in scope, for names it says nothing about. `lifetimes` says
-/// what lifetimes mean.
+/// parameters in scope, for names it says nothing about. `proj` says what a
+/// projection is. `lifetimes` says what lifetimes mean.
 pub(crate) fn resolve(
     t: &TypeExpr,
     names: &dyn Fn(&str, Span) -> Option<TypeName>,
+    proj: &ProjNames,
     params: &[String],
     lifetimes: &mut Lifetimes,
 ) -> Result<Type, Error> {
-    resolve_in(t, names, params, lifetimes, None)
+    resolve_in(t, names, proj, params, lifetimes, None)
 }
 
 /// The lifetimes a function type being resolved is generic over: those
@@ -177,14 +194,19 @@ fn region(
 fn resolve_in(
     t: &TypeExpr,
     names: &dyn Fn(&str, Span) -> Option<TypeName>,
+    proj: &ProjNames,
     params: &[String],
     lifetimes: &mut Lifetimes,
     mut binder: Option<&mut Binder>,
 ) -> Result<Type, Error> {
     let go = |t: &TypeExpr, lifetimes: &mut Lifetimes, binder: Option<&mut Binder>| {
-        resolve_in(t, names, params, lifetimes, binder)
+        resolve_in(t, names, proj, params, lifetimes, binder)
     };
     match &t.kind {
+        TypeExprKind::Proj(inner, tr, name) => {
+            let inner = go(inner, lifetimes, binder)?;
+            proj(inner, tr.as_ref(), name, t.span)
+        }
         TypeExprKind::Named(name, _) if name == "_" => Err(Error::ty(
             t.span,
             "`_` can only stand for a type in type arguments, like `id::<_>`",
@@ -330,6 +352,9 @@ pub(super) fn name_holes(t: &TypeExpr, holes: &mut Vec<(String, Span)>) -> TypeE
         TypeExprKind::Ref(l, m, inner) => {
             TypeExprKind::Ref(l.clone(), *m, Box::new(name_holes(inner, holes)))
         }
+        TypeExprKind::Proj(inner, tr, name) => {
+            TypeExprKind::Proj(Box::new(name_holes(inner, holes)), tr.clone(), name.clone())
+        }
     };
     TypeExpr { kind, span: t.span }
 }
@@ -405,7 +430,11 @@ pub(super) fn bounds(
     let mut out = Vec::new();
     for (subject, after) in &g.bounds {
         // The traits are for `Checker::preds`.
-        for b in after.iter().filter(|b| b.name.starts_with('\'')) {
+        for b in after
+            .iter()
+            .map(|b| &b.name)
+            .filter(|b| b.name.starts_with('\''))
+        {
             let r = l.region(Some(&b.name), b.span)?;
             if subject.name.starts_with('\'') {
                 let s = l.region(Some(&subject.name), subject.span)?;
@@ -419,17 +448,25 @@ pub(super) fn bounds(
 }
 
 /// How deep type parameter `p` is in `t`, at its deepest, if it's there:
-/// 0 for `p` itself, 1 in `Option<p>`.
+/// 0 for `p` itself, 1 in `Option<p>`. `UNBOUNDED` if it's in a projection:
+/// `T::Out` can be a bigger type than `T` by any amount (`W<W<T>>`, say),
+/// which only the impls say, and what a copy of a generic function needs
+/// mustn't depend on which impls there are.
 fn depth_of(t: &Type, p: &str) -> Option<i64> {
     match t {
         Type::Param(q) if q == p => Some(0),
+        Type::Proj(s, ..) => depth_of(s, p).map(|_| UNBOUNDED),
         t => t
             .parts()
             .filter_map(|t| depth_of(t, p))
             .max()
-            .map(|d| d + 1),
+            .map(|d| if d == UNBOUNDED { d } else { d + 1 }),
     }
 }
+
+/// The weight of an edge that can make types deeper by any amount; see
+/// `polymorphic_recursion`.
+const UNBOUNDED: i64 = i64::MAX / 4;
 
 /// One generic thing using another: function `from` calls or names
 /// function `to`, or struct or enum `from` has a field that mentions `to`,
@@ -443,7 +480,9 @@ pub(super) struct Use<'a> {
     /// `from`'s `i`-th stands for, `depth` type constructors inside it,
     /// rather than an argument built from those. That's how a call of a
     /// trait's method at `Self = T` gets to an impl's method: for `impl<U>
-    /// Show for Option<U>`, `U` is inside `T`, one down.
+    /// Show for Option<U>`, `U` is inside `T`, one down. `usize::MAX` if
+    /// it's inside what a projection on it stands for, which can be bigger
+    /// than it.
     pub(super) inside: Vec<(usize, usize, usize)>,
     pub(super) span: Span,
 }
@@ -486,7 +525,21 @@ pub(super) fn polymorphic_recursion(
             }
         }
         for &(j, i, d) in &u.inside {
-            edges.push(((u.from, i), (u.to, j), -(d as i64), u));
+            let w = match d {
+                usize::MAX => UNBOUNDED,
+                d => -(d as i64),
+            };
+            edges.push(((u.from, i), (u.to, j), w, u));
+        }
+    }
+    // An edge through a projection outweighs every edge that takes
+    // constructors away put together, so any cycle through it weighs more
+    // than 0: it can make types deeper by more than all of them can make
+    // them shallower.
+    let unbounded: i64 = 1 + edges.iter().map(|e| e.2.min(0).abs()).sum::<i64>();
+    for e in &mut edges {
+        if e.2 == UNBOUNDED {
+            e.2 = unbounded;
         }
     }
     let mut nodes: Vec<Node> = edges.iter().flat_map(|e| [e.0, e.1]).collect();

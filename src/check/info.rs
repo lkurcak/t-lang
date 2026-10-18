@@ -40,6 +40,9 @@ pub struct Info {
     /// The method each method call and path names, by the span of its
     /// name, for `lift` to write out as a plain call.
     pub methods: HashMap<Span, Resolved>,
+    /// The trait of each projection written, by its span: `Iter` for a
+    /// `T::Item` where `T: Iter`, for monomorphisation to work it out by.
+    pub projections: HashMap<Span, String>,
 }
 
 /// What a method call `x.m(..)` or path `T::m` names: method `symbol`.
@@ -347,6 +350,7 @@ impl Checker {
             let span = d.name().span;
             self.note(span, kind, Some(generic.clone()), Some(span));
             self.param_notes(params);
+            self.bound_notes(d.generics(), params);
             match d {
                 TypeDecl::Struct(s) => {
                     for f in &s.fields {
@@ -382,6 +386,10 @@ impl Checker {
             let params = &d.generics.types;
             self.param_notes(params);
             self.type_expr_notes(&d.self_ty, params);
+            self.bound_notes(&d.generics, params);
+            for a in &d.assoc {
+                self.type_expr_notes(&a.ty, params);
+            }
             for f in &d.methods {
                 outer.insert(f.name.span, params.clone());
             }
@@ -391,6 +399,7 @@ impl Checker {
             params.extend(f.generics.types.iter().cloned());
             let params = &params;
             self.param_notes(&f.generics.types);
+            self.bound_notes(&f.generics, params);
             for p in &f.params {
                 self.type_expr_notes(&p.ty, params);
             }
@@ -418,6 +427,17 @@ impl Checker {
         }
     }
 
+    /// Notes the types in the equality bounds of `g`.
+    fn bound_notes(&mut self, g: &Generics, params: &[Ident]) {
+        for (_, items) in &g.bounds {
+            for a in items.iter().flat_map(|b| &b.assoc) {
+                if let AssocBoundKind::Eq(t) = &a.kind {
+                    self.type_expr_notes(t, params);
+                }
+            }
+        }
+    }
+
     fn param_notes(&mut self, params: &[Ident]) {
         for p in params {
             let kind = NoteKind::TypeParam(p.name.clone());
@@ -429,6 +449,15 @@ impl Checker {
     /// are in scope.
     fn type_expr_notes(&mut self, t: &TypeExpr, params: &[Ident]) {
         match &t.kind {
+            TypeExprKind::Proj(inner, tr, _) => {
+                self.type_expr_notes(inner, params);
+                if let Some(tr) = tr
+                    && let Some(def) = self.traits.traits.get(&tr.name)
+                {
+                    let (kind, def) = (NoteKind::Trait(tr.name.clone()), def.span);
+                    self.note(tr.span, kind, None, def);
+                }
+            }
             TypeExprKind::Named(name, args) => {
                 // Only the name, not the arguments after it.
                 let span = Span::new(t.span.start, t.span.start + name.len());

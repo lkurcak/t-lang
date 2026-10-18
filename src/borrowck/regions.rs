@@ -202,6 +202,10 @@ fn vary(
                 vary(a, v.then(vs[regions.len() + i]), d, variances, out);
             }
         }
+        // What a projection stands for may use its type's parameters any
+        // way at all: `<W<'a> as Tr>::Out` can be a `&'a mut &'a int`
+        // though `W` is covariant. So it's invariant in them.
+        Type::Proj(inner, ..) => vary(inner, Variance::Inv, d, variances, out),
         Type::Int | Type::Bool | Type::Unit | Type::Never | Type::Var(_) => {}
     }
 }
@@ -237,12 +241,16 @@ fn wf_into(t: &Type, adts: &Adts, outlives: &HashMap<String, Vec<Bound>>, out: &
                     Bound::Param(p, r) => {
                         type_outlives(&s.apply(&Type::Param(p.clone())), &s.region(r), out)
                     }
+                    Bound::Proj(p, r) => {
+                        type_outlives(&adts.normalise(&s.apply(p)), &s.region(r), out)
+                    }
                 }
             }
             for a in args {
                 wf_into(a, adts, outlives, out);
             }
         }
+        Type::Proj(inner, ..) => wf_into(inner, adts, outlives, out),
         Type::Fn(_)
         | Type::Int
         | Type::Bool
@@ -276,6 +284,14 @@ pub(crate) fn type_outlives(t: &Type, r: &Region, out: &mut Vec<Bound>) {
             }
         }
         Type::Param(p) => push(out, Bound::Param(p.clone(), r.clone())),
+        // A rigid projection's regions are its type's and `'static` (its
+        // impl's associated type can only mention the impl's parameters and
+        // `'static`), so it outlives what its type does; or what a bound
+        // says it does: a test of its own (see `Regions::subject`).
+        Type::Proj(inner, ..) if matches!(**inner, Type::Param(_) | Type::Proj(..)) => {
+            push(out, Bound::Proj(t.clone(), r.clone()))
+        }
+        Type::Proj(inner, ..) => type_outlives(inner, r, out),
         Type::Box(inner) => type_outlives(inner, r, out),
         Type::Fn(_) | Type::Int | Type::Bool | Type::Unit | Type::Never | Type::Var(_) => {}
     }
@@ -309,14 +325,16 @@ pub(crate) struct Regions {
     /// How many variables there are.
     pub(crate) count: usize,
     pub(crate) constraints: Vec<Outlives>,
-    /// `T: 'r`: type parameter `T` must outlive region variable `'r`.
-    pub(crate) type_tests: Vec<(String, usize, Span)>,
+    /// `T: 'r`: type parameter `T`, or rigid projection `T::Out`, must
+    /// outlive region variable `'r`.
+    pub(crate) type_tests: Vec<(Type, usize, Span)>,
     /// `known[a][b]`: universal `a` is known to outlive universal `b`, from
     /// what the signature says. Universal regions are numbered by their
     /// place in `universal`.
     pub(crate) known: Vec<Vec<bool>>,
-    /// The universal regions each type parameter is known to outlive.
-    pub(crate) known_params: HashMap<String, Vec<usize>>,
+    /// The universal regions each type parameter, or rigid projection, is
+    /// known to outlive, from what the signature says.
+    pub(crate) known_params: HashMap<Type, Vec<usize>>,
 }
 
 impl Regions {
@@ -348,6 +366,13 @@ impl Regions {
                 }
                 Bound::Param(p, b) => {
                     let b = r.universal_var(b);
+                    r.known_params
+                        .entry(Type::Param(p.clone()))
+                        .or_default()
+                        .push(b);
+                }
+                Bound::Proj(p, b) => {
+                    let b = r.universal_var(b);
                     r.known_params.entry(p.clone()).or_default().push(b);
                 }
             }
@@ -370,6 +395,22 @@ impl Regions {
             *outlived = all;
         }
         r
+    }
+
+    /// The universal regions type parameter or rigid projection `t` is
+    /// known to outlive: what the signature says of it, and, for
+    /// `T::Out`, what it says of `T`, as a projection's regions are its
+    /// type's and `'static` (Rust's RFC 1214).
+    pub(crate) fn known_of(&self, t: &Type) -> Vec<usize> {
+        let mut out = self.known_params.get(t).cloned().unwrap_or_default();
+        if let Type::Proj(inner, ..) = t {
+            for u in self.known_of(inner) {
+                if !out.contains(&u) {
+                    out.push(u);
+                }
+            }
+        }
+        out
     }
 
     /// The variable of a universal region, as signatures name them.
@@ -435,7 +476,8 @@ impl Regions {
         for b in bounds {
             match b {
                 Bound::Region(a, b) => self.outlives(a, b, span),
-                Bound::Param(p, r) => self.type_tests.push((p.clone(), var(r), span)),
+                Bound::Param(p, r) => self.type_tests.push((Type::Param(p.clone()), var(r), span)),
+                Bound::Proj(p, r) => self.type_tests.push((p.clone(), var(r), span)),
             }
         }
     }
@@ -489,6 +531,11 @@ impl Regions {
             | (Type::Never, _)
             | (_, Type::Never) => {}
             (Type::Param(p), Type::Param(q)) if p == q => {}
+            // Two rigid projections are the same type if their types are,
+            // regions and all: invariantly (see `vary`).
+            (Type::Proj(ta, x, n), Type::Proj(tb, y, m)) if x == y && n == m => {
+                self.relate(adts, ta, tb, v.then(Variance::Inv), span)
+            }
             // Relating two types that aren't the same up to regions would
             // say nothing of the regions in their parts that differ, and
             // so allow what it shouldn't: wherever a value goes, the borrow

@@ -70,7 +70,7 @@ pub(crate) fn check(cx: &Checker, f: &FnDecl, scheme: &Scheme) -> Result<Vec<War
 #[derive(Default)]
 struct Requirements {
     regions: Vec<(usize, usize)>,
-    params: Vec<(String, usize)>,
+    params: Vec<(Type, usize)>,
 }
 
 /// Checks a lowered body, its closures first. For a closure, `propagate`:
@@ -172,7 +172,7 @@ fn analyze(
         }
     }
     for (p, r, span) in b.regions.type_tests.clone() {
-        let known = b.regions.known_params.get(&p).cloned().unwrap_or_default();
+        let known = b.regions.known_of(&p);
         for e in sol.ends(r, universals) {
             if known.contains(&e) {
                 continue;
@@ -182,6 +182,11 @@ fn analyze(
                 continue;
             }
             let short = names.lifetime(b, e);
+            // A projection outlives what its type does.
+            let (what, p) = match &p {
+                Type::Proj(..) => ("type", root_param(&p)),
+                p => ("type parameter", p.clone()),
+            };
             let bound = match &b.regions.universal[e] {
                 Region::Named(n) if !b.regions.universal[e].is_elided() && e < signature => {
                     format!("`{p}: {n}`")
@@ -192,7 +197,7 @@ fn analyze(
             errors.push(Error::ty(
                 span,
                 format!(
-                    "the type parameter `{p}` may not live long enough: this needs it to outlive \
+                    "the {what} `{p}` may not live long enough: this needs it to outlive \
                      {short}; say it does with a bound, {bound}"
                 ),
             ));
@@ -210,6 +215,15 @@ fn analyze(
         });
     }
     Ok((warnings, reqs))
+}
+
+/// The type parameter at the bottom of rigid projection `t`: `T` for
+/// `<T::Out as Tr>::Item`.
+fn root_param(t: &Type) -> Type {
+    match t {
+        Type::Proj(inner, ..) => root_param(inner),
+        t => t.clone(),
+    }
 }
 
 /// Checks closure `c`, found in `parent`'s body, as a function of its own.

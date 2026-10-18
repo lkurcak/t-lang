@@ -1,0 +1,45 @@
+#[derive(Discard)]
+struct A { n: int }
+
+#[derive(Discard)]
+struct B { b: bool }
+
+#[derive(Discard)]
+struct W::<A> { t: A }
+
+#[derive(Discard)]
+struct Count::<A> { of: A, n: int }
+
+#[derive(Discard)]
+struct Hold::<int><'r> { u: int, r: &'r int }
+
+fn shown::<W<A>>(s: &W::<A>) -> int { <W::<A> as Show>::show(&*s) }
+
+fn count::<A>(of: A) -> Count::<A> {
+    let n = <A as Tr>::out(&of) + 1;
+    Count::<A> { of, n }
+}
+
+fn same::<A>(x: &A, y: &A) -> bool { <A as Tr>::out(&*x) == <A as Tr>::out(&*y) }
+
+fn same::<B>(x: &B, y: &B) -> bool { <B as Tr>::out(&*x) == <B as Tr>::out(&*y) }
+
+fn hold::<A><'r>(t: &A, r: &'r int) -> int {
+    let h: Hold::<int><'r> = Hold::<int> { u: <A as Tr>::out(&*t), r };
+    *h.r
+}
+
+fn main() {
+    print(shown::<W<A>>(&W::<A> { t: A { n: 4 } }));
+    let c = count::<A>(A { n: 1 });
+    print(c.n + c.of.n);
+    print_bool(same::<A>(&A { n: 1 }, &A { n: 1 }));
+    print_bool(same::<B>(&B { b: true }, &B { b: false }));
+    print(hold::<A>(&A { n: 1 }, &5));
+}
+
+fn <A as Tr>::out(&self) -> int { self.n }
+
+fn <B as Tr>::out(&self) -> bool { self.b }
+
+fn <W::<A> as Show>::show(&self) -> int { <A as Tr>::out(&self.t) * 10 }

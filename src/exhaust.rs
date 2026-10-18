@@ -418,7 +418,7 @@ impl Cx<'_> {
             }),
             // Nothing is known about a type parameter's values: it could be
             // anything.
-            Type::Fn(..) | Type::Param(_) | Type::Var(_) | Type::Box(_) => None,
+            Type::Fn(..) | Type::Param(_) | Type::Proj(..) | Type::Var(_) | Type::Box(_) => None,
             Type::Ref(..) => unreachable!("peeled"),
         }
     }

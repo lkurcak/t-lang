@@ -1,0 +1,56 @@
+// What a projection stands for has the lifetimes of the type it's on, each
+// in its place. Here `Out` is the second reference of a `Pair`, so the
+// first may be short-lived.
+#[derive(Discard)]
+struct Pair<'a, 'b> { a: &'a int, b: &'b int }
+
+trait Second {
+    type Out;
+
+    fn second(self) -> Self::Out;
+}
+
+impl<'a, 'b> Second for Pair<'a, 'b> {
+    type Out = &'b int;
+
+    fn second(self) -> &'b int { self.b }
+}
+
+fn get<T: Second>(t: T) -> T::Out { t.second() }
+
+trait Tr {
+    type Out;
+
+    fn out(self) -> Self::Out;
+}
+
+impl<'a> Tr for &'a int {
+    type Out = &'a int;
+
+    fn out(self) -> &'a int { self }
+}
+
+// A rigid projection lives as long as its type does.
+fn need<'r, U: Discard + 'r>(u: U, r: &'r int) -> int {
+    let _u = u;
+    *r
+}
+
+fn g<'r, T: Tr<Out: Discard> + 'r>(x: T::Out, r: &'r int) -> int { need(x, r) }
+
+// A reference to a projection: what it points to outlives it.
+fn hold<'r, T: Tr>(x: &'r T::Out) -> &'r T::Out { x }
+
+fn main() {
+    let long = 1;
+    let r;
+    {
+        let short = 2;
+        r = get(Pair { a: &short, b: &long });
+        print(*Tr::out(&short)); // expect: 2
+    }
+    print(*r);                      // expect: 1
+    print(g::<&int>(&long, &long)); // expect: 1
+    let x = &long;
+    print(**hold::<&int>(&x)); // expect: 1
+}

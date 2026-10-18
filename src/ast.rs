@@ -148,7 +148,7 @@ pub struct Generics {
     /// `'b: 'a` and `T: Show + 'a`, in the order written, each with what's
     /// before its `:` and the lifetimes and traits after it. Lifetimes start
     /// with a `'`, and traits don't.
-    pub bounds: Vec<(Ident, Vec<Ident>)>,
+    pub bounds: Vec<(Ident, Vec<BoundItem>)>,
     /// From the `<` to the `>`, if they're there.
     pub span: Option<Span>,
 }
@@ -160,13 +160,50 @@ impl Generics {
 
     /// The bounds on `name`, a lifetime or type parameter: lifetimes and
     /// traits.
-    pub fn bounds_of(&self, name: &str) -> Vec<&Ident> {
+    pub fn bounds_of(&self, name: &str) -> Vec<&BoundItem> {
         self.bounds
             .iter()
             .filter(|(p, _)| p.name == name)
             .flat_map(|(_, b)| b)
             .collect()
     }
+}
+
+/// What's after a `:` in a bound: a lifetime, or a trait, maybe saying
+/// something of its associated types, as in `Iter<Item = int>` or
+/// `Iter<Item: Discard>`.
+#[derive(Debug, Clone)]
+pub struct BoundItem {
+    pub name: Ident,
+    pub assoc: Vec<AssocBound>,
+    /// From the name to the `>`, or just the name.
+    pub span: Span,
+}
+
+impl BoundItem {
+    /// A lifetime, or a trait with nothing said of its associated types.
+    pub fn plain(name: Ident) -> BoundItem {
+        BoundItem {
+            span: name.span,
+            name,
+            assoc: Vec::new(),
+        }
+    }
+}
+
+/// `Item = int` or `Item: Discard + Show` in a trait bound.
+#[derive(Debug, Clone)]
+pub struct AssocBound {
+    pub name: Ident,
+    pub kind: AssocBoundKind,
+}
+
+#[derive(Debug, Clone)]
+pub enum AssocBoundKind {
+    /// `Item = int`: an *equality bound*.
+    Eq(TypeExpr),
+    /// `Item: Discard + Show`: the traits it implements.
+    Bounds(Vec<Ident>),
 }
 
 /// `#[derive(Discard, Copy, Eq)]` before a struct or enum: implementations
@@ -260,7 +297,31 @@ pub struct TraitDecl {
     /// `Eq` in `trait Ord: Eq`: traits a type must implement to implement
     /// this one, its *supertraits*.
     pub supers: Vec<Ident>,
+    /// `type Item: Discard;`: its associated types.
+    pub assoc: Vec<AssocDecl>,
     pub methods: Vec<TraitMethod>,
+}
+
+/// `type Item;` or `type Item: Discard + Show;` in a trait: a type each
+/// impl picks, which the traits after the `:` say it must implement.
+#[derive(Debug, Clone)]
+pub struct AssocDecl {
+    pub doc: Option<DocComment>,
+    /// From the `type` to the `;`.
+    pub span: Span,
+    pub name: Ident,
+    pub bounds: Vec<Ident>,
+}
+
+/// `type Item = int;` in an impl: what the trait's associated type is for
+/// the impl's type.
+#[derive(Debug, Clone)]
+pub struct AssocDef {
+    pub doc: Option<DocComment>,
+    /// From the `type` to the `;`.
+    pub span: Span,
+    pub name: Ident,
+    pub ty: TypeExpr,
 }
 
 /// A method of a trait: `fn show(&self);`, which each impl must have, or
@@ -289,6 +350,8 @@ pub struct ImplDecl {
     pub trait_name: Option<Ident>,
     /// The type it's for, which `Self` means in it.
     pub self_ty: TypeExpr,
+    /// `type Item = int;`: what the trait's associated types are.
+    pub assoc: Vec<AssocDef>,
     pub methods: Vec<FnDecl>,
 }
 
@@ -458,6 +521,10 @@ pub enum TypeExprKind {
     Lifetime(String),
     /// `!`, the type with no values.
     Never,
+    /// `<T as Iter>::Item`, or `T::Item` without the trait: a *projection*,
+    /// the type an impl of the trait picks for its associated type, for the
+    /// type before the `as`.
+    Proj(Box<TypeExpr>, Option<Ident>, Ident),
 }
 
 /// As written: `Option<int>`, `fn(int) -> bool`, `()`.
@@ -480,6 +547,10 @@ impl fmt::Display for TypeExpr {
             }
             TypeExprKind::Lifetime(name) => f.write_str(name),
             TypeExprKind::Never => f.write_str("!"),
+            TypeExprKind::Proj(t, Some(tr), name) => {
+                write!(f, "<{t} as {}>::{}", tr.name, name.name)
+            }
+            TypeExprKind::Proj(t, None, name) => write!(f, "{t}::{}", name.name),
         }
     }
 }

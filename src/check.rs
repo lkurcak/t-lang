@@ -90,6 +90,7 @@ pub(crate) fn builtin_scheme(name: &str) -> Scheme {
                 lifetimes: vec!["'a".into()],
                 bounds: Vec::new(),
                 preds: Vec::new(),
+                eqs: Vec::new(),
                 ty: Type::func(vec![r, t.clone()], t),
             }
         }
@@ -106,6 +107,7 @@ pub(crate) fn builtin_scheme(name: &str) -> Scheme {
                 lifetimes: vec!["'a".into(), "'b".into()],
                 bounds: Vec::new(),
                 preds: Vec::new(),
+                eqs: Vec::new(),
                 ty: Type::func(vec![r("'a"), r("'b")], Type::Unit),
             }
         }
@@ -122,6 +124,7 @@ pub fn check(prog: &Program, warnings: &mut Vec<Warning>) -> (Info, Result<(), E
     let result = cx.program(prog);
     cx.type_notes(prog);
     cx.info.types = cx.defs.types.clone();
+    cx.info.projections = cx.proj_traits.take();
     cx.warnings.sort_by_key(|w| w.span.start);
     warnings.append(&mut cx.warnings);
     (cx.info, result)
@@ -370,6 +373,33 @@ pub(crate) struct Checker {
     /// The types a `!` was wanted as while they were still unknown. Those
     /// that nothing else decides by the end of the function are `!`.
     diverging: Vec<Type>,
+    /// The trait of each projection written, by its span, as it's worked
+    /// out while resolving types (see `Info::projections`).
+    proj_traits: std::cell::RefCell<HashMap<Span, String>>,
+    /// Whether impls are being collected: then what a projection on a type
+    /// that isn't a parameter stands for isn't known yet, nor whether the
+    /// type implements the trait, which `check_impls` sees to.
+    collecting: bool,
+    /// Where the expression being checked is, for the goals it makes.
+    here: Span,
+    /// Projections on types not known yet, each waiting for its type to
+    /// be, with what it must turn out to be (see `settle`).
+    goals: Vec<Goal>,
+}
+
+/// A projection `proj`, `<T as Tr>::Item`, whose type `T` isn't known yet,
+/// so that what it stands for isn't, which must turn out to be `is`, for
+/// what's at `span`. Working it out only ever goes forward, from `T` to
+/// what it stands for, as different types can have the same: `T` is never
+/// inferred from it (see `unify`).
+#[derive(Debug, Clone)]
+pub(super) struct Goal {
+    proj: Type,
+    is: Type,
+    span: Span,
+    /// What needs it to be `is`, if something said so: an equality bound
+    /// of what's named this.
+    who: Option<String>,
 }
 
 /// What a `break` or `continue` goes to.
@@ -447,6 +477,10 @@ impl Checker {
             loops: Vec::new(),
             diverges: None,
             diverging: Vec::new(),
+            proj_traits: Default::default(),
+            collecting: false,
+            here: Span::new(0, 0),
+            goals: Vec::new(),
         }
     }
 
@@ -464,6 +498,7 @@ impl Checker {
             self.method_ids.insert(f.name.span, FnId(i));
         }
         self.collect_impls(prog)?;
+        self.projections_known();
         self.derive(prog)?;
         self.signatures(prog, &fns)?;
         self.check_impls(prog)?;
@@ -509,8 +544,18 @@ impl Checker {
             let scheme = match method {
                 Some(&(_, MethodOf::Impl(k))) => {
                     let d = self.traits.impls[self.impl_ids[k]].clone();
-                    let (ps, ls, bs, preds) = (&d.params, &d.lifetimes, &d.bounds, &d.preds);
-                    self.method_scheme(f, ps, ls, bs, preds, Some(&d.self_ty))?
+                    let outer = traits::Outer {
+                        params: d.params.clone(),
+                        lifetimes: d.lifetimes.clone(),
+                        bounds: d.bounds.clone(),
+                        preds: d.preds.clone(),
+                        eqs: d.eqs.clone(),
+                    };
+                    let this = d.trait_name.clone().map(|tr| Pred {
+                        ty: Type::Param("Self".into()),
+                        trait_name: tr,
+                    });
+                    self.method_scheme(f, &outer, this, Some(&d.self_ty))?
                 }
                 Some(&(_, MethodOf::Trait(k))) => {
                     let tr = &prog.traits[k].name.name;
@@ -558,7 +603,9 @@ impl Checker {
         let params = generics::declare(&f.generics.types)?;
         let declared = generics::declare_lifetimes(&f.generics.lifetimes)?;
         let bounds = generics::bounds(&f.generics, &declared, &params)?;
-        let preds = self.preds(&f.generics, &params)?;
+        let (preds, eqs) = self.preds(&f.generics, &params, &declared, true)?;
+        self.env = preds.clone();
+        self.adts.proj.local = eqs.clone();
         let (param_tys, ret, lifetimes) = match self.mono {
             // Lifetimes don't matter any more.
             true => {
@@ -572,11 +619,14 @@ impl Checker {
             }
             false => self.signature(f, &params, &declared)?,
         };
+        self.env.clear();
+        self.adts.proj.local.clear();
         Ok(Scheme {
             params,
             lifetimes,
             bounds,
             preds,
+            eqs,
             ty: Type::func(param_tys, ret),
         })
     }
@@ -665,6 +715,8 @@ impl Checker {
         self.type_params = scheme.params.clone();
         self.lifetimes = scheme.lifetimes.clone();
         self.env = scheme.preds.clone();
+        self.adts.proj.local = scheme.eqs.clone();
+        self.goals.clear();
         let scope = self.locals.len();
         for (i, p) in f.params.iter().enumerate() {
             if f.params[..i].iter().any(|q| q.name.name == p.name.name) {
@@ -790,6 +842,7 @@ impl Checker {
         }
 
         let mut adts = Adts::new();
+        adts.proj = std::mem::take(&mut self.adts.proj);
         // Every field's type, with the symbol of the type it's in and where
         // it was written, for the recursion checks.
         let mut field_types = Vec::new();
@@ -798,7 +851,9 @@ impl Checker {
             let params = generics::declare(d.type_params())?;
             let lifetimes = generics::declare_lifetimes(&d.generics().lifetimes)?;
             let bounds = generics::bounds(d.generics(), &lifetimes, &params)?;
-            let preds = self.preds(d.generics(), &params)?;
+            let (preds, eqs) = self.preds(d.generics(), &params, &lifetimes, false)?;
+            self.env = preds.clone();
+            self.adts.proj.local = eqs.clone();
             let mut lts = match self.mono {
                 true => Lifetimes::Any,
                 false => Lifetimes::Fields {
@@ -846,6 +901,7 @@ impl Checker {
                 lifetimes,
                 bounds,
                 preds,
+                eqs,
                 copy: self.mono && d.derive_of("Copy").is_some(),
                 eq: self.mono && d.derive_of("Eq").is_some(),
                 kind,
@@ -889,6 +945,9 @@ impl Checker {
                 ));
             }
         }
+        self.env.clear();
+        adts.proj = std::mem::take(&mut self.adts.proj);
+        adts.proj.local.clear();
         self.adts = adts;
         Ok(())
     }
@@ -936,6 +995,7 @@ impl Checker {
         resolve(
             t,
             &|name, span| self.type_name(name, span, params),
+            &|s, tr, name, span| self.projection(s, tr, name, span),
             params,
             lts,
         )
@@ -964,6 +1024,13 @@ impl Checker {
     /// by something that isn't a function of the program: a derived `Eq`'s
     /// `==` on each field, below. Whatever makes monomorphisation copy
     /// something new must add its uses here too.
+    ///
+    /// A projection in a type argument, `f::<T::Out>`, or as the `Self` of
+    /// a method call, can stand for a type as much bigger than `T` as an
+    /// impl likes, so an edge through it has unbounded weight (`dispatch`,
+    /// `generics::polymorphic_recursion`), and any cycle through it is
+    /// rejected. The copies of types that impls' associated types make are
+    /// seen to by `Checker::assoc_regular`.
     fn no_polymorphic_recursion(&self) -> Result<(), Error> {
         // The `eq` of each derived `Eq`: not a function of the program, but
         // it does what one would, `==` on each field, so it's a node of its
@@ -1086,18 +1153,18 @@ impl Checker {
         let ty = s.apply(&scheme.ty);
         // What it needs of its type arguments, by its bounds.
         for p in &scheme.preds {
-            let Type::Param(param) = &p.ty else {
-                unreachable!("bounds are on type parameters")
-            };
             let pred = Pred {
-                ty: s.apply(&p.ty),
+                ty: self.adts.normalise(&s.apply(&p.ty)),
                 trait_name: p.trait_name.clone(),
             };
             self.oblige(
                 pred,
                 at,
-                traits::Why::Bound(name.to_string(), param.clone()),
+                traits::Why::Bound(name.to_string(), p.ty.to_string()),
             )?;
+        }
+        for (lhs, rhs) in &scheme.eqs {
+            self.require_eq(s.apply(lhs), s.apply(rhs), at, name)?;
         }
         let res = match (&symbol, builtin) {
             (Some(symbol), _) => Res::Fn(symbol.clone(), args.clone()),
@@ -1218,6 +1285,7 @@ impl Checker {
     ///
     /// A `!` fits whatever is wanted (T-Never).
     fn check(&mut self, e: &Expr, want: &Type) -> Result<(), Error> {
+        self.here = e.span;
         let got = match &e.kind {
             ExprKind::Block(stmts, tail) => self.block(stmts, tail.as_deref(), Some(want))?,
             ExprKind::Match(scrutinee, arms) => self.match_expr(e, scrutinee, arms, Some(want))?,
@@ -1359,7 +1427,9 @@ impl Checker {
 
     /// Computes ("synthesizes") the type of `e`.
     fn synth(&mut self, e: &Expr) -> Result<Type, Error> {
+        self.here = e.span;
         let t = self.synth_inner(e)?;
+        self.settle_goals()?;
         self.typed.exprs.insert(e, t.clone());
         self.note_never(e, &t);
         Ok(t)

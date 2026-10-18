@@ -526,6 +526,14 @@ enum Dropped {
 /// problem, like `moves`, but asking what *must* be gone: where paths meet,
 /// what's gone on both. Then each statement that drops a value is checked
 /// against what's gone before it.
+///
+/// Whether a type is `Discard` is up to `Traits::implements`, with the
+/// bounds in scope. Monomorphisation's copy has to agree, at every type
+/// argument, or a value this lets be dropped would leak there. For a rigid
+/// projection, `T::Out`, that holds as it's `Discard` only by a bound of
+/// the function's, which each caller proved of what it stands for, or by
+/// the trait's declaration, `type Out: Discard;`, which each impl was
+/// checked against (`Checker::assoc_bounds`).
 pub(crate) fn linear(b: &Builder) -> Result<(), Error> {
     let body = &b.body;
     let mut start = Gone {
@@ -703,6 +711,16 @@ fn dropped(
         Some(Type::Param(p)) => {
             format!("; to let it be thrown away, add a bound: `{p}: Discard`")
         }
+        // A function's bound can say it of a projection on its parameter;
+        // otherwise only the trait can.
+        Some(Type::Proj(s, tr, a)) => match *s {
+            Type::Param(p) if p != "Self" => {
+                format!("; to let it be thrown away, add a bound: `{p}: {tr}<{a}: Discard>`")
+            }
+            _ => format!(
+                "; to let it be thrown away, declare it in the trait as `type {a}: Discard;`"
+            ),
+        },
         Some(u) => format!(
             "; to let it be thrown away, add `#[derive(Discard)]` to `{}`",
             crate::check::source_name(&u.to_string())

@@ -1,7 +1,7 @@
 //! Types as the checker understands them.
 
 use crate::check::source_name;
-use crate::traits::Pred;
+use crate::traits::{Pred, Projections};
 use std::collections::HashMap;
 use std::fmt;
 
@@ -45,6 +45,14 @@ pub enum Type {
     /// `Box<T>`: a `T` on the heap, which the box *owns*: it's freed when
     /// the box is.
     Box(Box<Type>),
+    /// `<T as Iter>::Item`: a *projection*, the type that the impl of trait
+    /// `.1` for type `.0` picks for its associated type `.2` (see
+    /// docs/06b-associated-types.md). Once the type's outermost shape is
+    /// known, an impl is found, and the projection *normalises* to what it
+    /// says (`Projections::normalise`). What's left is *rigid*: on a type
+    /// parameter, in generic code, where it's a type that's equal only to
+    /// itself, like the parameter; or on a type variable, until it's known.
+    Proj(Box<Type>, String, String),
 }
 
 /// A *region*, or *lifetime*: the stretch of the program during which a
@@ -90,6 +98,8 @@ impl fmt::Display for Region {
 pub enum Bound {
     Region(Region, Region),
     Param(String, Region),
+    /// `T::Item: 'b`, of a rigid projection.
+    Proj(Type, Region),
 }
 
 /// A function type's parts. A struct rather than fields of `Type::Fn`, so
@@ -147,6 +157,9 @@ pub struct AdtDef {
     /// The traits it needs its type parameters to implement, like
     /// `T: Show`: every use of it must show they do.
     pub preds: Vec<Pred>,
+    /// What its equality bounds say, like `(T::Item, int)`: every use
+    /// must show that too.
+    pub eqs: Vec<(Type, Type)>,
     /// Is it `#[derive(Copy)]`, and `#[derive(Eq)]`? Only for what
     /// monomorphisation made, which says so for each copy that implements
     /// them. Before that, the impls of `Copy` and `Eq` say.
@@ -176,8 +189,39 @@ pub enum AdtKind {
     Enum(Vec<(String, Vec<Type>)>),
 }
 
-/// Every struct and enum in the program, by name.
-pub type Adts = HashMap<String, AdtDef>;
+/// Every struct and enum in the program, by name, and what the
+/// projections their fields may have stand for.
+#[derive(Debug, Clone, Default)]
+pub struct Adts {
+    defs: HashMap<String, AdtDef>,
+    pub proj: Projections,
+}
+
+impl Adts {
+    pub fn new() -> Adts {
+        Adts::default()
+    }
+
+    /// `t` with every projection in it normalised, as far as it goes (see
+    /// `Projections::normalise`).
+    pub fn normalise(&self, t: &Type) -> Type {
+        self.proj.normalise(t)
+    }
+}
+
+impl std::ops::Deref for Adts {
+    type Target = HashMap<String, AdtDef>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.defs
+    }
+}
+
+impl std::ops::DerefMut for Adts {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.defs
+    }
+}
 
 // Looking inside struct and enum values. Everything that needs a field's type
 // goes through these instead of reading an `AdtDef`, because the types an
@@ -186,20 +230,23 @@ pub type Adts = HashMap<String, AdtDef>;
 
 /// What `name<regions, args>` is made of, with `regions` and `args`
 /// substituted for the parameters.
+///
+/// A field's type can have a projection on a parameter in it, like `T::Item`,
+/// which the arguments may let normalise: with the arguments' regions, each
+/// where the impl puts it, so the borrow checker gets the regions the field
+/// really has.
 fn instantiate(adts: &Adts, name: &str, regions: &[Region], args: &[Type]) -> AdtKind {
     let def = &adts[name];
     let s = Subst::new(&def.params, args).with_regions(&def.lifetimes, regions);
+    let field = |t: &Type| adts.normalise(&s.apply(t));
     match &def.kind {
-        AdtKind::Struct(fields) => AdtKind::Struct(
-            fields
-                .iter()
-                .map(|(f, t)| (f.clone(), s.apply(t)))
-                .collect(),
-        ),
+        AdtKind::Struct(fields) => {
+            AdtKind::Struct(fields.iter().map(|(f, t)| (f.clone(), field(t))).collect())
+        }
         AdtKind::Enum(variants) => AdtKind::Enum(
             variants
                 .iter()
-                .map(|(v, ts)| (v.clone(), ts.iter().map(|t| s.apply(t)).collect()))
+                .map(|(v, ts)| (v.clone(), ts.iter().map(field).collect()))
                 .collect(),
         ),
     }
@@ -306,7 +353,7 @@ impl Type {
         let (params, ret): (&[Type], Option<&Type>) = match self {
             Type::Fn(f) => (&f.params, Some(&f.ret)),
             Type::Adt(_, _, args) => (args, None),
-            Type::Ref(_, _, t) | Type::Box(t) => (&[], Some(t)),
+            Type::Ref(_, _, t) | Type::Box(t) | Type::Proj(t, ..) => (&[], Some(t)),
             Type::Int | Type::Bool | Type::Unit | Type::Never | Type::Param(_) | Type::Var(_) => {
                 (&[], None)
             }
@@ -328,6 +375,7 @@ impl Type {
             }
             Type::Ref(r, m, t) => Type::Ref(r.clone(), *m, Box::new(f(t))),
             Type::Box(t) => Type::Box(Box::new(f(t))),
+            Type::Proj(t, tr, name) => Type::Proj(Box::new(f(t)), tr.clone(), name.clone()),
             Type::Int | Type::Bool | Type::Unit | Type::Never | Type::Param(_) | Type::Var(_) => {
                 self.clone()
             }
@@ -345,6 +393,7 @@ impl Type {
             (Type::Adt(a, _, xs), Type::Adt(b, _, ys)) => a == b && xs.len() == ys.len(),
             (Type::Ref(_, m, _), Type::Ref(_, n, _)) => m == n,
             (Type::Box(_), Type::Box(_)) => true,
+            (Type::Proj(_, a, x), Type::Proj(_, b, y)) => a == b && x == y,
             (Type::Var(_), _) | (_, Type::Var(_)) => false,
             (a, b) => a == b,
         }
@@ -438,7 +487,7 @@ impl Type {
     /// over: `fn(&int) -> int` takes references of any lifetime.
     pub fn may_borrow(&self) -> bool {
         fn has_param(t: &Type) -> bool {
-            matches!(t, Type::Param(_)) || t.parts().any(has_param)
+            matches!(t, Type::Param(_) | Type::Proj(..)) || t.parts().any(has_param)
         }
         !self.regions().is_empty() || has_param(self)
     }
@@ -459,7 +508,7 @@ pub fn is_copy(adts: &Adts, ty: &Type, params: bool) -> bool {
         | Type::Fn(_)
         | Type::Ref(_, false, _) => true,
         Type::Ref(_, true, _) | Type::Box(_) | Type::Var(_) => false,
-        Type::Param(_) => params,
+        Type::Param(_) | Type::Proj(..) => params,
         // Can't recurse forever: a type holds itself only through a box or
         // a reference, and neither of those leads back here.
         Type::Adt(name, ..) => {
@@ -491,6 +540,7 @@ impl Type {
             }
             Type::Ref(_, m, t) => format!("&{}{}", if *m { "mut " } else { "" }, t.symbols()),
             Type::Box(t) => format!("Box<{}>", t.symbols()),
+            Type::Proj(t, tr, name) => format!("<{} as {tr}>::{name}", t.symbols()),
             t => t.to_string(),
         }
     }
@@ -534,6 +584,9 @@ impl fmt::Display for Type {
                 write!(f, "{t}")
             }
             Type::Box(t) => write!(f, "Box<{t}>"),
+            // `T::Item` is what's written, and says enough in a message.
+            Type::Proj(t, _, name) if matches!(**t, Type::Param(_)) => write!(f, "{t}::{name}"),
+            Type::Proj(t, tr, name) => write!(f, "<{t} as {tr}>::{name}"),
             Type::Param(name) => f.write_str(name),
             // Like Rust: "some type, not known yet".
             Type::Var(_) => f.write_str("_"),
@@ -570,6 +623,9 @@ pub struct Scheme {
     /// `fn f<T: Show>`. Every use has to show they do, for the type
     /// arguments it picks.
     pub preds: Vec<Pred>,
+    /// What its equality bounds say projections are: `(T::Item, int)` for
+    /// `fn f<T: Iter<Item = int>>`. Every use has to show they are.
+    pub eqs: Vec<(Type, Type)>,
     pub ty: Type,
 }
 
@@ -581,6 +637,7 @@ impl Scheme {
             lifetimes: Vec::new(),
             bounds: Vec::new(),
             preds: Vec::new(),
+            eqs: Vec::new(),
             ty,
         }
     }

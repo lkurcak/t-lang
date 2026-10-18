@@ -360,11 +360,11 @@ away: a positive cycle, found by Bellman–Ford (`generics.rs`). That lets
 
 | Missing | Why it's missing | Step |
 |---|---|---|
-| associated types, `type Item;` | the next part | 6b |
+| associated types, `type Item;` | the next part: docs/06b-associated-types.md | 6b |
 | closures as `Fn` traits, capturing by reference | after that | 6c |
 | `dyn Trait` | static dispatch until a program needs it | — |
 | `Drop` | drop check is the hard part | — |
-| `for` loops | an `Iterator` trait, so associated types | — |
+| `for` loops | an `Iterator` trait, with associated types (6b) and closures (6c) | — |
 | operator traits but `Eq` (`Add`, `Ord` for `<`) | not needed yet | — |
 | traits with type parameters, `where` clauses | not needed yet | — |
 | `impl Tr for &U` methods by `.` | the one-`&` rule | — |

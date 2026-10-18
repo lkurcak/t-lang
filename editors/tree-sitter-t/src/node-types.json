@@ -172,6 +172,14 @@
         "named": true
       },
       {
+        "type": "projection_type",
+        "named": true
+      },
+      {
+        "type": "qualified_type",
+        "named": true
+      },
+      {
         "type": "reference_type",
         "named": true
       },
@@ -220,6 +228,94 @@
         "types": [
           {
             "type": "_expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "associated_bound",
+    "named": true,
+    "fields": {
+      "bounds": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "trait_bounds",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type_identifier",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "associated_equality",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type_identifier",
+            "named": true
+          }
+        ]
+      },
+      "type": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "_type",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "associated_type",
+    "named": true,
+    "fields": {
+      "bounds": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "trait_bounds",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type_identifier",
+            "named": true
+          }
+        ]
+      },
+      "type": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "_type",
             "named": true
           }
         ]
@@ -629,6 +725,10 @@
       "multiple": true,
       "required": false,
       "types": [
+        {
+          "type": "associated_type",
+          "named": true
+        },
         {
           "type": "attribute_item",
           "named": true
@@ -1523,6 +1623,76 @@
     }
   },
   {
+    "type": "projection_type",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type_identifier",
+            "named": true
+          }
+        ]
+      },
+      "type": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "projection_type",
+            "named": true
+          },
+          {
+            "type": "qualified_type",
+            "named": true
+          },
+          {
+            "type": "type_identifier",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "qualified_type",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type_identifier",
+            "named": true
+          }
+        ]
+      },
+      "trait": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type_identifier",
+            "named": true
+          }
+        ]
+      },
+      "type": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "_type",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "range_pattern",
     "named": true,
     "fields": {},
@@ -1812,6 +1982,10 @@
           "named": true
         },
         {
+          "type": "trait_with_associated",
+          "named": true
+        },
+        {
           "type": "type_identifier",
           "named": true
         }
@@ -1852,6 +2026,36 @@
           }
         ]
       }
+    }
+  },
+  {
+    "type": "trait_with_associated",
+    "named": true,
+    "fields": {
+      "trait": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type_identifier",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "associated_bound",
+          "named": true
+        },
+        {
+          "type": "associated_equality",
+          "named": true
+        }
+      ]
     }
   },
   {
@@ -2221,6 +2425,10 @@
     "named": false
   },
   {
+    "type": "as",
+    "named": false
+  },
+  {
     "type": "break",
     "named": false
   },
@@ -2316,6 +2524,10 @@
   },
   {
     "type": "true",
+    "named": false
+  },
+  {
+    "type": "type",
     "named": false
   },
   {

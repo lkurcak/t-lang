@@ -37,7 +37,7 @@
 use crate::ast::*;
 use crate::check::{self, Info, Instance};
 use crate::error::{Error, Span};
-use crate::traits::{Source, eq_subject};
+use crate::traits::{Projections, Source, eq_subject};
 use crate::types::{Region, Subst, Type};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -127,6 +127,9 @@ struct Mono<'p> {
     type_copies: HashMap<String, Vec<Vec<Type>>>,
     /// The types `==` is used on so far, after `eq_subject`.
     compared: HashSet<Type>,
+    /// What projections stand for, by the impls: in a copy, every type is
+    /// known, so every one does.
+    proj: Projections,
 }
 
 impl<'p> Mono<'p> {
@@ -154,6 +157,7 @@ impl<'p> Mono<'p> {
             type_queue: Vec::new(),
             type_copies: HashMap::new(),
             compared: HashSet::new(),
+            proj: Projections::new(&info.traits),
         }
     }
 
@@ -329,7 +333,7 @@ impl<'p> Mono<'p> {
         let traits = &cx.m.info.traits;
         let names: Vec<Ident> = ["Discard", "Copy", "Eq"]
             .into_iter()
-            .filter(|tr| traits.implements(&ty, tr, &[]).is_ok())
+            .filter(|tr| traits.implements(&ty, tr, &[], &[]).is_ok())
             .map(|tr| Ident {
                 name: tr.into(),
                 span: d.name().span,
@@ -517,9 +521,23 @@ impl Cx<'_, '_, '_> {
                 .get(name)
                 .map(|&(l, n)| check::TypeName::Adt(name.to_string(), l, n)),
         };
-        let resolved = check::resolve(t, &names, &self.params, &mut check::Lifetimes::Any)
+        let projections = &self.m.info.projections;
+        let proj = |s: Type, tr: Option<&Ident>, name: &Ident, span: Span| {
+            let tr = match tr {
+                Some(tr) => tr.name.clone(),
+                None => projections[&span].clone(),
+            };
+            Ok(Type::Proj(Box::new(s), tr, name.name.clone()))
+        };
+        let resolved = check::resolve(t, &names, &proj, &self.params, &mut check::Lifetimes::Any)
             .expect("monomorphising a program that checked");
-        self.s.apply(&resolved)
+        self.subst(&resolved)
+    }
+
+    /// `t`, of the original, as it is in the copy: with the copy's type
+    /// arguments, and every projection worked out, as each can be now.
+    fn subst(&self, t: &Type) -> Type {
+        self.m.proj.normalise(&self.s.apply(t))
     }
 
     /// Makes the copies of every impl's `eq` that `==` on values of type
@@ -528,6 +546,9 @@ impl Cx<'_, '_, '_> {
     /// derived, and so on down. Each type once: a type can hold itself,
     /// through a box. That ends, as the check against polymorphic
     /// recursion sees through derived impls the same way (`dispatch`).
+    ///
+    /// `t` and the field types have their projections worked out (`subst`,
+    /// `resolved`), so it's the impls of what they stand for that it finds.
     fn need_eq(&mut self, t: &Type, span: Span) {
         let t = eq_subject(t).erased();
         if !matches!(t, Type::Adt(..)) || !self.m.compared.insert(t.clone()) {
@@ -611,7 +632,9 @@ impl Cx<'_, '_, '_> {
                 TypeExprKind::Ref(lifetime, *m, Box::new(self.written(inner, span)))
             }
             Type::Box(inner) => TypeExprKind::Named("Box".into(), vec![self.written(inner, span)]),
-            Type::Param(_) | Type::Var(_) => unreachable!("`{t}` left after monomorphising"),
+            Type::Param(_) | Type::Var(_) | Type::Proj(..) => {
+                unreachable!("`{t}` left after monomorphising")
+            }
         };
         TypeExpr { kind, span }
     }
@@ -623,7 +646,7 @@ impl Cx<'_, '_, '_> {
         Some(match instance {
             // A copy doesn't depend on lifetimes, so they're left out.
             Instance::Fn(name, args) => {
-                let args = args.iter().map(|a| self.s.apply(a).erased()).collect();
+                let args = args.iter().map(|a| self.subst(a).erased()).collect();
                 match self.target(&name, args) {
                     Target::Fn(of, args, copy) => {
                         self.m.named_copy(&of, args, copy, span, self.copy)
@@ -632,7 +655,7 @@ impl Cx<'_, '_, '_> {
                 }
             }
             Instance::Adt(name, args) => {
-                let args: Vec<Type> = args.iter().map(|a| self.s.apply(a).erased()).collect();
+                let args: Vec<Type> = args.iter().map(|a| self.subst(a).erased()).collect();
                 // Its fields' types may need copies of their own.
                 self.written(&Type::Adt(name.clone(), Vec::new(), args.clone()), span);
                 self.m.type_copy(&name, args)
@@ -683,7 +706,7 @@ impl Cx<'_, '_, '_> {
             return Target::Fn(name.to_string(), args, copy);
         };
         let traits = &self.m.info.traits;
-        match traits.implements(&self_ty, &tr, &[]) {
+        match traits.implements(&self_ty, &tr, &[], &[]) {
             Ok(Source::Impl(i, impl_args)) if !traits.impls[i].derived => {
                 let d = &traits.impls[i];
                 match d.methods.iter().find(|(m, _)| *m == method) {
@@ -773,7 +796,7 @@ impl Cx<'_, '_, '_> {
             // like the inferred ones, and the copy's name says them.
             ExprKind::Var(name, _) => match self.m.info.instances.get(&e.span).cloned() {
                 Some(Instance::Fn(f, args)) => {
-                    let args = args.iter().map(|a| self.s.apply(a).erased()).collect();
+                    let args = args.iter().map(|a| self.subst(a).erased()).collect();
                     match self.target(&f, args) {
                         Target::Fn(of, args, copy) => {
                             let name = self.m.named_copy(&of, args, copy, e.span, self.copy);
@@ -808,7 +831,7 @@ impl Cx<'_, '_, '_> {
             ExprKind::Unary(op, x) => ExprKind::Unary(*op, Box::new(self.expr(x))),
             ExprKind::Binary(op, l, r) => {
                 if let Some(Instance::Fn(_, args)) = self.m.info.instances.get(&e.span).cloned() {
-                    self.need_eq(&self.s.apply(&args[0]), e.span);
+                    self.need_eq(&self.subst(&args[0]), e.span);
                 }
                 ExprKind::Binary(*op, Box::new(self.expr(l)), Box::new(self.expr(r)))
             }

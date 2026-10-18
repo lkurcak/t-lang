@@ -64,7 +64,8 @@
 "fn" @keyword.function
 ["trait" "impl" "for"] @keyword
 "let" @keyword
-["struct" "enum"] @keyword.type
+["struct" "enum" "type"] @keyword.type
+"as" @keyword.operator
 ["if" "else" "match"] @keyword.conditional
 ["while" "loop" "break" "continue"] @keyword.repeat
 "return" @keyword.return

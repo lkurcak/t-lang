@@ -42,6 +42,15 @@ pub fn lift(prog: &Program, info: &Info) -> Program {
         .iter()
         .map(|d| ImplDecl {
             self_ty: cx.ty(&d.self_ty),
+            generics: cx.generics(&d.generics),
+            assoc: d
+                .assoc
+                .iter()
+                .map(|a| AssocDef {
+                    ty: cx.ty(&a.ty),
+                    ..a.clone()
+                })
+                .collect(),
             methods: d.methods.iter().map(|f| cx.method(f, &mut fns)).collect(),
             ..d.clone()
         })
@@ -106,7 +115,7 @@ impl<'p> Cx<'p> {
             allows: f.allows.clone(),
             span: f.span,
             name: self.ident(&f.name),
-            generics: f.generics.clone(),
+            generics: self.generics(&f.generics),
             params: f.params.iter().map(|p| self.param(p)).collect(),
             parens: f.parens,
             ret: self.ty(&f.ret),
@@ -122,7 +131,7 @@ impl<'p> Cx<'p> {
                 allows: s.allows.clone(),
                 span: s.span,
                 name: self.ident(&s.name),
-                generics: s.generics.clone(),
+                generics: self.generics(&s.generics),
                 derives: s.derives.clone(),
                 fields: s.fields.iter().map(|f| self.param(f)).collect(),
             }),
@@ -131,7 +140,7 @@ impl<'p> Cx<'p> {
                 allows: e.allows.clone(),
                 span: e.span,
                 name: self.ident(&e.name),
-                generics: e.generics.clone(),
+                generics: self.generics(&e.generics),
                 derives: e.derives.clone(),
                 variants: e
                     .variants
@@ -186,8 +195,24 @@ impl<'p> Cx<'p> {
             TypeExprKind::Ref(lifetime, mutable, inner) => {
                 TypeExprKind::Ref(lifetime.clone(), *mutable, Box::new(self.ty(inner)))
             }
+            TypeExprKind::Proj(inner, tr, name) => {
+                TypeExprKind::Proj(Box::new(self.ty(inner)), tr.clone(), name.clone())
+            }
         };
         TypeExpr { kind, span: t.span }
+    }
+
+    /// `g`, with the types in its equality bounds renamed.
+    fn generics(&self, g: &Generics) -> Generics {
+        let mut g = g.clone();
+        for (_, items) in &mut g.bounds {
+            for a in items.iter_mut().flat_map(|b| &mut b.assoc) {
+                if let AssocBoundKind::Eq(t) = &mut a.kind {
+                    *t = self.ty(t);
+                }
+            }
+        }
+        g
     }
 
     fn types(&self, ts: &[TypeExpr]) -> Vec<TypeExpr> {

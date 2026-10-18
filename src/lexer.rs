@@ -25,6 +25,8 @@ pub enum Tok {
     Return,
     Break,
     Continue,
+    Type,
+    As,
     /// `'a`: a lifetime, with its `'`.
     Lifetime(String),
     // punctuation
@@ -98,6 +100,8 @@ impl Tok {
             Tok::Return => "return",
             Tok::Break => "break",
             Tok::Continue => "continue",
+            Tok::Type => "type",
+            Tok::As => "as",
             Tok::LParen => "(",
             Tok::RParen => ")",
             Tok::LBrace => "{",
@@ -239,6 +243,8 @@ pub fn lex_with_comments(src: &str) -> Result<(Vec<Token>, Vec<Comment>), Error>
                 "return" => Tok::Return,
                 "break" => Tok::Break,
                 "continue" => Tok::Continue,
+                "type" => Tok::Type,
+                "as" => Tok::As,
                 name => Tok::Ident(name.to_string()),
             }
         } else if c == b'\'' {

@@ -128,16 +128,44 @@ module.exports = grammar({
 
     declaration_list: $ => seq(
       '{',
-      repeat(choice($.function_item, $.function_signature_item, $.attribute_item)),
+      repeat(choice(
+        $.function_item,
+        $.function_signature_item,
+        $.associated_type,
+        $.attribute_item,
+      )),
       '}',
+    ),
+
+    // `type Item: Discard;` in a trait, or `type Item = int;` in an impl.
+    associated_type: $ => seq(
+      'type',
+      field('name', $._type_identifier),
+      optional(field('bounds', $.trait_bounds)),
+      optional(seq('=', field('type', $._type))),
+      ';',
     ),
 
     // `: Show + 'a`
     trait_bounds: $ => seq(
       ':',
-      choice($.lifetime, $._type_identifier),
-      repeat(seq('+', choice($.lifetime, $._type_identifier))),
+      $._bound,
+      repeat(seq('+', $._bound)),
     ),
+
+    _bound: $ => choice($.lifetime, $._type_identifier, $.trait_with_associated),
+
+    // `Iter<Item = int>` or `Iter<Item: Discard>` in a bound.
+    trait_with_associated: $ => seq(
+      field('trait', $._type_identifier),
+      '<',
+      commaSep1(choice($.associated_equality, $.associated_bound)),
+      '>',
+    ),
+
+    associated_equality: $ => seq(field('name', $._type_identifier), '=', field('type', $._type)),
+
+    associated_bound: $ => seq(field('name', $._type_identifier), field('bounds', $.trait_bounds)),
 
     // `<'a, T: Show + 'a>` after the name of a function, struct or enum,
     // or after `impl`.
@@ -230,6 +258,26 @@ module.exports = grammar({
       $.function_type,
       $.reference_type,
       $.never_type,
+      $.qualified_type,
+      $.projection_type,
+    ),
+
+    // `<T as Iter>::Item`
+    qualified_type: $ => seq(
+      '<',
+      field('type', $._type),
+      'as',
+      field('trait', $._type_identifier),
+      '>',
+      '::',
+      field('name', $._type_identifier),
+    ),
+
+    // `T::Item`
+    projection_type: $ => seq(
+      field('type', choice($._type_identifier, $.qualified_type, $.projection_type)),
+      '::',
+      field('name', $._type_identifier),
     ),
 
     // `&T`, `&'a mut T`

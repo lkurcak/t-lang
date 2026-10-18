@@ -364,9 +364,9 @@ impl Printer<'_> {
             false => format!(": {}", supers.join(" + ")),
         };
         let open = self.find(t.name.span.end, &Tok::LBrace);
-        let methods: Vec<(&FnDecl, bool)> =
-            t.methods.iter().map(|m| (&m.decl, m.provided)).collect();
-        let body = self.methods(open, t.span.end - 1, &methods);
+        let mut items: Vec<BodyItem> = t.assoc.iter().map(BodyItem::Decl).collect();
+        items.extend(t.methods.iter().map(|m| BodyItem::Fn(&m.decl, m.provided)));
+        let body = self.methods(open, t.span.end - 1, items);
         doc + "trait " + &t.name.name + supers + " " + body
     }
 
@@ -383,27 +383,47 @@ impl Printer<'_> {
             None => text(" "),
         };
         let open = self.find(d.self_ty.span.end, &Tok::LBrace);
-        let methods: Vec<(&FnDecl, bool)> = d.methods.iter().map(|f| (f, true)).collect();
-        let body = self.methods(open, d.span.end - 1, &methods);
+        let mut items: Vec<BodyItem> = d.assoc.iter().map(BodyItem::Def).collect();
+        items.extend(d.methods.iter().map(|f| BodyItem::Fn(f, true)));
+        let body = self.methods(open, d.span.end - 1, items);
         doc + "impl" + generics + header + self.ty(&d.self_ty) + " " + body
     }
 
     /// The `{ .. }` of a trait or impl, with the `{` at `open` and the `}`
-    /// at `close` in the source: its methods, each with whether it has a
-    /// body, one after another.
-    fn methods(&mut self, open: usize, close: usize, methods: &[(&FnDecl, bool)]) -> Doc {
+    /// at `close` in the source: its associated types and methods, in the
+    /// order written, one after another.
+    fn methods(&mut self, open: usize, close: usize, mut methods: Vec<BodyItem>) -> Doc {
         if methods.is_empty() && !self.comments_before(close) {
             return text("{}");
         }
+        methods.sort_by_key(|m| m.span().start);
         let mut body = self.trailing(open + 1);
-        for (i, &(f, provided)) in methods.iter().enumerate() {
-            let start = lead_start(f.doc.as_ref(), &f.allows, f.span.start);
-            body = body + Doc::HardLine + self.element(start, i == 0);
-            let doc = match provided {
-                true => self.fn_decl(f),
-                false => self.signature(f) + ";",
+        for (i, item) in methods.iter().enumerate() {
+            let (doc, allows, span) = match item {
+                BodyItem::Fn(f, _) => (f.doc.as_ref(), &f.allows[..], f.span),
+                BodyItem::Decl(a) => (a.doc.as_ref(), &[][..], a.span),
+                BodyItem::Def(a) => (a.doc.as_ref(), &[][..], a.span),
             };
-            body = body + doc + self.trailing(f.span.end);
+            let start = lead_start(doc, allows, span.start);
+            body = body + Doc::HardLine + self.element(start, i == 0);
+            let doc = match *item {
+                BodyItem::Fn(f, true) => self.fn_decl(f),
+                BodyItem::Fn(f, false) => self.signature(f) + ";",
+                BodyItem::Decl(a) => {
+                    let lead = self.lead(a.doc.as_ref(), &[], a.span.start);
+                    let bounds: Vec<&str> = a.bounds.iter().map(|b| b.name.as_str()).collect();
+                    let bounds = match bounds.is_empty() {
+                        true => String::new(),
+                        false => format!(": {}", bounds.join(" + ")),
+                    };
+                    lead + "type " + &a.name.name + bounds + ";"
+                }
+                BodyItem::Def(a) => {
+                    let lead = self.lead(a.doc.as_ref(), &[], a.span.start);
+                    lead + "type " + &a.name.name + " = " + self.ty(&a.ty) + ";"
+                }
+            };
+            body = body + doc + self.trailing(span.end);
         }
         for c in self.dangling(close, methods.is_empty()) {
             body = body + Doc::HardLine + c;
@@ -430,16 +450,30 @@ impl Printer<'_> {
             &params,
             |p| (p.span.start, end(p)),
             None,
-            |_, p| {
-                let bounds: Vec<&str> = g
-                    .bounds_of(&p.name)
-                    .iter()
-                    .map(|b| b.name.as_str())
-                    .collect();
-                match bounds.is_empty() {
-                    true => text(&p.name),
-                    false => text(format!("{}: {}", p.name, bounds.join(" + "))),
+            |pp, p| {
+                let mut out = text(&p.name);
+                for (i, b) in g.bounds_of(&p.name).into_iter().enumerate() {
+                    out = out + if i == 0 { ": " } else { " + " } + &b.name.name;
+                    if b.assoc.is_empty() {
+                        continue;
+                    }
+                    let mut args = Doc::nil();
+                    for (j, a) in b.assoc.iter().enumerate() {
+                        if j > 0 {
+                            args = args + ", ";
+                        }
+                        args = args + &a.name.name;
+                        args = match &a.kind {
+                            AssocBoundKind::Eq(t) => args + " = " + pp.ty(t),
+                            AssocBoundKind::Bounds(ts) => {
+                                let ts: Vec<&str> = ts.iter().map(|t| t.name.as_str()).collect();
+                                args + ": " + ts.join(" + ")
+                            }
+                        };
+                    }
+                    out = out + "<" + args + ">";
                 }
+                out
             },
         )
     }
@@ -1001,6 +1035,10 @@ impl Printer<'_> {
                 }
                 text(head) + self.ty(inner)
             }
+            TypeExprKind::Proj(inner, Some(tr), name) => {
+                text("<") + self.ty(inner) + " as " + &tr.name + ">::" + &name.name
+            }
+            TypeExprKind::Proj(inner, None, name) => self.ty(inner) + "::" + &name.name,
             TypeExprKind::Fn(params, ret) => {
                 let open = self.find(t.span.start, &Tok::LParen);
                 let close = self.close(open, params.last().map(|p| p.span.end), &Tok::RParen);
@@ -1101,4 +1139,32 @@ fn range(lo: i64, hi: i64, inclusive: bool) -> String {
         i64::MAX => format!("{lo}.."),
         hi => format!("{lo}..{}", hi + 1),
     }
+}
+
+/// Something in the `{ .. }` of a trait or impl.
+enum BodyItem<'a> {
+    /// A method, with whether it has a body.
+    Fn(&'a FnDecl, bool),
+    /// `type Item: Discard;`, in a trait.
+    Decl(&'a AssocDecl),
+    /// `type Item = int;`, in an impl.
+    Def(&'a AssocDef),
+}
+
+impl BodyItem<'_> {
+    fn span(&self) -> Span {
+        match self {
+            BodyItem::Fn(f, _) => lead_start_span(f),
+            BodyItem::Decl(a) => a.span,
+            BodyItem::Def(a) => a.span,
+        }
+    }
+}
+
+/// Where a method starts, docs and attributes and all.
+fn lead_start_span(f: &FnDecl) -> Span {
+    Span::new(
+        lead_start(f.doc.as_ref(), &f.allows, f.span.start),
+        f.span.end,
+    )
 }

@@ -282,7 +282,7 @@ combine features in ways nobody planned for.
 | 5.1 ✅ | `return`, `break`, `continue`, `loop`, labels | the empty type `!`, divergence | [docs/05.1-control-flow.md](docs/05.1-control-flow.md) |
 | 6a ✅ | traits, impls, methods, `Eq` and `Copy` | ad-hoc polymorphism, type classes, coherence, termination of resolution; a call's borrows taken after its arguments | [docs/06-traits.md](docs/06-traits.md) |
 | 6a.1 ✅ | values must be used up, unless `Discard`; `replace` | linear types, substructural rules (weakening, contraction) | [docs/06a.1-linear-types.md](docs/06a.1-linear-types.md) |
-| 6b | associated types | type-level functions | |
+| 6b ✅ | associated types, projections, equality bounds | type-level functions (open type families), normalisation with lifetimes | [docs/06b-associated-types.md](docs/06b-associated-types.md) |
 | 6c | closures as `Fn` traits | a type per closure, capturing by reference | |
 | 7 | effects | effect systems: which functions can panic, allocate or diverge | |
 | 8 | refinement types | proving indexes in bounds, so indexing can't panic | |

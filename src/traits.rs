@@ -23,6 +23,7 @@ use crate::error::Span;
 use crate::types::{Bound, Region, Scheme, Subst, Type};
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::Arc;
 
 /// `T: Show`: type `ty` implements trait `trait_name`. A bound says it's
 /// so; an *obligation* is one the checker has to prove.
@@ -51,7 +52,19 @@ pub struct TraitDef {
     pub span: Option<Span>,
     /// Its supertraits, as written.
     pub supers: Vec<String>,
+    /// Its associated types.
+    pub assoc: Vec<AssocDecl>,
     pub methods: Vec<MethodDef>,
+}
+
+/// An associated type of a trait: `type Item: Discard;`.
+#[derive(Debug, Clone)]
+pub struct AssocDecl {
+    pub name: String,
+    /// The traits every impl's type for it must implement, as written:
+    /// generic code may assume it does.
+    pub bounds: Vec<String>,
+    pub span: Span,
 }
 
 /// A method of a trait.
@@ -87,6 +100,11 @@ pub struct ImplDef {
     pub self_ty: Type,
     /// What it needs, on `params`: `T: Show` in `impl<T: Show> ..`.
     pub preds: Vec<Pred>,
+    /// What its equality bounds say, like `(T::Item, int)`.
+    pub eqs: Vec<(Type, Type)>,
+    /// What it says each of the trait's associated types is, by name, as
+    /// written, mentioning `params` and `lifetimes`.
+    pub assoc: Vec<(String, Type)>,
     /// The methods it defines, by name, with their symbols.
     pub methods: Vec<(String, String)>,
     /// Made by a `#[derive(..)]`, rather than written?
@@ -131,6 +149,7 @@ impl Traits {
             TraitDef {
                 span: None,
                 supers: Vec::new(),
+                assoc: Vec::new(),
                 methods: Vec::new(),
             },
         );
@@ -140,6 +159,7 @@ impl Traits {
             TraitDef {
                 span: None,
                 supers: vec!["Discard".to_string()],
+                assoc: Vec::new(),
                 methods: Vec::new(),
             },
         );
@@ -157,6 +177,7 @@ impl Traits {
                     ty: param("Self"),
                     trait_name: "Eq".into(),
                 }],
+                eqs: Vec::new(),
                 ty: Type::func(vec![this(), other], Type::Bool),
             },
             provided: false,
@@ -168,6 +189,7 @@ impl Traits {
             TraitDef {
                 span: None,
                 supers: Vec::new(),
+                assoc: Vec::new(),
                 methods: vec![eq],
             },
         );
@@ -194,6 +216,16 @@ impl Traits {
             i += 1;
         }
         out
+    }
+
+    /// The trait among `tr` and its supertraits with an associated type
+    /// `name`, if exactly one has: `T::Item` for `T: tr` means it's that
+    /// one's. More than one, all of them, for saying so.
+    pub fn assoc_owner(&self, tr: &str, name: &str) -> Vec<String> {
+        self.implied(tr)
+            .into_iter()
+            .filter(|t| self.traits[t].assoc.iter().any(|a| a.name == name))
+            .collect()
     }
 
     /// The method `name` of trait `tr`, if it has one.
@@ -231,11 +263,28 @@ impl Traits {
     /// checker got with bounds. That holds as every obligation was proved
     /// with the bounds in scope, and every impl, derived ones too, needs
     /// exactly its `preds`: a derived impl that needed less than its
-    /// fields do (`Checker::derive`) would pass here and fail there. If it doesn't, the obligation
+    /// fields do (`Checker::derive`) would pass here and fail there. If it
+    /// doesn't, the obligation
     /// that fails, at the bottom of the search: for `Option<fn()>: Eq`,
     /// `fn(): Eq`.
-    pub fn implements(&self, ty: &Type, tr: &str, env: &[Pred]) -> Result<Source, Pred> {
-        self.implements_at(ty, tr, env, 0)
+    ///
+    /// A rigid projection, like `T::Item`, implements what a bound in
+    /// `env` says it does, and what the trait declares of it: `type Item:
+    /// Discard;` says every impl's `Item` does, which each impl was checked
+    /// for (`Checker::assoc_bounds`). Monomorphisation, where it's what it
+    /// stands for, gets the same answer: a bound on it was proved of that
+    /// by each caller, and the declaration of every impl's. `eqs` are the
+    /// equality bounds in scope, for an impl that has some of its own,
+    /// which hold by normalising, the same before and after substitution
+    /// (see `Projections`). `ty` must be normalised as far as it goes.
+    pub fn implements(
+        &self,
+        ty: &Type,
+        tr: &str,
+        env: &[Pred],
+        eqs: &[(Type, Type)],
+    ) -> Result<Source, Pred> {
+        self.implements_at(ty, tr, env, eqs, 0)
     }
 
     fn implements_at(
@@ -243,6 +292,7 @@ impl Traits {
         ty: &Type,
         tr: &str,
         env: &[Pred],
+        eqs: &[(Type, Type)],
         depth: usize,
     ) -> Result<Source, Pred> {
         // Termination is checked when impls are collected, so this can only
@@ -254,7 +304,7 @@ impl Traits {
         };
         let all = |ts: &[&Type]| -> Result<Source, Pred> {
             for t in ts {
-                self.implements_at(t, tr, env, depth + 1)?;
+                self.implements_at(t, tr, env, eqs, depth + 1)?;
             }
             Ok(Source::Builtin)
         };
@@ -280,11 +330,18 @@ impl Traits {
             ("Eq", Type::Fn(_)) => return Err(fail()),
             _ => {}
         }
-        if let Type::Param(_) = ty {
-            let assumed = env
-                .iter()
-                .any(|p| p.ty == *ty && self.implied(&p.trait_name).iter().any(|t| t == tr));
-            return match assumed {
+        if let Type::Param(_) | Type::Proj(..) = ty {
+            let implied = |t: &str| self.implied(t).iter().any(|t| t == tr);
+            let assumed = env.iter().any(|p| p.ty == *ty && implied(&p.trait_name));
+            let declared = match ty {
+                Type::Proj(_, of, name) => self.traits[of]
+                    .assoc
+                    .iter()
+                    .find(|a| a.name == *name)
+                    .is_some_and(|a| a.bounds.iter().any(|b| implied(b))),
+                _ => false,
+            };
+            return match assumed || declared {
                 true => Ok(Source::Assumed),
                 false => Err(fail()),
             };
@@ -295,9 +352,143 @@ impl Traits {
         let d = &self.impls[i];
         let s = Subst::new(&d.params, &args);
         for p in &d.preds {
-            self.implements_at(&s.apply(&p.ty), &p.trait_name, env, depth + 1)?;
+            let t = normalise(&self.impls, eqs, &s.apply(&p.ty));
+            self.implements_at(&t, &p.trait_name, env, eqs, depth + 1)?;
+        }
+        for (lhs, rhs) in &d.eqs {
+            let (l, r) = (s.apply(lhs), s.apply(rhs));
+            if normalise(&self.impls, eqs, &l).erased() != normalise(&self.impls, eqs, &r).erased()
+            {
+                return Err(fail());
+            }
         }
         Ok(Source::Impl(i, args))
+    }
+}
+
+/// What the projections in types stand for: the associated types of every
+/// impl, and what the equality bounds in scope say.
+///
+/// Working one out is *normalising* it, and it's a function of the type
+/// it's on, regions and all, that commutes with substitution, which is what
+/// makes it sound for generic code, the borrow checker and
+/// monomorphisation to each do it at their own time (see
+/// docs/06b-associated-types.md):
+///
+/// - At most one impl matches a type (coherence), and only by *matching*
+///   its header to the type, never unifying: more known of a type can't
+///   pick another impl, or none.
+/// - The header is parametric (`check::traits`'s `parametric`): each
+///   lifetime and type parameter once, no `'static`. So matching gives each
+///   of them exactly one region or type, with the regions where the type
+///   has them, and the associated type is what the impl says with those.
+///   It may only mention parameters that are in the header outside every
+///   function type (`check::traits`'s `constrained`): matching doesn't
+///   decide those, or decides them as regions that only mean something
+///   inside a function type.
+/// - It's never cached by type with regions erased: `<&'x int as Tr>::Out`
+///   and `<&'y int as Tr>::Out` are different types.
+/// - It ends: the projections in an impl's associated type are on smaller
+///   types than its header, or on the same type parameter, for a blanket
+///   impl, to a trait that can't lead back (`Checker::assoc_termination`).
+#[derive(Debug, Clone, Default)]
+pub struct Projections {
+    /// Every trait impl.
+    impls: Arc<Vec<ImplDef>>,
+    /// What the equality bounds in scope say: `(T::Item, int)` for
+    /// `T: Iter<Item = int>`.
+    pub local: Vec<(Type, Type)>,
+}
+
+impl Projections {
+    pub fn new(traits: &Traits) -> Projections {
+        let impls = traits.impls.iter().filter(|d| d.trait_name.is_some());
+        Projections {
+            impls: Arc::new(impls.cloned().collect()),
+            local: Vec::new(),
+        }
+    }
+
+    /// `t`, with every projection in it that can be worked out, worked out.
+    pub fn normalise(&self, t: &Type) -> Type {
+        normalise(&self.impls, &self.local, t)
+    }
+}
+
+/// `t`, with every projection in it worked out that can be: by the impl of
+/// `impls` its type matches, or what `local` says of a rigid one.
+pub fn normalise(impls: &[ImplDef], local: &[(Type, Type)], t: &Type) -> Type {
+    let t = t.map(|p| normalise(impls, local, p));
+    let Type::Proj(s, tr, name) = &t else {
+        return t;
+    };
+    if let Some((_, u)) = local.iter().find(|(p, _)| *p == t) {
+        return u.clone();
+    }
+    match project(impls, s, tr, name) {
+        Some(u) => normalise(impls, local, &u),
+        None => t,
+    }
+}
+
+/// What `<s as tr>::name` is by the impl of `impls` that's for `s`, if one
+/// is: the type it says, with the parts of `s` its parameters match, and
+/// the regions of `s` where its lifetimes are.
+pub fn project(impls: &[ImplDef], s: &Type, tr: &str, name: &str) -> Option<Type> {
+    if let Type::Param(_) | Type::Var(_) | Type::Proj(..) = s {
+        return None;
+    }
+    for d in impls.iter().filter(|d| d.trait_name.as_deref() == Some(tr)) {
+        let mut found = HashMap::new();
+        if !matches(&d.self_ty, s, &d.params, &mut found) {
+            continue;
+        }
+        let mut regions = HashMap::new();
+        regions_at(&d.self_ty, s, &d.lifetimes, &mut regions);
+        let (_, rhs) = d.assoc.iter().find(|(n, _)| n == name)?;
+        let args: Vec<Type> = d
+            .params
+            .iter()
+            .map(|p| found.get(p).cloned().unwrap_or(Type::Unit))
+            .collect();
+        let regions: Vec<Region> = d
+            .lifetimes
+            .iter()
+            .map(|l| regions.get(l).cloned().unwrap_or(Region::Erased))
+            .collect();
+        let s = Subst::new(&d.params, &args).with_regions(&d.lifetimes, &regions);
+        return Some(s.apply(rhs));
+    }
+    None
+}
+
+/// The region `t` has where `pat`, which `t` matches, has each of
+/// `lifetimes`, outside function types: a function type's regions may be
+/// those it's generic over, which mean nothing outside it.
+fn regions_at(pat: &Type, t: &Type, lifetimes: &[String], out: &mut HashMap<String, Region>) {
+    let mut at = |p: &Region, r: &Region| {
+        if let Region::Named(n) = p
+            && lifetimes.contains(n)
+        {
+            out.insert(n.clone(), r.clone());
+        }
+    };
+    match (pat, t) {
+        (Type::Fn(_), _) => {}
+        (Type::Ref(p, _, a), Type::Ref(r, _, b)) => {
+            at(p, r);
+            regions_at(a, b, lifetimes, out);
+        }
+        (Type::Adt(_, ps, xs), Type::Adt(_, rs, ys)) => {
+            for (p, r) in ps.iter().zip(rs) {
+                at(p, r);
+            }
+            for (x, y) in xs.iter().zip(ys) {
+                regions_at(x, y, lifetimes, out);
+            }
+        }
+        (Type::Box(a), Type::Box(b)) => regions_at(a, b, lifetimes, out),
+        _ => {}
     }
 }
 
@@ -325,14 +516,16 @@ fn param(name: &str) -> Type {
 ///   `parametric`): a lifetime or type parameter appears once in its type,
 ///   never `'static`, with no lifetime bounds. So the impl found for
 ///   `Pair<'x, 'y>` was checked for every two lifetimes, and what it gives
-///   can't depend on which. An associated type would be a type it gives:
-///   `<Pair<'x, 'y> as Tr>::Out` must be worked out with `'x` and `'y`,
-///   not with regions erased.
+///   can't depend on which. An associated type is a type it gives:
+///   `<Pair<'x, 'y> as Tr>::Out` is worked out with `'x` and `'y`, each
+///   where the header has it (`project`), never with regions erased, and
+///   only from what's outside function types.
 /// - Nor does it look at what a function type is generic over: an impl for
 ///   `fn(&int) -> &int`, for every lifetime, is found for a `fn(&'a int) ->
 ///   &'a int`. That's sound only because every function value works at
-///   every lifetime, as a closure captures no references. Closures that
-///   capture references would break it.
+///   every lifetime, as a closure captures no references, and because an
+///   associated type can't mention a parameter that's only inside a
+///   function type. Closures that capture references would break it.
 pub fn matches(pat: &Type, t: &Type, params: &[String], found: &mut HashMap<String, Type>) -> bool {
     match pat {
         Type::Param(p) if params.contains(p) => match found.get(p) {

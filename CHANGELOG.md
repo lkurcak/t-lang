@@ -1,5 +1,47 @@
 # Changelog
 
+## Unreleased
+
+Step 6b: associated types. See
+[docs/06b-associated-types.md](docs/06b-associated-types.md).
+
+### Added
+
+- Associated types: `type Item;` or `type Item: Discard + Show;` in a trait,
+  `type Item = int;` in each impl of it. An impl must say every one, and
+  only those; what the trait's bounds say of it is checked at each impl.
+  There are no defaults.
+- Projections: `<T as Tr>::Item`, and `T::Item` or `Self::Item` for a type
+  parameter or `Self`, when exactly one of its traits has an `Item`. On a
+  known type, a projection is what the impl says, with the type's lifetimes
+  where the impl's header has its own; on a type parameter it's a type of its
+  own, equal only to itself.
+- Equality bounds, `T: Tr<Item = int>`, on functions, impls and structs, and
+  bounds on projections, `T: Tr<Item: Discard>`, on functions. Each use
+  shows they hold.
+- `type` and `as` are keywords.
+- The naming lint covers associated types, which are named like types.
+- The tree-sitter grammar and the formatter know associated types,
+  projections and the new bounds.
+
+### Changed
+
+- What an impl says an associated type is can only mention the impl's
+  parameters that are in its type outside function types, and `'static`,
+  and leaves no lifetime out. A projection in it must be on a smaller type
+  than the impl's, or, in a blanket impl, on its parameter, with no cycle
+  between traits.
+- An impl can't be for a projection.
+- A struct or enum with a field of a projection's type is invariant in the
+  parameters the projection mentions.
+- A rigid projection outlives what its type does, or what the signature
+  says it does (`T: 'r` gives `T::Item: 'r`).
+- Inference works a projection out once its type is known, and never infers
+  the type from what the projection is.
+- Polymorphic recursion through a projection is rejected, in functions, in
+  method calls on a projection, and in the types impls' associated types
+  mention; so are types that hold themselves through one.
+
 ## 0.6.0 (2026-10-18)
 
 Step 6a.1: linear types. See

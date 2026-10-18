@@ -472,14 +472,18 @@ impl Parser {
             }
         }
         self.expect(Tok::LBrace)?;
+        let mut assoc = Vec::new();
         let mut methods = Vec::new();
         while *self.peek() != Tok::RBrace {
             let head = self.head()?.no_derives()?;
-            if *self.peek() != Tok::Fn {
-                return Err(self.unexpected("`fn` or `}`"));
+            match self.peek() {
+                Tok::Type => assoc.push(self.assoc_decl(head)?),
+                Tok::Fn => {
+                    let (decl, provided) = self.function(head, true, true)?;
+                    methods.push(TraitMethod { decl, provided });
+                }
+                _ => return Err(self.unexpected("`fn`, `type` or `}`")),
             }
-            let (decl, provided) = self.function(head, true, true)?;
-            methods.push(TraitMethod { decl, provided });
         }
         let end = self.expect(Tok::RBrace)?;
         Ok(TraitDecl {
@@ -488,7 +492,53 @@ impl Parser {
             span: start.to(end),
             name,
             supers,
+            assoc,
             methods,
+        })
+    }
+
+    /// `type Item: Discard;` in a trait, after its head.
+    fn assoc_decl(&mut self, head: Head) -> Result<AssocDecl, Error> {
+        let start = self.expect(Tok::Type)?;
+        head.no_allows()?;
+        let name = self.ident()?;
+        let mut bounds = Vec::new();
+        if self.eat(&Tok::Colon) {
+            bounds.push(self.ident()?);
+            while self.eat(&Tok::Plus) {
+                bounds.push(self.ident()?);
+            }
+        }
+        if *self.peek() == Tok::Eq {
+            return Err(Error::syntax(
+                self.span(),
+                "an associated type can't have a default: a default method could then be \
+                 checked knowing what it is, and an impl that picks another would make that \
+                 wrong; each impl says what it is",
+            ));
+        }
+        let end = self.expect(Tok::Semi)?;
+        Ok(AssocDecl {
+            doc: head.doc,
+            span: start.to(end),
+            name,
+            bounds,
+        })
+    }
+
+    /// `type Item = int;` in an impl, after its head.
+    fn assoc_def(&mut self, head: Head) -> Result<AssocDef, Error> {
+        let start = self.expect(Tok::Type)?;
+        head.no_allows()?;
+        let name = self.ident()?;
+        self.expect(Tok::Eq)?;
+        let ty = self.ty()?;
+        let end = self.expect(Tok::Semi)?;
+        Ok(AssocDef {
+            doc: head.doc,
+            span: start.to(end),
+            name,
+            ty,
         })
     }
 
@@ -517,13 +567,15 @@ impl Parser {
             },
         };
         self.expect(Tok::LBrace)?;
+        let mut assoc = Vec::new();
         let mut methods = Vec::new();
         while *self.peek() != Tok::RBrace {
             let head = self.head()?.no_derives()?;
-            if *self.peek() != Tok::Fn {
-                return Err(self.unexpected("`fn` or `}`"));
+            match self.peek() {
+                Tok::Type => assoc.push(self.assoc_def(head)?),
+                Tok::Fn => methods.push(self.function(head, true, false)?.0),
+                _ => return Err(self.unexpected("`fn`, `type` or `}`")),
             }
-            methods.push(self.function(head, true, false)?.0);
         }
         let end = self.expect(Tok::RBrace)?;
         Ok(ImplDecl {
@@ -533,6 +585,7 @@ impl Parser {
             generics,
             trait_name,
             self_ty,
+            assoc,
             methods,
         })
     }
@@ -571,9 +624,9 @@ impl Parser {
                 let mut bounds = Vec::new();
                 loop {
                     bounds.push(match p.peek() {
-                        Tok::Ident(_) if !lifetime => p.ident()?,
-                        _ if lifetime => p.lifetime()?,
-                        Tok::Lifetime(_) => p.lifetime()?,
+                        Tok::Ident(_) if !lifetime => p.trait_bound()?,
+                        _ if lifetime => BoundItem::plain(p.lifetime()?),
+                        Tok::Lifetime(_) => BoundItem::plain(p.lifetime()?),
                         _ => return Err(p.unexpected("a lifetime or a trait")),
                     });
                     if !p.eat(&Tok::Plus) {
@@ -586,6 +639,47 @@ impl Parser {
         })?;
         g.span = Some(start.to(end));
         Ok(g)
+    }
+
+    /// `Show`, or `Iter<Item = int, Other: Discard>`, after a `:` in
+    /// generics.
+    fn trait_bound(&mut self) -> Result<BoundItem, Error> {
+        let name = self.ident()?;
+        if *self.peek() != Tok::Lt {
+            return Ok(BoundItem::plain(name));
+        }
+        self.bump();
+        let (assoc, end) = self.comma_list(Tok::Gt, |p| {
+            let name = p.ident()?;
+            let kind = match p.peek() {
+                Tok::Eq => {
+                    p.bump();
+                    AssocBoundKind::Eq(p.ty()?)
+                }
+                Tok::Colon => {
+                    p.bump();
+                    let mut traits = vec![p.ident()?];
+                    while p.eat(&Tok::Plus) {
+                        traits.push(p.ident()?);
+                    }
+                    AssocBoundKind::Bounds(traits)
+                }
+                _ => {
+                    return Err(Error::syntax(
+                        name.span,
+                        "a trait has no type parameters; this can only say what one of its \
+                         associated types is, as in `Iter<Item = int>`, or what it implements, \
+                         as in `Iter<Item: Discard>`",
+                    ));
+                }
+            };
+            Ok(AssocBound { name, kind })
+        })?;
+        Ok(BoundItem {
+            span: name.span.to(end),
+            name,
+            assoc,
+        })
     }
 
     /// `'a`
@@ -679,8 +773,39 @@ impl Parser {
     }
 
     fn ty(&mut self) -> Result<TypeExpr, Error> {
+        let mut t = self.ty_head()?;
+        // `T::Item`, `T::Item::Other`: projections without the trait.
+        while *self.peek() == Tok::ColonColon
+            && matches!(t.kind, TypeExprKind::Named(..) | TypeExprKind::Proj(..))
+        {
+            self.bump();
+            let name = self.ident()?;
+            let span = t.span.to(name.span);
+            t = TypeExpr {
+                kind: TypeExprKind::Proj(Box::new(t), None, name),
+                span,
+            };
+        }
+        Ok(t)
+    }
+
+    fn ty_head(&mut self) -> Result<TypeExpr, Error> {
         let start = self.span();
         match self.peek().clone() {
+            // `<T as Iter>::Item`
+            Tok::Lt => {
+                self.bump();
+                let inner = self.ty()?;
+                self.expect(Tok::As)?;
+                let tr = self.ident()?;
+                self.expect(Tok::Gt)?;
+                self.expect(Tok::ColonColon)?;
+                let name = self.ident()?;
+                Ok(TypeExpr {
+                    kind: TypeExprKind::Proj(Box::new(inner), Some(tr), name.clone()),
+                    span: start.to(name.span),
+                })
+            }
             Tok::Ident(name) => {
                 self.bump();
                 // There's no `<` operator in a type, so this can only start
@@ -1487,6 +1612,17 @@ struct Head {
 }
 
 impl Head {
+    /// Checks this head, for an associated type, has no `#[allow(..)]`.
+    fn no_allows(&self) -> Result<(), Error> {
+        match self.allows.first() {
+            Some(a) => Err(Error::syntax(
+                a.span,
+                "`#[allow(..)]` can't be on an associated type",
+            )),
+            None => Ok(()),
+        }
+    }
+
     /// This head, for something that isn't a struct or enum, so can't
     /// have a `#[derive(..)]`.
     fn no_derives(self) -> Result<Head, Error> {

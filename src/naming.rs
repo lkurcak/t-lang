@@ -163,6 +163,12 @@ fn decls(prog: &Program) -> Vec<Decl<'_>> {
     }
     for t in &prog.traits {
         out.push(ident(&t.name, "trait", Case::Camel));
+        // An impl's are named by the trait's.
+        out.extend(
+            t.assoc
+                .iter()
+                .map(|a| ident(&a.name, "associated type", Case::Camel)),
+        );
         // Those with a default are among the functions.
         for m in t.methods.iter().filter(|m| !m.provided) {
             out.push(ident(&m.decl.name, "method", Case::Snake));

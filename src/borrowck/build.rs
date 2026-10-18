@@ -578,6 +578,13 @@ impl<'a> Builder<'a> {
     /// when it's a `&Box<T>` as `&**r`, a borrow of place `**r`, and `&mut
     /// b` used as a `&T` as `&**(&mut b)`, which borrows `b` and then
     /// reborrows through that, as here.
+    ///
+    /// `ft` has its projections worked out already, with the regions this
+    /// call has (`instantiate`): `T::Out` at `T = Pair<'?1, '?2>` is the
+    /// impl's type with `'?1` and `'?2` where its lifetimes are, so the
+    /// constraints relate each argument and the result to the regions they
+    /// really have. Worked out with regions erased and then given new ones,
+    /// they'd relate them to nothing.
     fn call_into(
         &mut self,
         f: Operand,
@@ -841,25 +848,24 @@ impl<'a> Builder<'a> {
             .map(|_| Region::Var(self.regions.fresh()))
             .collect();
         let s = Subst::new(&scheme.params, &targs).with_regions(&scheme.lifetimes, &vars);
-        let t = s.apply(&scheme.ty);
-        let bounds: Vec<_> = scheme
-            .bounds
-            .iter()
-            .map(|b| match b {
-                crate::types::Bound::Region(a, b) => {
-                    crate::types::Bound::Region(s.region(a), s.region(b))
-                }
-                crate::types::Bound::Param(p, r) => {
-                    crate::types::Bound::Param(p.clone(), s.region(r))
-                }
-            })
-            .collect();
-        for b in bounds {
+        // Projections are worked out only now, with the regions just made:
+        // `<W<'?3> as Tr>::Out` is the impl's type with `'?3` where its
+        // lifetime is. Worked out by the checker, with regions erased, and
+        // then given new ones, they'd be tied to nothing.
+        let t = self.adts().normalise(&s.apply(&scheme.ty));
+        for b in &scheme.bounds {
             match b {
-                crate::types::Bound::Region(..) => self.regions.require(&[b], span),
+                crate::types::Bound::Region(a, b) => {
+                    let b = crate::types::Bound::Region(s.region(a), s.region(b));
+                    self.regions.require(&[b], span);
+                }
                 crate::types::Bound::Param(p, r) => {
-                    let arg = s.apply(&Type::Param(p));
-                    self.regions.type_outlives(&arg, &r, span);
+                    let arg = s.apply(&Type::Param(p.clone()));
+                    self.regions.type_outlives(&arg, &s.region(r), span);
+                }
+                crate::types::Bound::Proj(p, r) => {
+                    let arg = self.adts().normalise(&s.apply(p));
+                    self.regions.type_outlives(&arg, &s.region(r), span);
                 }
             }
         }
