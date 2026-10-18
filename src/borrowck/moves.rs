@@ -13,6 +13,7 @@
 use super::build::{Builder, project};
 use super::describe;
 use super::mir::*;
+use crate::ast::Capture;
 use crate::error::{Edit, Error, Fix, Span};
 use crate::types::{Type, struct_fields, variant_fields};
 use std::collections::{BTreeMap, BTreeSet};
@@ -72,8 +73,13 @@ pub(crate) fn behind_references(b: &Builder) -> Result<(), Error> {
 
 /// Checks that whatever's assigned to or borrowed `&mut` may be changed,
 /// and returns the locals that had to be `mut` for that.
-pub(crate) fn mutability(b: &Builder) -> Result<Vec<Local>, Error> {
+///
+/// In a closure's body, what it captured by value may be changed if the
+/// variable is `mut` where the closure is, which then needs it to be: those
+/// are the second list, by id.
+pub(crate) fn mutability(b: &Builder) -> Result<(Vec<Local>, Vec<Span>), Error> {
     let mut needed = Vec::new();
+    let mut captured = Vec::new();
     let changes = b
         .body
         .blocks
@@ -102,13 +108,24 @@ pub(crate) fn mutability(b: &Builder) -> Result<Vec<Local>, Error> {
                 true => format!("cannot borrow `{target}` as mutable"),
                 false => format!("cannot assign to `{target}`"),
             };
+            if borrow && b.body.unique_by_closures.contains(&s.span) {
+                continue;
+            }
             // It may be changed if it's behind a `&mut`, whatever holds
             // that; behind a `&` it may not. Otherwise, it's up to the
             // local.
+            // In a closure's body, the reference to the closure doesn't
+            // count: what it owns is as changeable as the variable was.
             let mut t = b.body.locals[place.local.0].ty.clone();
+            let own = match env_var(b, place) {
+                Some(_) => usize::from(matches!(t, Type::Ref(..))) + 1,
+                None => 0,
+            };
             let mut behind = None;
             for (i, p) in place.proj.iter().enumerate() {
-                if let (Proj::Deref, Type::Ref(_, m, _)) = (p, &t) {
+                if let (Proj::Deref, Type::Ref(_, m, _)) = (p, &t)
+                    && i >= own
+                {
                     behind = Some((*m, i));
                 }
                 t = project(b.adts(), &t, *p);
@@ -132,6 +149,39 @@ pub(crate) fn mutability(b: &Builder) -> Result<Vec<Local>, Error> {
                 }
                 None => {}
             }
+            // What a closure owns may change if the variable may, which then
+            // needs to be `mut` where the closure is, and if the closure's
+            // call has it by `&mut` or by value, not by `&`.
+            if let Some(v) = env_var(b, place)
+                && v.capture == Capture::Value
+            {
+                if let Type::Ref(_, false, _) = b.body.locals[place.local.0].ty {
+                    return Err(Error::ty(
+                        s.span,
+                        format!(
+                            "{}: this closure is `Fn`, called through a `&`",
+                            act(&describe(b, place))
+                        ),
+                    ));
+                }
+                if v.mutable {
+                    captured.push(v.id);
+                    continue;
+                }
+                let name = &v.name;
+                return Err(Error::ty(
+                    s.span,
+                    format!(
+                        "{}, as `{name}` isn't declared `mut`",
+                        act(&describe(b, place))
+                    ),
+                )
+                .with_note(v.id, format!("`{name}` is declared here"))
+                .with_fix(Fix::new(
+                    format!("make `{name}` mutable"),
+                    vec![Edit::insert(v.id.start, "mut ")],
+                )));
+            }
             let decl = &b.body.locals[place.local.0];
             if decl.mutable {
                 needed.push(place.local);
@@ -140,14 +190,18 @@ pub(crate) fn mutability(b: &Builder) -> Result<Vec<Local>, Error> {
             let name = decl.name.clone().unwrap_or_default();
             let target = describe(b, place);
             let e = match decl.kind {
-                LocalKind::Captured => Error::ty(
+                _ if borrow && b.body.changed_by_closures.contains(&s.span) => Error::ty(
                     s.span,
                     format!(
-                        "{}: `{name}` is captured by a closure, which has a copy of it that it \
-                         can't change",
-                        act(&target)
+                        "this closure changes `{target}`, so it borrows it mutably, and `{name}` \
+                         isn't declared `mut`"
                     ),
-                ),
+                )
+                .with_note(decl.span, format!("`{name}` is declared here"))
+                .with_fix(Fix::new(
+                    format!("make `{name}` mutable"),
+                    vec![Edit::insert(decl.span.start, "mut ")],
+                )),
                 _ => {
                     let by_ref = b.cx.typed().binds.get(&decl.span).and_then(|b| b.by_ref);
                     let e = Error::ty(
@@ -168,7 +222,21 @@ pub(crate) fn mutability(b: &Builder) -> Result<Vec<Local>, Error> {
         }
     }
     deferred(b, &mut needed)?;
-    Ok(needed)
+    Ok((needed, captured))
+}
+
+/// The variable a closure captured that `place`, in its body, is in, if
+/// it's in one: the field of the closure it's in, or what that points to.
+pub(crate) fn env_var<'b>(b: &'b Builder, place: &Place) -> Option<&'b EnvVar> {
+    let decl = &b.body.locals[place.local.0];
+    if decl.kind != LocalKind::Env {
+        return None;
+    }
+    let skip = usize::from(matches!(decl.ty, Type::Ref(..)));
+    match place.proj.get(skip)? {
+        Proj::Field(i) => b.body.env.get(*i),
+        _ => None,
+    }
 }
 
 /// Is assigning to `place` maybe giving a variable declared with no value,
@@ -271,7 +339,7 @@ pub(crate) fn moves(b: &Builder) -> Result<(), Error> {
         index: 0,
     };
     for (i, l) in body.locals.iter().enumerate() {
-        if !matches!(l.kind, LocalKind::Param | LocalKind::Captured) {
+        if !matches!(l.kind, LocalKind::Param | LocalKind::Env) {
             start.insert(Place::local(Local(i)), (l.span, entry));
         }
     }
@@ -534,6 +602,12 @@ enum Dropped {
 /// the function's, which each caller proved of what it stands for, or by
 /// the trait's declaration, `type Out: Discard;`, which each impl was
 /// checked against (`Checker::assoc_bounds`).
+///
+/// A closure is `Discard` if what it captured is, and one that owns what
+/// isn't is `FnOnce` only, called by value: then its body has it as a
+/// parameter, whose fields it must use up, each said by name (`leftover`).
+/// So every closure called by `&` or `&mut` may be dropped, which a call of
+/// it as `FnOnce` does, after.
 pub(crate) fn linear(b: &Builder) -> Result<(), Error> {
     let body = &b.body;
     let mut start = Gone {
@@ -541,7 +615,7 @@ pub(crate) fn linear(b: &Builder) -> Result<(), Error> {
         must: BTreeSet::new(),
     };
     for (i, l) in body.locals.iter().enumerate() {
-        if !matches!(l.kind, LocalKind::Param | LocalKind::Captured) {
+        if !matches!(l.kind, LocalKind::Param | LocalKind::Env) {
             start.may.insert(Place::local(Local(i)), l.span);
             start.must.insert(Place::local(Local(i)));
         }
@@ -652,9 +726,11 @@ fn leftover(
         return None;
     }
     let partly = must.iter().any(|m| m.within(place) && m != place);
+    // A closure's body says which of what it owns it didn't use up.
+    let env = place.proj.is_empty() && b.body.locals[place.local.0].kind == LocalKind::Env;
     let variant = match consumed {
         Some(v) => v,
-        None if partly => None,
+        None if partly || env => None,
         None => return Some(place.clone()),
     };
     let parts: Vec<Place> = match &t {
@@ -735,6 +811,15 @@ fn dropped(
         .find(|(m, at)| (q.within(m) || m.within(&q)) && **at != decl.span)
         .map(|(_, at)| *at);
     let e = match why {
+        // What a closure that's called by value owns, its body must use up.
+        Dropped::Dead if decl.kind == LocalKind::Env => Error::ty(
+            decl.span,
+            format!(
+                "`{what}` is never used up: this closure owns it, so it can only be called once, \
+                 and that call must use it up, as {isnt}"
+            ),
+        )
+        .with_note(span, "the call ends here"),
         Dropped::Dead => {
             let temp = decl.kind == LocalKind::Temp;
             let subject = match (temp, q.proj.is_empty()) {

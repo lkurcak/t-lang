@@ -36,7 +36,7 @@
 
 use crate::ast::*;
 use crate::check::{self, Info, Instance};
-use crate::error::{Error, Span};
+use crate::error::Span;
 use crate::traits::{Projections, Source, eq_subject};
 use crate::types::{Region, Subst, Type};
 use std::collections::{HashMap, HashSet};
@@ -45,27 +45,12 @@ use std::sync::Arc;
 /// `prog`, which must have checked with `info` and then been lifted,
 /// without generics.
 ///
-/// What comes out is checked again. That catches one kind of error the
-/// checker can't see in a generic function's body, where it only knows `T`
-/// as `T`: a closure that captures, escaping the frame that made it (see
-/// `check/escape.rs`). `fn id<T>(x: T) -> T { x }` is fine, but its copy
-/// for a function type returns a function parameter, which may be such a
-/// closure. That's reported at the use that made the copy.
-pub fn monomorphise(prog: &Program, info: &Info) -> Result<Program, Error> {
-    let mut m = Mono::new(prog, info);
-    let out = m.run();
-    match check::recheck(&out) {
-        Ok(()) => Ok(out),
-        Err((Some(f), e)) if m.copies.contains_key(&f) => Err(m.blame(&f, e)),
-        Err((_, e)) => Err(Error::ty(
-            e.span,
-            format!(
-                "internal error: monomorphisation made a program that doesn't check: {}. \
-                 This is a bug in T.",
-                e.message
-            ),
-        )),
-    }
+/// Nothing a copy does can be wrong where the generic function wasn't: the
+/// checker checked it for every type its type parameters could be, and
+/// what a copy does depends on its types only through the impls the bounds
+/// said there were.
+pub fn monomorphise(prog: &Program, info: &Info) -> Program {
+    Mono::new(prog, info).run()
 }
 
 /// The name of the copy of `name` for type arguments `args`. It has the
@@ -81,14 +66,11 @@ fn mangle(name: &str, args: &[Type]) -> String {
     }
 }
 
-/// A copy of a generic function: what it's a copy of, and which use first
-/// needed it, for blaming that use if the copy doesn't check.
+/// A copy of a generic function: what it's a copy of, at which type
+/// arguments.
 struct Copy {
     of: String,
     args: Vec<Type>,
-    /// The span of that use, and the copy it's in, if it's in one.
-    needed_at: Span,
-    needed_by: Option<String>,
 }
 
 /// A function to make copies of: its declaration, all its type parameters
@@ -237,23 +219,13 @@ impl<'p> Mono<'p> {
     }
 
     /// The name of the copy of function `name` for `args`, `mangled`,
-    /// making it if it's new. `at` is the use that needs it, in copy `by`,
-    /// if any.
-    fn named_copy(
-        &mut self,
-        name: &str,
-        args: Vec<Type>,
-        mangled: String,
-        at: Span,
-        by: Option<&str>,
-    ) -> String {
+    /// making it if it's new.
+    fn named_copy(&mut self, name: &str, args: Vec<Type>, mangled: String) -> String {
         if !self.copies.contains_key(&mangled) {
             self.fn_queue.push(mangled.clone());
             let copy = Copy {
                 of: name.to_string(),
                 args,
-                needed_at: at,
-                needed_by: by.map(str::to_string),
             };
             self.copies.insert(mangled.clone(), copy);
             self.copy_order.push(mangled.clone());
@@ -281,12 +253,7 @@ impl<'p> Mono<'p> {
     fn function(&mut self, f: &FnDecl, s: &Subst, params: &[String], name: Option<&str>) -> FnDecl {
         let mut params = params.to_vec();
         params.push("Self".into());
-        let mut cx = Cx {
-            m: self,
-            s,
-            params,
-            copy: name,
-        };
+        let mut cx = Cx { m: self, s, params };
         FnDecl {
             doc: f.doc.clone(),
             allows: f.allows.clone(),
@@ -321,7 +288,6 @@ impl<'p> Mono<'p> {
             m: self,
             s: &s,
             params,
-            copy: None,
         };
         let name = Ident {
             name: mangle(&d.name().name, args),
@@ -386,38 +352,6 @@ impl<'p> Mono<'p> {
                     .collect(),
             }),
         }
-    }
-
-    /// The error for copy `f` not checking: `e`, at the use outside any
-    /// generic function that it comes from. It names functions as they're
-    /// written, not by their symbols.
-    fn blame(&self, f: &str, e: Error) -> Error {
-        // Up through the copies that needed it.
-        let mut top = f;
-        while let Some(by) = &self.copies[top].needed_by {
-            top = by;
-        }
-        let copy = &self.copies[top];
-        let decl = &self.fns[copy.of.as_str()];
-        let bindings: Vec<String> = decl
-            .params
-            .iter()
-            .zip(&copy.args)
-            .map(|(p, a)| format!("`{p}` = `{a}`"))
-            .collect();
-        let inside = match top == f {
-            true => "in that copy of it".to_string(),
-            false => format!("in `{}`, which that needs", check::source_name(f)),
-        };
-        Error::ty(
-            copy.needed_at,
-            format!(
-                "cannot use `{}` with {} here: {inside}, {}",
-                check::source_name(&copy.of),
-                bindings.join(", "),
-                e.message
-            ),
-        )
     }
 }
 
@@ -500,8 +434,6 @@ struct Cx<'m, 'p, 's> {
     s: &'s Subst,
     /// Its type parameters.
     params: Vec<String>,
-    /// The name of the copy, if it's a copy of a generic function.
-    copy: Option<&'s str>,
 }
 
 impl Cx<'_, '_, '_> {
@@ -541,7 +473,7 @@ impl Cx<'_, '_, '_> {
     }
 
     /// Makes the copies of every impl's `eq` that `==` on values of type
-    /// `t`, at `span`, may call: the one of `t`'s impl of `Eq`, if it has
+    /// `t` may call: the one of `t`'s impl of `Eq`, if it has
     /// one of its own, or else those of the types of its fields, if it's
     /// derived, and so on down. Each type once: a type can hold itself,
     /// through a box. That ends, as the check against polymorphic
@@ -549,18 +481,18 @@ impl Cx<'_, '_, '_> {
     ///
     /// `t` and the field types have their projections worked out (`subst`,
     /// `resolved`), so it's the impls of what they stand for that it finds.
-    fn need_eq(&mut self, t: &Type, span: Span) {
+    fn need_eq(&mut self, t: &Type) {
         let t = eq_subject(t).erased();
         if !matches!(t, Type::Adt(..)) || !self.m.compared.insert(t.clone()) {
             return;
         }
         match self.target("<Eq>::eq", vec![t.clone()]) {
             Target::Fn(of, args, copy) => {
-                self.m.named_copy(&of, args, copy, span, self.copy);
+                self.m.named_copy(&of, args, copy);
             }
             Target::Eq(t) => {
                 for f in self.field_types(&t) {
-                    self.need_eq(&f, span);
+                    self.need_eq(&f);
                 }
             }
         }
@@ -579,7 +511,6 @@ impl Cx<'_, '_, '_> {
             m: &mut *self.m,
             s: &s,
             params,
-            copy: None,
         };
         let written: Vec<&TypeExpr> = match d {
             TypeDecl::Struct(st) => st.fields.iter().map(|f| &f.ty).collect(),
@@ -599,6 +530,15 @@ impl Cx<'_, '_, '_> {
                 sig.params.iter().map(|p| self.written(p, span)).collect(),
                 Box::new(self.written(&sig.ret, span)),
             ),
+            // A closure's type can't be written; this is only for showing
+            // the program.
+            Type::Adt(name, _, args) if crate::types::is_closure(name) => {
+                let args: Vec<Type> = args.iter().map(Type::erased).collect();
+                for a in &args {
+                    self.written(a, span);
+                }
+                TypeExprKind::Named(mangle(name, &args), Vec::new())
+            }
             Type::Adt(name, regions, args) => {
                 // A copy's fields may need more copies.
                 for a in args {
@@ -648,9 +588,7 @@ impl Cx<'_, '_, '_> {
             Instance::Fn(name, args) => {
                 let args = args.iter().map(|a| self.subst(a).erased()).collect();
                 match self.target(&name, args) {
-                    Target::Fn(of, args, copy) => {
-                        self.m.named_copy(&of, args, copy, span, self.copy)
-                    }
+                    Target::Fn(of, args, copy) => self.m.named_copy(&of, args, copy),
                     Target::Eq(_) => unreachable!("`eq` of a built-in `Eq` is `==`"),
                 }
             }
@@ -734,6 +672,7 @@ impl Cx<'_, '_, '_> {
                 self.written(t, Span::new(0, 0));
                 mangle(name, &args)
             }
+            Type::Proj(..) => unreachable!("`{t}` left after monomorphising"),
             Type::Ref(_, m, inner) => {
                 format!("&{}{}", if *m { "mut " } else { "" }, self.copy_name(inner))
             }
@@ -799,11 +738,11 @@ impl Cx<'_, '_, '_> {
                     let args = args.iter().map(|a| self.subst(a).erased()).collect();
                     match self.target(&f, args) {
                         Target::Fn(of, args, copy) => {
-                            let name = self.m.named_copy(&of, args, copy, e.span, self.copy);
+                            let name = self.m.named_copy(&of, args, copy);
                             ExprKind::Var(name, Vec::new())
                         }
                         Target::Eq(t) => {
-                            self.need_eq(&t, e.span);
+                            self.need_eq(&t);
                             self.eq_fn(&t, e.span)
                         }
                     }
@@ -817,7 +756,7 @@ impl Cx<'_, '_, '_> {
                 {
                     match self.target(name, Vec::new()) {
                         Target::Fn(of, args, copy) => {
-                            let name = self.m.named_copy(&of, args, copy, e.span, self.copy);
+                            let name = self.m.named_copy(&of, args, copy);
                             ExprKind::Var(name, Vec::new())
                         }
                         Target::Eq(_) => unreachable!("an inherent method"),
@@ -831,7 +770,7 @@ impl Cx<'_, '_, '_> {
             ExprKind::Unary(op, x) => ExprKind::Unary(*op, Box::new(self.expr(x))),
             ExprKind::Binary(op, l, r) => {
                 if let Some(Instance::Fn(_, args)) = self.m.info.instances.get(&e.span).cloned() {
-                    self.need_eq(&self.subst(&args[0]), e.span);
+                    self.need_eq(&self.subst(&args[0]));
                 }
                 ExprKind::Binary(*op, Box::new(self.expr(l)), Box::new(self.expr(r)))
             }
@@ -908,7 +847,10 @@ impl Cx<'_, '_, '_> {
                     })
                     .collect();
                 let ret = l.ret.as_ref().map(|t| self.ty(t));
-                ExprKind::Lambda(Arc::new(Lambda::new(params, ret, self.expr(&l.body))))
+                let mut lambda = Lambda::new(params, ret, self.expr(&l.body));
+                lambda.moves = l.moves;
+                lambda.modes = l.modes.clone();
+                ExprKind::Lambda(Arc::new(lambda))
             }
             ExprKind::Assign(op, place, value) => {
                 ExprKind::Assign(*op, Box::new(self.expr(place)), Box::new(self.expr(value)))

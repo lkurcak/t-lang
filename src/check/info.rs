@@ -43,6 +43,14 @@ pub struct Info {
     /// The trait of each projection written, by its span: `Iter` for a
     /// `T::Item` where `T: Iter`, for monomorphisation to work it out by.
     pub projections: HashMap<Span, String>,
+    /// How each closure that captures captures each variable it does, by
+    /// the span of its body, for `lift` to write into it.
+    pub captures: HashMap<Span, Vec<(String, crate::ast::Capture)>>,
+    /// How each call of what isn't a function type gets at what it calls,
+    /// by the span of the call, for `lift` to write out: `f(1)` for a
+    /// closure `f` that's `FnMut` is `(&mut f)(1)`. Through how many `*`s,
+    /// and by which `Fn` trait.
+    pub calls: HashMap<Span, (usize, crate::traits::FnKind)>,
 }
 
 /// What a method call `x.m(..)` or path `T::m` names: method `symbol`.
@@ -427,13 +435,11 @@ impl Checker {
         }
     }
 
-    /// Notes the types in the equality bounds of `g`.
+    /// Notes the types in the bounds of `g`.
     fn bound_notes(&mut self, g: &Generics, params: &[Ident]) {
         for (_, items) in &g.bounds {
-            for a in items.iter().flat_map(|b| &b.assoc) {
-                if let AssocBoundKind::Eq(t) = &a.kind {
-                    self.type_expr_notes(t, params);
-                }
+            for t in items.iter().flat_map(|b| b.types()) {
+                self.type_expr_notes(t, params);
             }
         }
     }
@@ -461,7 +467,7 @@ impl Checker {
             TypeExprKind::Named(name, args) => {
                 // Only the name, not the arguments after it.
                 let span = Span::new(t.span.start, t.span.start + name.len());
-                if let Some(symbol) = self.adt_symbol(name, t.span) {
+                if let Some(symbol) = self.adt_symbol(t.span) {
                     let def = self.defs.types.get(symbol).copied();
                     let kind = match self.adts.get(symbol).map(|d| &d.kind) {
                         Some(crate::types::AdtKind::Enum(_)) => NoteKind::Enum(name.clone()),

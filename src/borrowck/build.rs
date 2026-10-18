@@ -17,11 +17,13 @@
 use super::mir::*;
 use super::regions::{AdtInfo, Regions};
 use crate::ast::*;
-use crate::check::Checker;
 use crate::check::typed::Res;
+use crate::check::{Checker, first_use};
 use crate::error::Span;
+use crate::traits::{FnKind, SIG};
 use crate::types::{AdtKind, Adts, Region, Scheme, Subst, Type, struct_fields, variant_fields};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// A borrow: of `place`, `&mut` or not, for as long as region variable
 /// `region` says, made at `point`.
@@ -51,6 +53,9 @@ pub(crate) struct ClosureUse<'a> {
 
 pub(crate) struct Builder<'a> {
     pub(crate) cx: &'a Checker,
+    /// The checker's structs and enums, with what the equality bounds in
+    /// scope say in terms of this body's regions (see `Builder::new`).
+    adts: &'a Adts,
     pub(crate) info: &'a AdtInfo,
     pub(crate) body: Body,
     pub(crate) regions: Regions,
@@ -65,6 +70,10 @@ pub(crate) struct Builder<'a> {
     temps: Vec<Vec<Local>>,
     /// Each variable's local, by its id.
     vars: HashMap<Span, Local>,
+    /// In a closure's body, where each variable it captured is, by id:
+    /// `*(*env).x` for one captured by reference, and `(*env).x` or
+    /// `env.x` for one captured by value.
+    captured: HashMap<Span, Place>,
     /// The loops being lowered, innermost last.
     loops: Vec<LoopFrame>,
     /// Whether control can get to each block, as far as is known: a block
@@ -94,14 +103,27 @@ struct LoopFrame {
 }
 
 impl<'a> Builder<'a> {
-    pub(crate) fn new(cx: &'a Checker, info: &'a AdtInfo, regions: Regions) -> Builder<'a> {
+    /// A builder for a body whose regions are `regions`. `adts` must be
+    /// `local_adts` of them: projections normalised by an equality bound in
+    /// scope get the bound's regions, which are universal regions of the
+    /// body, and so must already be numbered as its variables.
+    pub(crate) fn new(
+        cx: &'a Checker,
+        adts: &'a Adts,
+        info: &'a AdtInfo,
+        regions: Regions,
+    ) -> Builder<'a> {
         Builder {
             cx,
+            adts,
             info,
             body: Body {
                 locals: Vec::new(),
                 blocks: vec![Block::default()],
                 params: 0,
+                env: Vec::new(),
+                changed_by_closures: Vec::new(),
+                unique_by_closures: Vec::new(),
                 heads: Vec::new(),
             },
             regions,
@@ -115,25 +137,47 @@ impl<'a> Builder<'a> {
             }],
             temps: Vec::new(),
             vars: HashMap::new(),
+            captured: HashMap::new(),
             loops: Vec::new(),
             live: vec![true],
         }
     }
 
     pub(crate) fn adts(&self) -> &'a Adts {
-        self.cx.adts()
+        self.adts
     }
 
     /// The function's return place and parameters, of these types, with
     /// regions numbered. Parameters are named by `params`: their names and
-    /// ids. Captured variables come after, in the same way.
+    /// ids. For a closure's body, the closure comes first, `env`, of type
+    /// `env_ty`: by `&`, `&mut` or by value as `env_ref` says, holding
+    /// what it captured, `vars`, written at `span`.
     pub(crate) fn signature(
         &mut self,
         ret: Type,
         params: &[(String, Span, Type)],
-        captured: &[(String, Span, Type)],
+        env: Option<(Type, Option<bool>, Vec<EnvVar>, Span)>,
     ) {
         self.new_local(ret, LocalKind::Return, None, Span::new(0, 0));
+        if let Some((env_ty, by_ref, vars, span)) = env {
+            let l = self.new_local(env_ty, LocalKind::Env, None, span);
+            // Taking apart a closure that's called by value, as its body
+            // does what it likes with what it owns.
+            self.body.locals[l.0].mutable = true;
+            self.scope().push(l);
+            for (i, v) in vars.iter().enumerate() {
+                let mut p = Place::local(l);
+                if by_ref.is_some() {
+                    p = p.project(Proj::Deref);
+                }
+                p = p.project(Proj::Field(i));
+                if v.capture != Capture::Value {
+                    p = p.project(Proj::Deref);
+                }
+                self.captured.insert(v.id, p);
+            }
+            self.body.env = vars;
+        }
         for (name, id, ty) in params {
             let bind = &self.cx.typed().binds[id];
             let (mutable, mut_span) = (bind.mutable, bind.mut_span);
@@ -143,14 +187,7 @@ impl<'a> Builder<'a> {
             self.vars.insert(*id, l);
             self.scope().push(l);
         }
-        self.body.params = params.len();
-        // A closure's copies of what it captured are made for each call,
-        // and go away when it returns, as its parameters do.
-        for (name, id, ty) in captured {
-            let l = self.new_local(ty.clone(), LocalKind::Captured, Some(name.clone()), *id);
-            self.vars.insert(*id, l);
-            self.scope().push(l);
-        }
+        self.body.params = self.body.locals.len() - 1;
     }
 
     /// Lowers `body` as what the function returns, then drops the
@@ -392,6 +429,46 @@ impl<'a> Builder<'a> {
                 let t = self.ty(e);
                 self.assign(dest, Rvalue::Binary(*op, l, r), &t, span, false);
             }
+            // A call of a closure, or of what a bound says can be called:
+            // with it for a receiver, as a method's, borrowed for `Fn` and
+            // `FnMut` and taken for `FnOnce`, through any references to it.
+            // What it takes and gives is what its type's signature says,
+            // with the regions it has here.
+            ExprKind::Call(callee, args)
+                if let Some(&(derefs, kind)) =
+                    self.cx.typed().calls.get(&std::ptr::from_ref(e)) =>
+            {
+                let mut recv = self.place(callee);
+                for _ in 0..derefs {
+                    recv = recv.project(Proj::Deref);
+                }
+                let t = self.place_ty(&recv);
+                let sig = Type::Proj(Box::new(t.clone()), "FnOnce".into(), SIG.into());
+                let Type::Fn(mut sig) = self.adts().normalise(&sig) else {
+                    unreachable!("`{t}` can be called")
+                };
+                let (receiver, recv_ty) = match kind {
+                    FnKind::FnOnce => {
+                        let (o, ot) = self.use_place(recv, callee.span);
+                        (Arg::Value(o, ot.clone(), callee.span), ot)
+                    }
+                    kind => {
+                        let m = kind == FnKind::FnMut;
+                        let r = Region::Var(self.regions.fresh());
+                        let rt = Type::Ref(r, m, Box::new(t));
+                        (Arg::Borrow(recv, m, None, callee.span), rt)
+                    }
+                };
+                sig.params.insert(0, recv_ty);
+                self.call_into(
+                    Operand::Const,
+                    Type::Fn(sig),
+                    Some(receiver),
+                    args,
+                    dest,
+                    span,
+                );
+            }
             ExprKind::Call(f, args) => {
                 let (f, ft) = self.operand(f);
                 self.call_into(f, ft, None, args, dest, span);
@@ -542,13 +619,37 @@ impl<'a> Builder<'a> {
                 self.assign(dest, Rvalue::Aggregate(ops), &t, span, false);
             }
             ExprKind::Match(scrutinee, arms) => self.match_into(scrutinee, arms, dest, span),
+            // A closure that captures is a struct of what it captures: a
+            // reference to each variable, borrowed here for as long as the
+            // closure lasts, or its value, moved or copied in.
             ExprKind::Lambda(l) => {
                 let t = self.ty(e);
-                let captured = self.cx.typed().captures[&std::ptr::from_ref(&**l)].clone();
-                let ops = captured
-                    .iter()
-                    .map(|id| Operand::Copy(Place::local(self.vars[id])))
-                    .collect();
+                let modes = self.cx.typed().modes.get(&Arc::as_ptr(l)).cloned();
+                let fields = struct_fields(self.adts(), &t).unwrap_or_default();
+                let mut ops = Vec::new();
+                for (i, (id, mode)) in modes.iter().flatten().enumerate() {
+                    let place = self.var_place(*id);
+                    let name = &self.cx.typed().binds[id].name;
+                    let at = first_use(&l.body, name).unwrap_or(l.body.span);
+                    let (o, ot) = match mode {
+                        Capture::Value => self.use_place(place, at),
+                        Capture::Ref | Capture::Mut | Capture::Unique => {
+                            let m = *mode != Capture::Ref;
+                            match mode {
+                                Capture::Mut => self.body.changed_by_closures.push(at),
+                                Capture::Unique => self.body.unique_by_closures.push(at),
+                                _ => {}
+                            }
+                            let (r, rt) = self.borrow(&place, m, at);
+                            let tmp = self.temp(rt.clone(), at);
+                            let value = Rvalue::Ref(r, m, place);
+                            self.assign(&Place::local(tmp), value, &rt, at, false);
+                            (Operand::Move(Place::local(tmp)), rt)
+                        }
+                    };
+                    self.regions.subtype(self.info, &ot, &fields[i].1, at);
+                    ops.push(o);
+                }
                 self.closures.push(ClosureUse {
                     lambda: l,
                     ty: t.clone(),
@@ -560,7 +661,8 @@ impl<'a> Builder<'a> {
     }
 
     /// A call of `f`, of type `ft`, with arguments `args`, after `first`
-    /// if there is one: a method's receiver.
+    /// if there is one: a method's receiver, or what's called, for a
+    /// closure or what a bound says can be called.
     ///
     /// The arguments are worked out in order, but a borrow of a place,
     /// `&v` or `&mut v`, is only taken once they all have been, just
@@ -853,6 +955,15 @@ impl<'a> Builder<'a> {
         // lifetime is. Worked out by the checker, with regions erased, and
         // then given new ones, they'd be tied to nothing.
         let t = self.adts().normalise(&s.apply(&scheme.ty));
+        // What its equality bounds say holds of the types they're at, with
+        // their regions: `T: Tr<Out = &'a int>` at `T` = `W<'?1>` relates
+        // `<W<'?1> as Tr>::Out` and `&'?2 int`, so `'?1` is `'?2`. The
+        // checker saw they're the same type but for regions.
+        for (lhs, rhs) in &scheme.eqs {
+            let lhs = self.adts().normalise(&s.apply(lhs));
+            let rhs = self.adts().normalise(&s.apply(rhs));
+            self.regions.equate(self.info, &lhs, &rhs, span);
+        }
         for b in &scheme.bounds {
             match b {
                 crate::types::Bound::Region(a, b) => {
@@ -883,11 +994,24 @@ impl<'a> Builder<'a> {
     fn borrow(&mut self, place: &Place, mutable: bool, span: Span) -> (usize, Type) {
         let r = self.regions.fresh();
         let mut t = self.body.locals[place.local.0].ty.clone();
+        // The references it's through, outermost first.
+        let mut through = Vec::new();
         for p in &place.proj {
-            if let (Proj::Deref, Type::Ref(q, _, _)) = (p, &t) {
-                self.regions.outlives(q, &Region::Var(r), span);
+            if let (Proj::Deref, Type::Ref(q, m, _)) = (p, &t) {
+                through.push((q.clone(), *m));
             }
             t = project(self.adts(), &t, *p);
+        }
+        // From the innermost out, up to and including the first `&`: what
+        // a `&'a` points to stays put for all of `'a`, whatever happens to
+        // the way it was got to, so the borrow may last that long. Through
+        // a `&mut`, only as long as that lasts, as it's unique only that
+        // long. (Rust's *supporting prefixes*.)
+        for (q, m) in through.into_iter().rev() {
+            self.regions.outlives(&q, &Region::Var(r), span);
+            if !m {
+                break;
+            }
         }
         self.regions.type_outlives(&t, &Region::Var(r), span);
         self.loans.push(Loan {
@@ -900,6 +1024,20 @@ impl<'a> Builder<'a> {
         (r, Type::Ref(Region::Var(r), mutable, Box::new(t)))
     }
 
+    /// The local of variable `id`, if it's one of this body's own.
+    pub(crate) fn var_local(&self, id: Span) -> Option<Local> {
+        self.vars.get(&id).copied()
+    }
+
+    /// Where variable `id` is: its local, or in a closure's body, if it
+    /// captured it, where in the closure.
+    fn var_place(&self, id: Span) -> Place {
+        match self.captured.get(&id) {
+            Some(p) => p.clone(),
+            None => Place::local(self.vars[&id]),
+        }
+    }
+
     /// Where the value of place expression `e` is: a variable, with any
     /// fields and `*`s, and those of any references and boxes a field
     /// looks through. Anything else is lowered into a temporary.
@@ -908,7 +1046,7 @@ impl<'a> Builder<'a> {
         match &e.kind {
             ExprKind::Var(..) => {
                 if let Some(Res::Local(id)) = typed.vars.get(&std::ptr::from_ref(e)) {
-                    return Place::local(self.vars[id]);
+                    return self.var_place(*id);
                 }
             }
             ExprKind::Field(x, _) => {

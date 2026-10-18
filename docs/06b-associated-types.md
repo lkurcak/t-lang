@@ -336,7 +336,7 @@ checked for the whole program:
 | generic associated types (`type Item<'a>`) | no higher-kinded types yet | — |
 | equality bounds with projections in them | needs a termination check | — |
 | bounds on projections in impls and structs | breaks resolution's termination argument | — |
-| `Iterator` and `for` | needs closures as traits first | 6c |
+| `Iterator` and `for` | a small `core` library first | 6e |
 | `dyn Trait<Item = int>` | no trait objects | — |
 
 ## Exercises

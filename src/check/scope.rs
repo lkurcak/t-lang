@@ -296,8 +296,8 @@ pub(super) struct Outer {
     env: Vec<crate::traits::Pred>,
     self_ty: Option<crate::types::Type>,
     obligations: Vec<super::traits::Obligation>,
-    captures: Vec<(String, crate::types::Type, Span)>,
-    escapes: Vec<super::escape::Escape>,
+    closures: Vec<super::closures::Pending>,
+    calls: Vec<(*const crate::ast::Expr, crate::types::Type, Span)>,
     unused: Vec<(usize, crate::types::Type)>,
     closure_fix: Option<(usize, Fix)>,
     ret: Option<crate::types::Type>,
@@ -324,8 +324,8 @@ impl Checker {
             env: std::mem::take(&mut self.env),
             self_ty: self.self_ty.take(),
             obligations: std::mem::take(&mut self.obligations),
-            captures: std::mem::take(&mut self.captures),
-            escapes: std::mem::take(&mut self.escapes),
+            closures: std::mem::take(&mut self.closures),
+            calls: std::mem::take(&mut self.calls),
             unused: std::mem::take(&mut self.unused),
             closure_fix: std::mem::take(&mut self.closure_fix),
             ret: self.ret.take(),
@@ -342,8 +342,8 @@ impl Checker {
         self.env = outer.env;
         self.self_ty = outer.self_ty;
         self.obligations = outer.obligations;
-        self.captures = outer.captures;
-        self.escapes = outer.escapes;
+        self.closures = outer.closures;
+        self.calls = outer.calls;
         self.unused = outer.unused;
         self.closure_fix = outer.closure_fix;
         self.ret = outer.ret;

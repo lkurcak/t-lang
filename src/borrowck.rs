@@ -31,9 +31,10 @@ mod regions;
 use crate::ast::*;
 use crate::check::Checker;
 use crate::error::{Edit, Error, Fix, Lint, Span, Warning};
+use crate::traits::FnKind;
 use crate::types::{FnType, Region, Scheme, Type};
 use build::{Builder, ClosureUse};
-use mir::{LocalKind, Place, Proj};
+use mir::{EnvVar, LocalKind, Place, Proj};
 use regions::{AdtInfo, Regions, wf_bounds};
 
 /// Checks function `f`, whose type is `scheme`, and returns the warnings
@@ -49,7 +50,9 @@ pub(crate) fn check(cx: &Checker, f: &FnDecl, scheme: &Scheme) -> Result<Vec<War
     for t in sig.params.iter().chain([&*sig.ret]) {
         bounds.extend(wf_bounds(t, cx.adts(), &info.outlives));
     }
-    let mut b = Builder::new(cx, &info, Regions::new(&scheme.lifetimes, &bounds));
+    let regions = Regions::new(&scheme.lifetimes, &bounds);
+    let adts = local_adts(cx, &regions);
+    let mut b = Builder::new(cx, &adts, &info, regions);
     let ret = b.regions.renumber(&sig.ret);
     let params: Vec<(String, Span, Type)> = f
         .params
@@ -57,20 +60,39 @@ pub(crate) fn check(cx: &Checker, f: &FnDecl, scheme: &Scheme) -> Result<Vec<War
         .zip(&sig.params)
         .map(|(p, t)| (p.name.name.clone(), p.name.span, b.regions.renumber(t)))
         .collect();
-    b.signature(ret, &params, &[]);
+    b.signature(ret, &params, None);
     b.lower(&f.body);
     let names = Names::of(f, sig);
     let (warnings, _) = analyze(&mut b, &names, false)?;
     Ok(warnings)
 }
 
+/// The checker's structs and enums, with what the equality bounds in scope
+/// say numbered as the regions of a body with `regions`: `T::Out` for `T:
+/// Tr<Out = &'a int>` normalises to `&'a int`, with `'a` the body's
+/// universal region. The checker keeps them as written, regions erased or
+/// named, which the borrow checker can't relate.
+fn local_adts(cx: &Checker, regions: &Regions) -> crate::types::Adts {
+    let mut adts = cx.adts().clone();
+    adts.proj.local = adts
+        .proj
+        .local
+        .iter()
+        .map(|(lhs, rhs)| (lhs.clone(), regions.universal_regions(rhs)))
+        .collect();
+    adts
+}
+
 /// What a closure needs of the regions in its signature, which the
 /// function it's in has to see to: that universal region `.0` outlives
 /// universal `.1`, or that type parameter `.0` outlives universal `.1`.
+/// And the variables it captured by value and changes, by id, which must
+/// be `mut` where it is.
 #[derive(Default)]
 struct Requirements {
     regions: Vec<(usize, usize)>,
     params: Vec<(Type, usize)>,
+    muts: Vec<Span>,
 }
 
 /// Checks a lowered body, its closures first. For a closure, `propagate`:
@@ -82,18 +104,23 @@ fn analyze(
 ) -> Result<(Vec<Warning>, Requirements), Error> {
     let mut warnings = Vec::new();
     let mut errors = Vec::new();
+    let mut muts = Vec::new();
     for c in std::mem::take(&mut b.closures) {
         match closure(b, &c) {
             Ok((w, reqs)) => {
                 warnings.extend(w);
                 let regions = c.ty.regions().into_iter().cloned().collect::<Vec<_>>();
+                let external = b.regions.signature - 1;
+                let vars = b.regions.universal_vars.clone();
                 let region = |u: usize| match u {
                     0 => Region::Static,
-                    u => regions[u - 1].clone(),
+                    u if u <= external => Region::Var(vars[u]),
+                    u => regions[u - 1 - external].clone(),
                 };
                 for (u, e) in reqs.regions {
                     b.regions.outlives(&region(u), &region(e), c.span);
                 }
+                muts.extend(reqs.muts);
                 for (p, e) in reqs.params {
                     let Region::Var(v) = region(e) else {
                         b.regions.type_tests.push((p, 0, c.span));
@@ -105,13 +132,26 @@ fn analyze(
             Err(e) => errors.push(e),
         }
     }
-    let needed = match moves::behind_references(b).and_then(|()| moves::mutability(b)) {
-        Ok(needed) => needed,
-        Err(e) => {
-            errors.push(e);
-            Vec::new()
-        }
+    let (mut needed, captured) =
+        match moves::behind_references(b).and_then(|()| moves::mutability(b)) {
+            Ok(needed) => needed,
+            Err(e) => {
+                errors.push(e);
+                (Vec::new(), Vec::new())
+            }
+        };
+    let mut reqs = Requirements {
+        muts: captured,
+        ..Requirements::default()
     };
+    // What closures in it change of what they captured by value must be
+    // `mut` here, or where this captured it from.
+    for id in muts {
+        match b.var_local(id) {
+            Some(l) => needed.push(l),
+            None => reqs.muts.push(id),
+        }
+    }
     // What's used up is only worth asking once what's moved is right.
     if let Err(e) = moves::moves(b).and_then(|()| moves::linear(b)) {
         errors.push(e);
@@ -120,7 +160,6 @@ fn analyze(
     if let Err(e) = loans::check(b, &sol) {
         errors.push(e);
     }
-    let mut reqs = Requirements::default();
     let universals = b.regions.universal.len();
     let signature = b.regions.signature;
     for u in 1..universals {
@@ -135,6 +174,28 @@ fn analyze(
             let path = b.regions.blame(b.regions.universal_vars[u], e, &sol);
             let span = path.last().map_or(Span::new(0, 0), |c| c.span);
             let (long, short) = (names.lifetime(b, u), names.lifetime(b, e));
+            // In a closure's body, something it got through itself must
+            // last longer than the call.
+            if b.regions.call == Some(u) {
+                let gives = match b.body.locals[0]
+                    .ty
+                    .regions()
+                    .iter()
+                    .any(|r| **r == Region::Var(b.regions.universal_vars[e]))
+                {
+                    true => "returns",
+                    false => "gives out",
+                };
+                errors.push(Error::ty(
+                    span,
+                    format!(
+                        "this closure {gives} a reference to what it captured, which only lasts \
+                         as long as the call: the next call could change it, or the closure \
+                         could be gone"
+                    ),
+                ));
+                continue;
+            }
             let general = "a function type here takes references of any lifetime, as its \
                            caller picks";
             let message = match (u >= signature, e >= signature) {
@@ -227,22 +288,84 @@ fn root_param(t: &Type) -> Type {
 }
 
 /// Checks closure `c`, found in `parent`'s body, as a function of its own.
+///
+/// The universal regions of the function it's in are universal in it too,
+/// as what they are there: what it needs of them goes up as it is. Then
+/// each region in its signature, and for one that captures, in its
+/// fields' types, is a lifetime parameter of its own, which it needs
+/// what it needs of, for its type to say, as constraints at the closure
+/// (see `analyze`).
+///
+/// One that captures is called with itself for its first parameter, by
+/// `&` or `&mut`, as it's `Fn` or `FnMut`, for a lifetime only that call
+/// knows, which nothing it gives out may need, as the next call may
+/// change what it points to; or by value, as it's `FnOnce`. What it
+/// captured are that parameter's fields.
 fn closure(parent: &Builder, c: &ClosureUse) -> Result<(Vec<Warning>, Requirements), Error> {
     let cx = parent.cx;
-    let Type::Fn(sig) = &c.ty else {
-        unreachable!("a closure has a function type")
+    let external: Vec<String> = parent.regions.universal[1..parent.regions.signature]
+        .iter()
+        .map(|r| match r {
+            Region::Named(n) => n.clone(),
+            r => unreachable!("universal region `{r}`"),
+        })
+        .collect();
+    let mut lifetimes = external.clone();
+    let typed = cx.typed();
+    let (sig, env) = match &c.ty {
+        Type::Fn(sig) => {
+            let sig = Type::Fn(sig.clone()).map_regions(&mut |_| {
+                let name = format!("'_c{}", lifetimes.len());
+                lifetimes.push(name.clone());
+                Region::Named(name)
+            });
+            (sig, None)
+        }
+        Type::Adt(symbol, _, args) => {
+            let def = &cx.traits().closures[symbol];
+            lifetimes.extend(def.lifetimes.iter().cloned());
+            let own = Type::Adt(
+                symbol.clone(),
+                def.lifetimes.iter().cloned().map(Region::Named).collect(),
+                args.clone(),
+            );
+            let modes = &typed.modes[&std::ptr::from_ref(c.lambda)];
+            let vars = modes
+                .iter()
+                .map(|(id, capture)| {
+                    let bind = &typed.binds[id];
+                    EnvVar {
+                        name: bind.name.clone(),
+                        capture: *capture,
+                        id: *id,
+                        mutable: bind.mutable,
+                    }
+                })
+                .collect();
+            let by_ref = match def.kind.expect("settled") {
+                FnKind::Fn => Some(false),
+                FnKind::FnMut => Some(true),
+                FnKind::FnOnce => None,
+            };
+            (def.sig_at(&own), Some((own, by_ref, vars)))
+        }
+        t => unreachable!("a closure of type `{t}`"),
     };
-    // Each region in its signature is a lifetime parameter of its own.
-    let mut lifetimes = Vec::new();
-    let sig = Type::Fn(sig.clone()).map_regions(&mut |_| {
-        let name = format!("'_c{}", lifetimes.len());
-        lifetimes.push(name.clone());
-        Region::Named(name)
-    });
     let Type::Fn(FnType { params, ret, .. }) = &sig else {
-        unreachable!()
+        unreachable!("a closure's signature is a function type")
     };
-    let mut b = Builder::new(cx, parent.info, Regions::new(&lifetimes, &[]));
+    // What the function knows of them, it checks of what goes up.
+    let mut regions = Regions::new(&lifetimes, &[]);
+    let adts = local_adts(cx, &regions);
+    let env = env.map(|(own, by_ref, vars)| {
+        let own = regions.renumber(&own);
+        let t = match by_ref {
+            Some(m) => Type::Ref(Region::Var(regions.call_region()), m, Box::new(own)),
+            None => own,
+        };
+        (t, by_ref, vars, c.span)
+    });
+    let mut b = Builder::new(cx, &adts, parent.info, regions);
     b.closure = true;
     let ret = b.regions.renumber(ret);
     let params: Vec<(String, Span, Type)> = c
@@ -252,16 +375,7 @@ fn closure(parent: &Builder, c: &ClosureUse) -> Result<(Vec<Warning>, Requiremen
         .zip(params)
         .map(|(p, t)| (p.name.name.clone(), p.name.span, b.regions.renumber(t)))
         .collect();
-    let typed = cx.typed();
-    let captured: Vec<(String, Span, Type)> = typed.captures[&std::ptr::from_ref(c.lambda)]
-        .iter()
-        .map(|id| {
-            let bind = &typed.binds[id];
-            let t = cx.solution(&bind.ty);
-            (bind.name.clone(), *id, b.regions.fresh_regions(&t))
-        })
-        .collect();
-    b.signature(ret, &params, &captured);
+    b.signature(ret, &params, env);
     b.lower(&c.lambda.body);
     let names = Names {
         params: Vec::new(),
@@ -318,13 +432,28 @@ fn describe(b: &Builder, place: &Place) -> String {
     let mut out = match (&decl.name, decl.kind) {
         (Some(n), _) => n.clone(),
         (None, LocalKind::Return) => "the result".to_string(),
+        (None, LocalKind::Env) => "the closure".to_string(),
         (None, _) => "a temporary".to_string(),
     };
     let mut t = decl.ty.clone();
-    for (i, p) in place.proj.iter().enumerate() {
+    let mut proj = &place.proj[..];
+    // In a closure's body, what it captured is written as the variable:
+    // `x` for `*(*env).x`, where it has a reference to `x`.
+    if let Some(v) = moves::env_var(b, place) {
+        out = v.name.clone();
+        let mut skip = usize::from(matches!(t, Type::Ref(..))) + 1;
+        if v.capture != crate::ast::Capture::Value {
+            skip += 1;
+        }
+        for p in proj.iter().take(skip) {
+            t = build::project(b.adts(), &t, *p);
+        }
+        proj = &proj[skip.min(proj.len())..];
+    }
+    for (i, p) in proj.iter().enumerate() {
         match p {
             // `(*r).x` is written `r.x`.
-            Proj::Deref if matches!(place.proj.get(i + 1), Some(Proj::Field(_))) => {}
+            Proj::Deref if matches!(proj.get(i + 1), Some(Proj::Field(_))) => {}
             Proj::Deref => out = format!("*{out}"),
             Proj::Field(f) => {
                 let fields = crate::types::struct_fields(b.adts(), &t).unwrap_or_default();

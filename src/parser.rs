@@ -10,6 +10,8 @@
 //! generics = "<" (gparam ("," gparam)* ","?)? ">"     -- lifetimes before types
 //! gparam   = LIFETIME (":" LIFETIME ("+" LIFETIME)*)? | IDENT (":" bound ("+" bound)*)?
 //! bound    = LIFETIME | IDENT                         -- a lifetime, or a trait
+//!          | IDENT "<" (IDENT ("=" type | ":" IDENT ("+" IDENT)*)),* ">"
+//!          | IDENT "(" (type ("," type)*)? ")" ("->" type)?  -- `Fn(int) -> int`
 //! param    = "mut"? IDENT ":" type
 //! trait    = "trait" IDENT (":" IDENT ("+" IDENT)*)? "{" (head method)* "}"
 //! impl     = "impl" generics? (IDENT "for")? type "{" (head method)* "}"
@@ -40,7 +42,7 @@
 //!          | "return" expr? | "break" LIFETIME? expr? | "continue" LIFETIME?
 //! label    = LIFETIME ":"
 //! targs    = "::" "<" type ("," type)* ","? ">"            -- the "turbofish"
-//! lambda   = ("||" | "|" (lparam ("," lparam)* ","?)? "|") ("->" type block | expr)
+//! lambda   = "move"? ("||" | "|" (lparam ("," lparam)* ","?)? "|") ("->" type block | expr)
 //! lparam   = "mut"? IDENT (":" type)?
 //! if       = "if" expr block ("else" (block | if))?
 //! while    = "while" expr block
@@ -645,6 +647,24 @@ impl Parser {
     /// generics.
     fn trait_bound(&mut self) -> Result<BoundItem, Error> {
         let name = self.ident()?;
+        if *self.peek() == Tok::LParen {
+            self.bump();
+            let (params, mut end) = self.comma_list(Tok::RParen, |p| p.ty())?;
+            let ret = match self.eat(&Tok::Arrow) {
+                true => {
+                    let t = self.ty()?;
+                    end = t.span;
+                    Some(Box::new(t))
+                }
+                false => None,
+            };
+            return Ok(BoundItem {
+                span: name.span.to(end),
+                name,
+                assoc: Vec::new(),
+                sig: Some((params, ret)),
+            });
+        }
         if *self.peek() != Tok::Lt {
             return Ok(BoundItem::plain(name));
         }
@@ -679,6 +699,7 @@ impl Parser {
             span: name.span.to(end),
             name,
             assoc,
+            sig: None,
         })
     }
 
@@ -1154,7 +1175,7 @@ impl Parser {
             Tok::Match => return self.match_expr(),
             Tok::While | Tok::Loop | Tok::Lifetime(_) => return self.loop_expr(),
             Tok::Return | Tok::Break | Tok::Continue => return self.jump(),
-            Tok::Pipe | Tok::OrOr => return self.lambda(),
+            Tok::Pipe | Tok::OrOr | Tok::Move => return self.lambda(),
             _ => return Err(self.unexpected("an expression")),
         };
         self.bump();
@@ -1343,6 +1364,7 @@ impl Parser {
     /// block after it.
     fn lambda(&mut self) -> Result<Expr, Error> {
         let start = self.span();
+        let moves = (*self.peek() == Tok::Move).then(|| self.bump().span);
         let params = if self.eat(&Tok::OrOr) {
             Vec::new()
         } else {
@@ -1369,8 +1391,10 @@ impl Parser {
             (None, self.expr()?)
         };
         let span = start.to(body.span);
+        let mut lambda = Lambda::new(params, ret, body);
+        lambda.moves = moves;
         Ok(Expr {
-            kind: ExprKind::Lambda(Arc::new(Lambda::new(params, ret, body))),
+            kind: ExprKind::Lambda(Arc::new(lambda)),
             span,
         })
     }
@@ -1573,6 +1597,7 @@ fn starts_expr(tok: &Tok) -> bool {
             | Tok::Return
             | Tok::Break
             | Tok::Continue
+            | Tok::Move
             | Tok::Pipe
             | Tok::OrOr
             | Tok::Minus

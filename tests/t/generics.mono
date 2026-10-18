@@ -24,14 +24,21 @@ fn flip::<int, bool>(p: Pair::<int, bool>) -> Pair::<bool, int> {
     Pair::<bool, int> { first: p.second, second: p.first }
 }
 
-fn map::<int, int>(o: Option::<int>, f: fn(int) -> int) -> Option::<int> {
+fn map::<int, int, {closure#1536}>(o: Option::<int>, f: {closure#1536}) -> Option::<int> {
     match o {
         Option::<int>::Some(x) => Option::<int>::Some(f(x)),
         Option::<int>::None => Option::<int>::None,
     }
 }
 
-fn map::<int, bool>(o: Option::<int>, f: fn(int) -> bool) -> Option::<bool> {
+fn map::<int, int, fn(int) -> int>(o: Option::<int>, f: fn(int) -> int) -> Option::<int> {
+    match o {
+        Option::<int>::Some(x) => Option::<int>::Some(f(x)),
+        Option::<int>::None => Option::<int>::None,
+    }
+}
+
+fn map::<int, bool, fn(int) -> bool>(o: Option::<int>, f: fn(int) -> bool) -> Option::<bool> {
     match o {
         Option::<int>::Some(x) => Option::<bool>::Some(f(x)),
         Option::<int>::None => Option::<bool>::None,
@@ -67,11 +74,14 @@ fn main() {
     print_bool(p.first);
     print(p.second);
     let n = 10;
-    let o = map::<int, int>(Option::<int>::Some(4), |x| x * n);
+    let o = map::<int, int, {closure#1536}>(Option::<int>::Some(4), |x| x * n);
     print(unwrap_or::<int>(o, 0));
     let none: Option::<int> = Option::<int>::None;
-    print(unwrap_or::<int>(map::<int, int>(none, |x| x + 1), -1));
-    print_bool(unwrap_or::<bool>(map::<int, bool>(Option::<int>::Some(3), |x| x > 2), false));
+    print(unwrap_or::<int>(map::<int, int, fn(int) -> int>(none, |x| x + 1), -1));
+    print_bool(unwrap_or::<bool>(
+        map::<int, bool, fn(int) -> bool>(Option::<int>::Some(3), |x| x > 2),
+        false,
+    ));
     print(twice::<int>(inc, 0));
     print(repeat::<int>(|x| x * 2, 1, 10));
     let nested = Option::<Pair<Option<int>, int>>::Some(Pair::<Option<int>, int> {

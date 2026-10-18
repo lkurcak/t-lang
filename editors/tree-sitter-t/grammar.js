@@ -153,7 +153,19 @@ module.exports = grammar({
       repeat(seq('+', $._bound)),
     ),
 
-    _bound: $ => choice($.lifetime, $._type_identifier, $.trait_with_associated),
+    _bound: $ => choice(
+      $.lifetime,
+      $._type_identifier,
+      $.trait_with_associated,
+      $.trait_with_signature,
+    ),
+
+    // `Fn(int) -> int`, `FnMut()` or `FnOnce(T)` in a bound.
+    trait_with_signature: $ => prec.right(seq(
+      field('trait', $._type_identifier),
+      field('parameters', $.type_parameters_list),
+      optional(seq('->', field('return_type', $._type))),
+    )),
 
     // `Iter<Item = int>` or `Iter<Item: Discard>` in a bound.
     trait_with_associated: $ => seq(
@@ -477,6 +489,7 @@ module.exports = grammar({
     )),
 
     closure_expression: $ => prec(PREC.closure, seq(
+      optional('move'),
       field('parameters', $.closure_parameters),
       choice(
         seq('->', field('return_type', $._type), field('body', $.block)),

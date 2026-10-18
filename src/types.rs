@@ -160,11 +160,6 @@ pub struct AdtDef {
     /// What its equality bounds say, like `(T::Item, int)`: every use
     /// must show that too.
     pub eqs: Vec<(Type, Type)>,
-    /// Is it `#[derive(Copy)]`, and `#[derive(Eq)]`? Only for what
-    /// monomorphisation made, which says so for each copy that implements
-    /// them. Before that, the impls of `Copy` and `Eq` say.
-    pub copy: bool,
-    pub eq: bool,
     pub kind: AdtKind,
 }
 
@@ -493,33 +488,6 @@ impl Type {
     }
 }
 
-/// Is a value of type `ty` *copied* when it's used, rather than *moved*,
-/// in what monomorphisation made? `int`, `bool`, `()`, `!`, functions and
-/// shared references are; mutable references and boxes aren't, since there
-/// must only ever be one of each. A struct or enum is if it's
-/// `#[derive(Copy)]` and its fields are. Before monomorphisation, whether a
-/// type is `Copy` is up to the impls of `Copy` (see `traits.rs`).
-pub fn is_copy(adts: &Adts, ty: &Type, params: bool) -> bool {
-    match ty {
-        Type::Int
-        | Type::Bool
-        | Type::Unit
-        | Type::Never
-        | Type::Fn(_)
-        | Type::Ref(_, false, _) => true,
-        Type::Ref(_, true, _) | Type::Box(_) | Type::Var(_) => false,
-        Type::Param(_) | Type::Proj(..) => params,
-        // Can't recurse forever: a type holds itself only through a box or
-        // a reference, and neither of those leads back here.
-        Type::Adt(name, ..) => {
-            adts[name].copy
-                && all_fields(adts, ty)
-                    .iter()
-                    .all(|t| is_copy(adts, t, params))
-        }
-    }
-}
-
 impl Type {
     /// Like `to_string`, but with the symbols of structs and enums rather
     /// than their names, so that two types of the same name show
@@ -560,6 +528,9 @@ impl fmt::Display for Type {
             Type::Unit => f.write_str("()"),
             Type::Never => f.write_str("!"),
             Type::Fn(sig) => write!(f, "fn({}) -> {}", comma_list(&sig.params), sig.ret),
+            // Its type parameters are those in scope where it's written,
+            // which say nothing to a reader.
+            Type::Adt(name, ..) if is_closure(name) => f.write_str("{closure}"),
             Type::Adt(name, regions, args) => {
                 f.write_str(&source_name(name))?;
                 // Lifetimes only if some were written.
@@ -592,6 +563,11 @@ impl fmt::Display for Type {
             Type::Var(_) => f.write_str("_"),
         }
     }
+}
+
+/// Is `symbol` a closure's type's? See `traits::ClosureDef`.
+pub fn is_closure(symbol: &str) -> bool {
+    symbol.starts_with("{closure#")
 }
 
 /// Is region `r` one that types are shown without? Those that nobody wrote.

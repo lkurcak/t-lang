@@ -36,6 +36,15 @@ pub(crate) struct Body {
     pub(crate) blocks: Vec<Block>,
     /// How many parameters there are: locals `1..=params`.
     pub(crate) params: usize,
+    /// For a closure's body, the variables it captured, as its first
+    /// parameter's fields, in order.
+    pub(crate) env: Vec<EnvVar>,
+    /// Where closures made here borrow what they capture mutably, as they
+    /// change it, by the span of the borrow: the change.
+    pub(crate) changed_by_closures: Vec<Span>,
+    /// Where closures made here borrow a reference uniquely, to change what
+    /// it points to: by `&mut`, but needing it unique only, not `mut`.
+    pub(crate) unique_by_closures: Vec<Span>,
     /// The first block of each loop, which the end of its body and each
     /// `continue` go back to. It comes before every block of the body.
     pub(crate) heads: Vec<Bb>,
@@ -47,11 +56,24 @@ pub(crate) enum LocalKind {
     Param,
     /// A variable the program declares.
     Var,
-    /// A variable a closure captured: its own copy, which it can't change.
-    Captured,
+    /// The closure whose body this is, its first parameter: by `&`, by
+    /// `&mut` or by value, as it's `Fn`, `FnMut` or `FnOnce`. What it
+    /// captured are its fields (see `Body::env`).
+    Env,
     /// A value the program doesn't name, like a function's result before
     /// it's used.
     Temp,
+}
+
+/// A variable a closure captured: how, and as what it's declared where the
+/// closure is, which says if it may be changed.
+#[derive(Debug, Clone)]
+pub(crate) struct EnvVar {
+    pub(crate) name: String,
+    pub(crate) capture: crate::ast::Capture,
+    /// Where it's declared: its id.
+    pub(crate) id: Span,
+    pub(crate) mutable: bool,
 }
 
 pub(crate) struct LocalDecl {

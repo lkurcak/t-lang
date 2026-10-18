@@ -219,14 +219,12 @@ impl Walk<'_> {
         self.current.pop();
     }
 
-    /// The types in the equality bounds of `g`, like `int` in `T: Iter<Item
-    /// = int>`.
+    /// The types in the bounds of `g`, like `int` in `T: Iter<Item = int>`
+    /// and `F: Fn(int) -> bool`.
     fn bounds(&mut self, g: &Generics) {
         for (_, items) in &g.bounds {
-            for a in items.iter().flat_map(|b| &b.assoc) {
-                if let AssocBoundKind::Eq(t) = &a.kind {
-                    self.ty(t);
-                }
+            for t in items.iter().flat_map(|b| b.types()) {
+                self.ty(t);
             }
         }
     }

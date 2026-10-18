@@ -176,17 +176,48 @@ impl Generics {
 pub struct BoundItem {
     pub name: Ident,
     pub assoc: Vec<AssocBound>,
+    /// `(int, bool) -> int` after `Fn`, `FnMut` or `FnOnce`: the
+    /// parameters and result of a call, as in a function type.
+    pub sig: Option<(Vec<TypeExpr>, Option<Box<TypeExpr>>)>,
     /// From the name to the `>`, or just the name.
     pub span: Span,
 }
 
 impl BoundItem {
+    /// The types written in it: what its equality bounds say, and what an
+    /// `Fn` bound's calls take and give.
+    pub fn types(&self) -> Vec<&TypeExpr> {
+        let eqs = self.assoc.iter().filter_map(|a| match &a.kind {
+            AssocBoundKind::Eq(t) => Some(t),
+            AssocBoundKind::Bounds(_) => None,
+        });
+        let sig = self
+            .sig
+            .iter()
+            .flat_map(|(ps, ret)| ps.iter().chain(ret.as_deref()));
+        eqs.chain(sig).collect()
+    }
+
+    /// `types`, to change.
+    pub fn types_mut(&mut self) -> Vec<&mut TypeExpr> {
+        let eqs = self.assoc.iter_mut().filter_map(|a| match &mut a.kind {
+            AssocBoundKind::Eq(t) => Some(t),
+            AssocBoundKind::Bounds(_) => None,
+        });
+        let sig = self
+            .sig
+            .iter_mut()
+            .flat_map(|(ps, ret)| ps.iter_mut().chain(ret.as_deref_mut()));
+        eqs.chain(sig).collect()
+    }
+
     /// A lifetime, or a trait with nothing said of its associated types.
     pub fn plain(name: Ident) -> BoundItem {
         BoundItem {
             span: name.span,
             name,
             assoc: Vec::new(),
+            sig: None,
         }
     }
 }
@@ -639,9 +670,12 @@ impl Expr {
 }
 
 /// An anonymous function: `|x| x + 1`, `|x: int| -> int { x + 1 }`, or `|| 1`
-/// with no parameters. Any type left out is inferred.
+/// with no parameters. Any type left out is inferred. `move |x| ..` takes
+/// what it captures by value.
 #[derive(Debug)]
 pub struct Lambda {
+    /// Where the `move` is, if it's there.
+    pub moves: Option<Span>,
     pub params: Vec<LambdaParam>,
     pub ret: Option<TypeExpr>,
     pub body: Expr,
@@ -649,6 +683,22 @@ pub struct Lambda {
     /// variables*, which a closure made from it has to capture. Some may be
     /// functions, which need no capturing.
     pub captures: Vec<String>,
+    /// How it captures each of the variables it does, in order, once the
+    /// checker has worked that out: `lift` writes them here, for the
+    /// interpreter. Empty before.
+    pub modes: Vec<(String, Capture)>,
+}
+
+/// How a closure holds a variable it captures: a reference to it, `&` or
+/// `&mut`, or the value, moved or copied in. `Unique` is a `&mut` to a
+/// reference that the closure changes what it points to through, which, as
+/// for any such reborrow, needs the variable to be unique but not `mut`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Capture {
+    Ref,
+    Unique,
+    Mut,
+    Value,
 }
 
 impl Lambda {
@@ -657,10 +707,12 @@ impl Lambda {
         let mut captures = Vec::new();
         free_vars(&body, &mut bound, &mut captures);
         Lambda {
+            moves: None,
             params,
             ret,
             body,
             captures,
+            modes: Vec::new(),
         }
     }
 }

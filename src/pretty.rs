@@ -454,6 +454,16 @@ impl Printer<'_> {
                 let mut out = text(&p.name);
                 for (i, b) in g.bounds_of(&p.name).into_iter().enumerate() {
                     out = out + if i == 0 { ": " } else { " + " } + &b.name.name;
+                    if let Some((params, ret)) = &b.sig {
+                        let open = pp.find(b.name.span.end, &Tok::LParen);
+                        let last = params.last().map(|p| p.span.end);
+                        let close = pp.close(open, last, &Tok::RParen);
+                        out = out + pp.types(PARENS, close, params);
+                        if let Some(ret) = ret {
+                            out = out + " -> " + pp.ty(ret);
+                        }
+                        continue;
+                    }
                     if b.assoc.is_empty() {
                         continue;
                     }
@@ -753,6 +763,10 @@ impl Printer<'_> {
                             },
                         )
                     }
+                };
+                let params = match l.moves {
+                    Some(_) => text("move ") + params,
+                    None => params,
                 };
                 match &l.ret {
                     Some(t) => {

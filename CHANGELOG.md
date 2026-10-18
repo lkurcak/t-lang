@@ -1,5 +1,59 @@
 # Changelog
 
+## Unreleased
+
+Step 6c: closures as `Fn` traits. See
+[docs/06c-closures.md](docs/06c-closures.md).
+
+### Added
+
+- Each closure that captures has a type of its own, `{closure}`: a struct of
+  what it captures, generic over the type parameters in scope, and invariant
+  in its lifetimes.
+- The built-in traits `Fn`, `FnMut` and `FnOnce` (`Fn: FnMut: FnOnce`), as
+  bounds like `F: Fn(int) -> int`, with the signature higher-ranked over any
+  lifetime it leaves out. Functions implement all three; `&F` is `Fn` when
+  `F` is, and `&mut F` is `FnMut` when `F` is. Nothing else can implement
+  them.
+- Closures capture each variable by `&`, by `&mut` or by value, the least
+  that does what the body does with it; `move |x| ..` captures everything
+  by value. A `&mut` the body changes things through is borrowed uniquely,
+  which doesn't need it to be `mut`. A closure is `FnOnce` only if it
+  moves out of what it owns, or owns something that isn't `Discard` (which
+  its body must then use up), `FnMut` if it changes what it captured, and
+  `Fn` otherwise.
+- A closure is `Discard` and `Copy` if what it captured is.
+- `move` is a keyword.
+- The tree-sitter grammar and the formatter know `move` and `Fn` bounds.
+
+### Changed
+
+- Closures that capture can be stored, and passed to generic code, as long
+  as they don't outlive what they borrow: the downward-only rule is gone.
+  They can't be returned from a function yet, as their types can't be
+  written (step 6c.1).
+- A function type holds only functions and closures that capture nothing,
+  so a function that takes a closure that captures is generic over it.
+- Captured variables are borrowed, not copied: a closure sees changes made
+  after it's made, and can change them, and what it borrows can't be
+  changed or moved while it may still be called.
+- A borrow through a `&` may last as long as that reference says, whatever
+  happens to the way it was reached (Rust's supporting prefixes).
+- `t mono` writes calls of closures with the borrow they take,
+  `(&mut f)(1)`.
+
+### Removed
+
+- Monomorphisation no longer checks the program it makes again, and the
+  checker's mode for doing so is gone: no error depends on a copy of a
+  generic function any more.
+
+### Fixed
+
+- An equality bound naming a lifetime, like `T: Tr<Out = &'a int>`,
+  crashed the borrow checker, and its regions weren't related where the
+  function was called, which allowed a use after free.
+
 ## 0.7.0 (2026-10-18)
 
 Step 6b: associated types. See

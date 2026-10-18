@@ -22,7 +22,7 @@ fn fact(n: int) -> int {
     if n <= 1 { 1 } else { n * fact(n - 1) }
 }
 
-fn twice(f: fn(int) -> int, x: int) -> int { f(f(x)) }
+fn twice<F: Fn(int) -> int + Discard>(f: F, x: int) -> int { f(f(x)) }
 
 fn main() {
     let n = 5;
@@ -257,10 +257,10 @@ has to fit that:
   no reference counting. `Box` will move to a library, as in Rust's split
   between `core`, `alloc` and `std`. See
   [docs/05-ownership.md](docs/05-ownership.md).
-- **Closures that capture are downward-only:** they can be passed to
-  functions but not returned or stored, since their variables live on the
-  stack. A `fn` nested in a block captures nothing, so it can go anywhere.
-  See [docs/03-inference.md](docs/03-inference.md).
+- **Closures are values of their own types**, structs of what they borrow
+  or own, called through the `Fn` traits, like Rust's: no closure needs the
+  heap. The borrow checker sees what each borrows. See
+  [docs/06c-closures.md](docs/06c-closures.md).
 - **Errors are values, not exceptions.** There's no unwinding.
 - **Values must be used up.** One whose type isn't `#[derive(Discard)]`
   can't be dropped or overwritten: a resource like a file descriptor can't
@@ -283,7 +283,8 @@ combine features in ways nobody planned for.
 | 6a ✅ | traits, impls, methods, `Eq` and `Copy` | ad-hoc polymorphism, type classes, coherence, termination of resolution; a call's borrows taken after its arguments | [docs/06-traits.md](docs/06-traits.md) |
 | 6a.1 ✅ | values must be used up, unless `Discard`; `replace` | linear types, substructural rules (weakening, contraction) | [docs/06a.1-linear-types.md](docs/06a.1-linear-types.md) |
 | 6b ✅ | associated types, projections, equality bounds | type-level functions (open type families), normalisation with lifetimes | [docs/06b-associated-types.md](docs/06b-associated-types.md) |
-| 6c | closures as `Fn` traits | a type per closure, capturing by reference | |
+| 6c ✅ | closures as `Fn` traits | closure conversion, a type per closure, capturing by reference | [docs/06c-closures.md](docs/06c-closures.md) |
+| 6c.1 | returning closures, `-> impl Fn(int) -> int` | existential (opaque) types | |
 | 6d | modules: `mod`, `use`, visibility | abstract types, orphan rules (coherence across modules) | derived bounds written out at module boundaries |
 | 6e | a small `core`: `Option`, `Result`, `Ord`, `Iterator`, `for` | equality bounds with projections (`IntoIterator`), iterating over linear values | what the tests keep defining themselves; no allocation |
 | 7 | effects | effect systems: which functions can panic, allocate or diverge | |

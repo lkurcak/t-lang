@@ -6,14 +6,17 @@ for nested functions `src/check/scope.rs` and `src/lift.rs`.
 
 ```rust
 fn main() {
-    let n = 5;
     let twice = |f, x| f(f(x));
-    print(twice(|x| x + n, 0)); // expect: 10
+    print(twice(|x| x + 5, 0)); // expect: 10
 }
 ```
 
 Nothing says what `f` and `x` are, yet the checker works out that `twice` is
 `fn(fn(int) -> int, int) -> int`. This step is about how.
+
+> Since step 6c, a closure that captures, like `|x| x + n`, has a type of
+> its own rather than a function type, and borrows what it captures. Where
+> this page and that one differ, see [06c-closures.md](06c-closures.md).
 
 ## Closures: the other half of functions
 
@@ -33,7 +36,8 @@ in scope: `|x| x + n` reads the `n` around it. That's what makes it a
 parameters and other functions.
 
 Closures and functions have the same types, so either can go wherever a
-`fn(int) -> int` is wanted (`tests/t/closures.t`).
+`fn(int) -> int` is wanted. (Since step 6c, only closures that capture
+nothing do.)
 
 ### Nested functions
 
@@ -311,6 +315,10 @@ parametric polymorphism, which is step 4.
 
 ## Closures and memory
 
+> This is how T's closures worked until step 6c, and why. Step 6c gave
+> each closure that captures a type of its own, which says what it borrows,
+> and the rule below is gone: see [06c-closures.md](06c-closures.md).
+
 A closure is a value made of two things: its code, and the values of the
 locals it uses, its **environment**. In `let add = |x| x + n;`, `add` is the
 code of `|x| x + n` with `n` packed alongside. Turning a closure into a (code, environment) pair is
@@ -335,8 +343,8 @@ get() + n  // 3
 
 The hard part is where the environment *lives*. Take
 
-```rust
-fn adder(n: int) -> fn(int) -> int { |x| x + n }
+```rust,error
+fn adder(n: int) -> fn(int) -> int { |x| x + n } // error: found a closure that captures `n`
 ```
 
 `n` is a parameter, on `adder`'s stack frame, but the closure outlives that
@@ -347,18 +355,21 @@ to its environment, so who's that? Most languages answer with a garbage
 collector, or reference counting. T can't: it has to compile to bare metal,
 with no runtime.
 
-So in T, **closures that capture are downward-only**: they can be called, and
+So in T, **closures that captured were downward-only**: they can be called, and
 passed to functions, but not returned or stored in a struct or enum. Then the
 environment can simply live in the frame that made the closure, and the
 closure can be a pair of pointers, to its code and into that frame, which
 only ever reaches frames *above* it on the stack, which are still there.
 That's how Pascal's nested procedures work, and Swift's non-escaping closures.
-`adder` is an error:
+`adder` was an error:
 
-```
+```text
 type error: cannot return a closure that captures `n`: it keeps `n` on the
 stack, and closures that capture can only be passed down, not returned
 ```
+
+(Since step 6c it still is, as a function type can't hold a closure that
+captures.)
 
 Closures that capture nothing are plain functions, and go anywhere.
 
@@ -388,7 +399,7 @@ is the smallest case of one: every function value either lives forever, or
 lives as long as "here". (Step 5 gives references lifetimes, but not yet
 function values: see docs/05-ownership.md.)
 
-The other way out, for later: give every closure its own unnamed type,
+The other way out, which step 6c took: give every closure its own unnamed type,
 exactly the size of its environment, so it can be returned *by value* and
 live wherever its caller puts it. That's what Rust does. `fn(i64) -> i64`
 there is only a plain function pointer, which capturing closures don't fit,
@@ -397,19 +408,20 @@ and talking about "some closure type" takes generics (step 4) and traits
 the compiler inline it into every function it's passed to, so it often
 disappears entirely.
 
-The interpreter doesn't care where environments live, and shares them behind
-an `Rc`. The rule is in the checker, so that a compiled T never needs to.
+The interpreter didn't care where environments lived, and shared them. The
+rule was in the checker, so that a compiled T would never need to.
 
 ## Design decisions worth noticing
 
 - **Rust's syntax:** `|x| x + 1`, `|x: int| -> int { .. }` (a return type
   needs a block), and `|| 1` with no parameters. `||` is a single token, so
   the parser accepts it where an expression starts as an empty parameter list.
-- **Capturing closures go down, not up.** See *Closures and memory*.
-- **Only free variables are captured**, and copies of a closure share one
-  environment. Capturing every local in scope would mean the same thing, but
-  a closure would copy every closure before it, each holding every closure
-  before *that*: twice the size at each step (`closure_chain.t`).
+- **Capturing closures went down, not up**, until 6c. See *Closures and
+  memory*.
+- **Only free variables are captured.** Capturing every local in scope
+  would mean the same thing, but a closure would copy every closure before
+  it, each holding every closure before *that*: twice the size at each step
+  (`closure_chain.t`).
 - **Unsolved variables are errors**, not defaulted to some type. Rust does
   the same, except for number literals, which default to `i32`.
 - **Variables never leave a function.** Every global's type is fully known,
@@ -426,9 +438,9 @@ an `Rc`. The rule is in the checker, so that a compiled T never needs to.
 | Missing | Why it's missing | Step |
 |---|---|---|
 | `let id = \|x\| x;` usable at two types | let-polymorphism is parametric polymorphism | 4 |
-| returning a closure that captures | its environment is on the stack: lifetimes, or a type per closure | 5, 6 |
+| returning a closure that captures | its environment is on the stack: lifetimes, and a type per closure | 6c.1 |
 | a closure calling itself | its name isn't in scope in its own body; use a nested `fn` | — |
-| changing a captured variable | mutation, and who owns the environment | 5 |
+| changing a captured variable | mutation, and who owns the environment | 6c |
 | patterns as parameters, `\|P { x, y }\| ..` | easy, just not needed yet | — |
 | inferring top-level signatures | on purpose, see *Where inference stops* | — |
 
@@ -448,10 +460,10 @@ an `Rc`. The rule is in the checker, so that a compiled T never needs to.
 5. `Lambda::captures` lists functions a closure calls too, and the
    interpreter skips them. Why can't it tell them apart from locals
    when it computes them? Could the checker?
-6. `fn id(f: fn(int) -> int) -> fn(int) -> int { f }` is rejected, though
-   it's harmless on its own. Write a program that would go wrong if it
-   weren't, using `id` and a closure that captures. Then: why is it fine for
-   `escape_ok.t` to return a field?
+6. Until step 6c, `fn id(f: fn(int) -> int) -> fn(int) -> int { f }` was
+   rejected, though it's harmless on its own. Write a program that would
+   have gone wrong if it weren't, using `id` and a closure that captures.
+   Then: why can't it go wrong since 6c?
 7. *Defunctionalization* (Reynolds, 1972) compiles closures without a heap
    differently: every closure of type `fn(int) -> int` in the program
    becomes a variant of one enum holding its environment, and calling one is

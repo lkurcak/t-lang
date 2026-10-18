@@ -1,5 +1,5 @@
 // Each closure captures the one before it, which holds the one before that.
-// Copying a closure shares its environment, so this stays small.
+// Each borrows the one before, so each is only one reference big.
 fn main() {
     let f0 = || 1;
     let f1 = || f0() + 1;

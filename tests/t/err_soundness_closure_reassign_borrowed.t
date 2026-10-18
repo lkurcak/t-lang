@@ -1,0 +1,17 @@
+// `g` borrows `v`, so `v` can't be given a new value while `g` is still to
+// be used: what `g` reads would change under it. (`move || v` would take a
+// copy instead.)
+fn call<T: Copy>(x: T, y: T) -> T {
+    let mut v = x;
+    let g = || v;
+    v = y;
+    let _w = v;
+    g()
+}
+
+fn main() {
+    let b = Box::new(5);
+    let c = Box::new(6);
+    print(*call(&*b, &*c));
+}
+// error: cannot assign to `v` while `v` is borrowed

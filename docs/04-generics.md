@@ -16,8 +16,7 @@ fn map<T, U>(o: Option<T>, f: fn(T) -> U) -> Option<U> {
 }
 
 fn main() {
-    let n = 10;
-    match map(Option::Some(4), |x| x * n) {
+    match map(Option::Some(4), |x| x * 10) {
         Option::Some(y) => print(y), // expect: 40
         Option::None => {},
     }
@@ -277,10 +276,13 @@ without growing them, like a `count<T>` that calls `count<int>` or a
 `flip<A, B>` that calls `flip<B, A>`, needs only finitely many copies, so
 it's allowed (`generic_recursion_ok.t`).
 
-### What checking once can't see
+### What checking once couldn't see
 
-There's one rule that checking a generic body once doesn't cover: closures
-that capture are downward-only (step 3). Inside
+> Until step 6c, there was one rule that checking a generic body once
+> didn't cover. Since 6c the types of closures say what they borrow, so it
+> does: see [06c-closures.md](06c-closures.md). This is how it was.
+
+Closures that capture were downward-only (step 3). Inside
 
 ```rust
 fn id<T>(x: T) -> T { x }
@@ -293,21 +295,22 @@ step 3 forbids. Whether a value may hold a stack frame isn't part of its
 type, so a body checked with `T` opaque can't know. That rule isn't
 parametric.
 
-So monomorphisation's output is checked again (`mono::monomorphise`), and an
-error in a copy is reported at the use that made it:
+So monomorphisation's output was checked again, and an error in a copy was
+reported at the use that made it:
 
-```
+```text
 type error: cannot use `id` with `T` = `fn(int) -> int` here: in that copy of
 it, cannot return `x`: it may be a closure that captures, and closures that
 capture can only be passed down, not returned
 ```
 
-That includes `id(inc)` for a top-level `inc`, just as step 3 rejects a
+That included `id(inc)` for a top-level `inc`, just as step 3 rejected a
 non-generic `fn id(f: fn(int) -> int) -> fn(int) -> int { f }`. This is a
-small taste of C++'s errors-at-instantiation, kept to one rule. It goes away
-when the type says where a value may live. Step 5 does that for references,
+small taste of C++'s errors-at-instantiation, kept to one rule. It went away
+when the type said where a value may live. Step 5 did that for references,
 with lifetimes, where a `T` that holds one is written `T: 'a` and checked
-like any other bound; function values get lifetimes with traits, in step 6.
+like any other bound; closures got types with lifetimes in step 6c, and the
+second check went with them.
 
 ## Leaving room for effects
 
@@ -371,7 +374,7 @@ reads the same table.
 | `T: Eq`, `==` on a `T` | bounds are traits | 6 |
 | generic closures, `let`-generalisation | closures are values; see above | — |
 | `Option<T>` holding itself, lists, trees | needs pointers | 5 |
-| returning a closure through a generic | lifetimes | 5 |
+| returning a closure that captures | a type per closure, and `impl Fn` | 6c.1 |
 | higher-rank types, `fn(∀T. fn(T) -> T)` | can't be monomorphised | — |
 | `fn map<T, U, e>` | effect polymorphism | 7 |
 
@@ -398,8 +401,8 @@ reads the same table.
    `let id = |x| x; id(1); id(true)` becomes two `let`s. Now try
    `let id = { print(1); |x| x };`. What goes wrong, and how does ML's
    *value restriction* avoid it?
-8. Why is it fine for `apply<T>(f: fn(T) -> T, x: T)` to be called with a
-   closure that captures, when `id` isn't?
+8. Before step 6c, why was it fine for `apply<T>(f: fn(T) -> T, x: T)` to
+   be called with a closure that captured, when `id` wasn't?
 
 ## Reading
 

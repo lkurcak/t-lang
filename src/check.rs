@@ -32,7 +32,7 @@
 //! the parameter in `|x| x + 1`, the checker makes up a *type variable* and
 //! works out what it must be from how it's used: `unify`.
 
-mod escape;
+mod closures;
 mod generics;
 mod info;
 mod lints;
@@ -53,7 +53,6 @@ use crate::traits::{Pred, Traits};
 use crate::types::{
     AdtDef, AdtKind, Adts, Region, Scheme, Subst, Type, all_fields, struct_fields, variant_fields,
 };
-use escape::{Escape, Exit, Origin, bound_origin};
 use generics::Use;
 use info::Defs;
 use info::Resolved;
@@ -64,6 +63,7 @@ use lints::{
 use names::{Scoped, TypeDef};
 use scope::{Binding, FnDef, FnId, FnScope, to_closure};
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use typed::{Bind, Res, Typed};
 use unify::Var;
 
@@ -119,7 +119,7 @@ pub(crate) fn builtin_scheme(name: &str) -> Scheme {
 /// Those found before an error are kept, and so is what was learned about
 /// the program up to it.
 pub fn check(prog: &Program, warnings: &mut Vec<Warning>) -> (Info, Result<(), Error>) {
-    let mut cx = Checker::new(prog, false);
+    let mut cx = Checker::new(prog);
     cx.warnings.extend(prog.stray_docs.iter().map(unused_doc));
     let result = cx.program(prog);
     cx.type_notes(prog);
@@ -128,14 +128,6 @@ pub fn check(prog: &Program, warnings: &mut Vec<Warning>) -> (Info, Result<(), E
     cx.warnings.sort_by_key(|w| w.span.start);
     warnings.append(&mut cx.warnings);
     (cx.info, result)
-}
-
-/// Checks `prog` like `check`, but without the warnings, and with the name
-/// of the function the error is in, if it's in one. For checking what
-/// monomorphisation made (see `mono.rs`).
-pub fn recheck(prog: &Program) -> Result<(), (Option<String>, Error)> {
-    let mut cx = Checker::new(prog, true);
-    cx.program(prog).map_err(|e| (cx.failed_in.take(), e))
 }
 
 /// Checks that there's a `main`, and that it takes nothing.
@@ -204,9 +196,6 @@ struct Local {
     sites: Vec<Site>,
     /// Whether anything has read it, for the unused-variable warning.
     used: bool,
-    /// Why it may hold a closure that must stay in its frame, if it may
-    /// (see `escape`).
-    origin: Option<Origin>,
 }
 
 /// Where a variable is bound. `shorthand` is for a struct pattern's `P { x }`,
@@ -230,7 +219,6 @@ impl Local {
                 shorthand: false,
             }],
             used: false,
-            origin: None,
         }
     }
 
@@ -239,12 +227,9 @@ impl Local {
         self.sites[0].span
     }
 
-    /// A parameter, which may be a closure that captures.
+    /// A parameter.
     fn param(name: &str, ty: Type, span: Span) -> Local {
-        Local {
-            origin: Some(Origin::Param(name.to_string())),
-            ..Local::new(name, ty, span)
-        }
+        Local::new(name, ty, span)
     }
 }
 
@@ -278,11 +263,7 @@ pub(crate) struct Checker {
     /// `Program::all_types`.
     types: Vec<TypeDef>,
     /// What each name in a type refers to, by its span (see `names.rs`).
-    /// `None` when checking what monomorphisation made, which has
-    /// everything at the top level, named by its symbol, and where a copy
-    /// has the spans of what it's a copy of, all through a type, so spans
-    /// don't tell names apart. Names are looked up as they are then.
-    type_names: Option<HashMap<Span, Scoped>>,
+    type_names: HashMap<Span, Scoped>,
     /// The symbol of every function, by `FnId`.
     fn_symbols: Vec<String>,
     /// Every function, top-level and nested, by `FnId`.
@@ -299,14 +280,18 @@ pub(crate) struct Checker {
     type_params: Vec<String>,
     /// Its lifetime parameters, elided ones too.
     lifetimes: Vec<String>,
-    /// Is this what monomorphisation made? Then lifetimes mean nothing, and
-    /// the borrow checker doesn't run: it already did, on the program before.
-    mono: bool,
     /// What the borrow checker needs to know about each body.
     typed: Typed,
-    /// Closures' captures, with their types, which must turn out to be
-    /// `Copy` and hold no references (see `check_captures`).
-    captures: Vec<(String, Type, Span)>,
+    /// The closures that capture in the function being checked, whose
+    /// captures are worked out at its end (see `closures`).
+    closures: Vec<closures::Pending>,
+    /// Why each closure implements only the `Fn` traits it does, by
+    /// symbol, for messages: "it moves `b` out".
+    closure_why: HashMap<String, String>,
+    /// The calls in the function being checked of what isn't a function
+    /// type, with the callee's type, and where: how each gets at what it
+    /// calls is worked out at its end (`Checker::settle_calls`).
+    calls: Vec<(*const Expr, Type, Span)>,
     /// The local part of the context Γ, as a stack. Entering a scope pushes,
     /// leaving truncates (see `end_scope`). Searching from the top makes inner
     /// `let`s shadow outer ones.
@@ -338,9 +323,6 @@ pub(crate) struct Checker {
     /// like `==` on a value of a type to be inferred. Proved once the
     /// function's types are.
     obligations: Vec<traits::Obligation>,
-    /// Values that may be closures leaving the frame that made them, checked
-    /// once the function's types are known.
-    escapes: Vec<Escape>,
     /// Unused variables warned about, by index in `warnings`, with their
     /// types: once those are known, one that isn't `Discard` gets no fix
     /// to rename it, which wouldn't help (see `settle_unused`).
@@ -356,8 +338,6 @@ pub(crate) struct Checker {
     /// arguments that may still have variables in them. `finish_notes`
     /// moves them to `info`.
     pending: Vec<(Span, Instance)>,
-    /// The function the first error was in, if it was in one.
-    failed_in: Option<String>,
     /// What a `return` in the code being checked returns from: the type of
     /// the function's or closure's result. `None` in a closure whose result
     /// type is still to be inferred, until a `return` needs it.
@@ -428,13 +408,11 @@ pub(crate) struct LoopCx {
 }
 
 impl Checker {
-    /// `mono` says whether `prog` is what monomorphisation made.
-    fn new(prog: &Program, mono: bool) -> Checker {
+    fn new(prog: &Program) -> Checker {
         let fn_symbols = scope::symbols(prog);
         let (types, type_names) = names::names(prog, &prog.all_fns(), &fn_symbols);
-        let type_names = (!mono).then_some(type_names);
         let mut info = Info::default();
-        for (span, name) in type_names.iter().flatten() {
+        for (span, name) in &type_names {
             if let Scoped::Adt(symbol) = name {
                 info.symbols.insert(*span, symbol.clone());
             }
@@ -452,9 +430,10 @@ impl Checker {
             current: None,
             type_params: Vec::new(),
             lifetimes: Vec::new(),
-            mono,
             typed: Typed::default(),
-            captures: Vec::new(),
+            closures: Vec::new(),
+            closure_why: HashMap::new(),
+            calls: Vec::new(),
             locals: Vec::new(),
             barrier: 0,
             closure_fix: None,
@@ -466,13 +445,11 @@ impl Checker {
             env: Vec::new(),
             self_ty: None,
             obligations: Vec::new(),
-            escapes: Vec::new(),
             unused: Vec::new(),
             uses: Vec::new(),
             warnings: Vec::new(),
             info,
             pending: Vec::new(),
-            failed_in: None,
             ret: None,
             loops: Vec::new(),
             diverges: None,
@@ -504,6 +481,8 @@ impl Checker {
         self.check_impls(prog)?;
         self.info.traits = self.traits.clone();
         self.bodies(prog)?;
+        // What each closure is is known once the body it's in is.
+        self.info.traits.closures = self.traits.closures.clone();
         self.no_polymorphic_recursion()?;
         check_main(prog)?;
         // What's dead depends on the whole program, so only once it all checks.
@@ -606,19 +585,7 @@ impl Checker {
         let (preds, eqs) = self.preds(&f.generics, &params, &declared, true)?;
         self.env = preds.clone();
         self.adts.proj.local = eqs.clone();
-        let (param_tys, ret, lifetimes) = match self.mono {
-            // Lifetimes don't matter any more.
-            true => {
-                let mut any = Lifetimes::Any;
-                let ps = f
-                    .params
-                    .iter()
-                    .map(|p| self.resolve_with(&p.ty, &params, &mut any));
-                let ps = ps.collect::<Result<Vec<_>, _>>()?;
-                (ps, self.resolve_with(&f.ret, &params, &mut any)?, declared)
-            }
-            false => self.signature(f, &params, &declared)?,
-        };
+        let (param_tys, ret, lifetimes) = self.signature(f, &params, &declared)?;
         self.env.clear();
         self.adts.proj.local.clear();
         Ok(Scheme {
@@ -692,9 +659,6 @@ impl Checker {
             let notes = self.info.notes.len();
             let result = self.body(f, FnId(i));
             self.finish_notes(notes);
-            if result.is_err() {
-                self.failed_in = Some(f.name.name.clone());
-            }
             result?;
         }
         Ok(())
@@ -743,12 +707,8 @@ impl Checker {
         self.loops.clear();
         self.diverges = None;
         self.check(&f.body, &ret)?;
-        self.leaves(&f.body, &ret, Exit::Return);
         self.end_scope(scope);
         self.solve_all(vars)?;
-        if self.mono {
-            return Ok(());
-        }
         let warnings = crate::borrowck::check(self, f, &scheme)?;
         self.warnings.extend(warnings);
         Ok(())
@@ -767,7 +727,28 @@ impl Checker {
     /// `t` with the type variables in it replaced by what they turned out
     /// to be.
     pub(crate) fn solution(&self, t: &Type) -> Type {
-        self.solved(t)
+        self.closure_regions(&self.solved(t))
+    }
+
+    /// `t`, with each closure type in it with as many regions as the
+    /// closure has lifetime parameters, erased. The checker, which ignores
+    /// regions, makes them with none, before it knows how many.
+    fn closure_regions(&self, t: &Type) -> Type {
+        let t = t.map(|p| self.closure_regions(p));
+        match t {
+            Type::Adt(symbol, regions, args)
+                if let Some(c) = self.traits.closures.get(&symbol)
+                    && regions.len() != c.lifetimes.len() =>
+            {
+                Type::Adt(symbol, vec![Region::Erased; c.lifetimes.len()], args)
+            }
+            t => t,
+        }
+    }
+
+    /// Every trait, impl and closure.
+    pub(crate) fn traits(&self) -> &Traits {
+        &self.traits
     }
 
     /// The type of function `symbol`, which may be a method of a trait.
@@ -854,11 +835,8 @@ impl Checker {
             let (preds, eqs) = self.preds(d.generics(), &params, &lifetimes, false)?;
             self.env = preds.clone();
             self.adts.proj.local = eqs.clone();
-            let mut lts = match self.mono {
-                true => Lifetimes::Any,
-                false => Lifetimes::Fields {
-                    declared: &lifetimes,
-                },
+            let mut lts = Lifetimes::Fields {
+                declared: &lifetimes,
             };
             let kind = match d {
                 TypeDecl::Struct(s) => {
@@ -902,8 +880,6 @@ impl Checker {
                 bounds,
                 preds,
                 eqs,
-                copy: self.mono && d.derive_of("Copy").is_some(),
-                eq: self.mono && d.derive_of("Eq").is_some(),
                 kind,
             };
             adts.insert(symbol.clone(), adt);
@@ -952,18 +928,10 @@ impl Checker {
         Ok(())
     }
 
-    /// What type name `name`, written at `span` where type parameters
-    /// `params` are in scope, refers to, if it's a struct or enum or an
-    /// outer type parameter (see `names.rs`).
-    fn type_name(&self, name: &str, span: Span, params: &[String]) -> Option<TypeName> {
-        let Some(names) = &self.type_names else {
-            if params.iter().any(|p| p == name) {
-                return None;
-            }
-            let (lts, arity) = *self.arities.get(name)?;
-            return Some(TypeName::Adt(name.to_string(), lts, arity));
-        };
-        match names.get(&span)? {
+    /// What the type name written at `span` refers to, if it's a struct or
+    /// enum or an outer type parameter (see `names.rs`).
+    fn type_name(&self, span: Span) -> Option<TypeName> {
+        match self.type_names.get(&span)? {
             Scoped::Adt(symbol) => {
                 let (lts, arity) = *self.arities.get(symbol)?;
                 Some(TypeName::Adt(symbol.clone(), lts, arity))
@@ -972,15 +940,12 @@ impl Checker {
         }
     }
 
-    /// The symbol of the struct or enum that `name`, written at `span`,
-    /// refers to, if it's one.
-    fn adt_symbol<'a>(&'a self, name: &'a str, span: Span) -> Option<&'a str> {
-        match &self.type_names {
-            None => self.arities.contains_key(name).then_some(name),
-            Some(names) => match names.get(&span)? {
-                Scoped::Adt(symbol) => Some(symbol),
-                Scoped::OuterParam(..) => None,
-            },
+    /// The symbol of the struct or enum that the type name written at
+    /// `span` refers to, if it's one.
+    fn adt_symbol(&self, span: Span) -> Option<&str> {
+        match self.type_names.get(&span)? {
+            Scoped::Adt(symbol) => Some(symbol),
+            Scoped::OuterParam(..) => None,
         }
     }
 
@@ -994,7 +959,7 @@ impl Checker {
     ) -> Result<Type, Error> {
         resolve(
             t,
-            &|name, span| self.type_name(name, span, params),
+            &|_, span| self.type_name(span),
             &|s, tr, name, span| self.projection(s, tr, name, span),
             params,
             lts,
@@ -1003,11 +968,8 @@ impl Checker {
 
     /// A type written inside the function being checked.
     fn resolve(&self, t: &TypeExpr) -> Result<Type, Error> {
-        let mut lts = match self.mono {
-            true => Lifetimes::Any,
-            false => Lifetimes::Body {
-                declared: &self.lifetimes,
-            },
+        let mut lts = Lifetimes::Body {
+            declared: &self.lifetimes,
         };
         self.resolve_with(t, &self.type_params, &mut lts)
     }
@@ -1031,6 +993,12 @@ impl Checker {
     /// `generics::polymorphic_recursion`), and any cycle through it is
     /// rejected. The copies of types that impls' associated types make are
     /// seen to by `Checker::assoc_regular`.
+    ///
+    /// A closure's type is a type constructor applied to the type parameters
+    /// in scope, so passing a closure that holds a `G` where a `G` was, as
+    /// `f(|| g())` in `f<G>`, is an edge that grows, like `f::<Box<G>>`.
+    /// What a closure's body uses is in the function it's in, by where it
+    /// is, and is copied with it.
     fn no_polymorphic_recursion(&self) -> Result<(), Error> {
         // The `eq` of each derived `Eq`: not a function of the program, but
         // it does what one would, `==` on each field, so it's a node of its
@@ -1230,11 +1198,8 @@ impl Checker {
         let t = generics::name_holes(t, &mut holes);
         let mut params = self.type_params.clone();
         params.extend(holes.iter().map(|(name, _)| name.clone()));
-        let mut lts = match self.mono {
-            true => Lifetimes::Any,
-            false => Lifetimes::Body {
-                declared: &self.lifetimes,
-            },
+        let mut lts = Lifetimes::Body {
+            declared: &self.lifetimes,
         };
         let ty = self.resolve_with(&t, &params, &mut lts)?;
         let (names, vars): (Vec<String>, Vec<Type>) = holes
@@ -1292,9 +1257,41 @@ impl Checker {
             ExprKind::Loop(label, body) => self.loop_expr(label, None, body, Some(want))?,
             ExprKind::Lambda(l) => {
                 let sig = match self.shallow(want) {
-                    Type::Fn(sig) if sig.params.len() == l.params.len() => {
-                        Some((sig.params, *sig.ret))
-                    }
+                    // A function type is wanted, which a closure can only be
+                    // if it captures nothing: what it captures has to be
+                    // somewhere.
+                    Type::Fn(sig) => match self.captured(l).first() {
+                        Some(id) => {
+                            let name = &self.typed.binds[id].name;
+                            let at = first_use(&l.body, name).unwrap_or(l.body.span);
+                            let ps: Vec<String> =
+                                sig.params.iter().map(|p| p.to_string()).collect();
+                            return Err(Error::ty(
+                                e.span,
+                                format!(
+                                    "expected `{}`, found a closure that captures `{name}`",
+                                    Type::Fn(sig.clone())
+                                ),
+                            )
+                            .with_note(at, format!("`{name}` is captured here"))
+                            .with_note(
+                                e.span,
+                                format!(
+                                    "a function type only holds functions, and closures that \
+                                     capture nothing; to take this, take a type parameter \
+                                     `F: Fn({}) -> {}`",
+                                    ps.join(", "),
+                                    sig.ret
+                                ),
+                            ));
+                        }
+                        None if sig.params.len() == l.params.len() => Some((sig.params, *sig.ret)),
+                        None => None,
+                    },
+                    // What a bound on a type to be inferred says calls of it
+                    // take and give: `F: Fn(int) -> int` for `apply`'s `F`
+                    // in `apply(|x| x + 1)`.
+                    Type::Var(v) => self.wanted_sig(v, l.params.len()),
                     _ => None,
                 };
                 self.lambda(l, sig)?
@@ -1533,7 +1530,6 @@ impl Checker {
                 match op {
                     None => {
                         self.check(value, &t)?;
-                        self.leaves(value, &t, Exit::Assign);
                     }
                     Some(op) => {
                         self.unify_or(&t, &Type::Int, place.span, |t, _| {
@@ -1578,7 +1574,6 @@ impl Checker {
                 match value {
                     Some(v) => {
                         self.check(v, &ret)?;
-                        self.leaves(v, &ret, Exit::Return);
                     }
                     None => self.unify_or(&Type::Unit, &ret, e.span, |_, ret| {
                         format!("a `return` with no value returns `()`, but this returns `{ret}`")
@@ -1740,7 +1735,34 @@ impl Checker {
                             .unwrap_or_else(|_| unreachable!("fresh variables fit anything"));
                         (params, ret)
                     }
-                    t => return Err(Error::ty(f.span, format!("`{t}` is not a function"))),
+                    // A closure, or what a bound says can be called, or a
+                    // reference to one: what its signature says. How the
+                    // call gets at it is worked out once that's known
+                    // (`settle_calls`).
+                    t => {
+                        let sig = Type::Proj(
+                            Box::new(t.clone()),
+                            "FnOnce".into(),
+                            crate::traits::SIG.into(),
+                        );
+                        let Type::Fn(sig) = self.shallow(&sig) else {
+                            let hint = match &t {
+                                Type::Param(p) => format!(
+                                    "; to call it, say what it takes and gives with a bound, \
+                                     like `{p}: Fn(int) -> int`"
+                                ),
+                                _ => String::new(),
+                            };
+                            return Err(Error::ty(
+                                f.span,
+                                format!("`{t}` is not a function{hint}"),
+                            ));
+                        };
+                        let pred = Checker::callable_pred(&t);
+                        self.oblige(pred, f.span, traits::Why::Call)?;
+                        self.calls.push((e, t, e.span));
+                        (sig.params, *sig.ret)
+                    }
                 };
                 if params.len() != args.len() {
                     return Err(Error::ty(
@@ -1947,7 +1969,6 @@ impl Checker {
                     given[i] = true;
                     self.note_field(&symbol, &init.name, &fields[i].1);
                     self.check(&init.value, &fields[i].1)?;
-                    self.leaves(&init.value, &fields[i].1, Exit::Store);
                 }
                 if let Some(i) = given.iter().position(|g| !g) {
                     return Err(Error::ty(
@@ -2040,7 +2061,6 @@ impl Checker {
                 }
                 for (arg, field) in args.iter().zip(&fields) {
                     self.check(arg, field)?;
-                    self.leaves(arg, field, Exit::Store);
                 }
                 let Type::Adt(symbol, ..) = &t else {
                     unreachable!("an enum")
@@ -2198,7 +2218,7 @@ impl Checker {
     // `break` out of a loop around it: the body is a function of its own.
     // Whether it diverges doesn't matter to the code around: making a
     // closure doesn't run it.
-    fn lambda(&mut self, l: &Lambda, sig: Option<(Vec<Type>, Type)>) -> Result<Type, Error> {
+    fn lambda(&mut self, l: &Arc<Lambda>, sig: Option<(Vec<Type>, Type)>) -> Result<Type, Error> {
         let outer_ret = self.ret.take();
         let outer_diverges = self.diverges.take();
         self.loops.push(Target::Closure);
@@ -2209,22 +2229,15 @@ impl Checker {
         result
     }
 
-    fn lambda_inner(&mut self, l: &Lambda, sig: Option<(Vec<Type>, Type)>) -> Result<Type, Error> {
-        // What it captures is copied into it, so must be `Copy`, and must
-        // not hold a reference, which the closure could outlive: whether it
-        // does is checked once their types are known.
-        let mut captured = Vec::new();
-        for name in &l.captures {
-            if let Some(Binding::Local(i)) = self.binding(name)
-                && i >= self.barrier
-            {
-                let local = &self.locals[i];
-                captured.push(local.id());
-                let span = first_use(&l.body, name).unwrap_or(l.body.span);
-                self.captures.push((name.clone(), local.ty.clone(), span));
-            }
-        }
-        self.typed.captures.insert(l, captured);
+    fn lambda_inner(
+        &mut self,
+        l: &Arc<Lambda>,
+        sig: Option<(Vec<Type>, Type)>,
+    ) -> Result<Type, Error> {
+        // What it captures: the variables around it its body uses. How, is
+        // worked out once their types are known (see `closures`).
+        let captured = self.captured(l);
+        self.typed.captures.insert(Arc::as_ptr(l), captured.clone());
         let scope = self.locals.len();
         let mut params = Vec::new();
         for (i, p) in l.params.iter().enumerate() {
@@ -2278,9 +2291,22 @@ impl Checker {
                 }
             }
         };
-        self.leaves(&l.body, &ret, Exit::Return);
         self.end_scope(scope);
-        Ok(Type::func(params, ret))
+        match captured.is_empty() {
+            true => Ok(Type::func(params, ret)),
+            false => Ok(self.closure_type(l, captured, params, ret)),
+        }
+    }
+
+    /// The variables around closure `l` its body uses, by id.
+    fn captured(&self, l: &Lambda) -> Vec<Span> {
+        l.captures
+            .iter()
+            .filter_map(|name| match self.binding(name) {
+                Some(Binding::Local(i)) if i >= self.barrier => Some(self.locals[i].id()),
+                _ => None,
+            })
+            .collect()
     }
 
     /// The type a closure's annotation names, which must fit the one
@@ -2394,13 +2420,6 @@ impl Checker {
                     };
                     let mut binds = Vec::new();
                     let p = self.pattern(pat, &t, None, &mut binds)?;
-                    let origin = init
-                        .as_ref()
-                        .and_then(|init| self.origin(init, &mut Vec::new()))
-                        .map(|(o, _)| o);
-                    if let Some(origin) = bound_origin(pat, origin) {
-                        binds[0].origin = Some(origin);
-                    }
                     self.note_binds(&binds, ty.is_none());
                     binds.iter().for_each(|l| self.bind(l));
                     let t = self.solved(&t);
@@ -2500,15 +2519,11 @@ impl Checker {
         want: Option<&Type>,
     ) -> Result<Type, Error> {
         let t = self.synth(scrutinee)?;
-        let origin = self.origin(scrutinee, &mut Vec::new()).map(|(o, _)| o);
         let mut pats = Vec::new();
         let mut binds = Vec::new();
         for arm in arms {
             let mut b = Vec::new();
             pats.push(self.pattern(&arm.pat, &t, None, &mut b)?);
-            if let Some(origin) = bound_origin(&arm.pat, origin.clone()) {
-                b[0].origin = Some(origin);
-            }
             self.note_binds(&b, true);
             b.iter().for_each(|l| self.bind(l));
             binds.push(b);
@@ -2778,9 +2793,7 @@ impl Checker {
     /// If it's generic, each type parameter gets a fresh variable, to be
     /// worked out from the fields or from where it's used.
     fn struct_type(&mut self, name: &Ident, targs: &[TypeExpr]) -> Result<Type, Error> {
-        let def = self
-            .adt_symbol(&name.name, name.span)
-            .and_then(|s| self.adts.get(s));
+        let def = self.adt_symbol(name.span).and_then(|s| self.adts.get(s));
         match def.map(|d| &d.kind) {
             Some(AdtKind::Struct(_)) => self.instantiate(name, targs, " { .. }", NoteKind::Struct),
             Some(AdtKind::Enum(_)) => Err(Error::ty(
@@ -2805,9 +2818,7 @@ impl Checker {
         rest: &str,
         kind: fn(String) -> NoteKind,
     ) -> Result<Type, Error> {
-        let symbol = self
-            .adt_symbol(&name.name, name.span)
-            .expect("a struct or enum");
+        let symbol = self.adt_symbol(name.span).expect("a struct or enum");
         let symbol = symbol.to_string();
         let params = self.adts[&symbol].params.clone();
         let args = self.type_args(&name.name, &params, targs, name.span, rest)?;
@@ -2840,7 +2851,7 @@ impl Checker {
         targs: &[TypeExpr],
         variant: &Ident,
     ) -> Result<(Type, usize), Error> {
-        let symbol = self.adt_symbol(&ty.name, ty.span).map(str::to_string);
+        let symbol = self.adt_symbol(ty.span).map(str::to_string);
         let def = symbol.as_ref().and_then(|s| self.adts.get(s));
         if def.is_none() && ty.name == "Box" {
             return Err(Error::ty(
@@ -2904,9 +2915,7 @@ impl Checker {
 
     /// Is `ty::name` a variant of an enum, rather than a path to a method?
     fn is_variant(&self, ty: &Ident, name: &Ident) -> bool {
-        let def = self
-            .adt_symbol(&ty.name, ty.span)
-            .and_then(|s| self.adts.get(s));
+        let def = self.adt_symbol(ty.span).and_then(|s| self.adts.get(s));
         match def.map(|d| &d.kind) {
             Some(AdtKind::Enum(variants)) => variants.iter().any(|(v, _)| *v == name.name),
             // Not a method either, but the variant rule says what's wrong.
@@ -2952,7 +2961,7 @@ impl Checker {
         parens: bool,
     ) -> Result<Type, Error> {
         let found = match self.traits.traits.contains_key(&ty.name)
-            && self.adt_symbol(&ty.name, ty.span).is_none()
+            && self.adt_symbol(ty.span).is_none()
             && !self.type_params.contains(&ty.name)
         {
             true => {
@@ -2969,11 +2978,10 @@ impl Checker {
                 self.lookup_method(&s, Some(&tr), name, &[], "trait")?
             }
             false => {
-                let t = match self.adt_symbol(&ty.name, ty.span) {
+                let t = match self.adt_symbol(ty.span) {
                     Some(_) => {
                         let rest = format!("::{}", name.name);
-                        let kind = match self.adts[self.adt_symbol(&ty.name, ty.span).unwrap()].kind
-                        {
+                        let kind = match self.adts[self.adt_symbol(ty.span).unwrap()].kind {
                             AdtKind::Struct(_) => NoteKind::Struct,
                             AdtKind::Enum(_) => NoteKind::Enum,
                         };
@@ -2990,10 +2998,7 @@ impl Checker {
                         t
                     }
                 };
-                let what = match self
-                    .adt_symbol(&ty.name, ty.span)
-                    .map(|s| &self.adts[s].kind)
-                {
+                let what = match self.adt_symbol(ty.span).map(|s| &self.adts[s].kind) {
                     Some(AdtKind::Enum(_)) => "enum",
                     _ => "type",
                 };
@@ -3050,7 +3055,7 @@ impl Checker {
 
     /// Does `name`, written as the type in `name::new(..)`, mean `Box`?
     fn is_box(&self, name: &Ident) -> bool {
-        name.name == "Box" && self.adt_symbol(&name.name, name.span).is_none()
+        name.name == "Box" && self.adt_symbol(name.span).is_none()
     }
 
     //        Γ ⊢ e : T
@@ -3092,42 +3097,7 @@ impl Checker {
             }
             _ => return Err(generics::arity_error("`Box`", 1, targs.len(), e.span)),
         };
-        self.leaves(arg, &t, Exit::Store);
         Ok(Type::Box(Box::new(t)))
-    }
-
-    /// At the end of a function: each closure's captures must be copies it
-    /// can keep. That's when their types are known.
-    fn check_captures(&mut self) -> Result<(), Error> {
-        for (name, ty, span) in std::mem::take(&mut self.captures) {
-            let t = self.solved(&ty);
-            if unify::has_vars(&t) {
-                // Reported as not inferred.
-                continue;
-            }
-            let why = if t.may_borrow() && matches!(t, Type::Fn(_)) {
-                format!(
-                    "it's a `{t}`, which takes references of a certain lifetime only, and the \
-                     closure could outlive that"
-                )
-            } else if t.may_borrow() && !matches!(t, Type::Param(_)) {
-                format!(
-                    "it's a `{t}`, which holds a reference, and the closure could outlive what \
-                     that points to"
-                )
-            } else if !self.is_copy(&t) {
-                format!("closures copy what they capture, and a `{t}` can't be copied")
-            } else {
-                continue;
-            };
-            return Err(Error::ty(
-                span,
-                format!(
-                    "this closure can't capture `{name}`: {why}; pass it as an argument instead"
-                ),
-            ));
-        }
-        Ok(())
     }
 }
 
@@ -3142,7 +3112,7 @@ fn stmt_span(stmt: &Stmt) -> Option<Span> {
 }
 
 /// Where variable `name` is first used in `e`, if it is.
-fn first_use(e: &Expr, name: &str) -> Option<Span> {
+pub(crate) fn first_use(e: &Expr, name: &str) -> Option<Span> {
     match &e.kind {
         ExprKind::Var(n, _) if n == name => Some(e.span),
         _ => e.children().into_iter().find_map(|c| first_use(c, name)),

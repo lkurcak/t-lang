@@ -104,6 +104,14 @@ impl AdtInfo {
             let mut changed = false;
             for n in &names {
                 let d = &adts[*n];
+                // A closure is invariant in everything: its signature uses
+                // its parameters too, which its fields don't show, maybe
+                // the other way round. (Rust's are too.)
+                if crate::types::is_closure(n) {
+                    let inv = vec![Variance::Inv; d.lifetimes.len() + d.params.len()];
+                    changed |= variances.insert((*n).clone(), inv.clone()) != Some(inv);
+                    continue;
+                }
                 let mut v = variances[*n].clone();
                 for t in field_types(adts, n) {
                     vary(&t, Variance::Co, d, &variances, &mut v);
@@ -335,6 +343,8 @@ pub(crate) struct Regions {
     /// The universal regions each type parameter, or rigid projection, is
     /// known to outlive, from what the signature says.
     pub(crate) known_params: HashMap<Type, Vec<usize>>,
+    /// In a closure's body, which universal region is the call's, if any.
+    pub(crate) call: Option<usize>,
 }
 
 impl Regions {
@@ -353,6 +363,7 @@ impl Regions {
             constraints: Vec::new(),
             type_tests: Vec::new(),
             known_params: HashMap::new(),
+            call: None,
         };
         for a in 0..n {
             r.known[a][a] = true;
@@ -424,6 +435,16 @@ impl Regions {
         }
     }
 
+    /// The region of a call of the closure whose body this is, for which
+    /// it has itself: universal, like a placeholder, but the one of the
+    /// call, which nothing the closure gives out may need (see
+    /// `borrowck::closure`).
+    pub(crate) fn call_region(&mut self) -> usize {
+        let v = self.placeholder();
+        self.call = Some(self.universal.len() - 1);
+        v
+    }
+
     /// A new placeholder region: universal, known only to be outlived by
     /// `'static`.
     fn placeholder(&mut self) -> usize {
@@ -459,6 +480,16 @@ impl Regions {
         })
     }
 
+    /// `t` with each universal region, as signatures name them, its
+    /// variable. It must have no other regions but variables.
+    pub(crate) fn universal_regions(&self, t: &Type) -> Type {
+        t.map_regions(&mut |r| match r {
+            Region::Var(_) => r.clone(),
+            r if self.universal.contains(r) => Region::Var(self.universal_var(r)),
+            r => unreachable!("region `{r}` isn't universal here"),
+        })
+    }
+
     /// `t` with every region a new variable, whatever it was.
     pub(crate) fn fresh_regions(&mut self, t: &Type) -> Type {
         t.map_regions(&mut |_| Region::Var(self.fresh()))
@@ -487,6 +518,11 @@ impl Regions {
     /// regions. `a <: b`, *subtyping*.
     pub(crate) fn subtype(&mut self, adts: &AdtInfo, a: &Type, b: &Type, span: Span) {
         self.relate(adts, a, b, Variance::Co, span);
+    }
+
+    /// Constraints for `a` and `b` to be the same type, regions and all.
+    pub(crate) fn equate(&mut self, adts: &AdtInfo, a: &Type, b: &Type, span: Span) {
+        self.relate(adts, a, b, Variance::Inv, span);
     }
 
     fn relate(&mut self, adts: &AdtInfo, a: &Type, b: &Type, v: Variance, span: Span) {

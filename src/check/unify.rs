@@ -42,6 +42,16 @@ fn same_name(a: &Type, b: &Type) -> String {
             }
         });
     }
+    if symbols
+        .iter()
+        .filter(|s| crate::types::is_closure(s))
+        .count()
+        > 1
+    {
+        return "; each closure that captures has a type of its own, even if two look the same"
+            .to_string();
+    }
+    symbols.retain(|s| !crate::types::is_closure(s));
     for (i, x) in symbols.iter().enumerate() {
         let name = source_name(x);
         if let Some(y) = symbols[i + 1..].iter().find(|y| source_name(y) == name) {
@@ -305,8 +315,8 @@ impl Checker {
                     .unwrap_or_else(|_| unreachable!("a variable fits anything"));
             }
         }
-        self.check_escapes()?;
-        self.check_captures()?;
+        self.settle_closures()?;
+        self.settle_calls()?;
         self.prove_all()?;
         for v in vars..self.vars.len() {
             let t = self.solved(&Type::Var(v as u32));
@@ -331,7 +341,7 @@ impl Checker {
     fn settle_unused(&mut self) {
         for (i, t) in std::mem::take(&mut self.unused) {
             let t = self.solved(&t);
-            if self.mono || has_vars(&t) || self.is_discard(&t) {
+            if has_vars(&t) || self.is_discard(&t) {
                 continue;
             }
             let w = &mut self.warnings[i];

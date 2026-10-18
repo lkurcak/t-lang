@@ -8,8 +8,9 @@
 //! checked; the borrow checker runs once they're all solved, and asks the
 //! checker for their solutions.
 
-use crate::ast::{Expr, Lambda, Pattern};
+use crate::ast::{Capture, Expr, Lambda, Pattern};
 use crate::error::Span;
+use crate::traits::FnKind;
 use crate::types::Type;
 use std::collections::HashMap;
 
@@ -39,6 +40,14 @@ pub(crate) struct Typed {
     pub(crate) fields: HashMap<*const Expr, (usize, usize)>,
     /// The variables each closure captures, by id.
     pub(crate) captures: HashMap<*const Lambda, Vec<Span>>,
+    /// How each closure that captures captures each of those, once worked
+    /// out (`Checker::settle_closures`), with its type's symbol.
+    pub(crate) modes: HashMap<*const Lambda, Vec<(Span, Capture)>>,
+    /// For each call of what isn't a function type, how it gets at what it
+    /// calls: through how many `*`s, and by which `Fn` trait. Through any,
+    /// it borrows what's at the end, `&` for `Fn` and `&mut` for `FnMut`;
+    /// or else, it borrows it that way, or for `FnOnce`, takes it.
+    pub(crate) calls: HashMap<*const Expr, (usize, FnKind)>,
     /// For each method call, the method it calls, and how its receiver is
     /// got from what's before the `.`: through how many `*`s, and then
     /// maybe a `&` (`Some(false)`) or `&mut` (`Some(true)`).

@@ -92,21 +92,14 @@ impl Ptr {
     }
 }
 
-/// What `|x| x + n` evaluates to: its code, and the environment it was
-/// created in, which holds `n`.
-///
-/// The environment is a *copy* of the locals the body uses, made at that
-/// point. What a closure can capture is `Copy` and holds no references, so
-/// a copy is as good as the original. It still has to live somewhere for as
-/// long as the closure does, which may be longer than the function that made
-/// it (see docs/03-inference.md).
-///
-/// Copies of the closure share one environment, so copying a closure that
-/// holds closures that hold closures costs no more than copying one.
+/// What `|x| x + n` evaluates to: its code, and what it captured, its
+/// *environment*: for each variable, a reference to it, or its value,
+/// moved or copied in, as `Lambda::modes` says (see
+/// docs/06c-closures.md). Like a struct's fields, as that's what it is.
 #[derive(Debug, Clone)]
 pub struct Closure {
     pub code: Arc<Lambda>,
-    pub env: Arc<[(String, Value)]>,
+    pub env: Vec<(String, Value)>,
 }
 
 /// The same closure: made by the same expression, in equal environments. T
@@ -307,6 +300,7 @@ impl Memory {
             v = match v {
                 Value::Struct(_, fields) => &fields[i].1,
                 Value::Variant(_, _, fields) => &fields[i],
+                Value::Closure(c) => &c.env[i].1,
                 Value::Moved => unsound("use of a value that was moved"),
                 other => unsound(&format!("field {i} of `{other}`")),
             };
@@ -321,6 +315,7 @@ impl Memory {
             v = match v {
                 Value::Struct(_, fields) => &mut fields[i].1,
                 Value::Variant(_, _, fields) => &mut fields[i],
+                Value::Closure(c) => &mut c.env[i].1,
                 Value::Moved => unsound("assignment into a value that was moved"),
                 other => unsound(&format!("field {i} of `{other}`")),
             };
@@ -343,7 +338,9 @@ struct Interp<'p, 'o> {
     /// The variables in scope, innermost last, each with its slot. A
     /// temporary that a `let` keeps alive (`let r = &f();`) is one with no
     /// name.
-    locals: Vec<(String, Ptr)>,
+    /// Whether each owns its slot: not a variable a closure captured, in
+    /// its body, which is where the closure says (see `call_closure`).
+    locals: Vec<(String, Ptr, bool)>,
     memory: Memory,
     /// The temporaries made in each statement being run, innermost last,
     /// to free when it's done.
@@ -355,8 +352,8 @@ struct Interp<'p, 'o> {
 impl Interp<'_, '_> {
     /// The slot of local variable `name`, if it's one.
     fn local(&self, name: &str) -> Option<Ptr> {
-        let local = self.locals.iter().rev().find(|(n, _)| n == name);
-        local.map(|(_, p)| p.clone())
+        let local = self.locals.iter().rev().find(|(n, ..)| n == name);
+        local.map(|(_, p, _)| p.clone())
     }
 
     /// The function `name` names, which isn't a local.
@@ -391,6 +388,8 @@ impl Interp<'_, '_> {
         match v {
             Value::Box(_) => true,
             Value::Struct(ty, _) | Value::Variant(ty, ..) => !self.copy.contains(ty.as_str()),
+            // A closure is `Copy` if what it holds is.
+            Value::Closure(c) => c.env.iter().any(|(_, v)| self.moves(v)),
             _ => false,
         }
     }
@@ -403,6 +402,7 @@ impl Interp<'_, '_> {
             Value::Box(p) => self.taken_apart(self.memory.get(p)),
             Value::Struct(_, fields) => fields.iter().any(|(_, v)| self.taken_apart(v)),
             Value::Variant(_, _, fields) => fields.iter().any(|v| self.taken_apart(v)),
+            Value::Closure(c) => c.env.iter().any(|(_, v)| self.taken_apart(v)),
             _ => false,
         }
     }
@@ -436,6 +436,7 @@ impl Interp<'_, '_> {
             }
             Value::Struct(_, fields) => fields.into_iter().for_each(|(_, v)| self.drop(v)),
             Value::Variant(_, _, fields) => fields.into_iter().for_each(|v| self.drop(v)),
+            Value::Closure(c) => c.env.into_iter().for_each(|(_, v)| self.drop(v)),
             _ => {}
         }
     }
@@ -451,7 +452,10 @@ impl Interp<'_, '_> {
     /// frees their slots.
     fn end_scope(&mut self, scope: usize) {
         while self.locals.len() > scope {
-            let (_, p) = self.locals.pop().expect("a local");
+            let (_, p, owned) = self.locals.pop().expect("a local");
+            if !owned {
+                continue;
+            }
             let v = self.memory.free(&p, false);
             self.drop(v);
         }
@@ -576,24 +580,57 @@ impl Interp<'_, '_> {
                 let decl = self.fns[name.as_str()];
                 // A call gets a fresh environment: just the parameters.
                 let params = decl.params.iter().map(|p| p.name.name.clone());
-                self.enter(params.zip(args).collect(), &decl.body, span)
+                self.enter(Vec::new(), params.zip(args).collect(), &decl.body, span)
             }
-            // A closure's environment is the one it was created in, plus its
-            // parameters.
-            Value::Closure(Closure { code, env }) => {
-                let params = code.params.iter().map(|p| p.name.name.clone());
-                let locals = env.iter().cloned().chain(params.zip(args)).collect();
-                self.enter(locals, &code.body, span)
+            // A closure called by value is the call's to use up, and what's
+            // left of it is dropped when it returns.
+            Value::Closure(c) => {
+                let at = self.memory.alloc(Value::Closure(c), false);
+                let result = self.call_closure(&at, args, span);
+                let left = self.memory.free(&at, false);
+                self.drop(left);
+                result
             }
+            // Through a reference, what it points to is called, in place.
+            Value::Ref(p) => match self.memory.get(&p).clone() {
+                Value::Closure(_) => self.call_closure(&p, args, span),
+                f => self.call(f, args, span),
+            },
             other => unsound(&format!("called a non-function `{other}`")),
         }
     }
 
+    /// Calls the closure at `at`. In its body, each variable it captured is
+    /// where the closure says: what the reference it holds points to, if it
+    /// captured it by reference, or else its own field.
+    fn call_closure(&mut self, at: &Ptr, args: Vec<Value>, span: Span) -> Result<Value, Error> {
+        let Value::Closure(c) = self.memory.get(at).clone() else {
+            unreachable!("a closure")
+        };
+        let mut captured = Vec::new();
+        for (i, (name, mode)) in c.code.modes.iter().enumerate() {
+            let p = match mode {
+                Capture::Value => at.field(i),
+                Capture::Ref | Capture::Mut | Capture::Unique => {
+                    match self.memory.get(&at.field(i)) {
+                        Value::Ref(p) => p.clone(),
+                        other => unsound(&format!("a closure holding `{other}` for a reference")),
+                    }
+                }
+            };
+            captured.push((name.clone(), p));
+        }
+        let params = c.code.params.iter().map(|p| p.name.name.clone());
+        self.enter(captured, params.zip(args).collect(), &c.code.body, span)
+    }
+
     /// Evaluates a function body with `locals` as its environment, each in
-    /// a new slot, freed at the end. The caller's locals are saved and
-    /// restored afterwards.
+    /// a new slot, freed at the end, and in a closure's, what it captured,
+    /// `captured`, where it is. The caller's locals are saved and restored
+    /// afterwards.
     fn enter(
         &mut self,
+        captured: Vec<(String, Ptr)>,
         locals: Vec<(String, Value)>,
         body: &Expr,
         span: Span,
@@ -604,9 +641,13 @@ impl Interp<'_, '_> {
                 format!("stack overflow (more than {MAX_CALL_DEPTH} nested calls)"),
             ));
         }
-        let locals = locals
-            .into_iter()
-            .map(|(name, v)| (name, self.memory.alloc(v, false)))
+        let captured = captured.into_iter().map(|(name, p)| (name, p, false));
+        let locals = captured
+            .chain(
+                locals
+                    .into_iter()
+                    .map(|(name, v)| (name, self.memory.alloc(v, false), true)),
+            )
             .collect();
         let saved = std::mem::replace(&mut self.locals, locals);
         let saved_temps = std::mem::take(&mut self.temps);
@@ -646,10 +687,14 @@ impl Interp<'_, '_> {
     /// (`Builder::call_into`). Only the borrow waits, and following the
     /// place's path: its root is worked out in order, as working it out
     /// may do things. `&*make()` calls `make` where it's written.
-    fn arguments(&mut self, args: &[Expr]) -> Result<Vec<Value>, Flow> {
+    fn arguments<'e>(
+        &mut self,
+        args: impl IntoIterator<Item = &'e Expr>,
+    ) -> Result<Vec<Value>, Flow> {
+        let args: Vec<&Expr> = args.into_iter().collect();
         // Each argument's value, or for a borrow, where its place's root is.
         let mut firsts: Vec<Result<Value, Ptr>> = Vec::new();
-        for a in args {
+        for &a in &args {
             let first = match &a.kind {
                 ExprKind::Unary(UnOp::Ref | UnOp::RefMut, x) => self.base(root(x)).map(Err),
                 _ => self.eval(a).map(Ok),
@@ -756,10 +801,14 @@ impl Interp<'_, '_> {
 
             // A function value owns nothing, so there's nothing to drop if
             // an argument doesn't finish.
+            //
+            // A closure's `&f` or `&mut f`, as `lift` writes a call of one
+            // that's `Fn` or `FnMut`, is taken after the arguments, as any
+            // borrow passed is.
             ExprKind::Call(f, args) => {
-                let f = self.eval(f)?;
-                let args = self.arguments(args)?;
-                self.call(f, args, e.span)?
+                let mut all = self.arguments(std::iter::once(&**f).chain(args))?;
+                let f = all.remove(0);
+                self.call(f, all, e.span)?
             }
 
             ExprKind::If(c, then, els) => {
@@ -835,14 +884,18 @@ impl Interp<'_, '_> {
             // functions. They're `Copy`, so they're copied.
             ExprKind::Lambda(code) => {
                 let mut env = Vec::new();
-                for name in &code.captures {
-                    if let Some(p) = self.local(name) {
-                        let v = self.read(&p);
-                        env.push((name.clone(), v));
-                    }
+                for (name, mode) in &code.modes {
+                    let p = self
+                        .local(name)
+                        .unwrap_or_else(|| unsound("capturing a non-variable"));
+                    let v = match mode {
+                        Capture::Value => self.read(&p),
+                        Capture::Ref | Capture::Mut | Capture::Unique => Value::Ref(p),
+                    };
+                    env.push((name.clone(), v));
                 }
                 Value::Closure(Closure {
-                    env: env.into(),
+                    env,
                     code: code.clone(),
                 })
             }
@@ -875,7 +928,7 @@ impl Interp<'_, '_> {
                         unsound("`let` with no value of a pattern");
                     };
                     let slot = self.memory.alloc(Value::Moved, false);
-                    self.locals.push((name.clone(), slot));
+                    self.locals.push((name.clone(), slot, true));
                 }
                 Stmt::Expr(e) | Stmt::BlockLike(e) => {
                     self.statement(|i| {
@@ -904,7 +957,7 @@ impl Interp<'_, '_> {
         {
             let v = self.statement(|i| i.eval(x))?;
             let p = self.memory.alloc(v, false);
-            self.locals.push((String::new(), p.clone()));
+            self.locals.push((String::new(), p.clone(), true));
             let r = self.memory.alloc(Value::Ref(p), false);
             self.temps.push(vec![r.clone()]);
             self.bind(pat, &r, false);
@@ -1019,7 +1072,7 @@ impl Interp<'_, '_> {
                     false => self.read(&v),
                 };
                 let slot = self.memory.alloc(value, false);
-                self.locals.push((name.clone(), slot));
+                self.locals.push((name.clone(), slot, true));
             }
             PatternKind::Variant(_, _, _, pats) => {
                 for (i, p) in pats.iter().enumerate() {

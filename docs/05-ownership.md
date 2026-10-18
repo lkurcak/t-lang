@@ -470,14 +470,12 @@ decide, so it's passed up to the function it's in, as constraints on the
 closure's type there: that's how `|r| r` checks against `fn(&int) ->
 &int`.
 
-What closures capture is unchanged from step 3: copies, and closures that
-capture are downward-only. With references and boxes about, a closure can
-only capture what's `Copy` and has no lifetime in its type, so a copy can't
-dangle and can't be freed twice (`err_closure_capture_box.t`,
-`err_closure_capture_ref.t`). Its copies are its own, and it can't change
-them (`err_mut_closure_capture.t`). Giving function types lifetimes, so a
-closure can capture references and be returned with them, waits for traits
-(step 6), when each closure gets a type of its own.
+What closures captured was unchanged from step 3: copies, and closures that
+captured were downward-only. With references and boxes about, a closure
+could only capture what's `Copy` and has no lifetime in its type, so a copy
+couldn't dangle or be freed twice, and its copies were its own, which it
+couldn't change. Step 6c gave each closure a type of its own, with the
+lifetimes of what it borrows: see [06c-closures.md](06c-closures.md).
 
 ## Matching through references
 
@@ -555,7 +553,7 @@ for as long as `r` (`err_borrow_temp.t`).
 | `Rc`, `RefCell`, sharing that's checked at run time | a library, once there's `alloc`; `RefCell` panics | — |
 | raw pointers, `unsafe` | for writing what the checker can't see is safe, like `Vec` itself | — |
 | a resizable array (`Vec`) | needs raw pointers, generics over sizes, and `alloc` | — |
-| closures capturing references, returning closures | function types with lifetimes, a type per closure | 6 |
+| returning closures | a type per closure (6c), and `impl Fn` | 6c.1 |
 | `Drop`, destructors | traits | 6 |
 | allocation that may fail | effects | 7 |
 | `v.push(v.len())`: a call's borrows taken after its arguments | no methods yet | 6 |

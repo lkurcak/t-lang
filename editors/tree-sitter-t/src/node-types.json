@@ -1986,6 +1986,10 @@
           "named": true
         },
         {
+          "type": "trait_with_signature",
+          "named": true
+        },
+        {
           "type": "type_identifier",
           "named": true
         }
@@ -2056,6 +2060,42 @@
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "trait_with_signature",
+    "named": true,
+    "fields": {
+      "parameters": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type_parameters_list",
+            "named": true
+          }
+        ]
+      },
+      "return_type": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "_type",
+            "named": true
+          }
+        ]
+      },
+      "trait": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type_identifier",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
@@ -2500,6 +2540,10 @@
   },
   {
     "type": "match",
+    "named": false
+  },
+  {
+    "type": "move",
     "named": false
   },
   {

@@ -54,7 +54,7 @@ pub fn check_source(src: &str) -> Checked {
     let checked = result.is_ok().then_some(&info);
     warnings.extend(naming::warnings(src, &program, checked));
     allow::apply(&program, &mut warnings);
-    let result = result.and_then(|()| mono::monomorphise(&lift::lift(&program, &info), &info));
+    let result = result.map(|()| mono::monomorphise(&lift::lift(&program, &info), &info));
     Checked {
         warnings,
         info,

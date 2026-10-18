@@ -20,6 +20,7 @@
 use crate::ast::*;
 use crate::check::Info;
 use crate::error::Span;
+use crate::traits::FnKind;
 use std::sync::Arc;
 
 /// `prog`, which must have checked with `info`, with no nested functions or
@@ -202,14 +203,12 @@ impl<'p> Cx<'p> {
         TypeExpr { kind, span: t.span }
     }
 
-    /// `g`, with the types in its equality bounds renamed.
+    /// `g`, with the types in its bounds renamed.
     fn generics(&self, g: &Generics) -> Generics {
         let mut g = g.clone();
         for (_, items) in &mut g.bounds {
-            for a in items.iter_mut().flat_map(|b| &mut b.assoc) {
-                if let AssocBoundKind::Eq(t) = &mut a.kind {
-                    *t = self.ty(t);
-                }
+            for t in items.iter_mut().flat_map(|b| b.types_mut()) {
+                *t = self.ty(t);
             }
         }
         g
@@ -235,10 +234,35 @@ impl<'p> Cx<'p> {
                 Box::new(self.expr(l, nested)),
                 Box::new(self.expr(r, nested)),
             ),
-            ExprKind::Call(f, args) => ExprKind::Call(
-                Box::new(self.expr(f, nested)),
-                args.iter().map(|a| self.expr(a, nested)).collect(),
-            ),
+            // A call of what isn't a function: of what it is through
+            // `derefs` references, by `&` or `&mut`, or by value. One of a
+            // borrow, `(&f)(1)`, is that already.
+            ExprKind::Call(f, args) => {
+                let mut callee = self.expr(f, nested);
+                let borrow = matches!(f.kind, ExprKind::Unary(UnOp::Ref | UnOp::RefMut, _));
+                if let Some(&(derefs, kind)) = self.info.calls.get(&e.span)
+                    && !borrow
+                {
+                    let span = callee.span;
+                    for _ in 0..derefs {
+                        let kind = ExprKind::Unary(UnOp::Deref, Box::new(callee));
+                        callee = Expr { kind, span };
+                    }
+                    let op = match kind {
+                        FnKind::Fn => Some(UnOp::Ref),
+                        FnKind::FnMut => Some(UnOp::RefMut),
+                        FnKind::FnOnce => None,
+                    };
+                    if let Some(op) = op {
+                        let kind = ExprKind::Unary(op, Box::new(callee));
+                        callee = Expr { kind, span };
+                    }
+                }
+                ExprKind::Call(
+                    Box::new(callee),
+                    args.iter().map(|a| self.expr(a, nested)).collect(),
+                )
+            }
             ExprKind::MethodCall(x, name, _, args) => {
                 let m = &self.info.methods[&name.span];
                 let mut recv = self.expr(x, nested);
@@ -354,7 +378,12 @@ impl<'p> Cx<'p> {
                     .collect();
                 let ret = l.ret.as_ref().map(|t| self.ty(t));
                 let body = self.expr(&l.body, nested);
-                ExprKind::Lambda(Arc::new(Lambda::new(params, ret, body)))
+                let mut lambda = Lambda::new(params, ret, body);
+                lambda.moves = l.moves;
+                lambda.modes = (self.info.captures.get(&l.body.span).into_iter().flatten())
+                    .cloned()
+                    .collect();
+                ExprKind::Lambda(Arc::new(lambda))
             }
             ExprKind::Assign(op, place, value) => ExprKind::Assign(
                 *op,

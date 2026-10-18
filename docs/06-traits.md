@@ -361,7 +361,7 @@ away: a positive cycle, found by Bellman–Ford (`generics.rs`). That lets
 | Missing | Why it's missing | Step |
 |---|---|---|
 | associated types, `type Item;` | the next part: docs/06b-associated-types.md | 6b |
-| closures as `Fn` traits, capturing by reference | after that | 6c |
+| closures as `Fn` traits, capturing by reference | done: docs/06c-closures.md | 6c ✅ |
 | `dyn Trait` | static dispatch until a program needs it | — |
 | `Drop` | drop check is the hard part | — |
 | `for` loops | an `Iterator` trait, with associated types (6b) and closures (6c) | — |

@@ -49,6 +49,8 @@ pub(super) enum Why {
     Bound(String, String),
     /// A call of method `.0` of the trait.
     Method(String),
+    /// A call of a value of the type.
+    Call,
 }
 
 /// An obligation the checker has to prove once the types in it are known.
@@ -191,6 +193,63 @@ impl Checker {
                         trait_name: tr.clone(),
                     },
                 );
+                // `F: Fn(int) -> int` says what `F`'s calls take and give,
+                // as an equality bound on `FnOnce`'s signature.
+                let callable = crate::traits::FN_TRAITS.contains(&tr.as_str());
+                match (&b.sig, callable) {
+                    (Some((ps, ret)), true) => {
+                        let unit = TypeExpr {
+                            kind: TypeExprKind::Unit,
+                            span: b.span,
+                        };
+                        let written = TypeExpr {
+                            kind: TypeExprKind::Fn(
+                                ps.clone(),
+                                Box::new(ret.as_deref().cloned().unwrap_or(unit)),
+                            ),
+                            span: b.span,
+                        };
+                        let mut lts = Lifetimes::Assoc {
+                            declared: lifetimes,
+                        };
+                        let rhs = self.resolve_with(&written, params, &mut lts)?;
+                        let lhs = Type::Proj(
+                            Box::new(ty.clone()),
+                            "FnOnce".into(),
+                            crate::traits::SIG.into(),
+                        );
+                        if eqs.iter().any(|(l, _)| *l == lhs) {
+                            return Err(Error::ty(
+                                b.span,
+                                format!(
+                                    "`{}` is said to take and give things twice; say it once",
+                                    subject.name
+                                ),
+                            ));
+                        }
+                        eqs.push((lhs, rhs));
+                    }
+                    (None, true) => {
+                        return Err(Error::ty(
+                            b.span,
+                            format!(
+                                "say what calls of `{0}` take and give, as in `{0}: {tr}(int) -> \
+                                 int`",
+                                subject.name
+                            ),
+                        ));
+                    }
+                    (Some(_), false) => {
+                        return Err(Error::ty(
+                            b.span,
+                            format!(
+                                "`{tr}` isn't one of `Fn`, `FnMut` and `FnOnce`, so it takes no \
+                                 signature"
+                            ),
+                        ));
+                    }
+                    (None, false) => {}
+                }
                 for a in &b.assoc {
                     let owner = match self.traits.assoc_owner(&tr, &a.name.name)[..] {
                         [ref o] => o.clone(),
@@ -215,11 +274,8 @@ impl Checker {
                     let lhs = Type::Proj(Box::new(ty.clone()), owner, a.name.name.clone());
                     match &a.kind {
                         AssocBoundKind::Eq(t) => {
-                            let mut lts = match self.mono {
-                                true => Lifetimes::Any,
-                                false => Lifetimes::Assoc {
-                                    declared: lifetimes,
-                                },
+                            let mut lts = Lifetimes::Assoc {
+                                declared: lifetimes,
                             };
                             let rhs = self.resolve_with(t, params, &mut lts)?;
                             if has_proj(&rhs) {
@@ -543,12 +599,9 @@ impl Checker {
         for d in &prog.impls {
             let params = generics::declare(&d.generics.types)?;
             let declared = generics::declare_lifetimes(&d.generics.lifetimes)?;
-            let mut lts = match self.mono {
-                true => Lifetimes::Any,
-                false => Lifetimes::Params {
-                    declared: &declared,
-                    elided: Vec::new(),
-                },
+            let mut lts = Lifetimes::Params {
+                declared: &declared,
+                elided: Vec::new(),
             };
             if let Some(s) = mentions_self(&d.self_ty) {
                 return Err(Error::ty(
@@ -583,6 +636,15 @@ impl Checker {
                         format!(
                             "an inherent impl can only be for a struct or enum, not `{t}`; to \
                              give `{t}` methods, declare a trait and implement that"
+                        ),
+                    ));
+                }
+                (Some(tr), _) if crate::traits::FN_TRAITS.contains(&tr.as_str()) => {
+                    return Err(Error::ty(
+                        header,
+                        format!(
+                            "`{tr}` is built in: only functions and closures implement it, and \
+                             references to them"
                         ),
                     ));
                 }
@@ -746,11 +808,8 @@ impl Checker {
             }
             let mut with_self = params.to_vec();
             with_self.push("Self".into());
-            let mut lts = match self.mono {
-                true => Lifetimes::Any,
-                false => Lifetimes::Assoc {
-                    declared: lifetimes,
-                },
+            let mut lts = Lifetimes::Assoc {
+                declared: lifetimes,
             };
             self.env = preds.to_vec();
             self.env.push(Pred {
@@ -763,10 +822,8 @@ impl Checker {
             self.adts.proj.local.clear();
             let t =
                 Subst::new(&["Self".to_string()], std::slice::from_ref(self_ty)).apply(&resolved?);
-            if !self.mono {
-                constrained(&t, self_ty, params, a.ty.span)?;
-                terminates(&t, self_ty, params, a.ty.span)?;
-            }
+            constrained(&t, self_ty, params, a.ty.span)?;
+            terminates(&t, self_ty, params, a.ty.span)?;
             out.push((n.clone(), t));
         }
         let missing: Vec<String> = decls
@@ -865,10 +922,6 @@ impl Checker {
                     derived: true,
                 });
             }
-        }
-        // What monomorphisation made says what's `Copy` and `Eq` already.
-        if self.mono {
-            return Ok(());
         }
         loop {
             let mut changed = false;
@@ -1369,7 +1422,8 @@ impl Checker {
                 if path.contains(&k) {
                     return Some(t.clone());
                 }
-                let u = crate::traits::project(&self.traits.impls, s, tr, name)?;
+                let u =
+                    crate::traits::project(&self.traits.impls, &self.traits.closures, s, tr, name)?;
                 path.push(k);
                 let found = self.holds(&u, path, &mut HashSet::new());
                 path.pop();
@@ -1640,17 +1694,12 @@ impl Checker {
         Ok(())
     }
 
-    /// Does `t`, which has no type variables in it, implement `tr`, with
-    /// the bounds in scope? Monomorphisation's output says which of its
-    /// types do (see `derive`).
+    /// Is `t`, which has no type variables in it, `Copy`, with the bounds
+    /// in scope?
     pub(crate) fn is_copy(&self, t: &Type) -> bool {
-        match self.mono {
-            true => crate::types::is_copy(&self.adts, t, false),
-            false => self
-                .traits
-                .implements(t, "Copy", &self.env, &self.adts.proj.local)
-                .is_ok(),
-        }
+        self.traits
+            .implements(t, "Copy", &self.env, &self.adts.proj.local)
+            .is_ok()
     }
 
     /// May a value of type `t`, which has no type variables in it, be
@@ -1716,6 +1765,8 @@ impl Checker {
     /// known, or else once the function's types are.
     pub(super) fn oblige(&mut self, pred: Pred, span: Span, why: Why) -> Result<(), Error> {
         let ty = self.solved(&pred.ty);
+        // What a closure implements is known only once its captures are.
+        let later = self.has_unsettled_closure(&ty);
         let o = Obligation {
             pred: Pred {
                 ty,
@@ -1724,7 +1775,7 @@ impl Checker {
             span,
             why,
         };
-        match super::unify::has_vars(&o.pred.ty) {
+        match later || super::unify::has_vars(&o.pred.ty) {
             true => {
                 self.obligations.push(o);
                 Ok(())
@@ -1751,6 +1802,7 @@ impl Checker {
             (Type::Param(t), tr) => format!("; add a bound: `{t}: {tr}`"),
             (Type::Fn(_), "Eq") if at_bottom => ": functions can't be compared".to_string(),
             (Type::Fn(_), "Eq") => ", and functions can't be compared".to_string(),
+            (Type::Adt(s, ..), _) if crate::types::is_closure(s) => String::new(),
             (t @ Type::Adt(..), tr @ ("Eq" | "Copy" | "Discard")) => {
                 format!(
                     "; add `#[derive({tr})]` to `{}`",
@@ -1767,6 +1819,9 @@ impl Checker {
         let message = match &o.why {
             Why::Compare(op) => match (ty, at_bottom) {
                 (Type::Fn(_), _) => format!("cannot compare functions with `{op}`"),
+                (Type::Adt(s, ..), _) if crate::types::is_closure(s) => {
+                    format!("cannot compare closures with `{op}`")
+                }
                 (Type::Param(p), true) => format!(
                     "cannot compare values of type `{p}` with `{op}`: `{p}` doesn't implement \
                      `Eq`{}",
@@ -1792,6 +1847,21 @@ impl Checker {
                 "`{ty}` doesn't implement `{tr}`, which method `{m}` is of{needs}{}",
                 fix(&bad)
             ),
+            Why::Call => format!("`{ty}` can't be called{needs}"),
+        };
+        // A closure that implements less than it's needed to: why.
+        let message = match (&o.why, self.closure_why(&bad.ty)) {
+            (Why::Bound(what, _), Some((kind, why)))
+                if crate::traits::FN_TRAITS.contains(&bad.trait_name.as_str()) =>
+            {
+                format!(
+                    "this closure is only `{}`, as {why}, but `{what}` needs it to implement \
+                     `{}`",
+                    kind.name(),
+                    bad.trait_name
+                )
+            }
+            _ => message,
         };
         Err(Error::ty(o.span, message))
     }
@@ -1841,9 +1911,6 @@ impl Checker {
 
     /// `well_formed`, for a type with no variables in it, outside a body.
     pub(super) fn well_formed_now(&mut self, t: &Type, span: Span) -> Result<(), Error> {
-        if self.mono {
-            return Ok(());
-        }
         self.well_formed(t, span)
     }
 

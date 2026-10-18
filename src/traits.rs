@@ -43,7 +43,96 @@ impl fmt::Display for Pred {
 /// `Discard`, which says a type's values may be thrown away rather than
 /// used up; and `Copy`, which says they're copied rather than moved, and
 /// needs `Discard` (see docs/06a.1-linear-types.md).
-pub const BUILTIN_TRAITS: &[&str] = &["Copy", "Discard", "Eq"];
+pub const BUILTIN_TRAITS: &[&str] = &["Copy", "Discard", "Eq", "Fn", "FnMut", "FnOnce"];
+
+/// The traits of what can be called: `F: Fn(int) -> int` says a value of
+/// type `F` can be called with an `int`, giving an `int`. Functions and
+/// closures implement them, and nothing else can (see
+/// docs/06c-closures.md). Each is stronger than the next: `trait Fn:
+/// FnMut` and `trait FnMut: FnOnce`.
+pub const FN_TRAITS: &[&str] = &["Fn", "FnMut", "FnOnce"];
+
+/// The associated type of `FnOnce` that a bound like `Fn(int) -> int`
+/// says is `fn(int) -> int`: what a call takes and gives. Its name can't
+/// be written, so only such bounds can say what it is.
+pub const SIG: &str = "(signature)";
+
+/// How a call of a callable value gets at it: `Fn` borrows it, `FnMut`
+/// borrows it mutably, and `FnOnce` takes it. In that order, each allows
+/// fewer calls than the one before, and needs less of the value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum FnKind {
+    Fn,
+    FnMut,
+    FnOnce,
+}
+
+impl FnKind {
+    pub fn name(self) -> &'static str {
+        match self {
+            FnKind::Fn => "Fn",
+            FnKind::FnMut => "FnMut",
+            FnKind::FnOnce => "FnOnce",
+        }
+    }
+
+    pub fn of(trait_name: &str) -> Option<FnKind> {
+        match trait_name {
+            "Fn" => Some(FnKind::Fn),
+            "FnMut" => Some(FnKind::FnMut),
+            "FnOnce" => Some(FnKind::FnOnce),
+            _ => None,
+        }
+    }
+}
+
+/// What a closure that captures is, as a type: a struct of what it
+/// captures, with an impl of the `Fn` traits whose body is the closure's.
+/// Its type is `Type::Adt` of its symbol, with every type parameter in
+/// scope where it's written for type arguments, and a lifetime for each
+/// region in its captures' types and its signature, which are its
+/// lifetime parameters. It's the same type each time the closure
+/// expression runs, as a struct is, but for those regions.
+#[derive(Debug, Clone)]
+pub struct ClosureDef {
+    /// The type parameters in scope where it's written.
+    pub params: Vec<String>,
+    /// Its lifetime parameters: none until its captures are worked out,
+    /// at the end of the function it's in.
+    pub lifetimes: Vec<String>,
+    /// What it takes and gives, mentioning `params` and `lifetimes`.
+    pub sig: crate::types::FnType,
+    /// Which of the `Fn` traits it implements, the strongest: worked out
+    /// with its captures.
+    pub kind: Option<FnKind>,
+    /// What it captures, in order: each variable's name, and the type of
+    /// the field it's in, a reference to it or its value.
+    pub fields: Vec<(String, Type)>,
+}
+
+impl ClosureDef {
+    /// Its fields' types at type `t`, which is it.
+    pub fn fields_at(&self, t: &Type) -> Vec<Type> {
+        let s = self.subst(t);
+        self.fields.iter().map(|(_, f)| s.apply(f)).collect()
+    }
+
+    /// Its signature at type `t`, which is it.
+    pub fn sig_at(&self, t: &Type) -> Type {
+        self.subst(t).apply(&Type::Fn(self.sig.clone()))
+    }
+
+    fn subst(&self, t: &Type) -> Subst {
+        let Type::Adt(_, regions, args) = t else {
+            unreachable!("a closure type is a struct's")
+        };
+        let s = Subst::new(&self.params, args);
+        match regions.len() == self.lifetimes.len() {
+            true => s.with_regions(&self.lifetimes, regions),
+            false => s,
+        }
+    }
+}
 
 /// A trait.
 #[derive(Debug, Clone)]
@@ -126,6 +215,8 @@ impl ImplDef {
 pub struct Traits {
     pub traits: HashMap<String, TraitDef>,
     pub impls: Vec<ImplDef>,
+    /// Every closure that captures, by its symbol.
+    pub closures: HashMap<String, ClosureDef>,
 }
 
 /// How a type implements a trait.
@@ -193,9 +284,38 @@ impl Traits {
                 methods: vec![eq],
             },
         );
+        // trait FnOnce { type (signature); }
+        // trait FnMut: FnOnce {}
+        // trait Fn: FnMut {}
+        //
+        // Calling isn't a method, as a call takes any number of arguments.
+        for (name, supers) in [
+            ("FnOnce", None),
+            ("FnMut", Some("FnOnce")),
+            ("Fn", Some("FnMut")),
+        ] {
+            let assoc = match supers {
+                None => vec![AssocDecl {
+                    name: SIG.into(),
+                    bounds: Vec::new(),
+                    span: Span::new(0, 0),
+                }],
+                Some(_) => Vec::new(),
+            };
+            traits.insert(
+                name.to_string(),
+                TraitDef {
+                    span: None,
+                    supers: supers.into_iter().map(str::to_string).collect(),
+                    assoc,
+                    methods: Vec::new(),
+                },
+            );
+        }
         Traits {
             traits,
             impls: Vec::new(),
+            closures: HashMap::new(),
         }
     }
 
@@ -328,7 +448,36 @@ impl Traits {
             // References and boxes compare what they point to.
             ("Eq", Type::Ref(_, _, inner) | Type::Box(inner)) => return all(&[inner]),
             ("Eq", Type::Fn(_)) => return Err(fail()),
+            // Functions can be called any number of times. A reference to
+            // what can be called through a shared reference can be too, and
+            // one to what can be through a mutable one, as long as it's
+            // mutable: calling `&F` calls `F` by `&`.
+            ("Fn" | "FnMut" | "FnOnce", Type::Fn(_)) => return Ok(Source::Builtin),
+            ("Fn" | "FnMut" | "FnOnce", Type::Ref(_, false, inner)) => {
+                self.implements_at(inner, "Fn", env, eqs, depth + 1)?;
+                return Ok(Source::Builtin);
+            }
+            ("FnMut" | "FnOnce", Type::Ref(_, true, inner)) => {
+                self.implements_at(inner, "FnMut", env, eqs, depth + 1)?;
+                return Ok(Source::Builtin);
+            }
+            ("Fn", Type::Ref(_, true, _)) => return Err(fail()),
             _ => {}
+        }
+        // A closure is what it captures: it may be thrown away, or copied,
+        // if all of that may be. A reference it holds always may be thrown
+        // away, and copied unless it's `&mut`.
+        if let Type::Adt(symbol, ..) = ty
+            && let Some(c) = self.closures.get(symbol)
+        {
+            let Some(kind) = c.kind else {
+                unreachable!("`{ty}: {tr}` asked before the closure's captures were known")
+            };
+            return match (tr, FnKind::of(tr)) {
+                ("Discard" | "Copy", _) => all(&c.fields_at(ty).iter().collect::<Vec<_>>()),
+                (_, Some(wanted)) if kind <= wanted => Ok(Source::Builtin),
+                _ => Err(fail()),
+            };
         }
         if let Type::Param(_) | Type::Proj(..) = ty {
             let implied = |t: &str| self.implied(t).iter().any(|t| t == tr);
@@ -352,13 +501,13 @@ impl Traits {
         let d = &self.impls[i];
         let s = Subst::new(&d.params, &args);
         for p in &d.preds {
-            let t = normalise(&self.impls, eqs, &s.apply(&p.ty));
+            let t = normalise(&self.impls, &self.closures, eqs, &s.apply(&p.ty));
             self.implements_at(&t, &p.trait_name, env, eqs, depth + 1)?;
         }
         for (lhs, rhs) in &d.eqs {
             let (l, r) = (s.apply(lhs), s.apply(rhs));
-            if normalise(&self.impls, eqs, &l).erased() != normalise(&self.impls, eqs, &r).erased()
-            {
+            let normal = |t: &Type| normalise(&self.impls, &self.closures, eqs, t).erased();
+            if normal(&l) != normal(&r) {
                 return Err(fail());
             }
         }
@@ -395,6 +544,9 @@ impl Traits {
 pub struct Projections {
     /// Every trait impl.
     impls: Arc<Vec<ImplDef>>,
+    /// Every closure that captures, by symbol: what it takes and gives is
+    /// what `<C as FnOnce>::(signature)` is.
+    pub closures: HashMap<String, ClosureDef>,
     /// What the equality bounds in scope say: `(T::Item, int)` for
     /// `T: Iter<Item = int>`.
     pub local: Vec<(Type, Type)>,
@@ -405,28 +557,34 @@ impl Projections {
         let impls = traits.impls.iter().filter(|d| d.trait_name.is_some());
         Projections {
             impls: Arc::new(impls.cloned().collect()),
+            closures: traits.closures.clone(),
             local: Vec::new(),
         }
     }
 
     /// `t`, with every projection in it that can be worked out, worked out.
     pub fn normalise(&self, t: &Type) -> Type {
-        normalise(&self.impls, &self.local, t)
+        normalise(&self.impls, &self.closures, &self.local, t)
     }
 }
 
 /// `t`, with every projection in it worked out that can be: by the impl of
 /// `impls` its type matches, or what `local` says of a rigid one.
-pub fn normalise(impls: &[ImplDef], local: &[(Type, Type)], t: &Type) -> Type {
-    let t = t.map(|p| normalise(impls, local, p));
+pub fn normalise(
+    impls: &[ImplDef],
+    closures: &HashMap<String, ClosureDef>,
+    local: &[(Type, Type)],
+    t: &Type,
+) -> Type {
+    let t = t.map(|p| normalise(impls, closures, local, p));
     let Type::Proj(s, tr, name) = &t else {
         return t;
     };
     if let Some((_, u)) = local.iter().find(|(p, _)| *p == t) {
         return u.clone();
     }
-    match project(impls, s, tr, name) {
-        Some(u) => normalise(impls, local, &u),
+    match project(impls, closures, s, tr, name) {
+        Some(u) => normalise(impls, closures, local, &u),
         None => t,
     }
 }
@@ -434,9 +592,31 @@ pub fn normalise(impls: &[ImplDef], local: &[(Type, Type)], t: &Type) -> Type {
 /// What `<s as tr>::name` is by the impl of `impls` that's for `s`, if one
 /// is: the type it says, with the parts of `s` its parameters match, and
 /// the regions of `s` where its lifetimes are.
-pub fn project(impls: &[ImplDef], s: &Type, tr: &str, name: &str) -> Option<Type> {
+pub fn project(
+    impls: &[ImplDef],
+    closures: &HashMap<String, ClosureDef>,
+    s: &Type,
+    tr: &str,
+    name: &str,
+) -> Option<Type> {
     if let Type::Param(_) | Type::Var(_) | Type::Proj(..) = s {
         return None;
+    }
+    // What a call of a function, a closure, or a reference to one takes
+    // and gives: its signature, with the closure's regions where its
+    // lifetimes are.
+    if name == SIG {
+        return match s {
+            Type::Fn(_) => Some(s.clone()),
+            Type::Adt(symbol, ..) => Some(closures.get(symbol)?.sig_at(s)),
+            Type::Ref(_, _, inner) => match &**inner {
+                Type::Param(_) | Type::Var(_) | Type::Proj(..) => {
+                    Some(Type::Proj(inner.clone(), "FnOnce".into(), SIG.into()))
+                }
+                inner => project(impls, closures, inner, tr, name),
+            },
+            _ => None,
+        };
     }
     for d in impls.iter().filter(|d| d.trait_name.as_deref() == Some(tr)) {
         let mut found = HashMap::new();
@@ -523,9 +703,15 @@ fn param(name: &str) -> Type {
 /// - Nor does it look at what a function type is generic over: an impl for
 ///   `fn(&int) -> &int`, for every lifetime, is found for a `fn(&'a int) ->
 ///   &'a int`. That's sound only because every function value works at
-///   every lifetime, as a closure captures no references, and because an
-///   associated type can't mention a parameter that's only inside a
-///   function type. Closures that capture references would break it.
+///   every lifetime, and because an associated type can't mention a
+///   parameter that's only inside a function type. A function value holds
+///   no references: a closure that captures anything has a type of its own
+///   (`ClosureDef`), never a function type, and the checker rejects one
+///   where a function type is wanted. Anything that lets a function type
+///   hold what it borrows must replace this.
+/// - A closure's type is a struct's, parametric in its lifetimes like any,
+///   and nothing can name it in an impl's header, so only blanket impls and
+///   the built-in ones are found for it.
 pub fn matches(pat: &Type, t: &Type, params: &[String], found: &mut HashMap<String, Type>) -> bool {
     match pat {
         Type::Param(p) if params.contains(p) => match found.get(p) {

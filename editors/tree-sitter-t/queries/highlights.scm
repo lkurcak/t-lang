@@ -69,6 +69,7 @@
 ["if" "else" "match"] @keyword.conditional
 ["while" "loop" "break" "continue"] @keyword.repeat
 "return" @keyword.return
+"move" @keyword.storage.modifier
 (mutable_specifier) @keyword.storage.modifier
 
 ; Operators and punctuation
