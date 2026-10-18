@@ -21,6 +21,15 @@
 //! a *leak*. The borrow checker promises none of those happen
 //! (docs/05-ownership.md).
 //!
+//! Since step 6a.1 it keeps linear values the same way, by their types:
+//! what monomorphisation made says which are `Copy` and which `Discard`.
+//! Using a value whose type isn't `Copy` moves it, whatever it holds, and a
+//! pattern that takes apart a value whose type isn't `Discard`, by value,
+//! uses it up, as the borrow checker's `Consume` does. Throwing one away
+//! whole, rather than using it up, is a leak too
+//! (docs/06a.1-linear-types.md). Except on the way out of a run-time error:
+//! that's a panic, which aborts, so nothing is really dropped.
+//!
 //! `return`, `break` and `continue` unwind: each is a `Flow` that runs back
 //! up through the expressions it's in, ending their statements and scopes
 //! on the way, to the call or loop it goes to. What those expressions had
@@ -30,7 +39,7 @@
 use crate::ast::*;
 use crate::check::BUILTINS;
 use crate::error::{Error, Span};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
@@ -151,26 +160,14 @@ impl fmt::Display for Value {
     }
 }
 
-impl Value {
-    /// Does this value own a box, so that copying it would mean two owners?
-    /// Then using it moves it. Through a reference doesn't count: that box
-    /// is someone else's. Everything else is copied: whether that's allowed
-    /// is the checker's business, not memory's.
-    fn owns_box(&self) -> bool {
-        match self {
-            Value::Box(_) => true,
-            Value::Struct(_, fields) => fields.iter().any(|(_, v)| v.owns_box()),
-            Value::Variant(_, _, fields) => fields.iter().any(Value::owns_box),
-            Value::Moved => unsound("use of a value that was moved out of, at least in part"),
-            _ => false,
-        }
-    }
-}
-
 /// Runs `main`. Anything the program prints is appended to `out`, even if the
 /// program later fails.
 pub fn run(prog: &Program, out: &mut Vec<String>) -> Result<Value, Error> {
     let fns = prog.fns.iter().map(|f| (f.name.name.as_str(), f)).collect();
+    let derived = |tr: &str| -> HashSet<&str> {
+        let with = prog.types.iter().filter(|d| d.derive_of(tr).is_some());
+        with.map(|d| d.name().name.as_str()).collect()
+    };
     let structs = prog
         .types
         .iter()
@@ -182,6 +179,9 @@ pub fn run(prog: &Program, out: &mut Vec<String>) -> Result<Value, Error> {
     let mut interp = Interp {
         fns,
         structs,
+        copy: derived("Copy"),
+        discard: derived("Discard"),
+        aborting: false,
         locals: Vec::new(),
         memory: Memory::default(),
         temps: Vec::new(),
@@ -333,6 +333,13 @@ struct Interp<'p, 'o> {
     fns: HashMap<&'p str, &'p FnDecl>,
     /// For putting struct literals' fields in declaration order.
     structs: HashMap<&'p str, &'p StructDecl>,
+    /// The structs and enums that are `Copy`, and that are `Discard`, as
+    /// monomorphisation's copies of them say.
+    copy: HashSet<&'p str>,
+    discard: HashSet<&'p str>,
+    /// Is a run-time error on its way out? Then what's dropped isn't
+    /// checked for leaks: a panic aborts.
+    aborting: bool,
     /// The variables in scope, innermost last, each with its slot. A
     /// temporary that a `let` keeps alive (`let r = &f();`) is one with no
     /// name.
@@ -363,21 +370,65 @@ impl Interp<'_, '_> {
         }
     }
 
-    /// The value at `p`, moved out if it owns a box, or else copied.
+    /// The value at `p`, moved out if its type isn't `Copy`, or else
+    /// copied. It must all be there.
     fn read(&mut self, p: &Ptr) -> Value {
         let v = self.memory.get(p);
-        if let Value::Moved = v {
-            unsound("use of a value that was moved");
+        if self.taken_apart(v) {
+            unsound("use of a value that was moved out of, at least in part");
         }
-        if v.owns_box() {
+        if self.moves(v) {
             std::mem::replace(self.memory.get_mut(p), Value::Moved)
         } else {
             v.clone()
         }
     }
 
+    /// Is using `v` moving it: is its type not `Copy`? A box never is, and
+    /// a reference always is, as far as memory goes: that a `&mut` isn't is
+    /// the borrow checker's business.
+    fn moves(&self, v: &Value) -> bool {
+        match v {
+            Value::Box(_) => true,
+            Value::Struct(ty, _) | Value::Variant(ty, ..) => !self.copy.contains(ty.as_str()),
+            _ => false,
+        }
+    }
+
+    /// Has some of `v` been moved out of, maybe all of it? Through boxes
+    /// too, which own what they point to.
+    fn taken_apart(&self, v: &Value) -> bool {
+        match v {
+            Value::Moved => true,
+            Value::Box(p) => self.taken_apart(self.memory.get(p)),
+            Value::Struct(_, fields) => fields.iter().any(|(_, v)| self.taken_apart(v)),
+            Value::Variant(_, _, fields) => fields.iter().any(|v| self.taken_apart(v)),
+            _ => false,
+        }
+    }
+
     /// Frees everything `v` owns: the boxes in it, and what's in those.
+    ///
+    /// Throwing away a struct or enum value that isn't `Discard` is a leak,
+    /// unless it's been taken apart, by moving out of it: then only what's
+    /// left in it counts, each part on its own, as for the borrow checker
+    /// (`moves::leftover`).
     fn drop(&mut self, v: Value) {
+        if let Value::Struct(ty, _) | Value::Variant(ty, ..) = &v
+            && !self.aborting
+            && !self.discard.contains(ty.as_str())
+            && !self.taken_apart(&v)
+        {
+            unsound(&format!(
+                "a `{}` was thrown away, and it isn't `Discard`: a leak",
+                crate::check::source_name(ty)
+            ));
+        }
+        self.drop_parts(v);
+    }
+
+    /// Drops what `v` holds, but not `v` itself.
+    fn drop_parts(&mut self, v: Value) {
         match v {
             Value::Box(p) => {
                 let inner = self.memory.free(&p, true);
@@ -387,6 +438,13 @@ impl Interp<'_, '_> {
             Value::Variant(_, _, fields) => fields.into_iter().for_each(|v| self.drop(v)),
             _ => {}
         }
+    }
+
+    /// The error at `span`, of a program that panics: from here on,
+    /// nothing is dropped for real.
+    fn panic(&mut self, span: Span, message: impl Into<String>) -> Error {
+        self.aborting = true;
+        Error::runtime(span, message)
     }
 
     /// Drops the variables from `scope` on, the last declared first, and
@@ -421,20 +479,35 @@ impl Interp<'_, '_> {
         p
     }
 
-    /// Where the value of place expression `e` is. Anything else is
-    /// evaluated into a temporary, which is where it is.
+    /// Where the value of place expression `e` is: where its root is,
+    /// then its path (see `root`).
     fn place(&mut self, e: &Expr) -> Result<Ptr, Flow> {
+        let base = self.base(root(e))?;
+        Ok(self.path(e, &base))
+    }
+
+    /// Where the value of `root`, the root of a place expression, is: a
+    /// variable's slot, or else a new temporary, holding its value.
+    fn base(&mut self, root: &Expr) -> Result<Ptr, Flow> {
+        if let ExprKind::Var(name, _) = &root.kind {
+            if let Some(p) = self.local(name) {
+                return Ok(p);
+            }
+            let f = self.function(name);
+            return Ok(self.temp(f));
+        }
+        let v = self.eval(root)?;
+        Ok(self.temp(v))
+    }
+
+    /// Where the value of place expression `e` is, given `base`, where its
+    /// root is: following its fields and `*`s, which does nothing but read
+    /// memory, so can't fail, nor jump anywhere.
+    fn path(&self, e: &Expr, base: &Ptr) -> Ptr {
         match &e.kind {
-            ExprKind::Var(name, _) => match self.local(name) {
-                Some(p) => Ok(p),
-                None => {
-                    let f = self.function(name);
-                    Ok(self.temp(f))
-                }
-            },
             // Through any references and boxes to the struct.
             ExprKind::Field(x, field) => {
-                let mut p = self.place(x)?;
+                let mut p = self.path(x, base);
                 loop {
                     match self.memory.get(&p) {
                         Value::Ref(q) | Value::Box(q) => p = q.clone(),
@@ -442,23 +515,20 @@ impl Interp<'_, '_> {
                             let i = fields.iter().position(|(f, _)| *f == field.name);
                             let i =
                                 i.unwrap_or_else(|| unsound(&format!("no field `{}`", field.name)));
-                            return Ok(p.field(i));
+                            return p.field(i);
                         }
                         other => unsound(&format!("field access on `{other}`")),
                     }
                 }
             }
             ExprKind::Unary(UnOp::Deref, x) => {
-                let p = self.place(x)?;
+                let p = self.path(x, base);
                 match self.memory.get(&p) {
-                    Value::Ref(q) | Value::Box(q) => Ok(q.clone()),
+                    Value::Ref(q) | Value::Box(q) => q.clone(),
                     other => unsound(&format!("`*` on `{other}`")),
                 }
             }
-            _ => {
-                let v = self.eval(e)?;
-                Ok(self.temp(v))
-            }
+            _ => base.clone(),
         }
     }
 
@@ -529,7 +599,7 @@ impl Interp<'_, '_> {
         span: Span,
     ) -> Result<Value, Error> {
         if self.depth >= MAX_CALL_DEPTH {
-            return Err(Error::runtime(
+            return Err(self.panic(
                 span,
                 format!("stack overflow (more than {MAX_CALL_DEPTH} nested calls)"),
             ));
@@ -571,26 +641,38 @@ impl Interp<'_, '_> {
         Ok(values)
     }
 
-    /// A call's arguments, in order, but for borrows of places, `&v` or
-    /// `&mut v`, which are taken after the rest, as the borrow checker
-    /// says (`Builder::call_into`). A borrow of what isn't a place,
-    /// `&make()`, is made in order, as making it may do things.
+    /// A call's arguments, in order, but for borrows, `&e` or `&mut e`,
+    /// which are taken after the rest, as the borrow checker says
+    /// (`Builder::call_into`). Only the borrow waits, and following the
+    /// place's path: its root is worked out in order, as working it out
+    /// may do things. `&*make()` calls `make` where it's written.
     fn arguments(&mut self, args: &[Expr]) -> Result<Vec<Value>, Flow> {
-        let later = |a: &Expr| matches!(&a.kind, ExprKind::Unary(UnOp::Ref | UnOp::RefMut, x) if x.is_place());
-        let mut values = self
-            .eval_all(args.iter().filter(|a| !later(a)))?
-            .into_iter();
-        let mut out = Vec::new();
+        // Each argument's value, or for a borrow, where its place's root is.
+        let mut firsts: Vec<Result<Value, Ptr>> = Vec::new();
         for a in args {
-            out.push(match later(a) {
-                // Borrowing a place can't fail, nor jump anywhere.
-                true => self
-                    .eval(a)
-                    .unwrap_or_else(|_| unsound("borrowing a place failed")),
-                false => values.next().expect("a value for each argument"),
-            });
+            let first = match &a.kind {
+                ExprKind::Unary(UnOp::Ref | UnOp::RefMut, x) => self.base(root(x)).map(Err),
+                _ => self.eval(a).map(Ok),
+            };
+            match first {
+                Ok(first) => firsts.push(first),
+                Err(flow) => {
+                    for v in firsts.into_iter().rev().filter_map(Result::ok) {
+                        self.drop(v);
+                    }
+                    return Err(flow);
+                }
+            }
         }
-        Ok(out)
+        let borrow = |i: &Self, a: &Expr, base: Ptr| match &a.kind {
+            ExprKind::Unary(_, x) => Value::Ref(i.path(x, &base)),
+            _ => unreachable!("a borrow"),
+        };
+        Ok(args
+            .iter()
+            .zip(firsts)
+            .map(|(a, first)| first.unwrap_or_else(|base| borrow(self, a, base)))
+            .collect())
     }
 
     /// Runs the body of a loop again and again, until a `break`, whose
@@ -642,11 +724,10 @@ impl Interp<'_, '_> {
             ExprKind::Unary(op, x) => {
                 let v = self.eval(x)?;
                 match op {
-                    UnOp::Neg => Value::Int(
-                        int(v)
-                            .checked_neg()
-                            .ok_or_else(|| Error::runtime(e.span, "integer overflow"))?,
-                    ),
+                    UnOp::Neg => match int(v).checked_neg() {
+                        Some(n) => Value::Int(n),
+                        None => return Err(self.panic(e.span, "integer overflow").into()),
+                    },
                     _ => Value::Bool(!bool(v)),
                 }
             }
@@ -944,6 +1025,7 @@ impl Interp<'_, '_> {
                 for (i, p) in pats.iter().enumerate() {
                     self.bind(p, &v.field(i), by_ref);
                 }
+                self.consume(&v, by_ref);
             }
             PatternKind::Struct(_, _, field_pats, _) => {
                 for fp in field_pats {
@@ -954,6 +1036,7 @@ impl Interp<'_, '_> {
                     let i = i.unwrap_or_else(|| unsound("no such field"));
                     self.bind(&fp.pat, &v.field(i), by_ref);
                 }
+                self.consume(&v, by_ref);
             }
             PatternKind::Or(alts) => {
                 let alt = alts.iter().find(|alt| self.matches(alt, &v));
@@ -968,8 +1051,21 @@ impl Interp<'_, '_> {
         }
     }
 
-    /// Are `a` and `b` equal, looking through references and boxes to what
-    /// they point to?
+    /// Uses up the value at `v`, which a pattern has just taken apart, if
+    /// it's owned, not reached `by_ref`, and isn't `Discard`: what the
+    /// pattern's variables didn't move out of it is dropped, and nothing's
+    /// left there. As the borrow checker's `Consume` does, though that goes
+    /// by the type the checker knows (see `Builder::consume`).
+    fn consume(&mut self, v: &Ptr, by_ref: bool) {
+        if let Value::Struct(ty, _) | Value::Variant(ty, ..) = self.memory.get(v)
+            && !by_ref
+            && !self.discard.contains(ty.as_str())
+        {
+            let old = std::mem::replace(self.memory.get_mut(v), Value::Moved);
+            self.drop_parts(old);
+        }
+    }
+
     /// `==` on the values at `p` and `q`, at `span`. References and boxes
     /// compare what they point to. A struct or enum with an `eq` of its
     /// own, a function `<T as Eq>::eq` for its type `T`, compares by that;
@@ -1005,6 +1101,10 @@ impl Interp<'_, '_> {
     }
 
     /// The `eq` of a struct or enum's own, if type `ty` has one.
+    ///
+    /// Relies on monomorphisation having made a copy of every `eq` that a
+    /// `==` can get to (`mono::Cx::need_eq`): here a missing one looks like
+    /// a derived `Eq`, and the values would be compared field by field.
     fn user_eq(&self, ty: &str) -> Option<String> {
         let name = format!("<{ty} as Eq>::eq");
         self.fns.contains_key(name.as_str()).then_some(name)
@@ -1016,22 +1116,40 @@ impl Interp<'_, '_> {
         Ok(bool(self.call(Value::Fn(f), args, span)?))
     }
 
-    fn arith(&self, op: BinOp, l: i64, r: i64, span: Span) -> Result<Value, Error> {
-        let overflow = || Error::runtime(span, "integer overflow");
-        Ok(match op {
-            BinOp::Add => Value::Int(l.checked_add(r).ok_or_else(overflow)?),
-            BinOp::Sub => Value::Int(l.checked_sub(r).ok_or_else(overflow)?),
-            BinOp::Mul => Value::Int(l.checked_mul(r).ok_or_else(overflow)?),
+    fn arith(&mut self, op: BinOp, l: i64, r: i64, span: Span) -> Result<Value, Error> {
+        let n = match op {
+            BinOp::Lt => return Ok(Value::Bool(l < r)),
+            BinOp::Le => return Ok(Value::Bool(l <= r)),
+            BinOp::Gt => return Ok(Value::Bool(l > r)),
+            BinOp::Ge => return Ok(Value::Bool(l >= r)),
             BinOp::Div | BinOp::Rem if r == 0 => {
-                return Err(Error::runtime(span, "division by zero"));
+                return Err(self.panic(span, "division by zero"));
             }
-            BinOp::Div => Value::Int(l.checked_div(r).ok_or_else(overflow)?),
-            BinOp::Rem => Value::Int(l.checked_rem(r).ok_or_else(overflow)?),
-            BinOp::Lt => Value::Bool(l < r),
-            BinOp::Le => Value::Bool(l <= r),
-            BinOp::Gt => Value::Bool(l > r),
-            BinOp::Ge => Value::Bool(l >= r),
+            BinOp::Add => l.checked_add(r),
+            BinOp::Sub => l.checked_sub(r),
+            BinOp::Mul => l.checked_mul(r),
+            BinOp::Div => l.checked_div(r),
+            BinOp::Rem => l.checked_rem(r),
             BinOp::Eq | BinOp::Ne | BinOp::And | BinOp::Or => unreachable!("handled in eval"),
-        })
+        };
+        match n {
+            Some(n) => Ok(Value::Int(n)),
+            None => Err(self.panic(span, "integer overflow")),
+        }
+    }
+}
+
+/// The root of place expression `e`: what its path of fields and `*`s
+/// starts from, `v` in `(*v.f).g`. Any expression is a place expression,
+/// its own root if it isn't a field or a `*`.
+///
+/// The borrow checker sees a place the same way (`Builder::place`), and the
+/// two must agree on when each part of it is worked out: the root where
+/// it's written, the path when the place is used. Only a borrow passed to a
+/// call (`arguments`) tells those apart.
+fn root(e: &Expr) -> &Expr {
+    match &e.kind {
+        ExprKind::Field(x, _) | ExprKind::Unary(UnOp::Deref, x) => root(x),
+        _ => e,
     }
 }
