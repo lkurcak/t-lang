@@ -27,16 +27,19 @@
 //! which types are `Copy` and `Eq`, which each type's copy says with a
 //! `#[derive(..)]`. The `eq` of a built-in or derived `Eq` is `==`, which
 //! the interpreter does field by field, calling `<T as Eq>::eq` for a type
-//! `T` with an `eq` of its own.
+//! `T` with an `eq` of its own. So each `==` needs a copy of every such
+//! `eq` it may get to, through fields and what references and boxes point
+//! to (`Cx::need_eq`): the interpreter can't tell a missing one from a
+//! derived one.
 //!
 //! The interpreter runs what comes out of here, and `t mono` prints it.
 
 use crate::ast::*;
 use crate::check::{self, Info, Instance};
 use crate::error::{Error, Span};
-use crate::traits::Source;
+use crate::traits::{Source, eq_subject};
 use crate::types::{Region, Subst, Type};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 /// `prog`, which must have checked with `info` and then been lifted,
@@ -122,6 +125,8 @@ struct Mono<'p> {
     type_queue: Vec<(String, Vec<Type>)>,
     /// The copies of each generic type, in that order.
     type_copies: HashMap<String, Vec<Vec<Type>>>,
+    /// The types `==` is used on so far, after `eq_subject`.
+    compared: HashSet<Type>,
 }
 
 impl<'p> Mono<'p> {
@@ -148,6 +153,7 @@ impl<'p> Mono<'p> {
             fn_queue: Vec::new(),
             type_queue: Vec::new(),
             type_copies: HashMap::new(),
+            compared: HashSet::new(),
         }
     }
 
@@ -497,6 +503,12 @@ struct Cx<'m, 'p, 's> {
 impl Cx<'_, '_, '_> {
     /// A type written in the original, as written in the copy.
     fn ty(&mut self, t: &TypeExpr) -> TypeExpr {
+        let resolved = self.resolved(t);
+        self.written(&resolved, t.span)
+    }
+
+    /// A type written in the original, as it is in the copy.
+    fn resolved(&self, t: &TypeExpr) -> Type {
         // Everything is at the top level by now, named by its symbol.
         let arities = &self.m.arities;
         let names = |name: &str, _| match self.params.iter().any(|p| p == name) {
@@ -507,7 +519,52 @@ impl Cx<'_, '_, '_> {
         };
         let resolved = check::resolve(t, &names, &self.params, &mut check::Lifetimes::Any)
             .expect("monomorphising a program that checked");
-        self.written(&self.s.apply(&resolved), t.span)
+        self.s.apply(&resolved)
+    }
+
+    /// Makes the copies of every impl's `eq` that `==` on values of type
+    /// `t`, at `span`, may call: the one of `t`'s impl of `Eq`, if it has
+    /// one of its own, or else those of the types of its fields, if it's
+    /// derived, and so on down. Each type once: a type can hold itself,
+    /// through a box. That ends, as the check against polymorphic
+    /// recursion sees through derived impls the same way (`dispatch`).
+    fn need_eq(&mut self, t: &Type, span: Span) {
+        let t = eq_subject(t).erased();
+        if !matches!(t, Type::Adt(..)) || !self.m.compared.insert(t.clone()) {
+            return;
+        }
+        match self.target("<Eq>::eq", vec![t.clone()]) {
+            Target::Fn(of, args, copy) => {
+                self.m.named_copy(&of, args, copy, span, self.copy);
+            }
+            Target::Eq(t) => {
+                for f in self.field_types(&t) {
+                    self.need_eq(&f, span);
+                }
+            }
+        }
+    }
+
+    /// The type of each field of struct or enum type `t`, which has no
+    /// type parameters left in it.
+    fn field_types(&mut self, t: &Type) -> Vec<Type> {
+        let Type::Adt(name, _, args) = t else {
+            unreachable!("fields of `{t}`")
+        };
+        let d = self.m.types[name.as_str()];
+        let params = names(d.type_params());
+        let s = Subst::new(&params, args);
+        let cx = Cx {
+            m: &mut *self.m,
+            s: &s,
+            params,
+            copy: None,
+        };
+        let written: Vec<&TypeExpr> = match d {
+            TypeDecl::Struct(st) => st.fields.iter().map(|f| &f.ty).collect(),
+            TypeDecl::Enum(e) => e.variants.iter().flat_map(|v| &v.fields).collect(),
+        };
+        written.into_iter().map(|f| cx.resolved(f)).collect()
     }
 
     /// How to write `t`, which has no type parameters left in it.
@@ -722,7 +779,10 @@ impl Cx<'_, '_, '_> {
                             let name = self.m.named_copy(&of, args, copy, e.span, self.copy);
                             ExprKind::Var(name, Vec::new())
                         }
-                        Target::Eq(t) => self.eq_fn(&t, e.span),
+                        Target::Eq(t) => {
+                            self.need_eq(&t, e.span);
+                            self.eq_fn(&t, e.span)
+                        }
                     }
                 }
                 // A method that isn't generic still needs its copy made.
@@ -747,6 +807,9 @@ impl Cx<'_, '_, '_> {
             },
             ExprKind::Unary(op, x) => ExprKind::Unary(*op, Box::new(self.expr(x))),
             ExprKind::Binary(op, l, r) => {
+                if let Some(Instance::Fn(_, args)) = self.m.info.instances.get(&e.span).cloned() {
+                    self.need_eq(&self.s.apply(&args[0]), e.span);
+                }
                 ExprKind::Binary(*op, Box::new(self.expr(l)), Box::new(self.expr(r)))
             }
             ExprKind::Call(f, args) => ExprKind::Call(

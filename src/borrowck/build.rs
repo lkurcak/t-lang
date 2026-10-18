@@ -34,10 +34,12 @@ pub(crate) struct Loan {
 }
 
 /// An argument of a call, worked out: a value, or a place to borrow,
-/// `&mut` or not, just before the call (see `Builder::call_into`).
+/// `&mut` or not, just before the call (see `Builder::call_into`), and
+/// maybe then coerced, as the checker says: reborrowed through `.0` more
+/// `*`s, `&mut` if `.1`.
 pub(crate) enum Arg {
     Value(Operand, Type, Span),
-    Borrow(Place, bool, Span),
+    Borrow(Place, bool, Option<(usize, bool)>, Span),
 }
 
 /// A closure found in the body: its code, its type there, and where it is.
@@ -100,6 +102,7 @@ impl<'a> Builder<'a> {
                 locals: Vec::new(),
                 blocks: vec![Block::default()],
                 params: 0,
+                heads: Vec::new(),
             },
             regions,
             loans: Vec::new(),
@@ -408,7 +411,7 @@ impl<'a> Builder<'a> {
                     recv = recv.project(Proj::Deref);
                 }
                 let receiver = match autoref {
-                    Some(m) => Arg::Borrow(recv, m, x.span),
+                    Some(m) => Arg::Borrow(recv, m, None, x.span),
                     None => {
                         let (o, t) = self.use_place(recv, x.span);
                         Arg::Value(o, t, x.span)
@@ -567,6 +570,14 @@ impl<'a> Builder<'a> {
     /// program does happens later than it's written. And finding a place
     /// is only following fields and `*`s, so when it's done can't be
     /// seen, except by the borrow checker, which then sees no clash.
+    ///
+    /// That's what the interpreter does, from the program `lift` writes
+    /// (`Interp::arguments`), and the two must agree, or this would check
+    /// another program than the one that runs. So a borrow the checker
+    /// made, by a coercion, waits too: `lift` writes `r` used as a `&T`
+    /// when it's a `&Box<T>` as `&**r`, a borrow of place `**r`, and `&mut
+    /// b` used as a `&T` as `&**(&mut b)`, which borrows `b` and then
+    /// reborrows through that, as here.
     fn call_into(
         &mut self,
         f: Operand,
@@ -588,11 +599,19 @@ impl<'a> Builder<'a> {
         let (params, ret) = sig.instantiate(&vars);
         let mut pending: Vec<Arg> = first.into_iter().collect();
         for a in args {
-            pending.push(match &a.kind {
-                ExprKind::Unary(op @ (UnOp::Ref | UnOp::RefMut), x) => {
-                    Arg::Borrow(self.place(x), *op == UnOp::RefMut, a.span)
+            let coerced = self.cx.typed().coerced.get(&std::ptr::from_ref(a)).copied();
+            pending.push(match (&a.kind, coerced) {
+                (ExprKind::Unary(op @ (UnOp::Ref | UnOp::RefMut), x), _) => {
+                    Arg::Borrow(self.place(x), *op == UnOp::RefMut, coerced, a.span)
                 }
-                _ => {
+                (_, Some((derefs, m))) => {
+                    let mut p = self.place(a);
+                    for _ in 0..=derefs {
+                        p = p.project(Proj::Deref);
+                    }
+                    Arg::Borrow(p, m, None, a.span)
+                }
+                (_, None) => {
                     let (o, t) = self.operand(a);
                     Arg::Value(o, t, a.span)
                 }
@@ -602,11 +621,15 @@ impl<'a> Builder<'a> {
         for (a, p) in pending.into_iter().zip(params.iter()) {
             let (o, t, at) = match a {
                 Arg::Value(o, t, at) => (o, t, at),
-                Arg::Borrow(place, m, at) => {
+                Arg::Borrow(place, m, coerced, at) => {
                     let (r, t) = self.borrow(&place, m, at);
                     let tmp = self.temp(t.clone(), at);
                     self.assign(&Place::local(tmp), Rvalue::Ref(r, m, place), &t, at, false);
-                    (Operand::Move(Place::local(tmp)), t, at)
+                    let (o, t) = match coerced {
+                        Some((derefs, m)) => self.reborrow(&Place::local(tmp), derefs, m, at),
+                        None => (Operand::Move(Place::local(tmp)), t),
+                    };
+                    (o, t, at)
                 }
             };
             self.regions.subtype(self.info, &t, p, at);
@@ -629,6 +652,7 @@ impl<'a> Builder<'a> {
         dest: Option<&Place>,
     ) {
         let (head, after) = (self.new_block(), self.new_block());
+        self.body.heads.push(head);
         self.goto(head);
         self.block = head;
         if let Some(c) = c {
@@ -1161,6 +1185,15 @@ impl Builder<'_> {
     /// Uses up the value at `place`, of variant `variant` if it's an enum,
     /// taken apart by the pattern at `span`, if it's owned and isn't
     /// `Discard`. Matching it through a reference only looks at it.
+    ///
+    /// The interpreter does the same (`Interp::consume`), but by the type
+    /// the value has when it runs: in generic code, a `W<T>` that the
+    /// checker can't show is `Discard` may turn out to be. Then what this
+    /// drops at the pattern, the interpreter drops later, when the variable
+    /// goes. That can't be seen while dropping does nothing but free
+    /// memory, and nothing can borrow what's left after this: it's moved.
+    /// A destructor (a provided `Discard::discard`) would make the two
+    /// differ.
     fn consume(&mut self, place: &Place, variant: Option<usize>, span: Span) {
         if self.consumes_at(place) {
             self.push(StmtKind::Consume(place.clone(), variant), span);

@@ -482,7 +482,18 @@ impl Regions {
                     self.relate(adts, ta, tb, v.then(vs[ras.len() + i]), span);
                 }
             }
-            _ => {}
+            // No regions to relate. A `!` goes anywhere, having no values.
+            (Type::Int, Type::Int)
+            | (Type::Bool, Type::Bool)
+            | (Type::Unit, Type::Unit)
+            | (Type::Never, _)
+            | (_, Type::Never) => {}
+            (Type::Param(p), Type::Param(q)) if p == q => {}
+            // Relating two types that aren't the same up to regions would
+            // say nothing of the regions in their parts that differ, and
+            // so allow what it shouldn't: wherever a value goes, the borrow
+            // checker must see it at the type it has there.
+            (a, b) => unreachable!("relating `{a}` to `{b}`"),
         }
     }
 

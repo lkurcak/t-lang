@@ -223,7 +223,15 @@ impl Traits {
     }
 
     /// Does `ty` implement `tr`, given that the bounds `env` hold? `ty`
-    /// must have no type variables in it. If it doesn't, the obligation
+    /// must have no type variables in it, and `env` is bounds on type
+    /// parameters only.
+    ///
+    /// Monomorphisation asks it again, with no bounds, of the types each
+    /// copy is at (`mono::Cx::target`), and expects the same answer as the
+    /// checker got with bounds. That holds as every obligation was proved
+    /// with the bounds in scope, and every impl, derived ones too, needs
+    /// exactly its `preds`: a derived impl that needed less than its
+    /// fields do (`Checker::derive`) would pass here and fail there. If it doesn't, the obligation
     /// that fails, at the bottom of the search: for `Option<fn()>: Eq`,
     /// `fn(): Eq`.
     pub fn implements(&self, ty: &Type, tr: &str, env: &[Pred]) -> Result<Source, Pred> {
@@ -293,6 +301,15 @@ impl Traits {
     }
 }
 
+/// What `==` on values of type `t` compares: what any references and boxes
+/// point to, as their built-in impls of `Eq` do.
+pub(crate) fn eq_subject(t: &Type) -> &Type {
+    match t {
+        Type::Ref(_, _, inner) | Type::Box(inner) => eq_subject(inner),
+        t => t,
+    }
+}
+
 fn param(name: &str) -> Type {
     Type::Param(name.to_string())
 }
@@ -300,6 +317,22 @@ fn param(name: &str) -> Type {
 /// Does `pat`, a type mentioning type parameters `params`, match `t` for
 /// some choice of them? Adds what they must be to `found`. Regions don't
 /// matter: an impl is for a type at every lifetime.
+///
+/// Invariants this relies on, which anything that lets resolution decide
+/// more (associated types, say) must keep or replace:
+///
+/// - Every trait impl is *parametric* in lifetimes (`check::traits`'s
+///   `parametric`): a lifetime or type parameter appears once in its type,
+///   never `'static`, with no lifetime bounds. So the impl found for
+///   `Pair<'x, 'y>` was checked for every two lifetimes, and what it gives
+///   can't depend on which. An associated type would be a type it gives:
+///   `<Pair<'x, 'y> as Tr>::Out` must be worked out with `'x` and `'y`,
+///   not with regions erased.
+/// - Nor does it look at what a function type is generic over: an impl for
+///   `fn(&int) -> &int`, for every lifetime, is found for a `fn(&'a int) ->
+///   &'a int`. That's sound only because every function value works at
+///   every lifetime, as a closure captures no references. Closures that
+///   capture references would break it.
 pub fn matches(pat: &Type, t: &Type, params: &[String], found: &mut HashMap<String, Type>) -> bool {
     match pat {
         Type::Param(p) if params.contains(p) => match found.get(p) {

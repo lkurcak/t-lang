@@ -34,6 +34,36 @@ Step 6a.1: linear types. See
   it up" rather than a fix to rename it `_x`, which wouldn't help.
 - Every struct and enum in the tests, docs and examples is
   `#[derive(Discard)]` now.
+- The interpreter moves every value whose type isn't `Copy`, not only
+  those holding a box, and stops with "type soundness violated" where a
+  value that isn't `Discard` is thrown away, but on the way out of a panic.
+
+A soundness pass over traits, linear types, the call rule and `swap`, each
+attempt a test (`tests/t/*soundness_*.t`).
+
+### Fixed
+
+- A borrow passed to a call worked out what it borrows from (`make()` in
+  `&*make()`) after the other arguments in the interpreter, but in order in
+  the borrow checker, which so checked a different program: one where an
+  argument after it could move what it then used.
+- A coerced `&mut x` argument, used as a `&T`, was related to its
+  parameter's type part by part, skipping the parts that didn't line up,
+  so a reference out of it could outlive what it pointed to. Coerced
+  arguments are now borrows taken after the arguments, as `lift` writes
+  them (`&**r`), and relating two types that aren't the same up to regions
+  is an internal error.
+- `==` on a type with an impl of `Eq` of its own compared field by field,
+  unless something else called that `eq` by name. And `==` was invisible
+  to the polymorphic recursion check, so an `eq` comparing at a bigger type
+  each time made monomorphisation go on forever; it now sees `==` as the
+  call of `eq` it is, through references, boxes and derived impls.
+- A derived impl's bounds came out as the derived trait even where a
+  field's impl needed another (`Q<T>: Eq` needing `T: Show`), so a
+  `#[derive(Discard)]` type could be thrown away holding a value that
+  isn't, and a derived `Eq` crashed monomorphisation.
+- "moved here, in an earlier time round the loop" was said of a move
+  written after a borrow that waits for the arguments, with no loop.
 
 Step 6a: traits. See [docs/06-traits.md](docs/06-traits.md).
 

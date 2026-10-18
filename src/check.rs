@@ -956,9 +956,39 @@ impl Checker {
     /// `generics::polymorphic_recursion`. A call of a trait's method may
     /// run any impl's that could be for its `Self`, so it uses each of
     /// those (`traits::dispatch`).
+    ///
+    /// Invariant: every copy monomorphisation can make is of a use here.
+    /// So every call or naming of a generic function a body can make, at
+    /// its type arguments, is in `info.instances`: calls, method calls,
+    /// paths, and `==`, which calls `<Eq>::eq`. And so is every call made
+    /// by something that isn't a function of the program: a derived `Eq`'s
+    /// `==` on each field, below. Whatever makes monomorphisation copy
+    /// something new must add its uses here too.
     fn no_polymorphic_recursion(&self) -> Result<(), Error> {
-        // Which function each use is in, from where they are.
+        // The `eq` of each derived `Eq`: not a function of the program, but
+        // it does what one would, `==` on each field, so it's a node of its
+        // own (see `dispatch`).
+        let derived_eq: Vec<Option<String>> = self
+            .traits
+            .impls
+            .iter()
+            .map(|d| {
+                let eq = d.derived && d.trait_name.as_deref() == Some("Eq");
+                eq.then(|| format!("<{} as Eq>::eq", d.self_ty.symbols()))
+            })
+            .collect();
+        let eq = traits::trait_method_symbol("Eq", "eq");
         let mut uses = Vec::new();
+        for (k, d) in self.traits.impls.iter().enumerate() {
+            let (Some(from), Type::Adt(symbol, ..)) = (&derived_eq[k], &d.self_ty) else {
+                continue;
+            };
+            for (_, f) in traits::fields(&self.adts[symbol].kind) {
+                let args = [f];
+                uses.extend(self.dispatch(from, &d.params, &eq, &args, &derived_eq, d.span));
+            }
+        }
+        // Which function each use is in, from where they are.
         for (span, instance) in &self.info.instances {
             // The innermost function it's in.
             let from = self
@@ -969,7 +999,14 @@ impl Checker {
             if let Instance::Fn(to, args) = instance
                 && let Some(from) = from
             {
-                let mut dispatched = self.dispatch(&from.symbol, to, args, *span);
+                let mut dispatched = self.dispatch(
+                    &from.symbol,
+                    &from.scheme.params,
+                    to,
+                    args,
+                    &derived_eq,
+                    *span,
+                );
                 if dispatched.is_empty() {
                     dispatched.push(Use {
                         from: &from.symbol,
@@ -984,11 +1021,16 @@ impl Checker {
         }
         // In source order, so the first one is reported.
         uses.sort_by_key(|u| u.span.start);
-        let params: HashMap<&str, &[String]> = self
+        let mut params: HashMap<&str, &[String]> = self
             .fns
             .iter()
             .map(|f| (f.symbol.as_str(), f.scheme.params.as_slice()))
             .collect();
+        for (d, eq) in self.traits.impls.iter().zip(&derived_eq) {
+            if let Some(eq) = eq {
+                params.insert(eq, &d.params);
+            }
+        }
         generics::polymorphic_recursion(&uses, &params)
     }
 
@@ -1583,9 +1625,17 @@ impl Checker {
                 //
                 // If T isn't fully known yet, as in `|a, b| a == b`, the
                 // obligation waits until it is, at the end of the function.
+                //
+                // Being a call of `eq`, it's a use of it, at `T`: for
+                // monomorphisation to make the copies of the impls' `eq`s it
+                // may call, and for the check against polymorphic recursion
+                // to see it.
                 BinOp::Eq | BinOp::Ne => {
                     let t = self.synth(l)?;
                     self.check(r, &t)?;
+                    let eq = traits::trait_method_symbol("Eq", "eq");
+                    self.pending
+                        .push((e.span, Instance::Fn(eq, vec![t.clone()])));
                     let pred = Pred {
                         ty: t,
                         trait_name: "Eq".into(),

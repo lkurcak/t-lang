@@ -20,6 +20,10 @@ use std::collections::{BTreeMap, BTreeSet};
 /// The places moved out of, each with where, in order.
 type Moved = BTreeMap<Place, Span>;
 
+/// The same, with the point of each move too, for saying whether it was in
+/// an earlier time round a loop.
+type MovedAt = BTreeMap<Place, (Span, Point)>;
+
 /// The part of `place` that the body owns: up to the first `*` of a
 /// reference. What's behind a reference belongs to someone else, so moving
 /// out of it isn't allowed, and assigning to it doesn't make anything the
@@ -261,27 +265,35 @@ fn deferred(b: &Builder, needed: &mut Vec<Local>) -> Result<(), Error> {
 pub(crate) fn moves(b: &Builder) -> Result<(), Error> {
     let body = &b.body;
     // At the start, only the parameters and captured variables have values.
-    let mut start = Moved::new();
+    let mut start = MovedAt::new();
+    let entry = Point {
+        block: Bb(0),
+        index: 0,
+    };
     for (i, l) in body.locals.iter().enumerate() {
         if !matches!(l.kind, LocalKind::Param | LocalKind::Captured) {
-            start.insert(Place::local(Local(i)), l.span);
+            start.insert(Place::local(Local(i)), (l.span, entry));
         }
     }
-    let mut ins: Vec<Option<Moved>> = vec![None; body.blocks.len()];
+    let mut ins: Vec<Option<MovedAt>> = vec![None; body.blocks.len()];
     ins[0] = Some(start);
     let mut todo = vec![0];
     while let Some(bb) = todo.pop() {
         let mut state = ins[bb].clone().expect("reached");
-        for s in &body.blocks[bb].stmts {
-            step(b, &mut state, s).map_err(|e| e.0)?;
+        for (index, s) in body.blocks[bb].stmts.iter().enumerate() {
+            let point = Point {
+                block: Bb(bb),
+                index,
+            };
+            step(b, &mut state, s, point).map_err(|e| e.0)?;
         }
         for succ in body.successors(Bb(bb)) {
             let new = match &ins[succ.0] {
                 None => state.clone(),
                 Some(old) => {
                     let mut new = old.clone();
-                    for (p, span) in &state {
-                        new.entry(p.clone()).or_insert(*span);
+                    for (p, at) in &state {
+                        new.entry(p.clone()).or_insert(*at);
                     }
                     new
                 }
@@ -298,32 +310,35 @@ pub(crate) fn moves(b: &Builder) -> Result<(), Error> {
 /// Not an error yet: one found while looking.
 struct Found(Error);
 
-/// What statement `s` does to `state`, the places that may be moved out of
-/// before it, or the error if it uses one.
-fn step(b: &Builder, state: &mut Moved, s: &Statement) -> Result<(), Found> {
+/// What statement `s`, at `point`, does to `state`, the places that may be
+/// moved out of before it, or the error if it uses one.
+fn step(b: &Builder, state: &mut MovedAt, s: &Statement, point: Point) -> Result<(), Found> {
+    let here = (s.span, point);
     match &s.kind {
         StmtKind::Assign { place, value, .. } => {
             for o in value.operands() {
                 match o {
-                    Operand::Copy(p) => used(b, state, p, true, s.span)?,
+                    Operand::Copy(p) => used(b, state, p, true, here)?,
                     Operand::Move(p) => {
-                        used(b, state, p, true, s.span)?;
+                        used(b, state, p, true, here)?;
                         let (p, _) = owned(b, p);
                         state.retain(|m, _| !m.within(&p));
-                        state.insert(p, s.span);
+                        state.insert(p, here);
                     }
                     Operand::Const => {}
                 }
             }
             if let Rvalue::Ref(_, _, p) = value {
-                used(b, state, p, true, s.span)?;
+                used(b, state, p, true, here)?;
             }
             let (owned, behind) = owned(b, place);
             if behind {
                 // Through a reference: the reference itself must be there.
-                used(b, state, &owned, false, s.span)?;
+                used(b, state, &owned, false, here)?;
             } else {
-                if let Some((m, at)) = state.iter().find(|(m, _)| owned.within(m) && **m != owned) {
+                if let Some((m, (at, _))) =
+                    state.iter().find(|(m, _)| owned.within(m) && **m != owned)
+                {
                     let decl = &b.body.locals[m.local.0];
                     let why = match *m == Place::local(m.local) && *at == decl.span {
                         true => "which has no value here".to_string(),
@@ -341,28 +356,36 @@ fn step(b: &Builder, state: &mut Moved, s: &Statement) -> Result<(), Found> {
                 state.retain(|m, _| !m.within(&owned));
             }
         }
-        StmtKind::Inspect(p) => used(b, state, p, false, s.span)?,
+        StmtKind::Inspect(p) => used(b, state, p, false, here)?,
         // What the pattern moved out of it is gone already, so it's the
         // rest that has to be there.
         StmtKind::Consume(p, _) => {
-            used(b, state, p, false, s.span)?;
+            used(b, state, p, false, here)?;
             state.retain(|m, _| !m.within(p));
-            state.insert(p.clone(), s.span);
+            state.insert(p.clone(), here);
         }
         StmtKind::Dead(l) => {
             let p = Place::local(*l);
             state.retain(|m, _| !m.within(&p));
-            state.insert(p, s.span);
+            state.insert(p, here);
         }
     }
     Ok(())
 }
 
-/// Checks that `place` can be used at `span`: that nothing it's part of
-/// may have been moved out of, nor, if `whole`, any part of it.
-fn used(b: &Builder, state: &Moved, place: &Place, whole: bool, span: Span) -> Result<(), Found> {
+/// Checks that `place` can be used where `at` says, a span and a point:
+/// that nothing it's part of may have been moved out of, nor, if `whole`,
+/// any part of it.
+fn used(
+    b: &Builder,
+    state: &MovedAt,
+    place: &Place,
+    whole: bool,
+    at: (Span, Point),
+) -> Result<(), Found> {
+    let (span, point) = at;
     let (owned, _) = owned(b, place);
-    for (m, moved_at) in state {
+    for (m, (moved_at, moved_point)) in state {
         let partly = whole && m.within(&owned) && *m != owned;
         if !(owned.within(m) || partly) {
             continue;
@@ -385,9 +408,11 @@ fn used(b: &Builder, state: &Moved, place: &Place, whole: bool, span: Span) -> R
         };
         let mut e = Error::ty(span, message);
         if *moved_at != decl.span {
-            let note = match moved_at.start > span.start {
-                true => "moved here, in an earlier time round the loop".to_string(),
-                false => format!("`{}` was moved here", describe(b, m)),
+            // A move written after the use can still come first: a call's
+            // borrows are taken after its arguments.
+            let note = match b.body.same_round(*moved_point, point) {
+                false => "moved here, in an earlier time round the loop".to_string(),
+                true => format!("`{}` was moved here", describe(b, m)),
             };
             e = e.with_note(*moved_at, note);
         }
@@ -489,6 +514,13 @@ enum Dropped {
 
 /// Checks that every value that isn't `Discard` is used up on every path
 /// that goes on: never dropped while some part of it may still hold one.
+///
+/// Invariant: MIR drops a value exactly where the interpreter does, at
+/// `Dead` (a scope's or statement's end, or a jump out of them), at an
+/// `Assign` (what the place held), and at a `Consume` (what the pattern
+/// didn't move out); and moves exactly where it does. The interpreter
+/// checks each drop for a leak (`Interp::drop`), so a program this lets
+/// through that throws away a linear value fails there.
 ///
 /// Whether it's been used up depends on the path, so it's a dataflow
 /// problem, like `moves`, but asking what *must* be gone: where paths meet,

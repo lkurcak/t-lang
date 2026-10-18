@@ -36,6 +36,9 @@ pub(crate) struct Body {
     pub(crate) blocks: Vec<Block>,
     /// How many parameters there are: locals `1..=params`.
     pub(crate) params: usize,
+    /// The first block of each loop, which the end of its body and each
+    /// `continue` go back to. It comes before every block of the body.
+    pub(crate) heads: Vec<Bb>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -211,6 +214,30 @@ impl Body {
             Some(Term::Switch(ts)) => ts.clone(),
             Some(Term::Return) | None => Vec::new(),
         }
+    }
+
+    /// Can control get from point `from` to point `to` without going back
+    /// round a loop, to its head from inside it? Then what happens at
+    /// `from` can happen before `to` in the same time round.
+    pub(crate) fn same_round(&self, from: Point, to: Point) -> bool {
+        if from.block == to.block && from.index < to.index {
+            return true;
+        }
+        let back = |b: Bb, s: Bb| self.heads.contains(&s) && s.0 < b.0;
+        let mut seen = vec![false; self.blocks.len()];
+        let mut todo = vec![from.block];
+        while let Some(b) = todo.pop() {
+            for s in self.successors(b) {
+                if back(b, s) || std::mem::replace(&mut seen[s.0], true) {
+                    continue;
+                }
+                if s == to.block {
+                    return true;
+                }
+                todo.push(s);
+            }
+        }
+        false
     }
 
     /// The blocks that can come right before each block.

@@ -8,7 +8,7 @@ use super::generics::{self, Lifetimes};
 use super::{Checker, plural};
 use crate::ast::*;
 use crate::error::{Edit, Error, Fix, Span};
-use crate::traits::{ImplDef, MethodDef, Pred, TraitDef, overlap};
+use crate::traits::{ImplDef, MethodDef, Pred, TraitDef, eq_subject, overlap};
 use crate::types::{AdtKind, Bound, Region, Scheme, Subst, Type};
 use std::collections::{HashMap, HashSet};
 
@@ -373,14 +373,17 @@ impl Checker {
     /// parameters is worked out from its fields: exactly the bounds that
     /// make every field implement the trait. `#[derive(Copy)] struct
     /// W<T> { f: fn(T) -> int }` is `Copy` for every `T`, and `struct P<A,
-    /// B> { a: Option<A>, b: &B }` only needs `A: Copy`.
+    /// B> { a: Option<A>, b: &B }` only needs `A: Copy`. A bound can be of
+    /// another trait: with `impl<T: Show> Eq for Q<T>`, a derived `Eq` of
+    /// `struct W<T> { q: Q<T> }` needs `T: Show`, and `T: Eq` wouldn't do,
+    /// as it doesn't make `Q<T>: Eq`.
     ///
     /// A field can be of a type whose impl is derived too, maybe the type
     /// itself, through a reference: `struct Node<'a, T> { v: T, next:
     /// Option<&'a Node<'a, T>> }`. So the bounds are worked out together,
     /// starting from none and adding what's missing until nothing is: the
     /// least *fixed point*. That ends, as each round adds a bound or stops,
-    /// and there are only so many parameters.
+    /// and there are only so many parameters and traits.
     ///
     /// A derived `Copy` needs the type to be `Discard` too, as `trait Copy:
     /// Discard`, and it's never assumed: it says so with a fix.
@@ -419,7 +422,7 @@ impl Checker {
                 let (d, _) = decls[i];
                 let symbol = &self.types[i].symbol;
                 let def = &self.adts[symbol];
-                let mut needed: Vec<String> = Vec::new();
+                let mut needed: Vec<Pred> = Vec::new();
                 for (what, t) in fields(&def.kind) {
                     if let Err(bad) = self.needs(&t, tr, &def.params, &mut needed) {
                         let why = match (&bad.ty, tr) {
@@ -436,15 +439,17 @@ impl Checker {
                         ));
                     }
                 }
-                let preds: Vec<Pred> = def
-                    .params
-                    .iter()
-                    .filter(|p| needed.contains(p))
-                    .map(|p| Pred {
-                        ty: Type::Param(p.clone()),
-                        trait_name: tr.to_string(),
-                    })
-                    .collect();
+                // In a fixed order, so that a round that adds none changes
+                // nothing.
+                let position = |p: &Pred| {
+                    def.params
+                        .iter()
+                        .position(|q| p.ty == Type::Param(q.clone()))
+                };
+                needed.sort_by(|a, b| {
+                    (position(a), &a.trait_name).cmp(&(position(b), &b.trait_name))
+                });
+                let preds = needed;
                 if preds != self.traits.impls[k].preds {
                     self.traits.impls[k].preds = preds;
                     changed = true;
@@ -485,20 +490,24 @@ impl Checker {
         Ok(())
     }
 
-    /// Which of `params` `t` needs to implement `tr` for it to, added to
-    /// `out`, by the impls found so far. Or the obligation that fails
-    /// whatever they implement.
+    /// What `t` needs of `params` to implement `tr`, by the impls found so
+    /// far: bounds on them, added to `out`, each of whatever trait it is.
+    /// Or the obligation that fails whatever they implement.
     fn needs(
         &self,
         t: &Type,
         tr: &str,
         params: &[String],
-        out: &mut Vec<String>,
+        out: &mut Vec<Pred>,
     ) -> Result<(), Pred> {
         match t {
             Type::Param(p) if params.contains(p) => {
-                if !out.contains(p) {
-                    out.push(p.clone());
+                let pred = Pred {
+                    ty: t.clone(),
+                    trait_name: tr.to_string(),
+                };
+                if !out.contains(&pred) {
+                    out.push(pred);
                 }
                 return Ok(());
             }
@@ -1287,16 +1296,26 @@ impl Checker {
 
 impl Checker {
     /// The uses, for `generics::polymorphic_recursion`, of the methods a
-    /// use in function `from` of `to` at `args`, at `span`, may run, if
-    /// `to` is a trait's method: the method of each impl that could be for
-    /// its `Self`, or the trait's default if the impl has none. An impl's
-    /// type parameters are parts of what `Self` is, or of what its type
-    /// parameters are.
+    /// use in function `from`, with type parameters `from_params`, of `to`
+    /// at `args`, at `span`, may run, if `to` is a trait's method: the
+    /// method of each impl that could be for its `Self`, or the trait's
+    /// default if the impl has none. An impl's type parameters are parts of
+    /// what `Self` is, or of what its type parameters are.
+    ///
+    /// `Eq` has impls that aren't functions of the program, but do what one
+    /// would. A built-in one of a reference or box compares what it points
+    /// to, so `==` on a `&T` is `==` on a `T`. A derived one is `==` on
+    /// each field: impl `k`'s is named `derived_eq[k]`, and its own uses are
+    /// those (see `Checker::no_polymorphic_recursion`). Leaving either out
+    /// would hide a polymorphic recursion through `==` from the check, and
+    /// monomorphising it would never end (see `mono::Cx::need_eq`).
     pub(super) fn dispatch<'a>(
         &'a self,
         from: &'a str,
+        from_params: &[String],
         to: &str,
         args: &[Type],
+        derived_eq: &'a [Option<String>],
         span: Span,
     ) -> Vec<generics::Use<'a>> {
         let Some((tr, m)) = self.traits.traits.iter().find_map(|(t, d)| {
@@ -1306,20 +1325,15 @@ impl Checker {
             return Vec::new();
         };
         let (self_ty, own) = args.split_first().expect("`Self` first");
-        let from_params = &self
-            .fns
-            .iter()
-            .find(|f| f.symbol == from)
-            .expect("a function")
-            .scheme
-            .params;
+        let self_ty = match tr.as_str() {
+            "Eq" => eq_subject(self_ty),
+            _ => self_ty,
+        };
         let mut out = Vec::new();
-        for d in self
-            .traits
-            .impls
-            .iter()
-            .filter(|d| d.trait_name.as_deref() == Some(tr))
-        {
+        for (k, d) in self.traits.impls.iter().enumerate() {
+            if d.trait_name.as_deref() != Some(tr) {
+                continue;
+            }
             let renamed: Vec<Type> = d
                 .params
                 .iter()
@@ -1331,32 +1345,33 @@ impl Checker {
             if !overlap(&header, self_ty, &vars) {
                 continue;
             }
-            let Some((_, symbol)) = d.methods.iter().find(|(n, _)| *n == m.name) else {
-                // The default, at this `Self`. A derived impl has no
-                // methods, nor do built-in ones, and its `eq` is `==`.
-                if !d.derived && m.provided {
-                    let to = &self
-                        .fns
-                        .iter()
-                        .find(|f| f.symbol == m.symbol)
-                        .expect("a default")
-                        .symbol;
-                    out.push(generics::Use {
-                        from,
-                        to,
-                        args: args.to_vec(),
-                        inside: Vec::new(),
-                        span,
-                    });
+            let to: &str = match (d.methods.iter().find(|(n, _)| *n == m.name), &derived_eq[k]) {
+                (Some((_, symbol)), _) => {
+                    let f = self.fns.iter().find(|f| f.symbol == *symbol);
+                    &f.expect("a method").symbol
                 }
-                continue;
+                (None, Some(eq)) => eq,
+                // The default, at this `Self`. A derived impl has no
+                // methods, nor do built-in ones.
+                (None, None) => {
+                    if !d.derived && m.provided {
+                        let to = &self
+                            .fns
+                            .iter()
+                            .find(|f| f.symbol == m.symbol)
+                            .expect("a default")
+                            .symbol;
+                        out.push(generics::Use {
+                            from,
+                            to,
+                            args: args.to_vec(),
+                            inside: Vec::new(),
+                            span,
+                        });
+                    }
+                    continue;
+                }
             };
-            let to = &self
-                .fns
-                .iter()
-                .find(|f| f.symbol == *symbol)
-                .expect("a method")
-                .symbol;
             let mut found: Vec<Option<Type>> = vec![None; d.params.len()];
             let mut inside = Vec::new();
             split(
@@ -1490,7 +1505,7 @@ fn args_of(t: &Type) -> Vec<Type> {
 
 /// Each field of struct or enum `d`, of kind `kind`, as "field `x`" or
 /// "variant `V`", with its type.
-fn fields(kind: &AdtKind) -> Vec<(String, Type)> {
+pub(super) fn fields(kind: &AdtKind) -> Vec<(String, Type)> {
     match kind {
         AdtKind::Struct(fields) => fields
             .iter()
