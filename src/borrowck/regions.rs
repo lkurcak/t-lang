@@ -643,7 +643,6 @@ pub(crate) fn liveness(body: &Body) -> HashMap<Point, Vec<bool>> {
                 }
                 StmtKind::Inspect(p) | StmtKind::Consume(p, _) => live[p.local.0] = true,
                 StmtKind::Dead(l) => live[l.0] = false,
-                StmtKind::Activate(_) => {}
             }
             changed |= live_in[b][i] != live;
             live_in[b][i] = live.clone();

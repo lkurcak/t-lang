@@ -99,12 +99,6 @@ pub(crate) enum StmtKind {
     /// by value. What the pattern's variables didn't move out of it is
     /// dropped, and then nothing's there. (See `moves::linear`.)
     Consume(Place, Option<usize>),
-    /// A *two-phase* borrow, the loan at this index in `Builder::loans`,
-    /// starts being a `&mut` here. Until here it was only *reserved*, and
-    /// worked as a shared borrow, so that what it borrows could still be
-    /// read: in `v.push(v.len())`, the `&mut v` for `push` is made before
-    /// `v.len()` reads `v`, and only used after.
-    Activate(usize),
 }
 
 pub(crate) enum Term {
@@ -248,7 +242,6 @@ impl fmt::Display for Body {
                     StmtKind::Inspect(p) => writeln!(f, "    inspect {p:?}")?,
                     StmtKind::Dead(l) => writeln!(f, "    dead _{}", l.0)?,
                     StmtKind::Consume(p, v) => writeln!(f, "    consume {p:?} {v:?}")?,
-                    StmtKind::Activate(l) => writeln!(f, "    activate loan {l}")?,
                 }
             }
             match &block.term {

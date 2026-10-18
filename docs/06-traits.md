@@ -2,7 +2,7 @@
 
 Code: `src/traits.rs` (traits, impls and resolution), `src/check/traits.rs`
 (collecting impls, coherence, termination, method lookup), `src/check.rs`
-(T-Method, T-Path, T-Eq), `src/borrowck/loans.rs` (two-phase borrows) and
+(T-Method, T-Path, T-Eq), `src/borrowck/build.rs` (a call's borrows, `call_into`) and
 `src/mono.rs` (calls become impls' methods).
 
 ```rust
@@ -215,7 +215,7 @@ A method without `self` is only reached by a path: `Point::new(1, 2)`. A
 path without `(..)` is the method as a function, `let f = Point::len;`.
 `Self` is the impl's type, in it.
 
-### Two-phase borrows
+### A call's borrows come last
 
 ```rust
 #[derive(Discard)]
@@ -239,12 +239,26 @@ fn main() {
 
 `v.push(v.len())` is `<Stack>::push(&mut v, <Stack>::len(&v))`, and the
 `&mut v` comes first. Taken literally, `&v` can't happen while it lasts.
-So the `&mut` of an inserted receiver is a *two-phase* borrow: *reserved*
-where it's taken, when it clashes only as a shared one would, and
-*activated* at the call (`StmtKind::Activate`), checked there as a `&mut`
-taken then. Reading `v` in between is fine; changing it isn't, and nor is a
-shared borrow that's still in use at the call. Rust added the same thing
-for the same reason (RFC 2025). Only those borrows are two-phase.
+So a call works out its arguments in order but takes its borrows of
+places, `&v` and `&mut v`, written or inserted for a receiver, after the
+rest, just before the call: `v.push(v.len())` is `let n = v.len();
+v.push(n)`. The arguments can do anything to `v`, even change it, but a
+borrow they make can't still be in use at the call, as the `&mut v` is
+taken there.
+
+Only the borrow waits: what a place is made from, if it isn't a variable,
+like `make()` in `&mut make().f`, is worked out in order. Finding a place
+is only following fields and `*`s of references and boxes, which nothing
+can see happen, so taking it later changes no program's meaning; it only
+lets the borrow checker see that nothing clashes. That's a reason to keep
+it so: when traits for `*` and indexing come, their calls will be worked
+out in order, and only what's built in borrowed late.
+
+Rust has *two-phase* borrows instead (RFC 2025): the receiver's `&mut` is
+taken first but only *reserved*, working as a shared borrow until the
+call. That's needed there because finding a place can run code, through
+`Deref` and `Index`, so it can't wait. It accepts less: `v.push({ v.clear();
+1 })`, and `f(&mut v, v.len())` with the `&mut` written, are fine in T.
 
 ## `Eq` and `Copy`
 
@@ -365,9 +379,9 @@ away: a positive cycle, found by Bellman–Ford (`generics.rs`). That lets
    that would make resolution loop, and trace it.
 3. Change method lookup to Rust's autoref search, so `impl Show for &Point`
    is found from a `&Point`. What new ambiguity does that bring?
-4. Turn off two-phase borrows (make every loan `In` when made) and see
-   which tests fail. Find a program that two-phase borrows accept and that
-   would go wrong if the reservation allowed writes.
+4. Make `call_into` take each borrow where its argument is, and see which
+   tests fail. Then find a program that would go wrong if a borrow were
+   taken late but its place worked out early, in the interpreter too.
 5. A derived `Copy` takes its bounds from the fields. Write a type whose
    least fixed point needs more than one round.
 6. Write a program whose polymorphic recursion check fails though
@@ -389,5 +403,6 @@ away: a positive cycle, found by Bellman–Ford (`generics.rs`). That lets
   JFP 2007. Where the Paterson conditions are stated.
 - Nicholas Matsakis, *Little Orphan Impls*, 2015, and RFC 1023: *Rebalancing
   coherence*. Coherence across crates.
-- RFC 2025: *Enable use of two-phase borrows*.
+- RFC 2025: *Enable use of two-phase borrows*. Rust's answer to
+  `v.push(v.len())`.
 - RFC 1210: *impl specialization*, and why it's still unstable.

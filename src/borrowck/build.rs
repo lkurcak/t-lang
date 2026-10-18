@@ -28,11 +28,16 @@ use std::collections::HashMap;
 pub(crate) struct Loan {
     pub(crate) place: Place,
     pub(crate) mutable: bool,
-    /// Is it a two-phase `&mut`, only reserved until a `StmtKind::Activate`?
-    pub(crate) two_phase: bool,
     pub(crate) region: usize,
     pub(crate) point: Point,
     pub(crate) span: Span,
+}
+
+/// An argument of a call, worked out: a value, or a place to borrow,
+/// `&mut` or not, just before the call (see `Builder::call_into`).
+pub(crate) enum Arg {
+    Value(Operand, Type, Span),
+    Borrow(Place, bool, Span),
 }
 
 /// A closure found in the body: its code, its type there, and where it is.
@@ -389,9 +394,8 @@ impl<'a> Builder<'a> {
                 self.call_into(f, ft, None, args, dest, span);
             }
             // The receiver first: what's before the `.`, through its `*`s,
-            // borrowed if the method takes `&self` or `&mut self`. A `&mut`
-            // is a two-phase borrow, only reserved until the call, so the
-            // arguments can still read what it borrows.
+            // borrowed if the method takes `&self` or `&mut self`, which,
+            // like any borrow passed, happens after the arguments.
             ExprKind::MethodCall(x, _, _, args) => {
                 let (res, derefs, autoref) =
                     self.cx.typed().methods[&std::ptr::from_ref(e)].clone();
@@ -404,24 +408,10 @@ impl<'a> Builder<'a> {
                     recv = recv.project(Proj::Deref);
                 }
                 let receiver = match autoref {
-                    Some(m) => {
-                        let (r, t) = self.borrow(&recv, m, x.span);
-                        let loan = self.loans.len() - 1;
-                        self.loans[loan].two_phase = m;
-                        let tmp = self.temp(t.clone(), x.span);
-                        self.assign(
-                            &Place::local(tmp),
-                            Rvalue::Ref(r, m, recv),
-                            &t,
-                            x.span,
-                            false,
-                        );
-                        let o = Operand::Move(Place::local(tmp));
-                        (o, t, x.span, m.then_some(loan))
-                    }
+                    Some(m) => Arg::Borrow(recv, m, x.span),
                     None => {
                         let (o, t) = self.use_place(recv, x.span);
-                        (o, t, x.span, None)
+                        Arg::Value(o, t, x.span)
                     }
                 };
                 self.call_into(Operand::Const, ft, Some(receiver), args, dest, span);
@@ -567,14 +557,21 @@ impl<'a> Builder<'a> {
     }
 
     /// A call of `f`, of type `ft`, with arguments `args`, after `first`
-    /// if there is one: a method's receiver, as an operand, its type and
-    /// where it is, and the two-phase loan it took to activate at the call,
-    /// if it did.
+    /// if there is one: a method's receiver.
+    ///
+    /// The arguments are worked out in order, but a borrow of a place,
+    /// `&v` or `&mut v`, is only taken once they all have been, just
+    /// before the call: `v.push(v.len())` is `let n = v.len(); v.push(n)`.
+    /// Only the borrow waits. What the place is made from, if it isn't a
+    /// variable's (`&mut make().f`), is worked out in order, so nothing a
+    /// program does happens later than it's written. And finding a place
+    /// is only following fields and `*`s, so when it's done can't be
+    /// seen, except by the borrow checker, which then sees no clash.
     fn call_into(
         &mut self,
         f: Operand,
         ft: Type,
-        first: Option<(Operand, Type, Span, Option<usize>)>,
+        first: Option<Arg>,
         args: &'a [Expr],
         dest: &Place,
         span: Span,
@@ -589,22 +586,31 @@ impl<'a> Builder<'a> {
             .map(|_| Region::Var(self.regions.fresh()))
             .collect();
         let (params, ret) = sig.instantiate(&vars);
-        let mut params = params.iter();
+        let mut pending: Vec<Arg> = first.into_iter().collect();
+        for a in args {
+            pending.push(match &a.kind {
+                ExprKind::Unary(op @ (UnOp::Ref | UnOp::RefMut), x) => {
+                    Arg::Borrow(self.place(x), *op == UnOp::RefMut, a.span)
+                }
+                _ => {
+                    let (o, t) = self.operand(a);
+                    Arg::Value(o, t, a.span)
+                }
+            });
+        }
         let mut ops = Vec::new();
-        let mut activate = None;
-        if let Some((o, t, at, loan)) = first {
-            let p = params.next().expect("a method takes its receiver");
+        for (a, p) in pending.into_iter().zip(params.iter()) {
+            let (o, t, at) = match a {
+                Arg::Value(o, t, at) => (o, t, at),
+                Arg::Borrow(place, m, at) => {
+                    let (r, t) = self.borrow(&place, m, at);
+                    let tmp = self.temp(t.clone(), at);
+                    self.assign(&Place::local(tmp), Rvalue::Ref(r, m, place), &t, at, false);
+                    (Operand::Move(Place::local(tmp)), t, at)
+                }
+            };
             self.regions.subtype(self.info, &t, p, at);
             ops.push(o);
-            activate = loan;
-        }
-        for (a, p) in args.iter().zip(params) {
-            let (o, t) = self.operand(a);
-            self.regions.subtype(self.info, &t, p, a.span);
-            ops.push(o);
-        }
-        if let Some(loan) = activate {
-            self.push(StmtKind::Activate(loan), span);
         }
         self.assign(dest, Rvalue::Call(f, ops), &ret, span, false);
         // A function that returns a `!` never does.
@@ -857,7 +863,6 @@ impl<'a> Builder<'a> {
         self.loans.push(Loan {
             place: place.clone(),
             mutable,
-            two_phase: false,
             region: r,
             point: self.point(),
             span,

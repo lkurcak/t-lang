@@ -558,6 +558,28 @@ impl Interp<'_, '_> {
         Ok(values)
     }
 
+    /// A call's arguments, in order, but for borrows of places, `&v` or
+    /// `&mut v`, which are taken after the rest, as the borrow checker
+    /// says (`Builder::call_into`). A borrow of what isn't a place,
+    /// `&make()`, is made in order, as making it may do things.
+    fn arguments(&mut self, args: &[Expr]) -> Result<Vec<Value>, Flow> {
+        let later = |a: &Expr| matches!(&a.kind, ExprKind::Unary(UnOp::Ref | UnOp::RefMut, x) if x.is_place());
+        let mut values = self
+            .eval_all(args.iter().filter(|a| !later(a)))?
+            .into_iter();
+        let mut out = Vec::new();
+        for a in args {
+            out.push(match later(a) {
+                // Borrowing a place can't fail, nor jump anywhere.
+                true => self
+                    .eval(a)
+                    .unwrap_or_else(|_| unsound("borrowing a place failed")),
+                false => values.next().expect("a value for each argument"),
+            });
+        }
+        Ok(out)
+    }
+
     /// Runs the body of a loop again and again, until a `break`, whose
     /// value it returns, or for a `while`, until its condition `c` is false.
     ///
@@ -642,7 +664,7 @@ impl Interp<'_, '_> {
             // an argument doesn't finish.
             ExprKind::Call(f, args) => {
                 let f = self.eval(f)?;
-                let args = self.eval_all(args)?;
+                let args = self.arguments(args)?;
                 self.call(f, args, e.span)?
             }
 

@@ -354,7 +354,6 @@ fn step(b: &Builder, state: &mut Moved, s: &Statement) -> Result<(), Found> {
             state.retain(|m, _| !m.within(&p));
             state.insert(p, s.span);
         }
-        StmtKind::Activate(_) => {}
     }
     Ok(())
 }
@@ -589,7 +588,7 @@ fn gone(b: &Builder, state: &mut Gone, s: &Statement, check: bool) -> Result<(),
             }
             away(state, Place::local(*l));
         }
-        StmtKind::Inspect(_) | StmtKind::Activate(_) => {}
+        StmtKind::Inspect(_) => {}
     }
     Ok(())
 }

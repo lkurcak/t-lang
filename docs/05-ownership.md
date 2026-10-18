@@ -558,7 +558,7 @@ for as long as `r` (`err_borrow_temp.t`).
 | closures capturing references, returning closures | function types with lifetimes, a type per closure | 6 |
 | `Drop`, destructors | traits | 6 |
 | allocation that may fail | effects | 7 |
-| two-phase borrows: `v.push(v.len())` | no methods yet | 6 |
+| `v.push(v.len())`: a call's borrows taken after its arguments | no methods yet | 6 |
 
 `break`, `continue`, `return` and `loop`, control flow the MIR already had
 room for, came right after: docs/05.1-control-flow.md.

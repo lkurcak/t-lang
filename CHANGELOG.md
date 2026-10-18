@@ -54,8 +54,9 @@ Step 6a: traits. See [docs/06-traits.md](docs/06-traits.md).
   ambiguous.
 - Paths to methods: `Point::new(1, 2)`, `Show::show(&x)`, `T::m(..)`, and
   `Point::len` without `(..)` as a function value.
-- Two-phase borrows: the `&mut` a method call takes of its receiver is only
-  reserved until the call, so `v.push(v.len())` works.
+- A call takes its borrows of places (`&v`, `&mut v`, and a method
+  receiver's) after its other arguments, so `v.push(v.len())` and
+  `f(&mut v, v.len())` work, and so does `v.push({ v.clear(); 1 })`.
 - `Eq` is a trait, behind `==` and `!=`, and `#[derive(Eq)]` compares field
   by field. An impl of `Eq` can compare as it likes, and a derived one uses
   it for that field.
