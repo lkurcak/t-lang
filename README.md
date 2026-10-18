@@ -284,8 +284,11 @@ combine features in ways nobody planned for.
 | 6a.1 ✅ | values must be used up, unless `Discard`; `replace` | linear types, substructural rules (weakening, contraction) | [docs/06a.1-linear-types.md](docs/06a.1-linear-types.md) |
 | 6b ✅ | associated types, projections, equality bounds | type-level functions (open type families), normalisation with lifetimes | [docs/06b-associated-types.md](docs/06b-associated-types.md) |
 | 6c | closures as `Fn` traits | a type per closure, capturing by reference | |
+| 6d | modules: `mod`, `use`, visibility | abstract types, orphan rules (coherence across modules) | derived bounds written out at module boundaries |
+| 6e | a small `core`: `Option`, `Result`, `Ord`, `Iterator`, `for` | equality bounds with projections (`IntoIterator`), iterating over linear values | what the tests keep defining themselves; no allocation |
 | 7 | effects | effect systems: which functions can panic, allocate or diverge | |
 | 8 | refinement types | proving indexes in bounds, so indexing can't panic | |
+| — | `alloc` (a dense, resizable `List`) and `std` | | after effects, once raw memory has a design |
 | — | C backend | | when it's worth it |
 
 ## License
