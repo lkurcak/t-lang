@@ -111,6 +111,7 @@ that use it, inside the one function that needs them:
 fn main() {
     print(perimeter(Rect { w: 2, h: 3 })); // expect: 10
 
+    #[derive(Discard)]
     struct Rect { w: int, h: int }
     fn perimeter(r: Rect) -> int { 2 * (r.w + r.h) }
 }
@@ -127,6 +128,7 @@ leave the block, since inference doesn't need the name:
 ```rust
 fn main() {
     let p = {
+        #[derive(Discard)]
         struct P { x: int }
         P { x: 1 }
     };
@@ -140,9 +142,11 @@ which is which:
 
 ```rust,error
 fn f() -> int {
+    #[derive(Discard)]
     struct P { x: int }
     fn g(p: P) -> int { p.x }
     fn h() -> int {
+        #[derive(Discard)]
         struct P { x: int }
         g(P { x: 1 }) // error: these are two different types called `P`
     }
@@ -241,6 +245,7 @@ types are equal". Some rules need to *decide* something with a type, and
 need it known right then:
 
 ```rust,error
+#[derive(Discard)]
 struct P { x: int, y: int }
 fn on_point(f: fn(P) -> int) -> int { f(P { x: 3, y: 4 }) }
 

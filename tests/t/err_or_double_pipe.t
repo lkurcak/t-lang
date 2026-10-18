@@ -1,3 +1,4 @@
+#[derive(Discard)]
 enum C { R, G }
 fn f(c: C) -> int {
     match c { C::R || C::G => 1 }

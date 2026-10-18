@@ -1,5 +1,6 @@
 // Closures: anonymous functions that can use the locals around them.
 
+#[derive(Discard)]
 struct P { x: int, y: int }
 
 fn apply(f: fn(int) -> int, x: int) -> int { f(x) }
@@ -47,4 +48,5 @@ fn main() {
     print(twice(add5, 0));                  // expect: 10
 }
 
+#[derive(Discard)]
 struct Fs { a: fn(int) -> int, b: fn(int) -> int }

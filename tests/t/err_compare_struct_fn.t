@@ -1,6 +1,6 @@
 // Comparing field by field needs every field to compare, and functions
 // can't.
-#[derive(Eq)]
+#[derive(Discard, Eq)]
 struct Handler { f: fn(int) -> int }
 fn id(x: int) -> int { x }
 fn main() -> bool {

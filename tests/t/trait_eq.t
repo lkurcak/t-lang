@@ -1,9 +1,10 @@
 // `==` is `Eq`'s: `#[derive(Eq)]` compares field by field, and an impl of
 // its own can say anything, which a derived `Eq` of a type around it uses.
 
-#[derive(Eq)]
+#[derive(Discard, Eq)]
 enum Option<T> { Some(T), None }
 
+#[derive(Discard)]
 struct Money { cents: int }
 
 // Equal to the dollar.
@@ -11,7 +12,7 @@ impl Eq for Money {
     fn eq(&self, other: &Money) -> bool { self.cents / 100 == other.cents / 100 }
 }
 
-#[derive(Eq)]
+#[derive(Discard, Eq)]
 struct Account { id: int, balance: Money }
 
 fn main() {

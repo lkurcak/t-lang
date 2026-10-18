@@ -112,7 +112,8 @@ fn analyze(
             Vec::new()
         }
     };
-    if let Err(e) = moves::moves(b) {
+    // What's used up is only worth asking once what's moved is right.
+    if let Err(e) = moves::moves(b).and_then(|()| moves::linear(b)) {
         errors.push(e);
     }
     let sol = b.regions.solve(&b.body);

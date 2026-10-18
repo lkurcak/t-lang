@@ -1,6 +1,7 @@
 // A closure captures what its body uses, as it is when the closure is made,
 // and only the variables in scope there, not ones of the same name that its
 // own parameters, `let`s or patterns shadow.
+#[derive(Discard)]
 enum Opt { None, Some(int) }
 
 fn main() {

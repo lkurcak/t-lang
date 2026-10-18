@@ -1,3 +1,4 @@
+#[derive(Discard)]
 struct B { b: Box<int> }
 impl Copy for B {}
 fn main() {}

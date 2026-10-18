@@ -1,6 +1,7 @@
 // Two impls overlap if some type could be both of theirs: which one it
 // used would be a choice.
 trait Show { fn show(&self); }
+#[derive(Discard)]
 enum Option<T> { Some(T), None }
 impl<T> Show for Option<T> { fn show(&self) {} }
 impl Show for Option<int> { fn show(&self) {} }

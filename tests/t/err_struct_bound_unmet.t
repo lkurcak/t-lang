@@ -1,3 +1,4 @@
+#[derive(Discard)]
 struct S<T: Eq> { x: T }
 fn main() {
     let _s = S { x: main };

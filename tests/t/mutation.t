@@ -1,6 +1,7 @@
 // `let mut` variables can be changed, by assigning to them, to their
 // fields, or through a `&mut` to them.
 
+#[derive(Discard)]
 struct Counter { count: int, step: int }
 
 fn tick(c: &mut Counter) { c.count += c.step; }

@@ -2,6 +2,7 @@
 // the algebra of types. A `match` on it needs no arms, and can have any type,
 // because it can never run.
 
+#[derive(Discard)]
 enum Never {}
 
 fn absurd(n: Never) -> int {
@@ -14,6 +15,7 @@ fn absurd_bool(n: Never) -> bool { match n {} }
 
 // No value can be built with `Maybe::Impossible`, since it needs a `Never`.
 // So it needs no arm: matching `Real` covers every `Maybe` there is.
+#[derive(Discard)]
 enum Maybe { Real(int), Impossible(Never) }
 
 fn get(m: Maybe) -> int {

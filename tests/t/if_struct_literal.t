@@ -1,7 +1,7 @@
 // In the head of `if` and `match`, `x {` starts the body, not a struct literal.
 // Parenthesize to use a struct literal there.
 
-#[derive(Eq)]
+#[derive(Discard, Eq)]
 struct P { x: int }
 
 fn main() {

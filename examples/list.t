@@ -1,6 +1,7 @@
 // A linked list on the heap: built by moving nodes into boxes, read and
 // changed through references, and freed when it goes away.
 
+#[derive(Discard)]
 enum List { Nil, Cons(int, Box<List>) }
 
 fn push(l: List, x: int) -> List { List::Cons(x, Box::new(l)) }

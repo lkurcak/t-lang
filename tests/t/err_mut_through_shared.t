@@ -1,3 +1,4 @@
+#[derive(Discard)]
 struct P { x: int }
 
 fn set(p: &P) { p.x = 1; }

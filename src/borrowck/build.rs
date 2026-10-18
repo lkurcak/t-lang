@@ -20,7 +20,7 @@ use crate::ast::*;
 use crate::check::Checker;
 use crate::check::typed::Res;
 use crate::error::Span;
-use crate::types::{AdtKind, Adts, Region, Subst, Type, struct_fields, variant_fields};
+use crate::types::{AdtKind, Adts, Region, Scheme, Subst, Type, struct_fields, variant_fields};
 use std::collections::HashMap;
 
 /// A borrow: of `place`, `&mut` or not, for as long as region variable
@@ -732,11 +732,9 @@ impl<'a> Builder<'a> {
             ExprKind::Var(_, _) => {
                 let t = match &self.cx.typed().vars[&std::ptr::from_ref(e)] {
                     Res::Fn(symbol, targs) => self.fn_value(symbol, targs, e.span),
-                    Res::Builtin => {
-                        let t = self
-                            .cx
-                            .solution(&self.cx.typed().exprs[&std::ptr::from_ref(e)]);
-                        self.regions.fresh_regions(&t)
+                    Res::Builtin(name, targs) => {
+                        let scheme = crate::check::builtin_scheme(name);
+                        self.instantiate(&scheme, targs, e.span)
                     }
                     Res::Local(_) => unreachable!("a place"),
                 };
@@ -792,6 +790,14 @@ impl<'a> Builder<'a> {
     /// parameter and return types make sense.
     fn fn_value(&mut self, symbol: &str, targs: &[Type], span: Span) -> Type {
         let scheme = self.cx.scheme(symbol);
+        self.instantiate(scheme, targs, span)
+    }
+
+    /// Function type `scheme` at type arguments `targs`, as `fn_value`
+    /// does it. Each type argument gets new region variables once, so that
+    /// where the scheme mentions a type parameter twice, it's the same
+    /// type: `replace`'s `T`s, say.
+    fn instantiate(&mut self, scheme: &Scheme, targs: &[Type], span: Span) -> Type {
         let targs: Vec<Type> = targs
             .iter()
             .map(|t| {
@@ -1082,7 +1088,8 @@ impl<'a> Builder<'a> {
 
     /// Gives the variables `p` binds their values, from the value at
     /// `place`, which `p` matches: moved or copied out of it, or borrowed
-    /// from it if they bind by reference.
+    /// from it if they bind by reference. A value that isn't `Discard`,
+    /// taken apart by value, is then used up (`consume`).
     fn bind(&mut self, p: &Pattern, place: &Place) {
         let mut place = place.clone();
         for _ in 0..self.peels(p) {
@@ -1115,6 +1122,7 @@ impl<'a> Builder<'a> {
                 for (j, q) in pats.iter().enumerate() {
                     self.bind(q, &place.project(Proj::Variant(i, j)));
                 }
+                self.consume(&place, Some(i), p.span);
             }
             PatternKind::Struct(_, _, fields, _) => {
                 let t = self.place_ty(&place);
@@ -1122,9 +1130,13 @@ impl<'a> Builder<'a> {
                     let j = field_index(self.adts(), &t, &fp.name.name);
                     self.bind(&fp.pat, &place.project(Proj::Field(j)));
                 }
+                self.consume(&place, None, p.span);
             }
-            // Whichever alternative matched binds the variables.
-            PatternKind::Or(alts) if !alts.is_empty() && has_binds(p) => {
+            // Whichever alternative matched binds the variables, and uses up
+            // what it takes apart.
+            PatternKind::Or(alts)
+                if !alts.is_empty() && (has_binds(p) || self.consumes(p, &place)) =>
+            {
                 let blocks: Vec<Bb> = alts.iter().map(|_| self.new_block()).collect();
                 let join = self.new_block();
                 self.terminate(Term::Switch(blocks.clone()));
@@ -1136,6 +1148,50 @@ impl<'a> Builder<'a> {
                 self.block = join;
             }
             _ => {}
+        }
+    }
+}
+
+impl Builder<'_> {
+    /// Uses up the value at `place`, of variant `variant` if it's an enum,
+    /// taken apart by the pattern at `span`, if it's owned and isn't
+    /// `Discard`. Matching it through a reference only looks at it.
+    fn consume(&mut self, place: &Place, variant: Option<usize>, span: Span) {
+        if self.consumes_at(place) {
+            self.push(StmtKind::Consume(place.clone(), variant), span);
+        }
+    }
+
+    fn consumes_at(&self, place: &Place) -> bool {
+        !super::moves::owned(self, place).1 && !self.cx.is_discard(&self.place_ty(place))
+    }
+
+    /// Does pattern `p`, matching the value at `place`, use up anything?
+    fn consumes(&self, p: &Pattern, place: &Place) -> bool {
+        let mut place = place.clone();
+        for _ in 0..self.peels(p) {
+            place = place.project(Proj::Deref);
+        }
+        match &p.kind {
+            PatternKind::Variant(_, _, v, pats) => {
+                let t = self.place_ty(&place);
+                let i = variant_index(self.adts(), &t, &v.name);
+                self.consumes_at(&place)
+                    || pats
+                        .iter()
+                        .enumerate()
+                        .any(|(j, q)| self.consumes(q, &place.project(Proj::Variant(i, j))))
+            }
+            PatternKind::Struct(_, _, fields, _) => {
+                let t = self.place_ty(&place);
+                self.consumes_at(&place)
+                    || fields.iter().any(|fp| {
+                        let j = field_index(self.adts(), &t, &fp.name.name);
+                        self.consumes(&fp.pat, &place.project(Proj::Field(j)))
+                    })
+            }
+            PatternKind::Or(alts) => alts.iter().any(|a| self.consumes(a, &place)),
+            _ => false,
         }
     }
 }

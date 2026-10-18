@@ -1,3 +1,4 @@
+#[derive(Discard)]
 enum Opt { None, Some(int) }
 fn f(o: Opt) -> int {
     match o {

@@ -1,3 +1,4 @@
+#[derive(Discard)]
 struct C { n: int }
 impl C {
     fn inc(&mut self) { self.n += 1 }

@@ -1,3 +1,4 @@
+#[derive(Discard)]
 enum Option<T> { Some(T), None }
 fn f(o: Option<int, bool>) {}
 fn main() {}

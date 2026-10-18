@@ -1,8 +1,10 @@
 // Variables bound by patterns can be `mut` too.
 
+#[derive(Discard)]
 struct P { x: int, y: int }
 
 #[allow(dead_code)]
+#[derive(Discard)]
 enum Option<T> { Some(T), None }
 
 fn main() {

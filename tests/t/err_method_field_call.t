@@ -1,3 +1,4 @@
+#[derive(Discard)]
 struct F { f: fn() -> int }
 fn one() -> int { 1 }
 fn main() {

@@ -2,6 +2,7 @@
 // `let`s, closures and patterns. A variable bound in every alternative of
 // an or-pattern is warned about once. A leading `_` doesn't count, and
 // digits are fine.
+#[derive(Discard)]
 enum Shape { Circle(int), Square(int), Empty }
 
 fn side(s: Shape, Default: int) -> int {

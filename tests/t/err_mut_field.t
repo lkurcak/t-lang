@@ -1,3 +1,4 @@
+#[derive(Discard)]
 struct P { x: int }
 
 fn main() {

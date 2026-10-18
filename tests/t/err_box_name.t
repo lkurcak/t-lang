@@ -1,3 +1,4 @@
+#[derive(Discard)]
 struct Box { x: int }
 
 fn main() {}

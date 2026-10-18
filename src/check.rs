@@ -68,14 +68,31 @@ use typed::{Bind, Res, Typed};
 use unify::Var;
 
 /// Built-in functions, available everywhere. Shared with the interpreter.
-pub const BUILTINS: &[&str] = &["print", "print_bool"];
+pub const BUILTINS: &[&str] = &["print", "print_bool", "replace"];
 
-fn builtin_type(name: &str) -> Type {
+/// The type of built-in function `name`.
+pub(crate) fn builtin_scheme(name: &str) -> Scheme {
     match name {
         // print : fn(int) -> ()
-        "print" => Type::func(vec![Type::Int], Type::Unit),
+        "print" => Scheme::mono(Type::func(vec![Type::Int], Type::Unit)),
         // print_bool : fn(bool) -> ()
-        "print_bool" => Type::func(vec![Type::Bool], Type::Unit),
+        "print_bool" => Scheme::mono(Type::func(vec![Type::Bool], Type::Unit)),
+        // replace : ∀'a T. fn(&'a mut T, T) -> T
+        //
+        // Puts the new value where the reference points, and gives back the
+        // old one, so nothing is thrown away: how to change what's behind a
+        // `&mut` whose type isn't `Discard`.
+        "replace" => {
+            let t = Type::Param("T".into());
+            let r = Type::Ref(Region::Named("'a".into()), true, Box::new(t.clone()));
+            Scheme {
+                params: vec!["T".into()],
+                lifetimes: vec!["'a".into()],
+                bounds: Vec::new(),
+                preds: Vec::new(),
+                ty: Type::func(vec![r, t.clone()], t),
+            }
+        }
         _ => unreachable!("unknown builtin `{name}`"),
     }
 }
@@ -305,6 +322,10 @@ pub(crate) struct Checker {
     /// Values that may be closures leaving the frame that made them, checked
     /// once the function's types are known.
     escapes: Vec<Escape>,
+    /// Unused variables warned about, by index in `warnings`, with their
+    /// types: once those are known, one that isn't `Discard` gets no fix
+    /// to rename it, which wouldn't help (see `settle_unused`).
+    unused: Vec<(usize, Type)>,
     /// What each function checked so far refers to, by `FnId`.
     uses: Vec<Uses>,
     warnings: Vec<Warning>,
@@ -400,6 +421,7 @@ impl Checker {
             self_ty: None,
             obligations: Vec::new(),
             escapes: Vec::new(),
+            unused: Vec::new(),
             uses: Vec::new(),
             warnings: Vec::new(),
             info,
@@ -999,7 +1021,7 @@ impl Checker {
                 let scheme = f.scheme.clone();
                 (scheme, Some(f.name.span), Some(f.symbol.clone()), None)
             }
-            Some(Binding::Builtin(b)) => (Scheme::mono(builtin_type(b)), None, None, Some(b)),
+            Some(Binding::Builtin(b)) => (builtin_scheme(b), None, None, Some(b)),
         };
         let args = self.type_args(name, &scheme.params, targs, span, "(..)")?;
         let s = Subst::new(&scheme.params, &args);
@@ -1021,7 +1043,7 @@ impl Checker {
         }
         let res = match (&symbol, builtin) {
             (Some(symbol), _) => Res::Fn(symbol.clone(), args.clone()),
-            (None, Some(_)) => Res::Builtin,
+            (None, Some(b)) => Res::Builtin(b, args.clone()),
             (None, None) => unreachable!("a function or a built-in"),
         };
         let instance = symbol.map(|symbol| {
@@ -1118,6 +1140,7 @@ impl Checker {
     fn end_scope(&mut self, scope: usize) {
         for local in self.locals.split_off(scope) {
             if !local.used && !local.name.starts_with('_') && local.name != "self" {
+                self.unused.push((self.warnings.len(), local.ty.clone()));
                 self.warnings.push(unused(&local));
             }
         }

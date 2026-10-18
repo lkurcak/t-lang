@@ -1,7 +1,10 @@
 // `match` on every kind of value, with nested patterns.
 
+#[derive(Discard)]
 enum Color { Red, Green, Blue }
+#[derive(Discard)]
 struct Pixel { color: Color, bright: bool }
+#[derive(Discard)]
 enum Opt { None, Some(int) }
 
 fn describe(p: Pixel) -> int {

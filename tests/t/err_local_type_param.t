@@ -1,6 +1,7 @@
 // A local type can't use the type parameters of the function it's in: it
 // means what it would at the top level.
 fn wrap<T>(x: T) -> T {
+    #[derive(Discard)]
     struct Wrap { v: T }
     x
 }

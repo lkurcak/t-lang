@@ -2,13 +2,14 @@
 // rather than moved. `#[derive(Copy)]` needs of the type parameters only
 // what the fields need.
 
-#[derive(Copy)]
+#[derive(Discard, Copy)]
 struct Pair<A, B> { a: A, b: B }
 
 // `Copy` for every `T`: a function is, whatever it takes.
-#[derive(Copy)]
+#[derive(Discard, Copy)]
 struct Callback<T> { f: fn(T) -> int }
 
+#[derive(Discard)]
 struct Celsius { degrees: int }
 
 impl Copy for Celsius {}

@@ -1,3 +1,4 @@
+#[derive(Discard)]
 enum Opt { None, Some(int) }
 fn main() {
     let Opt::Some(x) = Opt::Some(1);

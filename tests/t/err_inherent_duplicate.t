@@ -1,3 +1,4 @@
+#[derive(Discard)]
 struct W<T> { x: T }
 impl<T> W<T> { fn get(&self) {} }
 impl W<int> { fn get(&self) {} }

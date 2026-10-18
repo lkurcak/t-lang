@@ -7,7 +7,7 @@
 use super::generics::{self, Lifetimes};
 use super::{Checker, plural};
 use crate::ast::*;
-use crate::error::{Error, Span};
+use crate::error::{Edit, Error, Fix, Span};
 use crate::traits::{ImplDef, MethodDef, Pred, TraitDef, overlap};
 use crate::types::{AdtKind, Bound, Region, Scheme, Subst, Type};
 use std::collections::{HashMap, HashSet};
@@ -381,12 +381,15 @@ impl Checker {
     /// starting from none and adding what's missing until nothing is: the
     /// least *fixed point*. That ends, as each round adds a bound or stops,
     /// and there are only so many parameters.
+    ///
+    /// A derived `Copy` needs the type to be `Discard` too, as `trait Copy:
+    /// Discard`, and it's never assumed: it says so with a fix.
     pub(super) fn derive(&mut self, prog: &Program) -> Result<(), Error> {
         let decls = prog.all_types();
         // (impl index, type, the derive, trait)
         let mut derived: Vec<(usize, usize, Span, &'static str)> = Vec::new();
         for (i, (d, _)) in decls.iter().enumerate() {
-            for tr in ["Copy", "Eq"] {
+            for tr in ["Copy", "Discard", "Eq"] {
                 let Some(at) = d.derive_of(tr) else {
                     continue;
                 };
@@ -448,9 +451,38 @@ impl Checker {
                 }
             }
             if !changed {
-                return Ok(());
+                break;
             }
         }
+        for &(k, i, span, tr) in &derived {
+            let def = &self.traits.impls[k];
+            if tr != "Copy"
+                || self
+                    .traits
+                    .implements(&def.self_ty, "Discard", &def.preds)
+                    .is_ok()
+            {
+                continue;
+            }
+            let (d, _) = decls[i];
+            let name = &d.name().name;
+            let e = Error::ty(
+                span,
+                format!(
+                    "`{name}` can't be `Copy` unless it's `Discard`: `trait Copy: Discard`, as a \
+                     value that's copied can't be used up exactly once"
+                ),
+            );
+            let copy = d.derive_of("Copy").expect("derived");
+            return Err(match d.derive_of("Discard") {
+                Some(_) => e,
+                None => e.with_fix(Fix::new(
+                    "derive `Discard` too",
+                    vec![Edit::insert(copy.span.start, "Discard, ")],
+                )),
+            });
+        }
+        Ok(())
     }
 
     /// Which of `params` `t` needs to implement `tr` for it to, added to
@@ -473,6 +505,7 @@ impl Checker {
             Type::Ref(_, _, inner) | Type::Box(inner) if tr == "Eq" => {
                 return self.needs(inner, tr, params, out);
             }
+            Type::Box(inner) if tr == "Discard" => return self.needs(inner, tr, params, out),
             Type::Adt(..) => {}
             t => {
                 return self
@@ -500,8 +533,9 @@ impl Checker {
 
     /// Pass 4, once every impl and method signature is known: the rules
     /// for impls. Each impl of a trait has the trait's methods at the
-    /// trait's types, and the trait's supertraits; an impl of `Copy` is
-    /// for a type whose fields all are; no two impls overlap; and proving
+    /// trait's types, and the trait's supertraits; an impl of `Copy` or
+    /// `Discard` is for a type whose fields all are; no two impls overlap;
+    /// and proving
     /// that a type implements a trait always ends.
     pub(super) fn check_impls(&mut self, prog: &Program) -> Result<(), Error> {
         for (k, d) in prog.impls.iter().enumerate() {
@@ -538,7 +572,7 @@ impl Checker {
                     ));
                 }
             }
-            if tr == "Copy" {
+            if tr == "Copy" || tr == "Discard" {
                 let Type::Adt(symbol, ..) = &def.self_ty else {
                     unreachable!("checked")
                 };
@@ -546,11 +580,11 @@ impl Checker {
                 let s = Subst::new(&adt.params, &args_of(&def.self_ty));
                 for (what, t) in fields(&adt.kind) {
                     let t = s.apply(&t);
-                    if self.traits.implements(&t, "Copy", &def.preds).is_err() {
+                    if self.traits.implements(&t, tr, &def.preds).is_err() {
                         return Err(Error::ty(
                             def.span,
                             format!(
-                                "`{}` can't be `Copy`: its {what} holds a `{t}`, which isn't",
+                                "`{}` can't be `{tr}`: its {what} holds a `{t}`, which isn't",
                                 def.self_ty
                             ),
                         ));
@@ -832,6 +866,54 @@ impl Checker {
         }
     }
 
+    /// May a value of type `t`, which has no type variables in it, be
+    /// thrown away, with the bounds in scope? Only asked before
+    /// monomorphisation: the borrow checker asks it, and it's done by then.
+    pub(crate) fn is_discard(&self, t: &Type) -> bool {
+        self.traits.implements(t, "Discard", &self.env).is_ok()
+    }
+
+    /// What `t`, which isn't `Discard`, would need to be, for messages to
+    /// say: a type parameter, which a bound can make so, or a struct or
+    /// enum that deriving `Discard` would make so, if its fields allow
+    /// that. `None` if it's neither, as a fix that wouldn't work is no fix.
+    pub(crate) fn missing_discard(&self, t: &Type) -> Option<Type> {
+        let bad = self.traits.implements(t, "Discard", &self.env).err()?;
+        let Type::Adt(symbol, ..) = &bad.ty else {
+            return matches!(bad.ty, Type::Param(_)).then_some(bad.ty);
+        };
+        if self.traits.select(&bad.ty, Some("Discard")).is_some() {
+            return None;
+        }
+        // As if it were `#[derive(Discard)]`, needing it of every type
+        // parameter: the derive would need no more.
+        let adt = &self.adts[symbol];
+        let assumed: Vec<Pred> = adt
+            .params
+            .iter()
+            .map(|p| Pred {
+                ty: Type::Param(p.clone()),
+                trait_name: "Discard".into(),
+            })
+            .collect();
+        let mut traits = self.traits.clone();
+        traits.impls.push(ImplDef {
+            span: Span::new(0, 0),
+            trait_name: Some("Discard".into()),
+            params: adt.params.clone(),
+            lifetimes: adt.lifetimes.clone(),
+            bounds: adt.bounds.clone(),
+            self_ty: adt.generic(symbol),
+            preds: assumed.clone(),
+            methods: Vec::new(),
+            derived: true,
+        });
+        let fields_may = fields(&adt.kind)
+            .iter()
+            .all(|(_, f)| traits.implements(f, "Discard", &assumed).is_ok());
+        (fields_may && traits.implements(t, "Discard", &self.env).is_ok()).then_some(bad.ty)
+    }
+
     /// Requires `pred`, at `span` because of `why`: now, if its type is
     /// known, or else once the function's types are.
     pub(super) fn oblige(&mut self, pred: Pred, span: Span, why: Why) -> Result<(), Error> {
@@ -868,7 +950,7 @@ impl Checker {
             (Type::Param(t), tr) => format!("; add a bound: `{t}: {tr}`"),
             (Type::Fn(_), "Eq") if at_bottom => ": functions can't be compared".to_string(),
             (Type::Fn(_), "Eq") => ", and functions can't be compared".to_string(),
-            (t @ Type::Adt(..), tr @ ("Eq" | "Copy")) => {
+            (t @ Type::Adt(..), tr @ ("Eq" | "Copy" | "Discard")) => {
                 format!(
                     "; add `#[derive({tr})]` to `{}`",
                     super::source_name(&t.to_string())

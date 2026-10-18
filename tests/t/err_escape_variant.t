@@ -1,3 +1,4 @@
+#[derive(Discard)]
 enum Op { Apply(fn(int) -> int), Skip }
 fn main() {
     let n = 5;

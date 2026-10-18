@@ -1,7 +1,10 @@
 // `let` takes any irrefutable pattern: one that matches every value of its type.
 
+#[derive(Discard)]
 struct Point { x: int, y: int }
+#[derive(Discard)]
 struct Line { from: Point, to: Point }
+#[derive(Discard)]
 enum Wrapper { Only(int) }   // one variant, so matching it can't fail
 
 fn main() {

@@ -2,6 +2,7 @@
 // references they take and return are related; elision fills in the
 // obvious ones.
 
+#[derive(Discard)]
 struct Pair { a: int, b: int }
 
 // Elided: one lifetime in, so the result has it.
@@ -19,6 +20,7 @@ fn left<'a, 'b>(x: &'a int, y: &'b int) -> &'a int {
 }
 
 // A struct holding a reference has a lifetime parameter.
+#[derive(Discard)]
 struct View<'a> { pair: &'a Pair, which: bool }
 
 fn get(v: View) -> int {

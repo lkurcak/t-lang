@@ -1,7 +1,10 @@
 // Structs are named in UpperCamelCase. The fix renames every use too, in
 // types, literals and patterns.
+#[derive(Discard)]
 struct my_point { x: int, y: int }
+#[derive(Discard)]
 struct HTTPServer { port: int }
+#[derive(Discard)]
 struct Vec2 { x: int, y: int }
 
 fn shift(p: my_point) -> my_point {

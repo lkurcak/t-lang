@@ -1,3 +1,4 @@
+#[derive(Discard)]
 struct View { r: &int }
 
 fn main() {}

@@ -1,6 +1,6 @@
 // What can leave a function: functions, closures that capture nothing, and
 // fields, which hold only those. Parameters that aren't functions are fine.
-#[derive(Copy)]
+#[derive(Discard, Copy)]
 struct Fs { f: fn(int) -> int, n: int }
 
 fn inc(x: int) -> int { x + 1 }

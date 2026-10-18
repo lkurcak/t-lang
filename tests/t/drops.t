@@ -3,8 +3,10 @@
 // never freed.
 
 #[allow(dead_code)]
+#[derive(Discard)]
 enum Option<T> { Some(T), None }
 
+#[derive(Discard)]
 struct Two { a: Box<int>, b: Box<int> }
 
 fn two(n: int) -> Two { Two { a: Box::new(n), b: Box::new(n + 1) } }

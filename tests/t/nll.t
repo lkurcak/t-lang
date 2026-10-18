@@ -1,6 +1,7 @@
 // A borrow lasts only as long as the reference is used, not to the end of
 // its block: *non-lexical lifetimes*.
 
+#[derive(Discard)]
 struct Account { balance: int }
 
 fn deposit(a: &mut Account, n: int) { a.balance += n; }

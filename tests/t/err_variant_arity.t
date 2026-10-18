@@ -1,3 +1,4 @@
+#[derive(Discard)]
 enum Shape { Rect(int, int) }
 fn main() {
     let s = Shape::Rect(1);

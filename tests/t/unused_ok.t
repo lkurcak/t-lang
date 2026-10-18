@@ -1,4 +1,5 @@
 // None of these is an unused variable.
+#[derive(Discard)]
 struct P { x: int, y: int }
 fn ignore(_n: int) -> int { 0 }
 fn main() {

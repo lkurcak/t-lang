@@ -36,9 +36,9 @@
 (self) @variable.builtin
 
 ((call_expression function: (identifier) @function.builtin)
-  (#match? @function.builtin "^(print|print_bool)$"))
+  (#match? @function.builtin "^(print|print_bool|replace)$"))
 ((call_expression function: (identifier) @function)
-  (#not-match? @function "^(print|print_bool)$"))
+  (#not-match? @function "^(print|print_bool|replace)$"))
 
 (generic_function function: (identifier) @function)
 

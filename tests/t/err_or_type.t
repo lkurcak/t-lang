@@ -1,3 +1,4 @@
+#[derive(Discard)]
 enum E { A(int), B(bool) }
 fn f(e: E) -> int {
     match e {

@@ -75,6 +75,7 @@ it, a function's body and the functions nested in it included:
 
 ```rust
 #[allow(non_camel_case_types, dead_code)]
+#[derive(Discard)]
 enum ffi_result { OK, Retry, Fatal }
 
 fn main() {
@@ -261,6 +262,9 @@ has to fit that:
   stack. A `fn` nested in a block captures nothing, so it can go anywhere.
   See [docs/03-inference.md](docs/03-inference.md).
 - **Errors are values, not exceptions.** There's no unwinding.
+- **Values must be used up.** One whose type isn't `#[derive(Discard)]`
+  can't be dropped or overwritten: a resource like a file descriptor can't
+  be forgotten. See [docs/06a.1-linear-types.md](docs/06a.1-linear-types.md).
 
 Within that, the aim is to push the type system as far as it goes, and keep
 it sound: well-typed programs don't go wrong, including the ones that
@@ -277,6 +281,7 @@ combine features in ways nobody planned for.
 | 5 ✅ | ownership, borrowing, pointers | affine types, regions/lifetimes; types that hold themselves through a pointer | [docs/05-ownership.md](docs/05-ownership.md) |
 | 5.1 ✅ | `return`, `break`, `continue`, `loop`, labels | the empty type `!`, divergence | [docs/05.1-control-flow.md](docs/05.1-control-flow.md) |
 | 6a ✅ | traits, impls, methods, `Eq` and `Copy` | ad-hoc polymorphism, type classes, coherence, termination of resolution; two-phase borrows | [docs/06-traits.md](docs/06-traits.md) |
+| 6a.1 ✅ | values must be used up, unless `Discard`; `replace` | linear types, substructural rules (weakening, contraction) | [docs/06a.1-linear-types.md](docs/06a.1-linear-types.md) |
 | 6b | associated types | type-level functions | |
 | 6c | closures as `Fn` traits | a type per closure, capturing by reference | |
 | 7 | effects | effect systems: which functions can panic, allocate or diverge | |

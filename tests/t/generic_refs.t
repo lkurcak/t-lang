@@ -2,15 +2,17 @@
 // `T: 'a` says that a `T` lives at least as long as `'a`.
 
 #[allow(dead_code)]
+#[derive(Discard)]
 enum Option<T> { Some(T), None }
 
-#[derive(Copy)]
+#[derive(Discard, Copy)]
 struct Pair<A, B> { a: A, b: B }
 
 fn swap<A, B>(p: Pair<A, B>) -> Pair<B, A> { Pair { a: p.b, b: p.a } }
 
 fn largest<'a>(x: &'a int, y: &'a int) -> &'a int { if *x > *y { x } else { y } }
 
+#[derive(Discard)]
 struct Slot<'a, T: 'a> { r: &'a T }
 
 fn fill<'a, T>(s: &mut Option<&'a T>, v: &'a T) { *s = Option::Some(v); }

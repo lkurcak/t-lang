@@ -2,8 +2,10 @@
 // expression of type `!`, which fits wherever a value is wanted, since it
 // never gives one.
 
+#[derive(Discard)]
 enum Option<T> { Some(T), None }
 
+#[derive(Discard)]
 enum State { Ok, Unauthorized }
 
 fn login(user_exists: bool) -> State {

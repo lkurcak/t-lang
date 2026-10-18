@@ -1,11 +1,13 @@
 // A `struct` or `enum` in a block is local to it: it means what it would
 // at the top level, and its name is in scope in the whole block.
+#[derive(Discard)]
 struct P { x: int }
 
 fn total() -> int {
     // Used before it's declared.
     let pair = Pair { left: P { x: 1 }, right: P { x: 2 } };
     /// Two of the top-level `P`.
+    #[derive(Discard)]
     struct Pair { left: P, right: P }
     // A nested `fn` can use it, in its signature too.
     fn sum(p: Pair) -> int { p.left.x + p.right.x }
@@ -14,6 +16,7 @@ fn total() -> int {
 
 fn shapes() -> int {
     // Generic.
+    #[derive(Discard)]
     enum Shape<T> { Circle(T), Rect(T, T), Empty }
     fn area(s: Shape<int>) -> int {
         match s {
@@ -29,17 +32,20 @@ fn main() {
     print(total());  // expect: 3
     print(shapes()); // expect: 18
     // Shadows the top-level `P`.
+    #[derive(Discard)]
     struct P { y: bool }
     print_bool(P { y: true }.y); // expect: true
     // A value of a local type can leave its block: nothing outside can
     // name the type, but inference doesn't need to.
     let q = {
+        #[derive(Discard)]
         struct Q { n: int }
         Q { n: 7 }
     };
     print(q.n); // expect: 7
     // A second `P` in `main`, in a block of its own.
     {
+        #[derive(Discard)]
         struct P { z: int }
         let P { z } = P { z: 9 };
         print(z); // expect: 9
@@ -50,6 +56,7 @@ fn main() {
 
 // Another function's `P`.
 fn other() -> int {
+    #[derive(Discard)]
     struct P { y: int }
     P { y: 4 }.y
 }
@@ -57,6 +64,7 @@ fn other() -> int {
 // In a nested `fn`.
 fn outer() -> int {
     fn inner() -> int {
+        #[derive(Discard)]
         enum Sign { Minus, Plus }
         fn value(s: Sign) -> int {
             match s {

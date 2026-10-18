@@ -1,5 +1,6 @@
 // A variable bound by an or-pattern is one variable, with one warning, and
 // the fix renames it in every alternative.
+#[derive(Discard)]
 enum Pair { L(int, int), R(int, int) }
 fn f(p: Pair) -> int {
     match p {

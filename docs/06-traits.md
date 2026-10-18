@@ -15,6 +15,7 @@ trait Show {
     }
 }
 
+#[derive(Discard)]
 struct Point { x: int, y: int }
 
 impl Show for Point {
@@ -24,6 +25,7 @@ impl Show for Point {
     }
 }
 
+#[derive(Discard)]
 enum Option<T> { Some(T), None }
 
 impl<T: Show> Show for Option<T> {
@@ -35,7 +37,7 @@ impl<T: Show> Show for Option<T> {
     }
 }
 
-fn show_all<T: Show>(a: T, b: T) {
+fn show_all<T: Show>(a: &T, b: &T) {
     a.show();
     b.show();
 }
@@ -46,7 +48,7 @@ fn main() {
                     // expect: 2
                     // expect: 1
                     // expect: 2
-    show_all(Option::Some(Point { x: 3, y: 4 }), Option::None);
+    show_all(&Option::Some(Point { x: 3, y: 4 }), &Option::None);
     // expect: 3
     // expect: 4
     // expect: 0
@@ -78,7 +80,7 @@ Haskell's type classes (Wadler and Blott, 1989), and Rust's traits.
 A bound is an assumption. In the body of `fn show_all<T: Show>`, `T: Show`
 holds, though nothing says which impl it's by; that's for each caller to
 show, for the `T` it picks. Each obligation, such as `int: Show` for
-`show_all(1, 2)`, waits until its type is known, at the end of the
+`show_all(&1, &2)`, waits until its type is known, at the end of the
 function, as `==` on a type to be inferred did in step 3.
 
 ```rust,error
@@ -86,13 +88,13 @@ trait Show {
     fn show(&self);
 }
 
-fn show_all<T: Show>(a: T, b: T) {
+fn show_all<T: Show>(a: &T, b: &T) {
     a.show();
     b.show();
 }
 
 fn main() {
-    show_all(1, 2);
+    show_all(&1, &2);
 }
 // error: `show_all` needs its `T` to implement `Show`, and `int` doesn't
 ```
@@ -216,6 +218,7 @@ path without `(..)` is the method as a function, `let f = Point::len;`.
 ### Two-phase borrows
 
 ```rust
+#[derive(Discard)]
 struct Stack { top: int, size: int }
 
 impl Stack {
@@ -256,12 +259,13 @@ an `eq` of its own counts it), or with an impl. Functions never are.
 
 `Copy` is a trait with no methods: a *marker*. `#[derive(Copy)]` is an
 impl, and so is `impl Copy for P {}`, which also needs every field `Copy`.
-A bound `T: Copy` lets generic code copy a `T`.
+A bound `T: Copy` lets generic code copy a `T`. Since step 6a.1, `Copy`
+needs `Discard` too (docs/06a.1-linear-types.md).
 
 A derived impl needs of the type's parameters only what its fields need:
 
 ```rust
-#[derive(Copy)]
+#[derive(Discard, Copy)]
 struct Callback<T> { f: fn(T) -> int }
 
 fn unbox(b: Box<int>) -> int { *b }
@@ -299,6 +303,7 @@ trait Tr {
     fn f(&self) -> int;
 }
 
+#[derive(Discard)]
 struct W<X> { x: X }
 
 impl<X: Tr> Tr for W<X> {

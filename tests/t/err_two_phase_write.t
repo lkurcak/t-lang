@@ -1,5 +1,6 @@
 // Until the call, the `&mut v` works as a shared borrow: `v` can be read,
 // not changed.
+#[derive(Discard)]
 struct Stack { size: int }
 impl Stack {
     fn push(&mut self, x: int) { self.size += x }

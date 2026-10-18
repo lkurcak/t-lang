@@ -5,6 +5,7 @@ checker), `src/borrowck.rs` and `src/borrowck/` (the borrow checker), and
 `src/interp.rs` (memory).
 
 ```rust
+#[derive(Discard)]
 enum List { Nil, Cons(int, Box<List>) }
 
 fn sum(l: &List) -> int {
@@ -107,7 +108,7 @@ Some types are fine to duplicate: an `int` owns nothing. Those are `Copy`:
 enums that say so with `#[derive(Copy)]`, if all their fields are `Copy`:
 
 ```rust
-#[derive(Copy)]
+#[derive(Discard, Copy)]
 struct Point { x: int, y: int }
 
 fn main() {
@@ -290,8 +291,10 @@ other way a type can hold itself, with nothing on the heap
 
 ```rust
 #[allow(dead_code)]
+#[derive(Discard)]
 enum Option<T> { Some(T), None }
 
+#[derive(Discard)]
 struct Node<'a> { value: int, next: Option<&'a Node<'a>> }
 
 fn total(n: &Node) -> int {

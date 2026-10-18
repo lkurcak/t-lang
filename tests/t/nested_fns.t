@@ -55,6 +55,7 @@ fn pick(b: bool) -> fn(int) -> int {
     if b { double_it() } else { neg }
 }
 
+#[derive(Discard)]
 struct Holder { f: fn(int) -> int }
 
 fn double_it() -> fn(int) -> int {
@@ -64,6 +65,7 @@ fn double_it() -> fn(int) -> int {
 }
 
 // Outer functions and types are fine to use.
+#[derive(Discard)]
 struct One { n: int }
 fn top() -> int {
     fn one() -> One { One { n: 1 } }

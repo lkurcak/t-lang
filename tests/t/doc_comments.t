@@ -2,6 +2,7 @@
 // Editors show it on hover. It changes nothing about what the program does.
 
 /// A pair of ints.
+#[derive(Discard)]
 struct Pair {
     /// The first.
     a: int,
@@ -12,6 +13,7 @@ struct Pair {
 }
 
 /// A shape.
+#[derive(Discard)]
 enum Shape {
     /// Its radius.
     Circle(int),

@@ -1,4 +1,4 @@
-#[derive(Copy)]
+#[derive(Discard, Copy)]
 struct Owner { b: Box<int> }
 
 fn main() {}

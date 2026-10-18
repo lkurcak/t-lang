@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+Step 6a.1: linear types. See
+[docs/06a.1-linear-types.md](docs/06a.1-linear-types.md).
+
+### Added
+
+- A built-in trait `Discard`: values of its types may be thrown away.
+  `#[derive(Discard)]` and `impl Discard for P {}` say a struct or enum is,
+  and need every field to be; a derived impl needs of the type parameters
+  only what the fields do. `int`, `bool`, `()`, `!`, functions and
+  references always are, and `Box<T>` is when `T` is.
+- `replace(&mut x, v)`, built in: puts `v` in `x` and gives back what was
+  there, for any type.
+
+### Changed
+
+- Values are linear: one whose type isn't `Discard` must be used up, moved
+  or taken apart by a pattern, on every path that goes on. Letting it go
+  out of scope, ignoring it as a result, binding it to `_`, or giving its
+  place a new value (`x = v`, `*r = v`) is an error that says how to fix
+  it. Paths that never go on, after a call that returns `!`, are exempt.
+- Matching a value that isn't `Discard` by value against a struct or
+  variant pattern uses it up, in every arm; the parts the pattern doesn't
+  bind must be `Discard`.
+- `trait Copy: Discard`: `#[derive(Copy)]` needs `#[derive(Discard)]` too,
+  and the error's fix adds it.
+- A `T` isn't `Discard` unless a bound says so: generic code that drops a
+  `T` needs `T: Discard`, or `T: Copy`.
+- An unused variable whose type isn't `Discard` is warned about with "use
+  it up" rather than a fix to rename it `_x`, which wouldn't help.
+- Every struct and enum in the tests, docs and examples is
+  `#[derive(Discard)]` now.
+
 Step 6a: traits. See [docs/06-traits.md](docs/06-traits.md).
 
 ### Added

@@ -1,5 +1,7 @@
+#[derive(Discard)]
 struct Holder { f: fn(int) -> int }
 
+#[derive(Discard)]
 struct One { n: int }
 
 fn main() {

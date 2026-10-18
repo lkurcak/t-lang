@@ -317,11 +317,11 @@ impl<'p> Mono<'p> {
             name: mangle(&d.name().name, args),
             span: d.name().span,
         };
-        // Whether it's `Copy` and `Eq`, which the checker of what this
-        // makes takes the copy's word for.
+        // Whether it's `Discard`, `Copy` and `Eq`, which the checker of what
+        // this makes takes the copy's word for.
         let ty = Type::Adt(d.name().name.clone(), Vec::new(), args.to_vec());
         let traits = &cx.m.info.traits;
-        let names: Vec<Ident> = ["Copy", "Eq"]
+        let names: Vec<Ident> = ["Discard", "Copy", "Eq"]
             .into_iter()
             .filter(|tr| traits.implements(&ty, tr, &[]).is_ok())
             .map(|tr| Ident {

@@ -31,6 +31,7 @@ fn overlap(n: int) -> int {
     }
 }
 
+#[derive(Discard)]
 enum Opt { None, Some(int) }
 
 // Nested, in or-patterns, and covering every int between them.
@@ -41,6 +42,7 @@ fn small(o: Opt) -> bool {
     }
 }
 
+#[derive(Discard)]
 struct P { x: int, y: int }
 
 // `..` still ignores the rest of a struct's fields.
@@ -54,6 +56,7 @@ fn quadrant(p: P) -> int {
 
 // The `x` ranges overlap, but `Q { x: 10, on: false }` still reaches the
 // second arm, so `10..30` is as narrow as it can be.
+#[derive(Discard)]
 struct Q { x: int, on: bool }
 
 fn lit(q: Q) -> int {

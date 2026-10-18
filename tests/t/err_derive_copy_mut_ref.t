@@ -1,4 +1,4 @@
-#[derive(Copy)]
+#[derive(Discard, Copy)]
 enum E<'a> { A(&'a mut int), B }
 
 fn main() {}

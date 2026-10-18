@@ -2,12 +2,14 @@
 // new one, after which the old one can't be used, until it's given a new
 // value.
 
-#[derive(Copy)]
+#[derive(Discard, Copy)]
 struct Point { x: int, y: int }
 
+#[derive(Discard)]
 struct Owner { name: int, data: Box<int> }
 
 #[allow(dead_code)]
+#[derive(Discard)]
 enum Option<T> { Some(T), None }
 
 fn take(o: Owner) -> int { o.name + *o.data }

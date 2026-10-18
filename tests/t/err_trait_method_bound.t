@@ -1,5 +1,6 @@
 // An impl's method can't need more than the trait's says it does.
 trait Pick { fn pick<T>(&self, a: T, b: T) -> T; }
+#[derive(Discard)]
 struct First {}
 impl Pick for First {
     fn pick<T: Copy>(&self, a: T, b: T) -> T { a }

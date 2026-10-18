@@ -1,3 +1,4 @@
+#[derive(Discard)]
 struct P {}
 impl P { fn new() -> P { P {} } }
 fn main() {

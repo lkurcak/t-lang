@@ -1,6 +1,8 @@
 // Messages show local types by their names, not their symbols.
 fn main() {
+    #[derive(Discard)]
     enum Option<T> { Some(T), None }
+    #[derive(Discard)]
     struct P { x: int }
     let o: Option<P> = Option::Some(P { x: 1 });
     match o {

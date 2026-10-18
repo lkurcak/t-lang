@@ -1,14 +1,21 @@
 // Code that can never run: functions `main` doesn't reach, structs it never
 // builds, enums it never mentions and variants it never constructs. A name
 // starting with `_` says that's on purpose.
+#[derive(Discard)]
 struct Used { a: int }
+#[derive(Discard)]
 struct Unbuilt { a: int }
+#[derive(Discard)]
 struct _Kept { a: int }
+#[derive(Discard)]
 enum Color { Red, Green, _Blue }
+#[derive(Discard)]
 enum Unused { A, B }
+#[derive(Discard)]
 enum Inner { X }
 
 // Only mentioned by a struct that's built, so not dead.
+#[derive(Discard)]
 struct Holder { i: Inner }
 
 fn helper() -> int { 1 }

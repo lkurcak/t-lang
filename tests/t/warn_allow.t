@@ -2,6 +2,7 @@
 // parameters, body and nested functions, a type's fields and variants.
 
 #[allow(non_camel_case_types, dead_code)]
+#[derive(Discard)]
 enum light_color {
     Red,
     yellow,
@@ -10,6 +11,7 @@ enum light_color {
 
 /// Documented, then allowed.
 #[allow(non_snake_case)]
+#[derive(Discard)]
 struct Pixel {
     R: int,
     G: int,
@@ -17,6 +19,7 @@ struct Pixel {
     B: int,
 }
 
+#[derive(Discard)]
 struct Point {
     x: int,
     #[allow(non_snake_case)]

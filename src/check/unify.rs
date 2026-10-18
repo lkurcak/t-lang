@@ -206,6 +206,25 @@ impl Checker {
                 return Err(Error::ty(*span, message));
             }
         }
+        self.settle_unused();
         Ok(())
+    }
+
+    /// An unused variable whose type isn't `Discard` must still be used
+    /// up, so renaming it `_x` would only hide the warning: it says so
+    /// instead, with no fix.
+    fn settle_unused(&mut self) {
+        for (i, t) in std::mem::take(&mut self.unused) {
+            let t = self.solved(&t);
+            if self.mono || has_vars(&t) || self.is_discard(&t) {
+                continue;
+            }
+            let w = &mut self.warnings[i];
+            w.message = format!(
+                "{}: use it up, as its type, `{t}`, isn't `Discard`",
+                w.message
+            );
+            w.fixes.clear();
+        }
     }
 }

@@ -318,6 +318,8 @@ fn main() {
         E::A(n) => print(n),
     }
 }
+impl Discard for P {}
+impl Discard for E {}
 ";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
@@ -507,10 +509,11 @@ fn main() {
 }
 fn other() -> P {
     let local = P { z: 3 };
-    struct P { z: int }
+    #[derive(Discard)] struct P { z: int }
     top(local.z)
 }
 fn top(x: int) -> P { P { x } }
+impl Discard for P {}
 ";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
@@ -707,7 +710,7 @@ fn main() {
     {
         let q = P { y: true };
         print_bool(q.y);
-        struct P { y: bool }
+        #[derive(Discard)] struct P { y: bool }
     }
 }
 fn other() -> int {
@@ -715,6 +718,7 @@ fn other() -> int {
     helper()
 }
 struct P { x: int }
+impl Discard for P {}
 ";
     let (mut d, diags) = Doc::open(&mut c, "file:///tmp/refs.t", src);
     assert_eq!(diags, Vec::<Value>::new());
@@ -760,7 +764,11 @@ struct P { x: int }
         vec![d.range("P", 1), d.range("P", 2)]
     );
     let renamed = d.rename(&mut c, "P", 3, "Point").unwrap();
-    assert_eq!(renamed, src.replace("P { x", "Point { x"));
+    assert_eq!(
+        renamed,
+        src.replace("P { x", "Point { x")
+            .replace("for P {}", "for Point {}")
+    );
     // A field of the local one.
     assert_eq!(
         d.references(&mut c, "y", 2, true),
@@ -823,7 +831,7 @@ enum Shape<T> {
     Empty,
 }
 struct Wrap<T> { inner: T }
-fn area<T>(s: Shape<T>, w: Wrap<T>) -> T {
+fn area<T: Discard>(s: Shape<T>, w: Wrap<T>) -> T {
     match s {
         Shape::Circle(r) => r,
         Shape::Empty => w.inner,
@@ -833,6 +841,8 @@ fn main() {
     print(area(Shape::Circle(2), Wrap { inner: 1 }));
     print(area(Shape::Empty, Wrap::<int> { inner: 3 }));
 }
+impl<T: Discard> Discard for Shape<T> {}
+impl<T: Discard> Discard for Wrap<T> {}
 ";
     let (mut d, diags) = Doc::open(&mut c, "file:///tmp/kinds.t", src);
     assert_eq!(diags, Vec::<Value>::new());
@@ -848,8 +858,8 @@ fn main() {
     assert_eq!(
         d.rename(&mut c, "T", 4, "U").unwrap(),
         src.replace(
-            "area<T>(s: Shape<T>, w: Wrap<T>) -> T",
-            "area<U>(s: Shape<U>, w: Wrap<U>) -> U"
+            "area<T: Discard>(s: Shape<T>, w: Wrap<T>) -> T",
+            "area<U: Discard>(s: Shape<U>, w: Wrap<U>) -> U"
         )
     );
     assert_eq!(
@@ -877,6 +887,7 @@ fn main() {
     print(a + b + p.x + helper());
 }
 fn c() -> int { 3 }
+impl Discard for P {}
 ";
     let (mut d, diags) = Doc::open(&mut c, "file:///tmp/bad.t", src);
     assert_eq!(diags, Vec::<Value>::new());
@@ -1010,6 +1021,8 @@ fn main() {
     print(get(Option::None));
     print(id(2));
 }
+impl<T: Discard> Discard for Option<T> {}
+impl Discard for P {}
 ";
     let (mut d, diags) = Doc::open(&mut c, "file:///tmp/typedef.t", src);
     assert_eq!(diags, Vec::<Value>::new());
@@ -1181,16 +1194,17 @@ impl P {
 impl Show for P {
     fn show(&self) -> int { self.get() }
 }
-fn twice<T: Show>(t: T) -> int { t.show() * 2 }
+fn twice<T: Show + Discard>(t: T) -> int { t.show() * 2 }
 fn main() {
     let p = P { x: 1 };
     print(twice(p));
     print(P { x: 2 }.show());
 }
+impl Discard for P {}
 ";
     let (mut d, diags) = Doc::open(&mut c, "file:///tmp/traits.t", src);
     assert_eq!(diags, Vec::<Value>::new());
-    let hover = d.ask(&mut c, "textDocument/hover", "Show>", 0, json!({}));
+    let hover = d.ask(&mut c, "textDocument/hover", "Show +", 0, json!({}));
     assert_eq!(
         hover["result"]["contents"]["value"],
         "```t\ntrait Show\n```"
@@ -1252,6 +1266,7 @@ fn main() {
             json!(["impl Show for P", 19, ["show"]]),
             json!(["twice", 12, []]),
             json!(["main", 12, []]),
+            json!(["impl Discard for P", 19, []]),
         ]
     );
 

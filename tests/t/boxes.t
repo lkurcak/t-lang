@@ -1,6 +1,7 @@
 // Boxes: values on the heap, freed when their owner goes out of scope.
 // The interpreter checks that each is freed exactly once.
 
+#[derive(Discard)]
 struct Big { a: int, b: int }
 
 fn make(n: int) -> Box<Big> { Box::new(Big { a: n, b: n * 2 }) }

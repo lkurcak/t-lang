@@ -1,6 +1,6 @@
 // Types left out are inferred from how values are used.
 
-#[derive(Eq)]
+#[derive(Discard, Eq)]
 enum Opt { None, Some(int) }
 
 fn main() {
@@ -28,6 +28,7 @@ fn main() {
 
 // A match with no arms is a `!`, which fits any type: `int` here. (It can
 // never run, so neither can this function: `_` says that's on purpose.)
+#[derive(Discard)]
 enum _Never {}
 fn _absurd(n: _Never) -> int {
     match n {}

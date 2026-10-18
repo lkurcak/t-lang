@@ -92,6 +92,7 @@ fn accesses(s: &Statement) -> Vec<(Place, Access)> {
         }
         StmtKind::Inspect(p) => out.push((p.clone(), Access::Inspect)),
         StmtKind::Dead(l) => out.push((Place::local(*l), Access::Dead)),
+        StmtKind::Consume(p, _) => out.push((p.clone(), Access::Move)),
         // Checked in `conflicts`, against the other loans.
         StmtKind::Activate(_) => {}
     }
@@ -189,7 +190,7 @@ fn effect(b: &Builder, live: &mut [Phase], s: &Statement, point: Point) {
     let gone = match &s.kind {
         StmtKind::Assign { place, .. } => Some(place.clone()),
         StmtKind::Dead(l) => Some(Place::local(*l)),
-        StmtKind::Inspect(_) => None,
+        StmtKind::Inspect(_) | StmtKind::Consume(..) => None,
         StmtKind::Activate(i) => {
             live[*i] = Phase::In;
             None

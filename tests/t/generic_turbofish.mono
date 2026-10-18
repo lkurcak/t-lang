@@ -1,13 +1,19 @@
+#[derive(Discard)]
 enum Option::<int> { Some(int), None }
 
+#[derive(Discard)]
 enum Option::<bool> { Some(bool), None }
 
+#[derive(Discard)]
 struct Pair::<int, bool> { first: int, second: bool }
 
+#[derive(Discard)]
 struct Pair::<int, int> { first: int, second: int }
 
+#[derive(Discard)]
 struct Id::<Pair<int, int>> { n: int }
 
+#[derive(Discard)]
 struct Id::<bool> { n: int }
 
 fn none::<bool>() -> Option::<bool> { Option::<bool>::None }

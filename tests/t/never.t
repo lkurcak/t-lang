@@ -2,6 +2,7 @@
 // can be used as any type: that's how a `return` fits anywhere.
 
 #[allow(dead_code)]
+#[derive(Discard)]
 enum Option<T> { Some(T), None }
 
 fn id<T>(x: T) -> T { x }
@@ -30,6 +31,7 @@ fn returns_early() -> int {
 // A `match` with no arms is a `!`, and so is a `loop` that nothing breaks
 // out of, as the annotations say. Neither function can be called, or would
 // return if it were: `_` says that's on purpose.
+#[derive(Discard)]
 enum _Void {}
 fn _absurd(v: _Void) -> bool {
     let _b: ! = match v {};

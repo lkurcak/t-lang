@@ -1,5 +1,5 @@
-#[derive(Debug)]
+#[derive(Discard, Debug)]
 struct P { x: int }
 
 fn main() {}
-// error: can't derive `Debug`; only `Copy` and `Eq` can be derived
+// error: can't derive `Debug`; only `Copy`, `Discard` and `Eq` can be derived

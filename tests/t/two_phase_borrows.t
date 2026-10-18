@@ -2,6 +2,7 @@
 // receiver is the first argument, but it's only *reserved* until the call,
 // so `v.len()` can still read `v`. That's a two-phase borrow.
 
+#[derive(Discard)]
 struct Stack { top: int, size: int }
 
 impl Stack {

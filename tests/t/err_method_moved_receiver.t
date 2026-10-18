@@ -1,3 +1,4 @@
+#[derive(Discard)]
 struct P { n: int }
 impl P {
     fn take(self) -> int { self.n }

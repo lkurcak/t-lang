@@ -1,6 +1,8 @@
 // Or-patterns: an arm matches if any alternative does.
 
+#[derive(Discard)]
 enum Shape { Circle(int), Square(int), Rect(int, int), Empty }
+#[derive(Discard)]
 enum Opt { None, Some(int) }
 
 // Every alternative binds `side`, at the same type.
@@ -21,7 +23,9 @@ fn small(o: Opt) -> bool {
 
 // Two or-patterns in different fields: every combination is reachable, and
 // each alternative is used by some combination.
+#[derive(Discard)]
 struct Light { on: bool, color: Color }
+#[derive(Discard)]
 enum Color { Red, Green, Blue }
 
 fn code(l: Light) -> int {
@@ -39,7 +43,9 @@ fn xor(a: bool, b: bool) -> bool {
 }
 
 // Alternatives may bind in a different order.
+#[derive(Discard)]
 enum Pair { IntBool(int, bool), BoolInt(bool, int) }
+#[derive(Discard)]
 struct S { a: int, b: int }
 
 fn main() {

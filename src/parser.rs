@@ -207,12 +207,12 @@ impl Parser {
             if derive {
                 if let Some(n) = names
                     .iter()
-                    .find(|n| !matches!(n.name.as_str(), "Copy" | "Eq"))
+                    .find(|n| !matches!(n.name.as_str(), "Copy" | "Discard" | "Eq"))
                 {
                     return Err(Error::syntax(
                         n.span,
                         format!(
-                            "can't derive `{}`; only `Copy` and `Eq` can be derived",
+                            "can't derive `{}`; only `Copy`, `Discard` and `Eq` can be derived",
                             n.name
                         ),
                     ));

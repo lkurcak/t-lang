@@ -1,4 +1,5 @@
 // Enums are named in UpperCamelCase, and so are their variants.
+#[derive(Discard)]
 enum light_color { Red, yellow, GREEN_LIGHT }
 
 fn code(c: light_color) -> int {

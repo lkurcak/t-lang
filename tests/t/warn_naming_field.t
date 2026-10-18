@@ -1,6 +1,7 @@
 // Fields are named in snake_case. With a shorthand, `P { xPos }`, the
 // fix for the field writes `P { x_pos: xPos }`, and the one for the
 // variable `P { x_pos: x_pos }`.
+#[derive(Discard)]
 struct P { xPos: int, y: int }
 
 fn main() {

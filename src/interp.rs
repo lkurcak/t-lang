@@ -475,6 +475,20 @@ impl Interp<'_, '_> {
                 self.out.push(bool(arg).to_string());
                 Ok(Value::Unit)
             }
+            // What was behind the reference comes out, and the new value
+            // goes in: nothing is dropped.
+            Value::Builtin("replace") => {
+                let [r, new] =
+                    <[Value; 2]>::try_from(args).unwrap_or_else(|_| unsound("replace arity"));
+                let Value::Ref(p) = r else {
+                    unsound(&format!("`replace` of `{r}`"))
+                };
+                let old = std::mem::replace(self.memory.get_mut(&p), new);
+                if let Value::Moved = old {
+                    unsound("`replace` of a value that was moved");
+                }
+                Ok(old)
+            }
             Value::Fn(name) => {
                 let decl = self.fns[name.as_str()];
                 // A call gets a fresh environment: just the parameters.

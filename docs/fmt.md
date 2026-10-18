@@ -5,6 +5,7 @@ Code: `src/fmt.rs` (the command, and the check before writing),
 layout), `src/doc.rs` (the layout engine), and `tests/fmt.rs`.
 
 ```rust,unformatted
+#[derive(Discard)]
 struct Point{x:int,y:int}
 fn dist(p:Point,q:Point)->int{
 let dx=p.x-q.x;let dy=p.y-q.y;  // no square roots yet
@@ -19,6 +20,7 @@ fn main(){print(dist(Point{x:0,y:0},Point{x:3,y:4})); // expect: 25
 `t fmt` turns that into:
 
 ```rust
+#[derive(Discard)]
 struct Point { x: int, y: int }
 fn dist(p: Point, q: Point) -> int {
     let dx = p.x - q.x;

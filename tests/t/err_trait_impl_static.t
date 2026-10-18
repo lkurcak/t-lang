@@ -1,5 +1,6 @@
 // Found for a `&S` of any lifetime, so `get` would return a reference to
 // a local as `'static`.
+#[derive(Discard)]
 struct S { x: int }
 
 trait Get { fn get(self) -> &'static int; }

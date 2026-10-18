@@ -1,3 +1,4 @@
+#[derive(Discard)]
 struct View<'a> { r: &'a int }
 
 fn f(v: View<'static, 'static>) {}

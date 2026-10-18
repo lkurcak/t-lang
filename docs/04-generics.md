@@ -5,6 +5,7 @@ Code: `src/types.rs` (`Type::Param`, `Subst`, `Scheme`), `src/check.rs`
 `src/mono.rs`.
 
 ```rust
+#[derive(Discard)]
 enum Option<T> { Some(T), None }
 
 fn map<T, U>(o: Option<T>, f: fn(T) -> U) -> Option<U> {

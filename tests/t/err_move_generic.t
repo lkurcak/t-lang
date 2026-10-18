@@ -1,4 +1,5 @@
 // A type parameter could be anything, so it's moved, not copied.
+#[derive(Discard)]
 struct Pair<T> { a: T, b: T }
 
 fn dup<T>(x: T) -> Pair<T> { Pair { a: x, b: x } }

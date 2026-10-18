@@ -1,7 +1,7 @@
 // A supertrait: implementing `Ord` needs `Eq` implemented too, and a bound
 // `T: Ord` gives `T` the methods of both, and `==`.
 
-trait Ord: Eq {
+trait Ord: Eq + Discard {
     fn lt(&self, other: &Self) -> bool;
 
     fn max(self, other: Self) -> Self {
@@ -9,7 +9,7 @@ trait Ord: Eq {
     }
 }
 
-#[derive(Copy, Eq)]
+#[derive(Discard, Copy, Eq)]
 struct Money { cents: int }
 
 impl Ord for Money {

@@ -3,6 +3,7 @@
 // leaks and double frees. So is what an expression had worked out before a
 // jump out of the middle of it.
 
+#[derive(Discard)]
 struct Two { a: Box<int>, b: Box<int> }
 
 fn consume(b: Box<int>) -> int { *b }

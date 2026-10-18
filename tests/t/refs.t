@@ -1,7 +1,7 @@
 // References: `&x` borrows `x`, `*r` is what `r` points to, and a field of
 // a reference is a field of what it points to.
 
-#[derive(Copy, Eq)]
+#[derive(Discard, Copy, Eq)]
 struct Point { x: int, y: int }
 
 fn sum(p: &Point) -> int { p.x + p.y }

@@ -38,9 +38,11 @@ impl fmt::Display for Pred {
     }
 }
 
-/// The traits built into the language: `Eq`, behind `==` and `!=`, and
-/// `Copy`, which says a type's values are copied rather than moved.
-pub const BUILTIN_TRAITS: &[&str] = &["Copy", "Eq"];
+/// The traits built into the language: `Eq`, behind `==` and `!=`;
+/// `Discard`, which says a type's values may be thrown away rather than
+/// used up; and `Copy`, which says they're copied rather than moved, and
+/// needs `Discard` (see docs/06a.1-linear-types.md).
+pub const BUILTIN_TRAITS: &[&str] = &["Copy", "Discard", "Eq"];
 
 /// A trait.
 #[derive(Debug, Clone)]
@@ -125,10 +127,19 @@ impl Traits {
     pub fn new() -> Traits {
         let mut traits = HashMap::new();
         traits.insert(
-            "Copy".to_string(),
+            "Discard".to_string(),
             TraitDef {
                 span: None,
                 supers: Vec::new(),
+                methods: Vec::new(),
+            },
+        );
+        // trait Copy: Discard {}
+        traits.insert(
+            "Copy".to_string(),
+            TraitDef {
+                span: None,
+                supers: vec!["Discard".to_string()],
                 methods: Vec::new(),
             },
         );
@@ -239,8 +250,15 @@ impl Traits {
             }
             Ok(Source::Builtin)
         };
-        // The built-in impls.
+        // The built-in impls. Plain values may be thrown away, and so may
+        // references, whatever they point to: dropping one doesn't drop
+        // that. A box holds what it points to, so it may be if that may.
         match (tr, ty) {
+            (
+                "Discard",
+                Type::Int | Type::Bool | Type::Unit | Type::Never | Type::Fn(_) | Type::Ref(..),
+            ) => return Ok(Source::Builtin),
+            ("Discard", Type::Box(inner)) => return all(&[inner]),
             ("Copy", Type::Int | Type::Bool | Type::Unit | Type::Never | Type::Fn(_)) => {
                 return Ok(Source::Builtin);
             }

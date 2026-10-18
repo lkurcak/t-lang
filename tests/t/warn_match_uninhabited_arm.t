@@ -1,6 +1,8 @@
 // The other side of empty_enum.t: an arm for a variant that can't hold a
 // value can never run.
+#[derive(Discard)]
 enum Never {}
+#[derive(Discard)]
 enum Maybe { Real(int), Impossible(Never) }
 fn get(m: Maybe) -> int {
     match m {

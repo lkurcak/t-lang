@@ -2,6 +2,7 @@
 // references and boxes to what `x` points to, and then takes `&` or `&mut`
 // of it if the method takes `&self` or `&mut self`.
 
+#[derive(Discard)]
 struct Counter { n: int }
 
 impl Counter {
@@ -22,6 +23,7 @@ impl Counter {
     fn twice(x: int) -> int { x * 2 }
 }
 
+#[derive(Discard)]
 struct Wrapper<T> { x: T }
 
 impl<T> Wrapper<T> {

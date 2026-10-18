@@ -2,11 +2,14 @@
 // `&Never` or `Box<Never>` can't exist, and nor can a value that must hold
 // itself forever. A `match` needn't cover them.
 
+#[derive(Discard)]
 enum Never {}
 
 #[allow(infinite_types)]
+#[derive(Discard)]
 struct Stream { next: Box<Stream> }
 
+#[derive(Discard)]
 enum Shape<'a> { Circle(int), Ref(&'a Never), Boxed(Box<Never>), Forever(Stream) }
 
 fn radius(s: Shape) -> int {

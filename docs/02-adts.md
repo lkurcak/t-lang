@@ -4,6 +4,7 @@ Code: `src/check.rs` (typing rules), `src/exhaust.rs` (exhaustiveness), and
 `src/interp.rs` (what matching does at runtime).
 
 ```rust
+#[derive(Discard)]
 enum Shape { Circle(int), Rect(int, int), Empty }
 
 fn area(s: Shape) -> int {

@@ -1,5 +1,6 @@
 // Type parameters are named in UpperCamelCase. The fix renames one only in
 // what declares it, though others share its name.
+#[derive(Discard)]
 struct Wrap<item> { inner: item }
 
 fn unwrap<item>(w: Wrap<item>) -> item {

@@ -1,4 +1,5 @@
 // Not a top-level alternative, so checking those alone would miss it.
+#[derive(Discard)]
 enum Opt { None, Some(int) }
 fn f(o: Opt) -> int {
     match o {

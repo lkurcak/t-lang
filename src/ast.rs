@@ -169,8 +169,8 @@ impl Generics {
     }
 }
 
-/// `#[derive(Copy, Eq)]` before a struct or enum: implementations of those
-/// traits, worked out from its fields. `Copy` and `Eq` are the only traits
+/// `#[derive(Discard, Copy, Eq)]` before a struct or enum: implementations
+/// of those traits, worked out from its fields. They're the only traits
 /// that can be derived.
 #[derive(Debug, Clone)]
 pub struct Derive {

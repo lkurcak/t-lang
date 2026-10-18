@@ -1,4 +1,5 @@
 // Covered by the arm above, alternative by alternative.
+#[derive(Discard)]
 enum C { R, G, B }
 fn f(c: C) -> int {
     match c {

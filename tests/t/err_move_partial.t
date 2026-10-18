@@ -1,3 +1,4 @@
+#[derive(Discard)]
 struct Owner { a: Box<int>, b: Box<int> }
 
 fn main() {

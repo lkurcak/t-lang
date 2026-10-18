@@ -1,7 +1,9 @@
 // Generic functions, structs and enums. Each use picks its own type
 // arguments, worked out from the arguments and from where the result goes.
 
+#[derive(Discard)]
 enum Option<T> { Some(T), None }
+#[derive(Discard)]
 struct Pair<A, B> { first: A, second: B }
 
 fn id<T>(x: T) -> T { x }
@@ -17,7 +19,7 @@ fn map<T, U>(o: Option<T>, f: fn(T) -> U) -> Option<U> {
     }
 }
 
-fn unwrap_or<T>(o: Option<T>, default: T) -> T {
+fn unwrap_or<T: Discard>(o: Option<T>, default: T) -> T {
     match o {
         Option::Some(x) => x,
         Option::None => default,

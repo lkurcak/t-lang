@@ -2,8 +2,10 @@
 // reference: to what's inside the value it points to.
 
 #[allow(dead_code)]
+#[derive(Discard)]
 enum Option<T> { Some(T), None }
 
+#[derive(Discard)]
 struct Wrapper { inner: Option<Box<int>> }
 
 fn peek(o: &Option<Box<int>>) -> int {

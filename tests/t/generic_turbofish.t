@@ -1,19 +1,22 @@
 // Type arguments can be written out with `::<..>`, the "turbofish", where
 // inference can't work them out or to say them anyway.
 
+#[derive(Discard)]
 enum Option<T> { Some(T), None }
+#[derive(Discard)]
 struct Pair<A, B> { first: A, second: B }
 // `T` isn't in either of these signatures, so callers have to say it.
 fn none<T>() -> Option<T> { Option::None }
 fn count<T>(n: int) -> int { n }
 // A type with a parameter none of its fields use: a number tagged with
 // what it counts.
+#[derive(Discard)]
 struct Id<T> { n: int }
 
 fn id<T>(x: T) -> T { x }
-fn second<A, B>(_a: A, b: B) -> B { b }
+fn second<A: Discard, B>(_a: A, b: B) -> B { b }
 fn apply<T>(f: fn(T) -> T, x: T) -> T { f(x) }
-fn is_some<T>(o: Option<T>) -> bool {
+fn is_some<T: Discard>(o: Option<T>) -> bool {
     match o {
         Option::Some(_) => true,
         Option::None => false,

@@ -1,5 +1,5 @@
 // Comparing waits until the type is fully known: here it holds a function.
-#[derive(Eq)]
+#[derive(Discard, Eq)]
 enum Option<T> { Some(T), None }
 fn inc(x: int) -> int { x + 1 }
 fn main() {

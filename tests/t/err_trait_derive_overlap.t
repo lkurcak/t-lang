@@ -1,4 +1,4 @@
-#[derive(Eq)]
+#[derive(Discard, Eq)]
 struct P { x: int }
 impl Eq for P {
     fn eq(&self, other: &P) -> bool { true }

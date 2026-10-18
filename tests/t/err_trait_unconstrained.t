@@ -1,4 +1,5 @@
 trait Show { fn show(&self); }
+#[derive(Discard)]
 struct P {}
 impl<T> Show for P { fn show(&self) {} }
 fn main() {}

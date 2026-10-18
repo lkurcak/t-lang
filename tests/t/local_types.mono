@@ -1,18 +1,26 @@
+#[derive(Discard)]
 struct P { x: int }
 
 /// Two of the top-level `P`.
+#[derive(Discard)]
 struct total::Pair { left: P, right: P }
 
+#[derive(Discard)]
 enum shapes::Shape::<int> { Circle(int), Rect(int, int), Empty }
 
+#[derive(Discard)]
 struct main::P { y: bool }
 
+#[derive(Discard)]
 struct main::Q { n: int }
 
+#[derive(Discard)]
 struct main::P#2 { z: int }
 
+#[derive(Discard)]
 struct other::P { y: int }
 
+#[derive(Discard)]
 enum outer::inner::Sign { Minus, Plus }
 
 fn total() -> int {

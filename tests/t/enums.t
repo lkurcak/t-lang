@@ -1,6 +1,6 @@
 // Enums: sum types. A value is exactly one variant, holding that variant's fields.
 
-#[derive(Eq)]
+#[derive(Discard, Eq)]
 enum Shape {
     Circle(int),
     Rect(int, int),

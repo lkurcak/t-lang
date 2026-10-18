@@ -1,6 +1,7 @@
 // Resolution would find this impl for a `Pair<'x, 'y>` too, and `leak`,
 // checked knowing the lifetimes are the same, would hand back `&inner` as
 // if it lived as long as `outer`.
+#[derive(Discard)]
 struct Pair<'a, 'b> { long: &'a int, short: &'b int }
 
 trait Leak { fn leak(self) -> Self; }

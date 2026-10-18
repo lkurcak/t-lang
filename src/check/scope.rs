@@ -298,6 +298,7 @@ pub(super) struct Outer {
     obligations: Vec<super::traits::Obligation>,
     captures: Vec<(String, crate::types::Type, Span)>,
     escapes: Vec<super::escape::Escape>,
+    unused: Vec<(usize, crate::types::Type)>,
     closure_fix: Option<(usize, Fix)>,
     ret: Option<crate::types::Type>,
     loops: Vec<super::Target>,
@@ -325,6 +326,7 @@ impl Checker {
             obligations: std::mem::take(&mut self.obligations),
             captures: std::mem::take(&mut self.captures),
             escapes: std::mem::take(&mut self.escapes),
+            unused: std::mem::take(&mut self.unused),
             closure_fix: std::mem::take(&mut self.closure_fix),
             ret: self.ret.take(),
             loops: std::mem::take(&mut self.loops),
@@ -342,6 +344,7 @@ impl Checker {
         self.obligations = outer.obligations;
         self.captures = outer.captures;
         self.escapes = outer.escapes;
+        self.unused = outer.unused;
         self.closure_fix = outer.closure_fix;
         self.ret = outer.ret;
         self.loops = outer.loops;

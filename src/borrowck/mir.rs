@@ -94,6 +94,11 @@ pub(crate) enum StmtKind {
     /// A local goes out of scope: what it holds is dropped, and its memory
     /// freed.
     Dead(Local),
+    /// A value is *used up* by a pattern that takes it apart, where it is:
+    /// a struct, or variant `.1` of an enum, that isn't `Discard`, matched
+    /// by value. What the pattern's variables didn't move out of it is
+    /// dropped, and then nothing's there. (See `moves::linear`.)
+    Consume(Place, Option<usize>),
     /// A *two-phase* borrow, the loan at this index in `Builder::loans`,
     /// starts being a `&mut` here. Until here it was only *reserved*, and
     /// worked as a shared borrow, so that what it borrows could still be
@@ -242,6 +247,7 @@ impl fmt::Display for Body {
                     }
                     StmtKind::Inspect(p) => writeln!(f, "    inspect {p:?}")?,
                     StmtKind::Dead(l) => writeln!(f, "    dead _{}", l.0)?,
+                    StmtKind::Consume(p, v) => writeln!(f, "    consume {p:?} {v:?}")?,
                     StmtKind::Activate(l) => writeln!(f, "    activate loan {l}")?,
                 }
             }

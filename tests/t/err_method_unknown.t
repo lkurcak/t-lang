@@ -1,3 +1,4 @@
+#[derive(Discard)]
 struct P {}
 fn main() {
     let p = P {};

@@ -1,5 +1,6 @@
 // `T` could be `&int` at two different lifetimes: found for a
 // `Pair<&'x int, &'y int>`, `leak` would swap them.
+#[derive(Discard)]
 struct Pair<A, B> { long: A, short: B }
 
 trait Leak { fn leak(self) -> Self; }

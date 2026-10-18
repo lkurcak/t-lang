@@ -2,6 +2,7 @@
 // first one, whether it's `mut` or not, as long as it can't have one
 // already. It can't be used before then.
 
+#[derive(Discard)]
 struct Pair { a: Box<int>, b: int }
 
 fn main() {

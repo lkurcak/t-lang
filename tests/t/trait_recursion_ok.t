@@ -6,6 +6,7 @@ trait Show {
     fn show(&self);
 }
 
+#[derive(Discard)]
 enum Option<T> { Some(T), None }
 
 impl<T: Show> Show for Option<T> {
@@ -25,6 +26,7 @@ impl Show for int {
     fn show(&self) { print(*self) }
 }
 
+#[derive(Discard)]
 struct W<T> { x: T }
 
 impl<T: Show> Show for W<T> {

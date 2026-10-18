@@ -14,8 +14,8 @@ use super::build::{Builder, project};
 use super::describe;
 use super::mir::*;
 use crate::error::{Edit, Error, Fix, Span};
-use crate::types::Type;
-use std::collections::BTreeMap;
+use crate::types::{Type, struct_fields, variant_fields};
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The places moved out of, each with where, in order.
 type Moved = BTreeMap<Place, Span>;
@@ -24,7 +24,7 @@ type Moved = BTreeMap<Place, Span>;
 /// reference. What's behind a reference belongs to someone else, so moving
 /// out of it isn't allowed, and assigning to it doesn't make anything the
 /// body owns hold a value again.
-fn owned(b: &Builder, place: &Place) -> (Place, bool) {
+pub(super) fn owned(b: &Builder, place: &Place) -> (Place, bool) {
     let mut t = b.body.locals[place.local.0].ty.clone();
     for (i, p) in place.proj.iter().enumerate() {
         if let (Proj::Deref, Type::Ref(..)) = (p, &t) {
@@ -342,6 +342,13 @@ fn step(b: &Builder, state: &mut Moved, s: &Statement) -> Result<(), Found> {
             }
         }
         StmtKind::Inspect(p) => used(b, state, p, false, s.span)?,
+        // What the pattern moved out of it is gone already, so it's the
+        // rest that has to be there.
+        StmtKind::Consume(p, _) => {
+            used(b, state, p, false, s.span)?;
+            state.retain(|m, _| !m.within(p));
+            state.insert(p.clone(), s.span);
+        }
         StmtKind::Dead(l) => {
             let p = Place::local(*l);
             state.retain(|m, _| !m.within(&p));
@@ -413,4 +420,328 @@ pub(crate) fn unused_mut(b: &Builder, needed: &[Local]) -> Vec<(String, Span)> {
         }
     }
     out
+}
+
+//   Γ ⊢ e : U
+//  ------------------ (Weaken)   if T: Discard
+//   Γ, x : T ⊢ e : U
+//
+//   Γ, x : T, x : T ⊢ e : U
+//  ------------------------- (Contract)   if T: Copy
+//   Γ, x : T ⊢ e : U
+//
+// Without the two, each variable in the context is used exactly once: a
+// *linear* type system. Moves give `Contract` up for what isn't `Copy`,
+// and this, `Weaken` for what isn't `Discard`: a value of such a type must
+// be *used up* on every path that goes on, moved somewhere or taken apart
+// by a pattern, rather than dropped where its owner goes out of scope, or
+// thrown away by giving its place a new value. `trait Copy: Discard`, as
+// a value that can be copied can't be used up exactly once.
+//
+// A path that never goes on is exempt: a call that returns `!` ends its
+// block, with nothing after it, as a panic aborts the program, and nothing
+// is dropped on the way.
+
+/// What may have been used up or moved out of, each with where, as in
+/// `moves`, and what *definitely* has, on every path to here.
+#[derive(Clone, PartialEq)]
+struct Gone {
+    may: Moved,
+    must: BTreeSet<Place>,
+}
+
+/// Is `p`, or what it's part of, in `set`?
+fn covered(set: &BTreeSet<Place>, p: &Place) -> bool {
+    set.iter().any(|m| p.within(m))
+}
+
+/// Adds `p` to `set`, unless it's covered already, and drops its parts,
+/// which it covers.
+fn add(set: &mut BTreeSet<Place>, p: Place) {
+    if !covered(set, &p) {
+        set.retain(|m| !m.within(&p));
+        set.insert(p);
+    }
+}
+
+/// What's gone on both paths, where they meet: what one has that the
+/// other covers.
+fn meet(a: &BTreeSet<Place>, b: &BTreeSet<Place>) -> BTreeSet<Place> {
+    let mut out = BTreeSet::new();
+    for (x, y) in [(a, b), (b, a)] {
+        for p in x.iter().filter(|p| covered(y, p)) {
+            add(&mut out, p.clone());
+        }
+    }
+    out
+}
+
+/// Why a value is thrown away, for saying so.
+#[derive(Clone, Copy)]
+enum Dropped {
+    /// It goes out of scope.
+    Dead,
+    /// Its place is given a new value.
+    Assign,
+    /// A pattern takes it apart, of this variant if it's an enum, and
+    /// doesn't move out the rest.
+    Consume(Option<usize>),
+}
+
+/// Checks that every value that isn't `Discard` is used up on every path
+/// that goes on: never dropped while some part of it may still hold one.
+///
+/// Whether it's been used up depends on the path, so it's a dataflow
+/// problem, like `moves`, but asking what *must* be gone: where paths meet,
+/// what's gone on both. Then each statement that drops a value is checked
+/// against what's gone before it.
+pub(crate) fn linear(b: &Builder) -> Result<(), Error> {
+    let body = &b.body;
+    let mut start = Gone {
+        may: Moved::new(),
+        must: BTreeSet::new(),
+    };
+    for (i, l) in body.locals.iter().enumerate() {
+        if !matches!(l.kind, LocalKind::Param | LocalKind::Captured) {
+            start.may.insert(Place::local(Local(i)), l.span);
+            start.must.insert(Place::local(Local(i)));
+        }
+    }
+    let mut ins: Vec<Option<Gone>> = vec![None; body.blocks.len()];
+    ins[0] = Some(start);
+    let mut todo = vec![0];
+    while let Some(bb) = todo.pop() {
+        let mut state = ins[bb].clone().expect("reached");
+        for s in &body.blocks[bb].stmts {
+            gone(b, &mut state, s, false)?;
+        }
+        for succ in body.successors(Bb(bb)) {
+            let new = match &ins[succ.0] {
+                None => state.clone(),
+                Some(old) => {
+                    let mut may = old.may.clone();
+                    for (p, span) in &state.may {
+                        may.entry(p.clone()).or_insert(*span);
+                    }
+                    let must = meet(&old.must, &state.must);
+                    Gone { may, must }
+                }
+            };
+            if ins[succ.0].as_ref() != Some(&new) {
+                ins[succ.0] = Some(new);
+                todo.push(succ.0);
+            }
+        }
+    }
+    let mut first: Option<Error> = None;
+    for (bb, block) in body.blocks.iter().enumerate() {
+        let Some(mut state) = ins[bb].clone() else {
+            continue;
+        };
+        for s in &block.stmts {
+            if let Err(e) = gone(b, &mut state, s, true)
+                && first.as_ref().is_none_or(|f| e.span.start < f.span.start)
+            {
+                first = Some(e);
+            }
+        }
+    }
+    match first {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
+}
+
+/// What statement `s` does to `state`, and if `check`, the error if it
+/// throws away what it can't. Moving out of a place comes before giving
+/// it a new value: `x = f(x)` throws nothing away.
+fn gone(b: &Builder, state: &mut Gone, s: &Statement, check: bool) -> Result<(), Error> {
+    let away = |state: &mut Gone, p: Place| {
+        state.may.retain(|m, _| !m.within(&p));
+        state.may.insert(p.clone(), s.span);
+        add(&mut state.must, p);
+    };
+    match &s.kind {
+        StmtKind::Assign { place, value, .. } => {
+            for o in value.operands() {
+                if let Operand::Move(p) = o {
+                    away(state, owned(b, p).0);
+                }
+            }
+            if check {
+                dropped(b, state, place, Dropped::Assign, s.span)?;
+            }
+            let (owned, behind) = owned(b, place);
+            if !behind {
+                state.may.retain(|m, _| !m.within(&owned));
+                state.must.retain(|m| !m.within(&owned));
+            }
+        }
+        StmtKind::Consume(p, variant) => {
+            if check {
+                dropped(b, state, p, Dropped::Consume(*variant), s.span)?;
+            }
+            away(state, p.clone());
+        }
+        StmtKind::Dead(l) => {
+            if check {
+                dropped(b, state, &Place::local(*l), Dropped::Dead, s.span)?;
+            }
+            away(state, Place::local(*l));
+        }
+        StmtKind::Inspect(_) | StmtKind::Activate(_) => {}
+    }
+    Ok(())
+}
+
+/// The part of the value at `place` that holds one that isn't `Discard`,
+/// and isn't gone, if there is one: what dropping it would throw away. A
+/// value that's been taken apart, by moving out of some of it, or by
+/// `consumed`, a pattern, of the variant it says if it's an enum, has only
+/// its parts left to check.
+fn leftover(
+    b: &Builder,
+    must: &BTreeSet<Place>,
+    place: &Place,
+    consumed: Option<Option<usize>>,
+) -> Option<Place> {
+    if covered(must, place) {
+        return None;
+    }
+    let t = b.place_ty(place);
+    if b.cx.is_discard(&t) {
+        return None;
+    }
+    let partly = must.iter().any(|m| m.within(place) && m != place);
+    let variant = match consumed {
+        Some(v) => v,
+        None if partly => None,
+        None => return Some(place.clone()),
+    };
+    let parts: Vec<Place> = match &t {
+        Type::Box(_) => vec![place.project(Proj::Deref)],
+        Type::Adt(..) => match struct_fields(b.adts(), &t) {
+            Some(fields) => (0..fields.len())
+                .map(|i| place.project(Proj::Field(i)))
+                .collect(),
+            None => {
+                // Which variant it is, if a pattern doesn't say: the one
+                // that was moved out of.
+                let moved = must
+                    .iter()
+                    .find_map(|m| match m.proj.get(place.proj.len()) {
+                        Some(Proj::Variant(v, _)) if m.within(place) => Some(*v),
+                        _ => None,
+                    });
+                let Some(v) = variant.or(moved) else {
+                    return Some(place.clone());
+                };
+                (0..variant_fields(b.adts(), &t, v).len())
+                    .map(|i| place.project(Proj::Variant(v, i)))
+                    .collect()
+            }
+        },
+        _ => return Some(place.clone()),
+    };
+    parts.iter().find_map(|p| leftover(b, must, p, None))
+}
+
+/// Checks that dropping the value at `place`, at `span`, for `why`,
+/// throws away nothing that isn't `Discard`.
+fn dropped(
+    b: &Builder,
+    state: &Gone,
+    place: &Place,
+    why: Dropped,
+    span: Span,
+) -> Result<(), Error> {
+    let consumed = match why {
+        Dropped::Consume(v) => Some(v),
+        _ => None,
+    };
+    let Some(q) = leftover(b, &state.must, place, consumed) else {
+        return Ok(());
+    };
+    let t = b.place_ty(&q);
+    let decl = &b.body.locals[q.local.0];
+    let what = describe(b, &q);
+    let hint = match b.cx.missing_discard(&t) {
+        Some(Type::Param(p)) if p == "Self" => {
+            "; to let it be thrown away, make `Discard` a supertrait of the trait".to_string()
+        }
+        Some(Type::Param(p)) => {
+            format!("; to let it be thrown away, add a bound: `{p}: Discard`")
+        }
+        Some(u) => format!(
+            "; to let it be thrown away, add `#[derive(Discard)]` to `{}`",
+            crate::check::source_name(&u.to_string())
+        ),
+        None => String::new(),
+    };
+    let isnt = format!("its type, `{t}`, isn't `Discard`{hint}");
+    // Where it, or part of it, was used up on some paths, but not all.
+    let some_paths = state
+        .may
+        .iter()
+        .find(|(m, at)| (q.within(m) || m.within(&q)) && **at != decl.span)
+        .map(|(_, at)| *at);
+    let e = match why {
+        Dropped::Dead => {
+            let temp = decl.kind == LocalKind::Temp;
+            let subject = match (temp, q.proj.is_empty()) {
+                (true, true) => "this value".to_string(),
+                (true, false) => "part of this value".to_string(),
+                (false, _) => format!("`{what}`"),
+            };
+            let never = match some_paths {
+                Some(_) => "isn't used up on every path",
+                None => "is never used up",
+            };
+            let e = Error::ty(decl.span, format!("{subject} {never}, and {isnt}"));
+            let e = match some_paths {
+                Some(at) => e.with_note(at, "it's used up here, on some paths".to_string()),
+                None => e,
+            };
+            let gone = match (temp, decl.kind) {
+                (true, _) => "it's dropped here, at the end of the statement".to_string(),
+                (_, LocalKind::Param) => format!(
+                    "`{}` is dropped here, when the function returns",
+                    decl.name.clone().unwrap_or_default()
+                ),
+                _ => format!(
+                    "`{}` goes out of scope here",
+                    decl.name.clone().unwrap_or_default()
+                ),
+            };
+            e.with_note(span, gone)
+        }
+        Dropped::Assign => {
+            let replace = format!(
+                "; to get it back instead, use `replace(&mut {}, ..)`",
+                describe(b, place)
+            );
+            let held = match q == *place {
+                true => format!("the value `{what}` holds"),
+                false => format!("`{what}`"),
+            };
+            Error::ty(
+                span,
+                format!("this assignment would throw away {held}, and {isnt}{replace}"),
+            )
+        }
+        Dropped::Consume(_) => {
+            let part = match decl.kind {
+                LocalKind::Temp => "part of the value it matches".to_string(),
+                _ => format!("`{what}`"),
+            };
+            Error::ty(
+                span,
+                format!(
+                    "this pattern throws away {part}, and {isnt}; bind it to a variable instead, \
+                     and use that up"
+                ),
+            )
+        }
+    };
+    Err(e)
 }

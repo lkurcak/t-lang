@@ -9,6 +9,7 @@ impl Ord for int {
     fn lt(&self, other: &int) -> bool { *self < *other }
 }
 
+#[derive(Discard)]
 struct Sorted<T: Ord> { lo: T, hi: T }
 
 impl<T: Ord> Sorted<T> {

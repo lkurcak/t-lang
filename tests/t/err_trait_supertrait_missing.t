@@ -1,4 +1,5 @@
 trait Ord: Eq {}
+#[derive(Discard)]
 struct P {}
 impl Ord for P {}
 fn main() {}

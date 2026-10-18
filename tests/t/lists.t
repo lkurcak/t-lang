@@ -1,5 +1,6 @@
 // A type can hold itself through a box: a linked list.
 
+#[derive(Discard)]
 enum List { Nil, Cons(int, Box<List>) }
 
 fn push(l: List, x: int) -> List { List::Cons(x, Box::new(l)) }

@@ -1,6 +1,7 @@
 // Each call is at a bigger type than the one before: `W<int>`,
 // `W<&W<int>>`, `W<&W<&W<int>>>`...
 trait Tr { fn f(&self) -> int; }
+#[derive(Discard)]
 struct W<X> { x: X }
 impl<X: Tr> Tr for W<X> {
     fn f(&self) -> int { W { x: self }.f() }

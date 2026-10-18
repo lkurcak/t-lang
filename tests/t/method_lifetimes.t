@@ -1,6 +1,7 @@
 // Lifetimes in impls and methods. What a method returns is borrowed from
 // `self`, if it takes `&self` and nothing says otherwise, as in Rust.
 
+#[derive(Discard)]
 struct Holder<'a> { r: &'a int }
 
 impl<'a> Holder<'a> {

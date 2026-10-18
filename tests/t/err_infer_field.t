@@ -1,4 +1,5 @@
 // Reading a field needs the type now: which struct is it?
+#[derive(Discard)]
 struct P { x: int }
 fn main() {
     let get = |p| p.x;

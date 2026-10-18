@@ -1,3 +1,4 @@
+#[derive(Discard)]
 enum Shape { Circle(int), Rect(int, int), Empty }
 fn area(s: Shape) -> int {
     match s {

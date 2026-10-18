@@ -1,5 +1,6 @@
 // No bound is implied: an impl of a struct must say what the struct needs.
 trait Ord: Eq {}
+#[derive(Discard)]
 struct Sorted<T: Ord> { lo: T }
 impl<T> Sorted<T> {
     fn lo(&self) -> &T { &self.lo }

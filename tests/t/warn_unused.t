@@ -1,6 +1,8 @@
 // Variables nothing reads: `let`s, parameters and pattern bindings. The fix
 // renames each to start with `_`.
+#[derive(Discard)]
 struct P { x: int, y: int }
+#[derive(Discard)]
 enum Opt { None, Some(int) }
 
 fn first(a: int, b: int) -> int {

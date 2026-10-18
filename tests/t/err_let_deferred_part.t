@@ -1,5 +1,6 @@
 // A part of a variable with no value can't be given one: the whole
 // hasn't got one to be part of.
+#[derive(Discard)]
 struct P { x: int, y: int }
 
 fn main() {

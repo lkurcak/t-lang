@@ -10,7 +10,7 @@ trait Show {
     }
 }
 
-#[derive(Copy)]
+#[derive(Discard, Copy)]
 struct Point { x: int, y: int }
 
 impl Show for Point {
@@ -27,6 +27,7 @@ impl Show for int {
     fn show_twice(&self) { print(*self * 11) }
 }
 
+#[derive(Discard)]
 enum Option<T> { Some(T), None }
 
 // For every `T` that's `Show`: a generic impl.
@@ -40,7 +41,7 @@ impl<T: Show> Show for Option<T> {
 }
 
 // A bound: `T` must be `Show`, so values of it have `show`.
-fn show_all<T: Show>(a: T, b: T) {
+fn show_all<T: Show + Discard>(a: T, b: T) {
     a.show();
     b.show();
 }
