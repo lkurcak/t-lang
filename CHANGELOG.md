@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.0 (2026-10-19)
 
 Step 6c: closures as `Fn` traits. See
 [docs/06c-closures.md](docs/06c-closures.md).
