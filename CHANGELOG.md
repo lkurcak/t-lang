@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 (2026-10-18)
 
 Step 6a.1: linear types. See
 [docs/06a.1-linear-types.md](docs/06a.1-linear-types.md).
