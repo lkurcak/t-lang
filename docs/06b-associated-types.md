@@ -344,9 +344,11 @@ checked for the whole program:
 1. Write `impl<T: Tr> Tr for Box<T> { type Out = T::Out; }` and a function
    that uses it at `Box<Box<int>>`. Trace how `Projections::normalise` works
    out `<Box<Box<int>> as Tr>::Out`, and why it ends.
-2. Make `regions_at` give every lifetime `Region::Erased`. Which tests
-   fail, and how? Run `tests/t/err_soundness_assoc_pair.t` under the change
-   and read what the interpreter says.
+2. Make `regions_at` give every lifetime `Region::Erased`. Why does the
+   checker, not the interpreter, now reject `tests/t/assoc_lifetimes.t`?
+   Undo that, and instead make `Builder::instantiate` take each projection
+   worked out with regions erased and give the result fresh regions. Run
+   `tests/t/err_soundness_assoc_pair.t` and read what the interpreter says.
 3. Change `vary` so a projection is covariant in its type. Show the program
    in `err_soundness_assoc_variance.t` freeing memory it then reads.
 4. Relax the constrained rule: allow a parameter that's only inside a
@@ -362,7 +364,8 @@ checked for the whole program:
    mind.
 7. Write `Iterator` with `type Item;` and `fn next(&mut self) ->
    Option<Self::Item>;`, a counter that implements it, and a `sum` with an
-   equality bound. What would `for x in it { .. }` desugar to?
+   equality bound. What would `for x in it { .. }` desugar to, and what
+   must it do with the iterator after a `break`, if it isn't `Discard`?
 
 ## Reading
 
