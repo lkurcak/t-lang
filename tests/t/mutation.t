@@ -6,7 +6,7 @@ struct Counter { count: int, step: int }
 
 fn tick(c: &mut Counter) { c.count += c.step; }
 
-fn swap(a: &mut int, b: &mut int) {
+fn exchange(a: &mut int, b: &mut int) {
     let t = *a;
     *a = *b;
     *b = t;
@@ -25,7 +25,7 @@ fn main() {
     print(c.count);             // expect: 7
     let mut a = 1;
     let mut b = 2;
-    swap(&mut a, &mut b);
+    exchange(&mut a, &mut b);
     print(a);                   // expect: 2
     print(b);                   // expect: 1
     let r = &mut a;

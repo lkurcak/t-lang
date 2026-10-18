@@ -489,6 +489,19 @@ impl Interp<'_, '_> {
                 }
                 Ok(old)
             }
+            Value::Builtin("swap") => {
+                let [a, b] = <[Value; 2]>::try_from(args).unwrap_or_else(|_| unsound("swap arity"));
+                let (Value::Ref(p), Value::Ref(q)) = (&a, &b) else {
+                    unsound(&format!("`swap` of `{a}` and `{b}`"))
+                };
+                let x = std::mem::replace(self.memory.get_mut(p), Value::Moved);
+                let y = std::mem::replace(self.memory.get_mut(q), x);
+                if let Value::Moved = y {
+                    unsound("`swap` of a value that was moved, or of a place with itself");
+                }
+                *self.memory.get_mut(p) = y;
+                Ok(Value::Unit)
+            }
             Value::Fn(name) => {
                 let decl = self.fns[name.as_str()];
                 // A call gets a fresh environment: just the parameters.

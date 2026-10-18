@@ -14,6 +14,7 @@ Step 6a.1: linear types. See
   references always are, and `Box<T>` is when `T` is.
 - `replace(&mut x, v)`, built in: puts `v` in `x` and gives back what was
   there, for any type.
+- `swap(&mut a, &mut b)`, built in: exchanges two values, for any type.
 
 ### Changed
 

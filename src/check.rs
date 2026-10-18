@@ -68,7 +68,7 @@ use typed::{Bind, Res, Typed};
 use unify::Var;
 
 /// Built-in functions, available everywhere. Shared with the interpreter.
-pub const BUILTINS: &[&str] = &["print", "print_bool", "replace"];
+pub const BUILTINS: &[&str] = &["print", "print_bool", "replace", "swap"];
 
 /// The type of built-in function `name`.
 pub(crate) fn builtin_scheme(name: &str) -> Scheme {
@@ -91,6 +91,22 @@ pub(crate) fn builtin_scheme(name: &str) -> Scheme {
                 bounds: Vec::new(),
                 preds: Vec::new(),
                 ty: Type::func(vec![r, t.clone()], t),
+            }
+        }
+        // swap : ∀'a 'b T. fn(&'a mut T, &'b mut T) -> ()
+        //
+        // Exchanges two values, making and throwing away none: the more
+        // basic of the two, as `replace` can be written with it and not the
+        // other way round, having no `T` of its own to put in.
+        "swap" => {
+            let t = Type::Param("T".into());
+            let r = |l: &str| Type::Ref(Region::Named(l.into()), true, Box::new(t.clone()));
+            Scheme {
+                params: vec!["T".into()],
+                lifetimes: vec!["'a".into(), "'b".into()],
+                bounds: Vec::new(),
+                preds: Vec::new(),
+                ty: Type::func(vec![r("'a"), r("'b")], Type::Unit),
             }
         }
         _ => unreachable!("unknown builtin `{name}`"),

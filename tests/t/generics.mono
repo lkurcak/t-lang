@@ -20,7 +20,7 @@ fn id::<int>(x: int) -> int { x }
 
 fn id::<bool>(x: bool) -> bool { x }
 
-fn swap::<int, bool>(p: Pair::<int, bool>) -> Pair::<bool, int> {
+fn flip::<int, bool>(p: Pair::<int, bool>) -> Pair::<bool, int> {
     Pair::<bool, int> { first: p.second, second: p.first }
 }
 
@@ -63,7 +63,7 @@ fn inc(x: int) -> int { x + 1 }
 fn main() {
     print(id::<int>(1));
     print_bool(id::<bool>(true));
-    let p = swap::<int, bool>(Pair::<int, bool> { first: 1, second: false });
+    let p = flip::<int, bool>(Pair::<int, bool> { first: 1, second: false });
     print_bool(p.first);
     print(p.second);
     let n = 10;

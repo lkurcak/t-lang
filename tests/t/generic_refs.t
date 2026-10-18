@@ -8,7 +8,7 @@ enum Option<T> { Some(T), None }
 #[derive(Discard, Copy)]
 struct Pair<A, B> { a: A, b: B }
 
-fn swap<A, B>(p: Pair<A, B>) -> Pair<B, A> { Pair { a: p.b, b: p.a } }
+fn flip<A, B>(p: Pair<A, B>) -> Pair<B, A> { Pair { a: p.b, b: p.a } }
 
 fn largest<'a>(x: &'a int, y: &'a int) -> &'a int { if *x > *y { x } else { y } }
 
@@ -23,7 +23,7 @@ fn main() {
     let x = 1;
     let y = 2;
     let p = Pair { a: &x, b: &y };
-    let q = swap(p);
+    let q = flip(p);
     print(*q.a);                    // expect: 2
     print(*largest(p.a, p.b));      // expect: 2
     let mut s = Option::None;

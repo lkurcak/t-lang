@@ -8,7 +8,7 @@ struct Pair<A, B> { first: A, second: B }
 
 fn id<T>(x: T) -> T { x }
 
-fn swap<A, B>(p: Pair<A, B>) -> Pair<B, A> {
+fn flip<A, B>(p: Pair<A, B>) -> Pair<B, A> {
     Pair { first: p.second, second: p.first }
 }
 
@@ -39,7 +39,7 @@ fn inc(x: int) -> int { x + 1 }
 fn main() {
     print(id(1));                                   // expect: 1
     print_bool(id(true));                           // expect: true
-    let p = swap(Pair { first: 1, second: false });
+    let p = flip(Pair { first: 1, second: false });
     print_bool(p.first);                            // expect: false
     print(p.second);                                // expect: 1
     let n = 10;
