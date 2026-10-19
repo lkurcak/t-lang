@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.0 (2026-10-19)
 
 Step 6c.1: returning closures, opaque types. See
 [docs/06c.1-opaque-types.md](docs/06c.1-opaque-types.md).
