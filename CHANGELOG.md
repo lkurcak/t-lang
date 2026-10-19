@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.11.0 (2026-10-19)
 
 Step 6d.1: modules in files of their own. See
 [docs/06d.1-files.md](docs/06d.1-files.md).
