@@ -84,12 +84,21 @@
           }
         },
         {
-          "type": "FIELD",
-          "name": "body",
-          "content": {
-            "type": "SYMBOL",
-            "name": "mod_body"
-          }
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "body",
+              "content": {
+                "type": "SYMBOL",
+                "name": "mod_body"
+              }
+            },
+            {
+              "type": "STRING",
+              "value": ";"
+            }
+          ]
         }
       ]
     },

@@ -13,32 +13,48 @@ use crate::ast::*;
 use crate::check::{self, Info, Note, NoteKind};
 use crate::error::{Edit, Span};
 use crate::lexer::{self, Tok};
+use crate::load::{self, Read};
+use crate::source::Sources;
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
-/// Parses and checks `src`, for renaming in it. Only a program that checks
-/// can be renamed in: one that doesn't may have names nothing knows the
-/// meaning of yet.
-pub fn checked(src: &str) -> Result<(Program, Info), String> {
-    let mut prog = lexer::lex(src)
-        .and_then(crate::parser::parse)
-        .map_err(|_| "the file has a syntax error; fix it first".to_string())?;
+/// Parses and checks the program that starts at `path`, whose text is
+/// `src`, for renaming in it. Only a program that checks can be renamed
+/// in: one that doesn't may have names nothing knows the meaning of yet.
+pub fn checked(path: &Path, src: &str, read: Read) -> Result<(Sources, Program, Info), String> {
+    let (sources, prog) = load::load(path, src, read);
+    let mut prog = prog.map_err(|_| "the program has a syntax error; fix it first".to_string())?;
     let (info, result) = check::check(&mut prog, &mut Vec::new());
     match result {
-        Ok(()) => Ok((prog, info)),
-        Err(_) => Err("the file has a type error; fix it first".to_string()),
+        Ok(()) => Ok((sources, prog, info)),
+        Err(_) => Err("the program has a type error; fix it first".to_string()),
     }
+}
+
+/// The program `sources` are, with their texts replaced by `texts`, in the
+/// same order, parsed again.
+fn reparsed(
+    sources: &Sources,
+    texts: &[String],
+) -> (Sources, Result<Program, crate::error::Error>) {
+    let files = sources.files();
+    let read = |path: &Path| match files.iter().position(|f| f.path == path) {
+        Some(i) => Ok(texts[i].clone()),
+        None => crate::no_files(path),
+    };
+    load::load(&files[0].path, &texts[0], &read)
 }
 
 /// What renaming at `offset` renames, as the note there, or why nothing
 /// can be renamed there.
 pub fn target<'i>(
-    src: &str,
+    sources: &Sources,
     prog: &Program,
     info: &'i Info,
     offset: usize,
 ) -> Result<&'i Note, String> {
     let Some(note) = info.note_at(offset) else {
-        return Err(match word_at(src, offset) {
+        return Err(match word_at(sources.text(), offset) {
             name @ ("int" | "bool") => format!("`{name}` is a built-in type"),
             _ => "there's nothing here to rename".to_string(),
         });
@@ -73,12 +89,12 @@ fn word_at(src: &str, offset: usize) -> &str {
     &src[start..end]
 }
 
-/// The edits that rename what's declared at `def` to `new`, in `src`, which
-/// parses to `prog` and checks, as `info` says. Every name for it changes,
+/// The edits that rename what's declared at `def` to `new`, in `sources`,
+/// which parse to `prog` and check, as `info` says. Every name for it changes,
 /// and nothing else, comments included. In a shorthand `P { x }`, renaming
 /// the variable gives `P { x: new }` and renaming the field `P { new: x }`.
 pub fn rename(
-    src: &str,
+    sources: &Sources,
     prog: &Program,
     info: &Info,
     def: Span,
@@ -107,7 +123,7 @@ pub fn rename(
         .occurrences(def)
         .into_iter()
         // A use through another name, given by `use .. as`, keeps it.
-        .filter(|span| src.get(span.start..span.end) == Some(old))
+        .filter(|span| sources.text().get(span.start..span.end) == Some(old))
         .map(|span| match (shorthands.contains(&span), is_field) {
             (false, _) => Renamed {
                 edit: Edit::replace(span, new),
@@ -127,15 +143,14 @@ pub fn rename(
         })
         .collect();
     let edits: Vec<Edit> = renamed.iter().map(|r| r.edit.clone()).collect();
-    let after = crate::error::Fix::new("", edits.clone()).apply(src);
-
     let cant = |why: String| format!("can't rename `{old}` to `{new}`: {why}");
-    let mut prog_after = lexer::lex(&after)
-        .and_then(crate::parser::parse)
-        .map_err(|e| cant(e.message))?;
+    let (sources_after, prog_after) = reparsed(sources, &sources.edited(&edits));
+    let mut prog_after = prog_after.map_err(|e| cant(e.message))?;
+    let after = sources_after.text();
+    let line = |offset: usize| sources_after.line(offset);
     let (info_after, result) = check::check(&mut prog_after, &mut Vec::new());
     if let Err(e) = result {
-        let line = line(&after, e.span.start);
+        let line = line(e.span.start);
         return Err(cant(format!(
             "line {line} would be an error: {}",
             e.message
@@ -162,7 +177,7 @@ pub fn rename(
             format!(
                 "the {what} `{}` on line {}",
                 &after[d.start..d.end],
-                line(&after, d.start)
+                line(d.start)
             )
         }
     };
@@ -175,7 +190,7 @@ pub fn rename(
             continue;
         }
         let name = &after[at.start..at.end];
-        let line = line(&after, at.start);
+        let line = line(at.start);
         let why = match now {
             None => format!("`{name}` on line {line} would no longer mean anything"),
             Some(now) if was == Some(target) => format!(
@@ -280,11 +295,6 @@ fn what(kind: &NoteKind) -> &'static str {
         NoteKind::Field(_) => "field",
         NoteKind::Variant(..) => "variant",
     }
-}
-
-/// The line `offset` is on, counting from 1.
-fn line(src: &str, offset: usize) -> usize {
-    src[..offset].matches('\n').count() + 1
 }
 
 /// Where a struct literal or pattern in `prog` uses the shorthand `P { x }`,

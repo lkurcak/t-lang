@@ -56,8 +56,9 @@ fn main() {
 
 The crate root's `helper` is `super::helper` here, or `crate::helper` from
 anywhere. Such a module is *hermetic*: what it means doesn't depend on where
-it sits, so moving it elsewhere, or into a file of its own once modules can
-be files, changes nothing but the paths that lead to it.
+it sits, so moving it elsewhere, or into a file of its own (see
+[docs/06d.1-files.md](06d.1-files.md)), changes nothing but the paths that
+lead to it.
 
 A path starts at a name in scope, or at `crate` (the root), `super` (the
 module around this one) or `self` (this one), and goes through modules to
@@ -320,7 +321,7 @@ monomorphisation and the interpreter don't know modules exist.
 
 | Missing | Why it's missing | Step |
 |---|---|---|
-| `mod m;` from a file `m.t` | the CLI and the editor support need to know files | 6d.1 |
+| `mod m;` from a file `m.t` | the CLI and the editor support need to know files | 6d.1 ✅ |
 | `use a::*` | shadowing rules for names globs bring in | — |
 | `pub(crate)`, `pub(super)` | `pub` and private are enough so far | — |
 | `use` in a function | items in blocks are enough so far | — |

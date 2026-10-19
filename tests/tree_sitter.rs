@@ -6,15 +6,23 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tree_sitter::{Node, Parser, Query, QueryCursor, StreamingIterator};
 
-/// Every `tests/t/*.t` and `examples/*.t` file.
+/// Every `.t` file in `tests/t` and `examples`, and the directories in them.
 fn programs() -> Vec<PathBuf> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut paths: Vec<PathBuf> = ["tests/t", "examples"]
-        .iter()
-        .flat_map(|dir| fs::read_dir(root.join(dir)).unwrap())
-        .map(|entry| entry.unwrap().path())
-        .filter(|p| p.extension().is_some_and(|ext| ext == "t"))
-        .collect();
+    let mut dirs = vec![root.join("tests/t"), root.join("examples")];
+    let mut paths = Vec::new();
+    while let Some(dir) = dirs.pop() {
+        for p in fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+        {
+            if p.is_dir() {
+                dirs.push(p);
+            } else if p.extension().is_some_and(|ext| ext == "t") {
+                paths.push(p);
+            }
+        }
+    }
     paths.sort();
     assert!(!paths.is_empty());
     paths

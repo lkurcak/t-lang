@@ -5,7 +5,7 @@
 //! ```text
 //! program  = item*
 //! item     = head "pub"? (fn_decl | struct | enum | trait | mod | use) | head impl
-//! mod      = "mod" IDENT "{" item* "}"
+//! mod      = "mod" IDENT ("{" item* "}" | ";")           -- `;`: in a file of its own
 //! use      = "use" tree ";"
 //! tree     = path ("as" IDENT)? | path "::" "{" (tree ("," tree)* ","?)? "}"
 //! path     = seg ("::" IDENT)*                       -- `a::b::C`
@@ -105,19 +105,11 @@ use crate::error::{Edit, Error, Fix, Span};
 use crate::lexer::{OpEq, Tok, Token};
 use std::sync::Arc;
 
+/// Parses a file as the crate root. A `mod m;` in it is a module of no
+/// items yet, `in_file`: `load.rs` reads its file and parses that into it
+/// with `parse_into`.
 pub fn parse(tokens: Vec<Token>) -> Result<Program, Error> {
-    let (docs, toks): (Vec<Token>, Vec<Token>) = tokens
-        .into_iter()
-        .partition(|t| matches!(t.tok, Tok::Doc(_)));
-    let end = toks.last().map_or(0, |t| t.span.end);
-    let mut p = Parser {
-        toks,
-        attached: vec![false; docs.len()],
-        docs,
-        pos: 0,
-        no_struct: false,
-        module: ROOT,
-    };
+    let end = tokens.last().map_or(0, |t| t.span.end);
     let mut prog = Program {
         mods: vec![ModDecl {
             doc: None,
@@ -129,6 +121,7 @@ pub fn parse(tokens: Vec<Token>) -> Result<Program, Error> {
             },
             parent: None,
             public: None,
+            in_file: false,
         }],
         uses: Vec::new(),
         types: Vec::new(),
@@ -137,9 +130,26 @@ pub fn parse(tokens: Vec<Token>) -> Result<Program, Error> {
         fns: Vec::new(),
         stray_docs: Vec::new(),
     };
-    p.items(&mut prog, Tok::Eof)?;
-    prog.stray_docs = p.stray_docs();
+    parse_into(tokens, &mut prog, ROOT)?;
     Ok(prog)
+}
+
+/// Parses a file's items into `module` of `prog`.
+pub fn parse_into(tokens: Vec<Token>, prog: &mut Program, module: usize) -> Result<(), Error> {
+    let (docs, toks): (Vec<Token>, Vec<Token>) = tokens
+        .into_iter()
+        .partition(|t| matches!(t.tok, Tok::Doc(_)));
+    let mut p = Parser {
+        toks,
+        attached: vec![false; docs.len()],
+        docs,
+        pos: 0,
+        no_struct: false,
+        module,
+    };
+    p.items(prog, Tok::Eof)?;
+    prog.stray_docs.extend(p.stray_docs());
+    Ok(())
 }
 
 struct Parser {
@@ -384,7 +394,7 @@ impl Parser {
         Ok(())
     }
 
-    /// `mod name { .. }`, after its head and `pub`, if it has one.
+    /// `mod name { .. }` or `mod name;`, after its head and `pub`, if it has one.
     fn mod_decl(
         &mut self,
         prog: &mut Program,
@@ -394,23 +404,27 @@ impl Parser {
         let start = public.unwrap_or(self.span());
         self.expect(Tok::Mod)?;
         let name = self.binder()?;
-        if *self.peek() == Tok::Semi {
-            return Err(Error::syntax(
-                self.span(),
-                "a module in a file of its own isn't supported yet; write its items here, in \
-                 `{ .. }`",
-            ));
-        }
-        self.expect(Tok::LBrace)?;
-        let index = prog.mods.len();
-        prog.mods.push(ModDecl {
+        let in_file = *self.peek() == Tok::Semi;
+        let decl = ModDecl {
             doc: head.doc,
             allows: head.allows,
             span: start,
             name,
             parent: Some(self.module),
             public,
-        });
+            in_file,
+        };
+        if in_file {
+            let end = self.bump().span;
+            prog.mods.push(ModDecl {
+                span: start.to(end),
+                ..decl
+            });
+            return Ok(());
+        }
+        self.expect(Tok::LBrace)?;
+        let index = prog.mods.len();
+        prog.mods.push(decl);
         let outer = std::mem::replace(&mut self.module, index);
         self.items(prog, Tok::RBrace)?;
         self.module = outer;

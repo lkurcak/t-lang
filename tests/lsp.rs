@@ -1400,3 +1400,94 @@ fn main() {
 
     stop(child, c);
 }
+
+/// The next `publishDiagnostics` for `uri`, skipping others.
+fn diagnostics_for(c: &mut Client, uri: &str) -> Vec<Value> {
+    loop {
+        let msg = c.recv();
+        if msg["method"] == "textDocument/publishDiagnostics" && msg["params"]["uri"] == uri {
+            return msg["params"]["diagnostics"].as_array().unwrap().clone();
+        }
+    }
+}
+
+/// A file of a module is checked as part of its program: the nearest
+/// `main.t` above it that has it. Diagnostics go to the file they're in,
+/// definitions and renames cross files, and an open file's text is used
+/// over what's on disk.
+#[test]
+fn files_of_modules_are_checked_with_their_program() {
+    let dir = std::env::temp_dir().join(format!("t-lsp-files-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = "mod util;\nfn main() {\n    print(util::helper());\n}\n";
+    std::fs::write(dir.join("main.t"), main).unwrap();
+    std::fs::write(dir.join("util.t"), "pub fn helper() -> int { 1 }\n").unwrap();
+    let main_uri = format!("file://{}/main.t", dir.display());
+    let util_uri = format!("file://{}/util.t", dir.display());
+
+    let (child, mut c) = start();
+    // Opened with an error that isn't on disk: it's in `util.t`, and
+    // `main.t`, not open, has none.
+    let util = "pub fn helper() -> int {\n    true\n}\n";
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": util_uri, "languageId": "t", "version": 1, "text": util}
+        }}),
+    );
+    let diags = diagnostics_for(&mut c, &util_uri);
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    assert_eq!(
+        diags[0]["range"]["start"],
+        json!({"line": 1, "character": 4})
+    );
+
+    // Fixed, then `main.t` opened: going to `helper` goes to `util.t`.
+    let util = "pub fn helper() -> int { 1 }\n";
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
+            "textDocument": {"uri": util_uri, "version": 2},
+            "contentChanges": [{"text": util}]
+        }}),
+    );
+    assert_eq!(diagnostics_for(&mut c, &util_uri), Vec::<Value>::new());
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": main_uri, "languageId": "t", "version": 1, "text": main}
+        }}),
+    );
+    assert_eq!(diagnostics_for(&mut c, &main_uri), Vec::<Value>::new());
+    let at = |line, character| json!({"textDocument": {"uri": main_uri}, "position": {"line": line, "character": character}});
+    c.send(json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/definition", "params": at(2, 17)}));
+    let def = c.response(2);
+    assert_eq!(def["result"]["uri"], util_uri, "{def}");
+    assert_eq!(
+        def["result"]["range"]["start"],
+        json!({"line": 0, "character": 7})
+    );
+    // The name in `mod util;` goes to its file.
+    c.send(
+        json!({"jsonrpc": "2.0", "id": 3, "method": "textDocument/definition", "params": at(0, 5)}),
+    );
+    assert_eq!(c.response(3)["result"]["uri"], util_uri);
+
+    // Renaming `helper` changes both files.
+    let mut p = at(2, 17);
+    p["newName"] = json!("assist");
+    c.send(json!({"jsonrpc": "2.0", "id": 4, "method": "textDocument/rename", "params": p}));
+    let r = c.response(4);
+    let changes = &r["result"]["changes"];
+    assert_eq!(
+        changes[&main_uri],
+        json!([{"range": {"start": {"line": 2, "character": 16}, "end": {"line": 2, "character": 22}}, "newText": "assist"}]),
+        "{r}"
+    );
+    assert_eq!(
+        changes[&util_uri],
+        json!([{"range": {"start": {"line": 0, "character": 7}, "end": {"line": 0, "character": 13}}, "newText": "assist"}]),
+        "{r}"
+    );
+
+    stop(child, c);
+    std::fs::remove_dir_all(&dir).unwrap();
+}

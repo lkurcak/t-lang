@@ -1,5 +1,7 @@
 //! Source spans and diagnostics shared by every compiler phase.
 
+use crate::source::Sources;
+
 /// A byte range `start..end` in the source text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Span {
@@ -79,15 +81,40 @@ impl Error {
         self
     }
 
-    /// Renders the error rustc-style, with the offending line underlined.
-    pub fn render(&self, path: &str, src: &str) -> String {
-        let label = match self.phase {
+    /// Renders the error rustc-style, with the offending line underlined,
+    /// in whichever of the program's files it's in.
+    pub fn render_in(&self, sources: &Sources) -> String {
+        let (label, mut out) = (self.label(), String::new());
+        let (path, src, span) = in_file(sources, self.span);
+        out.push_str(&render(
+            label,
+            span,
+            &self.message,
+            &self.fixes,
+            None,
+            &path,
+            src,
+        ));
+        for (span, note) in &self.notes {
+            let (path, src, span) = in_file(sources, *span);
+            out.push('\n');
+            out.push_str(&render("note", span, note, &[], None, &path, src));
+        }
+        out
+    }
+
+    fn label(&self) -> &'static str {
+        match self.phase {
             Phase::Syntax => "syntax error",
             Phase::Type => "type error",
             Phase::Runtime => "runtime error",
-        };
+        }
+    }
+
+    /// Renders the error rustc-style, with the offending line underlined.
+    pub fn render(&self, path: &str, src: &str) -> String {
         let mut out = render(
-            label,
+            self.label(),
             self.span,
             &self.message,
             &self.fixes,
@@ -121,6 +148,22 @@ impl Warning {
         let note = note.then(|| format!("`#[allow({})]` turns this off", self.lint.name()));
         let (span, fixes) = (self.span, &self.fixes);
         render("warning", span, &self.message, fixes, note, path, src)
+    }
+
+    /// Renders each of `warnings`, each in the file of the program it's in,
+    /// noting how to turn a lint off the first time it comes up.
+    pub fn render_all_in(warnings: &[Warning], sources: &Sources) -> Vec<String> {
+        let mut seen = Vec::new();
+        warnings
+            .iter()
+            .map(|w| {
+                let first = !seen.contains(&w.lint);
+                seen.push(w.lint);
+                let (path, src, span) = in_file(sources, w.span);
+                let note = first.then(|| format!("`#[allow({})]` turns this off", w.lint.name()));
+                render("warning", span, &w.message, &w.fixes, note, &path, src)
+            })
+            .collect()
     }
 
     /// Renders each of `warnings`, noting how to turn a lint off the first
@@ -272,6 +315,12 @@ impl Edit {
     pub fn delete(span: Span) -> Edit {
         Edit::replace(span, "")
     }
+}
+
+/// The path and text of the file `span` is in, and where in it `span` is.
+fn in_file(sources: &Sources, span: Span) -> (String, &str, Span) {
+    let (file, local) = sources.local(span);
+    (file.path.display().to_string(), sources.src(file), local)
 }
 
 /// A diagnostic rustc-style: the offending line underlined, then a `help`

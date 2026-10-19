@@ -1,6 +1,8 @@
 //! Runs every `tests/t/*.t` program and compares it against the expectations
 //! written in its comments: `// expect:`, `// error:` and `// warning:` (see
-//! `shared/expect.rs`). Every test must have at least one.
+//! `shared/expect.rs`). Every test must have at least one. A program of
+//! several files is a directory, `tests/t/<name>/main.t` and its modules'
+//! files.
 //!
 //! A `tests/t/<name>.mono` file next to a test holds what `t mono` prints
 //! for it: the program after monomorphisation. Run with `BLESS=1` to rewrite
@@ -13,19 +15,31 @@ use expect::Expectations;
 use std::fs;
 use std::path::{Path, PathBuf};
 use t_lang::check::NoteKind;
-use t_lang::error::Fix;
 
-/// Every `tests/t/*.t` file, in order.
+/// The first file of every program in `tests/t`, in order: `tests/t/*.t`
+/// and `tests/t/*/main.t`.
 fn programs() -> Vec<PathBuf> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/t");
     let mut paths: Vec<_> = fs::read_dir(&dir)
         .unwrap()
         .map(|entry| entry.unwrap().path())
-        .filter(|p| p.extension().is_some_and(|ext| ext == "t"))
+        .filter_map(|p| match p.is_dir() {
+            true => Some(p.join("main.t")),
+            false => p.extension().is_some_and(|ext| ext == "t").then_some(p),
+        })
         .collect();
     paths.sort();
     assert!(!paths.is_empty(), "no tests found in {}", dir.display());
     paths
+}
+
+/// What a test is called: its file's name, or its directory's.
+fn name(path: &Path) -> String {
+    let path = match path.file_name().is_some_and(|n| n == "main.t") {
+        true => path.parent().unwrap(),
+        false => path,
+    };
+    path.file_name().unwrap().to_string_lossy().into_owned()
 }
 
 #[test]
@@ -34,16 +48,17 @@ fn golden() {
 
     let mut failures = Vec::new();
     for path in &paths {
-        let name = path.file_name().unwrap().to_string_lossy().into_owned();
-        let src = fs::read_to_string(path).unwrap();
-        let want = Expectations::of(&src);
+        let name = name(path);
+        let files = expect::files_of(path);
+        let all: String = files.iter().map(|(_, src)| src.as_str()).collect();
+        let want = Expectations::of(&all);
         if want.output.is_empty() && want.error.is_none() && want.warnings.is_empty() {
             failures.push(format!(
                 "{name}: has no `// expect:`, `// error:` or `// warning:` lines"
             ));
             continue;
         }
-        if let Err(failure) = expect::check(&name, &src) {
+        if let Err(failure) = expect::check_files(&files) {
             failures.push(format!("{name}: {failure}"));
         }
     }
@@ -70,12 +85,13 @@ fn mono() {
             continue;
         }
         checked += 1;
-        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let name = name(&path);
         let src = fs::read_to_string(&path).unwrap();
-        let actual = match t_lang::check_source(&src).result {
+        let checked = t_lang::check_files(&path, &src, &t_lang::load::read_file);
+        let actual = match checked.result {
             Ok(program) => program.to_string(),
             Err(e) => {
-                failures.push(format!("{name}: {}", e.render(&name, &src)));
+                failures.push(format!("{name}: {}", e.render_in(&checked.sources)));
                 continue;
             }
         };
@@ -103,9 +119,9 @@ fn mono() {
 fn printing_round_trips() {
     let mut failures = Vec::new();
     for path in programs() {
-        let name = path.file_name().unwrap().to_string_lossy().into_owned();
-        let src = fs::read_to_string(&path).unwrap();
-        let Ok(program) = t_lang::check_source(&src).result else {
+        let name = name(&path);
+        let files = expect::files_of(&path);
+        let Ok(program) = expect::run_checked(&files) else {
             continue;
         };
         let printed = program.to_string();
@@ -128,7 +144,7 @@ fn printing_round_trips() {
             failures.push(format!("{name}: printed\n{printed}\nthen\n{reprinted}"));
             continue;
         }
-        let (before, after) = (t_lang::run_source(&src), t_lang::run_source(&printed));
+        let (before, after) = (expect::run(&files), t_lang::run_source(&printed));
         if !expect::same_behaviour(&before, &after) {
             failures.push(format!(
                 "{name}: does something else once printed:\n{printed}"
@@ -146,12 +162,17 @@ fn renaming_keeps_meaning() {
     let mut failures = Vec::new();
     let mut renamed = 0;
     for path in programs() {
-        let name = path.file_name().unwrap().to_string_lossy().into_owned();
-        let src = fs::read_to_string(&path).unwrap();
-        let Ok((prog, info)) = t_lang::rename::checked(&src) else {
+        let name = name(&path);
+        let files = expect::files_of(&path);
+        let read = |p: &Path| match files.iter().find(|(f, _)| f == p) {
+            Some((_, src)) => Ok(src.clone()),
+            None => t_lang::no_files(p),
+        };
+        let Ok((sources, prog, info)) = t_lang::rename::checked(&path, &files[0].1, &read) else {
             continue;
         };
-        let before = t_lang::run_source(&src);
+        let src = sources.text();
+        let before = expect::run(&files);
         let mut defs: Vec<_> = info
             .notes
             .iter()
@@ -160,7 +181,7 @@ fn renaming_keeps_meaning() {
         defs.sort_by_key(|n| n.span.start);
         defs.dedup_by_key(|n| n.span);
         for n in defs {
-            if t_lang::rename::target(&src, &prog, &info, n.span.start).is_err() {
+            if t_lang::rename::target(&sources, &prog, &info, n.span.start).is_err() {
                 continue;
             }
             let new = match n.kind {
@@ -169,7 +190,7 @@ fn renaming_keeps_meaning() {
                 _ => "renamed",
             };
             let old = &src[n.span.start..n.span.end];
-            let edits = match t_lang::rename::rename(&src, &prog, &info, n.span, new) {
+            let edits = match t_lang::rename::rename(&sources, &prog, &info, n.span, new) {
                 Ok(edits) => edits,
                 Err(why) => {
                     failures.push(format!("{name}: renaming `{old}` failed: {why}"));
@@ -177,7 +198,8 @@ fn renaming_keeps_meaning() {
                 }
             };
             renamed += 1;
-            let after = Fix::new("", edits).apply(&src);
+            let paths = sources.files().iter().map(|f| f.path.clone());
+            let after: expect::Files = paths.zip(sources.edited(&edits)).collect();
             // Printed values and messages show the names of functions,
             // types, fields and variants.
             let shown = |run: t_lang::RunResult, renamed: bool| {
@@ -191,7 +213,8 @@ fn renaming_keeps_meaning() {
                 }
                 out
             };
-            if shown(before.clone(), false) != shown(t_lang::run_source(&after), true) {
+            if shown(before.clone(), false) != shown(expect::run(&after), true) {
+                let after: String = after.iter().map(|(_, src)| src.as_str()).collect();
                 failures.push(format!(
                     "{name}: renaming `{old}` changed what it does:\n{after}"
                 ));

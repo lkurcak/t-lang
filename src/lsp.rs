@@ -2,9 +2,13 @@
 //! errors and warnings as you type, and offer their fixes as quick fixes. Run
 //! as `t lsp`; it talks JSON-RPC over stdin/stdout.
 //!
-//! On every open/change it re-checks the whole file (it's tiny and fast) and
-//! reports every warning and the first error. Asked for anything else, it
-//! checks the file again and answers from what the checker found out
+//! A file is checked as part of its program: the one of the nearest
+//! `main.t` above it that has it as a module's file, or else the file
+//! alone (see `load.rs`), with what the editor has for open files and
+//! what's on disk for the others. On every open/change it re-checks the
+//! whole program (it's tiny and fast) and reports every warning and the
+//! first error, each in its file. Asked for anything else, it checks the
+//! program again and answers from what the checker found out
 //! (`check::Info`): the fixes of the diagnostics in range as code actions,
 //! the type and doc comment of what's under the cursor on hover, where
 //! that's defined and where its type is, every place it's named (as
@@ -18,6 +22,7 @@ use crate::ast::{FnDecl, MethodOf, Program, ROOT, TypeDecl};
 use crate::check::{Info, NoteKind};
 use crate::error::{Error, Fix, Lint, Phase, Span, Warning};
 use crate::fmt::FmtError;
+use crate::source::{File as SourceFile, Sources};
 use crate::types::{Type, comma_list};
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, Response};
 use lsp_types::notification::{
@@ -43,6 +48,7 @@ use lsp_types::{
     TextDocumentSyncKind, TextEdit, TypeDefinitionProviderCapability, Uri, WorkspaceEdit,
 };
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -71,8 +77,10 @@ pub fn run() -> Result<()> {
     };
     conn.initialize(serde_json::to_value(capabilities)?)?;
 
-    // The text of every open file, by URI.
-    let mut docs: HashMap<String, String> = HashMap::new();
+    let mut docs = Docs::default();
+    // The files each program last had diagnostics published for, by the
+    // path of its first file, to clear those of a file no longer in it.
+    let mut published: HashMap<PathBuf, Vec<Uri>> = HashMap::new();
     for msg in &conn.receiver {
         match msg {
             Message::Request(req) => {
@@ -85,29 +93,23 @@ pub fn run() -> Result<()> {
                 DidOpenTextDocument::METHOD => {
                     let p: DidOpenTextDocumentParams = serde_json::from_value(n.params)?;
                     let doc = p.text_document;
-                    let diags = diagnose(&doc.uri, &doc.text)
-                        .into_iter()
-                        .map(|(d, _)| d)
-                        .collect();
-                    publish(&conn, doc.uri.clone(), Some(doc.version), diags)?;
-                    docs.insert(doc.uri.as_str().to_string(), doc.text);
+                    docs.0.insert(doc.uri.as_str().to_string(), doc.text);
+                    let version = (doc.uri, doc.version);
+                    publish_all(&conn, &docs, version, &mut published)?;
                 }
                 DidChangeTextDocument::METHOD => {
                     let p: DidChangeTextDocumentParams = serde_json::from_value(n.params)?;
                     // With FULL sync, the last change holds the whole new text.
                     if let Some(change) = p.content_changes.into_iter().last() {
                         let doc = p.text_document;
-                        let diags = diagnose(&doc.uri, &change.text)
-                            .into_iter()
-                            .map(|(d, _)| d)
-                            .collect();
-                        publish(&conn, doc.uri.clone(), Some(doc.version), diags)?;
-                        docs.insert(doc.uri.as_str().to_string(), change.text);
+                        docs.0.insert(doc.uri.as_str().to_string(), change.text);
+                        let version = (doc.uri, doc.version);
+                        publish_all(&conn, &docs, version, &mut published)?;
                     }
                 }
                 DidCloseTextDocument::METHOD => {
                     let p: DidCloseTextDocumentParams = serde_json::from_value(n.params)?;
-                    docs.remove(p.text_document.uri.as_str());
+                    docs.0.remove(p.text_document.uri.as_str());
                     publish(&conn, p.text_document.uri, None, Vec::new())?;
                 }
                 _ => {}
@@ -123,12 +125,128 @@ pub fn run() -> Result<()> {
     Ok(())
 }
 
-fn respond(req: Request, docs: &HashMap<String, String>) -> Result<Response> {
+/// The text of every open file, by URI.
+#[derive(Default)]
+struct Docs(HashMap<String, String>);
+
+impl Docs {
+    /// Reads a file: what the editor has, if it's open, or else what's on
+    /// disk.
+    fn read(&self, path: &Path) -> std::io::Result<String> {
+        match self.0.get(path_uri(path).as_str()) {
+            Some(text) => Ok(text.clone()),
+            None => crate::load::read_file(path),
+        }
+    }
+
+    /// The program the open file at `uri` is in, checked. That's the one
+    /// of the nearest `main.t` above it that has it as a module's file, or
+    /// else the file alone (see `load.rs`).
+    fn analyse(&self, uri: &Uri) -> Option<Analysis> {
+        let src = self.0.get(uri.as_str())?;
+        let path = uri_path(uri);
+        let read = |p: &Path| self.read(p);
+        let mut dirs = path.parent().into_iter().flat_map(Path::ancestors);
+        let root = dirs.find_map(|dir| {
+            let main = dir.join("main.t");
+            if main == path {
+                return Some((main, src.clone()));
+            }
+            let text = self.read(&main).ok()?;
+            let (sources, _) = crate::load::load(&main, &text, &read);
+            sources.file(&path).map(|_| (main, text))
+        });
+        let (root, text) = root.unwrap_or_else(|| (path, src.clone()));
+        let checked = crate::check_files(&root, &text, &read);
+        let uris = checked
+            .sources
+            .files()
+            .iter()
+            .map(|f| path_uri(&f.path))
+            .collect();
+        Some(Analysis {
+            root,
+            text,
+            checked,
+            uris,
+        })
+    }
+}
+
+/// What checking the program an open file is in found.
+struct Analysis {
+    /// The program's first file, and its text.
+    root: PathBuf,
+    text: String,
+    checked: crate::Checked,
+    /// The URI of each of its files, in the order of its sources.
+    uris: Vec<Uri>,
+}
+
+impl Analysis {
+    fn sources(&self) -> &Sources {
+        &self.checked.sources
+    }
+
+    fn info(&self) -> &Info {
+        &self.checked.info
+    }
+
+    /// The file at `uri`, if it's one of the program's.
+    fn file(&self, uri: &Uri) -> Option<&SourceFile> {
+        let i = self.uris.iter().position(|u| u == uri)?;
+        Some(&self.sources().files()[i])
+    }
+
+    /// Where `pos` in the file at `uri` is in the sources.
+    fn offset(&self, uri: &Uri, pos: Position) -> Option<usize> {
+        let file = self.file(uri)?;
+        Some(file.start + offset(self.sources().src(file), pos))
+    }
+
+    /// Where `span` is, as a file and the range in it.
+    fn location(&self, span: Span) -> Location {
+        let (file, local) = self.sources().local(span);
+        let i = self
+            .sources()
+            .files()
+            .iter()
+            .position(|f| f.start == file.start);
+        let uri = self.uris[i.expect("one of the files")].clone();
+        Location::new(uri, lsp_range(self.sources().src(file), local))
+    }
+
+    /// The range `span` is in the file at `uri`, if it's in that file.
+    fn range_in(&self, uri: &Uri, span: Span) -> Option<Range> {
+        let location = self.location(span);
+        (location.uri == *uri).then_some(location.range)
+    }
+
+    /// `edits` as an LSP workspace edit, each in its own file.
+    fn workspace_edit(&self, edits: &[crate::error::Edit]) -> WorkspaceEdit {
+        // `WorkspaceEdit` wants a map by `Uri`, which clippy thinks may
+        // change under it; it doesn't.
+        #[allow(clippy::mutable_key_type)]
+        let mut changes: HashMap<Uri, Vec<TextEdit>> = HashMap::new();
+        for e in edits {
+            let location = self.location(e.span);
+            let edit = TextEdit::new(location.range, e.text.clone());
+            changes.entry(location.uri).or_default().push(edit);
+        }
+        WorkspaceEdit {
+            changes: Some(changes),
+            ..Default::default()
+        }
+    }
+}
+
+fn respond(req: Request, docs: &Docs) -> Result<Response> {
     match req.method.as_str() {
         CodeActionRequest::METHOD => {
             let p: CodeActionParams = serde_json::from_value(req.params)?;
-            let actions = match docs.get(p.text_document.uri.as_str()) {
-                Some(src) => code_actions(&p.text_document.uri, src, p.range),
+            let uri = &p.text_document.uri;
+            let actions = match docs.analyse(uri) {
+                Some(a) => code_actions(&a, uri, p.range),
                 None => Vec::new(),
             };
             Ok(Response::new_ok(req.id, actions))
@@ -136,9 +254,9 @@ fn respond(req: Request, docs: &HashMap<String, String>) -> Result<Response> {
         HoverRequest::METHOD => {
             let p: HoverParams = serde_json::from_value(req.params)?;
             let at = p.text_document_position_params;
-            let hover = docs.get(at.text_document.uri.as_str()).and_then(|src| {
-                let info = crate::check_source(src).info;
-                let note = info.note_at(offset(src, at.position))?;
+            let uri = &at.text_document.uri;
+            let hover = docs.analyse(uri).and_then(|a| {
+                let note = a.info().note_at(a.offset(uri, at.position)?)?;
                 // The signature, then the doc comment, as rust-analyzer
                 // shows them.
                 let mut value = format!("```t\n{}\n```", note.hover());
@@ -150,7 +268,7 @@ fn respond(req: Request, docs: &HashMap<String, String>) -> Result<Response> {
                         kind: MarkupKind::Markdown,
                         value,
                     }),
-                    range: Some(lsp_range(src, note.span)),
+                    range: a.range_in(uri, note.span),
                 })
             });
             Ok(Response::new_ok(req.id, hover))
@@ -158,28 +276,25 @@ fn respond(req: Request, docs: &HashMap<String, String>) -> Result<Response> {
         GotoDefinition::METHOD => {
             let p: GotoDefinitionParams = serde_json::from_value(req.params)?;
             let at = p.text_document_position_params;
-            let uri = at.text_document.uri;
-            let def = docs.get(uri.as_str()).and_then(|src| {
-                let info = crate::check_source(src).info;
-                let def = info.note_at(offset(src, at.position))?.def?;
-                Some(GotoDefinitionResponse::Scalar(Location {
-                    uri: uri.clone(),
-                    range: lsp_range(src, def),
-                }))
+            let uri = &at.text_document.uri;
+            let def = docs.analyse(uri).and_then(|a| {
+                let offset = a.offset(uri, at.position)?;
+                let location = match a.info().note_at(offset) {
+                    Some(note) => a.location(note.def?),
+                    // The name of a `mod m;` goes to its file.
+                    None => file_of_mod(&a, offset)?,
+                };
+                Some(GotoDefinitionResponse::Scalar(location))
             });
             Ok(Response::new_ok(req.id, def))
         }
         GotoTypeDefinition::METHOD => {
             let p: GotoDefinitionParams = serde_json::from_value(req.params)?;
             let at = p.text_document_position_params;
-            let uri = at.text_document.uri;
-            let defs = docs.get(uri.as_str()).and_then(|src| {
-                let info = crate::check_source(src).info;
-                let spans = type_definitions(&info, offset(src, at.position));
-                let locations: Vec<Location> = spans
-                    .into_iter()
-                    .map(|span| Location::new(uri.clone(), lsp_range(src, span)))
-                    .collect();
+            let uri = &at.text_document.uri;
+            let defs = docs.analyse(uri).and_then(|a| {
+                let spans = type_definitions(a.info(), a.offset(uri, at.position)?);
+                let locations: Vec<Location> = spans.into_iter().map(|s| a.location(s)).collect();
                 (!locations.is_empty()).then_some(GotoDefinitionResponse::Array(locations))
             });
             Ok(Response::new_ok(req.id, defs))
@@ -187,85 +302,77 @@ fn respond(req: Request, docs: &HashMap<String, String>) -> Result<Response> {
         References::METHOD => {
             let p: ReferenceParams = serde_json::from_value(req.params)?;
             let at = p.text_document_position;
-            let uri = at.text_document.uri;
-            let refs = docs.get(uri.as_str()).and_then(|src| {
-                let info = crate::check_source(src).info;
-                let def = info.note_at(offset(src, at.position))?.def?;
-                let spans = info.occurrences(def).into_iter();
+            let uri = &at.text_document.uri;
+            let refs = docs.analyse(uri).and_then(|a| {
+                let def = a.info().note_at(a.offset(uri, at.position)?)?.def?;
+                let spans = a.info().occurrences(def).into_iter();
                 let spans = spans.filter(|&s| p.context.include_declaration || s != def);
-                let refs = spans.map(|span| Location::new(uri.clone(), lsp_range(src, span)));
-                Some(refs.collect::<Vec<_>>())
+                Some(spans.map(|span| a.location(span)).collect::<Vec<_>>())
             });
             Ok(Response::new_ok(req.id, refs))
         }
         DocumentHighlightRequest::METHOD => {
             let p: DocumentHighlightParams = serde_json::from_value(req.params)?;
             let at = p.text_document_position_params;
-            let highlights = docs.get(at.text_document.uri.as_str()).and_then(|src| {
-                let info = crate::check_source(src).info;
-                let def = info.note_at(offset(src, at.position))?.def?;
-                let highlights = info
-                    .occurrences(def)
-                    .into_iter()
-                    .map(|span| DocumentHighlight {
-                        range: lsp_range(src, span),
+            let uri = &at.text_document.uri;
+            let highlights = docs.analyse(uri).and_then(|a| {
+                let def = a.info().note_at(a.offset(uri, at.position)?)?.def?;
+                // Only those in this file: highlights are for one.
+                let highlights = a.info().occurrences(def).into_iter().filter_map(|span| {
+                    Some(DocumentHighlight {
+                        range: a.range_in(uri, span)?,
                         kind: Some(match span == def {
                             true => DocumentHighlightKind::WRITE,
                             false => DocumentHighlightKind::READ,
                         }),
-                    });
+                    })
+                });
                 Some(highlights.collect::<Vec<_>>())
             });
             Ok(Response::new_ok(req.id, highlights))
         }
         PrepareRenameRequest::METHOD => {
             let at: TextDocumentPositionParams = serde_json::from_value(req.params)?;
-            let Some(src) = docs.get(at.text_document.uri.as_str()) else {
+            let uri = &at.text_document.uri;
+            let Some(a) = docs.analyse(uri) else {
                 return Ok(Response::new_ok(req.id, ()));
             };
-            let target = crate::rename::checked(src).and_then(|(prog, info)| {
-                let note = crate::rename::target(src, &prog, &info, offset(src, at.position))?;
-                Ok(note.span)
+            let target = renaming(docs, &a).and_then(|(sources, prog, info)| {
+                let offset = a
+                    .offset(uri, at.position)
+                    .ok_or("this file isn't in the program")?;
+                let note = crate::rename::target(&sources, &prog, &info, offset)?;
+                a.range_in(uri, note.span)
+                    .ok_or_else(|| "it's in another file".to_string())
             });
             Ok(match target {
-                Ok(span) => {
-                    Response::new_ok(req.id, PrepareRenameResponse::Range(lsp_range(src, span)))
-                }
+                Ok(range) => Response::new_ok(req.id, PrepareRenameResponse::Range(range)),
                 Err(why) => Response::new_err(req.id, ErrorCode::RequestFailed as i32, why),
             })
         }
         Rename::METHOD => {
             let p: RenameParams = serde_json::from_value(req.params)?;
             let at = p.text_document_position;
-            let uri = at.text_document.uri;
-            let Some(src) = docs.get(uri.as_str()) else {
+            let uri = &at.text_document.uri;
+            let Some(a) = docs.analyse(uri) else {
                 return Ok(Response::new_ok(req.id, ()));
             };
-            let edits = crate::rename::checked(src).and_then(|(prog, info)| {
-                let note = crate::rename::target(src, &prog, &info, offset(src, at.position))?;
+            let edits = renaming(docs, &a).and_then(|(sources, prog, info)| {
+                let offset = a
+                    .offset(uri, at.position)
+                    .ok_or("this file isn't in the program")?;
+                let note = crate::rename::target(&sources, &prog, &info, offset)?;
                 let def = note.def.expect("a target is defined somewhere");
-                crate::rename::rename(src, &prog, &info, def, &p.new_name)
+                crate::rename::rename(&sources, &prog, &info, def, &p.new_name)
             });
             Ok(match edits {
-                Ok(edits) => {
-                    let edits = edits
-                        .iter()
-                        .map(|e| TextEdit::new(lsp_range(src, e.span), e.text.clone()))
-                        .collect();
-                    Response::new_ok(
-                        req.id,
-                        WorkspaceEdit {
-                            changes: Some(HashMap::from([(uri, edits)])),
-                            ..Default::default()
-                        },
-                    )
-                }
+                Ok(edits) => Response::new_ok(req.id, a.workspace_edit(&edits)),
                 Err(why) => Response::new_err(req.id, ErrorCode::RequestFailed as i32, why),
             })
         }
         DocumentSymbolRequest::METHOD => {
             let p: DocumentSymbolParams = serde_json::from_value(req.params)?;
-            let outline = docs.get(p.text_document.uri.as_str()).and_then(|src| {
+            let outline = docs.0.get(p.text_document.uri.as_str()).and_then(|src| {
                 let prog = crate::lexer::lex(src).and_then(crate::parser::parse).ok()?;
                 Some(DocumentSymbolResponse::Nested(outline(src, &prog)))
             });
@@ -273,15 +380,16 @@ fn respond(req: Request, docs: &HashMap<String, String>) -> Result<Response> {
         }
         InlayHintRequest::METHOD => {
             let p: InlayHintParams = serde_json::from_value(req.params)?;
-            let hints = match docs.get(p.text_document.uri.as_str()) {
-                Some(src) => inlay_hints(src, p.range),
+            let uri = &p.text_document.uri;
+            let hints = match docs.analyse(uri) {
+                Some(a) => inlay_hints(&a, uri, p.range),
                 None => Vec::new(),
             };
             Ok(Response::new_ok(req.id, hints))
         }
         Formatting::METHOD => {
             let p: DocumentFormattingParams = serde_json::from_value(req.params)?;
-            let Some(src) = docs.get(p.text_document.uri.as_str()) else {
+            let Some(src) = docs.0.get(p.text_document.uri.as_str()) else {
                 return Ok(Response::new_ok(req.id, ()));
             };
             match crate::fmt::format(src) {
@@ -317,6 +425,20 @@ fn respond(req: Request, docs: &HashMap<String, String>) -> Result<Response> {
     }
 }
 
+/// The program `a` is about, parsed and checked for renaming in it.
+fn renaming(docs: &Docs, a: &Analysis) -> std::result::Result<(Sources, Program, Info), String> {
+    crate::rename::checked(&a.root, &a.text, &|p: &Path| docs.read(p))
+}
+
+/// The file of the `mod m;` whose name is at `offset`, if there's one.
+fn file_of_mod(a: &Analysis, offset: usize) -> Option<Location> {
+    let files = a.sources().files();
+    let i = files
+        .iter()
+        .position(|f| f.declared.is_some_and(|name| name.contains(offset)))?;
+    Some(Location::new(a.uris[i].clone(), Range::default()))
+}
+
 fn publish(
     conn: &Connection,
     uri: Uri,
@@ -333,24 +455,60 @@ fn publish(
     Ok(())
 }
 
-/// Every diagnostic for `src`, the document at `uri`, each with its fixes.
-fn diagnose(uri: &Uri, src: &str) -> Vec<(Diagnostic, Vec<Fix>)> {
-    let checked = crate::check_source(src);
-    let mut out: Vec<_> = checked
+/// Publishes the diagnostics of every file of the program the open file at
+/// `uri` is in: its `version` has just changed. A file that was in the
+/// program and no longer is has its diagnostics cleared.
+fn publish_all(
+    conn: &Connection,
+    docs: &Docs,
+    (uri, version): (Uri, i32),
+    published: &mut HashMap<PathBuf, Vec<Uri>>,
+) -> Result<()> {
+    let Some(a) = docs.analyse(&uri) else {
+        return Ok(());
+    };
+    let before = published.get(&a.root).cloned().unwrap_or_default();
+    for file in &a.uris {
+        let diags: Vec<Diagnostic> = diagnose(&a, file).into_iter().map(|(d, _)| d).collect();
+        // A file neither open nor with anything to say, now or before,
+        // needs nothing published.
+        if diags.is_empty() && !docs.0.contains_key(file.as_str()) && !before.contains(file) {
+            continue;
+        }
+        let version = (*file == uri).then_some(version);
+        publish(conn, file.clone(), version, diags)?;
+    }
+    let before = published.insert(a.root.clone(), a.uris.clone());
+    for old in before.into_iter().flatten() {
+        if !a.uris.contains(&old) {
+            publish(conn, old, None, Vec::new())?;
+        }
+    }
+    Ok(())
+}
+
+/// Every diagnostic in the file at `uri` of the program `a` is about, each
+/// with its fixes.
+fn diagnose(a: &Analysis, uri: &Uri) -> Vec<(Diagnostic, Vec<Fix>)> {
+    let mut out: Vec<_> = a
+        .checked
         .warnings
         .iter()
-        .map(|w| (warning_diagnostic(w, src), w.fixes.clone()))
+        .filter_map(|w| Some((warning_diagnostic(a, uri, w)?, w.fixes.clone())))
         .collect();
-    if let Err(e) = &checked.result {
-        out.push((error_diagnostic(uri, e, src), e.fixes.clone()));
+    if let Err(e) = &a.checked.result
+        && let Some(d) = error_diagnostic(a, uri, e)
+    {
+        out.push((d, e.fixes.clone()));
     }
     out
 }
 
-/// A quick fix for each fix of each diagnostic that touches `range`.
-fn code_actions(uri: &Uri, src: &str, range: Range) -> Vec<CodeActionOrCommand> {
+/// A quick fix for each fix of each diagnostic in the file at `uri` that
+/// touches `range`.
+fn code_actions(a: &Analysis, uri: &Uri, range: Range) -> Vec<CodeActionOrCommand> {
     let mut actions = Vec::new();
-    for (diag, fixes) in diagnose(uri, src) {
+    for (diag, fixes) in diagnose(a, uri) {
         if diag.range.start > range.end || range.start > diag.range.end {
             continue;
         }
@@ -358,19 +516,11 @@ fn code_actions(uri: &Uri, src: &str, range: Range) -> Vec<CodeActionOrCommand> 
         // only one there is.
         let preferred = fixes.len() == 1;
         for fix in fixes {
-            let edits = fix
-                .edits
-                .iter()
-                .map(|e| TextEdit::new(lsp_range(src, e.span), e.text.clone()))
-                .collect();
             actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                edit: Some(a.workspace_edit(&fix.edits)),
                 title: fix.title,
                 kind: Some(CodeActionKind::QUICKFIX),
                 diagnostics: Some(vec![diag.clone()]),
-                edit: Some(WorkspaceEdit {
-                    changes: Some(HashMap::from([(uri.clone(), edits)])),
-                    ..Default::default()
-                }),
                 is_preferred: Some(preferred),
                 ..Default::default()
             }));
@@ -581,15 +731,16 @@ fn type_symbol(src: &str, d: &TypeDecl) -> DocumentSymbol {
 }
 
 /// The types the checker inferred, and the type arguments it worked out for
-/// each use of something generic, inside `range`.
-fn inlay_hints(src: &str, range: Range) -> Vec<InlayHint> {
-    let mut notes = crate::check_source(src).info.notes;
+/// each use of something generic, inside `range` of the file at `uri`.
+fn inlay_hints(a: &Analysis, uri: &Uri, range: Range) -> Vec<InlayHint> {
+    let mut notes: Vec<_> = a.info().notes.iter().collect();
     notes.sort_by_key(|n| n.span.start);
     notes
         .iter()
         .filter_map(|n| {
             let hint = n.hint()?;
-            let pos = position(src, n.span.end);
+            let end = Span::new(n.span.end, n.span.end);
+            let pos = a.range_in(uri, end)?.start;
             (range.start <= pos && pos <= range.end).then(|| InlayHint {
                 position: pos,
                 label: InlayHintLabel::String(hint),
@@ -604,9 +755,9 @@ fn inlay_hints(src: &str, range: Range) -> Vec<InlayHint> {
         .collect()
 }
 
-/// The diagnostic for `e`, in `src`, the document at `uri`. Its notes, like
-/// "`x` is borrowed here", are related information.
-fn error_diagnostic(uri: &Uri, e: &Error, src: &str) -> Diagnostic {
+/// The diagnostic for `e`, if it's in the file at `uri`. Its notes, like
+/// "`x` is borrowed here", are related information, in any file.
+fn error_diagnostic(a: &Analysis, uri: &Uri, e: &Error) -> Option<Diagnostic> {
     let phase = match e.phase {
         Phase::Syntax => "syntax error",
         Phase::Type => "type error",
@@ -616,23 +767,23 @@ fn error_diagnostic(uri: &Uri, e: &Error, src: &str) -> Diagnostic {
         .notes
         .iter()
         .map(|(span, note)| DiagnosticRelatedInformation {
-            location: Location::new(uri.clone(), lsp_range(src, *span)),
+            location: a.location(*span),
             message: note.clone(),
         })
         .collect::<Vec<_>>();
-    Diagnostic {
-        range: lsp_range(src, e.span),
+    Some(Diagnostic {
+        range: a.range_in(uri, e.span)?,
         severity: Some(DiagnosticSeverity::ERROR),
         source: Some("t".to_string()),
         message: format!("{phase}: {}", e.message),
         related_information: (!related.is_empty()).then_some(related),
         ..Default::default()
-    }
+    })
 }
 
-fn warning_diagnostic(w: &Warning, src: &str) -> Diagnostic {
-    Diagnostic {
-        range: lsp_range(src, w.span),
+fn warning_diagnostic(a: &Analysis, uri: &Uri, w: &Warning) -> Option<Diagnostic> {
+    Some(Diagnostic {
+        range: a.range_in(uri, w.span)?,
         severity: Some(DiagnosticSeverity::WARNING),
         code: Some(NumberOrString::String(w.lint.name().to_string())),
         source: Some("t".to_string()),
@@ -645,7 +796,56 @@ fn warning_diagnostic(w: &Warning, src: &str) -> Diagnostic {
         )
         .then(|| vec![DiagnosticTag::UNNECESSARY]),
         ..Default::default()
+    })
+}
+
+/// The path of a `file:` URI. Any other URI, of a file not saved, is a
+/// path of its own, which no `main.t` is above.
+fn uri_path(uri: &Uri) -> PathBuf {
+    let Some(rest) = uri.as_str().strip_prefix("file://") else {
+        return PathBuf::from(uri.as_str());
+    };
+    let bytes = rest.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = |b: u8| (b as char).to_digit(16);
+        match (
+            bytes[i],
+            bytes.get(i + 1).copied().and_then(hex),
+            bytes.get(i + 2).copied().and_then(hex),
+        ) {
+            (b'%', Some(hi), Some(lo)) => {
+                out.push((hi * 16 + lo) as u8);
+                i += 3;
+            }
+            (b, ..) => {
+                out.push(b);
+                i += 1;
+            }
+        }
     }
+    PathBuf::from(String::from_utf8_lossy(&out).into_owned())
+}
+
+/// The `file:` URI of a path, the inverse of `uri_path`.
+fn path_uri(path: &Path) -> Uri {
+    let s = path.to_string_lossy();
+    if !s.starts_with('/')
+        && let Ok(uri) = s.parse()
+    {
+        return uri;
+    }
+    let mut out = String::from("file://");
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'/' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out.parse().expect("a file URI")
 }
 
 fn lsp_range(src: &str, span: Span) -> Range {

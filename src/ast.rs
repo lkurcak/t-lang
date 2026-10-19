@@ -88,7 +88,8 @@ pub const ROOT: usize = 0;
 pub struct ModDecl {
     pub doc: Option<DocComment>,
     pub allows: Vec<Allow>,
-    /// From the `mod` to the `}`; for the crate root, the whole file.
+    /// From the `pub` or `mod` to the `}` or `;`; for the crate root, the
+    /// whole file.
     pub span: Span,
     /// `crate` for the crate root.
     pub name: Ident,
@@ -96,6 +97,9 @@ pub struct ModDecl {
     pub parent: Option<usize>,
     /// Where the `pub` is, if it's public.
     pub public: Option<Span>,
+    /// Is it `mod name;`, in a file of its own? Its items are in that file
+    /// (see `load.rs`).
+    pub in_file: bool,
 }
 
 /// `use a::b;`, `pub use a::{b, c as d};`: names from other modules,

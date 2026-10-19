@@ -14,6 +14,7 @@
 use crate::ast::*;
 use crate::check::Info;
 use crate::error::{Fix, Lint, Span, Warning};
+use crate::source::Sources;
 
 /// Which way a name should be written.
 #[derive(Clone, Copy)]
@@ -31,8 +32,8 @@ struct Decl<'a> {
 }
 
 /// A warning for each name in `prog` that's written the wrong way. `info`
-/// is what checking `src` found, if it checked, for the fixes.
-pub fn warnings(src: &str, prog: &Program, info: Option<&Info>) -> Vec<Warning> {
+/// is what checking `sources` found, if it checked, for the fixes.
+pub fn warnings(sources: &Sources, prog: &Program, info: Option<&Info>) -> Vec<Warning> {
     decls(prog)
         .into_iter()
         .filter_map(|d| {
@@ -44,7 +45,7 @@ pub fn warnings(src: &str, prog: &Program, info: Option<&Info>) -> Vec<Warning> 
                 return None;
             }
             let fix = info.and_then(|info| {
-                let edits = crate::rename::rename(src, prog, info, d.span, &want).ok()?;
+                let edits = crate::rename::rename(sources, prog, info, d.span, &want).ok()?;
                 Some(Fix::new(format!("rename to `{want}`"), edits))
             });
             let (lint, case) = match d.case {

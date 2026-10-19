@@ -429,9 +429,12 @@ impl Printer<'_> {
         doc
     }
 
-    /// `mod name { .. }`, for `t fmt`.
+    /// `mod name { .. }` or `mod name;`, for `t fmt`.
     fn mod_decl(&mut self, program: &Program, i: usize, m: &ModDecl) -> Doc {
         let lead = self.lead(m.doc.as_ref(), &m.allows, m.span.start);
+        if m.in_file {
+            return lead + public(m.public) + "mod " + &m.name.name + ";";
+        }
         let head = lead + public(m.public) + "mod " + &m.name.name + " ";
         let open = self.find(m.name.span.end, &Tok::LBrace);
         let close = m.span.end - 1;

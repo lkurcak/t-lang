@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+Step 6d.1: modules in files of their own. See
+[docs/06d.1-files.md](docs/06d.1-files.md).
+
+### Added
+
+- `mod m;`: a module whose items are in a file of its own. It means just
+  what `mod m { .. }` would with the file's items in the braces.
+- The file of module `a::b` is `a/b.t`, from the directory of `main.t`,
+  whether `b` is `mod b;` in `a.t` or in an inline `mod a { .. }`.
+- Only a program that starts in `main.t` has modules in files, and none of
+  them can be called `main`, so a file's program is the nearest `main.t`
+  above it that has it. A missing file, and a file read twice through a
+  link, are errors.
+- Errors and warnings say which file they're in; fixes edit each file they
+  touch; an `#[allow(..)]` on `mod m;` covers `m.t` and the files of the
+  modules in it.
+- `t run`, `t check` and `t mono` read a program's files. `t fmt` formats
+  `mod m;`, and formats each file it's given on its own.
+- The language server checks a file as part of its program, using the
+  editor's text for open files. Diagnostics go to the file they're in, and
+  going to a definition, references and renames cross files; going to the
+  definition of `m` in `mod m;` opens `m.t`.
+- The tree-sitter grammar knows `mod m;`.
+
 ## 0.10.0 (2026-10-19)
 
 Step 6d: modules. See [docs/06d-modules.md](docs/06d-modules.md).

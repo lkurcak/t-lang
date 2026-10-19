@@ -67,9 +67,10 @@ fn main() -> ExitCode {
         }
     };
 
+    let path = std::path::Path::new(path);
     if cmd == "check" || cmd == "mono" {
-        let checked = t_lang::check_source(&src);
-        for w in Warning::render_all(&checked.warnings, path, &src) {
+        let checked = t_lang::check_files(path, &src, &t_lang::load::read_file);
+        for w in Warning::render_all_in(&checked.warnings, &checked.sources) {
             eprintln!("{w}\n");
         }
         return match checked.result {
@@ -82,14 +83,14 @@ fn main() -> ExitCode {
                 ExitCode::SUCCESS
             }
             Err(e) => {
-                eprintln!("{}", e.render(path, &src));
+                eprintln!("{}", e.render_in(&checked.sources));
                 ExitCode::FAILURE
             }
         };
     }
 
-    let run = t_lang::run_source(&src);
-    for w in Warning::render_all(&run.warnings, path, &src) {
+    let run = t_lang::run_files(path, &src, None);
+    for w in Warning::render_all_in(&run.warnings, &run.sources) {
         eprintln!("{w}\n");
     }
     for line in &run.output {
@@ -102,7 +103,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(e) => {
-            eprintln!("{}", e.render(path, &src));
+            eprintln!("{}", e.render_in(&run.sources));
             ExitCode::FAILURE
         }
     }

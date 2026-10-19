@@ -3,16 +3,18 @@
 //! parameters and body, the functions and types nested in it, a type's
 //! fields and variants. As in Rust, a name that isn't a lint's is only a
 //! warning (`unknown_lints`), so that a program keeps working when a lint is
-//! renamed or removed.
+//! renamed or removed. One on a `mod` turns them off in the module, the
+//! files of `mod m;` in it included.
 
 use crate::ast::*;
 use crate::error::{Edit, Fix, Lint, Span, Warning};
+use crate::source::Sources;
 
 /// Adds a warning for each name in `prog`'s `#[allow(..)]`s that isn't a
 /// lint, then drops the warnings they turn off.
-pub fn apply(prog: &Program, warnings: &mut Vec<Warning>) {
+pub fn apply(prog: &Program, sources: &Sources, warnings: &mut Vec<Warning>) {
     let mut scopes: Vec<(Span, Lint)> = Vec::new();
-    for (span, allows) in allowed(prog) {
+    for (span, allows) in allowed(prog, sources) {
         for name in allows.iter().flat_map(|a| &a.lints) {
             match Lint::from_name(&name.name) {
                 Some(lint) => scopes.push((span, lint)),
@@ -28,11 +30,19 @@ pub fn apply(prog: &Program, warnings: &mut Vec<Warning>) {
     warnings.sort_by_key(|w| w.span.start);
 }
 
-/// Everything in `prog` that has attributes, as its span and them.
-fn allowed(prog: &Program) -> Vec<(Span, &[Allow])> {
+/// Everything in `prog` that has attributes, as its spans and them: a
+/// module that has files is in them too.
+fn allowed<'p>(prog: &'p Program, sources: &Sources) -> Vec<(Span, &'p [Allow])> {
     let mut out: Vec<(Span, &[Allow])> = Vec::new();
     for m in &prog.mods[1..] {
         out.push((m.span, &m.allows));
+    }
+    for file in &sources.files()[1..] {
+        let mut m = Some(file.module);
+        while let Some(i) = m.filter(|&i| i != ROOT) {
+            out.push((file.span(), &prog.mods[i].allows));
+            m = prog.mods[i].parent;
+        }
     }
     for (f, _) in prog.all_fns() {
         out.push((f.span, &f.allows));

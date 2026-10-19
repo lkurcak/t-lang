@@ -80,12 +80,12 @@ module.exports = grammar({
 
     visibility_modifier: _ => 'pub',
 
-    // `mod geometry { .. }`
+    // `mod geometry { .. }`, or `mod geometry;` in a file of its own
     mod_item: $ => seq(
       optional($.visibility_modifier),
       'mod',
       field('name', $.identifier),
-      field('body', $.mod_body),
+      choice(field('body', $.mod_body), ';'),
     ),
 
     mod_body: $ => seq('{', repeat(choice($._item, $.attribute_item)), '}'),

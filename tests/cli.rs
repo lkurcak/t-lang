@@ -46,3 +46,24 @@ fn bad_arguments_print_usage() {
         assert!(stderr.starts_with("usage: t "), "{args:?}: {stderr}");
     }
 }
+
+/// A program of several files reads them from beside its `main.t`, and
+/// says which file an error is in.
+#[test]
+fn reads_the_files_of_modules() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/t");
+    let out = t(&[&format!("{dir}/module_files/main.t")]);
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        "0\n12\n25\n42\n7\n0\n"
+    );
+
+    let out = t(&["check", &format!("{dir}/err_module_file_type_error/main.t")]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("err_module_file_type_error/a/b.t:2:5"),
+        "{stderr}"
+    );
+}

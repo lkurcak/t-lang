@@ -60,6 +60,10 @@ t fmt examples/hello.t      # format the file in place (--check: just print a di
 t lsp                       # language server (see below)
 ```
 
+A program of several files starts in `main.t`, and `mod geo;` in it is
+the module in `geo.t` beside it (see
+[docs/06d.1-files.md](docs/06d.1-files.md)).
+
 From a checkout, use `cargo run -- <args>` instead, and `cargo test` to run
 every program in `tests/t/` and the code in the docs (see [Tests](#tests)).
 
@@ -221,7 +225,9 @@ print(1 + 2); // expect: 3
 ```
 
 Every warning must be expected, and applying the warnings' fixes must not
-change what the program does. A `tests/t/<name>.mono` file holds what
+change what the program does. A program of several files is a directory,
+`tests/t/<name>/main.t` with its modules' files, and its comments are read
+from all of them. A `tests/t/<name>.mono` file holds what
 `t mono` prints for that test; `BLESS=1 cargo test` rewrites them.
 
 The T code in this README and in `docs/` is tested too (`tests/docs.rs`).
@@ -289,7 +295,7 @@ combine features in ways nobody planned for.
 | 6c ✅ | closures as `Fn` traits | closure conversion, a type per closure, capturing by reference | [docs/06c-closures.md](docs/06c-closures.md) |
 | 6c.1 ✅ | returning closures, `-> impl Fn(int) -> int` | existential (opaque) types, which lifetimes they capture | [docs/06c.1-opaque-types.md](docs/06c.1-opaque-types.md) |
 | 6d ✅ | modules: `mod`, `use`, `pub` | namespaces, abstract types (existential types, representation independence), coherence and orphan rules | [docs/06d-modules.md](docs/06d-modules.md) |
-| 6d.1 | modules in files of their own: `mod m;` | | |
+| 6d.1 ✅ | modules in files of their own: `mod m;` | a file is the module's braces; one file per module path | [docs/06d.1-files.md](docs/06d.1-files.md) |
 | 6e | a small `core`: `Option`, `Result`, `Ord`, `Iterator`, `for` | equality bounds with projections (`IntoIterator`), iterating over linear values | what the tests keep defining themselves; no allocation |
 | 7 | effects | effect systems: which functions can panic, allocate or diverge | |
 | 8 | refinement types | proving indexes in bounds, so indexing can't panic | |
