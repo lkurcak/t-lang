@@ -19,20 +19,7 @@ use std::fmt;
 impl fmt::Display for Program {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut p = Printer::default();
-        let items = self
-            .types
-            .iter()
-            .map(Item::Type)
-            .chain(self.traits.iter().map(Item::Trait))
-            .chain(self.impls.iter().map(Item::Impl))
-            .chain(self.fns.iter().map(Item::Fn));
-        let mut doc = Doc::nil();
-        for (i, item) in items.enumerate() {
-            if i > 0 {
-                doc = doc + Doc::HardLine + Doc::HardLine;
-            }
-            doc = doc + p.item(item);
-        }
+        let doc = p.plain_items(self, ROOT);
         f.write_str(&render(&doc))
     }
 }
@@ -43,53 +30,63 @@ pub fn format(program: &Program, trivia: Trivia) -> String {
     let mut p = Printer {
         trivia: Some(trivia),
     };
-    let mut items: Vec<(usize, Item)> = program
-        .types
-        .iter()
-        .map(|d| (d.name().span.start, Item::Type(d)))
-        .chain(
-            program
-                .traits
-                .iter()
-                .map(|t| (t.span.start, Item::Trait(t))),
-        )
-        .chain(program.impls.iter().map(|i| (i.span.start, Item::Impl(i))))
-        .chain(program.fns.iter().map(|f| (f.name.span.start, Item::Fn(f))))
-        .collect();
-    items.sort_by_key(|(pos, _)| *pos);
-    let mut doc = Doc::nil();
-    for (i, &(pos, item)) in items.iter().enumerate() {
-        if i > 0 {
-            doc = doc + Doc::HardLine;
-        }
-        // It starts at its doc comment or attributes, or else at the
-        // `struct`, `enum` or `fn` before the name.
-        let start = match item {
-            Item::Type(d) => type_lead_start(d, p.before(pos)),
-            Item::Fn(f) => lead_start(f.doc.as_ref(), &f.allows, f.span.start),
-            Item::Trait(t) => lead_start(t.doc.as_ref(), &t.allows, t.span.start),
-            Item::Impl(d) => lead_start(d.doc.as_ref(), &d.allows, d.span.start),
-        };
-        doc = doc + p.element(start, i == 0);
-        let end = match item {
-            Item::Type(_) => p.find(pos, &Tok::RBrace) + 1,
-            Item::Fn(f) => f.body.span.end,
-            Item::Trait(t) => t.span.end,
-            Item::Impl(d) => d.span.end,
-        };
-        doc = doc + p.item(item) + p.trailing(end);
-    }
-    for (i, c) in p
-        .dangling(usize::MAX, items.is_empty())
-        .into_iter()
-        .enumerate()
-    {
-        if i > 0 || !items.is_empty() {
+    let (mut doc, empty) = p.items(program, ROOT);
+    for (i, c) in p.dangling(usize::MAX, empty).into_iter().enumerate() {
+        if i > 0 || !empty {
             doc = doc + Doc::HardLine;
         }
         doc = doc + c;
     }
     render(&doc)
+}
+
+/// The items of module `module`, each with where its name is in the
+/// source: its types, traits, impls, functions, modules and `use`s, or, if
+/// `sorted`, in the order they're written.
+fn items_of(program: &Program, module: usize, sorted: bool) -> Vec<(usize, Item<'_>)> {
+    let mods = program.mods.iter().enumerate().skip(1);
+    let mut items: Vec<(usize, Item)> = program
+        .types
+        .iter()
+        .filter(|d| d.module() == module)
+        .map(|d| (d.name().span.start, Item::Type(d)))
+        .chain(
+            program
+                .traits
+                .iter()
+                .filter(|t| t.module == module)
+                .map(|t| (t.span.start, Item::Trait(t))),
+        )
+        .chain(
+            program
+                .impls
+                .iter()
+                .filter(|d| d.module == module)
+                .map(|i| (i.span.start, Item::Impl(i))),
+        )
+        .chain(
+            program
+                .fns
+                .iter()
+                .filter(|f| f.module == module)
+                .map(|f| (f.name.span.start, Item::Fn(f))),
+        )
+        .chain(
+            mods.filter(|(_, m)| m.parent == Some(module))
+                .map(|(i, m)| (m.name.span.start, Item::Mod(i, m))),
+        )
+        .chain(
+            program
+                .uses
+                .iter()
+                .filter(|u| u.module == module)
+                .map(|u| (u.span.start, Item::Use(u))),
+        )
+        .collect();
+    if sorted {
+        items.sort_by_key(|(pos, _)| *pos);
+    }
+    items
 }
 
 #[derive(Clone, Copy)]
@@ -98,6 +95,9 @@ enum Item<'a> {
     Trait(&'a TraitDecl),
     Impl(&'a ImplDecl),
     Fn(&'a FnDecl),
+    /// With its index in `Program::mods`.
+    Mod(usize, &'a ModDecl),
+    Use(&'a UseDecl),
 }
 
 /// How tightly a binary operator binds, as in the parser.
@@ -239,10 +239,24 @@ impl Printer<'_> {
                 .flat_map(|d| &d.lines)
                 .map(|l| text(format!("///{}", l.text)) + Doc::HardLine),
         );
-        let attrs = allows.iter().map(|a| ("allow", a.span, &a.lints));
-        let attrs = attrs.chain(derives.iter().map(|d| ("derive", d.span, &d.names)));
-        for (attr, span, names) in attrs {
-            let names: Vec<&str> = names.iter().map(|l| l.name.as_str()).collect();
+        let no_wheres = Vec::new();
+        let attrs = allows
+            .iter()
+            .map(|a| ("allow", a.span, &a.lints, &no_wheres));
+        let attrs = attrs.chain(
+            derives
+                .iter()
+                .map(|d| ("derive", d.span, &d.names, &d.wheres)),
+        );
+        for (attr, span, names, wheres) in attrs {
+            let names: Vec<String> = names
+                .iter()
+                .enumerate()
+                .map(|(i, l)| match wheres.get(i) {
+                    Some(Some(w)) => format!("{} {}", l.name, where_clause(w)),
+                    _ => l.name.clone(),
+                })
+                .collect();
             let attr = format!("#[{attr}({})]", names.join(", "));
             out = out + self.element(span.start, true) + attr + self.trailing(span.end);
             out = out + Doc::HardLine;
@@ -346,12 +360,103 @@ impl Printer<'_> {
         group(text(open) + nest(inner) + line() + close)
     }
 
+    /// The items of module `module`, for `t fmt`, and whether it has none.
+    fn items(&mut self, program: &Program, module: usize) -> (Doc, bool) {
+        let items = items_of(program, module, true);
+        let mut doc = Doc::nil();
+        for (i, &(pos, item)) in items.iter().enumerate() {
+            if i > 0 {
+                doc = doc + Doc::HardLine;
+            }
+            // It starts at its doc comment or attributes, or else at the
+            // `pub`, `struct`, `enum` or `fn` before the name.
+            let start = match item {
+                Item::Type(d) => {
+                    let start = type_lead_start(d, self.before(pos));
+                    d.public().map_or(start, |p| start.min(p.start))
+                }
+                Item::Fn(f) => lead_start(f.doc.as_ref(), &f.allows, fn_start(f)),
+                Item::Trait(t) => {
+                    let start = t.public.map_or(t.span.start, |p| p.start);
+                    lead_start(t.doc.as_ref(), &t.allows, start)
+                }
+                Item::Impl(d) => lead_start(d.doc.as_ref(), &d.allows, d.span.start),
+                Item::Mod(_, m) => lead_start(m.doc.as_ref(), &m.allows, m.span.start),
+                Item::Use(u) => u.span.start,
+            };
+            doc = doc + self.element(start, i == 0);
+            let end = match item {
+                Item::Type(_) => self.find(pos, &Tok::RBrace) + 1,
+                Item::Fn(f) => f.body.span.end,
+                Item::Trait(t) => t.span.end,
+                Item::Impl(d) => d.span.end,
+                Item::Mod(_, m) => m.span.end,
+                Item::Use(u) => u.span.end,
+            };
+            let item = match item {
+                Item::Mod(i, m) => self.mod_decl(program, i, m),
+                item => self.item(item),
+            };
+            doc = doc + item + self.trailing(end);
+        }
+        (doc, items.is_empty())
+    }
+
+    /// The items of module `module`, for `t mono` and `Display`: with no
+    /// comments, a blank line between each two.
+    fn plain_items(&mut self, program: &Program, module: usize) -> Doc {
+        let mut doc = Doc::nil();
+        for (i, (_, item)) in items_of(program, module, false).into_iter().enumerate() {
+            if i > 0 {
+                doc = doc + Doc::HardLine + Doc::HardLine;
+            }
+            doc = doc
+                + match item {
+                    Item::Mod(i, m) => {
+                        let body = nest(Doc::HardLine + self.plain_items(program, i));
+                        self.lead(m.doc.as_ref(), &m.allows, m.span.start)
+                            + public(m.public)
+                            + "mod "
+                            + &m.name.name
+                            + " {"
+                            + body
+                            + Doc::HardLine
+                            + "}"
+                    }
+                    item => self.item(item),
+                };
+        }
+        doc
+    }
+
+    /// `mod name { .. }`, for `t fmt`.
+    fn mod_decl(&mut self, program: &Program, i: usize, m: &ModDecl) -> Doc {
+        let lead = self.lead(m.doc.as_ref(), &m.allows, m.span.start);
+        let head = lead + public(m.public) + "mod " + &m.name.name + " ";
+        let open = self.find(m.name.span.end, &Tok::LBrace);
+        let close = m.span.end - 1;
+        let (items, empty) = self.items(program, i);
+        if empty && !self.comments_before(close) {
+            return head + "{}";
+        }
+        let mut body = self.trailing(open + 1);
+        if !empty {
+            body = body + Doc::HardLine + items;
+        }
+        for c in self.dangling(close, empty) {
+            body = body + Doc::HardLine + c;
+        }
+        head + "{" + nest(body) + Doc::HardLine + "}"
+    }
+
     fn item(&mut self, item: Item) -> Doc {
         match item {
             Item::Type(d) => self.type_decl(d),
             Item::Trait(t) => self.trait_decl(t),
             Item::Impl(d) => self.impl_decl(d),
             Item::Fn(f) => self.fn_decl(f),
+            Item::Use(u) => public(u.public) + "use " + use_tree(&u.tree) + ";",
+            Item::Mod(..) => unreachable!("printed by `items` or `plain_items`"),
         }
     }
 
@@ -367,7 +472,7 @@ impl Printer<'_> {
         let mut items: Vec<BodyItem> = t.assoc.iter().map(BodyItem::Decl).collect();
         items.extend(t.methods.iter().map(|m| BodyItem::Fn(&m.decl, m.provided)));
         let body = self.methods(open, t.span.end - 1, items);
-        doc + "trait " + &t.name.name + supers + " " + body
+        doc + public(t.public) + "trait " + &t.name.name + supers + " " + body
     }
 
     /// `impl<T: Show> Show for Option<T> { .. }` or `impl Point { .. }`
@@ -510,18 +615,27 @@ impl Printer<'_> {
         if let Some(t) = &mut self.trivia {
             t.hold_docs(name.span.start, close);
         }
-        let head = doc + keyword + &name.name + self.generics(name, d.generics()) + " ";
+        let head = doc
+            + public(d.public())
+            + keyword
+            + &name.name
+            + self.generics(name, d.generics())
+            + " ";
         let body = match d {
             TypeDecl::Struct(s) => self.list(
                 BRACES,
                 close,
                 &s.fields,
                 |f| {
-                    let start = lead_start(f.doc.as_ref(), &f.allows, f.name.span.start);
+                    let name = f.public.unwrap_or(f.name.span).start;
+                    let start = lead_start(f.doc.as_ref(), &f.allows, name);
                     (start, f.ty.span.end)
                 },
                 None,
-                |p, f| p.lead(f.doc.as_ref(), &f.allows, f.name.span.start) + p.param(f),
+                |p, f| {
+                    let name = f.public.unwrap_or(f.name.span).start;
+                    p.lead(f.doc.as_ref(), &f.allows, name) + public(f.public) + p.param(f)
+                },
             ),
             TypeDecl::Enum(e) => {
                 let variants: Vec<(&Variant, usize)> = e
@@ -583,7 +697,7 @@ impl Printer<'_> {
 
     /// A function, up to its body.
     fn signature(&mut self, f: &FnDecl) -> Doc {
-        let doc = self.lead(f.doc.as_ref(), &f.allows, f.span.start);
+        let doc = self.lead(f.doc.as_ref(), &f.allows, fn_start(f)) + public(f.public);
         let generics = self.generics(&f.name, &f.generics);
         let open = self.find(f.name.span.end, &Tok::LParen);
         let close = self.close(open, f.params.last().map(|p| p.ty.span.end), &Tok::RParen);
@@ -1193,7 +1307,51 @@ impl BodyItem<'_> {
 /// Where a method starts, docs and attributes and all.
 fn lead_start_span(f: &FnDecl) -> Span {
     Span::new(
-        lead_start(f.doc.as_ref(), &f.allows, f.span.start),
+        lead_start(f.doc.as_ref(), &f.allows, fn_start(f)),
         f.span.end,
     )
+}
+
+/// Where function `f` starts without its doc comment and attributes: at its
+/// `pub`, if it has one.
+fn fn_start(f: &FnDecl) -> usize {
+    f.public.map_or(f.span.start, |p| p.start)
+}
+
+/// `pub ` if `public` says where one is.
+fn public(public: Option<Span>) -> Doc {
+    match public {
+        Some(_) => text("pub "),
+        None => Doc::nil(),
+    }
+}
+
+/// `a::{b, c as d}` in a `use`.
+fn use_tree(t: &UseTree) -> String {
+    let path: Vec<&str> = t.path.iter().map(|s| s.name.as_str()).collect();
+    let path = path.join("::");
+    match &t.kind {
+        UseKind::Name(None) => path,
+        UseKind::Name(Some(alias)) => format!("{path} as {}", alias.name),
+        UseKind::Group(trees) => {
+            let trees: Vec<String> = trees.iter().map(use_tree).collect();
+            match path.is_empty() {
+                true => format!("{{{}}}", trees.join(", ")),
+                false => format!("{path}::{{{}}}", trees.join(", ")),
+            }
+        }
+    }
+}
+
+/// `where T: Discard, U: Eq` after a derived trait.
+fn where_clause(w: &Where) -> String {
+    let bounds: Vec<String> = w
+        .bounds
+        .iter()
+        .map(|(p, items)| {
+            let items: Vec<String> = items.iter().map(BoundItem::to_string).collect();
+            format!("{}: {}", p.name, items.join(" + "))
+        })
+        .collect();
+    format!("where {}", bounds.join(", "))
 }

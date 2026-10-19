@@ -50,9 +50,19 @@ module.exports = grammar({
     // `if x {` could start a struct literal or the `if`'s block; the real
     // parser forbids struct literals there, here the struct reading loses.
     [$._expression, $._type_identifier],
-    // `x::` could go on as `x::<int>` (a function) or `x::V` (a variant):
-    // the token after `::` decides.
-    [$.generic_function, $._type_identifier],
+    // `a::f` could be a path to a function or a type, and `x::` could go
+    // on as `x::<int>` (a function) or `x::V` (a variant): the tokens
+    // after decide.
+    [$._path, $._type_identifier],
+    [$._path, $.generic_function],
+    // In `#[derive(Eq where T: Eq, U: Show)]`, a name after a `,` could be
+    // another bound or another trait: the `:` after it decides.
+    [$.where_clause],
+    [$._path, $.projection_type],
+    [$._path, $.variant_expression],
+    [$._path, $.generic_function, $._type_identifier],
+    [$._path, $.variant_pattern],
+    [$.scoped_identifier, $._type_identifier],
   ],
 
   rules: {
@@ -64,7 +74,55 @@ module.exports = grammar({
       $.enum_item,
       $.trait_item,
       $.impl_item,
+      $.mod_item,
+      $.use_declaration,
     ),
+
+    visibility_modifier: _ => 'pub',
+
+    // `mod geometry { .. }`
+    mod_item: $ => seq(
+      optional($.visibility_modifier),
+      'mod',
+      field('name', $.identifier),
+      field('body', $.mod_body),
+    ),
+
+    mod_body: $ => seq('{', repeat(choice($._item, $.attribute_item)), '}'),
+
+    // `use a::b;`, `pub use a::{b, c as d};`
+    use_declaration: $ => seq(
+      optional($.visibility_modifier),
+      'use',
+      field('argument', $._use_clause),
+      ';',
+    ),
+
+    _use_clause: $ => choice($._path, $.use_as_clause, $.scoped_use_list),
+
+    use_as_clause: $ => seq(field('path', $._path), 'as', field('alias', $.identifier)),
+
+    scoped_use_list: $ => seq(field('path', $._path), '::', field('list', $.use_list)),
+
+    use_list: $ => seq('{', commaSep($._use_clause), '}'),
+
+    // A path to an item: `a::b::f`, `crate::a`, `super::f`, `self::f`.
+    _path: $ => choice($.identifier, $.crate, $.super, $.self, $.scoped_identifier),
+
+    scoped_identifier: $ => seq(field('path', $._path), '::', field('name', $.identifier)),
+
+    // `a::Point`, `crate::shapes::Show`: a path to a type or trait.
+    scoped_type_identifier: $ => seq(
+      field('path', $._path),
+      '::',
+      field('name', $._type_identifier),
+    ),
+
+    _path_type: $ => choice($._type_identifier, $.scoped_type_identifier),
+
+    crate: _ => 'crate',
+
+    super: _ => 'super',
 
     // `//`, but not `///` followed by anything but another `/`: `////` is
     // a plain comment, as in Rust. The two never match the same line, so
@@ -85,12 +143,28 @@ module.exports = grammar({
       '[',
       field('name', $.identifier),
       '(',
-      commaSep($.identifier),
+      commaSep(choice($.identifier, $.derive_with_bounds)),
       ')',
       ']',
     ),
 
+    // `Discard where T: Discard` in a `#[derive(..)]`: what the derived
+    // impl needs, written down.
+    derive_with_bounds: $ => seq(field('trait', $._type_identifier), $.where_clause),
+
+    where_clause: $ => seq(
+      'where',
+      $.where_predicate,
+      repeat(seq(',', $.where_predicate)),
+    ),
+
+    where_predicate: $ => seq(
+      field('left', alias($.identifier, $.type_identifier)),
+      field('bounds', $.trait_bounds),
+    ),
+
     function_item: $ => seq(
+      optional($.visibility_modifier),
       'fn',
       field('name', $.identifier),
       optional(field('type_parameters', $.type_parameters)),
@@ -111,6 +185,7 @@ module.exports = grammar({
 
     // `trait Ord: Eq { .. }`
     trait_item: $ => seq(
+      optional($.visibility_modifier),
       'trait',
       field('name', $._type_identifier),
       optional(field('bounds', $.trait_bounds)),
@@ -121,7 +196,7 @@ module.exports = grammar({
     impl_item: $ => seq(
       'impl',
       optional(field('type_parameters', $.type_parameters)),
-      optional(seq(field('trait', $._type_identifier), 'for')),
+      optional(seq(field('trait', $._path_type), 'for')),
       field('type', $._type),
       field('body', $.declaration_list),
     ),
@@ -155,21 +230,21 @@ module.exports = grammar({
 
     _bound: $ => choice(
       $.lifetime,
-      $._type_identifier,
+      $._path_type,
       $.trait_with_associated,
       $.trait_with_signature,
     ),
 
     // `Fn(int) -> int`, `FnMut()` or `FnOnce(T)` in a bound.
     trait_with_signature: $ => prec.right(seq(
-      field('trait', $._type_identifier),
+      field('trait', $._path_type),
       field('parameters', $.type_parameters_list),
       optional(seq('->', field('return_type', $._type))),
     )),
 
     // `Iter<Item = int>` or `Iter<Item: Discard>` in a bound.
     trait_with_associated: $ => seq(
-      field('trait', $._type_identifier),
+      field('trait', $._path_type),
       '<',
       commaSep1(choice($.associated_equality, $.associated_bound)),
       '>',
@@ -223,6 +298,7 @@ module.exports = grammar({
     ),
 
     struct_item: $ => seq(
+      optional($.visibility_modifier),
       'struct',
       field('name', $._type_identifier),
       optional(field('type_parameters', $.type_parameters)),
@@ -236,12 +312,14 @@ module.exports = grammar({
     ),
 
     field_declaration: $ => seq(
+      optional($.visibility_modifier),
       field('name', $._field_identifier),
       ':',
       field('type', $._type),
     ),
 
     enum_item: $ => seq(
+      optional($.visibility_modifier),
       'enum',
       field('name', $._type_identifier),
       optional(field('type_parameters', $.type_parameters)),
@@ -283,7 +361,7 @@ module.exports = grammar({
     )),
 
     _trait_bound: $ => choice(
-      $._type_identifier,
+      $._path_type,
       $.trait_with_associated,
       $.trait_with_signature,
     ),
@@ -293,15 +371,22 @@ module.exports = grammar({
       '<',
       field('type', $._type),
       'as',
-      field('trait', $._type_identifier),
+      field('trait', $._path_type),
       '>',
       '::',
       field('name', $._type_identifier),
     ),
 
-    // `T::Item`
+    // `T::Item`, or a path to a type, `a::Point`, which looks the same.
     projection_type: $ => seq(
-      field('type', choice($._type_identifier, $.qualified_type, $.projection_type)),
+      field('type', choice(
+        $._type_identifier,
+        $.qualified_type,
+        $.projection_type,
+        $.crate,
+        $.super,
+        $.self,
+      )),
       '::',
       field('name', $._type_identifier),
     ),
@@ -316,7 +401,7 @@ module.exports = grammar({
 
     // `Option<int>`
     generic_type: $ => seq(
-      field('type', $._type_identifier),
+      field('type', choice($._type_identifier, $.projection_type)),
       field('type_arguments', $.type_arguments),
     ),
 
@@ -470,10 +555,13 @@ module.exports = grammar({
     )),
 
     // `id::<int>`
-    generic_function: $ => seq(field('function', $.identifier), $._turbofish),
+    generic_function: $ => seq(
+      field('function', choice($.identifier, $.scoped_identifier)),
+      $._turbofish,
+    ),
 
     struct_expression: $ => prec.dynamic(-1, seq(
-      field('name', $._type_identifier),
+      field('name', $._path_type),
       optional($._turbofish),
       field('body', $.field_initializer_list),
     )),
@@ -495,7 +583,7 @@ module.exports = grammar({
     // `Shape::Rect(2, 3)` or `Shape::Empty`, or a path to a method,
     // `Point::new(1, 2)` or `Show::show`, which look the same.
     variant_expression: $ => prec.right(seq(
-      field('type', $._type_identifier),
+      field('type', choice($._path_type, $.crate, $.super, $.self)),
       optional($._turbofish),
       '::',
       field('variant', $.identifier),
@@ -604,7 +692,7 @@ module.exports = grammar({
     unit_pattern: _ => seq('(', ')'),
 
     variant_pattern: $ => seq(
-      field('type', $._type_identifier),
+      field('type', choice($._path_type, $.crate, $.super, $.self)),
       optional($._turbofish),
       '::',
       field('variant', $.identifier),
@@ -612,7 +700,7 @@ module.exports = grammar({
     ),
 
     struct_pattern: $ => seq(
-      field('type', $._type_identifier),
+      field('type', $._path_type),
       optional($._turbofish),
       '{',
       repeat(seq($.field_pattern, ',')),

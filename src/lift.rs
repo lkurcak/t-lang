@@ -29,7 +29,7 @@ use std::sync::Arc;
 /// `Program::all_types`.
 pub fn lift(prog: &Program, info: &Info) -> Program {
     let cx = Cx { info };
-    let types = prog
+    let types: Vec<TypeDecl> = prog
         .all_types()
         .into_iter()
         .map(|(d, _)| cx.type_decl(d))
@@ -38,7 +38,7 @@ pub fn lift(prog: &Program, info: &Info) -> Program {
     for f in &prog.fns {
         cx.function(f, &mut fns);
     }
-    let impls = prog
+    let impls: Vec<ImplDecl> = prog
         .impls
         .iter()
         .map(|d| ImplDecl {
@@ -56,7 +56,7 @@ pub fn lift(prog: &Program, info: &Info) -> Program {
             ..d.clone()
         })
         .collect();
-    let traits = prog
+    let traits: Vec<TraitDecl> = prog
         .traits
         .iter()
         .map(|t| TraitDecl {
@@ -74,10 +74,20 @@ pub fn lift(prog: &Program, info: &Info) -> Program {
             ..t.clone()
         })
         .collect();
+    // Everything is at the top level now, named by its symbol.
+    let types = types.into_iter().map(TypeDecl::at_root).collect::<Vec<_>>();
     Program {
+        mods: prog.mods[..1].to_vec(),
+        uses: Vec::new(),
         types,
-        traits,
-        impls,
+        traits: traits
+            .into_iter()
+            .map(|t| TraitDecl { module: ROOT, ..t })
+            .collect(),
+        impls: impls
+            .into_iter()
+            .map(|d| ImplDecl { module: ROOT, ..d })
+            .collect(),
         fns,
         stray_docs: prog.stray_docs.clone(),
     }
@@ -115,6 +125,8 @@ impl<'p> Cx<'p> {
             doc: f.doc.clone(),
             allows: f.allows.clone(),
             span: f.span,
+            module: ROOT,
+            public: f.public,
             name: self.ident(&f.name),
             generics: self.generics(&f.generics),
             params: f.params.iter().map(|p| self.param(p)).collect(),
@@ -131,6 +143,8 @@ impl<'p> Cx<'p> {
                 doc: s.doc.clone(),
                 allows: s.allows.clone(),
                 span: s.span,
+                module: s.module,
+                public: s.public,
                 name: self.ident(&s.name),
                 generics: self.generics(&s.generics),
                 derives: s.derives.clone(),
@@ -140,6 +154,8 @@ impl<'p> Cx<'p> {
                 doc: e.doc.clone(),
                 allows: e.allows.clone(),
                 span: e.span,
+                module: e.module,
+                public: e.public,
                 name: self.ident(&e.name),
                 generics: self.generics(&e.generics),
                 derives: e.derives.clone(),
@@ -179,6 +195,7 @@ impl<'p> Cx<'p> {
             doc: p.doc.clone(),
             allows: p.allows.clone(),
             mutable: p.mutable,
+            public: p.public,
             name: p.name.clone(),
             ty: self.ty(&p.ty),
         }

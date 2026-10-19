@@ -284,14 +284,16 @@ fn analyze(
             Err(e) => errors.push(e),
         }
     }
-    let (mut needed, captured) =
-        match moves::behind_references(b).and_then(|()| moves::mutability(b)) {
-            Ok(needed) => needed,
-            Err(e) => {
-                errors.push(e);
-                (Vec::new(), Vec::new())
-            }
-        };
+    let (mut needed, captured) = match moves::behind_references(b)
+        .and_then(|()| moves::abstraction(b))
+        .and_then(|()| moves::mutability(b))
+    {
+        Ok(needed) => needed,
+        Err(e) => {
+            errors.push(e);
+            (Vec::new(), Vec::new())
+        }
+    };
     let mut reqs = Requirements {
         muts: captured,
         ..Requirements::default()

@@ -39,7 +39,7 @@ pub struct Checked {
 /// Lexes, parses, type-checks, lifts and monomorphises a program.
 pub fn check_source(src: &str) -> Checked {
     let mut warnings = Vec::new();
-    let program = match lexer::lex(src).and_then(parser::parse) {
+    let mut program = match lexer::lex(src).and_then(parser::parse) {
         Ok(program) => program,
         Err(e) => {
             return Checked {
@@ -49,7 +49,7 @@ pub fn check_source(src: &str) -> Checked {
             };
         }
     };
-    let (info, result) = check::check(&program, &mut warnings);
+    let (info, result) = check::check(&mut program, &mut warnings);
     // Here rather than in `check`, since the fixes check renamed programs.
     let checked = result.is_ok().then_some(&info);
     warnings.extend(naming::warnings(src, &program, checked));

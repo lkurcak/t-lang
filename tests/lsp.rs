@@ -1313,3 +1313,90 @@ impl Discard for P {}
 
     stop(child, c);
 }
+
+/// Hover, go to definition, rename and the outline work through paths and
+/// `use`s. A name brought in with `as` is another name, which renaming the
+/// item leaves alone.
+#[test]
+fn modules() {
+    let (child, mut c) = start();
+    let src = "\
+mod shapes {
+    pub trait Area {
+        fn area(&self) -> int;
+    }
+    #[derive(Discard)]
+    pub struct Sq { pub side: int }
+    pub fn sq(side: int) -> Sq { Sq { side } }
+    pub mod more {
+        pub fn twice(n: int) -> int { n * 2 }
+    }
+}
+use shapes::{Area, Sq, more::twice as double};
+impl Area for Sq {
+    fn area(&self) -> int { self.side * self.side }
+}
+fn main() {
+    let s: Sq = shapes::sq(3);
+    print(s.area() + double(1) + shapes::more::twice(2));
+}
+";
+    let (mut d, diags) = Doc::open(&mut c, "file:///tmp/modules.t", src);
+    assert_eq!(diags, Vec::<Value>::new());
+    let hover = d.ask(&mut c, "textDocument/hover", "sq(3)", 0, json!({}));
+    assert_eq!(
+        hover["result"]["contents"]["value"],
+        "```t\nfn sq: fn(int) -> Sq\n```"
+    );
+    let def = d.ask(&mut c, "textDocument/definition", "sq(3)", 0, json!({}));
+    assert_eq!(def["result"]["range"], d.range("sq", 0));
+    let def = d.ask(&mut c, "textDocument/definition", "double(1)", 0, json!({}));
+    assert_eq!(def["result"]["range"], d.range("twice", 0));
+    let def = d.ask(&mut c, "textDocument/definition", "Sq, more", 0, json!({}));
+    assert_eq!(def["result"]["range"], d.range("Sq", 0));
+
+    assert_eq!(
+        d.rename(&mut c, "Sq", 0, "Square").unwrap(),
+        src.replace("Sq", "Square")
+    );
+    assert_eq!(
+        d.rename(&mut c, "twice", 0, "dup").unwrap(),
+        src.replace("twice", "dup")
+    );
+    assert_eq!(
+        d.rename(&mut c, "Area", 0, "Size").unwrap(),
+        src.replace("Area", "Size")
+    );
+
+    d.id += 1;
+    c.send(
+        json!({"jsonrpc": "2.0", "id": d.id, "method": "textDocument/documentSymbol", "params": {
+            "textDocument": {"uri": d.uri}
+        }}),
+    );
+    let symbols = c.response(d.id)["result"].clone();
+    let names: Vec<Value> = symbols
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| {
+            let children: Vec<Value> = s["children"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|c| c["name"].clone())
+                .collect();
+            json!([s["name"], s["kind"], children])
+        })
+        .collect();
+    assert_eq!(
+        names,
+        vec![
+            json!(["shapes", 2, ["Area", "Sq", "sq", "more"]]),
+            json!(["impl Area for Sq", 19, ["area"]]),
+            json!(["main", 12, []]),
+        ]
+    );
+
+    stop(child, c);
+}

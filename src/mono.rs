@@ -189,6 +189,8 @@ impl<'p> Mono<'p> {
         // In source order, with each generic one's copies where it was.
         // Doc comments that document nothing don't matter to the program.
         let mut out = Program {
+            mods: prog.mods.clone(),
+            uses: Vec::new(),
             types: Vec::new(),
             traits: Vec::new(),
             impls: Vec::new(),
@@ -264,6 +266,8 @@ impl<'p> Mono<'p> {
             doc: f.doc.clone(),
             allows: f.allows.clone(),
             span: f.span,
+            module: ROOT,
+            public: f.public,
             name: Ident {
                 name: name.unwrap_or(&f.name.name).to_string(),
                 span: f.name.span,
@@ -276,6 +280,7 @@ impl<'p> Mono<'p> {
                     doc: None,
                     allows: Vec::new(),
                     mutable: p.mutable,
+                    public: None,
                     name: p.name.clone(),
                     ty: cx.ty(&p.ty),
                 })
@@ -315,6 +320,7 @@ impl<'p> Mono<'p> {
             true => Vec::new(),
             false => vec![Derive {
                 span: d.name().span,
+                wheres: vec![None; names.len()],
                 names,
             }],
         };
@@ -323,6 +329,8 @@ impl<'p> Mono<'p> {
                 doc: st.doc.clone(),
                 allows: st.allows.clone(),
                 span: st.span,
+                module: ROOT,
+                public: st.public,
                 name,
                 generics: lifetimes_only(&st.generics),
                 derives,
@@ -333,6 +341,7 @@ impl<'p> Mono<'p> {
                         doc: f.doc.clone(),
                         allows: f.allows.clone(),
                         mutable: None,
+                        public: f.public,
                         name: f.name.clone(),
                         ty: cx.ty(&f.ty),
                     })
@@ -342,6 +351,8 @@ impl<'p> Mono<'p> {
                 doc: e.doc.clone(),
                 allows: e.allows.clone(),
                 span: e.span,
+                module: ROOT,
+                public: e.public,
                 name,
                 generics: lifetimes_only(&e.generics),
                 derives,

@@ -3,25 +3,33 @@
 //! Grammar (lowest to highest precedence for operators):
 //!
 //! ```text
-//! program  = (head (fn_decl | struct | enum | trait | impl))*
+//! program  = item*
+//! item     = head "pub"? (fn_decl | struct | enum | trait | mod | use) | head impl
+//! mod      = "mod" IDENT "{" item* "}"
+//! use      = "use" tree ";"
+//! tree     = path ("as" IDENT)? | path "::" "{" (tree ("," tree)* ","?)? "}"
+//! path     = seg ("::" IDENT)*                       -- `a::b::C`
+//! seg      = IDENT | "crate" | "super" | "self"
 //! head     = attr*
-//! attr     = "#" "[" ("allow" | "derive") "(" (IDENT ("," IDENT)* ","?)? ")" "]"
+//! attr     = "#" "[" "allow" "(" (IDENT ("," IDENT)* ","?)? ")" "]"
+//!          | "#" "[" "derive" "(" (derived ("," derived)* ","?)? ")" "]"
+//! derived  = IDENT ("where" IDENT ":" bound ("+" bound)* ("," IDENT ":" bound ("+" bound)*)*)?
 //! fn_decl  = "fn" IDENT generics? "(" (param ("," param)* ","?)? ")" ("->" type)? block
 //! generics = "<" (gparam ("," gparam)* ","?)? ">"     -- lifetimes before types
 //! gparam   = LIFETIME (":" LIFETIME ("+" LIFETIME)*)? | IDENT (":" bound ("+" bound)*)?
-//! bound    = LIFETIME | IDENT                         -- a lifetime, or a trait
-//!          | IDENT "<" (IDENT ("=" type | ":" IDENT ("+" IDENT)*)),* ">"
-//!          | IDENT "(" (type ("," type)*)? ")" ("->" type)?  -- `Fn(int) -> int`
+//! bound    = LIFETIME | path                          -- a lifetime, or a trait
+//!          | path "<" (IDENT ("=" type | ":" path ("+" path)*)),* ">"
+//!          | path "(" (type ("," type)*)? ")" ("->" type)?  -- `Fn(int) -> int`
 //! param    = "mut"? IDENT ":" type
-//! trait    = "trait" IDENT (":" IDENT ("+" IDENT)*)? "{" (head method)* "}"
-//! impl     = "impl" generics? (IDENT "for")? type "{" (head method)* "}"
+//! trait    = "trait" IDENT (":" path ("+" path)*)? "{" (head method)* "}"
+//! impl     = "impl" generics? (path "for")? type "{" (head "pub"? method)* "}"
 //! method   = "fn" IDENT generics? "(" ((receiver | param) ("," param)* ","?)? ")"
 //!            ("->" type)? (block | ";")               -- `;` only in a trait
 //! receiver = "mut"? "self" | "&" LIFETIME? "mut"? "self"
-//! struct   = "struct" IDENT generics? "{" (head param ("," head param)* ","?)? "}"
+//! struct   = "struct" IDENT generics? "{" (head "pub"? param ("," head "pub"? param)* ","?)? "}"
 //! enum     = "enum" IDENT generics? "{" (head variant ("," head variant)* ","?)? "}"
 //! variant  = IDENT ("(" type ("," type)* ","? ")")?
-//! type     = IDENT ("<" targ ("," targ)* ","? ">")? | "(" ")"
+//! type     = path ("<" targ ("," targ)* ","? ">")? | "(" ")"
 //!          | "fn" "(" (type ("," type)*)? ")" ("->" type)?
 //!          | "&" LIFETIME? "mut"? type | "!"
 //!          | "impl" bound ("+" bound)*               -- only in a return type
@@ -38,8 +46,8 @@
 //! unary    = ("-" | "!" | "*" | "&" "mut"?) unary | call
 //! postfix  = primary ("(" args ")" | "." IDENT | "." IDENT targs? "(" args ")")*
 //! primary  = INT | "true" | "false" | IDENT targs? | "(" ")" | "(" expr ")" | block
-//!          | if | match | label? (while | loop) | IDENT targs? "{" field_init,* "}"
-//!          | IDENT targs? "::" IDENT ("(" args ")")? | lambda
+//!          | if | match | label? (while | loop) | path targs? "{" field_init,* "}"
+//!          | path targs? "::" IDENT ("(" args ")")? | path "::" IDENT targs | lambda
 //!          | "return" expr? | "break" LIFETIME? expr? | "continue" LIFETIME?
 //! label    = LIFETIME ":"
 //! targs    = "::" "<" type ("," type)* ","? ">"            -- the "turbofish"
@@ -53,8 +61,8 @@
 //!
 //! pattern  = pat_atom ("|" pat_atom)*
 //! pat_atom = "_" | "mut"? IDENT | int | range | "true" | "false" | "(" ")"
-//!          | IDENT targs? "::" IDENT ("(" pattern,* ")")?
-//!          | IDENT targs? "{" (IDENT (":" pattern)?),* ".."? "}"
+//!          | path targs? "::" IDENT ("(" pattern,* ")")?
+//!          | path targs? "{" (IDENT (":" pattern)?),* ".."? "}"
 //! range    = int ".." int? | int "..=" int | ".." int | "..=" int
 //! int      = "-"? INT
 //! ```
@@ -70,7 +78,11 @@
 //! body does: `return a + b` returns `a + b`.
 //!
 //! A `fn`, `struct` or `enum` in a block is local to it (see `ast::Stmt`).
-//! A `trait` or `impl` can only be at the top level.
+//! A `trait`, `impl`, `mod` or `use` can only be in a module.
+//!
+//! Which names in a path are modules isn't known here: `a::f(1)` reads as
+//! variant `f` of a type `a`, and `a::Point` in a type as the projection
+//! `T::Item` does, until `check/modules.rs` resolves names and rewrites them.
 //!
 //! `self` and `Self` are names, not keywords, but `self` can only be a
 //! method's receiver: no other parameter or pattern can bind it.
@@ -97,38 +109,37 @@ pub fn parse(tokens: Vec<Token>) -> Result<Program, Error> {
     let (docs, toks): (Vec<Token>, Vec<Token>) = tokens
         .into_iter()
         .partition(|t| matches!(t.tok, Tok::Doc(_)));
+    let end = toks.last().map_or(0, |t| t.span.end);
     let mut p = Parser {
         toks,
         attached: vec![false; docs.len()],
         docs,
         pos: 0,
         no_struct: false,
+        module: ROOT,
     };
-    let mut types = Vec::new();
-    let mut traits = Vec::new();
-    let mut impls = Vec::new();
-    let mut fns = Vec::new();
-    loop {
-        if *p.peek() == Tok::Eof {
-            break;
-        }
-        let head = p.head()?;
-        match p.peek() {
-            Tok::Struct => types.push(TypeDecl::Struct(p.struct_decl(head)?)),
-            Tok::Enum => types.push(TypeDecl::Enum(p.enum_decl(head)?)),
-            Tok::Trait => traits.push(p.trait_decl(head.no_derives()?)?),
-            Tok::Impl => impls.push(p.impl_decl(head.no_derives()?)?),
-            _ => fns.push(p.fn_decl(head.no_derives()?)?),
-        }
-    }
-    let stray_docs = p.stray_docs();
-    Ok(Program {
-        types,
-        traits,
-        impls,
-        fns,
-        stray_docs,
-    })
+    let mut prog = Program {
+        mods: vec![ModDecl {
+            doc: None,
+            allows: Vec::new(),
+            span: Span::new(0, end),
+            name: Ident {
+                name: "crate".into(),
+                span: Span::new(0, 0),
+            },
+            parent: None,
+            public: None,
+        }],
+        uses: Vec::new(),
+        types: Vec::new(),
+        traits: Vec::new(),
+        impls: Vec::new(),
+        fns: Vec::new(),
+        stray_docs: Vec::new(),
+    };
+    p.items(&mut prog, Tok::Eof)?;
+    prog.stray_docs = p.stray_docs();
+    Ok(prog)
 }
 
 struct Parser {
@@ -141,6 +152,8 @@ struct Parser {
     /// Set while parsing the head of an `if` or `match`, where `x {` must not
     /// be read as a struct literal.
     no_struct: bool,
+    /// The module being parsed, by its index in `Program::mods`.
+    module: usize,
 }
 
 impl Parser {
@@ -204,7 +217,10 @@ impl Parser {
             };
             self.bump();
             self.expect(Tok::LParen)?;
-            let (names, _) = self.comma_list(Tok::RParen, Self::ident)?;
+            let (names, wheres) = match derive {
+                true => self.derive_list()?,
+                false => (self.comma_list(Tok::RParen, Self::ident)?.0, Vec::new()),
+            };
             let end = self.expect(Tok::RBracket)?;
             let span = start.to(end);
             if derive {
@@ -220,7 +236,11 @@ impl Parser {
                         ),
                     ));
                 }
-                derives.push(Derive { span, names });
+                derives.push(Derive {
+                    span,
+                    names,
+                    wheres,
+                });
             } else {
                 allows.push(Allow { span, lints: names });
             }
@@ -240,6 +260,54 @@ impl Parser {
         })
     }
 
+    /// `Discard, Eq where T: Eq, U: Show)` in a `#[derive(..)]`, after
+    /// the `(`: each trait, with the `where` after it, if it has one. The
+    /// bounds of a `where` go on while a name and a `:` come after a `,`.
+    fn derive_list(&mut self) -> Result<(Vec<Ident>, Vec<Option<Where>>), Error> {
+        let mut names = Vec::new();
+        let mut wheres = Vec::new();
+        while *self.peek() != Tok::RParen {
+            names.push(self.ident()?);
+            let w = match *self.peek() == Tok::Where {
+                false => None,
+                true => {
+                    let start = self.bump().span;
+                    let mut bounds = Vec::new();
+                    let end = loop {
+                        let param = self.ident()?;
+                        self.expect(Tok::Colon)?;
+                        let mut items = vec![self.trait_bound()?];
+                        while self.eat(&Tok::Plus) {
+                            items.push(self.trait_bound()?);
+                        }
+                        let end = items[items.len() - 1].span;
+                        bounds.push((param, items));
+                        let more = *self.peek() == Tok::Comma
+                            && matches!(self.peek2(), Tok::Ident(_))
+                            && self
+                                .toks
+                                .get(self.pos + 2)
+                                .is_some_and(|t| t.tok == Tok::Colon);
+                        if !more {
+                            break end;
+                        }
+                        self.bump();
+                    };
+                    Some(Where {
+                        span: start.to(end),
+                        bounds,
+                    })
+                }
+            };
+            wheres.push(w);
+            if !self.eat(&Tok::Comma) {
+                break;
+            }
+        }
+        self.expect(Tok::RParen)?;
+        Ok((names, wheres))
+    }
+
     /// The doc comments nothing took, each run of lines with no other token
     /// between them as one.
     fn stray_docs(&self) -> Vec<DocComment> {
@@ -256,6 +324,209 @@ impl Parser {
             prev_next_tok = Some(next_tok);
         }
         runs.iter().map(|run| doc_comment(run)).collect()
+    }
+
+    /// The items of the module being parsed, up to `close`: `}`, or the end
+    /// of the file for the crate root.
+    fn items(&mut self, prog: &mut Program, close: Tok) -> Result<(), Error> {
+        while *self.peek() != close {
+            if *self.peek() == Tok::Eof {
+                return Err(self.unexpected(&close.describe()));
+            }
+            let head = self.head()?;
+            let public = (*self.peek() == Tok::Pub).then(|| self.bump().span);
+            match self.peek() {
+                Tok::Struct => {
+                    let mut d = self.struct_decl(head)?;
+                    d.public = public;
+                    prog.types.push(TypeDecl::Struct(d));
+                }
+                Tok::Enum => {
+                    let mut d = self.enum_decl(head)?;
+                    d.public = public;
+                    prog.types.push(TypeDecl::Enum(d));
+                }
+                Tok::Trait => {
+                    let mut d = self.trait_decl(head.no_derives()?)?;
+                    d.public = public;
+                    prog.traits.push(d);
+                }
+                Tok::Impl => {
+                    if let Some(at) = public {
+                        return Err(Error::syntax(
+                            at,
+                            "an `impl` can't be `pub`: a trait impl is wherever the trait and \
+                             type are, and an inherent impl's methods each say if they are",
+                        )
+                        .with_fix(Fix::new(
+                            "remove the `pub`",
+                            vec![Edit::delete(Span::new(at.start, self.span().start))],
+                        )));
+                    }
+                    prog.impls.push(self.impl_decl(head.no_derives()?)?);
+                }
+                Tok::Mod => self.mod_decl(prog, head.no_derives()?, public)?,
+                Tok::Use => {
+                    head.no_derives()?.no_allows_on("a `use`")?;
+                    let d = self.use_decl(public)?;
+                    prog.uses.push(d);
+                }
+                _ => {
+                    let mut f = self.fn_decl(head.no_derives()?)?;
+                    f.public = public;
+                    prog.fns.push(f);
+                }
+            }
+        }
+        if close != Tok::Eof {
+            self.bump();
+        }
+        Ok(())
+    }
+
+    /// `mod name { .. }`, after its head and `pub`, if it has one.
+    fn mod_decl(
+        &mut self,
+        prog: &mut Program,
+        head: Head,
+        public: Option<Span>,
+    ) -> Result<(), Error> {
+        let start = public.unwrap_or(self.span());
+        self.expect(Tok::Mod)?;
+        let name = self.binder()?;
+        if *self.peek() == Tok::Semi {
+            return Err(Error::syntax(
+                self.span(),
+                "a module in a file of its own isn't supported yet; write its items here, in \
+                 `{ .. }`",
+            ));
+        }
+        self.expect(Tok::LBrace)?;
+        let index = prog.mods.len();
+        prog.mods.push(ModDecl {
+            doc: head.doc,
+            allows: head.allows,
+            span: start,
+            name,
+            parent: Some(self.module),
+            public,
+        });
+        let outer = std::mem::replace(&mut self.module, index);
+        self.items(prog, Tok::RBrace)?;
+        self.module = outer;
+        prog.mods[index].span = start.to(self.toks[self.pos - 1].span);
+        Ok(())
+    }
+
+    /// `use a::b;`, `use a::b as c;` or `use a::{b, c};`, after its `pub`.
+    fn use_decl(&mut self, public: Option<Span>) -> Result<UseDecl, Error> {
+        let start = public.unwrap_or(self.span());
+        self.expect(Tok::Use)?;
+        let tree = self.use_tree()?;
+        let end = self.expect(Tok::Semi)?;
+        Ok(UseDecl {
+            span: start.to(end),
+            module: self.module,
+            public,
+            tree,
+        })
+    }
+
+    fn use_tree(&mut self) -> Result<UseTree, Error> {
+        let start = self.span();
+        let mut path = Vec::new();
+        loop {
+            match self.peek() {
+                Tok::LBrace if !path.is_empty() => {
+                    self.bump();
+                    let (trees, end) = self.comma_list(Tok::RBrace, Self::use_tree)?;
+                    return Ok(UseTree {
+                        path,
+                        kind: UseKind::Group(trees),
+                        span: start.to(end),
+                    });
+                }
+                Tok::Star => {
+                    return Err(Error::syntax(
+                        self.span(),
+                        "glob imports (`*`) aren't supported: name each item, as in \
+                         `use a::{b, c};`",
+                    ));
+                }
+                _ => path.push(self.segment()?),
+            }
+            if !self.eat(&Tok::ColonColon) {
+                break;
+            }
+        }
+        let alias = match self.eat(&Tok::As) {
+            true => Some(self.binder()?),
+            false => None,
+        };
+        let end = alias.as_ref().map_or(path[path.len() - 1].span, |a| a.span);
+        Ok(UseTree {
+            path,
+            kind: UseKind::Name(alias),
+            span: start.to(end),
+        })
+    }
+
+    /// One segment of a path: a name, or `crate`, `super` or `self`.
+    fn segment(&mut self) -> Result<Ident, Error> {
+        let name = match self.peek() {
+            Tok::Crate => "crate",
+            Tok::Super => "super",
+            _ => return self.ident(),
+        };
+        Ok(Ident {
+            name: name.into(),
+            span: self.bump().span,
+        })
+    }
+
+    /// `a::b::Show`: a path of plain names, as one name, its segments
+    /// joined by `::`, spanning them all. A path to a trait is written
+    /// like this.
+    fn path(&mut self) -> Result<Ident, Error> {
+        let mut path = self.segment()?;
+        while *self.peek() == Tok::ColonColon && matches!(self.peek2(), Tok::Ident(_)) {
+            self.bump();
+            let next = self.ident()?;
+            path = join(&path, &next);
+        }
+        Ok(path)
+    }
+
+    /// `a::Shape::<int>::Dot`: names with `::` between, each maybe with
+    /// type arguments, up to a `::` that has neither a name nor `<`
+    /// after it.
+    fn segments(&mut self) -> Result<Vec<Segment>, Error> {
+        let mut segs = Vec::new();
+        loop {
+            let name = self.segment()?;
+            let (targs, end) = self.turbofish()?;
+            segs.push((name, targs, end));
+            if *self.peek() == Tok::ColonColon && matches!(self.peek2(), Tok::Ident(_)) {
+                self.bump();
+            } else {
+                return Ok(segs);
+            }
+        }
+    }
+
+    /// Checks there's no `pub` next, where nothing can be: `why`.
+    fn no_pub(&mut self, why: &str) -> Result<(), Error> {
+        if *self.peek() != Tok::Pub {
+            return Ok(());
+        }
+        let at = self.span();
+        let next = self.toks[self.pos + 1].span;
+        Err(
+            Error::syntax(at, format!("this can't be `pub`: {why}")).with_fix(Fix::new(
+                "remove the `pub`",
+                vec![Edit::delete(Span::new(at.start, next.start))],
+            )),
+        )
     }
 
     fn bump(&mut self) -> Token {
@@ -393,6 +664,8 @@ impl Parser {
             doc: head.doc,
             allows: head.allows,
             span: start.to(body.span),
+            module: self.module,
+            public: None,
             name,
             generics,
             params,
@@ -452,6 +725,7 @@ impl Parser {
             doc: None,
             allows: Vec::new(),
             mutable,
+            public: None,
             name,
             ty,
         })
@@ -469,9 +743,9 @@ impl Parser {
         }
         let mut supers = Vec::new();
         if self.eat(&Tok::Colon) {
-            supers.push(self.ident()?);
+            supers.push(self.path()?);
             while self.eat(&Tok::Plus) {
-                supers.push(self.ident()?);
+                supers.push(self.path()?);
             }
         }
         self.expect(Tok::LBrace)?;
@@ -479,6 +753,7 @@ impl Parser {
         let mut methods = Vec::new();
         while *self.peek() != Tok::RBrace {
             let head = self.head()?.no_derives()?;
+            self.no_pub("a trait's methods are public wherever the trait is")?;
             match self.peek() {
                 Tok::Type => assoc.push(self.assoc_decl(head)?),
                 Tok::Fn => {
@@ -493,6 +768,8 @@ impl Parser {
             doc: head.doc,
             allows: head.allows,
             span: start.to(end),
+            module: self.module,
+            public: None,
             name,
             supers,
             assoc,
@@ -507,9 +784,9 @@ impl Parser {
         let name = self.ident()?;
         let mut bounds = Vec::new();
         if self.eat(&Tok::Colon) {
-            bounds.push(self.ident()?);
+            bounds.push(self.path()?);
             while self.eat(&Tok::Plus) {
-                bounds.push(self.ident()?);
+                bounds.push(self.path()?);
             }
         }
         if *self.peek() == Tok::Eq {
@@ -553,15 +830,9 @@ impl Parser {
         let first = self.ty()?;
         let (trait_name, self_ty) = match self.eat(&Tok::For) {
             false => (None, first),
-            true => match first.kind {
-                TypeExprKind::Named(name, args) if args.is_empty() => {
-                    let name = Ident {
-                        name,
-                        span: first.span,
-                    };
-                    (Some(name), self.ty()?)
-                }
-                _ => {
+            true => match type_path(&first) {
+                Some(name) => (Some(name), self.ty()?),
+                None => {
                     return Err(Error::syntax(
                         first.span,
                         "expected the name of a trait before `for`",
@@ -574,9 +845,20 @@ impl Parser {
         let mut methods = Vec::new();
         while *self.peek() != Tok::RBrace {
             let head = self.head()?.no_derives()?;
+            let public = match trait_name {
+                Some(_) => {
+                    self.no_pub("a trait impl's methods are public wherever the trait is")?;
+                    None
+                }
+                None => (*self.peek() == Tok::Pub).then(|| self.bump().span),
+            };
             match self.peek() {
                 Tok::Type => assoc.push(self.assoc_def(head)?),
-                Tok::Fn => methods.push(self.function(head, true, false)?.0),
+                Tok::Fn => {
+                    let mut f = self.function(head, true, false)?.0;
+                    f.public = public;
+                    methods.push(f);
+                }
                 _ => return Err(self.unexpected("`fn`, `type` or `}`")),
             }
         }
@@ -585,6 +867,7 @@ impl Parser {
             doc: head.doc,
             allows: head.allows,
             span: start.to(end),
+            module: self.module,
             generics,
             trait_name,
             self_ty,
@@ -627,7 +910,7 @@ impl Parser {
                 let mut bounds = Vec::new();
                 loop {
                     bounds.push(match p.peek() {
-                        Tok::Ident(_) if !lifetime => p.trait_bound()?,
+                        Tok::Ident(_) | Tok::Crate | Tok::Super if !lifetime => p.trait_bound()?,
                         _ if lifetime => BoundItem::plain(p.lifetime()?),
                         Tok::Lifetime(_) => BoundItem::plain(p.lifetime()?),
                         _ => return Err(p.unexpected("a lifetime or a trait")),
@@ -647,7 +930,7 @@ impl Parser {
     /// `Show`, or `Iter<Item = int, Other: Discard>`, after a `:` in
     /// generics.
     fn trait_bound(&mut self) -> Result<BoundItem, Error> {
-        let name = self.ident()?;
+        let name = self.path()?;
         if *self.peek() == Tok::LParen {
             self.bump();
             let (params, mut end) = self.comma_list(Tok::RParen, |p| p.ty())?;
@@ -679,9 +962,9 @@ impl Parser {
                 }
                 Tok::Colon => {
                     p.bump();
-                    let mut traits = vec![p.ident()?];
+                    let mut traits = vec![p.path()?];
                     while p.eat(&Tok::Plus) {
-                        traits.push(p.ident()?);
+                        traits.push(p.path()?);
                     }
                     AssocBoundKind::Bounds(traits)
                 }
@@ -725,6 +1008,7 @@ impl Parser {
             doc: None,
             allows: Vec::new(),
             mutable,
+            public: None,
             name,
             ty,
         })
@@ -737,6 +1021,7 @@ impl Parser {
         self.expect(Tok::LBrace)?;
         let (fields, end) = self.comma_list(Tok::RBrace, |p| {
             let Head { doc, allows, .. } = p.head()?.no_derives()?;
+            let public = (*p.peek() == Tok::Pub).then(|| p.bump().span);
             if *p.peek() == Tok::Mut {
                 return Err(Error::syntax(
                     p.span(),
@@ -747,6 +1032,7 @@ impl Parser {
             Ok(Param {
                 doc,
                 allows,
+                public,
                 ..p.param()?
             })
         })?;
@@ -754,6 +1040,8 @@ impl Parser {
             doc: head.doc,
             allows: head.allows,
             span: start.to(end),
+            module: self.module,
+            public: None,
             name,
             generics,
             derives: head.derives,
@@ -768,6 +1056,7 @@ impl Parser {
         self.expect(Tok::LBrace)?;
         let (variants, end) = self.comma_list(Tok::RBrace, |p| {
             let Head { doc, allows, .. } = p.head()?.no_derives()?;
+            p.no_pub("an enum's variants are public wherever it is")?;
             let name = p.ident()?;
             let (fields, span) = if p.eat(&Tok::LParen) {
                 let (fields, close) = p.comma_list(Tok::RParen, Self::ty)?;
@@ -787,6 +1076,8 @@ impl Parser {
             doc: head.doc,
             allows: head.allows,
             span: start.to(end),
+            module: self.module,
+            public: None,
             name,
             generics,
             derives: head.derives,
@@ -819,7 +1110,7 @@ impl Parser {
                 self.bump();
                 let inner = self.ty()?;
                 self.expect(Tok::As)?;
-                let tr = self.ident()?;
+                let tr = self.path()?;
                 self.expect(Tok::Gt)?;
                 self.expect(Tok::ColonColon)?;
                 let name = self.ident()?;
@@ -828,20 +1119,46 @@ impl Parser {
                     span: start.to(name.span),
                 })
             }
-            Tok::Ident(name) => {
-                self.bump();
+            Tok::Ident(_) | Tok::Crate | Tok::Super => {
+                let mut segs = vec![self.segment()?];
+                while *self.peek() == Tok::ColonColon && matches!(self.peek2(), Tok::Ident(_)) {
+                    self.bump();
+                    segs.push(self.ident()?);
+                }
                 // There's no `<` operator in a type, so this can only start
                 // type arguments.
                 let (args, span) = if self.eat(&Tok::Lt) {
                     let (args, end) = self.comma_list(Tok::Gt, Self::type_arg)?;
                     (args, start.to(end))
                 } else {
-                    (Vec::new(), start)
+                    (Vec::new(), start.to(segs[segs.len() - 1].span))
                 };
-                Ok(TypeExpr {
-                    kind: TypeExprKind::Named(name, args),
-                    span,
-                })
+                // `T::Item` is a projection, unless `T` turns out to be a
+                // module, which only resolving names can tell (see
+                // `check/modules.rs`). With type arguments at the end, or
+                // starting at `crate`, `super` or `self`, it can only be a
+                // path to a type.
+                let path =
+                    !args.is_empty() || matches!(segs[0].name.as_str(), "crate" | "super" | "self");
+                if segs.len() == 1 || path {
+                    let refs: Vec<&Ident> = segs.iter().collect();
+                    return Ok(TypeExpr {
+                        kind: TypeExprKind::Named(join_all(&refs).name, args),
+                        span,
+                    });
+                }
+                let mut t = TypeExpr {
+                    span: segs[0].span,
+                    kind: TypeExprKind::Named(segs[0].name.clone(), Vec::new()),
+                };
+                for name in segs.into_iter().skip(1) {
+                    let span = t.span.to(name.span);
+                    t = TypeExpr {
+                        kind: TypeExprKind::Proj(Box::new(t), None, name),
+                        span,
+                    };
+                }
+                Ok(t)
             }
             Tok::LParen => {
                 self.bump();
@@ -892,7 +1209,7 @@ impl Parser {
                 let mut bounds = Vec::new();
                 loop {
                     bounds.push(match self.peek() {
-                        Tok::Ident(_) => self.trait_bound()?,
+                        Tok::Ident(_) | Tok::Crate | Tok::Super => self.trait_bound()?,
                         _ => return Err(self.unexpected("a trait after `impl`")),
                     });
                     if !self.eat(&Tok::Plus) {
@@ -961,6 +1278,17 @@ impl Parser {
                         }
                     ),
                 ));
+            }
+            if matches!(self.peek(), Tok::Mod | Tok::Use | Tok::Pub) {
+                let what = match self.peek() {
+                    Tok::Mod => {
+                        "a `mod` can't be in a function: a module's items are only in \
+                                 modules"
+                    }
+                    Tok::Use => "a `use` can't be in a function, only in a module",
+                    _ => "what's in a function can't be `pub`: only it can see it",
+                };
+                return Err(Error::syntax(self.span(), what));
             }
             if matches!(self.peek(), Tok::Fn | Tok::Struct | Tok::Enum | Tok::Hash) {
                 let head = self.head()?;
@@ -1165,6 +1493,7 @@ impl Parser {
             Tok::Int(n) => ExprKind::Int(n),
             Tok::True => ExprKind::Bool(true),
             Tok::False => ExprKind::Bool(false),
+            Tok::Crate | Tok::Super => return self.path_expr(),
             Tok::Ident(name) => match self.peek2() {
                 Tok::ColonColon => return self.path_expr(),
                 Tok::LBrace if !self.no_struct => {
@@ -1324,32 +1653,39 @@ impl Parser {
     }
 
     /// A name followed by `::`: `Shape::Rect(2, 3)`, `Shape::Empty`,
-    /// `Option::<int>::None`, `id::<int>` or `Pair::<int, bool> { .. }`.
+    /// `Option::<int>::None`, `id::<int>`, `Pair::<int, bool> { .. }`, or a
+    /// path that starts with a module: `geometry::origin()`,
+    /// `crate::a::Point { .. }`. Which of a path's names are modules isn't
+    /// known yet: `a::f(1)` is read as a variant `f` of an `a`, until
+    /// resolving names says `a` is a module (see `check/modules.rs`).
     fn path_expr(&mut self) -> Result<Expr, Error> {
-        let name = self.ident()?;
-        let (targs, end) = self.turbofish()?;
-        if let Some(end) = end
-            && *self.peek() != Tok::ColonColon
-        {
-            if *self.peek() == Tok::LBrace && !self.no_struct {
-                return self.struct_lit(name, targs);
-            }
+        let start = self.span();
+        let segs = self.segments()?;
+        let (last, targs, end) = segs[segs.len() - 1].clone();
+        let all: Vec<&Ident> = segs.iter().map(|s| &s.0).collect();
+        if *self.peek() == Tok::LBrace && !self.no_struct {
+            no_targs(&segs[..segs.len() - 1])?;
+            return self.struct_lit(join_all(&all), targs);
+        }
+        if segs.len() == 1 || end.is_some() {
+            no_targs(&segs[..segs.len() - 1])?;
             return Ok(Expr {
-                span: name.span.to(end),
-                kind: ExprKind::Var(name.name, targs),
+                span: start.to(end.unwrap_or(last.span)),
+                kind: ExprKind::Var(join_all(&all).name, targs),
             });
         }
-        self.expect(Tok::ColonColon)?;
-        let variant = self.ident()?;
+        let ty_segs = &segs[..segs.len() - 1];
+        no_targs(&ty_segs[..ty_segs.len() - 1])?;
+        let ty = join_all(&all[..all.len() - 1]);
+        let ty_targs = ty_segs[ty_segs.len() - 1].1.clone();
         let parens = self.eat(&Tok::LParen);
         let (args, end) = match parens {
             true => self.args()?,
-            false => (Vec::new(), variant.span),
+            false => (Vec::new(), last.span),
         };
-        let span = name.span.to(end);
         Ok(Expr {
-            kind: ExprKind::Variant(name, targs, variant, args, parens),
-            span,
+            kind: ExprKind::Variant(ty, ty_targs, last, args, parens),
+            span: start.to(end),
         })
     }
 
@@ -1506,26 +1842,9 @@ impl Parser {
                     span: start.to(end),
                 });
             }
+            Tok::Crate | Tok::Super => return self.path_pattern(),
             Tok::Ident(name) => match self.peek2() {
-                Tok::ColonColon => {
-                    let ty = self.ident()?;
-                    let (targs, end) = self.turbofish()?;
-                    if end.is_some() && *self.peek() == Tok::LBrace {
-                        return self.struct_pattern(ty, targs);
-                    }
-                    self.expect(Tok::ColonColon)?;
-                    let variant = self.ident()?;
-                    let (args, end) = if self.eat(&Tok::LParen) {
-                        self.comma_list(Tok::RParen, Self::pattern)?
-                    } else {
-                        (Vec::new(), variant.span)
-                    };
-                    let kind = PatternKind::Variant(ty, targs, variant, args);
-                    return Ok(Pattern {
-                        kind,
-                        span: start.to(end),
-                    });
-                }
+                Tok::ColonColon => return self.path_pattern(),
                 Tok::LBrace => {
                     let ty = self.ident()?;
                     return self.struct_pattern(ty, Vec::new());
@@ -1543,6 +1862,41 @@ impl Parser {
         };
         self.bump();
         Ok(Pattern { kind, span: start })
+    }
+
+    /// `Shape::Dot(p)`, `a::Shape::Empty` or `a::P::<int> { .. }`: a
+    /// pattern that starts with a path.
+    fn path_pattern(&mut self) -> Result<Pattern, Error> {
+        let start = self.span();
+        let segs = self.segments()?;
+        let all: Vec<&Ident> = segs.iter().map(|s| &s.0).collect();
+        let (last, last_targs, end) = segs[segs.len() - 1].clone();
+        if *self.peek() == Tok::LBrace {
+            no_targs(&segs[..segs.len() - 1])?;
+            return self.struct_pattern(join_all(&all), last_targs);
+        }
+        if segs.len() == 1 {
+            return Err(self.unexpected("`::` or `{`"));
+        }
+        if let Some(end) = end {
+            return Err(Error::syntax(
+                end,
+                "a variant has no type arguments of its own",
+            ));
+        }
+        let ty_segs = &segs[..segs.len() - 1];
+        no_targs(&ty_segs[..ty_segs.len() - 1])?;
+        let ty = join_all(&all[..all.len() - 1]);
+        let targs = ty_segs[ty_segs.len() - 1].1.clone();
+        let (args, end) = if self.eat(&Tok::LParen) {
+            self.comma_list(Tok::RParen, Self::pattern)?
+        } else {
+            (Vec::new(), last.span)
+        };
+        Ok(Pattern {
+            kind: PatternKind::Variant(ty, targs, last, args),
+            span: start.to(end),
+        })
     }
 
     /// `5` or `-5` in a pattern.
@@ -1649,6 +2003,10 @@ fn binop(tok: &Tok) -> Option<(BinOp, u8)> {
 }
 
 /// What can come before a `fn`, `struct`, `enum`, field or variant.
+/// A segment of a path in an expression or pattern, with its type
+/// arguments and where they end, if it has any.
+type Segment = (Ident, Vec<TypeExpr>, Option<Span>);
+
 struct Head {
     doc: Option<DocComment>,
     allows: Vec<Allow>,
@@ -1658,10 +2016,15 @@ struct Head {
 impl Head {
     /// Checks this head, for an associated type, has no `#[allow(..)]`.
     fn no_allows(&self) -> Result<(), Error> {
+        self.no_allows_on("an associated type")
+    }
+
+    /// Checks this head, for `what`, has no `#[allow(..)]`.
+    fn no_allows_on(&self, what: &str) -> Result<(), Error> {
         match self.allows.first() {
             Some(a) => Err(Error::syntax(
                 a.span,
-                "`#[allow(..)]` can't be on an associated type",
+                format!("`#[allow(..)]` can't be on {what}"),
             )),
             None => Ok(()),
         }
@@ -1694,5 +2057,47 @@ fn doc_comment(lines: &[Token]) -> DocComment {
                 span: t.span,
             })
             .collect(),
+    }
+}
+
+/// `a::b` from `a` and `b`: one name for a path, spanning both.
+fn join(a: &Ident, b: &Ident) -> Ident {
+    Ident {
+        name: format!("{}::{}", a.name, b.name),
+        span: a.span.to(b.span),
+    }
+}
+
+/// The segments of a path, as one name: see `Parser::path`.
+fn join_all(segs: &[&Ident]) -> Ident {
+    let mut out = segs[0].clone();
+    for s in &segs[1..] {
+        out = join(&out, s);
+    }
+    out
+}
+
+/// A type written as a plain path, `Show` or `a::Show`, as the one name
+/// `Parser::path` would make of it: where a trait's name is expected.
+fn type_path(t: &TypeExpr) -> Option<Ident> {
+    match &t.kind {
+        TypeExprKind::Named(name, args) if args.is_empty() => Some(Ident {
+            name: name.clone(),
+            span: t.span,
+        }),
+        TypeExprKind::Proj(inner, None, name) => Some(join(&type_path(inner)?, name)),
+        _ => None,
+    }
+}
+
+/// Checks that none of `segs`, the start of a path, has type arguments:
+/// they go after the type's name, or a function's.
+fn no_targs(segs: &[Segment]) -> Result<(), Error> {
+    match segs.iter().find_map(|(_, _, end)| *end) {
+        Some(end) => Err(Error::syntax(
+            end,
+            "type arguments can only go after the type or function they're for",
+        )),
+        None => Ok(()),
     }
 }

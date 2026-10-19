@@ -14,7 +14,7 @@
 //! It formats a file like `t fmt`, ignoring the editor's formatting
 //! options: there's one style. It never runs the program.
 
-use crate::ast::{FnDecl, MethodOf, Program, TypeDecl};
+use crate::ast::{FnDecl, MethodOf, Program, ROOT, TypeDecl};
 use crate::check::{Info, NoteKind};
 use crate::error::{Error, Fix, Lint, Phase, Span, Warning};
 use crate::fmt::FmtError;
@@ -413,10 +413,10 @@ fn adts<'t>(t: &'t Type, out: &mut Vec<&'t str>) {
     }
 }
 
-/// The outline of `prog`: its functions, structs, enums, traits and
-/// impls, with the fields and variants of each type, the methods of each
-/// trait and impl, and the nested functions and local types of each
-/// function, under it. In source order.
+/// The outline of `prog`: its modules, functions, structs, enums, traits
+/// and impls, with the items of each module, the fields and variants of
+/// each type, the methods of each trait and impl, and the nested functions
+/// and local types of each function, under it. In source order.
 fn outline(src: &str, prog: &Program) -> Vec<DocumentSymbol> {
     let fns = prog.all_fns();
     let methods = prog.methods();
@@ -431,12 +431,13 @@ fn outline(src: &str, prog: &Program) -> Vec<DocumentSymbol> {
             children.push(s);
         }
     }
-    let mut top = Vec::new();
+    // The items of each module.
+    let mut top: Vec<Vec<DocumentSymbol>> = vec![Vec::new(); prog.mods.len()];
     for (d, f) in prog.all_types() {
         let s = type_symbol(src, d);
         match f {
             Some(f) => inside[f].push(s),
-            None => top.push(s),
+            None => top[d.module()].push(s),
         }
     }
     // Nested functions come after the ones they're in.
@@ -454,13 +455,13 @@ fn outline(src: &str, prog: &Program) -> Vec<DocumentSymbol> {
                     MethodOf::Trait(k) => traits[k].push(s),
                 }
             }
-            (None, None) => top.push(s),
+            (None, None) => top[f.module].push(s),
         }
     }
     for (t, mut children) in prog.traits.iter().zip(traits) {
         sort(&mut children);
         let detail = format!("trait {}", t.name.name);
-        top.push(symbol(
+        top[t.module].push(symbol(
             src,
             &t.name,
             detail,
@@ -479,7 +480,7 @@ fn outline(src: &str, prog: &Program) -> Vec<DocumentSymbol> {
             name: header.clone(),
             span: d.self_ty.span,
         };
-        top.push(symbol(
+        top[d.module].push(symbol(
             src,
             &name,
             header,
@@ -488,6 +489,15 @@ fn outline(src: &str, prog: &Program) -> Vec<DocumentSymbol> {
             children,
         ));
     }
+    // A module comes after the one it's in.
+    for (i, m) in prog.mods.iter().enumerate().skip(1).rev() {
+        let mut children = std::mem::take(&mut top[i]);
+        sort(&mut children);
+        let detail = format!("mod {}", m.name.name);
+        let s = symbol(src, &m.name, detail, SymbolKind::MODULE, m.span, children);
+        top[m.parent.expect("not the crate root")].push(s);
+    }
+    let mut top = std::mem::take(&mut top[ROOT]);
     sort(&mut top);
     top
 }

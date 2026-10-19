@@ -455,8 +455,12 @@ impl Traits {
     /// checker got with bounds. That holds as every obligation was proved
     /// with the bounds in scope, and every impl, derived ones too, needs
     /// exactly its `preds`: a derived impl that needed less than its
-    /// fields do (`Checker::derive`) would pass here and fail there. If it
-    /// doesn't, the obligation
+    /// fields do (`Checker::derive`) would pass here and fail there. One
+    /// whose bounds are written, `#[derive(Discard where T: Discard)]`,
+    /// needs those, which were checked to give what its fields need. Which
+    /// module anything is in doesn't matter here: modules decide which
+    /// names are in scope, never which impl applies (lemma M3 of
+    /// docs/06d-modules.md). If it doesn't, the obligation
     /// that fails, at the bottom of the search: for `Option<fn()>: Eq`,
     /// `fn(): Eq`.
     ///

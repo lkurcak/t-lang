@@ -5,6 +5,7 @@
 //! rename, see `lsp.rs` and `rename.rs`), and monomorphisation reads the
 //! type arguments (see `mono.rs`).
 
+use super::modules::Item;
 use super::{Checker, Lifetimes};
 use crate::ast::*;
 use crate::error::Span;
@@ -145,6 +146,35 @@ pub enum NoteKind {
     Variant(String, String),
 }
 
+/// A note for a name written as a path, `a::b::f` at `span`, is for its
+/// last segment, `f`, which is what renaming it changes: the path ends
+/// where `span` does. A trait is named by its symbol, `a::Show`, however
+/// it's written, so the same goes for it.
+fn last_segment(span: Span, kind: NoteKind) -> (Span, NoteKind) {
+    let (NoteKind::Fn(name)
+    | NoteKind::Trait(name)
+    | NoteKind::Struct(name)
+    | NoteKind::Enum(name)) = &kind
+    else {
+        return (span, kind);
+    };
+    let Some((_, last)) = name.rsplit_once("::") else {
+        return (span, kind);
+    };
+    let last = last.to_string();
+    let span = Span::new(
+        span.end.saturating_sub(last.len()).max(span.start),
+        span.end,
+    );
+    let kind = match kind {
+        NoteKind::Fn(_) => NoteKind::Fn(last),
+        NoteKind::Trait(_) => NoteKind::Trait(last),
+        NoteKind::Struct(_) => NoteKind::Struct(last),
+        _ => NoteKind::Enum(last),
+    };
+    (span, kind)
+}
+
 impl Note {
     /// A short description, for hovering over it in an editor.
     pub fn hover(&self) -> String {
@@ -244,6 +274,7 @@ impl Checker {
     /// Notes what's at `span`. Its types may still have variables in them:
     /// `finish_notes` solves them once the function is checked.
     pub(super) fn note(&mut self, span: Span, kind: NoteKind, ty: Option<Type>, def: Option<Span>) {
+        let (span, kind) = last_segment(span, kind);
         self.info.notes.push(Note {
             span,
             kind,
@@ -283,6 +314,7 @@ impl Checker {
         {
             self.pending.push(instance);
         }
+        let (span, kind) = last_segment(span, kind);
         self.info.notes.push(Note {
             span,
             kind,
@@ -363,6 +395,18 @@ impl Checker {
             self.note(span, kind, Some(generic.clone()), Some(span));
             self.param_notes(params);
             self.bound_notes(d.generics(), params);
+            // `where T: Discard` in a `#[derive(..)]`.
+            for w in d.derives().iter().flat_map(|d| &d.wheres).flatten() {
+                for (subject, items) in &w.bounds {
+                    if let Some(p) = params.iter().find(|p| p.name == subject.name) {
+                        let kind = NoteKind::TypeParam(p.name.clone());
+                        self.note(subject.span, kind, None, Some(p.span));
+                    }
+                    for t in items.iter().flat_map(|b| b.types()) {
+                        self.type_expr_notes(t, params);
+                    }
+                }
+            }
             match d {
                 TypeDecl::Struct(s) => {
                     for f in &s.fields {
@@ -390,6 +434,37 @@ impl Checker {
                         }
                     }
                 }
+            }
+        }
+        // What each `use` names.
+        for (name, items) in self.modules.leaf_items.clone() {
+            for item in items {
+                let (kind, ty, def) = match item {
+                    Item::Fn(i) => {
+                        let f = &self.fns[i];
+                        (
+                            NoteKind::Fn(f.name.name.clone()),
+                            Some(f.scheme.ty.clone()),
+                            f.name.span,
+                        )
+                    }
+                    Item::Type(k) => {
+                        let d = &prog.types[k];
+                        let symbol = &self.types[k].symbol;
+                        let ty = self.adts.get(symbol).map(|def| def.generic(symbol));
+                        let kind = match d {
+                            TypeDecl::Struct(_) => NoteKind::Struct(d.name().name.clone()),
+                            TypeDecl::Enum(_) => NoteKind::Enum(d.name().name.clone()),
+                        };
+                        (kind, ty, d.name().span)
+                    }
+                    Item::Trait(k) => {
+                        let t = &prog.traits[k];
+                        (NoteKind::Trait(t.name.name.clone()), None, t.name.span)
+                    }
+                    Item::Mod(_) => continue,
+                };
+                self.note(name.span, kind, ty, Some(def));
             }
         }
         // A method can use its impl's type parameters too.

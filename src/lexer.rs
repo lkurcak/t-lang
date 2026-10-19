@@ -28,6 +28,12 @@ pub enum Tok {
     Continue,
     Type,
     As,
+    Pub,
+    Mod,
+    Use,
+    Crate,
+    Super,
+    Where,
     /// `'a`: a lifetime, with its `'`.
     Lifetime(String),
     // punctuation
@@ -104,6 +110,12 @@ impl Tok {
             Tok::Continue => "continue",
             Tok::Type => "type",
             Tok::As => "as",
+            Tok::Pub => "pub",
+            Tok::Mod => "mod",
+            Tok::Use => "use",
+            Tok::Crate => "crate",
+            Tok::Super => "super",
+            Tok::Where => "where",
             Tok::LParen => "(",
             Tok::RParen => ")",
             Tok::LBrace => "{",
@@ -248,6 +260,12 @@ pub fn lex_with_comments(src: &str) -> Result<(Vec<Token>, Vec<Comment>), Error>
                 "continue" => Tok::Continue,
                 "type" => Tok::Type,
                 "as" => Tok::As,
+                "pub" => Tok::Pub,
+                "mod" => Tok::Mod,
+                "use" => Tok::Use,
+                "crate" => Tok::Crate,
+                "super" => Tok::Super,
+                "where" => Tok::Where,
                 name => Tok::Ident(name.to_string()),
             }
         } else if c == b'\'' {

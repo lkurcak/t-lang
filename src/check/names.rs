@@ -6,10 +6,15 @@
 //! worked out here, before checking starts, for the whole program.
 //!
 //! Like a function, each type has a symbol, unique in the program: its name
-//! at the top level, or if it's local, the symbol of the function it's in
-//! and its own name, like `main::Point` (see `check/scope.rs`). Lifting
-//! moves local types to the top level under them (see `lift.rs`).
+//! at the crate root, after its module's path in a module (`shapes::Point`),
+//! or if it's local, the symbol of the function it's in and its own name,
+//! like `main::Point` (see `check/scope.rs`). Lifting moves local types to
+//! the top level under them (see `lift.rs`).
+//!
+//! At the level of a module, a name means what the module's namespace says
+//! (see `check/modules.rs`), and a path with a `::` what resolving it said.
 
+use super::modules::{Item, Modules};
 use super::scope::{FnId, symbol};
 use crate::ast::*;
 use crate::error::Span;
@@ -23,6 +28,11 @@ pub(super) struct TypeDef {
     /// The block it's declared in, as a number unique in the program: 0
     /// for the top level.
     pub(super) block: usize,
+    /// The module it's in, or that the function it's local to is in.
+    pub(super) module: usize,
+    /// Its fields that aren't `pub`: none for an enum, whose variants are
+    /// public wherever it is.
+    pub(super) private: Vec<String>,
 }
 
 /// What a name in a type refers to, where it's written: a struct or enum,
@@ -43,8 +53,18 @@ pub(super) fn names(
     prog: &Program,
     fns: &[(&FnDecl, Option<usize>)],
     fn_symbols: &[String],
+    modules: &Modules,
 ) -> (Vec<TypeDef>, HashMap<Span, Scoped>) {
+    // The symbols of the types in modules come first, so no local type's
+    // can be one of them.
+    let top: Vec<String> = prog
+        .types
+        .iter()
+        .map(|d| format!("{}{}", modules.mods[d.module()].prefix, d.name().name))
+        .collect();
     let mut w = Walk {
+        modules,
+        top: top.clone(),
         levels: Vec::new(),
         items: Vec::new(),
         fn_ids: fns
@@ -54,18 +74,19 @@ pub(super) fn names(
             .collect(),
         fn_symbols,
         current: Vec::new(),
-        taken: HashSet::new(),
+        taken: top.iter().cloned().collect(),
         blocks: 0,
         defs: HashMap::new(),
         names: HashMap::new(),
     };
-    let top = prog.types.iter().map(|d| (d, None)).collect();
-    w.declare(top);
+    w.declare(prog.types.iter().map(|d| (d, None)).collect());
     for f in &prog.fns {
+        w.module(f.module);
         w.function(f, &[]);
     }
     // A method can use its impl's type parameters as well as its own.
     for d in &prog.impls {
+        w.module(d.module);
         let params: Vec<String> = d.generics.types.iter().map(|p| p.name.clone()).collect();
         w.levels.push(Level::Params(params.clone(), w.items.len()));
         w.items.push(("impl", "impl".into()));
@@ -80,6 +101,7 @@ pub(super) fn names(
         }
     }
     for t in &prog.traits {
+        w.module(t.module);
         for m in &t.methods {
             match m.provided {
                 true => w.function(&m.decl, &[]),
@@ -94,7 +116,6 @@ pub(super) fn names(
             }
         }
     }
-    w.levels.pop();
     let defs = prog
         .all_types()
         .into_iter()
@@ -109,6 +130,8 @@ pub(super) fn names(
 
 /// A scope, in the stack of them that a type name is looked up in.
 enum Level {
+    /// That of a module: what its namespace says. Always at the bottom.
+    Module(usize),
     /// The types the top level or a block declares, as name and symbol.
     Types(Vec<(String, String)>),
     /// The type parameters of a function, struct or enum, and where it is
@@ -117,6 +140,9 @@ enum Level {
 }
 
 struct Walk<'a> {
+    modules: &'a Modules,
+    /// The symbol of each type in `Program::types`.
+    top: Vec<String>,
     /// The scopes around what's being walked, innermost last.
     levels: Vec<Level>,
     /// The functions and types being walked, innermost last, as keyword and
@@ -142,6 +168,10 @@ impl Walk<'_> {
     fn lookup(&self, name: &str) -> Option<Scoped> {
         for level in self.levels.iter().rev() {
             match level {
+                Level::Module(m) => {
+                    let k = self.modules.type_named(*m, name)?;
+                    return Some(Scoped::Adt(self.top[k].clone()));
+                }
                 Level::Types(types) => {
                     if let Some((_, symbol)) = types.iter().find(|(n, _)| n == name) {
                         return Some(Scoped::Adt(symbol.clone()));
@@ -160,8 +190,21 @@ impl Walk<'_> {
         None
     }
 
-    /// Notes what `name`, written at `span`, refers to.
+    /// Starts walking the items of module `m`.
+    fn module(&mut self, m: usize) {
+        self.levels.clear();
+        self.levels.push(Level::Module(m));
+    }
+
+    /// Notes what `name`, written at `span`, refers to. A path with a `::`
+    /// refers to what resolving it said, if it's a struct or enum.
     fn name(&mut self, name: &str, span: Span) {
+        if name.contains("::") {
+            if let Some(Item::Type(k)) = self.modules.paths.get(&span) {
+                self.names.insert(span, Scoped::Adt(self.top[*k].clone()));
+            }
+            return;
+        }
         if let Some(s) = self.lookup(name) {
             self.names.insert(span, s);
         }
@@ -178,21 +221,40 @@ impl Walk<'_> {
             _ => 0,
         };
         let mut level = Vec::new();
-        for &(d, parent) in &decls {
+        for (k, &(d, parent)) in decls.iter().enumerate() {
             let name = d.name();
             let symbol = match parent {
-                None => name.name.clone(),
+                None => self.top[k].clone(),
                 Some(f) => symbol(&self.fn_symbols[f.0], &name.name, &self.taken),
             };
             self.taken.insert(symbol.clone());
             self.names.insert(name.span, Scoped::Adt(symbol.clone()));
             level.push((name.name.clone(), symbol.clone()));
+            let private = match d {
+                TypeDecl::Struct(s) => s
+                    .fields
+                    .iter()
+                    .filter(|f| f.public.is_none())
+                    .map(|f| f.name.name.clone())
+                    .collect(),
+                TypeDecl::Enum(_) => Vec::new(),
+            };
             let def = TypeDef {
                 symbol,
                 parent,
                 block,
+                module: d.module(),
+                private,
             };
             self.defs.insert(std::ptr::from_ref(d), def);
+        }
+        // The top-level ones are in their modules' namespaces instead.
+        if decls.first().is_some_and(|(_, parent)| parent.is_none()) {
+            for (d, _) in decls {
+                self.module(d.module());
+                self.type_decl(d);
+            }
+            return;
         }
         self.levels.push(Level::Types(level));
         for (d, _) in decls {

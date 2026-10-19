@@ -55,6 +55,14 @@
 (variant_expression variant: (identifier) @constructor)
 (variant_pattern variant: (identifier) @constructor)
 
+; Modules
+
+(mod_item name: (identifier) @module)
+(scoped_identifier path: (identifier) @module)
+(scoped_type_identifier path: (identifier) @module)
+(crate) @module.builtin
+(super) @module.builtin
+
 ; Attributes
 
 (attribute_item) @attribute
@@ -62,7 +70,8 @@
 ; Keywords
 
 "fn" @keyword.function
-["trait" "impl" "for"] @keyword
+["trait" "impl" "for" "mod" "use" "where"] @keyword
+(visibility_modifier) @keyword.storage.modifier
 "let" @keyword
 ["struct" "enum" "type"] @keyword.type
 "as" @keyword.operator

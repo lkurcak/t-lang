@@ -1,5 +1,43 @@
 # Changelog
 
+## Unreleased
+
+Step 6d: modules. See [docs/06d-modules.md](docs/06d-modules.md).
+
+### Added
+
+- `mod m { .. }`: a module, a namespace of its own, holding items as the
+  file does. Each module has a namespace of types (structs, enums, traits
+  and modules) and one of functions. Nothing of the modules around it is
+  in scope in it.
+- Paths to items: `a::b::f`, and from `crate::`, `super::` and `self::`, in
+  expressions, types, patterns and bounds.
+- `use a::b;`, `use a::b as c;`, `use a::{b, c};` and `pub use`, in a
+  module. Two names for the same thing in a namespace of a module, and
+  `use`s that go round in a circle, are errors.
+- `pub` on items, fields and the methods of inherent impls: an item is
+  visible in its module and the modules in it, and, if it's `pub`,
+  wherever its module is. An enum's variants are public wherever it is.
+- A struct with fields that can't be seen is abstract: it can't be made
+  there, nor, unless it's `Discard`, taken apart, by moving a field out or
+  by a pattern that matches it by value.
+- A public item can't name a private type or trait in its signature, nor a
+  public field in its type.
+- `x.m()` only finds the methods of traits in scope where it's written,
+  with a fix that imports the one that has it.
+- `#[derive(Discard where T: Discard)]`: a public struct with private
+  fields says what each derive needs, which must be enough for its fields.
+- An inherent impl must be in its type's module, and `main` at the crate
+  root.
+- The `unused_imports` lint, with a fix that removes the `use`.
+- The tree-sitter grammar, the formatter and the language server know
+  modules, paths, `use` and `pub`; renaming follows names through paths and
+  `use`s, and the outline nests modules.
+
+### Changed
+
+- `pub`, `mod`, `use`, `crate`, `super` and `where` are keywords.
+
 ## 0.9.0 (2026-10-19)
 
 Step 6c.1: returning closures, opaque types. See

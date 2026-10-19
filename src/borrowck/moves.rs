@@ -71,6 +71,59 @@ pub(crate) fn behind_references(b: &Builder) -> Result<(), Error> {
     Ok(())
 }
 
+/// Checks that nothing here takes apart a struct it can't see all the
+/// fields of, unless it's `Discard` (lemma M2 of docs/06d-modules.md).
+/// Outside its module, such a struct is *abstract*: its module made every
+/// value of it, and whoever holds one can move it, borrow it, read its pub
+/// fields through a place, and hand it back. Taking it apart, by moving a
+/// field out or matching it by value, would end a value that isn't
+/// `Discard` without its module's say, throwing the private rest away: a
+/// file handle closed by nobody. `Discard` is the module saying that's fine.
+pub(crate) fn abstraction(b: &Builder) -> Result<(), Error> {
+    for s in b.body.blocks.iter().flat_map(|block| &block.stmts) {
+        let places: Vec<(&Place, bool)> = match &s.kind {
+            StmtKind::Assign { value, .. } => value
+                .operands()
+                .into_iter()
+                .filter_map(|o| match o {
+                    Operand::Move(p) => Some((p, false)),
+                    _ => None,
+                })
+                .collect(),
+            StmtKind::Consume(p, None) => vec![(p, true)],
+            _ => Vec::new(),
+        };
+        for (place, whole) in places {
+            let mut t = b.body.locals[place.local.0].ty.clone();
+            let mut parts = Vec::new();
+            for p in &place.proj {
+                parts.push((t.clone(), matches!(p, Proj::Field(_))));
+                t = project(b.adts(), &t, *p);
+            }
+            if whole {
+                parts.push((t, true));
+            }
+            for (t, taken) in parts {
+                if let Type::Adt(symbol, ..) = &t
+                    && taken
+                    && b.cx.is_abstract(symbol)
+                    && !b.cx.is_discard(&t)
+                {
+                    return Err(Error::ty(
+                        s.span,
+                        format!(
+                            "can't take `{t}` apart here: it has private fields and isn't \
+                             `Discard`, so only {} can",
+                            b.cx.module_of(symbol)
+                        ),
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Checks that whatever's assigned to or borrowed `&mut` may be changed,
 /// and returns the locals that had to be `mut` for that.
 ///

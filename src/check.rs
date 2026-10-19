@@ -8,7 +8,9 @@
 //! `continue`, `loop` and the never type `!` (see
 //! docs/05.1-control-flow.md), plus traits, impls and methods (step 6,
 //! see docs/06-traits.md, and `check/traits.rs`), plus opaque types, `impl
-//! Fn(int) -> int` in a return type (see docs/06c.1-opaque-types.md).
+//! Fn(int) -> int` in a return type (see docs/06c.1-opaque-types.md), plus
+//! modules, resolved before anything else (step 6d, see
+//! docs/06d-modules.md, and `check/modules.rs`).
 //! Whether a program uses its
 //! references and moved values correctly is checked after its types are,
 //! by the borrow checker (`borrowck`), from what `typed` records here.
@@ -38,6 +40,7 @@ mod closures;
 mod generics;
 mod info;
 mod lints;
+pub(crate) mod modules;
 mod names;
 mod scope;
 mod traits;
@@ -119,9 +122,15 @@ pub(crate) fn builtin_scheme(name: &str) -> Scheme {
 
 /// Type-checks `prog`, adding any warnings to `warnings`, in source order.
 /// Those found before an error are kept, and so is what was learned about
-/// the program up to it.
-pub fn check(prog: &Program, warnings: &mut Vec<Warning>) -> (Info, Result<(), Error>) {
-    let mut cx = Checker::new(prog);
+/// the program up to it. Resolving its paths first rewrites it, as
+/// `check/modules.rs` says.
+pub fn check(prog: &mut Program, warnings: &mut Vec<Warning>) -> (Info, Result<(), Error>) {
+    let modules = match modules::resolve(prog) {
+        Ok(modules) => modules,
+        Err(e) => return (Info::default(), Err(e)),
+    };
+    let prog = &*prog;
+    let mut cx = Checker::new(prog, modules);
     cx.warnings.extend(prog.stray_docs.iter().map(unused_doc));
     let result = cx.program(prog);
     cx.type_notes(prog);
@@ -134,7 +143,11 @@ pub fn check(prog: &Program, warnings: &mut Vec<Warning>) -> (Info, Result<(), E
 
 /// Checks that there's a `main`, and that it takes nothing.
 fn check_main(prog: &Program) -> Result<(), Error> {
-    match prog.fns.iter().find(|f| f.name.name == "main") {
+    match prog
+        .fns
+        .iter()
+        .find(|f| f.module == ROOT && f.name.name == "main")
+    {
         None => Err(Error::ty(Span::new(0, 0), "program has no `main` function")),
         Some(main) if !main.params.is_empty() => {
             Err(Error::ty(main.name.span, "`main` must not take parameters"))
@@ -308,10 +321,15 @@ pub(crate) struct Checker {
     fns: Vec<FnDef>,
     /// Each nested function's id, by where its name is declared.
     nested_ids: HashMap<Span, FnId>,
-    /// The functions in scope, as a stack: the top-level ones, then those
-    /// of each block around what's being checked that declares any. With
-    /// the built-ins, the global part of the context Γ (see `scope.rs`).
+    /// The functions in scope, as a stack: those of each block around what's
+    /// being checked that declares any. With those of its module and the
+    /// built-ins, the global part of the context Γ (see `scope.rs`).
     scopes: Vec<FnScope>,
+    /// Which item each path names, and what's in scope in each module (see
+    /// `modules.rs`).
+    modules: modules::Modules,
+    /// The module of what's being checked.
+    module: usize,
     /// The function being checked.
     current: Option<FnId>,
     /// The type parameters of the function being checked.
@@ -452,9 +470,9 @@ pub(crate) struct LoopCx {
 }
 
 impl Checker {
-    fn new(prog: &Program) -> Checker {
-        let fn_symbols = scope::symbols(prog);
-        let (types, type_names) = names::names(prog, &prog.all_fns(), &fn_symbols);
+    fn new(prog: &Program, modules: modules::Modules) -> Checker {
+        let fn_symbols = scope::symbols(prog, &modules);
+        let (types, type_names) = names::names(prog, &prog.all_fns(), &fn_symbols, &modules);
         let mut info = Info::default();
         for (span, name) in &type_names {
             if let Scoped::Adt(symbol) = name {
@@ -504,6 +522,8 @@ impl Checker {
             goals: Vec::new(),
             opaque_at: HashMap::new(),
             sig_owner: Default::default(),
+            modules,
+            module: ROOT,
         }
     }
 
@@ -537,6 +557,12 @@ impl Checker {
         check_main(prog)?;
         // What's dead depends on the whole program, so only once it all checks.
         self.dead_code(prog);
+        let unused = self
+            .modules
+            .imports
+            .iter()
+            .filter(|i| !i.public && !i.used.get());
+        self.warnings.extend(unused.map(lints::unused_import));
         // Needs there to be no polymorphic recursion, to end.
         self.infinite_types(prog);
         Ok(())
@@ -556,12 +582,12 @@ impl Checker {
         fns: &[(&FnDecl, Option<usize>)],
     ) -> Result<(), Error> {
         let methods = prog.methods();
-        let mut top: Vec<FnId> = Vec::new();
         for (i, &(f, parent)) in fns.iter().enumerate() {
             let parent = parent.map(FnId);
             let method = i.checked_sub(prog.fns.len()).and_then(|j| methods.get(j));
             if parent.is_none()
                 && method.is_none()
+                && f.module == ROOT
                 && f.name.name == "main"
                 && !f.generics.types.is_empty()
             {
@@ -599,16 +625,15 @@ impl Checker {
             self.receivers.push(f.receiver().is_some());
             match parent {
                 None if method.is_some() => {}
+                // Two in a module of the same name are found by resolving
+                // names (see `modules.rs`).
                 None => {
-                    if BUILTINS.contains(&name.as_str())
-                        || top.iter().any(|id| self.fns[id.0].name.name == *name)
-                    {
+                    if BUILTINS.contains(&name.as_str()) {
                         return Err(Error::ty(
                             f.name.span,
                             format!("`{name}` is already defined"),
                         ));
                     }
-                    top.push(FnId(i));
                 }
                 Some(_) => {
                     self.nested_ids.insert(f.name.span, FnId(i));
@@ -621,9 +646,10 @@ impl Checker {
                 scheme,
                 parent,
                 body: f.body.span,
+                module: f.module,
+                public: f.public.is_some(),
             });
         }
-        self.scopes.push(FnScope { at: 0, fns: top });
         self.uses = (0..fns.len()).map(|_| Uses::default()).collect();
         Ok(())
     }
@@ -854,6 +880,7 @@ impl Checker {
     /// Checks the body of `f`, which has id `id`, top-level or nested.
     fn body(&mut self, f: &FnDecl, id: FnId) -> Result<(), Error> {
         self.current = Some(id);
+        self.module = f.module;
         let scheme = self.fns[id.0].scheme.clone();
         let Type::Fn(sig) = &scheme.ty else {
             unreachable!("a function has a function type")
@@ -975,6 +1002,44 @@ impl Checker {
     }
 
     /// What every struct and enum is made of, by symbol.
+    /// Checks that `field` of the struct with symbol `symbol` can be seen
+    /// here: that it's `pub`, or this is in the struct's module.
+    fn field_visible(&self, symbol: &str, field: &Ident) -> Result<(), Error> {
+        let Some(def) = self.types.iter().find(|d| d.symbol == symbol) else {
+            return Ok(());
+        };
+        if !def.private.contains(&field.name) || self.modules.within(self.module, def.module) {
+            return Ok(());
+        }
+        Err(Error::ty(
+            field.span,
+            format!(
+                "field `{}` of `{}` is private to {}",
+                field.name,
+                source_name(symbol),
+                self.modules.describe(def.module)
+            ),
+        ))
+    }
+
+    /// Is the struct with symbol `symbol` abstract here: does it have
+    /// fields that can't be seen? Then code here can only take it apart if
+    /// its module says that's fine, by making it `Discard` (see
+    /// `moves::abstraction`).
+    pub(crate) fn is_abstract(&self, symbol: &str) -> bool {
+        self.types.iter().any(|d| {
+            d.symbol == symbol
+                && !d.private.is_empty()
+                && !self.modules.within(self.module, d.module)
+        })
+    }
+
+    /// The module of the struct or enum with symbol `symbol`, for messages.
+    pub(crate) fn module_of(&self, symbol: &str) -> String {
+        let def = self.types.iter().find(|d| d.symbol == symbol);
+        self.modules.describe(def.map_or(ROOT, |d| d.module))
+    }
+
     pub(crate) fn adts(&self) -> &Adts {
         &self.adts
     }
@@ -1072,7 +1137,7 @@ impl Checker {
                     format!("`{}` is a built-in type", name.name),
                 ));
             }
-            if !declared.insert((def.block, &name.name)) {
+            if !declared.insert((def.block, d.module(), &name.name)) {
                 return Err(Error::ty(
                     name.span,
                     format!("type `{}` is already defined", name.name),
@@ -1353,7 +1418,15 @@ impl Checker {
     ) -> Result<Option<(Type, Res)>, Error> {
         // Notes are for the name, not any `::<..>` after it.
         let at = Span::new(span.start, span.start + name.len());
-        let (scheme, def, symbol, builtin) = match self.binding(name) {
+        // A path, `a::f`, names what resolving it said.
+        let binding = match name.contains("::") {
+            true => match self.modules.paths.get(&span) {
+                Some(modules::Item::Fn(i)) => Some(Binding::Fn(FnId(*i))),
+                _ => None,
+            },
+            false => self.binding(name),
+        };
+        let (scheme, def, symbol, builtin) = match binding {
             None => return Ok(None),
             Some(Binding::Local(i)) => {
                 if i < self.barrier {
@@ -2238,6 +2311,7 @@ impl Checker {
                         ));
                     }
                     given[i] = true;
+                    self.field_visible(&symbol, &init.name)?;
                     self.note_field(&symbol, &init.name, &fields[i].1);
                     self.check(&init.value, &fields[i].1)?;
                 }
@@ -2290,6 +2364,7 @@ impl Checker {
                 {
                     Some((i, (_, ft))) => {
                         if let Type::Adt(s, ..) = &t {
+                            self.field_visible(s, field)?;
                             self.note_field(&s.clone(), field, &ft);
                         }
                         self.typed.fields.insert(e, (derefs, i));
@@ -3026,6 +3101,7 @@ impl Checker {
                         ));
                     }
                     given[i] = true;
+                    self.field_visible(&symbol, &fp.name)?;
                     self.note_field(&symbol, &fp.name, &fields[i].1);
                     args[i] = self.pattern(&fp.pat, &fields[i].1, by_ref, binds)?;
                     // `P { x }`: the parser made the pattern `x` out of the

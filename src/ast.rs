@@ -11,6 +11,12 @@ use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct Program {
+    /// Every module: the crate root first, which is the whole file, then
+    /// each `mod` in the order its name is written. Every item says which
+    /// one it's in by its index here (see docs/06d-modules.md).
+    pub mods: Vec<ModDecl>,
+    /// The `use`s of every module, in order.
+    pub uses: Vec<UseDecl>,
     pub types: Vec<TypeDecl>,
     pub traits: Vec<TraitDecl>,
     pub impls: Vec<ImplDecl>,
@@ -72,6 +78,84 @@ pub struct Allow {
     pub lints: Vec<Ident>,
 }
 
+/// The crate root's index in `Program::mods`.
+pub const ROOT: usize = 0;
+
+/// `mod geometry { .. }`: a module, a namespace of its own for the items in
+/// it. Those items are in the flat lists of `Program`, each saying which
+/// module it's in, as is each `mod` in it.
+#[derive(Debug, Clone)]
+pub struct ModDecl {
+    pub doc: Option<DocComment>,
+    pub allows: Vec<Allow>,
+    /// From the `mod` to the `}`; for the crate root, the whole file.
+    pub span: Span,
+    /// `crate` for the crate root.
+    pub name: Ident,
+    /// The module it's in: `None` only for the crate root.
+    pub parent: Option<usize>,
+    /// Where the `pub` is, if it's public.
+    pub public: Option<Span>,
+}
+
+/// `use a::b;`, `pub use a::{b, c as d};`: names from other modules,
+/// usable in this one as if declared in it.
+#[derive(Debug, Clone)]
+pub struct UseDecl {
+    /// From the `pub` or `use` to the `;`.
+    pub span: Span,
+    /// The module it's in.
+    pub module: usize,
+    pub public: Option<Span>,
+    pub tree: UseTree,
+}
+
+/// What a `use` names: `a::b`, `a::b as c`, or `a::{b, c::d}`, a path
+/// before a group of more.
+#[derive(Debug, Clone)]
+pub struct UseTree {
+    /// The segments as written: `crate`, `super` and `self` among them.
+    pub path: Vec<Ident>,
+    pub kind: UseKind,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum UseKind {
+    /// The path names one item, the last segment, maybe with `as` and
+    /// another name for it here.
+    Name(Option<Ident>),
+    /// `{b, c as d}` after the path and its `::`.
+    Group(Vec<UseTree>),
+}
+
+impl UseTree {
+    /// Each name it brings in: the path to it, and the name it's given.
+    pub fn leaves(&self) -> Vec<(Vec<&Ident>, &Ident)> {
+        let mut out = Vec::new();
+        self.collect(&mut Vec::new(), &mut out);
+        out
+    }
+
+    fn collect<'a>(
+        &'a self,
+        prefix: &mut Vec<&'a Ident>,
+        out: &mut Vec<(Vec<&'a Ident>, &'a Ident)>,
+    ) {
+        let len = prefix.len();
+        prefix.extend(&self.path);
+        match &self.kind {
+            UseKind::Name(alias) => {
+                if let Some(last) = prefix.last().copied() {
+                    out.push((prefix.clone(), alias.as_ref().unwrap_or(last)));
+                }
+            }
+            UseKind::Group(trees) => trees.iter().for_each(|t| t.collect(prefix, out)),
+        }
+        prefix.truncate(len);
+    }
+}
+
 /// `struct Point { x: int, y: int }` or `enum Shape { Circle(int), Empty }`.
 #[derive(Debug, Clone)]
 pub enum TypeDecl {
@@ -98,6 +182,30 @@ impl TypeDecl {
         match self {
             TypeDecl::Struct(s) => &s.allows,
             TypeDecl::Enum(e) => &e.allows,
+        }
+    }
+
+    /// The module it's in.
+    pub fn module(&self) -> usize {
+        match self {
+            TypeDecl::Struct(s) => s.module,
+            TypeDecl::Enum(e) => e.module,
+        }
+    }
+
+    /// It, moved to the crate root.
+    pub fn at_root(self) -> TypeDecl {
+        match self {
+            TypeDecl::Struct(s) => TypeDecl::Struct(StructDecl { module: ROOT, ..s }),
+            TypeDecl::Enum(e) => TypeDecl::Enum(EnumDecl { module: ROOT, ..e }),
+        }
+    }
+
+    /// Where its `pub` is, if it's public.
+    pub fn public(&self) -> Option<Span> {
+        match self {
+            TypeDecl::Struct(s) => s.public,
+            TypeDecl::Enum(e) => e.public,
         }
     }
 
@@ -133,6 +241,15 @@ impl TypeDecl {
             .iter()
             .flat_map(|d| &d.names)
             .find(|n| n.name == name)
+    }
+
+    /// What the `#[derive(..)]` of trait `name` says it needs, if it says:
+    /// `where T: Discard` after it.
+    pub fn derive_where(&self, name: &str) -> Option<&Where> {
+        self.derives().iter().find_map(|d| {
+            let i = d.names.iter().position(|n| n.name == name)?;
+            d.wheres[i].as_ref()
+        })
     }
 }
 
@@ -273,6 +390,18 @@ pub struct Derive {
     /// From the `#` to the `]`.
     pub span: Span,
     pub names: Vec<Ident>,
+    /// For each name, the `where` after it, if there is one.
+    pub wheres: Vec<Option<Where>>,
+}
+
+/// `where T: Discard, U: Eq` after a derived trait: what its impl needs,
+/// written down rather than worked out from the fields.
+#[derive(Debug, Clone)]
+pub struct Where {
+    /// From the `where` to the end of the last bound.
+    pub span: Span,
+    /// As in `Generics::bounds`, but only of type parameters.
+    pub bounds: Vec<(Ident, Vec<BoundItem>)>,
 }
 
 #[derive(Debug, Clone)]
@@ -281,6 +410,9 @@ pub struct StructDecl {
     pub allows: Vec<Allow>,
     /// From the `struct` to the `}`, without the doc comment or attributes.
     pub span: Span,
+    /// The module it's in.
+    pub module: usize,
+    pub public: Option<Span>,
     pub name: Ident,
     /// Its lifetime parameters, type parameters and bounds.
     pub generics: Generics,
@@ -295,6 +427,8 @@ pub struct EnumDecl {
     pub allows: Vec<Allow>,
     /// From the `enum` to the `}`, without the doc comment or attributes.
     pub span: Span,
+    pub module: usize,
+    pub public: Option<Span>,
     pub name: Ident,
     pub generics: Generics,
     pub derives: Vec<Derive>,
@@ -327,6 +461,11 @@ pub struct FnDecl {
     /// From the `fn` to the end of the body, without the doc comment or
     /// attributes.
     pub span: Span,
+    /// The module it's in, or the one the function it's nested in is in.
+    pub module: usize,
+    /// Where its `pub` is, if it's public: only one in a module, or in an
+    /// inherent impl, can be.
+    pub public: Option<Span>,
     pub name: Ident,
     /// `<'a, T>` in `fn id<'a, T>(x: &'a T) -> &'a T`.
     pub generics: Generics,
@@ -352,6 +491,8 @@ pub struct TraitDecl {
     pub allows: Vec<Allow>,
     /// From the `trait` to the `}`.
     pub span: Span,
+    pub module: usize,
+    pub public: Option<Span>,
     pub name: Ident,
     /// `Eq` in `trait Ord: Eq`: traits a type must implement to implement
     /// this one, its *supertraits*.
@@ -404,6 +545,7 @@ pub struct ImplDecl {
     pub allows: Vec<Allow>,
     /// From the `impl` to the `}`.
     pub span: Span,
+    pub module: usize,
     pub generics: Generics,
     /// The trait, if it implements one.
     pub trait_name: Option<Ident>,
@@ -546,6 +688,8 @@ pub struct Param {
     /// `mut name: type`, with where the `mut` is: only a function parameter
     /// can be `mut`.
     pub mutable: Option<Span>,
+    /// `pub name: type`: only a struct field can be public.
+    pub public: Option<Span>,
     pub name: Ident,
     pub ty: TypeExpr,
 }
@@ -708,7 +852,7 @@ impl Expr {
 /// An anonymous function: `|x| x + 1`, `|x: int| -> int { x + 1 }`, or `|| 1`
 /// with no parameters. Any type left out is inferred. `move |x| ..` takes
 /// what it captures by value.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Lambda {
     /// Where the `move` is, if it's there.
     pub moves: Option<Span>,
@@ -760,6 +904,8 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
     let mut go = |e: &Expr, bound: &mut Vec<String>| free_vars(e, bound, out);
     match &e.kind {
         ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit | ExprKind::Continue(_) => {}
+        // A path, `a::f`, names a function, which needs no capturing.
+        ExprKind::Var(name, _) if name.contains("::") => {}
         ExprKind::Var(name, _) => {
             if !bound.contains(name) && !out.contains(name) {
                 out.push(name.clone());
@@ -841,7 +987,7 @@ fn pattern_binds(p: &Pattern, out: &mut Vec<String>) {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LambdaParam {
     /// Where the `mut` is, if it's `mut`.
     pub mutable: Option<Span>,

@@ -1,7 +1,7 @@
 //! The naming lints, as in Rust: `UpperCamelCase` for structs, enums,
 //! variants, traits and type parameters (`non_camel_case_types`), and
-//! `snake_case` for functions, methods, parameters, variables and fields
-//! (`non_snake_case`).
+//! `snake_case` for modules, functions, methods, parameters, variables and
+//! fields (`non_snake_case`).
 //! Underscores before or after a name don't count, and digits are fine
 //! (`Vec2`, `x1`). An acronym is one word, so `HTTPServer` should be
 //! `HttpServer`.
@@ -141,6 +141,9 @@ fn words(name: &str) -> (&str, Vec<&str>, &str) {
 /// declared in the first.
 fn decls(prog: &Program) -> Vec<Decl<'_>> {
     let mut out: Vec<Decl> = Vec::new();
+    for m in &prog.mods[1..] {
+        out.push(ident(&m.name, "module", Case::Snake));
+    }
     for (d, _) in prog.all_types() {
         out.push(ident(d.name(), "type", Case::Camel));
         params(d.type_params(), &mut out);
@@ -162,7 +165,12 @@ fn decls(prog: &Program) -> Vec<Decl<'_>> {
         }
     }
     for t in &prog.traits {
-        out.push(ident(&t.name, "trait", Case::Camel));
+        // Named by its symbol once resolved: `shapes::Show` in a module.
+        let name = t.name.name.rsplit("::").next().unwrap_or_default();
+        out.push(Decl {
+            name,
+            ..ident(&t.name, "trait", Case::Camel)
+        });
         // An impl's are named by the trait's.
         out.extend(
             t.assoc

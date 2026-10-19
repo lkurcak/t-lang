@@ -91,7 +91,8 @@ As in Rust, a name that isn't a lint's is a warning (`unknown_lints`), not
 an error. The lints are `unused_variables`, `unused_mut`, `dead_code`,
 `unreachable_patterns`, `overlapping_ranges`, `mergeable_ranges`,
 `unused_doc_comments`, `non_camel_case_types`, `non_snake_case`,
-`infinite_types`, `unreachable_code`, `unused_labels` and `unknown_lints`.
+`infinite_types`, `unreachable_code`, `unused_labels`, `unused_imports` and
+`unknown_lints`.
 
 Pipeline: `lexer` → `parser` → `check` (type checker, then `borrowck`, the
 borrow checker) → `lift` (nested functions and types moved to the top
@@ -287,7 +288,8 @@ combine features in ways nobody planned for.
 | 6b ✅ | associated types, projections, equality bounds | type-level functions (open type families), normalisation with lifetimes | [docs/06b-associated-types.md](docs/06b-associated-types.md) |
 | 6c ✅ | closures as `Fn` traits | closure conversion, a type per closure, capturing by reference | [docs/06c-closures.md](docs/06c-closures.md) |
 | 6c.1 ✅ | returning closures, `-> impl Fn(int) -> int` | existential (opaque) types, which lifetimes they capture | [docs/06c.1-opaque-types.md](docs/06c.1-opaque-types.md) |
-| 6d | modules: `mod`, `use`, visibility | abstract types, orphan rules (coherence across modules) | derived bounds written out at module boundaries |
+| 6d ✅ | modules: `mod`, `use`, `pub` | namespaces, abstract types (existential types, representation independence), coherence and orphan rules | [docs/06d-modules.md](docs/06d-modules.md) |
+| 6d.1 | modules in files of their own: `mod m;` | | |
 | 6e | a small `core`: `Option`, `Result`, `Ord`, `Iterator`, `for` | equality bounds with projections (`IntoIterator`), iterating over linear values | what the tests keep defining themselves; no allocation |
 | 7 | effects | effect systems: which functions can panic, allocate or diverge | |
 | 8 | refinement types | proving indexes in bounds, so indexing can't panic | |

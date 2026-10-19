@@ -47,6 +47,22 @@ pub(super) fn unreachable_code(span: Span) -> Warning {
     }
 }
 
+/// A name a `use` brings in that nothing uses. The fix removes the `use`,
+/// if that's all it brings in.
+pub(super) fn unused_import(import: &super::modules::Import) -> Warning {
+    let name = &import.name.name;
+    Warning {
+        lint: Lint::UnusedImports,
+        span: import.name.span,
+        message: format!("unused import `{name}`"),
+        fixes: import
+            .alone
+            .map(|decl| Fix::new("remove the `use`", vec![Edit::delete(decl)]))
+            .into_iter()
+            .collect(),
+    }
+}
+
 /// A loop's label that no `break` or `continue` uses. The fix removes it.
 pub(super) fn unused_label(label: &Label) -> Warning {
     let name = &label.name.name;

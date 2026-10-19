@@ -19,10 +19,10 @@ use std::collections::{HashMap, HashSet};
 /// can be renamed in: one that doesn't may have names nothing knows the
 /// meaning of yet.
 pub fn checked(src: &str) -> Result<(Program, Info), String> {
-    let prog = lexer::lex(src)
+    let mut prog = lexer::lex(src)
         .and_then(crate::parser::parse)
         .map_err(|_| "the file has a syntax error; fix it first".to_string())?;
-    let (info, result) = check::check(&prog, &mut Vec::new());
+    let (info, result) = check::check(&mut prog, &mut Vec::new());
     match result {
         Ok(()) => Ok((prog, info)),
         Err(_) => Err("the file has a type error; fix it first".to_string()),
@@ -53,7 +53,10 @@ pub fn target<'i>(
     if matches!(&note.kind, NoteKind::Var(n) if n == "self") {
         return Err("`self` can't be renamed: it's what a method's receiver is called".into());
     }
-    let main = prog.fns.iter().find(|f| f.name.name == "main");
+    let main = prog
+        .fns
+        .iter()
+        .find(|f| f.module == ROOT && f.name.name == "main");
     if main.is_some_and(|m| m.name.span == def) {
         return Err("`main` can't be renamed: it's where the program starts".to_string());
     }
@@ -103,6 +106,8 @@ pub fn rename(
     let renamed: Vec<Renamed> = info
         .occurrences(def)
         .into_iter()
+        // A use through another name, given by `use .. as`, keeps it.
+        .filter(|span| src.get(span.start..span.end) == Some(old))
         .map(|span| match (shorthands.contains(&span), is_field) {
             (false, _) => Renamed {
                 edit: Edit::replace(span, new),
@@ -125,10 +130,10 @@ pub fn rename(
     let after = crate::error::Fix::new("", edits.clone()).apply(src);
 
     let cant = |why: String| format!("can't rename `{old}` to `{new}`: {why}");
-    let prog_after = lexer::lex(&after)
+    let mut prog_after = lexer::lex(&after)
         .and_then(crate::parser::parse)
         .map_err(|e| cant(e.message))?;
-    let (info_after, result) = check::check(&prog_after, &mut Vec::new());
+    let (info_after, result) = check::check(&mut prog_after, &mut Vec::new());
     if let Err(e) = result {
         let line = line(&after, e.span.start);
         return Err(cant(format!(

@@ -18,6 +18,7 @@
 //! trait's method names.
 
 use super::Checker;
+use super::modules::Modules;
 use crate::ast::*;
 use crate::error::{Edit, Error, Fix, Span};
 use crate::types::Scheme;
@@ -38,6 +39,9 @@ pub(super) struct FnDef {
     pub(super) parent: Option<FnId>,
     /// Where its body is, for finding which function a use is in.
     pub(super) body: Span,
+    /// The module it's in, and whether it's `pub` there.
+    pub(super) module: usize,
+    pub(super) public: bool,
 }
 
 /// The functions a block declares, which are in scope in all of it. Locals
@@ -71,7 +75,7 @@ pub(super) fn symbol(parent: &str, name: &str, taken: &HashSet<String>) -> Strin
 
 /// The symbol of each function of `prog`, in the order of
 /// `Program::all_fns`.
-pub(super) fn symbols(prog: &Program) -> Vec<String> {
+pub(super) fn symbols(prog: &Program, modules: &Modules) -> Vec<String> {
     let methods = prog.methods();
     let mut out: Vec<String> = Vec::new();
     let mut taken = HashSet::new();
@@ -87,7 +91,8 @@ pub(super) fn symbols(prog: &Program) -> Vec<String> {
                 };
                 let symbol = format!("<{header}>::{}", f.name.name);
                 // Two impls can only have the same header by mistake, which
-                // the checker rejects.
+                // the checker rejects, or for types of the same name in
+                // different modules.
                 (1..)
                     .map(|n| match n {
                         1 => symbol.clone(),
@@ -99,7 +104,7 @@ pub(super) fn symbols(prog: &Program) -> Vec<String> {
             (None, Some(&(_, MethodOf::Trait(k)))) => {
                 super::traits::trait_method_symbol(&prog.traits[k].name.name, &f.name.name)
             }
-            (None, None) => f.name.name.clone(),
+            (None, None) => format!("{}{}", modules.mods[f.module].prefix, f.name.name),
         };
         taken.insert(symbol.clone());
         out.push(symbol);
@@ -191,13 +196,16 @@ pub(super) fn declared_in(symbol: &str) -> String {
 
 impl Checker {
     /// What `name` refers to here, if anything: the innermost local or
-    /// function by that name, or else a built-in.
+    /// function by that name, or else one of its module's, or a built-in.
     pub(super) fn binding(&self, name: &str) -> Option<Binding> {
         let local = self.locals.iter().rposition(|l| l.name == name);
         let func = self.scopes.iter().rev().find_map(|s| {
             let id = s.fns.iter().find(|id| self.fns[id.0].name.name == name)?;
             Some((s.at, *id))
         });
+        // Its module's are in scope everywhere in it, so behind every local.
+        let module = || Some((0, FnId(self.modules.fn_named(self.module, name)?)));
+        let func = func.or_else(module);
         match (local, func) {
             (Some(i), Some((at, id))) if at > i => Some(Binding::Fn(id)),
             (Some(i), _) => Some(Binding::Local(i)),

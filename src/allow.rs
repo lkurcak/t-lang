@@ -31,6 +31,9 @@ pub fn apply(prog: &Program, warnings: &mut Vec<Warning>) {
 /// Everything in `prog` that has attributes, as its span and them.
 fn allowed(prog: &Program) -> Vec<(Span, &[Allow])> {
     let mut out: Vec<(Span, &[Allow])> = Vec::new();
+    for m in &prog.mods[1..] {
+        out.push((m.span, &m.allows));
+    }
     for (f, _) in prog.all_fns() {
         out.push((f.span, &f.allows));
     }

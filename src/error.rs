@@ -173,6 +173,8 @@ pub enum Lint {
     UnreachableCode,
     /// A loop's label that no `break` or `continue` uses.
     UnusedLabels,
+    /// A name a `use` brings in that nothing uses.
+    UnusedImports,
 }
 
 impl Lint {
@@ -191,10 +193,11 @@ impl Lint {
             Lint::InfiniteTypes => "infinite_types",
             Lint::UnreachableCode => "unreachable_code",
             Lint::UnusedLabels => "unused_labels",
+            Lint::UnusedImports => "unused_imports",
         }
     }
 
-    pub const ALL: [Lint; 13] = [
+    pub const ALL: [Lint; 14] = [
         Lint::UnreachablePatterns,
         Lint::OverlappingRanges,
         Lint::MergeableRanges,
@@ -208,6 +211,7 @@ impl Lint {
         Lint::InfiniteTypes,
         Lint::UnreachableCode,
         Lint::UnusedLabels,
+        Lint::UnusedImports,
     ];
 
     pub fn from_name(name: &str) -> Option<Lint> {

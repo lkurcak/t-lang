@@ -650,7 +650,22 @@ impl Checker {
             };
             let header = Span::new(d.span.start, d.self_ty.span.end);
             match (&trait_name, &self_ty) {
-                (None, Type::Adt(..)) => {}
+                // So all of a type's own methods are where its private
+                // fields can be seen.
+                (None, Type::Adt(symbol, ..)) => {
+                    let def = self.types.iter().find(|t| t.symbol == *symbol);
+                    if let Some(def) = def
+                        && def.module != d.module
+                    {
+                        return Err(Error::ty(
+                            d.self_ty.span,
+                            format!(
+                                "an inherent impl of `{self_ty}` must be in its module, {}",
+                                self.modules.describe(def.module)
+                            ),
+                        ));
+                    }
+                }
                 (None, t) => {
                     return Err(Error::ty(
                         d.self_ty.span,
@@ -917,6 +932,12 @@ impl Checker {
     ///
     /// A derived `Copy` needs the type to be `Discard` too, as `trait Copy:
     /// Discard`, and it's never assumed: it says so with a fix.
+    ///
+    /// What a public struct with private fields derives says what it needs
+    /// in a `where`, or needs nothing, if it has none (lemma M5 of
+    /// docs/06d-modules.md): those bounds are part of its interface, which
+    /// its private fields mustn't change. Whatever the fields need must
+    /// follow from what's written, which may say more, to leave room.
     pub(super) fn derive(&mut self, prog: &Program) -> Result<(), Error> {
         let decls = prog.all_types();
         // (impl index, type, the derive, trait)
@@ -943,6 +964,39 @@ impl Checker {
                     derived: true,
                 });
             }
+        }
+        // The bounds written down, by impl.
+        let mut written: HashMap<usize, Option<&Where>> = HashMap::new();
+        for &(k, i, _, tr) in &derived {
+            let (d, _) = decls[i];
+            let boundary = match d {
+                TypeDecl::Struct(s) => {
+                    s.public.is_some() && s.fields.iter().any(|f| f.public.is_none())
+                }
+                TypeDecl::Enum(_) => false,
+            };
+            let w = d.derive_where(tr);
+            if w.is_none() && !boundary {
+                continue;
+            }
+            if let Some(w) = w {
+                let def = &self.adts[&self.types[i].symbol];
+                let (params, lifetimes) = (def.params.clone(), def.lifetimes.clone());
+                if let Some((p, _)) = w.bounds.iter().find(|(p, _)| !params.contains(&p.name)) {
+                    return Err(Error::ty(
+                        p.span,
+                        format!("`{}` isn't a type parameter of `{}`", p.name, d.name().name),
+                    ));
+                }
+                let g = Generics {
+                    bounds: w.bounds.clone(),
+                    ..Generics::default()
+                };
+                let (preds, eqs) = self.preds(&g, &params, &lifetimes, false)?;
+                self.traits.impls[k].preds = preds;
+                self.traits.impls[k].eqs.extend(eqs);
+            }
+            written.insert(k, w);
         }
         loop {
             let mut changed = false;
@@ -995,6 +1049,9 @@ impl Checker {
                     (position(a), &a.trait_name).cmp(&(position(b), &b.trait_name))
                 });
                 let preds = needed;
+                if written.contains_key(&k) {
+                    continue;
+                }
                 if preds != self.traits.impls[k].preds {
                     self.traits.impls[k].preds = preds;
                     changed = true;
@@ -1003,6 +1060,56 @@ impl Checker {
             if !changed {
                 break;
             }
+        }
+        // What's written must give what the fields need.
+        for &(k, i, span, tr) in &derived {
+            let Some(&w) = written.get(&k) else {
+                continue;
+            };
+            let (d, _) = decls[i];
+            let def = &self.adts[&self.types[i].symbol];
+            let mut needed: Vec<Pred> = Vec::new();
+            for (_, t) in fields(&def.kind) {
+                // What can't hold at all was reported above.
+                let _ = self.needs(&t, tr, &def.params, &mut needed);
+            }
+            let imp = &self.traits.impls[k];
+            let missing: Vec<&Pred> = needed
+                .iter()
+                .filter(|p| {
+                    self.traits
+                        .implements(&p.ty, &p.trait_name, &imp.preds, &imp.eqs)
+                        .is_err()
+                })
+                .collect();
+            let Some(first) = missing.first() else {
+                continue;
+            };
+            let name = &d.name().name;
+            let bounds: Vec<String> = needed.iter().map(|p| format!("{p}")).collect();
+            let at = d.derive_of(tr).expect("derived");
+            return Err(match w {
+                Some(w) => Error::ty(
+                    w.span,
+                    format!("`{name}`'s `{tr}` needs `{first}`, which its `where` doesn't say"),
+                ),
+                None => Error::ty(
+                    span,
+                    format!(
+                        "`{name}` is public with private fields, so its `{tr}` must say what it \
+                         needs: `where {}`; what its private fields need can't be part of its \
+                         interface",
+                        bounds.join(", ")
+                    ),
+                )
+                .with_fix(Fix::new(
+                    "say what it needs",
+                    vec![Edit::insert(
+                        at.span.end,
+                        format!(" where {}", bounds.join(", ")),
+                    )],
+                )),
+            });
         }
         for &(k, i, span, tr) in &derived {
             let def = &self.traits.impls[k];
@@ -1983,6 +2090,9 @@ impl Checker {
     ) -> Result<Found, Error> {
         let ty = self.solved(ty);
         let m = &name.name;
+        // The traits it implements that aren't in scope, if it's a type
+        // whose impls are looked at.
+        let mut hidden: Vec<String> = Vec::new();
         if tr.is_none() {
             let inherent: Vec<usize> = self
                 .traits
@@ -2057,7 +2167,13 @@ impl Checker {
                 }
                 out.sort();
                 out.dedup();
-                out
+                // Only a trait in scope here: what one in another module
+                // says can't change what a call here means.
+                let (visible, out): (Vec<String>, Vec<String>) = out
+                    .into_iter()
+                    .partition(|t| self.modules.trait_in_scope(self.module, t));
+                hidden = out;
+                visible
             }
         };
         let mut having: Vec<&str> = traits
@@ -2068,6 +2184,24 @@ impl Checker {
         having.sort();
         let tr = match having[..] {
             [tr] => tr.to_string(),
+            [] if let Some(h) = hidden.iter().find(|h| self.traits.method(h, m).is_some()) => {
+                let path = self.modules.path_to_trait(self.module, h);
+                let fix = Fix::new(
+                    format!("import `{h}`"),
+                    vec![Edit::insert(
+                        self.modules.ends[self.module],
+                        format!("\nuse {path};\n"),
+                    )],
+                );
+                return Err(Error::ty(
+                    name.span,
+                    format!(
+                        "`{ty}` has no method `{m}` in scope; trait `{h}` has one: import it \
+                         with `use {path};`"
+                    ),
+                )
+                .with_fix(fix));
+            }
             [] => {
                 let message = match (tr, &ty) {
                     (Some(tr), _) => format!("trait `{tr}` has no method `{m}`"),
@@ -2121,6 +2255,7 @@ impl Checker {
                 ));
             }
         };
+        self.modules.use_trait(self.module, &tr);
         let def = self.traits.method(&tr, m).expect("it has it").clone();
         let own = &def.scheme.params[1..];
         let mut args = vec![ty.clone()];
@@ -2172,6 +2307,17 @@ impl Checker {
             .expect("a method");
         self.uses().fns.insert(super::scope::FnId(id));
         let f = &self.fns[id];
+        if !f.public && !self.modules.within(self.module, f.module) {
+            return Err(Error::ty(
+                name.span,
+                format!(
+                    "method `{}` of `{}` is private to {}",
+                    name.name,
+                    d.self_ty,
+                    self.modules.describe(f.module)
+                ),
+            ));
+        }
         let (scheme, def) = (f.scheme.clone(), f.name.span);
         let receiver = self.receivers[id];
         // The impl's parameters are worked out from the type; the method's
