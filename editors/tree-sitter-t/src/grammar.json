@@ -1498,6 +1498,60 @@
         {
           "type": "SYMBOL",
           "name": "projection_type"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "impl_type"
+        }
+      ]
+    },
+    "impl_type": {
+      "type": "PREC_RIGHT",
+      "value": 0,
+      "content": {
+        "type": "SEQ",
+        "members": [
+          {
+            "type": "STRING",
+            "value": "impl"
+          },
+          {
+            "type": "SYMBOL",
+            "name": "_trait_bound"
+          },
+          {
+            "type": "REPEAT",
+            "content": {
+              "type": "SEQ",
+              "members": [
+                {
+                  "type": "STRING",
+                  "value": "+"
+                },
+                {
+                  "type": "SYMBOL",
+                  "name": "_trait_bound"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "_trait_bound": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_type_identifier"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "trait_with_associated"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "trait_with_signature"
         }
       ]
     },

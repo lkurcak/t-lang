@@ -438,16 +438,12 @@ impl Checker {
                 }
             }
             Type::Adt(symbol, ..) => Some((0, self.traits.closures.get(&symbol)?.kind?)),
-            t @ (Type::Param(_) | Type::Proj(..)) => {
-                let implied = |tr: &str| {
-                    self.env
-                        .iter()
-                        .filter(|p| p.ty == t)
-                        .any(|p| self.traits.implied(&p.trait_name).iter().any(|i| i == tr))
-                };
+            // What its bounds say: the strongest of the `Fn` traits they do.
+            t @ (Type::Param(_) | Type::Proj(..) | Type::Opaque(..)) => {
+                let env = (&self.env, &self.adts.proj.local);
                 [FnKind::Fn, FnKind::FnMut, FnKind::FnOnce]
                     .into_iter()
-                    .find(|k| implied(k.name()))
+                    .find(|k| self.traits.implements(&t, k.name(), env.0, env.1).is_ok())
                     .map(|k| (0, k))
             }
             _ => None,

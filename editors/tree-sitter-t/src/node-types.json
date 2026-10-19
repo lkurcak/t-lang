@@ -168,6 +168,10 @@
         "named": true
       },
       {
+        "type": "impl_type",
+        "named": true
+      },
+      {
         "type": "never_type",
         "named": true
       },
@@ -1265,6 +1269,29 @@
           }
         ]
       }
+    }
+  },
+  {
+    "type": "impl_type",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "trait_with_associated",
+          "named": true
+        },
+        {
+          "type": "trait_with_signature",
+          "named": true
+        },
+        {
+          "type": "type_identifier",
+          "named": true
+        }
+      ]
     }
   },
   {

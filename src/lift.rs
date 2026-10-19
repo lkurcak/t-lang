@@ -199,6 +199,13 @@ impl<'p> Cx<'p> {
             TypeExprKind::Proj(inner, tr, name) => {
                 TypeExprKind::Proj(Box::new(self.ty(inner)), tr.clone(), name.clone())
             }
+            TypeExprKind::Impl(bounds) => {
+                let mut bounds = bounds.clone();
+                for t in bounds.iter_mut().flat_map(|b| b.types_mut()) {
+                    *t = self.ty(t);
+                }
+                TypeExprKind::Impl(bounds)
+            }
         };
         TypeExpr { kind, span: t.span }
     }

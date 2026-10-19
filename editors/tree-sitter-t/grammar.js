@@ -272,6 +272,20 @@ module.exports = grammar({
       $.never_type,
       $.qualified_type,
       $.projection_type,
+      $.impl_type,
+    ),
+
+    // `impl Fn(int) -> int + Discard`, in a return type: an opaque type.
+    impl_type: $ => prec.right(seq(
+      'impl',
+      $._trait_bound,
+      repeat(seq('+', $._trait_bound)),
+    )),
+
+    _trait_bound: $ => choice(
+      $._type_identifier,
+      $.trait_with_associated,
+      $.trait_with_signature,
     ),
 
     // `<T as Iter>::Item`

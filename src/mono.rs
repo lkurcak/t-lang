@@ -32,6 +32,12 @@
 //! to (`Cx::need_eq`): the interpreter can't tell a missing one from a
 //! derived one.
 //!
+//! An opaque type, `impl Fn(int) -> int` in a function's return type, is
+//! replaced by the type it stands for, in the copy at the type arguments
+//! it's at (`Projections::reveal`). That's sound for the same reason as for
+//! a trait's method: the checker only let callers rely on its bounds, which
+//! that type implements, by the impls it'll find here.
+//!
 //! The interpreter runs what comes out of here, and `t mono` prints it.
 
 use crate::ast::*;
@@ -447,11 +453,19 @@ impl Cx<'_, '_, '_> {
     fn resolved(&self, t: &TypeExpr) -> Type {
         // Everything is at the top level by now, named by its symbol.
         let arities = &self.m.arities;
-        let names = |name: &str, _| match self.params.iter().any(|p| p == name) {
-            true => None,
-            false => arities
-                .get(name)
-                .map(|&(l, n)| check::TypeName::Adt(name.to_string(), l, n)),
+        let opaques = &self.m.info.opaques;
+        let names = |name: &str, span: Span| {
+            if let Some(symbol) = opaques.get(&span) {
+                let d = &self.m.info.traits.opaques[symbol];
+                let (lifetimes, params) = (d.lifetimes.clone(), d.params.clone());
+                return Some(check::TypeName::Opaque(symbol.clone(), lifetimes, params));
+            }
+            match self.params.iter().any(|p| p == name) {
+                true => None,
+                false => arities
+                    .get(name)
+                    .map(|&(l, n)| check::TypeName::Adt(name.to_string(), l, n)),
+            }
         };
         let projections = &self.m.info.projections;
         let proj = |s: Type, tr: Option<&Ident>, name: &Ident, span: Span| {
@@ -467,9 +481,10 @@ impl Cx<'_, '_, '_> {
     }
 
     /// `t`, of the original, as it is in the copy: with the copy's type
-    /// arguments, and every projection worked out, as each can be now.
+    /// arguments, every opaque type replaced by the type it stands for,
+    /// and every projection worked out, as each can be now.
     fn subst(&self, t: &Type) -> Type {
-        self.m.proj.normalise(&self.s.apply(t))
+        self.m.proj.reveal(&self.s.apply(t))
     }
 
     /// Makes the copies of every impl's `eq` that `==` on values of type
@@ -572,7 +587,7 @@ impl Cx<'_, '_, '_> {
                 TypeExprKind::Ref(lifetime, *m, Box::new(self.written(inner, span)))
             }
             Type::Box(inner) => TypeExprKind::Named("Box".into(), vec![self.written(inner, span)]),
-            Type::Param(_) | Type::Var(_) | Type::Proj(..) => {
+            Type::Param(_) | Type::Var(_) | Type::Proj(..) | Type::Opaque(..) => {
                 unreachable!("`{t}` left after monomorphising")
             }
         };

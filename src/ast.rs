@@ -222,6 +222,34 @@ impl BoundItem {
     }
 }
 
+/// As written: `Show`, `Iter<Item = int>`, `Fn(int) -> int`.
+impl fmt::Display for BoundItem {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(&self.name.name)?;
+        if let Some((params, ret)) = &self.sig {
+            write!(f, "({})", comma_list(params))?;
+            if let Some(ret) = ret {
+                write!(f, " -> {ret}")?;
+            }
+        }
+        if !self.assoc.is_empty() {
+            let assoc: Vec<String> = self
+                .assoc
+                .iter()
+                .map(|a| match &a.kind {
+                    AssocBoundKind::Eq(t) => format!("{} = {t}", a.name.name),
+                    AssocBoundKind::Bounds(ts) => {
+                        let ts: Vec<&str> = ts.iter().map(|t| t.name.as_str()).collect();
+                        format!("{}: {}", a.name.name, ts.join(" + "))
+                    }
+                })
+                .collect();
+            write!(f, "<{}>", assoc.join(", "))?;
+        }
+        Ok(())
+    }
+}
+
 /// `Item = int` or `Item: Discard + Show` in a trait bound.
 #[derive(Debug, Clone)]
 pub struct AssocBound {
@@ -556,6 +584,10 @@ pub enum TypeExprKind {
     /// the type an impl of the trait picks for its associated type, for the
     /// type before the `as`.
     Proj(Box<TypeExpr>, Option<Ident>, Ident),
+    /// `impl Fn(int) -> int + Discard`, in a function's return type: some
+    /// type the function picks, of which callers only know that it
+    /// implements these traits (see docs/06c.1-opaque-types.md).
+    Impl(Vec<BoundItem>),
 }
 
 /// As written: `Option<int>`, `fn(int) -> bool`, `()`.
@@ -582,6 +614,10 @@ impl fmt::Display for TypeExpr {
                 write!(f, "<{t} as {}>::{}", tr.name, name.name)
             }
             TypeExprKind::Proj(t, None, name) => write!(f, "{t}::{}", name.name),
+            TypeExprKind::Impl(bounds) => {
+                let bounds: Vec<String> = bounds.iter().map(BoundItem::to_string).collect();
+                write!(f, "impl {}", bounds.join(" + "))
+            }
         }
     }
 }

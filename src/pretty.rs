@@ -453,39 +453,44 @@ impl Printer<'_> {
             |pp, p| {
                 let mut out = text(&p.name);
                 for (i, b) in g.bounds_of(&p.name).into_iter().enumerate() {
-                    out = out + if i == 0 { ": " } else { " + " } + &b.name.name;
-                    if let Some((params, ret)) = &b.sig {
-                        let open = pp.find(b.name.span.end, &Tok::LParen);
-                        let last = params.last().map(|p| p.span.end);
-                        let close = pp.close(open, last, &Tok::RParen);
-                        out = out + pp.types(PARENS, close, params);
-                        if let Some(ret) = ret {
-                            out = out + " -> " + pp.ty(ret);
-                        }
-                        continue;
-                    }
-                    if b.assoc.is_empty() {
-                        continue;
-                    }
-                    let mut args = Doc::nil();
-                    for (j, a) in b.assoc.iter().enumerate() {
-                        if j > 0 {
-                            args = args + ", ";
-                        }
-                        args = args + &a.name.name;
-                        args = match &a.kind {
-                            AssocBoundKind::Eq(t) => args + " = " + pp.ty(t),
-                            AssocBoundKind::Bounds(ts) => {
-                                let ts: Vec<&str> = ts.iter().map(|t| t.name.as_str()).collect();
-                                args + ": " + ts.join(" + ")
-                            }
-                        };
-                    }
-                    out = out + "<" + args + ">";
+                    out = out + if i == 0 { ": " } else { " + " } + pp.bound(b);
                 }
                 out
             },
         )
+    }
+
+    /// `Show`, `Iter<Item = int>` or `Fn(int) -> int`.
+    fn bound(&mut self, b: &BoundItem) -> Doc {
+        let mut out = text(&b.name.name);
+        if let Some((params, ret)) = &b.sig {
+            let open = self.find(b.name.span.end, &Tok::LParen);
+            let last = params.last().map(|p| p.span.end);
+            let close = self.close(open, last, &Tok::RParen);
+            out = out + self.types(PARENS, close, params);
+            if let Some(ret) = ret {
+                out = out + " -> " + self.ty(ret);
+            }
+            return out;
+        }
+        if b.assoc.is_empty() {
+            return out;
+        }
+        let mut args = Doc::nil();
+        for (j, a) in b.assoc.iter().enumerate() {
+            if j > 0 {
+                args = args + ", ";
+            }
+            args = args + &a.name.name;
+            args = match &a.kind {
+                AssocBoundKind::Eq(t) => args + " = " + self.ty(t),
+                AssocBoundKind::Bounds(ts) => {
+                    let ts: Vec<&str> = ts.iter().map(|t| t.name.as_str()).collect();
+                    args + ": " + ts.join(" + ")
+                }
+            };
+        }
+        out + "<" + args + ">"
     }
 
     fn type_decl(&mut self, d: &TypeDecl) -> Doc {
@@ -1053,6 +1058,16 @@ impl Printer<'_> {
                 text("<") + self.ty(inner) + " as " + &tr.name + ">::" + &name.name
             }
             TypeExprKind::Proj(inner, None, name) => self.ty(inner) + "::" + &name.name,
+            TypeExprKind::Impl(bounds) => {
+                let mut out = text("impl ");
+                for (i, b) in bounds.iter().enumerate() {
+                    if i > 0 {
+                        out = out + " + ";
+                    }
+                    out = out + self.bound(b);
+                }
+                out
+            }
             TypeExprKind::Fn(params, ret) => {
                 let open = self.find(t.span.start, &Tok::LParen);
                 let close = self.close(open, params.last().map(|p| p.span.end), &Tok::RParen);

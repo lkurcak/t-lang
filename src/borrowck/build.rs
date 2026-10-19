@@ -63,6 +63,10 @@ pub(crate) struct Builder<'a> {
     pub(crate) closures: Vec<ClosureUse<'a>>,
     /// Is the body a closure's?
     pub(crate) closure: bool,
+    /// The regions of the types its opaque types stand for, each of which
+    /// must be one of its lifetimes (see `borrowck::member_constraints`),
+    /// with where the opaque type is written, and as what.
+    pub(crate) members: Vec<(usize, Span, String)>,
     block: Bb,
     /// The locals of each scope being lowered, innermost last.
     scopes: Vec<Scope>,
@@ -130,6 +134,7 @@ impl<'a> Builder<'a> {
             loans: Vec::new(),
             closures: Vec::new(),
             closure: false,
+            members: Vec::new(),
             block: Bb(0),
             scopes: vec![Scope {
                 locals: Vec::new(),

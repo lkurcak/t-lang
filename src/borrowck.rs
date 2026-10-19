@@ -17,6 +17,10 @@
 //! - `loans.rs`: nothing borrowed is used in a way that clashes with the
 //!   borrow while it lasts.
 //!
+//! A function that returns an opaque type, `impl Fn(int) -> int`, returns
+//! the type it stands for, with regions of its own, each of which must be
+//! one of the function's lifetimes (`member_constraints`).
+//!
 //! A closure is checked as a function of its own, whose signature's regions
 //! are its *universal* regions. What it needs of them, it can't decide: the
 //! function it's in does, so it's passed up as constraints on the
@@ -53,7 +57,32 @@ pub(crate) fn check(cx: &Checker, f: &FnDecl, scheme: &Scheme) -> Result<Vec<War
     let regions = Regions::new(&scheme.lifetimes, &bounds);
     let adts = local_adts(cx, &regions);
     let mut b = Builder::new(cx, &adts, &info, regions);
-    let ret = b.regions.renumber(&sig.ret);
+    // Its body returns the types its opaque types stand for, with regions
+    // of their own: each must turn out to be one of the function's
+    // lifetimes, or `'static`, as that's all an opaque type says it may
+    // borrow for (`member_constraints`).
+    let ret = b.regions.renumber(&reveal_own(&sig.ret, cx));
+    let mut hidden = Vec::new();
+    pair_opaques(&sig.ret, &ret, &mut hidden);
+    for (symbol, h) in &hidden {
+        let d = &cx.traits().opaques[symbol];
+        let what = crate::types::opaque_text(symbol).to_string();
+        for r in outside_fns(h) {
+            if let Region::Var(v) = r
+                && b.regions.universal_vars.iter().all(|u| u != v)
+            {
+                b.members.push((*v, d.span, what.clone()));
+            }
+        }
+        // What its equality bounds say, with regions: a closure that
+        // returns `&'a int` isn't an `impl Fn() -> &'static int`.
+        let generic = d.generic(symbol);
+        for (lhs, rhs) in &d.eqs {
+            let lhs = adts.normalise(&replace_type(lhs, &generic, h));
+            let rhs = b.regions.renumber(rhs);
+            b.regions.equate(&info, &lhs, &rhs, d.span);
+        }
+    }
     let params: Vec<(String, Span, Type)> = f
         .params
         .iter()
@@ -65,6 +94,129 @@ pub(crate) fn check(cx: &Checker, f: &FnDecl, scheme: &Scheme) -> Result<Vec<War
     let names = Names::of(f, sig);
     let (warnings, _) = analyze(&mut b, &names, false)?;
     Ok(warnings)
+}
+
+/// `t`, a function's return type, with each opaque type in it the type it
+/// stands for, regions erased, as the function's body sees it.
+fn reveal_own(t: &Type, cx: &Checker) -> Type {
+    match t {
+        Type::Opaque(symbol, ..) => {
+            let hidden = cx.traits().opaques[symbol].hidden.as_ref();
+            hidden.expect("known once the body's types are").erased()
+        }
+        t => t.map(|p| reveal_own(p, cx)),
+    }
+}
+
+/// Each opaque type in `written`, with what's in its place in `revealed`,
+/// which is `written` with each the type it stands for.
+fn pair_opaques(written: &Type, revealed: &Type, out: &mut Vec<(String, Type)>) {
+    match written {
+        Type::Opaque(symbol, ..) => out.push((symbol.clone(), revealed.clone())),
+        t => {
+            for (w, r) in t.parts().zip(revealed.parts()) {
+                pair_opaques(w, r, out);
+            }
+        }
+    }
+}
+
+/// The regions of `t` but those in function types: a function value is
+/// code, which holds no references, so it's good for as long as anything,
+/// whatever its type mentions (see `regions::type_outlives`).
+fn outside_fns(t: &Type) -> Vec<&Region> {
+    let mut out = Vec::new();
+    match t {
+        Type::Fn(_) => return out,
+        Type::Ref(r, ..) => out.push(r),
+        Type::Adt(_, rs, _) | Type::Opaque(_, rs, _) => out.extend(rs),
+        _ => {}
+    }
+    for p in t.parts() {
+        out.extend(outside_fns(p));
+    }
+    out
+}
+
+/// `t`, with every `from` in it replaced by `to`.
+fn replace_type(t: &Type, from: &Type, to: &Type) -> Type {
+    match t == from {
+        true => to.clone(),
+        false => t.map(|p| replace_type(p, from, to)),
+    }
+}
+
+/// Makes each region of the types a function's opaque types stand for,
+/// `b.members`, one of the function's lifetimes, or `'static`: the least
+/// of those that holds all it must, and is held by all that must hold it,
+/// given the constraints so far. That's rustc's *member constraints*.
+///
+/// It's only inference: which one is picked decides which programs are
+/// accepted, not whether what's accepted is sound, as the region is then
+/// made equal to it, and everything is checked again with that.
+/// Soundness needs only that it's equal to one: then the type holds no
+/// reference that lasts less than what the opaque type is at, which is
+/// what `type_outlives` takes for granted of it, and what keeps the loans
+/// it holds alive wherever it goes.
+fn member_constraints(b: &mut Builder, names: &Names) -> Result<(), Error> {
+    let signature = b.regions.signature;
+    let universals = b.regions.universal.len();
+    for (h, span, what) in b.members.clone() {
+        let sol = b.regions.solve(&b.body);
+        // What it must hold: the ends of these.
+        let lower = sol.ends(h, universals);
+        // What must hold it: the universal regions it's reached from.
+        let mut seen = vec![false; b.regions.count];
+        let mut todo: Vec<usize> = Vec::new();
+        let mut upper = Vec::new();
+        for u in 0..signature {
+            seen.iter_mut().for_each(|s| *s = false);
+            todo.clear();
+            todo.push(b.regions.universal_vars[u]);
+            while let Some(r) = todo.pop() {
+                if r == h {
+                    upper.push(u);
+                    break;
+                }
+                for c in &b.regions.constraints {
+                    if c.sup == r && !seen[c.sub] {
+                        seen[c.sub] = true;
+                        todo.push(c.sub);
+                    }
+                }
+            }
+        }
+        let known = &b.regions.known;
+        let fits: Vec<usize> = (0..signature)
+            .filter(|&c| lower.iter().all(|&e| e < signature && known[c][e]))
+            .filter(|&c| upper.iter().all(|&u| known[u][c]))
+            .collect();
+        let Some(&c) = fits.iter().find(|&&c| fits.iter().all(|&o| known[o][c])) else {
+            let mut own: Vec<String> = (1..signature).map(|u| names.lifetime(b, u)).collect();
+            own.push("`'static`".to_string());
+            return Err(Error::ty(
+                span,
+                format!(
+                    "the type behind `{what}` borrows for a lifetime that isn't one of {}: \
+                     those are all it can borrow for, and nothing says which one this is",
+                    or_list(&own)
+                ),
+            ));
+        };
+        let u = Region::Var(b.regions.universal_vars[c]);
+        b.regions.outlives(&Region::Var(h), &u, span);
+        b.regions.outlives(&u, &Region::Var(h), span);
+    }
+    Ok(())
+}
+
+/// `a`, `a or b`, `a, b or c`.
+fn or_list(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [a] => a.clone(),
+        [rest @ .., last] => format!("{} or {last}", rest.join(", ")),
+    }
 }
 
 /// The checker's structs and enums, with what the equality bounds in scope
@@ -156,6 +308,10 @@ fn analyze(
     if let Err(e) = moves::moves(b).and_then(|()| moves::linear(b)) {
         errors.push(e);
     }
+    // That a region of an opaque type's can't be one of the function's
+    // lifetimes is often because of something else that's wrong, which is
+    // what's worth saying, if there's anything.
+    let members = member_constraints(b, names).err();
     let sol = b.regions.solve(&b.body);
     if let Err(e) = loans::check(b, &sol) {
         errors.push(e);
@@ -264,7 +420,7 @@ fn analyze(
             ));
         }
     }
-    if let Some(e) = errors.into_iter().min_by_key(|e| e.span.start) {
+    if let Some(e) = errors.into_iter().min_by_key(|e| e.span.start).or(members) {
         return Err(e);
     }
     for (name, span) in moves::unused_mut(b, &needed) {

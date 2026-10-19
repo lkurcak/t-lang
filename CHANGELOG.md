@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+Step 6c.1: returning closures, opaque types. See
+[docs/06c.1-opaque-types.md](docs/06c.1-opaque-types.md).
+
+### Added
+
+- `impl Fn(int) -> int + Discard`, anywhere in the return type of a
+  function, nested function or method of an inherent impl: an opaque type,
+  standing for the one type the function's body returns there. Any bounds
+  can follow `impl`, like `impl Iter<Item = int>`. Callers know only what
+  they say, `Discard` and `Copy` included, and the impls that apply to any
+  type that does; each `impl` written is a type of its own.
+- An opaque type may borrow for any lifetime of its function, elided ones
+  too, and hold any of its type parameters, and is invariant in them. The
+  borrow checker makes each region of the type behind it one of those
+  lifetimes, or `'static` (member constraints), and checks its bounds with
+  their lifetimes.
+- A type behind an opaque type that holds that opaque type, through others
+  or not, is an error.
+- The tree-sitter grammar, the formatter and the language server know
+  `impl` types.
+
+### Changed
+
+- `t mono` writes the type behind each opaque type, as `{closure#12}` for a
+  closure's.
+
 ## 0.8.0 (2026-10-19)
 
 Step 6c: closures as `Fn` traits. See

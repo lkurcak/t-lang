@@ -418,7 +418,13 @@ impl Cx<'_> {
             }),
             // Nothing is known about a type parameter's values: it could be
             // anything.
-            Type::Fn(..) | Type::Param(_) | Type::Proj(..) | Type::Var(_) | Type::Box(_) => None,
+            // Nor about an opaque type's, outside the function that picks it.
+            Type::Fn(..)
+            | Type::Param(_)
+            | Type::Proj(..)
+            | Type::Opaque(..)
+            | Type::Var(_)
+            | Type::Box(_) => None,
             Type::Ref(..) => unreachable!("peeled"),
         }
     }

@@ -214,6 +214,16 @@ fn vary(
         // way at all: `<W<'a> as Tr>::Out` can be a `&'a mut &'a int`
         // though `W` is covariant. So it's invariant in them.
         Type::Proj(inner, ..) => vary(inner, Variance::Inv, d, variances, out),
+        // How an opaque type's hidden type uses its parameters isn't for
+        // anything else to know, so it's invariant in them all.
+        Type::Opaque(_, regions, args) => {
+            for r in regions {
+                region(r, Variance::Inv, out);
+            }
+            for a in args {
+                vary(a, Variance::Inv, d, variances, out);
+            }
+        }
         Type::Int | Type::Bool | Type::Unit | Type::Never | Type::Var(_) => {}
     }
 }
@@ -259,6 +269,13 @@ fn wf_into(t: &Type, adts: &Adts, outlives: &HashMap<String, Vec<Bound>>, out: &
             }
         }
         Type::Proj(inner, ..) => wf_into(inner, adts, outlives, out),
+        // What its hidden type needs was checked where that's known, and
+        // holds wherever the type is made, by a call of the function.
+        Type::Opaque(_, _, args) => {
+            for a in args {
+                wf_into(a, adts, outlives, out);
+            }
+        }
         Type::Fn(_)
         | Type::Int
         | Type::Bool
@@ -283,7 +300,10 @@ pub(crate) fn type_outlives(t: &Type, r: &Region, out: &mut Vec<Bound>) {
             push(out, Bound::Region(q.clone(), r.clone()));
             type_outlives(inner, r, out);
         }
-        Type::Adt(_, regions, args) => {
+        // An opaque type's hidden type only has regions it's at, and
+        // `'static`, and only the types it's at in it (see
+        // `Builder::member_constraints`), so it outlives what they all do.
+        Type::Adt(_, regions, args) | Type::Opaque(_, regions, args) => {
             for q in regions {
                 push(out, Bound::Region(q.clone(), r.clone()));
             }
@@ -558,6 +578,15 @@ impl Regions {
                 }
                 for (i, (ta, tb)) in tas.iter().zip(tbs).enumerate() {
                     self.relate(adts, ta, tb, v.then(vs[ras.len() + i]), span);
+                }
+            }
+            // Invariant in everything: see `vary`.
+            (Type::Opaque(_, ras, tas), Type::Opaque(_, rbs, tbs)) => {
+                for (ra, rb) in ras.iter().zip(rbs) {
+                    region(self, ra, rb, Variance::Inv);
+                }
+                for (ta, tb) in tas.iter().zip(tbs) {
+                    self.relate(adts, ta, tb, Variance::Inv, span);
                 }
             }
             // No regions to relate. A `!` goes anywhere, having no values.

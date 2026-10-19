@@ -1,0 +1,32 @@
+fn adder(n: int) -> {closure#199} { move |x| x + n }
+
+fn counter() -> {closure#287} {
+    let mut n = 0;
+    move || {
+        n += 1;
+        n
+    }
+}
+
+fn compose::<{closure#199}, {closure#199}>(
+    f: {closure#199},
+    g: {closure#199},
+) -> {closure#464}::<{closure#199}, {closure#199}> { move |x| (&g)((&f)(x)) }
+
+fn pick(c: bool) -> {closure#199} {
+    let a = adder(1);
+    let b = adder(2);
+    if c { a } else { b }
+}
+
+fn main() {
+    let add5 = adder(5);
+    print((&add5)(1));
+    let mut c = counter();
+    print((&mut c)());
+    print((&mut c)());
+    let h = compose::<{closure#199}, {closure#199}>(adder(1), adder(10));
+    print((&h)(0));
+    print((&pick(false))(0));
+    print((&adder(2))(3));
+}

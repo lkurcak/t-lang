@@ -76,7 +76,7 @@ That's what keeps function types sound under the rule trait resolution
 relies on: a function value works at every lifetime (`traits::matches`),
 which is true when it holds no references. Returning a closure that captures
 needs a way to say "some type that implements `Fn`" in a signature, `impl
-Fn(int) -> int`: that's step 6c.1.
+Fn(int) -> int`: that's step 6c.1, docs/06c.1-opaque-types.md.
 
 ## How a closure captures
 

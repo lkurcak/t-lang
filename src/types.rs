@@ -53,6 +53,15 @@ pub enum Type {
     /// parameter, in generic code, where it's a type that's equal only to
     /// itself, like the parameter; or on a type variable, until it's known.
     Proj(Box<Type>, String, String),
+    /// `impl Fn(int) -> int`, as a function's return type: an *opaque*
+    /// type, standing for one type the function picks, its *hidden* type,
+    /// of which the rest of the program knows only what the bounds say
+    /// (see docs/06c.1-opaque-types.md). By its symbol, with every lifetime
+    /// and type parameter in scope where it's written, which its hidden
+    /// type may mention: it's equal only to itself at the same ones. Its
+    /// definition is a `traits::OpaqueDef`. Monomorphisation replaces it
+    /// with the hidden type.
+    Opaque(String, Vec<Region>, Vec<Type>),
 }
 
 /// A *region*, or *lifetime*: the stretch of the program during which a
@@ -326,6 +335,11 @@ impl Subst {
                 regions.iter().map(|r| self.region(r)).collect(),
                 args.iter().map(|a| self.apply(a)).collect(),
             ),
+            Type::Opaque(name, regions, args) => Type::Opaque(
+                name.clone(),
+                regions.iter().map(|r| self.region(r)).collect(),
+                args.iter().map(|a| self.apply(a)).collect(),
+            ),
             t => t.map(|p| self.apply(p)),
         }
     }
@@ -347,7 +361,7 @@ impl Type {
     pub fn parts(&self) -> impl Iterator<Item = &Type> {
         let (params, ret): (&[Type], Option<&Type>) = match self {
             Type::Fn(f) => (&f.params, Some(&f.ret)),
-            Type::Adt(_, _, args) => (args, None),
+            Type::Adt(_, _, args) | Type::Opaque(_, _, args) => (args, None),
             Type::Ref(_, _, t) | Type::Box(t) | Type::Proj(t, ..) => (&[], Some(t)),
             Type::Int | Type::Bool | Type::Unit | Type::Never | Type::Param(_) | Type::Var(_) => {
                 (&[], None)
@@ -368,6 +382,9 @@ impl Type {
             Type::Adt(name, regions, args) => {
                 Type::Adt(name.clone(), regions.clone(), args.iter().map(f).collect())
             }
+            Type::Opaque(name, regions, args) => {
+                Type::Opaque(name.clone(), regions.clone(), args.iter().map(f).collect())
+            }
             Type::Ref(r, m, t) => Type::Ref(r.clone(), *m, Box::new(f(t))),
             Type::Box(t) => Type::Box(Box::new(f(t))),
             Type::Proj(t, tr, name) => Type::Proj(Box::new(f(t)), tr.clone(), name.clone()),
@@ -385,7 +402,8 @@ impl Type {
     pub fn same_shape(&self, other: &Type) -> bool {
         match (self, other) {
             (Type::Fn(f), Type::Fn(g)) => f.params.len() == g.params.len(),
-            (Type::Adt(a, _, xs), Type::Adt(b, _, ys)) => a == b && xs.len() == ys.len(),
+            (Type::Adt(a, _, xs), Type::Adt(b, _, ys))
+            | (Type::Opaque(a, _, xs), Type::Opaque(b, _, ys)) => a == b && xs.len() == ys.len(),
             (Type::Ref(_, m, _), Type::Ref(_, n, _)) => m == n,
             (Type::Box(_), Type::Box(_)) => true,
             (Type::Proj(_, a, x), Type::Proj(_, b, y)) => a == b && x == y,
@@ -420,6 +438,14 @@ impl Type {
                     .collect();
                 let args = args.iter().map(|a| a.map_free_regions(f, bound)).collect();
                 Type::Adt(name.clone(), regions, args)
+            }
+            Type::Opaque(name, regions, args) => {
+                let regions = regions
+                    .iter()
+                    .map(|r| if free(r, bound) { f(r) } else { r.clone() })
+                    .collect();
+                let args = args.iter().map(|a| a.map_free_regions(f, bound)).collect();
+                Type::Opaque(name.clone(), regions, args)
             }
             Type::Fn(sig) => {
                 let outer = bound.len();
@@ -462,7 +488,7 @@ impl Type {
         };
         match self {
             Type::Ref(r, _, _) => free(r),
-            Type::Adt(_, regions, _) => regions.iter().for_each(free),
+            Type::Adt(_, regions, _) | Type::Opaque(_, regions, _) => regions.iter().for_each(free),
             _ => {}
         }
         let outer = bound.len();
@@ -509,6 +535,10 @@ impl Type {
             Type::Ref(_, m, t) => format!("&{}{}", if *m { "mut " } else { "" }, t.symbols()),
             Type::Box(t) => format!("Box<{}>", t.symbols()),
             Type::Proj(t, tr, name) => format!("<{} as {tr}>::{name}", t.symbols()),
+            Type::Opaque(name, _, args) => {
+                let args: Vec<String> = args.iter().map(Type::symbols).collect();
+                format!("{{{name}}}<{}>", args.join(", "))
+            }
             t => t.to_string(),
         }
     }
@@ -559,6 +589,8 @@ impl fmt::Display for Type {
             Type::Proj(t, _, name) if matches!(**t, Type::Param(_)) => write!(f, "{t}::{name}"),
             Type::Proj(t, tr, name) => write!(f, "<{t} as {tr}>::{name}"),
             Type::Param(name) => f.write_str(name),
+            // As written, which is where it's from: what it's at says little.
+            Type::Opaque(name, ..) => f.write_str(opaque_text(name)),
             // Like Rust: "some type, not known yet".
             Type::Var(_) => f.write_str("_"),
         }
@@ -568,6 +600,18 @@ impl fmt::Display for Type {
 /// Is `symbol` a closure's type's? See `traits::ClosureDef`.
 pub fn is_closure(symbol: &str) -> bool {
     symbol.starts_with("{closure#")
+}
+
+/// The symbol of the opaque type written as `text` at offset `at`: the
+/// text, which is how it's shown, and where, which tells apart two written
+/// the same.
+pub fn opaque_symbol(text: &str, at: usize) -> String {
+    format!("{text}#{at}")
+}
+
+/// How the opaque type of `symbol` is shown: as written.
+pub fn opaque_text(symbol: &str) -> &str {
+    symbol.rsplit_once('#').map_or(symbol, |(text, _)| text)
 }
 
 /// Is region `r` one that types are shown without? Those that nobody wrote.

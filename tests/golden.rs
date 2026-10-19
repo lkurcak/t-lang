@@ -96,8 +96,9 @@ fn mono() {
 /// A program without generics, nested functions or local types prints as
 /// itself: parsing what `t mono` prints gives a program that prints the
 /// same, and does the same. (The names of the copies of generic things,
-/// like `id::<int>`, and of lifted nested functions and local types, like
-/// `main::helper`, don't parse.)
+/// like `id::<int>`, of lifted nested functions and local types, like
+/// `main::helper`, and of closures' types, which a function that returns
+/// one names, like `{closure#12}`, don't parse.)
 #[test]
 fn printing_round_trips() {
     let mut failures = Vec::new();
@@ -110,7 +111,10 @@ fn printing_round_trips() {
         let printed = program.to_string();
         let lifted = program.fns.iter().map(|f| &f.name.name);
         let lifted = lifted.chain(program.types.iter().map(|d| &d.name().name));
-        if printed.contains("::<") || lifted.into_iter().any(|name| name.contains("::")) {
+        if printed.contains("::<")
+            || printed.contains("{closure#")
+            || lifted.into_iter().any(|name| name.contains("::"))
+        {
             continue;
         }
         let reprinted = match t_lang::check_source(&printed).result {

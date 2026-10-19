@@ -34,6 +34,16 @@ pub(super) fn has_vars(t: &Type) -> bool {
 /// If `a` and `b` mention two different types of the same name, which look
 /// the same in a message, the rest of the message, which says so.
 fn same_name(a: &Type, b: &Type) -> String {
+    let (mut xs, mut ys) = (Vec::new(), Vec::new());
+    opaques(a, &mut xs);
+    opaques(b, &mut ys);
+    let text = crate::types::opaque_text;
+    if xs
+        .iter()
+        .any(|x| ys.iter().any(|y| x != y && text(x) == text(y)))
+    {
+        return "; each `impl` type is a type of its own, even if two look the same".to_string();
+    }
     let mut symbols: Vec<&str> = Vec::new();
     for t in [a, b] {
         super::each_adt(t, &mut |s, _| {
@@ -69,6 +79,14 @@ fn same_name(a: &Type, b: &Type) -> String {
         }
     }
     String::new()
+}
+
+/// The symbols of the opaque types in `t`.
+fn opaques<'t>(t: &'t Type, out: &mut Vec<&'t str>) {
+    if let Type::Opaque(s, ..) = t {
+        out.push(s);
+    }
+    t.parts().for_each(|p| opaques(p, out));
 }
 
 /// `t`, with every variable `v` in it called `name`. For explaining an
@@ -156,8 +174,11 @@ impl Checker {
                 }
                 // Not worked out, though its type is known: no impl, which
                 // the obligation that the type implements the trait says.
+                // Unless it's rigid: on a parameter, or an opaque type,
+                // which implements what it does without saying what its
+                // associated types are.
                 if let Type::Proj(s, ..) = &p
-                    && !matches!(**s, Type::Param(_) | Type::Proj(..))
+                    && !matches!(**s, Type::Param(_) | Type::Proj(..) | Type::Opaque(..))
                 {
                     continue;
                 }

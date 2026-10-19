@@ -295,6 +295,47 @@ fn hovers_hints_and_goes_to_definitions() {
 }
 
 #[test]
+fn hovers_and_hints_show_opaque_types_as_written() {
+    let (child, mut c) = start();
+    let uri = "file:///tmp/opaque.t";
+    let src = "fn adder(n: int) -> impl Fn(int) -> int + Discard { move |x| x + n }\nfn main() {\n    let f = adder(1);\n    print(f(2));\n}\n";
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
+        }}),
+    );
+    assert_eq!(c.diagnostics(), Vec::<Value>::new());
+    let at = |line: u32, character: u32| json!({"textDocument": {"uri": uri}, "position": {"line": line, "character": character}});
+
+    // Callers see what the signature says, not the closure behind it.
+    c.send(json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": at(3, 10)}));
+    let hover = c.response(2)["result"].clone();
+    assert_eq!(
+        hover["contents"]["value"], "```t\nf: impl Fn(int) -> int + Discard\n```",
+        "{hover}"
+    );
+    let whole = json!({"start": {"line": 0, "character": 0}, "end": {"line": 5, "character": 0}});
+    c.send(
+        json!({"jsonrpc": "2.0", "id": 3, "method": "textDocument/inlayHint", "params": {
+            "textDocument": {"uri": uri}, "range": whole
+        }}),
+    );
+    let hints = c.response(3)["result"].clone();
+    let labels: Vec<Value> = hints
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| h["label"].clone())
+        .collect();
+    assert!(
+        labels.contains(&json!(": impl Fn(int) -> int + Discard")),
+        "{hints}"
+    );
+
+    stop(child, c);
+}
+
+#[test]
 fn hovers_show_doc_comments() {
     let (child, mut c) = start();
     let uri = "file:///tmp/docs.t";

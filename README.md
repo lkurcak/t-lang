@@ -260,7 +260,9 @@ has to fit that:
 - **Closures are values of their own types**, structs of what they borrow
   or own, called through the `Fn` traits, like Rust's: no closure needs the
   heap. The borrow checker sees what each borrows. See
-  [docs/06c-closures.md](docs/06c-closures.md).
+  [docs/06c-closures.md](docs/06c-closures.md). A function returns one as
+  `impl Fn(int) -> int`, a type its callers know only by what it can do
+  (see [docs/06c.1-opaque-types.md](docs/06c.1-opaque-types.md)).
 - **Errors are values, not exceptions.** There's no unwinding.
 - **Values must be used up.** One whose type isn't `#[derive(Discard)]`
   can't be dropped or overwritten: a resource like a file descriptor can't
@@ -284,7 +286,7 @@ combine features in ways nobody planned for.
 | 6a.1 ✅ | values must be used up, unless `Discard`; `replace` | linear types, substructural rules (weakening, contraction) | [docs/06a.1-linear-types.md](docs/06a.1-linear-types.md) |
 | 6b ✅ | associated types, projections, equality bounds | type-level functions (open type families), normalisation with lifetimes | [docs/06b-associated-types.md](docs/06b-associated-types.md) |
 | 6c ✅ | closures as `Fn` traits | closure conversion, a type per closure, capturing by reference | [docs/06c-closures.md](docs/06c-closures.md) |
-| 6c.1 | returning closures, `-> impl Fn(int) -> int` | existential (opaque) types | |
+| 6c.1 ✅ | returning closures, `-> impl Fn(int) -> int` | existential (opaque) types, which lifetimes they capture | [docs/06c.1-opaque-types.md](docs/06c.1-opaque-types.md) |
 | 6d | modules: `mod`, `use`, visibility | abstract types, orphan rules (coherence across modules) | derived bounds written out at module boundaries |
 | 6e | a small `core`: `Option`, `Result`, `Ord`, `Iterator`, `for` | equality bounds with projections (`IntoIterator`), iterating over linear values | what the tests keep defining themselves; no allocation |
 | 7 | effects | effect systems: which functions can panic, allocate or diverge | |

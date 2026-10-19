@@ -134,6 +134,75 @@ impl ClosureDef {
     }
 }
 
+/// What an opaque type, `impl Fn(int) -> int` in a function's return type,
+/// is (see `Type::Opaque`). Its type is generic over every lifetime and type
+/// parameter of the function, as the hidden type it stands for may mention
+/// any of them; it's *invariant* in each, as how the hidden type uses them
+/// isn't for the rest of the program to know.
+///
+/// Everywhere but in the function, it's like a type parameter whose bounds
+/// are its `preds` and `eqs`: it implements what they say, and the impls
+/// that apply to any type that does (blanket impls), and nothing else. Its
+/// hidden type was checked to implement what they say, under the
+/// function's bounds, so monomorphisation, which replaces it with that,
+/// finds the same impls: by coherence, a blanket impl that applies to it is
+/// the only impl of its trait.
+#[derive(Debug, Clone)]
+pub struct OpaqueDef {
+    /// The function it's the return type of, by symbol, and by name.
+    pub owner: String,
+    pub owner_name: String,
+    /// The function's type and lifetime parameters, the elided ones too.
+    pub params: Vec<String>,
+    pub lifetimes: Vec<String>,
+    /// What it implements, on itself as `generic` or on projections of
+    /// that, mentioning `params` and `lifetimes`.
+    pub preds: Vec<Pred>,
+    /// What its equality bounds say, like `(<Self as Iter>::Item, int)`,
+    /// with `generic` for `Self`.
+    pub eqs: Vec<(Type, Type)>,
+    /// The type it stands for, mentioning `params`, once the function's
+    /// body is checked. Its regions don't matter: monomorphisation
+    /// ignores them, and the borrow checker of the function's body makes
+    /// its own.
+    pub hidden: Option<Type>,
+    /// Where it's written.
+    pub span: Span,
+}
+
+impl OpaqueDef {
+    /// Its type with the function's parameters as arguments, as the
+    /// function sees it.
+    pub fn generic(&self, symbol: &str) -> Type {
+        Type::Opaque(
+            symbol.to_string(),
+            self.lifetimes.iter().cloned().map(Region::Named).collect(),
+            self.params.iter().cloned().map(Type::Param).collect(),
+        )
+    }
+
+    /// What its parameters are at type `t`, which is it.
+    pub fn subst(&self, t: &Type) -> Subst {
+        let Type::Opaque(_, regions, args) = t else {
+            unreachable!("`{t}` isn't an opaque type")
+        };
+        let s = Subst::new(&self.params, args);
+        match regions.len() == self.lifetimes.len() {
+            true => s.with_regions(&self.lifetimes, regions),
+            false => s,
+        }
+    }
+
+    /// Its hidden type at type `t`, which is it.
+    pub fn hidden_at(&self, t: &Type) -> Type {
+        let hidden = self
+            .hidden
+            .as_ref()
+            .expect("the hidden type is known by now");
+        self.subst(t).apply(hidden)
+    }
+}
+
 /// A trait.
 #[derive(Debug, Clone)]
 pub struct TraitDef {
@@ -217,6 +286,8 @@ pub struct Traits {
     pub impls: Vec<ImplDef>,
     /// Every closure that captures, by its symbol.
     pub closures: HashMap<String, ClosureDef>,
+    /// Every opaque type, by its symbol.
+    pub opaques: HashMap<String, OpaqueDef>,
 }
 
 /// How a type implements a trait.
@@ -316,6 +387,7 @@ impl Traits {
             traits,
             impls: Vec::new(),
             closures: HashMap::new(),
+            opaques: HashMap::new(),
         }
     }
 
@@ -397,6 +469,12 @@ impl Traits {
     /// equality bounds in scope, for an impl that has some of its own,
     /// which hold by normalising, the same before and after substitution
     /// (see `Projections`). `ty` must be normalised as far as it goes.
+    ///
+    /// An opaque type implements what its bounds say, and what blanket
+    /// impls give that, as a rigid projection does; monomorphisation asks
+    /// of its hidden type, which was checked to implement its bounds with
+    /// the bounds of the function it's from, and gets the same answer (see
+    /// `matches`).
     pub fn implements(
         &self,
         ty: &Type,
@@ -479,6 +557,13 @@ impl Traits {
                 _ => Err(fail()),
             };
         }
+        // What an opaque type's bounds say it implements, it does; or it
+        // might by a blanket impl, below. An opaque type has no impls of
+        // its own: nothing can name it. So does a projection on it that
+        // they say does.
+        if let Some(Source::Assumed) = self.opaque_implements(ty, tr) {
+            return Ok(Source::Assumed);
+        }
         if let Type::Param(_) | Type::Proj(..) = ty {
             let implied = |t: &str| self.implied(t).iter().any(|t| t == tr);
             let assumed = env.iter().any(|p| p.ty == *ty && implied(&p.trait_name));
@@ -501,18 +586,57 @@ impl Traits {
         let d = &self.impls[i];
         let s = Subst::new(&d.params, &args);
         for p in &d.preds {
-            let t = normalise(&self.impls, &self.closures, eqs, &s.apply(&p.ty));
+            let t = normalise(&self.impls, &self.anon(), eqs, &s.apply(&p.ty));
             self.implements_at(&t, &p.trait_name, env, eqs, depth + 1)?;
         }
         for (lhs, rhs) in &d.eqs {
             let (l, r) = (s.apply(lhs), s.apply(rhs));
-            let normal = |t: &Type| normalise(&self.impls, &self.closures, eqs, t).erased();
+            let normal = |t: &Type| normalise(&self.impls, &self.anon(), eqs, t).erased();
             if normal(&l) != normal(&r) {
                 return Err(fail());
             }
         }
         Ok(Source::Impl(i, args))
     }
+
+    /// `Some(Assumed)` if `ty` is an opaque type, or a projection on one,
+    /// that the opaque type's bounds say implements `tr`.
+    fn opaque_implements(&self, ty: &Type, tr: &str) -> Option<Source> {
+        let mut root = ty;
+        while let Type::Proj(inner, ..) = root {
+            root = inner;
+        }
+        let Type::Opaque(symbol, ..) = root else {
+            return None;
+        };
+        let d = self.opaques.get(symbol)?;
+        let s = d.subst(root);
+        let erased = ty.erased();
+        d.preds
+            .iter()
+            .any(|p| {
+                s.apply(&p.ty).erased() == erased
+                    && self.implied(&p.trait_name).iter().any(|t| t == tr)
+            })
+            .then_some(Source::Assumed)
+    }
+
+    /// The closures and opaque types, for normalising.
+    pub fn anon(&self) -> Anon<'_> {
+        Anon {
+            closures: &self.closures,
+            opaques: &self.opaques,
+        }
+    }
+}
+
+/// The types with no names a program can write: closures' and opaque
+/// types. What a projection on one is is in their definitions rather than
+/// impls.
+#[derive(Clone, Copy)]
+pub struct Anon<'a> {
+    pub closures: &'a HashMap<String, ClosureDef>,
+    pub opaques: &'a HashMap<String, OpaqueDef>,
 }
 
 /// What the projections in types stand for: the associated types of every
@@ -547,6 +671,9 @@ pub struct Projections {
     /// Every closure that captures, by symbol: what it takes and gives is
     /// what `<C as FnOnce>::(signature)` is.
     pub closures: HashMap<String, ClosureDef>,
+    /// Every opaque type, by symbol: what its equality bounds say a
+    /// projection on it is.
+    pub opaques: HashMap<String, OpaqueDef>,
     /// What the equality bounds in scope say: `(T::Item, int)` for
     /// `T: Iter<Item = int>`.
     pub local: Vec<(Type, Type)>,
@@ -558,33 +685,50 @@ impl Projections {
         Projections {
             impls: Arc::new(impls.cloned().collect()),
             closures: traits.closures.clone(),
+            opaques: traits.opaques.clone(),
             local: Vec::new(),
+        }
+    }
+
+    fn anon(&self) -> Anon<'_> {
+        Anon {
+            closures: &self.closures,
+            opaques: &self.opaques,
         }
     }
 
     /// `t`, with every projection in it that can be worked out, worked out.
     pub fn normalise(&self, t: &Type) -> Type {
-        normalise(&self.impls, &self.closures, &self.local, t)
+        normalise(&self.impls, &self.anon(), &self.local, t)
+    }
+
+    /// `t`, with every opaque type in it replaced by the type it stands
+    /// for, as far down as that goes, and then normalised: for
+    /// monomorphisation, once every function's body is checked. It ends,
+    /// as no hidden type holds its own opaque type, through others or not
+    /// (`Checker::opaque_cycles`).
+    pub fn reveal(&self, t: &Type) -> Type {
+        let t = t.map(|p| self.reveal(p));
+        let t = match &t {
+            Type::Opaque(symbol, ..) => self.reveal(&self.opaques[symbol].hidden_at(&t)),
+            _ => t,
+        };
+        self.normalise(&t)
     }
 }
 
 /// `t`, with every projection in it worked out that can be: by the impl of
 /// `impls` its type matches, or what `local` says of a rigid one.
-pub fn normalise(
-    impls: &[ImplDef],
-    closures: &HashMap<String, ClosureDef>,
-    local: &[(Type, Type)],
-    t: &Type,
-) -> Type {
-    let t = t.map(|p| normalise(impls, closures, local, p));
+pub fn normalise(impls: &[ImplDef], anon: &Anon, local: &[(Type, Type)], t: &Type) -> Type {
+    let t = t.map(|p| normalise(impls, anon, local, p));
     let Type::Proj(s, tr, name) = &t else {
         return t;
     };
     if let Some((_, u)) = local.iter().find(|(p, _)| *p == t) {
         return u.clone();
     }
-    match project(impls, closures, s, tr, name) {
-        Some(u) => normalise(impls, closures, local, &u),
+    match project(impls, anon, s, tr, name) {
+        Some(u) => normalise(impls, anon, local, &u),
         None => t,
     }
 }
@@ -592,15 +736,24 @@ pub fn normalise(
 /// What `<s as tr>::name` is by the impl of `impls` that's for `s`, if one
 /// is: the type it says, with the parts of `s` its parameters match, and
 /// the regions of `s` where its lifetimes are.
-pub fn project(
-    impls: &[ImplDef],
-    closures: &HashMap<String, ClosureDef>,
-    s: &Type,
-    tr: &str,
-    name: &str,
-) -> Option<Type> {
+pub fn project(impls: &[ImplDef], anon: &Anon, s: &Type, tr: &str, name: &str) -> Option<Type> {
     if let Type::Param(_) | Type::Var(_) | Type::Proj(..) = s {
         return None;
+    }
+    // What an opaque type's equality bounds say; or else what a blanket
+    // impl does, below, or nothing: then it's rigid.
+    if let Type::Opaque(symbol, ..) = s
+        && let Some(d) = anon.opaques.get(symbol)
+    {
+        let sub = d.subst(s);
+        let proj = Type::Proj(Box::new(s.clone()), tr.to_string(), name.to_string()).erased();
+        if let Some((_, rhs)) = d
+            .eqs
+            .iter()
+            .find(|(lhs, _)| sub.apply(lhs).erased() == proj)
+        {
+            return Some(sub.apply(rhs));
+        }
     }
     // What a call of a function, a closure, or a reference to one takes
     // and gives: its signature, with the closure's regions where its
@@ -608,12 +761,12 @@ pub fn project(
     if name == SIG {
         return match s {
             Type::Fn(_) => Some(s.clone()),
-            Type::Adt(symbol, ..) => Some(closures.get(symbol)?.sig_at(s)),
+            Type::Adt(symbol, ..) => Some(anon.closures.get(symbol)?.sig_at(s)),
             Type::Ref(_, _, inner) => match &**inner {
                 Type::Param(_) | Type::Var(_) | Type::Proj(..) => {
                     Some(Type::Proj(inner.clone(), "FnOnce".into(), SIG.into()))
                 }
-                inner => project(impls, closures, inner, tr, name),
+                inner => project(impls, anon, inner, tr, name),
             },
             _ => None,
         };
@@ -712,6 +865,11 @@ fn param(name: &str) -> Type {
 /// - A closure's type is a struct's, parametric in its lifetimes like any,
 ///   and nothing can name it in an impl's header, so only blanket impls and
 ///   the built-in ones are found for it.
+/// - Nor can anything name an opaque type, so only blanket impls are found
+///   for it, and only by its bounds. Its hidden type implements those
+///   bounds (`Checker::hide`), so the same blanket impl is found for that,
+///   and, by coherence, no other impl of the trait exists: monomorphisation,
+///   which only sees the hidden type, finds the impl the checker did.
 pub fn matches(pat: &Type, t: &Type, params: &[String], found: &mut HashMap<String, Type>) -> bool {
     match pat {
         Type::Param(p) if params.contains(p) => match found.get(p) {

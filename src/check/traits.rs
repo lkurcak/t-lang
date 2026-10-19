@@ -51,6 +51,8 @@ pub(super) enum Why {
     Method(String),
     /// A call of a value of the type.
     Call,
+    /// The return type of function `.0`, an opaque type, says it does.
+    Returns(String),
 }
 
 /// An obligation the checker has to prove once the types in it are known.
@@ -566,13 +568,32 @@ impl Checker {
         // replaced by the impl's type.
         let mut with_self = params.clone();
         with_self.push("Self".into());
+        let opaques = this.is_none();
         self.env = preds.iter().cloned().chain(this).collect();
         self.adts.proj.local = eqs.clone();
-        let (param_tys, ret, lts) = self.signature(f, &with_self, &lifetimes)?;
+        let (param_tys, ret, lts) = self.signature(f, &with_self, &lifetimes, opaques)?;
         let mut ty = Type::func(param_tys, ret);
         if let Some(s) = self_ty {
-            ty = Subst::new(&["Self".to_string()], std::slice::from_ref(s)).apply(&ty);
-            ty = self.adts.normalise(&ty);
+            let s = Subst::new(&["Self".to_string()], std::slice::from_ref(s));
+            ty = self.adts.normalise(&s.apply(&ty));
+            // What its opaque types' bounds say of `Self` is of the impl's
+            // type too.
+            for o in super::opaques_of(&ty) {
+                for d in [
+                    self.traits.opaques.get_mut(&o),
+                    self.adts.proj.opaques.get_mut(&o),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    for p in &mut d.preds {
+                        p.ty = s.apply(&p.ty);
+                    }
+                    for (l, r) in &mut d.eqs {
+                        (*l, *r) = (s.apply(l), s.apply(r));
+                    }
+                }
+            }
         }
         self.env.clear();
         self.adts.proj.local.clear();
@@ -1423,7 +1444,7 @@ impl Checker {
                     return Some(t.clone());
                 }
                 let u =
-                    crate::traits::project(&self.traits.impls, &self.traits.closures, s, tr, name)?;
+                    crate::traits::project(&self.traits.impls, &self.traits.anon(), s, tr, name)?;
                 path.push(k);
                 let found = self.holds(&u, path, &mut HashSet::new());
                 path.pop();
@@ -1848,6 +1869,14 @@ impl Checker {
                 fix(&bad)
             ),
             Why::Call => format!("`{ty}` can't be called{needs}"),
+            Why::Returns(f) if *ty == Type::Never => format!(
+                "can't tell what type `{f}` returns: it never returns, so nothing says which \
+                 type this is"
+            ),
+            Why::Returns(f) => format!(
+                "`{ty}` doesn't implement `{tr}`, which `{f}`'s return type says it does{needs}{}",
+                fix(&bad)
+            ),
         };
         // A closure that implements less than it's needed to: why.
         let message = match (&o.why, self.closure_why(&bad.ty)) {
@@ -1857,6 +1886,16 @@ impl Checker {
                 format!(
                     "this closure is only `{}`, as {why}, but `{what}` needs it to implement \
                      `{}`",
+                    kind.name(),
+                    bad.trait_name
+                )
+            }
+            (Why::Returns(f), Some((kind, why)))
+                if crate::traits::FN_TRAITS.contains(&bad.trait_name.as_str()) =>
+            {
+                format!(
+                    "this closure is only `{}`, as {why}, but `{f}`'s return type says it \
+                     implements `{}`",
                     kind.name(),
                     bad.trait_name
                 )
@@ -2007,6 +2046,14 @@ impl Checker {
                     .collect();
                 if builtin_eq(&ty) {
                     out.push("Eq".into());
+                }
+                // What an opaque type's bounds say it implements.
+                if let Type::Opaque(symbol, ..) = &ty {
+                    for p in &self.traits.opaques[symbol].preds {
+                        if let Type::Opaque(..) = p.ty {
+                            out.extend(self.traits.implied(&p.trait_name));
+                        }
+                    }
                 }
                 out.sort();
                 out.dedup();
@@ -2501,6 +2548,10 @@ fn mentions_self(t: &TypeExpr) -> Option<Span> {
             .find_map(mentions_self)
             .or_else(|| mentions_self(r)),
         TypeExprKind::Ref(_, _, inner) | TypeExprKind::Proj(inner, ..) => mentions_self(inner),
+        TypeExprKind::Impl(bounds) => bounds
+            .iter()
+            .flat_map(BoundItem::types)
+            .find_map(mentions_self),
         TypeExprKind::Unit | TypeExprKind::Never | TypeExprKind::Lifetime(_) => None,
     }
 }
@@ -2575,6 +2626,7 @@ fn proj_in(t: &TypeExpr) -> Option<Span> {
         TypeExprKind::Named(_, args) => args.iter().find_map(proj_in),
         TypeExprKind::Fn(ps, r) => ps.iter().find_map(proj_in).or_else(|| proj_in(r)),
         TypeExprKind::Ref(_, _, inner) => proj_in(inner),
+        TypeExprKind::Impl(bounds) => bounds.iter().flat_map(BoundItem::types).find_map(proj_in),
         TypeExprKind::Unit | TypeExprKind::Never | TypeExprKind::Lifetime(_) => None,
     }
 }

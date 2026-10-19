@@ -36,6 +36,10 @@ pub(crate) enum TypeName {
     /// in, which it can't use. With the keyword and name of what it's
     /// written in: `("fn", "helper")`.
     OuterParam(&'static str, String),
+    /// An opaque type, `impl Tr`, in a function's return type: by its
+    /// symbol, with the function's lifetime and type parameters, which
+    /// are its arguments there.
+    Opaque(String, Vec<String>, Vec<String>),
 }
 
 /// What the lifetimes written in a type mean, which depends on where it's
@@ -253,6 +257,7 @@ fn resolve_in(
                         ),
                     ));
                 }
+                Some(TypeName::Opaque(..)) => unreachable!("an opaque type is written `impl`"),
                 None if params.contains(name) => (Type::Param(name.clone()), 0, 0),
                 None if name == "int" => (Type::Int, 0, 0),
                 None if name == "bool" => (Type::Bool, 0, 0),
@@ -301,6 +306,18 @@ fn resolve_in(
         }
         TypeExprKind::Unit => Ok(Type::Unit),
         TypeExprKind::Never => Ok(Type::Never),
+        // Where it can be, its symbol is known by where it is.
+        TypeExprKind::Impl(_) => match names("impl", t.span) {
+            Some(TypeName::Opaque(symbol, lifetimes, params)) => Ok(Type::Opaque(
+                symbol,
+                lifetimes.into_iter().map(Region::Named).collect(),
+                params.into_iter().map(Type::Param).collect(),
+            )),
+            _ => Err(Error::ty(
+                t.span,
+                "`impl` types can only be written in a function's return type",
+            )),
+        },
         // A function type of its own, generic over what it leaves out.
         TypeExprKind::Fn(params_, ret) => {
             let mut b = Binder {
@@ -355,6 +372,8 @@ pub(super) fn name_holes(t: &TypeExpr, holes: &mut Vec<(String, Span)>) -> TypeE
         TypeExprKind::Proj(inner, tr, name) => {
             TypeExprKind::Proj(Box::new(name_holes(inner, holes)), tr.clone(), name.clone())
         }
+        // Rejected wherever there can be holes.
+        TypeExprKind::Impl(_) => t.kind.clone(),
     };
     TypeExpr { kind, span: t.span }
 }

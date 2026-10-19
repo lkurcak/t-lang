@@ -1,0 +1,10 @@
+// `stash` wants something that lives for ever, and `reader(&n)` borrows `n`.
+fn reader<'a>(x: &'a int) -> impl Fn() -> int + Discard { move || *x }
+
+fn stash<T: 'static + Discard>(_x: T) {}
+
+fn main() {
+    let n = 1;
+    stash(reader(&n));
+}
+// error: `n` doesn't live long enough

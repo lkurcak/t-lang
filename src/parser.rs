@@ -24,6 +24,7 @@
 //! type     = IDENT ("<" targ ("," targ)* ","? ">")? | "(" ")"
 //!          | "fn" "(" (type ("," type)*)? ")" ("->" type)?
 //!          | "&" LIFETIME? "mut"? type | "!"
+//!          | "impl" bound ("+" bound)*               -- only in a return type
 //! targ     = LIFETIME | type
 //! block    = "{" (let | head (fn_decl | struct | enum) | expr ";" | block_like ";"?)* expr? "}"
 //! block_like = if | match | label? (while | loop) | block
@@ -886,6 +887,24 @@ impl Parser {
                 kind: TypeExprKind::Never,
                 span: self.bump().span,
             }),
+            Tok::Impl => {
+                self.bump();
+                let mut bounds = Vec::new();
+                loop {
+                    bounds.push(match self.peek() {
+                        Tok::Ident(_) => self.trait_bound()?,
+                        _ => return Err(self.unexpected("a trait after `impl`")),
+                    });
+                    if !self.eat(&Tok::Plus) {
+                        break;
+                    }
+                }
+                let span = start.to(bounds.last().unwrap().span);
+                Ok(TypeExpr {
+                    kind: TypeExprKind::Impl(bounds),
+                    span,
+                })
+            }
             _ => Err(self.unexpected("a type")),
         }
     }

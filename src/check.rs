@@ -7,7 +7,9 @@
 //! moves (step 5, see docs/05-ownership.md), plus `return`, `break`,
 //! `continue`, `loop` and the never type `!` (see
 //! docs/05.1-control-flow.md), plus traits, impls and methods (step 6,
-//! see docs/06-traits.md, and `check/traits.rs`). Whether a program uses its
+//! see docs/06-traits.md, and `check/traits.rs`), plus opaque types, `impl
+//! Fn(int) -> int` in a return type (see docs/06c.1-opaque-types.md).
+//! Whether a program uses its
 //! references and moved values correctly is checked after its types are,
 //! by the borrow checker (`borrowck`), from what `typed` records here.
 //!
@@ -172,6 +174,42 @@ fn contains(adts: &Adts, ty: &Type, target: &str, seen: &mut HashSet<Type>) -> b
     all_fields(adts, ty)
         .iter()
         .any(|t| contains(adts, t, target, seen))
+}
+
+/// Every `impl Tr` written in return type `t`, where they can be: not in a
+/// function type, which would be a different type for each function, nor
+/// in another's bounds, nor a projection.
+fn opaques_in<'t>(t: &'t TypeExpr, out: &mut Vec<&'t TypeExpr>) {
+    match &t.kind {
+        TypeExprKind::Impl(_) => out.push(t),
+        TypeExprKind::Named(_, args) => args.iter().for_each(|a| opaques_in(a, out)),
+        TypeExprKind::Ref(_, _, inner) => opaques_in(inner, out),
+        TypeExprKind::Fn(..)
+        | TypeExprKind::Proj(..)
+        | TypeExprKind::Unit
+        | TypeExprKind::Never
+        | TypeExprKind::Lifetime(_) => {}
+    }
+}
+
+/// The symbols of the opaque types in `t`.
+fn opaques_of(t: &Type) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Type::Opaque(s, ..) = t {
+        out.push(s.clone());
+    }
+    for p in t.parts() {
+        out.extend(opaques_of(p));
+    }
+    out
+}
+
+/// `t`, with every `from` in it replaced by `to`.
+fn replace_type(t: &Type, from: &Type, to: &Type) -> Type {
+    match t == from {
+        true => to.clone(),
+        false => t.map(|p| replace_type(p, from, to)),
+    }
 }
 
 /// Adds the name of every struct and enum that `t` mentions to `out`.
@@ -365,6 +403,12 @@ pub(crate) struct Checker {
     /// Projections on types not known yet, each waiting for its type to
     /// be, with what it must turn out to be (see `settle`).
     goals: Vec<Goal>,
+    /// The symbol of each opaque type, `impl Tr` in a return type, by
+    /// where it's written.
+    opaque_at: HashMap<Span, String>,
+    /// The function whose signature is being worked out, by symbol and
+    /// name: what owns the opaque types in it.
+    sig_owner: (String, String),
 }
 
 /// A projection `proj`, `<T as Tr>::Item`, whose type `T` isn't known yet,
@@ -458,6 +502,8 @@ impl Checker {
             collecting: false,
             here: Span::new(0, 0),
             goals: Vec::new(),
+            opaque_at: HashMap::new(),
+            sig_owner: Default::default(),
         }
     }
 
@@ -481,8 +527,12 @@ impl Checker {
         self.check_impls(prog)?;
         self.info.traits = self.traits.clone();
         self.bodies(prog)?;
-        // What each closure is is known once the body it's in is.
+        // What each closure is is known once the body it's in is, and so
+        // what each opaque type stands for.
         self.info.traits.closures = self.traits.closures.clone();
+        self.opaque_cycles()?;
+        self.info.traits.opaques = self.traits.opaques.clone();
+        self.info.opaques = self.opaque_at.clone();
         self.no_polymorphic_recursion()?;
         check_main(prog)?;
         // What's dead depends on the whole program, so only once it all checks.
@@ -520,6 +570,7 @@ impl Checker {
                     "`main` must not have type parameters: nothing could say what they are",
                 ));
             }
+            self.sig_owner = (self.fn_symbols[i].clone(), f.name.name.clone());
             let scheme = match method {
                 Some(&(_, MethodOf::Impl(k))) => {
                     let d = self.traits.impls[self.impl_ids[k]].clone();
@@ -585,7 +636,7 @@ impl Checker {
         let (preds, eqs) = self.preds(&f.generics, &params, &declared, true)?;
         self.env = preds.clone();
         self.adts.proj.local = eqs.clone();
-        let (param_tys, ret, lifetimes) = self.signature(f, &params, &declared)?;
+        let (param_tys, ret, lifetimes) = self.signature(f, &params, &declared, true)?;
         self.env.clear();
         self.adts.proj.local.clear();
         Ok(Scheme {
@@ -608,11 +659,17 @@ impl Checker {
     /// exactly one: `fn first(p: &Pair) -> &int` returns something borrowed
     /// from `p`. Or a method's, if it takes `&self` or `&mut self`: what it
     /// returns is borrowed from that. Otherwise it has to be written.
+    ///
+    /// Each `impl Tr` in the return type is an opaque type of its own,
+    /// generic over all of `f`'s lifetime and type parameters, elided ones
+    /// too, which it's defined here as (see `opaque`). Not in a trait's
+    /// methods, unless `opaques`.
     fn signature(
-        &self,
+        &mut self,
         f: &FnDecl,
         params: &[String],
         declared: &[String],
+        opaques: bool,
     ) -> Result<(Vec<Type>, Type, Vec<String>), Error> {
         let mut lts = Lifetimes::Params {
             declared,
@@ -637,10 +694,140 @@ impl Checker {
             (_, _, [r]) => Ok((*r).clone()),
             _ => Err(inputs.len()),
         };
+        let lifetimes: Vec<String> = declared.iter().cloned().chain(elided).collect();
+        let mut written = Vec::new();
+        opaques_in(&f.ret, &mut written);
+        if let Some(t) = written.first()
+            && !opaques
+        {
+            return Err(Error::ty(
+                t.span,
+                "`impl` types can't be in a trait's methods yet: each impl would pick its own, \
+                 as for an associated type",
+            ));
+        }
+        let own: Vec<String> = params.iter().filter(|p| *p != "Self").cloned().collect();
+        for t in written {
+            self.opaque(t, &own, &lifetimes)?;
+        }
         let mut lts = Lifetimes::Return { declared, input };
         let ret = self.resolve_with(&f.ret, params, &mut lts)?;
-        let lifetimes = declared.iter().cloned().chain(elided).collect();
         Ok((param_tys, ret, lifetimes))
+    }
+
+    /// Defines the opaque type `t`, an `impl Tr` written in the return type
+    /// of the function whose signature is being worked out, which has type
+    /// parameters `params` and lifetimes `lifetimes`. Its bounds are those
+    /// of a type parameter, with it for the parameter.
+    fn opaque(
+        &mut self,
+        t: &TypeExpr,
+        params: &[String],
+        lifetimes: &[String],
+    ) -> Result<(), Error> {
+        let TypeExprKind::Impl(bounds) = &t.kind else {
+            unreachable!("an opaque type is written `impl`")
+        };
+        let symbol = crate::types::opaque_symbol(&t.to_string(), t.span.start);
+        let subject = Ident {
+            name: symbol.clone(),
+            span: t.span,
+        };
+        let g = Generics {
+            bounds: vec![(subject, bounds.clone())],
+            ..Generics::default()
+        };
+        let mut with_it = params.to_vec();
+        with_it.push(symbol.clone());
+        let (preds, eqs) = self.preds(&g, &with_it, lifetimes, true)?;
+        let (owner, owner_name) = self.sig_owner.clone();
+        let mut def = crate::traits::OpaqueDef {
+            owner,
+            owner_name,
+            params: params.to_vec(),
+            lifetimes: lifetimes.to_vec(),
+            preds: Vec::new(),
+            eqs: Vec::new(),
+            hidden: None,
+            span: t.span,
+        };
+        let s = Subst::new(std::slice::from_ref(&symbol), &[def.generic(&symbol)]);
+        def.preds = preds
+            .into_iter()
+            .map(|p| Pred {
+                ty: s.apply(&p.ty),
+                trait_name: p.trait_name,
+            })
+            .collect();
+        def.eqs = eqs
+            .into_iter()
+            .map(|(l, r)| (s.apply(&l), s.apply(&r)))
+            .collect();
+        self.opaque_at.insert(t.span, symbol.clone());
+        self.adts.proj.opaques.insert(symbol.clone(), def.clone());
+        self.traits.opaques.insert(symbol, def);
+        Ok(())
+    }
+
+    /// The symbols of the opaque types a value of type `t` may hold: in
+    /// it, and in the types of what the closures in it capture.
+    fn opaques_held(&self, t: &Type) -> Vec<String> {
+        let mut out = opaques_of(t);
+        let mut seen = HashSet::new();
+        let mut todo = vec![t.clone()];
+        while let Some(t) = todo.pop() {
+            each_adt(&t, &mut |name, _| {
+                if let Some(c) = self.traits.closures.get(name)
+                    && seen.insert(name.to_string())
+                {
+                    for (_, f) in &c.fields {
+                        out.extend(opaques_of(f));
+                        todo.push(f.clone());
+                    }
+                }
+            });
+        }
+        out
+    }
+
+    /// Rejects opaque types that stand for types that hold them, through
+    /// others or not: `fn f() -> impl Fn() -> int` whose closure holds
+    /// what `f()` returns would be a type that holds itself, which no
+    /// finite type is. Then replacing each with what it stands for, as
+    /// monomorphisation does (`Projections::reveal`), ends.
+    fn opaque_cycles(&self) -> Result<(), Error> {
+        let mut symbols: Vec<&String> = self.traits.opaques.keys().collect();
+        symbols.sort_by_key(|s| self.traits.opaques[*s].span.start);
+        for start in symbols {
+            let mut todo = vec![start.clone()];
+            let mut seen = HashSet::new();
+            while let Some(s) = todo.pop() {
+                let Some(hidden) = &self.traits.opaques[&s].hidden else {
+                    continue;
+                };
+                for o in self.opaques_held(hidden) {
+                    if o == *start {
+                        let d = &self.traits.opaques[start];
+                        return Err(Error::ty(
+                            d.span,
+                            format!(
+                                "the type `{}` returns would contain itself: what it returns \
+                                 holds what {} returns",
+                                d.owner_name,
+                                match s == *start {
+                                    true => "it".to_string(),
+                                    false => format!("`{}`", self.traits.opaques[&s].owner_name),
+                                }
+                            ),
+                        ));
+                    }
+                    if seen.insert(o.clone()) {
+                        todo.push(o);
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Pass 5: checks each function's body against its declared return
@@ -703,15 +890,88 @@ impl Checker {
         self.mention(&ret);
         self.well_formed(&ret, f.ret.span)?;
         let vars = self.vars.len();
+        // In its own body, each of its opaque types is the type it stands
+        // for, to be inferred, which must have what its bounds say.
+        let mut hidden = Vec::new();
+        let symbol = self.fns[id.0].symbol.clone();
+        let ret = self.hide(&ret, &symbol, &f.name.name, &mut hidden)?;
         self.ret = Some(ret.clone());
         self.loops.clear();
         self.diverges = None;
         self.check(&f.body, &ret)?;
         self.end_scope(scope);
         self.solve_all(vars)?;
+        for (s, var) in &hidden {
+            let t = self.solution(var);
+            let span = self.traits.opaques[s].span;
+            if t == Type::Never {
+                return Err(Error::ty(
+                    span,
+                    format!(
+                        "can't tell what type `{}` returns: it never returns, so nothing \
+                             says which type this is",
+                        f.name.name
+                    ),
+                ));
+            }
+            self.traits.opaques.get_mut(s).expect("defined").hidden = Some(t.clone());
+            self.adts.proj.opaques.get_mut(s).expect("defined").hidden = Some(t);
+        }
         let warnings = crate::borrowck::check(self, f, &scheme)?;
         self.warnings.extend(warnings);
         Ok(())
+    }
+
+    /// `ret`, the return type of function `symbol`, called `name`, with
+    /// each of its opaque types replaced by a new variable, for the type it
+    /// stands for, which `hidden` gets with the opaque type's symbol. Each
+    /// must turn out to have what the bounds say.
+    fn hide(
+        &mut self,
+        ret: &Type,
+        symbol: &str,
+        name: &str,
+        hidden: &mut Vec<(String, Type)>,
+    ) -> Result<Type, Error> {
+        let mut parts = Vec::new();
+        for p in ret.parts() {
+            parts.push(self.hide(p, symbol, name, hidden)?);
+        }
+        let mut parts = parts.into_iter();
+        let t = ret.map(|_| parts.next().expect("as many"));
+        let Type::Opaque(s, ..) = &t else {
+            return Ok(t);
+        };
+        let d = self.traits.opaques[s].clone();
+        if d.owner != symbol {
+            return Ok(t);
+        }
+        if let Some((_, var)) = hidden.iter().find(|(h, _)| h == s) {
+            return Ok(var.clone());
+        }
+        let var = self.fresh(
+            d.span,
+            format!("the type `{name}` returns"),
+            "nothing in its body says".to_string(),
+        );
+        let swap = |u: &Type| replace_type(u, &t, &var);
+        for p in &d.preds {
+            let pred = Pred {
+                ty: swap(&p.ty),
+                trait_name: p.trait_name.clone(),
+            };
+            self.oblige(pred, d.span, traits::Why::Returns(name.to_string()))?;
+        }
+        for (lhs, rhs) in &d.eqs {
+            self.require_eq(
+                swap(lhs),
+                rhs.clone(),
+                d.span,
+                &format!("{name}'s return type"),
+            )?;
+        }
+        hidden.push((s.clone(), var.clone()));
+        Ok(var)
     }
 
     /// What every struct and enum is made of, by symbol.
@@ -931,6 +1191,11 @@ impl Checker {
     /// What the type name written at `span` refers to, if it's a struct or
     /// enum or an outer type parameter (see `names.rs`).
     fn type_name(&self, span: Span) -> Option<TypeName> {
+        if let Some(symbol) = self.opaque_at.get(&span) {
+            let d = &self.traits.opaques[symbol];
+            let (lifetimes, params) = (d.lifetimes.clone(), d.params.clone());
+            return Some(TypeName::Opaque(symbol.clone(), lifetimes, params));
+        }
         match self.type_names.get(&span)? {
             Scoped::Adt(symbol) => {
                 let (lts, arity) = *self.arities.get(symbol)?;
@@ -997,6 +1262,12 @@ impl Checker {
     /// A closure's type is a type constructor applied to the type parameters
     /// in scope, so passing a closure that holds a `G` where a `G` was, as
     /// `f(|| g())` in `f<G>`, is an edge that grows, like `f::<Box<G>>`.
+    /// So is an opaque type, applied to its function's type parameters:
+    /// `g(wrap(x))` in `g<T>`, for `wrap<T>(x: T) -> impl Discard`. What it
+    /// stands for is a finite type of those, which holds no opaque type
+    /// that leads back to it (`opaque_cycles`), so replacing each with
+    /// that, as monomorphisation does, makes no more copies than there are
+    /// of the opaque types.
     /// What a closure's body uses is in the function it's in, by where it
     /// is, and is copied with it.
     fn no_polymorphic_recursion(&self) -> Result<(), Error> {

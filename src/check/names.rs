@@ -272,6 +272,11 @@ impl Walk<'_> {
                 self.ty(ret);
             }
             TypeExprKind::Ref(_, _, inner) | TypeExprKind::Proj(inner, ..) => self.ty(inner),
+            TypeExprKind::Impl(bounds) => {
+                for t in bounds.iter().flat_map(BoundItem::types) {
+                    self.ty(t);
+                }
+            }
         }
     }
 

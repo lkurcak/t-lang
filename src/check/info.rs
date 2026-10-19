@@ -51,6 +51,10 @@ pub struct Info {
     /// closure `f` that's `FnMut` is `(&mut f)(1)`. Through how many `*`s,
     /// and by which `Fn` trait.
     pub calls: HashMap<Span, (usize, crate::traits::FnKind)>,
+    /// The symbol of each opaque type, `impl Tr` in a return type, by
+    /// where it's written, for monomorphisation to replace it with what it
+    /// stands for.
+    pub opaques: HashMap<Span, String>,
 }
 
 /// What a method call `x.m(..)` or path `T::m` names: method `symbol`.
@@ -491,6 +495,12 @@ impl Checker {
                 self.type_expr_notes(r, params);
             }
             TypeExprKind::Ref(_, _, inner) => self.type_expr_notes(inner, params),
+            // Its traits are noted where they're resolved.
+            TypeExprKind::Impl(bounds) => {
+                for t in bounds.iter().flat_map(BoundItem::types) {
+                    self.type_expr_notes(t, params);
+                }
+            }
         }
     }
 }
