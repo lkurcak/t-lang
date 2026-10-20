@@ -67,6 +67,8 @@ Step 7: effects. See [docs/07-effects.md](docs/07-effects.md).
   leak, which the interpreter stopped at. Now what the borrow checker
   moved is moved at every type, and a pattern uses up, at every type, what
   it took apart that wasn't known to be `Discard`.
+- On Windows, the file of a module in a directory, as `a/b.t` for `mod b;`
+  in `a.t`, is shown with Windows' separators, `a\b.t`, rather than a mix.
 
 ## 0.13.0 (2026-10-20)
 
