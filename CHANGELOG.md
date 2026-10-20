@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.13.0 (2026-10-20)
 
 Step 6e.1: higher-ranked closures. See
 [docs/06e.1-higher-ranked-closures.md](docs/06e.1-higher-ranked-closures.md).
