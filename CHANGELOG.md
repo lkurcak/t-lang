@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Changed
+
+- Internal: every expression, pattern, name, type and closure in the AST
+  has an id of its own (`ast::NodeId`), and what the checker learns about
+  a node is filed by that, not by its span or its address in memory. Nodes
+  made up by rewriting `for` loops and ranges no longer need spans nothing
+  else has, and a closure's result lifetimes still to work out are a
+  region of their own, `Region::Result`, rather than a name. Programs mean
+  what they did.
+
 ### Fixed
 
 - Generic code runs as it was checked, whatever its type parameters turn
