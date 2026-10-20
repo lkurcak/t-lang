@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.15.1 (2026-10-21)
 
 No change to the language or the tools: the type checker's two largest
 files are split into modules.
