@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.15.0 (2026-10-21)
 
 Step 7.1: impl parameters decided by bounds, and `where` on impls. See
 [docs/07.1-impl-parameters.md](docs/07.1-impl-parameters.md).
