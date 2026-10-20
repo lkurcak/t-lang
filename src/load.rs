@@ -118,7 +118,12 @@ fn files(path: &Path, sources: &mut Sources, read: Read) -> Result<Program, Erro
             ));
         }
         let segments = module_path(&prog, m);
-        let file = dir.join(segments.join("/") + ".t");
+        // A directory for each module it's in, joined as paths are where
+        // it runs: `a\b.t` on Windows, not `a/b.t`.
+        let (last, outer) = segments.split_last().expect("a module has a name");
+        let mut file = dir.to_path_buf();
+        file.extend(outer);
+        file.push(format!("{last}.t"));
         let shown = segments.join("::");
         let text = read(&file).map_err(|e| {
             Error::syntax(

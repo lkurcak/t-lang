@@ -61,7 +61,8 @@ fn reads_the_files_of_modules() {
 
     let out = t(&["check", &format!("{dir}/err_module_file_type_error/main.t")]);
     assert_eq!(out.status.code(), Some(1));
-    let stderr = String::from_utf8(out.stderr).unwrap();
+    // With `\` between a path's parts on Windows.
+    let stderr = String::from_utf8(out.stderr).unwrap().replace('\\', "/");
     assert!(
         stderr.contains("err_module_file_type_error/a/b.t:2:5"),
         "{stderr}"
