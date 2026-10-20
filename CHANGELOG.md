@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.14.0 (2026-10-21)
 
 Step 7: effects. See [docs/07-effects.md](docs/07-effects.md).
 
