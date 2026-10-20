@@ -934,6 +934,7 @@ impl Cx<'_, '_, '_> {
                 Box::new(self.expr(body)),
             ),
             ExprKind::Loop(label, body) => ExprKind::Loop(label.clone(), Box::new(self.expr(body))),
+            ExprKind::Move(x) => ExprKind::Move(Box::new(self.expr(x))),
             ExprKind::Return(x) => ExprKind::Return(x.as_ref().map(|x| Box::new(self.expr(x)))),
             ExprKind::Break(label, x) => {
                 ExprKind::Break(label.clone(), x.as_ref().map(|x| Box::new(self.expr(x))))
@@ -965,6 +966,7 @@ impl Cx<'_, '_, '_> {
             PatternKind::Or(alts) => {
                 PatternKind::Or(alts.iter().map(|a| self.pattern(a)).collect())
             }
+            PatternKind::Move(p) => PatternKind::Move(Box::new(self.pattern(p))),
             kind => kind.clone(),
         };
         Pattern { kind, span: p.span }

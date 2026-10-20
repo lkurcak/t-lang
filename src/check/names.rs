@@ -391,6 +391,7 @@ impl Walk<'_> {
 
     fn pattern(&mut self, p: &Pattern) {
         match &p.kind {
+            PatternKind::Move(_) => unreachable!("written by lift"),
             PatternKind::Variant(name, targs, _, pats) => {
                 self.name(&name.name, name.span);
                 targs.iter().for_each(|t| self.ty(t));

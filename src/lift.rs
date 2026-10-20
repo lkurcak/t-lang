@@ -16,9 +16,14 @@
 //! takes it: `v.push(1)` becomes `<V>::push(&mut v, 1)`. The methods stay
 //! in their impls and traits, renamed the same way, for monomorphisation
 //! to pick from.
+//!
+//! And it writes out what the borrow checker moved, rather than copied
+//! (`Info::moves`): `ExprKind::Move` and `PatternKind::Move`. That's
+//! decided by the types the checker knew, so a generic body moves what it
+//! moved when it was checked, whatever its type parameters turn out to be.
 
 use crate::ast::*;
-use crate::check::Info;
+use crate::check::{Info, MoveSite};
 use crate::error::Span;
 use crate::traits::FnKind;
 use std::sync::Arc;
@@ -255,6 +260,7 @@ impl<'p> Cx<'p> {
             ExprKind::For(_) | ExprKind::Range(..) => {
                 unreachable!("rewritten when paths are resolved")
             }
+            ExprKind::Move(_) => unreachable!("written here"),
             ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit | ExprKind::Continue(_) => {
                 e.kind.clone()
             }
@@ -289,6 +295,9 @@ impl<'p> Cx<'p> {
                     if let Some(op) = op {
                         let kind = ExprKind::Unary(op, Box::new(callee));
                         callee = Expr { kind, span };
+                    } else if self.info.moves.contains(&MoveSite::Receiver(e.span)) {
+                        let kind = ExprKind::Move(Box::new(callee));
+                        callee = Expr { kind, span };
                     }
                 }
                 ExprKind::Call(
@@ -307,6 +316,9 @@ impl<'p> Cx<'p> {
                 if let Some(mutable) = m.autoref {
                     let op = if mutable { UnOp::RefMut } else { UnOp::Ref };
                     let kind = ExprKind::Unary(op, Box::new(recv));
+                    recv = Expr { kind, span };
+                } else if self.info.moves.contains(&MoveSite::Receiver(e.span)) {
+                    let kind = ExprKind::Move(Box::new(recv));
                     recv = Expr { kind, span };
                 }
                 let f = Expr {
@@ -413,8 +425,12 @@ impl<'p> Cx<'p> {
                 let body = self.expr(&l.body, nested);
                 let mut lambda = Lambda::new(params, ret, body);
                 lambda.moves = l.moves;
-                lambda.modes = (self.info.captures.get(&l.body.span).into_iter().flatten())
-                    .cloned()
+                let captures = self.info.captures.get(&l.body.span).into_iter().flatten();
+                lambda.modes = (captures.enumerate())
+                    .map(|(i, (name, mode))| {
+                        let site = MoveSite::Capture(l.body.span, i);
+                        (name.clone(), *mode, self.info.moves.contains(&site))
+                    })
                     .collect();
                 ExprKind::Lambda(Arc::new(lambda))
             }
@@ -439,7 +455,16 @@ impl<'p> Cx<'p> {
                 x.as_ref().map(|x| Box::new(self.expr(x, nested))),
             ),
         };
+        let moves = self.info.moves.contains(&MoveSite::Expr(e.span));
+        debug_assert!(!moves || e.is_place(), "only a place is moved out of");
         let e = Expr { kind, span: e.span };
+        if moves {
+            let span = e.span;
+            return Expr {
+                kind: ExprKind::Move(Box::new(e)),
+                span,
+            };
+        }
         match self.info.coercions.get(&e.span) {
             None => e,
             Some(&(derefs, mutable)) => {
@@ -481,8 +506,16 @@ impl<'p> Cx<'p> {
             PatternKind::Or(alts) => {
                 PatternKind::Or(alts.iter().map(|a| self.pattern(a)).collect())
             }
+            PatternKind::Move(_) => unreachable!("written here"),
             kind => kind.clone(),
         };
-        Pattern { kind, span: p.span }
+        let pat = Pattern { kind, span: p.span };
+        match self.info.moves.contains(&MoveSite::Pattern(p.span)) {
+            true => Pattern {
+                kind: PatternKind::Move(Box::new(pat)),
+                span: p.span,
+            },
+            false => pat,
+        }
     }
 }

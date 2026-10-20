@@ -49,7 +49,7 @@ mod unify;
 
 pub(crate) use closures::is_result_lifetime;
 pub(crate) use generics::{Lifetimes, TypeName, resolve};
-pub use info::{Info, Instance, Note, NoteKind};
+pub use info::{Info, Instance, MoveSite, Note, NoteKind};
 pub use scope::source_name;
 
 use crate::ast::*;
@@ -124,6 +124,7 @@ pub fn check(prog: &mut Program, warnings: &mut Vec<Warning>) -> (Info, Result<(
         .map(|(s, _)| s.clone())
         .collect();
     cx.info.projections = cx.proj_traits.take();
+    cx.info.moves = cx.moves.take();
     cx.warnings.sort_by_key(|w| w.span.start);
     warnings.append(&mut cx.warnings);
     (cx.info, result)
@@ -405,6 +406,9 @@ pub(crate) struct Checker {
     /// The trait of each projection written, by its span, as it's worked
     /// out while resolving types (see `Info::projections`).
     proj_traits: std::cell::RefCell<HashMap<Span, String>>,
+    /// Where the borrow checker moved, as it checks each body, which only
+    /// needs a `&Checker` (see `Info::moves`).
+    pub(crate) moves: std::cell::RefCell<HashSet<MoveSite>>,
     /// Whether impls are being collected: then what a projection on a type
     /// that isn't a parameter stands for isn't known yet, nor whether the
     /// type implements the trait, which `check_impls` sees to.
@@ -511,6 +515,7 @@ impl Checker {
             diverges: None,
             diverging: Vec::new(),
             proj_traits: Default::default(),
+            moves: Default::default(),
             collecting: false,
             here: Span::new(0, 0),
             goals: Vec::new(),
@@ -1791,6 +1796,7 @@ impl Checker {
 
     fn synth_inner(&mut self, e: &Expr) -> Result<Type, Error> {
         match &e.kind {
+            ExprKind::Move(_) => unreachable!("written by lift"),
             ExprKind::For(_) | ExprKind::Range(..) => {
                 unreachable!("rewritten when paths are resolved")
             }
@@ -3077,6 +3083,7 @@ impl Checker {
         }
         let ty = &ty;
         Ok(match &p.kind {
+            PatternKind::Move(_) => unreachable!("written by lift"),
             PatternKind::Wild => Pat::Wild,
             PatternKind::Bind(name, mutable) => {
                 if binds.iter().any(|l| l.name == *name) {

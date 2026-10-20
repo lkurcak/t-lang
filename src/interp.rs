@@ -21,12 +21,17 @@
 //! a *leak*. The borrow checker promises none of those happen
 //! (docs/05-ownership.md).
 //!
-//! Since step 6a.1 it keeps linear values the same way, by their types:
-//! what monomorphisation made says which are `Copy` and which `Discard`.
-//! Using a value whose type isn't `Copy` moves it, whatever it holds, and a
-//! pattern that takes apart a value whose type isn't `Discard`, by value,
-//! uses it up, as the borrow checker's `Consume` does. Throwing one away
-//! whole, rather than using it up, is a leak too
+//! Since step 6a.1 it keeps linear values the same way. What moves and
+//! what's copied, and which patterns use up what they take apart, is what
+//! the borrow checker decided, by the types it knew, as `lift` wrote it
+//! out (`ExprKind::Move`, `PatternKind::Move`): in generic code, a value of
+//! a type parameter that isn't known to be `Copy` moves, even where it's an
+//! `int`, so that a body means the same at every type. The types
+//! monomorphisation made, which say which are `Copy` and which `Discard`,
+//! only check those decisions: a copy of a value whose type isn't `Copy`,
+//! or a value taken apart by value and not used up whose type isn't
+//! `Discard`, is a checker bug. Throwing away whole a value that isn't
+//! `Discard`, rather than using it up, is a leak too
 //! (docs/06a.1-linear-types.md). Except on the way out of a run-time error:
 //! that's a panic, which aborts, so nothing is really dropped.
 //!
@@ -367,30 +372,34 @@ impl Interp<'_, '_> {
         }
     }
 
-    /// The value at `p`, moved out if its type isn't `Copy`, or else
-    /// copied. It must all be there.
-    fn read(&mut self, p: &Ptr) -> Value {
+    /// The value at `p`, moved out if `moves`, or else copied, as the
+    /// borrow checker decided. It must all be there. What it copies, it
+    /// knew to be `Copy`, which a type parameter is only if every type it
+    /// can be is; what it moves needn't be at the type it turned out to be.
+    fn read(&mut self, p: &Ptr, moves: bool) -> Value {
         let v = self.memory.get(p);
         if self.taken_apart(v) {
             unsound("use of a value that was moved out of, at least in part");
         }
-        if self.moves(v) {
+        if moves {
             std::mem::replace(self.memory.get_mut(p), Value::Moved)
+        } else if !self.copyable(v) {
+            unsound(&format!("a copy of `{v}`, whose type isn't `Copy`"));
         } else {
             v.clone()
         }
     }
 
-    /// Is using `v` moving it: is its type not `Copy`? A box never is, and
-    /// a reference always is, as far as memory goes: that a `&mut` isn't is
-    /// the borrow checker's business.
-    fn moves(&self, v: &Value) -> bool {
+    /// Is `v`'s type `Copy`? A box's never is, and a reference's always is,
+    /// as far as memory goes: that a `&mut` isn't is the borrow checker's
+    /// business.
+    fn copyable(&self, v: &Value) -> bool {
         match v {
-            Value::Box(_) => true,
-            Value::Struct(ty, _) | Value::Variant(ty, ..) => !self.copy.contains(ty.as_str()),
+            Value::Box(_) => false,
+            Value::Struct(ty, _) | Value::Variant(ty, ..) => self.copy.contains(ty.as_str()),
             // A closure is `Copy` if what it holds is.
-            Value::Closure(c) => c.env.iter().any(|(_, v)| self.moves(v)),
-            _ => false,
+            Value::Closure(c) => c.env.iter().all(|(_, v)| self.copyable(v)),
+            _ => true,
         }
     }
 
@@ -606,7 +615,7 @@ impl Interp<'_, '_> {
             unreachable!("a closure")
         };
         let mut captured = Vec::new();
-        for (i, (name, mode)) in c.code.modes.iter().enumerate() {
+        for (i, (name, mode, _)) in c.code.modes.iter().enumerate() {
             let p = match mode {
                 Capture::Value => at.field(i),
                 Capture::Ref | Capture::Mut | Capture::Unique => {
@@ -758,12 +767,16 @@ impl Interp<'_, '_> {
             ExprKind::Bool(b) => Value::Bool(*b),
             ExprKind::Unit => Value::Unit,
             ExprKind::Var(name, _) => match self.local(name) {
-                Some(p) => self.read(&p),
+                Some(p) => self.read(&p, false),
                 None => self.function(name),
             },
             ExprKind::Field(..) | ExprKind::Unary(UnOp::Deref, _) => {
                 let p = self.place(e)?;
-                self.read(&p)
+                self.read(&p, false)
+            }
+            ExprKind::Move(x) => {
+                let p = self.place(x)?;
+                self.read(&p, true)
             }
             ExprKind::Unary(UnOp::Ref | UnOp::RefMut, x) => Value::Ref(self.place(x)?),
 
@@ -885,12 +898,12 @@ impl Interp<'_, '_> {
             // functions. They're `Copy`, so they're copied.
             ExprKind::Lambda(code) => {
                 let mut env = Vec::new();
-                for (name, mode) in &code.modes {
+                for (name, mode, moves) in &code.modes {
                     let p = self
                         .local(name)
                         .unwrap_or_else(|| unsound("capturing a non-variable"));
                     let v = match mode {
-                        Capture::Value => self.read(&p),
+                        Capture::Value => self.read(&p, *moves),
                         Capture::Ref | Capture::Mut | Capture::Unique => Value::Ref(p),
                     };
                     env.push((name.clone(), v));
@@ -969,6 +982,14 @@ impl Interp<'_, '_> {
             return Ok(());
         }
         self.statement(|i| {
+            // The value, moved or copied as `init` says, into the variable,
+            // as the borrow checker has it.
+            if let PatternKind::Bind(name, _) = &pat.kind {
+                let v = i.eval(init)?;
+                let slot = i.memory.alloc(v, false);
+                i.locals.push((name.clone(), slot, true));
+                return Ok(());
+            }
             let p = i.place(init)?;
             if !i.matches(pat, &p) {
                 unsound("a `let` pattern didn't match");
@@ -1019,6 +1040,9 @@ impl Interp<'_, '_> {
     /// Does `p` match the value at `v`? Patterns that look inside a value
     /// look through references to it, as the checker's do.
     fn matches(&self, p: &Pattern, v: &Ptr) -> bool {
+        if let PatternKind::Move(p) = &p.kind {
+            return self.matches(p, v);
+        }
         let mut v = v.clone();
         let looks_inside = !matches!(
             p.kind,
@@ -1054,9 +1078,14 @@ impl Interp<'_, '_> {
     }
 
     /// Binds the variables of `p`, which matches the value at `v`: each to
-    /// what it matches, moved or copied out, or a reference to it if
-    /// `by_ref` or the pattern looked through a reference to get there.
+    /// what it matches, moved out if the pattern says so, or else copied,
+    /// or a reference to it if `by_ref` or the pattern looked through a
+    /// reference to get there.
     fn bind(&mut self, p: &Pattern, v: &Ptr, mut by_ref: bool) {
+        let (p, moves) = match &p.kind {
+            PatternKind::Move(p) => (&**p, true),
+            _ => (p, false),
+        };
         let mut v = v.clone();
         let looks_inside = !matches!(
             p.kind,
@@ -1068,9 +1097,10 @@ impl Interp<'_, '_> {
         }
         match &p.kind {
             PatternKind::Bind(name, _) => {
-                let value = match by_ref {
-                    true => Value::Ref(v),
-                    false => self.read(&v),
+                let value = match (by_ref, moves) {
+                    (true, true) => unsound("a move out from behind a reference"),
+                    (true, false) => Value::Ref(v),
+                    (false, _) => self.read(&v, moves),
                 };
                 let slot = self.memory.alloc(value, false);
                 self.locals.push((name.clone(), slot, true));
@@ -1079,7 +1109,7 @@ impl Interp<'_, '_> {
                 for (i, p) in pats.iter().enumerate() {
                     self.bind(p, &v.field(i), by_ref);
                 }
-                self.consume(&v, by_ref);
+                self.consume(&v, by_ref, moves);
             }
             PatternKind::Struct(_, _, field_pats, _) => {
                 for fp in field_pats {
@@ -1090,13 +1120,14 @@ impl Interp<'_, '_> {
                     let i = i.unwrap_or_else(|| unsound("no such field"));
                     self.bind(&fp.pat, &v.field(i), by_ref);
                 }
-                self.consume(&v, by_ref);
+                self.consume(&v, by_ref, moves);
             }
             PatternKind::Or(alts) => {
                 let alt = alts.iter().find(|alt| self.matches(alt, &v));
                 let alt = alt.unwrap_or_else(|| unsound("no alternative matches"));
                 self.bind(alt, &v, by_ref);
             }
+            PatternKind::Move(_) => unsound("a pattern moving twice"),
             PatternKind::Wild
             | PatternKind::Int(_)
             | PatternKind::Range(..)
@@ -1106,17 +1137,28 @@ impl Interp<'_, '_> {
     }
 
     /// Uses up the value at `v`, which a pattern has just taken apart, if
-    /// it's owned, not reached `by_ref`, and isn't `Discard`: what the
-    /// pattern's variables didn't move out of it is dropped, and nothing's
-    /// left there. As the borrow checker's `Consume` does, though that goes
-    /// by the type the checker knows (see `Builder::consume`).
-    fn consume(&mut self, v: &Ptr, by_ref: bool) {
-        if let Value::Struct(ty, _) | Value::Variant(ty, ..) = self.memory.get(v)
-            && !by_ref
-            && !self.discard.contains(ty.as_str())
-        {
-            let old = std::mem::replace(self.memory.get_mut(v), Value::Moved);
-            self.drop_parts(old);
+    /// it `moves`, as the borrow checker's `Consume` does where it does
+    /// (see `Builder::consume`): what the pattern's variables didn't move
+    /// out of it is dropped, and nothing's left there. If it doesn't, the
+    /// value must be `Discard`, if it's owned: the checker leaves only
+    /// what it knew to be, which a type parameter is only if every type it
+    /// can be is.
+    fn consume(&mut self, v: &Ptr, by_ref: bool, moves: bool) {
+        match (by_ref, moves, self.memory.get(v)) {
+            (true, true, _) => unsound("using up what's behind a reference"),
+            (false, true, _) => {
+                let old = std::mem::replace(self.memory.get_mut(v), Value::Moved);
+                self.drop_parts(old);
+            }
+            (false, false, Value::Struct(ty, _) | Value::Variant(ty, ..))
+                if !self.discard.contains(ty.as_str()) =>
+            {
+                unsound(&format!(
+                    "a `{}`, which isn't `Discard`, taken apart and not used up",
+                    crate::check::source_name(ty)
+                ));
+            }
+            _ => {}
         }
     }
 

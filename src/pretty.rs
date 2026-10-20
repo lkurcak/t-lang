@@ -795,13 +795,16 @@ impl Printer<'_> {
             ExprKind::Bool(b) => text(b.to_string()),
             ExprKind::Unit => text("()"),
             ExprKind::Var(name, targs) => text(name) + self.turbofish(targs),
+            // There's no syntax for one: printed as the place it moves out
+            // of, as how a closure captures isn't printed either.
+            ExprKind::Move(x) => self.expr_inner(x, ctx),
             ExprKind::Unary(op, x) => text(op.to_string()) + self.expr(x, UNARY, ctx.inner()),
             ExprKind::Binary(..) => self.binary(e, ctx),
             ExprKind::Call(f, args) => {
                 // Something more than a name or a call needs parentheses to
                 // be called: `(|x| x)(1)`, and `(s.f)(1)`, as `s.f(1)` is a
                 // method call.
-                let min = match f.kind {
+                let min = match f.unmoved().kind {
                     ExprKind::Var(..) | ExprKind::Call(..) | ExprKind::MethodCall(..) => UNARY,
                     _ => UNARY + 1,
                 };
@@ -869,7 +872,7 @@ impl Printer<'_> {
                     |i| (i.name.span.start, i.value.span.end),
                     None,
                     |p, init| {
-                        let shorthand = matches!(&init.value.kind,
+                        let shorthand = matches!(&init.value.unmoved().kind,
                             ExprKind::Var(v, t) if *v == init.name.name && t.is_empty());
                         match shorthand {
                             true => text(&init.name.name),
@@ -1255,6 +1258,8 @@ impl Printer<'_> {
 
     fn pattern(&mut self, p: &Pattern) -> Doc {
         match &p.kind {
+            // As for `ExprKind::Move`, there's no syntax for one.
+            PatternKind::Move(p) => self.pattern(p),
             PatternKind::Wild => text("_"),
             PatternKind::Bind(name, false) => text(name),
             PatternKind::Bind(name, true) => text(format!("mut {name}")),

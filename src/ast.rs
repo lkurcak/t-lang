@@ -652,7 +652,10 @@ impl Expr {
             | ExprKind::Unit
             | ExprKind::Var(..)
             | ExprKind::Continue(_) => Vec::new(),
-            ExprKind::Unary(_, x) | ExprKind::Field(x, _) | ExprKind::Loop(_, x) => vec![x],
+            ExprKind::Unary(_, x)
+            | ExprKind::Field(x, _)
+            | ExprKind::Loop(_, x)
+            | ExprKind::Move(x) => vec![x],
             ExprKind::Return(x) | ExprKind::Break(_, x) => x.iter().map(|x| &**x).collect(),
             ExprKind::Binary(_, l, r) => vec![l, r],
             ExprKind::Call(f, args) | ExprKind::MethodCall(f, _, _, args) => {
@@ -849,6 +852,13 @@ pub enum ExprKind {
     /// `continue`: on to the next time round the loop, the innermost or
     /// `continue 'a`, the one labelled `'a`.
     Continue(Option<Ident>),
+    /// The value at a place, moved out of it, rather than copied. Only
+    /// from `lift` on, which writes one around each place the borrow
+    /// checker moved out of, as it decided by the types it knew: in
+    /// generic code, a value of a type parameter that isn't known to be
+    /// `Copy` moves, whatever type it turns out to be (see
+    /// `Info::moves`). A place used by value without one is copied.
+    Move(Box<Expr>),
 }
 
 /// `for pat in iter { body }`, or with a label.
@@ -884,6 +894,14 @@ impl Expr {
             _ => false,
         }
     }
+
+    /// What a `Move` moves out of, or else this.
+    pub fn unmoved(&self) -> &Expr {
+        match &self.kind {
+            ExprKind::Move(x) => x,
+            _ => self,
+        }
+    }
 }
 
 /// An anonymous function: `|x| x + 1`, `|x: int| -> int { x + 1 }`, or `|| 1`
@@ -901,9 +919,10 @@ pub struct Lambda {
     /// functions, which need no capturing.
     pub captures: Vec<String>,
     /// How it captures each of the variables it does, in order, once the
-    /// checker has worked that out: `lift` writes them here, for the
-    /// interpreter. Empty before.
-    pub modes: Vec<(String, Capture)>,
+    /// checker has worked that out, and for one captured by value, whether
+    /// that moves it rather than copying it, as for `ExprKind::Move`:
+    /// `lift` writes them here, for the interpreter. Empty before.
+    pub modes: Vec<(String, Capture, bool)>,
 }
 
 /// How a closure holds a variable it captures: a reference to it, `&` or
@@ -948,7 +967,10 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
                 out.push(name.clone());
             }
         }
-        ExprKind::Unary(_, x) | ExprKind::Field(x, _) | ExprKind::Loop(_, x) => go(x, bound),
+        ExprKind::Unary(_, x)
+        | ExprKind::Field(x, _)
+        | ExprKind::Loop(_, x)
+        | ExprKind::Move(x) => go(x, bound),
         ExprKind::Return(x) | ExprKind::Break(_, x) => x.iter().for_each(|x| go(x, bound)),
         ExprKind::Binary(_, l, r) => {
             go(l, bound);
@@ -1020,6 +1042,7 @@ fn pattern_binds(p: &Pattern, out: &mut Vec<String>) {
         PatternKind::Variant(_, _, _, pats) | PatternKind::Or(pats) => {
             pats.iter().for_each(|p| pattern_binds(p, out));
         }
+        PatternKind::Move(p) => pattern_binds(p, out),
         PatternKind::Struct(_, _, fields, _) => {
             fields.iter().for_each(|f| pattern_binds(&f.pat, out))
         }
@@ -1143,6 +1166,14 @@ pub enum PatternKind {
     /// `Shape::Circle(r) | Shape::Rect(r, _)`: matches if any alternative
     /// does. Every alternative must bind the same variables, at the same types.
     Or(Vec<Pattern>),
+    /// A pattern that moves out of what it matches, as `ExprKind::Move`
+    /// does, and only from `lift` on: a binding by value of what the
+    /// borrow checker didn't know to be `Copy`, which moves it into the
+    /// variable, or a struct or enum pattern taking apart, by value, what
+    /// it didn't know to be `Discard`, which uses it up. Without one, a
+    /// binding copies, and a struct or enum pattern leaves what it takes
+    /// apart where it is.
+    Move(Box<Pattern>),
 }
 
 /// `y: 0` in a struct pattern. Plain `x` is short for `x: x`.

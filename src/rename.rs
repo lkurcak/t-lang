@@ -340,6 +340,7 @@ fn shorthand_exprs(e: &Expr, out: &mut HashSet<Span>) {
 
 fn shorthand_pats(p: &Pattern, out: &mut HashSet<Span>) {
     match &p.kind {
+        PatternKind::Move(_) => unreachable!("written by lift"),
         PatternKind::Struct(_, _, fields, _) => {
             for f in fields {
                 if f.pat.span == f.name.span {

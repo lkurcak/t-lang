@@ -1329,6 +1329,7 @@ impl Rewrite<'_> {
 
     fn pattern(&mut self, p: &mut Pattern) -> Result<(), Error> {
         match &mut p.kind {
+            PatternKind::Move(_) => unreachable!("written by lift"),
             PatternKind::Variant(ty, targs, _, pats) => {
                 for t in targs.iter_mut() {
                     self.ty(t)?;
@@ -1464,6 +1465,7 @@ fn plain_path(t: &TypeExpr) -> Option<Ident> {
 /// them.
 fn children_mut(e: &mut Expr) -> Vec<&mut Expr> {
     match &mut e.kind {
+        ExprKind::Move(_) => unreachable!("written by lift"),
         ExprKind::Int(_)
         | ExprKind::Bool(_)
         | ExprKind::Unit

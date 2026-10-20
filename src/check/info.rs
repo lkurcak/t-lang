@@ -59,6 +59,32 @@ pub struct Info {
     /// The symbols of the core library's functions, structs and enums,
     /// which monomorphisation keeps only if the program uses them.
     pub core_symbols: HashSet<String>,
+    /// Where the borrow checker moved a value rather than copying it, and
+    /// each pattern that moves out of what it matches, for `lift` to write
+    /// out (`ExprKind::Move`, `PatternKind::Move`). It decides by the types
+    /// it knows, so in generic code by the bounds: a value of a type
+    /// parameter that isn't known to be `Copy` moves, whatever type it
+    /// turns out to be. Then the program runs as it was checked, and means
+    /// the same at every type, as it would if it ran once for them all.
+    pub moves: HashSet<MoveSite>,
+}
+
+/// Where a value is used by value, which moves it or copies it, as
+/// `Info::moves` says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MoveSite {
+    /// A place used as a value, by its span.
+    Expr(Span),
+    /// The receiver of a call, by the call's span: what's before the `.`
+    /// of a method call whose method takes `self`, or a closure called as
+    /// an `FnOnce`.
+    Receiver(Span),
+    /// The `i`th variable a closure captures, captured by value, by the
+    /// span of the closure's body.
+    Capture(Span, usize),
+    /// A binding by value, which moves into its variable, or a struct or
+    /// enum pattern, which uses up what it takes apart. By its span.
+    Pattern(Span),
 }
 
 /// What a method call `x.m(..)` or path `T::m` names: method `symbol`.
@@ -629,6 +655,7 @@ fn names(params: &[Ident]) -> Vec<String> {
 /// the functions nested in it.
 fn each_annotation(e: &Expr, f: &mut impl FnMut(&TypeExpr)) {
     match &e.kind {
+        ExprKind::Move(_) => unreachable!("written by lift"),
         ExprKind::For(_) | ExprKind::Range(..) => {
             unreachable!("rewritten when paths are resolved")
         }
@@ -706,6 +733,7 @@ fn each_annotation(e: &Expr, f: &mut impl FnMut(&TypeExpr)) {
 /// Calls `f` on every type argument written in pattern `p`.
 fn pattern_annotations(p: &Pattern, f: &mut impl FnMut(&TypeExpr)) {
     match &p.kind {
+        PatternKind::Move(_) => unreachable!("written by lift"),
         PatternKind::Variant(_, targs, _, pats) => {
             targs.iter().for_each(&mut *f);
             pats.iter().for_each(|p| pattern_annotations(p, f));

@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Generic code runs as it was checked, whatever its type parameters turn
+  out to be. A field of a type parameter not known to be `Copy` that a
+  method moved out of, as in `app(self.p)`, used up `self` when checked,
+  but was copied when run at a `Copy` type, such as `int` or a closure that
+  only borrows, and then `self`, if it isn't `Discard`, was thrown away: a
+  leak, which the interpreter stopped at. Now what the borrow checker
+  moved is moved at every type, and a pattern uses up, at every type, what
+  it took apart that wasn't known to be `Discard`.
+
 ## 0.13.0 (2026-10-20)
 
 Step 6e.1: higher-ranked closures. See
