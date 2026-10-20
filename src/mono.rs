@@ -527,8 +527,8 @@ impl Cx<'_, '_, '_> {
         // Everything is at the top level by now, named by its symbol.
         let arities = &self.m.arities;
         let opaques = &self.m.info.opaques;
-        let names = |name: &str, span: Span| {
-            if let Some(symbol) = opaques.get(&span) {
+        let names = |name: &str, t: &TypeExpr| {
+            if let Some(symbol) = opaques.get(&t.id) {
                 let d = &self.m.info.traits.opaques[symbol];
                 let (lifetimes, params) = (d.lifetimes.clone(), d.params.clone());
                 return Some(check::TypeName::Opaque(symbol.clone(), lifetimes, params));
@@ -541,10 +541,10 @@ impl Cx<'_, '_, '_> {
             }
         };
         let projections = &self.m.info.projections;
-        let proj = |s: Type, tr: Option<&Ident>, name: &Ident, span: Span| {
+        let proj = |s: Type, tr: Option<&Ident>, name: &Ident, t: &TypeExpr| {
             let tr = match tr {
                 Some(tr) => tr.name.clone(),
-                None => projections[&span].clone(),
+                None => projections[&t.id].clone(),
             };
             Ok(Type::Proj(Box::new(s), tr, name.name.clone()))
         };
@@ -675,8 +675,8 @@ impl Cx<'_, '_, '_> {
 
     /// The use of something generic at `span`, if that's what's there, as
     /// the name of its copy.
-    fn instance(&mut self, span: Span) -> Option<String> {
-        let instance = self.m.info.instances.get(&span)?.clone();
+    fn instance(&mut self, id: NodeId) -> Option<String> {
+        let instance = self.m.info.instances.get(&id)?.clone();
         Some(match instance {
             // A copy doesn't depend on lifetimes, so they're left out.
             Instance::Fn(name, args) => {
@@ -689,7 +689,10 @@ impl Cx<'_, '_, '_> {
             Instance::Adt(name, args) => {
                 let args: Vec<Type> = args.iter().map(|a| self.subst(a).erased()).collect();
                 // Its fields' types may need copies of their own.
-                self.written(&Type::Adt(name.clone(), Vec::new(), args.clone()), span);
+                self.written(
+                    &Type::Adt(name.clone(), Vec::new(), args.clone()),
+                    Span::new(0, 0),
+                );
                 self.m.type_copy(&name, args)
             }
         })
@@ -815,7 +818,7 @@ impl Cx<'_, '_, '_> {
     /// `id`, renamed to its copy if it names something generic.
     fn ident(&mut self, id: &Ident) -> Ident {
         Ident {
-            name: self.instance(id.span).unwrap_or_else(|| id.name.clone()),
+            name: self.instance(id.id).unwrap_or_else(|| id.name.clone()),
             span: id.span,
             id: id.id,
         }
@@ -831,7 +834,7 @@ impl Cx<'_, '_, '_> {
             }
             // Type arguments written in the source are in `info.instances`
             // like the inferred ones, and the copy's name says them.
-            ExprKind::Var(name, _) => match self.m.info.instances.get(&e.span).cloned() {
+            ExprKind::Var(name, _) => match self.m.info.instances.get(&e.id).cloned() {
                 Some(Instance::Fn(f, args)) => {
                     let args = args.iter().map(|a| self.subst(a).erased()).collect();
                     match self.target(&f, args) {
@@ -861,13 +864,13 @@ impl Cx<'_, '_, '_> {
                     }
                 }
                 _ => ExprKind::Var(
-                    self.instance(e.span).unwrap_or_else(|| name.clone()),
+                    self.instance(e.id).unwrap_or_else(|| name.clone()),
                     Vec::new(),
                 ),
             },
             ExprKind::Unary(op, x) => ExprKind::Unary(*op, Box::new(self.expr(x))),
             ExprKind::Binary(op, l, r) => {
-                if let Some(Instance::Fn(_, args)) = self.m.info.instances.get(&e.span).cloned() {
+                if let Some(Instance::Fn(_, args)) = self.m.info.instances.get(&e.id).cloned() {
                     self.need_eq(&self.subst(&args[0]));
                 }
                 ExprKind::Binary(*op, Box::new(self.expr(l)), Box::new(self.expr(r)))

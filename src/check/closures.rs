@@ -268,7 +268,7 @@ impl Checker {
         self.closure_why.insert(symbol.clone(), why);
         self.define_closure(symbol, &def);
         self.info.captures.insert(
-            l.body.span,
+            l.id,
             modes
                 .iter()
                 .map(|(id, m)| (self.typed.binds[id].name.clone(), *m))
@@ -557,7 +557,7 @@ impl Checker {
                 ));
             };
             self.typed.calls.insert(e, call);
-            self.info.calls.insert(span, call);
+            self.info.calls.insert(e, call);
         }
         Ok(())
     }

@@ -148,19 +148,19 @@ impl Lifetimes<'_> {
     }
 }
 
-/// What a projection `<T as Tr>::Item` or `T::Item` written at a span is,
-/// given what's before the `as` (`T`), the trait if it's written, and the
-/// associated type's name.
+/// What a projection `<T as Tr>::Item` or `T::Item`, written as the type
+/// given last, is, given what's before the `as` (`T`), the trait if it's
+/// written, and the associated type's name.
 pub(crate) type ProjNames<'a> =
-    dyn Fn(Type, Option<&Ident>, &Ident, Span) -> Result<Type, Error> + 'a;
+    dyn Fn(Type, Option<&Ident>, &Ident, &TypeExpr) -> Result<Type, Error> + 'a;
 
 /// Turns a type as written (`TypeExpr`) into a type as understood (`Type`).
-/// `names` says what the name at a span refers to, and `params` are the type
+/// `names` says what the name of a type written refers to, and `params` are the type
 /// parameters in scope, for names it says nothing about. `proj` says what a
 /// projection is. `lifetimes` says what lifetimes mean.
 pub(crate) fn resolve(
     t: &TypeExpr,
-    names: &dyn Fn(&str, Span) -> Option<TypeName>,
+    names: &dyn Fn(&str, &TypeExpr) -> Option<TypeName>,
     proj: &ProjNames,
     params: &[String],
     lifetimes: &mut Lifetimes,
@@ -210,7 +210,7 @@ fn region(
 
 fn resolve_in(
     t: &TypeExpr,
-    names: &dyn Fn(&str, Span) -> Option<TypeName>,
+    names: &dyn Fn(&str, &TypeExpr) -> Option<TypeName>,
     proj: &ProjNames,
     params: &[String],
     lifetimes: &mut Lifetimes,
@@ -222,7 +222,7 @@ fn resolve_in(
     match &t.kind {
         TypeExprKind::Proj(inner, tr, name) => {
             let inner = go(inner, lifetimes, binder)?;
-            proj(inner, tr.as_ref(), name, t.span)
+            proj(inner, tr.as_ref(), name, t)
         }
         TypeExprKind::Named(name, _) if name == "_" => Err(Error::ty(
             t.span,
@@ -255,7 +255,7 @@ fn resolve_in(
                     "lifetime arguments must come before type arguments",
                 ));
             }
-            let (ty, lt_arity, arity) = match names(name, t.span) {
+            let (ty, lt_arity, arity) = match names(name, t) {
                 Some(TypeName::Adt(symbol, l, n)) => {
                     (Type::Adt(symbol, Vec::new(), Vec::new()), l, n)
                 }
@@ -320,7 +320,7 @@ fn resolve_in(
         TypeExprKind::Unit => Ok(Type::Unit),
         TypeExprKind::Never => Ok(Type::Never),
         // Where it can be, its symbol is known by where it is.
-        TypeExprKind::Impl(_) => match names("impl", t.span) {
+        TypeExprKind::Impl(_) => match names("impl", t) {
             Some(TypeName::Opaque(symbol, lifetimes, params)) => Ok(Type::Opaque(
                 symbol,
                 lifetimes.into_iter().map(Region::Named).collect(),

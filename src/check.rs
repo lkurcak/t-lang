@@ -396,9 +396,13 @@ pub(crate) struct Checker {
     /// What's been learned about the program.
     info: Info,
     /// Uses of generic things in the function being checked, with type
-    /// arguments that may still have variables in them. `finish_notes`
-    /// moves them to `info`.
-    pending: Vec<(Span, Instance)>,
+    /// arguments that may still have variables in them, and where each
+    /// is. `finish_notes` moves them to `info`, and the spans to
+    /// `instance_at`.
+    pending: Vec<(NodeId, Span, Instance)>,
+    /// Where each use in `info.instances` is, by its node: what function
+    /// it's in is worked out from that (`no_polymorphic_recursion`).
+    instance_at: HashMap<NodeId, Span>,
     /// What a `return` in the code being checked returns from: the type of
     /// the function's or closure's result. `None` in a closure whose result
     /// type is still to be inferred, until a `return` needs it.
@@ -416,7 +420,7 @@ pub(crate) struct Checker {
     diverging: Vec<Type>,
     /// The trait of each projection written, by its span, as it's worked
     /// out while resolving types (see `Info::projections`).
-    proj_traits: std::cell::RefCell<HashMap<Span, String>>,
+    proj_traits: std::cell::RefCell<HashMap<NodeId, String>>,
     /// Where the borrow checker moved, as it checks each body, which only
     /// needs a `&Checker` (see `Info::moves`).
     pub(crate) moves: std::cell::RefCell<HashSet<MoveSite>>,
@@ -431,7 +435,7 @@ pub(crate) struct Checker {
     goals: Vec<Goal>,
     /// The symbol of each opaque type, `impl Tr` in a return type, by
     /// where it's written.
-    opaque_at: HashMap<Span, String>,
+    opaque_at: HashMap<NodeId, String>,
     /// The function whose signature is being worked out, by symbol and
     /// name: what owns the opaque types in it.
     sig_owner: (String, String),
@@ -528,6 +532,7 @@ impl Checker {
             warnings: Vec::new(),
             info,
             pending: Vec::new(),
+            instance_at: HashMap::new(),
             ret: None,
             loops: Vec::new(),
             diverges: None,
@@ -822,7 +827,7 @@ impl Checker {
             .into_iter()
             .map(|(l, r)| (s.apply(&l), s.apply(&r)))
             .collect();
-        self.opaque_at.insert(t.span, symbol.clone());
+        self.opaque_at.insert(t.id, symbol.clone());
         self.adts.proj.opaques.insert(symbol.clone(), def.clone());
         self.traits.opaques.insert(symbol, def);
         Ok(())
@@ -1291,10 +1296,11 @@ impl Checker {
         Ok(())
     }
 
-    /// What the type name written at `span` refers to, if it's a struct or
-    /// enum or an outer type parameter (see `names.rs`).
-    fn type_name(&self, span: Span) -> Option<TypeName> {
-        if let Some(symbol) = self.opaque_at.get(&span) {
+    /// What the name of type `t` refers to, if it's a struct or enum, an
+    /// outer type parameter (see `names.rs`) or an opaque type.
+    fn type_name(&self, t: &TypeExpr) -> Option<TypeName> {
+        let span = t.span;
+        if let Some(symbol) = self.opaque_at.get(&t.id) {
             let d = &self.traits.opaques[symbol];
             let (lifetimes, params) = (d.lifetimes.clone(), d.params.clone());
             return Some(TypeName::Opaque(symbol.clone(), lifetimes, params));
@@ -1327,8 +1333,8 @@ impl Checker {
     ) -> Result<Type, Error> {
         resolve(
             t,
-            &|_, span| self.type_name(span),
-            &|s, tr, name, span| self.projection(s, tr, name, span),
+            &|_, t| self.type_name(t),
+            &|s, tr, name, t| self.projection(s, tr, name, t),
             params,
             lts,
         )
@@ -1398,7 +1404,8 @@ impl Checker {
             }
         }
         // Which function each use is in, from where they are.
-        for (span, instance) in &self.info.instances {
+        for (id, instance) in &self.info.instances {
+            let span = &self.instance_at[id];
             // The innermost function it's in.
             let from = self
                 .fns
@@ -1453,6 +1460,7 @@ impl Checker {
         name: &str,
         targs: &[TypeExpr],
         span: Span,
+        id: NodeId,
     ) -> Result<Option<(Type, Res)>, Error> {
         // Notes are for the name, not any `::<..>` after it.
         let at = Span::new(span.start, span.start + name.len());
@@ -1523,7 +1531,7 @@ impl Checker {
         };
         let instance = symbol.map(|symbol| {
             self.info.symbols.insert(span, symbol.clone());
-            (span, Instance::Fn(symbol, args))
+            (id, span, Instance::Fn(symbol, args))
         });
         let kind = NoteKind::Fn(name.to_string());
         self.note_use(at, kind, ty.clone(), def, instance, targs.is_empty());
@@ -1800,7 +1808,7 @@ impl Checker {
             return None;
         }
         self.typed.coerced.insert(e.id, (derefs, wm));
-        self.info.coercions.insert(e.span, (derefs, wm));
+        self.info.coercions.insert(e.id, (derefs, wm));
         Some(Type::Ref(Region::Erased, wm, Box::new(a)))
     }
 
@@ -1837,7 +1845,7 @@ impl Checker {
             // arguments substituted for its type parameters: the ones written
             // in `x::<..>`, or else a fresh variable for each (see `lookup`).
             ExprKind::Var(name, targs) => {
-                let Some((t, res)) = self.lookup(name, targs, e.span)? else {
+                let Some((t, res)) = self.lookup(name, targs, e.span, e.id)? else {
                     let unknown = format!("unknown variable `{name}`");
                     // `replace`, which isn't in the prelude: say where it is.
                     let path = self.modules.core_fn(name).filter(|_| !name.contains("::"));
@@ -2103,7 +2111,7 @@ impl Checker {
                     self.check(r, &t)?;
                     let eq = traits::trait_method_symbol("Eq", "eq");
                     self.pending
-                        .push((e.span, Instance::Fn(eq, vec![t.clone()])));
+                        .push((e.id, e.span, Instance::Fn(eq, vec![t.clone()])));
                     let pred = Pred {
                         ty: t,
                         trait_name: "Eq".into(),
@@ -2294,7 +2302,7 @@ impl Checker {
                     derefs,
                     autoref,
                 };
-                self.info.methods.insert(name.span, resolved);
+                self.info.methods.insert(name.id, resolved);
                 if let Some(pred) = found.of_trait {
                     self.oblige(pred, name.span, traits::Why::Method(name.name.clone()))?;
                 }
@@ -3323,7 +3331,7 @@ impl Checker {
             kind,
             ty.clone(),
             def,
-            Some((name.span, instance)),
+            Some((name.id, name.span, instance)),
             targs.is_empty(),
         );
         Ok(ty)
@@ -3394,7 +3402,7 @@ impl Checker {
             kind,
             ty,
             found.def,
-            Some((name.span, instance)),
+            Some((name.id, name.span, instance)),
             inferred,
         );
     }
@@ -3507,7 +3515,7 @@ impl Checker {
             derefs: 0,
             autoref: None,
         };
-        self.info.methods.insert(name.span, resolved);
+        self.info.methods.insert(name.id, resolved);
         // What `Self` is may only be known from the arguments.
         let oblige = |cx: &mut Checker| match found.of_trait.clone() {
             Some(pred) => cx.oblige(pred, name.span, traits::Why::Method(name.name.clone())),
@@ -3517,7 +3525,7 @@ impl Checker {
             oblige(self)?;
             // Without `(..)`, it's this whole expression that names it.
             let instance = Instance::Fn(found.symbol.clone(), found.args.clone());
-            self.pending.push((e.span, instance));
+            self.pending.push((e.id, e.span, instance));
             return Ok(found.ty);
         }
         let Type::Fn(sig) = &found.ty else {

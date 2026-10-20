@@ -458,7 +458,7 @@ impl<'a> Builder<'a> {
                 };
                 let (receiver, recv_ty) = match kind {
                     FnKind::FnOnce => {
-                        let (o, ot) = self.use_place(recv, callee.span, MoveSite::Receiver(span));
+                        let (o, ot) = self.use_place(recv, callee.span, MoveSite::Receiver(e.id));
                         (Arg::Value(o, ot.clone(), callee.span), ot)
                     }
                     kind => {
@@ -498,7 +498,7 @@ impl<'a> Builder<'a> {
                 let receiver = match autoref {
                     Some(m) => Arg::Borrow(recv, m, None, x.span),
                     None => {
-                        let (o, t) = self.use_place(recv, x.span, MoveSite::Receiver(span));
+                        let (o, t) = self.use_place(recv, x.span, MoveSite::Receiver(e.id));
                         Arg::Value(o, t, x.span)
                     }
                 };
@@ -639,9 +639,7 @@ impl<'a> Builder<'a> {
                     let name = &self.cx.typed().binds[id].name;
                     let at = first_use(&l.body, name).unwrap_or(l.body.span);
                     let (o, ot) = match mode {
-                        Capture::Value => {
-                            self.use_place(place, at, MoveSite::Capture(l.body.span, i))
-                        }
+                        Capture::Value => self.use_place(place, at, MoveSite::Capture(l.id, i)),
                         Capture::Ref | Capture::Mut | Capture::Unique => {
                             let m = *mode != Capture::Ref;
                             match mode {
@@ -870,7 +868,7 @@ impl<'a> Builder<'a> {
             let p = self.place(e);
             return match coerced {
                 Some((derefs, m)) => self.reborrow(&p, derefs, m, e.span),
-                None => self.use_place(p, e.span, MoveSite::Expr(e.span)),
+                None => self.use_place(p, e.span, MoveSite::Expr(e.id)),
             };
         }
         let (o, t) = match &e.kind {
@@ -1290,7 +1288,7 @@ impl<'a> Builder<'a> {
                         let o = match self.cx.is_copy(&t) {
                             true => Operand::Copy(place),
                             false => {
-                                self.cx.moves.borrow_mut().insert(MoveSite::Pattern(p.span));
+                                self.cx.moves.borrow_mut().insert(MoveSite::Pattern(p.id));
                                 Operand::Move(place)
                             }
                         };
@@ -1308,7 +1306,7 @@ impl<'a> Builder<'a> {
                 for (j, q) in pats.iter().enumerate() {
                     self.bind(q, &place.project(Proj::Variant(i, j)));
                 }
-                self.consume(&place, Some(i), p.span);
+                self.consume(&place, Some(i), p);
             }
             PatternKind::Struct(_, _, fields, _) => {
                 let t = self.place_ty(&place);
@@ -1316,7 +1314,7 @@ impl<'a> Builder<'a> {
                     let j = field_index(self.adts(), &t, &fp.name.name);
                     self.bind(&fp.pat, &place.project(Proj::Field(j)));
                 }
-                self.consume(&place, None, p.span);
+                self.consume(&place, None, p);
             }
             // Whichever alternative matched binds the variables, and uses up
             // what it takes apart.
@@ -1340,7 +1338,7 @@ impl<'a> Builder<'a> {
 
 impl Builder<'_> {
     /// Uses up the value at `place`, of variant `variant` if it's an enum,
-    /// taken apart by the pattern at `span`, if it's owned and isn't
+    /// taken apart by pattern `p`, if it's owned and isn't
     /// `Discard`. Matching it through a reference only looks at it.
     ///
     /// The interpreter does the same where this says (`Interp::consume`),
@@ -1348,10 +1346,10 @@ impl Builder<'_> {
     /// generic code, a `W<T>` that the checker can't show is `Discard` is
     /// used up here even where it turns out to be, so that it's dropped at
     /// the same point at every type, as a destructor would see.
-    fn consume(&mut self, place: &Place, variant: Option<usize>, span: Span) {
+    fn consume(&mut self, place: &Place, variant: Option<usize>, p: &Pattern) {
         if self.consumes_at(place) {
-            self.cx.moves.borrow_mut().insert(MoveSite::Pattern(span));
-            self.push(StmtKind::Consume(place.clone(), variant), span);
+            self.cx.moves.borrow_mut().insert(MoveSite::Pattern(p.id));
+            self.push(StmtKind::Consume(place.clone(), variant), p.span);
         }
     }
 

@@ -22,7 +22,7 @@ pub struct Info {
     /// The type arguments of each use of a generic function, struct or enum,
     /// by the span of its name. In a generic function these can mention its
     /// own type parameters.
-    pub instances: HashMap<Span, Instance>,
+    pub instances: HashMap<NodeId, Instance>,
     /// The symbol of every function, struct and enum, by the span of its
     /// name where it's declared and where it's used: a name for it that's
     /// unique in the program, unlike the one it's written with (see
@@ -35,27 +35,27 @@ pub struct Info {
     /// expression: `r` used as a `&T` when it's a `&Box<T>`, a `&&T` or a
     /// `&mut T`, with how many more `*`s it takes to get to the `T`, and
     /// whether the result is `&mut`. `lift` writes them out: `&**r`.
-    pub coercions: HashMap<Span, (usize, bool)>,
+    pub coercions: HashMap<NodeId, (usize, bool)>,
     /// Every trait and impl, for monomorphisation to find impls by.
     pub traits: crate::traits::Traits,
     /// The method each method call and path names, by the span of its
     /// name, for `lift` to write out as a plain call.
-    pub methods: HashMap<Span, Resolved>,
+    pub methods: HashMap<NodeId, Resolved>,
     /// The trait of each projection written, by its span: `Iter` for a
     /// `T::Item` where `T: Iter`, for monomorphisation to work it out by.
-    pub projections: HashMap<Span, String>,
+    pub projections: HashMap<NodeId, String>,
     /// How each closure that captures captures each variable it does, by
     /// the span of its body, for `lift` to write into it.
-    pub captures: HashMap<Span, Vec<(String, crate::ast::Capture)>>,
+    pub captures: HashMap<NodeId, Vec<(String, crate::ast::Capture)>>,
     /// How each call of what isn't a function type gets at what it calls,
     /// by the span of the call, for `lift` to write out: `f(1)` for a
     /// closure `f` that's `FnMut` is `(&mut f)(1)`. Through how many `*`s,
     /// and by which `Fn` trait.
-    pub calls: HashMap<Span, (usize, crate::traits::FnKind)>,
+    pub calls: HashMap<NodeId, (usize, crate::traits::FnKind)>,
     /// The symbol of each opaque type, `impl Tr` in a return type, by
     /// where it's written, for monomorphisation to replace it with what it
     /// stands for.
-    pub opaques: HashMap<Span, String>,
+    pub opaques: HashMap<NodeId, String>,
     /// The symbols of the core library's functions, structs and enums,
     /// which monomorphisation keeps only if the program uses them.
     pub core_symbols: HashSet<String>,
@@ -73,18 +73,18 @@ pub struct Info {
 /// `Info::moves` says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MoveSite {
-    /// A place used as a value, by its span.
-    Expr(Span),
-    /// The receiver of a call, by the call's span: what's before the `.`
-    /// of a method call whose method takes `self`, or a closure called as
-    /// an `FnOnce`.
-    Receiver(Span),
+    /// A place used as a value.
+    Expr(NodeId),
+    /// The receiver of a call, by the call: what's before the `.` of a
+    /// method call whose method takes `self`, or a closure called as an
+    /// `FnOnce`.
+    Receiver(NodeId),
     /// The `i`th variable a closure captures, captured by value, by the
-    /// span of the closure's body.
-    Capture(Span, usize),
+    /// closure.
+    Capture(NodeId, usize),
     /// A binding by value, which moves into its variable, or a struct or
-    /// enum pattern, which uses up what it takes apart. By its span.
-    Pattern(Span),
+    /// enum pattern, which uses up what it takes apart.
+    Pattern(NodeId),
 }
 
 /// What a method call `x.m(..)` or path `T::m` names: method `symbol`.
@@ -334,11 +334,11 @@ impl Checker {
         kind: NoteKind,
         ty: Type,
         def: Option<Span>,
-        instance: Option<(Span, Instance)>,
+        instance: Option<(NodeId, Span, Instance)>,
         inferred: bool,
     ) {
         let args = match &instance {
-            Some((_, Instance::Fn(_, args) | Instance::Adt(_, args))) => args.clone(),
+            Some((_, _, Instance::Fn(_, args) | Instance::Adt(_, args))) => args.clone(),
             None => Vec::new(),
         };
         if let Some(instance) = instance
@@ -401,7 +401,7 @@ impl Checker {
             n.ty = ty;
             n.args = args;
         }
-        for (span, instance) in std::mem::take(&mut self.pending) {
+        for (id, span, instance) in std::mem::take(&mut self.pending) {
             let instance = match instance {
                 Instance::Fn(name, args) => Instance::Fn(
                     name,
@@ -416,7 +416,8 @@ impl Checker {
                         .collect(),
                 ),
             };
-            self.info.instances.insert(span, instance);
+            self.info.instances.insert(id, instance);
+            self.instance_at.insert(id, span);
         }
     }
 

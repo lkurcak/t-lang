@@ -415,9 +415,9 @@ impl Checker {
         s: Type,
         tr: Option<&Ident>,
         name: &Ident,
-        span: Span,
+        t: &TypeExpr,
     ) -> Result<Type, Error> {
-        let n = &name.name;
+        let (n, span) = (&name.name, t.span);
         // What the bounds in scope, and the trait's own for a projection,
         // say `s` implements.
         let traits_of = |s: &Type| -> Vec<String> {
@@ -531,7 +531,7 @@ impl Checker {
                 ));
             }
         }
-        self.proj_traits.borrow_mut().insert(span, tr.clone());
+        self.proj_traits.borrow_mut().insert(t.id, tr.clone());
         Ok(self.adts.normalise(&Type::Proj(Box::new(s), tr, n.clone())))
     }
 

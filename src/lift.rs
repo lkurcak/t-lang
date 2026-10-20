@@ -299,7 +299,7 @@ impl<'p> Cx<'p> {
             ExprKind::Call(f, args) => {
                 let mut callee = self.expr(f, nested);
                 let borrow = matches!(f.kind, ExprKind::Unary(UnOp::Ref | UnOp::RefMut, _));
-                if let Some(&(derefs, kind)) = self.info.calls.get(&e.span)
+                if let Some(&(derefs, kind)) = self.info.calls.get(&e.id)
                     && !borrow
                 {
                     let span = callee.span;
@@ -323,7 +323,7 @@ impl<'p> Cx<'p> {
                             span,
                             id: self.id(),
                         };
-                    } else if self.info.moves.contains(&MoveSite::Receiver(e.span)) {
+                    } else if self.info.moves.contains(&MoveSite::Receiver(e.id)) {
                         let kind = ExprKind::Move(Box::new(callee));
                         callee = Expr {
                             kind,
@@ -338,7 +338,7 @@ impl<'p> Cx<'p> {
                 )
             }
             ExprKind::MethodCall(x, name, _, args) => {
-                let m = &self.info.methods[&name.span];
+                let m = &self.info.methods[&name.id];
                 let mut recv = self.expr(x, nested);
                 let span = recv.span;
                 for _ in 0..m.derefs {
@@ -357,7 +357,7 @@ impl<'p> Cx<'p> {
                         span,
                         id: self.id(),
                     };
-                } else if self.info.moves.contains(&MoveSite::Receiver(e.span)) {
+                } else if self.info.moves.contains(&MoveSite::Receiver(e.id)) {
                     let kind = ExprKind::Move(Box::new(recv));
                     recv = Expr {
                         kind,
@@ -378,9 +378,9 @@ impl<'p> Cx<'p> {
                 ExprKind::Call(Box::new(f), args)
             }
             ExprKind::Variant(_, _, name, args, parens)
-                if self.info.methods.contains_key(&name.span) =>
+                if self.info.methods.contains_key(&name.id) =>
             {
-                let f = ExprKind::Var(self.info.methods[&name.span].symbol.clone(), Vec::new());
+                let f = ExprKind::Var(self.info.methods[&name.id].symbol.clone(), Vec::new());
                 let f = Expr {
                     kind: f,
                     span: name.span,
@@ -473,10 +473,10 @@ impl<'p> Cx<'p> {
                 let body = self.expr(&l.body, nested);
                 let mut lambda = Lambda::new(l.id, params, ret, body);
                 lambda.moves = l.moves;
-                let captures = self.info.captures.get(&l.body.span).into_iter().flatten();
+                let captures = self.info.captures.get(&l.id).into_iter().flatten();
                 lambda.modes = (captures.enumerate())
                     .map(|(i, (name, mode))| {
-                        let site = MoveSite::Capture(l.body.span, i);
+                        let site = MoveSite::Capture(l.id, i);
                         (name.clone(), *mode, self.info.moves.contains(&site))
                     })
                     .collect();
@@ -503,7 +503,7 @@ impl<'p> Cx<'p> {
                 x.as_ref().map(|x| Box::new(self.expr(x, nested))),
             ),
         };
-        let moves = self.info.moves.contains(&MoveSite::Expr(e.span));
+        let moves = self.info.moves.contains(&MoveSite::Expr(e.id));
         debug_assert!(!moves || e.is_place(), "only a place is moved out of");
         let e = Expr {
             kind,
@@ -518,7 +518,7 @@ impl<'p> Cx<'p> {
                 id: self.id(),
             };
         }
-        match self.info.coercions.get(&e.span) {
+        match self.info.coercions.get(&e.id) {
             None => e,
             Some(&(derefs, mutable)) => {
                 let span = e.span;
@@ -572,7 +572,7 @@ impl<'p> Cx<'p> {
             span: p.span,
             id: p.id,
         };
-        match self.info.moves.contains(&MoveSite::Pattern(p.span)) {
+        match self.info.moves.contains(&MoveSite::Pattern(p.id)) {
             true => Pattern {
                 kind: PatternKind::Move(Box::new(pat)),
                 span: p.span,
