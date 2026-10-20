@@ -314,13 +314,13 @@ pub(crate) struct Checker {
     /// `Program::all_types`.
     types: Vec<TypeDef>,
     /// What each name in a type refers to, by its span (see `names.rs`).
-    type_names: HashMap<Span, Scoped>,
+    type_names: HashMap<NodeId, Scoped>,
     /// The symbol of every function, by `FnId`.
     fn_symbols: Vec<String>,
     /// Every function, top-level and nested, by `FnId`.
     fns: Vec<FnDef>,
     /// Each nested function's id, by where its name is declared.
-    nested_ids: HashMap<Span, FnId>,
+    nested_ids: HashMap<NodeId, FnId>,
     /// The functions in scope, as a stack: those of each block around what's
     /// being checked that declares any. With those of its module and the
     /// built-ins, the global part of the context Γ (see `scope.rs`).
@@ -370,7 +370,7 @@ pub(crate) struct Checker {
     /// Where each impl of the program is in `traits.impls`.
     impl_ids: Vec<usize>,
     /// Each method's id, by where its name is declared.
-    method_ids: HashMap<Span, FnId>,
+    method_ids: HashMap<NodeId, FnId>,
     /// Whether each function, by `FnId`, takes `self`: a method that does.
     receivers: Vec<bool>,
     /// The bounds that hold in what's being checked: its own, its impl's,
@@ -492,9 +492,9 @@ impl Checker {
         let fn_symbols = scope::symbols(prog, &modules);
         let (types, type_names) = names::names(prog, &prog.all_fns(), &fn_symbols, &modules);
         let mut info = Info::default();
-        for (span, name) in &type_names {
+        for (id, name) in &type_names {
             if let Scoped::Adt(symbol) = name {
-                info.symbols.insert(*span, symbol.clone());
+                info.symbols.insert(*id, symbol.clone());
             }
         }
         Checker {
@@ -560,7 +560,7 @@ impl Checker {
             .skip(prog.fns.len())
             .take(prog.methods().len())
         {
-            self.method_ids.insert(f.name.span, FnId(i));
+            self.method_ids.insert(f.name.id, FnId(i));
         }
         self.collect_impls(prog)?;
         self.projections_known();
@@ -673,10 +673,10 @@ impl Checker {
                     }
                 }
                 Some(_) => {
-                    self.nested_ids.insert(f.name.span, FnId(i));
+                    self.nested_ids.insert(f.name.id, FnId(i));
                 }
             }
-            self.info.symbols.insert(f.name.span, symbol.clone());
+            self.info.symbols.insert(f.name.id, symbol.clone());
             self.fns.push(FnDef {
                 name: f.name.clone(),
                 symbol,
@@ -1299,13 +1299,12 @@ impl Checker {
     /// What the name of type `t` refers to, if it's a struct or enum, an
     /// outer type parameter (see `names.rs`) or an opaque type.
     fn type_name(&self, t: &TypeExpr) -> Option<TypeName> {
-        let span = t.span;
         if let Some(symbol) = self.opaque_at.get(&t.id) {
             let d = &self.traits.opaques[symbol];
             let (lifetimes, params) = (d.lifetimes.clone(), d.params.clone());
             return Some(TypeName::Opaque(symbol.clone(), lifetimes, params));
         }
-        match self.type_names.get(&span)? {
+        match self.type_names.get(&t.id)? {
             Scoped::Adt(symbol) => {
                 let (lts, arity) = *self.arities.get(symbol)?;
                 Some(TypeName::Adt(symbol.clone(), lts, arity))
@@ -1316,8 +1315,8 @@ impl Checker {
 
     /// The symbol of the struct or enum that the type name written at
     /// `span` refers to, if it's one.
-    fn adt_symbol(&self, span: Span) -> Option<&str> {
-        match self.type_names.get(&span)? {
+    fn adt_symbol(&self, id: NodeId) -> Option<&str> {
+        match self.type_names.get(&id)? {
             Scoped::Adt(symbol) => Some(symbol),
             Scoped::OuterParam(..) => None,
         }
@@ -1466,7 +1465,7 @@ impl Checker {
         let at = Span::new(span.start, span.start + name.len());
         // A path, `a::f`, names what resolving it said.
         let binding = match name.contains("::") {
-            true => match self.modules.paths.get(&span) {
+            true => match self.modules.paths.get(&id) {
                 Some(modules::Item::Fn(i)) => Some(Binding::Fn(FnId(*i))),
                 _ => None,
             },
@@ -1530,7 +1529,7 @@ impl Checker {
             (None, None) => unreachable!("a function or a built-in"),
         };
         let instance = symbol.map(|symbol| {
-            self.info.symbols.insert(span, symbol.clone());
+            self.info.symbols.insert(id, symbol.clone());
             (id, span, Instance::Fn(symbol, args))
         });
         let kind = NoteKind::Fn(name.to_string());
@@ -2847,7 +2846,7 @@ impl Checker {
             }
         }
         if !fns.is_empty() {
-            let fns = fns.iter().map(|f| self.nested_ids[&f.name.span]).collect();
+            let fns = fns.iter().map(|f| self.nested_ids[&f.name.id]).collect();
             self.scopes.push(FnScope { at: scope, fns });
         }
         // If the code before the block diverges, that's for the code
@@ -3283,7 +3282,7 @@ impl Checker {
     /// If it's generic, each type parameter gets a fresh variable, to be
     /// worked out from the fields or from where it's used.
     fn struct_type(&mut self, name: &Ident, targs: &[TypeExpr]) -> Result<Type, Error> {
-        let def = self.adt_symbol(name.span).and_then(|s| self.adts.get(s));
+        let def = self.adt_symbol(name.id).and_then(|s| self.adts.get(s));
         match def.map(|d| &d.kind) {
             Some(AdtKind::Struct(_)) => self.instantiate(name, targs, " { .. }", NoteKind::Struct),
             Some(AdtKind::Enum(_)) => Err(Error::ty(
@@ -3308,7 +3307,7 @@ impl Checker {
         rest: &str,
         kind: fn(String) -> NoteKind,
     ) -> Result<Type, Error> {
-        let symbol = self.adt_symbol(name.span).expect("a struct or enum");
+        let symbol = self.adt_symbol(name.id).expect("a struct or enum");
         let symbol = symbol.to_string();
         let params = self.adts[&symbol].params.clone();
         let args = self.type_args(&name.name, &params, targs, name.span, rest)?;
@@ -3341,7 +3340,7 @@ impl Checker {
         targs: &[TypeExpr],
         variant: &Ident,
     ) -> Result<(Type, usize), Error> {
-        let symbol = self.adt_symbol(ty.span).map(str::to_string);
+        let symbol = self.adt_symbol(ty.id).map(str::to_string);
         let def = symbol.as_ref().and_then(|s| self.adts.get(s));
         if def.is_none() && ty.name == "Box" {
             return Err(Error::ty(
@@ -3405,7 +3404,7 @@ impl Checker {
 
     /// Is `ty::name` a variant of an enum, rather than a path to a method?
     fn is_variant(&self, ty: &Ident, name: &Ident) -> bool {
-        let def = self.adt_symbol(ty.span).and_then(|s| self.adts.get(s));
+        let def = self.adt_symbol(ty.id).and_then(|s| self.adts.get(s));
         match def.map(|d| &d.kind) {
             Some(AdtKind::Enum(variants)) => variants.iter().any(|(v, _)| *v == name.name),
             // Not a method either, but the variant rule says what's wrong.
@@ -3451,7 +3450,7 @@ impl Checker {
         parens: bool,
     ) -> Result<Type, Error> {
         let found = match self.traits.traits.contains_key(&ty.name)
-            && self.adt_symbol(ty.span).is_none()
+            && self.adt_symbol(ty.id).is_none()
             && !self.type_params.contains(&ty.name)
         {
             true => {
@@ -3468,10 +3467,10 @@ impl Checker {
                 self.lookup_method(&s, Some(&tr), name, &[], "trait")?
             }
             false => {
-                let t = match self.adt_symbol(ty.span) {
+                let t = match self.adt_symbol(ty.id) {
                     Some(_) => {
                         let rest = format!("::{}", name.name);
-                        let kind = match self.adts[self.adt_symbol(ty.span).unwrap()].kind {
+                        let kind = match self.adts[self.adt_symbol(ty.id).unwrap()].kind {
                             AdtKind::Struct(_) => NoteKind::Struct,
                             AdtKind::Enum(_) => NoteKind::Enum,
                         };
@@ -3488,7 +3487,7 @@ impl Checker {
                         t
                     }
                 };
-                let what = match self.adt_symbol(ty.span).map(|s| &self.adts[s].kind) {
+                let what = match self.adt_symbol(ty.id).map(|s| &self.adts[s].kind) {
                     Some(AdtKind::Enum(_)) => "enum",
                     _ => "type",
                 };
@@ -3572,7 +3571,7 @@ impl Checker {
 
     /// Does `name`, written as the type in `name::new(..)`, mean `Box`?
     fn is_box(&self, name: &Ident) -> bool {
-        name.name == "Box" && self.adt_symbol(name.span).is_none()
+        name.name == "Box" && self.adt_symbol(name.id).is_none()
     }
 
     //        Γ ⊢ e : T

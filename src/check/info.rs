@@ -27,7 +27,7 @@ pub struct Info {
     /// name where it's declared and where it's used: a name for it that's
     /// unique in the program, unlike the one it's written with (see
     /// `check/scope.rs` and `check/names.rs`).
-    pub symbols: HashMap<Span, String>,
+    pub symbols: HashMap<NodeId, String>,
     /// Where each struct and enum is declared, by symbol: the span of its
     /// name.
     pub types: HashMap<String, Span>,
@@ -521,7 +521,7 @@ impl Checker {
             }
         }
         // A method can use its impl's type parameters too.
-        let mut outer: HashMap<Span, Vec<Ident>> = HashMap::new();
+        let mut outer: HashMap<NodeId, Vec<Ident>> = HashMap::new();
         for d in &prog.impls {
             let params = &d.generics.types;
             self.param_notes(params);
@@ -531,11 +531,11 @@ impl Checker {
                 self.type_expr_notes(&a.ty, params);
             }
             for f in &d.methods {
-                outer.insert(f.name.span, params.clone());
+                outer.insert(f.name.id, params.clone());
             }
         }
         for (f, _) in prog.all_fns() {
-            let mut params = outer.get(&f.name.span).cloned().unwrap_or_default();
+            let mut params = outer.get(&f.name.id).cloned().unwrap_or_default();
             params.extend(f.generics.types.iter().cloned());
             let params = &params;
             self.param_notes(&f.generics.types);
@@ -606,7 +606,7 @@ impl Checker {
             TypeExprKind::Named(name, args) => {
                 // Only the name, not the arguments after it.
                 let span = Span::new(t.span.start, t.span.start + name.len());
-                if let Some(symbol) = self.adt_symbol(t.span) {
+                if let Some(symbol) = self.adt_symbol(t.id) {
                     let def = self.defs.types.get(symbol).copied();
                     let kind = match self.adts.get(symbol).map(|d| &d.kind) {
                         Some(crate::types::AdtKind::Enum(_)) => NoteKind::Enum(name.clone()),

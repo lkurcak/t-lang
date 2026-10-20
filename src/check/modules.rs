@@ -108,7 +108,7 @@ pub(crate) struct Modules {
     /// where a type is written (`a::Point`, by the span of the type), in a
     /// struct literal or pattern (by the span of its name), and one to a
     /// function where one is used (by the span of the expression).
-    pub(crate) paths: HashMap<Span, Item>,
+    pub(crate) paths: HashMap<NodeId, Item>,
     pub(crate) imports: Vec<Import>,
     /// The symbol of each trait, by its index in `Program::traits`.
     pub(crate) trait_symbols: Vec<String>,
@@ -866,7 +866,7 @@ impl Rewrite<'_> {
 
     /// A path to a struct or enum, written as `name`: noted, if it's
     /// written with a `::`.
-    fn type_path(&mut self, name: &Ident, at: Span) -> Result<(), Error> {
+    fn type_path(&mut self, name: &Ident) -> Result<(), Error> {
         if !name.name.contains("::") {
             // A type parameter, or `int`, or a local type, or one of the
             // module's: only the last can be private, and only it can be
@@ -883,7 +883,7 @@ impl Rewrite<'_> {
         match b.item {
             Item::Type(_) => {
                 self.exposed(b.item, &name.name, name.span)?;
-                self.r.m.paths.insert(at, b.item);
+                self.r.m.paths.insert(name.id, b.item);
                 Ok(())
             }
             _ => Err(Error::ty(
@@ -992,7 +992,7 @@ impl Rewrite<'_> {
                     span: t.span,
                     id: t.id,
                 };
-                self.type_path(&name, t.span)?;
+                self.type_path(&name)?;
             }
             TypeExprKind::Unit | TypeExprKind::Never | TypeExprKind::Lifetime(_) => {}
             TypeExprKind::Fn(params, ret) => {
@@ -1014,7 +1014,7 @@ impl Rewrite<'_> {
                             format!("`{}` isn't a struct or enum", path.name),
                         ));
                     }
-                    self.r.m.paths.insert(t.span, b.item);
+                    self.r.m.paths.insert(t.id, b.item);
                     t.kind = TypeExprKind::Named(path.name, Vec::new());
                     return Ok(());
                 }
@@ -1075,10 +1075,7 @@ impl Rewrite<'_> {
                     span: Span::new(l.span.end, l.span.end),
                     id: self.id(),
                 };
-                self.r
-                    .m
-                    .paths
-                    .insert(ty.span, self.core_item("ops", "Range"));
+                self.r.m.paths.insert(ty.id, self.core_item("ops", "Range"));
                 let new = Ident {
                     name: "new".into(),
                     span: Span::new(r.span.start, r.span.start),
@@ -1098,7 +1095,7 @@ impl Rewrite<'_> {
                         id: e.id,
                     };
                     let b = self.path(&name, Ns::Values)?;
-                    self.r.m.paths.insert(e.span, b.item);
+                    self.r.m.paths.insert(e.id, b.item);
                 }
             }
             ExprKind::Variant(ty, targs, member, args, parens) => {
@@ -1122,12 +1119,14 @@ impl Rewrite<'_> {
                         id: self.id(),
                     };
                     let b = self.path(&path, Ns::Values)?;
-                    self.r.m.paths.insert(path.span, b.item);
                     let var = Expr {
                         kind: ExprKind::Var(path.name, Vec::new()),
                         span: path.span,
                         id: self.id(),
                     };
+                    // Without `(..)`, it's this expression that's the path.
+                    let named = if *parens { var.id } else { e.id };
+                    self.r.m.paths.insert(named, b.item);
                     e.kind = match parens {
                         true => ExprKind::Call(Box::new(var), std::mem::take(args)),
                         false => var.kind,
@@ -1138,7 +1137,7 @@ impl Rewrite<'_> {
                     let b = self.path(ty, Ns::Types)?;
                     match b.item {
                         Item::Type(_) => {
-                            self.r.m.paths.insert(ty.span, b.item);
+                            self.r.m.paths.insert(ty.id, b.item);
                         }
                         Item::Trait(k) => ty.name = self.symbols[k].clone(),
                         _ => {}
@@ -1154,8 +1153,7 @@ impl Rewrite<'_> {
                 for t in targs.iter_mut() {
                     self.ty(t)?;
                 }
-                let at = ty.span;
-                self.type_path(&ty.clone(), at)?;
+                self.type_path(&ty.clone())?;
             }
             ExprKind::MethodCall(_, _, targs, _) => {
                 for t in targs.iter_mut() {
@@ -1291,13 +1289,14 @@ impl Rewrite<'_> {
         };
         let option = self.core_item("option", "Option");
         let mut variant = |name: &str, pats: Vec<Pattern>, ty: Span, member: Span, span: Span| {
-            self.r.m.paths.insert(ty, option);
+            let ty_id = self.id();
+            self.r.m.paths.insert(ty_id, option);
             Pattern {
                 kind: PatternKind::Variant(
                     Ident {
                         name: "core::option::Option".into(),
                         span: ty,
-                        id: self.id(),
+                        id: ty_id,
                     },
                     Vec::new(),
                     Ident {
@@ -1364,8 +1363,7 @@ impl Rewrite<'_> {
                 for t in targs.iter_mut() {
                     self.ty(t)?;
                 }
-                let at = ty.span;
-                self.type_path(&ty.clone(), at)?;
+                self.type_path(&ty.clone())?;
                 for p in pats {
                     self.pattern(p)?;
                 }
@@ -1374,8 +1372,7 @@ impl Rewrite<'_> {
                 for t in targs.iter_mut() {
                     self.ty(t)?;
                 }
-                let at = ty.span;
-                self.type_path(&ty.clone(), at)?;
+                self.type_path(&ty.clone())?;
                 for f in fields {
                     self.pattern(&mut f.pat)?;
                 }

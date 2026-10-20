@@ -114,7 +114,7 @@ impl Checker {
                 methods: Vec::new(),
             };
             self.traits.traits.insert(name.name.clone(), def);
-            self.info.symbols.insert(name.span, name.name.clone());
+            self.info.symbols.insert(name.id, name.name.clone());
         }
         // Each trait's supertraits and associated types, which a type
         // anywhere can mention, as `T::Item`.
@@ -816,7 +816,7 @@ impl Checker {
                         format!("method `{}` is defined twice", f.name.name),
                     ));
                 }
-                let symbol = self.fn_symbols[self.method_ids[&f.name.span].0].clone();
+                let symbol = self.fn_symbols[self.method_ids[&f.name.id].0].clone();
                 methods.push((f.name.name.clone(), symbol));
             }
             if let Some(tr) = &trait_name {
@@ -1301,7 +1301,7 @@ impl Checker {
                 continue;
             };
             for f in &d.methods {
-                let id = self.method_ids[&f.name.span];
+                let id = self.method_ids[&f.name.id];
                 let got = self.fns[id.0].scheme.clone();
                 let want = self
                     .traits

@@ -24,7 +24,6 @@
 
 use crate::ast::*;
 use crate::check::{Info, MoveSite};
-use crate::error::Span;
 use crate::traits::FnKind;
 use std::cell::Cell;
 use std::sync::Arc;
@@ -200,15 +199,15 @@ impl<'p> Cx<'p> {
     /// or type.
     fn ident(&self, id: &Ident) -> Ident {
         Ident {
-            name: self.renamed(&id.name, id.span),
+            name: self.renamed(&id.name, id.id),
             span: id.span,
             id: id.id,
         }
     }
 
-    /// The symbol of what `name`, written at `at`, refers to, or `name` if
-    /// it isn't a function or type.
-    fn renamed(&self, name: &str, at: Span) -> String {
+    /// The symbol of what `name`, written as node `at`, refers to, or
+    /// `name` if it isn't a function or type.
+    fn renamed(&self, name: &str, at: NodeId) -> String {
         let symbol = self.info.symbols.get(&at);
         symbol.map_or_else(|| name.to_string(), String::clone)
     }
@@ -227,7 +226,7 @@ impl<'p> Cx<'p> {
     fn ty(&self, t: &TypeExpr) -> TypeExpr {
         let kind = match &t.kind {
             TypeExprKind::Named(name, args) => {
-                TypeExprKind::Named(self.renamed(name, t.span), self.types(args))
+                TypeExprKind::Named(self.renamed(name, t.id), self.types(args))
             }
             TypeExprKind::Unit | TypeExprKind::Never | TypeExprKind::Lifetime(_) => t.kind.clone(),
             TypeExprKind::Fn(params, ret) => {
@@ -285,7 +284,7 @@ impl<'p> Cx<'p> {
                 e.kind.clone()
             }
             ExprKind::Var(name, targs) => {
-                ExprKind::Var(self.renamed(name, e.span), self.types(targs))
+                ExprKind::Var(self.renamed(name, e.id), self.types(targs))
             }
             ExprKind::Unary(op, x) => ExprKind::Unary(*op, Box::new(self.expr(x, nested))),
             ExprKind::Binary(op, l, r) => ExprKind::Binary(

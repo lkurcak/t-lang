@@ -322,7 +322,7 @@ impl Checker {
     /// around it stay on the stack, below `barrier`, to say what's wrong if
     /// it uses one.
     pub(super) fn nested(&mut self, f: &FnDecl, fix: Option<Fix>) -> Result<(), Error> {
-        let id = self.nested_ids[&f.name.span];
+        let id = self.nested_ids[&f.name.id];
         let barrier = self.locals.len();
         let outer = Outer {
             current: self.current,

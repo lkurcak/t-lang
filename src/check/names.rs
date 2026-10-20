@@ -17,7 +17,6 @@
 use super::modules::{Item, Modules};
 use super::scope::{FnId, symbol};
 use crate::ast::*;
-use crate::error::Span;
 use std::collections::{HashMap, HashSet};
 
 /// A struct or enum's definition, besides what it's made of.
@@ -47,14 +46,15 @@ pub(super) enum Scoped {
 }
 
 /// Every type's definition, in the order of `Program::all_types`, and what
-/// every name in a type refers to, by its span: in types written anywhere,
+/// every name in a type refers to, by its node (a `TypeExpr`, or the
+/// `Ident` of a struct literal, pattern or declaration): in types written anywhere,
 /// struct literals and patterns, and where types are declared.
 pub(super) fn names(
     prog: &Program,
     fns: &[(&FnDecl, Option<usize>)],
     fn_symbols: &[String],
     modules: &Modules,
-) -> (Vec<TypeDef>, HashMap<Span, Scoped>) {
+) -> (Vec<TypeDef>, HashMap<NodeId, Scoped>) {
     // The symbols of the types in modules come first, so no local type's
     // can be one of them.
     let top: Vec<String> = prog
@@ -70,7 +70,7 @@ pub(super) fn names(
         fn_ids: fns
             .iter()
             .enumerate()
-            .map(|(i, &(f, _))| (std::ptr::from_ref(f), FnId(i)))
+            .map(|(i, &(f, _))| (f.name.id, FnId(i)))
             .collect(),
         fn_symbols,
         current: Vec::new(),
@@ -119,11 +119,7 @@ pub(super) fn names(
     let defs = prog
         .all_types()
         .into_iter()
-        .map(|(d, _)| {
-            w.defs
-                .remove(&std::ptr::from_ref(d))
-                .expect("every type is walked")
-        })
+        .map(|(d, _)| w.defs.remove(&d.name().id).expect("every type is walked"))
         .collect();
     (defs, w.names)
 }
@@ -148,10 +144,9 @@ struct Walk<'a> {
     /// The functions and types being walked, innermost last, as keyword and
     /// name.
     items: Vec<(&'static str, String)>,
-    /// Each function's id, and below each type's definition, by which
-    /// declaration it is. Not by where: monomorphisation makes copies with
-    /// the same spans, and those are checked too.
-    fn_ids: HashMap<*const FnDecl, FnId>,
+    /// Each function's id, and below each type's definition, by the node
+    /// of its name.
+    fn_ids: HashMap<NodeId, FnId>,
     fn_symbols: &'a [String],
     /// The functions being walked, innermost last.
     current: Vec<FnId>,
@@ -159,8 +154,8 @@ struct Walk<'a> {
     taken: HashSet<String>,
     /// How many blocks have declared types so far.
     blocks: usize,
-    defs: HashMap<*const TypeDecl, TypeDef>,
-    names: HashMap<Span, Scoped>,
+    defs: HashMap<NodeId, TypeDef>,
+    names: HashMap<NodeId, Scoped>,
 }
 
 impl Walk<'_> {
@@ -196,17 +191,17 @@ impl Walk<'_> {
         self.levels.push(Level::Module(m));
     }
 
-    /// Notes what `name`, written at `span`, refers to. A path with a `::`
-    /// refers to what resolving it said, if it's a struct or enum.
-    fn name(&mut self, name: &str, span: Span) {
+    /// Notes what `name`, written as node `id`, refers to. A path with a
+    /// `::` refers to what resolving it said, if it's a struct or enum.
+    fn name(&mut self, name: &str, id: NodeId) {
         if name.contains("::") {
-            if let Some(Item::Type(k)) = self.modules.paths.get(&span) {
-                self.names.insert(span, Scoped::Adt(self.top[*k].clone()));
+            if let Some(Item::Type(k)) = self.modules.paths.get(&id) {
+                self.names.insert(id, Scoped::Adt(self.top[*k].clone()));
             }
             return;
         }
         if let Some(s) = self.lookup(name) {
-            self.names.insert(span, s);
+            self.names.insert(id, s);
         }
     }
 
@@ -228,7 +223,7 @@ impl Walk<'_> {
                 Some(f) => symbol(&self.fn_symbols[f.0], &name.name, &self.taken),
             };
             self.taken.insert(symbol.clone());
-            self.names.insert(name.span, Scoped::Adt(symbol.clone()));
+            self.names.insert(name.id, Scoped::Adt(symbol.clone()));
             level.push((name.name.clone(), symbol.clone()));
             let private = match d {
                 TypeDecl::Struct(s) => s
@@ -246,7 +241,7 @@ impl Walk<'_> {
                 module: d.module(),
                 private,
             };
-            self.defs.insert(std::ptr::from_ref(d), def);
+            self.defs.insert(name.id, def);
         }
         // The top-level ones are in their modules' namespaces instead.
         if decls.first().is_some_and(|(_, parent)| parent.is_none()) {
@@ -266,7 +261,7 @@ impl Walk<'_> {
     /// parameters, which the items in it can't use. A method's has its
     /// impl's, `outer`, too.
     fn function(&mut self, f: &FnDecl, outer: &[String]) {
-        self.current.push(self.fn_ids[&std::ptr::from_ref(f)]);
+        self.current.push(self.fn_ids[&f.name.id]);
         self.enter("fn", &f.name, &f.generics.types);
         if let Some(Level::Params(params, _)) = self.levels.last_mut() {
             params.extend(outer.iter().cloned());
@@ -325,7 +320,7 @@ impl Walk<'_> {
     fn ty(&mut self, t: &TypeExpr) {
         match &t.kind {
             TypeExprKind::Named(name, args) => {
-                self.name(name, t.span);
+                self.name(name, t.id);
                 args.iter().for_each(|a| self.ty(a));
             }
             TypeExprKind::Unit | TypeExprKind::Never | TypeExprKind::Lifetime(_) => {}
@@ -346,7 +341,7 @@ impl Walk<'_> {
         match &e.kind {
             ExprKind::Var(_, targs) => targs.iter().for_each(|t| self.ty(t)),
             ExprKind::StructLit(name, targs, _) | ExprKind::Variant(name, targs, ..) => {
-                self.name(&name.name, name.span);
+                self.name(&name.name, name.id);
                 targs.iter().for_each(|t| self.ty(t));
             }
             ExprKind::Block(stmts, tail) => {
@@ -393,12 +388,12 @@ impl Walk<'_> {
         match &p.kind {
             PatternKind::Move(_) => unreachable!("written by lift"),
             PatternKind::Variant(name, targs, _, pats) => {
-                self.name(&name.name, name.span);
+                self.name(&name.name, name.id);
                 targs.iter().for_each(|t| self.ty(t));
                 pats.iter().for_each(|p| self.pattern(p));
             }
             PatternKind::Struct(name, targs, fields, _) => {
-                self.name(&name.name, name.span);
+                self.name(&name.name, name.id);
                 targs.iter().for_each(|t| self.ty(t));
                 fields.iter().for_each(|f| self.pattern(&f.pat));
             }
