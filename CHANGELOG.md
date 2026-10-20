@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.12.0 (2026-10-20)
 
 Step 6e: a small core library. See [docs/06e-core.md](docs/06e-core.md).
 
