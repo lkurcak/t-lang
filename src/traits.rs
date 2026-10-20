@@ -844,12 +844,12 @@ pub struct Anon<'a> {
 /// - At most one impl matches a type (coherence), and only by *matching*
 ///   its header to the type, never unifying: more known of a type can't
 ///   pick another impl, or none.
-/// - The header is parametric (`check::traits`'s `parametric`): each
+/// - The header is parametric (`check::traits::collect`'s `parametric`): each
 ///   lifetime and type parameter once, no `'static`. So matching gives each
 ///   of them exactly one region or type, with the regions where the type
 ///   has them, and the associated type is what the impl says with those.
 ///   It may only mention parameters that are in the header outside every
-///   function type (`check::traits`'s `constrained`): matching doesn't
+///   function type (`check::traits::collect`'s `constrained`): matching doesn't
 ///   decide those, or decides them as regions that only mean something
 ///   inside a function type. Or type parameters an equality bound decides,
 ///   from a projection on a parameter in the header outside function types
@@ -1048,7 +1048,7 @@ fn param(name: &str) -> Type {
 /// Invariants this relies on, which anything that lets resolution decide
 /// more (associated types, say) must keep or replace:
 ///
-/// - Every trait impl is *parametric* in lifetimes (`check::traits`'s
+/// - Every trait impl is *parametric* in lifetimes (`check::traits::collect`'s
 ///   `parametric`): a lifetime or type parameter appears once in its type,
 ///   never `'static`, with no lifetime bounds. So the impl found for
 ///   `Pair<'x, 'y>` was checked for every two lifetimes, and what it gives

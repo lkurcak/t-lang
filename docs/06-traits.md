@@ -1,8 +1,8 @@
 # Step 6a: traits
 
-Code: `src/traits.rs` (traits, impls and resolution), `src/check/traits.rs`
-(collecting impls, coherence, termination, method lookup), `src/check.rs`
-(T-Method, T-Path, T-Eq), `src/borrowck/build.rs` (a call's borrows, `call_into`) and
+Code: `src/traits.rs` (traits, impls and resolution), `src/check/traits/`
+(collecting impls, coherence, termination, method lookup), `src/check/expr.rs`
+and `src/check/paths.rs` (T-Method, T-Path, T-Eq), `src/borrowck/build.rs` (a call's borrows, `call_into`) and
 `src/mono.rs` (calls become impls' methods).
 
 ```rust
@@ -300,7 +300,7 @@ that because bounds worked out from fields make a type's public bounds
 depend on its private fields, so changing a field could break users. T has
 no libraries yet, so that can't happen; it will need thought when it does.
 The bounds are a least fixed point, as a type can hold itself through a
-reference (`check/traits.rs`, `derive`).
+reference (`check/traits/derive.rs`).
 
 ## Monomorphisation finds the impl
 

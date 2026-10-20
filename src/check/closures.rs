@@ -1,5 +1,6 @@
-//! Closures that capture, as values of types of their own (see
-//! docs/06c-closures.md).
+//! Closures: checking a lambda against the signature its context wants
+//! (`Checker::lambda`), and closures that capture, as values of types of
+//! their own (see docs/06c-closures.md).
 //!
 //! A closure that captures is a struct of what it captures, with an impl of
 //! the `Fn` traits whose body is the closure's: its type is a
@@ -27,10 +28,12 @@
 //! of that: so a closure can't give out what it holds by `&mut` twice, or
 //! what it owns at all (see `borrowck::closure`).
 
-use super::Checker;
+use super::generics::Lifetimes;
+use super::scope::Binding;
 use super::typed::Res;
+use super::{Checker, Local, Target, result_span};
 use crate::ast::*;
-use crate::error::Error;
+use crate::error::{Error, Span};
 use crate::traits::{FnKind, Pred};
 use crate::types::{FnType, Region, Type};
 use std::collections::HashMap;
@@ -71,6 +74,209 @@ enum Use {
     Unique,
     Mutate,
     Move,
+}
+
+impl Checker {
+    //   Γ, x1 : T1, .., xn : Tn ⊢ e : R
+    //  ---------------------------------- (T-Abs)
+    //   Γ ⊢ |x1, .., xn| e : fn(T1, .., Tn) -> R
+    //
+    // Function *introduction*, the λ of the lambda calculus; T-App is its
+    // elimination. The body sees Γ, so it can use the locals around it:
+    // that's what makes it a closure.
+    //
+    // Nothing says what T1..Tn are. An annotation does, or else `sig`, the
+    // signature wanted when checking (see `check`). Failing those, each is a
+    // fresh variable, for `unify` to solve from how the body and the callers
+    // use it.
+    //
+    // A `return` in the body returns from the closure, and nothing in it can
+    // `break` out of a loop around it: the body is a function of its own.
+    // Whether it diverges doesn't matter to the code around: making a
+    // closure doesn't run it.
+    //
+    // Its effects are those of what's in its body, rather than the code
+    // around it's: as a variable, at least what each has, worked out at
+    // the end of the function (see `effects`).
+    pub(super) fn lambda(&mut self, l: &Arc<Lambda>, sig: Option<FnType>) -> Result<Type, Error> {
+        let outer_ret = self.ret.take();
+        let outer_diverges = self.diverges.take();
+        let outer_sites = std::mem::take(&mut self.effect_sites);
+        self.loops.push(Target::Closure);
+        let result = self.lambda_inner(l, sig);
+        self.loops.pop();
+        self.ret = outer_ret;
+        self.diverges = outer_diverges;
+        self.effect_sites = outer_sites;
+        result
+    }
+
+    // A closure is generic over lifetimes as a function type is: over the
+    // ones `sig` is, if it's wanted, or else over those left out in its
+    // annotations, `|x: &int|` taking a reference of any lifetime, which
+    // each call picks. Unless `sig` says, its result's lifetimes, written
+    // or not, are worked out from its body at the end of the function, as
+    // one of those, or one fixed where it's made, such as of what it
+    // borrows (`closures::result_lifetime`): a lifetime left out in a
+    // written result means what it does anywhere in a body, one to infer.
+    // (The borrow checker checks the body for every lifetime it's generic
+    // over: see `borrowck::closure`.)
+    fn lambda_inner(&mut self, l: &Arc<Lambda>, sig: Option<FnType>) -> Result<Type, Error> {
+        // What it captures: the variables around it its body uses. How, is
+        // worked out once their types are known (see `closures`).
+        let captured = self.captured(l);
+        self.typed.captures.insert(l.id, captured.clone());
+        for (i, p) in l.params.iter().enumerate() {
+            let name = &p.name.name;
+            if l.params[..i].iter().any(|q| q.name.name == *name) {
+                return Err(Error::ty(
+                    p.name.span,
+                    format!("parameter `{name}` is declared twice"),
+                ));
+            }
+        }
+        let declared = self.lifetimes.clone();
+        let mut lts = Lifetimes::ClosureParams {
+            declared: &declared,
+            bound: Vec::new(),
+        };
+        let mut written = Vec::new();
+        for p in &l.params {
+            let t = p.ty.as_ref();
+            written.push(
+                t.map(|t| self.resolve_with(t, &self.type_params, &mut lts))
+                    .transpose()?,
+            );
+        }
+        let Lifetimes::ClosureParams { mut bound, .. } = lts else {
+            unreachable!("still a closure's parameters")
+        };
+        let mut lts = Lifetimes::Body {
+            declared: &declared,
+        };
+        let written_ret = match &l.ret {
+            Some(t) => Some(self.resolve_with(t, &self.type_params, &mut lts)?),
+            None => None,
+        };
+        let decided = sig.is_some();
+        let (wanted, wanted_ret) = match sig {
+            Some(sig) => {
+                bound = sig.bound;
+                (Some(sig.params), Some(*sig.ret))
+            }
+            None => (None, None),
+        };
+        let scope = self.locals.len();
+        let mut params = Vec::new();
+        for (i, p) in l.params.iter().enumerate() {
+            let name = &p.name.name;
+            let wanted = wanted.as_ref().map(|ps| ps[i].clone());
+            let t = match (&p.ty, written[i].take(), wanted) {
+                (Some(ann), Some(t), wanted) => self.annotation(t, ann.span, wanted)?,
+                (_, _, Some(t)) => t,
+                _ => self.fresh(
+                    p.name.span,
+                    format!("the type of `{name}`"),
+                    format!("annotate it, e.g. `|{name}: int|`"),
+                ),
+            };
+            params.push(t.clone());
+            let mut local = Local::param(&p.name, t);
+            local.mutable = p.mutable.is_some();
+            local.mut_span = p.mutable.map(|m| Span::new(m.start, p.name.span.start));
+            self.note_binds(std::slice::from_ref(&local), p.ty.is_none());
+            self.bind(&local);
+            self.locals.push(local);
+        }
+        let ret = match (&l.ret, written_ret) {
+            (Some(ann), Some(t)) => Some(self.annotation(t, ann.span, wanted_ret)?),
+            _ => wanted_ret,
+        };
+        self.ret = ret.clone();
+        let ret = match ret {
+            Some(r) => {
+                self.check(&l.body, &r)?;
+                r
+            }
+            // Its result is that of the body, and of any `return` in it.
+            None => {
+                let t = self.synth(&l.body)?;
+                match self.ret.clone() {
+                    Some(r) => {
+                        self.fits(&t, &r, result_span(&l.body), |t, r| {
+                            format!("this closure returns `{r}`, but its body is `{t}`")
+                        })?;
+                        r
+                    }
+                    None => t,
+                }
+            }
+        };
+        self.end_scope(scope);
+        // Each lifetime of its result that's left to work out gets a
+        // region of its own, to say what it is by once that's done.
+        let mut later = 0;
+        let mut next = || {
+            later += 1;
+            result_lifetime(l, later - 1)
+        };
+        let ret = match decided {
+            true => ret,
+            false => self.solved(&ret).map_regions(&mut |r| match r {
+                Region::Erased => next(),
+                Region::Named(n) if bound.contains(n) || n.starts_with("'_") => next(),
+                r => r.clone(),
+            }),
+        };
+        let sites = std::mem::take(&mut self.effect_sites);
+        let effects = self.closure_effects(l.body.span);
+        self.closure_sites(sites, &effects);
+        let sig = FnType {
+            params,
+            ret: Box::new(ret),
+            bound,
+            effects: Box::new(effects),
+        };
+        match captured.is_empty() {
+            true => {
+                if later > 0 {
+                    self.closures.push(Pending {
+                        symbol: None,
+                        lambda: l.clone(),
+                        captured,
+                        ty: Type::Fn(sig.clone()),
+                        later,
+                    });
+                }
+                Ok(Type::Fn(sig))
+            }
+            false => Ok(self.closure_type(l, captured, sig, later)),
+        }
+    }
+
+    /// The variables around closure `l` its body uses, by id.
+    pub(super) fn captured(&self, l: &Lambda) -> Vec<NodeId> {
+        l.captures
+            .iter()
+            .filter_map(|name| match self.binding(name) {
+                Some(Binding::Local(i)) if i >= self.barrier => Some(self.locals[i].id()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// `t`, the type a closure's annotation at `span` names, which must fit
+    /// the one `wanted` from the context, if any, which is then what it is.
+    fn annotation(&mut self, t: Type, span: Span, wanted: Option<Type>) -> Result<Type, Error> {
+        self.mention(&t);
+        match wanted {
+            Some(w) => {
+                self.unify_or(&t, &w, span, |t, w| format!("expected `{w}`, found `{t}`"))?;
+                Ok(w)
+            }
+            None => Ok(t),
+        }
+    }
 }
 
 impl Checker {

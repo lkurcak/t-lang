@@ -1,11 +1,11 @@
 # Step 7: effects
 
 Code: `src/check/effects.rs` (sites, the `⊆` that wait for the end of a
-function, and solving them), `src/check.rs` (where operators, calls and
-`Box::new` have effects), `src/check/unify.rs` (effect sets in
+function, and solving them), `src/check/expr.rs` and
+`src/check/paths.rs` (where operators, calls and `Box::new` have effects), `src/check/unify.rs` (effect sets in
 unification, and `Fn` bounds as upper bounds), `src/traits.rs` (`fits`,
-`impl_args`), `src/check/traits.rs` (an impl's methods against its
-trait's), `core/panic.t`, `core/num.t`, and `src/interp.rs`
+`impl_args`), `src/check/traits/impls.rs` (an impl's methods against
+its trait's), `core/panic.t`, `core/num.t`, and `src/interp.rs`
 (`Interp::effect`, which checks it all at run time).
 
 ```rust

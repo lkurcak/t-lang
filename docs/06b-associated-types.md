@@ -1,7 +1,7 @@
 # Step 6b: associated types
 
 Code: `src/traits.rs` (`Projections`: working projections out),
-`src/check/traits.rs` (associated types in traits and impls, the rules for
+`src/check/traits/` (associated types in traits and impls, the rules for
 them, and resolving projections), `src/check/unify.rs` (projections on types
 not known yet), `src/borrowck/regions.rs` and `src/borrowck/build.rs`
 (lifetimes and projections) and `src/mono.rs`.

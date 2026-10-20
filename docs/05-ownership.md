@@ -1,7 +1,7 @@
 # Step 5: ownership, borrowing and pointers
 
-Code: `src/check.rs` (references, boxes, assignment and `while` in the type
-checker), `src/borrowck.rs` and `src/borrowck/` (the borrow checker), and
+Code: `src/check/expr.rs` and `src/check/paths.rs` (references, boxes,
+assignment and `while` in the type checker), `src/borrowck.rs` and `src/borrowck/` (the borrow checker), and
 `src/interp.rs` (memory).
 
 ```rust

@@ -1,6 +1,6 @@
 # Step 1: the simply typed lambda calculus
 
-Code: `src/check.rs` (the type system) and `src/interp.rs` (what programs mean).
+Code: `src/check.rs` and `src/check/expr.rs` (the type system) and `src/interp.rs` (what programs mean).
 
 ## What a type system actually is
 

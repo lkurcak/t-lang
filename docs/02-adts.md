@@ -1,7 +1,7 @@
 # Step 2: algebraic data types and pattern matching
 
-Code: `src/check.rs` (typing rules), `src/exhaust.rs` (exhaustiveness), and
-`src/interp.rs` (what matching does at runtime).
+Code: `src/check/expr.rs` and `src/check/patterns.rs` (typing rules),
+`src/exhaust.rs` (exhaustiveness), and `src/interp.rs` (what matching does at runtime).
 
 ```rust
 #[derive(Discard)]
@@ -54,7 +54,7 @@ come from. The usual algebra laws hold too, up to renaming the values:
 ## Introduction and elimination
 
 Every type has rules for making values (**introduction**) and rules for using
-them (**elimination**). Each pair is written above its code in `check.rs`:
+them (**elimination**). Each pair is written above its code in `check/`:
 
 ```text
   Γ ⊢ e1 : T1 .. Γ ⊢ en : Tn                      Γ ⊢ e : S   S has field f : T

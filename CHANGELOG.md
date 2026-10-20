@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+No change to the language or the tools: the type checker's two largest
+files are split into modules.
+
+### Changed
+
+- `src/check.rs` is split into `check/expr.rs`, `patterns.rs`, `paths.rs`,
+  `opaque.rs` and `adts.rs`, and `src/check/traits.rs` into
+  `check/traits/`. The docs' "Code:" lines point at the new files.
+
 ## 0.15.0 (2026-10-21)
 
 Step 7.1: impl parameters decided by bounds, and `where` on impls. See

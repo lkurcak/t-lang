@@ -2,8 +2,8 @@
 
 Code: `core/` (the library itself, in T), `src/load.rs` (reading it into
 every program), `src/check/modules.rs` (`core::` paths, the prelude, and
-what `for` and `a..b` mean), `src/check/traits.rs` (`where` clauses and the
-orphan rule), and `src/interp.rs` (the one intrinsic).
+what `for` and `a..b` mean), `src/check/traits/` (`where` clauses in
+`bounds.rs`, the orphan rule in `impls.rs`), and `src/interp.rs` (the one intrinsic).
 
 Every program has the core library. What its prelude brings in needs no
 `use`:

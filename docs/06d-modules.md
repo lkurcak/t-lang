@@ -3,7 +3,7 @@
 Code: `src/check/modules.rs` (what each path names, `use`s, and which
 types are private in public signatures), `src/check/names.rs` (type names
 in each module's namespace), `src/borrowck/moves.rs` (`abstraction`: who
-may take a struct apart), and `src/check/traits.rs` (`derive`, for
+may take a struct apart), and `src/check/traits/` (`derive`, for
 written bounds, and `lookup_method`, for which traits a call sees).
 
 ```rust
