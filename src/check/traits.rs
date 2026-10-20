@@ -2883,7 +2883,7 @@ impl<'a> Canon<'a> {
         match r {
             Region::Named(n) if self.fixed.contains(n) => r.clone(),
             Region::Named(n) if n.starts_with("'^") => r.clone(),
-            Region::Named(_) => {
+            Region::Named(_) | Region::Result(..) => {
                 let i = match self.seen.iter().position(|s| s == r) {
                     Some(i) => i,
                     None => {

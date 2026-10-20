@@ -561,7 +561,7 @@ pub(crate) fn decide_result(
     cx: &Checker,
     lambda: &Lambda,
     ty: &Type,
-    later: &[String],
+    later: usize,
 ) -> Result<Vec<Region>, Error> {
     let info = AdtInfo::new(cx.adts());
     let c = ClosureUse {
@@ -590,7 +590,7 @@ fn closure_body(
     info: &AdtInfo,
     external: Vec<String>,
     c: &ClosureUse,
-    later: Option<&[String]>,
+    later: Option<usize>,
 ) -> Result<Outcome, Error> {
     let mut lifetimes = external.clone();
     let typed = cx.typed();
@@ -658,11 +658,11 @@ fn closure_body(
         .collect();
     let (params, ret) = sig.instantiate(&bound);
     // Each lifetime of its result to work out is a variable, of the body's.
-    let later = later.unwrap_or_default();
-    let mut vars: Vec<Option<usize>> = vec![None; later.len()];
+    let later = later.unwrap_or(0);
+    let mut vars: Vec<Option<usize>> = vec![None; later];
     let ret = ret.map_regions(&mut |r| match r {
-        Region::Named(n) if let Some(i) = later.iter().position(|l| l == n) => {
-            Region::Var(*vars[i].get_or_insert_with(|| regions.fresh()))
+        Region::Result(l, i) if *l == c.lambda.id && *i < later => {
+            Region::Var(*vars[*i].get_or_insert_with(|| regions.fresh()))
         }
         r => r.clone(),
     });
@@ -686,7 +686,9 @@ fn closure_body(
         ret: ret
             .regions()
             .into_iter()
-            .filter(|r| matches!(r, Region::Named(n) if !external.contains(n)))
+            .filter(|r| {
+                matches!(r, Region::Named(n) if !external.contains(n)) || is_result_lifetime(r)
+            })
             .cloned()
             .collect(),
     };
@@ -711,7 +713,7 @@ fn closure_body(
         .collect();
     b.signature(ret, &params, env);
     b.lower(&c.lambda.body);
-    if later.is_empty() {
+    if later == 0 {
         let (warnings, reqs) = analyze(&mut b, &names, true)?;
         return Ok(Outcome::Checked(warnings, reqs));
     }
@@ -849,6 +851,7 @@ impl Names {
         match r {
             Region::Static => "`'static`".to_string(),
             Region::Named(n) if !r.is_elided() => format!("`{n}`"),
+            Region::Result(..) => format!("`{r}`"),
             _ => match self.params.iter().find(|(_, rs)| rs.contains(r)) {
                 Some((p, _)) => format!("the lifetime of `{p}`"),
                 None => "the closure's lifetime".to_string(),

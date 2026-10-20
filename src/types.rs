@@ -80,6 +80,10 @@ pub enum Region {
     Erased,
     /// One of the borrow checker's region variables.
     Var(usize),
+    /// The `.1`th lifetime of the result of closure `.0`, until it's worked
+    /// out from its body (see `check/closures.rs`). No program can write
+    /// one.
+    Result(crate::ast::NodeId, usize),
 }
 
 impl Region {
@@ -97,6 +101,7 @@ impl fmt::Display for Region {
             Region::Static => f.write_str("'static"),
             Region::Erased => f.write_str("'_"),
             Region::Var(v) => write!(f, "'?{v}"),
+            Region::Result(l, i) => write!(f, "'?r{}.{i}", l.0),
         }
     }
 }

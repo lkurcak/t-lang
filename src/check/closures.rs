@@ -46,21 +46,20 @@ pub(super) struct Pending {
     pub(super) captured: Vec<NodeId>,
     /// Its type, as the checker made it.
     pub(super) ty: Type,
-    /// The names of its result's lifetimes still to work out
+    /// How many of its result's lifetimes are still to work out
     /// (`result_lifetime`).
-    pub(super) later: Vec<String>,
+    pub(super) later: usize,
 }
 
-/// The name of the `i`th lifetime of closure `l`'s result, until it's
-/// worked out from its body (`Checker::decide_result`). No program can
-/// write it, and each closure's are its own.
-pub(super) fn result_lifetime(l: &Lambda, i: usize) -> String {
-    format!("'?r{}.{i}", l.body.span.start)
+/// The `i`th lifetime of closure `l`'s result, until it's worked out from
+/// its body (`Checker::decide_result`). Each closure's are its own.
+pub(super) fn result_lifetime(l: &Lambda, i: usize) -> Region {
+    Region::Result(l.id, i)
 }
 
 /// Is `r` a lifetime of a closure's result still to work out?
 pub(crate) fn is_result_lifetime(r: &Region) -> bool {
-    matches!(r, Region::Named(n) if n.starts_with("'?r"))
+    matches!(r, Region::Result(..))
 }
 
 /// How a closure's body uses a variable, the most it needs: read it
@@ -83,7 +82,7 @@ impl Checker {
         l: &Arc<Lambda>,
         captured: Vec<NodeId>,
         sig: FnType,
-        later: Vec<String>,
+        later: usize,
     ) -> Type {
         let symbol = format!("{{closure#{}}}", l.body.span.start);
         let def = crate::traits::ClosureDef {
@@ -165,7 +164,11 @@ impl Checker {
             return t.clone();
         }
         t.map_regions(&mut |r| match r {
-            Region::Named(n) => self.decided.get(n).cloned().unwrap_or_else(|| r.clone()),
+            Region::Result(l, i) => self
+                .decided
+                .get(&(*l, *i))
+                .cloned()
+                .unwrap_or_else(|| r.clone()),
             r => r.clone(),
         })
     }
@@ -186,7 +189,7 @@ impl Checker {
         }
         self.settle_calls()?;
         for p in &pending {
-            if !p.later.is_empty() {
+            if p.later > 0 {
                 self.settle_result(p)?;
             }
         }
@@ -282,28 +285,28 @@ impl Checker {
     /// from its body (`borrowck::decide_result`).
     fn settle_result(&mut self, p: &Pending) -> Result<(), Error> {
         let ty = self.solution(&p.ty);
-        let decided = crate::borrowck::decide_result(self, &p.lambda, &ty, &p.later)?;
+        let decided = crate::borrowck::decide_result(self, &p.lambda, &ty, p.later)?;
+        let l = p.lambda.id;
         let Some(symbol) = &p.symbol else {
-            self.decided.extend(p.later.iter().cloned().zip(decided));
+            let decided = decided.into_iter().enumerate();
+            self.decided.extend(decided.map(|(i, r)| ((l, i), r)));
             return Ok(());
         };
         let mut def = self.traits.closures[symbol].clone();
         // One fixed where it's made is a lifetime parameter of its own.
-        let decided: HashMap<&String, Region> = p
-            .later
-            .iter()
-            .zip(decided)
-            .map(|(name, r)| match r {
+        let decided: Vec<Region> = decided
+            .into_iter()
+            .map(|r| match r {
                 Region::Erased => {
                     let own = format!("'_k{}", def.lifetimes.len());
                     def.lifetimes.push(own.clone());
-                    (name, Region::Named(own))
+                    Region::Named(own)
                 }
-                r => (name, r),
+                r => r,
             })
             .collect();
         let sig = Type::Fn(def.sig.clone()).map_regions(&mut |r| match r {
-            Region::Named(n) => decided.get(n).cloned().unwrap_or_else(|| r.clone()),
+            Region::Result(of, i) if *of == l => decided[*i].clone(),
             r => r.clone(),
         });
         let Type::Fn(sig) = sig else {

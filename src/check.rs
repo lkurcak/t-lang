@@ -345,7 +345,7 @@ pub(crate) struct Checker {
     /// What each lifetime of a closure's result that's worked out at the
     /// end of its function turned out to be, by its name (see
     /// `closures::result_lifetime`), for closures that are function types.
-    decided: HashMap<String, Region>,
+    decided: HashMap<(NodeId, usize), Region>,
     /// Why each closure implements only the `Fn` traits it does, by
     /// symbol, for messages: "it moves `b` out".
     closure_why: HashMap<String, String>,
@@ -2744,22 +2744,18 @@ impl Checker {
             }
         };
         self.end_scope(scope);
-        // Each lifetime of its result that's left to work out gets a name
-        // of its own, to say what it is by once that's done.
-        let mut later = Vec::new();
+        // Each lifetime of its result that's left to work out gets a
+        // region of its own, to say what it is by once that's done.
+        let mut later = 0;
+        let mut next = || {
+            later += 1;
+            closures::result_lifetime(l, later - 1)
+        };
         let ret = match decided {
             true => ret,
             false => self.solved(&ret).map_regions(&mut |r| match r {
-                Region::Erased => {
-                    let name = closures::result_lifetime(l, later.len());
-                    later.push(name.clone());
-                    Region::Named(name)
-                }
-                Region::Named(n) if bound.contains(n) || n.starts_with("'_") => {
-                    let name = closures::result_lifetime(l, later.len());
-                    later.push(name.clone());
-                    Region::Named(name)
-                }
+                Region::Erased => next(),
+                Region::Named(n) if bound.contains(n) || n.starts_with("'_") => next(),
                 r => r.clone(),
             }),
         };
@@ -2770,7 +2766,7 @@ impl Checker {
         };
         match captured.is_empty() {
             true => {
-                if !later.is_empty() {
+                if later > 0 {
                     self.closures.push(closures::Pending {
                         symbol: None,
                         lambda: l.clone(),
