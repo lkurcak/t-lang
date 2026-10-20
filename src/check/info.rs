@@ -360,24 +360,35 @@ impl Checker {
 
     /// At the end of a function, checked or not: solves the variables in
     /// the notes made since `notes` and in the pending instances, as far as
-    /// they're known, and files the instances in `info`.
+    /// they're known, with the lifetimes of closures' results worked out,
+    /// and files the instances in `info`.
     pub(super) fn finish_notes(&mut self, notes: usize) {
         for i in notes..self.info.notes.len() {
             let n = &self.info.notes[i];
-            let ty = n.ty.as_ref().map(|t| self.solved(t));
-            let args = n.args.iter().map(|t| self.solved(t)).collect();
+            let ty = n.ty.as_ref().map(|t| self.decided_regions(&self.solved(t)));
+            let args = n
+                .args
+                .iter()
+                .map(|t| self.decided_regions(&self.solved(t)))
+                .collect();
             let n = &mut self.info.notes[i];
             n.ty = ty;
             n.args = args;
         }
         for (span, instance) in std::mem::take(&mut self.pending) {
             let instance = match instance {
-                Instance::Fn(name, args) => {
-                    Instance::Fn(name, args.iter().map(|t| self.solved(t)).collect())
-                }
-                Instance::Adt(name, args) => {
-                    Instance::Adt(name, args.iter().map(|t| self.solved(t)).collect())
-                }
+                Instance::Fn(name, args) => Instance::Fn(
+                    name,
+                    args.iter()
+                        .map(|t| self.decided_regions(&self.solved(t)))
+                        .collect(),
+                ),
+                Instance::Adt(name, args) => Instance::Adt(
+                    name,
+                    args.iter()
+                        .map(|t| self.decided_regions(&self.solved(t)))
+                        .collect(),
+                ),
             };
             self.info.instances.insert(span, instance);
         }

@@ -242,6 +242,7 @@ function can't go wrong where the function didn't.
 | Missing | Why it's missing | Step |
 |---|---|---|
 | returning closures, `-> impl Fn(int) -> int` | existential types, and which lifetimes they capture | 6c.1 |
+| a closure's type generic over lifetimes, `\|x: &int\| -> &int { x }` called at two | higher-ranked closure types | 6e.1 |
 | `dyn Fn(int) -> int` | no trait objects | — |
 | `Box<F>` callable | only useful with `dyn` | — |
 | capturing fields, `p.x`, not `p` | path rules; relaxes compatibly | — |

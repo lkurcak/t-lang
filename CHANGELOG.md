@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+Step 6e.1: higher-ranked closures. See
+[docs/06e.1-higher-ranked-closures.md](docs/06e.1-higher-ranked-closures.md).
+
+### Added
+
+- A closure's type can be generic over lifetimes, as a function type is:
+  over those a bound like `F: Fn(&int) -> bool` says, where one is wanted,
+  or else over the lifetimes left out in its parameters' annotations.
+  `let id = |x: &int| x;` can be called with references that live for
+  different lengths of time, and a closure made before an impl's bound is
+  asked meets it.
+- A closure's result's lifetimes, written or not, are worked out from its
+  body, unless a bound says them: the lifetime of the one parameter it
+  returns a reference from, or else one fixed where it's made, such as of
+  what it captured. `|x: &int| x` returns a reference as long-lived as `x`;
+  `|_x: &int| -> &int { &n }` one as long-lived as its borrow of `n`. A
+  result that could borrow from either of two parameters is an error.
+- `Iterator::filter`, and `core::iter::Filter`. It throws away what the
+  predicate doesn't keep, so it asks for `Self::Item: Discard`.
+
+### Changed
+
+- Errors in a closure about lifetimes a call picks say which parameter's,
+  and where it went: into what the closure captured, or its result.
+- What a type with a closure in it implements, where the closure's result's
+  lifetimes are worked out, is decided at the end of the function, after
+  its captures and calls.
+
 ## 0.12.0 (2026-10-20)
 
 Step 6e: a small core library. See [docs/06e-core.md](docs/06e-core.md).

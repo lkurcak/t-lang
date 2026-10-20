@@ -8,4 +8,4 @@ fn main() {
     let m = 2;
     print(*f(&m));
 }
-// error: this function isn't general enough
+// error: this closure's result has the lifetime of `_y`, which each call picks

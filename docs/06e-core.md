@@ -48,7 +48,7 @@ can be anywhere T can, down to bare metal.
 | `core::option` | `Option<T>`: `is_some`, `is_none`, `as_ref`, `as_mut`, `take`, `map`, `and_then`, `or_else`, `unwrap_or`, `unwrap_or_else` | `Option` |
 | `core::result` | `Result<T, E>`: `is_ok`, `is_err`, `as_ref`, `map`, `and_then`, `map_err`, `or_else`, `ok`, `err`, `unwrap_or`, `unwrap_or_else` | `Result` |
 | `core::cmp` | `Ordering`, and `Ord`: `cmp`, `lt`, `le`, `gt`, `ge`, `max`, `min`, for `int` and `bool` | `Ord` |
-| `core::iter` | `Iterator`: `next`, `map`, `fold`, `count`; `Map` | `Iterator` |
+| `core::iter` | `Iterator`: `next`, `map`, `filter` (6e.1), `fold`, `count`; `Map`, `Filter` | `Iterator` |
 | `core::ops` | `Range<T>`, what `a..b` makes, an `Iterator` for `int`s | — |
 | `core::mem` | `swap` and `replace` | — |
 
@@ -456,7 +456,8 @@ copy of the trait.
   that takes a reference of any lifetime: a higher-ranked one. A closure's
   signature isn't higher-ranked unless its type is written out, even where
   a bound says it should be (docs/06c-closures.md), so no closure would ever
-  meet that bound. `filter` comes when closures can be.
+  meet that bound. `filter` comes when closures can be: step 6e.1,
+  docs/06e.1-higher-ranked-closures.md, where it's arrived.
 
 ## Running it
 
@@ -497,7 +498,7 @@ nowhere, and it can't be renamed.
 | Missing | Why it's missing | Step |
 |---|---|---|
 | `unwrap`, `expect`, `panic` | panics aren't in function types yet | 7 |
-| `filter` | closures can't be higher-ranked when a bound says they should | 6e.1 |
+| `filter` | closures can't be higher-ranked when a bound says they should | 6e.1 ✅ |
 | `IntoIterator`, `for x in &list` | needs equality bounds with projections in them, and there are no collections yet | with `alloc` |
 | `a..=b`, `a..`, `..b`, `.rev()` | not needed yet | — |
 | `<` on any `Ord`, `#[derive(Ord)]` | would make `Ord` part of the language | — |

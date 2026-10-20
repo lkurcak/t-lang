@@ -33,13 +33,14 @@ mod moves;
 mod regions;
 
 use crate::ast::*;
-use crate::check::Checker;
+use crate::check::{Checker, is_result_lifetime, result_span};
 use crate::error::{Edit, Error, Fix, Lint, Span, Warning};
 use crate::traits::FnKind;
 use crate::types::{FnType, Region, Scheme, Type};
 use build::{Builder, ClosureUse};
 use mir::{EnvVar, LocalKind, Place, Proj};
 use regions::{AdtInfo, Regions, wf_bounds};
+use std::collections::{HashMap, HashSet};
 
 /// Checks function `f`, whose type is `scheme`, and returns the warnings
 /// about it.
@@ -247,13 +248,10 @@ struct Requirements {
     muts: Vec<Span>,
 }
 
-/// Checks a lowered body, its closures first. For a closure, `propagate`:
-/// what it needs of its universal regions is returned rather than an error.
-fn analyze(
-    b: &mut Builder,
-    names: &Names,
-    propagate: bool,
-) -> Result<(Vec<Warning>, Requirements), Error> {
+/// Checks the closures in a lowered body, and adds what each needs of its
+/// regions to its constraints. Returns the warnings and errors about them,
+/// and the variables they captured by value and change, by id.
+fn closures_in(b: &mut Builder) -> (Vec<Warning>, Vec<Error>, Vec<Span>) {
     let mut warnings = Vec::new();
     let mut errors = Vec::new();
     let mut muts = Vec::new();
@@ -284,6 +282,17 @@ fn analyze(
             Err(e) => errors.push(e),
         }
     }
+    (warnings, errors, muts)
+}
+
+/// Checks a lowered body, its closures first. For a closure, `propagate`:
+/// what it needs of its universal regions is returned rather than an error.
+fn analyze(
+    b: &mut Builder,
+    names: &Names,
+    propagate: bool,
+) -> Result<(Vec<Warning>, Requirements), Error> {
+    let (mut warnings, mut errors, muts) = closures_in(b);
     let (mut needed, captured) = match moves::behind_references(b)
         .and_then(|()| moves::abstraction(b))
         .and_then(|()| moves::mutability(b))
@@ -352,6 +361,10 @@ fn analyze(
                          could be gone"
                     ),
                 ));
+                continue;
+            }
+            if let Some(error) = closure_generality(b, names, u, e, span) {
+                errors.push(error);
                 continue;
             }
             let general = "a function type here takes references of any lifetime, as its \
@@ -436,6 +449,56 @@ fn analyze(
     Ok((warnings, reqs))
 }
 
+/// What's wrong, if universal region `u` must outlive `e` in a closure's
+/// body, at `span`, and one of them is a lifetime the closure is generic
+/// over: each call picks it, so it could be anything.
+fn closure_generality(b: &Builder, names: &Names, u: usize, e: usize, span: Span) -> Option<Error> {
+    let (long, short) = (names.lifetime(b, u), names.lifetime(b, e));
+    let message = match (names.bound_param(u), names.bound_param(e)) {
+        (None, None) => return None,
+        (Some(p), None) if names.ret.contains(&b.regions.universal[e]) => {
+            format!(
+                "this closure returns a reference from `{p}`, whose lifetime each call picks, \
+                 but its result doesn't have that lifetime"
+            )
+        }
+        (Some(p), None) => match names.capture(b, e) {
+            Some(c) => format!(
+                "this closure stores a reference from `{p}` in `{c}`, but each call picks how \
+                 long `{p}` lives, and the next could give it one that's gone first"
+            ),
+            None => format!(
+                "this closure keeps a reference from `{p}` for {short}, but each call picks how \
+                 long `{p}` lives, which could be shorter"
+            ),
+        },
+        (None, Some(p))
+            if b.body.locals[0]
+                .ty
+                .regions()
+                .contains(&&Region::Var(b.regions.universal_vars[e])) =>
+        {
+            let lives = match names.capture(b, u) {
+                Some(c) => format!("this only lives as long as the captured `{c}`"),
+                None => format!("this needs {long} to outlive it"),
+            };
+            format!(
+                "this closure's result has the lifetime of `{p}`, which each call picks, so it \
+                 could be any, even `'static`, but {lives}"
+            )
+        }
+        (None, Some(_)) => format!(
+            "this needs {long} to outlive {short}, which each call picks, so it could be any, \
+             even `'static`"
+        ),
+        (Some(_), Some(_)) => format!(
+            "this needs {long} to outlive {short}, but each call picks those, so they could be \
+             any"
+        ),
+    };
+    Some(Error::ty(span, message))
+}
+
 /// The type parameter at the bottom of rigid projection `t`: `T` for
 /// `<T::Out as Tr>::Item`.
 fn root_param(t: &Type) -> Type {
@@ -454,13 +517,22 @@ fn root_param(t: &Type) -> Type {
 /// what it needs of, for its type to say, as constraints at the closure
 /// (see `analyze`).
 ///
+/// But for the lifetimes its signature is generic over (`FnType::bound`),
+/// which each call picks: each is a placeholder, after the signature's
+/// universal regions, so the body can assume nothing of it, and anything it
+/// needs of it is an error here, not a constraint that goes up, as the
+/// function it's in can't know what a call will pick. That's what makes
+/// any instantiation at a call sound (docs/06e.1-higher-ranked-closures.md).
+/// A placeholder has no implied bounds. Its result's lifetimes were worked
+/// out from its body already (`decide_result`), so they're checked here
+/// like any written out.
+///
 /// One that captures is called with itself for its first parameter, by
 /// `&` or `&mut`, as it's `Fn` or `FnMut`, for a lifetime only that call
 /// knows, which nothing it gives out may need, as the next call may
 /// change what it points to; or by value, as it's `FnOnce`. What it
 /// captured are that parameter's fields.
 fn closure(parent: &Builder, c: &ClosureUse) -> Result<(Vec<Warning>, Requirements), Error> {
-    let cx = parent.cx;
     let external: Vec<String> = parent.regions.universal[1..parent.regions.signature]
         .iter()
         .map(|r| match r {
@@ -468,11 +540,67 @@ fn closure(parent: &Builder, c: &ClosureUse) -> Result<(Vec<Warning>, Requiremen
             r => unreachable!("universal region `{r}`"),
         })
         .collect();
+    match closure_body(parent.cx, parent.info, external, c, None)? {
+        Outcome::Checked(warnings, reqs) => Ok((warnings, reqs)),
+        Outcome::Decided(_) => unreachable!("checking, not deciding"),
+    }
+}
+
+/// What the lifetimes of the result of closure `lambda`, of type `ty`,
+/// named `later`, are, worked out from its body once the function it's in
+/// has its types: each the one lifetime the closure is generic over that
+/// flows into it, if one does, which the result then borrows from, or if
+/// none does, one fixed where the closure is made (`Region::Erased`), such
+/// as of what it captured, if anything flows into it. If nothing does, as
+/// for `None`, it's as for a function: the lifetime the closure is generic
+/// over, if there's one. If two do, the result would have to live as long
+/// as both, which its type can't say. The borrow checker then checks the
+/// body against that (`closure`), so this only picks the signature: any
+/// choice is as sound as any other.
+pub(crate) fn decide_result(
+    cx: &Checker,
+    lambda: &Lambda,
+    ty: &Type,
+    later: &[String],
+) -> Result<Vec<Region>, Error> {
+    let info = AdtInfo::new(cx.adts());
+    let c = ClosureUse {
+        lambda,
+        ty: ty.clone(),
+        span: lambda.body.span,
+    };
+    match closure_body(cx, &info, Vec::new(), &c, Some(later))? {
+        Outcome::Decided(regions) => Ok(regions),
+        Outcome::Checked(..) => unreachable!("deciding, not checking"),
+    }
+}
+
+/// What `closure_body` found: what checking a closure's body gave, or the
+/// lifetimes of its result it worked out.
+enum Outcome {
+    Checked(Vec<Warning>, Requirements),
+    Decided(Vec<Region>),
+}
+
+/// Checks closure `c` as a function of its own, whose external lifetimes
+/// are `external` (see `closure`), or, if its result's lifetimes named
+/// `later` are to be worked out, works them out (see `decide_result`).
+fn closure_body(
+    cx: &Checker,
+    info: &AdtInfo,
+    external: Vec<String>,
+    c: &ClosureUse,
+    later: Option<&[String]>,
+) -> Result<Outcome, Error> {
     let mut lifetimes = external.clone();
     let typed = cx.typed();
+    let mut captures = Vec::new();
     let (sig, env) = match &c.ty {
         Type::Fn(sig) => {
-            let sig = Type::Fn(sig.clone()).map_regions(&mut |_| {
+            let sig = Type::Fn(sig.clone()).map_regions(&mut |r| {
+                if is_result_lifetime(r) {
+                    return r.clone();
+                }
                 let name = format!("'_c{}", lifetimes.len());
                 lifetimes.push(name.clone());
                 Region::Named(name)
@@ -482,6 +610,11 @@ fn closure(parent: &Builder, c: &ClosureUse) -> Result<(Vec<Warning>, Requiremen
         Type::Adt(symbol, _, args) => {
             let def = &cx.traits().closures[symbol];
             lifetimes.extend(def.lifetimes.iter().cloned());
+            captures = def
+                .fields
+                .iter()
+                .map(|(n, t)| (n.clone(), t.regions().into_iter().cloned().collect()))
+                .collect();
             let own = Type::Adt(
                 symbol.clone(),
                 def.lifetimes.iter().cloned().map(Region::Named).collect(),
@@ -509,11 +642,53 @@ fn closure(parent: &Builder, c: &ClosureUse) -> Result<(Vec<Warning>, Requiremen
         }
         t => unreachable!("a closure of type `{t}`"),
     };
-    let Type::Fn(FnType { params, ret, .. }) = &sig else {
+    let Type::Fn(sig) = &sig else {
         unreachable!("a closure's signature is a function type")
     };
     // What the function knows of them, it checks of what goes up.
     let mut regions = Regions::new(&lifetimes, &[]);
+    // The lifetimes it's generic over are placeholders: each call picks
+    // them, so the body can assume nothing of them, and needs nothing of
+    // them that could go up, as the function it's in can't see to that.
+    let bound: Vec<Region> = sig
+        .bound
+        .iter()
+        .map(|_| Region::Var(regions.placeholder()))
+        .collect();
+    let (params, ret) = sig.instantiate(&bound);
+    // Each lifetime of its result to work out is a variable, of the body's.
+    let later = later.unwrap_or_default();
+    let mut vars: Vec<Option<usize>> = vec![None; later.len()];
+    let ret = ret.map_regions(&mut |r| match r {
+        Region::Named(n) if let Some(i) = later.iter().position(|l| l == n) => {
+            Region::Var(*vars[i].get_or_insert_with(|| regions.fresh()))
+        }
+        r => r.clone(),
+    });
+    let first = regions.universal.len() - bound.len();
+    let names = Names {
+        params: Vec::new(),
+        generics: None,
+        bound: (first..regions.universal.len())
+            .zip(&bound)
+            .map(|(u, r)| {
+                let param = c
+                    .lambda
+                    .params
+                    .iter()
+                    .zip(&params)
+                    .find(|(_, t)| t.regions().contains(&r));
+                (u, param.map_or("_".into(), |(p, _)| p.name.name.clone()))
+            })
+            .collect(),
+        captures,
+        ret: ret
+            .regions()
+            .into_iter()
+            .filter(|r| matches!(r, Region::Named(n) if !external.contains(n)))
+            .cloned()
+            .collect(),
+    };
     let adts = local_adts(cx, &regions);
     let env = env.map(|(own, by_ref, vars)| {
         let own = regions.renumber(&own);
@@ -523,30 +698,100 @@ fn closure(parent: &Builder, c: &ClosureUse) -> Result<(Vec<Warning>, Requiremen
         };
         (t, by_ref, vars, c.span)
     });
-    let mut b = Builder::new(cx, &adts, parent.info, regions);
+    let mut b = Builder::new(cx, &adts, info, regions);
     b.closure = true;
-    let ret = b.regions.renumber(ret);
+    let ret = b.regions.renumber(&ret);
     let params: Vec<(String, Span, Type)> = c
         .lambda
         .params
         .iter()
-        .zip(params)
+        .zip(&params)
         .map(|(p, t)| (p.name.name.clone(), p.name.span, b.regions.renumber(t)))
         .collect();
     b.signature(ret, &params, env);
     b.lower(&c.lambda.body);
-    let names = Names {
-        params: Vec::new(),
-        generics: None,
-    };
-    analyze(&mut b, &names, true)
+    if later.is_empty() {
+        let (warnings, reqs) = analyze(&mut b, &names, true)?;
+        return Ok(Outcome::Checked(warnings, reqs));
+    }
+    closures_in(&mut b);
+    let bound: Vec<usize> = bound.iter().map(|r| b.regions.universal_var(r)).collect();
+    let decided = vars
+        .iter()
+        .map(|v| match v {
+            Some(v) => decide(&b, &names, &sig.bound, &bound, *v, c),
+            // Not in its type any more: nothing to decide.
+            None => Ok(Region::Erased),
+        })
+        .collect::<Result<_, _>>()?;
+    Ok(Outcome::Decided(decided))
+}
+
+/// What region variable `v`, a lifetime of the result of closure `c`, whose
+/// body is lowered in `b`, is: one of the lifetimes it's generic over,
+/// `bound`, whose variables are `vars`, or one fixed where it's made (see
+/// `decide_result`).
+fn decide(
+    b: &Builder,
+    names: &Names,
+    bound: &[String],
+    vars: &[usize],
+    v: usize,
+    c: &ClosureUse,
+) -> Result<Region, Error> {
+    // Everything that must outlive `v`: what flows into it.
+    let mut outliving: HashMap<usize, Vec<usize>> = HashMap::new();
+    for o in &b.regions.constraints {
+        outliving.entry(o.sub).or_default().push(o.sup);
+    }
+    let mut seen = HashSet::from([v]);
+    let mut todo = vec![v];
+    while let Some(r) = todo.pop() {
+        for s in outliving.get(&r).into_iter().flatten() {
+            if seen.insert(*s) {
+                todo.push(*s);
+            }
+        }
+    }
+    let from: Vec<usize> = (0..vars.len())
+        .filter(|i| seen.contains(&vars[*i]))
+        .collect();
+    // A borrow, or a universal region but `'static` and those it's generic
+    // over: what it captured, or borrows of what's in it.
+    let fixed = seen.iter().any(|r| {
+        b.loans.iter().any(|l| l.region == *r)
+            || (b.regions.universal_vars[1..].contains(r) && !vars.contains(r))
+    });
+    match from[..] {
+        [i] => Ok(Region::Named(bound[i].clone())),
+        [] if fixed || bound.len() != 1 => Ok(Region::Erased),
+        [] => Ok(Region::Named(bound[0].clone())),
+        [i, j, ..] => {
+            let name = |k: usize| names.bound.get(k).map_or("_", |(_, p)| p.as_str());
+            Err(Error::ty(
+                result_span(&c.lambda.body),
+                format!(
+                    "this closure's result could borrow from `{}` or from `{}`, and each call \
+                     picks how long each of those lives, apart: its type can't say the result \
+                     lives as long as both",
+                    name(i),
+                    name(j)
+                ),
+            ))
+        }
+    }
 }
 
 /// For naming lifetimes in messages: which parameter each elided one is
-/// in, and where the generic parameters are, to suggest bounds there.
+/// in, and where the generic parameters are, to suggest bounds there. For a
+/// closure, which parameter each lifetime it's generic over is in, by its
+/// universal region, and the regions of each capture and of its result.
 struct Names {
     params: Vec<(String, Vec<Region>)>,
     generics: Option<Span>,
+    bound: Vec<(usize, String)>,
+    captures: Vec<(String, Vec<Region>)>,
+    ret: Vec<Region>,
 }
 
 impl Names {
@@ -564,14 +809,41 @@ impl Names {
                 })
                 .collect(),
             generics: f.generics.span,
+            bound: Vec::new(),
+            captures: Vec::new(),
+            ret: Vec::new(),
         }
+    }
+
+    /// The parameter universal region `u` is in, if it's one of those the
+    /// closure being checked is generic over.
+    fn bound_param(&self, u: usize) -> Option<&str> {
+        self.bound
+            .iter()
+            .find(|(b, _)| *b == u)
+            .map(|(_, p)| p.as_str())
+    }
+
+    /// The capture whose type universal region `u` is in, if it's one.
+    fn capture(&self, b: &Builder, u: usize) -> Option<&str> {
+        let r = &b.regions.universal[u];
+        self.captures
+            .iter()
+            .find(|(_, rs)| rs.contains(r))
+            .map(|(n, _)| n.as_str())
     }
 
     /// How to name universal region `u` of `b` in a message.
     fn lifetime(&self, b: &Builder, u: usize) -> String {
         let r = &b.regions.universal[u];
+        if let Some(p) = self.bound_param(u) {
+            return format!("the lifetime of `{p}`");
+        }
         if u >= b.regions.signature {
             return "a lifetime a call picks, which can be anything".to_string();
+        }
+        if let Some(c) = self.capture(b, u) {
+            return format!("the lifetime of the captured `{c}`");
         }
         match r {
             Region::Static => "`'static`".to_string(),

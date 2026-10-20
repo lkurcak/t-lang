@@ -2149,7 +2149,7 @@ impl Checker {
     /// At the end of a function, the obligations that waited for its types.
     pub(super) fn prove_all(&mut self) -> Result<(), Error> {
         for mut o in std::mem::take(&mut self.obligations) {
-            o.pred.ty = self.solved(&o.pred.ty);
+            o.pred.ty = self.decided_regions(&self.solved(&o.pred.ty));
             // If it's still not fully known, that's reported later.
             if !super::unify::has_vars(&o.pred.ty) {
                 self.prove(&o)?;

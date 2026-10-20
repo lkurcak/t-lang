@@ -880,7 +880,13 @@ fn param(name: &str) -> Type {
 ///   hold what it borrows must replace this.
 /// - A closure's type is a struct's, parametric in its lifetimes like any,
 ///   and nothing can name it in an impl's header, so only blanket impls and
-///   the built-in ones are found for it.
+///   the built-in ones are found for it. What those need of its signature,
+///   `F: Fn(&T) -> bool`, is an equality bound on its `SIG`, which
+///   `implements_at` compares with what's bound and all: a signature
+///   generic over a lifetime isn't one at a lifetime fixed outside. That
+///   compares names, so bound lifetimes must be named `'^0`, `'^1`, .. in
+///   the order they're first written, wherever a function type is made
+///   (`generics::region`, `Lifetimes::ClosureParams`).
 /// - Nor can anything name an opaque type, so only blanket impls are found
 ///   for it, and only by its bounds. Its hidden type implements those
 ///   bounds (`Checker::hide`), so the same blanket impl is found for that,

@@ -47,6 +47,7 @@ mod traits;
 pub(crate) mod typed;
 mod unify;
 
+pub(crate) use closures::is_result_lifetime;
 pub(crate) use generics::{Lifetimes, TypeName, resolve};
 pub use info::{Info, Instance, Note, NoteKind};
 pub use scope::source_name;
@@ -56,7 +57,8 @@ use crate::error::{Edit, Error, Fix, Span, Warning};
 use crate::exhaust::{self, Ctor, Pat, Redundant};
 use crate::traits::{Pred, Traits};
 use crate::types::{
-    AdtDef, AdtKind, Adts, Region, Scheme, Subst, Type, all_fields, struct_fields, variant_fields,
+    AdtDef, AdtKind, Adts, FnType, Region, Scheme, Subst, Type, all_fields, struct_fields,
+    variant_fields,
 };
 use generics::Use;
 use info::Defs;
@@ -324,9 +326,14 @@ pub(crate) struct Checker {
     lifetimes: Vec<String>,
     /// What the borrow checker needs to know about each body.
     typed: Typed,
-    /// The closures that capture in the function being checked, whose
-    /// captures are worked out at its end (see `closures`).
+    /// The closures in the function being checked whose captures, or the
+    /// lifetimes of whose results, are worked out at its end (see
+    /// `closures`), innermost first.
     closures: Vec<closures::Pending>,
+    /// What each lifetime of a closure's result that's worked out at the
+    /// end of its function turned out to be, by its name (see
+    /// `closures::result_lifetime`), for closures that are function types.
+    decided: HashMap<String, Region>,
     /// Why each closure implements only the `Fn` traits it does, by
     /// symbol, for messages: "it moves `b` out".
     closure_why: HashMap<String, String>,
@@ -480,6 +487,7 @@ impl Checker {
             lifetimes: Vec::new(),
             typed: Typed::default(),
             closures: Vec::new(),
+            decided: HashMap::new(),
             closure_why: HashMap::new(),
             calls: Vec::new(),
             locals: Vec::new(),
@@ -1055,9 +1063,9 @@ impl Checker {
     }
 
     /// `t` with the type variables in it replaced by what they turned out
-    /// to be.
+    /// to be, and the lifetimes of closures' results too.
     pub(crate) fn solution(&self, t: &Type) -> Type {
-        self.closure_regions(&self.solved(t))
+        self.closure_regions(&self.decided_regions(&self.solved(t)))
     }
 
     /// `t`, with each closure type in it with as many regions as the
@@ -1634,7 +1642,7 @@ impl Checker {
                                 ),
                             ));
                         }
-                        None if sig.params.len() == l.params.len() => Some((sig.params, *sig.ret)),
+                        None if sig.params.len() == l.params.len() => Some(sig),
                         None => None,
                     },
                     // What a bound on a type to be inferred says calls of it
@@ -2592,7 +2600,7 @@ impl Checker {
     // `break` out of a loop around it: the body is a function of its own.
     // Whether it diverges doesn't matter to the code around: making a
     // closure doesn't run it.
-    fn lambda(&mut self, l: &Arc<Lambda>, sig: Option<(Vec<Type>, Type)>) -> Result<Type, Error> {
+    fn lambda(&mut self, l: &Arc<Lambda>, sig: Option<FnType>) -> Result<Type, Error> {
         let outer_ret = self.ret.take();
         let outer_diverges = self.diverges.take();
         self.loops.push(Target::Closure);
@@ -2603,17 +2611,21 @@ impl Checker {
         result
     }
 
-    fn lambda_inner(
-        &mut self,
-        l: &Arc<Lambda>,
-        sig: Option<(Vec<Type>, Type)>,
-    ) -> Result<Type, Error> {
+    // A closure is generic over lifetimes as a function type is: over the
+    // ones `sig` is, if it's wanted, or else over those left out in its
+    // annotations, `|x: &int|` taking a reference of any lifetime, which
+    // each call picks. Unless `sig` says, its result's lifetimes, written
+    // or not, are worked out from its body at the end of the function, as
+    // one of those, or one fixed where it's made, such as of what it
+    // borrows (`closures::result_lifetime`): a lifetime left out in a
+    // written result means what it does anywhere in a body, one to infer.
+    // (The borrow checker checks the body for every lifetime it's generic
+    // over: see `borrowck::closure`.)
+    fn lambda_inner(&mut self, l: &Arc<Lambda>, sig: Option<FnType>) -> Result<Type, Error> {
         // What it captures: the variables around it its body uses. How, is
         // worked out once their types are known (see `closures`).
         let captured = self.captured(l);
         self.typed.captures.insert(Arc::as_ptr(l), captured.clone());
-        let scope = self.locals.len();
-        let mut params = Vec::new();
         for (i, p) in l.params.iter().enumerate() {
             let name = &p.name.name;
             if l.params[..i].iter().any(|q| q.name.name == *name) {
@@ -2622,11 +2634,47 @@ impl Checker {
                     format!("parameter `{name}` is declared twice"),
                 ));
             }
-            let wanted = sig.as_ref().map(|(ps, _)| ps[i].clone());
-            let t = match (&p.ty, wanted) {
-                (Some(ann), wanted) => self.annotation(ann, wanted)?,
-                (None, Some(t)) => t,
-                (None, None) => self.fresh(
+        }
+        let declared = self.lifetimes.clone();
+        let mut lts = Lifetimes::ClosureParams {
+            declared: &declared,
+            bound: Vec::new(),
+        };
+        let mut written = Vec::new();
+        for p in &l.params {
+            let t = p.ty.as_ref();
+            written.push(
+                t.map(|t| self.resolve_with(t, &self.type_params, &mut lts))
+                    .transpose()?,
+            );
+        }
+        let Lifetimes::ClosureParams { mut bound, .. } = lts else {
+            unreachable!("still a closure's parameters")
+        };
+        let mut lts = Lifetimes::Body {
+            declared: &declared,
+        };
+        let written_ret = match &l.ret {
+            Some(t) => Some(self.resolve_with(t, &self.type_params, &mut lts)?),
+            None => None,
+        };
+        let decided = sig.is_some();
+        let (wanted, wanted_ret) = match sig {
+            Some(sig) => {
+                bound = sig.bound;
+                (Some(sig.params), Some(*sig.ret))
+            }
+            None => (None, None),
+        };
+        let scope = self.locals.len();
+        let mut params = Vec::new();
+        for (i, p) in l.params.iter().enumerate() {
+            let name = &p.name.name;
+            let wanted = wanted.as_ref().map(|ps| ps[i].clone());
+            let t = match (&p.ty, written[i].take(), wanted) {
+                (Some(ann), Some(t), wanted) => self.annotation(t, ann.span, wanted)?,
+                (_, _, Some(t)) => t,
+                _ => self.fresh(
                     p.name.span,
                     format!("the type of `{name}`"),
                     format!("annotate it, e.g. `|{name}: int|`"),
@@ -2640,10 +2688,9 @@ impl Checker {
             self.bind(&local);
             self.locals.push(local);
         }
-        let wanted = sig.map(|(_, r)| r);
-        let ret = match &l.ret {
-            Some(ann) => Some(self.annotation(ann, wanted)?),
-            None => wanted,
+        let ret = match (&l.ret, written_ret) {
+            (Some(ann), Some(t)) => Some(self.annotation(t, ann.span, wanted_ret)?),
+            _ => wanted_ret,
         };
         self.ret = ret.clone();
         let ret = match ret {
@@ -2666,9 +2713,44 @@ impl Checker {
             }
         };
         self.end_scope(scope);
+        // Each lifetime of its result that's left to work out gets a name
+        // of its own, to say what it is by once that's done.
+        let mut later = Vec::new();
+        let ret = match decided {
+            true => ret,
+            false => self.solved(&ret).map_regions(&mut |r| match r {
+                Region::Erased => {
+                    let name = closures::result_lifetime(l, later.len());
+                    later.push(name.clone());
+                    Region::Named(name)
+                }
+                Region::Named(n) if bound.contains(n) || n.starts_with("'_") => {
+                    let name = closures::result_lifetime(l, later.len());
+                    later.push(name.clone());
+                    Region::Named(name)
+                }
+                r => r.clone(),
+            }),
+        };
+        let sig = FnType {
+            params,
+            ret: Box::new(ret),
+            bound,
+        };
         match captured.is_empty() {
-            true => Ok(Type::func(params, ret)),
-            false => Ok(self.closure_type(l, captured, params, ret)),
+            true => {
+                if !later.is_empty() {
+                    self.closures.push(closures::Pending {
+                        symbol: None,
+                        lambda: l.clone(),
+                        captured,
+                        ty: Type::Fn(sig.clone()),
+                        later,
+                    });
+                }
+                Ok(Type::Fn(sig))
+            }
+            false => Ok(self.closure_type(l, captured, sig, later)),
         }
     }
 
@@ -2683,17 +2765,17 @@ impl Checker {
             .collect()
     }
 
-    /// The type a closure's annotation names, which must fit the one
-    /// `wanted` from the context, if any.
-    fn annotation(&mut self, ann: &TypeExpr, wanted: Option<Type>) -> Result<Type, Error> {
-        let t = self.resolve(ann)?;
+    /// `t`, the type a closure's annotation at `span` names, which must fit
+    /// the one `wanted` from the context, if any, which is then what it is.
+    fn annotation(&mut self, t: Type, span: Span, wanted: Option<Type>) -> Result<Type, Error> {
         self.mention(&t);
-        if let Some(w) = wanted {
-            self.unify_or(&t, &w, ann.span, |t, w| {
-                format!("expected `{w}`, found `{t}`")
-            })?;
+        match wanted {
+            Some(w) => {
+                self.unify_or(&t, &w, span, |t, w| format!("expected `{w}`, found `{t}`"))?;
+                Ok(w)
+            }
+            None => Ok(t),
         }
-        Ok(t)
     }
 
     //   Γ ⊢ e1 : T1    Γ, x : T1 ⊢ rest : T
@@ -3528,7 +3610,7 @@ pub(crate) fn first_use(e: &Expr, name: &str) -> Option<Span> {
 
 /// Where to point when an expression has the wrong type: for a block that's
 /// its final expression, not the whole multi-line block.
-fn result_span(e: &Expr) -> Span {
+pub(crate) fn result_span(e: &Expr) -> Span {
     match &e.kind {
         ExprKind::Block(_, Some(tail)) => result_span(tail),
         _ => e.span,

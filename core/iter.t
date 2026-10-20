@@ -13,6 +13,13 @@ pub trait Iterator {
     /// Gives `f` of each value.
     fn map<U, F: FnMut(Self::Item) -> U>(self, f: F) -> Map<Self, F, U> { Map { iter: self, f } }
 
+    /// The values `p` says `true` of, throwing the rest away. `p` takes each
+    /// by `&`, for as long as the call, so `|x: &int| *x > 0` will do.
+    fn filter<P: FnMut(&Self::Item) -> bool>(self, p: P) -> Filter<Self, P, Self::Item>
+    where
+        Self::Item: Discard,
+    { Filter { iter: self, p } }
+
     /// `f(..f(f(init, a), b).., z)` of the values `a`, `b`, .. `z`. It
     /// throws itself, and `f`, away at the end.
     fn fold<B, F: FnMut(B, Self::Item) -> B + Discard>(mut self, init: B, mut f: F) -> B
@@ -54,6 +61,31 @@ impl<U, I: Iterator, F: FnMut(I::Item) -> U> Iterator for Map<I, F, U> {
         match self.iter.next() {
             Option::Some(x) => Option::Some((self.f)(x)),
             Option::None => Option::None,
+        }
+    }
+}
+
+/// What `Iterator::filter` gives: the values of `iter` that `p` says `true`
+/// of, which are `T`s, as `iter`'s are.
+///
+/// `T` is a parameter for the impl to say it's `Discard`, as `next` throws
+/// away what `p` doesn't keep.
+#[derive(Discard where I: Discard, P: Discard)]
+pub struct Filter<I, P, T> { iter: I, p: P }
+
+impl<T: Discard, I: Iterator<Item = T>, P: FnMut(&T) -> bool> Iterator for Filter<I, P, T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<T> {
+        loop {
+            match self.iter.next() {
+                Option::Some(x) => {
+                    if (self.p)(&x) {
+                        return Option::Some(x);
+                    }
+                },
+                Option::None => return Option::None,
+            }
         }
     }
 }

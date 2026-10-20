@@ -11,4 +11,4 @@ fn main() {
     let r = &n;
     print(app(|_x| r));
 }
-// error: `n` doesn't live long enough
+// error: this closure's result has the lifetime of `_x`, which each call picks, so it could be any, even `'static`, but this only lives as long as the captured `r`

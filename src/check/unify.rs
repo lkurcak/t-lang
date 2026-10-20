@@ -337,7 +337,6 @@ impl Checker {
             }
         }
         self.settle_closures()?;
-        self.settle_calls()?;
         self.prove_all()?;
         for v in vars..self.vars.len() {
             let t = self.solved(&Type::Var(v as u32));

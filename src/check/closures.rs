@@ -36,13 +36,31 @@ use crate::types::{FnType, Region, Type};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// A closure that captures, in the function being checked, whose
-/// captures are to be worked out at its end.
+/// A closure in the function being checked whose captures, if it has any,
+/// or the lifetimes of whose result, are to be worked out at its end.
 pub(super) struct Pending {
-    pub(super) symbol: String,
+    /// Its symbol, if it captures: then its type is one of its own.
+    pub(super) symbol: Option<String>,
     pub(super) lambda: Arc<Lambda>,
     /// The variables it captures, by id, in the order it names them.
     pub(super) captured: Vec<Span>,
+    /// Its type, as the checker made it.
+    pub(super) ty: Type,
+    /// The names of its result's lifetimes still to work out
+    /// (`result_lifetime`).
+    pub(super) later: Vec<String>,
+}
+
+/// The name of the `i`th lifetime of closure `l`'s result, until it's
+/// worked out from its body (`Checker::decide_result`). No program can
+/// write it, and each closure's are its own.
+pub(super) fn result_lifetime(l: &Lambda, i: usize) -> String {
+    format!("'?r{}.{i}", l.body.span.start)
+}
+
+/// Is `r` a lifetime of a closure's result still to work out?
+pub(crate) fn is_result_lifetime(r: &Region) -> bool {
+    matches!(r, Region::Named(n) if n.starts_with("'?r"))
 }
 
 /// How a closure's body uses a variable, the most it needs: read it
@@ -57,25 +75,21 @@ enum Use {
 }
 
 impl Checker {
-    /// The type of closure `l`, whose parameters and result are `params`
-    /// and `ret`, if it captures the variables `captured`, by id: one of
-    /// its own, generic over every type parameter in scope.
+    /// The type of closure `l`, whose signature is `sig`, if it captures
+    /// the variables `captured`, by id: one of its own, generic over every
+    /// type parameter in scope.
     pub(super) fn closure_type(
         &mut self,
         l: &Arc<Lambda>,
         captured: Vec<Span>,
-        params: Vec<Type>,
-        ret: Type,
+        sig: FnType,
+        later: Vec<String>,
     ) -> Type {
         let symbol = format!("{{closure#{}}}", l.body.span.start);
         let def = crate::traits::ClosureDef {
             params: self.type_params.clone(),
             lifetimes: Vec::new(),
-            sig: FnType {
-                params,
-                ret: Box::new(ret),
-                bound: Vec::new(),
-            },
+            sig,
             kind: None,
             fields: Vec::new(),
         };
@@ -93,19 +107,22 @@ impl Checker {
         self.adts.proj.closures.insert(symbol.clone(), def.clone());
         self.traits.closures.insert(symbol.clone(), def);
         let args = self.type_params.iter().cloned().map(Type::Param).collect();
+        let ty = Type::Adt(symbol.clone(), Vec::new(), args);
         self.closures.push(Pending {
-            symbol: symbol.clone(),
+            symbol: Some(symbol),
             lambda: l.clone(),
             captured,
+            ty: ty.clone(),
+            later,
         });
-        Type::Adt(symbol, Vec::new(), args)
+        ty
     }
 
     /// What calls of type variable `v` take and give, if a bound on what
     /// it's for says, for a closure with `n` parameters: from the goal
     /// `<_ as FnOnce>::(signature)` = `fn(..) -> ..` that a call's bound
-    /// `F: Fn(..) -> ..` makes.
-    pub(super) fn wanted_sig(&self, v: u32, n: usize) -> Option<(Vec<Type>, Type)> {
+    /// `F: Fn(..) -> ..` makes, with the lifetimes it's generic over.
+    pub(super) fn wanted_sig(&self, v: u32, n: usize) -> Option<FnType> {
         self.goals
             .iter()
             .find_map(|g| match (&g.proj, self.shallow(&g.is)) {
@@ -114,14 +131,16 @@ impl Checker {
                         && self.shallow(s) == Type::Var(v)
                         && sig.params.len() == n =>
                 {
-                    Some((sig.params, *sig.ret))
+                    Some(sig)
                 }
                 _ => None,
             })
     }
 
-    /// Is `t` a closure type whose captures aren't worked out yet, or does
-    /// it have one in it? Then what it implements can't be asked yet.
+    /// Is `t` a closure type whose captures, or its result's lifetimes,
+    /// aren't worked out yet, or does it have one in it? Then what it
+    /// implements can't be asked yet: whether its signature is what a bound
+    /// says depends on them.
     pub(super) fn has_unsettled_closure(&self, t: &Type) -> bool {
         let mut found = false;
         super::each_adt(t, &mut |name, _| {
@@ -132,20 +151,49 @@ impl Checker {
                 .is_some_and(|c| c.kind.is_none());
         });
         found
+            || self
+                .decided_regions(t)
+                .regions()
+                .into_iter()
+                .any(is_result_lifetime)
+    }
+
+    /// `t` with each lifetime of a closure's result that's been worked out
+    /// what it turned out to be.
+    pub(super) fn decided_regions(&self, t: &Type) -> Type {
+        if self.decided.is_empty() {
+            return t.clone();
+        }
+        t.map_regions(&mut |r| match r {
+            Region::Named(n) => self.decided.get(n).cloned().unwrap_or_else(|| r.clone()),
+            r => r.clone(),
+        })
     }
 
     /// At the end of a function, once its types are known: how each of its
     /// closures captures what it does, and so which `Fn` traits it
-    /// implements, and the types of its fields. Innermost first, as an
-    /// outer closure captures what an inner one does.
+    /// implements, and the types of its fields; then how each call of what
+    /// isn't a function type gets at what it calls; then what the lifetimes
+    /// of each closure's result left to work out are, which a closure's body
+    /// needs all of those to say. Innermost first, as an outer closure
+    /// captures what an inner one does, and calls it.
     pub(super) fn settle_closures(&mut self) -> Result<(), Error> {
-        for p in std::mem::take(&mut self.closures) {
-            self.settle_closure(&p)?;
+        let pending = std::mem::take(&mut self.closures);
+        for p in &pending {
+            if let Some(symbol) = &p.symbol {
+                self.settle_closure(symbol, p)?;
+            }
+        }
+        self.settle_calls()?;
+        for p in &pending {
+            if !p.later.is_empty() {
+                self.settle_result(p)?;
+            }
         }
         Ok(())
     }
 
-    fn settle_closure(&mut self, p: &Pending) -> Result<(), Error> {
+    fn settle_closure(&mut self, symbol: &String, p: &Pending) -> Result<(), Error> {
         let l = &*p.lambda;
         let mut uses: HashMap<Span, Use> = HashMap::new();
         self.uses_in(&l.body, Use::Read, true, &p.captured, &mut uses);
@@ -187,9 +235,13 @@ impl Checker {
             modes.push((*id, mode));
         }
         // Each region in its fields' types and its signature is a lifetime
-        // parameter of its own.
+        // parameter of its own, but for those of its result still to work
+        // out, which are worked out once the rest is known.
         let mut lifetimes = Vec::new();
-        let mut fresh = |_: &Region| {
+        let mut fresh = |r: &Region| {
+            if is_result_lifetime(r) {
+                return r.clone();
+            }
             let name = format!("'_k{}", lifetimes.len());
             lifetimes.push(name.clone());
             Region::Named(name)
@@ -198,9 +250,12 @@ impl Checker {
             .into_iter()
             .map(|(n, t)| (n, t.map_regions(&mut fresh)))
             .collect();
-        let def = &self.traits.closures[&p.symbol];
+        let def = &self.traits.closures[symbol];
         let sig = Type::Fn(def.sig.clone());
-        let Type::Fn(sig) = self.solved(&sig).map_regions(&mut fresh) else {
+        let Type::Fn(sig) = self
+            .decided_regions(&self.solved(&sig))
+            .map_regions(&mut fresh)
+        else {
             unreachable!("a signature is a function type")
         };
         let def = crate::traits::ClosureDef {
@@ -208,17 +263,10 @@ impl Checker {
             lifetimes: lifetimes.clone(),
             sig,
             kind: Some(kind),
-            fields: fields.clone(),
+            fields,
         };
-        let adt = self.adts.get_mut(&p.symbol).expect("the closure's struct");
-        adt.lifetimes = lifetimes;
-        adt.kind = crate::types::AdtKind::Struct(fields);
-        self.adts
-            .proj
-            .closures
-            .insert(p.symbol.clone(), def.clone());
-        self.traits.closures.insert(p.symbol.clone(), def);
-        self.closure_why.insert(p.symbol.clone(), why);
+        self.closure_why.insert(symbol.clone(), why);
+        self.define_closure(symbol, &def);
         self.info.captures.insert(
             l.body.span,
             modes
@@ -228,6 +276,55 @@ impl Checker {
         );
         self.typed.modes.insert(Arc::as_ptr(&p.lambda), modes);
         Ok(())
+    }
+
+    /// Works out the lifetimes of closure `p`'s result left to work out,
+    /// from its body (`borrowck::decide_result`).
+    fn settle_result(&mut self, p: &Pending) -> Result<(), Error> {
+        let ty = self.solution(&p.ty);
+        let decided = crate::borrowck::decide_result(self, &p.lambda, &ty, &p.later)?;
+        let Some(symbol) = &p.symbol else {
+            self.decided.extend(p.later.iter().cloned().zip(decided));
+            return Ok(());
+        };
+        let mut def = self.traits.closures[symbol].clone();
+        // One fixed where it's made is a lifetime parameter of its own.
+        let decided: HashMap<&String, Region> = p
+            .later
+            .iter()
+            .zip(decided)
+            .map(|(name, r)| match r {
+                Region::Erased => {
+                    let own = format!("'_k{}", def.lifetimes.len());
+                    def.lifetimes.push(own.clone());
+                    (name, Region::Named(own))
+                }
+                r => (name, r),
+            })
+            .collect();
+        let sig = Type::Fn(def.sig.clone()).map_regions(&mut |r| match r {
+            Region::Named(n) => decided.get(n).cloned().unwrap_or_else(|| r.clone()),
+            r => r.clone(),
+        });
+        let Type::Fn(sig) = sig else {
+            unreachable!("a signature is a function type")
+        };
+        def.sig = sig;
+        self.define_closure(symbol, &def);
+        Ok(())
+    }
+
+    /// Defines closure `symbol`'s struct, and what it implements, as `def`
+    /// says.
+    fn define_closure(&mut self, symbol: &str, def: &crate::traits::ClosureDef) {
+        let adt = self.adts.get_mut(symbol).expect("the closure's struct");
+        adt.lifetimes = def.lifetimes.clone();
+        adt.kind = crate::types::AdtKind::Struct(def.fields.clone());
+        self.adts
+            .proj
+            .closures
+            .insert(symbol.to_string(), def.clone());
+        self.traits.closures.insert(symbol.to_string(), def.clone());
     }
 
     /// Notes in `uses` what `e` does with the variables `captured`, as it's

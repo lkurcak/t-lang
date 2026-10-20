@@ -62,6 +62,13 @@ pub(crate) enum Lifetimes<'a> {
     /// In a function's body: one left out is for the borrow checker to work
     /// out.
     Body { declared: &'a [String] },
+    /// In a closure's parameters, as for a function type's: each lifetime
+    /// left out is one the closure is generic over, named `'^0`, `'^1` and
+    /// so on, added to `bound`, which each call picks.
+    ClosureParams {
+        declared: &'a [String],
+        bound: Vec<String>,
+    },
     /// In the fields of a struct or enum, where none can be left out.
     Fields { declared: &'a [String] },
     /// In what an impl says an associated type is, or an equality bound
@@ -80,6 +87,7 @@ impl Lifetimes<'_> {
             Lifetimes::Params { declared, .. }
             | Lifetimes::Return { declared, .. }
             | Lifetimes::Body { declared }
+            | Lifetimes::ClosureParams { declared, .. }
             | Lifetimes::Fields { declared }
             | Lifetimes::Assoc { declared } => *declared,
             Lifetimes::Any => &[],
@@ -119,6 +127,11 @@ impl Lifetimes<'_> {
                      does, as in `fn f<'a>(x: &'a int, y: &int) -> &'a int`"
                 ),
             )),
+            Lifetimes::ClosureParams { bound, .. } => {
+                let name = format!("'^{}", bound.len());
+                bound.push(name.clone());
+                Ok(Region::Named(name))
+            }
             Lifetimes::Body { .. } | Lifetimes::Any => Ok(Region::Erased),
             Lifetimes::Fields { .. } => Err(Error::ty(
                 span,

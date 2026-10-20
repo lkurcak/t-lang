@@ -467,7 +467,7 @@ impl Regions {
 
     /// A new placeholder region: universal, known only to be outlived by
     /// `'static`.
-    fn placeholder(&mut self) -> usize {
+    pub(crate) fn placeholder(&mut self) -> usize {
         let v = self.fresh();
         let u = self.universal.len();
         self.universal.push(Region::Named(format!("'^p{u}")));

@@ -468,7 +468,9 @@ A closure's body is checked as a function of its own, with the regions in
 its signature as its universal regions. What it needs of those, it can't
 decide, so it's passed up to the function it's in, as constraints on the
 closure's type there: that's how `|r| r` checks against `fn(&int) ->
-&int`.
+&int`. (Since step 6e.1, a closure's type can be higher-ranked itself, and
+then its body is checked with placeholders for those lifetimes:
+docs/06e.1-higher-ranked-closures.md.)
 
 What closures captured was unchanged from step 3: copies, and closures that
 captured were downward-only. With references and boxes about, a closure
