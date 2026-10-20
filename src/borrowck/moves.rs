@@ -873,6 +873,15 @@ fn dropped(
             ),
         )
         .with_note(span, "the call ends here"),
+        // A `for` loop's iterator (see `modules::Rewrite::for_loop`), which
+        // the checker usually says this of first.
+        Dropped::Dead if decl.name.as_deref() == Some(crate::check::FOR_ITERATOR) => Error::ty(
+            decl.span,
+            format!(
+                "a `for` throws its iterator away when it ends, and `{t}` isn't `Discard`; to \
+                 keep it, iterate over a mutable reference to it: `for x in &mut it`"
+            ),
+        ),
         Dropped::Dead => {
             let temp = decl.kind == LocalKind::Temp;
             let subject = match (temp, q.proj.is_empty()) {
@@ -904,7 +913,7 @@ fn dropped(
         }
         Dropped::Assign => {
             let replace = format!(
-                "; to get it back instead, use `replace(&mut {}, ..)`",
+                "; to get it back instead, use `core::mem::replace(&mut {}, ..)`",
                 describe(b, place)
             );
             let held = match q == *place {

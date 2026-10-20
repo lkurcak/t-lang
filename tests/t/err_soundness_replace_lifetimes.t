@@ -1,4 +1,7 @@
 // The same for `replace`.
+
+use core::mem::replace;
+
 fn main() {
     let long = Box::new(1);
     let mut a = &*long;

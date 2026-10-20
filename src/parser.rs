@@ -13,8 +13,11 @@
 //! head     = attr*
 //! attr     = "#" "[" "allow" "(" (IDENT ("," IDENT)* ","?)? ")" "]"
 //!          | "#" "[" "derive" "(" (derived ("," derived)* ","?)? ")" "]"
+//!          | "#" "[" "intrinsic" "]"               -- only on a `fn`, in `core`
 //! derived  = IDENT ("where" IDENT ":" bound ("+" bound)* ("," IDENT ":" bound ("+" bound)*)*)?
-//! fn_decl  = "fn" IDENT generics? "(" (param ("," param)* ","?)? ")" ("->" type)? block
+//! fn_decl  = "fn" IDENT generics? "(" (param ("," param)* ","?)? ")" ("->" type)? where?
+//!            (block | ";")                          -- `;` only for an intrinsic
+//! where    = "where" type ":" bound ("+" bound)* ("," type ":" bound ("+" bound)*)* ","?
 //! generics = "<" (gparam ("," gparam)* ","?)? ">"     -- lifetimes before types
 //! gparam   = LIFETIME (":" LIFETIME ("+" LIFETIME)*)? | IDENT (":" bound ("+" bound)*)?
 //! bound    = LIFETIME | path                          -- a lifetime, or a trait
@@ -24,7 +27,7 @@
 //! trait    = "trait" IDENT (":" path ("+" path)*)? "{" (head method)* "}"
 //! impl     = "impl" generics? (path "for")? type "{" (head "pub"? method)* "}"
 //! method   = "fn" IDENT generics? "(" ((receiver | param) ("," param)* ","?)? ")"
-//!            ("->" type)? (block | ";")               -- `;` only in a trait
+//!            ("->" type)? where? (block | ";")       -- `;` only in a trait
 //! receiver = "mut"? "self" | "&" LIFETIME? "mut"? "self"
 //! struct   = "struct" IDENT generics? "{" (head "pub"? param ("," head "pub"? param)* ","?)? "}"
 //! enum     = "enum" IDENT generics? "{" (head variant ("," head variant)* ","?)? "}"
@@ -35,9 +38,10 @@
 //!          | "impl" bound ("+" bound)*               -- only in a return type
 //! targ     = LIFETIME | type
 //! block    = "{" (let | head (fn_decl | struct | enum) | expr ";" | block_like ";"?)* expr? "}"
-//! block_like = if | match | label? (while | loop) | block
+//! block_like = if | match | label? (while | loop | for) | block
 //! let      = "let" pattern (":" type)? "=" expr ";"
-//! expr     = or (("=" | "+=" | "-=" | "*=" | "/=" | "%=") expr)?  -- assignment
+//! expr     = range (("=" | "+=" | "-=" | "*=" | "/=" | "%=") expr)?  -- assignment
+//! range    = or (".." or)?                         -- no chaining
 //! or       = and ("||" and)*
 //! and      = cmp ("&&" cmp)*
 //! cmp      = add (("==" | "!=" | "<" | "<=" | ">" | ">=") add)?   -- no chaining
@@ -46,7 +50,7 @@
 //! unary    = ("-" | "!" | "*" | "&" "mut"?) unary | call
 //! postfix  = primary ("(" args ")" | "." IDENT | "." IDENT targs? "(" args ")")*
 //! primary  = INT | "true" | "false" | IDENT targs? | "(" ")" | "(" expr ")" | block
-//!          | if | match | label? (while | loop) | path targs? "{" field_init,* "}"
+//!          | if | match | label? (while | loop | for) | path targs? "{" field_init,* "}"
 //!          | path targs? "::" IDENT ("(" args ")")? | path "::" IDENT targs | lambda
 //!          | "return" expr? | "break" LIFETIME? expr? | "continue" LIFETIME?
 //! label    = LIFETIME ":"
@@ -56,14 +60,15 @@
 //! if       = "if" expr block ("else" (block | if))?
 //! while    = "while" expr block
 //! loop     = "loop" block
+//! for      = "for" pattern "in" expr block
 //! match    = "match" expr "{" (pattern "=>" expr ","?)* "}"  -- `,` optional after a block/if/match
 //! field_init = IDENT (":" expr)?                             -- `x` is short for `x: x`
 //!
 //! pattern  = pat_atom ("|" pat_atom)*
-//! pat_atom = "_" | "mut"? IDENT | int | range | "true" | "false" | "(" ")"
+//! pat_atom = "_" | "mut"? IDENT | int | pat_range | "true" | "false" | "(" ")"
 //!          | path targs? "::" IDENT ("(" pattern,* ")")?
 //!          | path targs? "{" (IDENT (":" pattern)?),* ".."? "}"
-//! range    = int ".." int? | int "..=" int | ".." int | "..=" int
+//! pat_range = int ".." int? | int "..=" int | ".." int | "..=" int
 //! int      = "-"? INT
 //! ```
 //!
@@ -123,6 +128,7 @@ pub fn parse(tokens: Vec<Token>) -> Result<Program, Error> {
             public: None,
             in_file: false,
         }],
+        core: None,
         uses: Vec::new(),
         types: Vec::new(),
         traits: Vec::new(),
@@ -212,18 +218,25 @@ impl Parser {
         let mut doc = self.doc();
         let mut allows = Vec::new();
         let mut derives = Vec::new();
+        let mut intrinsic = None;
         while *self.peek() == Tok::Hash {
             let start = self.bump().span;
             self.expect(Tok::LBracket)?;
             let derive = match self.peek() {
                 Tok::Ident(name) if name == "allow" || name == "derive" => name == "derive",
+                Tok::Ident(name) if name == "intrinsic" => {
+                    self.bump();
+                    intrinsic = Some(start.to(self.expect(Tok::RBracket)?));
+                    continue;
+                }
                 Tok::Ident(name) => {
                     let message = format!(
-                        "unknown attribute `{name}`; the only ones are `allow` and `derive`"
+                        "unknown attribute `{name}`; the only ones are `allow`, `derive` and \
+                         `intrinsic`"
                     );
                     return Err(Error::syntax(self.span(), message));
                 }
-                _ => return Err(self.unexpected("`allow` or `derive`")),
+                _ => return Err(self.unexpected("`allow`, `derive` or `intrinsic`")),
             };
             self.bump();
             self.expect(Tok::LParen)?;
@@ -267,6 +280,7 @@ impl Parser {
             doc,
             allows,
             derives,
+            intrinsic,
         })
     }
 
@@ -345,6 +359,10 @@ impl Parser {
             }
             let head = self.head()?;
             let public = (*self.peek() == Tok::Pub).then(|| self.bump().span);
+            let head = match self.peek() {
+                Tok::Fn => head,
+                _ => head.no_intrinsic()?,
+            };
             match self.peek() {
                 Tok::Struct => {
                     let mut d = self.struct_decl(head)?;
@@ -404,6 +422,12 @@ impl Parser {
         let start = public.unwrap_or(self.span());
         self.expect(Tok::Mod)?;
         let name = self.binder()?;
+        if name.name == "core" {
+            return Err(Error::syntax(
+                name.span,
+                "a module can't be called `core`: that's the name of the core library",
+            ));
+        }
         let in_file = *self.peek() == Tok::Semi;
         let decl = ModDecl {
             doc: head.doc,
@@ -657,8 +681,13 @@ impl Parser {
                 span: close,
             }
         };
+        let mut generics = generics;
+        if *self.peek() == Tok::Where {
+            self.where_clause(&mut generics)?;
+        }
+        let intrinsic = head.intrinsic;
         let (body, provided) = match self.peek() {
-            Tok::Semi if in_trait => {
+            Tok::Semi if in_trait || intrinsic.is_some() => {
                 let span = self.bump().span;
                 let body = Expr {
                     kind: ExprKind::Block(Vec::new(), None),
@@ -670,6 +699,12 @@ impl Parser {
                 return Err(Error::syntax(
                     self.span(),
                     "a function needs a body; only a method in a `trait` can have none",
+                ));
+            }
+            _ if intrinsic.is_some() => {
+                return Err(Error::syntax(
+                    self.span(),
+                    "an intrinsic has no body: the compiler provides it; end it with `;`",
                 ));
             }
             _ => (self.block()?, true),
@@ -686,8 +721,38 @@ impl Parser {
             parens: open.to(close),
             ret,
             body,
+            intrinsic,
         };
         Ok((f, provided))
+    }
+
+    /// `where T: Show, Self::Item: Discard` after a function's signature,
+    /// added to its generics. The bounds go on while a `,` is followed by
+    /// something other than the body.
+    fn where_clause(&mut self, g: &mut Generics) -> Result<(), Error> {
+        let start = self.expect(Tok::Where)?;
+        let mut end;
+        loop {
+            let subject = self.ty()?;
+            self.expect(Tok::Colon)?;
+            let mut items = Vec::new();
+            loop {
+                items.push(match self.peek() {
+                    Tok::Lifetime(_) => BoundItem::plain(self.lifetime()?),
+                    _ => self.trait_bound()?,
+                });
+                if !self.eat(&Tok::Plus) {
+                    break;
+                }
+            }
+            end = items[items.len() - 1].span;
+            g.wheres.push((subject, items));
+            if !self.eat(&Tok::Comma) || matches!(self.peek(), Tok::LBrace | Tok::Semi) {
+                break;
+            }
+        }
+        g.where_span = Some(start.to(end));
+        Ok(())
     }
 
     /// Is a receiver next: `self`, `mut self`, `&self`, `&'a mut self`..?
@@ -766,7 +831,7 @@ impl Parser {
         let mut assoc = Vec::new();
         let mut methods = Vec::new();
         while *self.peek() != Tok::RBrace {
-            let head = self.head()?.no_derives()?;
+            let head = self.head()?.no_derives()?.no_intrinsic()?;
             self.no_pub("a trait's methods are public wherever the trait is")?;
             match self.peek() {
                 Tok::Type => assoc.push(self.assoc_decl(head)?),
@@ -858,7 +923,7 @@ impl Parser {
         let mut assoc = Vec::new();
         let mut methods = Vec::new();
         while *self.peek() != Tok::RBrace {
-            let head = self.head()?.no_derives()?;
+            let head = self.head()?.no_derives()?.no_intrinsic()?;
             let public = match trait_name {
                 Some(_) => {
                     self.no_pub("a trait impl's methods are public wherever the trait is")?;
@@ -1305,7 +1370,7 @@ impl Parser {
                 return Err(Error::syntax(self.span(), what));
             }
             if matches!(self.peek(), Tok::Fn | Tok::Struct | Tok::Enum | Tok::Hash) {
-                let head = self.head()?;
+                let head = self.head()?.no_intrinsic()?;
                 let stmt = match self.peek() {
                     Tok::Fn => Stmt::Fn(Box::new(self.fn_decl(head.no_derives()?)?)),
                     Tok::Struct => Stmt::Type(Box::new(TypeDecl::Struct(self.struct_decl(head)?))),
@@ -1319,12 +1384,18 @@ impl Parser {
             }
             let block_like = matches!(
                 self.peek(),
-                Tok::If | Tok::Match | Tok::While | Tok::Loop | Tok::Lifetime(_) | Tok::LBrace
+                Tok::If
+                    | Tok::Match
+                    | Tok::While
+                    | Tok::Loop
+                    | Tok::For
+                    | Tok::Lifetime(_)
+                    | Tok::LBrace
             );
             let e = match self.peek() {
                 Tok::If => self.if_expr()?,
                 Tok::Match => self.match_expr()?,
-                Tok::While | Tok::Loop | Tok::Lifetime(_) => self.loop_expr()?,
+                Tok::While | Tok::Loop | Tok::For | Tok::Lifetime(_) => self.loop_expr()?,
                 Tok::LBrace => self.block()?,
                 _ => self.expr()?,
             };
@@ -1370,7 +1441,7 @@ impl Parser {
     /// An expression, which may be an assignment: `x = 1`, `p.x += 2`.
     /// Assignment binds less tightly than anything, and to the right.
     fn expr(&mut self) -> Result<Expr, Error> {
-        let lhs = self.binary(0)?;
+        let lhs = self.range()?;
         let op = match self.peek() {
             Tok::Eq => None,
             Tok::OpEq(op) => Some(match op {
@@ -1387,6 +1458,41 @@ impl Parser {
         let span = lhs.span.to(rhs.span);
         Ok(Expr {
             kind: ExprKind::Assign(op, Box::new(lhs), Box::new(rhs)),
+            span,
+        })
+    }
+
+    /// `a..b`, or just `a`. A range binds less tightly than any operator,
+    /// so `0..n + 1` is `0..(n + 1)`, and doesn't chain.
+    fn range(&mut self) -> Result<Expr, Error> {
+        let lhs = self.binary(0)?;
+        match self.peek() {
+            Tok::DotDot => {}
+            Tok::DotDotEq => {
+                return Err(Error::syntax(
+                    self.span(),
+                    "`a..=b` isn't supported (yet); write `a..b + 1`",
+                ));
+            }
+            _ => return Ok(lhs),
+        }
+        let dots = self.bump().span;
+        if !starts_expr(self.peek()) || (self.no_struct && *self.peek() == Tok::LBrace) {
+            return Err(Error::syntax(
+                dots,
+                "a range needs an end: `a..b` (ranges with no end aren't supported yet)",
+            ));
+        }
+        let rhs = self.binary(0)?;
+        if matches!(self.peek(), Tok::DotDot | Tok::DotDotEq) {
+            return Err(Error::syntax(
+                self.span(),
+                "ranges can't be chained: parenthesize one",
+            ));
+        }
+        let span = lhs.span.to(rhs.span);
+        Ok(Expr {
+            kind: ExprKind::Range(Box::new(lhs), Box::new(rhs)),
             span,
         })
     }
@@ -1535,7 +1641,7 @@ impl Parser {
             Tok::LBrace => return self.block(),
             Tok::If => return self.if_expr(),
             Tok::Match => return self.match_expr(),
-            Tok::While | Tok::Loop | Tok::Lifetime(_) => return self.loop_expr(),
+            Tok::While | Tok::Loop | Tok::For | Tok::Lifetime(_) => return self.loop_expr(),
             Tok::Return | Tok::Break | Tok::Continue => return self.jump(),
             Tok::Pipe | Tok::OrOr | Tok::Move => return self.lambda(),
             _ => return Err(self.unexpected("an expression")),
@@ -1576,6 +1682,25 @@ impl Parser {
             }
             _ => None,
         };
+        if *self.peek() == Tok::For {
+            self.bump();
+            let pat = self.pattern()?;
+            let in_span = self.expect(Tok::In)?;
+            let iter = self.structs(false, Self::expr)?;
+            let body = self.block()?;
+            let span = start.to(body.span);
+            let f = ForLoop {
+                label,
+                pat,
+                in_span,
+                iter,
+                body,
+            };
+            return Ok(Expr {
+                kind: ExprKind::For(Box::new(f)),
+                span,
+            });
+        }
         let (cond, body) = match self.peek() {
             Tok::While => {
                 self.bump();
@@ -1585,7 +1710,7 @@ impl Parser {
                 self.bump();
                 (None, self.block()?)
             }
-            _ => return Err(self.unexpected("`loop` or `while` after a label")),
+            _ => return Err(self.unexpected("`loop`, `while` or `for` after a label")),
         };
         let span = start.to(body.span);
         let kind = match cond {
@@ -1980,6 +2105,7 @@ fn starts_expr(tok: &Tok) -> bool {
             | Tok::Match
             | Tok::While
             | Tok::Loop
+            | Tok::For
             | Tok::Lifetime(_)
             | Tok::Return
             | Tok::Break
@@ -2025,6 +2151,8 @@ struct Head {
     doc: Option<DocComment>,
     allows: Vec<Allow>,
     derives: Vec<Derive>,
+    /// Where its `#[intrinsic]` is, if it has one: only a function's can.
+    intrinsic: Option<Span>,
 }
 
 impl Head {
@@ -2041,6 +2169,18 @@ impl Head {
                 format!("`#[allow(..)]` can't be on {what}"),
             )),
             None => Ok(()),
+        }
+    }
+
+    /// This head, for something that isn't a function, so can't have an
+    /// `#[intrinsic]`.
+    fn no_intrinsic(self) -> Result<Head, Error> {
+        match self.intrinsic {
+            Some(at) => Err(Error::syntax(
+                at,
+                "`#[intrinsic]` can only be on a function outside a trait or impl",
+            )),
+            None => Ok(self),
         }
     }
 

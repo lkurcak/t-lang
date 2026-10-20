@@ -447,8 +447,11 @@ impl Traits {
     }
 
     /// Does `ty` implement `tr`, given that the bounds `env` hold? `ty`
-    /// must have no type variables in it, and `env` is bounds on type
-    /// parameters only.
+    /// must have no type variables in it. `env` is bounds on type
+    /// parameters and projections, and, in an impl's method with a `where`
+    /// clause, on the impl's type: those hold there even if they're false,
+    /// as no call of the method can then prove them, and it never runs, so
+    /// monomorphisation never asks.
     ///
     /// Monomorphisation asks it again, with no bounds, of the types each
     /// copy is at (`mono::Cx::target`), and expects the same answer as the
@@ -583,6 +586,15 @@ impl Traits {
                 true => Ok(Source::Assumed),
                 false => Err(fail()),
             };
+        }
+        // A bound on a type that isn't a parameter, from an impl's method's
+        // `where` clause at the impl's type, holds in the method: if it's
+        // false, no call can prove it, and the method never runs.
+        if env
+            .iter()
+            .any(|p| p.ty == *ty && self.implied(&p.trait_name).iter().any(|t| t == tr))
+        {
+            return Ok(Source::Assumed);
         }
         let Some((i, args)) = self.select(ty, Some(tr)) else {
             return Err(fail());

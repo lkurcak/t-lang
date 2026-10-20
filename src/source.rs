@@ -32,6 +32,12 @@ impl File {
     pub fn span(&self) -> Span {
         Span::new(self.start, self.start + self.len)
     }
+
+    /// Is it one of the core library's, built into the compiler, rather
+    /// than the program's own?
+    pub fn is_core(&self) -> bool {
+        self.path.starts_with(crate::load::CORE_DIR)
+    }
 }
 
 impl Sources {
@@ -83,6 +89,11 @@ impl Sources {
     pub fn file_at(&self, offset: usize) -> &File {
         let i = self.files.partition_point(|f| f.start <= offset);
         &self.files[i.saturating_sub(1)]
+    }
+
+    /// Is `offset` in one of the core library's files?
+    pub fn in_core(&self, offset: usize) -> bool {
+        self.file_at(offset).is_core()
     }
 
     /// The file at `path`, if it's one of these.

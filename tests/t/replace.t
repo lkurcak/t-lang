@@ -2,6 +2,8 @@
 // nothing is thrown away: how to change what's behind a `&mut` whose type
 // isn't `Discard`.
 
+use core::mem::replace;
+
 struct Fd { n: int }
 
 fn close(fd: Fd) -> int {

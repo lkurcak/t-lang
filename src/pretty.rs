@@ -124,6 +124,7 @@ fn block_like(e: &Expr) -> bool {
             | ExprKind::Match(..)
             | ExprKind::While(..)
             | ExprKind::Loop(..)
+            | ExprKind::For(..)
             | ExprKind::Block(..)
     )
 }
@@ -516,7 +517,7 @@ impl Printer<'_> {
             body = body + Doc::HardLine + self.element(start, i == 0);
             let doc = match *item {
                 BodyItem::Fn(f, true) => self.fn_decl(f),
-                BodyItem::Fn(f, false) => self.signature(f) + ";",
+                BodyItem::Fn(f, false) => self.signature(f) + self.wheres(f, false) + ";",
                 BodyItem::Decl(a) => {
                     let lead = self.lead(a.doc.as_ref(), &[], a.span.start);
                     let bounds: Vec<&str> = a.bounds.iter().map(|b| b.name.as_str()).collect();
@@ -695,12 +696,52 @@ impl Printer<'_> {
     }
 
     fn fn_decl(&mut self, f: &FnDecl) -> Doc {
-        self.signature(f) + " " + self.expr(&f.body, 0, Ctx::default())
+        match f.intrinsic {
+            Some(_) => self.signature(f) + self.wheres(f, false) + ";",
+            // In order: comments are printed as what's after them is.
+            None => {
+                let head = self.signature(f) + self.wheres(f, true);
+                head + self.expr(&f.body, 0, Ctx::default())
+            }
+        }
+    }
+
+    /// A function's `where` clause, if it has one, on the signature's line
+    /// if it fits there, and otherwise on lines of its own, one bound to a
+    /// line, as rustfmt does: then a body's `{` goes on a line of its own
+    /// too. With a space before the body after it, if there's a `body`.
+    fn wheres(&mut self, f: &FnDecl, body: bool) -> Doc {
+        let after = if body { text(" ") } else { Doc::nil() };
+        if f.generics.wheres.is_empty() {
+            return after;
+        }
+        let mut preds = Doc::nil();
+        for (i, (subject, bounds)) in f.generics.wheres.iter().enumerate() {
+            if i > 0 {
+                preds = preds + "," + Doc::Line;
+            }
+            preds = preds + self.ty(subject);
+            for (j, b) in bounds.iter().enumerate() {
+                preds = preds + if j == 0 { ": " } else { " + " } + self.bound(b);
+            }
+        }
+        let comma = Doc::IfBreak(Box::new(text(",")), Box::new(Doc::nil()));
+        let end = match body {
+            true => Doc::Line,
+            false => Doc::nil(),
+        };
+        group(Doc::Line + "where" + nest(Doc::Line + preds + comma) + end)
     }
 
     /// A function, up to its body.
     fn signature(&mut self, f: &FnDecl) -> Doc {
-        let doc = self.lead(f.doc.as_ref(), &f.allows, fn_start(f)) + public(f.public);
+        let mut doc = self.lead(f.doc.as_ref(), &f.allows, fn_start(f));
+        if let Some(at) = f.intrinsic {
+            let after = f.public.map_or(f.span.start, |p| p.start);
+            doc = doc + "#[intrinsic]" + self.trailing(at.end) + Doc::HardLine;
+            doc = doc + self.element(after, true);
+        }
+        let doc = doc + public(f.public);
         let generics = self.generics(&f.name, &f.generics);
         let open = self.find(f.name.span.end, &Tok::LParen);
         let close = self.close(open, f.params.last().map(|p| p.ty.span.end), &Tok::RParen);
@@ -731,7 +772,8 @@ impl Printer<'_> {
             ExprKind::Lambda(_)
             | ExprKind::Assign(..)
             | ExprKind::Return(_)
-            | ExprKind::Break(..) => 0,
+            | ExprKind::Break(..)
+            | ExprKind::Range(..) => 0,
             _ => UNARY,
         };
         let parens = own < min
@@ -780,6 +822,19 @@ impl Printer<'_> {
             }
             ExprKind::Loop(label, body) => {
                 group(label_doc(label) + "loop " + self.block_or_expr(body))
+            }
+            ExprKind::For(f) => group(
+                label_doc(&f.label)
+                    + "for "
+                    + self.pattern(&f.pat)
+                    + " in "
+                    + self.head(&f.iter)
+                    + self.block_or_expr(&f.body),
+            ),
+            // Its ends bind more tightly than it, whatever they are but an
+            // assignment or a closure.
+            ExprKind::Range(l, r) => {
+                self.expr(l, 1, ctx.inner()) + ".." + self.expr(r, 1, ctx.inner())
             }
             ExprKind::Return(value) | ExprKind::Break(_, value) => {
                 let mut head = match &e.kind {
@@ -954,7 +1009,8 @@ impl Printer<'_> {
             | ExprKind::If(..)
             | ExprKind::Match(..)
             | ExprKind::While(..)
-            | ExprKind::Loop(..) => UNARY + 1,
+            | ExprKind::Loop(..)
+            | ExprKind::For(..) => UNARY + 1,
             _ => UNARY,
         };
         self.expr(x, min, ctx)
@@ -1318,7 +1374,8 @@ fn lead_start_span(f: &FnDecl) -> Span {
 /// Where function `f` starts without its doc comment and attributes: at its
 /// `pub`, if it has one.
 fn fn_start(f: &FnDecl) -> usize {
-    f.public.map_or(f.span.start, |p| p.start)
+    let start = f.public.map_or(f.span.start, |p| p.start);
+    f.intrinsic.map_or(start, |i| i.start.min(start))
 }
 
 /// `pub ` if `public` says where one is.

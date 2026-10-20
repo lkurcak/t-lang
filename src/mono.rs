@@ -190,6 +190,7 @@ impl<'p> Mono<'p> {
         // Doc comments that document nothing don't matter to the program.
         let mut out = Program {
             mods: prog.mods.clone(),
+            core: None,
             uses: Vec::new(),
             types: Vec::new(),
             traits: Vec::new(),
@@ -223,7 +224,47 @@ impl<'p> Mono<'p> {
         for copy in &self.copy_order {
             out.fns.extend(fns.remove(copy));
         }
+        self.without_unused_core(&mut out);
         out
+    }
+
+    /// `out` without the core library's functions, structs and enums that
+    /// are made whether they're used or not, as they aren't generic, and
+    /// aren't: they'd only be noise in what `t mono` prints. A copy of
+    /// anything generic is only made where it's used.
+    fn without_unused_core(&self, out: &mut Program) {
+        let lazy = |name: &str| self.info.core_symbols.contains(name);
+        let mut used = HashSet::new();
+        let mut kept_types: Vec<bool> = out.types.iter().map(|d| !lazy(&d.name().name)).collect();
+        let mut kept_fns: Vec<bool> = out.fns.iter().map(|f| !lazy(&f.name.name)).collect();
+        let mut seen_types = vec![false; out.types.len()];
+        let mut seen_fns = vec![false; out.fns.len()];
+        loop {
+            let mut changed = false;
+            for (i, d) in out.types.iter().enumerate() {
+                kept_types[i] |= used.contains(&d.name().name);
+                if kept_types[i] && !seen_types[i] {
+                    seen_types[i] = true;
+                    changed = true;
+                    used::in_type_decl(d, &mut used);
+                }
+            }
+            for (i, f) in out.fns.iter().enumerate() {
+                kept_fns[i] |= used.contains(&f.name.name);
+                if kept_fns[i] && !seen_fns[i] {
+                    seen_fns[i] = true;
+                    changed = true;
+                    used::in_fn(f, &mut used);
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        let mut keep = kept_types.into_iter();
+        out.types.retain(|_| keep.next().unwrap_or(true));
+        let mut keep = kept_fns.into_iter();
+        out.fns.retain(|_| keep.next().unwrap_or(true));
     }
 
     /// The name of the copy of function `name` for `args`, `mangled`,
@@ -288,6 +329,7 @@ impl<'p> Mono<'p> {
             parens: f.parens,
             ret: cx.ty(&f.ret),
             body: cx.expr(&f.body),
+            intrinsic: f.intrinsic,
         }
     }
 
@@ -441,6 +483,8 @@ fn lifetimes_only(g: &Generics) -> Generics {
             .cloned()
             .collect(),
         span: g.span,
+        wheres: Vec::new(),
+        where_span: None,
     }
 }
 
@@ -754,6 +798,9 @@ impl Cx<'_, '_, '_> {
 
     fn expr(&mut self, e: &Expr) -> Expr {
         let kind = match &e.kind {
+            ExprKind::For(_) | ExprKind::Range(..) => {
+                unreachable!("rewritten when paths are resolved")
+            }
             ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit | ExprKind::Continue(_) => {
                 e.kind.clone()
             }
@@ -930,5 +977,91 @@ fn region_name(r: &Region) -> String {
         Region::Named(n) if !r.is_elided() && !n.starts_with("'^") => n.clone(),
         Region::Static => "'static".into(),
         _ => "'_".into(),
+    }
+}
+
+/// The names a monomorphised item uses: of functions, structs and enums.
+mod used {
+    use crate::ast::*;
+    use std::collections::HashSet;
+
+    pub(super) fn in_type_decl(d: &TypeDecl, out: &mut HashSet<String>) {
+        match d {
+            TypeDecl::Struct(s) => s.fields.iter().for_each(|f| in_type(&f.ty, out)),
+            TypeDecl::Enum(e) => e
+                .variants
+                .iter()
+                .flat_map(|v| &v.fields)
+                .for_each(|t| in_type(t, out)),
+        }
+    }
+
+    pub(super) fn in_fn(f: &FnDecl, out: &mut HashSet<String>) {
+        f.params.iter().for_each(|p| in_type(&p.ty, out));
+        in_type(&f.ret, out);
+        in_expr(&f.body, out);
+    }
+
+    fn in_type(t: &TypeExpr, out: &mut HashSet<String>) {
+        match &t.kind {
+            TypeExprKind::Named(name, args) => {
+                out.insert(name.clone());
+                args.iter().for_each(|a| in_type(a, out));
+            }
+            TypeExprKind::Fn(params, ret) => {
+                params.iter().for_each(|p| in_type(p, out));
+                in_type(ret, out);
+            }
+            TypeExprKind::Ref(_, _, inner) => in_type(inner, out),
+            TypeExprKind::Proj(inner, ..) => in_type(inner, out),
+            TypeExprKind::Impl(_)
+            | TypeExprKind::Unit
+            | TypeExprKind::Never
+            | TypeExprKind::Lifetime(_) => {}
+        }
+    }
+
+    fn in_pattern(p: &Pattern, out: &mut HashSet<String>) {
+        match &p.kind {
+            PatternKind::Variant(ty, _, _, pats) => {
+                out.insert(ty.name.clone());
+                pats.iter().for_each(|p| in_pattern(p, out));
+            }
+            PatternKind::Struct(ty, _, fields, _) => {
+                out.insert(ty.name.clone());
+                fields.iter().for_each(|f| in_pattern(&f.pat, out));
+            }
+            PatternKind::Or(alts) => alts.iter().for_each(|p| in_pattern(p, out)),
+            _ => {}
+        }
+    }
+
+    fn in_expr(e: &Expr, out: &mut HashSet<String>) {
+        match &e.kind {
+            ExprKind::Var(name, _) => {
+                out.insert(name.clone());
+            }
+            ExprKind::StructLit(ty, ..) | ExprKind::Variant(ty, ..) => {
+                out.insert(ty.name.clone());
+            }
+            ExprKind::Match(_, arms) => arms.iter().for_each(|a| in_pattern(&a.pat, out)),
+            ExprKind::Block(stmts, _) => {
+                for s in stmts {
+                    if let Stmt::Let { pat, ty, .. } = s {
+                        in_pattern(pat, out);
+                        ty.iter().for_each(|t| in_type(t, out));
+                    }
+                }
+            }
+            ExprKind::Lambda(l) => {
+                l.params
+                    .iter()
+                    .flat_map(|p| &p.ty)
+                    .for_each(|t| in_type(t, out));
+                l.ret.iter().for_each(|t| in_type(t, out));
+            }
+            _ => {}
+        }
+        e.children().into_iter().for_each(|c| in_expr(c, out));
     }
 }

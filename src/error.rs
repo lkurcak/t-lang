@@ -218,6 +218,9 @@ pub enum Lint {
     UnusedLabels,
     /// A name a `use` brings in that nothing uses.
     UnusedImports,
+    /// A range written with constants whose start is after its end, so
+    /// that it's empty: most likely a countdown, which it isn't.
+    EmptyRanges,
 }
 
 impl Lint {
@@ -237,10 +240,11 @@ impl Lint {
             Lint::UnreachableCode => "unreachable_code",
             Lint::UnusedLabels => "unused_labels",
             Lint::UnusedImports => "unused_imports",
+            Lint::EmptyRanges => "empty_ranges",
         }
     }
 
-    pub const ALL: [Lint; 14] = [
+    pub const ALL: [Lint; 15] = [
         Lint::UnreachablePatterns,
         Lint::OverlappingRanges,
         Lint::MergeableRanges,
@@ -255,6 +259,7 @@ impl Lint {
         Lint::UnreachableCode,
         Lint::UnusedLabels,
         Lint::UnusedImports,
+        Lint::EmptyRanges,
     ];
 
     pub fn from_name(name: &str) -> Option<Lint> {

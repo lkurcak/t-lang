@@ -23,6 +23,7 @@ const PREC = {
   comparative: 8,
   and: 7,
   or: 6,
+  range: 5,
   assign: 0,
   closure: -1,
 };
@@ -70,6 +71,7 @@ module.exports = grammar({
 
     _item: $ => choice(
       $.function_item,
+      $.function_signature_item,
       $.struct_item,
       $.enum_item,
       $.trait_item,
@@ -135,16 +137,19 @@ module.exports = grammar({
 
     // Items
 
-    // `#[allow(dead_code)]` before an item, field or variant, or
-    // `#[derive(Copy)]` before a struct or enum. As in Rust's grammar, it's
-    // a sibling of what it's on rather than part of it.
+    // `#[allow(dead_code)]` before an item, field or variant,
+    // `#[derive(Copy)]` before a struct or enum, or `#[intrinsic]` before a
+    // function of the core library's. As in Rust's grammar, it's a sibling
+    // of what it's on rather than part of it.
     attribute_item: $ => seq(
       '#',
       '[',
       field('name', $.identifier),
-      '(',
-      commaSep(choice($.identifier, $.derive_with_bounds)),
-      ')',
+      optional(seq(
+        '(',
+        commaSep(choice($.identifier, $.derive_with_bounds)),
+        ')',
+      )),
       ']',
     ),
 
@@ -152,14 +157,17 @@ module.exports = grammar({
     // impl needs, written down.
     derive_with_bounds: $ => seq(field('trait', $._type_identifier), $.where_clause),
 
+    // In a derive, or after a function's signature, where what's bounded
+    // can be `Self` or a projection, `Self::Item`.
     where_clause: $ => seq(
       'where',
       $.where_predicate,
       repeat(seq(',', $.where_predicate)),
+      optional(','),
     ),
 
     where_predicate: $ => seq(
-      field('left', alias($.identifier, $.type_identifier)),
+      field('left', $._type),
       field('bounds', $.trait_bounds),
     ),
 
@@ -170,16 +178,20 @@ module.exports = grammar({
       optional(field('type_parameters', $.type_parameters)),
       field('parameters', $.parameters),
       optional(seq('->', field('return_type', $._type))),
+      optional($.where_clause),
       field('body', $.block),
     ),
 
-    // A method of a trait with no default: `fn show(&self);`.
+    // A method of a trait with no default, `fn show(&self);`, or an
+    // intrinsic, which the compiler provides.
     function_signature_item: $ => seq(
+      optional($.visibility_modifier),
       'fn',
       field('name', $.identifier),
       optional(field('type_parameters', $.type_parameters)),
       field('parameters', $.parameters),
       optional(seq('->', field('return_type', $._type))),
+      optional($.where_clause),
       ';',
     ),
 
@@ -454,6 +466,7 @@ module.exports = grammar({
       $.match_expression,
       $.while_expression,
       $.loop_expression,
+      $.for_expression,
       $.block,
     ),
 
@@ -469,6 +482,7 @@ module.exports = grammar({
       $.unary_expression,
       $.reference_expression,
       $.binary_expression,
+      $.range_expression,
       $.assignment_expression,
       $.compound_assignment_expr,
       $.call_expression,
@@ -625,6 +639,23 @@ module.exports = grammar({
       field('condition', $._expression),
       field('body', $.block),
     ),
+
+    // `for x in 0..n { .. }`, maybe with a label.
+    for_expression: $ => seq(
+      optional(seq(field('label', $.lifetime), ':')),
+      'for',
+      field('pattern', $._pattern),
+      'in',
+      field('value', $._expression),
+      field('body', $.block),
+    ),
+
+    // `a..b`, which doesn't chain.
+    range_expression: $ => prec.left(PREC.range, seq(
+      field('start', $._expression),
+      '..',
+      field('end', $._expression),
+    )),
 
     // `'a: loop { .. }`, with a label for `break 'a` to name.
     loop_expression: $ => seq(

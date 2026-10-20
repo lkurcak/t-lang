@@ -66,6 +66,12 @@ pub fn target<'i>(
             kind => format!("`{}` is built in", name(kind)),
         });
     };
+    if sources.in_core(def.start) || sources.in_core(offset) {
+        return Err(format!(
+            "`{}` is the core library's, which can't be changed",
+            word_at(sources.text(), def.start)
+        ));
+    }
     if matches!(&note.kind, NoteKind::Var(n) if n == "self") {
         return Err("`self` can't be renamed: it's what a method's receiver is called".into());
     }

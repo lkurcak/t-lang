@@ -35,6 +35,16 @@ type Hidden = (String, Type, Vec<usize>);
 type Edge<'a> = (String, &'a str, Vec<Type>, Vec<(usize, usize, usize)>, Span);
 
 /// Does `t` have a projection in it?
+/// Can a `where` clause bound `t`: a type parameter, `Self`, or a
+/// projection on one? Others' bounds are already true or false.
+fn bounded(t: &Type) -> bool {
+    match t {
+        Type::Param(_) => true,
+        Type::Proj(s, ..) => bounded(s),
+        _ => false,
+    }
+}
+
 pub(super) fn has_proj(t: &Type) -> bool {
     matches!(t, Type::Proj(..)) || t.parts().any(has_proj)
 }
@@ -174,6 +184,34 @@ impl Checker {
         lifetimes: &[String],
         on_projections: bool,
     ) -> Result<(Vec<Pred>, Vec<Equality>), Error> {
+        // A type in a bound can name an associated type of a parameter,
+        // as `F: Fn(I::Item)` does, which the parameter's own bounds say
+        // which trait's it is: in scope while the types are worked out.
+        let saved = self.env.clone();
+        for (p, after) in &g.bounds {
+            for b in after.iter().filter(|b| !b.name.name.starts_with('\'')) {
+                if params.contains(&p.name)
+                    && let Ok(tr) = self.trait_named(&b.name)
+                {
+                    self.env.push(Pred {
+                        ty: Type::Param(p.name.clone()),
+                        trait_name: tr,
+                    });
+                }
+            }
+        }
+        let result = self.preds_in(g, params, lifetimes, on_projections);
+        self.env = saved;
+        result
+    }
+
+    fn preds_in(
+        &mut self,
+        g: &Generics,
+        params: &[String],
+        lifetimes: &[String],
+        on_projections: bool,
+    ) -> Result<(Vec<Pred>, Vec<Equality>), Error> {
         let mut out: Vec<Pred> = Vec::new();
         let mut eqs: Vec<(Type, Type)> = Vec::new();
         let push = |out: &mut Vec<Pred>, pred: Pred| {
@@ -181,13 +219,51 @@ impl Checker {
                 out.push(pred);
             }
         };
-        for (subject, after) in &g.bounds {
+        // What each bound is on, and how it's written, for messages: a type
+        // parameter in `<..>`, or a type in a `where` clause, which can be
+        // `Self` or a projection too.
+        let mut subjects: Vec<(Option<Type>, String, &Vec<BoundItem>)> = g
+            .bounds
+            .iter()
+            .map(|(p, after)| {
+                let ty = params
+                    .contains(&p.name)
+                    .then(|| Type::Param(p.name.clone()));
+                (ty, p.name.clone(), after)
+            })
+            .collect();
+        for (subject, after) in &g.wheres {
+            let mut lts = Lifetimes::Assoc {
+                declared: lifetimes,
+            };
+            let ty = self.resolve_with(subject, params, &mut lts)?;
+            if !bounded(&ty) {
+                return Err(Error::ty(
+                    subject.span,
+                    format!(
+                        "a `where` clause can only bound a type parameter, `Self`, or an \
+                         associated type of one, not `{ty}`"
+                    ),
+                ));
+            }
+            if let Some(l) = after.iter().find(|b| b.name.name.starts_with('\'')) {
+                return Err(Error::ty(
+                    l.span,
+                    "a `where` clause can't say what outlives what (yet); say it in `<..>`",
+                ));
+            }
+            subjects.push((Some(ty.clone()), ty.to_string(), after));
+        }
+        for (subject_ty, subject_name, after) in subjects {
             for b in after.iter().filter(|b| !b.name.name.starts_with('\'')) {
                 let tr = self.trait_named(&b.name)?;
-                if !params.contains(&subject.name) {
+                let Some(ty) = subject_ty.clone() else {
                     continue;
-                }
-                let ty = Type::Param(subject.name.clone());
+                };
+                let subject = Ident {
+                    name: subject_name.clone(),
+                    span: b.span,
+                };
                 push(
                     &mut out,
                     Pred {
@@ -561,13 +637,25 @@ impl Checker {
         bounds.extend(generics::bounds(&f.generics, &lifetimes, &params)?);
         let mut preds = impl_preds.to_vec();
         let mut eqs = impl_eqs.to_vec();
-        let (own_preds, own_eqs) = self.preds(&f.generics, &own, &lifetimes, true)?;
-        preds.extend(own_preds);
-        eqs.extend(own_eqs);
         // `Self` resolves as a type parameter, and in an impl is then
-        // replaced by the impl's type.
+        // replaced by the impl's type. A `where` clause can bound it, or
+        // its associated types, which the trait's bound on it says.
         let mut with_self = params.clone();
         with_self.push("Self".into());
+        self.env = preds.iter().cloned().chain(this.clone()).collect();
+        self.adts.proj.local = eqs.clone();
+        let (mut own_preds, mut own_eqs) = self.preds(&f.generics, &with_self, &lifetimes, true)?;
+        if let Some(s) = self_ty {
+            let s = Subst::new(&["Self".to_string()], std::slice::from_ref(s));
+            for p in &mut own_preds {
+                p.ty = self.adts.normalise(&s.apply(&p.ty));
+            }
+            for (l, r) in &mut own_eqs {
+                (*l, *r) = (s.apply(l), s.apply(r));
+            }
+        }
+        preds.extend(own_preds);
+        eqs.extend(own_eqs);
         let opaques = this.is_none();
         self.env = preds.iter().cloned().chain(this).collect();
         self.adts.proj.local = eqs.clone();
@@ -697,6 +785,9 @@ impl Checker {
                     ));
                 }
                 _ => {}
+            }
+            if let Some(tr) = &trait_name {
+                self.orphan(prog, d, tr, &self_ty)?;
             }
             // Each parameter must be decided by the type: otherwise nothing
             // could say what it is when the impl is used.
@@ -1561,6 +1652,49 @@ impl Checker {
         }
     }
 
+    /// The orphan rule (lemma C2 of docs/06e-core.md): an impl of trait `tr`
+    /// for `self_ty`, `d`, must be in the package of the trait, or of the
+    /// type's head, its outermost constructor. Built-in traits and types
+    /// are the core library's. So the core library's impls are all it has
+    /// for its own traits and types, whatever program it's in, and no
+    /// program can add one that overlaps them, or give a different one to
+    /// another program: coherence holds for each package on its own.
+    /// Looking only at the head is the strictest form of the rule, and can
+    /// be relaxed.
+    fn orphan(&self, prog: &Program, d: &ImplDecl, tr: &str, self_ty: &Type) -> Result<(), Error> {
+        if self.modules.in_core(d.module) {
+            return Ok(());
+        }
+        let trait_local = prog
+            .traits
+            .iter()
+            .find(|t| t.name.name == tr)
+            .is_some_and(|t| !self.modules.in_core(t.module));
+        let head_local = match self_ty {
+            Type::Adt(symbol, ..) => self
+                .types
+                .iter()
+                .find(|t| t.symbol == *symbol)
+                .is_none_or(|t| !self.modules.in_core(t.module)),
+            _ => false,
+        };
+        if trait_local || head_local {
+            return Ok(());
+        }
+        let head = match self_ty {
+            Type::Adt(symbol, ..) => symbol.rsplit("::").next().unwrap_or(symbol).to_string(),
+            t => t.to_string(),
+        };
+        let tr = tr.rsplit("::").next().unwrap_or(tr);
+        Err(Error::ty(
+            Span::new(d.span.start, d.self_ty.span.end),
+            format!(
+                "`{tr}` and `{head}` are both `core`'s, so only `core` can implement one for the \
+                 other; to implement it for a type of your own, wrap it in a struct"
+            ),
+        ))
+    }
+
     /// Checks that method `f`, of type `got`, of impl `d`, is method
     /// `want` of its trait, at the impl's type. Up to the names of their
     /// own type parameters and lifetimes: the impl's method can't take less
@@ -1668,7 +1802,7 @@ impl Checker {
         let mut wp: Vec<String> = want.scheme.preds[1..]
             .iter()
             .map(|p| Pred {
-                ty: s.apply(&p.ty),
+                ty: self.adts.normalise(&s.apply(&p.ty)),
                 trait_name: p.trait_name.clone(),
             })
             .map(|p| p.to_string())

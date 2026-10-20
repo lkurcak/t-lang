@@ -15,6 +15,10 @@ pub struct Program {
     /// each `mod` in the order its name is written. Every item says which
     /// one it's in by its index here (see docs/06d-modules.md).
     pub mods: Vec<ModDecl>,
+    /// The root module of the core library, by its index in `mods`, once
+    /// it's loaded (see `load.rs`). It's a package of its own: a module
+    /// tree beside the crate root's, whose items' symbols start `core::`.
+    pub core: Option<usize>,
     /// The `use`s of every module, in order.
     pub uses: Vec<UseDecl>,
     pub types: Vec<TypeDecl>,
@@ -272,6 +276,12 @@ pub struct Generics {
     pub bounds: Vec<(Ident, Vec<BoundItem>)>,
     /// From the `<` to the `>`, if they're there.
     pub span: Option<Span>,
+    /// A function's `where` clause: `where Self: Discard, I::Item: Eq`,
+    /// each bound with the type before its `:`, which can be more than a
+    /// type parameter's name.
+    pub wheres: Vec<(TypeExpr, Vec<BoundItem>)>,
+    /// From the `where` to the end of its last bound, if it's there.
+    pub where_span: Option<Span>,
 }
 
 impl Generics {
@@ -478,6 +488,9 @@ pub struct FnDecl {
     pub parens: Span,
     pub ret: TypeExpr,
     pub body: Expr,
+    /// Where its `#[intrinsic]` is, if it's one: a function `core` declares
+    /// with no body, which the compiler provides. Its body here is empty.
+    pub intrinsic: Option<Span>,
 }
 
 impl FnDecl {
@@ -661,7 +674,10 @@ impl Expr {
                 .chain(arms.iter().map(|a| &a.body))
                 .collect(),
             ExprKind::Lambda(l) => vec![&l.body],
-            ExprKind::Assign(_, l, r) | ExprKind::While(_, l, r) => vec![l, r],
+            ExprKind::Assign(_, l, r) | ExprKind::While(_, l, r) | ExprKind::Range(l, r) => {
+                vec![l, r]
+            }
+            ExprKind::For(f) => vec![&f.iter, &f.body],
         }
     }
 
@@ -818,6 +834,12 @@ pub enum ExprKind {
     While(Option<Label>, Box<Expr>, Box<Expr>),
     /// `loop { .. }`: runs its body again and again, until a `break`.
     Loop(Option<Label>, Box<Expr>),
+    /// `for p in it { .. }`. Only until paths are resolved, which rewrites
+    /// it as the `loop` it means (see `check/modules.rs`).
+    For(Box<ForLoop>),
+    /// `a..b`. Only until paths are resolved, which rewrites it as a call
+    /// of `core::ops::Range::new`.
+    Range(Box<Expr>, Box<Expr>),
     /// `return e`, or `return` for `return ()`.
     Return(Option<Box<Expr>>),
     /// `break e` out of a `loop`, giving it the value of `e`, or `break`
@@ -827,6 +849,17 @@ pub enum ExprKind {
     /// `continue`: on to the next time round the loop, the innermost or
     /// `continue 'a`, the one labelled `'a`.
     Continue(Option<Ident>),
+}
+
+/// `for pat in iter { body }`, or with a label.
+#[derive(Debug, Clone)]
+pub struct ForLoop {
+    pub label: Option<Label>,
+    pub pat: Pattern,
+    /// Where the `in` is.
+    pub in_span: Span,
+    pub iter: Expr,
+    pub body: Expr,
 }
 
 /// `'a:` before a `loop` or `while`, for a `break` or `continue` in it to
@@ -966,9 +999,16 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
             go(&l.body, bound);
             bound.truncate(scope);
         }
-        ExprKind::Assign(_, l, r) | ExprKind::While(_, l, r) => {
+        ExprKind::Assign(_, l, r) | ExprKind::While(_, l, r) | ExprKind::Range(l, r) => {
             go(l, bound);
             go(r, bound);
+        }
+        ExprKind::For(f) => {
+            go(&f.iter, bound);
+            let scope = bound.len();
+            pattern_binds(&f.pat, bound);
+            go(&f.body, bound);
+            bound.truncate(scope);
         }
     }
 }

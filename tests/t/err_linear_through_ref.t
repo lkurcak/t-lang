@@ -17,4 +17,4 @@ fn main() {
     set(&mut fd);
     print(close(fd));
 }
-// error: use `replace(&mut *r, ..)`
+// error: use `core::mem::replace(&mut *r, ..)`

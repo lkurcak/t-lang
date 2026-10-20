@@ -76,7 +76,7 @@
 ["struct" "enum" "type"] @keyword.type
 "as" @keyword.operator
 ["if" "else" "match"] @keyword.conditional
-["while" "loop" "break" "continue"] @keyword.repeat
+["while" "loop" "in" "break" "continue"] @keyword.repeat
 "return" @keyword.return
 "move" @keyword.storage.modifier
 (mutable_specifier) @keyword.storage.modifier

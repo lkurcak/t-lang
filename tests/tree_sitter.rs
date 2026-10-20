@@ -9,7 +9,11 @@ use tree_sitter::{Node, Parser, Query, QueryCursor, StreamingIterator};
 /// Every `.t` file in `tests/t` and `examples`, and the directories in them.
 fn programs() -> Vec<PathBuf> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut dirs = vec![root.join("tests/t"), root.join("examples")];
+    let mut dirs = vec![
+        root.join("tests/t"),
+        root.join("examples"),
+        root.join("core"),
+    ];
     let mut paths = Vec::new();
     while let Some(dir) = dirs.pop() {
         for p in fs::read_dir(dir)

@@ -159,68 +159,89 @@ fn printing_round_trips() {
 /// it is found, and nothing else is touched.
 #[test]
 fn renaming_keeps_meaning() {
-    let mut failures = Vec::new();
-    let mut renamed = 0;
-    for path in programs() {
-        let name = name(&path);
-        let files = expect::files_of(&path);
-        let read = |p: &Path| match files.iter().find(|(f, _)| f == p) {
-            Some((_, src)) => Ok(src.clone()),
-            None => t_lang::no_files(p),
-        };
-        let Ok((sources, prog, info)) = t_lang::rename::checked(&path, &files[0].1, &read) else {
-            continue;
-        };
-        let src = sources.text();
-        let before = expect::run(&files);
-        let mut defs: Vec<_> = info
-            .notes
-            .iter()
-            .filter(|n| n.def == Some(n.span))
+    // Each program on its own, as many at once as there are cores: every
+    // rename checks a program again, the core library and all.
+    let paths = programs();
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let chunk = paths.len().div_ceil(threads);
+    let results: Vec<(Vec<String>, usize)> = std::thread::scope(|s| {
+        let handles: Vec<_> = paths
+            .chunks(chunk)
+            .map(|paths| s.spawn(move || paths.iter().map(|p| renames_in(p)).collect::<Vec<_>>()))
             .collect();
-        defs.sort_by_key(|n| n.span.start);
-        defs.dedup_by_key(|n| n.span);
-        for n in defs {
-            if t_lang::rename::target(&sources, &prog, &info, n.span.start).is_err() {
-                continue;
-            }
-            let new = match n.kind {
-                NoteKind::Struct(_) | NoteKind::Enum(_) | NoteKind::TypeParam(_) => "Renamed",
-                NoteKind::Variant(..) => "Renamed",
-                _ => "renamed",
-            };
-            let old = &src[n.span.start..n.span.end];
-            let edits = match t_lang::rename::rename(&sources, &prog, &info, n.span, new) {
-                Ok(edits) => edits,
-                Err(why) => {
-                    failures.push(format!("{name}: renaming `{old}` failed: {why}"));
-                    continue;
-                }
-            };
-            renamed += 1;
-            let paths = sources.files().iter().map(|f| f.path.clone());
-            let after: expect::Files = paths.zip(sources.edited(&edits)).collect();
-            // Printed values and messages show the names of functions,
-            // types, fields and variants.
-            let shown = |run: t_lang::RunResult, renamed: bool| {
-                let mut out = run.output;
-                out.push(match run.result {
-                    Ok(v) => v.to_string(),
-                    Err(e) => e.message,
-                });
-                if renamed {
-                    out.iter_mut().for_each(|l| *l = l.replace(new, old));
-                }
-                out
-            };
-            if shown(before.clone(), false) != shown(expect::run(&after), true) {
-                let after: String = after.iter().map(|(_, src)| src.as_str()).collect();
-                failures.push(format!(
-                    "{name}: renaming `{old}` changed what it does:\n{after}"
-                ));
-            }
-        }
-    }
+        handles
+            .into_iter()
+            .flat_map(|h| h.join().unwrap())
+            .collect()
+    });
+    let failures: Vec<String> = results.iter().flat_map(|(f, _)| f.clone()).collect();
+    let renamed: usize = results.iter().map(|(_, n)| n).sum();
     assert!(renamed > 100, "only {renamed} renames");
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
+/// Renames each thing declared in the program at `path` in turn: what went
+/// wrong, and how many renames there were.
+fn renames_in(path: &Path) -> (Vec<String>, usize) {
+    let mut failures = Vec::new();
+    let mut renamed = 0;
+    let name = name(path);
+    let files = expect::files_of(path);
+    let read = |p: &Path| match files.iter().find(|(f, _)| f == p) {
+        Some((_, src)) => Ok(src.clone()),
+        None => t_lang::no_files(p),
+    };
+    let Ok((sources, prog, info)) = t_lang::rename::checked(path, &files[0].1, &read) else {
+        return (failures, renamed);
+    };
+    let src = sources.text();
+    let before = expect::run(&files);
+    let mut defs: Vec<_> = info
+        .notes
+        .iter()
+        .filter(|n| n.def == Some(n.span) && !sources.in_core(n.span.start))
+        .collect();
+    defs.sort_by_key(|n| n.span.start);
+    defs.dedup_by_key(|n| n.span);
+    for n in defs {
+        if t_lang::rename::target(&sources, &prog, &info, n.span.start).is_err() {
+            continue;
+        }
+        let new = match n.kind {
+            NoteKind::Struct(_) | NoteKind::Enum(_) | NoteKind::TypeParam(_) => "Renamed",
+            NoteKind::Variant(..) => "Renamed",
+            _ => "renamed",
+        };
+        let old = &src[n.span.start..n.span.end];
+        let edits = match t_lang::rename::rename(&sources, &prog, &info, n.span, new) {
+            Ok(edits) => edits,
+            Err(why) => {
+                failures.push(format!("{name}: renaming `{old}` failed: {why}"));
+                continue;
+            }
+        };
+        renamed += 1;
+        let paths = sources.files().iter().map(|f| f.path.clone());
+        let after: expect::Files = paths.zip(sources.edited(&edits)).collect();
+        // Printed values and messages show the names of functions,
+        // types, fields and variants.
+        let shown = |run: t_lang::RunResult, renamed: bool| {
+            let mut out = run.output;
+            out.push(match run.result {
+                Ok(v) => v.to_string(),
+                Err(e) => e.message,
+            });
+            if renamed {
+                out.iter_mut().for_each(|l| *l = l.replace(new, old));
+            }
+            out
+        };
+        if shown(before.clone(), false) != shown(expect::run(&after), true) {
+            let after: String = after.iter().map(|(_, src)| src.as_str()).collect();
+            failures.push(format!(
+                "{name}: renaming `{old}` changed what it does:\n{after}"
+            ));
+        }
+    }
+    (failures, renamed)
 }

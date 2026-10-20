@@ -1,6 +1,8 @@
 // `swap(&mut a, &mut b)` exchanges two values, making and throwing away
 // none, so it works for any type, `Discard` or not.
 
+use core::mem::swap;
+
 struct Fd { n: int }
 
 fn close(fd: Fd) -> int {

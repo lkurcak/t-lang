@@ -2,6 +2,9 @@
 // reference of any lifetime, a new one at each mention: `put` would then
 // get a slot and a value whose types say nothing about each other, and
 // write a short-lived reference into a long-lived slot.
+
+use core::mem::replace;
+
 #[derive(Discard)]
 struct S { n: int }
 

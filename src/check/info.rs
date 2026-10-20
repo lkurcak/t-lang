@@ -10,7 +10,7 @@ use super::{Checker, Lifetimes};
 use crate::ast::*;
 use crate::error::Span;
 use crate::types::{Type, comma_list};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Everything the checker found out, as far as it got.
 #[derive(Debug, Clone, Default)]
@@ -56,6 +56,9 @@ pub struct Info {
     /// where it's written, for monomorphisation to replace it with what it
     /// stands for.
     pub opaques: HashMap<Span, String>,
+    /// The symbols of the core library's functions, structs and enums,
+    /// which monomorphisation keeps only if the program uses them.
+    pub core_symbols: HashSet<String>,
 }
 
 /// What a method call `x.m(..)` or path `T::m` names: method `symbol`.
@@ -275,6 +278,9 @@ impl Checker {
     /// `finish_notes` solves them once the function is checked.
     pub(super) fn note(&mut self, span: Span, kind: NoteKind, ty: Option<Type>, def: Option<Span>) {
         let (span, kind) = last_segment(span, kind);
+        if unwritten(span, &kind) {
+            return;
+        }
         self.info.notes.push(Note {
             span,
             kind,
@@ -315,6 +321,9 @@ impl Checker {
             self.pending.push(instance);
         }
         let (span, kind) = last_segment(span, kind);
+        if unwritten(span, &kind) {
+            return;
+        }
         self.info.notes.push(Note {
             span,
             kind,
@@ -331,6 +340,9 @@ impl Checker {
     pub(super) fn note_binds(&mut self, binds: &[super::Local], inferred: bool) {
         for l in binds {
             for site in &l.sites {
+                if unwritten(site.span, &NoteKind::Var(l.name.clone())) {
+                    continue;
+                }
                 self.info.notes.push(Note {
                     span: site.span,
                     kind: NoteKind::Var(l.name.clone()),
@@ -441,7 +453,10 @@ impl Checker {
             for item in items {
                 let (kind, ty, def) = match item {
                     Item::Fn(i) => {
-                        let f = &self.fns[i];
+                        // Not known if checking stopped before signatures.
+                        let Some(f) = self.fns.get(i) else {
+                            continue;
+                        };
                         (
                             NoteKind::Fn(f.name.name.clone()),
                             Some(f.scheme.ty.clone()),
@@ -506,6 +521,7 @@ impl Checker {
                     .map(|m| m.scheme.ty.clone());
                 let kind = NoteKind::Fn(f.name.name.clone());
                 self.note(f.name.span, kind, ty, Some(f.name.span));
+                self.bound_notes(&f.generics, params);
                 for p in &f.params {
                     self.type_expr_notes(&p.ty, params);
                 }
@@ -514,9 +530,15 @@ impl Checker {
         }
     }
 
-    /// Notes the types in the bounds of `g`.
+    /// Notes the types in the bounds of `g`, and in its `where` clause.
     fn bound_notes(&mut self, g: &Generics, params: &[Ident]) {
         for (_, items) in &g.bounds {
+            for t in items.iter().flat_map(|b| b.types()) {
+                self.type_expr_notes(t, params);
+            }
+        }
+        for (subject, items) in &g.wheres {
+            self.type_expr_notes(subject, params);
             for t in items.iter().flat_map(|b| b.types()) {
                 self.type_expr_notes(t, params);
             }
@@ -580,6 +602,13 @@ impl Checker {
     }
 }
 
+/// Is a name at `span` one the program doesn't have, but resolving paths
+/// made in rewriting a `for` loop or range (see `modules.rs`)? Those get
+/// empty spans, or names no program can write, and nothing to show.
+fn unwritten(span: Span, kind: &NoteKind) -> bool {
+    span.start == span.end || matches!(kind, NoteKind::Var(n) if n.starts_with('{'))
+}
+
 fn names(params: &[Ident]) -> Vec<String> {
     params.iter().map(|p| p.name.clone()).collect()
 }
@@ -589,6 +618,9 @@ fn names(params: &[Ident]) -> Vec<String> {
 /// the functions nested in it.
 fn each_annotation(e: &Expr, f: &mut impl FnMut(&TypeExpr)) {
     match &e.kind {
+        ExprKind::For(_) | ExprKind::Range(..) => {
+            unreachable!("rewritten when paths are resolved")
+        }
         ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit | ExprKind::Continue(_) => {}
         ExprKind::Var(_, targs) => targs.iter().for_each(&mut *f),
         ExprKind::Unary(_, x) | ExprKind::Field(x, _) | ExprKind::Loop(_, x) => {

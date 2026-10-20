@@ -384,6 +384,9 @@ impl<'a> Builder<'a> {
         }
         let span = e.span;
         match &e.kind {
+            ExprKind::For(_) | ExprKind::Range(..) => {
+                unreachable!("rewritten when paths are resolved")
+            }
             ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit => {
                 let t = self.ty(e);
                 self.assign(dest, Rvalue::Use(Operand::Const), &t, span, false);

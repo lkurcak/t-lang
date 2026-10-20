@@ -1,5 +1,57 @@
 # Changelog
 
+## Unreleased
+
+Step 6e: a small core library. See [docs/06e-core.md](docs/06e-core.md).
+
+### Added
+
+- The core library, `core/`, written in T and built into the compiler: every
+  program has it. `core::option::Option` and `core::result::Result`, with
+  `is_some`, `as_ref`, `take`, `map`, `and_then`, `or_else`, `unwrap_or`,
+  `unwrap_or_else`, `ok` and the like;
+  `core::cmp::Ord` and `Ordering`, for `int` and `bool`; `core::iter::Iterator`
+  with `map`, `fold` and `count`; `core::ops::Range`; and `core::mem::swap`
+  and `replace`. A method that would throw a value away asks for `Discard`
+  on the method, so an `Option` of a linear value has the rest.
+- The prelude: `Option`, `Result`, `Ord` and `Iterator` are in scope in every
+  module, after what the module declares and imports itself, so a program's
+  own `Option` still wins.
+- Paths can start with `core` anywhere. No module can be called `core`.
+- `for p in it { .. }` over any `Iterator`, with labels, `break` and
+  `continue`. It means a `loop` that calls `next`, so its iterator must be
+  `Discard` (iterate a linear one through `&mut it`), and each item must be
+  used up by the body. A `break` in it can't give a value.
+- `a..b`: a `core::ops::Range`, from `a` up to `b`, empty if `a` isn't before
+  `b`. `Range<int>` is an iterator, which never overflows. Its fields are
+  private. The `empty_ranges` lint warns about one like `5..0`.
+- `where` clauses after a function's signature, which can bound `Self` and
+  associated types (`where Self: Discard, Self::Item: Eq`). An impl's
+  method has its trait's exactly.
+- `#[intrinsic]`: a function the core library declares with no body, which
+  the compiler provides. The only one is `core::mem::swap`.
+- The orphan rule between packages: an impl must be in the package of its
+  trait or of its type's head, and the built-in traits and types are the
+  core library's.
+- The formatter, the tree-sitter grammar and the language server know `for`,
+  ranges, `where` clauses and `#[intrinsic]`. Hovering a core library item
+  shows its documentation; it has no definition to go to, and can't be
+  renamed.
+
+### Changed
+
+- `replace` and `swap` aren't built in any more: they're
+  `core::mem::replace` and `core::mem::swap`, and need a `use` or the path.
+  Using one without either says where it is, with a fix that imports it.
+- `in` is a keyword.
+- An `impl` bound like `P: FnMut(I::Item) -> U` can name associated types of
+  the impl's other parameters.
+
+### Fixed
+
+- A method called by path, `Tr::m(x)`, has its trait proved once its
+  arguments say what `Self` is, rather than failing later on a projection.
+
 ## 0.11.0 (2026-10-19)
 
 Step 6d.1: modules in files of their own. See

@@ -1491,3 +1491,46 @@ fn files_of_modules_are_checked_with_their_program() {
     stop(child, c);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// The core library's items have hovers, with their doc comments, but no
+/// definition to go to: its files are built into the compiler. A `for` loop
+/// hovers like the variables it binds, and nothing of what it means.
+#[test]
+fn hovers_the_core_library_but_goes_nowhere_in_it() {
+    let (child, mut c) = start();
+    let uri = "file:///tmp/core.t";
+    let src = "fn main() {\n    let o = Option::Some(1);\n    for i in 0..3 {\n        print(o.unwrap_or(i));\n    }\n}\n";
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
+        }}),
+    );
+    assert_eq!(c.diagnostics(), Vec::<Value>::new());
+    let at = |line: u32, character: u32| json!({"textDocument": {"uri": uri}, "position": {"line": line, "character": character}});
+
+    c.send(json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": at(3, 17)}));
+    let hover = c.response(2)["result"]["contents"]["value"].clone();
+    let hover = hover.as_str().unwrap();
+    assert!(hover.contains("unwrap_or"), "{hover}");
+    assert!(
+        hover.contains("What's in it, or else `default`."),
+        "{hover}"
+    );
+
+    c.send(json!({"jsonrpc": "2.0", "id": 3, "method": "textDocument/definition", "params": at(3, 17)}));
+    assert_eq!(c.response(3)["result"], Value::Null);
+
+    // The loop's variable, and nothing on `for` or `in`.
+    c.send(json!({"jsonrpc": "2.0", "id": 4, "method": "textDocument/hover", "params": at(2, 8)}));
+    let hover = c.response(4)["result"]["contents"]["value"].clone();
+    assert_eq!(hover, "```t\ni: int\n```");
+    for (id, character) in [(5, 5), (6, 11)] {
+        let params = at(2, character);
+        c.send(
+            json!({"jsonrpc": "2.0", "id": id, "method": "textDocument/hover", "params": params}),
+        );
+        assert_eq!(c.response(id)["result"], Value::Null, "at {character}");
+    }
+
+    stop(child, c);
+}

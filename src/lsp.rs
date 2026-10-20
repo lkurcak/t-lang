@@ -216,6 +216,12 @@ impl Analysis {
         Location::new(uri, lsp_range(self.sources().src(file), local))
     }
 
+    /// Where `span` is, unless it's in the core library, whose files are
+    /// built into the compiler, and so aren't anywhere an editor can open.
+    fn program_location(&self, span: Span) -> Option<Location> {
+        (!self.sources().in_core(span.start)).then(|| self.location(span))
+    }
+
     /// The range `span` is in the file at `uri`, if it's in that file.
     fn range_in(&self, uri: &Uri, span: Span) -> Option<Range> {
         let location = self.location(span);
@@ -280,7 +286,7 @@ fn respond(req: Request, docs: &Docs) -> Result<Response> {
             let def = docs.analyse(uri).and_then(|a| {
                 let offset = a.offset(uri, at.position)?;
                 let location = match a.info().note_at(offset) {
-                    Some(note) => a.location(note.def?),
+                    Some(note) => a.program_location(note.def?)?,
                     // The name of a `mod m;` goes to its file.
                     None => file_of_mod(&a, offset)?,
                 };
@@ -294,7 +300,10 @@ fn respond(req: Request, docs: &Docs) -> Result<Response> {
             let uri = &at.text_document.uri;
             let defs = docs.analyse(uri).and_then(|a| {
                 let spans = type_definitions(a.info(), a.offset(uri, at.position)?);
-                let locations: Vec<Location> = spans.into_iter().map(|s| a.location(s)).collect();
+                let locations: Vec<Location> = spans
+                    .into_iter()
+                    .filter_map(|s| a.program_location(s))
+                    .collect();
                 (!locations.is_empty()).then_some(GotoDefinitionResponse::Array(locations))
             });
             Ok(Response::new_ok(req.id, defs))
@@ -307,7 +316,11 @@ fn respond(req: Request, docs: &Docs) -> Result<Response> {
                 let def = a.info().note_at(a.offset(uri, at.position)?)?.def?;
                 let spans = a.info().occurrences(def).into_iter();
                 let spans = spans.filter(|&s| p.context.include_declaration || s != def);
-                Some(spans.map(|span| a.location(span)).collect::<Vec<_>>())
+                Some(
+                    spans
+                        .filter_map(|span| a.program_location(span))
+                        .collect::<Vec<_>>(),
+                )
             });
             Ok(Response::new_ok(req.id, refs))
         }

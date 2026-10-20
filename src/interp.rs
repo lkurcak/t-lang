@@ -549,32 +549,9 @@ impl Interp<'_, '_> {
                 self.out.push(bool(arg).to_string());
                 Ok(Value::Unit)
             }
-            // What was behind the reference comes out, and the new value
-            // goes in: nothing is dropped.
-            Value::Builtin("replace") => {
-                let [r, new] =
-                    <[Value; 2]>::try_from(args).unwrap_or_else(|_| unsound("replace arity"));
-                let Value::Ref(p) = r else {
-                    unsound(&format!("`replace` of `{r}`"))
-                };
-                let old = std::mem::replace(self.memory.get_mut(&p), new);
-                if let Value::Moved = old {
-                    unsound("`replace` of a value that was moved");
-                }
-                Ok(old)
-            }
-            Value::Builtin("swap") => {
-                let [a, b] = <[Value; 2]>::try_from(args).unwrap_or_else(|_| unsound("swap arity"));
-                let (Value::Ref(p), Value::Ref(q)) = (&a, &b) else {
-                    unsound(&format!("`swap` of `{a}` and `{b}`"))
-                };
-                let x = std::mem::replace(self.memory.get_mut(p), Value::Moved);
-                let y = std::mem::replace(self.memory.get_mut(q), x);
-                if let Value::Moved = y {
-                    unsound("`swap` of a value that was moved, or of a place with itself");
-                }
-                *self.memory.get_mut(p) = y;
-                Ok(Value::Unit)
+            Value::Fn(name) if self.fns[name.as_str()].intrinsic.is_some() => {
+                let of = name.split("::<").next().unwrap_or_default();
+                self.intrinsic(of, args)
             }
             Value::Fn(name) => {
                 let decl = self.fns[name.as_str()];
@@ -597,6 +574,27 @@ impl Interp<'_, '_> {
                 f => self.call(f, args, span),
             },
             other => unsound(&format!("called a non-function `{other}`")),
+        }
+    }
+
+    /// Runs intrinsic `name` (see `check::INTRINSICS`) on `args`.
+    fn intrinsic(&mut self, name: &str, args: Vec<Value>) -> Result<Value, Error> {
+        match name {
+            // Exchanges two values, making and throwing away none.
+            "core::mem::swap" => {
+                let [a, b] = <[Value; 2]>::try_from(args).unwrap_or_else(|_| unsound("swap arity"));
+                let (Value::Ref(p), Value::Ref(q)) = (&a, &b) else {
+                    unsound(&format!("`swap` of `{a}` and `{b}`"))
+                };
+                let x = std::mem::replace(self.memory.get_mut(p), Value::Moved);
+                let y = std::mem::replace(self.memory.get_mut(q), x);
+                if let Value::Moved = y {
+                    unsound("`swap` of a value that was moved, or of a place with itself");
+                }
+                *self.memory.get_mut(p) = y;
+                Ok(Value::Unit)
+            }
+            _ => unsound(&format!("unknown intrinsic `{name}`")),
         }
     }
 
@@ -753,6 +751,9 @@ impl Interp<'_, '_> {
 
     fn eval(&mut self, e: &Expr) -> Result<Value, Flow> {
         Ok(match &e.kind {
+            ExprKind::For(_) | ExprKind::Range(..) => {
+                unreachable!("rewritten when paths are resolved")
+            }
             ExprKind::Int(n) => Value::Int(*n),
             ExprKind::Bool(b) => Value::Bool(*b),
             ExprKind::Unit => Value::Unit,

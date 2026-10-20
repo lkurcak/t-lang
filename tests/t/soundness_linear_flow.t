@@ -1,6 +1,8 @@
 // Linear values through `swap`, loops and `break`, patterns that take part
 // of a value, and paths that never go on.
 
+use core::mem::swap;
+
 struct Fd { n: int }
 
 fn close(f: Fd) -> int {

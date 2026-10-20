@@ -274,6 +274,9 @@ has to fit that:
 - **Values must be used up.** One whose type isn't `#[derive(Discard)]`
   can't be dropped or overwritten: a resource like a file descriptor can't
   be forgotten. See [docs/06a.1-linear-types.md](docs/06a.1-linear-types.md).
+- **The core library is written in T.** `Option`, `Result`, `Iterator` and
+  the rest are checked like any program; all the checker takes on trust is
+  one intrinsic, `swap`. See [docs/06e-core.md](docs/06e-core.md).
 
 Within that, the aim is to push the type system as far as it goes, and keep
 it sound: well-typed programs don't go wrong, including the ones that
@@ -296,7 +299,8 @@ combine features in ways nobody planned for.
 | 6c.1 ✅ | returning closures, `-> impl Fn(int) -> int` | existential (opaque) types, which lifetimes they capture | [docs/06c.1-opaque-types.md](docs/06c.1-opaque-types.md) |
 | 6d ✅ | modules: `mod`, `use`, `pub` | namespaces, abstract types (existential types, representation independence), coherence and orphan rules | [docs/06d-modules.md](docs/06d-modules.md) |
 | 6d.1 ✅ | modules in files of their own: `mod m;` | a file is the module's braces; one file per module path | [docs/06d.1-files.md](docs/06d.1-files.md) |
-| 6e | a small `core`: `Option`, `Result`, `Ord`, `Iterator`, `for` | equality bounds with projections (`IntoIterator`), iterating over linear values | what the tests keep defining themselves; no allocation |
+| 6e ✅ | a small `core` library: `Option`, `Result`, `Ord`, `Iterator`, `for`, `a..b`, `where` clauses | a library written in T with one trusted intrinsic, a prelude that can't change a program, orphan rules between packages, `for` as a desugaring | [docs/06e-core.md](docs/06e-core.md) |
+| 6e.1 | closures that take a reference of any lifetime; `Iterator::filter` | higher-ranked closure signatures, checked against universal regions | |
 | 7 | effects | effect systems: which functions can panic, allocate or diverge | |
 | 8 | refinement types | proving indexes in bounds, so indexing can't panic | |
 | — | `alloc` (a dense, resizable `List`) and `std` | | after effects, once raw memory has a design |

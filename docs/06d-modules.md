@@ -325,7 +325,7 @@ monomorphisation and the interpreter don't know modules exist.
 | `use a::*` | shadowing rules for names globs bring in | — |
 | `pub(crate)`, `pub(super)` | `pub` and private are enough so far | — |
 | `use` in a function | items in blocks are enough so far | — |
-| packages, and `core` | the next step | 6e |
+| packages, and `core` | done: docs/06e-core.md | 6e ✅ |
 | private types in public signatures as a warning | an error can always be relaxed | — |
 
 ## Exercises

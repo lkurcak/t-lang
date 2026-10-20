@@ -73,7 +73,18 @@ use typed::{Bind, Res, Typed};
 use unify::Var;
 
 /// Built-in functions, available everywhere. Shared with the interpreter.
-pub const BUILTINS: &[&str] = &["print", "print_bool", "replace", "swap"];
+pub const BUILTINS: &[&str] = &["print", "print_bool"];
+
+/// The intrinsics: functions the core library declares with no body, which
+/// the compiler provides (see `core/mem.t`), by symbol. Each is checked
+/// like any function, by its signature; what it does is what the checker
+/// trusts.
+pub const INTRINSICS: &[&str] = &["core::mem::swap"];
+
+pub(crate) use modules::FOR_ITERATOR;
+
+/// The symbol of the core library's `Iterator`, which a `for` loop uses.
+pub(crate) const ITERATOR: &str = "core::iter::Iterator";
 
 /// The type of built-in function `name`.
 pub(crate) fn builtin_scheme(name: &str) -> Scheme {
@@ -82,40 +93,6 @@ pub(crate) fn builtin_scheme(name: &str) -> Scheme {
         "print" => Scheme::mono(Type::func(vec![Type::Int], Type::Unit)),
         // print_bool : fn(bool) -> ()
         "print_bool" => Scheme::mono(Type::func(vec![Type::Bool], Type::Unit)),
-        // replace : ∀'a T. fn(&'a mut T, T) -> T
-        //
-        // Puts the new value where the reference points, and gives back the
-        // old one, so nothing is thrown away: how to change what's behind a
-        // `&mut` whose type isn't `Discard`.
-        "replace" => {
-            let t = Type::Param("T".into());
-            let r = Type::Ref(Region::Named("'a".into()), true, Box::new(t.clone()));
-            Scheme {
-                params: vec!["T".into()],
-                lifetimes: vec!["'a".into()],
-                bounds: Vec::new(),
-                preds: Vec::new(),
-                eqs: Vec::new(),
-                ty: Type::func(vec![r, t.clone()], t),
-            }
-        }
-        // swap : ∀'a 'b T. fn(&'a mut T, &'b mut T) -> ()
-        //
-        // Exchanges two values, making and throwing away none: the more
-        // basic of the two, as `replace` can be written with it and not the
-        // other way round, having no `T` of its own to put in.
-        "swap" => {
-            let t = Type::Param("T".into());
-            let r = |l: &str| Type::Ref(Region::Named(l.into()), true, Box::new(t.clone()));
-            Scheme {
-                params: vec!["T".into()],
-                lifetimes: vec!["'a".into(), "'b".into()],
-                bounds: Vec::new(),
-                preds: Vec::new(),
-                eqs: Vec::new(),
-                ty: Type::func(vec![r("'a"), r("'b")], Type::Unit),
-            }
-        }
         _ => unreachable!("unknown builtin `{name}`"),
     }
 }
@@ -125,16 +102,25 @@ pub(crate) fn builtin_scheme(name: &str) -> Scheme {
 /// the program up to it. Resolving its paths first rewrites it, as
 /// `check/modules.rs` says.
 pub fn check(prog: &mut Program, warnings: &mut Vec<Warning>) -> (Info, Result<(), Error>) {
-    let modules = match modules::resolve(prog) {
+    let mut modules = match modules::resolve(prog) {
         Ok(modules) => modules,
         Err(e) => return (Info::default(), Err(e)),
     };
     let prog = &*prog;
+    let resolved = std::mem::take(&mut modules.warnings);
     let mut cx = Checker::new(prog, modules);
+    cx.warnings.extend(resolved);
     cx.warnings.extend(prog.stray_docs.iter().map(unused_doc));
     let result = cx.program(prog);
     cx.type_notes(prog);
     cx.info.types = cx.defs.types.clone();
+    let core_types = cx.types.iter().map(|t| (&t.symbol, t.module));
+    let core_fns = cx.fns.iter().map(|f| (&f.symbol, f.module));
+    cx.info.core_symbols = core_types
+        .chain(core_fns)
+        .filter(|&(_, m)| cx.modules.in_core(m))
+        .map(|(s, _)| s.clone())
+        .collect();
     cx.info.projections = cx.proj_traits.take();
     cx.warnings.sort_by_key(|w| w.span.start);
     warnings.append(&mut cx.warnings);
@@ -596,6 +582,21 @@ impl Checker {
                     "`main` must not have type parameters: nothing could say what they are",
                 ));
             }
+            if let Some(at) = f.intrinsic {
+                if !self.modules.in_core(f.module) {
+                    return Err(Error::ty(
+                        at,
+                        "only `core` can declare an intrinsic: what it does is what the checker \
+                         trusts",
+                    ));
+                }
+                if !INTRINSICS.contains(&self.fn_symbols[i].as_str()) {
+                    return Err(Error::ty(
+                        f.name.span,
+                        format!("there's no intrinsic `{}`", self.fn_symbols[i]),
+                    ));
+                }
+            }
             self.sig_owner = (self.fn_symbols[i].clone(), f.name.name.clone());
             let scheme = match method {
                 Some(&(_, MethodOf::Impl(k))) => {
@@ -863,6 +864,10 @@ impl Checker {
         let methods = prog.methods();
         let fns = prog.fns.iter().chain(methods.iter().map(|&(f, _)| f));
         for (i, f) in fns.enumerate() {
+            // What an intrinsic does isn't written in T.
+            if f.intrinsic.is_some() {
+                continue;
+            }
             self.self_ty = match methods.get(i.wrapping_sub(prog.fns.len())) {
                 Some(&(_, MethodOf::Impl(k))) => {
                     Some(self.traits.impls[self.impl_ids[k]].self_ty.clone())
@@ -1778,6 +1783,9 @@ impl Checker {
 
     fn synth_inner(&mut self, e: &Expr) -> Result<Type, Error> {
         match &e.kind {
+            ExprKind::For(_) | ExprKind::Range(..) => {
+                unreachable!("rewritten when paths are resolved")
+            }
             //  ----------------- (T-Int)       ------------------- (T-True/False)
             //   Γ ⊢ 42 : int                    Γ ⊢ true : bool
             ExprKind::Int(_) => Ok(Type::Int),
@@ -1796,7 +1804,27 @@ impl Checker {
             // in `x::<..>`, or else a fresh variable for each (see `lookup`).
             ExprKind::Var(name, targs) => {
                 let Some((t, res)) = self.lookup(name, targs, e.span)? else {
-                    return Err(Error::ty(e.span, format!("unknown variable `{name}`")));
+                    let unknown = format!("unknown variable `{name}`");
+                    // `replace`, which isn't in the prelude: say where it is.
+                    let path = self.modules.core_fn(name).filter(|_| !name.contains("::"));
+                    let Some(path) = path else {
+                        return Err(Error::ty(e.span, unknown));
+                    };
+                    let fix = Fix::new(
+                        format!("import `{path}`"),
+                        vec![Edit::insert(
+                            self.modules.ends[self.module],
+                            format!("\nuse {path};\n"),
+                        )],
+                    );
+                    return Err(Error::ty(
+                        e.span,
+                        format!(
+                            "{unknown}; the core library has `{path}`: import it with `use \
+                             {path};`"
+                        ),
+                    )
+                    .with_fix(fix));
                 };
                 self.typed.vars.insert(e, res);
                 Ok(t)
@@ -2769,6 +2797,11 @@ impl Checker {
                     self.note_binds(&binds, ty.is_none());
                     binds.iter().for_each(|l| self.bind(l));
                     let t = self.solved(&t);
+                    if let (PatternKind::Bind(name, _), Some(init)) = (&pat.kind, init)
+                        && name == modules::FOR_ITERATOR
+                    {
+                        self.for_iterator(&t, init.span)?;
+                    }
                     // Only alternatives can be unreachable here. A whole `let`
                     // pattern only is when the value can't exist, like a
                     // `Never` parameter, and then nothing is wrong.
@@ -3369,10 +3402,13 @@ impl Checker {
             autoref: None,
         };
         self.info.methods.insert(name.span, resolved);
-        if let Some(pred) = found.of_trait.clone() {
-            self.oblige(pred, name.span, traits::Why::Method(name.name.clone()))?;
-        }
+        // What `Self` is may only be known from the arguments.
+        let oblige = |cx: &mut Checker| match found.of_trait.clone() {
+            Some(pred) => cx.oblige(pred, name.span, traits::Why::Method(name.name.clone())),
+            None => Ok(()),
+        };
         if !parens {
+            oblige(self)?;
             // Without `(..)`, it's this whole expression that names it.
             let instance = Instance::Fn(found.symbol.clone(), found.args.clone());
             self.pending.push((e.span, instance));
@@ -3397,7 +3433,31 @@ impl Checker {
         for (arg, param) in args.iter().zip(&sig.params) {
             self.check(arg, param)?;
         }
+        oblige(self)?;
         Ok((*sig.ret).clone())
+    }
+
+    /// Checks the iterator of a `for` loop, of type `t`, written at `span`,
+    /// can be thrown away when the loop ends, as it is: the same check as
+    /// for any variable, which borrowck makes too, but with a message that
+    /// says what to do about it. If `t` isn't known yet, or isn't an
+    /// iterator at all, that's for those to say.
+    fn for_iterator(&self, t: &Type, span: Span) -> Result<(), Error> {
+        if unify::has_vars(t) || self.has_unsettled_closure(t) {
+            return Ok(());
+        }
+        let (env, eqs) = (&self.env, &self.adts.proj.local);
+        let implements = |tr: &str| self.traits.implements(t, tr, env, eqs).is_ok();
+        if !implements(ITERATOR) || implements("Discard") {
+            return Ok(());
+        }
+        Err(Error::ty(
+            span,
+            format!(
+                "a `for` throws its iterator away when it ends, and `{t}` isn't `Discard`; to \
+                 keep it, iterate over a mutable reference to it: `for x in &mut it`"
+            ),
+        ))
     }
 
     /// Does `name`, written as the type in `name::new(..)`, mean `Box`?

@@ -1,8 +1,9 @@
-//! `t fmt`. Every program in `tests/t/` and `examples/` must format to the
-//! same program (`fmt::format` checks that itself, and fails otherwise), and
-//! formatting must be idempotent: formatting the output again changes
-//! nothing. `examples/` must be formatted already; test programs may keep
-//! their own layouts, since some of them test the parser on odd ones.
+//! `t fmt`. Every program in `tests/t/` and `examples/`, and the core
+//! library's files in `core/`, must format to the same program
+//! (`fmt::format` checks that itself, and fails otherwise), and formatting
+//! must be idempotent: formatting the output again changes nothing.
+//! `examples/` and `core/` must be formatted already; test programs may
+//! keep their own layouts, since some of them test the parser on odd ones.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -27,7 +28,11 @@ fn programs(dir: &str) -> Vec<PathBuf> {
 fn formatting_keeps_the_program_and_is_idempotent() {
     let mut failures = Vec::new();
     let mut formatted = 0;
-    for path in programs("tests/t").into_iter().chain(programs("examples")) {
+    for path in programs("tests/t")
+        .into_iter()
+        .chain(programs("examples"))
+        .chain(programs("core"))
+    {
         let name = path.display().to_string();
         let src = fs::read_to_string(&path).unwrap();
         let once = match format(&src) {
@@ -63,7 +68,11 @@ fn formatting_keeps_the_program_and_is_idempotent() {
 fn layout_does_not_depend_on_the_input() {
     let mut failures = Vec::new();
     let mut compared = 0;
-    for path in programs("tests/t").into_iter().chain(programs("examples")) {
+    for path in programs("tests/t")
+        .into_iter()
+        .chain(programs("examples"))
+        .chain(programs("core"))
+    {
         let name = path.display().to_string();
         let src = fs::read_to_string(&path).unwrap();
         let Ok(toks) = t_lang::lexer::lex(&src) else {
@@ -98,7 +107,7 @@ fn layout_does_not_depend_on_the_input() {
 
 #[test]
 fn examples_are_formatted() {
-    for path in programs("examples") {
+    for path in programs("examples").into_iter().chain(programs("core")) {
         let name = path.display().to_string();
         let src = fs::read_to_string(&path).unwrap();
         let formatted = format(&src).unwrap_or_else(|e| panic!("{}", e.render(&name, &src)));

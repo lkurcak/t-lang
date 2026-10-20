@@ -29,9 +29,25 @@
 //! are. A trait is named by its *symbol* from here on: `Show` at the crate
 //! root, `shapes::Show` in a module, so every reference to a trait,
 //! whatever path it was written as, says which one it is.
+//!
+//! The core library is a package of its own (step 6e, see
+//! docs/06e-core.md): a module tree beside the crate root's, whose root is
+//! `core`. A path can start with `core` anywhere, as it can with `crate`,
+//! which in the core library means its root. Neither package's modules are
+//! in the other's: `super` can't leave a package, and its private items are
+//! its own. Every module also sees the *prelude*, what `core::prelude`
+//! brings in, after its own items and `use`s: a name a module declares or
+//! imports itself always wins, so adding to the prelude never changes what
+//! a program means.
+//!
+//! Two expressions are only sugar, which this rewrites into what they mean,
+//! naming the core library's items by their symbols, so that a program's
+//! own `Option` can't change them (lemma C4 of the docs): `a..b` is
+//! `core::ops::Range::new(a, b)`, and a `for` loop is a `loop` (see
+//! `Rewrite::for_loop`).
 
 use crate::ast::*;
-use crate::error::{Error, Span};
+use crate::error::{Error, Lint, Span, Warning};
 use std::cell::Cell;
 use std::collections::HashMap;
 
@@ -101,6 +117,11 @@ pub(crate) struct Modules {
     /// The last segment of the path of each name a `use` brings in, and
     /// what it names: something in each namespace.
     pub(crate) leaf_items: Vec<(Ident, Vec<Item>)>,
+    /// The core library's root module, and its prelude.
+    pub(crate) core: Option<usize>,
+    pub(crate) prelude: Option<usize>,
+    /// Warnings about what's rewritten here: empty ranges.
+    pub(crate) warnings: Vec<Warning>,
 }
 
 /// Which namespace a name is looked up in.
@@ -114,10 +135,13 @@ impl Modules {
     /// The binding of `name` in module `m`'s namespace `ns`, noting that
     /// its `use`, if it has one, is used.
     fn get(&self, m: usize, name: &str, ns: Ns) -> Option<&Binding> {
-        let b = match ns {
-            Ns::Types => self.mods[m].types.get(name),
-            Ns::Values => self.mods[m].values.get(name),
-        }?;
+        let table = |m: usize| match ns {
+            Ns::Types => &self.mods[m].types,
+            Ns::Values => &self.mods[m].values,
+        };
+        let b = table(m)
+            .get(name)
+            .or_else(|| table(self.prelude?).get(name))?;
         if let Some(i) = b.import {
             self.imports[i].used.set(true);
         }
@@ -150,12 +174,16 @@ impl Modules {
         builtin || self.trait_binding(m, symbol).is_some()
     }
 
-    /// The binding that puts trait `symbol` in scope in module `m`, if any.
+    /// The binding that puts trait `symbol` in scope in module `m`, if any:
+    /// its own, or else the prelude's.
     fn trait_binding(&self, m: usize, symbol: &str) -> Option<&Binding> {
-        self.mods[m]
-            .types
-            .values()
-            .find(|b| matches!(b.item, Item::Trait(k) if self.trait_symbols[k] == symbol))
+        let of = |m: usize| {
+            self.mods[m]
+                .types
+                .values()
+                .find(|b| matches!(b.item, Item::Trait(k) if self.trait_symbols[k] == symbol))
+        };
+        of(m).or_else(|| of(self.prelude?))
     }
 
     /// Notes that trait `symbol` was used in module `m`: its `use`, if
@@ -171,9 +199,48 @@ impl Modules {
     /// from it, or else that after `crate::`.
     pub(crate) fn path_to_trait(&self, m: usize, symbol: &str) -> String {
         match m {
+            _ if symbol.starts_with("core::") => symbol.to_string(),
             ROOT => symbol.to_string(),
             _ => format!("crate::{symbol}"),
         }
+    }
+
+    /// The path of the core library's public function `name`, if there's
+    /// exactly one, in a module of its own that's public: `core::mem::swap`
+    /// for `swap`.
+    pub(crate) fn core_fn(&self, name: &str) -> Option<String> {
+        let core = self.core?;
+        let found: Vec<&Module> = self
+            .mods
+            .iter()
+            .enumerate()
+            .filter(|&(m, _)| m != core && self.in_core(m))
+            .map(|(_, module)| module)
+            .filter(|module| {
+                module
+                    .values
+                    .get(name)
+                    .is_some_and(|b| b.public && b.import.is_none())
+            })
+            .collect();
+        match found[..] {
+            [module] => Some(format!("{}{name}", module.prefix)),
+            _ => None,
+        }
+    }
+
+    /// The root of the package module `m` is in: the crate root, or the
+    /// core library's.
+    pub(crate) fn package_root(&self, mut m: usize) -> usize {
+        while let Some(p) = self.mods[m].parent {
+            m = p;
+        }
+        m
+    }
+
+    /// Is module `m` in the core library?
+    pub(crate) fn in_core(&self, m: usize) -> bool {
+        Some(self.package_root(m)) == self.core
     }
 
     /// Is `inner` module `outer` or in it?
@@ -224,8 +291,13 @@ pub(crate) fn resolve(prog: &mut Program) -> Result<Modules, Error> {
             }
         };
         debug_assert_eq!(i, mods.len());
+        // The core library's root is a package's: no module is around it.
+        let parent = match prog.core == Some(i) {
+            true => None,
+            false => m.parent,
+        };
         mods.push(Module {
-            parent: m.parent,
+            parent,
             prefix,
             path,
             ..Module::default()
@@ -234,6 +306,7 @@ pub(crate) fn resolve(prog: &mut Program) -> Result<Modules, Error> {
     let mut r = Resolver {
         m: Modules {
             mods,
+            core: prog.core,
             ..Modules::default()
         },
         leaves: Vec::new(),
@@ -242,6 +315,14 @@ pub(crate) fn resolve(prog: &mut Program) -> Result<Modules, Error> {
     };
     r.declare(prog)?;
     r.imports(prog)?;
+    r.m.prelude = prog
+        .core
+        .and_then(|c| match r.m.mods[c].types.get("prelude") {
+            Some(Binding {
+                item: Item::Mod(p), ..
+            }) => Some(*p),
+            _ => None,
+        });
     let symbols: Vec<String> = prog
         .traits
         .iter()
@@ -301,6 +382,10 @@ impl Resolver {
     fn declare(&mut self, prog: &Program) -> Result<(), Error> {
         let mut items: Vec<(usize, &Ident, bool, Item, Ns)> = Vec::new();
         for (i, m) in prog.mods.iter().enumerate().skip(1) {
+            // The core library isn't a module of the crate root's.
+            if prog.core == Some(i) {
+                continue;
+            }
             let parent = m.parent.expect("not the crate root");
             items.push((parent, &m.name, m.public.is_some(), Item::Mod(i), Ns::Types));
         }
@@ -515,7 +600,7 @@ impl Resolver {
         let mut m = from;
         for (i, seg) in segs.iter().enumerate() {
             m = match seg.name.as_str() {
-                "crate" if i == 0 => ROOT,
+                "crate" if i == 0 => self.m.package_root(from),
                 "self" if i == 0 => from,
                 "super" if i == 0 || segs[..i].iter().all(|s| s.name == "super") => {
                     match self.m.mods[m].parent {
@@ -535,7 +620,16 @@ impl Resolver {
                     ));
                 }
                 name => {
-                    let Some(b) = self.lookup(m, name, Ns::Types)? else {
+                    let found = self.lookup(m, name, Ns::Types)?;
+                    if found.is_none()
+                        && i == 0
+                        && name == "core"
+                        && let Some(core) = self.m.core
+                    {
+                        m = core;
+                        continue;
+                    }
+                    let Some(b) = found else {
                         return Err(match i {
                             0 => Error::ty(seg.span, format!("unknown module `{name}`")),
                             _ => no_item(&self.m, m, seg),
@@ -693,7 +787,13 @@ impl Rewrite<'_> {
             return Ok(true);
         }
         let Some(b) = self.r.m.get(self.module, first, Ns::Types) else {
-            return Ok(false);
+            if first != "core" || self.r.m.core.is_none() {
+                return Ok(false);
+            }
+            return match segs.len() {
+                1 => Ok(true),
+                _ => Ok(matches!(self.path(name, Ns::Types)?.item, Item::Mod(_))),
+            };
         };
         if !matches!(b.item, Item::Mod(_)) {
             return Ok(false);
@@ -925,6 +1025,54 @@ impl Rewrite<'_> {
 
     fn expr(&mut self, e: &mut Expr) -> Result<(), Error> {
         match &mut e.kind {
+            ExprKind::For(f) => {
+                self.pattern(&mut f.pat)?;
+                self.expr(&mut f.iter)?;
+                self.expr(&mut f.body)?;
+                no_break_value(&f.body, f.label.as_ref().map(|l| &l.name.name), 0)?;
+                let ExprKind::For(f) = std::mem::replace(&mut e.kind, ExprKind::Unit) else {
+                    unreachable!("matched above");
+                };
+                e.kind = self.for_loop(*f, e.span);
+                return Ok(());
+            }
+            ExprKind::Range(l, r) => {
+                self.expr(l)?;
+                self.expr(r)?;
+                if let (Some(a), Some(b)) = (constant(l), constant(r))
+                    && a > b
+                    && !self.r.m.in_core(self.module)
+                {
+                    self.r.m.warnings.push(Warning {
+                        lint: Lint::EmptyRanges,
+                        span: e.span,
+                        message: format!(
+                            "this range is empty: `{a}` is after `{b}`, so it never yields \
+                             anything"
+                        ),
+                        fixes: Vec::new(),
+                    });
+                }
+                let ExprKind::Range(l, r) = std::mem::replace(&mut e.kind, ExprKind::Unit) else {
+                    unreachable!("matched above");
+                };
+                // `core::ops::Range::new(l, r)`, its type named where it
+                // can't be by any other path: just after `l`.
+                let ty = Ident {
+                    name: "core::ops::Range".into(),
+                    span: Span::new(l.span.end, l.span.end),
+                };
+                self.r
+                    .m
+                    .paths
+                    .insert(ty.span, self.core_item("ops", "Range"));
+                let new = Ident {
+                    name: "new".into(),
+                    span: Span::new(r.span.start, r.span.start),
+                };
+                e.kind = ExprKind::Variant(ty, Vec::new(), new, vec![*l, *r], true);
+                return Ok(());
+            }
             ExprKind::Var(name, targs) => {
                 for t in targs.iter_mut() {
                     self.ty(t)?;
@@ -1036,6 +1184,149 @@ impl Rewrite<'_> {
         Ok(())
     }
 
+    /// Item `name` of the core library's module `module`, which it has.
+    fn core_item(&self, module: &str, name: &str) -> Item {
+        let core = self.r.m.core.expect("the core library is loaded");
+        let Some(Binding {
+            item: Item::Mod(m), ..
+        }) = self.r.m.mods[core].types.get(module)
+        else {
+            unreachable!("the core library has a module `{module}`");
+        };
+        self.r.m.mods[*m].types[name].item
+    }
+
+    /// What `for pat in iter { body }`, `f`, at `span`, means (lemma C4):
+    ///
+    /// ```text
+    /// {
+    ///     let mut it = iter;
+    ///     loop {
+    ///         match core::iter::Iterator::next(&mut it) {
+    ///             core::option::Option::Some(pat) => body,
+    ///             core::option::Option::None => break,
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// with the `for`'s label on the `loop`, and `it` a name no program can
+    /// write. So `it` is thrown away when the loop ends, which it can only
+    /// be if it's `Discard`, and each value `pat` binds is the body's to use
+    /// up, by the rules for any variable. Nothing about a `for` needs a rule
+    /// of its own.
+    ///
+    /// What the checker learns is about the AST's nodes, and some of it is
+    /// by their spans, so each node made here gets a span of its own: one
+    /// in the `for` or `in`, which nothing else has. The variable's is the
+    /// iterator's, where an error about it should be.
+    fn for_loop(&mut self, f: ForLoop, span: Span) -> ExprKind {
+        let k = f.label.as_ref().map_or(span.start, |l| l.head.end);
+        let i = f.in_span.start;
+        let at = Span::new;
+        let it = || ExprKind::Var(FOR_ITERATOR.into(), Vec::new());
+        let iter_span = f.iter.span;
+        let init = Stmt::Let {
+            pat: Pattern {
+                kind: PatternKind::Bind(FOR_ITERATOR.into(), true),
+                span: iter_span,
+            },
+            ty: None,
+            init: Some(f.iter),
+            span: at(k, iter_span.end),
+        };
+        let borrow = Expr {
+            kind: ExprKind::Unary(
+                UnOp::RefMut,
+                Box::new(Expr {
+                    kind: it(),
+                    span: at(i + 1, i + 2),
+                }),
+            ),
+            span: at(i, i + 1),
+        };
+        let iterator = &self.symbols[match self.core_item("iter", "Iterator") {
+            Item::Trait(k) => k,
+            _ => unreachable!("`core::iter::Iterator` is a trait"),
+        }];
+        let next = Expr {
+            kind: ExprKind::Variant(
+                Ident {
+                    name: iterator.clone(),
+                    span: at(k + 2, k + 2),
+                },
+                Vec::new(),
+                // Where an error about it is: `x` isn't an iterator.
+                Ident {
+                    name: "next".into(),
+                    span: at(iter_span.start, iter_span.start),
+                },
+                vec![borrow],
+                true,
+            ),
+            span: at(k, iter_span.end),
+        };
+        let option = self.core_item("option", "Option");
+        let mut variant = |name: &str, pats: Vec<Pattern>, ty: Span, member: Span, span: Span| {
+            self.r.m.paths.insert(ty, option);
+            Pattern {
+                kind: PatternKind::Variant(
+                    Ident {
+                        name: "core::option::Option".into(),
+                        span: ty,
+                    },
+                    Vec::new(),
+                    Ident {
+                        name: name.into(),
+                        span: member,
+                    },
+                    pats,
+                ),
+                span,
+            }
+        };
+        let some = variant(
+            "Some",
+            vec![f.pat],
+            at(k, k),
+            at(k + 3, k + 3),
+            at(k, k + 1),
+        );
+        let none = variant(
+            "None",
+            Vec::new(),
+            at(k + 1, k + 1),
+            at(i, i),
+            at(k + 1, k + 2),
+        );
+        let arms = vec![
+            Arm {
+                pat: some,
+                body: f.body,
+            },
+            Arm {
+                pat: none,
+                body: Expr {
+                    kind: ExprKind::Break(None, None),
+                    span: at(k + 2, k + 2),
+                },
+            },
+        ];
+        let step = Expr {
+            kind: ExprKind::Match(Box::new(next), arms),
+            span: at(k, k + 2),
+        };
+        let body = Expr {
+            kind: ExprKind::Block(vec![Stmt::BlockLike(step)], None),
+            span: at(k + 1, k + 2),
+        };
+        let looped = Expr {
+            kind: ExprKind::Loop(f.label, Box::new(body)),
+            span: at(k, k + 3),
+        };
+        ExprKind::Block(vec![init, Stmt::BlockLike(looped)], None)
+    }
+
     fn pattern(&mut self, p: &mut Pattern) -> Result<(), Error> {
         match &mut p.kind {
             PatternKind::Variant(ty, targs, _, pats) => {
@@ -1071,6 +1362,54 @@ impl Rewrite<'_> {
             | PatternKind::Unit => {}
         }
         Ok(())
+    }
+}
+
+/// The name of the variable a `for` loop keeps its iterator in, which no
+/// program can write (see `Rewrite::for_loop`).
+pub(crate) const FOR_ITERATOR: &str = "{for}";
+
+/// Checks that no `break` in `e`, the body of a `for` labelled `label`, if
+/// it is, gives that loop a value: a `for` can end without a `break`, so it
+/// can only be `()`. `depth` is how many loops in it `e` is, which an
+/// unlabelled `break` would be for instead.
+fn no_break_value(e: &Expr, label: Option<&String>, depth: usize) -> Result<(), Error> {
+    match &e.kind {
+        ExprKind::Break(l, Some(_)) => {
+            let ours = match l {
+                Some(l) => Some(&l.name) == label,
+                None => depth == 0,
+            };
+            if ours {
+                return Err(Error::ty(
+                    e.span,
+                    "a `break` with a value only works in a `loop`: a `for` loop can end \
+                     without a `break`",
+                ));
+            }
+        }
+        // A closure's body is a function of its own.
+        ExprKind::Lambda(_) => return Ok(()),
+        ExprKind::Loop(..) | ExprKind::While(..) | ExprKind::For(_) => {
+            for c in e.children() {
+                no_break_value(c, label, depth + 1)?;
+            }
+            return Ok(());
+        }
+        _ => {}
+    }
+    for c in e.children() {
+        no_break_value(c, label, depth)?;
+    }
+    Ok(())
+}
+
+/// The value of `e`, if it's an integer constant: `3` or `-3`.
+fn constant(e: &Expr) -> Option<i64> {
+    match &e.kind {
+        ExprKind::Int(n) => Some(*n),
+        ExprKind::Unary(UnOp::Neg, x) => constant(x)?.checked_neg(),
+        _ => None,
     }
 }
 
@@ -1132,9 +1471,13 @@ fn children_mut(e: &mut Expr) -> Vec<&mut Expr> {
         | ExprKind::Continue(_) => Vec::new(),
         ExprKind::Unary(_, x) | ExprKind::Field(x, _) | ExprKind::Loop(_, x) => vec![&mut **x],
         ExprKind::Return(x) | ExprKind::Break(_, x) => x.iter_mut().map(|x| &mut **x).collect(),
-        ExprKind::Binary(_, l, r) | ExprKind::Assign(_, l, r) | ExprKind::While(_, l, r) => {
+        ExprKind::Binary(_, l, r)
+        | ExprKind::Assign(_, l, r)
+        | ExprKind::While(_, l, r)
+        | ExprKind::Range(l, r) => {
             vec![&mut **l, &mut **r]
         }
+        ExprKind::For(f) => vec![&mut f.iter, &mut f.body],
         ExprKind::Call(f, args) | ExprKind::MethodCall(f, _, _, args) => {
             std::iter::once(&mut **f).chain(args.iter_mut()).collect()
         }

@@ -1,4 +1,7 @@
 // A list and its own tail, through the borrow the `match` holds.
+
+use core::mem::swap;
+
 #[derive(Discard)]
 enum List { Cons(int, Box<List>), Nil }
 

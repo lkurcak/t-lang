@@ -76,6 +76,9 @@ pub fn check_files(path: &Path, src: &str, read: load::Read) -> Checked {
     let checked = result.is_ok().then_some(&info);
     warnings.extend(naming::warnings(&sources, &program, checked));
     allow::apply(&program, &sources, &mut warnings);
+    // The core library's are its own business: what a program doesn't
+    // use of it isn't dead, for one.
+    warnings.retain(|w| !sources.in_core(w.span.start));
     let result = result.map(|()| mono::monomorphise(&lift::lift(&program, &info), &info));
     Checked {
         sources,

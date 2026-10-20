@@ -1,4 +1,7 @@
 // `replace(&mut x, x)`: `x` is moved out before it's borrowed.
+
+use core::mem::replace;
+
 struct Fd { n: int }
 
 fn close(f: Fd) -> int {

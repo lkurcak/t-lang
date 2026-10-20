@@ -12,8 +12,14 @@
 //! can't change what they mean. Loading ends, since each file is for a
 //! module path of its own, and no file is read twice: not even through a
 //! link, which could otherwise make `a/a/a/..` go on forever.
+//!
+//! Every program has the core library too (see docs/06e-core.md): a module
+//! tree of its own beside the crate root's, read last, from the files of
+//! `core/` that are built into the compiler. Its root is `lib.t`, and the
+//! file of its module `a::b` is `a/b.t` there. Its paths are shown as
+//! `<core>/a/b.t`.
 
-use crate::ast::Program;
+use crate::ast::{Ident, ModDecl, Program, ROOT};
 use crate::error::{Error, Span};
 use crate::lexer;
 use crate::parser;
@@ -23,6 +29,21 @@ use std::path::{Path, PathBuf};
 /// Reads a file, for `load`. Tools can give the text of files open in an
 /// editor rather than what's on disk.
 pub type Read<'r> = &'r dyn Fn(&Path) -> std::io::Result<String>;
+
+/// The files of the core library, by their paths in `core/`.
+pub const CORE_FILES: &[(&str, &str)] = &[
+    ("lib.t", include_str!("../core/lib.t")),
+    ("cmp.t", include_str!("../core/cmp.t")),
+    ("iter.t", include_str!("../core/iter.t")),
+    ("mem.t", include_str!("../core/mem.t")),
+    ("ops.t", include_str!("../core/ops.t")),
+    ("option.t", include_str!("../core/option.t")),
+    ("prelude.t", include_str!("../core/prelude.t")),
+    ("result.t", include_str!("../core/result.t")),
+];
+
+/// Where the core library's files seem to be, in messages and to editors.
+pub const CORE_DIR: &str = "<core>";
 
 /// Reads the file system.
 pub fn read_file(path: &Path) -> std::io::Result<String> {
@@ -43,10 +64,32 @@ fn files(path: &Path, sources: &mut Sources, read: Read) -> Result<Program, Erro
     let dir = path.parent().unwrap_or(Path::new(""));
     let starts_in_main = path.file_name().is_some_and(|n| n == "main.t");
     let mut seen = vec![canonical(path)];
-    // Modules are added as files are parsed, so this sees those too.
+    // Modules are added as files are parsed, so this sees those too. The
+    // program's first, then the core library's.
     let mut m = 0;
-    while m < prog.mods.len() {
+    loop {
+        if m == prog.mods.len() {
+            if prog.core.is_some() {
+                break;
+            }
+            add_core(&mut prog, sources)?;
+            m += 1;
+            continue;
+        }
         if !prog.mods[m].in_file {
+            m += 1;
+            continue;
+        }
+        if let Some(core) = prog.core {
+            let segments = module_path(&prog, m);
+            let file = segments[1..].join("/") + ".t";
+            let Some(&(_, text)) = CORE_FILES.iter().find(|(f, _)| *f == file) else {
+                unreachable!("the core library has no file `{file}`");
+            };
+            let path = Path::new(CORE_DIR).join(&file);
+            let start = sources.add(path, text, m, Some(prog.mods[m].name.span));
+            parse_file(&mut prog, m, text, start)?;
+            debug_assert!(m > core);
             m += 1;
             continue;
         }
@@ -96,18 +139,46 @@ fn files(path: &Path, sources: &mut Sources, read: Read) -> Result<Program, Erro
         }
         seen.push(id);
         let start = sources.add(file, &text, m, Some(prog.mods[m].name.span));
-        let toks = lexer::lex(&text).map_err(|e| shift(e, start))?;
-        let toks = toks
-            .into_iter()
-            .map(|mut t| {
-                t.span = moved(t.span, start);
-                t
-            })
-            .collect();
-        parser::parse_into(toks, &mut prog, m)?;
+        parse_file(&mut prog, m, &text, start)?;
         m += 1;
     }
     Ok(prog)
+}
+
+/// Parses `text`, which starts at `start` in the sources, into module `m`.
+fn parse_file(prog: &mut Program, m: usize, text: &str, start: usize) -> Result<(), Error> {
+    let toks = lexer::lex(text).map_err(|e| shift(e, start))?;
+    let toks = toks
+        .into_iter()
+        .map(|mut t| {
+            t.span = moved(t.span, start);
+            t
+        })
+        .collect();
+    parser::parse_into(toks, prog, m)
+}
+
+/// Adds the core library's root module, from its `lib.t`, which is parsed
+/// here; its modules' files are read after.
+fn add_core(prog: &mut Program, sources: &mut Sources) -> Result<(), Error> {
+    let core = prog.mods.len();
+    let text = CORE_FILES[0].1;
+    let start = sources.add(Path::new(CORE_DIR).join("lib.t"), text, core, None);
+    let span = Span::new(start, start + text.len());
+    prog.mods.push(ModDecl {
+        doc: None,
+        allows: Vec::new(),
+        span,
+        name: Ident {
+            name: "core".into(),
+            span: Span::new(start, start),
+        },
+        parent: Some(ROOT),
+        public: Some(Span::new(start, start)),
+        in_file: false,
+    });
+    prog.core = Some(core);
+    parse_file(prog, core, text, start)
 }
 
 /// The names of the modules from the crate root down to `m`.

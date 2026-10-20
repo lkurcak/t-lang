@@ -1,5 +1,8 @@
 // `swap` can't take two `&mut` to the same place, even when one goes
 // through another reference.
+
+use core::mem::swap;
+
 struct Fd { n: int }
 
 struct P { a: Fd, b: Fd }

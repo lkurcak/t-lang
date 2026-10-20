@@ -44,6 +44,10 @@
         "named": true
       },
       {
+        "type": "for_expression",
+        "named": true
+      },
+      {
         "type": "generic_function",
         "named": true
       },
@@ -73,6 +77,10 @@
       },
       {
         "type": "parenthesized_expression",
+        "named": true
+      },
+      {
+        "type": "range_expression",
         "named": true
       },
       {
@@ -466,6 +474,10 @@
         },
         {
           "type": "function_item",
+          "named": true
+        },
+        {
+          "type": "function_signature_item",
           "named": true
         },
         {
@@ -1068,6 +1080,52 @@
     }
   },
   {
+    "type": "for_expression",
+    "named": true,
+    "fields": {
+      "body": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "block",
+            "named": true
+          }
+        ]
+      },
+      "label": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "lifetime",
+            "named": true
+          }
+        ]
+      },
+      "pattern": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "_pattern",
+            "named": true
+          }
+        ]
+      },
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "_expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "function_item",
     "named": true,
     "fields": {
@@ -1123,11 +1181,15 @@
       }
     },
     "children": {
-      "multiple": false,
+      "multiple": true,
       "required": false,
       "types": [
         {
           "type": "visibility_modifier",
+          "named": true
+        },
+        {
+          "type": "where_clause",
           "named": true
         }
       ]
@@ -1177,6 +1239,20 @@
           }
         ]
       }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "visibility_modifier",
+          "named": true
+        },
+        {
+          "type": "where_clause",
+          "named": true
+        }
+      ]
     }
   },
   {
@@ -1630,6 +1706,10 @@
           "named": true
         },
         {
+          "type": "function_signature_item",
+          "named": true
+        },
+        {
           "type": "impl_item",
           "named": true
         },
@@ -1892,6 +1972,32 @@
         "types": [
           {
             "type": "_type",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "range_expression",
+    "named": true,
+    "fields": {
+      "end": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "_expression",
+            "named": true
+          }
+        ]
+      },
+      "start": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "_expression",
             "named": true
           }
         ]
@@ -2172,6 +2278,10 @@
         },
         {
           "type": "function_item",
+          "named": true
+        },
+        {
+          "type": "function_signature_item",
           "named": true
         },
         {
@@ -2869,7 +2979,7 @@
         "required": true,
         "types": [
           {
-            "type": "type_identifier",
+            "type": "_type",
             "named": true
           }
         ]
@@ -3103,6 +3213,10 @@
   },
   {
     "type": "impl",
+    "named": false
+  },
+  {
+    "type": "in",
     "named": false
   },
   {

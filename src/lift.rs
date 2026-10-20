@@ -78,6 +78,7 @@ pub fn lift(prog: &Program, info: &Info) -> Program {
     let types = types.into_iter().map(TypeDecl::at_root).collect::<Vec<_>>();
     Program {
         mods: prog.mods[..1].to_vec(),
+        core: None,
         uses: Vec::new(),
         types,
         traits: traits
@@ -133,6 +134,7 @@ impl<'p> Cx<'p> {
             parens: f.parens,
             ret: self.ty(&f.ret),
             body,
+            intrinsic: f.intrinsic,
         };
         (decl, nested)
     }
@@ -230,6 +232,10 @@ impl<'p> Cx<'p> {
     /// `g`, with the types in its bounds renamed.
     fn generics(&self, g: &Generics) -> Generics {
         let mut g = g.clone();
+        // Checked already, and only about types that monomorphising
+        // replaces.
+        g.wheres.clear();
+        g.where_span = None;
         for (_, items) in &mut g.bounds {
             for t in items.iter_mut().flat_map(|b| b.types_mut()) {
                 *t = self.ty(t);
@@ -246,6 +252,9 @@ impl<'p> Cx<'p> {
     /// order. Local types are taken out too: `lift` has them already.
     fn expr(&self, e: &'p Expr, nested: &mut Vec<&'p FnDecl>) -> Expr {
         let kind = match &e.kind {
+            ExprKind::For(_) | ExprKind::Range(..) => {
+                unreachable!("rewritten when paths are resolved")
+            }
             ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit | ExprKind::Continue(_) => {
                 e.kind.clone()
             }
