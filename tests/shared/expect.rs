@@ -157,13 +157,21 @@ fn shown(files: &Files) -> String {
     }
 }
 
-/// A rendered diagnostic without the lines of source it shows, `3 | ..`.
+/// A rendered diagnostic without the lines of source it shows, `3 | ..`,
+/// and with `/` in the paths it shows.
 fn without_source(rendered: &str) -> String {
     let is_source = |l: &str| {
         let (n, rest) = l.split_once(" | ").unwrap_or(("", ""));
         !n.is_empty() && n.trim().chars().all(|c| c.is_ascii_digit()) && !rest.is_empty()
     };
-    let lines = rendered.lines().filter(|l| !is_source(l));
+    // Where it is, `--> dir/a/b.t:2:5`, with `/` between a path's parts on
+    // every system, as the expectations say them: Windows shows `\`.
+    let lines = rendered.lines().filter(|l| !is_source(l)).map(|l| {
+        match l.trim_start().starts_with("-->") {
+            true => l.replace('\\', "/"),
+            false => l.to_string(),
+        }
+    });
     lines.collect::<Vec<_>>().join("\n")
 }
 
