@@ -7,7 +7,7 @@ enum Shape {
     Empty,
 }
 
-fn area(s: Shape) -> int {
+fn area(s: Shape) -> int with panic {
     match s {
         Shape::Circle(r) => 3 * r * r,
         Shape::Rect(w, h) => w * h,
@@ -15,7 +15,7 @@ fn area(s: Shape) -> int {
     }
 }
 
-fn main() -> Shape {
+fn main() -> Shape with panic {
     print(area(Shape::Circle(2)));      // expect: 12
     print(area(Shape::Rect(3, 4)));     // expect: 12
     print(area(Shape::Empty));          // expect: 0

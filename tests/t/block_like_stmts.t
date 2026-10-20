@@ -1,12 +1,12 @@
 // An `if`, `match` or block at the start of a statement is the whole
 // statement, like in Rust.
 
-fn f(x: int) -> int {
+fn f(x: int) -> int with panic {
     if x > 100 { print(x) }   // a statement of type `()`
     -x                        // the block's value: not `(if ..) - x`
 }
 
-fn g(x: int) -> int {
+fn g(x: int) -> int with panic {
     // Parenthesize to use one in a larger expression.
     (if x > 0 { 10 } else { 20 }) - x
 }
@@ -17,7 +17,7 @@ fn h(b: bool) -> int {
     if b { 3 } else { 4 }     // the block's value, so any type is fine
 }
 
-fn main() {
+fn main() with panic {
     print(f(5));              // expect: -5
     print(g(3));              // expect: 7
     print(h(true));           // expect: 1

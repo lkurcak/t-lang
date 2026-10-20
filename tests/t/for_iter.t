@@ -6,8 +6,9 @@ struct Countdown { n: int }
 
 impl Iterator for Countdown {
     type Item = int;
+    effect e = panic;
 
-    fn next(&mut self) -> Option<int> {
+    fn next(&mut self) -> Option<int> with panic {
         if self.n == 0 {
             return Option::None;
         }
@@ -29,8 +30,9 @@ struct Fds { left: int }
 
 impl Iterator for Fds {
     type Item = Fd;
+    effect e = panic;
 
-    fn next(&mut self) -> Option<Fd> {
+    fn next(&mut self) -> Option<Fd> with panic {
         if self.left == 0 {
             return Option::None;
         }
@@ -39,11 +41,11 @@ impl Iterator for Fds {
     }
 }
 
-fn total<I: Iterator<Item = int> + Discard>(it: I) -> int {
+fn total<I: Iterator<Item = int> + Discard>(it: I) -> int with {panic, I::e} {
     it.fold(0, |acc, x| acc + x)
 }
 
-fn main() {
+fn main() with panic {
     for i in (Countdown { n: 3 }) {
         print(i);
     }

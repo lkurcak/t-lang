@@ -5,7 +5,7 @@ fn consume(b: Box<int>) -> int { *b }
 
 // The first pair of numbers below `n` that multiply to `target`: a `break`
 // with a label leaves both loops at once, with a value.
-fn find(n: int, target: int) -> int {
+fn find(n: int, target: int) -> int with panic {
     let mut i = 1;
     'outer: loop {
         let mut j = 1;
@@ -44,7 +44,7 @@ fn inner_never() -> int {
     }
 }
 
-fn main() {
+fn main() with {panic, alloc} {
     print(find(10, 12));                    // expect: 26
     print(find(3, 100));                    // expect: -1
     print(count_before_zero(3, 3));         // expect: 3

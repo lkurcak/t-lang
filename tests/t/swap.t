@@ -21,7 +21,7 @@ fn my_replace<T>(r: &mut T, v: T) -> T {
 #[derive(Discard)]
 struct Pair { a: int, b: int }
 
-fn main() {
+fn main() with {alloc, panic} {
     let mut x = Fd { n: 1 };
     let mut y = Fd { n: 2 };
     swap(&mut x, &mut y);

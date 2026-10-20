@@ -5,7 +5,7 @@ Code: `src/check/unify.rs` (`Checker::unify`), `src/check.rs`
 for nested functions `src/check/scope.rs` and `src/lift.rs`.
 
 ```rust
-fn main() {
+fn main() with panic {
     let twice = |f, x| f(f(x));
     print(twice(|x| x + 5, 0)); // expect: 10
 }
@@ -46,10 +46,10 @@ it would at the top level; only its name is scoped, to the block
 (`tests/t/nested_fns.t`):
 
 ```rust
-fn main() {
+fn main() with panic {
     print(fact(5)); // expect: 120
 
-    fn fact(n: int) -> int {
+    fn fact(n: int) -> int with panic {
         if n == 0 { 1 } else { n * fact(n - 1) }
     }
 }
@@ -112,12 +112,12 @@ block, and it shadows any outer type of the same name
 that use it, inside the one function that needs them:
 
 ```rust
-fn main() {
+fn main() with panic {
     print(perimeter(Rect { w: 2, h: 3 })); // expect: 10
 
     #[derive(Discard)]
     struct Rect { w: int, h: int }
-    fn perimeter(r: Rect) -> int { 2 * (r.w + r.h) }
+    fn perimeter(r: Rect) -> int with panic { 2 * (r.w + r.h) }
 }
 ```
 

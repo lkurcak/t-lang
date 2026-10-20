@@ -43,7 +43,7 @@ fn twice<T: Copy>(x: T) -> int {
     2
 }
 
-fn len<T: Discard>(l: &List<T>) -> int {
+fn len<T: Discard>(l: &List<T>) -> int with panic {
     match l {
         List::Cons(_, rest) => 1 + len(rest),
         List::Nil => 0,
@@ -52,7 +52,7 @@ fn len<T: Discard>(l: &List<T>) -> int {
 
 fn takes_fd(f: Fd) -> int { close(f) }
 
-fn main() {
+fn main() with {alloc, panic} {
     drop_it(1);
     drop_it(true);
     drop_it(());

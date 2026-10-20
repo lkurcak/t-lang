@@ -5,23 +5,23 @@ struct P { x: int, y: int }
 
 // A closure that captures has a type of its own, so a function that takes
 // one is generic over it.
-fn apply<F: Fn(int) -> int + Discard>(f: F, x: int) -> int { f(x) }
-fn compose<F: Fn(int) -> int + Discard, G: Fn(int) -> int + Discard>(
+fn apply<e, F: Fn(int) -> int with e + Discard>(f: F, x: int) -> int with e { f(x) }
+fn compose<e, F: Fn(int) -> int with e + Discard, G: Fn(int) -> int with e + Discard>(
     f: F,
     g: G,
     x: int,
-) -> int {
+) -> int with e {
     // A closure can capture a parameter.
     apply(|y| g(f(y)), x)
 }
-fn on_point<F: Fn(P) -> int + Discard>(f: F) -> int { f(P { x: 3, y: 4 }) }
-fn inc(x: int) -> int { x + 1 }
+fn on_point<e, F: Fn(P) -> int with e + Discard>(f: F) -> int with e { f(P { x: 3, y: 4 }) }
+fn inc(x: int) -> int with panic { x + 1 }
 // Closures that capture nothing can be returned: they're plain functions.
-fn pick(double: bool) -> fn(int) -> int {
+fn pick(double: bool) -> fn(int) -> int with panic {
     if double { |x| x * 2 } else { inc }
 }
 
-fn main() {
+fn main() with panic {
     let k = 10;
     print(apply(|x| x * k, 4));             // expect: 40
     let five = 5;
@@ -55,4 +55,4 @@ fn main() {
 }
 
 #[derive(Discard)]
-struct Fs { a: fn(int) -> int, b: fn(int) -> int }
+struct Fs { a: fn(int) -> int with panic, b: fn(int) -> int with panic }

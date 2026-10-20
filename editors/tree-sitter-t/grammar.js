@@ -178,6 +178,7 @@ module.exports = grammar({
       optional(field('type_parameters', $.type_parameters)),
       field('parameters', $.parameters),
       optional(seq('->', field('return_type', $._type))),
+      optional(field('effects', $.effects)),
       optional($.where_clause),
       field('body', $.block),
     ),
@@ -191,6 +192,7 @@ module.exports = grammar({
       optional(field('type_parameters', $.type_parameters)),
       field('parameters', $.parameters),
       optional(seq('->', field('return_type', $._type))),
+      optional(field('effects', $.effects)),
       optional($.where_clause),
       ';',
     ),
@@ -219,6 +221,7 @@ module.exports = grammar({
         $.function_item,
         $.function_signature_item,
         $.associated_type,
+        $.associated_effect,
         $.attribute_item,
       )),
       '}',
@@ -231,6 +234,26 @@ module.exports = grammar({
       optional(field('bounds', $.trait_bounds)),
       optional(seq('=', field('type', $._type))),
       ';',
+    ),
+
+    // `effect e;` in a trait, or `effect e = {I::e, f};` in an impl.
+    associated_effect: $ => seq(
+      'effect',
+      field('name', $.identifier),
+      optional(seq('=', field('effects', $.effect_set))),
+      ';',
+    ),
+
+    // `with panic` or `with {alloc, e}`: what a call may do.
+    effects: $ => seq('with', $.effect_set),
+
+    effect_set: $ => choice($._effect, seq('{', commaSep($._effect), '}')),
+
+    // `panic`, `alloc`, an effect parameter, or an associated effect.
+    _effect: $ => choice(
+      alias($.identifier, $.effect),
+      $.projection_type,
+      $.qualified_type,
     ),
 
     // `: Show + 'a`
@@ -252,6 +275,7 @@ module.exports = grammar({
       field('trait', $._path_type),
       field('parameters', $.type_parameters_list),
       optional(seq('->', field('return_type', $._type))),
+      optional(field('effects', $.effects)),
     )),
 
     // `Iter<Item = int>` or `Iter<Item: Discard>` in a bound.
@@ -431,6 +455,7 @@ module.exports = grammar({
       'fn',
       field('parameters', $.type_parameters_list),
       optional(seq('->', field('return_type', $._type))),
+      optional(field('effects', $.effects)),
     )),
 
     type_parameters_list: $ => seq('(', commaSep($._type), ')'),

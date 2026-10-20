@@ -8,7 +8,7 @@ mod fs {
 
     pub fn open(n: int) -> Fd { Fd { id: Id { n }, raw: n } }
 
-    pub fn close(fd: Fd) -> int {
+    pub fn close(fd: Fd) -> int with panic {
         let Fd { id, raw } = fd;
         id.n + raw
     }

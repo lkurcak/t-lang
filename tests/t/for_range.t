@@ -1,7 +1,7 @@
 // `for` over a range: `a..b` counts from `a` up to, not including, `b`. A
 // range whose start isn't before its end is empty.
 
-fn sum_to(n: int) -> int {
+fn sum_to(n: int) -> int with panic {
     let mut s = 0;
     for i in 0..n {
         s = s + i;
@@ -9,7 +9,7 @@ fn sum_to(n: int) -> int {
     s
 }
 
-fn main() {
+fn main() with panic {
     print(sum_to(5)); // expect: 10
     print(sum_to(0)); // expect: 0
     print(sum_to(-3)); // expect: 0

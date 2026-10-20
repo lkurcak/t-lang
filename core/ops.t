@@ -1,5 +1,7 @@
 // What operators are written with.
 
+use crate::num::checked_add;
+
 /// `start..end`: from `start` up to, not including, `end`. It's empty if
 /// `start` isn't before `end`. Its fields are private, so only `a..b` and
 /// `Range::new` make one.
@@ -19,15 +21,20 @@ impl<T: Copy> Range<T> {
     pub fn end(&self) -> T { self.end }
 }
 
-/// Counts up. It checks before it adds one, so it never overflows, even
-/// at the end of `int`.
+/// Counts up, and can't panic: it adds one only to what's less than the
+/// end, which can't overflow, even at the end of `int`. The checker can't
+/// see that, so it's a `checked_add`, whose `None` never happens.
 impl Iterator for Range<int> {
     type Item = int;
+    effect e = {};
 
     fn next(&mut self) -> Option<int> {
         if self.start < self.end {
             let n = self.start;
-            self.start = n + 1;
+            self.start = match checked_add(n, 1) {
+                Option::Some(m) => m,
+                Option::None => self.end,
+            };
             Option::Some(n)
         } else {
             Option::None

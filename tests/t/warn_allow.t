@@ -27,7 +27,7 @@ struct Point {
 }
 
 #[allow(non_snake_case, unused_variables)]
-fn sumPixel(P: Pixel) -> int {
+fn sumPixel(P: Pixel) -> int with panic {
     let Unused = 0;
     fn innerHelper(N: int) -> int {
         N
@@ -39,7 +39,7 @@ fn sumPixel(P: Pixel) -> int {
 fn never_called() {}
 
 #[allow(dead_cod, unused_variable, nonsense)]
-fn main() {
+fn main() with panic {
     let c = light_color::yellow;
     print(sumPixel(Pixel { R: 1, G: 2, B: 3 })); // expect: 3
     let p = Point { x: 1, Y: 2 };

@@ -2,12 +2,12 @@
 // `x`.
 struct Fd { n: int }
 
-fn two(a: &Fd, b: Fd) -> int {
+fn two(a: &Fd, b: Fd) -> int with panic {
     let Fd { n } = b;
     a.n + n
 }
 
-fn main() {
+fn main() with panic {
     let x = Fd { n: 1 };
     print(two(&x, x));
 }

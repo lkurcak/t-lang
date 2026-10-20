@@ -19,11 +19,11 @@ impl<T: Discard> Tr for W<T> {
     fn done(self) -> int { 0 }
 }
 
-fn f<T: Tr>(x: T, n: int) -> int {
+fn f<T: Tr>(x: T, n: int) -> int with panic {
     if n == 0 { x.done() } else { f(x.next(), n - 1) }
 }
 
-fn main() {
+fn main() with panic {
     print(f(W { t: 1 }, 3));
 }
 // error: polymorphic recursion

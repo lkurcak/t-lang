@@ -12,7 +12,7 @@ fn deferred_return(c: bool) {
 }
 
 // The only way out of the `loop` is the `break`, after `x` gets its value.
-fn deferred_loop() -> int {
+fn deferred_loop() -> int with panic {
     let x;
     let mut i = 0;
     loop {
@@ -48,7 +48,7 @@ fn borrow_or_change(c: bool) -> int {
     x
 }
 
-fn main() {
+fn main() with {panic, alloc} {
     deferred_return(true);                  // expect: 1
     deferred_return(false);
     print(deferred_loop());                 // expect: 30

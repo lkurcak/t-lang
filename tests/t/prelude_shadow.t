@@ -18,7 +18,7 @@ trait Iterator {
     fn next(&mut self) -> int;
 }
 
-fn main() {
+fn main() with panic {
     let mut sum = 0;
     for i in 0..4 {
         sum = sum + i;

@@ -4,10 +4,10 @@
 // another, and the impl chosen is the same either way.
 mod show {
     pub trait Show {
-        fn show(&self) -> int;
+        fn show(&self) -> int with panic;
     }
 
-    pub fn twice<T: Show>(x: &T) -> int { x.show() * 2 }
+    pub fn twice<T: Show>(x: &T) -> int with panic { x.show() * 2 }
 }
 
 mod shapes {
@@ -24,13 +24,13 @@ mod impls {
     use crate::shapes::{Sq, side};
 
     impl Show for Sq {
-        fn show(&self) -> int { side(self) * side(self) }
+        fn show(&self) -> int with panic { side(self) * side(self) }
     }
 }
 
 use show::Show;
 
-fn main() {
+fn main() with panic {
     let s = shapes::sq(3);
     print(s.show());               // expect: 9
     print(show::twice(&s));        // expect: 18

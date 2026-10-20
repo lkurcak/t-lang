@@ -36,8 +36,10 @@ pub const CORE_FILES: &[(&str, &str)] = &[
     ("cmp.t", include_str!("../core/cmp.t")),
     ("iter.t", include_str!("../core/iter.t")),
     ("mem.t", include_str!("../core/mem.t")),
+    ("num.t", include_str!("../core/num.t")),
     ("ops.t", include_str!("../core/ops.t")),
     ("option.t", include_str!("../core/option.t")),
+    ("panic.t", include_str!("../core/panic.t")),
     ("prelude.t", include_str!("../core/prelude.t")),
     ("result.t", include_str!("../core/result.t")),
 ];
@@ -228,9 +230,9 @@ mod tests {
     #[test]
     fn files_mean_what_inline_modules_do() {
         let files = [
-            ("p/a.t", "pub mod b;\npub fn f() -> int { b::g() + 1 }\n"),
+            ("p/a.t", "pub mod b;\npub fn f() -> int { b::g() }\n"),
             ("p/a/b.t", "pub fn g() -> int { crate::c::d::h() }\n"),
-            ("p/c/d.t", "pub fn h() -> int { 41 }\n"),
+            ("p/c/d.t", "pub fn h() -> int { 42 }\n"),
         ];
         let read = |p: &Path| match files.iter().find(|(f, _)| Path::new(f) == p) {
             Some((_, text)) => Ok(text.to_string()),
@@ -239,8 +241,8 @@ mod tests {
         let main = "mod a;\nmod c { pub mod d; }\nfn main() -> int { a::f() }\n";
         let split = crate::check_files(Path::new("p/main.t"), main, &read);
         let inline = "mod a {\n    pub mod b { pub fn g() -> int { crate::c::d::h() } }\n    \
-                      pub fn f() -> int { b::g() + 1 }\n}\n\
-                      mod c { pub mod d { pub fn h() -> int { 41 } } }\n\
+                      pub fn f() -> int { b::g() }\n}\n\
+                      mod c { pub mod d { pub fn h() -> int { 42 } } }\n\
                       fn main() -> int { a::f() }\n";
         let inline = crate::check_source(inline);
         let shown = |c: crate::Checked| {

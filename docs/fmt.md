@@ -7,13 +7,13 @@ layout), `src/doc.rs` (the layout engine), and `tests/fmt.rs`.
 ```rust,unformatted
 #[derive(Discard)]
 struct Point{x:int,y:int}
-fn dist(p:Point,q:Point)->int{
+fn dist(p:Point,q:Point)->int with panic{
 let dx=p.x-q.x;let dy=p.y-q.y;  // no square roots yet
 dx*dx+dy*dy}
 
 
 
-fn main(){print(dist(Point{x:0,y:0},Point{x:3,y:4})); // expect: 25
+fn main() with panic{print(dist(Point{x:0,y:0},Point{x:3,y:4})); // expect: 25
 }
 ```
 
@@ -22,13 +22,13 @@ fn main(){print(dist(Point{x:0,y:0},Point{x:3,y:4})); // expect: 25
 ```rust
 #[derive(Discard)]
 struct Point { x: int, y: int }
-fn dist(p: Point, q: Point) -> int {
+fn dist(p: Point, q: Point) -> int with panic {
     let dx = p.x - q.x;
     let dy = p.y - q.y; // no square roots yet
     dx * dx + dy * dy
 }
 
-fn main() {
+fn main() with panic {
     print(dist(Point { x: 0, y: 0 }, Point { x: 3, y: 4 })); // expect: 25
 }
 ```

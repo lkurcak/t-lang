@@ -4,11 +4,11 @@
 #[derive(Discard)]
 struct Big { a: int, b: int }
 
-fn make(n: int) -> Box<Big> { Box::new(Big { a: n, b: n * 2 }) }
+fn make(n: int) -> Box<Big> with {panic, alloc} { Box::new(Big { a: n, b: n * 2 }) }
 
-fn total(b: &Box<Big>) -> int { b.a + b.b }
+fn total(b: &Box<Big>) -> int with panic { b.a + b.b }
 
-fn main() {
+fn main() with {alloc, panic} {
     let b = make(3);
     print(total(&b));           // expect: 9
     print(b.b);                 // expect: 6

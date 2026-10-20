@@ -28,7 +28,7 @@ fn die() -> ! {
 }
 
 // Every path uses it up, one way or another.
-fn branch(c: bool, fd: Fd) -> int {
+fn branch(c: bool, fd: Fd) -> int with panic {
     if c { close(fd) } else { 10 + close(fd) }
 }
 
@@ -43,7 +43,7 @@ fn checked(n: int, fd: Fd) -> int {
 // Giving it back is using it up, too.
 fn pass(fd: Fd) -> Fd { fd }
 
-fn main() {
+fn main() with {panic, alloc} {
     let fd = open(1);
     print(peek(&fd));              // expect: 1
     print(close(pass(fd)));        // expect: 1

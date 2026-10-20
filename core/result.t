@@ -27,7 +27,7 @@ impl<T, E> Result<T, E> {
     }
 
     /// `f` of what's in an `Ok`.
-    pub fn map<U, F: FnOnce(T) -> U + Discard>(self, f: F) -> Result<U, E> {
+    pub fn map<U, e, F: FnOnce(T) -> U with e + Discard>(self, f: F) -> Result<U, E> with e {
         match self {
             Result::Ok(x) => Result::Ok(f(x)),
             Result::Err(e) => Result::Err(e),
@@ -35,7 +35,9 @@ impl<T, E> Result<T, E> {
     }
 
     /// `f` of what's in an `Ok`, which may itself fail.
-    pub fn and_then<U, F: FnOnce(T) -> Result<U, E> + Discard>(self, f: F) -> Result<U, E> {
+    pub fn and_then<U, e, F: FnOnce(T) -> Result<U, E> with e + Discard>(self, f: F) -> Result<U, E>
+    with e
+    {
         match self {
             Result::Ok(x) => f(x),
             Result::Err(e) => Result::Err(e),
@@ -43,7 +45,7 @@ impl<T, E> Result<T, E> {
     }
 
     /// `f` of what's in an `Err`.
-    pub fn map_err<G, F: FnOnce(E) -> G + Discard>(self, f: F) -> Result<T, G> {
+    pub fn map_err<G, e, F: FnOnce(E) -> G with e + Discard>(self, f: F) -> Result<T, G> with e {
         match self {
             Result::Ok(x) => Result::Ok(x),
             Result::Err(e) => Result::Err(f(e)),
@@ -53,7 +55,7 @@ impl<T, E> Result<T, E> {
     /// What's in an `Ok`, or else `f` of the error. The error goes to `f`
     /// rather than being thrown away, so neither `T` nor `E` need be
     /// `Discard`.
-    pub fn unwrap_or_else<F: FnOnce(E) -> T + Discard>(self, f: F) -> T {
+    pub fn unwrap_or_else<e, F: FnOnce(E) -> T with e + Discard>(self, f: F) -> T with e {
         match self {
             Result::Ok(x) => x,
             Result::Err(e) => f(e),
@@ -62,7 +64,9 @@ impl<T, E> Result<T, E> {
 
     /// `f` of what's in an `Err`, which may recover from it, or fail with
     /// an error of another type. An `Ok` is kept, and `f` thrown away.
-    pub fn or_else<G, F: FnOnce(E) -> Result<T, G> + Discard>(self, f: F) -> Result<T, G> {
+    pub fn or_else<G, e, F: FnOnce(E) -> Result<T, G> with e + Discard>(self, f: F) -> Result<T, G>
+    with e
+    {
         match self {
             Result::Ok(x) => Result::Ok(x),
             Result::Err(e) => f(e),
@@ -96,6 +100,16 @@ impl<T: Discard, E: Discard> Result<T, E> {
         match self {
             Result::Ok(x) => x,
             Result::Err(_e) => default,
+        }
+    }
+}
+
+impl<T, E: Discard> Result<T, E> {
+    /// What's in an `Ok`, or else a panic. The error is thrown away.
+    pub fn unwrap(self) -> T with panic {
+        match self {
+            Result::Ok(x) => x,
+            Result::Err(_) => crate::panic::panic(),
         }
     }
 }

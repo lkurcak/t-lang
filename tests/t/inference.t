@@ -3,7 +3,7 @@
 #[derive(Discard, Eq)]
 enum Opt { None, Some(int) }
 
-fn main() {
+fn main() with panic {
     // `x`'s type is unknown until `+ 1` says it's an int.
     let inc = |x| x + 1;
     print(inc(1));                          // expect: 2

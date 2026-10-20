@@ -284,7 +284,7 @@ struct Callback<T> { f: fn(T) -> int }
 
 fn unbox(b: Box<int>) -> int { *b }
 
-fn main() {
+fn main() with {alloc, panic} {
     let c = Callback { f: unbox };
     let d = c;
     print((c.f)(Box::new(1)) + (d.f)(Box::new(2))); // expect: 3

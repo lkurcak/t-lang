@@ -3,18 +3,18 @@
 #[derive(Discard)]
 struct V { n: int }
 impl V {
-    fn push(&mut self, k: int) {
+    fn push(&mut self, k: int) with panic {
         self.n = self.n + k;
     }
 }
-fn bump(v: &mut V) {
+fn bump(v: &mut V) with panic {
     v.push(1);
 }
-fn go<F: FnMut()>(f: &mut F) {
+fn go<e, F: FnMut() with e>(f: &mut F) with e {
     let mut g = || f();
     g();
 }
-fn main() {
+fn main() with panic {
     let mut v = V { n: 0 };
     let r = &mut v;
     let mut a = || r.push(2);

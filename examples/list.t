@@ -4,16 +4,16 @@
 #[derive(Discard)]
 enum List { Nil, Cons(int, Box<List>) }
 
-fn push(l: List, x: int) -> List { List::Cons(x, Box::new(l)) }
+fn push(l: List, x: int) -> List with {alloc, panic} { List::Cons(x, Box::new(l)) }
 
-fn sum(l: &List) -> int {
+fn sum(l: &List) -> int with panic {
     match l {
         List::Nil => 0,
         List::Cons(x, rest) => *x + sum(rest),
     }
 }
 
-fn double(l: &mut List) {
+fn double(l: &mut List) with panic {
     match l {
         List::Nil => {},
         List::Cons(x, rest) => {
@@ -23,7 +23,7 @@ fn double(l: &mut List) {
     }
 }
 
-fn main() {
+fn main() with {alloc, panic} {
     let mut l = List::Nil;
     let mut i = 1;
     while i <= 4 {

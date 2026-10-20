@@ -241,6 +241,9 @@ pub struct MethodDef {
     pub receiver: bool,
     /// Where its name is declared, unless it's built in.
     pub span: Option<Span>,
+    /// Where its effects are, or would be, written, `with ..`, with each
+    /// effect as written, unless it's built in: for a fix that adds more.
+    pub effects_at: Option<(Span, Vec<String>)>,
 }
 
 /// An impl, of a trait or inherent.
@@ -331,6 +334,7 @@ impl Traits {
         let eq = MethodDef {
             name: "eq".into(),
             symbol: "<Eq>::eq".into(),
+            effects_at: None,
             scheme: Scheme {
                 params: vec!["Self".into()],
                 lifetimes: vec!["'_0".into(), "'_1".into()],
@@ -428,7 +432,12 @@ impl Traits {
     /// The impl of `tr` (or an inherent one, for `None`) whose type matches
     /// `ty`, with what its type parameters are for it to. Coherence makes
     /// that at most one.
-    pub fn select(&self, ty: &Type, tr: Option<&str>) -> Option<(usize, Vec<Type>)> {
+    pub fn select(
+        &self,
+        ty: &Type,
+        tr: Option<&str>,
+        local: &[(Type, Type)],
+    ) -> Option<(usize, Vec<Type>)> {
         self.impls.iter().enumerate().find_map(|(i, d)| {
             if d.trait_name.as_deref() != tr {
                 return None;
@@ -437,12 +446,7 @@ impl Traits {
             if !matches(&d.self_ty, ty, &d.params, &mut found) {
                 return None;
             }
-            let args = d
-                .params
-                .iter()
-                .map(|p| found.get(p).cloned().unwrap_or(Type::Unit))
-                .collect();
-            Some((i, args))
+            Some((i, impl_args(d, &found, &self.impls, &self.anon(), local)))
         })
     }
 
@@ -596,7 +600,7 @@ impl Traits {
         {
             return Ok(Source::Assumed);
         }
-        let Some((i, args)) = self.select(ty, Some(tr)) else {
+        let Some((i, args)) = self.select(ty, Some(tr), eqs) else {
             return Err(fail());
         };
         let d = &self.impls[i];
@@ -608,7 +612,7 @@ impl Traits {
         for (lhs, rhs) in &d.eqs {
             let (l, r) = (s.apply(lhs), s.apply(rhs));
             let normal = |t: &Type| normalise(&self.impls, &self.anon(), eqs, t).erased();
-            if normal(&l) != normal(&r) {
+            if !fits(&normal(&l), &normal(&r), is_sig(lhs)) {
                 return Err(fail());
             }
         }
@@ -646,6 +650,89 @@ impl Traits {
     }
 }
 
+/// Is `lhs`, of an equality bound, what an `Fn` bound says calls take and
+/// give, `<F as FnOnce>::(signature)`?
+pub fn is_sig(lhs: &Type) -> bool {
+    matches!(lhs, Type::Proj(_, _, n) if n == SIG)
+}
+
+/// Does `t` meet an equality bound that says it's `want`? For an `Fn`
+/// bound's signature (`sig`), the effects `want` says are the most its
+/// calls may have, so a function that has fewer meets it: it can be
+/// called wherever one that may do more can. Otherwise only `want`
+/// itself does.
+pub fn fits(t: &Type, want: &Type, sig: bool) -> bool {
+    match (t, want) {
+        (Type::Fn(f), Type::Fn(g)) if sig => {
+            f.with_effects(Type::no_effects()) == g.with_effects(Type::no_effects())
+                && subset(&f.effects, &g.effects)
+        }
+        _ => t == want,
+    }
+}
+
+/// Is every effect of `a` one of `b`'s?
+pub fn subset(a: &Type, b: &Type) -> bool {
+    a.effect_items()
+        .iter()
+        .all(|e| b.effect_items().contains(e))
+}
+
+/// The arguments of impl `d`, at a type its header matched with `found`.
+/// Each type parameter's is from the match, as the header has them all
+/// (see `check::traits`'s `constrained`). An effect parameter's needn't
+/// be in the header, as in `impl<f, F: Fn() with f> Tr for W<F>`: then
+/// it's the least that makes the impl's `Fn` bounds hold, the effects of
+/// what's called, less the others a bound allows. Effects form a
+/// join-semilattice, so the least always exists, and depends only on the
+/// type matched: an impl found for a type has one meaning there, as for
+/// any of its parameters (coherence).
+fn impl_args(
+    d: &ImplDef,
+    found: &HashMap<String, Type>,
+    impls: &[ImplDef],
+    anon: &Anon,
+    local: &[(Type, Type)],
+) -> Vec<Type> {
+    let unfound = |p: &String| match crate::parser::is_effect_name(p) {
+        true => Type::no_effects(),
+        false => Type::Unit,
+    };
+    let mut args: Vec<Type> = d
+        .params
+        .iter()
+        .map(|p| found.get(p).cloned().unwrap_or_else(|| unfound(p)))
+        .collect();
+    let s = Subst::new(&d.params, &args);
+    for (i, p) in d.params.iter().enumerate() {
+        if found.contains_key(p) || !crate::parser::is_effect_name(p) {
+            continue;
+        }
+        let me = Type::Param(p.clone());
+        let mut items = Vec::new();
+        for (lhs, rhs) in &d.eqs {
+            let Type::Fn(want) = rhs else { continue };
+            if !is_sig(lhs) || !want.effects.effect_items().contains(&me) {
+                continue;
+            }
+            let others: Vec<Type> = want
+                .effects
+                .effect_items()
+                .iter()
+                .filter(|e| **e != me)
+                .map(|e| s.apply(e))
+                .collect();
+            let others = Type::effects(others);
+            if let Type::Fn(sig) = normalise(impls, anon, local, &s.apply(lhs)) {
+                let more = sig.effects.effect_items().iter();
+                items.extend(more.filter(|e| !others.effect_items().contains(e)).cloned());
+            }
+        }
+        args[i] = Type::effects(items);
+    }
+    args
+}
+
 /// The types with no names a program can write: closures' and opaque
 /// types. What a projection on one is is in their definitions rather than
 /// impls.
@@ -674,7 +761,10 @@ pub struct Anon<'a> {
 ///   It may only mention parameters that are in the header outside every
 ///   function type (`check::traits`'s `constrained`): matching doesn't
 ///   decide those, or decides them as regions that only mean something
-///   inside a function type.
+///   inside a function type. Or, for an associated effect, effect
+///   parameters an `Fn` bound decides (`decided_effects`), as the least
+///   effects that make it hold at the type matched (`impl_args`): a
+///   function of that type too, so substitution still commutes.
 /// - It's never cached by type with regions erased: `<&'x int as Tr>::Out`
 ///   and `<&'y int as Tr>::Out` are different types.
 /// - It ends: the projections in an impl's associated type are on smaller
@@ -743,7 +833,7 @@ pub fn normalise(impls: &[ImplDef], anon: &Anon, local: &[(Type, Type)], t: &Typ
     if let Some((_, u)) = local.iter().find(|(p, _)| *p == t) {
         return u.clone();
     }
-    match project(impls, anon, s, tr, name) {
+    match project(impls, anon, local, s, tr, name) {
         Some(u) => normalise(impls, anon, local, &u),
         None => t,
     }
@@ -752,7 +842,14 @@ pub fn normalise(impls: &[ImplDef], anon: &Anon, local: &[(Type, Type)], t: &Typ
 /// What `<s as tr>::name` is by the impl of `impls` that's for `s`, if one
 /// is: the type it says, with the parts of `s` its parameters match, and
 /// the regions of `s` where its lifetimes are.
-pub fn project(impls: &[ImplDef], anon: &Anon, s: &Type, tr: &str, name: &str) -> Option<Type> {
+pub fn project(
+    impls: &[ImplDef],
+    anon: &Anon,
+    local: &[(Type, Type)],
+    s: &Type,
+    tr: &str,
+    name: &str,
+) -> Option<Type> {
     if let Type::Param(_) | Type::Var(_) | Type::Proj(..) = s {
         return None;
     }
@@ -782,7 +879,7 @@ pub fn project(impls: &[ImplDef], anon: &Anon, s: &Type, tr: &str, name: &str) -
                 Type::Param(_) | Type::Var(_) | Type::Proj(..) => {
                     Some(Type::Proj(inner.clone(), "FnOnce".into(), SIG.into()))
                 }
-                inner => project(impls, anon, inner, tr, name),
+                inner => project(impls, anon, local, inner, tr, name),
             },
             _ => None,
         };
@@ -795,11 +892,7 @@ pub fn project(impls: &[ImplDef], anon: &Anon, s: &Type, tr: &str, name: &str) -
         let mut regions = HashMap::new();
         regions_at(&d.self_ty, s, &d.lifetimes, &mut regions);
         let (_, rhs) = d.assoc.iter().find(|(n, _)| n == name)?;
-        let args: Vec<Type> = d
-            .params
-            .iter()
-            .map(|p| found.get(p).cloned().unwrap_or(Type::Unit))
-            .collect();
+        let args = impl_args(d, &found, impls, anon, local);
         let regions: Vec<Region> = d
             .lifetimes
             .iter()
@@ -882,7 +975,8 @@ fn param(name: &str) -> Type {
 ///   and nothing can name it in an impl's header, so only blanket impls and
 ///   the built-in ones are found for it. What those need of its signature,
 ///   `F: Fn(&T) -> bool`, is an equality bound on its `SIG`, which
-///   `implements_at` compares with what's bound and all: a signature
+///   `implements_at` compares with what's bound and all, but for its
+///   effects, of which the bound says the most (`fits`): a signature
 ///   generic over a lifetime isn't one at a lifetime fixed outside. That
 ///   compares names, so bound lifetimes must be named `'^0`, `'^1`, .. in
 ///   the order they're first written, wherever a function type is made

@@ -18,9 +18,9 @@ impl Counter {
 
     fn into_inner(self) -> int { self.n }
 
-    fn doubled(&self) -> int { Self::twice(self.get()) }
+    fn doubled(&self) -> int with panic { Self::twice(self.get()) }
 
-    fn twice(x: int) -> int { x * 2 }
+    fn twice(x: int) -> int with panic { x * 2 }
 }
 
 #[derive(Discard)]
@@ -35,7 +35,7 @@ impl<T> Wrapper<T> {
 
 fn half(x: int) -> int { x / 2 }
 
-fn main() {
+fn main() with {alloc, panic} {
     let mut c = Counter::new();
     c.add(1).add(2);
     print(c.get());                       // expect: 3

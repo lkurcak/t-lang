@@ -221,6 +221,8 @@ pub enum Lint {
     /// A range written with constants whose start is after its end, so
     /// that it's empty: most likely a countdown, which it isn't.
     EmptyRanges,
+    /// An effect a function says it may have that nothing in it has.
+    UnusedEffects,
 }
 
 impl Lint {
@@ -241,10 +243,11 @@ impl Lint {
             Lint::UnusedLabels => "unused_labels",
             Lint::UnusedImports => "unused_imports",
             Lint::EmptyRanges => "empty_ranges",
+            Lint::UnusedEffects => "unused_effects",
         }
     }
 
-    pub const ALL: [Lint; 15] = [
+    pub const ALL: [Lint; 16] = [
         Lint::UnreachablePatterns,
         Lint::OverlappingRanges,
         Lint::MergeableRanges,
@@ -260,6 +263,7 @@ impl Lint {
         Lint::UnusedLabels,
         Lint::UnusedImports,
         Lint::EmptyRanges,
+        Lint::UnusedEffects,
     ];
 
     pub fn from_name(name: &str) -> Option<Lint> {

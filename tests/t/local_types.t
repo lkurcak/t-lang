@@ -3,22 +3,22 @@
 #[derive(Discard)]
 struct P { x: int }
 
-fn total() -> int {
+fn total() -> int with panic {
     // Used before it's declared.
     let pair = Pair { left: P { x: 1 }, right: P { x: 2 } };
     /// Two of the top-level `P`.
     #[derive(Discard)]
     struct Pair { left: P, right: P }
     // A nested `fn` can use it, in its signature too.
-    fn sum(p: Pair) -> int { p.left.x + p.right.x }
+    fn sum(p: Pair) -> int with panic { p.left.x + p.right.x }
     sum(pair)
 }
 
-fn shapes() -> int {
+fn shapes() -> int with panic {
     // Generic.
     #[derive(Discard)]
     enum Shape<T> { Circle(T), Rect(T, T), Empty }
-    fn area(s: Shape<int>) -> int {
+    fn area(s: Shape<int>) -> int with panic {
         match s {
             Shape::Circle(r) => 3 * r * r,
             Shape::Rect(w, h) => w * h,
@@ -28,7 +28,7 @@ fn shapes() -> int {
     area(Shape::Circle(2)) + area(Shape::Rect(2, 3)) + area(Shape::<int>::Empty)
 }
 
-fn main() {
+fn main() with panic {
     print(total());  // expect: 3
     print(shapes()); // expect: 18
     // Shadows the top-level `P`.
@@ -62,8 +62,8 @@ fn other() -> int {
 }
 
 // In a nested `fn`.
-fn outer() -> int {
-    fn inner() -> int {
+fn outer() -> int with panic {
+    fn inner() -> int with panic {
         #[derive(Discard)]
         enum Sign { Minus, Plus }
         fn value(s: Sign) -> int {

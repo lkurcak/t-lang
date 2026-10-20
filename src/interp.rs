@@ -184,6 +184,7 @@ pub fn run(prog: &Program, out: &mut Vec<String>) -> Result<Value, Error> {
         memory: Memory::default(),
         temps: Vec::new(),
         depth: 0,
+        frames: Vec::new(),
         out,
     };
     let result = interp.call(Value::Fn("main".to_string()), Vec::new(), Span::new(0, 0))?;
@@ -351,6 +352,9 @@ struct Interp<'p, 'o> {
     /// to free when it's done.
     temps: Vec<Vec<Ptr>>,
     depth: usize,
+    /// The functions being run, outermost first, by name: whose effects
+    /// each panic and allocation must be among (see `effect`).
+    frames: Vec<String>,
     out: &'o mut Vec<String>,
 }
 
@@ -457,6 +461,33 @@ impl Interp<'_, '_> {
         Error::runtime(span, message)
     }
 
+    /// A panic, which every function being run must say it may have: if
+    /// one doesn't, the checker let through what it shouldn't have
+    /// (see docs/07-effects.md). Not running out of stack, which no effect
+    /// says.
+    fn panics(&mut self, span: Span, message: impl Into<String>) -> Error {
+        self.effect("panic");
+        self.panic(span, message)
+    }
+
+    /// Checks that every function being run says it may have effect
+    /// `name`, as one that's happening. Closures are checked through the
+    /// functions that call them, which have their effects.
+    fn effect(&self, name: &str) {
+        for f in &self.frames {
+            let says = self.fns[f.as_str()]
+                .effects
+                .iter()
+                .flat_map(|e| &e.items)
+                .any(|e| e.to_string() == name);
+            if !says {
+                unsound(&format!(
+                    "`{f}` doesn't say `with {name}`, but it's running at a `{name}`"
+                ));
+            }
+        }
+    }
+
     /// Drops the variables from `scope` on, the last declared first, and
     /// frees their slots.
     fn end_scope(&mut self, scope: usize) {
@@ -559,14 +590,17 @@ impl Interp<'_, '_> {
                 Ok(Value::Unit)
             }
             Value::Fn(name) if self.fns[name.as_str()].intrinsic.is_some() => {
-                let of = name.split("::<").next().unwrap_or_default();
-                self.intrinsic(of, args)
+                let of = name.split("::<").next().unwrap_or_default().to_string();
+                self.intrinsic(&of, &name, args, span)
             }
             Value::Fn(name) => {
                 let decl = self.fns[name.as_str()];
                 // A call gets a fresh environment: just the parameters.
                 let params = decl.params.iter().map(|p| p.name.name.clone());
-                self.enter(Vec::new(), params.zip(args).collect(), &decl.body, span)
+                self.frames.push(name);
+                let result = self.enter(Vec::new(), params.zip(args).collect(), &decl.body, span);
+                self.frames.pop();
+                result
             }
             // A closure called by value is the call's to use up, and what's
             // left of it is dropped when it returns.
@@ -586,9 +620,37 @@ impl Interp<'_, '_> {
         }
     }
 
-    /// Runs intrinsic `name` (see `check::INTRINSICS`) on `args`.
-    fn intrinsic(&mut self, name: &str, args: Vec<Value>) -> Result<Value, Error> {
+    /// Runs intrinsic `name` (see `check::INTRINSICS`), whose copy is
+    /// `copy`, on `args`, called at `span`.
+    fn intrinsic(
+        &mut self,
+        name: &str,
+        copy: &str,
+        args: Vec<Value>,
+        span: Span,
+    ) -> Result<Value, Error> {
+        if let Some(op) = name.strip_prefix("core::num::checked_") {
+            let [a, b] = <[Value; 2]>::try_from(args).unwrap_or_else(|_| unsound("checked arity"));
+            let (a, b) = (int(a), int(b));
+            let result = match op {
+                "add" => a.checked_add(b),
+                "sub" => a.checked_sub(b),
+                "mul" => a.checked_mul(b),
+                "div" => a.checked_div(b),
+                _ => unsound(&format!("unknown intrinsic `{name}`")),
+            };
+            // The copy of `Option<int>` the intrinsic returns.
+            let TypeExprKind::Named(option, _) = &self.fns[copy].ret.kind else {
+                unsound("`checked_` returns an `Option<int>`")
+            };
+            return Ok(match result {
+                Some(n) => Value::Variant(option.clone(), "Some".into(), vec![Value::Int(n)]),
+                None => Value::Variant(option.clone(), "None".into(), Vec::new()),
+            });
+        }
         match name {
+            // Aborts.
+            "core::panic::panic" => Err(self.panics(span, "panicked")),
             // Exchanges two values, making and throwing away none.
             "core::mem::swap" => {
                 let [a, b] = <[Value; 2]>::try_from(args).unwrap_or_else(|_| unsound("swap arity"));
@@ -785,7 +847,7 @@ impl Interp<'_, '_> {
                 match op {
                     UnOp::Neg => match int(v).checked_neg() {
                         Some(n) => Value::Int(n),
-                        None => return Err(self.panic(e.span, "integer overflow").into()),
+                        None => return Err(self.panics(e.span, "integer overflow").into()),
                     },
                     _ => Value::Bool(!bool(v)),
                 }
@@ -887,6 +949,7 @@ impl Interp<'_, '_> {
             ExprKind::MethodCall(..) => unreachable!("lifting makes method calls plain calls"),
             ExprKind::Variant(ty, _, _, args, ..) if ty.name == "Box" => {
                 let v = self.eval(&args[0])?;
+                self.effect("alloc");
                 Value::Box(self.memory.alloc(v, true))
             }
             ExprKind::Variant(ty, _, variant, args, ..) => {
@@ -1219,7 +1282,7 @@ impl Interp<'_, '_> {
             BinOp::Gt => return Ok(Value::Bool(l > r)),
             BinOp::Ge => return Ok(Value::Bool(l >= r)),
             BinOp::Div | BinOp::Rem if r == 0 => {
-                return Err(self.panic(span, "division by zero"));
+                return Err(self.panics(span, "division by zero"));
             }
             BinOp::Add => l.checked_add(r),
             BinOp::Sub => l.checked_sub(r),
@@ -1230,7 +1293,7 @@ impl Interp<'_, '_> {
         };
         match n {
             Some(n) => Ok(Value::Int(n)),
-            None => Err(self.panic(span, "integer overflow")),
+            None => Err(self.panics(span, "integer overflow")),
         }
     }
 }

@@ -11,7 +11,7 @@ impl<'a> P<'a, 'a> {
     }
 }
 
-fn main() {
+fn main() with {alloc, panic} {
     let long = Box::new(1);
     let x;
     {

@@ -12,9 +12,9 @@ struct Owner { name: int, data: Box<int> }
 #[derive(Discard)]
 enum Option<T> { Some(T), None }
 
-fn take(o: Owner) -> int { o.name + *o.data }
+fn take(o: Owner) -> int with panic { o.name + *o.data }
 
-fn main() {
+fn main() with {panic, alloc} {
     let p = Point { x: 1, y: 2 };
     let q = p;                  // copied
     print(p.x + q.y);           // expect: 3

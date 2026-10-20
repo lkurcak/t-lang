@@ -9,11 +9,11 @@ enum Option<T> { Some(T), None }
 #[derive(Discard)]
 struct Two { a: Box<int>, b: Box<int> }
 
-fn two(n: int) -> Two { Two { a: Box::new(n), b: Box::new(n + 1) } }
+fn two(n: int) -> Two with {alloc, panic} { Two { a: Box::new(n), b: Box::new(n + 1) } }
 
 fn first(t: Two) -> int { *t.a }    // `t.b` is freed when `first` returns
 
-fn main() {
+fn main() with {alloc, panic} {
     // Temporaries are freed at the end of their statement.
     print(*Box::new(1));                // expect: 1
     Box::new(2);

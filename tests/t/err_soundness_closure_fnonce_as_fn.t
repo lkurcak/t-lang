@@ -7,7 +7,7 @@ fn take(b: B) -> int {
     x
 }
 
-fn twice<F: Fn() -> int + Discard>(f: F) -> int { f() + f() }
+fn twice<F: Fn() -> int + Discard>(f: F) -> int with panic { f() + f() }
 
 fn main() {
     let b = B { x: 1 };

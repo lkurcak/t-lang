@@ -2,7 +2,7 @@
 // predicate takes each by `&`, for as long as the call, of whatever
 // lifetime that is: a closure meets that bound when the bound asks for it
 // (`|x| *x % 2 == 0`) or when its annotations say so (`|x: &int|`).
-fn main() {
+fn main() with panic {
     for x in (0..10).filter(|x| *x % 2 == 0) {
         print(x);
     }

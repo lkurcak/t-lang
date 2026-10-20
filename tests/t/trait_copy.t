@@ -18,7 +18,7 @@ fn dup<T: Copy>(x: T) -> Pair<T, T> { Pair { a: x, b: x } }
 
 fn unbox(b: Box<int>) -> int { *b }
 
-fn main() {
+fn main() with {panic, alloc} {
     let p = dup(3);
     print(p.a + p.b);                                // expect: 6
     let c = Callback { f: unbox };

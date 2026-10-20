@@ -273,6 +273,32 @@
     }
   },
   {
+    "type": "associated_effect",
+    "named": true,
+    "fields": {
+      "effects": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "effect_set",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "associated_equality",
     "named": true,
     "fields": {
@@ -754,6 +780,10 @@
       "required": false,
       "types": [
         {
+          "type": "associated_effect",
+          "named": true
+        },
+        {
           "type": "associated_type",
           "named": true
         },
@@ -793,6 +823,44 @@
       "types": [
         {
           "type": "where_clause",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "effect_set",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "effect",
+          "named": true
+        },
+        {
+          "type": "projection_type",
+          "named": true
+        },
+        {
+          "type": "qualified_type",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "effects",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "effect_set",
           "named": true
         }
       ]
@@ -1139,6 +1207,16 @@
           }
         ]
       },
+      "effects": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "effects",
+            "named": true
+          }
+        ]
+      },
       "name": {
         "multiple": false,
         "required": true,
@@ -1199,6 +1277,16 @@
     "type": "function_signature_item",
     "named": true,
     "fields": {
+      "effects": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "effects",
+            "named": true
+          }
+        ]
+      },
       "name": {
         "multiple": false,
         "required": true,
@@ -1259,6 +1347,16 @@
     "type": "function_type",
     "named": true,
     "fields": {
+      "effects": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "effects",
+            "named": true
+          }
+        ]
+      },
       "parameters": {
         "multiple": false,
         "required": true,
@@ -2552,6 +2650,16 @@
     "type": "trait_with_signature",
     "named": true,
     "fields": {
+      "effects": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "effects",
+            "named": true
+          }
+        ]
+      },
       "parameters": {
         "multiple": false,
         "required": true,
@@ -3180,6 +3288,14 @@
     "extra": true
   },
   {
+    "type": "effect",
+    "named": false
+  },
+  {
+    "type": "effect",
+    "named": true
+  },
+  {
     "type": "else",
     "named": false
   },
@@ -3311,6 +3427,10 @@
   {
     "type": "wildcard_pattern",
     "named": true
+  },
+  {
+    "type": "with",
+    "named": false
   },
   {
     "type": "{",

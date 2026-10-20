@@ -1,8 +1,8 @@
 // A variable declared `mut` that's never changed. The fix removes the `mut`.
 
-fn count(mut n: int) -> int { n + 1 }
+fn count(mut n: int) -> int with panic { n + 1 }
 
-fn main() {
+fn main() with panic {
     let mut x = 1;
     let mut y = 2;
     y += x;

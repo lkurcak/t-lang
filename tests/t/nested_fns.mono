@@ -1,10 +1,10 @@
 #[derive(Discard)]
-struct Holder { f: fn(int) -> int }
+struct Holder { f: fn(int) -> int with panic }
 
 #[derive(Discard)]
 struct One { n: int }
 
-fn main() {
+fn main() with panic {
     print(main::double(1));
     print(main::fact(5));
     print_bool(main::is_even(10));
@@ -21,44 +21,44 @@ fn main() {
 }
 
 /// Doubles `x`.
-fn main::double(x: int) -> int { x * 2 }
+fn main::double(x: int) -> int with panic { x * 2 }
 
-fn main::fact(n: int) -> int {
+fn main::fact(n: int) -> int with panic {
     if n == 0 { 1 } else { n * main::fact(n - 1) }
 }
 
-fn main::is_even(n: int) -> bool {
+fn main::is_even(n: int) -> bool with panic {
     if n == 0 { true } else { main::is_odd(n - 1) }
 }
 
-fn main::is_odd(n: int) -> bool {
+fn main::is_odd(n: int) -> bool with panic {
     if n == 0 { false } else { main::is_even(n - 1) }
 }
 
-fn main::twice::<int>(f: fn(int) -> int, x: int) -> int { f(f(x)) }
+fn main::twice::<int>(f: fn(int) -> int with panic, x: int) -> int with panic { f(f(x)) }
 
-fn main::twice::<bool>(f: fn(bool) -> bool, x: bool) -> bool { f(f(x)) }
+fn main::twice::<bool>(f: fn(bool) -> bool with panic, x: bool) -> bool with panic { f(f(x)) }
 
-fn main::sum_to(n: int) -> int { main::sum_to::go(1, 0, n) }
+fn main::sum_to(n: int) -> int with panic { main::sum_to::go(1, 0, n) }
 
-fn main::sum_to::go(i: int, acc: int, n: int) -> int {
+fn main::sum_to::go(i: int, acc: int, n: int) -> int with panic {
     if i > n { acc } else { main::sum_to::go(i + 1, acc + i, n) }
 }
 
-fn main::inc(x: int) -> int { x + 1 }
+fn main::inc(x: int) -> int with panic { x + 1 }
 
-fn pick(b: bool) -> fn(int) -> int {
+fn pick(b: bool) -> fn(int) -> int with panic {
     if b { double_it() } else { pick::neg }
 }
 
-fn pick::neg(x: int) -> int { -x }
+fn pick::neg(x: int) -> int with panic { -x }
 
-fn double_it() -> fn(int) -> int {
+fn double_it() -> fn(int) -> int with panic {
     let h = Holder { f: double_it::double };
     h.f
 }
 
-fn double_it::double(x: int) -> int { x + x }
+fn double_it::double(x: int) -> int with panic { x + x }
 
 fn top() -> int { top::one().n }
 

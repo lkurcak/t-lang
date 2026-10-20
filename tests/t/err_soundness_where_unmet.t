@@ -7,6 +7,7 @@ struct Fds { left: int }
 
 impl Iterator for Fds {
     type Item = Fd;
+    effect e = {};
 
     fn next(&mut self) -> Option<Fd> {
         if self.left == 0 { return Option::None; }

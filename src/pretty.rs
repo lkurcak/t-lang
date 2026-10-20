@@ -474,6 +474,7 @@ impl Printer<'_> {
         };
         let open = self.find(t.name.span.end, &Tok::LBrace);
         let mut items: Vec<BodyItem> = t.assoc.iter().map(BodyItem::Decl).collect();
+        items.extend(t.effects.iter().map(BodyItem::EffectDecl));
         items.extend(t.methods.iter().map(|m| BodyItem::Fn(&m.decl, m.provided)));
         let body = self.methods(open, t.span.end - 1, items);
         doc + public(t.public) + "trait " + &t.name.name + supers + " " + body
@@ -489,6 +490,7 @@ impl Printer<'_> {
         };
         let open = self.find(d.self_ty.span.end, &Tok::LBrace);
         let mut items: Vec<BodyItem> = d.assoc.iter().map(BodyItem::Def).collect();
+        items.extend(d.effects.iter().map(BodyItem::EffectDef));
         items.extend(d.methods.iter().map(|f| BodyItem::Fn(f, true)));
         let body = self.methods(open, d.span.end - 1, items);
         doc + "impl" + generics + header + self.ty(&d.self_ty) + " " + body
@@ -508,6 +510,8 @@ impl Printer<'_> {
                 BodyItem::Fn(f, _) => (f.doc.as_ref(), &f.allows[..], f.span),
                 BodyItem::Decl(a) => (a.doc.as_ref(), &[][..], a.span),
                 BodyItem::Def(a) => (a.doc.as_ref(), &[][..], a.span),
+                BodyItem::EffectDecl(a) => (a.doc.as_ref(), &[][..], a.span),
+                BodyItem::EffectDef(a) => (a.doc.as_ref(), &[][..], a.span),
             };
             let start = lead_start(doc, allows, span.start);
             body = body + Doc::HardLine + self.element(start, i == 0);
@@ -526,6 +530,14 @@ impl Printer<'_> {
                 BodyItem::Def(a) => {
                     let lead = self.lead(a.doc.as_ref(), &[], a.span.start);
                     lead + "type " + &a.name.name + " = " + self.ty(&a.ty) + ";"
+                }
+                BodyItem::EffectDecl(a) => {
+                    let lead = self.lead(a.doc.as_ref(), &[], a.span.start);
+                    lead + "effect " + &a.name.name + ";"
+                }
+                BodyItem::EffectDef(a) => {
+                    let lead = self.lead(a.doc.as_ref(), &[], a.span.start);
+                    lead + "effect " + &a.name.name + " = " + self.effects(&a.effects) + ";"
                 }
             };
             body = body + doc + self.trailing(span.end);
@@ -575,6 +587,9 @@ impl Printer<'_> {
             out = out + self.types(PARENS, close, params);
             if let Some(ret) = ret {
                 out = out + " -> " + self.ty(ret);
+            }
+            if let Some(e) = &b.effects {
+                out = out + " " + self.effects(e);
             }
             return out;
         }
@@ -706,10 +721,24 @@ impl Printer<'_> {
     /// if it fits there, and otherwise on lines of its own, one bound to a
     /// line, as rustfmt does: then a body's `{` goes on a line of its own
     /// too. With a space before the body after it, if there's a `body`.
+    ///
+    /// Its effects, `with ..`, come first, and go on a line of their own
+    /// with it.
     fn wheres(&mut self, f: &FnDecl, body: bool) -> Doc {
         let after = if body { text(" ") } else { Doc::nil() };
+        let effects = match &f.effects {
+            Some(e) => Doc::Line + self.effects(e),
+            None => Doc::nil(),
+        };
+        let end = match body {
+            true => Doc::Line,
+            false => Doc::nil(),
+        };
         if f.generics.wheres.is_empty() {
-            return after;
+            return match f.effects {
+                Some(_) => group(effects + end),
+                None => after,
+            };
         }
         let mut preds = Doc::nil();
         for (i, (subject, bounds)) in f.generics.wheres.iter().enumerate() {
@@ -722,11 +751,7 @@ impl Printer<'_> {
             }
         }
         let comma = Doc::IfBreak(Box::new(text(",")), Box::new(Doc::nil()));
-        let end = match body {
-            true => Doc::Line,
-            false => Doc::nil(),
-        };
-        group(Doc::Line + "where" + nest(Doc::Line + preds + comma) + end)
+        group(effects + Doc::Line + "where" + nest(Doc::Line + preds + comma) + end)
     }
 
     /// A function, up to its body.
@@ -754,6 +779,37 @@ impl Printer<'_> {
             _ => text(" -> ") + self.ty(&f.ret),
         };
         doc + "fn " + &f.name.name + generics + params + ret
+    }
+
+    /// `with panic`, `with {alloc, e}`, or `{}` after `effect e =`. One
+    /// effect isn't in braces.
+    fn effects(&mut self, e: &EffectSet) -> Doc {
+        let items: Vec<Doc> = e.items.iter().map(|i| self.effect(i)).collect();
+        let mut out = match e.with {
+            true => text("with "),
+            false => Doc::nil(),
+        };
+        if items.len() == 1 {
+            return out + items.into_iter().next().expect("one");
+        }
+        out = out + "{";
+        for (i, item) in items.into_iter().enumerate() {
+            if i > 0 {
+                out = out + ", ";
+            }
+            out = out + item;
+        }
+        out + "}"
+    }
+
+    fn effect(&mut self, e: &Effect) -> Doc {
+        match &e.kind {
+            EffectKind::Named(n) => text(&n.name),
+            EffectKind::Proj(t, Some(tr), name) => {
+                text("<") + self.ty(t) + " as " + &tr.name + ">::" + &name.name
+            }
+            EffectKind::Proj(t, None, name) => self.ty(t) + "::" + &name.name,
+        }
     }
 
     /// Prints `e`, in parentheses if it binds less tightly than `min`, or if
@@ -1240,13 +1296,17 @@ impl Printer<'_> {
                 }
                 out
             }
-            TypeExprKind::Fn(params, ret) => {
+            TypeExprKind::Fn(params, ret, effects) => {
                 let open = self.find(t.span.start, &Tok::LParen);
                 let close = self.close(open, params.last().map(|p| p.span.end), &Tok::RParen);
                 let params = self.types(PARENS, close, params);
-                match ret.kind {
+                let out = match ret.kind {
                     TypeExprKind::Unit => text("fn") + params,
                     _ => text("fn") + params + " -> " + self.ty(ret),
+                };
+                match effects {
+                    Some(e) => out + " " + self.effects(e),
+                    None => out,
                 }
             }
         }
@@ -1352,6 +1412,10 @@ enum BodyItem<'a> {
     Decl(&'a AssocDecl),
     /// `type Item = int;`, in an impl.
     Def(&'a AssocDef),
+    /// `effect e;`, in a trait.
+    EffectDecl(&'a EffectDecl),
+    /// `effect e = panic;`, in an impl.
+    EffectDef(&'a EffectDef),
 }
 
 impl BodyItem<'_> {
@@ -1360,6 +1424,8 @@ impl BodyItem<'_> {
             BodyItem::Fn(f, _) => lead_start_span(f),
             BodyItem::Decl(a) => a.span,
             BodyItem::Def(a) => a.span,
+            BodyItem::EffectDecl(a) => a.span,
+            BodyItem::EffectDef(a) => a.span,
         }
     }
 }

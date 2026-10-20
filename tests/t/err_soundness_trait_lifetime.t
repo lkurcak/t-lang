@@ -11,7 +11,7 @@ impl<'a> Get for S<'a> {
     fn get(&self) -> &int { self.r }
 }
 
-fn main() {
+fn main() with {alloc, panic} {
     let out;
     {
         let n = Box::new(3);

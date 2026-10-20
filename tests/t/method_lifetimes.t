@@ -14,7 +14,7 @@ impl<'a> Holder<'a> {
     fn peek(&self) -> &int { self.r }
 }
 
-fn main() {
+fn main() with panic {
     let n = 7;
     let r;
     {

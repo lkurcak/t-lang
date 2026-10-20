@@ -10,11 +10,11 @@ fn app<F: Discard>(_f: F) -> bool { true }
 fn first<T: Discard>(x: T, _y: T) -> T { x }
 
 trait Use {
-    fn use_(self) -> int;
+    fn use_(self) -> int with panic;
 }
 
 impl Use for int {
-    fn use_(self) -> int { self + 1 }
+    fn use_(self) -> int with panic { self + 1 }
 }
 
 #[derive(Copy, Discard)]
@@ -38,7 +38,7 @@ impl<P: Discard> S<P> {
 
 impl<P: Use> S<P> {
     // As the receiver of a method that takes `self`.
-    fn recv(self) -> int { self.p.use_() }
+    fn recv(self) -> int with panic { self.p.use_() }
 }
 
 struct Out<P> { i: In<P> }
@@ -59,7 +59,7 @@ impl<F: FnOnce() -> int> K<F> {
     fn call(self) -> int { (self.f)() }
 }
 
-fn main() {
+fn main() with panic {
     print_bool(S { p: 1 }.arg());                // expect: true
     print(S { p: 2 }.bind());                    // expect: 2
     print(S { p: 3 }.pick(S { p: 4 }));          // expect: 3

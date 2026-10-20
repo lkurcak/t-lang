@@ -14,14 +14,14 @@ fn die() -> ! {
     loop {}
 }
 
-fn two(a: Fd, b: int) -> int { close(a) + b }
+fn two(a: Fd, b: int) -> int with panic { close(a) + b }
 
 struct P { a: Fd, b: Fd }
 
 #[allow(dead_code)]
 enum E { Two(Fd, Fd), One(Fd) }
 
-fn main() {
+fn main() with {panic, alloc} {
     // An argument moves `b` out and puts a new one in, before `swap`
     // borrows it.
     let mut a = Fd { n: 1 };

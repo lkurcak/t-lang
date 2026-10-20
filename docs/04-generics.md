@@ -16,8 +16,8 @@ fn map<T, U>(o: Option<T>, f: fn(T) -> U) -> Option<U> {
 }
 
 fn main() {
-    match map(Option::Some(4), |x| x * 10) {
-        Option::Some(y) => print(y), // expect: 40
+    match map(Option::Some(40), |x| x / 10) {
+        Option::Some(y) => print(y), // expect: 4
         Option::None => {},
     }
 }

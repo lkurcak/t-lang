@@ -70,7 +70,8 @@
 ; Keywords
 
 "fn" @keyword.function
-["trait" "impl" "for" "mod" "use" "where"] @keyword
+["trait" "impl" "for" "mod" "use" "where" "with" "effect"] @keyword
+(effect) @type.builtin
 (visibility_modifier) @keyword.storage.modifier
 "let" @keyword
 ["struct" "enum" "type"] @keyword.type

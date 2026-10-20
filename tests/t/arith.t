@@ -1,6 +1,6 @@
 // Integer arithmetic and operator precedence.
 
-fn main() {
+fn main() with panic {
     print(1 + 2 * 3);       // expect: 7
     print((1 + 2) * 3);     // expect: 9
     print(10 - 4 - 3);      // expect: 3

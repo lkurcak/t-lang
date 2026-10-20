@@ -8,7 +8,7 @@ checker), `src/borrowck.rs` and `src/borrowck/` (the borrow checker), and
 #[derive(Discard)]
 enum List { Nil, Cons(int, Box<List>) }
 
-fn sum(l: &List) -> int {
+fn sum(l: &List) -> int with panic {
     match l {
         List::Nil => 0,
         List::Cons(x, rest) => *x + sum(rest),
@@ -25,7 +25,7 @@ fn bump(l: &mut List) {
     }
 }
 
-fn main() {
+fn main() with {alloc, panic} {
     let mut l = List::Cons(1, Box::new(List::Cons(2, Box::new(List::Nil))));
     bump(&mut l);
     print(sum(&l)); // expect: 5
@@ -70,7 +70,7 @@ owner goes away, so does the value, and anything it owns. A `Box<T>` owns
 a `T` on the heap, so freeing the box frees the `T`:
 
 ```rust
-fn main() {
+fn main() with {alloc, panic} {
     let b = Box::new(5); // allocates
     print(*b);           // expect: 5
 }                        // `b` goes away: the box is freed
@@ -85,7 +85,7 @@ using a value that isn't `Copy` *moves* it: the new place owns it, and the
 old one can't be used again until it gets a new value.
 
 ```rust,error
-fn main() {
+fn main() with {alloc, panic} {
     let b = Box::new(1);
     let c = b; // moved: `c` owns the box now
     print(*c);
@@ -111,7 +111,7 @@ enums that say so with `#[derive(Copy)]`, if all their fields are `Copy`:
 #[derive(Discard, Copy)]
 struct Point { x: int, y: int }
 
-fn main() {
+fn main() with panic {
     let p = Point { x: 1, y: 2 };
     let q = p;        // copied
     print(p.x + q.y); // expect: 3
@@ -149,7 +149,7 @@ as can their fields, and `+=` and the like work on `int`s. With mutation
 comes the `while` loop, which needs it to ever end:
 
 ```rust
-fn fib(n: int) -> int {
+fn fib(n: int) -> int with panic {
     let mut a = 0;
     let mut b = 1;
     let mut i = 0;
@@ -162,7 +162,7 @@ fn fib(n: int) -> int {
     a
 }
 
-fn main() {
+fn main() with panic {
     print(fib(10)); // expect: 55
 }
 ```
@@ -297,14 +297,14 @@ enum Option<T> { Some(T), None }
 #[derive(Discard)]
 struct Node<'a> { value: int, next: Option<&'a Node<'a>> }
 
-fn total(n: &Node) -> int {
+fn total(n: &Node) -> int with panic {
     match n.next {
         Option::Some(next) => n.value + total(next),
         Option::None => n.value,
     }
 }
 
-fn main() {
+fn main() with panic {
     let c = Node { value: 3, next: Option::None };
     let b = Node { value: 2, next: Option::Some(&c) };
     let a = Node { value: 1, next: Option::Some(&b) };
@@ -448,9 +448,9 @@ in their lifetimes, a small corner of System F (docs/04-generics.md) that
 monomorphisation doesn't mind, since lifetimes don't exist at run time.
 
 ```rust
-fn apply(f: fn(&int) -> int, x: &int) -> int { f(x) }
+fn apply(f: fn(&int) -> int with panic, x: &int) -> int with panic { f(x) }
 
-fn main() {
+fn main() with panic {
     let n = 3;
     print(apply(|r| *r + 1, &n)); // expect: 4
 }

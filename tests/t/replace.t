@@ -22,7 +22,7 @@ fn rotate<T>(a: &mut T, b: &mut T, c: T) -> T {
 #[derive(Discard)]
 struct Holder<'a> { r: &'a mut int }
 
-fn main() {
+fn main() with {alloc, panic} {
     let mut slot = Fd { n: 1 };
     print(close(swap_in(&mut slot, 2))); // expect: 1
     print(close(slot));                  // expect: 2

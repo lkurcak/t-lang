@@ -1,10 +1,10 @@
 // `Result` comes from `core`, through the prelude.
 
-fn div(a: int, b: int) -> Result<int, bool> {
+fn div(a: int, b: int) -> Result<int, bool> with panic {
     if b == 0 { Result::Err(false) } else { Result::Ok(a / b) }
 }
 
-fn main() {
+fn main() with panic {
     let ok = div(6, 3);
     let err = div(1, 0);
     print_bool(ok.is_ok());   // expect: true

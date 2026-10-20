@@ -62,6 +62,19 @@ pub enum Type {
     /// definition is a `traits::OpaqueDef`. Monomorphisation replaces it
     /// with the hidden type.
     Opaque(String, Vec<Region>, Vec<Type>),
+    /// `{alloc, e}`: a set of *effects*, what a call may do besides give
+    /// its result (see docs/07-effects.md). A type of a kind of its own,
+    /// as in Koka: it's only ever a function type's effects, or a type
+    /// argument for an effect parameter, never the type of a value. Its
+    /// elements are `Alloc`, `Panic`, effect parameters (`Param`),
+    /// associated effects (`Proj`) and variables; `Type::effects` keeps
+    /// them flat, sorted and without repeats, so equal sets are equal
+    /// types.
+    Effects(Vec<Type>),
+    /// `alloc`, in an `Effects`: may allocate memory.
+    Alloc,
+    /// `panic`, in an `Effects`: may abort the program.
+    Panic,
 }
 
 /// A *region*, or *lifetime*: the stretch of the program during which a
@@ -129,16 +142,80 @@ pub struct FnType {
     /// reference of *any* lifetime, as `for<'x> fn(&'x int) -> int` would
     /// say in Rust: it's *higher-ranked*. Each call picks the lifetimes.
     pub bound: Vec<String>,
+    /// What its calls may do: always a `Type::Effects`, empty if they can
+    /// do nothing but give their result.
+    pub effects: Box<Type>,
 }
 
 impl Type {
-    /// `fn(params) -> ret`.
+    /// `fn(params) -> ret`, whose calls do nothing else.
     pub fn func(params: Vec<Type>, ret: Type) -> Type {
+        Type::func_with(params, ret, Type::no_effects())
+    }
+
+    /// `fn(params) -> ret with effects`.
+    pub fn func_with(params: Vec<Type>, ret: Type, effects: Type) -> Type {
         Type::Fn(FnType {
             params,
             ret: Box::new(ret),
             bound: Vec::new(),
+            effects: Box::new(effects),
         })
+    }
+
+    /// `{}`: no effects.
+    pub fn no_effects() -> Type {
+        Type::Effects(Vec::new())
+    }
+
+    /// The set of `items`, each an effect or a set of them: flat, sorted
+    /// and without repeats.
+    pub fn effects(items: impl IntoIterator<Item = Type>) -> Type {
+        fn flatten(t: Type, out: &mut Vec<Type>) {
+            match t {
+                Type::Effects(items) => items.into_iter().for_each(|i| flatten(i, out)),
+                t => out.push(t),
+            }
+        }
+        let mut out = Vec::new();
+        items.into_iter().for_each(|i| flatten(i, &mut out));
+        out.sort_by_cached_key(effect_key);
+        out.dedup();
+        Type::Effects(out)
+    }
+
+    /// The elements of an effect set: none if this isn't one.
+    pub fn effect_items(&self) -> &[Type] {
+        match self {
+            Type::Effects(items) => items,
+            _ => &[],
+        }
+    }
+
+    /// Is this an effect set with nothing in it?
+    pub fn is_no_effects(&self) -> bool {
+        matches!(self, Type::Effects(items) if items.is_empty())
+    }
+}
+
+/// Where an effect goes in a set: `alloc`, `panic`, then parameters,
+/// associated effects and variables, each in an order of their own.
+fn effect_key(t: &Type) -> (u8, String) {
+    match t {
+        Type::Alloc => (0, String::new()),
+        Type::Panic => (1, String::new()),
+        Type::Param(p) => (2, p.clone()),
+        Type::Proj(..) => (3, format!("{t:?}")),
+        Type::Var(v) => (4, format!("{v:010}")),
+        t => (5, format!("{t:?}")),
+    }
+}
+
+/// `panic`, or `{alloc, panic}`: an effect set as it's written after `with`.
+pub fn effects_text(t: &Type) -> String {
+    match t.effect_items() {
+        [one] => one.to_string(),
+        items => format!("{{{}}}", comma_list(items)),
     }
 }
 
@@ -154,6 +231,14 @@ impl FnType {
         };
         let params = self.params.iter().map(|p| p.map_regions(&mut f)).collect();
         (params, self.ret.map_regions(&mut f))
+    }
+
+    /// The same signature, with these effects.
+    pub fn with_effects(&self, effects: Type) -> FnType {
+        FnType {
+            effects: Box::new(effects),
+            ..self.clone()
+        }
     }
 }
 
@@ -364,15 +449,22 @@ impl Type {
     /// goes through this and `map`, so a new kind of type with parts only
     /// has to be taught to these two (and `same_shape`).
     pub fn parts(&self) -> impl Iterator<Item = &Type> {
-        let (params, ret): (&[Type], Option<&Type>) = match self {
-            Type::Fn(f) => (&f.params, Some(&f.ret)),
-            Type::Adt(_, _, args) | Type::Opaque(_, _, args) => (args, None),
-            Type::Ref(_, _, t) | Type::Box(t) | Type::Proj(t, ..) => (&[], Some(t)),
-            Type::Int | Type::Bool | Type::Unit | Type::Never | Type::Param(_) | Type::Var(_) => {
-                (&[], None)
+        let (params, ret, effects): (&[Type], Option<&Type>, Option<&Type>) = match self {
+            Type::Fn(f) => (&f.params, Some(&f.ret), Some(&f.effects)),
+            Type::Adt(_, _, args) | Type::Opaque(_, _, args) | Type::Effects(args) => {
+                (args, None, None)
             }
+            Type::Ref(_, _, t) | Type::Box(t) | Type::Proj(t, ..) => (&[], Some(t), None),
+            Type::Int
+            | Type::Bool
+            | Type::Unit
+            | Type::Never
+            | Type::Param(_)
+            | Type::Var(_)
+            | Type::Alloc
+            | Type::Panic => (&[], None, None),
         };
-        params.iter().chain(ret)
+        params.iter().chain(ret).chain(effects)
     }
 
     /// This type, with each of its parts replaced by `f(part)`. Its regions
@@ -383,7 +475,9 @@ impl Type {
                 params: sig.params.iter().map(&mut f).collect(),
                 ret: Box::new(f(&sig.ret)),
                 bound: sig.bound.clone(),
+                effects: Box::new(Type::effects([f(&sig.effects)])),
             }),
+            Type::Effects(items) => Type::effects(items.iter().map(f)),
             Type::Adt(name, regions, args) => {
                 Type::Adt(name.clone(), regions.clone(), args.iter().map(f).collect())
             }
@@ -393,9 +487,14 @@ impl Type {
             Type::Ref(r, m, t) => Type::Ref(r.clone(), *m, Box::new(f(t))),
             Type::Box(t) => Type::Box(Box::new(f(t))),
             Type::Proj(t, tr, name) => Type::Proj(Box::new(f(t)), tr.clone(), name.clone()),
-            Type::Int | Type::Bool | Type::Unit | Type::Never | Type::Param(_) | Type::Var(_) => {
-                self.clone()
-            }
+            Type::Int
+            | Type::Bool
+            | Type::Unit
+            | Type::Never
+            | Type::Param(_)
+            | Type::Var(_)
+            | Type::Alloc
+            | Type::Panic => self.clone(),
         }
     }
 
@@ -413,6 +512,8 @@ impl Type {
             (Type::Box(_), Type::Box(_)) => true,
             (Type::Proj(_, a, x), Type::Proj(_, b, y)) => a == b && x == y,
             (Type::Var(_), _) | (_, Type::Var(_)) => false,
+            // Sets aren't equal element by element (see `unify`).
+            (Type::Effects(_), _) | (_, Type::Effects(_)) => false,
             (a, b) => a == b,
         }
     }
@@ -461,11 +562,13 @@ impl Type {
                     .map(|p| p.map_free_regions(f, bound))
                     .collect();
                 let ret = sig.ret.map_free_regions(f, bound);
+                let effects = sig.effects.map_free_regions(f, bound);
                 bound.truncate(outer);
                 Type::Fn(FnType {
                     params,
                     ret: Box::new(ret),
                     bound: sig.bound.clone(),
+                    effects: Box::new(effects),
                 })
             }
             t => t.map(|p| p.map_free_regions(f, bound)),
@@ -530,7 +633,26 @@ impl Type {
         match self {
             Type::Fn(sig) => {
                 let params: Vec<String> = sig.params.iter().map(Type::symbols).collect();
-                format!("fn({}) -> {}", params.join(", "), sig.ret.symbols())
+                let effects: Vec<String> = sig
+                    .effects
+                    .effect_items()
+                    .iter()
+                    .map(Type::symbols)
+                    .collect();
+                let effects = match &effects[..] {
+                    [] => String::new(),
+                    [one] => format!(" with {one}"),
+                    all => format!(" with {{{}}}", all.join(", ")),
+                };
+                format!(
+                    "fn({}) -> {}{effects}",
+                    params.join(", "),
+                    sig.ret.symbols()
+                )
+            }
+            Type::Effects(items) => {
+                let items: Vec<String> = items.iter().map(Type::symbols).collect();
+                format!("{{{}}}", items.join(", "))
             }
             Type::Adt(name, _, args) if args.is_empty() => name.clone(),
             Type::Adt(name, _, args) => {
@@ -562,7 +684,23 @@ impl fmt::Display for Type {
             Type::Bool => f.write_str("bool"),
             Type::Unit => f.write_str("()"),
             Type::Never => f.write_str("!"),
-            Type::Fn(sig) => write!(f, "fn({}) -> {}", comma_list(&sig.params), sig.ret),
+            // Effects not worked out yet aren't shown: what's known is.
+            Type::Fn(sig) => {
+                write!(f, "fn({}) -> {}", comma_list(&sig.params), sig.ret)?;
+                let known = Type::Effects(
+                    (sig.effects.effect_items().iter())
+                        .filter(|e| !matches!(e, Type::Var(_)))
+                        .cloned()
+                        .collect(),
+                );
+                match known.is_no_effects() {
+                    true => Ok(()),
+                    false => write!(f, " with {}", effects_text(&known)),
+                }
+            }
+            Type::Effects(items) => write!(f, "{{{}}}", comma_list(items)),
+            Type::Alloc => f.write_str("alloc"),
+            Type::Panic => f.write_str("panic"),
             // Its type parameters are those in scope where it's written,
             // which say nothing to a reader.
             Type::Adt(name, ..) if is_closure(name) => f.write_str("{closure}"),
@@ -599,6 +737,16 @@ impl fmt::Display for Type {
             // Like Rust: "some type, not known yet".
             Type::Var(_) => f.write_str("_"),
         }
+    }
+}
+
+/// Type parameter `name` as a type argument: `Type::Param`, or, for an
+/// effect parameter, the set of just it, as effect arguments are always
+/// sets.
+pub fn param(name: &str) -> Type {
+    match crate::parser::is_effect_name(name) {
+        true => Type::Effects(vec![Type::Param(name.to_string())]),
+        false => Type::Param(name.to_string()),
     }
 }
 

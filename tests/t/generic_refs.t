@@ -19,7 +19,7 @@ fn fill<'a, T>(s: &mut Option<&'a T>, v: &'a T) { *s = Option::Some(v); }
 
 fn read<'a, T>(s: Slot<'a, T>) -> &'a T { s.r }
 
-fn main() {
+fn main() with panic {
     let x = 1;
     let y = 2;
     let p = Pair { a: &x, b: &y };

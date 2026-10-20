@@ -8,7 +8,7 @@ fn close(fd: Fd) -> int {
     n
 }
 
-fn main() {
+fn main() with panic {
     let fd = open(1);
     let r = &fd;
     let Fd { n } = fd;

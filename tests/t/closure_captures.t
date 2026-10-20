@@ -4,7 +4,7 @@
 #[derive(Discard)]
 enum Opt { None, Some(int) }
 
-fn main() {
+fn main() with panic {
     let a = 1;
     let b = 2;
     let f = |b| {
@@ -25,4 +25,4 @@ fn main() {
     print(h());                     // expect: 4
 }
 
-fn double(x: int) -> int { x * 2 }
+fn double(x: int) -> int with panic { x * 2 }

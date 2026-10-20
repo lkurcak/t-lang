@@ -4,8 +4,9 @@ struct Lines { left: int }
 
 impl Iterator for Lines {
     type Item = int;
+    effect e = panic;
 
-    fn next(&mut self) -> Option<int> {
+    fn next(&mut self) -> Option<int> with panic {
         if self.left == 0 { return Option::None; }
         self.left = self.left - 1;
         Option::Some(self.left)
@@ -17,7 +18,7 @@ fn close(lines: Lines) -> int {
     left
 }
 
-fn main() {
+fn main() with panic {
     let mut lines = Lines { left: 5 };
     for n in &mut lines {
         if n == 2 {

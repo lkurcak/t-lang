@@ -1,20 +1,20 @@
-fn count::<bool>(_x: bool, n: int) -> int {
+fn count::<bool>(_x: bool, n: int) -> int with panic {
     if n == 0 { 0 } else { 1 + count::<int>(n, n - 1) }
 }
 
-fn count::<int>(_x: int, n: int) -> int {
+fn count::<int>(_x: int, n: int) -> int with panic {
     if n == 0 { 0 } else { 1 + count::<int>(n, n - 1) }
 }
 
-fn flip::<int, bool>(a: int, b: bool, n: int) -> int {
+fn flip::<int, bool>(a: int, b: bool, n: int) -> int with panic {
     if n == 0 { 0 } else { 1 + flip::<bool, int>(b, a, n - 1) }
 }
 
-fn flip::<bool, int>(a: bool, b: int, n: int) -> int {
+fn flip::<bool, int>(a: bool, b: int, n: int) -> int with panic {
     if n == 0 { 0 } else { 1 + flip::<int, bool>(b, a, n - 1) }
 }
 
-fn main() {
+fn main() with panic {
     print(count::<bool>(true, 5));
     print(flip::<int, bool>(1, false, 4));
 }

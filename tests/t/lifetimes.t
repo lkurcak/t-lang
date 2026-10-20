@@ -9,7 +9,7 @@ struct Pair { a: int, b: int }
 fn first(p: &Pair) -> &int { &p.a }
 
 // Written: the result lives as long as both arguments do.
-fn longer<'a>(x: &'a Pair, y: &'a Pair) -> &'a Pair {
+fn longer<'a>(x: &'a Pair, y: &'a Pair) -> &'a Pair with panic {
     if x.a + x.b >= y.a + y.b { x } else { y }
 }
 
@@ -35,7 +35,7 @@ fn shorter<'a, 'b: 'a>(x: &'a int, y: &'b int) -> &'a int {
 // A reference to a reference: the inner one outlives the outer.
 fn deref<'a, 'b>(r: &'a &'b int) -> &'b int { *r }
 
-fn main() {
+fn main() with panic {
     let p = Pair { a: 1, b: 2 };
     let q = Pair { a: 3, b: 4 };
     print(*first(&p));                      // expect: 1

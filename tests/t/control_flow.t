@@ -21,7 +21,7 @@ fn show(s: State) -> int {
 }
 
 // The `None` arm is a `!`, which fits as the `int` the other arm is.
-fn or_minus_one(o: Option<int>) -> int {
+fn or_minus_one(o: Option<int>) -> int with panic {
     let n = match o {
         Option::Some(n) => n,
         Option::None => return -1,
@@ -30,7 +30,7 @@ fn or_minus_one(o: Option<int>) -> int {
 }
 
 // A `loop`'s value is what its `break` gives it.
-fn first_square_above(n: int) -> int {
+fn first_square_above(n: int) -> int with panic {
     let mut i = 0;
     loop {
         if i * i > n { break i * i; }
@@ -76,7 +76,7 @@ fn sign(n: int) -> int {
 
 // `return a + b` returns `a + b`: what follows a `return` runs as far right
 // as an expression can.
-fn add(a: int, b: int) -> int {
+fn add(a: int, b: int) -> int with panic {
     return a + b;
 }
 
@@ -88,7 +88,7 @@ fn print_positive(n: int) {
 
 fn apply(f: fn(int) -> int, x: int) -> int { f(x) }
 
-fn main() {
+fn main() with panic {
     print(show(login(true)));                       // expect: 1
     print(show(login(false)));                      // expect: 0
     print(or_minus_one(Option::Some(4)));           // expect: 40

@@ -7,12 +7,12 @@ struct HTTPServer { port: int }
 #[derive(Discard)]
 struct Vec2 { x: int, y: int }
 
-fn shift(p: my_point) -> my_point {
+fn shift(p: my_point) -> my_point with panic {
     let my_point { x, y } = p;
     my_point { x: x + 1, y }
 }
 
-fn main() {
+fn main() with panic {
     let p = shift(my_point { x: 1, y: 2 });
     let s = HTTPServer { port: 80 };
     let v = Vec2 { x: 3, y: 4 };

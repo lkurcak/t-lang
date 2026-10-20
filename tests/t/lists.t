@@ -3,12 +3,12 @@
 #[derive(Discard)]
 enum List { Nil, Cons(int, Box<List>) }
 
-fn push(l: List, x: int) -> List { List::Cons(x, Box::new(l)) }
+fn push(l: List, x: int) -> List with {alloc, panic} { List::Cons(x, Box::new(l)) }
 
 // `l` is a reference, so `match` looks through it, and binds `x` and
 // `rest` by reference: `rest` is a `&Box<List>`, which is used as the
 // `&List` `sum` wants.
-fn sum(l: &List) -> int {
+fn sum(l: &List) -> int with panic {
     match l {
         List::Nil => 0,
         List::Cons(x, rest) => *x + sum(rest),
@@ -43,7 +43,7 @@ fn bump(l: &mut List) {
 }
 
 // Reverses the list by moving each node over, freeing nothing.
-fn reverse(l: List) -> List {
+fn reverse(l: List) -> List with {alloc, panic} {
     let mut done = List::Nil;
     let mut todo = l;
     let mut more = true;
@@ -66,7 +66,7 @@ fn first(l: &List) -> int {
     }
 }
 
-fn main() {
+fn main() with {alloc, panic} {
     let mut l = push(push(push(List::Nil, 1), 2), 3);
     print(sum(&l));             // expect: 6
     print(len(&l));             // expect: 3

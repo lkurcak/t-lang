@@ -5,6 +5,7 @@
 use super::scope::source_name;
 use crate::ast::*;
 use crate::error::{Error, Span};
+use crate::parser::is_effect_name;
 use crate::types::{FnType, Region, Type};
 use std::collections::HashMap;
 
@@ -271,6 +272,12 @@ fn resolve_in(
                     ));
                 }
                 Some(TypeName::Opaque(..)) => unreachable!("an opaque type is written `impl`"),
+                None if params.contains(name) && crate::parser::is_effect_name(name) => {
+                    return Err(Error::ty(
+                        t.span,
+                        format!("`{name}` is an effect, not a type"),
+                    ));
+                }
                 None if params.contains(name) => (Type::Param(name.clone()), 0, 0),
                 None if name == "int" => (Type::Int, 0, 0),
                 None if name == "bool" => (Type::Bool, 0, 0),
@@ -332,7 +339,7 @@ fn resolve_in(
             )),
         },
         // A function type of its own, generic over what it leaves out.
-        TypeExprKind::Fn(params_, ret) => {
+        TypeExprKind::Fn(params_, ret, effects) => {
             let mut b = Binder {
                 bound: Vec::new(),
                 ret: None,
@@ -352,13 +359,62 @@ fn resolve_in(
                 _ => Err(inputs.len()),
             });
             let ret = go(ret, lifetimes, Some(&mut b))?;
+            let effects = match effects {
+                Some(e) => resolve_effects(e, names, proj, params, lifetimes)?,
+                None => Type::no_effects(),
+            };
             Ok(Type::Fn(FnType {
                 params: params_,
                 ret: Box::new(ret),
                 bound: b.bound,
+                effects: Box::new(effects),
             }))
         }
     }
+}
+
+/// Turns effects as written (`with {alloc, e}`) into the set they are, as
+/// `resolve` does a type: `params` are the type and effect parameters in
+/// scope.
+pub(crate) fn resolve_effects(
+    e: &EffectSet,
+    names: &dyn Fn(&str, &TypeExpr) -> Option<TypeName>,
+    proj: &ProjNames,
+    params: &[String],
+    lifetimes: &mut Lifetimes,
+) -> Result<Type, Error> {
+    let mut items = Vec::new();
+    for item in &e.items {
+        items.push(match &item.kind {
+            EffectKind::Named(n) => match n.name.as_str() {
+                "panic" => Type::Panic,
+                "alloc" => Type::Alloc,
+                name if params.iter().any(|p| p == name) => match is_effect_name(name) {
+                    true => Type::Param(name.to_string()),
+                    false => {
+                        return Err(Error::ty(
+                            n.span,
+                            format!("`{name}` is a type, not an effect"),
+                        ));
+                    }
+                },
+                name => {
+                    return Err(Error::ty(n.span, format!("there's no effect `{name}`")));
+                }
+            },
+            // As the projection it is, which is how `proj` knows it.
+            EffectKind::Proj(base, tr, name) => {
+                let written = TypeExpr {
+                    kind: TypeExprKind::Proj(base.clone(), tr.clone(), name.clone()),
+                    span: item.span,
+                    id: item.id,
+                };
+                let base = resolve_in(base, names, proj, params, lifetimes, None)?;
+                proj(base, tr.as_ref(), name, &written)?
+            }
+        });
+    }
+    Ok(Type::effects(items))
 }
 
 /// `t`, with each `_` in it renamed to a type parameter no program can
@@ -375,9 +431,10 @@ pub(super) fn name_holes(t: &TypeExpr, holes: &mut Vec<(String, Span)>) -> TypeE
             args.iter().map(|a| name_holes(a, holes)).collect(),
         ),
         TypeExprKind::Unit | TypeExprKind::Never | TypeExprKind::Lifetime(_) => t.kind.clone(),
-        TypeExprKind::Fn(params, ret) => TypeExprKind::Fn(
+        TypeExprKind::Fn(params, ret, effects) => TypeExprKind::Fn(
             params.iter().map(|p| name_holes(p, holes)).collect(),
             Box::new(name_holes(ret, holes)),
+            effects.clone(),
         ),
         TypeExprKind::Ref(l, m, inner) => {
             TypeExprKind::Ref(l.clone(), *m, Box::new(name_holes(inner, holes)))

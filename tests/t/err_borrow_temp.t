@@ -1,4 +1,4 @@
-fn main() {
+fn main() with {alloc, panic} {
     let r = &*Box::new(1);
     print(*r);
 }

@@ -30,7 +30,7 @@ impl Eq for E {
 
 fn same<T: Eq>(a: &T, b: &T) -> bool { a == b }
 
-fn main() {
+fn main() with {alloc, panic} {
     print_bool(S { n: 1 } == S { n: 2 });                     // expect: true
     print_bool(same(&S { n: 1 }, &S { n: 2 }));               // expect: true
     print_bool(W { x: S { n: 1 } } == W { x: S { n: 2 } });   // expect: true

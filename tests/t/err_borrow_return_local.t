@@ -1,4 +1,4 @@
-fn dangle(n: &int) -> &int {
+fn dangle(n: &int) -> &int with panic {
     let x = *n + 1;
     &x
 }

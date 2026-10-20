@@ -1,6 +1,6 @@
 // `let`, annotations, shadowing and block scoping.
 
-fn main() {
+fn main() with panic {
     let x = 1;
     let y: int = x + 1;
     print(y);                 // expect: 2

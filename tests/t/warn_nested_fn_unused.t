@@ -4,10 +4,10 @@
 fn main() {
     fn unused() -> int { 1 }
     // Only used by each other.
-    fn ping(n: int) -> int {
+    fn ping(n: int) -> int with panic {
         if n == 0 { 0 } else { pong(n - 1) }
     }
-    fn pong(n: int) -> int { ping(n) }
+    fn pong(n: int) -> int with panic { ping(n) }
     fn _on_purpose() {}
     fn used() -> int {
         fn also_unused() {}

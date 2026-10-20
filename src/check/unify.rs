@@ -10,7 +10,7 @@ use crate::types::Type;
 pub(super) struct Var {
     /// What it turned out to be, once `unify` finds out. That can be another
     /// variable, or a type with variables in it, like `fn(_) -> int`.
-    solution: Option<Type>,
+    pub(super) solution: Option<Type>,
     /// Where it came from, for when it's never solved: the span, what it's
     /// the type of ("the type of `x`") and how to fix that.
     span: Span,
@@ -182,6 +182,24 @@ impl Checker {
                 {
                     continue;
                 }
+                // An `Fn` bound's signature: as said, but for the effects,
+                // which are at most those it says (`traits::fits`).
+                if crate::traits::is_sig(&g.proj)
+                    && let (Type::Fn(have), Type::Fn(want)) = (&p, self.shallow(&g.is))
+                {
+                    let bare =
+                        |f: &crate::types::FnType| Type::Fn(f.with_effects(Type::no_effects()));
+                    self.unify_or(&bare(have), &bare(&want), g.span, |a, b| match &g.who {
+                        Some(who) => format!("`{who}` needs calls of it to be `{b}`, not `{a}`"),
+                        None => format!("expected `{b}`, found `{a}`"),
+                    })?;
+                    let why = super::effects::Why::Bound {
+                        who: g.who.clone().unwrap_or_default(),
+                        sig: g.is.clone(),
+                    };
+                    self.within(*have.effects.clone(), *want.effects, g.span, why);
+                    continue;
+                }
                 // As written, with its type as it's known now.
                 let proj = g.proj.map(|t| self.solved(t));
                 self.unify_or(&p, &g.is, g.span, |a, b| match &g.who {
@@ -272,6 +290,7 @@ impl Checker {
         }
         match (sa, sb) {
             (Type::Var(v), Type::Var(w)) if v == w => Ok(()),
+            (a @ Type::Effects(_), b @ Type::Effects(_)) => self.unify_effects(&a, &b),
             (Type::Var(v), t) | (t, Type::Var(v)) => {
                 if self.occurs(v, &t) {
                     return Err(Clash::Infinite(v, t));
@@ -287,6 +306,37 @@ impl Checker {
             }
             _ => Err(Clash::Mismatch),
         }
+    }
+
+    /// Unifies effect sets `a` and `b`. A set that's just a variable is the
+    /// other; one with variables, or projections not worked out yet, waits
+    /// for them, as two `Within`s, both ways; one with neither must be the
+    /// same set as the other.
+    fn unify_effects(&mut self, a: &Type, b: &Type) -> Result<(), Clash> {
+        let (a, b) = (self.solved(a), self.solved(b));
+        if a == b {
+            return Ok(());
+        }
+        for (x, y) in [(&a, &b), (&b, &a)] {
+            if let [Type::Var(v)] = x.effect_items()
+                && !y.effect_items().contains(&Type::Var(*v))
+            {
+                self.vars[*v as usize].solution = Some(y.clone());
+                return Ok(());
+            }
+        }
+        let open = |t: &Type| {
+            t.effect_items()
+                .iter()
+                .any(|e| matches!(e, Type::Var(_)) || self.unknown_proj(e))
+        };
+        if open(&a) || open(&b) {
+            let why = super::effects::Why::Same;
+            self.within(a.clone(), b.clone(), self.here, why.clone());
+            self.within(b, a, self.here, why);
+            return Ok(());
+        }
+        Err(Clash::Mismatch)
     }
 
     /// Unifies `a` and `b`. If they don't fit, the error at `span` says
@@ -336,6 +386,9 @@ impl Checker {
                     .unwrap_or_else(|_| unreachable!("a variable fits anything"));
             }
         }
+        // Before what's worked out of the closures, which needs their
+        // types without variables, effects and all.
+        self.settle_effects(vars)?;
         self.settle_closures()?;
         self.prove_all()?;
         for v in vars..self.vars.len() {

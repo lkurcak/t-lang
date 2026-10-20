@@ -8,14 +8,14 @@
 struct S { n: int }
 
 impl S {
-    fn get(&self, k: Box<int>) -> int { self.n + *k }
+    fn get(&self, k: Box<int>) -> int with panic { self.n + *k }
 }
 
-fn f(x: &int, y: Box<int>) -> int { *x + *y }
+fn f(x: &int, y: Box<int>) -> int with panic { *x + *y }
 
-fn g(x: &mut Box<int>, n: int) -> int { **x + n }
+fn g(x: &mut Box<int>, n: int) -> int with panic { **x + n }
 
-fn main() {
+fn main() with {alloc, panic} {
     let mut a = Box::new(1);
     let c = a;
     print(f(&*{ a = Box::new(5); Box::new(7) }, a)); // expect: 12

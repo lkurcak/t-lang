@@ -5,7 +5,7 @@ mod cells {
     #[derive(Discard where T: Discard)]
     pub struct Cell<T> { v: Box<T> }
 
-    pub fn cell<T>(v: T) -> Cell<T> { Cell { v: Box::new(v) } }
+    pub fn cell<T>(v: T) -> Cell<T> with {alloc, panic} { Cell { v: Box::new(v) } }
 
     // Needs nothing of `T`, and says so by writing nothing.
     #[derive(Copy, Discard)]
@@ -28,7 +28,7 @@ mod cells {
 
 fn five() -> int { 5 }
 
-fn main() {
+fn main() with {alloc, panic} {
     let _c = cells::cell(1);
     let t = cells::tag(3, five);
     let u = t;

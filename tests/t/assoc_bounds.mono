@@ -13,9 +13,9 @@ struct Count::<A> { of: A, n: int }
 #[derive(Discard)]
 struct Hold::<int><'r> { u: int, r: &'r int }
 
-fn shown::<W<A>>(s: &W::<A>) -> int { <W::<A> as Show>::show(&*s) }
+fn shown::<W<A>>(s: &W::<A>) -> int with panic { <W::<A> as Show>::show(&*s) }
 
-fn count::<A>(of: A) -> Count::<A> {
+fn count::<A>(of: A) -> Count::<A> with panic {
     let n = <A as Tr>::out(&of) + 1;
     Count::<A> { of, n }
 }
@@ -29,7 +29,7 @@ fn hold::<A><'r>(t: &A, r: &'r int) -> int {
     *h.r
 }
 
-fn main() {
+fn main() with panic {
     print(shown::<W<A>>(&W::<A> { t: A { n: 4 } }));
     let c = count::<A>(A { n: 1 });
     print(c.n + c.of.n);
@@ -42,4 +42,4 @@ fn <A as Tr>::out(&self) -> int { self.n }
 
 fn <B as Tr>::out(&self) -> bool { self.b }
 
-fn <W::<A> as Show>::show(&self) -> int { <A as Tr>::out(&self.t) * 10 }
+fn <W::<A> as Show>::show(&self) -> int with panic { <A as Tr>::out(&self.t) * 10 }

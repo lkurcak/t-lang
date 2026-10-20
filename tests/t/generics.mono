@@ -24,21 +24,26 @@ fn flip::<int, bool>(p: Pair::<int, bool>) -> Pair::<bool, int> {
     Pair::<bool, int> { first: p.second, second: p.first }
 }
 
-fn map::<int, int, {closure#1536}>(o: Option::<int>, f: {closure#1536}) -> Option::<int> {
+fn map::<{panic}, int, int, {closure#1619}>(o: Option::<int>, f: {closure#1619}) -> Option::<int>
+with panic
+{
     match o {
         Option::<int>::Some(x) => Option::<int>::Some(f(x)),
         Option::<int>::None => Option::<int>::None,
     }
 }
 
-fn map::<int, int, fn(int) -> int>(o: Option::<int>, f: fn(int) -> int) -> Option::<int> {
+fn map::<{panic}, int, int, fn(int) -> int with panic>(
+    o: Option::<int>,
+    f: fn(int) -> int with panic,
+) -> Option::<int> with panic {
     match o {
         Option::<int>::Some(x) => Option::<int>::Some(f(x)),
         Option::<int>::None => Option::<int>::None,
     }
 }
 
-fn map::<int, bool, fn(int) -> bool>(o: Option::<int>, f: fn(int) -> bool) -> Option::<bool> {
+fn map::<{}, int, bool, fn(int) -> bool>(o: Option::<int>, f: fn(int) -> bool) -> Option::<bool> {
     match o {
         Option::<int>::Some(x) => Option::<bool>::Some(f(x)),
         Option::<int>::None => Option::<bool>::None,
@@ -59,27 +64,30 @@ fn unwrap_or::<bool>(o: Option::<bool>, default: bool) -> bool {
     }
 }
 
-fn twice::<int>(f: fn(int) -> int, x: int) -> int { f(id::<int>(f(x))) }
+fn twice::<int>(f: fn(int) -> int with panic, x: int) -> int with panic { f(id::<int>(f(x))) }
 
-fn repeat::<int>(f: fn(int) -> int, x: int, n: int) -> int {
+fn repeat::<int>(f: fn(int) -> int with panic, x: int, n: int) -> int with panic {
     if n == 0 { x } else { repeat::<int>(f, f(x), n - 1) }
 }
 
-fn inc(x: int) -> int { x + 1 }
+fn inc(x: int) -> int with panic { x + 1 }
 
-fn main() {
+fn main() with panic {
     print(id::<int>(1));
     print_bool(id::<bool>(true));
     let p = flip::<int, bool>(Pair::<int, bool> { first: 1, second: false });
     print_bool(p.first);
     print(p.second);
     let n = 10;
-    let o = map::<int, int, {closure#1536}>(Option::<int>::Some(4), |x| x * n);
+    let o = map::<{panic}, int, int, {closure#1619}>(Option::<int>::Some(4), |x| x * n);
     print(unwrap_or::<int>(o, 0));
     let none: Option::<int> = Option::<int>::None;
-    print(unwrap_or::<int>(map::<int, int, fn(int) -> int>(none, |x| x + 1), -1));
+    print(unwrap_or::<int>(
+        map::<{panic}, int, int, fn(int) -> int with panic>(none, |x| x + 1),
+        -1,
+    ));
     print_bool(unwrap_or::<bool>(
-        map::<int, bool, fn(int) -> bool>(Option::<int>::Some(3), |x| x > 2),
+        map::<{}, int, bool, fn(int) -> bool>(Option::<int>::Some(3), |x| x > 2),
         false,
     ));
     print(twice::<int>(inc, 0));

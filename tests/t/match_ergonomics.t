@@ -29,7 +29,7 @@ fn as_ref<T>(o: &Option<T>) -> Option<&T> {
     }
 }
 
-fn main() {
+fn main() with {alloc, panic} {
     let o = Option::Some(Box::new(7));
     print(peek(&o));            // expect: 7
     // Nothing was moved out of `o`, so again:

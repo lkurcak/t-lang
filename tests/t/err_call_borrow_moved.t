@@ -2,8 +2,8 @@
 #[derive(Discard)]
 struct Stack { top: int }
 fn take(s: Stack) -> int { s.top }
-fn add(s: &Stack, n: int) -> int { s.top + n }
-fn main() {
+fn add(s: &Stack, n: int) -> int with panic { s.top + n }
+fn main() with panic {
     let v = Stack { top: 1 };
     print(add(&v, take(v)));
 }

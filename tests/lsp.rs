@@ -298,7 +298,7 @@ fn hovers_hints_and_goes_to_definitions() {
 fn hovers_and_hints_show_opaque_types_as_written() {
     let (child, mut c) = start();
     let uri = "file:///tmp/opaque.t";
-    let src = "fn adder(n: int) -> impl Fn(int) -> int + Discard { move |x| x + n }\nfn main() {\n    let f = adder(1);\n    print(f(2));\n}\n";
+    let src = "fn adder(n: int) -> impl Fn(int) -> int with panic + Discard { move |x| x + n }\nfn main() with panic {\n    let f = adder(1);\n    print(f(2));\n}\n";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
             "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
@@ -311,7 +311,7 @@ fn hovers_and_hints_show_opaque_types_as_written() {
     c.send(json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": at(3, 10)}));
     let hover = c.response(2)["result"].clone();
     assert_eq!(
-        hover["contents"]["value"], "```t\nf: impl Fn(int) -> int + Discard\n```",
+        hover["contents"]["value"], "```t\nf: impl Fn(int) -> int with panic + Discard\n```",
         "{hover}"
     );
     let whole = json!({"start": {"line": 0, "character": 0}, "end": {"line": 5, "character": 0}});
@@ -328,7 +328,7 @@ fn hovers_and_hints_show_opaque_types_as_written() {
         .map(|h| h["label"].clone())
         .collect();
     assert!(
-        labels.contains(&json!(": impl Fn(int) -> int + Discard")),
+        labels.contains(&json!(": impl Fn(int) -> int with panic + Discard")),
         "{hints}"
     );
 
@@ -739,7 +739,7 @@ fn references_highlights_and_renames_follow_scopes() {
     let (child, mut c) = start();
     let src = "\
 fn helper() -> int { 1 }
-fn main() {
+fn main() with panic {
     print(helper());
     {
         print_bool(helper(2));
@@ -920,7 +920,7 @@ fn refuses_bad_renames() {
     let (child, mut c) = start();
     let src = "\
 struct P { x: int }
-fn main() {
+fn main() with panic {
     let a = 1;
     let b = 2;
     let p = P { x: 4 };
@@ -961,23 +961,23 @@ impl Discard for P {}
             "`main` can't be renamed: it's where the program starts"
         ))
     );
-    let a = prepare(&mut c, "a", 1);
-    assert_eq!(a, Ok(d.range("a", 1)));
+    let a = prepare(&mut c, "a", 2);
+    assert_eq!(a, Ok(d.range("a", 2)));
 
     assert_eq!(
-        d.rename(&mut c, "a", 1, "1a"),
+        d.rename(&mut c, "a", 2, "1a"),
         Err("`1a` isn't a name".into())
     );
     assert_eq!(
-        d.rename(&mut c, "a", 1, "a b"),
+        d.rename(&mut c, "a", 2, "a b"),
         Err("`a b` isn't a name".into())
     );
     assert_eq!(
-        d.rename(&mut c, "a", 1, "match"),
+        d.rename(&mut c, "a", 2, "match"),
         Err("`match` is a keyword".into())
     );
     assert_eq!(
-        d.rename(&mut c, "a", 1, "_"),
+        d.rename(&mut c, "a", 2, "_"),
         Err("`_` can't be a name".into())
     );
     assert_eq!(
@@ -986,7 +986,7 @@ impl Discard for P {}
     );
     // A variable shadowed by another of the new name.
     assert_eq!(
-        d.rename(&mut c, "a", 1, "b"),
+        d.rename(&mut c, "a", 2, "b"),
         Err(
             "can't rename `a` to `b`: `b` on line 7 would refer to the variable `b` on line 4 \
              instead"
@@ -995,14 +995,14 @@ impl Discard for P {}
     );
     // A function that would be shadowed by the renamed variable.
     assert_eq!(
-        d.rename(&mut c, "a", 1, "print"),
+        d.rename(&mut c, "a", 2, "print"),
         Err(
             "can't rename `a` to `print`: line 7 would be an error: `int` is not a function".into()
         )
     );
     // A nested `fn` would then capture it.
     assert_eq!(
-        d.rename(&mut c, "a", 1, "c"),
+        d.rename(&mut c, "a", 2, "c"),
         Err(
             "can't rename `a` to `c`: line 6 would be an error: can't capture `c` in a nested \
              `fn`; use a closure"
@@ -1235,8 +1235,8 @@ impl P {
 impl Show for P {
     fn show(&self) -> int { self.get() }
 }
-fn twice<T: Show + Discard>(t: T) -> int { t.show() * 2 }
-fn main() {
+fn twice<T: Show + Discard>(t: T) -> int with panic { t.show() * 2 }
+fn main() with panic {
     let p = P { x: 1 };
     print(twice(p));
     print(P { x: 2 }.show());
@@ -1323,20 +1323,20 @@ fn modules() {
     let src = "\
 mod shapes {
     pub trait Area {
-        fn area(&self) -> int;
+        fn area(&self) -> int with panic;
     }
     #[derive(Discard)]
     pub struct Sq { pub side: int }
     pub fn sq(side: int) -> Sq { Sq { side } }
     pub mod more {
-        pub fn twice(n: int) -> int { n * 2 }
+        pub fn twice(n: int) -> int with panic { n * 2 }
     }
 }
 use shapes::{Area, Sq, more::twice as double};
 impl Area for Sq {
-    fn area(&self) -> int { self.side * self.side }
+    fn area(&self) -> int with panic { self.side * self.side }
 }
-fn main() {
+fn main() with panic {
     let s: Sq = shapes::sq(3);
     print(s.area() + double(1) + shapes::more::twice(2));
 }

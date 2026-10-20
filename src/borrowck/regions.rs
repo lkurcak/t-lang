@@ -200,6 +200,14 @@ fn vary(
                 vary(p, v.then(Variance::Contra), d, variances, out);
             }
             vary(&sig.ret, v, d, variances, out);
+            vary(&sig.effects, Variance::Inv, d, variances, out);
+        }
+        // An effect set has no regions but those of the associated effects
+        // in it, which are projections.
+        Type::Effects(items) => {
+            for i in items {
+                vary(i, Variance::Inv, d, variances, out);
+            }
         }
         Type::Adt(name, regions, args) => {
             let vs = &variances[name];
@@ -224,7 +232,13 @@ fn vary(
                 vary(a, Variance::Inv, d, variances, out);
             }
         }
-        Type::Int | Type::Bool | Type::Unit | Type::Never | Type::Var(_) => {}
+        Type::Int
+        | Type::Bool
+        | Type::Unit
+        | Type::Never
+        | Type::Var(_)
+        | Type::Alloc
+        | Type::Panic => {}
     }
 }
 
@@ -276,7 +290,11 @@ fn wf_into(t: &Type, adts: &Adts, outlives: &HashMap<String, Vec<Bound>>, out: &
                 wf_into(a, adts, outlives, out);
             }
         }
+        // Effects are no values, and hold no references.
         Type::Fn(_)
+        | Type::Effects(_)
+        | Type::Alloc
+        | Type::Panic
         | Type::Int
         | Type::Bool
         | Type::Unit
@@ -321,7 +339,16 @@ pub(crate) fn type_outlives(t: &Type, r: &Region, out: &mut Vec<Bound>) {
         }
         Type::Proj(inner, ..) => type_outlives(inner, r, out),
         Type::Box(inner) => type_outlives(inner, r, out),
-        Type::Fn(_) | Type::Int | Type::Bool | Type::Unit | Type::Never | Type::Var(_) => {}
+        // Nor do effects, as an argument of a closure's type.
+        Type::Fn(_)
+        | Type::Effects(_)
+        | Type::Alloc
+        | Type::Panic
+        | Type::Int
+        | Type::Bool
+        | Type::Unit
+        | Type::Never
+        | Type::Var(_) => {}
     }
 }
 
@@ -596,6 +623,9 @@ impl Regions {
             | (Type::Never, _)
             | (_, Type::Never) => {}
             (Type::Param(p), Type::Param(q)) if p == q => {}
+            // Effects are no values, and borrow nothing: the checker saw
+            // that one set fits in the other, which is all there is to it.
+            (Type::Effects(_), Type::Effects(_)) => {}
             // Two rigid projections are the same type if their types are,
             // regions and all: invariantly (see `vary`).
             (Type::Proj(ta, x, n), Type::Proj(tb, y, m)) if x == y && n == m => {

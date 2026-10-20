@@ -426,6 +426,7 @@ impl Cx<'_> {
             | Type::Var(_)
             | Type::Box(_) => None,
             Type::Ref(..) => unreachable!("peeled"),
+            Type::Effects(_) | Type::Alloc | Type::Panic => unreachable!("effects have no values"),
         }
     }
 

@@ -21,8 +21,8 @@ struct Holder { i: Inner }
 fn helper() -> int { 1 }
 
 // They call each other, but nothing live calls either.
-fn ping(n: int) -> int { if n == 0 { 0 } else { pong(n - 1) } }
-fn pong(n: int) -> int { ping(n) }
+fn ping(n: int) -> int with panic { if n == 0 { 0 } else { pong(n - 1) } }
+fn pong(n: int) -> int with panic { ping(n) }
 
 // Named but never called still counts as used.
 fn passed(x: int) -> int { x }

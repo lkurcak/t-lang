@@ -12,13 +12,13 @@ fn close(fd: Fd) -> int {
 
 mod deep {
     // A module of its own needs its own `use`, or the whole path.
-    pub fn bump(r: &mut int) -> int {
+    pub fn bump(r: &mut int) -> int with panic {
         let next = *r + 1;
         core::mem::replace(r, next)
     }
 }
 
-fn main() {
+fn main() with panic {
     let mut a = Fd { n: 1 };
     let mut b = Fd { n: 2 };
     swap(&mut a, &mut b);

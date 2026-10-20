@@ -4,7 +4,7 @@
 // line up, and so lose `'x: 'y`: `out` dangled.
 fn inner<'y>(r: &&'y int) -> &'y int { *r }
 
-fn main() {
+fn main() with {alloc, panic} {
     let out;
     let mut b: Box<&int>;
     {

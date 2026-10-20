@@ -7,13 +7,13 @@ mod fs {
 
     pub fn open(n: int) -> Fd { Fd { id: Id { n }, raw: n } }
 
-    pub fn close(fd: Fd) -> int {
+    pub fn close(fd: Fd) -> int with panic {
         let Fd { id, raw } = fd;
         id.n + raw
     }
 }
 
-fn main() {
+fn main() with {alloc, panic} {
     let b = Box::new(fs::open(1));
     let fs::Fd { id, .. } = *b;
     print(id.n);

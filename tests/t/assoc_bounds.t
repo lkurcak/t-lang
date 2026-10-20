@@ -26,7 +26,7 @@ impl Tr for B {
 }
 
 trait Show {
-    fn show(&self) -> int;
+    fn show(&self) -> int with panic;
 }
 
 #[derive(Discard)]
@@ -34,16 +34,16 @@ struct W<T> { t: T }
 
 // Only for a `T` whose `Out` is an `int`.
 impl<T: Tr<Out = int>> Show for W<T> {
-    fn show(&self) -> int { self.t.out() * 10 }
+    fn show(&self) -> int with panic { self.t.out() * 10 }
 }
 
-fn shown<S: Show>(s: &S) -> int { s.show() }
+fn shown<S: Show>(s: &S) -> int with panic { s.show() }
 
 // A struct that's only for such a `T`, whose field is an `int`.
 #[derive(Discard)]
 struct Count<T: Tr<Out = int>> { of: T, n: T::Out }
 
-fn count<T: Tr<Out = int>>(of: T) -> Count<T> {
+fn count<T: Tr<Out = int>>(of: T) -> Count<T> with panic {
     let n = of.out() + 1;
     Count { of, n }
 }
@@ -60,7 +60,7 @@ fn hold<'r, T: Tr<Out: Discard> + 'r>(t: &T, r: &'r int) -> int {
     *h.r
 }
 
-fn main() {
+fn main() with panic {
     print(shown(&W { t: A { n: 4 } })); // expect: 40
     let c = count(A { n: 1 });
     print(c.n + c.of.n);                               // expect: 3

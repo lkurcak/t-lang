@@ -997,11 +997,14 @@ impl Rewrite<'_> {
                 self.type_path(&name)?;
             }
             TypeExprKind::Unit | TypeExprKind::Never | TypeExprKind::Lifetime(_) => {}
-            TypeExprKind::Fn(params, ret) => {
+            TypeExprKind::Fn(params, ret, effects) => {
                 for p in params {
                     self.ty(p)?;
                 }
                 self.ty(ret)?;
+                for t in effects.iter_mut().flat_map(EffectSet::types_mut) {
+                    self.ty(t)?;
+                }
             }
             TypeExprKind::Ref(_, _, inner) => self.ty(inner)?,
             TypeExprKind::Proj(..) => {

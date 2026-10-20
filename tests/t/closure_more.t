@@ -5,9 +5,9 @@ fn close(fd: Fd) -> int {
     let Fd { n } = fd;
     n
 }
-fn twice<F: FnMut() -> int>(f: &mut F) -> int { f() + f() }
+fn twice<e, F: FnMut() -> int with e>(f: &mut F) -> int with {panic, e} { f() + f() }
 
-fn main() {
+fn main() with panic {
     // An `FnMut` closure lent by `&mut`.
     let mut n = 0;
     let mut c = || {

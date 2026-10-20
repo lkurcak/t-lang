@@ -1,5 +1,5 @@
 // Moved in one branch, so maybe moved after.
-fn main() {
+fn main() with {alloc, panic} {
     let b = Box::new(1);
     if true {
         let c = b;

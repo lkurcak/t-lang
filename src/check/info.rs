@@ -532,6 +532,9 @@ impl Checker {
             for a in &d.assoc {
                 self.type_expr_notes(&a.ty, params);
             }
+            for e in &d.effects {
+                self.effect_notes(Some(&e.effects), params);
+            }
             for f in &d.methods {
                 outer.insert(f.name.id, params.clone());
             }
@@ -546,6 +549,7 @@ impl Checker {
                 self.type_expr_notes(&p.ty, params);
             }
             self.type_expr_notes(&f.ret, params);
+            self.effect_notes(f.effects.as_ref(), params);
             each_annotation(&f.body, &mut |t| self.type_expr_notes(t, params));
         }
         for t in &prog.traits {
@@ -566,6 +570,29 @@ impl Checker {
                     self.type_expr_notes(&p.ty, params);
                 }
                 self.type_expr_notes(&f.ret, params);
+                self.effect_notes(f.effects.as_ref(), params);
+            }
+        }
+    }
+
+    /// Notes the names in effects `e`, if there are any, written where type
+    /// and effect parameters `params` are in scope: the effect parameters,
+    /// and the types of the associated effects.
+    fn effect_notes(&mut self, e: Option<&EffectSet>, params: &[Ident]) {
+        for t in e.iter().flat_map(|e| e.types()) {
+            self.type_expr_notes(t, params);
+        }
+        self.effect_param_notes(e, params);
+    }
+
+    /// Notes the effect parameters in effects `e`, if there are any.
+    fn effect_param_notes(&mut self, e: Option<&EffectSet>, params: &[Ident]) {
+        for item in e.iter().flat_map(|e| &e.items) {
+            if let EffectKind::Named(n) = &item.kind
+                && let Some(p) = params.iter().find(|p| p.name == n.name)
+            {
+                let kind = NoteKind::TypeParam(n.name.clone());
+                self.note(n.span, kind, None, Some(p.span));
             }
         }
     }
@@ -573,16 +600,25 @@ impl Checker {
     /// Notes the types in the bounds of `g`, and in its `where` clause.
     fn bound_notes(&mut self, g: &Generics, params: &[Ident]) {
         for (_, items) in &g.bounds {
-            for t in items.iter().flat_map(|b| b.types()) {
-                self.type_expr_notes(t, params);
+            for b in items {
+                self.bound_item_notes(b, params);
             }
         }
         for (subject, items) in &g.wheres {
             self.type_expr_notes(subject, params);
-            for t in items.iter().flat_map(|b| b.types()) {
-                self.type_expr_notes(t, params);
+            for b in items {
+                self.bound_item_notes(b, params);
             }
         }
+    }
+
+    /// Notes the types in bound `b`, and its effects.
+    fn bound_item_notes(&mut self, b: &BoundItem, params: &[Ident]) {
+        // Those of its effects' associated effects among them.
+        for t in b.types() {
+            self.type_expr_notes(t, params);
+        }
+        self.effect_param_notes(b.effects.as_ref(), params);
     }
 
     fn param_notes(&mut self, params: &[Ident]) {
@@ -625,17 +661,18 @@ impl Checker {
                 }
             }
             TypeExprKind::Unit | TypeExprKind::Never | TypeExprKind::Lifetime(_) => {}
-            TypeExprKind::Fn(ps, r) => {
+            TypeExprKind::Fn(ps, r, effects) => {
                 for p in ps {
                     self.type_expr_notes(p, params);
                 }
                 self.type_expr_notes(r, params);
+                self.effect_notes(effects.as_ref(), params);
             }
             TypeExprKind::Ref(_, _, inner) => self.type_expr_notes(inner, params),
             // Its traits are noted where they're resolved.
             TypeExprKind::Impl(bounds) => {
-                for t in bounds.iter().flat_map(BoundItem::types) {
-                    self.type_expr_notes(t, params);
+                for b in bounds {
+                    self.bound_item_notes(b, params);
                 }
             }
         }

@@ -12,7 +12,7 @@ mod inner {
 
 use geo::Point;
 
-fn main() {
+fn main() with panic {
     let p = geo::origin();
     print(p.x);                    // expect: 0
     let q: Point = geo::at(3, 4);

@@ -4,7 +4,7 @@ trait Show {
     fn show(&self);
 
     /// A default, which an impl may leave out.
-    fn show_twice(&self) {
+    fn show_twice(&self) with panic {
         self.show();
         self.show();
     }
@@ -24,7 +24,7 @@ impl Show for Point {
 impl Show for int {
     fn show(&self) { print(*self) }
 
-    fn show_twice(&self) { print(*self * 11) }
+    fn show_twice(&self) with panic { print(*self * 11) }
 }
 
 #[derive(Discard)]
@@ -46,7 +46,7 @@ fn show_all<T: Show + Discard>(a: T, b: T) {
     b.show();
 }
 
-fn main() {
+fn main() with panic {
     let p = Point { x: 1, y: 2 };
     p.show();                   // expect: 1
                                 // expect: 2

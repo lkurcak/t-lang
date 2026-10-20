@@ -8,7 +8,7 @@ mod geometry {
 
     pub fn origin() -> Point { Point { x: 0, y: 0 } }
 
-    pub fn len(s: Shape) -> int {
+    pub fn len(s: Shape) -> int with panic {
         match s {
             Shape::Dot(_) => 0,
             Shape::Line(a, b) => self::dist(a.x, b.x) + dist(a.y, b.y),
@@ -16,12 +16,12 @@ mod geometry {
     }
 
     // Private: only `geometry` and the modules in it can call it.
-    fn dist(a: int, b: int) -> int { if a < b { b - a } else { a - b } }
+    fn dist(a: int, b: int) -> int with panic { if a < b { b - a } else { a - b } }
 
     pub mod scale {
         use super::Point;
 
-        pub fn twice(p: Point) -> Point { Point { x: super::dist(0, p.x) * 2, y: p.y * 2 } }
+        pub fn twice(p: Point) -> Point with panic { Point { x: super::dist(0, p.x) * 2, y: p.y * 2 } }
 
         pub fn back() -> int { crate::helper() }
     }
@@ -31,7 +31,7 @@ use geometry::{Point, Shape, scale::twice as double};
 
 fn helper() -> int { 7 }
 
-fn main() {
+fn main() with panic {
     let p = Point { x: 3, y: 4 };
     print(geometry::len(Shape::Line(geometry::origin(), p))); // expect: 7
     print(double(p).y);                                       // expect: 8

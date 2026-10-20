@@ -8,10 +8,10 @@ struct Two { a: Box<int>, b: Box<int> }
 
 fn consume(b: Box<int>) -> int { *b }
 
-fn pair(a: Box<int>, b: int) -> int { *a + b }
+fn pair(a: Box<int>, b: int) -> int with panic { *a + b }
 
 // Both boxes are in scope at the `return`.
-fn early(c: bool) -> int {
+fn early(c: bool) -> int with {alloc, panic} {
     let x = Box::new(1);
     let y = Box::new(2);
     if c { return *x; }
@@ -19,7 +19,7 @@ fn early(c: bool) -> int {
 }
 
 // The box is moved on the path that returns, and still there on the other.
-fn moved_then_return(c: bool) -> int {
+fn moved_then_return(c: bool) -> int with {alloc, panic} {
     let b = Box::new(3);
     if c {
         let n = consume(b);
@@ -29,17 +29,17 @@ fn moved_then_return(c: bool) -> int {
 }
 
 // The first argument is made, then the second returns: the first is freed.
-fn half_made(c: bool) -> int {
+fn half_made(c: bool) -> int with {panic, alloc} {
     pair(Box::new(10), if c { return 0; } else { 5 })
 }
 
 // Out of a struct literal: `a` is made, `b` never is.
-fn half_struct(c: bool) -> int {
+fn half_struct(c: bool) -> int with {alloc, panic} {
     let t = Two { a: Box::new(1), b: if c { return 7; } else { Box::new(2) } };
     *t.a + *t.b
 }
 
-fn main() {
+fn main() with {alloc, panic} {
     print(early(true));                 // expect: 1
     print(early(false));                // expect: 3
     print(moved_then_return(true));     // expect: 3

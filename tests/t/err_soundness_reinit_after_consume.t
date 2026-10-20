@@ -8,7 +8,7 @@ fn close(f: Fd) -> int {
 
 struct P { a: Fd, b: Fd }
 
-fn main() {
+fn main() with panic {
     let mut p = P { a: Fd { n: 1 }, b: Fd { n: 2 } };
     let P { a, b } = p;
     p.a = Fd { n: 3 };

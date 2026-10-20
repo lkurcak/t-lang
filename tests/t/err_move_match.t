@@ -3,7 +3,7 @@
 #[derive(Discard)]
 enum Option<T> { Some(T), None }
 
-fn main() {
+fn main() with {alloc, panic} {
     let o = Option::Some(Box::new(1));
     match o {
         Option::Some(b) => print(*b),

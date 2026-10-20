@@ -4,9 +4,9 @@
 // doesn't live as long as what came out of `id_ref`.
 fn id_ref(r: &Box<int>) -> &Box<int> { r }
 
-fn f(x: &int, n: int) -> int { *x + n }
+fn f(x: &int, n: int) -> int with panic { *x + n }
 
-fn main() {
+fn main() with {alloc, panic} {
     let b1 = Box::new(1);
     let mut r = &b1;
     print(f(&**id_ref(r), {

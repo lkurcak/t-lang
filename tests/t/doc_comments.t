@@ -23,10 +23,10 @@ enum Shape {
 
 /// The sum of both halves of `p`.
 // A plain comment between a doc comment and its function is fine.
-fn sum(p: Pair) -> int { p.a + p.b }
+fn sum(p: Pair) -> int with panic { p.a + p.b }
 
 /// Roughly, with π rounded down.
-fn area(s: Shape) -> int {
+fn area(s: Shape) -> int with panic {
     match s {
         Shape::Circle(r) => 3 * r * r,
         Shape::Empty => 0,
@@ -34,7 +34,7 @@ fn area(s: Shape) -> int {
 }
 
 //// Four slashes make a plain comment, as in Rust.
-fn main() {
+fn main() with panic {
     print(sum(Pair { a: 1, b: 2 }));                    // expect: 3
     print(area(Shape::Circle(2)) + area(Shape::Empty)); // expect: 12
 }

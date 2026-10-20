@@ -10,7 +10,7 @@ fn code(c: light_color) -> int {
     }
 }
 
-fn main() {
+fn main() with panic {
     print(code(light_color::Red) + code(light_color::yellow) + code(light_color::GREEN_LIGHT));
 }
 // warning: type `light_color` should have an upper camel case name: `LightColor`

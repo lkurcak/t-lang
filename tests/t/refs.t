@@ -4,15 +4,15 @@
 #[derive(Discard, Copy, Eq)]
 struct Point { x: int, y: int }
 
-fn sum(p: &Point) -> int { p.x + p.y }
+fn sum(p: &Point) -> int with panic { p.x + p.y }
 
 fn first(p: &Point) -> &int { &p.x }
 
-fn larger<'a>(a: &'a Point, b: &'a Point) -> &'a Point {
+fn larger<'a>(a: &'a Point, b: &'a Point) -> &'a Point with panic {
     if sum(a) >= sum(b) { a } else { b }
 }
 
-fn main() {
+fn main() with panic {
     let p = Point { x: 1, y: 2 };
     let q = Point { x: 5, y: 5 };
     let r = &p;

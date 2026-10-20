@@ -7,7 +7,7 @@ fn close(fd: Fd) -> int {
     n
 }
 
-fn main() {
+fn main() with panic {
     let fd = Fd { n: 1 };
     let z = 0;
     print(1 / z);

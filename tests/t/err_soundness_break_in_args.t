@@ -6,9 +6,9 @@ fn close(f: Fd) -> int {
     n
 }
 
-fn two(a: Fd, b: int) -> int { close(a) + b }
+fn two(a: Fd, b: int) -> int with panic { close(a) + b }
 
-fn main() {
+fn main() with panic {
     let x = loop {
         two(Fd { n: 1 }, break 3);
     };

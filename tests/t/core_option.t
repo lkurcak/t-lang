@@ -13,7 +13,7 @@ fn half(n: int) -> Option<int> {
     if n % 2 == 0 { Option::Some(n / 2) } else { Option::None }
 }
 
-fn main() {
+fn main() with panic {
     let a = half(4);
     let b = half(3);
     print_bool(a.is_some()); // expect: true

@@ -3,9 +3,9 @@
 #[derive(Discard)]
 struct B { n: int }
 
-fn two(a: &B, b: B) -> int { a.n + b.n }
+fn two(a: &B, b: B) -> int with panic { a.n + b.n }
 
-fn main() {
+fn main() with panic {
     let x = B { n: 1 };
     let y = B { n: 2 };
     let c = true;

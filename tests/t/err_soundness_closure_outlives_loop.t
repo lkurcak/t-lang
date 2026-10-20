@@ -4,7 +4,7 @@
 #[derive(Discard)]
 enum Opt<F> { None, Some(F) }
 
-fn main() {
+fn main() with panic {
     let mut v = Opt::None;
     let mut i = 0;
     loop {

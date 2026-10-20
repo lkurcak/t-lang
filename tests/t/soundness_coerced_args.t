@@ -5,7 +5,7 @@ fn first(a: &int, _n: int) -> int { *a }
 
 fn get(r: &int) -> int { *r }
 
-fn main() {
+fn main() with {alloc, panic} {
     let one = Box::new(1);
     let two = Box::new(2);
     let mut rb = &one;

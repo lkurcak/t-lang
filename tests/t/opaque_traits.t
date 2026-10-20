@@ -1,7 +1,7 @@
 // Any bounds can follow `impl`, not just the `Fn` traits: callers know only
 // what they say.
 trait Show {
-    fn show(&self) -> int;
+    fn show(&self) -> int with panic;
 }
 
 impl Show for int {
@@ -12,7 +12,7 @@ impl Show for int {
 struct Two { a: int, b: int }
 
 impl Show for Two {
-    fn show(&self) -> int { self.a * 10 + self.b }
+    fn show(&self) -> int with panic { self.a * 10 + self.b }
 }
 
 fn shown() -> impl Show + Discard {
@@ -42,14 +42,14 @@ fn from(n: int) -> impl Iter<Item = int> + Discard { Up { n } }
 // A blanket impl applies to an opaque type through its bounds, and to the
 // type behind it: the same impl, so the same code runs.
 trait Twice {
-    fn twice(&self) -> int;
+    fn twice(&self) -> int with panic;
 }
 
 impl<T: Show> Twice for T {
-    fn twice(&self) -> int { self.show() * 2 }
+    fn twice(&self) -> int with panic { self.show() * 2 }
 }
 
-fn main() {
+fn main() with panic {
     let s = shown();
     print(s.show());                // expect: 12
     print(s.twice());               // expect: 24

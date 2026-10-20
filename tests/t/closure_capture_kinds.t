@@ -14,7 +14,7 @@ fn call<T: Copy>(x: T, k: fn(T) -> int) -> int {
 }
 fn deref(r: &int) -> int { *r }
 
-fn main() {
+fn main() with {alloc, panic} {
     let b = Box::new(1);
     let get = || *b;
     print(get());                   // expect: 1

@@ -1,14 +1,14 @@
 // Closures as values of their own types, taken by generic functions through
 // the `Fn` traits.
 
-fn apply<F: Fn(int) -> int + Discard>(f: F, x: int) -> int { f(x) }
-fn twice<F: FnMut()>(mut f: F) -> F {
+fn apply<e, F: Fn(int) -> int with e + Discard>(f: F, x: int) -> int with e { f(x) }
+fn twice<e, F: FnMut() with e>(mut f: F) -> F with e {
     f();
     f();
     f
 }
-fn once<F: FnOnce() -> int>(f: F) -> int { f() }
-fn inc(x: int) -> int { x + 1 }
+fn once<e, F: FnOnce() -> int with e>(f: F) -> int with e { f() }
+fn inc(x: int) -> int with panic { x + 1 }
 
 struct B { x: int }
 
@@ -17,7 +17,7 @@ fn take(b: B) -> int {
     x
 }
 
-fn main() {
+fn main() with panic {
     // Captures by reference: `k` is only read.
     let k = 10;
     print(apply(|x| x * k, 4));             // expect: 40

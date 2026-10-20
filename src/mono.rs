@@ -245,7 +245,12 @@ impl<'p> Mono<'p> {
     /// aren't: they'd only be noise in what `t mono` prints. A copy of
     /// anything generic is only made where it's used.
     fn without_unused_core(&self, out: &mut Program) {
-        let lazy = |name: &str| self.info.core_symbols.contains(name);
+        // Copies of the core library's generic types too, which its
+        // functions' signatures may make, like `Option<int>`.
+        let lazy = |name: &str| {
+            let of = name.split("::<").next().unwrap_or(name);
+            self.info.core_symbols.contains(name) || self.info.core_symbols.contains(of)
+        };
         let mut used = HashSet::new();
         let mut kept_types: Vec<bool> = out.types.iter().map(|d| !lazy(&d.name().name)).collect();
         let mut kept_fns: Vec<bool> = out.fns.iter().map(|f| !lazy(&f.name.name)).collect();
@@ -341,6 +346,7 @@ impl<'p> Mono<'p> {
                 .collect(),
             parens: f.parens,
             ret: cx.ty(&f.ret),
+            effects: cx.written_effects(&cx.resolved_effects(f.effects.as_ref()), f.span),
             body: cx.expr(&f.body),
             intrinsic: f.intrinsic,
         }
@@ -524,6 +530,32 @@ impl Cx<'_, '_, '_> {
 
     /// A type written in the original, as it is in the copy.
     fn resolved(&self, t: &TypeExpr) -> Type {
+        self.resolving(|names, proj, params| {
+            check::resolve(t, names, proj, params, &mut check::Lifetimes::Any)
+        })
+    }
+
+    /// Effects written in the original, as they are in the copy: `panic`
+    /// and `alloc` only.
+    fn resolved_effects(&self, e: Option<&EffectSet>) -> Type {
+        match e {
+            Some(e) => self.resolving(|names, proj, params| {
+                check::resolve_effects(e, names, proj, params, &mut check::Lifetimes::Any)
+            }),
+            None => Type::no_effects(),
+        }
+    }
+
+    /// What `go` resolves, given what the names in the original mean, as it
+    /// is in the copy.
+    fn resolving(
+        &self,
+        go: impl FnOnce(
+            &dyn Fn(&str, &TypeExpr) -> Option<check::TypeName>,
+            &check::ProjNames,
+            &[String],
+        ) -> Result<Type, crate::error::Error>,
+    ) -> Type {
         // Everything is at the top level by now, named by its symbol.
         let arities = &self.m.arities;
         let opaques = &self.m.info.opaques;
@@ -548,8 +580,8 @@ impl Cx<'_, '_, '_> {
             };
             Ok(Type::Proj(Box::new(s), tr, name.name.clone()))
         };
-        let resolved = check::resolve(t, &names, &proj, &self.params, &mut check::Lifetimes::Any)
-            .expect("monomorphising a program that checked");
+        let resolved =
+            go(&names, &proj, &self.params).expect("monomorphising a program that checked");
         self.subst(&resolved)
     }
 
@@ -617,12 +649,13 @@ impl Cx<'_, '_, '_> {
             Type::Fn(sig) => TypeExprKind::Fn(
                 sig.params.iter().map(|p| self.written(p, span)).collect(),
                 Box::new(self.written(&sig.ret, span)),
+                self.written_effects(&sig.effects, span),
             ),
             // A closure's type can't be written; this is only for showing
             // the program.
             Type::Adt(name, _, args) if crate::types::is_closure(name) => {
                 let args: Vec<Type> = args.iter().map(Type::erased).collect();
-                for a in &args {
+                for a in args.iter().filter(|a| !matches!(a, Type::Effects(_))) {
                     self.written(a, span);
                 }
                 TypeExprKind::Named(mangle(name, &args), Vec::new())
@@ -665,12 +698,45 @@ impl Cx<'_, '_, '_> {
             Type::Param(_) | Type::Var(_) | Type::Proj(..) | Type::Opaque(..) => {
                 unreachable!("`{t}` left after monomorphising")
             }
+            Type::Effects(_) | Type::Alloc | Type::Panic => {
+                unreachable!("effects `{t}` written as a type")
+            }
         };
         TypeExpr {
             kind,
             span,
             id: self.m.id(),
         }
+    }
+
+    /// How to write effects `t`, which are `panic` and `alloc` only by now:
+    /// nothing, if there are none.
+    fn written_effects(&mut self, t: &Type, span: Span) -> Option<EffectSet> {
+        let items: Vec<Effect> = t
+            .effect_items()
+            .iter()
+            .map(|e| {
+                let name = match e {
+                    Type::Alloc | Type::Panic => e.to_string(),
+                    e => unreachable!("effect `{e}` left after monomorphising"),
+                };
+                let id = self.m.id();
+                Effect {
+                    kind: EffectKind::Named(Ident { name, span, id }),
+                    span,
+                    id: self.m.id(),
+                }
+            })
+            .collect();
+        if items.is_empty() {
+            return None;
+        }
+        Some(EffectSet {
+            braced: items.len() > 1,
+            items,
+            span,
+            with: true,
+        })
     }
 
     /// The use of something generic at `span`, if that's what's there, as
@@ -1046,9 +1112,13 @@ mod used {
                 out.insert(name.clone());
                 args.iter().for_each(|a| in_type(a, out));
             }
-            TypeExprKind::Fn(params, ret) => {
+            TypeExprKind::Fn(params, ret, effects) => {
                 params.iter().for_each(|p| in_type(p, out));
                 in_type(ret, out);
+                effects
+                    .iter()
+                    .flat_map(EffectSet::types)
+                    .for_each(|t| in_type(t, out));
             }
             TypeExprKind::Ref(_, _, inner) => in_type(inner, out),
             TypeExprKind::Proj(inner, ..) => in_type(inner, out),

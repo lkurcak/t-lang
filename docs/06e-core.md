@@ -14,8 +14,9 @@ struct Countdown { n: int }
 
 impl Iterator for Countdown {
     type Item = int;
+    effect e = panic;
 
-    fn next(&mut self) -> Option<int> {
+    fn next(&mut self) -> Option<int> with panic {
         if self.n == 0 {
             return Option::None;
         }
@@ -24,7 +25,7 @@ impl Iterator for Countdown {
     }
 }
 
-fn main() {
+fn main() with panic {
     for i in (Countdown { n: 3 }) {
         print(i);
     }
@@ -249,6 +250,7 @@ struct Lines { left: int }
 
 impl Iterator for Lines {
     type Item = int;
+    effect e = panic;
 
     fn next(&mut self) -> Option<int> {
         if self.left == 0 {
@@ -277,8 +279,9 @@ struct Lines { left: int }
 
 impl Iterator for Lines {
     type Item = int;
+    effect e = panic;
 
-    fn next(&mut self) -> Option<int> {
+    fn next(&mut self) -> Option<int> with panic {
         if self.left == 0 {
             return Option::None;
         }
@@ -292,7 +295,7 @@ fn close(lines: Lines) -> int {
     left
 }
 
-fn main() {
+fn main() with panic {
     let mut lines = Lines { left: 5 };
     for n in &mut lines {
         if n == 2 {
@@ -334,7 +337,7 @@ is before `end` before it adds one, so it never overflows, even for a
 range that ends at the largest `int`.
 
 ```rust
-fn main() {
+fn main() with panic {
     let big = 9223372036854775807;
     let mut last = 0;
     for i in big - 2..big {
@@ -379,10 +382,10 @@ or on an associated type, as well as on a type parameter:
 trait Source {
     type Out;
 
-    fn get(&mut self) -> Self::Out;
+    fn get(&mut self) -> Self::Out with panic;
 
     // Only for a source that may be thrown away, whose items may be too.
-    fn skip(mut self, n: int) -> int where Self: Discard, Self::Out: Discard {
+    fn skip(mut self, n: int) -> int with panic where Self: Discard, Self::Out: Discard {
         let mut i = 0;
         while i < n {
             let _x = self.get();
@@ -398,13 +401,13 @@ struct Nat { n: int }
 impl Source for Nat {
     type Out = int;
 
-    fn get(&mut self) -> int {
+    fn get(&mut self) -> int with panic {
         self.n = self.n + 1;
         self.n
     }
 }
 
-fn main() {
+fn main() with panic {
     print((Nat { n: 0 }).skip(5)); // expect: 5
 }
 ```
@@ -420,6 +423,7 @@ struct Lines { left: int }
 
 impl Iterator for Lines {
     type Item = int;
+    effect e = panic;
 
     fn next(&mut self) -> Option<int> {
         if self.left == 0 {
@@ -497,7 +501,8 @@ nowhere, and it can't be renamed.
 
 | Missing | Why it's missing | Step |
 |---|---|---|
-| `unwrap`, `expect`, `panic` | panics aren't in function types yet | 7 |
+| `unwrap`, `panic` | panics weren't in function types yet | 7 ✅ |
+| `expect` | needs strings | — |
 | `filter` | closures can't be higher-ranked when a bound says they should | 6e.1 ✅ |
 | `IntoIterator`, `for x in &list` | needs equality bounds with projections in them, and there are no collections yet | with `alloc` |
 | `a..=b`, `a..`, `..b`, `.rev()` | not needed yet | — |

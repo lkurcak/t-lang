@@ -1,7 +1,7 @@
 #[derive(Discard)]
 enum Shape { Circle(int), Rect(int, int), Empty }
 
-fn area(s: Shape) -> int {
+fn area(s: Shape) -> int with panic {
     match s {
         Shape::Circle(r) => 3 * r * r,
         Shape::Rect(w, h) => w * h,
@@ -9,13 +9,13 @@ fn area(s: Shape) -> int {
     }
 }
 
-fn fact(n: int) -> int {
+fn fact(n: int) -> int with panic {
     if n <= 1 { 1 } else { n * fact(n - 1) }
 }
 
-fn twice(f: fn(int) -> int, x: int) -> int { f(f(x)) }
+fn twice<e, F: Fn(int) -> int with e + Discard>(f: F, x: int) -> int with e { f(f(x)) }
 
-fn main() {
+fn main() with panic {
     let n = 5;
     print(fact(10));
     print(twice(fact, 3));

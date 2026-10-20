@@ -8,7 +8,7 @@ fn deposit(a: &mut Account, n: int) { a.balance += n; }
 
 fn balance(a: &Account) -> int { a.balance }
 
-fn main() {
+fn main() with panic {
     let mut x = 1;
     let r = &x;
     print(*r);                  // expect: 1

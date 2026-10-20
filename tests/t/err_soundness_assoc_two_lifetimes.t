@@ -13,7 +13,7 @@ impl<'a> Tr for &'a int {
     fn out(self) -> &'a int { self }
 }
 
-fn main() {
+fn main() with panic {
     let long = 1;
     let r1 = Tr::out(&long);
     let r2;

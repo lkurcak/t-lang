@@ -68,7 +68,7 @@ impl Eq for Fd {
 #[derive(Eq)]
 struct P { a: Fd }
 
-fn main() {
+fn main() with panic {
     throw(W { f: close });
     let _e: E<Fd> = E::B;
     print(take(Option::Some(Fd { n: 3 }), close)); // expect: 3

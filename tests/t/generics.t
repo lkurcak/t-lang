@@ -14,7 +14,7 @@ fn flip<A, B>(p: Pair<A, B>) -> Pair<B, A> {
 
 // A closure has a type of its own, so `map` takes any `F` that can be
 // called with a `T`. If there's no `T`, `f` isn't called, but dropped.
-fn map<T, U, F: FnOnce(T) -> U + Discard>(o: Option<T>, f: F) -> Option<U> {
+fn map<e, T, U, F: FnOnce(T) -> U with e + Discard>(o: Option<T>, f: F) -> Option<U> with e {
     match o {
         Option::Some(x) => Option::Some(f(x)),
         Option::None => Option::None,
@@ -29,16 +29,16 @@ fn unwrap_or<T: Discard>(o: Option<T>, default: T) -> T {
 }
 
 // Calls a generic function inside a generic function: `id` at `T`.
-fn twice<T>(f: fn(T) -> T, x: T) -> T { f(id(f(x))) }
+fn twice<T>(f: fn(T) -> T with panic, x: T) -> T with panic { f(id(f(x))) }
 
 // Recursion at the same type is fine.
-fn repeat<T>(f: fn(T) -> T, x: T, n: int) -> T {
+fn repeat<T>(f: fn(T) -> T with panic, x: T, n: int) -> T with panic {
     if n == 0 { x } else { repeat(f, f(x), n - 1) }
 }
 
-fn inc(x: int) -> int { x + 1 }
+fn inc(x: int) -> int with panic { x + 1 }
 
-fn main() {
+fn main() with panic {
     print(id(1));                                   // expect: 1
     print_bool(id(true));                           // expect: true
     let p = flip(Pair { first: 1, second: false });

@@ -152,6 +152,7 @@ impl<'p> Cx<'p> {
             params: f.params.iter().map(|p| self.param(p)).collect(),
             parens: f.parens,
             ret: self.ty(&f.ret),
+            effects: f.effects.as_ref().map(|e| self.effects(e)),
             body,
             intrinsic: f.intrinsic,
         };
@@ -229,9 +230,11 @@ impl<'p> Cx<'p> {
                 TypeExprKind::Named(self.renamed(name, t.id), self.types(args))
             }
             TypeExprKind::Unit | TypeExprKind::Never | TypeExprKind::Lifetime(_) => t.kind.clone(),
-            TypeExprKind::Fn(params, ret) => {
-                TypeExprKind::Fn(self.types(params), Box::new(self.ty(ret)))
-            }
+            TypeExprKind::Fn(params, ret, effects) => TypeExprKind::Fn(
+                self.types(params),
+                Box::new(self.ty(ret)),
+                effects.as_ref().map(|e| self.effects(e)),
+            ),
             TypeExprKind::Ref(lifetime, mutable, inner) => {
                 TypeExprKind::Ref(lifetime.clone(), *mutable, Box::new(self.ty(inner)))
             }
@@ -266,6 +269,15 @@ impl<'p> Cx<'p> {
             }
         }
         g
+    }
+
+    /// `e`, with the types whose associated effects it names renamed.
+    fn effects(&self, e: &EffectSet) -> EffectSet {
+        let mut e = e.clone();
+        for t in e.types_mut() {
+            *t = self.ty(t);
+        }
+        e
     }
 
     fn types(&self, ts: &[TypeExpr]) -> Vec<TypeExpr> {

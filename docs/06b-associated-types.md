@@ -96,7 +96,7 @@ kinds:
 trait Make {
     type Out;
 
-    fn make(&self) -> Self::Out;
+    fn make(&self) -> Self::Out with panic;
 }
 
 #[derive(Discard)]
@@ -105,19 +105,19 @@ struct Two { n: int }
 impl Make for Two {
     type Out = int;
 
-    fn make(&self) -> int { self.n * 2 }
+    fn make(&self) -> int with panic { self.n * 2 }
 }
 
 // An equality bound: `M::Out` is `int`, so it can be added.
-fn plus_one<M: Make<Out = int>>(m: &M) -> int { m.make() + 1 }
+fn plus_one<M: Make<Out = int>>(m: &M) -> int with panic { m.make() + 1 }
 
 // A bound on the projection: `M::Out` may be thrown away.
-fn ignore<M: Make<Out: Discard>>(m: &M) -> int {
+fn ignore<M: Make<Out: Discard>>(m: &M) -> int with panic {
     let _ = m.make();
     0
 }
 
-fn main() {
+fn main() with panic {
     print(plus_one(&Two { n: 3 })); // expect: 7
     print(ignore(&Two { n: 3 }));   // expect: 0
 }

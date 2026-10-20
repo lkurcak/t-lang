@@ -23,20 +23,20 @@ struct other::P { y: int }
 #[derive(Discard)]
 enum outer::inner::Sign { Minus, Plus }
 
-fn total() -> int {
+fn total() -> int with panic {
     let pair = total::Pair { left: P { x: 1 }, right: P { x: 2 } };
     total::sum(pair)
 }
 
-fn total::sum(p: total::Pair) -> int { p.left.x + p.right.x }
+fn total::sum(p: total::Pair) -> int with panic { p.left.x + p.right.x }
 
-fn shapes() -> int {
+fn shapes() -> int with panic {
     shapes::area(shapes::Shape::<int>::Circle(2))
         + shapes::area(shapes::Shape::<int>::Rect(2, 3))
         + shapes::area(shapes::Shape::<int>::Empty)
 }
 
-fn shapes::area(s: shapes::Shape::<int>) -> int {
+fn shapes::area(s: shapes::Shape::<int>) -> int with panic {
     match s {
         shapes::Shape::<int>::Circle(r) => 3 * r * r,
         shapes::Shape::<int>::Rect(w, h) => w * h,
@@ -44,7 +44,7 @@ fn shapes::area(s: shapes::Shape::<int>) -> int {
     }
 }
 
-fn main() {
+fn main() with panic {
     print(total());
     print(shapes());
     print_bool((main::P { y: true }).y);
@@ -60,9 +60,9 @@ fn main() {
 
 fn other() -> int { (other::P { y: 4 }).y }
 
-fn outer() -> int { outer::inner() }
+fn outer() -> int with panic { outer::inner() }
 
-fn outer::inner() -> int {
+fn outer::inner() -> int with panic {
     outer::inner::value(outer::inner::Sign::Plus)
         + outer::inner::value(outer::inner::Sign::Minus)
         + outer::inner::value(outer::inner::Sign::Plus)

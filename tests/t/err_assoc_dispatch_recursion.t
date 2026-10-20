@@ -7,7 +7,7 @@
 struct W<T> { t: T }
 
 trait Show {
-    fn show(self, n: int) -> int;
+    fn show(self, n: int) -> int with panic;
 }
 
 trait Tr {
@@ -23,14 +23,14 @@ impl<T: Discard> Tr for W<T> {
 }
 
 impl<U: Discard> Show for W<U> {
-    fn show(self, n: int) -> int {
+    fn show(self, n: int) -> int with panic {
         if n == 0 { 0 } else { go(self, n - 1) }
     }
 }
 
-fn go<T: Tr>(x: T, n: int) -> int { x.wrap().show(n) }
+fn go<T: Tr>(x: T, n: int) -> int with panic { x.wrap().show(n) }
 
-fn main() {
+fn main() with panic {
     print(go(W { t: 1 }, 3));
 }
 // error: polymorphic recursion

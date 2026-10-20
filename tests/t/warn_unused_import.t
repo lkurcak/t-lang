@@ -7,7 +7,7 @@ mod m {
 use m::f;
 use m::{g, f as h};
 
-fn main() {
+fn main() with panic {
     print(m::f() + g()); // expect: 3
 }
 // warning: unused import `f`

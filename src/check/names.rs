@@ -324,9 +324,13 @@ impl Walk<'_> {
                 args.iter().for_each(|a| self.ty(a));
             }
             TypeExprKind::Unit | TypeExprKind::Never | TypeExprKind::Lifetime(_) => {}
-            TypeExprKind::Fn(params, ret) => {
+            TypeExprKind::Fn(params, ret, effects) => {
                 params.iter().for_each(|p| self.ty(p));
                 self.ty(ret);
+                effects
+                    .iter()
+                    .flat_map(EffectSet::types)
+                    .for_each(|t| self.ty(t));
             }
             TypeExprKind::Ref(_, _, inner) | TypeExprKind::Proj(inner, ..) => self.ty(inner),
             TypeExprKind::Impl(bounds) => {

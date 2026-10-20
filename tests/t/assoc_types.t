@@ -42,7 +42,7 @@ fn ignore_first<C: Container>(c: &C) -> int {
 fn get<C: Container>(c: &C) -> <C as Container>::Item { c.first() }
 
 // An equality bound says what the projection is, so it can be used as that.
-fn total<C: Container<Item = int>>(c: &C) -> int { c.first() + get(c) }
+fn total<C: Container<Item = int>>(c: &C) -> int with panic { c.first() + get(c) }
 
 // A projection's type can be a field's.
 #[derive(Discard)]
@@ -79,7 +79,7 @@ impl Sized2 for Ints {
 
 fn first_of<S: Sized2>(s: &S) -> S::Item { s.first() }
 
-fn main() {
+fn main() with panic {
     let i = Ints { x: 3, y: 4 };
     print(i.first()); // expect: 3
     let p = i.first_twice();

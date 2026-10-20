@@ -4,7 +4,7 @@ fn Match() -> int { 1 }
 fn myFn() -> int { 2 }
 fn my_fn() -> int { 3 }
 
-fn main() {
+fn main() with panic {
     let True = Match();
     print(True + myFn() + my_fn());
 }

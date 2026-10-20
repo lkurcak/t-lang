@@ -12,6 +12,7 @@ struct Fds { left: int }
 
 impl Iterator for Fds {
     type Item = Fd;
+    effect e = {};
 
     fn next(&mut self) -> Option<Fd> {
         if self.left == 0 { return Option::None; }
@@ -20,7 +21,7 @@ impl Iterator for Fds {
     }
 }
 
-fn main() {
+fn main() with panic {
     let mut total = 0;
     for fd in (Fds { left: 3 }) {
         if fd.n == 1 {

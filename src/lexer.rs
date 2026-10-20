@@ -35,6 +35,8 @@ pub enum Tok {
     Crate,
     Super,
     Where,
+    With,
+    Effect,
     /// `'a`: a lifetime, with its `'`.
     Lifetime(String),
     // punctuation
@@ -118,6 +120,8 @@ impl Tok {
             Tok::Crate => "crate",
             Tok::Super => "super",
             Tok::Where => "where",
+            Tok::With => "with",
+            Tok::Effect => "effect",
             Tok::LParen => "(",
             Tok::RParen => ")",
             Tok::LBrace => "{",
@@ -269,6 +273,8 @@ pub fn lex_with_comments(src: &str) -> Result<(Vec<Token>, Vec<Comment>), Error>
                 "crate" => Tok::Crate,
                 "super" => Tok::Super,
                 "where" => Tok::Where,
+                "with" => Tok::With,
+                "effect" => Tok::Effect,
                 name => Tok::Ident(name.to_string()),
             }
         } else if c == b'\'' {

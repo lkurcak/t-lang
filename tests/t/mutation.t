@@ -12,7 +12,7 @@ fn exchange(a: &mut int, b: &mut int) {
     *b = t;
 }
 
-fn main() {
+fn main() with panic {
     let mut x = 1;
     x = x + 1;
     x *= 10;

@@ -731,6 +731,7 @@ impl Parser {
                 id: self.id(),
             }
         };
+        let effects = self.with_effects()?;
         let mut generics = generics;
         if *self.peek() == Tok::Where {
             self.where_clause(&mut generics)?;
@@ -771,6 +772,7 @@ impl Parser {
             params,
             parens: open.to(close),
             ret,
+            effects,
             body,
             intrinsic,
         };
@@ -888,17 +890,19 @@ impl Parser {
         }
         self.expect(Tok::LBrace)?;
         let mut assoc = Vec::new();
+        let mut effects = Vec::new();
         let mut methods = Vec::new();
         while *self.peek() != Tok::RBrace {
             let head = self.head()?.no_derives()?.no_intrinsic()?;
             self.no_pub("a trait's methods are public wherever the trait is")?;
             match self.peek() {
                 Tok::Type => assoc.push(self.assoc_decl(head)?),
+                Tok::Effect => effects.push(self.effect_decl(head)?),
                 Tok::Fn => {
                     let (decl, provided) = self.function(head, true, true)?;
                     methods.push(TraitMethod { decl, provided });
                 }
-                _ => return Err(self.unexpected("`fn`, `type` or `}`")),
+                _ => return Err(self.unexpected("`fn`, `type`, `effect` or `}`")),
             }
         }
         let end = self.expect(Tok::RBrace)?;
@@ -911,6 +915,7 @@ impl Parser {
             name,
             supers,
             assoc,
+            effects,
             methods,
         })
     }
@@ -960,6 +965,115 @@ impl Parser {
         })
     }
 
+    /// `effect e;` in a trait, after its head.
+    fn effect_decl(&mut self, head: Head) -> Result<EffectDecl, Error> {
+        let start = self.expect(Tok::Effect)?;
+        head.no_allows()?;
+        let name = self.effect_name()?;
+        if *self.peek() == Tok::Eq {
+            return Err(Error::syntax(
+                self.span(),
+                "an associated effect can't have a default, as an associated type can't: \
+                 each impl says what it is",
+            ));
+        }
+        let end = self.expect(Tok::Semi)?;
+        Ok(EffectDecl {
+            doc: head.doc,
+            span: start.to(end),
+            name,
+        })
+    }
+
+    /// `effect e = panic;` in an impl, after its head.
+    fn effect_def(&mut self, head: Head) -> Result<EffectDef, Error> {
+        let start = self.expect(Tok::Effect)?;
+        head.no_allows()?;
+        let name = self.effect_name()?;
+        self.expect(Tok::Eq)?;
+        let effects = self.effect_set(None)?;
+        let end = self.expect(Tok::Semi)?;
+        Ok(EffectDef {
+            doc: head.doc,
+            span: start.to(end),
+            name,
+            effects,
+        })
+    }
+
+    /// The name of an effect, which is lowercase.
+    fn effect_name(&mut self) -> Result<Ident, Error> {
+        let name = self.ident()?;
+        if !is_effect_name(&name.name) {
+            return Err(Error::syntax(
+                name.span,
+                format!("an effect's name is lowercase, as `{}` isn't", name.name),
+            ));
+        }
+        Ok(name)
+    }
+
+    /// `with panic` or `with {alloc, e}`, if a `with` is next.
+    fn with_effects(&mut self) -> Result<Option<EffectSet>, Error> {
+        match *self.peek() == Tok::With {
+            true => {
+                let with = self.bump().span;
+                Ok(Some(self.effect_set(Some(with))?))
+            }
+            false => Ok(None),
+        }
+    }
+
+    /// One effect, or a set of them in braces, after the `with` at `with`
+    /// if there is one.
+    fn effect_set(&mut self, with: Option<Span>) -> Result<EffectSet, Error> {
+        let start = with.unwrap_or_else(|| self.span());
+        if self.eat(&Tok::LBrace) {
+            let (items, end) = self.comma_list(Tok::RBrace, Self::effect)?;
+            return Ok(EffectSet {
+                items,
+                span: start.to(end),
+                braced: true,
+                with: with.is_some(),
+            });
+        }
+        let item = self.effect()?;
+        Ok(EffectSet {
+            span: start.to(item.span),
+            items: vec![item],
+            braced: false,
+            with: with.is_some(),
+        })
+    }
+
+    /// `panic`, `alloc`, an effect parameter `e`, or an associated effect
+    /// `I::e` or `<I as Iterator>::e`.
+    fn effect(&mut self) -> Result<Effect, Error> {
+        let t = self.ty()?;
+        let kind = match t.kind {
+            TypeExprKind::Named(name, args) if args.is_empty() && !name.contains("::") => {
+                EffectKind::Named(Ident {
+                    name,
+                    span: t.span,
+                    id: t.id,
+                })
+            }
+            TypeExprKind::Proj(base, tr, name) => EffectKind::Proj(base, tr, name),
+            _ => {
+                return Err(Error::syntax(
+                    t.span,
+                    "expected an effect: `panic`, `alloc`, an effect parameter like `e`, or an \
+                     associated effect like `I::e`",
+                ));
+            }
+        };
+        Ok(Effect {
+            kind,
+            span: t.span,
+            id: self.id(),
+        })
+    }
+
     /// `impl<T> Show for Option<T> { .. }` or `impl Point { .. }`, after
     /// its head.
     fn impl_decl(&mut self, head: Head) -> Result<ImplDecl, Error> {
@@ -980,6 +1094,7 @@ impl Parser {
         };
         self.expect(Tok::LBrace)?;
         let mut assoc = Vec::new();
+        let mut effects = Vec::new();
         let mut methods = Vec::new();
         while *self.peek() != Tok::RBrace {
             let head = self.head()?.no_derives()?.no_intrinsic()?;
@@ -992,12 +1107,13 @@ impl Parser {
             };
             match self.peek() {
                 Tok::Type => assoc.push(self.assoc_def(head)?),
+                Tok::Effect => effects.push(self.effect_def(head)?),
                 Tok::Fn => {
                     let mut f = self.function(head, true, false)?.0;
                     f.public = public;
                     methods.push(f);
                 }
-                _ => return Err(self.unexpected("`fn`, `type` or `}`")),
+                _ => return Err(self.unexpected("`fn`, `type`, `effect` or `}`")),
             }
         }
         let end = self.expect(Tok::RBrace)?;
@@ -1010,6 +1126,7 @@ impl Parser {
             trait_name,
             self_ty,
             assoc,
+            effects,
             methods,
         })
     }
@@ -1037,6 +1154,16 @@ impl Parser {
                 }
                 _ => {
                     let t = p.ident()?;
+                    if is_effect_name(&t.name) {
+                        if *p.peek() == Tok::Colon {
+                            return Err(Error::syntax(
+                                p.span(),
+                                "an effect parameter has no bounds: it stands for any effects",
+                            ));
+                        }
+                        g.types.push(t);
+                        return Ok(());
+                    }
                     g.types.push(t.clone());
                     t
                 }
@@ -1080,11 +1207,16 @@ impl Parser {
                 }
                 false => None,
             };
+            let effects = self.with_effects()?;
+            if let Some(e) = &effects {
+                end = e.span;
+            }
             return Ok(BoundItem {
                 span: name.span.to(end),
                 name,
                 assoc: Vec::new(),
                 sig: Some((params, ret)),
+                effects,
             });
         }
         if *self.peek() != Tok::Lt {
@@ -1122,6 +1254,7 @@ impl Parser {
             name,
             assoc,
             sig: None,
+            effects: None,
         })
     }
 
@@ -1326,9 +1459,10 @@ impl Parser {
                         id: self.id(),
                     }
                 };
-                let span = start.to(ret.span);
+                let effects = self.with_effects()?;
+                let span = start.to(effects.as_ref().map_or(ret.span, |e| e.span));
                 Ok(TypeExpr {
-                    kind: TypeExprKind::Fn(params, Box::new(ret)),
+                    kind: TypeExprKind::Fn(params, Box::new(ret), effects),
                     span,
                     id: self.id(),
                 })
@@ -2347,4 +2481,13 @@ fn no_targs(segs: &[Segment]) -> Result<(), Error> {
         )),
         None => Ok(()),
     }
+}
+
+/// Is `name` an effect's: lowercase, as `e` or `panic`, after any `_`s?
+/// A type's starts with a capital.
+pub fn is_effect_name(name: &str) -> bool {
+    name.trim_start_matches('_')
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_lowercase())
 }

@@ -291,6 +291,12 @@ impl TypeDecl {
 pub struct Generics {
     /// With their `'`: `'a`.
     pub lifetimes: Vec<Ident>,
+    /// Type parameters, and effect parameters among them, told apart by
+    /// case: the `e` of `fn apply<e, F: Fn() with e>(f: F) with e` is
+    /// lowercase (see `parser::is_effect_name`). An effect parameter is a
+    /// type parameter of a kind of its own, standing for a set of effects
+    /// (`Type::Effects`), so it's instantiated, substituted and
+    /// monomorphised as one is.
     pub types: Vec<Ident>,
     /// `'b: 'a` and `T: Show + 'a`, in the order written, each with what's
     /// before its `:` and the lifetimes and traits after it. Lifetimes start
@@ -332,13 +338,17 @@ pub struct BoundItem {
     /// `(int, bool) -> int` after `Fn`, `FnMut` or `FnOnce`: the
     /// parameters and result of a call, as in a function type.
     pub sig: Option<(Vec<TypeExpr>, Option<Box<TypeExpr>>)>,
+    /// `with e` after an `Fn` bound's signature: what its calls may do, at
+    /// most. With `sig` but without this, they can do nothing.
+    pub effects: Option<EffectSet>,
     /// From the name to the `>`, or just the name.
     pub span: Span,
 }
 
 impl BoundItem {
-    /// The types written in it: what its equality bounds say, and what an
-    /// `Fn` bound's calls take and give.
+    /// The types written in it: what its equality bounds say, what an
+    /// `Fn` bound's calls take and give, and the types whose associated
+    /// effects its effects are.
     pub fn types(&self) -> Vec<&TypeExpr> {
         let eqs = self.assoc.iter().filter_map(|a| match &a.kind {
             AssocBoundKind::Eq(t) => Some(t),
@@ -348,7 +358,8 @@ impl BoundItem {
             .sig
             .iter()
             .flat_map(|(ps, ret)| ps.iter().chain(ret.as_deref()));
-        eqs.chain(sig).collect()
+        let effects = self.effects.iter().flat_map(EffectSet::types);
+        eqs.chain(sig).chain(effects).collect()
     }
 
     /// `types`, to change.
@@ -361,7 +372,8 @@ impl BoundItem {
             .sig
             .iter_mut()
             .flat_map(|(ps, ret)| ps.iter_mut().chain(ret.as_deref_mut()));
-        eqs.chain(sig).collect()
+        let effects = self.effects.iter_mut().flat_map(EffectSet::types_mut);
+        eqs.chain(sig).chain(effects).collect()
     }
 
     /// A lifetime, or a trait with nothing said of its associated types.
@@ -371,6 +383,7 @@ impl BoundItem {
             name,
             assoc: Vec::new(),
             sig: None,
+            effects: None,
         }
     }
 }
@@ -384,6 +397,9 @@ impl fmt::Display for BoundItem {
             if let Some(ret) = ret {
                 write!(f, " -> {ret}")?;
             }
+        }
+        if let Some(e) = &self.effects {
+            write!(f, " {e}")?;
         }
         if !self.assoc.is_empty() {
             let assoc: Vec<String> = self
@@ -509,6 +525,9 @@ pub struct FnDecl {
     /// From the `(` before the parameters to the `)` after them.
     pub parens: Span,
     pub ret: TypeExpr,
+    /// `with panic` after its result: what calling it may do, or `None`
+    /// if nothing's written, which means nothing may happen.
+    pub effects: Option<EffectSet>,
     pub body: Expr,
     /// Where its `#[intrinsic]` is, if it's one: a function `core` declares
     /// with no body, which the compiler provides. Its body here is empty.
@@ -538,6 +557,8 @@ pub struct TraitDecl {
     pub supers: Vec<Ident>,
     /// `type Item: Discard;`: its associated types.
     pub assoc: Vec<AssocDecl>,
+    /// `effect e;`: its associated effects.
+    pub effects: Vec<EffectDecl>,
     pub methods: Vec<TraitMethod>,
 }
 
@@ -561,6 +582,103 @@ pub struct AssocDef {
     pub span: Span,
     pub name: Ident,
     pub ty: TypeExpr,
+}
+
+/// `effect e;` in a trait: effects each impl picks, which the trait's
+/// methods can say they have, as `with Self::e`.
+#[derive(Debug, Clone)]
+pub struct EffectDecl {
+    pub doc: Option<DocComment>,
+    /// From the `effect` to the `;`.
+    pub span: Span,
+    pub name: Ident,
+}
+
+/// `effect e = {I::e, f};` in an impl: what the trait's associated effect
+/// is for the impl's type.
+#[derive(Debug, Clone)]
+pub struct EffectDef {
+    pub doc: Option<DocComment>,
+    /// From the `effect` to the `;`.
+    pub span: Span,
+    pub name: Ident,
+    pub effects: EffectSet,
+}
+
+/// `with panic`, or `with {alloc, panic}`: what calling a function may do,
+/// its *effects*, as a set. `{}` is none.
+#[derive(Debug, Clone)]
+pub struct EffectSet {
+    pub items: Vec<Effect>,
+    /// From the `with`, or the `{` of a set after an `=`, to the end.
+    pub span: Span,
+    /// Was it written in braces?
+    pub braced: bool,
+    /// Is there a `with` before it? There is everywhere but after `effect
+    /// e =`.
+    pub with: bool,
+}
+
+/// One effect: `panic`, `alloc`, an effect parameter `e`, or an associated
+/// effect `I::e`, `<I as Iterator>::e`.
+#[derive(Debug, Clone)]
+pub struct Effect {
+    pub kind: EffectKind,
+    pub span: Span,
+    pub id: NodeId,
+}
+
+#[derive(Debug, Clone)]
+pub enum EffectKind {
+    /// `panic`, `alloc`, or an effect parameter.
+    Named(Ident),
+    /// `I::e` or `<I as Iterator>::e`: what the impl of the trait for the
+    /// type says its associated effect is.
+    Proj(Box<TypeExpr>, Option<Ident>, Ident),
+}
+
+impl EffectSet {
+    /// The types whose associated effects it names: the `I` of `I::e`.
+    pub fn types(&self) -> impl Iterator<Item = &TypeExpr> {
+        self.items.iter().filter_map(|e| match &e.kind {
+            EffectKind::Proj(t, ..) => Some(&**t),
+            EffectKind::Named(_) => None,
+        })
+    }
+
+    /// `types`, to change.
+    pub fn types_mut(&mut self) -> impl Iterator<Item = &mut TypeExpr> {
+        self.items.iter_mut().filter_map(|e| match &mut e.kind {
+            EffectKind::Proj(t, ..) => Some(&mut **t),
+            EffectKind::Named(_) => None,
+        })
+    }
+}
+
+/// As written: `with panic`, `with {alloc, e}`, or `{}` after `effect e =`.
+impl fmt::Display for EffectSet {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if self.with {
+            f.write_str("with ")?;
+        }
+        let items: Vec<String> = self.items.iter().map(Effect::to_string).collect();
+        match self.braced || items.len() != 1 {
+            true => write!(f, "{{{}}}", items.join(", ")),
+            false => f.write_str(&items[0]),
+        }
+    }
+}
+
+impl fmt::Display for Effect {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match &self.kind {
+            EffectKind::Named(n) => f.write_str(&n.name),
+            EffectKind::Proj(t, Some(tr), name) => {
+                write!(f, "<{t} as {}>::{}", tr.name, name.name)
+            }
+            EffectKind::Proj(t, None, name) => write!(f, "{t}::{}", name.name),
+        }
+    }
 }
 
 /// A method of a trait: `fn show(&self);`, which each impl must have, or
@@ -592,6 +710,8 @@ pub struct ImplDecl {
     pub self_ty: TypeExpr,
     /// `type Item = int;`: what the trait's associated types are.
     pub assoc: Vec<AssocDef>,
+    /// `effect e = panic;`: what the trait's associated effects are.
+    pub effects: Vec<EffectDef>,
     pub methods: Vec<FnDecl>,
 }
 
@@ -761,8 +881,9 @@ pub enum TypeExprKind {
     Named(String, Vec<TypeExpr>),
     /// `()`
     Unit,
-    /// `fn(int, bool) -> int`
-    Fn(Vec<TypeExpr>, Box<TypeExpr>),
+    /// `fn(int, bool) -> int`, or `fn(int) -> int with panic` with the
+    /// effects its calls may have.
+    Fn(Vec<TypeExpr>, Box<TypeExpr>, Option<EffectSet>),
     /// `&T`, `&'a T`, `&mut T` or `&'a mut T`: a reference, with its
     /// lifetime if it's written, and whether it's `mut`.
     Ref(Option<Ident>, bool, Box<TypeExpr>),
@@ -788,7 +909,13 @@ impl fmt::Display for TypeExpr {
             TypeExprKind::Named(name, args) if args.is_empty() => f.write_str(name),
             TypeExprKind::Named(name, args) => write!(f, "{name}<{}>", comma_list(args)),
             TypeExprKind::Unit => f.write_str("()"),
-            TypeExprKind::Fn(params, ret) => write!(f, "fn({}) -> {ret}", comma_list(params)),
+            TypeExprKind::Fn(params, ret, effects) => {
+                write!(f, "fn({}) -> {ret}", comma_list(params))?;
+                match effects {
+                    Some(e) => write!(f, " {e}"),
+                    None => Ok(()),
+                }
+            }
             TypeExprKind::Ref(lifetime, mutable, t) => {
                 f.write_str("&")?;
                 if let Some(l) = lifetime {

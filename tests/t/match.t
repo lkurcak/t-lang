@@ -19,7 +19,7 @@ fn describe(p: Pixel) -> int {
     }
 }
 
-fn classify(n: int) -> int {
+fn classify(n: int) -> int with panic {
     match n {
         0 => 100,
         -1 => 200,
@@ -42,7 +42,7 @@ fn unwrap_or(o: Opt, default: int) -> int {
     }
 }
 
-fn main() {
+fn main() with panic {
     print(describe(Pixel { color: Color::Red, bright: true }));    // expect: 1
     print(describe(Pixel { color: Color::Red, bright: false }));   // expect: 2
     print(describe(Pixel { color: Color::Blue, bright: false }));  // expect: 3

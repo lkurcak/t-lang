@@ -178,6 +178,11 @@ fn decls(prog: &Program) -> Vec<Decl<'_>> {
                 .iter()
                 .map(|a| ident(&a.name, "associated type", Case::Camel)),
         );
+        out.extend(
+            t.effects
+                .iter()
+                .map(|a| ident(&a.name, "associated effect", Case::Snake)),
+        );
         // Those with a default are among the functions.
         for m in t.methods.iter().filter(|m| !m.provided) {
             out.push(ident(&m.decl.name, "method", Case::Snake));
@@ -223,7 +228,10 @@ fn params<'a>(params: &'a [Ident], out: &mut Vec<Decl<'a>>) {
     out.extend(
         params
             .iter()
-            .map(|p| ident(p, "type parameter", Case::Camel)),
+            .map(|p| match crate::parser::is_effect_name(&p.name) {
+                true => ident(p, "effect parameter", Case::Snake),
+                false => ident(p, "type parameter", Case::Camel),
+            }),
     );
 }
 

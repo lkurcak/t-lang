@@ -18,8 +18,8 @@ impl<T: Ord> Sorted<T> {
     }
 }
 
-fn width(s: Sorted<int>) -> int { s.hi - s.lo }
+fn width(s: Sorted<int>) -> int with panic { s.hi - s.lo }
 
-fn main() {
+fn main() with panic {
     print(width(Sorted::of(9, 3)));  // expect: 6
 }

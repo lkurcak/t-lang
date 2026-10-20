@@ -3,7 +3,7 @@
 #[derive(Discard)]
 struct P { x: int, y: int }
 
-fn main() {
+fn main() with panic {
     // Borrows end with the closure's last use.
     let mut n = 0;
     let mut inc = || n = n + 1;

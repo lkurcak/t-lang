@@ -7,14 +7,14 @@ body) and `src/borrowck/build.rs` (making a closure, and calling one),
 `src/lift.rs` and `src/interp.rs` (`Closure`).
 
 ```rust
-fn apply<F: Fn(int) -> int + Discard>(f: F, x: int) -> int { f(x) }
+fn apply<e, F: Fn(int) -> int with e + Discard>(f: F, x: int) -> int with e { f(x) }
 
-fn count<F: FnMut() + Discard>(mut tick: F) {
+fn count<e, F: FnMut() with e + Discard>(mut tick: F) with e {
     tick();
     tick();
 }
 
-fn main() {
+fn main() with panic {
     let k = 10;
     print(apply(|x| x * k, 4)); // expect: 40
     let mut n = 0;
@@ -104,7 +104,7 @@ Which trait a closure implements follows from what its body does:
 - `Fn` otherwise.
 
 ```rust,error
-fn twice<F: Fn() -> int + Discard>(f: F) -> int { f() + f() }
+fn twice<e, F: Fn() -> int with e + Discard>(f: F) -> int with {panic, e} { f() + f() }
 
 fn main() {
     let mut n = 0;
@@ -192,9 +192,9 @@ implementations that aren't closures.
 can be lent to a function and called again after:
 
 ```rust
-fn apply<F: Fn(int) -> int>(f: &F, x: int) -> int { f(x) }
+fn apply<e, F: Fn(int) -> int with e>(f: &F, x: int) -> int with e { f(x) }
 
-fn main() {
+fn main() with panic {
     let k = 3;
     let add = |x| x + k;
     print(apply(&add, 1) + apply(&add, 2)); // expect: 9

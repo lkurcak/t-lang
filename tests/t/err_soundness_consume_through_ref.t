@@ -14,7 +14,7 @@ fn close(f: Fd) -> int {
     n
 }
 
-fn main() {
+fn main() with panic {
     let inner = Fd { n: 9 };
     let p = P { a: Fd { n: 1 }, q: Q { r: &inner } };
     let P { a, q: Q { r: Fd { n } } } = p;

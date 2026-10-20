@@ -2,7 +2,50 @@
 
 ## Unreleased
 
+Step 7: effects. See [docs/07-effects.md](docs/07-effects.md).
+
+### Added
+
+- A function's type says what a call may do besides give its result: its
+  effects. `with panic` says it may abort the program, and `with alloc`
+  that it may allocate; `with {alloc, panic}` says both. A function
+  without a `with` can do neither, which is checked: nothing in it, and
+  nothing it calls, can. A `main` without one is a program that can't
+  panic.
+- What panics: `+`, `-`, `*` and unary `-` on overflow, `/` and `%` by
+  zero (but not `-5`, or `/` and `%` by a literal other than `0`, which
+  can't), `Box::new`, which also allocates, and the new `panic()`, of
+  type `fn() -> ! with panic`.
+- Effect parameters, lowercase among the type parameters, for code
+  generic in what it's given: `fn twice<e, F: Fn(int) -> int with e>(f: F,
+  x: int) -> int with e`. Each call's is worked out as the least that
+  will do, the effects of what's passed.
+- A closure's effects are worked out from its body. A bound like `F:
+  Fn(int) -> int with panic` says the most a closure may do.
+- Associated effects: `effect e;` in a trait, which each impl says, as it
+  says an associated type. `Iterator` has one, `e`, which its `next`
+  has: iterating over a range can't panic, and `map` and `filter` have
+  the effects of what they iterate and what they call.
+- In the core library: `Option::unwrap` and `Result::unwrap`, which panic,
+  and `checked_add`, `checked_sub`, `checked_mul`, `checked_div`,
+  `checked_rem` and `checked_neg`, which can't, in the prelude.
+- A warning, `unused_effects`, for an effect a function says but can't
+  have, with a fix that takes it out.
+- The interpreter checks, at each panic and allocation, that every
+  function being run says it may: a "type soundness violated" error if
+  not, as for leaks.
+
 ### Changed
+
+- Breaking: every function that may panic or allocate must say so, `main`
+  too, and every `Fn` bound or function type that doesn't say `with`
+  holds only of what can't. A type parameter named in lowercase is now
+  an effect parameter.
+- An impl of a trait with an effect parameter that isn't in its type is
+  allowed if an `Fn` bound decides it, as `impl<f, F: Fn() with f> Tr for
+  W<F>`.
+- A function's `with` and `where` go on lines of their own together when
+  its signature doesn't fit on one.
 
 - Internal: every expression, pattern, name, type and closure in the AST
   has an id of its own (`ast::NodeId`), and what the checker learns about

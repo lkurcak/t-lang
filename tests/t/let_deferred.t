@@ -5,7 +5,7 @@
 #[derive(Discard)]
 struct Pair { a: Box<int>, b: int }
 
-fn main() {
+fn main() with {alloc, panic} {
     let x = 1;
     let y = 2;
     let r;

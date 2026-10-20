@@ -37,6 +37,7 @@
 //! works out what it must be from how it's used: `unify`.
 
 mod closures;
+mod effects;
 mod generics;
 mod info;
 mod lints;
@@ -48,7 +49,7 @@ pub(crate) mod typed;
 mod unify;
 
 pub(crate) use closures::is_result_lifetime;
-pub(crate) use generics::{Lifetimes, TypeName, resolve};
+pub(crate) use generics::{Lifetimes, ProjNames, TypeName, resolve, resolve_effects};
 pub use info::{Info, Instance, MoveSite, Note, NoteKind};
 pub use scope::source_name;
 
@@ -81,7 +82,14 @@ pub const BUILTINS: &[&str] = &["print", "print_bool"];
 /// the compiler provides (see `core/mem.t`), by symbol. Each is checked
 /// like any function, by its signature; what it does is what the checker
 /// trusts.
-pub const INTRINSICS: &[&str] = &["core::mem::swap"];
+pub const INTRINSICS: &[&str] = &[
+    "core::mem::swap",
+    "core::panic::panic",
+    "core::num::checked_add",
+    "core::num::checked_sub",
+    "core::num::checked_mul",
+    "core::num::checked_div",
+];
 
 pub(crate) use modules::FOR_ITERATOR;
 
@@ -439,6 +447,17 @@ pub(crate) struct Checker {
     /// The function whose signature is being worked out, by symbol and
     /// name: what owns the opaque types in it.
     sig_owner: (String, String),
+    /// What has effects in the body being checked, the function's or a
+    /// closure's (see `effects`).
+    effect_sites: Vec<effects::Site>,
+    /// What must hold of effect sets once the function's variables are
+    /// solved.
+    withins: Vec<effects::Within>,
+    /// Where the closure is whose effects each effect variable is, by its
+    /// number, for messages.
+    effect_owners: HashMap<u32, Span>,
+    /// The variables that stand for effect sets.
+    effect_vars: HashSet<u32>,
 }
 
 /// A projection `proj`, `<T as Tr>::Item`, whose type `T` isn't known yet,
@@ -544,6 +563,10 @@ impl Checker {
             goals: Vec::new(),
             opaque_at: HashMap::new(),
             sig_owner: Default::default(),
+            effect_sites: Vec::new(),
+            withins: Vec::new(),
+            effect_owners: HashMap::new(),
+            effect_vars: HashSet::new(),
             modules,
             module: ROOT,
         }
@@ -699,7 +722,7 @@ impl Checker {
         let (preds, eqs) = self.preds(&f.generics, &params, &declared, true)?;
         self.env = preds.clone();
         self.adts.proj.local = eqs.clone();
-        let (param_tys, ret, lifetimes) = self.signature(f, &params, &declared, true)?;
+        let (param_tys, ret, effects, lifetimes) = self.signature(f, &params, &declared, true)?;
         self.env.clear();
         self.adts.proj.local.clear();
         Ok(Scheme {
@@ -708,14 +731,14 @@ impl Checker {
             bounds,
             preds,
             eqs,
-            ty: Type::func(param_tys, ret),
+            ty: Type::func_with(param_tys, ret, effects),
         })
     }
 
-    /// The parameter and return types of `f`, which has type parameters
-    /// `params` and declares lifetimes `declared`, and its lifetime
-    /// parameters: those, and one more for each lifetime its parameters
-    /// leave out.
+    /// The parameter and return types of `f`, which has type and effect
+    /// parameters `params` and declares lifetimes `declared`, its effects,
+    /// and its lifetime parameters: those, and one more for each lifetime
+    /// its parameters leave out.
     ///
     /// That's *lifetime elision*, as in Rust. A lifetime its return type
     /// leaves out is the one lifetime its parameters have, if they have
@@ -733,7 +756,7 @@ impl Checker {
         params: &[String],
         declared: &[String],
         opaques: bool,
-    ) -> Result<(Vec<Type>, Type, Vec<String>), Error> {
+    ) -> Result<(Vec<Type>, Type, Type, Vec<String>), Error> {
         let mut lts = Lifetimes::Params {
             declared,
             elided: Vec::new(),
@@ -775,7 +798,16 @@ impl Checker {
         }
         let mut lts = Lifetimes::Return { declared, input };
         let ret = self.resolve_with(&f.ret, params, &mut lts)?;
-        Ok((param_tys, ret, lifetimes))
+        let effects = match &f.effects {
+            Some(e) => {
+                let mut lts = Lifetimes::Assoc {
+                    declared: &lifetimes,
+                };
+                self.resolve_effects_with(e, params, &mut lts)?
+            }
+            None => Type::no_effects(),
+        };
+        Ok((param_tys, ret, effects, lifetimes))
     }
 
     /// Defines the opaque type `t`, an `impl Tr` written in the return type
@@ -970,6 +1002,7 @@ impl Checker {
         self.check(&f.body, &ret)?;
         self.end_scope(scope);
         self.solve_all(vars)?;
+        self.body_effects(f, &sig.effects)?;
         for (s, var) in &hidden {
             let t = self.solution(var);
             let span = self.traits.opaques[s].span;
@@ -1339,6 +1372,23 @@ impl Checker {
         )
     }
 
+    /// Effects written where type and effect parameters `params` are in
+    /// scope, and lifetimes mean what `lts` says.
+    fn resolve_effects_with(
+        &self,
+        e: &EffectSet,
+        params: &[String],
+        lts: &mut Lifetimes,
+    ) -> Result<Type, Error> {
+        resolve_effects(
+            e,
+            &|_, t| self.type_name(t),
+            &|s, tr, name, t| self.projection(s, tr, name, t),
+            params,
+            lts,
+        )
+    }
+
     /// A type written inside the function being checked.
     fn resolve(&self, t: &TypeExpr) -> Result<Type, Error> {
         let mut lts = Lifetimes::Body {
@@ -1554,7 +1604,8 @@ impl Checker {
             return Ok(params
                 .iter()
                 .map(|p| {
-                    self.fresh(
+                    self.fresh_param(
+                        p,
                         span,
                         format!("`{p}` for this use of `{name}`"),
                         format!(
@@ -1573,7 +1624,25 @@ impl Checker {
                 span,
             ));
         }
-        targs.iter().map(|t| self.type_arg(t)).collect()
+        let mut args = Vec::new();
+        for (p, t) in params.iter().zip(targs) {
+            args.push(match crate::parser::is_effect_name(p) {
+                true if matches!(&t.kind, TypeExprKind::Named(n, a) if n == "_" && a.is_empty()) => {
+                    self.fresh_effects(t.span, format!("`{p}` for this use of `{name}`"))
+                }
+                true => {
+                    return Err(Error::ty(
+                        t.span,
+                        format!(
+                            "`{p}` is an effect parameter, which can't be written here yet; \
+                             write `_` for it"
+                        ),
+                    ));
+                }
+                false => self.type_arg(t)?,
+            });
+        }
+        Ok(args)
     }
 
     /// A type argument written in `::<..>`, where `_` may stand for any part
@@ -1709,6 +1778,31 @@ impl Checker {
                     ),
                 )),
             };
+        }
+        // A function gains effects: one that can't panic will do where
+        // one that may is wanted, as nothing calling it counts on a panic.
+        // Only as a whole value, here, not inside another type: there's no
+        // subtyping.
+        if let (Type::Fn(g), Type::Fn(w)) = (self.shallow(&got), self.shallow(want)) {
+            let bare = |f: &FnType| Type::Fn(f.with_effects(Type::no_effects()));
+            let (gs, ws) = (self.solved(&got), self.solved(want));
+            self.unify_or(&bare(&g), &bare(&w), result_span(e), |_, _| {
+                format!("expected `{ws}`, found `{gs}`")
+            })?;
+            let why = effects::Why::Coerce {
+                got: gs.clone(),
+                want: ws.clone(),
+            };
+            let (ge, we) = (self.solved(&g.effects), self.solved(&w.effects));
+            let open = |t: &Type| unify::has_vars(t);
+            if !open(&ge) && !open(&we) && !crate::traits::subset(&ge, &we) {
+                return Err(Error::ty(
+                    result_span(e),
+                    format!("expected `{ws}`, found `{gs}`"),
+                ));
+            }
+            self.within(ge, we, result_span(e), why);
+            return Ok(());
         }
         self.fits(&got, want, result_span(e), |got, want| {
             format!("expected `{want}`, found `{got}`")
@@ -1874,12 +1968,19 @@ impl Checker {
             //   Γ ⊢ e : int            Γ ⊢ e : bool
             //  -------------- (T-Neg)  -------------- (T-Not)
             //   Γ ⊢ -e : int            Γ ⊢ !e : bool
+            //
+            // `-x` panics at the least `int`, which has no positive
+            // counterpart. Not `-5`: a literal is at most the greatest
+            // `int`, so negating it can't overflow.
             ExprKind::Unary(op @ (UnOp::Neg | UnOp::Not), x) => {
                 let t = match op {
                     UnOp::Neg => Type::Int,
                     _ => Type::Bool,
                 };
                 self.check(x, &t)?;
+                if *op == UnOp::Neg && !matches!(x.kind, ExprKind::Int(_)) {
+                    self.effect(e.span, "`-`", Type::effects([Type::Panic]));
+                }
                 Ok(t)
             }
 
@@ -2054,9 +2155,19 @@ impl Checker {
                 //   Γ ⊢ l : int   Γ ⊢ r : int
                 //  --------------------------- (T-Arith)   for + - * / %
                 //       Γ ⊢ l + r : int
+                //
+                // Each may panic: on overflow, or `/` and `%` by zero. Not
+                // `/` or `%` by a literal other than `0`: a literal is at
+                // least 1 then, which can't overflow either, as only the
+                // least `int` divided by -1 does.
                 BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => {
                     self.check(l, &Type::Int)?;
                     self.check(r, &Type::Int)?;
+                    let by_literal = matches!(op, BinOp::Div | BinOp::Rem)
+                        && matches!(r.kind, ExprKind::Int(n) if n != 0);
+                    if !by_literal {
+                        self.effect(e.span, format!("`{op}`"), Type::effects([Type::Panic]));
+                    }
                     Ok(Type::Int)
                 }
 
@@ -2128,8 +2239,15 @@ impl Checker {
             // arguments of some types, returning some type.
             ExprKind::Call(f, args) => {
                 let ft = self.synth(f)?;
+                let what = match &f.kind {
+                    ExprKind::Var(name, _) => format!("`{name}`"),
+                    _ => "this call".to_string(),
+                };
                 let (params, ret) = match self.shallow(&ft) {
-                    Type::Fn(sig) => (sig.params, *sig.ret),
+                    Type::Fn(sig) => {
+                        self.effect(e.span, what, *sig.effects);
+                        (sig.params, *sig.ret)
+                    }
                     Type::Var(_) => {
                         let params: Vec<Type> = args
                             .iter()
@@ -2138,11 +2256,13 @@ impl Checker {
                                 self.fresh(a.span, what, "add a type annotation".into())
                             })
                             .collect();
-                        let what = "the type of this call".to_string();
-                        let ret = self.fresh(e.span, what, "add a type annotation".into());
-                        let sig = Type::func(params.clone(), ret.clone());
+                        let it = "the type of this call".to_string();
+                        let ret = self.fresh(e.span, it, "add a type annotation".into());
+                        let effects = self.fresh_effects(e.span, "the effects of this call".into());
+                        let sig = Type::func_with(params.clone(), ret.clone(), effects.clone());
                         self.unify(&ft, &sig)
                             .unwrap_or_else(|_| unreachable!("fresh variables fit anything"));
+                        self.effect(e.span, what, effects);
                         (params, ret)
                     }
                     // A closure, or what a bound says can be called, or a
@@ -2171,6 +2291,7 @@ impl Checker {
                         let pred = Checker::callable_pred(&t);
                         self.oblige(pred, f.span, traits::Why::Call)?;
                         self.calls.push((e.id, t, e.span));
+                        self.effect(e.span, what, *sig.effects);
                         (sig.params, *sig.ret)
                     }
                 };
@@ -2290,6 +2411,7 @@ impl Checker {
                 }
                 let ret = (*sig.ret).clone();
                 let params = params.to_vec();
+                self.effect(e.span, format!("`{}`", name.name), (*sig.effects).clone());
                 self.resolved(name, &found, targs.is_empty());
                 for (arg, param) in args.iter().zip(&params) {
                     self.check(arg, param)?;
@@ -2630,14 +2752,20 @@ impl Checker {
     // `break` out of a loop around it: the body is a function of its own.
     // Whether it diverges doesn't matter to the code around: making a
     // closure doesn't run it.
+    //
+    // Its effects are those of what's in its body, rather than the code
+    // around it's: as a variable, at least what each has, worked out at
+    // the end of the function (see `effects`).
     fn lambda(&mut self, l: &Arc<Lambda>, sig: Option<FnType>) -> Result<Type, Error> {
         let outer_ret = self.ret.take();
         let outer_diverges = self.diverges.take();
+        let outer_sites = std::mem::take(&mut self.effect_sites);
         self.loops.push(Target::Closure);
         let result = self.lambda_inner(l, sig);
         self.loops.pop();
         self.ret = outer_ret;
         self.diverges = outer_diverges;
+        self.effect_sites = outer_sites;
         result
     }
 
@@ -2758,10 +2886,14 @@ impl Checker {
                 r => r.clone(),
             }),
         };
+        let sites = std::mem::take(&mut self.effect_sites);
+        let effects = self.closure_effects(l.body.span);
+        self.closure_sites(sites, &effects);
         let sig = FnType {
             params,
             ret: Box::new(ret),
             bound,
+            effects: Box::new(effects),
         };
         match captured.is_empty() {
             true => {
@@ -3542,6 +3674,7 @@ impl Checker {
         for (arg, param) in args.iter().zip(&sig.params) {
             self.check(arg, param)?;
         }
+        self.effect(e.span, format!("`{}`", name.name), (*sig.effects).clone());
         oblige(self)?;
         Ok((*sig.ret).clone())
     }
@@ -3613,6 +3746,9 @@ impl Checker {
             }
             _ => return Err(generics::arity_error("`Box`", 1, targs.len(), e.span)),
         };
+        // It allocates, and aborts if memory has run out.
+        let effects = Type::effects([Type::Alloc, Type::Panic]);
+        self.effect(e.span, "`Box::new`", effects);
         Ok(Type::Box(Box::new(t)))
     }
 }

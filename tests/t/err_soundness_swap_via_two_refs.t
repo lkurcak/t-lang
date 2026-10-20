@@ -2,7 +2,7 @@
 
 use core::mem::swap;
 
-fn main() {
+fn main() with {alloc, panic} {
     let mut x = Box::new(1);
     let r = &mut x;
     swap(r, &mut *r);

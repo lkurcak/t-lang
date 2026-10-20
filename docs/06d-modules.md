@@ -11,16 +11,16 @@ mod geometry {
     #[derive(Copy, Discard)]
     pub struct Point { pub x: int, pub y: int }
 
-    pub fn dist(a: Point, b: Point) -> int { abs(a.x - b.x) + abs(a.y - b.y) }
+    pub fn dist(a: Point, b: Point) -> int with panic { abs(a.x - b.x) + abs(a.y - b.y) }
 
-    fn abs(n: int) -> int {
+    fn abs(n: int) -> int with panic {
         if n < 0 { -n } else { n }
     }
 }
 
 use geometry::{Point, dist};
 
-fn main() {
+fn main() with panic {
     let p = Point { x: 1, y: 2 };
     print(dist(p, Point { x: 4, y: 6 })); // expect: 7
     print(geometry::dist(p, p));          // expect: 0
@@ -68,13 +68,13 @@ declared there, maybe under another one:
 ```rust
 mod shapes {
     pub mod round {
-        pub fn area(r: int) -> int { 3 * r * r }
+        pub fn area(r: int) -> int with panic { 3 * r * r }
     }
 }
 
 use shapes::round::area as circle;
 
-fn main() {
+fn main() with panic {
     print(circle(2)); // expect: 12
 }
 ```
@@ -153,15 +153,15 @@ and only `close` can take one apart, so every file that's opened is closed:
 mod fs {
     pub struct Fd { pub id: int, raw: int }
 
-    pub fn open(id: int) -> Fd { Fd { id, raw: id * 10 } }
+    pub fn open(id: int) -> Fd with panic { Fd { id, raw: id * 10 } }
 
-    pub fn close(fd: Fd) -> int {
+    pub fn close(fd: Fd) -> int with panic {
         let Fd { id, raw } = fd;
         id + raw
     }
 }
 
-fn main() {
+fn main() with panic {
     let fd = fs::open(2);
     print(fd.id);         // expect: 2
     print(fs::close(fd)); // expect: 22
@@ -186,7 +186,7 @@ mod fs {
 
     pub fn open(n: int) -> Fd { Fd { id: Id { n }, raw: n } }
 
-    pub fn close(fd: Fd) -> int {
+    pub fn close(fd: Fd) -> int with panic {
         let Fd { id, raw } = fd;
         id.n + raw
     }
@@ -268,10 +268,10 @@ mod cells {
     #[derive(Discard where T: Discard)]
     pub struct Cell<T> { v: Box<T> }
 
-    pub fn cell<T>(v: T) -> Cell<T> { Cell { v: Box::new(v) } }
+    pub fn cell<T>(v: T) -> Cell<T> with {alloc, panic} { Cell { v: Box::new(v) } }
 }
 
-fn main() {
+fn main() with {alloc, panic} {
     // A `Cell<int>` is `Discard`, so it can be thrown away.
     let _c = cells::cell(5);
 }

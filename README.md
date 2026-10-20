@@ -10,7 +10,7 @@ they matter.
 enum Shape { Circle(int), Rect(int, int), Empty }
 
 /// The area of `s`, with π rounded down to 3.
-fn area(s: Shape) -> int {
+fn area(s: Shape) -> int with panic {
     match s {
         Shape::Circle(r) => 3 * r * r,
         Shape::Rect(w, h) => w * h,
@@ -18,13 +18,13 @@ fn area(s: Shape) -> int {
     }
 }
 
-fn fact(n: int) -> int {
+fn fact(n: int) -> int with panic {
     if n <= 1 { 1 } else { n * fact(n - 1) }
 }
 
-fn twice<F: Fn(int) -> int + Discard>(f: F, x: int) -> int { f(f(x)) }
+fn twice<e, F: Fn(int) -> int with e + Discard>(f: F, x: int) -> int with e { f(f(x)) }
 
-fn main() {
+fn main() with panic {
     let n = 5;
     print(fact(10));                                    // expect: 3628800
     print(twice(fact, 3));                              // expect: 720
@@ -34,7 +34,7 @@ fn main() {
     print(area(Shape::Circle(2)) + area(Shape::Empty)); // expect: 12
 
     // A nested `fn`: only `main` can see it.
-    fn square(x: int) -> int { x * x }
+    fn square(x: int) -> int with panic { x * x }
 }
 ```
 
@@ -95,8 +95,8 @@ As in Rust, a name that isn't a lint's is a warning (`unknown_lints`), not
 an error. The lints are `unused_variables`, `unused_mut`, `dead_code`,
 `unreachable_patterns`, `overlapping_ranges`, `mergeable_ranges`,
 `unused_doc_comments`, `non_camel_case_types`, `non_snake_case`,
-`infinite_types`, `unreachable_code`, `unused_labels`, `unused_imports` and
-`unknown_lints`.
+`infinite_types`, `unreachable_code`, `unused_labels`, `unused_imports`,
+`empty_ranges`, `unused_effects` and `unknown_lints`.
 
 Pipeline: `lexer` → `parser` → `check` (type checker, then `borrowck`, the
 borrow checker) → `lift` (nested functions and types moved to the top
@@ -270,13 +270,18 @@ has to fit that:
   [docs/06c-closures.md](docs/06c-closures.md). A function returns one as
   `impl Fn(int) -> int`, a type its callers know only by what it can do
   (see [docs/06c.1-opaque-types.md](docs/06c.1-opaque-types.md)).
-- **Errors are values, not exceptions.** There's no unwinding.
+- **Errors are values, not exceptions.** There's no unwinding. A panic
+  aborts, and a function's type says if it may: `fn mean(a: int, b: int) ->
+  int with panic`. One that doesn't say so can't, nor can a `main` that
+  doesn't, nor anything it calls; allocating is in types the same way,
+  `with alloc`. See [docs/07-effects.md](docs/07-effects.md).
 - **Values must be used up.** One whose type isn't `#[derive(Discard)]`
   can't be dropped or overwritten: a resource like a file descriptor can't
   be forgotten. See [docs/06a.1-linear-types.md](docs/06a.1-linear-types.md).
 - **The core library is written in T.** `Option`, `Result`, `Iterator` and
   the rest are checked like any program; all the checker takes on trust is
-  one intrinsic, `swap`. See [docs/06e-core.md](docs/06e-core.md).
+  its intrinsics: `swap`, `panic`, and `checked_add`, `checked_sub`,
+  `checked_mul` and `checked_div`. See [docs/06e-core.md](docs/06e-core.md).
 
 Within that, the aim is to push the type system as far as it goes, and keep
 it sound: well-typed programs don't go wrong, including the ones that
@@ -301,7 +306,7 @@ combine features in ways nobody planned for.
 | 6d.1 ✅ | modules in files of their own: `mod m;` | a file is the module's braces; one file per module path | [docs/06d.1-files.md](docs/06d.1-files.md) |
 | 6e ✅ | a small `core` library: `Option`, `Result`, `Ord`, `Iterator`, `for`, `a..b`, `where` clauses | a library written in T with one trusted intrinsic, a prelude that can't change a program, orphan rules between packages, `for` as a desugaring | [docs/06e-core.md](docs/06e-core.md) |
 | 6e.1 ✅ | closures that take a reference of any lifetime; `Iterator::filter` | higher-ranked closure types: a closure's body checked for every lifetime, with placeholders; its result's lifetimes inferred from its body, then checked; signatures equal up to renaming | [docs/06e.1-higher-ranked-closures.md](docs/06e.1-higher-ranked-closures.md) |
-| 7 | effects | effect systems: which functions can panic, allocate or diverge | |
+| 7 ✅ | `with panic`, `with alloc`: what a call may do, in its type; `panic()`, `unwrap`, `checked_add` | effect systems, effect polymorphism (effects as a kind, least solutions), associated effects; divergence left for a termination checker | [docs/07-effects.md](docs/07-effects.md) |
 | 8 | refinement types | proving indexes in bounds, so indexing can't panic | |
 | — | `alloc` (a dense, resizable `List`) and `std` | | after effects, once raw memory has a design |
 | — | C backend | | when it's worth it |

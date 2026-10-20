@@ -3,6 +3,7 @@ struct Lines { left: int }
 
 impl Iterator for Lines {
     type Item = int;
+    effect e = {};
 
     fn next(&mut self) -> Option<int> {
         if self.left == 0 { return Option::None; }

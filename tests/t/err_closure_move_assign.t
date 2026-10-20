@@ -1,6 +1,6 @@
 // A `move` closure has its own copy of `n`, but changing it still needs
 // `n` to be `mut`, as it would anywhere.
-fn main() {
+fn main() with panic {
     let n = 0;
     let mut c = move || {
         n = n + 1;

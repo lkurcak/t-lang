@@ -1,0 +1,15 @@
+// An impl must set each associated effect of its trait, as it sets each
+// associated type.
+struct Ones {}
+
+impl Iterator for Ones {
+    type Item = int;
+
+    fn next(&mut self) -> Option<int> { Option::Some(1) }
+}
+
+fn main() {
+    let mut o = Ones {};
+    print_bool(o.next().is_some());
+}
+// error: this impl of `Iterator` for `Ones` is missing an associated effect: `e`

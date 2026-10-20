@@ -21,7 +21,7 @@ impl Iter for Up {
 
 fn from(n: int) -> impl Iter + Discard { Up { n } }
 
-fn sum<I: Iter<Item = int> + Discard>(mut i: I) -> int { i.next() + i.next() }
+fn sum<I: Iter<Item = int> + Discard>(mut i: I) -> int with panic { i.next() + i.next() }
 
 fn main() { print(sum(from(1))); }
 // error: `sum` needs `<impl Iter + Discard as Iter>::Item` to be `int`, and nothing says it is

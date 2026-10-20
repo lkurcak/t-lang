@@ -8,6 +8,7 @@ use super::generics::{self, Lifetimes};
 use super::{Checker, plural};
 use crate::ast::*;
 use crate::error::{Edit, Error, Fix, Span};
+use crate::parser::is_effect_name;
 use crate::traits::{AssocDecl, ImplDef, MethodDef, Pred, TraitDef, eq_subject, overlap};
 use crate::types::{AdtKind, Bound, Region, Scheme, Subst, Type};
 use std::collections::{HashMap, HashSet};
@@ -145,6 +146,21 @@ impl Checker {
                     name: a.name.name.clone(),
                     bounds,
                     span: a.name.span,
+                });
+            }
+            // An associated effect is an associated type of the kind of
+            // effects: it's projected and normalised as one is.
+            for e in &t.effects {
+                if assoc.iter().any(|b| b.name == e.name.name) {
+                    return Err(Error::ty(
+                        e.name.span,
+                        format!("associated effect `{}` is declared twice", e.name.name),
+                    ));
+                }
+                assoc.push(AssocDecl {
+                    name: e.name.name.clone(),
+                    bounds: Vec::new(),
+                    span: e.name.span,
                 });
             }
             let def = self.traits.traits.get_mut(&t.name.name).expect("named");
@@ -286,6 +302,7 @@ impl Checker {
                             kind: TypeExprKind::Fn(
                                 ps.clone(),
                                 Box::new(ret.as_deref().cloned().unwrap_or(unit)),
+                                b.effects.clone(),
                             ),
                             span: b.span,
                             id: self.fresh_id(),
@@ -585,6 +602,7 @@ impl Checker {
                     provided: m.provided,
                     receiver: f.receiver().is_some(),
                     span: Some(f.name.span),
+                    effects_at: Some(super::effects::written_at(f)),
                 });
             }
             self.traits
@@ -662,8 +680,8 @@ impl Checker {
         let opaques = this.is_none();
         self.env = preds.iter().cloned().chain(this).collect();
         self.adts.proj.local = eqs.clone();
-        let (param_tys, ret, lts) = self.signature(f, &with_self, &lifetimes, opaques)?;
-        let mut ty = Type::func(param_tys, ret);
+        let (param_tys, ret, effects, lts) = self.signature(f, &with_self, &lifetimes, opaques)?;
+        let mut ty = Type::func_with(param_tys, ret, effects);
         if let Some(s) = self_ty {
             let s = Subst::new(&["Self".to_string()], std::slice::from_ref(s));
             ty = self.adts.normalise(&s.apply(&ty));
@@ -793,8 +811,13 @@ impl Checker {
                 self.orphan(prog, d, tr, &self_ty)?;
             }
             // Each parameter must be decided by the type: otherwise nothing
-            // could say what it is when the impl is used.
+            // could say what it is when the impl is used. An effect
+            // parameter may be decided by an `Fn` bound instead, as the
+            // least effects that make it hold (see `traits::impl_args`).
             for (p, decl) in params.iter().zip(&d.generics.types) {
+                if is_effect_name(p) && in_fn_bound(&d.generics, p) {
+                    continue;
+                }
                 if !mentions(&self_ty, p) {
                     return Err(Error::ty(
                         decl.span,
@@ -912,6 +935,12 @@ impl Checker {
         header: Span,
     ) -> Result<Vec<(String, Type)>, Error> {
         let Some(tr) = tr else {
+            if let Some(e) = d.effects.first() {
+                return Err(Error::ty(
+                    e.name.span,
+                    "only an impl of a trait can have associated effects",
+                ));
+            }
             return match d.assoc.first() {
                 Some(a) => Err(Error::ty(
                     a.name.span,
@@ -956,21 +985,64 @@ impl Checker {
             terminates(&t, self_ty, params, a.ty.span)?;
             out.push((n.clone(), t));
         }
-        let missing: Vec<String> = decls
+        for e in &d.effects {
+            let n = &e.name.name;
+            if !decls.iter().any(|x| x.name == *n) {
+                return Err(Error::ty(
+                    e.name.span,
+                    format!(
+                        "`{}` has no associated effect `{n}`",
+                        super::source_name(tr)
+                    ),
+                ));
+            }
+            if out.iter().any(|(m, _)| m == n) {
+                return Err(Error::ty(
+                    e.name.span,
+                    format!("associated effect `{n}` is defined twice"),
+                ));
+            }
+            let mut with_self = params.to_vec();
+            with_self.push("Self".into());
+            let mut lts = Lifetimes::Assoc {
+                declared: lifetimes,
+            };
+            self.env = preds.to_vec();
+            self.env.push(Pred {
+                ty: Type::Param("Self".into()),
+                trait_name: tr.to_string(),
+            });
+            self.adts.proj.local = eqs.to_vec();
+            let resolved = self.resolve_effects_with(&e.effects, &with_self, &mut lts);
+            self.env.clear();
+            self.adts.proj.local.clear();
+            let t =
+                Subst::new(&["Self".to_string()], std::slice::from_ref(self_ty)).apply(&resolved?);
+            decided_effects(&t, self_ty, eqs, e.effects.span)?;
+            terminates(&t, self_ty, params, e.effects.span)?;
+            out.push((n.clone(), t));
+        }
+        let missing: Vec<&AssocDecl> = decls
             .iter()
             .filter(|x| !out.iter().any(|(n, _)| *n == x.name))
-            .map(|x| format!("`{}`", x.name))
             .collect();
-        if !missing.is_empty() {
+        let (effects, types): (Vec<&AssocDecl>, Vec<&AssocDecl>) =
+            missing.into_iter().partition(|x| is_effect_name(&x.name));
+        for (missing, what) in [(types, "associated type"), (effects, "associated effect")] {
+            if missing.is_empty() {
+                continue;
+            }
+            let names: Vec<String> = missing.iter().map(|x| format!("`{}`", x.name)).collect();
             return Err(Error::ty(
                 header,
                 format!(
-                    "this impl of `{tr}` for `{self_ty}` is missing {}: {}",
-                    match missing.len() {
-                        1 => "an associated type".to_string(),
-                        n => plural(n, "associated type"),
+                    "this impl of `{}` for `{self_ty}` is missing {}: {}",
+                    super::source_name(tr),
+                    match names.len() {
+                        1 => format!("an {what}"),
+                        n => plural(n, what),
                     },
-                    missing.join(", ")
+                    names.join(", ")
                 ),
             ));
         }
@@ -1277,7 +1349,7 @@ impl Checker {
             ty: t.clone(),
             trait_name: tr.to_string(),
         };
-        let (i, args) = self.traits.select(t, Some(tr)).ok_or_else(fail)?;
+        let (i, args) = self.traits.select(t, Some(tr), &[]).ok_or_else(fail)?;
         let d = &self.traits.impls[i];
         let s = Subst::new(&d.params, &args);
         for p in &d.preds {
@@ -1640,12 +1712,12 @@ impl Checker {
                     .find_map(|(_, f)| self.holds(&s.apply(f), path, done))
             }
             Type::Proj(s, tr, name) => {
-                let (k, _) = self.traits.select(s, Some(tr))?;
+                let (k, _) = self.traits.select(s, Some(tr), &[])?;
                 if path.contains(&k) {
                     return Some(t.clone());
                 }
-                let u =
-                    crate::traits::project(&self.traits.impls, &self.traits.anon(), s, tr, name)?;
+                let (impls, anon) = (&self.traits.impls, &self.traits.anon());
+                let u = crate::traits::project(impls, anon, &[], s, tr, name)?;
                 path.push(k);
                 let found = self.holds(&u, path, &mut HashSet::new());
                 path.pop();
@@ -1737,10 +1809,13 @@ impl Checker {
         // The trait's, at `Self` = the impl's type and with this one's
         // type parameter names.
         let mut args = vec![d.self_ty.clone()];
-        args.extend(own.iter().cloned().map(Type::Param));
+        args.extend(own.iter().map(|p| crate::types::param(p)));
         let s = Subst::new(&want.scheme.params, &args);
-        // `Self::Item` in the trait's is what this impl says it is.
-        let wanted = self.adts.normalise(&s.apply(&want.scheme.ty));
+        // `Self::Item` in the trait's is what this impl says it is, with
+        // what its bounds say, which decide its effect parameters.
+        let mut proj = self.adts.proj.clone();
+        proj.local = d.eqs.clone();
+        let wanted = proj.normalise(&s.apply(&want.scheme.ty));
         let (Type::Fn(g), Type::Fn(w)) = (&got.ty, &wanted) else {
             unreachable!("methods have function types")
         };
@@ -1769,6 +1844,48 @@ impl Checker {
                 "it should return `{}`, not `{}`",
                 w.ret, g.ret
             )));
+        }
+        // Its effects, at most the trait's: callers going by the trait's
+        // signature may count on its calls having no others.
+        let more = Type::effects(
+            (g.effects.effect_items().iter())
+                .filter(|e| !w.effects.effect_items().contains(e))
+                .cloned(),
+        );
+        if !more.is_no_effects() {
+            let e = Error::ty(
+                f.name.span,
+                format!(
+                    "`{0}` {1}, but `{2}`'s `{0}` can't, so its impls can't either",
+                    f.name.name,
+                    super::effects::does(&more),
+                    super::source_name(tr),
+                ),
+            );
+            // Unless what's more is the impl's own, the trait's can say it;
+            // or rather the impl's associated effect, if the trait says one.
+            let own = more
+                .effect_items()
+                .iter()
+                .all(|e| matches!(e, Type::Alloc | Type::Panic))
+                && !(want.effects_at.iter())
+                    .flat_map(|(_, w)| w)
+                    .any(|w| w.starts_with("Self::"));
+            return Err(match (&want.effects_at, own) {
+                (Some((span, written)), true) => {
+                    let mut items = written.clone();
+                    items.extend(more.effect_items().iter().map(Type::to_string));
+                    let text = super::effects::set_text(&items);
+                    e.with_fix(Fix::new(
+                        format!("say `with {text}` in `{}`", super::source_name(tr)),
+                        vec![Edit {
+                            span: *span,
+                            text: format!(" with {text}"),
+                        }],
+                    ))
+                }
+                _ => e,
+            });
         }
         // Its own lifetime bounds, the same as the trait's.
         let show = |bounds: &[Bound], c: &mut Canon| -> Vec<String> {
@@ -1988,7 +2105,7 @@ impl Checker {
         let Type::Adt(symbol, ..) = &bad.ty else {
             return matches!(bad.ty, Type::Param(_) | Type::Proj(..)).then_some(bad.ty);
         };
-        if self.traits.select(&bad.ty, Some("Discard")).is_some() {
+        if self.traits.select(&bad.ty, Some("Discard"), &[]).is_some() {
             return None;
         }
         // As if it were `#[derive(Discard)]`, needing it of every type
@@ -2463,7 +2580,8 @@ impl Checker {
             .params
             .iter()
             .map(|p| {
-                self.fresh(
+                self.fresh_param(
+                    p,
                     name.span,
                     format!("`{p}` of the impl of `{}`", d.self_ty),
                     "annotate the type".into(),
@@ -2826,10 +2944,11 @@ fn mentions_self(t: &TypeExpr) -> Option<Span> {
     match &t.kind {
         TypeExprKind::Named(n, _) if n == "Self" => Some(t.span),
         TypeExprKind::Named(_, args) => args.iter().find_map(mentions_self),
-        TypeExprKind::Fn(ps, r) => ps
+        TypeExprKind::Fn(ps, r, e) => ps
             .iter()
             .find_map(mentions_self)
-            .or_else(|| mentions_self(r)),
+            .or_else(|| mentions_self(r))
+            .or_else(|| e.iter().flat_map(EffectSet::types).find_map(mentions_self)),
         TypeExprKind::Ref(_, _, inner) | TypeExprKind::Proj(inner, ..) => mentions_self(inner),
         TypeExprKind::Impl(bounds) => bounds
             .iter()
@@ -2902,12 +3021,63 @@ impl<'a> Canon<'a> {
     }
 }
 
+/// Does an `Fn` bound in `g` say its calls may have effect parameter `p`?
+fn in_fn_bound(g: &Generics, p: &str) -> bool {
+    let bounds = g
+        .bounds
+        .iter()
+        .map(|(_, b)| b)
+        .chain(g.wheres.iter().map(|(_, b)| b));
+    bounds
+        .flatten()
+        .flat_map(|b| &b.effects)
+        .flat_map(|e| &e.items)
+        .any(|e| matches!(&e.kind, EffectKind::Named(n) if n.name == p))
+}
+
+/// Rejects an impl's associated effect `t` with an effect parameter in it
+/// that nothing decides: one that isn't in `self_ty`, nor in the effects
+/// of an `Fn` bound, which give it its least value (see
+/// `traits::impl_args`).
+fn decided_effects(
+    t: &Type,
+    self_ty: &Type,
+    eqs: &[(Type, Type)],
+    span: Span,
+) -> Result<(), Error> {
+    for e in t.effect_items() {
+        let Type::Param(p) = e else { continue };
+        let in_bound = eqs.iter().any(|(lhs, rhs)| {
+            crate::traits::is_sig(lhs)
+                && matches!(rhs, Type::Fn(f) if f.effects.effect_items().contains(e))
+        });
+        if !in_bound && !mentions(self_ty, p) {
+            return Err(Error::ty(
+                span,
+                format!(
+                    "nothing decides what `{p}` is: say it's the effects of something an impl's                      type holds, with a bound like `F: Fn() with {p}`"
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Where a projection is written in `t`, if one is.
 fn proj_in(t: &TypeExpr) -> Option<Span> {
     match &t.kind {
         TypeExprKind::Proj(..) => Some(t.span),
         TypeExprKind::Named(_, args) => args.iter().find_map(proj_in),
-        TypeExprKind::Fn(ps, r) => ps.iter().find_map(proj_in).or_else(|| proj_in(r)),
+        TypeExprKind::Fn(ps, r, e) => {
+            ps.iter()
+                .find_map(proj_in)
+                .or_else(|| proj_in(r))
+                .or_else(|| {
+                    let mut items = e.iter().flat_map(|e| &e.items);
+                    let proj = items.find(|i| matches!(i.kind, EffectKind::Proj(..)));
+                    proj.map(|i| i.span)
+                })
+        }
         TypeExprKind::Ref(_, _, inner) => proj_in(inner),
         TypeExprKind::Impl(bounds) => bounds.iter().flat_map(BoundItem::types).find_map(proj_in),
         TypeExprKind::Unit | TypeExprKind::Never | TypeExprKind::Lifetime(_) => None,

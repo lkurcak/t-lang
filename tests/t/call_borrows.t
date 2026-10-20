@@ -22,7 +22,7 @@ struct Holder { b: Box<Stack> }
 
 fn make() -> Stack { Stack { top: 0, size: 7 } }
 
-fn main() {
+fn main() with {panic, alloc} {
     let mut v = Stack { top: 0, size: 0 };
     v.push(v.len());
     v.push(v.len() + v.top);

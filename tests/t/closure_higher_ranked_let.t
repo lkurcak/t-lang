@@ -2,14 +2,14 @@
 // would: `|x: &int|` takes a reference of any lifetime, picked at each call,
 // and a written `-> &int` returns one as long-lived as that. So one closure
 // can be called with references that live for different lengths of time.
-fn twice(f: fn(&int) -> &int) -> int {
+fn twice(f: fn(&int) -> &int) -> int with panic {
     let a = 1;
     let r = f(&a);
     let b = 2;
     *r + *f(&b)
 }
 
-fn main() {
+fn main() with panic {
     let id = |x: &int| -> &int { x };
     let a = 3;
     let long = id(&a);

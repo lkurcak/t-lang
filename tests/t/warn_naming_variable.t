@@ -12,7 +12,7 @@ fn side(s: Shape, Default: int) -> int {
     }
 }
 
-fn main() {
+fn main() with panic {
     let firstTry = side(Shape::Circle(2), 0);
     let x1 = side(Shape::Square(3), 0);
     let _ignoredValue = 4;

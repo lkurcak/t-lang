@@ -5,15 +5,15 @@ struct Point { x: int, y: int }
 #[derive(Discard)]
 struct Rect { min: Point, max: Point }
 
-fn area(r: Rect) -> int {
+fn area(r: Rect) -> int with panic {
     (r.max.x - r.min.x) * (r.max.y - r.min.y)
 }
 
-fn translate(p: Point, dx: int) -> Point {
+fn translate(p: Point, dx: int) -> Point with panic {
     Point { x: p.x + dx, y: p.y }
 }
 
-fn main() -> Point {
+fn main() -> Point with panic {
     let p = Point { y: 2, x: 1 };       // field order doesn't matter
     print(p.x);                         // expect: 1
     let r = Rect { min: p, max: Point { x: 4, y: 6 } };
