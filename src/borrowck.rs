@@ -84,11 +84,11 @@ pub(crate) fn check(cx: &Checker, f: &FnDecl, scheme: &Scheme) -> Result<Vec<War
             b.regions.equate(&info, &lhs, &rhs, d.span);
         }
     }
-    let params: Vec<(String, Span, Type)> = f
+    let params: Vec<(String, NodeId, Type)> = f
         .params
         .iter()
         .zip(&sig.params)
-        .map(|(p, t)| (p.name.name.clone(), p.name.span, b.regions.renumber(t)))
+        .map(|(p, t)| (p.name.name.clone(), p.name.id, b.regions.renumber(t)))
         .collect();
     b.signature(ret, &params, None);
     b.lower(&f.body);
@@ -245,13 +245,13 @@ fn local_adts(cx: &Checker, regions: &Regions) -> crate::types::Adts {
 struct Requirements {
     regions: Vec<(usize, usize)>,
     params: Vec<(Type, usize)>,
-    muts: Vec<Span>,
+    muts: Vec<NodeId>,
 }
 
 /// Checks the closures in a lowered body, and adds what each needs of its
 /// regions to its constraints. Returns the warnings and errors about them,
 /// and the variables they captured by value and change, by id.
-fn closures_in(b: &mut Builder) -> (Vec<Warning>, Vec<Error>, Vec<Span>) {
+fn closures_in(b: &mut Builder) -> (Vec<Warning>, Vec<Error>, Vec<NodeId>) {
     let mut warnings = Vec::new();
     let mut errors = Vec::new();
     let mut muts = Vec::new();
@@ -620,7 +620,7 @@ fn closure_body(
                 def.lifetimes.iter().cloned().map(Region::Named).collect(),
                 args.clone(),
             );
-            let modes = &typed.modes[&std::ptr::from_ref(c.lambda)];
+            let modes = &typed.modes[&c.lambda.id];
             let vars = modes
                 .iter()
                 .map(|(id, capture)| {
@@ -629,6 +629,7 @@ fn closure_body(
                         name: bind.name.clone(),
                         capture: *capture,
                         id: *id,
+                        span: bind.span,
                         mutable: bind.mutable,
                     }
                 })
@@ -701,12 +702,12 @@ fn closure_body(
     let mut b = Builder::new(cx, &adts, info, regions);
     b.closure = true;
     let ret = b.regions.renumber(&ret);
-    let params: Vec<(String, Span, Type)> = c
+    let params: Vec<(String, NodeId, Type)> = c
         .lambda
         .params
         .iter()
         .zip(&params)
-        .map(|(p, t)| (p.name.name.clone(), p.name.span, b.regions.renumber(t)))
+        .map(|(p, t)| (p.name.name.clone(), p.name.id, b.regions.renumber(t)))
         .collect();
     b.signature(ret, &params, env);
     b.lower(&c.lambda.body);

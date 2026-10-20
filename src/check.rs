@@ -243,11 +243,13 @@ struct Local {
 #[derive(Debug, Clone, Copy)]
 struct Site {
     span: Span,
+    /// The binding pattern, or the parameter's name.
+    node: NodeId,
     shorthand: bool,
 }
 
 impl Local {
-    fn new(name: &str, ty: Type, span: Span) -> Local {
+    fn new(name: &str, ty: Type, span: Span, node: NodeId) -> Local {
         Local {
             name: name.to_string(),
             ty,
@@ -256,20 +258,26 @@ impl Local {
             by_ref: None,
             sites: vec![Site {
                 span,
+                node,
                 shorthand: false,
             }],
             used: false,
         }
     }
 
-    /// Its id: where its name is first bound (see `typed`).
-    fn id(&self) -> Span {
+    /// Its id: the node where its name is first bound (see `typed`).
+    fn id(&self) -> NodeId {
+        self.sites[0].node
+    }
+
+    /// Where its name is first bound.
+    fn def(&self) -> Span {
         self.sites[0].span
     }
 
     /// A parameter.
-    fn param(name: &str, ty: Type, span: Span) -> Local {
-        Local::new(name, ty, span)
+    fn param(name: &Ident, ty: Type) -> Local {
+        Local::new(&name.name, ty, name.span, name.id)
     }
 }
 
@@ -344,7 +352,7 @@ pub(crate) struct Checker {
     /// The calls in the function being checked of what isn't a function
     /// type, with the callee's type, and where: how each gets at what it
     /// calls is worked out at its end (`Checker::settle_calls`).
-    calls: Vec<(*const Expr, Type, Span)>,
+    calls: Vec<(NodeId, Type, Span)>,
     /// The local part of the context Γ, as a stack. Entering a scope pushes,
     /// leaving truncates (see `end_scope`). Searching from the top makes inner
     /// `let`s shadow outer ones.
@@ -935,7 +943,7 @@ impl Checker {
             let ty = sig.params[i].clone();
             self.mention(&ty);
             self.well_formed(&ty, p.ty.span)?;
-            let mut local = Local::param(&p.name.name, ty, p.name.span);
+            let mut local = Local::param(&p.name, ty);
             local.mutable = p.mutable.is_some();
             local.mut_span = p.mutable.map(|m| Span::new(m.start, p.name.span.start));
             self.note_binds(std::slice::from_ref(&local), false);
@@ -1138,6 +1146,7 @@ impl Checker {
     fn bind(&mut self, l: &Local) {
         let bind = Bind {
             name: l.name.clone(),
+            span: l.def(),
             ty: l.ty.clone(),
             mutable: l.mutable,
             mut_span: l.mut_span,
@@ -1145,7 +1154,7 @@ impl Checker {
         };
         self.typed.binds.insert(l.id(), bind);
         for site in &l.sites {
-            self.typed.sites.insert(site.span, l.id());
+            self.typed.sites.insert(site.node, l.id());
         }
     }
 
@@ -1472,14 +1481,14 @@ impl Checker {
                 }
                 let local = &mut self.locals[i];
                 local.used = true;
-                let (ty, def) = (local.ty.clone(), local.id());
+                let (ty, def, id) = (local.ty.clone(), local.def(), local.id());
                 self.note(
                     at,
                     NoteKind::Var(name.to_string()),
                     Some(ty.clone()),
                     Some(def),
                 );
-                return Ok(Some((ty, Res::Local(def))));
+                return Ok(Some((ty, Res::Local(id))));
             }
             Some(Binding::Fn(id)) => {
                 self.uses().fns.insert(id);
@@ -1679,7 +1688,7 @@ impl Checker {
             },
             _ => self.synth(e)?,
         };
-        self.typed.exprs.insert(e, got.clone());
+        self.typed.exprs.insert(e.id, got.clone());
         self.note_never(e, &got);
         if let Some(target) = self.coerce(e, &got, want) {
             return match self.unify(&target, want) {
@@ -1790,7 +1799,7 @@ impl Checker {
         if derefs == 0 && gm == wm {
             return None;
         }
-        self.typed.coerced.insert(e, (derefs, wm));
+        self.typed.coerced.insert(e.id, (derefs, wm));
         self.info.coercions.insert(e.span, (derefs, wm));
         Some(Type::Ref(Region::Erased, wm, Box::new(a)))
     }
@@ -1800,7 +1809,7 @@ impl Checker {
         self.here = e.span;
         let t = self.synth_inner(e)?;
         self.settle_goals()?;
-        self.typed.exprs.insert(e, t.clone());
+        self.typed.exprs.insert(e.id, t.clone());
         self.note_never(e, &t);
         Ok(t)
     }
@@ -1851,7 +1860,7 @@ impl Checker {
                     )
                     .with_fix(fix));
                 };
-                self.typed.vars.insert(e, res);
+                self.typed.vars.insert(e.id, res);
                 Ok(t)
             }
 
@@ -1917,10 +1926,7 @@ impl Checker {
                 }
                 let t = self.synth(place)?;
                 if let ExprKind::Var(..) = place.kind
-                    && !matches!(
-                        self.typed.vars.get(&std::ptr::from_ref(&**place)),
-                        Some(Res::Local(_))
-                    )
+                    && !matches!(self.typed.vars.get(&place.id), Some(Res::Local(_)))
                 {
                     return Err(not_place());
                 }
@@ -2157,7 +2163,7 @@ impl Checker {
                         };
                         let pred = Checker::callable_pred(&t);
                         self.oblige(pred, f.span, traits::Why::Call)?;
-                        self.calls.push((e, t, e.span));
+                        self.calls.push((e.id, t, e.span));
                         (sig.params, *sig.ret)
                     }
                 };
@@ -2282,7 +2288,7 @@ impl Checker {
                     self.check(arg, param)?;
                 }
                 let res = Res::Fn(found.symbol.clone(), found.args.clone());
-                self.typed.methods.insert(e, (res, derefs, autoref));
+                self.typed.methods.insert(e.id, (res, derefs, autoref));
                 let resolved = Resolved {
                     symbol: found.symbol.clone(),
                     derefs,
@@ -2420,7 +2426,7 @@ impl Checker {
                             self.field_visible(s, field)?;
                             self.note_field(&s.clone(), field, &ft);
                         }
-                        self.typed.fields.insert(e, (derefs, i));
+                        self.typed.fields.insert(e.id, (derefs, i));
                         Ok(ft)
                     }
                     None => Err(Error::ty(
@@ -2642,7 +2648,7 @@ impl Checker {
         // What it captures: the variables around it its body uses. How, is
         // worked out once their types are known (see `closures`).
         let captured = self.captured(l);
-        self.typed.captures.insert(Arc::as_ptr(l), captured.clone());
+        self.typed.captures.insert(l.id, captured.clone());
         for (i, p) in l.params.iter().enumerate() {
             let name = &p.name.name;
             if l.params[..i].iter().any(|q| q.name.name == *name) {
@@ -2698,7 +2704,7 @@ impl Checker {
                 ),
             };
             params.push(t.clone());
-            let mut local = Local::param(name, t, p.name.span);
+            let mut local = Local::param(&p.name, t);
             local.mutable = p.mutable.is_some();
             local.mut_span = p.mutable.map(|m| Span::new(m.start, p.name.span.start));
             self.note_binds(std::slice::from_ref(&local), p.ty.is_none());
@@ -2772,7 +2778,7 @@ impl Checker {
     }
 
     /// The variables around closure `l` its body uses, by id.
-    fn captured(&self, l: &Lambda) -> Vec<Span> {
+    fn captured(&self, l: &Lambda) -> Vec<NodeId> {
         l.captures
             .iter()
             .filter_map(|name| match self.binding(name) {
@@ -3089,7 +3095,7 @@ impl Checker {
                 peeled += 1;
             }
             if peeled > 0 {
-                self.typed.peels.insert(p, peeled);
+                self.typed.peels.insert(p.id, peeled);
             }
         }
         let ty = &ty;
@@ -3116,7 +3122,7 @@ impl Checker {
                     Some(m) => Type::Ref(Region::Erased, m, Box::new(ty.clone())),
                     None => ty.clone(),
                 };
-                let mut local = Local::new(name, t, p.name_span());
+                let mut local = Local::new(name, t, p.name_span(), p.id);
                 local.mutable = *mutable;
                 local.mut_span = mutable.then(|| Span::new(p.span.start, p.name_span().start));
                 local.by_ref = by_ref;
@@ -3495,7 +3501,7 @@ impl Checker {
         self.resolved(name, &found, targs.is_empty());
         self.typed
             .vars
-            .insert(e, Res::Fn(found.symbol.clone(), found.args.clone()));
+            .insert(e.id, Res::Fn(found.symbol.clone(), found.args.clone()));
         let resolved = Resolved {
             symbol: found.symbol.clone(),
             derefs: 0,

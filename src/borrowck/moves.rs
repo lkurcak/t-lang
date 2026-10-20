@@ -130,7 +130,7 @@ pub(crate) fn abstraction(b: &Builder) -> Result<(), Error> {
 /// In a closure's body, what it captured by value may be changed if the
 /// variable is `mut` where the closure is, which then needs it to be: those
 /// are the second list, by id.
-pub(crate) fn mutability(b: &Builder) -> Result<(Vec<Local>, Vec<Span>), Error> {
+pub(crate) fn mutability(b: &Builder) -> Result<(Vec<Local>, Vec<crate::ast::NodeId>), Error> {
     let mut needed = Vec::new();
     let mut captured = Vec::new();
     let changes = b
@@ -229,10 +229,10 @@ pub(crate) fn mutability(b: &Builder) -> Result<(Vec<Local>, Vec<Span>), Error> 
                         act(&describe(b, place))
                     ),
                 )
-                .with_note(v.id, format!("`{name}` is declared here"))
+                .with_note(v.span, format!("`{name}` is declared here"))
                 .with_fix(Fix::new(
                     format!("make `{name}` mutable"),
-                    vec![Edit::insert(v.id.start, "mut ")],
+                    vec![Edit::insert(v.span.start, "mut ")],
                 )));
             }
             let decl = &b.body.locals[place.local.0];
@@ -256,7 +256,7 @@ pub(crate) fn mutability(b: &Builder) -> Result<(Vec<Local>, Vec<Span>), Error> 
                     vec![Edit::insert(decl.span.start, "mut ")],
                 )),
                 _ => {
-                    let by_ref = b.cx.typed().binds.get(&decl.span).and_then(|b| b.by_ref);
+                    let by_ref = decl.by_ref;
                     let e = Error::ty(
                         s.span,
                         format!("{}, as `{name}` isn't declared `mut`", act(&target)),

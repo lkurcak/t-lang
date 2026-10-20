@@ -305,7 +305,7 @@ pub(super) struct Outer {
     self_ty: Option<crate::types::Type>,
     obligations: Vec<super::traits::Obligation>,
     closures: Vec<super::closures::Pending>,
-    calls: Vec<(*const crate::ast::Expr, crate::types::Type, Span)>,
+    calls: Vec<(crate::ast::NodeId, crate::types::Type, Span)>,
     unused: Vec<(usize, crate::types::Type)>,
     closure_fix: Option<(usize, Fix)>,
     ret: Option<crate::types::Type>,

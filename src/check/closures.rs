@@ -30,7 +30,7 @@
 use super::Checker;
 use super::typed::Res;
 use crate::ast::*;
-use crate::error::{Error, Span};
+use crate::error::Error;
 use crate::traits::{FnKind, Pred};
 use crate::types::{FnType, Region, Type};
 use std::collections::HashMap;
@@ -43,7 +43,7 @@ pub(super) struct Pending {
     pub(super) symbol: Option<String>,
     pub(super) lambda: Arc<Lambda>,
     /// The variables it captures, by id, in the order it names them.
-    pub(super) captured: Vec<Span>,
+    pub(super) captured: Vec<NodeId>,
     /// Its type, as the checker made it.
     pub(super) ty: Type,
     /// The names of its result's lifetimes still to work out
@@ -81,7 +81,7 @@ impl Checker {
     pub(super) fn closure_type(
         &mut self,
         l: &Arc<Lambda>,
-        captured: Vec<Span>,
+        captured: Vec<NodeId>,
         sig: FnType,
         later: Vec<String>,
     ) -> Type {
@@ -195,7 +195,7 @@ impl Checker {
 
     fn settle_closure(&mut self, symbol: &String, p: &Pending) -> Result<(), Error> {
         let l = &*p.lambda;
-        let mut uses: HashMap<Span, Use> = HashMap::new();
+        let mut uses: HashMap<NodeId, Use> = HashMap::new();
         self.uses_in(&l.body, Use::Read, true, &p.captured, &mut uses);
         let mut fields = Vec::new();
         let mut modes = Vec::new();
@@ -274,7 +274,7 @@ impl Checker {
                 .map(|(id, m)| (self.typed.binds[id].name.clone(), *m))
                 .collect(),
         );
-        self.typed.modes.insert(Arc::as_ptr(&p.lambda), modes);
+        self.typed.modes.insert(p.lambda.id, modes);
         Ok(())
     }
 
@@ -336,16 +336,11 @@ impl Checker {
         e: &Expr,
         how: Use,
         value: bool,
-        captured: &[Span],
-        uses: &mut HashMap<Span, Use>,
+        captured: &[NodeId],
+        uses: &mut HashMap<NodeId, Use>,
     ) {
         // Using a value of `e`'s type: moving it, unless it's `Copy`.
-        let ty = |e: &Expr| {
-            self.typed
-                .exprs
-                .get(&std::ptr::from_ref(e))
-                .map(|t| self.solved(t))
-        };
+        let ty = |e: &Expr| self.typed.exprs.get(&e.id).map(|t| self.solved(t));
         // A `&mut` used is reborrowed, as `Builder::use_place` does.
         let read = |e: &Expr| match ty(e) {
             Some(Type::Ref(_, true, _)) => Use::Unique,
@@ -355,7 +350,7 @@ impl Checker {
         let mut go = |e: &Expr, how: Use, value: bool| self.uses_in(e, how, value, captured, uses);
         // A reference used as another is reborrowed: `&*r`, or `&mut *r`,
         // which needs `r` unique, not `mut`.
-        if let Some(&(_, mutable)) = self.typed.coerced.get(&std::ptr::from_ref(e)) {
+        if let Some(&(_, mutable)) = self.typed.coerced.get(&e.id) {
             let how = if mutable { Use::Unique } else { Use::Read };
             return self.place_uses(e, how, captured, uses);
         }
@@ -380,7 +375,7 @@ impl Checker {
             }
             ExprKind::MethodCall(x, _, _, args) => {
                 // Through references, `r.push(1)` is `push(&mut *r, 1)`.
-                let receiver = self.typed.methods.get(&std::ptr::from_ref(e));
+                let receiver = self.typed.methods.get(&e.id);
                 match receiver.map(|(_, derefs, autoref)| (*derefs, *autoref)) {
                     Some((_, Some(false))) => go(x, Use::Read, false),
                     Some((0, Some(true))) => go(x, Use::Mutate, false),
@@ -430,7 +425,7 @@ impl Checker {
             // An inner closure captures what it does from here: the same
             // way, but a copy of a `Copy` value only needs a `&`.
             ExprKind::Lambda(l) => {
-                let Some(modes) = self.typed.modes.get(&Arc::as_ptr(l)) else {
+                let Some(modes) = self.typed.modes.get(&l.id) else {
                     return;
                 };
                 for (id, mode) in modes {
@@ -457,10 +452,10 @@ impl Checker {
 
     /// `uses_in` for an expression used as a place, `how`: a variable,
     /// what's at a field of one, or what one points to.
-    fn place_uses(&self, e: &Expr, how: Use, captured: &[Span], uses: &mut HashMap<Span, Use>) {
+    fn place_uses(&self, e: &Expr, how: Use, captured: &[NodeId], uses: &mut HashMap<NodeId, Use>) {
         match &e.kind {
             ExprKind::Var(..) => {
-                if let Some(Res::Local(id)) = self.typed.vars.get(&std::ptr::from_ref(e))
+                if let Some(Res::Local(id)) = self.typed.vars.get(&e.id)
                     && captured.contains(id)
                 {
                     note(uses, *id, how);
@@ -473,14 +468,14 @@ impl Checker {
                     ExprKind::Field(..) => self
                         .typed
                         .fields
-                        .get(&std::ptr::from_ref(e))
+                        .get(&e.id)
                         .is_some_and(|(derefs, _)| *derefs > 0),
                     _ => true,
                 };
                 let reference = self
                     .typed
                     .exprs
-                    .get(&std::ptr::from_ref(&**x))
+                    .get(&x.id)
                     .is_some_and(|t| matches!(self.solved(t), Type::Ref(..)));
                 let how = match how {
                     Use::Mutate if through && reference => Use::Unique,
@@ -496,7 +491,7 @@ impl Checker {
     /// a value that isn't `Copy` by value, or take apart one that isn't
     /// `Discard`, which uses it up?
     fn pattern_moves(&self, pat: &Pattern, scrutinee: &Expr) -> bool {
-        let Some(t) = self.typed.exprs.get(&std::ptr::from_ref(scrutinee)) else {
+        let Some(t) = self.typed.exprs.get(&scrutinee.id) else {
             return true;
         };
         let t = self.solved(t);
@@ -588,15 +583,15 @@ impl Checker {
 }
 
 /// Notes that the variable `id` is used `how`, if that's more than it was.
-fn note(uses: &mut HashMap<Span, Use>, id: Span, how: Use) {
+fn note(uses: &mut HashMap<NodeId, Use>, id: NodeId, how: Use) {
     let u = uses.entry(id).or_insert(how);
     *u = (*u).max(how);
 }
 
 /// Calls `f` with where each variable `p` binds is bound.
-fn pattern_sites(p: &Pattern, f: &mut impl FnMut(Span)) {
+fn pattern_sites(p: &Pattern, f: &mut impl FnMut(NodeId)) {
     match &p.kind {
-        PatternKind::Bind(..) => f(p.name_span()),
+        PatternKind::Bind(..) => f(p.id),
         PatternKind::Variant(_, _, _, pats) | PatternKind::Or(pats) => {
             pats.iter().for_each(|p| pattern_sites(p, f))
         }

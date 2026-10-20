@@ -23,7 +23,6 @@ use crate::error::Span;
 use crate::traits::{FnKind, SIG};
 use crate::types::{AdtKind, Adts, Region, Scheme, Subst, Type, struct_fields, variant_fields};
 use std::collections::HashMap;
-use std::sync::Arc;
 
 /// A borrow: of `place`, `&mut` or not, for as long as region variable
 /// `region` says, made at `point`.
@@ -73,11 +72,11 @@ pub(crate) struct Builder<'a> {
     /// The temporaries of each statement being lowered, innermost last.
     temps: Vec<Vec<Local>>,
     /// Each variable's local, by its id.
-    vars: HashMap<Span, Local>,
+    vars: HashMap<NodeId, Local>,
     /// In a closure's body, where each variable it captured is, by id:
     /// `*(*env).x` for one captured by reference, and `(*env).x` or
     /// `env.x` for one captured by value.
-    captured: HashMap<Span, Place>,
+    captured: HashMap<NodeId, Place>,
     /// The loops being lowered, innermost last.
     loops: Vec<LoopFrame>,
     /// Whether control can get to each block, as far as is known: a block
@@ -160,7 +159,7 @@ impl<'a> Builder<'a> {
     pub(crate) fn signature(
         &mut self,
         ret: Type,
-        params: &[(String, Span, Type)],
+        params: &[(String, NodeId, Type)],
         env: Option<(Type, Option<bool>, Vec<EnvVar>, Span)>,
     ) {
         self.new_local(ret, LocalKind::Return, None, Span::new(0, 0));
@@ -185,10 +184,11 @@ impl<'a> Builder<'a> {
         }
         for (name, id, ty) in params {
             let bind = &self.cx.typed().binds[id];
-            let (mutable, mut_span) = (bind.mutable, bind.mut_span);
-            let l = self.new_local(ty.clone(), LocalKind::Param, Some(name.clone()), *id);
+            let (mutable, mut_span, by_ref) = (bind.mutable, bind.mut_span, bind.by_ref);
+            let l = self.new_local(ty.clone(), LocalKind::Param, Some(name.clone()), bind.span);
             self.body.locals[l.0].mutable = mutable;
             self.body.locals[l.0].mut_span = mut_span;
+            self.body.locals[l.0].by_ref = by_ref;
             self.vars.insert(*id, l);
             self.scope().push(l);
         }
@@ -251,6 +251,7 @@ impl<'a> Builder<'a> {
             name,
             span,
             mut_span: None,
+            by_ref: None,
             deferred: false,
         });
         Local(self.body.locals.len() - 1)
@@ -347,7 +348,7 @@ impl<'a> Builder<'a> {
     /// The type of expression `e`, as the checker found it, with a new
     /// region variable for each region in it.
     fn ty(&mut self, e: &Expr) -> Type {
-        let t = self.cx.typed().exprs.get(&std::ptr::from_ref(e));
+        let t = self.cx.typed().exprs.get(&e.id);
         let t = self
             .cx
             .solution(t.expect("the checker saw every expression"));
@@ -370,7 +371,7 @@ impl<'a> Builder<'a> {
         if !self.reachable() {
             return;
         }
-        if self.cx.typed().coerced.contains_key(&std::ptr::from_ref(e)) {
+        if self.cx.typed().coerced.contains_key(&e.id) {
             let (o, t) = self.operand(e);
             self.assign(dest, Rvalue::Use(o), &t, e.span, false);
             return;
@@ -444,8 +445,7 @@ impl<'a> Builder<'a> {
             // What it takes and gives is what its type's signature says,
             // with the regions it has here.
             ExprKind::Call(callee, args)
-                if let Some(&(derefs, kind)) =
-                    self.cx.typed().calls.get(&std::ptr::from_ref(e)) =>
+                if let Some(&(derefs, kind)) = self.cx.typed().calls.get(&e.id) =>
             {
                 let mut recv = self.place(callee);
                 for _ in 0..derefs {
@@ -486,8 +486,7 @@ impl<'a> Builder<'a> {
             // borrowed if the method takes `&self` or `&mut self`, which,
             // like any borrow passed, happens after the arguments.
             ExprKind::MethodCall(x, _, _, args) => {
-                let (res, derefs, autoref) =
-                    self.cx.typed().methods[&std::ptr::from_ref(e)].clone();
+                let (res, derefs, autoref) = self.cx.typed().methods[&e.id].clone();
                 let Res::Fn(symbol, targs) = res else {
                     unreachable!("a method is a function")
                 };
@@ -507,8 +506,7 @@ impl<'a> Builder<'a> {
             }
             // A path to a method: the method, as a function, maybe called.
             ExprKind::Variant(_, _, _, args, parens)
-                if let Some(Res::Fn(symbol, targs)) =
-                    self.cx.typed().vars.get(&std::ptr::from_ref(e)) =>
+                if let Some(Res::Fn(symbol, targs)) = self.cx.typed().vars.get(&e.id) =>
             {
                 let ft = self.fn_value(symbol, targs, span);
                 match parens {
@@ -633,7 +631,7 @@ impl<'a> Builder<'a> {
             // closure lasts, or its value, moved or copied in.
             ExprKind::Lambda(l) => {
                 let t = self.ty(e);
-                let modes = self.cx.typed().modes.get(&Arc::as_ptr(l)).cloned();
+                let modes = self.cx.typed().modes.get(&l.id).cloned();
                 let fields = struct_fields(self.adts(), &t).unwrap_or_default();
                 let mut ops = Vec::new();
                 for (i, (id, mode)) in modes.iter().flatten().enumerate() {
@@ -719,7 +717,7 @@ impl<'a> Builder<'a> {
         let (params, ret) = sig.instantiate(&vars);
         let mut pending: Vec<Arg> = first.into_iter().collect();
         for a in args {
-            let coerced = self.cx.typed().coerced.get(&std::ptr::from_ref(a)).copied();
+            let coerced = self.cx.typed().coerced.get(&a.id).copied();
             pending.push(match (&a.kind, coerced) {
                 (ExprKind::Unary(op @ (UnOp::Ref | UnOp::RefMut), x), _) => {
                     Arg::Borrow(self.place(x), *op == UnOp::RefMut, coerced, a.span)
@@ -859,12 +857,9 @@ impl<'a> Builder<'a> {
     /// used, so the old one can be used again after. Anything else is
     /// lowered into a temporary, which is moved out of.
     fn operand(&mut self, e: &'a Expr) -> (Operand, Type) {
-        let coerced = self.cx.typed().coerced.get(&std::ptr::from_ref(e)).copied();
+        let coerced = self.cx.typed().coerced.get(&e.id).copied();
         let local_var = |b: &Self| match &e.kind {
-            ExprKind::Var(..) => matches!(
-                b.cx.typed().vars.get(&std::ptr::from_ref(e)),
-                Some(Res::Local(_))
-            ),
+            ExprKind::Var(..) => matches!(b.cx.typed().vars.get(&e.id), Some(Res::Local(_))),
             _ => true,
         };
         let place = matches!(
@@ -880,7 +875,7 @@ impl<'a> Builder<'a> {
         }
         let (o, t) = match &e.kind {
             ExprKind::Var(_, _) => {
-                let t = match &self.cx.typed().vars[&std::ptr::from_ref(e)] {
+                let t = match &self.cx.typed().vars[&e.id] {
                     Res::Fn(symbol, targs) => self.fn_value(symbol, targs, e.span),
                     Res::Builtin(name, targs) => {
                         let scheme = crate::check::builtin_scheme(name);
@@ -1038,13 +1033,13 @@ impl<'a> Builder<'a> {
     }
 
     /// The local of variable `id`, if it's one of this body's own.
-    pub(crate) fn var_local(&self, id: Span) -> Option<Local> {
+    pub(crate) fn var_local(&self, id: NodeId) -> Option<Local> {
         self.vars.get(&id).copied()
     }
 
     /// Where variable `id` is: its local, or in a closure's body, if it
     /// captured it, where in the closure.
-    fn var_place(&self, id: Span) -> Place {
+    fn var_place(&self, id: NodeId) -> Place {
         match self.captured.get(&id) {
             Some(p) => p.clone(),
             None => Place::local(self.vars[&id]),
@@ -1058,12 +1053,12 @@ impl<'a> Builder<'a> {
         let typed = self.cx.typed();
         match &e.kind {
             ExprKind::Var(..) => {
-                if let Some(Res::Local(id)) = typed.vars.get(&std::ptr::from_ref(e)) {
+                if let Some(Res::Local(id)) = typed.vars.get(&e.id) {
                     return self.var_place(*id);
                 }
             }
             ExprKind::Field(x, _) => {
-                let (derefs, i) = typed.fields[&std::ptr::from_ref(e)];
+                let (derefs, i) = typed.fields[&e.id];
                 let mut p = self.place(x);
                 for _ in 0..derefs {
                     p = p.project(Proj::Deref);
@@ -1199,7 +1194,7 @@ impl<'a> Builder<'a> {
     /// How many references pattern `p` looks through (match ergonomics).
     fn peels(&self, p: &Pattern) -> usize {
         let peels = &self.cx.typed().peels;
-        peels.get(&std::ptr::from_ref(p)).copied().unwrap_or(0)
+        peels.get(&p.id).copied().unwrap_or(0)
     }
 
     /// Reads what pattern `p` tests in the value at `place`, so that it
@@ -1255,16 +1250,17 @@ impl<'a> Builder<'a> {
     /// with the type annotation `ann` says, lifetimes and all.
     fn declare_var(&mut self, p: &Pattern, ann: Option<&TypeExpr>) -> Local {
         let typed = self.cx.typed();
-        let id = typed.sites[&p.name_span()];
+        let id = typed.sites[&p.id];
         if let Some(l) = self.vars.get(&id) {
             return *l;
         }
         let bind = &typed.binds[&id];
         let t = self.cx.solution(&bind.ty);
         let t = self.regions.fresh_regions(&t);
-        let l = self.new_local(t, LocalKind::Var, Some(bind.name.clone()), id);
+        let l = self.new_local(t, LocalKind::Var, Some(bind.name.clone()), bind.span);
         self.body.locals[l.0].mutable = bind.mutable;
         self.body.locals[l.0].mut_span = bind.mut_span;
+        self.body.locals[l.0].by_ref = bind.by_ref;
         if let Some(t) = ann.and_then(|t| self.cx.written_type(t)) {
             self.body.locals[l.0].ty = self.regions.renumber(&t);
         }
@@ -1285,7 +1281,7 @@ impl<'a> Builder<'a> {
         match &p.kind {
             PatternKind::Bind(..) => {
                 let typed = self.cx.typed();
-                let id = typed.sites[&p.name_span()];
+                let id = typed.sites[&p.id];
                 let l = self.vars[&id];
                 let dest = Place::local(l);
                 match typed.binds[&id].by_ref {

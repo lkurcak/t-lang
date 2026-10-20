@@ -71,8 +71,10 @@ pub(crate) enum LocalKind {
 pub(crate) struct EnvVar {
     pub(crate) name: String,
     pub(crate) capture: crate::ast::Capture,
-    /// Where it's declared: its id.
-    pub(crate) id: Span,
+    /// Its id (see `check/typed.rs`).
+    pub(crate) id: crate::ast::NodeId,
+    /// Where it's declared.
+    pub(crate) span: Span,
     pub(crate) mutable: bool,
 }
 
@@ -88,6 +90,9 @@ pub(crate) struct LocalDecl {
     /// For a variable that's `mut`, where the `mut` is, from the `mut` to
     /// the name.
     pub(crate) mut_span: Option<Span>,
+    /// For a variable bound by reference (match ergonomics), whether it's
+    /// `&mut`.
+    pub(crate) by_ref: Option<bool>,
     /// Declared with no value, `let x;`: an assignment gives it its first
     /// one, whether it's `mut` or not.
     pub(crate) deferred: bool,
