@@ -29,8 +29,10 @@ Step 7: effects. See [docs/07-effects.md](docs/07-effects.md).
 - In the core library: `Option::unwrap` and `Result::unwrap`, which panic,
   and `checked_add`, `checked_sub`, `checked_mul`, `checked_div`,
   `checked_rem` and `checked_neg`, which can't, in the prelude.
-- A warning, `unused_effects`, for an effect a function says but can't
-  have, with a fix that takes it out.
+- A warning, `unused_effects`, for an effect a private function says but
+  can't have, with a fix that takes it out. Not for a `pub` function,
+  which may keep the right to have it later, nor a trait's methods or
+  their impls'.
 - The interpreter checks, at each panic and allocation, that every
   function being run says it may: a "type soundness violated" error if
   not, as for leaks.

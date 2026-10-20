@@ -1,0 +1,21 @@
+// An effect said but not had is a warning only where nothing outside can
+// count on it: a `pub` function may say one to keep the right to have it
+// later, and a trait's method says what its impls may do.
+pub trait Store {
+    fn get(&self) -> int with panic;
+
+    fn twice(&self) -> int with panic { self.get() }
+}
+
+#[derive(Discard)]
+struct Fixed {}
+
+impl Store for Fixed {
+    fn get(&self) -> int with panic { 1 }
+}
+
+pub fn reserved() -> int with panic { 1 }
+
+fn main() with panic {
+    print(Fixed {}.twice() + reserved()); // expect: 2
+}

@@ -458,6 +458,8 @@ pub(crate) struct Checker {
     effect_owners: HashMap<u32, Span>,
     /// The variables that stand for effect sets.
     effect_vars: HashSet<u32>,
+    /// Is the function being checked a method of an impl of a trait?
+    in_trait_impl: bool,
 }
 
 /// A projection `proj`, `<T as Tr>::Item`, whose type `T` isn't known yet,
@@ -567,6 +569,7 @@ impl Checker {
             withins: Vec::new(),
             effect_owners: HashMap::new(),
             effect_vars: HashSet::new(),
+            in_trait_impl: false,
             modules,
             module: ROOT,
         }
@@ -943,6 +946,10 @@ impl Checker {
                 }
                 _ => None,
             };
+            self.in_trait_impl = matches!(
+                methods.get(i.wrapping_sub(prog.fns.len())),
+                Some(&(_, MethodOf::Impl(k))) if prog.impls[k].trait_name.is_some()
+            );
             let notes = self.info.notes.len();
             let result = self.body(f, FnId(i));
             self.finish_notes(notes);

@@ -94,8 +94,11 @@ fn main() {
 ```
 
 Saying an effect a function can't have is a warning (`unused_effects`),
-whose fix takes it out. A trait's methods are the exception: what they
-say is what their impls may do.
+whose fix takes it out, but only where nothing outside can be counting on
+it. A `pub` function may say `with panic` to keep the right to panic
+later, without breaking its callers when it does. A trait's method says
+what its impls may do, and an impl's method is public wherever the trait
+is.
 
 ## Closures and effect parameters
 

@@ -313,6 +313,7 @@ pub(super) struct Outer {
     diverges: Option<Span>,
     diverging: Vec<crate::types::Type>,
     effect_sites: Vec<super::effects::Site>,
+    in_trait_impl: bool,
     withins: Vec<super::effects::Within>,
 }
 
@@ -343,6 +344,7 @@ impl Checker {
             diverges: self.diverges.take(),
             diverging: std::mem::take(&mut self.diverging),
             effect_sites: std::mem::take(&mut self.effect_sites),
+            in_trait_impl: std::mem::take(&mut self.in_trait_impl),
             withins: std::mem::take(&mut self.withins),
         };
         self.closure_fix = fix.map(|fix| (outer.barrier, fix));
@@ -363,6 +365,7 @@ impl Checker {
         self.diverges = outer.diverges;
         self.diverging = outer.diverging;
         self.effect_sites = outer.effect_sites;
+        self.in_trait_impl = outer.in_trait_impl;
         self.withins = outer.withins;
         result
     }
