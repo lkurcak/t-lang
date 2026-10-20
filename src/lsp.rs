@@ -626,7 +626,7 @@ fn outline(src: &str, prog: &Program) -> Vec<DocumentSymbol> {
         let detail = format!("trait {}", t.name.name);
         top[t.module].push(symbol(
             src,
-            &t.name,
+            label(&t.name),
             detail,
             SymbolKind::INTERFACE,
             t.span,
@@ -639,13 +639,9 @@ fn outline(src: &str, prog: &Program) -> Vec<DocumentSymbol> {
             Some(t) => format!("impl {} for {}", t.name, d.self_ty),
             None => format!("impl {}", d.self_ty),
         };
-        let name = crate::ast::Ident {
-            name: header.clone(),
-            span: d.self_ty.span,
-        };
         top[d.module].push(symbol(
             src,
-            &name,
+            (&header.clone(), d.self_ty.span),
             header,
             SymbolKind::OBJECT,
             d.span,
@@ -657,7 +653,14 @@ fn outline(src: &str, prog: &Program) -> Vec<DocumentSymbol> {
         let mut children = std::mem::take(&mut top[i]);
         sort(&mut children);
         let detail = format!("mod {}", m.name.name);
-        let s = symbol(src, &m.name, detail, SymbolKind::MODULE, m.span, children);
+        let s = symbol(
+            src,
+            label(&m.name),
+            detail,
+            SymbolKind::MODULE,
+            m.span,
+            children,
+        );
         top[m.parent.expect("not the crate root")].push(s);
     }
     let mut top = std::mem::take(&mut top[ROOT]);
@@ -672,7 +675,7 @@ fn sort(symbols: &mut [DocumentSymbol]) {
 /// A symbol for the outline. `detail` is the signature, as hover shows it.
 fn symbol(
     src: &str,
-    name: &crate::ast::Ident,
+    (name, at): (&str, Span),
     detail: String,
     kind: SymbolKind,
     span: Span,
@@ -680,21 +683,33 @@ fn symbol(
 ) -> DocumentSymbol {
     #[allow(deprecated)]
     DocumentSymbol {
-        name: name.name.clone(),
+        name: name.to_string(),
         detail: Some(detail),
         kind,
         tags: None,
         deprecated: None,
         range: lsp_range(src, span),
-        selection_range: lsp_range(src, name.span),
+        selection_range: lsp_range(src, at),
         children: Some(children),
     }
+}
+
+/// A name, as `symbol` takes it: what it says, and where.
+fn label(name: &crate::ast::Ident) -> (&str, Span) {
+    (&name.name, name.span)
 }
 
 fn fn_symbol(src: &str, f: &FnDecl, children: Vec<DocumentSymbol>) -> DocumentSymbol {
     let params: Vec<&crate::ast::TypeExpr> = f.params.iter().map(|p| &p.ty).collect();
     let detail = format!("fn({}) -> {}", comma_list(&params), f.ret);
-    symbol(src, &f.name, detail, SymbolKind::FUNCTION, f.span, children)
+    symbol(
+        src,
+        label(&f.name),
+        detail,
+        SymbolKind::FUNCTION,
+        f.span,
+        children,
+    )
 }
 
 fn type_symbol(src: &str, d: &TypeDecl) -> DocumentSymbol {
@@ -712,7 +727,7 @@ fn type_symbol(src: &str, d: &TypeDecl) -> DocumentSymbol {
                 let span = f.name.span.to(f.ty.span);
                 symbol(
                     src,
-                    &f.name,
+                    label(&f.name),
                     f.ty.to_string(),
                     SymbolKind::FIELD,
                     span,
@@ -729,7 +744,7 @@ fn type_symbol(src: &str, d: &TypeDecl) -> DocumentSymbol {
                 };
                 symbol(
                     src,
-                    &v.name,
+                    label(&v.name),
                     detail,
                     SymbolKind::ENUM_MEMBER,
                     v.span,
@@ -740,7 +755,7 @@ fn type_symbol(src: &str, d: &TypeDecl) -> DocumentSymbol {
         }
     };
     let detail = format!("{keyword} {ty}");
-    symbol(src, d.name(), detail, kind, d.span(), children)
+    symbol(src, label(d.name()), detail, kind, d.span(), children)
 }
 
 /// The types the checker inferred, and the type arguments it worked out for

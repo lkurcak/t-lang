@@ -482,11 +482,7 @@ impl Printer<'_> {
     /// `impl<T: Show> Show for Option<T> { .. }` or `impl Point { .. }`
     fn impl_decl(&mut self, d: &ImplDecl) -> Doc {
         let doc = self.lead(d.doc.as_ref(), &d.allows, d.span.start);
-        let keyword = Ident {
-            name: "impl".into(),
-            span: Span::new(d.span.start, d.span.start + 4),
-        };
-        let generics = self.generics(&keyword, &d.generics);
+        let generics = self.generics(d.span.start + 4, &d.generics);
         let header = match &d.trait_name {
             Some(t) => text(format!(" {} for ", t.name)),
             None => text(" "),
@@ -542,7 +538,7 @@ impl Printer<'_> {
 
     /// `<'a, T: Show + 'a>` after the name of a generic function, struct or
     /// enum, or after `impl`.
-    fn generics(&mut self, name: &Ident, g: &Generics) -> Doc {
+    fn generics(&mut self, after: usize, g: &Generics) -> Doc {
         if g.is_empty() {
             return Doc::nil();
         }
@@ -552,7 +548,7 @@ impl Printer<'_> {
             let bounds = g.bounds_of(&p.name);
             bounds.last().map_or(p.span.end, |b| b.span.end)
         };
-        let close = self.close(name.span.end, params.last().map(|p| end(p)), &Tok::Gt);
+        let close = self.close(after, params.last().map(|p| end(p)), &Tok::Gt);
         self.list(
             ANGLES,
             close,
@@ -623,7 +619,7 @@ impl Printer<'_> {
             + public(d.public())
             + keyword
             + &name.name
-            + self.generics(name, d.generics())
+            + self.generics(name.span.end, d.generics())
             + " ";
         let body = match d {
             TypeDecl::Struct(s) => self.list(
@@ -742,7 +738,7 @@ impl Printer<'_> {
             doc = doc + self.element(after, true);
         }
         let doc = doc + public(f.public);
-        let generics = self.generics(&f.name, &f.generics);
+        let generics = self.generics(f.name.span.end, &f.generics);
         let open = self.find(f.name.span.end, &Tok::LParen);
         let close = self.close(open, f.params.last().map(|p| p.ty.span.end), &Tok::RParen);
         let params = self.list(

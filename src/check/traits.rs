@@ -263,6 +263,7 @@ impl Checker {
                 let subject = Ident {
                     name: subject_name.clone(),
                     span: b.span,
+                    id: self.fresh_id(),
                 };
                 push(
                     &mut out,
@@ -279,6 +280,7 @@ impl Checker {
                         let unit = TypeExpr {
                             kind: TypeExprKind::Unit,
                             span: b.span,
+                            id: self.fresh_id(),
                         };
                         let written = TypeExpr {
                             kind: TypeExprKind::Fn(
@@ -286,6 +288,7 @@ impl Checker {
                                 Box::new(ret.as_deref().cloned().unwrap_or(unit)),
                             ),
                             span: b.span,
+                            id: self.fresh_id(),
                         };
                         let mut lts = Lifetimes::Assoc {
                             declared: lifetimes,

@@ -108,9 +108,8 @@ pub fn check(prog: &mut Program, warnings: &mut Vec<Warning>) -> (Info, Result<(
         Ok(modules) => modules,
         Err(e) => return (Info::default(), Err(e)),
     };
-    let prog = &*prog;
     let resolved = std::mem::take(&mut modules.warnings);
-    let mut cx = Checker::new(prog, modules);
+    let mut cx = Checker::new(&*prog, modules);
     cx.warnings.extend(resolved);
     cx.warnings.extend(prog.stray_docs.iter().map(unused_doc));
     let result = cx.program(prog);
@@ -127,6 +126,7 @@ pub fn check(prog: &mut Program, warnings: &mut Vec<Warning>) -> (Info, Result<(
     cx.info.moves = cx.moves.take();
     cx.warnings.sort_by_key(|w| w.span.start);
     warnings.append(&mut cx.warnings);
+    prog.next_id = cx.next_id;
     (cx.info, result)
 }
 
@@ -294,6 +294,9 @@ fn plural(n: usize, what: &str) -> String {
 }
 
 pub(crate) struct Checker {
+    /// `Program::next_id`, while checking: the nodes the checker makes up
+    /// take ids from it, and the program's goes on from where it got to.
+    next_id: u32,
     /// What every struct and enum is made of, by symbol.
     adts: Adts,
     /// How many lifetime and type arguments each struct and enum takes, by
@@ -467,6 +470,12 @@ pub(crate) struct LoopCx {
 }
 
 impl Checker {
+    /// An id for a node the checker makes up (see `NodeId`).
+    fn fresh_id(&mut self) -> NodeId {
+        self.next_id += 1;
+        NodeId(self.next_id - 1)
+    }
+
     fn new(prog: &Program, modules: modules::Modules) -> Checker {
         let fn_symbols = scope::symbols(prog, &modules);
         let (types, type_names) = names::names(prog, &prog.all_fns(), &fn_symbols, &modules);
@@ -489,6 +498,7 @@ impl Checker {
             current: None,
             type_params: Vec::new(),
             lifetimes: Vec::new(),
+            next_id: prog.next_id,
             typed: Typed::default(),
             closures: Vec::new(),
             decided: HashMap::new(),
@@ -772,6 +782,7 @@ impl Checker {
         let subject = Ident {
             name: symbol.clone(),
             span: t.span,
+            id: t.id,
         };
         let g = Generics {
             bounds: vec![(subject, bounds.clone())],

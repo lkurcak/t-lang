@@ -388,7 +388,11 @@ pub(super) fn name_holes(t: &TypeExpr, holes: &mut Vec<(String, Span)>) -> TypeE
         // Rejected wherever there can be holes.
         TypeExprKind::Impl(_) => t.kind.clone(),
     };
-    TypeExpr { kind, span: t.span }
+    TypeExpr {
+        kind,
+        span: t.span,
+        id: t.id,
+    }
 }
 
 /// Checks the type parameters declared by a function, struct or enum, and

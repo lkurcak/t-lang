@@ -118,9 +118,19 @@ struct Mono<'p> {
     /// What projections stand for, by the impls: in a copy, every type is
     /// known, so every one does.
     proj: Projections,
+    /// `Program::next_id`: the nodes made here that weren't in the program
+    /// take ids from it. A copy of one that was keeps its id, so the copies
+    /// of a generic function share theirs.
+    next_id: u32,
 }
 
 impl<'p> Mono<'p> {
+    /// An id for a node made here (see `NodeId`).
+    fn id(&mut self) -> NodeId {
+        self.next_id += 1;
+        NodeId(self.next_id - 1)
+    }
+
     fn new(prog: &'p Program, info: &'p Info) -> Mono<'p> {
         Mono {
             prog,
@@ -146,6 +156,7 @@ impl<'p> Mono<'p> {
             type_copies: HashMap::new(),
             compared: HashSet::new(),
             proj: Projections::new(&info.traits),
+            next_id: prog.next_id,
         }
     }
 
@@ -197,6 +208,7 @@ impl<'p> Mono<'p> {
             impls: Vec::new(),
             fns: Vec::new(),
             stray_docs: Vec::new(),
+            next_id: self.next_id,
         };
         for d in &prog.types {
             let name = &d.name().name;
@@ -312,6 +324,7 @@ impl<'p> Mono<'p> {
             name: Ident {
                 name: name.unwrap_or(&f.name.name).to_string(),
                 span: f.name.span,
+                id: f.name.id,
             },
             generics: lifetimes_only(&f.generics),
             params: f
@@ -345,6 +358,7 @@ impl<'p> Mono<'p> {
         let name = Ident {
             name: mangle(&d.name().name, args),
             span: d.name().span,
+            id: d.name().id,
         };
         // Whether it's `Discard`, `Copy` and `Eq`, which the checker of what
         // this makes takes the copy's word for.
@@ -356,6 +370,7 @@ impl<'p> Mono<'p> {
             .map(|tr| Ident {
                 name: tr.into(),
                 span: d.name().span,
+                id: cx.m.id(),
             })
             .collect();
         let derives = match names.is_empty() {
@@ -501,7 +516,10 @@ impl Cx<'_, '_, '_> {
     /// A type written in the original, as written in the copy.
     fn ty(&mut self, t: &TypeExpr) -> TypeExpr {
         let resolved = self.resolved(t);
-        self.written(&resolved, t.span)
+        TypeExpr {
+            id: t.id,
+            ..self.written(&resolved, t.span)
+        }
     }
 
     /// A type written in the original, as it is in the copy.
@@ -622,6 +640,7 @@ impl Cx<'_, '_, '_> {
                         .map(|r| TypeExpr {
                             kind: TypeExprKind::Lifetime(region_name(r)),
                             span,
+                            id: self.m.id(),
                         })
                         .collect(),
                 };
@@ -637,6 +656,7 @@ impl Cx<'_, '_, '_> {
                     r => Some(Ident {
                         name: region_name(r),
                         span,
+                        id: self.m.id(),
                     }),
                 };
                 TypeExprKind::Ref(lifetime, *m, Box::new(self.written(inner, span)))
@@ -646,7 +666,11 @@ impl Cx<'_, '_, '_> {
                 unreachable!("`{t}` left after monomorphising")
             }
         };
-        TypeExpr { kind, span }
+        TypeExpr {
+            kind,
+            span,
+            id: self.m.id(),
+        }
     }
 
     /// The use of something generic at `span`, if that's what's there, as
@@ -759,33 +783,33 @@ impl Cx<'_, '_, '_> {
     /// derived `Eq` of `T`, as a function.
     fn eq_fn(&mut self, t: &Type, span: Span) -> ExprKind {
         let r = Type::Ref(Region::Erased, false, Box::new(t.clone()));
-        let var = |name: &str| Expr {
-            kind: ExprKind::Var(name.into(), Vec::new()),
+        let node = |kind: ExprKind, m: &mut Mono| Expr {
+            kind,
             span,
+            id: m.id(),
         };
-        let deref = |e: Expr| Expr {
-            kind: ExprKind::Unary(UnOp::Deref, Box::new(e)),
-            span,
+        let deref = |name: &str, m: &mut Mono| {
+            let var = node(ExprKind::Var(name.into(), Vec::new()), m);
+            node(ExprKind::Unary(UnOp::Deref, Box::new(var)), m)
         };
+        let (a, b) = (deref("a", self.m), deref("b", self.m));
+        let body = node(
+            ExprKind::Binary(BinOp::Eq, Box::new(a), Box::new(b)),
+            self.m,
+        );
         let params = ["a", "b"]
             .map(|name| LambdaParam {
                 mutable: None,
                 name: Ident {
                     name: name.into(),
                     span,
+                    id: self.m.id(),
                 },
                 ty: Some(self.written(&r, span)),
             })
             .into();
-        let body = Expr {
-            kind: ExprKind::Binary(
-                BinOp::Eq,
-                Box::new(deref(var("a"))),
-                Box::new(deref(var("b"))),
-            ),
-            span,
-        };
-        ExprKind::Lambda(Arc::new(Lambda::new(params, None, body)))
+        let id = self.m.id();
+        ExprKind::Lambda(Arc::new(Lambda::new(id, params, None, body)))
     }
 
     /// `id`, renamed to its copy if it names something generic.
@@ -793,6 +817,7 @@ impl Cx<'_, '_, '_> {
         Ident {
             name: self.instance(id.span).unwrap_or_else(|| id.name.clone()),
             span: id.span,
+            id: id.id,
         }
     }
 
@@ -920,7 +945,7 @@ impl Cx<'_, '_, '_> {
                     })
                     .collect();
                 let ret = l.ret.as_ref().map(|t| self.ty(t));
-                let mut lambda = Lambda::new(params, ret, self.expr(&l.body));
+                let mut lambda = Lambda::new(l.id, params, ret, self.expr(&l.body));
                 lambda.moves = l.moves;
                 lambda.modes = l.modes.clone();
                 ExprKind::Lambda(Arc::new(lambda))
@@ -940,7 +965,11 @@ impl Cx<'_, '_, '_> {
                 ExprKind::Break(label.clone(), x.as_ref().map(|x| Box::new(self.expr(x))))
             }
         };
-        Expr { kind, span: e.span }
+        Expr {
+            kind,
+            span: e.span,
+            id: e.id,
+        }
     }
 
     fn pattern(&mut self, p: &Pattern) -> Pattern {
@@ -969,7 +998,11 @@ impl Cx<'_, '_, '_> {
             PatternKind::Move(p) => PatternKind::Move(Box::new(self.pattern(p))),
             kind => kind.clone(),
         };
-        Pattern { kind, span: p.span }
+        Pattern {
+            kind,
+            span: p.span,
+            id: p.id,
+        }
     }
 }
 

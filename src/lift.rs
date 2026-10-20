@@ -26,6 +26,7 @@ use crate::ast::*;
 use crate::check::{Info, MoveSite};
 use crate::error::Span;
 use crate::traits::FnKind;
+use std::cell::Cell;
 use std::sync::Arc;
 
 /// `prog`, which must have checked with `info`, with no nested functions or
@@ -33,7 +34,10 @@ use std::sync::Arc;
 /// order, and the local types come after the top-level ones, in the order of
 /// `Program::all_types`.
 pub fn lift(prog: &Program, info: &Info) -> Program {
-    let cx = Cx { info };
+    let cx = Cx {
+        info,
+        next_id: Cell::new(prog.next_id),
+    };
     let types: Vec<TypeDecl> = prog
         .all_types()
         .into_iter()
@@ -96,14 +100,25 @@ pub fn lift(prog: &Program, info: &Info) -> Program {
             .collect(),
         fns,
         stray_docs: prog.stray_docs.clone(),
+        next_id: cx.next_id.get(),
     }
 }
 
 struct Cx<'p> {
     info: &'p Info,
+    /// `Program::next_id`: the nodes written here that weren't in the
+    /// program take ids from it. The others keep theirs.
+    next_id: Cell<u32>,
 }
 
 impl<'p> Cx<'p> {
+    /// An id for a node written here (see `NodeId`).
+    fn id(&self) -> NodeId {
+        let id = self.next_id.get();
+        self.next_id.set(id + 1);
+        NodeId(id)
+    }
+
     /// Adds `f`, named by its symbol, to `out`, then those nested in it.
     fn function(&self, f: &'p FnDecl, out: &mut Vec<FnDecl>) {
         let (decl, nested) = self.lifted(f);
@@ -187,6 +202,7 @@ impl<'p> Cx<'p> {
         Ident {
             name: self.renamed(&id.name, id.span),
             span: id.span,
+            id: id.id,
         }
     }
 
@@ -231,7 +247,11 @@ impl<'p> Cx<'p> {
                 TypeExprKind::Impl(bounds)
             }
         };
-        TypeExpr { kind, span: t.span }
+        TypeExpr {
+            kind,
+            span: t.span,
+            id: t.id,
+        }
     }
 
     /// `g`, with the types in its bounds renamed.
@@ -285,7 +305,11 @@ impl<'p> Cx<'p> {
                     let span = callee.span;
                     for _ in 0..derefs {
                         let kind = ExprKind::Unary(UnOp::Deref, Box::new(callee));
-                        callee = Expr { kind, span };
+                        callee = Expr {
+                            kind,
+                            span,
+                            id: self.id(),
+                        };
                     }
                     let op = match kind {
                         FnKind::Fn => Some(UnOp::Ref),
@@ -294,10 +318,18 @@ impl<'p> Cx<'p> {
                     };
                     if let Some(op) = op {
                         let kind = ExprKind::Unary(op, Box::new(callee));
-                        callee = Expr { kind, span };
+                        callee = Expr {
+                            kind,
+                            span,
+                            id: self.id(),
+                        };
                     } else if self.info.moves.contains(&MoveSite::Receiver(e.span)) {
                         let kind = ExprKind::Move(Box::new(callee));
-                        callee = Expr { kind, span };
+                        callee = Expr {
+                            kind,
+                            span,
+                            id: self.id(),
+                        };
                     }
                 }
                 ExprKind::Call(
@@ -311,19 +343,34 @@ impl<'p> Cx<'p> {
                 let span = recv.span;
                 for _ in 0..m.derefs {
                     let kind = ExprKind::Unary(UnOp::Deref, Box::new(recv));
-                    recv = Expr { kind, span };
+                    recv = Expr {
+                        kind,
+                        span,
+                        id: self.id(),
+                    };
                 }
                 if let Some(mutable) = m.autoref {
                     let op = if mutable { UnOp::RefMut } else { UnOp::Ref };
                     let kind = ExprKind::Unary(op, Box::new(recv));
-                    recv = Expr { kind, span };
+                    recv = Expr {
+                        kind,
+                        span,
+                        id: self.id(),
+                    };
                 } else if self.info.moves.contains(&MoveSite::Receiver(e.span)) {
                     let kind = ExprKind::Move(Box::new(recv));
-                    recv = Expr { kind, span };
+                    recv = Expr {
+                        kind,
+                        span,
+                        id: self.id(),
+                    };
                 }
+                // As the method's name: what the checker noted of it is
+                // what it noted of the name.
                 let f = Expr {
                     kind: ExprKind::Var(m.symbol.clone(), Vec::new()),
                     span: name.span,
+                    id: name.id,
                 };
                 let args = std::iter::once(recv)
                     .chain(args.iter().map(|a| self.expr(a, nested)))
@@ -337,6 +384,7 @@ impl<'p> Cx<'p> {
                 let f = Expr {
                     kind: f,
                     span: name.span,
+                    id: name.id,
                 };
                 match parens {
                     true => {
@@ -423,7 +471,7 @@ impl<'p> Cx<'p> {
                     .collect();
                 let ret = l.ret.as_ref().map(|t| self.ty(t));
                 let body = self.expr(&l.body, nested);
-                let mut lambda = Lambda::new(params, ret, body);
+                let mut lambda = Lambda::new(l.id, params, ret, body);
                 lambda.moves = l.moves;
                 let captures = self.info.captures.get(&l.body.span).into_iter().flatten();
                 lambda.modes = (captures.enumerate())
@@ -457,12 +505,17 @@ impl<'p> Cx<'p> {
         };
         let moves = self.info.moves.contains(&MoveSite::Expr(e.span));
         debug_assert!(!moves || e.is_place(), "only a place is moved out of");
-        let e = Expr { kind, span: e.span };
+        let e = Expr {
+            kind,
+            span: e.span,
+            id: e.id,
+        };
         if moves {
             let span = e.span;
             return Expr {
                 kind: ExprKind::Move(Box::new(e)),
                 span,
+                id: self.id(),
             };
         }
         match self.info.coercions.get(&e.span) {
@@ -472,12 +525,17 @@ impl<'p> Cx<'p> {
                 let mut inner = e;
                 for _ in 0..=derefs {
                     let kind = ExprKind::Unary(UnOp::Deref, Box::new(inner));
-                    inner = Expr { kind, span };
+                    inner = Expr {
+                        kind,
+                        span,
+                        id: self.id(),
+                    };
                 }
                 let op = if mutable { UnOp::RefMut } else { UnOp::Ref };
                 Expr {
                     kind: ExprKind::Unary(op, Box::new(inner)),
                     span,
+                    id: self.id(),
                 }
             }
         }
@@ -509,11 +567,16 @@ impl<'p> Cx<'p> {
             PatternKind::Move(_) => unreachable!("written here"),
             kind => kind.clone(),
         };
-        let pat = Pattern { kind, span: p.span };
+        let pat = Pattern {
+            kind,
+            span: p.span,
+            id: p.id,
+        };
         match self.info.moves.contains(&MoveSite::Pattern(p.span)) {
             true => Pattern {
                 kind: PatternKind::Move(Box::new(pat)),
                 span: p.span,
+                id: self.id(),
             },
             false => pat,
         }

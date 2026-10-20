@@ -165,6 +165,7 @@ fn add_core(prog: &mut Program, sources: &mut Sources) -> Result<(), Error> {
     let text = CORE_FILES[0].1;
     let start = sources.add(Path::new(CORE_DIR).join("lib.t"), text, core, None);
     let span = Span::new(start, start + text.len());
+    let id = prog.fresh_id();
     prog.mods.push(ModDecl {
         doc: None,
         allows: Vec::new(),
@@ -172,6 +173,7 @@ fn add_core(prog: &mut Program, sources: &mut Sources) -> Result<(), Error> {
         name: Ident {
             name: "core".into(),
             span: Span::new(start, start),
+            id,
         },
         parent: Some(ROOT),
         public: Some(Span::new(start, start)),

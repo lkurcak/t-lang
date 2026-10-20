@@ -123,6 +123,7 @@ pub fn parse(tokens: Vec<Token>) -> Result<Program, Error> {
             name: Ident {
                 name: "crate".into(),
                 span: Span::new(0, 0),
+                id: NodeId(0),
             },
             parent: None,
             public: None,
@@ -135,6 +136,7 @@ pub fn parse(tokens: Vec<Token>) -> Result<Program, Error> {
         impls: Vec::new(),
         fns: Vec::new(),
         stray_docs: Vec::new(),
+        next_id: 1,
     };
     parse_into(tokens, &mut prog, ROOT)?;
     Ok(prog)
@@ -152,8 +154,10 @@ pub fn parse_into(tokens: Vec<Token>, prog: &mut Program, module: usize) -> Resu
         pos: 0,
         no_struct: false,
         module,
+        next_id: prog.next_id,
     };
     p.items(prog, Tok::Eof)?;
+    prog.next_id = p.next_id;
     prog.stray_docs.extend(p.stray_docs());
     Ok(())
 }
@@ -170,9 +174,52 @@ struct Parser {
     no_struct: bool,
     /// The module being parsed, by its index in `Program::mods`.
     module: usize,
+    /// The id the next node gets: `Program::next_id`, while parsing.
+    next_id: u32,
 }
 
 impl Parser {
+    /// An id for a new node (see `NodeId`).
+    fn id(&mut self) -> NodeId {
+        self.next_id += 1;
+        NodeId(self.next_id - 1)
+    }
+
+    /// `a::b` from `a` and `b`: one name for a path, spanning both.
+    fn join(&mut self, a: &Ident, b: &Ident) -> Ident {
+        Ident {
+            name: format!("{}::{}", a.name, b.name),
+            span: a.span.to(b.span),
+            id: self.id(),
+        }
+    }
+
+    /// The segments of a path, as one name: see `Parser::path`.
+    fn join_all(&mut self, segs: &[&Ident]) -> Ident {
+        let mut out = segs[0].clone();
+        for s in &segs[1..] {
+            out = self.join(&out, s);
+        }
+        out
+    }
+
+    /// A type written as a plain path, `Show` or `a::Show`, as the one name
+    /// `Parser::path` would make of it: where a trait's name is expected.
+    fn type_path(&mut self, t: &TypeExpr) -> Option<Ident> {
+        match &t.kind {
+            TypeExprKind::Named(name, args) if args.is_empty() => Some(Ident {
+                name: name.clone(),
+                span: t.span,
+                id: self.id(),
+            }),
+            TypeExprKind::Proj(inner, None, name) => {
+                let inner = self.type_path(inner)?;
+                Some(self.join(&inner, name))
+            }
+            _ => None,
+        }
+    }
+
     fn peek(&self) -> &Tok {
         &self.toks[self.pos].tok
     }
@@ -519,6 +566,7 @@ impl Parser {
         Ok(Ident {
             name: name.into(),
             span: self.bump().span,
+            id: self.id(),
         })
     }
 
@@ -530,7 +578,7 @@ impl Parser {
         while *self.peek() == Tok::ColonColon && matches!(self.peek2(), Tok::Ident(_)) {
             self.bump();
             let next = self.ident()?;
-            path = join(&path, &next);
+            path = self.join(&path, &next);
         }
         Ok(path)
     }
@@ -617,6 +665,7 @@ impl Parser {
             Tok::Ident(name) => Ok(Ident {
                 name,
                 span: self.bump().span,
+                id: self.id(),
             }),
             _ => Err(self.unexpected("a name")),
         }
@@ -679,6 +728,7 @@ impl Parser {
             TypeExpr {
                 kind: TypeExprKind::Unit,
                 span: close,
+                id: self.id(),
             }
         };
         let mut generics = generics;
@@ -692,6 +742,7 @@ impl Parser {
                 let body = Expr {
                     kind: ExprKind::Block(Vec::new(), None),
                     span,
+                    id: self.id(),
                 };
                 (body, false)
             }
@@ -791,13 +842,21 @@ impl Parser {
         let self_ty = TypeExpr {
             kind: TypeExprKind::Named("Self".into(), Vec::new()),
             span: name.span,
+            id: self.id(),
         };
         let (mutable, ty) = match by_ref {
             false => (mut_span, self_ty),
             true => {
                 let kind = TypeExprKind::Ref(lifetime, mut_span.is_some(), Box::new(self_ty));
                 let span = start.to(name.span);
-                (None, TypeExpr { kind, span })
+                (
+                    None,
+                    TypeExpr {
+                        kind,
+                        span,
+                        id: self.id(),
+                    },
+                )
             }
         };
         Ok(Param {
@@ -909,7 +968,7 @@ impl Parser {
         let first = self.ty()?;
         let (trait_name, self_ty) = match self.eat(&Tok::For) {
             false => (None, first),
-            true => match type_path(&first) {
+            true => match self.type_path(&first) {
                 Some(name) => (Some(name), self.ty()?),
                 None => {
                     return Err(Error::syntax(
@@ -1072,6 +1131,7 @@ impl Parser {
             Tok::Lifetime(name) => Ok(Ident {
                 name,
                 span: self.bump().span,
+                id: self.id(),
             }),
             _ => Err(self.unexpected("a lifetime, like `'a`")),
         }
@@ -1176,6 +1236,7 @@ impl Parser {
             t = TypeExpr {
                 kind: TypeExprKind::Proj(Box::new(t), None, name),
                 span,
+                id: self.id(),
             };
         }
         Ok(t)
@@ -1196,6 +1257,7 @@ impl Parser {
                 Ok(TypeExpr {
                     kind: TypeExprKind::Proj(Box::new(inner), Some(tr), name.clone()),
                     span: start.to(name.span),
+                    id: self.id(),
                 })
             }
             Tok::Ident(_) | Tok::Crate | Tok::Super => {
@@ -1222,19 +1284,22 @@ impl Parser {
                 if segs.len() == 1 || path {
                     let refs: Vec<&Ident> = segs.iter().collect();
                     return Ok(TypeExpr {
-                        kind: TypeExprKind::Named(join_all(&refs).name, args),
+                        kind: TypeExprKind::Named(self.join_all(&refs).name, args),
                         span,
+                        id: self.id(),
                     });
                 }
                 let mut t = TypeExpr {
                     span: segs[0].span,
                     kind: TypeExprKind::Named(segs[0].name.clone(), Vec::new()),
+                    id: self.id(),
                 };
                 for name in segs.into_iter().skip(1) {
                     let span = t.span.to(name.span);
                     t = TypeExpr {
                         kind: TypeExprKind::Proj(Box::new(t), None, name),
                         span,
+                        id: self.id(),
                     };
                 }
                 Ok(t)
@@ -1245,6 +1310,7 @@ impl Parser {
                 Ok(TypeExpr {
                     kind: TypeExprKind::Unit,
                     span: start.to(end),
+                    id: self.id(),
                 })
             }
             Tok::Fn => {
@@ -1257,12 +1323,14 @@ impl Parser {
                     TypeExpr {
                         kind: TypeExprKind::Unit,
                         span: close,
+                        id: self.id(),
                     }
                 };
                 let span = start.to(ret.span);
                 Ok(TypeExpr {
                     kind: TypeExprKind::Fn(params, Box::new(ret)),
                     span,
+                    id: self.id(),
                 })
             }
             Tok::Amp => {
@@ -1277,11 +1345,13 @@ impl Parser {
                 Ok(TypeExpr {
                     kind: TypeExprKind::Ref(None, false, Box::new(inner)),
                     span,
+                    id: self.id(),
                 })
             }
             Tok::Bang => Ok(TypeExpr {
                 kind: TypeExprKind::Never,
                 span: self.bump().span,
+                id: self.id(),
             }),
             Tok::Impl => {
                 self.bump();
@@ -1299,6 +1369,7 @@ impl Parser {
                 Ok(TypeExpr {
                     kind: TypeExprKind::Impl(bounds),
                     span,
+                    id: self.id(),
                 })
             }
             _ => Err(self.unexpected("a type")),
@@ -1317,6 +1388,7 @@ impl Parser {
         Ok(TypeExpr {
             kind: TypeExprKind::Ref(lifetime, mutable, Box::new(inner)),
             span,
+            id: self.id(),
         })
     }
 
@@ -1326,6 +1398,7 @@ impl Parser {
             Tok::Lifetime(name) => Ok(TypeExpr {
                 kind: TypeExprKind::Lifetime(name),
                 span: self.bump().span,
+                id: self.id(),
             }),
             _ => self.ty(),
         }
@@ -1414,6 +1487,7 @@ impl Parser {
         Ok(Expr {
             kind: ExprKind::Block(stmts, tail),
             span: start.to(end),
+            id: self.id(),
         })
     }
 
@@ -1459,6 +1533,7 @@ impl Parser {
         Ok(Expr {
             kind: ExprKind::Assign(op, Box::new(lhs), Box::new(rhs)),
             span,
+            id: self.id(),
         })
     }
 
@@ -1494,6 +1569,7 @@ impl Parser {
         Ok(Expr {
             kind: ExprKind::Range(Box::new(lhs), Box::new(rhs)),
             span,
+            id: self.id(),
         })
     }
 
@@ -1511,6 +1587,7 @@ impl Parser {
             lhs = Expr {
                 kind: ExprKind::Binary(op, Box::new(lhs), Box::new(rhs)),
                 span,
+                id: self.id(),
             };
 
             if prec == CMP_PREC && binop(self.peek()).is_some_and(|(_, p)| p == CMP_PREC) {
@@ -1537,6 +1614,7 @@ impl Parser {
                 return Ok(Expr {
                     kind: ExprKind::Unary(UnOp::Ref, Box::new(inner)),
                     span,
+                    id: self.id(),
                 });
             }
             _ => return self.postfix(),
@@ -1550,6 +1628,7 @@ impl Parser {
         Ok(Expr {
             kind: ExprKind::Unary(op, Box::new(operand)),
             span,
+            id: self.id(),
         })
     }
 
@@ -1564,6 +1643,7 @@ impl Parser {
         Ok(Expr {
             kind: ExprKind::Unary(op, Box::new(operand)),
             span,
+            id: self.id(),
         })
     }
 
@@ -1576,6 +1656,7 @@ impl Parser {
                 e = Expr {
                     kind: ExprKind::Call(Box::new(e), args),
                     span,
+                    id: self.id(),
                 };
             } else if self.eat(&Tok::Dot) {
                 let name = self.ident()?;
@@ -1585,7 +1666,11 @@ impl Parser {
                         let (args, end) = self.args()?;
                         let span = e.span.to(end);
                         let kind = ExprKind::MethodCall(Box::new(e), name, targs, args);
-                        Expr { kind, span }
+                        Expr {
+                            kind,
+                            span,
+                            id: self.id(),
+                        }
                     }
                     false if !targs.is_empty() => {
                         return Err(self.unexpected("`(`: only a method call has type arguments"));
@@ -1593,7 +1678,11 @@ impl Parser {
                     false => {
                         let span = e.span.to(name.span);
                         let kind = ExprKind::Field(Box::new(e), name);
-                        Expr { kind, span }
+                        Expr {
+                            kind,
+                            span,
+                            id: self.id(),
+                        }
                     }
                 };
             } else {
@@ -1629,6 +1718,7 @@ impl Parser {
                     return Ok(Expr {
                         kind: ExprKind::Unit,
                         span: span.to(end),
+                        id: self.id(),
                     });
                 }
                 let inner = self.structs(true, Self::expr)?;
@@ -1636,6 +1726,7 @@ impl Parser {
                 return Ok(Expr {
                     kind: inner.kind,
                     span: span.to(end),
+                    id: self.id(),
                 });
             }
             Tok::LBrace => return self.block(),
@@ -1647,7 +1738,11 @@ impl Parser {
             _ => return Err(self.unexpected("an expression")),
         };
         self.bump();
-        Ok(Expr { kind, span })
+        Ok(Expr {
+            kind,
+            span,
+            id: self.id(),
+        })
     }
 
     fn if_expr(&mut self) -> Result<Expr, Error> {
@@ -1667,6 +1762,7 @@ impl Parser {
         Ok(Expr {
             kind: ExprKind::If(Box::new(cond), Box::new(then), els),
             span,
+            id: self.id(),
         })
     }
 
@@ -1699,6 +1795,7 @@ impl Parser {
             return Ok(Expr {
                 kind: ExprKind::For(Box::new(f)),
                 span,
+                id: self.id(),
             });
         }
         let (cond, body) = match self.peek() {
@@ -1717,7 +1814,11 @@ impl Parser {
             Some(c) => ExprKind::While(label, Box::new(c), Box::new(body)),
             None => ExprKind::Loop(label, Box::new(body)),
         };
-        Ok(Expr { kind, span })
+        Ok(Expr {
+            kind,
+            span,
+            id: self.id(),
+        })
     }
 
     /// `return e`, `break 'a e` or `continue 'a`, where the label is there
@@ -1746,6 +1847,7 @@ impl Parser {
         Ok(Expr {
             kind,
             span: keyword.span.to(end),
+            id: self.id(),
         })
     }
 
@@ -1775,6 +1877,7 @@ impl Parser {
         Ok(Expr {
             kind: ExprKind::Match(Box::new(scrutinee), arms),
             span: start.to(end),
+            id: self.id(),
         })
     }
 
@@ -1804,18 +1907,20 @@ impl Parser {
         let all: Vec<&Ident> = segs.iter().map(|s| &s.0).collect();
         if *self.peek() == Tok::LBrace && !self.no_struct {
             no_targs(&segs[..segs.len() - 1])?;
-            return self.struct_lit(join_all(&all), targs);
+            let name = self.join_all(&all);
+            return self.struct_lit(name, targs);
         }
         if segs.len() == 1 || end.is_some() {
             no_targs(&segs[..segs.len() - 1])?;
             return Ok(Expr {
                 span: start.to(end.unwrap_or(last.span)),
-                kind: ExprKind::Var(join_all(&all).name, targs),
+                kind: ExprKind::Var(self.join_all(&all).name, targs),
+                id: self.id(),
             });
         }
         let ty_segs = &segs[..segs.len() - 1];
         no_targs(&ty_segs[..ty_segs.len() - 1])?;
-        let ty = join_all(&all[..all.len() - 1]);
+        let ty = self.join_all(&all[..all.len() - 1]);
         let ty_targs = ty_segs[ty_segs.len() - 1].1.clone();
         let parens = self.eat(&Tok::LParen);
         let (args, end) = match parens {
@@ -1825,6 +1930,7 @@ impl Parser {
         Ok(Expr {
             kind: ExprKind::Variant(ty, ty_targs, last, args, parens),
             span: start.to(end),
+            id: self.id(),
         })
     }
 
@@ -1841,6 +1947,7 @@ impl Parser {
                     Expr {
                         kind: ExprKind::Var(name.name.clone(), Vec::new()),
                         span: name.span,
+                        id: p.id(),
                     }
                 };
                 Ok(FieldInit { name, value })
@@ -1850,6 +1957,7 @@ impl Parser {
         Ok(Expr {
             kind: ExprKind::StructLit(name, targs, fields),
             span,
+            id: self.id(),
         })
     }
 
@@ -1885,11 +1993,12 @@ impl Parser {
             (None, self.expr()?)
         };
         let span = start.to(body.span);
-        let mut lambda = Lambda::new(params, ret, body);
+        let mut lambda = Lambda::new(self.id(), params, ret, body);
         lambda.moves = moves;
         Ok(Expr {
             kind: ExprKind::Lambda(Arc::new(lambda)),
             span,
+            id: self.id(),
         })
     }
 
@@ -1914,6 +2023,7 @@ impl Parser {
         Ok(Pattern {
             kind: PatternKind::Or(alts),
             span,
+            id: self.id(),
         })
     }
 
@@ -1946,6 +2056,7 @@ impl Parser {
                 return Ok(Pattern {
                     kind,
                     span: start.to(end),
+                    id: self.id(),
                 });
             }
             Tok::DotDot | Tok::DotDotEq => {
@@ -1955,6 +2066,7 @@ impl Parser {
                 return Ok(Pattern {
                     kind: PatternKind::Range(i64::MIN, hi, inclusive),
                     span: start.to(end),
+                    id: self.id(),
                 });
             }
             Tok::True => PatternKind::Bool(true),
@@ -1971,6 +2083,7 @@ impl Parser {
                 return Ok(Pattern {
                     kind: PatternKind::Bind(name.name, true),
                     span: start.to(name.span),
+                    id: self.id(),
                 });
             }
             Tok::LParen => {
@@ -1979,6 +2092,7 @@ impl Parser {
                 return Ok(Pattern {
                     kind: PatternKind::Unit,
                     span: start.to(end),
+                    id: self.id(),
                 });
             }
             Tok::Crate | Tok::Super => return self.path_pattern(),
@@ -1994,13 +2108,18 @@ impl Parser {
                     return Ok(Pattern {
                         kind: PatternKind::Bind(name.name, false),
                         span: name.span,
+                        id: self.id(),
                     });
                 }
             },
             _ => return Err(self.unexpected("a pattern")),
         };
         self.bump();
-        Ok(Pattern { kind, span: start })
+        Ok(Pattern {
+            kind,
+            span: start,
+            id: self.id(),
+        })
     }
 
     /// `Shape::Dot(p)`, `a::Shape::Empty` or `a::P::<int> { .. }`: a
@@ -2012,7 +2131,8 @@ impl Parser {
         let (last, last_targs, end) = segs[segs.len() - 1].clone();
         if *self.peek() == Tok::LBrace {
             no_targs(&segs[..segs.len() - 1])?;
-            return self.struct_pattern(join_all(&all), last_targs);
+            let name = self.join_all(&all);
+            return self.struct_pattern(name, last_targs);
         }
         if segs.len() == 1 {
             return Err(self.unexpected("`::` or `{`"));
@@ -2025,7 +2145,7 @@ impl Parser {
         }
         let ty_segs = &segs[..segs.len() - 1];
         no_targs(&ty_segs[..ty_segs.len() - 1])?;
-        let ty = join_all(&all[..all.len() - 1]);
+        let ty = self.join_all(&all[..all.len() - 1]);
         let targs = ty_segs[ty_segs.len() - 1].1.clone();
         let (args, end) = if self.eat(&Tok::LParen) {
             self.comma_list(Tok::RParen, Self::pattern)?
@@ -2035,6 +2155,7 @@ impl Parser {
         Ok(Pattern {
             kind: PatternKind::Variant(ty, targs, last, args),
             span: start.to(end),
+            id: self.id(),
         })
     }
 
@@ -2076,6 +2197,7 @@ impl Parser {
                 Pattern {
                     kind: PatternKind::Bind(name.name.clone(), false),
                     span: name.span,
+                    id: self.id(),
                 }
             };
             fields.push(FieldPat { name, pat });
@@ -2087,6 +2209,7 @@ impl Parser {
         Ok(Pattern {
             kind: PatternKind::Struct(ty, targs, fields, rest),
             span,
+            id: self.id(),
         })
     }
 }
@@ -2211,36 +2334,6 @@ fn doc_comment(lines: &[Token]) -> DocComment {
                 span: t.span,
             })
             .collect(),
-    }
-}
-
-/// `a::b` from `a` and `b`: one name for a path, spanning both.
-fn join(a: &Ident, b: &Ident) -> Ident {
-    Ident {
-        name: format!("{}::{}", a.name, b.name),
-        span: a.span.to(b.span),
-    }
-}
-
-/// The segments of a path, as one name: see `Parser::path`.
-fn join_all(segs: &[&Ident]) -> Ident {
-    let mut out = segs[0].clone();
-    for s in &segs[1..] {
-        out = join(&out, s);
-    }
-    out
-}
-
-/// A type written as a plain path, `Show` or `a::Show`, as the one name
-/// `Parser::path` would make of it: where a trait's name is expected.
-fn type_path(t: &TypeExpr) -> Option<Ident> {
-    match &t.kind {
-        TypeExprKind::Named(name, args) if args.is_empty() => Some(Ident {
-            name: name.clone(),
-            span: t.span,
-        }),
-        TypeExprKind::Proj(inner, None, name) => Some(join(&type_path(inner)?, name)),
-        _ => None,
     }
 }
 

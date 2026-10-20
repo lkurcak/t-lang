@@ -64,10 +64,10 @@ fn comment_texts<'s>(src: &'s str, comments: &[Comment]) -> Vec<&'s str> {
         .collect()
 }
 
-/// The program with its spans left out, to compare two programs by. `Debug`
-/// is derived for every AST type, so this shows every other field. A span
-/// prints as `Span { start: 1, end: 2 }`, which nothing else can: names
-/// print in quotes.
+/// The program with its spans and node ids left out, to compare two
+/// programs by. `Debug` is derived for every AST type, so this shows every
+/// other field. A span prints as `Span { start: 1, end: 2 }` and an id as
+/// `NodeId(3)`, which nothing else can: names print in quotes.
 ///
 /// Doc comments that document nothing are compared line by line: which
 /// lines they are matters, not how they're grouped into runs, which moving
@@ -79,13 +79,20 @@ pub fn shape(program: &Program) -> String {
         .flat_map(|d| d.lines)
         .map(|l| DocComment { lines: vec![l] })
         .collect();
+    program.next_id = 0;
     let debug = format!("{program:?}");
+    let debug = strip(&debug, "Span { ", '}');
+    strip(&debug, "NodeId(", ')')
+}
+
+/// `debug` without each run of it from `open` to the next `close`.
+fn strip(debug: &str, open: &str, close: char) -> String {
     let mut out = String::with_capacity(debug.len());
-    let mut rest = debug.as_str();
-    while let Some(i) = rest.find("Span { ") {
+    let mut rest = debug;
+    while let Some(i) = rest.find(open) {
         out.push_str(&rest[..i]);
-        let close = rest[i..].find('}').expect("a span ends") + i;
-        rest = &rest[close + 1..];
+        let end = rest[i..].find(close).expect("it ends") + i;
+        rest = &rest[end + 1..];
     }
     out.push_str(rest);
     out

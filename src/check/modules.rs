@@ -343,8 +343,10 @@ pub(crate) fn resolve(prog: &mut Program) -> Result<Modules, Error> {
         module: ROOT,
         params: Vec::new(),
         interface: None,
+        next_id: prog.next_id,
     };
     w.program(prog)?;
+    prog.next_id = w.next_id;
     for (t, symbol) in prog.traits.iter_mut().zip(symbols) {
         t.name.name = symbol;
     }
@@ -701,9 +703,18 @@ struct Rewrite<'r> {
     /// While in the interface of a public item, what to say of a private
     /// type or trait in it: "`f` is public, but its signature names".
     interface: Option<String>,
+    /// `Program::next_id`, while the program is being rewritten: the nodes
+    /// made here take ids from it.
+    next_id: u32,
 }
 
 impl Rewrite<'_> {
+    /// An id for a node made here (see `NodeId`).
+    fn id(&mut self) -> NodeId {
+        self.next_id += 1;
+        NodeId(self.next_id - 1)
+    }
+
     fn program(&mut self, prog: &mut Program) -> Result<(), Error> {
         for d in &mut prog.types {
             self.module = d.module();
@@ -979,6 +990,7 @@ impl Rewrite<'_> {
                 let name = Ident {
                     name: name.clone(),
                     span: t.span,
+                    id: t.id,
                 };
                 self.type_path(&name, t.span)?;
             }
@@ -1061,6 +1073,7 @@ impl Rewrite<'_> {
                 let ty = Ident {
                     name: "core::ops::Range".into(),
                     span: Span::new(l.span.end, l.span.end),
+                    id: self.id(),
                 };
                 self.r
                     .m
@@ -1069,6 +1082,7 @@ impl Rewrite<'_> {
                 let new = Ident {
                     name: "new".into(),
                     span: Span::new(r.span.start, r.span.start),
+                    id: self.id(),
                 };
                 e.kind = ExprKind::Variant(ty, Vec::new(), new, vec![*l, *r], true);
                 return Ok(());
@@ -1081,6 +1095,7 @@ impl Rewrite<'_> {
                     let name = Ident {
                         name: name.clone(),
                         span: e.span,
+                        id: e.id,
                     };
                     let b = self.path(&name, Ns::Values)?;
                     self.r.m.paths.insert(e.span, b.item);
@@ -1104,12 +1119,14 @@ impl Rewrite<'_> {
                     let path = Ident {
                         name: format!("{}::{}", ty.name, member.name),
                         span: ty.span.to(member.span),
+                        id: self.id(),
                     };
                     let b = self.path(&path, Ns::Values)?;
                     self.r.m.paths.insert(path.span, b.item);
                     let var = Expr {
                         kind: ExprKind::Var(path.name, Vec::new()),
                         span: path.span,
+                        id: self.id(),
                     };
                     e.kind = match parens {
                         true => ExprKind::Call(Box::new(var), std::mem::take(args)),
@@ -1230,6 +1247,7 @@ impl Rewrite<'_> {
             pat: Pattern {
                 kind: PatternKind::Bind(FOR_ITERATOR.into(), true),
                 span: iter_span,
+                id: self.id(),
             },
             ty: None,
             init: Some(f.iter),
@@ -1241,9 +1259,11 @@ impl Rewrite<'_> {
                 Box::new(Expr {
                     kind: it(),
                     span: at(i + 1, i + 2),
+                    id: self.id(),
                 }),
             ),
             span: at(i, i + 1),
+            id: self.id(),
         };
         let iterator = &self.symbols[match self.core_item("iter", "Iterator") {
             Item::Trait(k) => k,
@@ -1254,17 +1274,20 @@ impl Rewrite<'_> {
                 Ident {
                     name: iterator.clone(),
                     span: at(k + 2, k + 2),
+                    id: self.id(),
                 },
                 Vec::new(),
                 // Where an error about it is: `x` isn't an iterator.
                 Ident {
                     name: "next".into(),
                     span: at(iter_span.start, iter_span.start),
+                    id: self.id(),
                 },
                 vec![borrow],
                 true,
             ),
             span: at(k, iter_span.end),
+            id: self.id(),
         };
         let option = self.core_item("option", "Option");
         let mut variant = |name: &str, pats: Vec<Pattern>, ty: Span, member: Span, span: Span| {
@@ -1274,15 +1297,18 @@ impl Rewrite<'_> {
                     Ident {
                         name: "core::option::Option".into(),
                         span: ty,
+                        id: self.id(),
                     },
                     Vec::new(),
                     Ident {
                         name: name.into(),
                         span: member,
+                        id: self.id(),
                     },
                     pats,
                 ),
                 span,
+                id: self.id(),
             }
         };
         let some = variant(
@@ -1309,20 +1335,24 @@ impl Rewrite<'_> {
                 body: Expr {
                     kind: ExprKind::Break(None, None),
                     span: at(k + 2, k + 2),
+                    id: self.id(),
                 },
             },
         ];
         let step = Expr {
             kind: ExprKind::Match(Box::new(next), arms),
             span: at(k, k + 2),
+            id: self.id(),
         };
         let body = Expr {
             kind: ExprKind::Block(vec![Stmt::BlockLike(step)], None),
             span: at(k + 1, k + 2),
+            id: self.id(),
         };
         let looped = Expr {
             kind: ExprKind::Loop(f.label, Box::new(body)),
             span: at(k, k + 3),
+            id: self.id(),
         };
         ExprKind::Block(vec![init, Stmt::BlockLike(looped)], None)
     }
@@ -1432,6 +1462,7 @@ fn segments(name: &Ident) -> Vec<Ident> {
             Ident {
                 name: part.to_string(),
                 span,
+                id: name.id,
             }
         })
         .collect()
@@ -1449,12 +1480,14 @@ fn plain_path(t: &TypeExpr) -> Option<Ident> {
         TypeExprKind::Named(name, args) if args.is_empty() => Some(Ident {
             name: name.clone(),
             span: t.span,
+            id: t.id,
         }),
         TypeExprKind::Proj(inner, None, name) => {
             let inner = plain_path(inner)?;
             Some(Ident {
                 name: format!("{}::{}", inner.name, name.name),
                 span: inner.span.to(name.span),
+                id: t.id,
             })
         }
         _ => None,

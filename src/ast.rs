@@ -28,7 +28,29 @@ pub struct Program {
     /// Doc comments that aren't before anything they can document, in
     /// order. The checker warns about each.
     pub stray_docs: Vec<DocComment>,
+    /// The id the next node made gets (see `NodeId`).
+    pub next_id: u32,
 }
+
+impl Program {
+    /// An id no node of the program has yet, for a node made after parsing.
+    pub fn fresh_id(&mut self) -> NodeId {
+        self.next_id += 1;
+        NodeId(self.next_id - 1)
+    }
+}
+
+/// Which node of the AST an `Expr`, `Pattern`, `Ident`, `TypeExpr` or
+/// `Lambda` is, unique in the program: the parser numbers each as it makes
+/// it, and whatever makes one later takes a fresh one
+/// (`Program::fresh_id`). What the checker learns about a node is by its
+/// id, not its span, which a node made up by desugaring may share with
+/// others, nor its address, which only lasts as long as the AST it's in.
+/// `lift` and monomorphisation copy ids: an id names a node as written, so
+/// each copy of a generic function's body for a type has the facts of the
+/// one checked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct NodeId(pub u32);
 
 /// A `///` doc comment, of one or more lines in a row, before the `fn`,
 /// `struct`, `enum`, field or variant it documents.
@@ -721,12 +743,14 @@ pub struct Param {
 pub struct Ident {
     pub name: String,
     pub span: Span,
+    pub id: NodeId,
 }
 
 #[derive(Debug, Clone)]
 pub struct TypeExpr {
     pub kind: TypeExprKind,
     pub span: Span,
+    pub id: NodeId,
 }
 
 #[derive(Debug, Clone)]
@@ -793,6 +817,7 @@ impl fmt::Display for TypeExpr {
 pub struct Expr {
     pub kind: ExprKind,
     pub span: Span,
+    pub id: NodeId,
 }
 
 #[derive(Debug, Clone)]
@@ -909,6 +934,7 @@ impl Expr {
 /// what it captures by value.
 #[derive(Debug, Clone)]
 pub struct Lambda {
+    pub id: NodeId,
     /// Where the `move` is, if it's there.
     pub moves: Option<Span>,
     pub params: Vec<LambdaParam>,
@@ -938,11 +964,12 @@ pub enum Capture {
 }
 
 impl Lambda {
-    pub fn new(params: Vec<LambdaParam>, ret: Option<TypeExpr>, body: Expr) -> Lambda {
+    pub fn new(id: NodeId, params: Vec<LambdaParam>, ret: Option<TypeExpr>, body: Expr) -> Lambda {
         let mut bound: Vec<String> = params.iter().map(|p| p.name.name.clone()).collect();
         let mut captures = Vec::new();
         free_vars(&body, &mut bound, &mut captures);
         Lambda {
+            id,
             moves: None,
             params,
             ret,
@@ -1123,6 +1150,7 @@ impl Stmt {
 pub struct Pattern {
     pub kind: PatternKind,
     pub span: Span,
+    pub id: NodeId,
 }
 
 impl Pattern {
