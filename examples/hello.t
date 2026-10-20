@@ -17,9 +17,9 @@ fn twice<e, F: Fn(int) -> int with e + Discard>(f: F, x: int) -> int with e { f(
 
 fn main() with panic {
     let n = 5;
-    print(fact(10));
-    print(twice(fact, 3));
-    print(twice(|x| x + n, 0));
-    print(area(Shape::Rect(3, 4)));
-    print(area(Shape::Circle(2)) + area(Shape::Empty));
+    print(fact(10));                                    // expect: 3628800
+    print(twice(fact, 3));                              // expect: 720
+    print(twice(|x| x + n, 0));                         // expect: 10
+    print(area(Shape::Rect(3, 4)));                     // expect: 12
+    print(area(Shape::Circle(2)) + area(Shape::Empty)); // expect: 12
 }

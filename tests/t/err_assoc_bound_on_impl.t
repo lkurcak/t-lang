@@ -1,5 +1,7 @@
-// A bound on a projection would make proving the impl's trait be about
-// what `T::Out` stands for, which can be a bigger type than `W<T>`.
+// A bound on a projection makes proving the impl's trait be about what
+// `T::Out` stands for, which can be a bigger type than `W<T>`: an `X`
+// whose `Out` is `W<X>` would have `W<X>: Show` need `W<X>: Show`. So it
+// can't be of the trait the impl is of, or one that leads back to it.
 trait Tr {
     type Out;
 }
@@ -16,4 +18,4 @@ impl<T: Tr<Out: Show>> Show for W<T> {
 }
 
 fn main() {}
-// error: a bound on an associated type, like `Out: Show`, can only be on a function's type parameter
+// error: proving that a type implements `Show` could go on forever: this impl needs `T::Out: Show`

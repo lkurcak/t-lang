@@ -446,7 +446,7 @@ impl Traits {
             if !matches(&d.self_ty, ty, &d.params, &mut found) {
                 return None;
             }
-            Some((i, impl_args(d, &found, &self.impls, &self.anon(), local)))
+            Some((i, impl_args(d, &found, &self.impls, &self.anon(), local)?))
         })
     }
 
@@ -678,22 +678,33 @@ pub fn subset(a: &Type, b: &Type) -> bool {
         .all(|e| b.effect_items().contains(e))
 }
 
-/// The arguments of impl `d`, at a type its header matched with `found`.
-/// Each type parameter's is from the match, as the header has them all
-/// (see `check::traits`'s `constrained`). An effect parameter's needn't
-/// be in the header, as in `impl<f, F: Fn() with f> Tr for W<F>`: then
-/// it's the least that makes the impl's `Fn` bounds hold, the effects of
-/// what's called, less the others a bound allows. Effects form a
-/// join-semilattice, so the least always exists, and depends only on the
-/// type matched: an impl found for a type has one meaning there, as for
-/// any of its parameters (coherence).
+/// The arguments of impl `d`, at a type its header matched with `found`,
+/// or `None` if a parameter its type doesn't have can't be decided there.
+///
+/// Each type parameter in the header is from the match. One that isn't is
+/// *decided* by an equality bound (`decider`): it's the part of the
+/// bound's type where the parameter is, in what the bound's projection is
+/// at the matched type, as `U` is `int` in `impl<U, F: Fn() -> U> Get for
+/// Thunk<F>` at `Thunk<fn() -> int>`. That's a function of the type too,
+/// as normalising is, and none if the projection's still rigid there, or
+/// what it is has no such part, or the part has a region of a function
+/// type it's in (`'^0` of `fn(&int) -> &int` is no region outside it).
+///
+/// An effect parameter's needn't be in the header, as in `impl<f, F: Fn()
+/// with f> Tr for W<F>`: then it's the least that makes the impl's `Fn`
+/// bounds hold, the effects of what's called, less the others a bound
+/// allows. Effects form a join-semilattice, so the least always exists,
+/// and depends only on the type matched.
+///
+/// So an impl found for a type has one meaning there, as for any of its
+/// parameters (coherence), and the arguments commute with substitution.
 fn impl_args(
     d: &ImplDef,
     found: &HashMap<String, Type>,
     impls: &[ImplDef],
     anon: &Anon,
     local: &[(Type, Type)],
-) -> Vec<Type> {
+) -> Option<Vec<Type>> {
     let unfound = |p: &String| match crate::parser::is_effect_name(p) {
         true => Type::no_effects(),
         false => Type::Unit,
@@ -703,6 +714,23 @@ fn impl_args(
         .iter()
         .map(|p| found.get(p).cloned().unwrap_or_else(|| unfound(p)))
         .collect();
+    // The header's parameters are all known, so each bound that decides
+    // one can be worked out now: its projection is on one of them.
+    let s = Subst::new(&d.params, &args);
+    for (i, p) in d.params.iter().enumerate() {
+        if found.contains_key(p) || crate::parser::is_effect_name(p) {
+            continue;
+        }
+        let k = decider(&d.self_ty, &d.params, &d.eqs, p)?;
+        let (lhs, rhs) = &d.eqs[k];
+        let at = normalise(impls, anon, local, &s.apply(lhs));
+        let value = part_at(rhs, &at, p, is_sig(lhs))?;
+        let bound = |r: &&Region| matches!(r, Region::Named(n) if n.starts_with("'^"));
+        if value.regions().iter().any(bound) {
+            return None;
+        }
+        args[i] = value;
+    }
     let s = Subst::new(&d.params, &args);
     for (i, p) in d.params.iter().enumerate() {
         if found.contains_key(p) || !crate::parser::is_effect_name(p) {
@@ -730,7 +758,69 @@ fn impl_args(
         }
         args[i] = Type::effects(items);
     }
-    args
+    Some(args)
+}
+
+/// Which of equality bounds `eqs` decides type parameter `p` of an impl
+/// for `self_ty` with parameters `params`, which `self_ty` doesn't have,
+/// if one does: the first whose projection is on a parameter `self_ty`
+/// has outside function types (where matching it decides it as a type
+/// that means something anywhere), with `p` where matching can find it
+/// (`decidable`). Not one on a parameter decided itself: that might not
+/// end, and isn't needed yet.
+pub fn decider(self_ty: &Type, params: &[String], eqs: &[(Type, Type)], p: &str) -> Option<usize> {
+    let header = outside_fns(self_ty);
+    eqs.iter().position(|(lhs, rhs)| {
+        matches!(lhs, Type::Proj(s, ..)
+            if matches!(&**s, Type::Param(q) if params.contains(q) && header.contains(q)))
+            && decidable(rhs, p, is_sig(lhs))
+    })
+}
+
+/// The type parameters `t` has outside function types.
+pub fn outside_fns(t: &Type) -> Vec<String> {
+    match t {
+        Type::Fn(_) => Vec::new(),
+        Type::Param(p) => vec![p.clone()],
+        t => t.parts().flat_map(outside_fns).collect(),
+    }
+}
+
+/// Is type parameter `p` in `pat` where matching `pat` to a type finds
+/// what it is? Not inside a projection, which says nothing of what it's
+/// on, nor in effects, which bounds give the most of, nor inside a
+/// function type, but for a signature's (`sig`) parameters and result.
+fn decidable(pat: &Type, p: &str, sig: bool) -> bool {
+    match pat {
+        Type::Param(q) => q == p,
+        Type::Proj(..) | Type::Effects(_) => false,
+        Type::Fn(f) if sig => f
+            .params
+            .iter()
+            .chain([&*f.ret])
+            .any(|t| decidable(t, p, false)),
+        Type::Fn(_) => false,
+        t => t.parts().any(|t| decidable(t, p, false)),
+    }
+}
+
+/// The part of `t` where `pat` has type parameter `p`, if `t` has the
+/// shape `pat` has on the way there (see `decidable`).
+fn part_at(pat: &Type, t: &Type, p: &str, sig: bool) -> Option<Type> {
+    match (pat, t) {
+        (Type::Param(q), t) if q == p => Some(t.clone()),
+        (Type::Proj(..) | Type::Effects(_), _) => None,
+        (Type::Fn(f), Type::Fn(g)) if sig && pat.same_shape(t) => {
+            let pairs = f.params.iter().zip(&g.params).chain([(&*f.ret, &*g.ret)]);
+            pairs.into_iter().find_map(|(a, b)| part_at(a, b, p, false))
+        }
+        (Type::Fn(_), _) => None,
+        (pat, t) if pat.same_shape(t) => pat
+            .parts()
+            .zip(t.parts())
+            .find_map(|(a, b)| part_at(a, b, p, false)),
+        _ => None,
+    }
 }
 
 /// The types with no names a program can write: closures' and opaque
@@ -761,10 +851,14 @@ pub struct Anon<'a> {
 ///   It may only mention parameters that are in the header outside every
 ///   function type (`check::traits`'s `constrained`): matching doesn't
 ///   decide those, or decides them as regions that only mean something
-///   inside a function type. Or, for an associated effect, effect
-///   parameters an `Fn` bound decides (`decided_effects`), as the least
-///   effects that make it hold at the type matched (`impl_args`): a
-///   function of that type too, so substitution still commutes.
+///   inside a function type. Or type parameters an equality bound decides,
+///   from a projection on a parameter in the header outside function types
+///   (`decider`), as the part of what that is where the bound says, with
+///   no region of a function type it's in; or, for an associated effect,
+///   effect parameters an `Fn` bound decides (`decided_effects`), as the
+///   least effects that make it hold at the type matched (`impl_args`):
+///   functions of that type too, so substitution still commutes. The
+///   projections that decide them end as an associated type's do.
 /// - It's never cached by type with regions erased: `<&'x int as Tr>::Out`
 ///   and `<&'y int as Tr>::Out` are different types.
 /// - It ends: the projections in an impl's associated type are on smaller
@@ -892,7 +986,7 @@ pub fn project(
         let mut regions = HashMap::new();
         regions_at(&d.self_ty, s, &d.lifetimes, &mut regions);
         let (_, rhs) = d.assoc.iter().find(|(n, _)| n == name)?;
-        let args = impl_args(d, &found, impls, anon, local);
+        let args = impl_args(d, &found, impls, anon, local)?;
         let regions: Vec<Region> = d
             .lifetimes
             .iter()
@@ -981,6 +1075,12 @@ fn param(name: &str) -> Type {
 ///   compares names, so bound lifetimes must be named `'^0`, `'^1`, .. in
 ///   the order they're first written, wherever a function type is made
 ///   (`generics::region`, `Lifetimes::ClosureParams`).
+/// - Matching decides only the parameters in the header. Those a bound
+///   decides (`decider`) are worked out from what it matched, never by
+///   matching: so they never make an impl apply to more or fewer types,
+///   and overlap is still unifying headers (`overlap`). What they're
+///   decided as is a function of the type, with no lifetime of a function
+///   type in it (`impl_args`).
 /// - Nor can anything name an opaque type, so only blanket impls are found
 ///   for it, and only by its bounds. Its hidden type implements those
 ///   bounds (`Checker::hide`), so the same blanket impl is found for that,

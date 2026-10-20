@@ -304,7 +304,7 @@ pub struct Generics {
     pub bounds: Vec<(Ident, Vec<BoundItem>)>,
     /// From the `<` to the `>`, if they're there.
     pub span: Option<Span>,
-    /// A function's `where` clause: `where Self: Discard, I::Item: Eq`,
+    /// A function's or impl's `where` clause: `where Self: Discard, I::Item: Eq`,
     /// each bound with the type before its `:`, which can be more than a
     /// type parameter's name.
     pub wheres: Vec<(TypeExpr, Vec<BoundItem>)>,

@@ -206,12 +206,14 @@ module.exports = grammar({
       field('body', $.declaration_list),
     ),
 
-    // `impl<T: Show> Show for Option<T> { .. }` or `impl Point { .. }`
+    // `impl<T: Show> Show for Option<T> { .. }` or `impl Point { .. }`,
+    // maybe with a `where` clause before the body.
     impl_item: $ => seq(
       'impl',
       optional(field('type_parameters', $.type_parameters)),
       optional(seq(field('trait', $._path_type), 'for')),
       field('type', $._type),
+      optional($.where_clause),
       field('body', $.declaration_list),
     ),
 

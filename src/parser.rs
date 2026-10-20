@@ -780,7 +780,7 @@ impl Parser {
     }
 
     /// `where T: Show, Self::Item: Discard` after a function's signature,
-    /// added to its generics. The bounds go on while a `,` is followed by
+    /// or an impl's type, added to its generics. The bounds go on while a `,` is followed by
     /// something other than the body.
     fn where_clause(&mut self, g: &mut Generics) -> Result<(), Error> {
         let start = self.expect(Tok::Where)?;
@@ -1078,7 +1078,7 @@ impl Parser {
     /// its head.
     fn impl_decl(&mut self, head: Head) -> Result<ImplDecl, Error> {
         let start = self.expect(Tok::Impl)?;
-        let generics = self.generics()?;
+        let mut generics = self.generics()?;
         let first = self.ty()?;
         let (trait_name, self_ty) = match self.eat(&Tok::For) {
             false => (None, first),
@@ -1092,6 +1092,9 @@ impl Parser {
                 }
             },
         };
+        if *self.peek() == Tok::Where {
+            self.where_clause(&mut generics)?;
+        }
         self.expect(Tok::LBrace)?;
         let mut assoc = Vec::new();
         let mut effects = Vec::new();

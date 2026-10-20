@@ -488,6 +488,39 @@ fn combine<Alpha, Beta>(
     );
 }
 
+/// A long impl header breaks its `<..>`, keeping a short type on the
+/// line, and its `where` clause goes on lines of its own, as a function's.
+#[test]
+fn impl_headers_break_their_generics_and_wheres() {
+    let src = "\
+impl<Alpha: Iterator, Beta: FnMut(&Alpha::Item) -> bool with p, p, Gamma: Discard> Iterator for Filtered<Alpha, Beta, Gamma> {}
+impl<I: Iterator> Iterator for Second<I> where I::Item: Discard { type Item = I::Item; }
+impl<I: Iterator> Tr for W<I> where I::Item: Discard, I::Item: Eq, I::Item: Copy, I::Item: Ord, I::Item: Tr {}
+";
+    assert_eq!(
+        fmt(src),
+        "\
+impl<
+    Alpha: Iterator,
+    Beta: FnMut(&Alpha::Item) -> bool with p,
+    p,
+    Gamma: Discard,
+> Iterator for Filtered<Alpha, Beta, Gamma> {}
+impl<I: Iterator> Iterator for Second<I> where I::Item: Discard {
+    type Item = I::Item;
+}
+impl<I: Iterator> Tr for W<I>
+where
+    I::Item: Discard,
+    I::Item: Eq,
+    I::Item: Copy,
+    I::Item: Ord,
+    I::Item: Tr,
+{}
+"
+    );
+}
+
 #[test]
 fn a_last_closure_or_block_argument_breaks_inside() {
     let src = "\

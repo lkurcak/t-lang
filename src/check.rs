@@ -1226,6 +1226,26 @@ impl Checker {
                     format!("type `{}` is already defined", name.name),
                 ));
             }
+            // What a struct or enum holds has types, and a function type
+            // among them says its effects itself.
+            if let Some(e) = d
+                .type_params()
+                .iter()
+                .find(|p| crate::parser::is_effect_name(&p.name))
+            {
+                let what = match d {
+                    TypeDecl::Struct(_) => "a struct",
+                    _ => "an enum",
+                };
+                return Err(Error::ty(
+                    e.span,
+                    format!(
+                        "{what} can't have effect parameters, as `{}` would be: what it holds \
+                         has types, and a function type among them says its effects itself",
+                        e.name
+                    ),
+                ));
+            }
             let arity = (d.generics().lifetimes.len(), d.type_params().len());
             self.arities.insert(def.symbol.clone(), arity);
         }

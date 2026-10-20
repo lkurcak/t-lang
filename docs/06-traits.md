@@ -138,7 +138,9 @@ and has *specialization* as an unfinished way out; T has none.
 **Termination.** Proving a goal by an impl needs what the impl needs. Each
 impl's type parameters are parts of its type (an impl whose parameter
 isn't, like `impl<T> Show for int`, is rejected: nothing could say what
-`T` is). So what an impl needs is about smaller types than what it proves,
+`T` is; one that a bound decides is fine, and so are bounds on what
+isn't a part, under a rule of their own: docs/07.1-impl-parameters.md).
+So what an impl needs is about smaller types than what it proves,
 and the search ends: the *Paterson conditions* (Sulzmann et al., 2007),
 which a bound on a type parameter meets whenever the impl's type is more
 than that parameter.

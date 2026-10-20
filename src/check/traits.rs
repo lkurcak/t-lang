@@ -752,7 +752,16 @@ impl Checker {
                 lifetimes.extend(elided);
             }
             let bounds = generics::bounds(&d.generics, &lifetimes, &params)?;
-            let (preds, eqs) = self.preds(&d.generics, &params, &lifetimes, false)?;
+            // What an impl is for is in its type, so a `where` clause can't
+            // bound that.
+            if let Some(s) = d.generics.wheres.iter().find_map(|(t, _)| mentions_self(t)) {
+                return Err(Error::ty(
+                    s,
+                    "an impl's `where` clause can only bound a type parameter, or an associated \
+                     type of one, not `Self`",
+                ));
+            }
+            let (preds, eqs) = self.preds(&d.generics, &params, &lifetimes, true)?;
             let trait_name = match &d.trait_name {
                 Some(t) => Some(self.trait_named(t)?),
                 None => None,
@@ -811,21 +820,40 @@ impl Checker {
                 self.orphan(prog, d, tr, &self_ty)?;
             }
             // Each parameter must be decided by the type: otherwise nothing
-            // could say what it is when the impl is used. An effect
-            // parameter may be decided by an `Fn` bound instead, as the
-            // least effects that make it hold (see `traits::impl_args`).
+            // could say what it is when the impl is used. Or by an equality
+            // bound on a parameter that is, as what that's a function of
+            // the type, or, for an effect parameter, by an `Fn` bound, as
+            // the least effects that make it hold (see `traits::impl_args`).
             for (p, decl) in params.iter().zip(&d.generics.types) {
-                if is_effect_name(p) && in_fn_bound(&d.generics, p) {
+                if mentions(&self_ty, p) {
                     continue;
                 }
-                if !mentions(&self_ty, p) {
+                if is_effect_name(p) {
+                    if in_fn_bound(&d.generics, p) {
+                        continue;
+                    }
                     return Err(Error::ty(
                         decl.span,
                         format!(
-                            "type parameter `{p}` isn't in `{self_ty}`, so nothing could say \
-                             what it is where the impl is used; remove it"
+                            "effect parameter `{p}` isn't decided by anything: say it's the \
+                             effects of something the impl's type holds, with a bound like \
+                             `F: Fn() with {p}`"
                         ),
                     ));
+                }
+                match crate::traits::decider(&self_ty, &params, &eqs, p) {
+                    Some(k) => terminates(&eqs[k].0, &self_ty, &params, decl.span)?,
+                    None => {
+                        return Err(Error::ty(
+                            decl.span,
+                            format!(
+                                "type parameter `{p}` isn't in `{self_ty}`, nor decided by a \
+                                 bound, so nothing could say what it is where the impl is used; \
+                                 remove it, or say what it is with a bound on a parameter that \
+                                 is, like `I: Iterator<Item = {p}>`"
+                            ),
+                        ));
+                    }
                 }
             }
             if trait_name.is_some() {
@@ -981,7 +1009,14 @@ impl Checker {
             self.adts.proj.local.clear();
             let t =
                 Subst::new(&["Self".to_string()], std::slice::from_ref(self_ty)).apply(&resolved?);
-            constrained(&t, self_ty, params, a.ty.span)?;
+            // A parameter a bound decides is a type that means something
+            // anywhere (see `traits::impl_args`).
+            let header: Vec<String> = params
+                .iter()
+                .filter(|p| mentions(self_ty, p))
+                .cloned()
+                .collect();
+            constrained(&t, self_ty, &header, a.ty.span)?;
             terminates(&t, self_ty, params, a.ty.span)?;
             out.push((n.clone(), t));
         }
@@ -1428,6 +1463,7 @@ impl Checker {
         self.adts.proj.local.clear();
         self.coherence()?;
         self.termination()?;
+        self.bound_termination()?;
         self.assoc_termination()?;
         self.assoc_sizes()?;
         self.assoc_regular()
@@ -1629,6 +1665,57 @@ impl Checker {
         Ok(())
     }
 
+    /// Proving a bound of an impl on what isn't a part of its type, like
+    /// `I::Item: Discard` in `impl<I: Iterator> Iterator for Filter<I, P>
+    /// where I::Item: Discard`, or on a parameter a bound decides, is about
+    /// a type that can be bigger than the one the impl is for: with
+    /// `impl<I: Iterator> A for W<I> where I::Item: B` and `impl<T: A> B
+    /// for V<T>`, an `X` whose `Item` is `V<W<X>>` has `W<X>: A` need
+    /// `V<W<X>>: B`, which needs `W<X>: A` again. So such a bound, in an
+    /// impl of `A`, can only be of a trait that can't lead back to `A`, by
+    /// any impl's bounds.
+    ///
+    /// Then the search ends. Take the traits' graph, with an edge from
+    /// each trait to those its impls' bounds are of, and its strongly
+    /// connected components: each step of a proof stays in one, and is a
+    /// bound on a part of the impl's type, or a blanket impl's (which
+    /// `termination` sees to), or goes to a component lower down, which
+    /// can only happen as often as there are components.
+    fn bound_termination(&self) -> Result<(), Error> {
+        let mut edges: Vec<(&str, &str, &ImplDef)> = Vec::new();
+        for d in &self.traits.impls {
+            let Some(tr) = &d.trait_name else { continue };
+            for pred in &d.preds {
+                edges.push((tr, &pred.trait_name, d));
+            }
+        }
+        for d in &self.traits.impls {
+            let Some(tr) = &d.trait_name else { continue };
+            let part = |t: &Type| matches!(t, Type::Param(p) if mentions(&d.self_ty, p));
+            for pred in d.preds.iter().filter(|p| !part(&p.ty)) {
+                let mut seen = HashSet::new();
+                let to = pred.trait_name.as_str();
+                let Some(back) = reach(&edges, to, tr, &mut seen) else {
+                    continue;
+                };
+                let how = match back.first() {
+                    None => String::new(),
+                    Some(b) => format!(", by the bounds of `impl {}`", b.header()),
+                };
+                return Err(Error::ty(
+                    d.span,
+                    format!(
+                        "proving that a type implements `{tr}` could go on forever: this impl \
+                         needs `{}: {to}`, which isn't a part of `{}`, so it can be a bigger \
+                         type, and proving it could lead back to `{tr}`{how}",
+                        pred.ty, d.self_ty
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Working out a projection ends (see `Projections`): each step, by an
     /// impl, is to projections on smaller types (checked where each impl's
     /// associated types are, in `terminates`), or, by a blanket impl `impl<T>
@@ -1643,7 +1730,14 @@ impl Checker {
             let (Some(tr), Type::Param(_)) = (&d.trait_name, &d.self_ty) else {
                 continue;
             };
-            for (_, t) in &d.assoc {
+            // What a bound decides a parameter is, is worked out when the
+            // impl's associated types are (`traits::impl_args`).
+            let deciding = d.params.iter().filter_map(|p| {
+                let decided = !is_effect_name(p) && !mentions(&d.self_ty, p);
+                let k = crate::traits::decider(&d.self_ty, &d.params, &d.eqs, p);
+                decided.then_some(&d.eqs[k?].0)
+            });
+            for t in d.assoc.iter().map(|(_, t)| t).chain(deciding) {
                 each_proj(t, &mut |s, to| {
                     if *s == d.self_ty {
                         edges.push((tr, to, d));
@@ -2017,12 +2111,12 @@ impl Checker {
         Ok(())
     }
 
-    /// Proving `T: A` by an impl needs what the impl needs. For each
-    /// impl, those are on its type parameters, each a part of the type it's
-    /// for (each is in it, checked in `collect_impls`). So they're about
+    /// Proving `T: A` by an impl needs what the impl needs. Those on its
+    /// type parameters that are parts of the type it's for are about
     /// smaller types, and the search ends: the *Paterson conditions*,
     /// which a bound on a type parameter meets whenever the impl is for a
-    /// type that's more than that parameter.
+    /// type that's more than that parameter. The others, on projections
+    /// and on parameters a bound decides, are `bound_termination`'s.
     ///
     /// An impl for a bare parameter, a *blanket impl* like `impl<T: A> B
     /// for T`, needs `T: A` to prove `T: B`: the same type. That still ends

@@ -10,7 +10,7 @@
 //! it goes. See docs/fmt.md.
 
 use crate::ast::*;
-use crate::doc::{Doc, concat, group, if_break, nest, render, text};
+use crate::doc::{Doc, WIDTH, concat, flat, flat_width, group, if_break, nest, render, text};
 use crate::error::Span;
 use crate::lexer::Tok;
 use crate::trivia::Trivia;
@@ -493,7 +493,14 @@ impl Printer<'_> {
         items.extend(d.effects.iter().map(BodyItem::EffectDef));
         items.extend(d.methods.iter().map(|f| BodyItem::Fn(f, true)));
         let body = self.methods(open, d.span.end - 1, items);
-        doc + "impl" + generics + header + self.ty(&d.self_ty) + " " + body
+        // A type short enough stays on the line, so a long header breaks
+        // its `<..>` instead, as a function breaks its parameters before
+        // its result.
+        let ty = self.ty(&d.self_ty);
+        let short = |f: &Doc| flat_width(f).is_some_and(|w| w <= WIDTH / 2);
+        let ty = flat(&ty).filter(short).unwrap_or(ty);
+        let wheres = self.wheres(None, &d.generics, true);
+        doc + "impl" + generics + header + ty + wheres + body
     }
 
     /// The `{ .. }` of a trait or impl, with the `{` at `open` and the `}`
@@ -517,7 +524,9 @@ impl Printer<'_> {
             body = body + Doc::HardLine + self.element(start, i == 0);
             let doc = match *item {
                 BodyItem::Fn(f, true) => self.fn_decl(f),
-                BodyItem::Fn(f, false) => self.signature(f) + self.wheres(f, false) + ";",
+                BodyItem::Fn(f, false) => {
+                    self.signature(f) + self.wheres(f.effects.as_ref(), &f.generics, false) + ";"
+                }
                 BodyItem::Decl(a) => {
                     let lead = self.lead(a.doc.as_ref(), &[], a.span.start);
                     let bounds: Vec<&str> = a.bounds.iter().map(|b| b.name.as_str()).collect();
@@ -708,25 +717,29 @@ impl Printer<'_> {
 
     fn fn_decl(&mut self, f: &FnDecl) -> Doc {
         match f.intrinsic {
-            Some(_) => self.signature(f) + self.wheres(f, false) + ";",
+            Some(_) => {
+                self.signature(f) + self.wheres(f.effects.as_ref(), &f.generics, false) + ";"
+            }
             // In order: comments are printed as what's after them is.
             None => {
-                let head = self.signature(f) + self.wheres(f, true);
+                let head = self.signature(f) + self.wheres(f.effects.as_ref(), &f.generics, true);
                 head + self.expr(&f.body, 0, Ctx::default())
             }
         }
     }
 
-    /// A function's `where` clause, if it has one, on the signature's line
-    /// if it fits there, and otherwise on lines of its own, one bound to a
-    /// line, as rustfmt does: then a body's `{` goes on a line of its own
-    /// too. With a space before the body after it, if there's a `body`.
+    /// A function's or impl's `where` clause, from `g`, if it has one, on
+    /// the signature's line if it fits there, and otherwise on lines of its
+    /// own, one bound to a line, as rustfmt does: then a body's `{` goes on
+    /// a line of its own too. With a space before the body after it, if
+    /// there's a `body`.
     ///
-    /// Its effects, `with ..`, come first, and go on a line of their own
-    /// with it.
-    fn wheres(&mut self, f: &FnDecl, body: bool) -> Doc {
+    /// A function's `effects`, `with ..`, come first, and go on a line of
+    /// their own with it.
+    fn wheres(&mut self, effects: Option<&EffectSet>, g: &Generics, body: bool) -> Doc {
         let after = if body { text(" ") } else { Doc::nil() };
-        let effects = match &f.effects {
+        let with = effects.is_some();
+        let effects = match effects {
             Some(e) => Doc::Line + self.effects(e),
             None => Doc::nil(),
         };
@@ -734,14 +747,14 @@ impl Printer<'_> {
             true => Doc::Line,
             false => Doc::nil(),
         };
-        if f.generics.wheres.is_empty() {
-            return match f.effects {
-                Some(_) => group(effects + end),
-                None => after,
+        if g.wheres.is_empty() {
+            return match with {
+                true => group(effects + end),
+                false => after,
             };
         }
         let mut preds = Doc::nil();
-        for (i, (subject, bounds)) in f.generics.wheres.iter().enumerate() {
+        for (i, (subject, bounds)) in g.wheres.iter().enumerate() {
             if i > 0 {
                 preds = preds + "," + Doc::Line;
             }

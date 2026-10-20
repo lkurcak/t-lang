@@ -1,0 +1,43 @@
+// Proving `W<X>: Tr` needs `X::Item: Tr2`, which is `V<W<X>>: Tr2`, which
+// needs `W<X>: Tr` again: a bound on what isn't a part of an impl's type
+// can lead back to the impl, and then finding out what implements what
+// never ends. So it can't lead back to the trait it's in an impl of.
+trait Tr {
+    fn a(&self) -> int;
+}
+
+trait Tr2 {
+    fn b(&self) -> int;
+}
+
+#[derive(Discard where I: Discard)]
+struct W<I> { iter: I }
+
+#[derive(Discard where T: Discard)]
+struct V<T> { t: T }
+
+impl<I: Iterator> Tr for W<I>
+where
+    I::Item: Tr2,
+{
+    fn a(&self) -> int { 1 }
+}
+
+impl<T: Tr> Tr2 for V<T> {
+    fn b(&self) -> int { 2 }
+}
+
+#[derive(Discard)]
+struct X {}
+
+impl Iterator for X {
+    type Item = V<W<X>>;
+    effect e = {};
+
+    fn next(&mut self) -> Option<V<W<X>>> { Option::None }
+}
+
+fn main() {
+    print((W { iter: X {} }).a());
+}
+// error: proving that a type implements `Tr` could go on forever: this impl needs `I::Item: Tr2`

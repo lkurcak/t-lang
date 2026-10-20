@@ -30,7 +30,7 @@ fn main() with {alloc, panic} {
         l = push(l, i);
         i += 1;
     }
-    print(sum(&l));
+    print(sum(&l)); // expect: 10
     double(&mut l);
-    print(sum(&l));
+    print(sum(&l)); // expect: 20
 }

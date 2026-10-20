@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+Step 7.1: impl parameters decided by bounds, and `where` on impls. See
+[docs/07.1-impl-parameters.md](docs/07.1-impl-parameters.md).
+
+### Added
+
+- An impl's type parameter needn't be in its type if an equality bound on
+  one that is decides it: `impl<U, F: Fn() -> U> Get for Thunk<F>`, or
+  `impl<T, I: Iterator<Item = T>> ..`. It's what the bound says, at the
+  type the impl is used at.
+- `where` clauses on impls, `impl<I: Iterator> Iterator for Second<I> where
+  I::Item: Discard`, and bounds on associated types in an impl's `<..>`,
+  `impl<T: Tr<Out: Show>>`. A bound on what isn't part of the impl's type
+  can't be of a trait that leads back to the impl's, so proving what
+  implements what still ends.
+- `examples/` are run by the tests, and say what they print.
+
+### Changed
+
+- **Breaking:** `core::iter::Map<I, F, U>` is `Map<I, F>`, and
+  `core::iter::Filter<I, P, T>` is `Filter<I, P>`.
+- A struct or enum with an effect parameter is an error that says so.
+- The error for an impl's effect parameter that nothing decides says it's
+  an effect parameter, and how to decide it.
+- `t fmt` breaks a long impl header in its `<..>`, keeping a short type
+  after `for` on one line, rather than in the type.
+
 ## 0.14.0 (2026-10-21)
 
 Step 7: effects. See [docs/07-effects.md](docs/07-effects.md).

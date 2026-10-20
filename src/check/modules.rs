@@ -946,6 +946,14 @@ impl Rewrite<'_> {
                 }
             }
         }
+        for (subject, items) in &mut g.wheres {
+            self.ty(subject)?;
+            for b in items {
+                if !b.name.name.starts_with('\'') {
+                    self.bound(b)?;
+                }
+            }
+        }
         Ok(())
     }
 

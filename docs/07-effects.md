@@ -188,8 +188,9 @@ fn main() with panic {
 `first(0..3)` has the effects of `<Range<int> as Iterator>::e`, which are
 none. An adapter has those of what it adapts and what it calls: `Map`'s
 are `{I::e, f}`, where `f` is the impl's effect parameter for its
-closure's. That isn't in the impl's type, as every type parameter must
-be, but it doesn't need to be: it's the least set that makes the impl's
+closure's. That isn't in the impl's type, as a type parameter must be
+unless a bound decides it (docs/07.1-impl-parameters.md), but it doesn't
+need to be: it's the least set that makes the impl's
 bound `F: FnMut(I::Item) -> U with f` hold, which depends only on `F`
 (`traits::impl_args`). So the impl still means one thing for each type it's
 for, which is what coherence needs.

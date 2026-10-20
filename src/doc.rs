@@ -283,8 +283,22 @@ fn fits(width: usize, doc: &Doc, rest: &[(usize, Mode, &Doc)]) -> bool {
     }
 }
 
+/// `doc` as it prints flat, which can't break, if it can go on one line.
+pub fn flat(doc: &Doc) -> Option<Doc> {
+    Some(match doc {
+        Doc::Text(_) => doc.clone(),
+        Doc::Concat(docs) => concat(docs.iter().map(flat).collect::<Option<Vec<_>>>()?),
+        Doc::Nest(d) | Doc::Group { doc: d, .. } => flat(d)?,
+        Doc::Hug { normal, .. } => flat(normal)?,
+        Doc::IfBreak(_, d) => flat(d)?,
+        Doc::Line => text(" "),
+        Doc::SoftLine => Doc::nil(),
+        Doc::HardLine | Doc::BreakParent | Doc::Comment(_) => return None,
+    })
+}
+
 /// How wide `doc` is on one line, if it can go on one.
-fn flat_width(doc: &Doc) -> Option<usize> {
+pub fn flat_width(doc: &Doc) -> Option<usize> {
     let mut width = 0;
     let mut todo = vec![doc];
     while let Some(doc) = todo.pop() {

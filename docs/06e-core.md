@@ -451,11 +451,14 @@ copy of the trait.
 
 ## Two gaps that shaped the library
 
-- **`Map` has a parameter no field holds.** `Map<I, F, U>` is what `map`
-  gives: `F` of what `I` gives, which are `U`s. Its impl must say what `U`
+- **`Map` had a parameter no field holds.** `Map<I, F, U>` was what `map`
+  gave: `F` of what `I` gives, which are `U`s. Its impl had to say what `U`
   is from the type alone (docs/06-traits.md), since a parameter decided only
-  by an equality bound, `F: FnMut(I::Item) -> U`, is something resolution
-  can't look up yet. The extra parameter is the price.
+  by an equality bound, `F: FnMut(I::Item) -> U`, was something resolution
+  couldn't look up. `Filter<I, P, T>` had one too, for its impl to say the
+  values are `Discard`. Step 7.1 lets a bound decide a parameter, and an
+  impl have a `where` clause, so they're `Map<I, F>` and `Filter<I, P>` now
+  (docs/07.1-impl-parameters.md).
 - **There's no `filter`.** Its impl needs `P: FnMut(&T) -> bool`, a closure
   that takes a reference of any lifetime: a higher-ranked one. A closure's
   signature isn't higher-ranked unless its type is written out, even where

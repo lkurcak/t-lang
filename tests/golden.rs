@@ -73,6 +73,25 @@ fn golden() {
     }
 }
 
+/// Every program in `examples/` runs, and prints what its `// expect:`
+/// lines say.
+#[test]
+fn examples() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
+    let mut failures = Vec::new();
+    for entry in fs::read_dir(&dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_none_or(|ext| ext != "t") {
+            continue;
+        }
+        let files = expect::files_of(&path);
+        if let Err(failure) = expect::check_files(&files) {
+            failures.push(format!("{}: {failure}", name(&path)));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
 /// What monomorphisation makes of each program with a `.mono` file.
 #[test]
 fn mono() {
