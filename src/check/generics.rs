@@ -319,7 +319,7 @@ fn resolve_in(
         }
         TypeExprKind::Unit => Ok(Type::Unit),
         TypeExprKind::Never => Ok(Type::Never),
-        // Where it can be, its symbol is known by where it is.
+        // Where it can be, its symbol is known by its node.
         TypeExprKind::Impl(_) => match names("impl", t) {
             Some(TypeName::Opaque(symbol, lifetimes, params)) => Ok(Type::Opaque(
                 symbol,

@@ -20,10 +20,11 @@ pub struct Info {
     /// variants. In no particular order.
     pub notes: Vec<Note>,
     /// The type arguments of each use of a generic function, struct or enum,
-    /// by the span of its name. In a generic function these can mention its
-    /// own type parameters.
+    /// by its node (see `ast::NodeId`): the expression that names a
+    /// function, or the name of a method or of a struct or enum. In a
+    /// generic function these can mention its own type parameters.
     pub instances: HashMap<NodeId, Instance>,
-    /// The symbol of every function, struct and enum, by the span of its
+    /// The symbol of every function, struct and enum, by the node of its
     /// name where it's declared and where it's used: a name for it that's
     /// unique in the program, unlike the one it's written with (see
     /// `check/scope.rs` and `check/names.rs`).
@@ -31,30 +32,30 @@ pub struct Info {
     /// Where each struct and enum is declared, by symbol: the span of its
     /// name.
     pub types: HashMap<String, Span>,
-    /// The references the checker made into others, by the span of the
-    /// expression: `r` used as a `&T` when it's a `&Box<T>`, a `&&T` or a
+    /// The references the checker made into others, by the expression:
+    /// `r` used as a `&T` when it's a `&Box<T>`, a `&&T` or a
     /// `&mut T`, with how many more `*`s it takes to get to the `T`, and
     /// whether the result is `&mut`. `lift` writes them out: `&**r`.
     pub coercions: HashMap<NodeId, (usize, bool)>,
     /// Every trait and impl, for monomorphisation to find impls by.
     pub traits: crate::traits::Traits,
-    /// The method each method call and path names, by the span of its
+    /// The method each method call and path names, by the node of its
     /// name, for `lift` to write out as a plain call.
     pub methods: HashMap<NodeId, Resolved>,
-    /// The trait of each projection written, by its span: `Iter` for a
+    /// The trait of each projection written, by its node: `Iter` for a
     /// `T::Item` where `T: Iter`, for monomorphisation to work it out by.
     pub projections: HashMap<NodeId, String>,
     /// How each closure that captures captures each variable it does, by
-    /// the span of its body, for `lift` to write into it.
+    /// the closure, for `lift` to write into it.
     pub captures: HashMap<NodeId, Vec<(String, crate::ast::Capture)>>,
     /// How each call of what isn't a function type gets at what it calls,
-    /// by the span of the call, for `lift` to write out: `f(1)` for a
+    /// by the call, for `lift` to write out: `f(1)` for a
     /// closure `f` that's `FnMut` is `(&mut f)(1)`. Through how many `*`s,
     /// and by which `Fn` trait.
     pub calls: HashMap<NodeId, (usize, crate::traits::FnKind)>,
-    /// The symbol of each opaque type, `impl Tr` in a return type, by
-    /// where it's written, for monomorphisation to replace it with what it
-    /// stands for.
+    /// The symbol of each opaque type, `impl Tr` in a return type, by the
+    /// node it's written as, for monomorphisation to replace it with what
+    /// it stands for.
     pub opaques: HashMap<NodeId, String>,
     /// The symbols of the core library's functions, structs and enums,
     /// which monomorphisation keeps only if the program uses them.
@@ -324,8 +325,9 @@ impl Checker {
     }
 
     /// Like `note`, for a use of something with type arguments `args`, if
-    /// it's generic, which monomorphisation will need, by the span of the
-    /// whole use: `id::<int>` rather than just `id`. Uses of things that
+    /// it's generic, which monomorphisation will need, by the node of the
+    /// use, with the span of the whole of it: `id::<int>` rather than just
+    /// `id`. Uses of things that
     /// aren't generic need nothing. The type arguments were `inferred`
     /// unless they were written out.
     pub(super) fn note_use(

@@ -154,6 +154,109 @@ fn printing_round_trips() {
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
 
+/// Every node of a program has an id of its own (`ast::NodeId`), by which
+/// the checker files what it learns about it, so two nodes with the same id
+/// must be one node, copied: of the same kind, at the same place. So must
+/// every id be one the program's counter has handed out. Checked once the
+/// checker has rewritten the program (paths resolved, `for` loops and
+/// ranges written out), in programs that check and programs that don't.
+#[test]
+fn node_ids_are_unique() {
+    let mut failures = Vec::new();
+    let mut nodes = 0;
+    for path in programs() {
+        let files = expect::files_of(&path);
+        let read = |p: &Path| match files.iter().find(|(f, _)| f == p) {
+            Some((_, src)) => Ok(src.clone()),
+            None => t_lang::no_files(p),
+        };
+        let (_, prog) = t_lang::load::load(&path, &files[0].1, &read);
+        let Ok(mut prog) = prog else {
+            continue;
+        };
+        let _ = t_lang::check::check(&mut prog, &mut Vec::new());
+        match node_ids(&format!("{prog:?}"), prog.next_id) {
+            Ok(n) => nodes += n,
+            Err(why) => failures.push(format!("{}: {why}", name(&path))),
+        }
+    }
+    assert!(nodes > 100_000, "only {nodes} nodes");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Reads the nodes off `debug`, a program's derived `Debug`, which shows
+/// every field (as `fmt::shape` reads spans off it): each `id: NodeId(n)`,
+/// with the struct it's in and that struct's span, if it has one before
+/// its id. How many there are, or two different ones with one id.
+fn node_ids(debug: &str, next_id: u32) -> Result<usize, String> {
+    use std::collections::HashMap;
+    const SPAN: &str = "span: Span { start: ";
+    const ID: &str = "id: NodeId(";
+    let number = |s: &str| -> (u32, usize) {
+        let end = s.find(|c: char| !c.is_ascii_digit()).unwrap();
+        (s[..end].parse().unwrap(), end)
+    };
+    // A struct, by name, with its span.
+    type Node<'a> = (&'a str, Option<(u32, u32)>);
+    // The structs the scan is in, innermost last.
+    let mut stack: Vec<Node> = Vec::new();
+    let mut seen: HashMap<u32, Node> = HashMap::new();
+    let mut count = 0;
+    let mut i = 0;
+    while i < debug.len() {
+        let rest = &debug[i..];
+        if rest.starts_with('"') {
+            // A name or a doc comment's text, which may hold anything.
+            let mut chars = rest.char_indices().skip(1);
+            while let Some((k, c)) = chars.next() {
+                match c {
+                    '\\' => {
+                        chars.next();
+                    }
+                    '"' => {
+                        i += k;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        } else if let Some(span) = rest.strip_prefix(SPAN) {
+            let (start, n) = number(span);
+            let (end, m) = number(&span[n + ", end: ".len()..]);
+            stack.last_mut().expect("in a struct").1 = Some((start, end));
+            // Past the span's `}`.
+            i += SPAN.len() + n + ", end: ".len() + m + " ".len();
+        } else if let Some(id) = rest.strip_prefix(ID) {
+            let (id, n) = number(id);
+            let node = *stack.last().expect("in a struct");
+            if id >= next_id {
+                return Err(format!(
+                    "`{}` has id {id}, but only {next_id} were made",
+                    node.0
+                ));
+            }
+            if let Some(&other) = seen.get(&id)
+                && other != node
+            {
+                return Err(format!("{node:?} and {other:?} have the same id, {id}"));
+            }
+            seen.insert(id, node);
+            count += 1;
+            i += ID.len() + n;
+        } else if rest.starts_with('{') {
+            let before = debug[..i].trim_end();
+            let start = before
+                .rfind(|c: char| !c.is_alphanumeric() && c != '_')
+                .map_or(0, |k| k + 1);
+            stack.push((&before[start..], None));
+        } else if rest.starts_with('}') {
+            stack.pop();
+        }
+        i += rest.chars().next().map_or(1, char::len_utf8);
+    }
+    Ok(count)
+}
+
 /// Renaming anything declared in a program to a name nothing else has is
 /// accepted, and leaves a program that does the same. So every name for
 /// it is found, and nothing else is touched.

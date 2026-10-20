@@ -104,10 +104,10 @@ pub(crate) struct Import {
 #[derive(Debug, Default)]
 pub(crate) struct Modules {
     pub(crate) mods: Vec<Module>,
-    /// What each path with a `::` refers to, by its span: one to a type
-    /// where a type is written (`a::Point`, by the span of the type), in a
-    /// struct literal or pattern (by the span of its name), and one to a
-    /// function where one is used (by the span of the expression).
+    /// What each path with a `::` refers to, by its node: one to a type
+    /// where a type is written (`a::Point`, by the type), in a struct
+    /// literal or pattern (by its name), and one to a function where one is
+    /// used (by the expression).
     pub(crate) paths: HashMap<NodeId, Item>,
     pub(crate) imports: Vec<Import>,
     /// The symbol of each trait, by its index in `Program::traits`.
@@ -345,8 +345,10 @@ pub(crate) fn resolve(prog: &mut Program) -> Result<Modules, Error> {
         interface: None,
         next_id: prog.next_id,
     };
-    w.program(prog)?;
+    let rewritten = w.program(prog);
+    // What's rewritten stays rewritten, ids and all, even past an error.
     prog.next_id = w.next_id;
+    rewritten?;
     for (t, symbol) in prog.traits.iter_mut().zip(symbols) {
         t.name.name = symbol;
     }
@@ -1231,9 +1233,9 @@ impl Rewrite<'_> {
     /// up, by the rules for any variable. Nothing about a `for` needs a rule
     /// of its own.
     ///
-    /// What the checker learns is about the AST's nodes, and some of it is
-    /// by their spans, so each node made here gets a span of its own: one
-    /// in the `for` or `in`, which nothing else has. The variable's is the
+    /// Each node made here gets an id of its own, which is what the checker
+    /// files what it learns about it by. Its span is only where messages
+    /// and editors point: one in the `for` or `in`. The variable's is the
     /// iterator's, where an error about it should be.
     fn for_loop(&mut self, f: ForLoop, span: Span) -> ExprKind {
         let k = f.label.as_ref().map_or(span.start, |l| l.head.end);

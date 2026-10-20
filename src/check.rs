@@ -313,13 +313,13 @@ pub(crate) struct Checker {
     /// Every struct and enum, top-level and local, in the order of
     /// `Program::all_types`.
     types: Vec<TypeDef>,
-    /// What each name in a type refers to, by its span (see `names.rs`).
+    /// What each name in a type refers to, by its node (see `names.rs`).
     type_names: HashMap<NodeId, Scoped>,
     /// The symbol of every function, by `FnId`.
     fn_symbols: Vec<String>,
     /// Every function, top-level and nested, by `FnId`.
     fns: Vec<FnDef>,
-    /// Each nested function's id, by where its name is declared.
+    /// Each nested function's id, by the node of its name.
     nested_ids: HashMap<NodeId, FnId>,
     /// The functions in scope, as a stack: those of each block around what's
     /// being checked that declares any. With those of its module and the
@@ -369,7 +369,7 @@ pub(crate) struct Checker {
     traits: Traits,
     /// Where each impl of the program is in `traits.impls`.
     impl_ids: Vec<usize>,
-    /// Each method's id, by where its name is declared.
+    /// Each method's id, by the node of its name.
     method_ids: HashMap<NodeId, FnId>,
     /// Whether each function, by `FnId`, takes `self`: a method that does.
     receivers: Vec<bool>,
@@ -418,7 +418,7 @@ pub(crate) struct Checker {
     /// The types a `!` was wanted as while they were still unknown. Those
     /// that nothing else decides by the end of the function are `!`.
     diverging: Vec<Type>,
-    /// The trait of each projection written, by its span, as it's worked
+    /// The trait of each projection written, by its node, as it's worked
     /// out while resolving types (see `Info::projections`).
     proj_traits: std::cell::RefCell<HashMap<NodeId, String>>,
     /// Where the borrow checker moved, as it checks each body, which only
@@ -433,8 +433,8 @@ pub(crate) struct Checker {
     /// Projections on types not known yet, each waiting for its type to
     /// be, with what it must turn out to be (see `settle`).
     goals: Vec<Goal>,
-    /// The symbol of each opaque type, `impl Tr` in a return type, by
-    /// where it's written.
+    /// The symbol of each opaque type, `impl Tr` in a return type, by the
+    /// node it's written as.
     opaque_at: HashMap<NodeId, String>,
     /// The function whose signature is being worked out, by symbol and
     /// name: what owns the opaque types in it.
