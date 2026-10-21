@@ -993,6 +993,10 @@ impl Rewrite<'_> {
 
     fn ty(&mut self, t: &mut TypeExpr) -> Result<(), Error> {
         match &mut t.kind {
+            TypeExprKind::Refined(_, base, pred) => {
+                self.ty(base)?;
+                self.expr(pred)?;
+            }
             TypeExprKind::Named(name, args) => {
                 for a in args.iter_mut() {
                     self.ty(a)?;

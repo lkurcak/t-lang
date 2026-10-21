@@ -27,7 +27,7 @@ fn deferred_loop() -> int with panic {
 
 // A `break` in a `while`'s condition leaves the loop around the `while`:
 // the condition isn't part of the `while`'s body.
-fn break_in_condition() -> int {
+fn break_in_condition() -> int with panic {
     let mut n = 0;
     loop {
         while if n > 4 { break; } else { true } {

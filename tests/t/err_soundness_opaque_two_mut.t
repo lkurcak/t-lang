@@ -1,7 +1,7 @@
 // Each closure holds a `&mut n`, for as long as it's around.
-fn bump(r: &mut int) -> impl FnMut() + Discard { move || *r += 1 }
+fn bump(r: &mut int) -> impl FnMut() with panic + Discard { move || *r += 1 }
 
-fn main() {
+fn main() with panic {
     let mut n = 0;
     let mut a = bump(&mut n);
     let mut b = bump(&mut n);

@@ -15,7 +15,7 @@ fn sum(l: &List) -> int with panic {
     }
 }
 
-fn len(l: &List) -> int {
+fn len(l: &List) -> int with panic {
     let mut n = 0;
     let mut at = l;
     let mut more = true;
@@ -32,7 +32,7 @@ fn len(l: &List) -> int {
 }
 
 // Adds one to every element, in place.
-fn bump(l: &mut List) {
+fn bump(l: &mut List) with panic {
     match l {
         List::Nil => {}
         List::Cons(x, rest) => {

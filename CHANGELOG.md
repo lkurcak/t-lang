@@ -1,5 +1,43 @@
 # Changelog
 
+## Unreleased
+
+Step 8: refinement types. See
+[docs/08-refinement-types.md](docs/08-refinement-types.md).
+
+### Added
+
+- Refinement types, `{ d: int | d > 0 }`: an `int` or `bool` with a
+  predicate in linear integer arithmetic, as the whole type of a
+  parameter, a result or a `let`. Arguments, results, refined `let`s and
+  assignments to them are checked against them, from what's known along
+  each path: refined parameters and results, conditions, `match`
+  patterns, `let`s and assignments.
+- An operator the checker proves can't overflow or divide by zero has no
+  `panic`: `1 + 2`, `x / 2`, `x + 1` for `x < 100`.
+- A `let mut` with a refinement keeps it, at every assignment: that's how
+  a loop says its invariant.
+- The interpreter checks every refinement at run time, and that no
+  operator the checker proved panics.
+- tree-sitter, `t fmt` and the LSP (hover, rename, go to definition)
+  know refinements.
+
+### Changed
+
+- **Breaking:** `checked_add`, `checked_sub` and `checked_div` are written
+  in T, proved total, rather than intrinsics; the checker trusts `swap`,
+  `panic` and `checked_mul`. `Range::next` uses `+`.
+- Step 7's special cases, `-5` and `/` by a non-zero literal being total,
+  are now what the checker proves, along with much more: a function or
+  `main` that said `with panic` only for such arithmetic gets an
+  `unused_effects` warning.
+
+### Fixed
+
+- **Breaking:** `+=` and the other compound assignments can overflow, so
+  they may panic, as their operators do. Step 7 missed them, and a
+  function without `with panic` could overflow there.
+
 ## 0.15.1 (2026-10-21)
 
 No change to the language or the tools: the type checker's two largest

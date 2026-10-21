@@ -185,6 +185,9 @@ pub fn run(prog: &Program, out: &mut Vec<String>) -> Result<Value, Error> {
         temps: Vec::new(),
         depth: 0,
         frames: Vec::new(),
+        proved: &prog.proved,
+        refined: HashMap::new(),
+        params_refined: Vec::new(),
         out,
     };
     let result = interp.call(Value::Fn("main".to_string()), Vec::new(), Span::new(0, 0))?;
@@ -355,7 +358,112 @@ struct Interp<'p, 'o> {
     /// The functions being run, outermost first, by name: whose effects
     /// each panic and allocation must be among (see `effect`).
     frames: Vec<String>,
+    /// The operators the checker proved can't panic, by node.
+    proved: &'p HashSet<NodeId>,
+    /// The refinement of each refined variable, by its slot and the
+    /// slot's generation: what each assignment to it must keep.
+    refined: HashMap<(usize, u64), Refined>,
+    /// The refinements of the parameters of the function about to be
+    /// entered, by name, for `enter` to keep in `refined`.
+    params_refined: Vec<(String, Refined)>,
     out: &'o mut Vec<String>,
+}
+
+/// A refinement to check at run time (see `check/refine.rs`): its binder,
+/// predicate, and the values of the other names in it, which can't change.
+#[derive(Clone)]
+struct Refined {
+    binder: String,
+    pred: Expr,
+    env: Vec<(String, Value)>,
+}
+
+/// What a predicate evaluates to: integers are the mathematical ones.
+enum PredValue {
+    Int(i128),
+    Bool(bool),
+}
+
+impl Refined {
+    /// Stops the program, as the checker is wrong, unless it holds of `v`,
+    /// which is `what`.
+    fn check(&self, v: &Value, what: &str) {
+        if let PredValue::Bool(false) = self.eval(&self.pred, v) {
+            unsound(&format!(
+                "{what} is `{v}`, which doesn't have its refinement `{}`",
+                crate::pretty::expr_text(&self.pred)
+            ));
+        }
+    }
+
+    fn eval(&self, e: &Expr, v: &Value) -> PredValue {
+        let int = |p: PredValue| match p {
+            PredValue::Int(n) => n,
+            PredValue::Bool(_) => unsound("a refinement's `bool` used as an `int`"),
+        };
+        let boolean = |p: PredValue| match p {
+            PredValue::Bool(b) => b,
+            PredValue::Int(_) => unsound("a refinement's `int` used as a `bool`"),
+        };
+        let value = |v: &Value| match v {
+            Value::Int(n) => PredValue::Int(*n as i128),
+            Value::Bool(b) => PredValue::Bool(*b),
+            other => unsound(&format!("a refinement of `{other}`")),
+        };
+        match &e.kind {
+            ExprKind::Int(n) => PredValue::Int(*n as i128),
+            ExprKind::Bool(b) => PredValue::Bool(*b),
+            ExprKind::Var(name, _) if *name == self.binder => value(v),
+            ExprKind::Var(name, _) => match self.env.iter().find(|(n, _)| n == name) {
+                Some((_, v)) => value(v),
+                None => unsound(&format!("a refinement naming `{name}`, which isn't there")),
+            },
+            ExprKind::Unary(UnOp::Neg, x) => PredValue::Int(-int(self.eval(x, v))),
+            ExprKind::Unary(UnOp::Not, x) => PredValue::Bool(!boolean(self.eval(x, v))),
+            ExprKind::Binary(op, l, r) => {
+                let (a, b) = (self.eval(l, v), self.eval(r, v));
+                match (op, a, b) {
+                    (BinOp::And, a, b) => PredValue::Bool(boolean(a) && boolean(b)),
+                    (BinOp::Or, a, b) => PredValue::Bool(boolean(a) || boolean(b)),
+                    (BinOp::Eq, PredValue::Bool(a), PredValue::Bool(b)) => PredValue::Bool(a == b),
+                    (BinOp::Ne, PredValue::Bool(a), PredValue::Bool(b)) => PredValue::Bool(a != b),
+                    (op, a, b) => {
+                        let (a, b) = (int(a), int(b));
+                        let arith = |n: Option<i128>| match n {
+                            Some(n) => PredValue::Int(n),
+                            None => unsound("a refinement's arithmetic out of range"),
+                        };
+                        match op {
+                            BinOp::Add => arith(a.checked_add(b)),
+                            BinOp::Sub => arith(a.checked_sub(b)),
+                            BinOp::Mul => arith(a.checked_mul(b)),
+                            BinOp::Eq => PredValue::Bool(a == b),
+                            BinOp::Ne => PredValue::Bool(a != b),
+                            BinOp::Lt => PredValue::Bool(a < b),
+                            BinOp::Le => PredValue::Bool(a <= b),
+                            BinOp::Gt => PredValue::Bool(a > b),
+                            BinOp::Ge => PredValue::Bool(a >= b),
+                            _ => unsound(&format!("`{op}` in a refinement")),
+                        }
+                    }
+                }
+            }
+            _ => unsound("a refinement outside the logic"),
+        }
+    }
+}
+
+/// The names in predicate `e` other than `binder`.
+fn pred_names<'e>(e: &'e Expr, binder: &str, out: &mut Vec<&'e str>) {
+    if let ExprKind::Var(name, _) = &e.kind
+        && name != binder
+        && !out.contains(&name.as_str())
+    {
+        out.push(name);
+    }
+    for c in e.children() {
+        pred_names(c, binder, out);
+    }
 }
 
 impl Interp<'_, '_> {
@@ -595,11 +703,40 @@ impl Interp<'_, '_> {
             }
             Value::Fn(name) => {
                 let decl = self.fns[name.as_str()];
+                // What a refinement names of the parameters: their values
+                // here, which can't change.
+                let env: Vec<(String, Value)> = decl
+                    .params
+                    .iter()
+                    .zip(&args)
+                    .filter(|(_, v)| matches!(v, Value::Int(_) | Value::Bool(_)))
+                    .map(|(p, v)| (p.name.name.clone(), v.clone()))
+                    .collect();
+                let refinement = |t: &TypeExpr| {
+                    t.refinement().map(|(v, pred)| Refined {
+                        binder: v.name.clone(),
+                        pred: pred.clone(),
+                        env: env.clone(),
+                    })
+                };
+                for (p, v) in decl.params.iter().zip(&args) {
+                    if let Some(r) = refinement(&p.ty) {
+                        r.check(
+                            v,
+                            &format!("argument `{}` of `{}`", p.name.name, decl.name.name),
+                        );
+                        self.params_refined.push((p.name.name.clone(), r));
+                    }
+                }
+                let ret = refinement(&decl.ret);
                 // A call gets a fresh environment: just the parameters.
                 let params = decl.params.iter().map(|p| p.name.name.clone());
                 self.frames.push(name);
                 let result = self.enter(Vec::new(), params.zip(args).collect(), &decl.body, span);
                 self.frames.pop();
+                if let (Ok(v), Some(r)) = (&result, ret) {
+                    r.check(v, &format!("the result of `{}`", decl.name.name));
+                }
                 result
             }
             // A closure called by value is the call's to use up, and what's
@@ -633,10 +770,7 @@ impl Interp<'_, '_> {
             let [a, b] = <[Value; 2]>::try_from(args).unwrap_or_else(|_| unsound("checked arity"));
             let (a, b) = (int(a), int(b));
             let result = match op {
-                "add" => a.checked_add(b),
-                "sub" => a.checked_sub(b),
                 "mul" => a.checked_mul(b),
-                "div" => a.checked_div(b),
                 _ => unsound(&format!("unknown intrinsic `{name}`")),
             };
             // The copy of `Option<int>` the intrinsic returns.
@@ -719,6 +853,10 @@ impl Interp<'_, '_> {
             )
             .collect();
         let saved = std::mem::replace(&mut self.locals, locals);
+        for (name, r) in std::mem::take(&mut self.params_refined) {
+            let p = self.local(&name).expect("a parameter");
+            self.refined.insert((p.slot, p.generation), r);
+        }
         let saved_temps = std::mem::take(&mut self.temps);
         self.depth += 1;
         let result = self.statement(|i| i.eval(body));
@@ -847,7 +985,10 @@ impl Interp<'_, '_> {
                 match op {
                     UnOp::Neg => match int(v).checked_neg() {
                         Some(n) => Value::Int(n),
-                        None => return Err(self.panics(e.span, "integer overflow").into()),
+                        None => {
+                            self.not_proved(e.id);
+                            return Err(self.panics(e.span, "integer overflow").into());
+                        }
                     },
                     _ => Value::Bool(!bool(v)),
                 }
@@ -872,7 +1013,7 @@ impl Interp<'_, '_> {
             ExprKind::Binary(op, l, r) => {
                 let l = self.eval(l)?;
                 let r = self.eval(r)?;
-                self.arith(*op, int(l), int(r), e.span)?
+                self.arith(*op, int(l), int(r), e)?
             }
 
             // A function value owns nothing, so there's nothing to drop if
@@ -931,10 +1072,15 @@ impl Interp<'_, '_> {
                 let v = match op {
                     Some(op) => {
                         let old = int(self.memory.get(&p).clone());
-                        self.arith(*op, old, int(v), e.span)?
+                        self.arith(*op, old, int(v), e)?
                     }
                     None => v,
                 };
+                if p.path.is_empty()
+                    && let Some(r) = self.refined.get(&(p.slot, p.generation))
+                {
+                    r.check(&v, "a refined variable assigned");
+                }
                 let old = std::mem::replace(self.memory.get_mut(&p), v);
                 self.drop(old);
                 Value::Unit
@@ -994,9 +1140,15 @@ impl Interp<'_, '_> {
             match stmt {
                 Stmt::Let {
                     pat,
+                    ty,
                     init: Some(init),
                     ..
-                } => self.let_stmt(pat, init)?,
+                } => {
+                    self.let_stmt(pat, init)?;
+                    if let Some((v, pred)) = ty.as_ref().and_then(|t| t.refinement()) {
+                        self.refine_let(pat, v, pred);
+                    }
+                }
                 // No value yet: as if it had been moved out of.
                 Stmt::Let {
                     pat, init: None, ..
@@ -1023,6 +1175,37 @@ impl Interp<'_, '_> {
             Some(tail) => self.statement(|i| i.eval(tail)),
             None => Ok(Value::Unit),
         }
+    }
+
+    /// Checks that the variable `pat` has just been given has refinement
+    /// `{ v: .. | pred }`, and keeps it for what's assigned to it.
+    fn refine_let(&mut self, pat: &Pattern, v: &Ident, pred: &Expr) {
+        let pat = match &pat.kind {
+            PatternKind::Move(p) => p,
+            _ => pat,
+        };
+        let PatternKind::Bind(name, _) = &pat.kind else {
+            unsound("a refined `let` of a pattern");
+        };
+        let mut names = Vec::new();
+        pred_names(pred, &v.name, &mut names);
+        let env = names
+            .into_iter()
+            .map(|n| {
+                let p = self
+                    .local(n)
+                    .unwrap_or_else(|| unsound(&format!("`{n}` isn't there")));
+                (n.to_string(), self.memory.get(&p).clone())
+            })
+            .collect();
+        let r = Refined {
+            binder: v.name.clone(),
+            pred: pred.clone(),
+            env,
+        };
+        let p = self.local(name).expect("just bound");
+        r.check(self.memory.get(&p), &format!("`{name}`"));
+        self.refined.insert((p.slot, p.generation), r);
     }
 
     /// `let pat = init;`. If `init` is `&e` of a value that isn't a place,
@@ -1275,13 +1458,24 @@ impl Interp<'_, '_> {
         Ok(bool(self.call(Value::Fn(f), args, span)?))
     }
 
-    fn arith(&mut self, op: BinOp, l: i64, r: i64, span: Span) -> Result<Value, Error> {
+    /// Stops the program, as the checker is wrong, if it proved the
+    /// operator at `id` can't panic: it's about to.
+    fn not_proved(&self, id: NodeId) {
+        if self.proved.contains(&id) {
+            unsound("an operator the checker proved can't panic is panicking");
+        }
+    }
+
+    /// `l op r`, for the operator `e`.
+    fn arith(&mut self, op: BinOp, l: i64, r: i64, e: &Expr) -> Result<Value, Error> {
+        let span = e.span;
         let n = match op {
             BinOp::Lt => return Ok(Value::Bool(l < r)),
             BinOp::Le => return Ok(Value::Bool(l <= r)),
             BinOp::Gt => return Ok(Value::Bool(l > r)),
             BinOp::Ge => return Ok(Value::Bool(l >= r)),
             BinOp::Div | BinOp::Rem if r == 0 => {
+                self.not_proved(e.id);
                 return Err(self.panics(span, "division by zero"));
             }
             BinOp::Add => l.checked_add(r),
@@ -1293,7 +1487,10 @@ impl Interp<'_, '_> {
         };
         match n {
             Some(n) => Ok(Value::Int(n)),
-            None => Err(self.panics(span, "integer overflow")),
+            None => {
+                self.not_proved(e.id);
+                Err(self.panics(span, "integer overflow"))
+            }
         }
     }
 }

@@ -1,8 +1,7 @@
 // The core library: what every program can use. It's written in T, checked
 // like any other code, and needs no allocation and no I/O. What the checker
-// takes on trust is its intrinsics: `mem::swap`, `panic::panic`, and the
-// arithmetic `num::checked_add`, `checked_sub`, `checked_mul` and
-// `checked_div`.
+// takes on trust is its intrinsics: `mem::swap`, `panic::panic` and
+// `num::checked_mul`.
 //
 // The items `prelude` brings in are in scope in every module, unless a
 // module declares or imports something by the same name.

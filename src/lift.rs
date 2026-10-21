@@ -100,6 +100,7 @@ pub fn lift(prog: &Program, info: &Info) -> Program {
         fns,
         stray_docs: prog.stray_docs.clone(),
         next_id: cx.next_id.get(),
+        proved: info.proved.clone(),
     }
 }
 
@@ -240,6 +241,9 @@ impl<'p> Cx<'p> {
             }
             TypeExprKind::Proj(inner, tr, name) => {
                 TypeExprKind::Proj(Box::new(self.ty(inner)), tr.clone(), name.clone())
+            }
+            TypeExprKind::Refined(v, base, pred) => {
+                TypeExprKind::Refined(v.clone(), Box::new(self.ty(base)), pred.clone())
             }
             TypeExprKind::Impl(bounds) => {
                 let mut bounds = bounds.clone();

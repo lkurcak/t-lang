@@ -35,6 +35,9 @@ pub(super) struct Site {
     pub span: Span,
     pub what: String,
     pub effects: Type,
+    /// The operator it is, if it's one: proving it can't panic takes it
+    /// out (see `refine`).
+    pub node: Option<NodeId>,
 }
 
 /// `sub ⊆ sup`, of two effect sets, which must hold once the function's
@@ -45,6 +48,8 @@ pub(super) struct Within {
     pub sup: Type,
     pub span: Span,
     pub why: Why,
+    /// The operator it's for, if it's a site of one in a closure.
+    pub node: Option<NodeId>,
 }
 
 #[derive(Debug, Clone)]
@@ -71,6 +76,18 @@ impl Checker {
             span,
             what: what.into(),
             effects,
+            node: None,
+        });
+    }
+
+    /// Records that operator `e`, described as `what`, may panic, unless
+    /// it's proved not to (see `refine`).
+    pub(super) fn operator(&mut self, e: &Expr, what: impl Into<String>) {
+        self.effect_sites.push(Site {
+            span: e.span,
+            what: what.into(),
+            effects: Type::effects([Type::Panic]),
+            node: Some(e.id),
         });
     }
 
@@ -81,6 +98,7 @@ impl Checker {
             sup,
             span,
             why,
+            node: None,
         });
     }
 
@@ -120,6 +138,7 @@ impl Checker {
         for s in sites {
             let why = Why::Closure(s.what);
             self.within(s.effects, effects.clone(), s.span, why);
+            self.withins.last_mut().expect("pushed").node = s.node;
         }
     }
 

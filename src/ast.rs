@@ -30,6 +30,10 @@ pub struct Program {
     pub stray_docs: Vec<DocComment>,
     /// The id the next node made gets (see `NodeId`).
     pub next_id: u32,
+    /// The operators the checker proved can't panic, by node (see
+    /// `check/refine.rs`): empty until it has, and kept by `lift` and
+    /// `mono` for the interpreter, which checks it.
+    pub proved: std::collections::HashSet<NodeId>,
 }
 
 impl Program {
@@ -900,6 +904,29 @@ pub enum TypeExprKind {
     /// type the function picks, of which callers only know that it
     /// implements these traits (see docs/06c.1-opaque-types.md).
     Impl(Vec<BoundItem>),
+    /// `{ v: int | v > 0 }`: a *refinement type*, the values of the base
+    /// type `.1` that make the predicate `.2` true of `.0`, the name it
+    /// gives the value (see docs/08-refinement-types.md). Only as the whole
+    /// type of a parameter, a result or a `let`.
+    Refined(Ident, Box<TypeExpr>, Box<Expr>),
+}
+
+impl TypeExpr {
+    /// What it refines, if it's a refinement type, or else itself.
+    pub fn unrefined(&self) -> &TypeExpr {
+        match &self.kind {
+            TypeExprKind::Refined(_, base, _) => base,
+            _ => self,
+        }
+    }
+
+    /// Its binder and predicate, if it's a refinement type.
+    pub fn refinement(&self) -> Option<(&Ident, &Expr)> {
+        match &self.kind {
+            TypeExprKind::Refined(v, _, p) => Some((v, p)),
+            _ => None,
+        }
+    }
 }
 
 /// As written: `Option<int>`, `fn(int) -> bool`, `()`.
@@ -935,6 +962,14 @@ impl fmt::Display for TypeExpr {
             TypeExprKind::Impl(bounds) => {
                 let bounds: Vec<String> = bounds.iter().map(BoundItem::to_string).collect();
                 write!(f, "impl {}", bounds.join(" + "))
+            }
+            TypeExprKind::Refined(v, base, pred) => {
+                write!(
+                    f,
+                    "{{ {}: {base} | {} }}",
+                    v.name,
+                    crate::pretty::expr_text(pred)
+                )
             }
         }
     }
@@ -1147,8 +1182,15 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
             bound.extend(fns.map(|f| f.name.name.clone()));
             for stmt in stmts {
                 match stmt {
-                    Stmt::Let { pat, init, .. } => {
+                    Stmt::Let { pat, ty, init, .. } => {
                         init.iter().for_each(|e| go(e, bound));
+                        // What a refinement names is read when it's
+                        // checked, at run time by the interpreter.
+                        if let Some((v, pred)) = ty.as_ref().and_then(|t| t.refinement()) {
+                            bound.push(v.name.clone());
+                            go(pred, bound);
+                            bound.pop();
+                        }
                         pattern_binds(pat, bound);
                     }
                     Stmt::Expr(e) | Stmt::BlockLike(e) => go(e, bound),

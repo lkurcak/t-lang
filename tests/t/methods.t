@@ -11,7 +11,7 @@ impl Counter {
 
     fn get(&self) -> int { self.n }
 
-    fn add(&mut self, k: int) -> &mut Counter {
+    fn add(&mut self, k: int) -> &mut Counter with panic {
         self.n += k;
         self
     }

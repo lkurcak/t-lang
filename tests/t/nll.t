@@ -4,7 +4,7 @@
 #[derive(Discard)]
 struct Account { balance: int }
 
-fn deposit(a: &mut Account, n: int) { a.balance += n; }
+fn deposit(a: &mut Account, n: int) with panic { a.balance += n; }
 
 fn balance(a: &Account) -> int { a.balance }
 

@@ -39,7 +39,7 @@ fn first_square_above(n: int) -> int with panic {
 }
 
 // `continue` skips the rest of the body, `break` leaves the loop.
-fn sum_odd_below(n: int) -> int {
+fn sum_odd_below(n: int) -> int with panic {
     let mut sum = 0;
     let mut i = 0;
     while true {
@@ -52,7 +52,7 @@ fn sum_odd_below(n: int) -> int {
 }
 
 // A `break` leaves the innermost loop only.
-fn pairs(n: int) -> int {
+fn pairs(n: int) -> int with panic {
     let mut count = 0;
     let mut i = 0;
     while i < n {

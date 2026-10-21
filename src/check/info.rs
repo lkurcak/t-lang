@@ -15,6 +15,9 @@ use std::collections::{HashMap, HashSet};
 /// Everything the checker found out, as far as it got.
 #[derive(Debug, Clone, Default)]
 pub struct Info {
+    /// The operators proved not to panic, by node (see `check/refine.rs`),
+    /// which the interpreter checks.
+    pub proved: std::collections::HashSet<NodeId>,
     /// One per name in the program that means something: variables where
     /// they're bound and where they're used, functions, types, fields and
     /// variants. In no particular order.
@@ -632,6 +635,7 @@ impl Checker {
     /// are in scope.
     fn type_expr_notes(&mut self, t: &TypeExpr, params: &[Ident]) {
         match &t.kind {
+            TypeExprKind::Refined(_, base, _) => self.type_expr_notes(base, params),
             TypeExprKind::Proj(inner, tr, _) => {
                 self.type_expr_notes(inner, params);
                 if let Some(tr) = tr

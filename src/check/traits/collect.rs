@@ -750,7 +750,9 @@ fn mentions_self(t: &TypeExpr) -> Option<Span> {
             .find_map(mentions_self)
             .or_else(|| mentions_self(r))
             .or_else(|| e.iter().flat_map(EffectSet::types).find_map(mentions_self)),
-        TypeExprKind::Ref(_, _, inner) | TypeExprKind::Proj(inner, ..) => mentions_self(inner),
+        TypeExprKind::Ref(_, _, inner)
+        | TypeExprKind::Proj(inner, ..)
+        | TypeExprKind::Refined(_, inner, _) => mentions_self(inner),
         TypeExprKind::Impl(bounds) => bounds
             .iter()
             .flat_map(BoundItem::types)
@@ -816,7 +818,7 @@ fn proj_in(t: &TypeExpr) -> Option<Span> {
                     proj.map(|i| i.span)
                 })
         }
-        TypeExprKind::Ref(_, _, inner) => proj_in(inner),
+        TypeExprKind::Ref(_, _, inner) | TypeExprKind::Refined(_, inner, _) => proj_in(inner),
         TypeExprKind::Impl(bounds) => bounds.iter().flat_map(BoundItem::types).find_map(proj_in),
         TypeExprKind::Unit | TypeExprKind::Never | TypeExprKind::Lifetime(_) => None,
     }

@@ -1,7 +1,7 @@
 #[derive(Discard)]
 enum Option<T> { Some(T), None }
 
-fn main() {
+fn main() with panic {
     let mut o = Option::Some(1);
     match &mut o {
         Option::Some(n) => {

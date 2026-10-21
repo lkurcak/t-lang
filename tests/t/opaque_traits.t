@@ -22,7 +22,7 @@ fn shown() -> impl Show + Discard {
 trait Iter {
     type Item;
 
-    fn next(&mut self) -> Self::Item;
+    fn next(&mut self) -> Self::Item with panic;
 }
 
 #[derive(Discard)]
@@ -31,7 +31,7 @@ struct Up { n: int }
 impl Iter for Up {
     type Item = int;
 
-    fn next(&mut self) -> int {
+    fn next(&mut self) -> int with panic {
         self.n += 1;
         self.n
     }

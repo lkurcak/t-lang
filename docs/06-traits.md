@@ -226,13 +226,13 @@ struct Stack { top: int, size: int }
 impl Stack {
     fn len(&self) -> int { self.size }
 
-    fn push(&mut self, x: int) {
+    fn push(&mut self, x: int) with panic {
         self.top = x;
         self.size += 1;
     }
 }
 
-fn main() {
+fn main() with panic {
     let mut v = Stack { top: 0, size: 0 };
     v.push(v.len());
     print(v.size); // expect: 1

@@ -2,7 +2,7 @@
 
 fn b(x: bool) -> int { if x { 1 } else { 0 } }
 
-fn main() with panic {
+fn main() {
     print(b(1 < 2));                    // expect: 1
     print(b(2 <= 1));                   // expect: 0
     print(b(true && !false));           // expect: 1

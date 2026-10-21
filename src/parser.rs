@@ -137,6 +137,7 @@ pub fn parse(tokens: Vec<Token>) -> Result<Program, Error> {
         fns: Vec::new(),
         stray_docs: Vec::new(),
         next_id: 1,
+        proved: Default::default(),
     };
     parse_into(tokens, &mut prog, ROOT)?;
     Ok(prog)
@@ -1482,6 +1483,21 @@ impl Parser {
                 Ok(TypeExpr {
                     kind: TypeExprKind::Ref(None, false, Box::new(inner)),
                     span,
+                    id: self.id(),
+                })
+            }
+            // `{ v: int | v > 0 }`
+            Tok::LBrace => {
+                self.bump();
+                let binder = self.ident()?;
+                self.expect(Tok::Colon)?;
+                let base = self.ty()?;
+                self.expect(Tok::Pipe)?;
+                let pred = self.structs(true, Self::expr)?;
+                let end = self.expect(Tok::RBrace)?;
+                Ok(TypeExpr {
+                    kind: TypeExprKind::Refined(binder, Box::new(base), Box::new(pred)),
+                    span: start.to(end),
                     id: self.id(),
                 })
             }

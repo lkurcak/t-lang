@@ -15,7 +15,7 @@ fn peek(o: &Option<Box<int>>) -> int {
     }
 }
 
-fn bump(o: &mut Option<int>) {
+fn bump(o: &mut Option<int>) with panic {
     match o {
         Option::Some(n) => *n += 1, // `n` is a `&mut int`
         Option::None => {}

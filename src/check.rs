@@ -61,6 +61,7 @@ mod names;
 mod opaque;
 mod paths;
 mod patterns;
+mod refine;
 mod scope;
 mod traits;
 pub(crate) mod typed;
@@ -98,10 +99,7 @@ pub const BUILTINS: &[&str] = &["print", "print_bool"];
 pub const INTRINSICS: &[&str] = &[
     "core::mem::swap",
     "core::panic::panic",
-    "core::num::checked_add",
-    "core::num::checked_sub",
     "core::num::checked_mul",
-    "core::num::checked_div",
 ];
 
 pub(crate) use modules::FOR_ITERATOR;
@@ -382,6 +380,13 @@ pub(crate) struct Checker {
     effect_vars: HashSet<u32>,
     /// Is the function being checked a method of an impl of a trait?
     in_trait_impl: bool,
+    /// The refinements in each function's signature that has any, by
+    /// symbol (see `refine`).
+    refined: HashMap<String, refine::RefinedSig>,
+    /// The refinement of each refined `let`'s variable, by id.
+    refined_lets: HashMap<NodeId, refine::Refinement>,
+    /// What each name in a refinement's predicate is, by node.
+    pred_names: HashMap<NodeId, refine::PredName>,
 }
 
 /// A projection `proj`, `<T as Tr>::Item`, whose type `T` isn't known yet,
@@ -467,6 +472,9 @@ impl Checker {
             effect_owners: HashMap::new(),
             effect_vars: HashSet::new(),
             in_trait_impl: false,
+            refined: HashMap::new(),
+            refined_lets: HashMap::new(),
+            pred_names: HashMap::new(),
             modules,
             module: ROOT,
         }
@@ -664,7 +672,7 @@ impl Checker {
         let param_tys = f
             .params
             .iter()
-            .map(|p| self.resolve_with(&p.ty, params, &mut lts))
+            .map(|p| self.resolve_with(p.ty.unrefined(), params, &mut lts))
             .collect::<Result<Vec<_>, _>>()?;
         let Lifetimes::Params { elided, .. } = lts else {
             unreachable!()
@@ -697,7 +705,8 @@ impl Checker {
             self.opaque(t, &own, &lifetimes)?;
         }
         let mut lts = Lifetimes::Return { declared, input };
-        let ret = self.resolve_with(&f.ret, params, &mut lts)?;
+        let ret = self.resolve_with(f.ret.unrefined(), params, &mut lts)?;
+        self.refined_signature(f, &param_tys, &ret, opaques)?;
         let effects = match &f.effects {
             Some(e) => {
                 let mut lts = Lifetimes::Assoc {
@@ -789,7 +798,7 @@ impl Checker {
         self.diverges = None;
         self.check(&f.body, &ret)?;
         self.end_scope(scope);
-        self.solve_all(vars)?;
+        self.solve_all(vars, f)?;
         self.body_effects(f, &sig.effects)?;
         for (s, var) in &hidden {
             let t = self.solution(var);

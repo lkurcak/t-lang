@@ -15,7 +15,7 @@ fn sum(l: &List) -> int with panic {
     }
 }
 
-fn bump(l: &mut List) {
+fn bump(l: &mut List) with panic {
     match l {
         List::Nil => {},
         List::Cons(x, rest) => {

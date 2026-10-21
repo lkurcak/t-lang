@@ -24,6 +24,13 @@ impl fmt::Display for Program {
     }
 }
 
+/// `e` as source, on one line if it fits, for messages.
+pub fn expr_text(e: &Expr) -> String {
+    render(&Printer::default().expr(e, 0, Ctx::default()))
+        .trim_end()
+        .to_string()
+}
+
 /// Prints `program` with the comments and blank lines in `trivia`, and its
 /// items in the order they're written.
 pub fn format(program: &Program, trivia: Trivia) -> String {
@@ -1277,6 +1284,15 @@ impl Printer<'_> {
 
     fn ty(&mut self, t: &TypeExpr) -> Doc {
         match &t.kind {
+            TypeExprKind::Refined(v, base, pred) => group(
+                text("{ ")
+                    + &v.name
+                    + ": "
+                    + self.ty(base)
+                    + " | "
+                    + self.expr(pred, 0, Ctx::default())
+                    + " }",
+            ),
             TypeExprKind::Named(name, args) if args.is_empty() => text(name),
             TypeExprKind::Named(name, args) => {
                 let close = self.find(args.last().unwrap().span.end, &Tok::Gt);

@@ -209,6 +209,7 @@ impl<'p> Mono<'p> {
             fns: Vec::new(),
             stray_docs: Vec::new(),
             next_id: self.next_id,
+            proved: prog.proved.clone(),
         };
         for d in &prog.types {
             let name = &d.name().name;
@@ -521,6 +522,14 @@ struct Cx<'m, 'p, 's> {
 impl Cx<'_, '_, '_> {
     /// A type written in the original, as written in the copy.
     fn ty(&mut self, t: &TypeExpr) -> TypeExpr {
+        // A refinement is kept, for the interpreter to check.
+        if let TypeExprKind::Refined(v, base, pred) = &t.kind {
+            return TypeExpr {
+                kind: TypeExprKind::Refined(v.clone(), Box::new(self.ty(base)), pred.clone()),
+                span: t.span,
+                id: t.id,
+            };
+        }
         let resolved = self.resolved(t);
         TypeExpr {
             id: t.id,
@@ -1121,7 +1130,9 @@ mod used {
                     .for_each(|t| in_type(t, out));
             }
             TypeExprKind::Ref(_, _, inner) => in_type(inner, out),
-            TypeExprKind::Proj(inner, ..) => in_type(inner, out),
+            TypeExprKind::Proj(inner, ..) | TypeExprKind::Refined(_, inner, _) => {
+                in_type(inner, out)
+            }
             TypeExprKind::Impl(_)
             | TypeExprKind::Unit
             | TypeExprKind::Never

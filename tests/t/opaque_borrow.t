@@ -13,7 +13,7 @@ fn either<'b, 'a: 'b>(c: bool, x: &'a int, y: &'b int) -> impl Fn() -> int with 
     move || *r
 }
 
-fn bump(r: &mut int) -> impl FnMut() + Discard { move || *r += 1 }
+fn bump(r: &mut int) -> impl FnMut() with panic + Discard { move || *r += 1 }
 
 fn main() with panic {
     let n = 3;

@@ -389,6 +389,18 @@ module.exports = grammar({
       $.qualified_type,
       $.projection_type,
       $.impl_type,
+      $.refinement_type,
+    ),
+
+    // `{ v: int | v > 0 }`: the values of a type a predicate holds of.
+    refinement_type: $ => seq(
+      '{',
+      field('name', $.identifier),
+      ':',
+      field('type', $._type),
+      '|',
+      field('predicate', $._expression),
+      '}',
     ),
 
     // `impl Fn(int) -> int + Discard`, in a return type: an opaque type.

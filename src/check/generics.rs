@@ -225,6 +225,12 @@ fn resolve_in(
             let inner = go(inner, lifetimes, binder)?;
             proj(inner, tr.as_ref(), name, t)
         }
+        // The places a refinement can be take it off first (see
+        // `check/refine.rs`).
+        TypeExprKind::Refined(..) => Err(Error::ty(
+            t.span,
+            "a refinement can only be the whole type of a parameter, a result or a `let`",
+        )),
         TypeExprKind::Named(name, _) if name == "_" => Err(Error::ty(
             t.span,
             "`_` can only stand for a type in type arguments, like `id::<_>`",
@@ -443,7 +449,7 @@ pub(super) fn name_holes(t: &TypeExpr, holes: &mut Vec<(String, Span)>) -> TypeE
             TypeExprKind::Proj(Box::new(name_holes(inner, holes)), tr.clone(), name.clone())
         }
         // Rejected wherever there can be holes.
-        TypeExprKind::Impl(_) => t.kind.clone(),
+        TypeExprKind::Impl(_) | TypeExprKind::Refined(..) => t.kind.clone(),
     };
     TypeExpr {
         kind,

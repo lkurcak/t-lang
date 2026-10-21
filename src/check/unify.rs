@@ -378,7 +378,7 @@ impl Checker {
     /// and how to pass it, so like Rust, T asks for an annotation.
     ///
     /// A type a `!` was wanted as that nothing decided is `!` (see `fits`).
-    pub(super) fn solve_all(&mut self, vars: usize) -> Result<(), Error> {
+    pub(super) fn solve_all(&mut self, vars: usize, f: &crate::ast::FnDecl) -> Result<(), Error> {
         self.settle_goals()?;
         for t in std::mem::take(&mut self.diverging) {
             if let Type::Var(_) = self.shallow(&t) {
@@ -386,6 +386,8 @@ impl Checker {
                     .unwrap_or_else(|_| unreachable!("a variable fits anything"));
             }
         }
+        // Which operators can't panic, before effects are settled.
+        self.refine(f)?;
         // Before what's worked out of the closures, which needs their
         // types without variables, effects and all.
         self.settle_effects(vars)?;

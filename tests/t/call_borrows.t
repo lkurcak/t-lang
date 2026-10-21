@@ -7,7 +7,7 @@ struct Stack { top: int, size: int }
 impl Stack {
     fn len(&self) -> int { self.size }
 
-    fn push(&mut self, x: int) {
+    fn push(&mut self, x: int) with panic {
         self.top = x;
         self.size += 1;
     }
@@ -15,7 +15,7 @@ impl Stack {
     fn clear(&mut self) { self.size = 0 }
 }
 
-fn push(s: &mut Stack, x: int) { s.push(x) }
+fn push(s: &mut Stack, x: int) with panic { s.push(x) }
 
 #[derive(Discard)]
 struct Holder { b: Box<Stack> }

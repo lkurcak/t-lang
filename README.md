@@ -274,14 +274,17 @@ has to fit that:
   aborts, and a function's type says if it may: `fn mean(a: int, b: int) ->
   int with panic`. One that doesn't say so can't, nor can a `main` that
   doesn't, nor anything it calls; allocating is in types the same way,
-  `with alloc`. See [docs/07-effects.md](docs/07-effects.md).
+  `with alloc`. See [docs/07-effects.md](docs/07-effects.md). Arithmetic
+  the checker proves can't overflow, from refinement types like `{ d: int
+  | d > 0 }`, can't panic (see
+  [docs/08-refinement-types.md](docs/08-refinement-types.md)).
 - **Values must be used up.** One whose type isn't `#[derive(Discard)]`
   can't be dropped or overwritten: a resource like a file descriptor can't
   be forgotten. See [docs/06a.1-linear-types.md](docs/06a.1-linear-types.md).
 - **The core library is written in T.** `Option`, `Result`, `Iterator` and
   the rest are checked like any program; all the checker takes on trust is
-  its intrinsics: `swap`, `panic`, and `checked_add`, `checked_sub`,
-  `checked_mul` and `checked_div`. See [docs/06e-core.md](docs/06e-core.md).
+  its intrinsics, `swap`, `panic` and `checked_mul`, and the arithmetic
+  operators. See [docs/06e-core.md](docs/06e-core.md).
 
 Within that, the aim is to push the type system as far as it goes, and keep
 it sound: well-typed programs don't go wrong, including the ones that
@@ -308,7 +311,8 @@ combine features in ways nobody planned for.
 | 6e.1 ✅ | closures that take a reference of any lifetime; `Iterator::filter` | higher-ranked closure types: a closure's body checked for every lifetime, with placeholders; its result's lifetimes inferred from its body, then checked; signatures equal up to renaming | [docs/06e.1-higher-ranked-closures.md](docs/06e.1-higher-ranked-closures.md) |
 | 7 ✅ | `with panic`, `with alloc`: what a call may do, in its type; `panic()`, `unwrap`, `checked_add` | effect systems, effect polymorphism (effects as a kind, least solutions), associated effects; divergence left for a termination checker | [docs/07-effects.md](docs/07-effects.md) |
 | 7.1 ✅ | impl parameters a bound decides, `where` on impls; `Map<I, F>` and `Filter<I, P>` | functional dependencies (a parameter as a function of the type), termination of resolution with bounds on projections (strongly connected components of the trait graph) | [docs/07.1-impl-parameters.md](docs/07.1-impl-parameters.md) |
-| 8 | refinement types | proving indexes in bounds, so indexing can't panic | |
+| 8 ✅ | refinement types, `{ d: int \| d > 0 }`, on parameters, results and `let`s; arithmetic proved total | refinement types, verification conditions from facts along each path (static single assignment), linear integer arithmetic decided by Fourier–Motzkin with integer rounding: sound, incomplete | [docs/08-refinement-types.md](docs/08-refinement-types.md) |
+| 8.1 | refinements on struct fields, facts through field reads | a checked `Range`; refinements of places | |
 | — | `alloc` (a dense, resizable `List`) and `std` | | after effects, once raw memory has a design |
 | — | C backend | | when it's worth it |
 

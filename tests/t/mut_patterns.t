@@ -7,7 +7,7 @@ struct P { x: int, y: int }
 #[derive(Discard)]
 enum Option<T> { Some(T), None }
 
-fn main() {
+fn main() with panic {
     let P { x: mut a, y } = P { x: 1, y: 2 };
     a += y;
     print(a);                       // expect: 3

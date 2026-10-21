@@ -319,6 +319,7 @@ impl Walk<'_> {
 
     fn ty(&mut self, t: &TypeExpr) {
         match &t.kind {
+            TypeExprKind::Refined(_, base, _) => self.ty(base),
             TypeExprKind::Named(name, args) => {
                 self.name(name, t.id);
                 args.iter().for_each(|a| self.ty(a));

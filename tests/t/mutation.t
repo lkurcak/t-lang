@@ -4,7 +4,7 @@
 #[derive(Discard)]
 struct Counter { count: int, step: int }
 
-fn tick(c: &mut Counter) { c.count += c.step; }
+fn tick(c: &mut Counter) with panic { c.count += c.step; }
 
 fn exchange(a: &mut int, b: &mut int) {
     let t = *a;

@@ -277,16 +277,17 @@ impl Checker {
             //   Γ ⊢ -e : int            Γ ⊢ !e : bool
             //
             // `-x` panics at the least `int`, which has no positive
-            // counterpart. Not `-5`: a literal is at most the greatest
-            // `int`, so negating it can't overflow.
+            // counterpart, unless it's proved not to be that (see
+            // `refine`): `-5` can't be, as a literal is at most the
+            // greatest `int`.
             ExprKind::Unary(op @ (UnOp::Neg | UnOp::Not), x) => {
                 let t = match op {
                     UnOp::Neg => Type::Int,
                     _ => Type::Bool,
                 };
                 self.check(x, &t)?;
-                if *op == UnOp::Neg && !matches!(x.kind, ExprKind::Int(_)) {
-                    self.effect(e.span, "`-`", Type::effects([Type::Panic]));
+                if *op == UnOp::Neg {
+                    self.operator(e, "`-`");
                 }
                 Ok(t)
             }
@@ -354,6 +355,8 @@ impl Checker {
                             format!("`{op}=` works on an `int`, not on `{t}`")
                         })?;
                         self.check(value, &Type::Int)?;
+                        // As `+` does.
+                        self.operator(e, format!("`{op}=`"));
                     }
                 }
                 Ok(Type::Unit)
@@ -650,18 +653,13 @@ impl Checker {
             //  --------------------------- (T-Arith)   for + - * / %
             //       Γ ⊢ l + r : int
             //
-            // Each may panic: on overflow, or `/` and `%` by zero. Not
-            // `/` or `%` by a literal other than `0`: a literal is at
-            // least 1 then, which can't overflow either, as only the
-            // least `int` divided by -1 does.
+            // Each may panic: on overflow, or `/` and `%` by zero or the
+            // least `int` by -1. Unless it's proved not to (see `refine`):
+            // `x / 2` can't.
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => {
                 self.check(l, &Type::Int)?;
                 self.check(r, &Type::Int)?;
-                let by_literal = matches!(op, BinOp::Div | BinOp::Rem)
-                    && matches!(r.kind, ExprKind::Int(n) if n != 0);
-                if !by_literal {
-                    self.effect(e.span, format!("`{op}`"), Type::effects([Type::Panic]));
-                }
+                self.operator(e, format!("`{op}`"));
                 Ok(Type::Int)
             }
 
@@ -1132,7 +1130,8 @@ impl Checker {
                     };
                     let t = match (ty, init) {
                         (Some(ann), init) => {
-                            let t = self.resolve(ann)?;
+                            let t = self.resolve(ann.unrefined())?;
+                            self.let_refinement(pat, ann, &t, init.is_some())?;
                             self.mention(&t);
                             if let Some(init) = init {
                                 self.check(init, &t)?;

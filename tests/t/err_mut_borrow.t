@@ -1,6 +1,6 @@
-fn bump(n: &mut int) { *n += 1; }
+fn bump(n: &mut int) with panic { *n += 1; }
 
-fn main() {
+fn main() with panic {
     let x = 1;
     bump(&mut x);
 }

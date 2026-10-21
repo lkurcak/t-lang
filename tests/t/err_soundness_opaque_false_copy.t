@@ -1,5 +1,5 @@
 // The closure holds a `&mut int`, which isn't `Copy`.
-fn bump(r: &mut int) -> impl FnMut() + Copy + Discard { move || *r += 1 }
+fn bump(r: &mut int) -> impl FnMut() with panic + Copy + Discard { move || *r += 1 }
 
 fn main() {
     let mut n = 0;

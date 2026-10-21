@@ -19,7 +19,7 @@ fn find(n: int, target: int) -> int with panic {
 }
 
 // `continue 'rows` goes on to the next row from inside the inner loop.
-fn count_before_zero(rows: int, cols: int) -> int {
+fn count_before_zero(rows: int, cols: int) -> int with panic {
     let mut count = 0;
     let mut r = 0;
     'rows: while r < rows {

@@ -41,9 +41,10 @@ which do means reading every function they call.
 ## What has effects
 
 - **Arithmetic.** `+`, `-`, `*` and unary `-` panic on overflow, and `/`
-  and `%` on dividing by zero, or the least `int` by `-1`. Not `-5`, as a
-  literal is at most the greatest `int`, nor `/` or `%` by a literal other
-  than `0`, which is at least 1: those can't overflow.
+  and `%` on dividing by zero, or the least `int` by `-1`. Not where the
+  checker proves they can't (step 8, docs/08-refinement-types.md): not
+  `-5`, as a literal is at most the greatest `int`, nor `/` or `%` by a
+  literal other than `0` or `-1`, nor `1 + 2`.
 - **`panic()`**, from the core library, whose type is `fn() -> ! with
   panic`: it aborts.
 - **`Box::new`**, `with {alloc, panic}`: it allocates, and aborts if memory
@@ -53,8 +54,8 @@ which do means reading every function they call.
 
 `core::num` has arithmetic that can't panic: `checked_add`, `checked_sub`,
 `checked_mul`, `checked_div`, `checked_rem` and `checked_neg`, each giving
-`None` where the operator panics. The first four are intrinsics, and the
-operators are what they are with a `panic()` on `None`:
+`None` where the operator panics. The operators are what they are with a
+`panic()` on `None`:
 
 ```rust
 fn add(a: int, b: int) -> int with panic {
@@ -70,10 +71,14 @@ fn main() with panic {
 }
 ```
 
-The checker can't see that `Range::next` adds 1 only to what's less than
-the range's end, which can't overflow, so it uses `checked_add` and never
-gets `None`. Counting through a range can't panic, then: `for i in 0..n`
-is as safe as the body.
+`Range::next` adds 1 only to what's less than the range's end, which
+can't overflow, so it can't panic: counting through a range, `for i in
+0..n`, is as safe as the body. In step 7 the checker couldn't see that,
+and it used `checked_add`; since step 8 it proves it, as it proves that
+`checked_add`, `checked_sub` and `checked_div` don't panic, which are
+written in T with the operators now (see
+docs/08-refinement-types.md). Only `checked_mul`, which needs to reason
+about products of unknowns, is an intrinsic.
 
 ## Saying them
 

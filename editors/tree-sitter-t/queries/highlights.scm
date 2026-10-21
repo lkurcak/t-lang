@@ -102,3 +102,4 @@
 
 ["(" ")" "[" "]" "{" "}"] @punctuation.bracket
 ["," ";" ":" "::" "."] @punctuation.delimiter
+(refinement_type name: (identifier) @variable.parameter)
