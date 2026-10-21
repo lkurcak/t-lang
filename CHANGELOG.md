@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.17.0 (2026-10-22)
 
 Step 8.1: refinements on struct fields. See
 [docs/08.1-field-refinements.md](docs/08.1-field-refinements.md).
