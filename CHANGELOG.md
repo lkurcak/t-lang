@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.16.0 (2026-10-22)
 
 Step 8: refinement types. See
 [docs/08-refinement-types.md](docs/08-refinement-types.md).
