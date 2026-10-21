@@ -914,6 +914,33 @@ impl<T: Discard> Discard for Wrap<T> {}
     stop(child, c);
 }
 
+/// A field named in another field's refinement is renamed there too, and
+/// a refinement's binder with its uses.
+#[test]
+fn renames_fields_in_refinements() {
+    let (child, mut c) = start();
+    let src = "\
+#[derive(Copy, Discard)]
+struct Span { lo: int, hi: { h: int | h >= lo } }
+fn main() {
+    let s = Span { lo: 1, hi: 2 };
+    print(s.hi - s.lo);
+}
+";
+    let (mut d, diags) = Doc::open(&mut c, "file:///tmp/fields.t", src);
+    assert_eq!(diags, Vec::<Value>::new());
+    assert_eq!(
+        d.rename(&mut c, "lo", 0, "low").unwrap(),
+        src.replace("lo", "low")
+    );
+    assert_eq!(
+        d.rename(&mut c, "h", 1, "high").unwrap(),
+        src.replace("h: int | h >=", "high: int | high >=")
+    );
+
+    stop(child, c);
+}
+
 /// What can't be renamed, and renames that are refused.
 #[test]
 fn refuses_bad_renames() {

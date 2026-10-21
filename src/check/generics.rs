@@ -229,7 +229,7 @@ fn resolve_in(
         // `check/refine.rs`).
         TypeExprKind::Refined(..) => Err(Error::ty(
             t.span,
-            "a refinement can only be the whole type of a parameter, a result or a `let`",
+            "a refinement can only be the whole type of a parameter, a result, a `let` or a struct's field",
         )),
         TypeExprKind::Named(name, _) if name == "_" => Err(Error::ty(
             t.span,

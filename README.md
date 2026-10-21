@@ -277,7 +277,9 @@ has to fit that:
   `with alloc`. See [docs/07-effects.md](docs/07-effects.md). Arithmetic
   the checker proves can't overflow, from refinement types like `{ d: int
   | d > 0 }`, can't panic (see
-  [docs/08-refinement-types.md](docs/08-refinement-types.md)).
+  [docs/08-refinement-types.md](docs/08-refinement-types.md)). A struct's
+  fields can have them too, which every value of it keeps (see
+  [docs/08.1-field-refinements.md](docs/08.1-field-refinements.md)).
 - **Values must be used up.** One whose type isn't `#[derive(Discard)]`
   can't be dropped or overwritten: a resource like a file descriptor can't
   be forgotten. See [docs/06a.1-linear-types.md](docs/06a.1-linear-types.md).
@@ -312,7 +314,7 @@ combine features in ways nobody planned for.
 | 7 ✅ | `with panic`, `with alloc`: what a call may do, in its type; `panic()`, `unwrap`, `checked_add` | effect systems, effect polymorphism (effects as a kind, least solutions), associated effects; divergence left for a termination checker | [docs/07-effects.md](docs/07-effects.md) |
 | 7.1 ✅ | impl parameters a bound decides, `where` on impls; `Map<I, F>` and `Filter<I, P>` | functional dependencies (a parameter as a function of the type), termination of resolution with bounds on projections (strongly connected components of the trait graph) | [docs/07.1-impl-parameters.md](docs/07.1-impl-parameters.md) |
 | 8 ✅ | refinement types, `{ d: int \| d > 0 }`, on parameters, results and `let`s; arithmetic proved total | refinement types, verification conditions from facts along each path (static single assignment), linear integer arithmetic decided by Fourier–Motzkin with integer rounding: sound, incomplete | [docs/08-refinement-types.md](docs/08-refinement-types.md) |
-| 8.1 | refinements on struct fields, facts through field reads | a checked `Range`; refinements of places | |
+| 8.1 ✅ | refinements on struct fields, `hi: { h: int \| h >= lo }`; facts through field reads | invariants of a type, kept by every value; facts about places (fields, `*`), forgotten where they may change | [docs/08.1-field-refinements.md](docs/08.1-field-refinements.md) |
 | — | `alloc` (a dense, resizable `List`) and `std` | | after effects, once raw memory has a design |
 | — | C backend | | when it's worth it |
 

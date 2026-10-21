@@ -663,7 +663,8 @@ impl Interp<'_, '_> {
                 loop {
                     match self.memory.get(&p) {
                         Value::Ref(q) | Value::Box(q) => p = q.clone(),
-                        Value::Struct(_, fields) => {
+                        v @ Value::Struct(_, fields) => {
+                            self.check_fields(v, "read");
                             let i = fields.iter().position(|(f, _)| *f == field.name);
                             let i =
                                 i.unwrap_or_else(|| unsound(&format!("no field `{}`", field.name)));
@@ -1083,6 +1084,11 @@ impl Interp<'_, '_> {
                 }
                 let old = std::mem::replace(self.memory.get_mut(&p), v);
                 self.drop(old);
+                if !p.path.is_empty() {
+                    let mut outer = p.clone();
+                    outer.path.pop();
+                    self.check_fields(self.memory.get(&outer), "assigned to");
+                }
                 Value::Unit
             }
 
@@ -1263,7 +1269,33 @@ impl Interp<'_, '_> {
                 (f.name.name.clone(), values[i].1.take().expect("each once"))
             })
             .collect();
-        Ok(Value::Struct(name.name.clone(), fields))
+        let v = Value::Struct(name.name.clone(), fields);
+        self.check_fields(&v, "made");
+        Ok(v)
+    }
+
+    /// Stops the program, as the checker is wrong, unless struct value
+    /// `v`, just `what`, has the refinements of its fields.
+    fn check_fields(&self, v: &Value, what: &str) {
+        let Value::Struct(name, fields) = v else {
+            return;
+        };
+        let Some(decl) = self.structs.get(name.as_str()) else {
+            return;
+        };
+        for (j, f) in decl.fields.iter().enumerate() {
+            if let Some((binder, pred)) = f.ty.refinement() {
+                let r = Refined {
+                    binder: binder.name.clone(),
+                    pred: pred.clone(),
+                    env: fields[..j].to_vec(),
+                };
+                r.check(
+                    &fields[j].1,
+                    &format!("field `{}` of a `{name}` {what}", f.name.name),
+                );
+            }
+        }
     }
 
     /// Picks the first arm whose pattern matches, without moving anything,

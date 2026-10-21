@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased
+
+Step 8.1: refinements on struct fields. See
+[docs/08.1-field-refinements.md](docs/08.1-field-refinements.md).
+
+### Added
+
+- A struct's `int` and `bool` fields can have refinements, which can name
+  the fields before them of the same visibility:
+  `struct Span { lo: int, hi: { h: int | h >= lo } }`. Every value of the
+  struct keeps them: literals and assignments to a field are checked, and
+  a field a refinement is about can't be borrowed `&mut`.
+- The checker knows facts about places, not just variables: `p.x`,
+  `self.start`, `*r`. What a literal gives each field is known, through
+  copies and patterns. Reading a field knows its struct's refinements.
+- A place lent `&mut` to a call that can't keep the reference is
+  forgotten after the call, rather than unknown in the whole body.
+- The interpreter checks a struct's refinements at every literal,
+  assignment to a field and read of one.
+
+### Changed
+
+- `Range::next` uses `self.start` and `self.end` as they are.
+- More arithmetic is proved total, through fields, so a function or
+  `main` that said `with panic` only for it gets an `unused_effects`
+  warning.
+
 ## 0.16.0 (2026-10-22)
 
 Step 8: refinement types. See

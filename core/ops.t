@@ -27,10 +27,9 @@ impl Iterator for Range<int> {
     effect e = {};
 
     fn next(&mut self) -> Option<int> {
-        let n = self.start;
-        let end = self.end;
-        if n < end {
-            self.start = n + 1;
+        if self.start < self.end {
+            let n = self.start;
+            self.start = self.start + 1;
             Option::Some(n)
         } else {
             Option::None

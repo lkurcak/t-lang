@@ -266,7 +266,7 @@ the checker proved, which must not panic. Either failing stops it with
 
 | Missing | Why it's missing | Step |
 |---|---|---|
-| refinements on struct fields, facts through field reads (a checked `Range`) | needs facts about places, not just variables | 8.1 |
+| refinements on struct fields, facts through field reads | needs facts about places, not just variables | 8.1 ([docs](08.1-field-refinements.md)) |
 | refinements inside other types, `Option<{ v: int \| v > 0 }>` | needs subtyping inside type constructors, and refinements on type parameters | — |
 | refined trait methods | an impl's must ask no more and promise no less | — |
 | `&mut` to a refined value | writes through it must keep the refinement | — |
@@ -283,7 +283,7 @@ the checker proved, which must not panic. Either failing stops it with
    refinement?
 2. Why can't a refinement name a `mut` parameter? Write a function where
    allowing it would make the checker prove something false.
-3. In `Walk::read`, return what the variable stood for even if it can
+3. In `Walk::leaf`, return what the variable stood for even if it can
    change other than by assignment. Which test catches it, and how?
 4. `count` above works with `i: { v: int | v >= 0 }`. What goes wrong with
    a plain `let mut i = 0;`? What would inferring the invariant need?

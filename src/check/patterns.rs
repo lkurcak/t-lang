@@ -246,7 +246,8 @@ impl Checker {
                 };
                 let symbol = symbol.clone();
                 self.uses().types.insert(symbol.clone());
-                self.pattern_is(p, ty, t)?;
+                self.pattern_is(p, ty, t.clone())?;
+                self.typed.struct_pats.insert(p.id, t);
                 // Fields left out of the pattern match anything.
                 let mut args = vec![Pat::Wild; fields.len()];
                 let mut given = vec![false; fields.len()];

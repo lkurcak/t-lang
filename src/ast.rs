@@ -907,7 +907,8 @@ pub enum TypeExprKind {
     /// `{ v: int | v > 0 }`: a *refinement type*, the values of the base
     /// type `.1` that make the predicate `.2` true of `.0`, the name it
     /// gives the value (see docs/08-refinement-types.md). Only as the whole
-    /// type of a parameter, a result or a `let`.
+    /// type of a parameter, a result, a `let` or a struct's field
+    /// (docs/08.1-field-refinements.md).
     Refined(Ident, Box<TypeExpr>, Box<Expr>),
 }
 

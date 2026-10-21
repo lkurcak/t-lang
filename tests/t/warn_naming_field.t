@@ -4,7 +4,7 @@
 #[derive(Discard)]
 struct P { xPos: int, y: int }
 
-fn main() with panic {
+fn main() {
     let xPos = 1;
     let p = P { xPos, y: 2 };
     let P { xPos, y } = p;

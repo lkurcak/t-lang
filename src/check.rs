@@ -383,6 +383,8 @@ pub(crate) struct Checker {
     /// The refinements in each function's signature that has any, by
     /// symbol (see `refine`).
     refined: HashMap<String, refine::RefinedSig>,
+    /// The refinements of each struct's fields that has any, by symbol.
+    field_refined: HashMap<String, refine::RefinedFields>,
     /// The refinement of each refined `let`'s variable, by id.
     refined_lets: HashMap<NodeId, refine::Refinement>,
     /// What each name in a refinement's predicate is, by node.
@@ -474,6 +476,7 @@ impl Checker {
             in_trait_impl: false,
             refined: HashMap::new(),
             refined_lets: HashMap::new(),
+            field_refined: HashMap::new(),
             pred_names: HashMap::new(),
             modules,
             module: ROOT,

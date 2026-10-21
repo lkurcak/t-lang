@@ -82,7 +82,8 @@ impl Checker {
                                 format!("field `{}` is declared twice", f.name.name),
                             ));
                         }
-                        let t = self.resolve_with(&f.ty, &params, &mut lts)?;
+                        // A refinement is checked once every type is known.
+                        let t = self.resolve_with(f.ty.unrefined(), &params, &mut lts)?;
                         field_types.push((symbol.as_str(), f.ty.span, t.clone()));
                         fields.push((f.name.name.clone(), t));
                     }
@@ -159,6 +160,11 @@ impl Checker {
         adts.proj = std::mem::take(&mut self.adts.proj);
         adts.proj.local.clear();
         self.adts = adts;
+        for ((d, _), symbol) in decls.iter().zip(&symbols) {
+            if let TypeDecl::Struct(s) = d {
+                self.field_refinements(s, symbol)?;
+            }
+        }
         Ok(())
     }
 }

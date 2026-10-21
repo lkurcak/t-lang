@@ -111,7 +111,7 @@ enums that say so with `#[derive(Copy)]`, if all their fields are `Copy`:
 #[derive(Discard, Copy)]
 struct Point { x: int, y: int }
 
-fn main() with panic {
+fn main() {
     let p = Point { x: 1, y: 2 };
     let q = p;        // copied
     print(p.x + q.y); // expect: 3

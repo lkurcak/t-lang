@@ -31,6 +31,8 @@ pub(crate) struct Typed {
     /// (*match ergonomics*): `Option::Some(x)` matching a
     /// `&Option<int>` looks through one, and binds `x` to a `&int`.
     pub(crate) peels: HashMap<NodeId, usize>,
+    /// The struct each struct pattern matches, by the pattern's id.
+    pub(crate) struct_pats: HashMap<NodeId, Type>,
     /// References used as others (*coerced*): a `&mut T` where a `&T` is
     /// wanted, or a `&Box<T>` or `&&T` where a `&T` is. With how many more
     /// `*`s it takes to get to the `T`, and whether the result is `&mut`.
