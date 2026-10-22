@@ -1,5 +1,5 @@
-// `grow` may move the slots, so a reference from `get` can't live past it:
-// `get` borrows the buffer, and `grow` needs it `&mut`.
+// `grow` may move the slots, so a slice of them can't live past it:
+// `slice` borrows the buffer, and `grow` needs it `&mut`.
 use alloc::raw::RawBuf;
 
 fn main() with {alloc, panic} {
@@ -7,10 +7,10 @@ fn main() with {alloc, panic} {
     // SAFETY: slot 0 is uninitialised, then holds 5.
     let r = unsafe {
         b.write(0, 5);
-        b.get(0)
+        b.slice(0, 1)
     };
     b.grow(8);
-    print(*r);
+    print(r.len());
     // SAFETY: slot 0 holds the 5; then every slot is uninitialised.
     unsafe {
         b.read(0);

@@ -145,7 +145,13 @@ impl Checker {
     pub(super) fn fresh_param(&mut self, p: &str, span: Span, what: String, hint: String) -> Type {
         match crate::parser::is_effect_name(p) {
             true => self.fresh_effects(span, what),
-            false => self.fresh(span, what, hint),
+            false => {
+                let t = self.fresh(span, what, hint);
+                if let Type::Var(v) = t {
+                    self.vars[v as usize].param = true;
+                }
+                t
+            }
         }
     }
 

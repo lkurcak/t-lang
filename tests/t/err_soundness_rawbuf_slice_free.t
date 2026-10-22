@@ -1,5 +1,5 @@
-// `free` gives the memory back, so a reference from `get` can't live past
-// it.
+// `free` gives the memory back, so a slice from `slice` can't live past
+// it, nor `read` take a value out from under it.
 use alloc::raw::RawBuf;
 
 fn main() with {alloc, panic} {
@@ -8,9 +8,9 @@ fn main() with {alloc, panic} {
     // before the buffer is freed.
     unsafe {
         b.write(0, 5);
-        let r = b.get(0);
+        let s = b.slice(0, 1);
         b.read(0);
-        print(*r);
+        print(s.len());
         b.free();
     }
 }

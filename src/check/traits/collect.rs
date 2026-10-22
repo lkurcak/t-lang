@@ -235,6 +235,11 @@ impl Checker {
         if let Some(s) = self_ty {
             let s = Subst::new(&["Self".to_string()], std::slice::from_ref(s));
             ty = self.adts.normalise(&s.apply(&ty));
+            // `Self` is `[T]` in a slice's own methods, which take it by
+            // reference.
+            if let Some(u) = ty.unsized_part() {
+                return Err(generics::unsized_slice(f.name.span, u));
+            }
             // What its opaque types' bounds say of `Self` is of the impl's
             // type too.
             for o in crate::check::opaques_of(&ty) {
@@ -296,7 +301,14 @@ impl Checker {
                      other impls, and two impls could then be for the same type",
                 ));
             }
-            let self_ty = self.resolve_with(&d.self_ty, &params, &mut lts)?;
+            let self_ty = match &d.self_ty.kind {
+                // `impl<T> [T]`: a slice's own methods, which only the
+                // built-in libraries give it, each taking it by reference.
+                TypeExprKind::Slice(elem) if d.trait_name.is_none() => {
+                    Type::Slice(Box::new(self.resolve_with(elem, &params, &mut lts)?))
+                }
+                _ => self.resolve_with(&d.self_ty, &params, &mut lts)?,
+            };
             let mut lifetimes = declared.clone();
             if let Lifetimes::Params { elided, .. } = lts {
                 lifetimes.extend(elided);
@@ -334,6 +346,7 @@ impl Checker {
                         ));
                     }
                 }
+                (None, Type::Slice(_)) if self.modules.in_library(d.module) => {}
                 (None, t) => {
                     return Err(Error::ty(
                         d.self_ty.span,
@@ -745,6 +758,7 @@ fn mentions_self(t: &TypeExpr) -> Option<Span> {
             .or_else(|| mentions_self(r))
             .or_else(|| e.iter().flat_map(EffectSet::types).find_map(mentions_self)),
         TypeExprKind::Ref(_, _, inner)
+        | TypeExprKind::Slice(inner)
         | TypeExprKind::Proj(inner, ..)
         | TypeExprKind::Refined(_, inner, _) => mentions_self(inner),
         TypeExprKind::Impl(bounds) => bounds
@@ -812,7 +826,9 @@ fn proj_in(t: &TypeExpr) -> Option<Span> {
                     proj.map(|i| i.span)
                 })
         }
-        TypeExprKind::Ref(_, _, inner) | TypeExprKind::Refined(_, inner, _) => proj_in(inner),
+        TypeExprKind::Ref(_, _, inner)
+        | TypeExprKind::Slice(inner)
+        | TypeExprKind::Refined(_, inner, _) => proj_in(inner),
         TypeExprKind::Impl(bounds) => bounds.iter().flat_map(BoundItem::types).find_map(proj_in),
         TypeExprKind::Unit | TypeExprKind::Never | TypeExprKind::Lifetime(_) => None,
     }

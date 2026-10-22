@@ -2,7 +2,7 @@
 // it is unsafe too.
 use alloc::raw::RawBuf;
 
-fn first(b: &RawBuf<int>) -> int with unsafe { *b.get(0) }
+fn first(b: &RawBuf<int>) -> int with unsafe { b.slice(0, 1).len() }
 
 fn main() with {alloc, panic} {
     let mut b: RawBuf<int> = RawBuf::new(1);

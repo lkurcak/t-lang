@@ -9,7 +9,7 @@ impl Bad {
     fn get(&self, i: int) -> Option<&int> {
         if i >= 0 && i <= self.len && i < self.buf.cap() {
             // SAFETY: wrong: slot `len` isn't in use.
-            Option::Some(unsafe { self.buf.get(i) })
+            unsafe { self.buf.slice(i, i + 1).get(0) }
         } else {
             Option::None
         }
@@ -29,4 +29,4 @@ fn main() with {alloc, panic} {
         b.buf.free();
     }
 }
-// error: unsafe code broke its obligation: `RawBuf::get` of slot 1, which is uninitialised
+// error: unsafe code broke its obligation: `RawBuf::slice` of slots 1..2, but slot 1 is uninitialised

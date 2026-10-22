@@ -241,6 +241,7 @@ impl<'p> Cx<'p> {
             TypeExprKind::Ref(lifetime, mutable, inner) => {
                 TypeExprKind::Ref(lifetime.clone(), *mutable, Box::new(self.ty(inner)))
             }
+            TypeExprKind::Slice(inner) => TypeExprKind::Slice(Box::new(self.ty(inner))),
             TypeExprKind::Proj(inner, tr, name) => {
                 TypeExprKind::Proj(Box::new(self.ty(inner)), tr.clone(), name.clone())
             }

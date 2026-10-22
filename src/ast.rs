@@ -906,6 +906,9 @@ pub enum TypeExprKind {
     /// `&T`, `&'a T`, `&mut T` or `&'a mut T`: a reference, with its
     /// lifetime if it's written, and whether it's `mut`.
     Ref(Option<Ident>, bool, Box<TypeExpr>),
+    /// `[T]`, a slice: only right after `&` or `&mut` (see
+    /// docs/10-slices.md).
+    Slice(Box<TypeExpr>),
     /// `'a`, as a lifetime argument: the `'a` of `Holder<'a, int>`. Lifetime
     /// arguments come before type arguments, and can only be there.
     Lifetime(String),
@@ -969,6 +972,7 @@ impl fmt::Display for TypeExpr {
                 }
                 write!(f, "{t}")
             }
+            TypeExprKind::Slice(t) => write!(f, "[{t}]"),
             TypeExprKind::Lifetime(name) => f.write_str(name),
             TypeExprKind::Never => f.write_str("!"),
             TypeExprKind::Proj(t, Some(tr), name) => {

@@ -43,6 +43,7 @@ pub const CORE_FILES: &[(&str, &str)] = &[
     ("panic.t", include_str!("../core/panic.t")),
     ("prelude.t", include_str!("../core/prelude.t")),
     ("result.t", include_str!("../core/result.t")),
+    ("slice.t", include_str!("../core/slice.t")),
 ];
 
 /// Where the core library's files seem to be, in messages and to editors.

@@ -672,7 +672,9 @@ impl Checker {
                 self.type_expr_notes(r, params);
                 self.effect_notes(effects.as_ref(), params);
             }
-            TypeExprKind::Ref(_, _, inner) => self.type_expr_notes(inner, params),
+            TypeExprKind::Ref(_, _, inner) | TypeExprKind::Slice(inner) => {
+                self.type_expr_notes(inner, params)
+            }
             // Its traits are noted where they're resolved.
             TypeExprKind::Impl(bounds) => {
                 for b in bounds {

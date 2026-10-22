@@ -1625,3 +1625,33 @@ fn hovers_list_methods() {
 
     stop(child, c);
 }
+
+/// A slice's methods, in `impl<T> [T]`, hover with their docs, from
+/// `core/slice.t`, and a slice's type as it's written.
+#[test]
+fn hovers_slice_methods() {
+    let (child, mut c) = start();
+    let uri = "file:///tmp/slice.t";
+    let src = "fn main() {\n    let s: &[int] = core::slice::empty();\n    print(s.len());\n}\n";
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
+        }}),
+    );
+    let diagnostics = c.diagnostics();
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    let at = |line: u32, character: u32| json!({"textDocument": {"uri": uri}, "position": {"line": line, "character": character}});
+
+    c.send(json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": at(2, 13)}));
+    let hover = c.response(2)["result"]["contents"]["value"].clone();
+    let hover = hover.as_str().unwrap();
+    assert!(hover.contains("len"), "{hover}");
+    assert!(hover.contains("How many values it has."), "{hover}");
+
+    c.send(json!({"jsonrpc": "2.0", "id": 3, "method": "textDocument/hover", "params": at(2, 10)}));
+    let hover = c.response(3)["result"]["contents"]["value"].clone();
+    let hover = hover.as_str().unwrap();
+    assert!(hover.contains("&[int]"), "{hover}");
+
+    stop(child, c);
+}

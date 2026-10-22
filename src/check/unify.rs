@@ -11,6 +11,9 @@ pub(super) struct Var {
     /// What it turned out to be, once `unify` finds out. That can be another
     /// variable, or a type with variables in it, like `fn(_) -> int`.
     pub(super) solution: Option<Type>,
+    /// Is it for what a type parameter stands for, in a use of something
+    /// generic? Only for what its errors say: no variable is ever a slice.
+    pub(super) param: bool,
     /// Where it came from, for when it's never solved: the span, what it's
     /// the type of ("the type of `x`") and how to fix that.
     span: Span,
@@ -24,6 +27,10 @@ pub(super) enum Clash {
     Mismatch,
     /// Variable `.0` would have to equal type `.1`, which contains it.
     Infinite(u32, Type),
+    /// Variable `.0` would have to be the slice `.1`, which is only ever
+    /// behind a reference, so is never a type a variable stands for: not
+    /// the type of a value, nor what a type parameter is.
+    Unsized(u32, Type),
 }
 
 /// Does `t` have a type variable in it?
@@ -104,6 +111,7 @@ impl Checker {
     pub(super) fn fresh(&mut self, span: Span, what: String, hint: String) -> Type {
         self.vars.push(Var {
             solution: None,
+            param: false,
             span,
             what,
             hint,
@@ -295,6 +303,13 @@ impl Checker {
                 if self.occurs(v, &t) {
                     return Err(Clash::Infinite(v, t));
                 }
+                match &t {
+                    Type::Slice(_) => return Err(Clash::Unsized(v, t)),
+                    Type::Var(w) if self.vars[v as usize].param => {
+                        self.vars[*w as usize].param = true;
+                    }
+                    _ => {}
+                }
                 self.vars[v as usize].solution = Some(t);
                 Ok(())
             }
@@ -339,6 +354,21 @@ impl Checker {
         Err(Clash::Mismatch)
     }
 
+    /// That variable `v` can't be `t`, a slice, at `span` (`Clash::Unsized`).
+    pub(super) fn unsized_var(&self, v: u32, t: &Type, span: Span) -> Error {
+        let t = self.solved(t);
+        match self.vars[v as usize].param {
+            true => Error::ty(
+                span,
+                format!(
+                    "a type parameter can't stand for the slice `{t}`: it's only ever behind a \
+                     reference"
+                ),
+            ),
+            false => super::generics::unsized_slice(span, t),
+        }
+    }
+
     /// Unifies `a` and `b`. If they don't fit, the error at `span` says
     /// `mismatch(a, b)`, with what's known about them so far.
     pub(super) fn unify_or(
@@ -365,6 +395,7 @@ impl Checker {
                     ),
                 ))
             }
+            Err(Clash::Unsized(v, t)) => Err(self.unsized_var(v, &t, span)),
         }
     }
 

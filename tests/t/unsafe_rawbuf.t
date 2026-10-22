@@ -35,7 +35,7 @@ impl Stack {
             return Option::None;
         }
         // SAFETY: slot `len - 1` is in use.
-        Option::Some(unsafe { self.buf.get(self.len - 1) })
+        unsafe { self.buf.slice(self.len - 1, self.len).get(0) }
     }
 
     fn free(mut self) {
@@ -47,7 +47,7 @@ impl Stack {
 
 /// Unsafe itself: the caller must know slot 0 holds a value.
 fn bump_first(b: &mut RawBuf<int>) with {panic, unsafe} {
-    *b.get_mut(0) += 1;
+    *b.slice_mut(0, 1).get_mut(0).unwrap() += 1;
 }
 
 fn apply<e, F: FnOnce() -> int with e>(f: F) -> int with e { f() }

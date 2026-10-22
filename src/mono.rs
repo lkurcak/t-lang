@@ -706,6 +706,7 @@ impl Cx<'_, '_, '_> {
                 TypeExprKind::Ref(lifetime, *m, Box::new(self.written(inner, span)))
             }
             Type::Box(inner) => TypeExprKind::Named("Box".into(), vec![self.written(inner, span)]),
+            Type::Slice(inner) => TypeExprKind::Slice(Box::new(self.written(inner, span))),
             Type::Param(_) | Type::Var(_) | Type::Proj(..) | Type::Opaque(..) => {
                 unreachable!("`{t}` left after monomorphising")
             }
@@ -851,6 +852,7 @@ impl Cx<'_, '_, '_> {
                 format!("&{}{}", if *m { "mut " } else { "" }, self.copy_name(inner))
             }
             Type::Box(inner) => format!("Box<{}>", self.copy_name(inner)),
+            Type::Slice(inner) => format!("[{}]", self.copy_name(inner)),
             Type::Fn(sig) => {
                 let params: Vec<String> = sig.params.iter().map(|p| self.copy_name(p)).collect();
                 format!("fn({}) -> {}", params.join(", "), self.copy_name(&sig.ret))
@@ -1132,7 +1134,7 @@ mod used {
                     .flat_map(EffectSet::types)
                     .for_each(|t| in_type(t, out));
             }
-            TypeExprKind::Ref(_, _, inner) => in_type(inner, out),
+            TypeExprKind::Ref(_, _, inner) | TypeExprKind::Slice(inner) => in_type(inner, out),
             TypeExprKind::Proj(inner, ..) | TypeExprKind::Refined(_, inner, _) => {
                 in_type(inner, out)
             }

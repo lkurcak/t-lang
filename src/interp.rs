@@ -91,6 +91,9 @@ pub struct Ptr {
     /// use.
     generation: u64,
     path: Vec<usize>,
+    /// For a slice, `[T]`: which of the `Slots` there it is, as the index
+    /// of the first and how many. A reference to a slice is one with this.
+    range: Option<(usize, usize)>,
 }
 
 impl Ptr {
@@ -99,6 +102,14 @@ impl Ptr {
         let mut p = self.clone();
         p.path.push(i);
         p
+    }
+
+    /// Slots `lo..lo + len` of the `Slots` this points to, as a slice.
+    fn slice(&self, lo: usize, len: usize) -> Ptr {
+        Ptr {
+            range: Some((lo, len)),
+            ..self.clone()
+        }
     }
 }
 
@@ -181,14 +192,27 @@ pub fn run(prog: &Program, out: &mut Vec<String>) -> Result<Value, Error> {
             TypeDecl::Enum(_) => None,
         })
         .collect();
+    let enums = prog
+        .types
+        .iter()
+        .filter_map(|t| match t {
+            TypeDecl::Enum(e) => Some((e.name.name.as_str(), e)),
+            TypeDecl::Struct(_) => None,
+        })
+        .collect();
+    let mut memory = Memory::default();
+    // Where every empty slice points: no slots, never freed.
+    let nowhere = memory.alloc(Value::Slots(Vec::new()), false);
     let mut interp = Interp {
         fns,
         structs,
+        enums,
+        nowhere,
         copy: derived("Copy"),
         discard: derived("Discard"),
         aborting: false,
         locals: Vec::new(),
-        memory: Memory::default(),
+        memory,
         temps: Vec::new(),
         depth: 0,
         frames: Vec::new(),
@@ -286,6 +310,7 @@ impl Memory {
             slot,
             generation: self.slots[slot].generation,
             path: Vec::new(),
+            range: None,
         }
     }
 
@@ -347,6 +372,10 @@ struct Interp<'p, 'o> {
     fns: HashMap<&'p str, &'p FnDecl>,
     /// For putting struct literals' fields in declaration order.
     structs: HashMap<&'p str, &'p StructDecl>,
+    /// For the copies of `Option` that intrinsics make.
+    enums: HashMap<&'p str, &'p EnumDecl>,
+    /// The `Slots` every empty slice is of.
+    nowhere: Ptr,
     /// The structs and enums that are `Copy`, and that are `Discard`, as
     /// monomorphisation's copies of them say.
     copy: HashSet<&'p str>,
@@ -806,7 +835,15 @@ impl Interp<'_, '_> {
             let op = copy.rsplit("::").next().unwrap_or_default();
             return self.raw_buf(op, args, span);
         }
+        if name.starts_with("<[") {
+            let op = copy.rsplit("::").next().unwrap_or_default();
+            return Ok(self.slice(op, copy, args));
+        }
         match name {
+            // No slots: of any type, as there's nothing there.
+            "core::slice::empty" | "core::slice::empty_mut" => {
+                Ok(Value::Ref(self.nowhere.slice(0, 0)))
+            }
             // Aborts.
             "core::panic::panic" => Err(self.panics(span, "panicked")),
             // Exchanges two values, making and throwing away none.
@@ -824,6 +861,67 @@ impl Interp<'_, '_> {
                 Ok(Value::Unit)
             }
             _ => unsound(&format!("unknown intrinsic `{name}`")),
+        }
+    }
+
+    /// Runs a slice's intrinsic method `op`, whose copy is `copy`, on
+    /// `args`. Each checks what it's given against the slice's length, so
+    /// none can fail: it's what it says in `core/slice.t`.
+    fn slice(&mut self, op: &str, copy: &str, args: Vec<Value>) -> Value {
+        let mut args = args.into_iter();
+        let this = args.next().unwrap_or_else(|| unsound("slice arity"));
+        let Value::Ref(
+            p @ Ptr {
+                range: Some((lo, len)),
+                ..
+            },
+        ) = &this
+        else {
+            unsound(&format!("`{op}` of `{this}`, which isn't a slice"))
+        };
+        let (p, lo, len) = (p.clone(), *lo, *len);
+        // The copy of `Option` it returns, and what's in its `Some`.
+        let option = || -> (String, Option<String>) {
+            let TypeExprKind::Named(option, _) = &self.fns[copy].ret.kind else {
+                unsound(&format!("`{op}` returns an `Option`"))
+            };
+            let some = self.enums[option.as_str()]
+                .variants
+                .iter()
+                .find(|v| v.name.name == "Some")
+                .and_then(|v| match &v.fields[0].kind {
+                    TypeExprKind::Named(name, _) => Some(name.clone()),
+                    _ => None,
+                });
+            (option.clone(), some)
+        };
+        let index = |v: Option<Value>, max: usize| {
+            let i = int(v.unwrap_or_else(|| unsound("slice arity")));
+            usize::try_from(i).ok().filter(|i| *i <= max)
+        };
+        let made = match op {
+            "len" => return Value::Int(len as i64),
+            "get" | "get_mut" => {
+                let i = index(args.next(), len).filter(|i| *i < len);
+                i.map(|i| {
+                    Value::Ref(Ptr {
+                        range: None,
+                        ..p.field(lo + i)
+                    })
+                })
+            }
+            "split_at" | "split_at_mut" => index(args.next(), len).map(|mid| {
+                let split = option().1.unwrap_or_else(|| unsound("a split's struct"));
+                let head = Value::Ref(p.slice(lo, mid));
+                let tail = Value::Ref(p.slice(lo + mid, len - mid));
+                Value::Struct(split, vec![("head".into(), head), ("tail".into(), tail)])
+            }),
+            _ => unsound(&format!("unknown intrinsic `[T]::{op}`")),
+        };
+        let option = option().0;
+        match made {
+            Some(v) => Value::Variant(option, "Some".into(), vec![v]),
+            None => Value::Variant(option, "None".into(), Vec::new()),
         }
     }
 
@@ -899,7 +997,34 @@ impl Interp<'_, '_> {
                 *self.memory.get_mut(&p) = Value::RawBuf(moved);
                 Ok(Value::Unit)
             }
-            "write" | "read" | "get" | "get_mut" => {
+            "slice" | "slice_mut" => {
+                let block = self.unsafe_op();
+                let q = buf(self, &arg());
+                let (lo, hi) = (int(arg()), int(arg()));
+                let cap = slots(self, &q);
+                let what = format!("`RawBuf::{op}` of slots {lo}..{hi}");
+                // That half is its type's, `{ l: int | l >= 0 }`.
+                if lo < 0 {
+                    unsound(&format!("{what}, but {lo} isn't `>= 0`"));
+                }
+                if hi > cap as i64 {
+                    let why = format!("{what}, but the buffer has {cap}");
+                    return Err(self.broken(span, block, why));
+                }
+                if lo > hi {
+                    let why = format!("{what}, which is no range: {lo} > {hi}");
+                    return Err(self.broken(span, block, why));
+                }
+                let (lo, hi) = (lo as usize, hi as usize);
+                if let Some(i) =
+                    (lo..hi).find(|i| matches!(self.memory.get(&q.field(*i)), Value::Moved))
+                {
+                    let why = format!("{what}, but slot {i} is uninitialised");
+                    return Err(self.broken(span, block, why));
+                }
+                Ok(Value::Ref(q.slice(lo, hi - lo)))
+            }
+            "write" | "read" => {
                 let block = self.unsafe_op();
                 let this = arg();
                 let (q, i) = (buf(self, &this), int(arg()));
@@ -926,10 +1051,7 @@ impl Interp<'_, '_> {
                     (_, false) => {
                         Err(self.broken(span, block, format!("{what}, which is uninitialised")))
                     }
-                    ("read", true) => {
-                        Ok(std::mem::replace(self.memory.get_mut(&slot), Value::Moved))
-                    }
-                    _ => Ok(Value::Ref(slot)),
+                    _ => Ok(std::mem::replace(self.memory.get_mut(&slot), Value::Moved)),
                 }
             }
             "free" => {

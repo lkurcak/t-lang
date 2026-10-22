@@ -387,12 +387,17 @@ module.exports = grammar({
       $.unit_type,
       $.function_type,
       $.reference_type,
+      $.slice_type,
       $.never_type,
       $.qualified_type,
       $.projection_type,
       $.impl_type,
       $.refinement_type,
     ),
+
+    // `[T]`, a slice: only right after `&` or `&mut`, which the checker
+    // says.
+    slice_type: $ => seq('[', field('element', $._type), ']'),
 
     // `{ v: int | v > 0 }`: the values of a type a predicate holds of.
     refinement_type: $ => seq(

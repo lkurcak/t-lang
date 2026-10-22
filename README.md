@@ -285,15 +285,16 @@ has to fit that:
   be forgotten. See [docs/06a.1-linear-types.md](docs/06a.1-linear-types.md).
 - **The core library is written in T.** `Option`, `Result`, `Iterator` and
   the rest are checked like any program; all the checker takes on trust is
-  its intrinsics, `swap`, `panic` and `checked_mul`, and the arithmetic
-  operators. See [docs/06e-core.md](docs/06e-core.md).
+  its intrinsics, `swap`, `panic`, `checked_mul` and a slice's few, and
+  the arithmetic operators. See [docs/06e-core.md](docs/06e-core.md).
 - **Unsafe code is marked, and small.** What the checker can't check, like
   which slots of a raw buffer hold values, is `unsafe`, an effect only an
   `unsafe` block takes away, so the trust is exactly those blocks. The
   `alloc` library builds on `RawBuf<T>`, the one way to get memory for
   many values. See [docs/09-unsafe.md](docs/09-unsafe.md). Its `List<T>`
   is a safe interface over it, which nothing outside can break (see
-  [docs/09.1-list.md](docs/09.1-list.md)).
+  [docs/09.1-list.md](docs/09.1-list.md)), and its values are seen as a
+  slice, `&[T]` (see [docs/10-slices.md](docs/10-slices.md)).
 
 Within that, the aim is to push the type system as far as it goes, and keep
 it sound: well-typed programs don't go wrong, including the ones that
@@ -324,6 +325,7 @@ combine features in ways nobody planned for.
 | 8.1 ✅ | refinements on struct fields, `hi: { h: int \| h >= lo }`; facts through field reads | invariants of a type, kept by every value; facts about places (fields, `*`), forgotten where they may change | [docs/08.1-field-refinements.md](docs/08.1-field-refinements.md) |
 | 9 ✅ | `unsafe` blocks, `with unsafe`; an `alloc` library with `RawBuf<T>`, a buffer of slots | unsafe code as an effect, discharged only by a block; a small trusted base, and its obligations checked as the program runs (as Miri does) | [docs/09-unsafe.md](docs/09-unsafe.md) |
 | 9.1 ✅ | `alloc::list::List<T>`, a dense, resizable array, and iterating it | a safe interface over unsafe code, kept by a type's invariant (representation invariants, as RustBelt's), which privacy, borrows and linearity protect | [docs/09.1-list.md](docs/09.1-list.md) |
+| 10 ✅ | slices, `&[T]` and `&mut [T]`; `List::as_slice`, `iter_mut` | a kind of types that are only ever behind a reference, so no `?Sized`; splitting a unique borrow into disjoint ones (`split_at_mut`), so `iter_mut` is safe code | [docs/10-slices.md](docs/10-slices.md) |
 | — | `std` | | |
 | — | C backend | | when it's worth it |
 

@@ -2261,6 +2261,10 @@
         },
         {
           "type": "SYMBOL",
+          "name": "slice_type"
+        },
+        {
+          "type": "SYMBOL",
           "name": "never_type"
         },
         {
@@ -2278,6 +2282,27 @@
         {
           "type": "SYMBOL",
           "name": "refinement_type"
+        }
+      ]
+    },
+    "slice_type": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "["
+        },
+        {
+          "type": "FIELD",
+          "name": "element",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_type"
+          }
+        },
+        {
+          "type": "STRING",
+          "value": "]"
         }
       ]
     },

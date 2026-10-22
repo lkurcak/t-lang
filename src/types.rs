@@ -45,6 +45,13 @@ pub enum Type {
     /// `Box<T>`: a `T` on the heap, which the box *owns*: it's freed when
     /// the box is.
     Box(Box<Type>),
+    /// `[T]`: a *slice*, some number of `T`s one after another in memory,
+    /// how many known only as the program runs. So it's never a value of
+    /// its own, only what a reference points to, `&'a [T]` or `&'a mut
+    /// [T]`, which carries the length (see docs/10-slices.md): nor is it
+    /// what a type parameter stands for, so generic code never has one by
+    /// value either (`Checker::sized`).
+    Slice(Box<Type>),
     /// `<T as Iter>::Item`: a *projection*, the type that the impl of trait
     /// `.1` for type `.0` picks for its associated type `.2` (see
     /// docs/06b-associated-types.md). Once the type's outermost shape is
@@ -459,7 +466,9 @@ impl Type {
             Type::Adt(_, _, args) | Type::Opaque(_, _, args) | Type::Effects(args) => {
                 (args, None, None)
             }
-            Type::Ref(_, _, t) | Type::Box(t) | Type::Proj(t, ..) => (&[], Some(t), None),
+            Type::Ref(_, _, t) | Type::Box(t) | Type::Slice(t) | Type::Proj(t, ..) => {
+                (&[], Some(t), None)
+            }
             Type::Int
             | Type::Bool
             | Type::Unit
@@ -471,6 +480,18 @@ impl Type {
             | Type::Unsafe => (&[], None, None),
         };
         params.iter().chain(ret).chain(effects)
+    }
+
+    /// A slice in this type that isn't right behind a reference, if there's
+    /// one: where it would be a value of its own.
+    pub fn unsized_part(&self) -> Option<&Type> {
+        match self {
+            Type::Slice(_) => Some(self),
+            Type::Ref(_, _, inner) if matches!(**inner, Type::Slice(_)) => {
+                inner.parts().find_map(Type::unsized_part)
+            }
+            t => t.parts().find_map(Type::unsized_part),
+        }
     }
 
     /// This type, with each of its parts replaced by `f(part)`. Its regions
@@ -492,6 +513,7 @@ impl Type {
             }
             Type::Ref(r, m, t) => Type::Ref(r.clone(), *m, Box::new(f(t))),
             Type::Box(t) => Type::Box(Box::new(f(t))),
+            Type::Slice(t) => Type::Slice(Box::new(f(t))),
             Type::Proj(t, tr, name) => Type::Proj(Box::new(f(t)), tr.clone(), name.clone()),
             Type::Int
             | Type::Bool
@@ -516,7 +538,7 @@ impl Type {
             (Type::Adt(a, _, xs), Type::Adt(b, _, ys))
             | (Type::Opaque(a, _, xs), Type::Opaque(b, _, ys)) => a == b && xs.len() == ys.len(),
             (Type::Ref(_, m, _), Type::Ref(_, n, _)) => m == n,
-            (Type::Box(_), Type::Box(_)) => true,
+            (Type::Box(_), Type::Box(_)) | (Type::Slice(_), Type::Slice(_)) => true,
             (Type::Proj(_, a, x), Type::Proj(_, b, y)) => a == b && x == y,
             (Type::Var(_), _) | (_, Type::Var(_)) => false,
             // Sets aren't equal element by element (see `unify`).
@@ -668,6 +690,7 @@ impl Type {
             }
             Type::Ref(_, m, t) => format!("&{}{}", if *m { "mut " } else { "" }, t.symbols()),
             Type::Box(t) => format!("Box<{}>", t.symbols()),
+            Type::Slice(t) => format!("[{}]", t.symbols()),
             Type::Proj(t, tr, name) => format!("<{} as {tr}>::{name}", t.symbols()),
             Type::Opaque(name, _, args) => {
                 let args: Vec<String> = args.iter().map(Type::symbols).collect();
@@ -736,6 +759,7 @@ impl fmt::Display for Type {
                 write!(f, "{t}")
             }
             Type::Box(t) => write!(f, "Box<{t}>"),
+            Type::Slice(t) => write!(f, "[{t}]"),
             // `T::Item` is what's written, and says enough in a message.
             Type::Proj(t, _, name) if matches!(**t, Type::Param(_)) => write!(f, "{t}::{name}"),
             Type::Proj(t, tr, name) => write!(f, "<{t} as {tr}>::{name}"),

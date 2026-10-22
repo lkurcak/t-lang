@@ -2,7 +2,7 @@
 // caller's block's to answer for: that's where it was said to be kept.
 use alloc::raw::RawBuf;
 
-fn second(b: &RawBuf<int>) -> int with unsafe { *b.get(1) }
+fn second(b: &RawBuf<int>) -> int with unsafe { b.slice(1, 2).len() }
 
 fn main() with {alloc, panic} {
     let mut b: RawBuf<int> = RawBuf::new(2);
@@ -14,4 +14,4 @@ fn main() with {alloc, panic} {
         b.free();
     }
 }
-// error: unsafe code broke its obligation: `RawBuf::get` of slot 1, which is uninitialised
+// error: unsafe code broke its obligation: `RawBuf::slice` of slots 1..2, but slot 1 is uninitialised

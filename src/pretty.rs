@@ -1322,6 +1322,7 @@ impl Printer<'_> {
                 }
                 text(head) + self.ty(inner)
             }
+            TypeExprKind::Slice(inner) => text("[") + self.ty(inner) + "]",
             TypeExprKind::Proj(inner, Some(tr), name) => {
                 text("<") + self.ty(inner) + " as " + &tr.name + ">::" + &name.name
             }

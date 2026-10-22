@@ -204,6 +204,10 @@
         "named": true
       },
       {
+        "type": "slice_type",
+        "named": true
+      },
+      {
         "type": "type_identifier",
         "named": true
       },
@@ -2409,6 +2413,22 @@
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "slice_type",
+    "named": true,
+    "fields": {
+      "element": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "_type",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {

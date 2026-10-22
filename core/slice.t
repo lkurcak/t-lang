@@ -1,0 +1,145 @@
+// Slices: values one after another in memory, seen through a reference.
+
+use crate::iter::Iterator;
+use crate::mem;
+use crate::option::Option;
+
+/// `[T]`: some number of `T`s one after another, seen through a reference,
+/// `&[T]` or `&mut [T]`, which knows how many. A slice is never a value of
+/// its own, so a type parameter never stands for one.
+///
+/// What's trusted is its intrinsics: each checks the index it's given
+/// against the slice's length, so none has an obligation, and
+/// `split_at_mut` gives two slices that share no values. The rest is safe
+/// code over them.
+impl<T> [T] {
+    /// How many values it has.
+    #[intrinsic]
+    pub fn len(&self) -> { n: int | n >= 0 };
+
+    /// Has it none?
+    pub fn is_empty(&self) -> bool { self.len() == 0 }
+
+    /// The value at `i`, or `None` if there's none: if `i` is negative, or
+    /// not less than `len()`.
+    #[intrinsic]
+    pub fn get(&self, i: int) -> Option<&T>;
+
+    /// The value at `i`, to change, or `None` if there's none.
+    #[intrinsic]
+    pub fn get_mut(&mut self, i: int) -> Option<&mut T>;
+
+    /// The first value, or `None` if it's empty.
+    pub fn first(&self) -> Option<&T> { self.get(0) }
+
+    /// The last value, or `None` if it's empty.
+    pub fn last(&self) -> Option<&T> { self.get(self.len() - 1) }
+
+    /// The values before index `mid` and those from it on, or `None` if
+    /// `mid` is negative or more than `len()`.
+    #[intrinsic]
+    pub fn split_at<'a>(&'a self, mid: int) -> Option<Split<'a, T>>;
+
+    /// The values before index `mid` and those from it on, each to change,
+    /// or `None` if `mid` is negative or more than `len()`. They share no
+    /// values, so both can be changed at once.
+    #[intrinsic]
+    pub fn split_at_mut<'a>(&'a mut self, mid: int) -> Option<SplitMut<'a, T>>;
+
+    /// Swaps the values at `i` and `j`, if there are values there, and says
+    /// whether it did. It's `split_at_mut` between them, so safe code.
+    pub fn swap(&mut self, i: int, j: int) -> bool {
+        if i < 0 || j < 0 || i >= self.len() || j >= self.len() {
+            return false;
+        }
+        if i == j {
+            return true;
+        }
+        let lo = if i < j { i } else { j };
+        let hi = if i < j { j } else { i };
+        match self.split_at_mut(hi) {
+            Option::Some(SplitMut { head, tail }) => match head.get_mut(lo) {
+                Option::Some(a) => match tail.get_mut(0) {
+                    Option::Some(b) => {
+                        mem::swap(a, b);
+                        true
+                    },
+                    Option::None => false,
+                },
+                Option::None => false,
+            },
+            Option::None => false,
+        }
+    }
+
+    /// Its values, by reference, front to back.
+    pub fn iter(&self) -> Iter<T> { Iter { rest: self } }
+
+    /// Its values, to change, front to back.
+    pub fn iter_mut(&mut self) -> IterMut<T> { IterMut { rest: self } }
+}
+
+/// A slice with no values, of any lifetime: it points at nothing.
+#[intrinsic]
+pub fn empty<'a, T>() -> &'a [T];
+
+/// A slice with no values, to change, of any lifetime: it points at
+/// nothing, so nothing else can see what it does.
+#[intrinsic]
+pub fn empty_mut<'a, T>() -> &'a mut [T];
+
+/// What `split_at` gives: the values before the index it's given, and
+/// those from it on.
+#[derive(Copy, Discard)]
+pub struct Split<'a, T> { pub head: &'a [T], pub tail: &'a [T] }
+
+/// What `split_at_mut` gives: the values before the index it's given, and
+/// those from it on, each to change.
+#[derive(Discard)]
+pub struct SplitMut<'a, T> { pub head: &'a mut [T], pub tail: &'a mut [T] }
+
+/// What `iter` gives: a reference to each value of `rest`, front to back.
+#[derive(Discard)]
+pub struct Iter<'a, T> { rest: &'a [T] }
+
+/// Safe code over `split_at`: each value is the head of what's left.
+impl<'a, T> Iterator for Iter<'a, T> {
+    type Item = &'a T;
+    effect e = {};
+
+    fn next(&mut self) -> Option<&'a T> {
+        let rest: &'a [T] = self.rest;
+        match rest.split_at(1) {
+            Option::Some(Split { head, tail }) => {
+                self.rest = tail;
+                head.get(0)
+            },
+            Option::None => Option::None,
+        }
+    }
+}
+
+/// What `iter_mut` gives: a reference to change each value of `rest`,
+/// front to back.
+#[derive(Discard)]
+pub struct IterMut<'a, T> { rest: &'a mut [T] }
+
+/// Safe code over `split_at_mut`: it takes what's left out of the
+/// iterator, leaving an empty slice, and keeps the tail. So each value it
+/// gives is in no slice it has any more, and nothing it gives later can
+/// be that value too.
+impl<'a, T> Iterator for IterMut<'a, T> {
+    type Item = &'a mut T;
+    effect e = {};
+
+    fn next(&mut self) -> Option<&'a mut T> {
+        let rest: &'a mut [T] = mem::replace(&mut self.rest, empty_mut());
+        match rest.split_at_mut(1) {
+            Option::Some(SplitMut { head, tail }) => {
+                self.rest = tail;
+                head.get_mut(0)
+            },
+            Option::None => Option::None,
+        }
+    }
+}

@@ -202,7 +202,8 @@ fn vary(
             let inner_v = if *m { Variance::Inv } else { Variance::Co };
             vary(inner, v.then(inner_v), d, variances, out);
         }
-        Type::Box(inner) => vary(inner, v, d, variances, out),
+        // A slice holds its `T`s, as a box does.
+        Type::Box(inner) | Type::Slice(inner) => vary(inner, v, d, variances, out),
         Type::Fn(sig) => {
             for p in &sig.params {
                 vary(p, v.then(Variance::Contra), d, variances, out);
@@ -272,7 +273,7 @@ fn wf_into(t: &Type, adts: &Adts, outlives: &HashMap<String, Vec<Bound>>, out: &
             type_outlives(inner, r, out);
             wf_into(inner, adts, outlives, out);
         }
-        Type::Box(inner) => wf_into(inner, adts, outlives, out),
+        Type::Box(inner) | Type::Slice(inner) => wf_into(inner, adts, outlives, out),
         Type::Adt(name, regions, args) => {
             let d = &adts[name];
             let s = Subst::new(&d.params, args).with_regions(&d.lifetimes, regions);
@@ -348,7 +349,7 @@ pub(crate) fn type_outlives(t: &Type, r: &Region, out: &mut Vec<Bound>) {
             push(out, Bound::Proj(t.clone(), r.clone()))
         }
         Type::Proj(inner, ..) => type_outlives(inner, r, out),
-        Type::Box(inner) => type_outlives(inner, r, out),
+        Type::Box(inner) | Type::Slice(inner) => type_outlives(inner, r, out),
         // Nor do effects, as an argument of a closure's type.
         Type::Fn(_)
         | Type::Effects(_)
@@ -599,7 +600,9 @@ impl Regions {
                 let inner = if *m { Variance::Inv } else { Variance::Co };
                 self.relate(adts, ta, tb, v.then(inner), span);
             }
-            (Type::Box(ta), Type::Box(tb)) => self.relate(adts, ta, tb, v, span),
+            (Type::Box(ta), Type::Box(tb)) | (Type::Slice(ta), Type::Slice(tb)) => {
+                self.relate(adts, ta, tb, v, span)
+            }
             (Type::Fn(f), Type::Fn(g)) => match v {
                 Variance::Co => self.relate_fns(adts, f, g, span),
                 Variance::Contra => self.relate_fns(adts, g, f, span),

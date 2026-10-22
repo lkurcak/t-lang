@@ -1,10 +1,12 @@
 // Lists: dense, resizable arrays.
 
+use core::slice::{Iter, IterMut};
+
 use crate::raw::RawBuf;
 
 /// A list of `T`s, one after another in a buffer on the heap, which grows
 /// as values are pushed. `get` sees a value by its index, from `0` up to,
-/// not including, `len()`.
+/// not including, `len()`, and `as_slice` sees them all, as a slice.
 ///
 /// It isn't `Discard`, as its buffer isn't: it's used up by `free`, or by
 /// `free_with` when its values aren't `Discard` either.
@@ -62,50 +64,35 @@ impl<T> List<T> {
         Option::Some(unsafe { self.buf.read(self.len) })
     }
 
+    /// Its values, as a slice.
+    pub fn as_slice(&self) -> &[T] {
+        // SAFETY: slots `0..len` hold values, and `len <= cap()`.
+        unsafe { self.buf.slice(0, self.len) }
+    }
+
+    /// Its values, as a slice to change.
+    pub fn as_mut_slice(&mut self) -> &mut [T] {
+        // SAFETY: slots `0..len` hold values, and `len <= cap()`. Nothing
+        // done through the slice can take one out.
+        unsafe { self.buf.slice_mut(0, self.len) }
+    }
+
     /// The value at `i`, or `None` if there's none: if `i` is negative, or
     /// not less than `len()`.
-    pub fn get(&self, i: int) -> Option<&T> {
-        if i >= 0 && i < self.len {
-            // SAFETY: slot `i` is below `len`, so it holds a value.
-            Option::Some(unsafe { self.buf.get(i) })
-        } else {
-            Option::None
-        }
-    }
+    pub fn get(&self, i: int) -> Option<&T> { self.as_slice().get(i) }
 
     /// The value at `i`, to change, or `None` if there's none.
-    pub fn get_mut(&mut self, i: int) -> Option<&mut T> {
-        if i >= 0 && i < self.len {
-            // SAFETY: slot `i` is below `len`, so it holds a value.
-            Option::Some(unsafe { self.buf.get_mut(i) })
-        } else {
-            Option::None
-        }
-    }
+    pub fn get_mut(&mut self, i: int) -> Option<&mut T> { self.as_mut_slice().get_mut(i) }
 
     /// Its values, by reference, front to back.
-    pub fn iter(&self) -> Iter<T> { Iter { list: self, next: 0 } }
+    pub fn iter(&self) -> Iter<T> { self.as_slice().iter() }
 
-    /// Swaps the values at `i` and `j`, if both are less than `len()`, and
+    /// Its values, to change, front to back.
+    pub fn iter_mut(&mut self) -> IterMut<T> { self.as_mut_slice().iter_mut() }
+
+    /// Swaps the values at `i` and `j`, if there are values there, and
     /// says whether it did.
-    pub fn swap(&mut self, i: { i: int | i >= 0 }, j: { j: int | j >= 0 }) -> bool {
-        if i >= self.len || j >= self.len {
-            return false;
-        }
-        if i == j {
-            return true;
-        }
-        // SAFETY: slots `i` and `j` are below `len`, so they hold values,
-        // and they're different slots, so each is read once and then
-        // written once, after it's empty.
-        unsafe {
-            let a = self.buf.read(i);
-            let b = self.buf.read(j);
-            self.buf.write(i, b);
-            self.buf.write(j, a);
-        }
-        true
-    }
+    pub fn swap(&mut self, i: int, j: int) -> bool { self.as_mut_slice().swap(i, j) }
 
     /// Gives each value, front to back, to `f`, and then the buffer back.
     pub fn free_with<e, F: FnMut(T) with e + Discard>(mut self, mut f: F) with e {
@@ -136,27 +123,4 @@ impl<T: Discard> List<T> {
 
     /// Throws all its values away, keeping the buffer for more.
     pub fn clear(&mut self) { self.truncate(0) }
-}
-
-/// What `List::iter` gives: a reference to each value of `list`, from
-/// index `next` on.
-#[derive(Discard)]
-pub struct Iter<'a, T> { list: &'a List<T>, next: { n: int | n >= 0 } }
-
-/// Safe code over `List::get`: each reference it gives borrows the list
-/// for as long as the iterator does.
-impl<'a, T> Iterator for Iter<'a, T> {
-    type Item = &'a T;
-    effect e = {};
-
-    fn next(&mut self) -> Option<&'a T> {
-        let list: &'a List<T> = self.list;
-        if self.next < list.len() {
-            let i = self.next;
-            self.next = i + 1;
-            list.get(i)
-        } else {
-            Option::None
-        }
-    }
 }

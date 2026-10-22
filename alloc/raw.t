@@ -51,21 +51,25 @@ impl<T> RawBuf<T> {
     #[intrinsic]
     pub fn read(&mut self, i: { i: int | i >= 0 }) -> T with unsafe;
 
-    /// The value in slot `i`.
+    /// The values in slots `lo` up to, not including, `hi`, as a slice.
     ///
     /// # Safety
     ///
-    /// `i < cap()`, and slot `i` is initialised.
+    /// `lo <= hi <= cap()`, and slots `lo..hi` are initialised. The slice
+    /// borrows the buffer, so they stay so while it lives.
     #[intrinsic]
-    pub fn get(&self, i: { i: int | i >= 0 }) -> &T with unsafe;
+    pub fn slice(&self, lo: { l: int | l >= 0 }, hi: int) -> &[T] with unsafe;
 
-    /// The value in slot `i`, to change.
+    /// The values in slots `lo` up to, not including, `hi`, as a slice to
+    /// change.
     ///
     /// # Safety
     ///
-    /// `i < cap()`, and slot `i` is initialised.
+    /// `lo <= hi <= cap()`, and slots `lo..hi` are initialised. The slice
+    /// borrows the buffer, so they stay so while it lives: nothing it does
+    /// can take a value out.
     #[intrinsic]
-    pub fn get_mut(&mut self, i: { i: int | i >= 0 }) -> &mut T with unsafe;
+    pub fn slice_mut(&mut self, lo: { l: int | l >= 0 }, hi: int) -> &mut [T] with unsafe;
 
     /// Gives its memory back.
     ///

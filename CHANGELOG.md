@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased
+
+Step 10: slices. See [docs/10-slices.md](docs/10-slices.md).
+
+### Added
+
+- Slices: `&[T]` and `&mut [T]`, references to some number of `T`s one
+  after another, with the length in the reference. `[T]` is a type only
+  right after `&` or `&mut`: never a value, a field, a type argument or
+  what's in a `Box`, and `*s` only a place, to borrow or call a method
+  of. A type parameter never stands for a slice, so `impl<T> Tr for &T`
+  isn't an impl for `&[int]`. `&[T]` is `Copy`, covariant in `T`; `&mut
+  [T]` is reborrowed, invariant in `T`.
+- `core::slice`: `len`, `is_empty`, `get` and `get_mut` (which return
+  `None` for an index out of range), `first`, `last`, `split_at` and
+  `split_at_mut` (which give a `Split` or `SplitMut` of two slices),
+  `swap`, `iter` and `iter_mut`, and `slice::empty()` and `empty_mut()`.
+  None is unsafe, and none panics. The intrinsics are `len`, `get`,
+  `get_mut`, `split_at`, `split_at_mut` and the empty slices; the rest,
+  `iter_mut` included, is safe code over them.
+- `RawBuf::slice(lo, hi)` and `slice_mut(lo, hi)`, unsafe: the values in
+  slots `lo..hi`, as a slice. The interpreter checks the obligation, `lo
+  <= hi <= cap()` and every slot initialised.
+- `List::as_slice`, `as_mut_slice` and `iter_mut`.
+- `s[i]` is a syntax error that says to use `get`: indexing waits for
+  refinements that can prove it in range.
+
+### Changed
+
+- `List::get`, `get_mut`, `iter` and `swap` are the slice's: `List::iter`
+  gives a `core::slice::Iter`, and `alloc::list::Iter` is gone.
+  `List::swap` takes `int`s, and says `false` for a negative one.
+- `RawBuf::get` and `get_mut` are gone: `slice(i, i + 1)` does what they
+  did.
+
 ## 0.19.0 (2026-10-22)
 
 Step 9.1: lists. See [docs/09.1-list.md](docs/09.1-list.md).

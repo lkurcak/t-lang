@@ -94,21 +94,29 @@ pub const BUILTINS: &[&str] = &["print", "print_bool"];
 
 /// The intrinsics: functions the core and alloc libraries declare with no
 /// body, which the compiler provides (see `core/mem.t`, `alloc/raw.t`), by
-/// symbol, or for a method, its type's symbol and its name. Each is checked
+/// symbol, or for a method, its type's symbol and its name (`[T]` for a
+/// slice's). Each is checked
 /// like any function, by its signature; what it does is what the checker
 /// trusts.
 pub const INTRINSICS: &[&str] = &[
     "core::mem::swap",
     "core::panic::panic",
     "core::num::checked_mul",
+    "core::slice::empty",
+    "core::slice::empty_mut",
+    "[T]::len",
+    "[T]::get",
+    "[T]::get_mut",
+    "[T]::split_at",
+    "[T]::split_at_mut",
     "alloc::raw::RawBuf::new",
     "alloc::raw::RawBuf::empty",
     "alloc::raw::RawBuf::cap",
     "alloc::raw::RawBuf::grow",
     "alloc::raw::RawBuf::write",
     "alloc::raw::RawBuf::read",
-    "alloc::raw::RawBuf::get",
-    "alloc::raw::RawBuf::get_mut",
+    "alloc::raw::RawBuf::slice",
+    "alloc::raw::RawBuf::slice_mut",
     "alloc::raw::RawBuf::free",
 ];
 
@@ -607,6 +615,7 @@ impl Checker {
                     Some(&(_, MethodOf::Impl(k))) => {
                         match &self.traits.impls[self.impl_ids[k]].self_ty {
                             Type::Adt(symbol, ..) => format!("{symbol}::{}", f.name.name),
+                            Type::Slice(_) => format!("[T]::{}", f.name.name),
                             t => format!("{t}::{}", f.name.name),
                         }
                     }

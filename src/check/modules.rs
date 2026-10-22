@@ -1041,7 +1041,7 @@ impl Rewrite<'_> {
                     self.ty(t)?;
                 }
             }
-            TypeExprKind::Ref(_, _, inner) => self.ty(inner)?,
+            TypeExprKind::Ref(_, _, inner) | TypeExprKind::Slice(inner) => self.ty(inner)?,
             TypeExprKind::Proj(..) => {
                 // `a::Point`, read as a projection, if `a` is a module.
                 if let Some(path) = plain_path(t)

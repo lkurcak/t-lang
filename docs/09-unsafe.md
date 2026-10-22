@@ -41,10 +41,12 @@ small, and trusted.
 *initialised* (holding a value) or not. `RawBuf::new(cap)` makes one with
 every slot uninitialised, and `grow` gives it more. What uses a slot is
 `unsafe`: `write` puts a value in one that's empty, `read` moves one out,
-`get` and `get_mut` borrow it, and `free` gives the memory back when
-they're all empty. Each has an *obligation*, written in its `# Safety`,
-that the checker doesn't check: the index is less than `cap()`, and the
-slot is initialised, or isn't. That the index isn't negative is its type,
+`slice` and `slice_mut` borrow a run of them as a slice (since step 10,
+see docs/10-slices.md; until then it was `get` and `get_mut`, of one
+slot), and `free` gives the memory back when they're all empty. Each has
+an *obligation*, written in its `# Safety`, that the checker doesn't
+check: the index is less than `cap()`, and the slot is initialised, or
+isn't. That the index isn't negative is its type,
 `{ i: int | i >= 0 }`, which the checker does prove (see
 docs/08-refinement-types.md): the upper bound would need a refinement to
 name `cap()`, which it can't yet. Nothing in the buffer remembers which slots hold
@@ -53,8 +55,8 @@ what. The code using it does, with `len` in a `List`.
 A typed buffer rather than pointers into bytes keeps the obligations
 local: each is about one slot of one buffer. There's no pointer
 arithmetic, no casts, and no aliasing rules beyond the borrow checker's:
-`get` borrows the buffer as `&self` and `get_mut` as `&mut self`, so a
-reference into it can't outlive it, nor a `grow` that moves the slots.
+`slice` borrows the buffer as `&self` and `slice_mut` as `&mut self`, so
+a slice of it can't outlive it, nor a `grow` that moves the slots.
 
 ```rust,error
 use alloc::raw::RawBuf;
@@ -62,12 +64,12 @@ use alloc::raw::RawBuf;
 fn main() with {alloc, panic} {
     let mut b: RawBuf<int> = RawBuf::new(1);
     // SAFETY: slot 0 is uninitialised, then holds the 5.
-    let r = unsafe {
+    let s = unsafe {
         b.write(0, 5);
-        b.get(0)
+        b.slice(0, 1)
     };
     b.grow(8);
-    print(*r);
+    print(s.len());
     // SAFETY: slot 0 holds the 5; then every slot is uninitialised.
     unsafe {
         b.read(0);
@@ -103,7 +105,7 @@ the obligations of the operations in it, so it doesn't have the effect:
 use alloc::raw::RawBuf;
 
 /// The caller must know slot 0 holds a value.
-fn first(b: &RawBuf<int>) -> int with unsafe { *b.get(0) }
+fn first(b: &RawBuf<int>) -> Option<&int> with unsafe { b.slice(0, 1).first() }
 
 fn main() with {alloc, panic} {
     let mut b: RawBuf<int> = RawBuf::new(1);
@@ -111,7 +113,7 @@ fn main() with {alloc, panic} {
     // out before the buffer is freed.
     unsafe {
         b.write(0, 7);
-        print(first(&b)); // expect: 7
+        print(*first(&b).unwrap()); // expect: 7
         b.read(0);
         b.free();
     }
@@ -212,10 +214,10 @@ block.
 The obligations make each operation safe on its own: an index in range,
 `>= 0` by its type and `< cap()` by the obligation, is memory the buffer
 has; a slot written only when it's empty loses no
-value; read, `get` and `get_mut` only of a slot that holds one. What they
+value; read, `slice` and `slice_mut` only of slots that hold one. What they
 don't cover, the types do. A buffer is linear, so it's freed once, and
 then only when it's empty, so nothing in it is lost, and nothing is left
-pointing into it: `get` and `get_mut` borrow it, and `free` takes it by
+pointing into it: `slice` and `slice_mut` borrow it, and `free` takes it by
 value, as `grow` takes it by `&mut`. Its type parameter is covariant,
 which is sound for what owns its `T`s, and its regions are its type's
 arguments', so a buffer of `&'a int` can't outlive `'a`.

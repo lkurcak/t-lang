@@ -341,7 +341,9 @@ impl Walk<'_> {
                     .flat_map(EffectSet::types)
                     .for_each(|t| self.ty(t));
             }
-            TypeExprKind::Ref(_, _, inner) | TypeExprKind::Proj(inner, ..) => self.ty(inner),
+            TypeExprKind::Ref(_, _, inner)
+            | TypeExprKind::Slice(inner)
+            | TypeExprKind::Proj(inner, ..) => self.ty(inner),
             TypeExprKind::Impl(bounds) => {
                 for t in bounds.iter().flat_map(BoundItem::types) {
                     self.ty(t);

@@ -1023,7 +1023,9 @@ fn regions_at(pat: &Type, t: &Type, lifetimes: &[String], out: &mut HashMap<Stri
                 regions_at(x, y, lifetimes, out);
             }
         }
-        (Type::Box(a), Type::Box(b)) => regions_at(a, b, lifetimes, out),
+        (Type::Box(a), Type::Box(b)) | (Type::Slice(a), Type::Slice(b)) => {
+            regions_at(a, b, lifetimes, out)
+        }
         _ => {}
     }
 }
@@ -1086,10 +1088,17 @@ fn param(name: &str) -> Type {
 ///   bounds (`Checker::hide`), so the same blanket impl is found for that,
 ///   and, by coherence, no other impl of the trait exists: monomorphisation,
 ///   which only sees the hidden type, finds the impl the checker did.
+/// - A parameter never matches a slice, `[T]`, as no type parameter
+///   stands for one (`Type::Slice`): an impl's methods could have its `T`
+///   by value. `overlap` agrees, so `impl<T> Tr for &T` and `impl Tr for
+///   &[int]` don't overlap, and the checker and monomorphisation find the
+///   same one.
 pub fn matches(pat: &Type, t: &Type, params: &[String], found: &mut HashMap<String, Type>) -> bool {
     match pat {
+        // A parameter never stands for a slice (see `Type::Slice`).
         Type::Param(p) if params.contains(p) => match found.get(p) {
             Some(prev) => prev.erased() == t.erased(),
+            None if matches!(t, Type::Slice(_)) => false,
             None => {
                 found.insert(p.clone(), t.clone());
                 true
@@ -1128,7 +1137,7 @@ fn unify(a: &Type, b: &Type, params: &[String], s: &mut HashMap<String, Type>) -
     match (&a, &b) {
         (Type::Param(p), Type::Param(q)) if p == q => true,
         (Type::Param(p), t) | (t, Type::Param(p)) if var(&Type::Param(p.clone())) => {
-            if occurs(p, t, s) {
+            if occurs(p, t, s) || matches!(t, Type::Slice(_)) {
                 return false;
             }
             s.insert(p.clone(), t.clone());

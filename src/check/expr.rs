@@ -5,7 +5,7 @@ use super::info::{Instance, Resolved};
 use super::lints::{narrowable, unreachable_alt, unreachable_code, unused_label};
 use super::scope::{FnScope, to_closure};
 use super::typed::Res;
-use super::{Checker, ITERATOR, effects, modules, plural, source_name, traits, unify};
+use super::{Checker, ITERATOR, effects, generics, modules, plural, source_name, traits, unify};
 use crate::ast::*;
 use crate::error::{Edit, Error, Fix, Span};
 use crate::exhaust::{self, Redundant};
@@ -77,7 +77,15 @@ impl Checker {
             // `&x` where a `&T` is wanted: `x` should be a `T`.
             ExprKind::Unary(op @ (UnOp::Ref | UnOp::RefMut), x) => match self.shallow(want) {
                 Type::Ref(_, m, inner) if m == (*op == UnOp::RefMut) => {
-                    self.check(x, &inner)?;
+                    match self.shallow(&inner) {
+                        Type::Slice(_) => {
+                            let t = self.synth_pointee(x)?;
+                            self.unify_or(&t, &inner, x.span, |a, b| {
+                                format!("expected `{b}`, found `{a}`")
+                            })?;
+                        }
+                        _ => self.check(x, &inner)?,
+                    }
                     Type::Ref(Region::Erased, m, inner)
                 }
                 _ => self.synth(e)?,
@@ -89,6 +97,7 @@ impl Checker {
         if let Some(target) = self.coerce(e, &got, want) {
             return match self.unify(&target, want) {
                 Ok(()) => Ok(()),
+                Err(unify::Clash::Unsized(v, t)) => Err(self.unsized_var(v, &t, result_span(e))),
                 Err(_) => Err(Error::ty(
                     result_span(e),
                     format!(
@@ -223,6 +232,22 @@ impl Checker {
         Ok(t)
     }
 
+    /// The type of `e`, a place borrowed or a method's receiver, which
+    /// may be what a slice reference points to, `*s`: the one place a
+    /// `[T]` can be, as it's never used as a value there.
+    pub(super) fn synth_pointee(&mut self, e: &Expr) -> Result<Type, Error> {
+        if let ExprKind::Unary(UnOp::Deref, x) = &e.kind {
+            let t = self.synth(x)?;
+            if let Type::Ref(_, _, inner) = self.shallow(&t)
+                && let Type::Slice(_) = *inner
+            {
+                self.typed.exprs.insert(e.id, (*inner).clone());
+                return Ok(*inner);
+            }
+        }
+        self.synth(e)
+    }
+
     fn synth_inner(&mut self, e: &Expr) -> Result<Type, Error> {
         match &e.kind {
             ExprKind::Move(_) => unreachable!("written by lift"),
@@ -303,16 +328,22 @@ impl Checker {
             // that clashes with the borrow while it lasts. `&` of a value
             // that isn't a place borrows a temporary holding it.
             ExprKind::Unary(op @ (UnOp::Ref | UnOp::RefMut), x) => {
-                let t = self.synth(x)?;
+                let t = self.synth_pointee(x)?;
                 Ok(Type::Ref(Region::Erased, *op == UnOp::RefMut, Box::new(t)))
             }
 
             //   Γ ⊢ e : &'r T         Γ ⊢ e : &'r mut T         Γ ⊢ e : Box<T>
             //  --------------- (T-Deref) ------------------- ------------------
             //    Γ ⊢ *e : T              Γ ⊢ *e : T              Γ ⊢ *e : T
+            //
+            // What a slice reference points to is no value of its own: it's
+            // only a place, to borrow or call a method of (`synth_pointee`).
             ExprKind::Unary(UnOp::Deref, x) => {
                 let t = self.synth(x)?;
                 match self.shallow(&t) {
+                    Type::Ref(_, _, inner) if matches!(*inner, Type::Slice(_)) => {
+                        Err(generics::unsized_slice(e.span, self.solved(&inner)))
+                    }
                     Type::Ref(_, _, inner) | Type::Box(inner) => Ok(*inner),
                     Type::Var(_) => Err(Error::ty(
                         x.span,
@@ -833,7 +864,7 @@ impl Checker {
         targs: &[TypeExpr],
         args: &[Expr],
     ) -> Result<Type, Error> {
-        let t = self.synth(x)?;
+        let t = self.synth_pointee(x)?;
         let mut base = self.solved(&t);
         let mut derefs = 0;
         while let Type::Ref(_, _, inner) | Type::Box(inner) = base {

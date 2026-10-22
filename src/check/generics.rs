@@ -155,6 +155,15 @@ impl Lifetimes<'_> {
 pub(crate) type ProjNames<'a> =
     dyn Fn(Type, Option<&Ident>, &Ident, &TypeExpr) -> Result<Type, Error> + 'a;
 
+/// That slice `t` is written somewhere other than right after `&` or
+/// `&mut`, where it would be a value of its own.
+pub(crate) fn unsized_slice(span: Span, t: impl std::fmt::Display) -> Error {
+    Error::ty(
+        span,
+        format!("a slice `{t}` can only be behind a reference, as in `&{t}`"),
+    )
+}
+
 /// Turns a type as written (`TypeExpr`) into a type as understood (`Type`).
 /// `names` says what the name of a type written refers to, and `params` are the type
 /// parameters in scope, for names it says nothing about. `proj` says what a
@@ -243,9 +252,14 @@ fn resolve_in(
             let span = Span::new(t.span.start, t.span.start + 1);
             let l = l.as_ref().map(|l| l.name.as_str());
             let region = region(l, span, lifetimes, binder.as_deref_mut())?;
-            let inner = go(inner, lifetimes, binder)?;
+            // The one place a slice can be.
+            let inner = match &inner.kind {
+                TypeExprKind::Slice(elem) => Type::Slice(Box::new(go(elem, lifetimes, binder)?)),
+                _ => go(inner, lifetimes, binder)?,
+            };
             Ok(Type::Ref(region, *mutable, Box::new(inner)))
         }
+        TypeExprKind::Slice(_) => Err(unsized_slice(t.span, t)),
         TypeExprKind::Named(name, args) => {
             // Lifetime arguments come first.
             let lts = args
@@ -446,6 +460,7 @@ pub(super) fn name_holes(t: &TypeExpr, holes: &mut Vec<(String, Span)>) -> TypeE
         TypeExprKind::Ref(l, m, inner) => {
             TypeExprKind::Ref(l.clone(), *m, Box::new(name_holes(inner, holes)))
         }
+        TypeExprKind::Slice(inner) => TypeExprKind::Slice(Box::new(name_holes(inner, holes))),
         TypeExprKind::Proj(inner, tr, name) => {
             TypeExprKind::Proj(Box::new(name_holes(inner, holes)), tr.clone(), name.clone())
         }

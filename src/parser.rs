@@ -1513,6 +1513,17 @@ impl Parser {
                     id: self.id(),
                 })
             }
+            // `[T]`, a slice.
+            Tok::LBracket => {
+                self.bump();
+                let inner = self.ty()?;
+                let end = self.expect(Tok::RBracket)?;
+                Ok(TypeExpr {
+                    kind: TypeExprKind::Slice(Box::new(inner)),
+                    span: start.to(end),
+                    id: self.id(),
+                })
+            }
             // `{ v: int | v > 0 }`
             Tok::LBrace => {
                 self.bump();
@@ -1847,6 +1858,12 @@ impl Parser {
     fn postfix(&mut self) -> Result<Expr, Error> {
         let mut e = self.primary()?;
         loop {
+            if *self.peek() == Tok::LBracket {
+                return Err(Error::syntax(
+                    self.span(),
+                    "there's no indexing with `[..]` yet; use `.get(..)`, which gives an `Option`",
+                ));
+            }
             if self.eat(&Tok::LParen) {
                 let (args, end) = self.args()?;
                 let span = e.span.to(end);

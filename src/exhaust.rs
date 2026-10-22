@@ -424,7 +424,8 @@ impl Cx<'_> {
             | Type::Proj(..)
             | Type::Opaque(..)
             | Type::Var(_)
-            | Type::Box(_) => None,
+            | Type::Box(_)
+            | Type::Slice(_) => None,
             Type::Ref(..) => unreachable!("peeled"),
             Type::Effects(_) | Type::Alloc | Type::Panic | Type::Unsafe => {
                 unreachable!("effects have no values")
