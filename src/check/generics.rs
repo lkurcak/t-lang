@@ -395,6 +395,7 @@ pub(crate) fn resolve_effects(
             EffectKind::Named(n) => match n.name.as_str() {
                 "panic" => Type::Panic,
                 "alloc" => Type::Alloc,
+                "unsafe" => Type::Unsafe,
                 name if params.iter().any(|p| p == name) => match is_effect_name(name) {
                     true => Type::Param(name.to_string()),
                     false => {

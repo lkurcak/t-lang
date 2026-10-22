@@ -92,20 +92,44 @@ use unify::Var;
 /// Built-in functions, available everywhere. Shared with the interpreter.
 pub const BUILTINS: &[&str] = &["print", "print_bool"];
 
-/// The intrinsics: functions the core library declares with no body, which
-/// the compiler provides (see `core/mem.t`), by symbol. Each is checked
+/// The intrinsics: functions the core and alloc libraries declare with no
+/// body, which the compiler provides (see `core/mem.t`, `alloc/raw.t`), by
+/// symbol, or for a method, its type's symbol and its name. Each is checked
 /// like any function, by its signature; what it does is what the checker
 /// trusts.
 pub const INTRINSICS: &[&str] = &[
     "core::mem::swap",
     "core::panic::panic",
     "core::num::checked_mul",
+    "alloc::raw::RawBuf::new",
+    "alloc::raw::RawBuf::cap",
+    "alloc::raw::RawBuf::grow",
+    "alloc::raw::RawBuf::write",
+    "alloc::raw::RawBuf::read",
+    "alloc::raw::RawBuf::get",
+    "alloc::raw::RawBuf::get_mut",
+    "alloc::raw::RawBuf::free",
 ];
+
+/// The intrinsic structs, by symbol: types the alloc library declares
+/// with no fields, which only the compiler makes and looks inside, by the
+/// intrinsic methods of their impls.
+pub const INTRINSIC_TYPES: &[&str] = &["alloc::raw::RawBuf"];
 
 pub(crate) use modules::FOR_ITERATOR;
 
 /// The symbol of the core library's `Iterator`, which a `for` loop uses.
 pub(crate) const ITERATOR: &str = "core::iter::Iterator";
+
+/// That only the built-in libraries can declare an intrinsic, written at
+/// `at`.
+pub(super) fn not_library(at: Span) -> Error {
+    Error::ty(
+        at,
+        "only `core` and `alloc` can declare an intrinsic: what it does is what the checker \
+         trusts",
+    )
+}
 
 /// The type of built-in function `name`.
 pub(crate) fn builtin_scheme(name: &str) -> Scheme {
@@ -134,11 +158,11 @@ pub fn check(prog: &mut Program, warnings: &mut Vec<Warning>) -> (Info, Result<(
     let result = cx.program(prog);
     cx.type_notes(prog);
     cx.info.types = cx.defs.types.clone();
-    let core_types = cx.types.iter().map(|t| (&t.symbol, t.module));
-    let core_fns = cx.fns.iter().map(|f| (&f.symbol, f.module));
-    cx.info.core_symbols = core_types
-        .chain(core_fns)
-        .filter(|&(_, m)| cx.modules.in_core(m))
+    let lib_types = cx.types.iter().map(|t| (&t.symbol, t.module));
+    let lib_fns = cx.fns.iter().map(|f| (&f.symbol, f.module));
+    cx.info.library_symbols = lib_types
+        .chain(lib_fns)
+        .filter(|&(_, m)| cx.modules.in_library(m))
         .map(|(s, _)| s.clone())
         .collect();
     cx.info.projections = cx.proj_traits.take();
@@ -159,6 +183,20 @@ fn check_main(prog: &Program) -> Result<(), Error> {
         None => Err(Error::ty(Span::new(0, 0), "program has no `main` function")),
         Some(main) if !main.params.is_empty() => {
             Err(Error::ty(main.name.span, "`main` must not take parameters"))
+        }
+        // Its obligations would be its caller's to keep, and nothing calls
+        // it: they'd be kept by no one.
+        Some(main)
+            if let Some(e) = main
+                .effects
+                .iter()
+                .flat_map(|e| &e.items)
+                .find(|e| matches!(&e.kind, EffectKind::Named(n) if n.name == "unsafe")) =>
+        {
+            Err(Error::ty(
+                e.span,
+                "`main` can't say `with unsafe`: nothing calls it to keep its obligations",
+            ))
         }
         Some(_) => Ok(()),
     }
@@ -373,6 +411,11 @@ pub(crate) struct Checker {
     /// What must hold of effect sets once the function's variables are
     /// solved.
     withins: Vec<effects::Within>,
+    /// The `unsafe` blocks in the body being checked.
+    unsafe_blocks: Vec<Span>,
+    /// The effects of each site in an `unsafe` block, by the block, to
+    /// tell which have something unsafe in them.
+    unsafe_uses: Vec<(Span, Type)>,
     /// Where the closure is whose effects each effect variable is, by its
     /// number, for messages.
     effect_owners: HashMap<u32, Span>,
@@ -471,6 +514,8 @@ impl Checker {
             sig_owner: Default::default(),
             effect_sites: Vec::new(),
             withins: Vec::new(),
+            unsafe_blocks: Vec::new(),
+            unsafe_uses: Vec::new(),
             effect_owners: HashMap::new(),
             effect_vars: HashSet::new(),
             in_trait_impl: false,
@@ -553,17 +598,23 @@ impl Checker {
                 ));
             }
             if let Some(at) = f.intrinsic {
-                if !self.modules.in_core(f.module) {
-                    return Err(Error::ty(
-                        at,
-                        "only `core` can declare an intrinsic: what it does is what the checker \
-                         trusts",
-                    ));
+                if !self.modules.in_library(f.module) {
+                    return Err(not_library(at));
                 }
-                if !INTRINSICS.contains(&self.fn_symbols[i].as_str()) {
+                // A method's is its type's: `alloc::raw::RawBuf::new`.
+                let name = match method {
+                    Some(&(_, MethodOf::Impl(k))) => {
+                        match &self.traits.impls[self.impl_ids[k]].self_ty {
+                            Type::Adt(symbol, ..) => format!("{symbol}::{}", f.name.name),
+                            t => format!("{t}::{}", f.name.name),
+                        }
+                    }
+                    _ => self.fn_symbols[i].clone(),
+                };
+                if !INTRINSICS.contains(&name.as_str()) {
                     return Err(Error::ty(
                         f.name.span,
-                        format!("there's no intrinsic `{}`", self.fn_symbols[i]),
+                        format!("there's no intrinsic `{name}`"),
                     ));
                 }
             }
@@ -591,6 +642,24 @@ impl Checker {
                 }
                 None => self.fn_scheme(f)?,
             };
+            // What `main` returns is shown, and then thrown away: nothing
+            // can use it up.
+            if parent.is_none()
+                && method.is_none()
+                && f.module == ROOT
+                && f.name.name == "main"
+                && let Type::Fn(sig) = &scheme.ty
+                && !self.is_discard(&sig.ret)
+            {
+                return Err(Error::ty(
+                    f.ret.span,
+                    format!(
+                        "`main` can't return a `{}`, which isn't `Discard`: what it returns is \
+                         thrown away at the end, as nothing can use it up",
+                        sig.ret
+                    ),
+                ));
+            }
             let name = &f.name.name;
             let symbol = self.fn_symbols[i].clone();
             self.receivers.push(f.receiver().is_some());
@@ -845,6 +914,23 @@ impl Checker {
         ))
     }
 
+    /// Checks that the struct with symbol `symbol`, written at `at` in a
+    /// literal or pattern, isn't intrinsic: what's in one is the
+    /// compiler's, so a literal would be one with nothing behind it, and a
+    /// pattern would use one up without its methods.
+    fn not_intrinsic(&self, symbol: &str, at: Span) -> Result<(), Error> {
+        match self.types.iter().find(|d| d.symbol == symbol) {
+            Some(def) if def.intrinsic.is_some() => Err(Error::ty(
+                at,
+                format!(
+                    "`{}` is intrinsic: only its own functions make one or take one apart",
+                    source_name(symbol)
+                ),
+            )),
+            _ => Ok(()),
+        }
+    }
+
     /// Is the struct with symbol `symbol` abstract here: does it have
     /// fields that can't be seen? Then code here can only take it apart if
     /// its module says that's fine, by making it `Discard` (see
@@ -855,6 +941,15 @@ impl Checker {
                 && !d.private.is_empty()
                 && !self.modules.within(self.module, d.module)
         })
+    }
+
+    /// Is `t` a struct or enum of a library built into the compiler, which
+    /// a program can't change?
+    pub(crate) fn is_library_type(&self, t: &Type) -> bool {
+        let Type::Adt(symbol, ..) = t else {
+            return false;
+        };
+        (self.types.iter()).any(|d| d.symbol == *symbol && self.modules.in_library(d.module))
     }
 
     /// The module of the struct or enum with symbol `symbol`, for messages.

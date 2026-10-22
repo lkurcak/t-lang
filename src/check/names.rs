@@ -32,6 +32,9 @@ pub(super) struct TypeDef {
     /// Its fields that aren't `pub`: none for an enum, whose variants are
     /// public wherever it is.
     pub(super) private: Vec<String>,
+    /// Where its `#[intrinsic]` is, if it's an intrinsic struct: one only
+    /// the compiler makes and takes apart.
+    pub(super) intrinsic: Option<crate::error::Span>,
 }
 
 /// What a name in a type refers to, where it's written: a struct or enum,
@@ -234,12 +237,17 @@ impl Walk<'_> {
                     .collect(),
                 TypeDecl::Enum(_) => Vec::new(),
             };
+            let intrinsic = match d {
+                TypeDecl::Struct(s) => s.intrinsic,
+                TypeDecl::Enum(_) => None,
+            };
             let def = TypeDef {
                 symbol,
                 parent,
                 block,
                 module: d.module(),
                 private,
+                intrinsic,
             };
             self.defs.insert(name.id, def);
         }

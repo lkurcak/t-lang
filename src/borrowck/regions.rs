@@ -112,6 +112,14 @@ impl AdtInfo {
                     changed |= variances.insert((*n).clone(), inv.clone()) != Some(inv);
                     continue;
                 }
+                // An intrinsic type has no fields to say how it holds its
+                // parameters. `RawBuf<T>` owns its `T`s, as a `Box<T>`
+                // does, so it's covariant in it.
+                if crate::check::INTRINSIC_TYPES.contains(&n.as_str()) {
+                    let co = vec![Variance::Co; d.lifetimes.len() + d.params.len()];
+                    changed |= variances.insert((*n).clone(), co.clone()) != Some(co);
+                    continue;
+                }
                 let mut v = variances[*n].clone();
                 for t in field_types(adts, n) {
                     vary(&t, Variance::Co, d, &variances, &mut v);
@@ -238,7 +246,8 @@ fn vary(
         | Type::Never
         | Type::Var(_)
         | Type::Alloc
-        | Type::Panic => {}
+        | Type::Panic
+        | Type::Unsafe => {}
     }
 }
 
@@ -295,6 +304,7 @@ fn wf_into(t: &Type, adts: &Adts, outlives: &HashMap<String, Vec<Bound>>, out: &
         | Type::Effects(_)
         | Type::Alloc
         | Type::Panic
+        | Type::Unsafe
         | Type::Int
         | Type::Bool
         | Type::Unit
@@ -344,6 +354,7 @@ pub(crate) fn type_outlives(t: &Type, r: &Region, out: &mut Vec<Bound>) {
         | Type::Effects(_)
         | Type::Alloc
         | Type::Panic
+        | Type::Unsafe
         | Type::Int
         | Type::Bool
         | Type::Unit

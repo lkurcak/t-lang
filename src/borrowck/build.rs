@@ -587,6 +587,7 @@ impl<'a> Builder<'a> {
                 self.assign(dest, unit, &Type::Unit, span, false);
             }
             ExprKind::Block(stmts, tail) => self.block(stmts, tail.as_deref(), dest, span),
+            ExprKind::Unsafe(block) => self.expr_into_uncoerced(block, dest),
             ExprKind::StructLit(_, _, inits) => {
                 let t = self.ty(e);
                 self.regions.well_formed(self.adts(), self.info, &t, span);

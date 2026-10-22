@@ -315,6 +315,8 @@ pub(super) struct Outer {
     effect_sites: Vec<super::effects::Site>,
     in_trait_impl: bool,
     withins: Vec<super::effects::Within>,
+    unsafe_blocks: Vec<Span>,
+    unsafe_uses: Vec<(Span, crate::types::Type)>,
 }
 
 impl Checker {
@@ -346,6 +348,8 @@ impl Checker {
             effect_sites: std::mem::take(&mut self.effect_sites),
             in_trait_impl: std::mem::take(&mut self.in_trait_impl),
             withins: std::mem::take(&mut self.withins),
+            unsafe_blocks: std::mem::take(&mut self.unsafe_blocks),
+            unsafe_uses: std::mem::take(&mut self.unsafe_uses),
         };
         self.closure_fix = fix.map(|fix| (outer.barrier, fix));
         let result = self.body(f, id);
@@ -367,6 +371,8 @@ impl Checker {
         self.effect_sites = outer.effect_sites;
         self.in_trait_impl = outer.in_trait_impl;
         self.withins = outer.withins;
+        self.unsafe_blocks = outer.unsafe_blocks;
+        self.unsafe_uses = outer.unsafe_uses;
         result
     }
 }

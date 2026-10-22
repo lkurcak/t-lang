@@ -202,6 +202,7 @@ impl<'p> Mono<'p> {
         let mut out = Program {
             mods: prog.mods.clone(),
             core: None,
+            alloc: None,
             uses: Vec::new(),
             types: Vec::new(),
             traits: Vec::new(),
@@ -250,7 +251,7 @@ impl<'p> Mono<'p> {
         // functions' signatures may make, like `Option<int>`.
         let lazy = |name: &str| {
             let of = name.split("::<").next().unwrap_or(name);
-            self.info.core_symbols.contains(name) || self.info.core_symbols.contains(of)
+            self.info.library_symbols.contains(name) || self.info.library_symbols.contains(of)
         };
         let mut used = HashSet::new();
         let mut kept_types: Vec<bool> = out.types.iter().map(|d| !lazy(&d.name().name)).collect();
@@ -410,6 +411,7 @@ impl<'p> Mono<'p> {
                         ty: cx.ty(&f.ty),
                     })
                     .collect(),
+                intrinsic: st.intrinsic,
             }),
             TypeDecl::Enum(e) => TypeDecl::Enum(EnumDecl {
                 doc: e.doc.clone(),
@@ -707,7 +709,7 @@ impl Cx<'_, '_, '_> {
             Type::Param(_) | Type::Var(_) | Type::Proj(..) | Type::Opaque(..) => {
                 unreachable!("`{t}` left after monomorphising")
             }
-            Type::Effects(_) | Type::Alloc | Type::Panic => {
+            Type::Effects(_) | Type::Alloc | Type::Panic | Type::Unsafe => {
                 unreachable!("effects `{t}` written as a type")
             }
         };
@@ -718,7 +720,7 @@ impl Cx<'_, '_, '_> {
         }
     }
 
-    /// How to write effects `t`, which are `panic` and `alloc` only by now:
+    /// How to write effects `t`, which are `alloc`, `panic` and `unsafe` only by now:
     /// nothing, if there are none.
     fn written_effects(&mut self, t: &Type, span: Span) -> Option<EffectSet> {
         let items: Vec<Effect> = t
@@ -726,7 +728,7 @@ impl Cx<'_, '_, '_> {
             .iter()
             .map(|e| {
                 let name = match e {
-                    Type::Alloc | Type::Panic => e.to_string(),
+                    Type::Alloc | Type::Panic | Type::Unsafe => e.to_string(),
                     e => unreachable!("effect `{e}` left after monomorphising"),
                 };
                 let id = self.m.id();
@@ -1037,6 +1039,7 @@ impl Cx<'_, '_, '_> {
                 Box::new(self.expr(body)),
             ),
             ExprKind::Loop(label, body) => ExprKind::Loop(label.clone(), Box::new(self.expr(body))),
+            ExprKind::Unsafe(block) => ExprKind::Unsafe(Box::new(self.expr(block))),
             ExprKind::Move(x) => ExprKind::Move(Box::new(self.expr(x))),
             ExprKind::Return(x) => ExprKind::Return(x.as_ref().map(|x| Box::new(self.expr(x)))),
             ExprKind::Break(label, x) => {

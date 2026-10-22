@@ -223,6 +223,11 @@ pub enum Lint {
     EmptyRanges,
     /// An effect a function says it may have that nothing in it has.
     UnusedEffects,
+    /// An `unsafe` block with nothing unsafe in it.
+    UnusedUnsafe,
+    /// An `unsafe` block without a `// SAFETY:` comment just before it,
+    /// saying why the obligations of what's in it are kept.
+    MissingSafetyComments,
 }
 
 impl Lint {
@@ -244,10 +249,12 @@ impl Lint {
             Lint::UnusedImports => "unused_imports",
             Lint::EmptyRanges => "empty_ranges",
             Lint::UnusedEffects => "unused_effects",
+            Lint::UnusedUnsafe => "unused_unsafe",
+            Lint::MissingSafetyComments => "missing_safety_comments",
         }
     }
 
-    pub const ALL: [Lint; 16] = [
+    pub const ALL: [Lint; 18] = [
         Lint::UnreachablePatterns,
         Lint::OverlappingRanges,
         Lint::MergeableRanges,
@@ -264,6 +271,8 @@ impl Lint {
         Lint::UnusedImports,
         Lint::EmptyRanges,
         Lint::UnusedEffects,
+        Lint::UnusedUnsafe,
+        Lint::MissingSafetyComments,
     ];
 
     pub fn from_name(name: &str) -> Option<Lint> {

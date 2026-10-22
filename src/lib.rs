@@ -20,6 +20,7 @@ mod naming;
 pub mod parser;
 mod pretty;
 pub mod rename;
+mod safety;
 pub mod source;
 pub mod traits;
 mod trivia;
@@ -75,10 +76,11 @@ pub fn check_files(path: &Path, src: &str, read: load::Read) -> Checked {
     // Here rather than in `check`, since the fixes check renamed programs.
     let checked = result.is_ok().then_some(&info);
     warnings.extend(naming::warnings(&sources, &program, checked));
+    warnings.extend(safety::warnings(&sources, &program));
     allow::apply(&program, &sources, &mut warnings);
     // The core library's are its own business: what a program doesn't
     // use of it isn't dead, for one.
-    warnings.retain(|w| !sources.in_core(w.span.start));
+    warnings.retain(|w| !sources.in_library(w.span.start));
     let result = result.map(|()| mono::monomorphise(&lift::lift(&program, &info), &info));
     Checked {
         sources,

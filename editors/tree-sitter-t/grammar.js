@@ -251,9 +251,11 @@ module.exports = grammar({
 
     effect_set: $ => choice($._effect, seq('{', commaSep($._effect), '}')),
 
-    // `panic`, `alloc`, an effect parameter, or an associated effect.
+    // `panic`, `alloc`, `unsafe`, an effect parameter, or an associated
+    // effect.
     _effect: $ => choice(
       alias($.identifier, $.effect),
+      alias('unsafe', $.effect),
       $.projection_type,
       $.qualified_type,
     ),
@@ -507,7 +509,11 @@ module.exports = grammar({
       $.loop_expression,
       $.for_expression,
       $.block,
+      $.unsafe_block,
     ),
+
+    // `unsafe { .. }`, which keeps the obligations of what's in it.
+    unsafe_block: $ => seq('unsafe', field('body', $.block)),
 
     // Expressions
 

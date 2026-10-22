@@ -26,7 +26,8 @@ fn main() with panic {
 ```
 
 A function's type now says what calling it may do besides give its
-result: its *effects*. There are two. `panic` says a call may abort the
+result: its *effects*. There are two (step 9 adds a third, `unsafe`: see
+docs/09-unsafe.md). `panic` says a call may abort the
 program, and `alloc` that it may allocate. `max` has neither, and that's
 checked: nothing it does, and nothing it calls, can panic. `mean` adds,
 and `+` panics when the sum doesn't fit in an `int`, so `mean` says `with

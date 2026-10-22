@@ -1,0 +1,7 @@
+// What an intrinsic type is, is what the checker trusts, so only the
+// built-in libraries can declare one.
+#[intrinsic]
+struct Buf {}
+
+fn main() {}
+// error: only `core` and `alloc` can declare an intrinsic

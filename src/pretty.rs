@@ -133,6 +133,7 @@ fn block_like(e: &Expr) -> bool {
             | ExprKind::Loop(..)
             | ExprKind::For(..)
             | ExprKind::Block(..)
+            | ExprKind::Unsafe(..)
     )
 }
 
@@ -151,7 +152,7 @@ fn huggable(args: &[Expr]) -> bool {
         return false;
     };
     match &last.kind {
-        ExprKind::If(..) | ExprKind::Match(..) | ExprKind::Block(..) => true,
+        ExprKind::If(..) | ExprKind::Match(..) | ExprKind::Block(..) | ExprKind::Unsafe(..) => true,
         ExprKind::StructLit(_, _, inits) => !inits.is_empty(),
         ExprKind::Lambda(l) => matches!(l.body.kind, ExprKind::Block(..)),
         // `f(g(..))`, but not `f(x, g(..))`, which would hide `x` at the end
@@ -635,12 +636,20 @@ impl Printer<'_> {
             TypeDecl::Enum(_) => "enum ",
         };
         let name = d.name();
-        let doc = self.lead_derives(
+        let mut doc = self.lead_derives(
             d.doc(),
             d.allows(),
             d.derives(),
             self.before(name.span.start),
         );
+        if let TypeDecl::Struct(StructDecl {
+            intrinsic: Some(at),
+            ..
+        }) = d
+        {
+            doc = doc + "#[intrinsic]" + self.trailing(at.end) + Doc::HardLine;
+            doc = doc + self.element(self.before(name.span.start), true);
+        }
         let open = self.find(name.span.end, &Tok::LBrace);
         let close = self.find(open, &Tok::RBrace);
         if let Some(t) = &mut self.trivia {
@@ -935,6 +944,7 @@ impl Printer<'_> {
                 place + format!(" {op}= ") + self.expr(value, 0, ctx.inner())
             }
             ExprKind::Block(stmts, tail) => group(self.block(stmts, tail.as_deref(), e.span)),
+            ExprKind::Unsafe(block) => group(text("unsafe ") + self.block_or_expr(block)),
             ExprKind::StructLit(name, targs, inits) => {
                 let close = e.span.end - 1;
                 let fields = self.list(
@@ -1081,6 +1091,7 @@ impl Printer<'_> {
             ExprKind::Unary(..)
             | ExprKind::StructLit(..)
             | ExprKind::Block(..)
+            | ExprKind::Unsafe(..)
             | ExprKind::If(..)
             | ExprKind::Match(..)
             | ExprKind::While(..)
@@ -1416,7 +1427,16 @@ fn lead_start(doc: Option<&DocComment>, allows: &[Allow], pos: usize) -> usize {
 /// comment and attributes.
 fn type_lead_start(d: &TypeDecl, pos: usize) -> usize {
     let derive = d.derives().first().map_or(pos, |d| d.span.start);
-    lead_start(d.doc(), d.allows(), pos).min(derive)
+    let intrinsic = match d {
+        TypeDecl::Struct(StructDecl {
+            intrinsic: Some(at),
+            ..
+        }) => at.start,
+        _ => pos,
+    };
+    lead_start(d.doc(), d.allows(), pos)
+        .min(derive)
+        .min(intrinsic)
 }
 
 /// A range pattern as written. Unlike `exhaust::show_range`, which tidies

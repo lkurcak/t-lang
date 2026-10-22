@@ -1231,6 +1231,15 @@
           "value": "effect"
         },
         {
+          "type": "ALIAS",
+          "content": {
+            "type": "STRING",
+            "value": "unsafe"
+          },
+          "named": true,
+          "value": "effect"
+        },
+        {
           "type": "SYMBOL",
           "name": "projection_type"
         },
@@ -2931,6 +2940,27 @@
         {
           "type": "SYMBOL",
           "name": "block"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "unsafe_block"
+        }
+      ]
+    },
+    "unsafe_block": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "unsafe"
+        },
+        {
+          "type": "FIELD",
+          "name": "body",
+          "content": {
+            "type": "SYMBOL",
+            "name": "block"
+          }
         }
       ]
     },

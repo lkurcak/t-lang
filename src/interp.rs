@@ -72,6 +72,11 @@ pub enum Value {
     Ref(Ptr),
     /// A box: where its value is, on the heap.
     Box(Ptr),
+    /// A `RawBuf`: where its slots are, on the heap, as a `Slots`.
+    RawBuf(Ptr),
+    /// The slots of a `RawBuf`, each a value, or `Moved` if it's
+    /// uninitialised. Only ever on the heap, where a `RawBuf` points.
+    Slots(Vec<Value>),
     /// What's left in a place whose value was moved out.
     Moved,
 }
@@ -126,6 +131,8 @@ impl fmt::Display for Value {
             Value::Closure(_) => f.write_str("<closure>"),
             Value::Ref(_) => f.write_str("<reference>"),
             Value::Box(_) => f.write_str("<box>"),
+            Value::RawBuf(_) => f.write_str("<buffer>"),
+            Value::Slots(_) => f.write_str("<slots>"),
             Value::Moved => f.write_str("<moved>"),
             Value::Struct(name, fields) if fields.is_empty() => {
                 write!(f, "{} {{}}", crate::check::source_name(name))
@@ -185,6 +192,7 @@ pub fn run(prog: &Program, out: &mut Vec<String>) -> Result<Value, Error> {
         temps: Vec::new(),
         depth: 0,
         frames: Vec::new(),
+        unsafe_blocks: Vec::new(),
         proved: &prog.proved,
         refined: HashMap::new(),
         params_refined: Vec::new(),
@@ -194,7 +202,7 @@ pub fn run(prog: &Program, out: &mut Vec<String>) -> Result<Value, Error> {
     interp.drop(result.clone());
     if interp.memory.on_heap > 0 {
         unsound(&format!(
-            "memory leak: {} boxes were never freed",
+            "memory leak: {} boxes or buffers were never freed",
             interp.memory.on_heap
         ));
     }
@@ -310,6 +318,7 @@ impl Memory {
                 Value::Struct(_, fields) => &fields[i].1,
                 Value::Variant(_, _, fields) => &fields[i],
                 Value::Closure(c) => &c.env[i].1,
+                Value::Slots(slots) => &slots[i],
                 Value::Moved => unsound("use of a value that was moved"),
                 other => unsound(&format!("field {i} of `{other}`")),
             };
@@ -325,6 +334,7 @@ impl Memory {
                 Value::Struct(_, fields) => &mut fields[i].1,
                 Value::Variant(_, _, fields) => &mut fields[i],
                 Value::Closure(c) => &mut c.env[i].1,
+                Value::Slots(slots) => &mut slots[i],
                 Value::Moved => unsound("assignment into a value that was moved"),
                 other => unsound(&format!("field {i} of `{other}`")),
             };
@@ -358,6 +368,10 @@ struct Interp<'p, 'o> {
     /// The functions being run, outermost first, by name: whose effects
     /// each panic and allocation must be among (see `effect`).
     frames: Vec<String>,
+    /// The `unsafe` blocks being run, innermost last, each with how many
+    /// functions were being run when it started: those called since must
+    /// say `with unsafe` (see `unsafe_op`).
+    unsafe_blocks: Vec<(Span, usize)>,
     /// The operators the checker proved can't panic, by node.
     proved: &'p HashSet<NodeId>,
     /// The refinement of each refined variable, by its slot and the
@@ -507,7 +521,7 @@ impl Interp<'_, '_> {
     /// business.
     fn copyable(&self, v: &Value) -> bool {
         match v {
-            Value::Box(_) => false,
+            Value::Box(_) | Value::RawBuf(_) => false,
             Value::Struct(ty, _) | Value::Variant(ty, ..) => self.copy.contains(ty.as_str()),
             // A closure is `Copy` if what it holds is.
             Value::Closure(c) => c.env.iter().all(|(_, v)| self.copyable(v)),
@@ -535,6 +549,11 @@ impl Interp<'_, '_> {
     /// left in it counts, each part on its own, as for the borrow checker
     /// (`moves::leftover`).
     fn drop(&mut self, v: Value) {
+        if let Value::RawBuf(_) = v
+            && !self.aborting
+        {
+            unsound("a `RawBuf` was thrown away, and it isn't `Discard`: a leak");
+        }
         if let Value::Struct(ty, _) | Value::Variant(ty, ..) = &v
             && !self.aborting
             && !self.discard.contains(ty.as_str())
@@ -783,6 +802,10 @@ impl Interp<'_, '_> {
                 None => Value::Variant(option.clone(), "None".into(), Vec::new()),
             });
         }
+        if name == "<alloc::raw::RawBuf" {
+            let op = copy.rsplit("::").next().unwrap_or_default();
+            return self.raw_buf(op, args, span);
+        }
         match name {
             // Aborts.
             "core::panic::panic" => Err(self.panics(span, "panicked")),
@@ -802,6 +825,159 @@ impl Interp<'_, '_> {
             }
             _ => unsound(&format!("unknown intrinsic `{name}`")),
         }
+    }
+
+    /// Runs `RawBuf`'s intrinsic method `op` on `args`, called at `span`.
+    /// Its slots are a `Slots` on the heap, so a reference to one is into
+    /// that, and `grow` and `free` leave it dangling, as they would a
+    /// compiled program's. Each unsafe one checks its obligations, as
+    /// `alloc/raw.t` says them, and stops the program if they're broken,
+    /// blaming the `unsafe` block that said they were kept.
+    fn raw_buf(&mut self, op: &str, args: Vec<Value>, span: Span) -> Result<Value, Error> {
+        /// More slots than this is running out of memory.
+        const MAX_SLOTS: i64 = 1 << 20;
+        // The buffer that `self`, a `&RawBuf` or `&mut RawBuf`, points to.
+        let buf = |this: &Interp, v: &Value| -> Ptr {
+            let Value::Ref(p) = v else {
+                unsound(&format!("`RawBuf::{op}` of `{v}`"))
+            };
+            match this.memory.get(p) {
+                Value::RawBuf(q) => q.clone(),
+                other => unsound(&format!("`RawBuf::{op}` of `{other}`")),
+            }
+        };
+        let slots = |this: &Interp, q: &Ptr| -> usize {
+            match this.memory.get(q) {
+                Value::Slots(slots) => slots.len(),
+                other => unsound(&format!("a `RawBuf` of `{other}`")),
+            }
+        };
+        let mut args = args.into_iter();
+        let mut arg = || args.next().unwrap_or_else(|| unsound("`RawBuf` arity"));
+        match op {
+            "new" => {
+                let cap = int(arg());
+                self.effect("alloc");
+                if cap > MAX_SLOTS {
+                    return Err(self.panics(span, format!("out of memory for {cap} slots")));
+                }
+                let slots = vec![Value::Moved; usize::try_from(cap).unwrap_or(0)];
+                Ok(Value::RawBuf(self.memory.alloc(Value::Slots(slots), true)))
+            }
+            "cap" => {
+                let q = buf(self, &arg());
+                Ok(Value::Int(slots(self, &q) as i64))
+            }
+            "grow" => {
+                let this = arg();
+                let (q, new_cap) = (buf(self, &this), int(arg()));
+                let cap = slots(self, &q);
+                self.effect("alloc");
+                if new_cap < cap as i64 {
+                    let message = format!("`grow` to {new_cap} slots, but it has {cap}");
+                    return Err(self.panics(span, message));
+                }
+                if new_cap > MAX_SLOTS {
+                    return Err(self.panics(span, format!("out of memory for {new_cap} slots")));
+                }
+                // Somewhere new, so that what pointed into the old slots
+                // dangles.
+                let Value::Slots(mut slots) = self.memory.free(&q, true) else {
+                    unreachable!("checked by `slots`")
+                };
+                slots.resize(new_cap as usize, Value::Moved);
+                let moved = self.memory.alloc(Value::Slots(slots), true);
+                let Value::Ref(p) = this else {
+                    unreachable!("checked by `buf`")
+                };
+                *self.memory.get_mut(&p) = Value::RawBuf(moved);
+                Ok(Value::Unit)
+            }
+            "write" | "read" | "get" | "get_mut" => {
+                let block = self.unsafe_op();
+                let this = arg();
+                let (q, i) = (buf(self, &this), int(arg()));
+                let cap = slots(self, &q);
+                let what = format!("`RawBuf::{op}` of slot {i}");
+                // That half is its type's, `{ i: int | i >= 0 }`.
+                if i < 0 {
+                    unsound(&format!("{what}, which isn't `>= 0`"));
+                }
+                if i >= cap as i64 {
+                    let why = format!("{what}, but it has {cap} slots");
+                    return Err(self.broken(span, block, why));
+                }
+                let slot = q.field(i as usize);
+                let filled = !matches!(self.memory.get(&slot), Value::Moved);
+                match (op, filled) {
+                    ("write", true) => {
+                        Err(self.broken(span, block, format!("{what}, which is initialised")))
+                    }
+                    ("write", false) => {
+                        *self.memory.get_mut(&slot) = arg();
+                        Ok(Value::Unit)
+                    }
+                    (_, false) => {
+                        Err(self.broken(span, block, format!("{what}, which is uninitialised")))
+                    }
+                    ("read", true) => {
+                        Ok(std::mem::replace(self.memory.get_mut(&slot), Value::Moved))
+                    }
+                    _ => Ok(Value::Ref(slot)),
+                }
+            }
+            "free" => {
+                let block = self.unsafe_op();
+                let Value::RawBuf(q) = arg() else {
+                    unsound("`RawBuf::free` of something else")
+                };
+                let Value::Slots(slots) = self.memory.get(&q) else {
+                    unsound("a `RawBuf` of something else")
+                };
+                if let Some(i) = slots.iter().position(|v| !matches!(v, Value::Moved)) {
+                    let why = format!("`RawBuf::free` with slot {i} initialised");
+                    return Err(self.broken(span, block, why));
+                }
+                self.memory.free(&q, true);
+                Ok(Value::Unit)
+            }
+            _ => unsound(&format!("unknown intrinsic `RawBuf::{op}`")),
+        }
+    }
+
+    /// The innermost `unsafe` block being run, at an unsafe operation:
+    /// there must be one, and every function called since it started must
+    /// say `with unsafe`, or the checker let through what it shouldn't
+    /// have (see docs/09-unsafe.md).
+    fn unsafe_op(&self) -> Span {
+        let Some(&(block, depth)) = self.unsafe_blocks.last() else {
+            unsound("an unsafe operation with no `unsafe` block around it")
+        };
+        for f in &self.frames[depth..] {
+            let says = self.fns[f.as_str()]
+                .effects
+                .iter()
+                .flat_map(|e| &e.items)
+                .any(|e| e.to_string() == "unsafe");
+            if !says {
+                unsound(&format!(
+                    "`{f}` doesn't say `with unsafe`, but it's running an unsafe operation"
+                ));
+            }
+        }
+        block
+    }
+
+    /// The error of an unsafe operation at `span` whose obligation is
+    /// broken, `why`, in `unsafe` block `block`. Not a soundness bug of the
+    /// checker's, but of the code in the block: it stops the program, as a
+    /// panic does.
+    fn broken(&mut self, span: Span, block: Span, why: String) -> Error {
+        self.panic(span, format!("unsafe code broke its obligation: {why}"))
+            .with_note(
+                block,
+                "in this `unsafe` block, which says its obligations are kept",
+            )
     }
 
     /// Calls the closure at `at`. In its body, each variable it captured is
@@ -1093,6 +1269,12 @@ impl Interp<'_, '_> {
             }
 
             ExprKind::Block(stmts, tail) => self.block(stmts, tail.as_deref())?,
+            ExprKind::Unsafe(block) => {
+                self.unsafe_blocks.push((e.span, self.frames.len()));
+                let v = self.eval(block);
+                self.unsafe_blocks.pop();
+                v?
+            }
 
             // These live in their own functions to keep `eval`'s stack frame
             // small: in debug builds every temporary in this `match` gets its

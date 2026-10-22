@@ -1763,6 +1763,7 @@ impl Walk<'_> {
                     None => Ok(Val::Other),
                 }
             }
+            ExprKind::Unsafe(block) => self.expr(block),
             ExprKind::Match(scrutinee, arms) => {
                 let s = self.expr(scrutinee)?;
                 let place = self.place_of(scrutinee);

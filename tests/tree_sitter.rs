@@ -6,13 +6,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tree_sitter::{Node, Parser, Query, QueryCursor, StreamingIterator};
 
-/// Every `.t` file in `tests/t` and `examples`, and the directories in them.
+/// Every `.t` file in `tests/t`, `examples` and the built-in libraries, and
+/// the directories in them.
 fn programs() -> Vec<PathBuf> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut dirs = vec![
         root.join("tests/t"),
         root.join("examples"),
         root.join("core"),
+        root.join("alloc"),
     ];
     let mut paths = Vec::new();
     while let Some(dir) = dirs.pop() {

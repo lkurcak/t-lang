@@ -108,6 +108,10 @@
         "named": true
       },
       {
+        "type": "unsafe_block",
+        "named": true
+      },
+      {
         "type": "variant_expression",
         "named": true
       },
@@ -2849,6 +2853,22 @@
     "fields": {}
   },
   {
+    "type": "unsafe_block",
+    "named": true,
+    "fields": {
+      "body": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "block",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "use_as_clause",
     "named": true,
     "fields": {
@@ -3457,6 +3477,10 @@
   {
     "type": "type_parameter",
     "named": true
+  },
+  {
+    "type": "unsafe",
+    "named": false
   },
   {
     "type": "use",

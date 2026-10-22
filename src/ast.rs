@@ -19,6 +19,9 @@ pub struct Program {
     /// it's loaded (see `load.rs`). It's a package of its own: a module
     /// tree beside the crate root's, whose items' symbols start `core::`.
     pub core: Option<usize>,
+    /// The root module of the alloc library, the same way, loaded after
+    /// the core library's: its items' symbols start `alloc::`.
+    pub alloc: Option<usize>,
     /// The `use`s of every module, in order.
     pub uses: Vec<UseDecl>,
     pub types: Vec<TypeDecl>,
@@ -41,6 +44,12 @@ impl Program {
     pub fn fresh_id(&mut self) -> NodeId {
         self.next_id += 1;
         NodeId(self.next_id - 1)
+    }
+
+    /// Is module `m` the root of a library built into the compiler, a
+    /// package of its own rather than a module of the crate root's?
+    pub fn is_library_root(&self, m: usize) -> bool {
+        self.core == Some(m) || self.alloc == Some(m)
     }
 }
 
@@ -475,6 +484,11 @@ pub struct StructDecl {
     /// `#[derive(Copy)]`, say: its values are copied rather than moved.
     pub derives: Vec<Derive>,
     pub fields: Vec<Param>,
+    /// Where its `#[intrinsic]` is, if it's one: a type a built-in library
+    /// declares with no fields, whose values only the compiler makes and
+    /// looks inside, by the intrinsic methods of its impl (see
+    /// `check::INTRINSICS`).
+    pub intrinsic: Option<Span>,
 }
 
 #[derive(Debug, Clone)]
@@ -801,6 +815,7 @@ impl Expr {
             ExprKind::Unary(_, x)
             | ExprKind::Field(x, _)
             | ExprKind::Loop(_, x)
+            | ExprKind::Unsafe(x)
             | ExprKind::Move(x) => vec![x],
             ExprKind::Return(x) | ExprKind::Break(_, x) => x.iter().map(|x| &**x).collect(),
             ExprKind::Binary(_, l, r) => vec![l, r],
@@ -1002,6 +1017,10 @@ pub enum ExprKind {
     If(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
     /// `{ stmt; stmt; tail }`; without a tail the block's value is `()`.
     Block(Vec<Stmt>, Option<Box<Expr>>),
+    /// `unsafe { .. }`, of a `Block`: it keeps the obligations of the
+    /// unsafe operations in it, so it doesn't have the effect `unsafe`
+    /// they do (see docs/09-unsafe.md).
+    Unsafe(Box<Expr>),
     /// `Point { x: 1, y: 2 }`, or `Pair::<int, bool> { .. }`
     StructLit(Ident, Vec<TypeExpr>, Vec<FieldInit>),
     /// `p.x`
@@ -1160,6 +1179,7 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
         ExprKind::Unary(_, x)
         | ExprKind::Field(x, _)
         | ExprKind::Loop(_, x)
+        | ExprKind::Unsafe(x)
         | ExprKind::Move(x) => go(x, bound),
         ExprKind::Return(x) | ExprKind::Break(_, x) => x.iter().for_each(|x| go(x, bound)),
         ExprKind::Binary(_, l, r) => {

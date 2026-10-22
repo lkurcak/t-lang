@@ -52,6 +52,15 @@ impl Checker {
                     ),
                 ));
             }
+            if let Some(at) = def.intrinsic {
+                if !self.modules.in_library(d.module()) {
+                    return Err(super::not_library(at));
+                }
+                if !super::INTRINSIC_TYPES.contains(&def.symbol.as_str()) {
+                    let message = format!("there's no intrinsic type `{}`", def.symbol);
+                    return Err(Error::ty(name.span, message));
+                }
+            }
             let arity = (d.generics().lifetimes.len(), d.type_params().len());
             self.arities.insert(def.symbol.clone(), arity);
         }

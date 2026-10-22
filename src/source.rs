@@ -33,10 +33,11 @@ impl File {
         Span::new(self.start, self.start + self.len)
     }
 
-    /// Is it one of the core library's, built into the compiler, rather
-    /// than the program's own?
-    pub fn is_core(&self) -> bool {
+    /// Is it one of a library's built into the compiler, the core
+    /// library's or the alloc library's, rather than the program's own?
+    pub fn is_library(&self) -> bool {
         self.path.starts_with(crate::load::CORE_DIR)
+            || self.path.starts_with(crate::load::ALLOC_DIR)
     }
 }
 
@@ -91,9 +92,10 @@ impl Sources {
         &self.files[i.saturating_sub(1)]
     }
 
-    /// Is `offset` in one of the core library's files?
-    pub fn in_core(&self, offset: usize) -> bool {
-        self.file_at(offset).is_core()
+    /// Is `offset` in one of the files of a library built into the
+    /// compiler?
+    pub fn in_library(&self, offset: usize) -> bool {
+        self.file_at(offset).is_library()
     }
 
     /// The file at `path`, if it's one of these.

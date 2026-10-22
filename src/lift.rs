@@ -87,6 +87,7 @@ pub fn lift(prog: &Program, info: &Info) -> Program {
     Program {
         mods: prog.mods[..1].to_vec(),
         core: None,
+        alloc: None,
         uses: Vec::new(),
         types,
         traits: traits
@@ -172,6 +173,7 @@ impl<'p> Cx<'p> {
                 generics: self.generics(&s.generics),
                 derives: s.derives.clone(),
                 fields: s.fields.iter().map(|f| self.param(f)).collect(),
+                intrinsic: s.intrinsic,
             }),
             TypeDecl::Enum(e) => TypeDecl::Enum(EnumDecl {
                 doc: e.doc.clone(),
@@ -510,6 +512,7 @@ impl<'p> Cx<'p> {
             ExprKind::Loop(label, body) => {
                 ExprKind::Loop(label.clone(), Box::new(self.expr(body, nested)))
             }
+            ExprKind::Unsafe(block) => ExprKind::Unsafe(Box::new(self.expr(block, nested))),
             ExprKind::Return(x) => {
                 ExprKind::Return(x.as_ref().map(|x| Box::new(self.expr(x, nested))))
             }

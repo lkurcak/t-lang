@@ -35,7 +35,9 @@
 //! `core`. A path can start with `core` anywhere, as it can with `crate`,
 //! which in the core library means its root. Neither package's modules are
 //! in the other's: `super` can't leave a package, and its private items are
-//! its own. Every module also sees the *prelude*, what `core::prelude`
+//! its own. The alloc library is a package the same way, whose root is
+//! `alloc`, and which uses the core library's. Every module also sees the
+//! *prelude*, what `core::prelude`
 //! brings in, after its own items and `use`s: a name a module declares or
 //! imports itself always wins, so adding to the prelude never changes what
 //! a program means.
@@ -119,6 +121,8 @@ pub(crate) struct Modules {
     pub(crate) leaf_items: Vec<(Ident, Vec<Item>)>,
     /// The core library's root module, and its prelude.
     pub(crate) core: Option<usize>,
+    /// The alloc library's root module.
+    pub(crate) alloc: Option<usize>,
     pub(crate) prelude: Option<usize>,
     /// Warnings about what's rewritten here: empty ranges.
     pub(crate) warnings: Vec<Warning>,
@@ -199,7 +203,9 @@ impl Modules {
     /// from it, or else that after `crate::`.
     pub(crate) fn path_to_trait(&self, m: usize, symbol: &str) -> String {
         match m {
-            _ if symbol.starts_with("core::") => symbol.to_string(),
+            _ if symbol.starts_with("core::") || symbol.starts_with("alloc::") => {
+                symbol.to_string()
+            }
             ROOT => symbol.to_string(),
             _ => format!("crate::{symbol}"),
         }
@@ -241,6 +247,23 @@ impl Modules {
     /// Is module `m` in the core library?
     pub(crate) fn in_core(&self, m: usize) -> bool {
         Some(self.package_root(m)) == self.core
+    }
+
+    /// Is module `m` in a library built into the compiler, the core
+    /// library or the alloc library?
+    pub(crate) fn in_library(&self, m: usize) -> bool {
+        let root = Some(self.package_root(m));
+        root == self.core || root == self.alloc
+    }
+
+    /// The root module of the library `name`, if it's one built in, as a
+    /// path can start with: `core` or `alloc`.
+    pub(crate) fn library(&self, name: &str) -> Option<usize> {
+        match name {
+            "core" => self.core,
+            "alloc" => self.alloc,
+            _ => None,
+        }
     }
 
     /// Is `inner` module `outer` or in it?
@@ -291,8 +314,8 @@ pub(crate) fn resolve(prog: &mut Program) -> Result<Modules, Error> {
             }
         };
         debug_assert_eq!(i, mods.len());
-        // The core library's root is a package's: no module is around it.
-        let parent = match prog.core == Some(i) {
+        // A library's root is a package's: no module is around it.
+        let parent = match prog.is_library_root(i) {
             true => None,
             false => m.parent,
         };
@@ -307,6 +330,7 @@ pub(crate) fn resolve(prog: &mut Program) -> Result<Modules, Error> {
         m: Modules {
             mods,
             core: prog.core,
+            alloc: prog.alloc,
             ..Modules::default()
         },
         leaves: Vec::new(),
@@ -386,8 +410,8 @@ impl Resolver {
     fn declare(&mut self, prog: &Program) -> Result<(), Error> {
         let mut items: Vec<(usize, &Ident, bool, Item, Ns)> = Vec::new();
         for (i, m) in prog.mods.iter().enumerate().skip(1) {
-            // The core library isn't a module of the crate root's.
-            if prog.core == Some(i) {
+            // A library isn't a module of the crate root's.
+            if prog.is_library_root(i) {
                 continue;
             }
             let parent = m.parent.expect("not the crate root");
@@ -627,10 +651,9 @@ impl Resolver {
                     let found = self.lookup(m, name, Ns::Types)?;
                     if found.is_none()
                         && i == 0
-                        && name == "core"
-                        && let Some(core) = self.m.core
+                        && let Some(library) = self.m.library(name)
                     {
-                        m = core;
+                        m = library;
                         continue;
                     }
                     let Some(b) = found else {
@@ -800,7 +823,7 @@ impl Rewrite<'_> {
             return Ok(true);
         }
         let Some(b) = self.r.m.get(self.module, first, Ns::Types) else {
-            if first != "core" || self.r.m.core.is_none() {
+            if self.r.m.library(first).is_none() {
                 return Ok(false);
             }
             return match segs.len() {
@@ -1070,7 +1093,7 @@ impl Rewrite<'_> {
                 self.expr(r)?;
                 if let (Some(a), Some(b)) = (constant(l), constant(r))
                     && a > b
-                    && !self.r.m.in_core(self.module)
+                    && !self.r.m.in_library(self.module)
                 {
                     self.r.m.warnings.push(Warning {
                         lint: Lint::EmptyRanges,
@@ -1518,7 +1541,10 @@ fn children_mut(e: &mut Expr) -> Vec<&mut Expr> {
         | ExprKind::Unit
         | ExprKind::Var(..)
         | ExprKind::Continue(_) => Vec::new(),
-        ExprKind::Unary(_, x) | ExprKind::Field(x, _) | ExprKind::Loop(_, x) => vec![&mut **x],
+        ExprKind::Unary(_, x)
+        | ExprKind::Field(x, _)
+        | ExprKind::Loop(_, x)
+        | ExprKind::Unsafe(x) => vec![&mut **x],
         ExprKind::Return(x) | ExprKind::Break(_, x) => x.iter_mut().map(|x| &mut **x).collect(),
         ExprKind::Binary(_, l, r)
         | ExprKind::Assign(_, l, r)

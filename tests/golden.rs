@@ -321,7 +321,7 @@ fn renames_in(path: &Path) -> (Vec<String>, usize) {
     let mut defs: Vec<_> = info
         .notes
         .iter()
-        .filter(|n| n.def == Some(n.span) && !sources.in_core(n.span.start))
+        .filter(|n| n.def == Some(n.span) && !sources.in_library(n.span.start))
         .collect();
     defs.sort_by_key(|n| n.span.start);
     defs.dedup_by_key(|n| n.span);

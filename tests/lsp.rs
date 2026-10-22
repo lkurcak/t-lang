@@ -1561,3 +1561,37 @@ fn hovers_the_core_library_but_goes_nowhere_in_it() {
 
     stop(child, c);
 }
+
+/// The alloc library's items hover as the core library's do, and go
+/// nowhere either; `unsafe` blocks hover as nothing, and their warnings
+/// are diagnostics.
+#[test]
+fn hovers_the_alloc_library_but_goes_nowhere_in_it() {
+    let (child, mut c) = start();
+    let uri = "file:///tmp/alloc.t";
+    let src = "use alloc::raw::RawBuf;\n\nfn main() with {alloc, panic} {\n    let b: RawBuf<int> = RawBuf::new(1);\n    unsafe { b.free() };\n}\n";
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
+        }}),
+    );
+    let diagnostics = c.diagnostics();
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    let message = diagnostics[0]["message"].as_str().unwrap();
+    assert!(message.contains("no `// SAFETY:` comment"), "{message}");
+    let at = |line: u32, character: u32| json!({"textDocument": {"uri": uri}, "position": {"line": line, "character": character}});
+
+    c.send(json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": at(4, 16)}));
+    let hover = c.response(2)["result"]["contents"]["value"].clone();
+    let hover = hover.as_str().unwrap();
+    assert!(hover.contains("free"), "{hover}");
+    assert!(hover.contains("Gives its memory back."), "{hover}");
+
+    c.send(json!({"jsonrpc": "2.0", "id": 3, "method": "textDocument/definition", "params": at(4, 16)}));
+    assert_eq!(c.response(3)["result"], Value::Null);
+
+    c.send(json!({"jsonrpc": "2.0", "id": 4, "method": "textDocument/hover", "params": at(4, 6)}));
+    assert_eq!(c.response(4)["result"], Value::Null);
+
+    stop(child, c);
+}

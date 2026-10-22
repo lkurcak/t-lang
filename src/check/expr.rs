@@ -30,6 +30,7 @@ impl Checker {
         self.here = e.span;
         let got = match &e.kind {
             ExprKind::Block(stmts, tail) => self.block(stmts, tail.as_deref(), Some(want))?,
+            ExprKind::Unsafe(block) => self.unsafe_block(e, block, Some(want))?,
             ExprKind::Match(scrutinee, arms) => self.match_expr(e, scrutinee, arms, Some(want))?,
             ExprKind::Loop(label, body) => self.loop_expr(label, None, body, Some(want))?,
             ExprKind::Lambda(l) => {
@@ -503,6 +504,11 @@ impl Checker {
 
             ExprKind::Block(stmts, tail) => self.block(stmts, tail.as_deref(), None),
 
+            // What's in it is checked as a block's, but the obligations of
+            // the unsafe operations in it are its own: they're kept here,
+            // so its sites don't have the effect `unsafe` (see `effects`).
+            ExprKind::Unsafe(block) => self.unsafe_block(e, block, None),
+
             //   struct S { f1: T1, .., fn: Tn }    Γ ⊢ e1 : T1  ..  Γ ⊢ en : Tn
             //  ---------------------------------------------------------------- (T-Struct)
             //               Γ ⊢ S { f1: e1, .., fn: en } : S
@@ -518,6 +524,7 @@ impl Checker {
                     unreachable!("a struct")
                 };
                 let symbol = symbol.clone();
+                self.not_intrinsic(&symbol, name.span)?;
                 let fields = struct_fields(&self.adts, &ty).expect("a struct");
                 let mut given = vec![false; fields.len()];
                 for init in inits {
@@ -1076,7 +1083,7 @@ impl Checker {
     // A block with no tail is a `()`, unless it never gets to its end, say
     // as it ends with a `return`: then it's a `!`. Code that comes after
     // something that diverges never runs, and gets a warning.
-    fn block(
+    pub(super) fn block(
         &mut self,
         stmts: &[Stmt],
         tail: Option<&Expr>,

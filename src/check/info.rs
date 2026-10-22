@@ -60,9 +60,9 @@ pub struct Info {
     /// node it's written as, for monomorphisation to replace it with what
     /// it stands for.
     pub opaques: HashMap<NodeId, String>,
-    /// The symbols of the core library's functions, structs and enums,
+    /// The symbols of the built-in libraries' functions, structs and enums,
     /// which monomorphisation keeps only if the program uses them.
-    pub core_symbols: HashSet<String>,
+    pub library_symbols: HashSet<String>,
     /// Where the borrow checker moved a value rather than copying it, and
     /// each pattern that moves out of what it matches, for `lift` to write
     /// out (`ExprKind::Move`, `PatternKind::Move`). It decides by the types
@@ -705,9 +705,10 @@ fn each_annotation(e: &Expr, f: &mut impl FnMut(&TypeExpr)) {
         }
         ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit | ExprKind::Continue(_) => {}
         ExprKind::Var(_, targs) => targs.iter().for_each(&mut *f),
-        ExprKind::Unary(_, x) | ExprKind::Field(x, _) | ExprKind::Loop(_, x) => {
-            each_annotation(x, f)
-        }
+        ExprKind::Unary(_, x)
+        | ExprKind::Field(x, _)
+        | ExprKind::Loop(_, x)
+        | ExprKind::Unsafe(x) => each_annotation(x, f),
         ExprKind::Return(x) | ExprKind::Break(_, x) => x.iter().for_each(|x| each_annotation(x, f)),
         ExprKind::Binary(_, l, r) | ExprKind::Assign(_, l, r) | ExprKind::While(_, l, r) => {
             each_annotation(l, f);

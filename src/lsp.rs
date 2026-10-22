@@ -219,7 +219,7 @@ impl Analysis {
     /// Where `span` is, unless it's in the core library, whose files are
     /// built into the compiler, and so aren't anywhere an editor can open.
     fn program_location(&self, span: Span) -> Option<Location> {
-        (!self.sources().in_core(span.start)).then(|| self.location(span))
+        (!self.sources().in_library(span.start)).then(|| self.location(span))
     }
 
     /// The range `span` is in the file at `uri`, if it's in that file.

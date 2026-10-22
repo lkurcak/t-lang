@@ -245,6 +245,7 @@ impl Checker {
                     unreachable!("a struct")
                 };
                 let symbol = symbol.clone();
+                self.not_intrinsic(&symbol, name.span)?;
                 self.uses().types.insert(symbol.clone());
                 self.pattern_is(p, ty, t.clone())?;
                 self.typed.struct_pats.insert(p.id, t);

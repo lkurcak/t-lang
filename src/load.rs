@@ -14,10 +14,11 @@
 //! link, which could otherwise make `a/a/a/..` go on forever.
 //!
 //! Every program has the core library too (see docs/06e-core.md): a module
-//! tree of its own beside the crate root's, read last, from the files of
-//! `core/` that are built into the compiler. Its root is `lib.t`, and the
-//! file of its module `a::b` is `a/b.t` there. Its paths are shown as
-//! `<core>/a/b.t`.
+//! tree of its own beside the crate root's, read after it, from the files
+//! of `core/` that are built into the compiler. Its root is `lib.t`, and
+//! the file of its module `a::b` is `a/b.t` there. Its paths are shown as
+//! `<core>/a/b.t`. The alloc library is the same, read last, from `alloc/`
+//! (see docs/09-unsafe.md).
 
 use crate::ast::{Ident, ModDecl, Program, ROOT};
 use crate::error::{Error, Span};
@@ -47,6 +48,29 @@ pub const CORE_FILES: &[(&str, &str)] = &[
 /// Where the core library's files seem to be, in messages and to editors.
 pub const CORE_DIR: &str = "<core>";
 
+/// The files of the alloc library, by their paths in `alloc/`.
+pub const ALLOC_FILES: &[(&str, &str)] = &[
+    ("lib.t", include_str!("../alloc/lib.t")),
+    ("raw.t", include_str!("../alloc/raw.t")),
+];
+
+/// Where the alloc library's files seem to be.
+pub const ALLOC_DIR: &str = "<alloc>";
+
+/// A library built into the compiler: its name, its files and where they
+/// seem to be.
+type Library = (
+    &'static str,
+    &'static [(&'static str, &'static str)],
+    &'static str,
+);
+
+/// The libraries built into the compiler, in the order they're read.
+const LIBRARIES: [Library; 2] = [
+    ("core", CORE_FILES, CORE_DIR),
+    ("alloc", ALLOC_FILES, ALLOC_DIR),
+];
+
 /// Reads the file system.
 pub fn read_file(path: &Path) -> std::io::Result<String> {
     std::fs::read_to_string(path)
@@ -67,14 +91,17 @@ fn files(path: &Path, sources: &mut Sources, read: Read) -> Result<Program, Erro
     let starts_in_main = path.file_name().is_some_and(|n| n == "main.t");
     let mut seen = vec![canonical(path)];
     // Modules are added as files are parsed, so this sees those too. The
-    // program's first, then the core library's.
+    // program's first, then each library's.
     let mut m = 0;
     loop {
         if m == prog.mods.len() {
-            if prog.core.is_some() {
+            let Some(&library) = LIBRARIES.iter().find(|(name, ..)| match *name {
+                "core" => prog.core.is_none(),
+                _ => prog.alloc.is_none(),
+            }) else {
                 break;
-            }
-            add_core(&mut prog, sources)?;
+            };
+            add_library(&mut prog, sources, library)?;
             m += 1;
             continue;
         }
@@ -82,16 +109,19 @@ fn files(path: &Path, sources: &mut Sources, read: Read) -> Result<Program, Erro
             m += 1;
             continue;
         }
-        if let Some(core) = prog.core {
+        if prog.core.is_some_and(|core| m > core) {
             let segments = module_path(&prog, m);
+            let (name, files, dir) = LIBRARIES
+                .into_iter()
+                .find(|(name, ..)| *name == segments[0])
+                .expect("a module after the crate's is a library's");
             let file = segments[1..].join("/") + ".t";
-            let Some(&(_, text)) = CORE_FILES.iter().find(|(f, _)| *f == file) else {
-                unreachable!("the core library has no file `{file}`");
+            let Some(&(_, text)) = files.iter().find(|(f, _)| *f == file) else {
+                unreachable!("the {name} library has no file `{file}`");
             };
-            let path = Path::new(CORE_DIR).join(&file);
+            let path = Path::new(dir).join(&file);
             let start = sources.add(path, text, m, Some(prog.mods[m].name.span));
             parse_file(&mut prog, m, text, start)?;
-            debug_assert!(m > core);
             m += 1;
             continue;
         }
@@ -165,12 +195,16 @@ fn parse_file(prog: &mut Program, m: usize, text: &str, start: usize) -> Result<
     parser::parse_into(toks, prog, m)
 }
 
-/// Adds the core library's root module, from its `lib.t`, which is parsed
-/// here; its modules' files are read after.
-fn add_core(prog: &mut Program, sources: &mut Sources) -> Result<(), Error> {
-    let core = prog.mods.len();
-    let text = CORE_FILES[0].1;
-    let start = sources.add(Path::new(CORE_DIR).join("lib.t"), text, core, None);
+/// Adds a library's root module, from its `lib.t`, which is parsed here;
+/// its modules' files are read after.
+fn add_library(
+    prog: &mut Program,
+    sources: &mut Sources,
+    (name, files, dir): Library,
+) -> Result<(), Error> {
+    let root = prog.mods.len();
+    let text = files[0].1;
+    let start = sources.add(Path::new(dir).join("lib.t"), text, root, None);
     let span = Span::new(start, start + text.len());
     let id = prog.fresh_id();
     prog.mods.push(ModDecl {
@@ -178,7 +212,7 @@ fn add_core(prog: &mut Program, sources: &mut Sources) -> Result<(), Error> {
         allows: Vec::new(),
         span,
         name: Ident {
-            name: "core".into(),
+            name: name.into(),
             span: Span::new(start, start),
             id,
         },
@@ -186,8 +220,11 @@ fn add_core(prog: &mut Program, sources: &mut Sources) -> Result<(), Error> {
         public: Some(Span::new(start, start)),
         in_file: false,
     });
-    prog.core = Some(core);
-    parse_file(prog, core, text, start)
+    match name {
+        "core" => prog.core = Some(root),
+        _ => prog.alloc = Some(root),
+    }
+    parse_file(prog, root, text, start)
 }
 
 /// The names of the modules from the crate root down to `m`.

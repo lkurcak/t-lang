@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased
+
+Step 9: unsafe code and raw memory. See
+[docs/09-unsafe.md](docs/09-unsafe.md).
+
+### Added
+
+- `unsafe` is an effect: `with unsafe` says a function has obligations
+  its caller must keep, which the checker doesn't check. An `unsafe { .. }`
+  block keeps those of the operations written in it, so it doesn't have
+  the effect; not those of an effect parameter, nor of a closure made in
+  it and called later. `main` can't say `with unsafe`.
+- The `alloc` library, a package beside `core`, with `alloc::raw::RawBuf<T>`:
+  an intrinsic, linear buffer of slots on the heap. `new`, `cap` and
+  `grow` are safe; `write`, `read`, `get`, `get_mut` and `free` are
+  unsafe, each with its obligation written down. An index's type is
+  `{ i: int | i >= 0 }`, so only `i < cap()` is an obligation.
+- The interpreter checks every obligation of `RawBuf`'s operations, and
+  stops with "unsafe code broke its obligation", naming the operation and
+  slot, and the `unsafe` block that said it was kept.
+- Lints: `missing_safety_comments`, for an `unsafe` block without a
+  `// SAFETY:` comment just above it, and `unused_unsafe`, for a block
+  with nothing unsafe in it.
+- `#[intrinsic]` on a fieldless struct, and on a method of an impl that
+  isn't a trait's, in the built-in libraries.
+
+### Changed
+
+- The orphan rule is per package: an impl must be in the package of its
+  trait or of its type's head, whichever library that is.
+- `unsafe` is a keyword.
+
+### Fixed
+
+- `main` can't return a value that isn't `Discard`: it was thrown away at
+  the end, and so leaked.
+
 ## 0.17.0 (2026-10-22)
 
 Step 8.1: refinements on struct fields. See

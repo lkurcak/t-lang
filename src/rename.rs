@@ -66,9 +66,9 @@ pub fn target<'i>(
             kind => format!("`{}` is built in", name(kind)),
         });
     };
-    if sources.in_core(def.start) || sources.in_core(offset) {
+    if sources.in_library(def.start) || sources.in_library(offset) {
         return Err(format!(
-            "`{}` is the core library's, which can't be changed",
+            "`{}` is a built-in library's, which can't be changed",
             word_at(sources.text(), def.start)
         ));
     }

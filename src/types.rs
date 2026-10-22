@@ -66,7 +66,7 @@ pub enum Type {
     /// its result (see docs/07-effects.md). A type of a kind of its own,
     /// as in Koka: it's only ever a function type's effects, or a type
     /// argument for an effect parameter, never the type of a value. Its
-    /// elements are `Alloc`, `Panic`, effect parameters (`Param`),
+    /// elements are `Alloc`, `Panic`, `Unsafe`, effect parameters (`Param`),
     /// associated effects (`Proj`) and variables; `Type::effects` keeps
     /// them flat, sorted and without repeats, so equal sets are equal
     /// types.
@@ -75,6 +75,10 @@ pub enum Type {
     Alloc,
     /// `panic`, in an `Effects`: may abort the program.
     Panic,
+    /// `unsafe`, in an `Effects`: has obligations its caller must keep,
+    /// which the checker doesn't check (see docs/09-unsafe.md). Only an
+    /// `unsafe` block takes it away.
+    Unsafe,
 }
 
 /// A *region*, or *lifetime*: the stretch of the program during which a
@@ -198,16 +202,17 @@ impl Type {
     }
 }
 
-/// Where an effect goes in a set: `alloc`, `panic`, then parameters,
+/// Where an effect goes in a set: `alloc`, `panic`, `unsafe`, then parameters,
 /// associated effects and variables, each in an order of their own.
 fn effect_key(t: &Type) -> (u8, String) {
     match t {
         Type::Alloc => (0, String::new()),
         Type::Panic => (1, String::new()),
-        Type::Param(p) => (2, p.clone()),
-        Type::Proj(..) => (3, format!("{t:?}")),
-        Type::Var(v) => (4, format!("{v:010}")),
-        t => (5, format!("{t:?}")),
+        Type::Unsafe => (2, String::new()),
+        Type::Param(p) => (3, p.clone()),
+        Type::Proj(..) => (4, format!("{t:?}")),
+        Type::Var(v) => (5, format!("{v:010}")),
+        t => (6, format!("{t:?}")),
     }
 }
 
@@ -462,7 +467,8 @@ impl Type {
             | Type::Param(_)
             | Type::Var(_)
             | Type::Alloc
-            | Type::Panic => (&[], None, None),
+            | Type::Panic
+            | Type::Unsafe => (&[], None, None),
         };
         params.iter().chain(ret).chain(effects)
     }
@@ -494,7 +500,8 @@ impl Type {
             | Type::Param(_)
             | Type::Var(_)
             | Type::Alloc
-            | Type::Panic => self.clone(),
+            | Type::Panic
+            | Type::Unsafe => self.clone(),
         }
     }
 
@@ -701,6 +708,7 @@ impl fmt::Display for Type {
             Type::Effects(items) => write!(f, "{{{}}}", comma_list(items)),
             Type::Alloc => f.write_str("alloc"),
             Type::Panic => f.write_str("panic"),
+            Type::Unsafe => f.write_str("unsafe"),
             // Its type parameters are those in scope where it's written,
             // which say nothing to a reader.
             Type::Adt(name, ..) if is_closure(name) => f.write_str("{closure}"),

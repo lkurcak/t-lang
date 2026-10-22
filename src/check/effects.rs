@@ -14,10 +14,18 @@
 //! so that least set exists, and taking it is what makes a closure's type
 //! say no more than its body does.
 //!
+//! An `unsafe` block takes the effect `unsafe` away from the sites in it,
+//! and nothing else (`Checker::unsafe_block`). An effect parameter `e`
+//! stays `e`, whatever a caller makes it, as the block can't know those
+//! obligations; and a closure's sites are its body's, not those of the
+//! block it's made in.
+//!
 //! Soundness (the lemma docs/07-effects.md proves): a function whose
-//! effects don't have `panic` never reaches a panic. Every site's effects
-//! are among its function's, or its closure's; a call's are what the
-//! callee's type says, at the arguments it's called with; and what's
+//! effects don't have `panic` never reaches a panic, nor one whose effects
+//! don't have `unsafe` an unsafe operation outside an `unsafe` block
+//! (docs/09-unsafe.md). Every site's effects are among its function's, or
+//! its closure's, but the `unsafe` a block takes away; a call's are what
+//! the callee's type says, at the arguments it's called with; and what's
 //! called through a type parameter, a function value or a trait's method
 //! has no more effects than its bound, its type or the trait's method
 //! says (`Within`, `traits::fits`, `Checker::impl_effects`).
@@ -38,6 +46,9 @@ pub(super) struct Site {
     /// The operator it is, if it's one: proving it can't panic takes it
     /// out (see `refine`).
     pub node: Option<NodeId>,
+    /// The innermost `unsafe` block it's in, if it's in one, in its body:
+    /// that keeps its obligations, so it doesn't have the effect `unsafe`.
+    pub unsafe_block: Option<Span>,
 }
 
 /// `sub ⊆ sup`, of two effect sets, which must hold once the function's
@@ -50,6 +61,9 @@ pub(super) struct Within {
     pub why: Why,
     /// The operator it's for, if it's a site of one in a closure.
     pub node: Option<NodeId>,
+    /// Is it for a site in an `unsafe` block, whose `unsafe` doesn't
+    /// count?
+    pub discharged: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -77,6 +91,7 @@ impl Checker {
             what: what.into(),
             effects,
             node: None,
+            unsafe_block: None,
         });
     }
 
@@ -88,6 +103,7 @@ impl Checker {
             what: what.into(),
             effects: Type::effects([Type::Panic]),
             node: Some(e.id),
+            unsafe_block: None,
         });
     }
 
@@ -99,6 +115,7 @@ impl Checker {
             span,
             why,
             node: None,
+            discharged: false,
         });
     }
 
@@ -138,7 +155,67 @@ impl Checker {
         for s in sites {
             let why = Why::Closure(s.what);
             self.within(s.effects, effects.clone(), s.span, why);
-            self.withins.last_mut().expect("pushed").node = s.node;
+            let w = self.withins.last_mut().expect("pushed");
+            w.node = s.node;
+            w.discharged = s.unsafe_block.is_some();
+        }
+    }
+
+    /// Checks `unsafe` block `e`, of `block`, wanted as `want` if that's
+    /// known. Each site in it that's not in an `unsafe` block inside it is
+    /// in this one, which keeps its obligations: its effect `unsafe` is
+    /// taken away. Only that effect, as the operations in the block have
+    /// it, not what an effect parameter turns out to be: an `unsafe { f() }`
+    /// of an `f: F` with effects `e` still has `e`, as the block can't
+    /// know what obligations `f` has. Nor what a closure made in it does
+    /// when it's called, later: a closure's sites are its body's.
+    pub(super) fn unsafe_block(
+        &mut self,
+        e: &Expr,
+        block: &Expr,
+        want: Option<&Type>,
+    ) -> Result<Type, Error> {
+        let ExprKind::Block(stmts, tail) = &block.kind else {
+            unreachable!("`unsafe` is parsed with a block")
+        };
+        let start = self.effect_sites.len();
+        let t = self.block(stmts, tail.as_deref(), want)?;
+        self.typed.exprs.insert(block.id, t.clone());
+        for s in &mut self.effect_sites[start..] {
+            if s.unsafe_block.is_none() {
+                s.unsafe_block = Some(e.span);
+                self.unsafe_uses.push((e.span, s.effects.clone()));
+            }
+        }
+        self.unsafe_blocks.push(e.span);
+        Ok(t)
+    }
+
+    /// Warns of each `unsafe` block of the body just checked with no site
+    /// in it that's unsafe: it keeps no obligations, and only hides where
+    /// the unsafe operations aren't.
+    fn unused_unsafe(&mut self) {
+        let uses = std::mem::take(&mut self.unsafe_uses);
+        for block in std::mem::take(&mut self.unsafe_blocks) {
+            let used = uses.iter().any(|(b, effects)| {
+                *b == block && self.solved(effects).effect_items().contains(&Type::Unsafe)
+            });
+            if used {
+                continue;
+            }
+            let keyword = Span::new(block.start, block.start + "unsafe ".len());
+            self.warnings.push(Warning {
+                lint: Lint::UnusedUnsafe,
+                span: Span::new(block.start, block.start + "unsafe".len()),
+                message: "this `unsafe` block has nothing unsafe in it".into(),
+                fixes: vec![Fix::new(
+                    "remove the `unsafe`",
+                    vec![Edit {
+                        span: keyword,
+                        text: String::new(),
+                    }],
+                )],
+            });
         }
     }
 
@@ -178,6 +255,9 @@ impl Checker {
                         e => sub.push(e.clone()),
                     }
                 }
+                if w.discharged {
+                    sub.retain(|e| *e != Type::Unsafe);
+                }
                 let have = least.entry(v).or_default();
                 for e in sub {
                     if !sup.effect_items().contains(&e) && !have.contains(&e) {
@@ -206,7 +286,10 @@ impl Checker {
             }
         }
         for w in withins {
-            let (sub, sup) = (self.solved(&w.sub), self.solved(&w.sup));
+            let (mut sub, sup) = (self.solved(&w.sub), self.solved(&w.sup));
+            if w.discharged {
+                sub = without_unsafe(&sub);
+            }
             if crate::traits::subset(&sub, &sup) {
                 continue;
             }
@@ -261,10 +344,14 @@ impl Checker {
     /// Checks the sites of the body of `f`, whose effects are `declared`,
     /// against them, and warns of each of them that no site has.
     pub(super) fn body_effects(&mut self, f: &FnDecl, declared: &Type) -> Result<(), Error> {
+        self.unused_unsafe();
         let sites = std::mem::take(&mut self.effect_sites);
         let mut used: Vec<Type> = Vec::new();
         for s in &sites {
-            let effects = self.solved(&s.effects);
+            let mut effects = self.solved(&s.effects);
+            if s.unsafe_block.is_some() {
+                effects = without_unsafe(&effects);
+            }
             let missing: Vec<Type> = effects
                 .effect_items()
                 .iter()
@@ -276,13 +363,29 @@ impl Checker {
                 continue;
             };
             let all = Type::effects(declared.effect_items().iter().chain(&missing).cloned());
-            let message = format!(
-                "{} {}, but `{}` doesn't say `with {}`",
-                s.what,
-                does(&Type::effects([first.clone()])),
-                f.name.name,
-                effects_text(&Type::effects([first.clone()])),
-            );
+            // Nothing calls `main` to keep its obligations, so it can't
+            // say `with unsafe` (see `check_main`).
+            let main = self
+                .current
+                .is_some_and(|id| self.fns[id.0].symbol == "main");
+            if *first == Type::Unsafe && main {
+                let message = format!("{} is unsafe, but it isn't in an `unsafe` block", s.what);
+                return Err(Error::ty(s.span, message));
+            }
+            let message = match first {
+                Type::Unsafe => format!(
+                    "{} is unsafe, but it isn't in an `unsafe` block, and `{}` doesn't say \
+                     `with unsafe`",
+                    s.what, f.name.name,
+                ),
+                _ => format!(
+                    "{} {}, but `{}` doesn't say `with {}`",
+                    s.what,
+                    does(&Type::effects([first.clone()])),
+                    f.name.name,
+                    effects_text(&Type::effects([first.clone()])),
+                ),
+            };
             let fix = Fix::new(
                 format!("say `with {}`", effects_text(&all)),
                 vec![Edit {
@@ -333,6 +436,11 @@ impl Checker {
                 [Type::Alloc] => {
                     format!("`{}` says `with alloc`, but it can't allocate", f.name.name)
                 }
+                [Type::Unsafe] => format!(
+                    "`{}` says `with unsafe`, but nothing in it is unsafe outside an `unsafe` \
+                     block",
+                    f.name.name
+                ),
                 _ => format!(
                     "`{}` says `with {item}`, but nothing in it has the effects `{item}`",
                     f.name.name
@@ -381,12 +489,19 @@ impl Checker {
     }
 }
 
+/// `effects` but `unsafe`, which an `unsafe` block takes away.
+fn without_unsafe(effects: &Type) -> Type {
+    let items = effects.effect_items().iter();
+    Type::effects(items.filter(|e| **e != Type::Unsafe).cloned())
+}
+
 /// What effects `missing` mean a call may do: "may panic".
 pub(super) fn does(missing: &Type) -> String {
     match missing.effect_items() {
         [Type::Panic] => "may panic".into(),
         [Type::Alloc] => "may allocate".into(),
         [Type::Alloc, Type::Panic] => "may allocate and panic".into(),
+        [Type::Unsafe] => "is unsafe".into(),
         _ => format!("may have the effects `{}`", effects_text(missing)),
     }
 }
@@ -396,6 +511,7 @@ fn cant(missing: &Type) -> String {
     match missing.effect_items() {
         [Type::Panic] => "can't panic".into(),
         [Type::Alloc] => "can't allocate".into(),
+        [Type::Unsafe] => "can't be unsafe".into(),
         _ => format!("can't have the effects `{}`", effects_text(missing)),
     }
 }

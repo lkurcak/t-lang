@@ -13,7 +13,8 @@
 //! head     = attr*
 //! attr     = "#" "[" "allow" "(" (IDENT ("," IDENT)* ","?)? ")" "]"
 //!          | "#" "[" "derive" "(" (derived ("," derived)* ","?)? ")" "]"
-//!          | "#" "[" "intrinsic" "]"               -- only on a `fn`, in `core`
+//!          | "#" "[" "intrinsic" "]"               -- on a `fn`, a fieldless `struct` or an
+//!                                                     inherent impl's method, in a library
 //! derived  = IDENT ("where" IDENT ":" bound ("+" bound)* ("," IDENT ":" bound ("+" bound)*)*)?
 //! fn_decl  = "fn" IDENT generics? "(" (param ("," param)* ","?)? ")" ("->" type)? where?
 //!            (block | ";")                          -- `;` only for an intrinsic
@@ -38,7 +39,7 @@
 //!          | "impl" bound ("+" bound)*               -- only in a return type
 //! targ     = LIFETIME | type
 //! block    = "{" (let | head (fn_decl | struct | enum) | expr ";" | block_like ";"?)* expr? "}"
-//! block_like = if | match | label? (while | loop | for) | block
+//! block_like = if | match | label? (while | loop | for) | block | "unsafe" block
 //! let      = "let" pattern (":" type)? "=" expr ";"
 //! expr     = range (("=" | "+=" | "-=" | "*=" | "/=" | "%=") expr)?  -- assignment
 //! range    = or (".." or)?                         -- no chaining
@@ -50,7 +51,8 @@
 //! unary    = ("-" | "!" | "*" | "&" "mut"?) unary | call
 //! postfix  = primary ("(" args ")" | "." IDENT | "." IDENT targs? "(" args ")")*
 //! primary  = INT | "true" | "false" | IDENT targs? | "(" ")" | "(" expr ")" | block
-//!          | if | match | label? (while | loop | for) | path targs? "{" field_init,* "}"
+//!          | if | match | label? (while | loop | for) | "unsafe" block
+//!          | path targs? "{" field_init,* "}"
 //!          | path targs? "::" IDENT ("(" args ")")? | path "::" IDENT targs | lambda
 //!          | "return" expr? | "break" LIFETIME? expr? | "continue" LIFETIME?
 //! label    = LIFETIME ":"
@@ -130,6 +132,7 @@ pub fn parse(tokens: Vec<Token>) -> Result<Program, Error> {
             in_file: false,
         }],
         core: None,
+        alloc: None,
         uses: Vec::new(),
         types: Vec::new(),
         traits: Vec::new(),
@@ -408,7 +411,7 @@ impl Parser {
             let head = self.head()?;
             let public = (*self.peek() == Tok::Pub).then(|| self.bump().span);
             let head = match self.peek() {
-                Tok::Fn => head,
+                Tok::Fn | Tok::Struct => head,
                 _ => head.no_intrinsic()?,
             };
             match self.peek() {
@@ -470,10 +473,10 @@ impl Parser {
         let start = public.unwrap_or(self.span());
         self.expect(Tok::Mod)?;
         let name = self.binder()?;
-        if name.name == "core" {
+        if let Some(lib) = ["core", "alloc"].iter().find(|&&l| name.name == l) {
             return Err(Error::syntax(
                 name.span,
-                "a module can't be called `core`: that's the name of the core library",
+                format!("a module can't be called `{lib}`: that's the name of the {lib} library"),
             ));
         }
         let in_file = *self.peek() == Tok::Semi;
@@ -1047,9 +1050,22 @@ impl Parser {
         })
     }
 
-    /// `panic`, `alloc`, an effect parameter `e`, or an associated effect
-    /// `I::e` or `<I as Iterator>::e`.
+    /// `panic`, `alloc`, `unsafe`, an effect parameter `e`, or an
+    /// associated effect `I::e` or `<I as Iterator>::e`.
     fn effect(&mut self) -> Result<Effect, Error> {
+        if *self.peek() == Tok::Unsafe {
+            let span = self.bump().span;
+            let name = Ident {
+                name: "unsafe".into(),
+                span,
+                id: self.id(),
+            };
+            return Ok(Effect {
+                kind: EffectKind::Named(name),
+                span,
+                id: self.id(),
+            });
+        }
         let t = self.ty()?;
         let kind = match t.kind {
             TypeExprKind::Named(name, args) if args.is_empty() && !name.contains("::") => {
@@ -1063,8 +1079,8 @@ impl Parser {
             _ => {
                 return Err(Error::syntax(
                     t.span,
-                    "expected an effect: `panic`, `alloc`, an effect parameter like `e`, or an \
-                     associated effect like `I::e`",
+                    "expected an effect: `panic`, `alloc`, `unsafe`, an effect parameter like `e`, \
+                     or an associated effect like `I::e`",
                 ));
             }
         };
@@ -1101,7 +1117,11 @@ impl Parser {
         let mut effects = Vec::new();
         let mut methods = Vec::new();
         while *self.peek() != Tok::RBrace {
-            let head = self.head()?.no_derives()?.no_intrinsic()?;
+            let head = self.head()?.no_derives()?;
+            let head = match trait_name {
+                None => head,
+                Some(_) => head.no_intrinsic()?,
+            };
             let public = match trait_name {
                 Some(_) => {
                     self.no_pub("a trait impl's methods are public wherever the trait is")?;
@@ -1312,6 +1332,12 @@ impl Parser {
                 ..p.param()?
             })
         })?;
+        if let (Some(_), Some(field)) = (head.intrinsic, fields.first()) {
+            return Err(Error::syntax(
+                field.name.span,
+                "an intrinsic struct has no fields: what's in it is the compiler's business",
+            ));
+        }
         Ok(StructDecl {
             doc: head.doc,
             allows: head.allows,
@@ -1322,6 +1348,7 @@ impl Parser {
             generics,
             derives: head.derives,
             fields,
+            intrinsic: head.intrinsic,
         })
     }
 
@@ -1617,12 +1644,14 @@ impl Parser {
                     | Tok::For
                     | Tok::Lifetime(_)
                     | Tok::LBrace
+                    | Tok::Unsafe
             );
             let e = match self.peek() {
                 Tok::If => self.if_expr()?,
                 Tok::Match => self.match_expr()?,
                 Tok::While | Tok::Loop | Tok::For | Tok::Lifetime(_) => self.loop_expr()?,
                 Tok::LBrace => self.block()?,
+                Tok::Unsafe => self.unsafe_block()?,
                 _ => self.expr()?,
             };
             if self.eat(&Tok::Semi) {
@@ -1640,6 +1669,21 @@ impl Parser {
         Ok(Expr {
             kind: ExprKind::Block(stmts, tail),
             span: start.to(end),
+            id: self.id(),
+        })
+    }
+
+    /// `unsafe { .. }`: a block that keeps the obligations of the unsafe
+    /// operations in it.
+    fn unsafe_block(&mut self) -> Result<Expr, Error> {
+        let start = self.expect(Tok::Unsafe)?;
+        if *self.peek() != Tok::LBrace {
+            return Err(self.unexpected("`{` after `unsafe`"));
+        }
+        let block = self.block()?;
+        Ok(Expr {
+            span: start.to(block.span),
+            kind: ExprKind::Unsafe(Box::new(block)),
             id: self.id(),
         })
     }
@@ -1883,6 +1927,7 @@ impl Parser {
                 });
             }
             Tok::LBrace => return self.block(),
+            Tok::Unsafe => return self.unsafe_block(),
             Tok::If => return self.if_expr(),
             Tok::Match => return self.match_expr(),
             Tok::While | Tok::Loop | Tok::For | Tok::Lifetime(_) => return self.loop_expr(),
@@ -2381,6 +2426,7 @@ fn starts_expr(tok: &Tok) -> bool {
             | Tok::Match
             | Tok::While
             | Tok::Loop
+            | Tok::Unsafe
             | Tok::For
             | Tok::Lifetime(_)
             | Tok::Return
@@ -2454,7 +2500,8 @@ impl Head {
         match self.intrinsic {
             Some(at) => Err(Error::syntax(
                 at,
-                "`#[intrinsic]` can only be on a function outside a trait or impl",
+                "`#[intrinsic]` can only be on a function, a struct, or a method of an impl \
+                 that isn't a trait's",
             )),
             None => Ok(self),
         }

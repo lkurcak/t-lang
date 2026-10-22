@@ -287,12 +287,12 @@ impl Checker {
     /// The orphan rule (lemma C2 of docs/06e-core.md): an impl of trait `tr`
     /// for `self_ty`, `d`, must be in the package of the trait, or of the
     /// type's head, its outermost constructor. Built-in traits and types
-    /// are the core library's. So the core library's impls are all it has
-    /// for its own traits and types, whatever program it's in, and no
-    /// program can add one that overlaps them, or give a different one to
-    /// another program: coherence holds for each package on its own.
-    /// Looking only at the head is the strictest form of the rule, and can
-    /// be relaxed.
+    /// are the core library's. So a library's impls are all there are for
+    /// its own traits and types, whatever program it's in, and no program
+    /// (nor the other library) can add one that overlaps them, or give a
+    /// different one to another program: coherence holds for each package
+    /// on its own. Looking only at the head is the strictest form of the
+    /// rule, and can be relaxed.
     pub(super) fn orphan(
         &self,
         prog: &Program,
@@ -300,23 +300,23 @@ impl Checker {
         tr: &str,
         self_ty: &Type,
     ) -> Result<(), Error> {
-        if self.modules.in_core(d.module) {
-            return Ok(());
-        }
-        let trait_local = prog
+        let m = &self.modules;
+        let package = m.package_root(d.module);
+        let core = m.core.unwrap_or(package);
+        let trait_package = prog
             .traits
             .iter()
             .find(|t| t.name.name == tr)
-            .is_some_and(|t| !self.modules.in_core(t.module));
-        let head_local = match self_ty {
-            Type::Adt(symbol, ..) => self
-                .types
-                .iter()
+            .map_or(core, |t| m.package_root(t.module));
+        // A type not declared anywhere is a closure's, which is its
+        // function's package's.
+        let head_package = match self_ty {
+            Type::Adt(symbol, ..) => (self.types.iter())
                 .find(|t| t.symbol == *symbol)
-                .is_none_or(|t| !self.modules.in_core(t.module)),
-            _ => false,
+                .map_or(package, |t| m.package_root(t.module)),
+            _ => core,
         };
-        if trait_local || head_local {
+        if trait_package == package || head_package == package {
             return Ok(());
         }
         let head = match self_ty {
@@ -324,11 +324,18 @@ impl Checker {
             t => t.to_string(),
         };
         let tr = tr.rsplit("::").next().unwrap_or(tr);
+        let (a, b) = (&m.mods[trait_package].path, &m.mods[head_package].path);
+        let message = match a == b {
+            true => format!("`{tr}` and `{head}` are both `{a}`'s, so only `{a}` can"),
+            false => {
+                format!("`{tr}` is `{a}`'s and `{head}` is `{b}`'s, so only `{a}` or `{b}` can")
+            }
+        };
         Err(Error::ty(
             Span::new(d.span.start, d.self_ty.span.end),
             format!(
-                "`{tr}` and `{head}` are both `core`'s, so only `core` can implement one for the \
-                 other; to implement it for a type of your own, wrap it in a struct"
+                "{message} implement one for the other; to implement it for a type of your own, \
+                 wrap it in a struct"
             ),
         ))
     }
@@ -430,7 +437,7 @@ impl Checker {
             let own = more
                 .effect_items()
                 .iter()
-                .all(|e| matches!(e, Type::Alloc | Type::Panic))
+                .all(|e| matches!(e, Type::Alloc | Type::Panic | Type::Unsafe))
                 && !(want.effects_at.iter())
                     .flat_map(|(_, w)| w)
                     .any(|w| w.starts_with("Self::"));

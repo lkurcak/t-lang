@@ -1,8 +1,8 @@
-//! `t fmt`. Every program in `tests/t/` and `examples/`, and the core
-//! library's files in `core/`, must format to the same program
+//! `t fmt`. Every program in `tests/t/` and `examples/`, and the built-in
+//! libraries' files in `core/` and `alloc/`, must format to the same program
 //! (`fmt::format` checks that itself, and fails otherwise), and formatting
 //! must be idempotent: formatting the output again changes nothing.
-//! `examples/` and `core/` must be formatted already; test programs may
+//! `examples/`, `core/` and `alloc/` must be formatted already; test programs may
 //! keep their own layouts, since some of them test the parser on odd ones.
 
 use std::fs;
@@ -32,6 +32,7 @@ fn formatting_keeps_the_program_and_is_idempotent() {
         .into_iter()
         .chain(programs("examples"))
         .chain(programs("core"))
+        .chain(programs("alloc"))
     {
         let name = path.display().to_string();
         let src = fs::read_to_string(&path).unwrap();
@@ -72,6 +73,7 @@ fn layout_does_not_depend_on_the_input() {
         .into_iter()
         .chain(programs("examples"))
         .chain(programs("core"))
+        .chain(programs("alloc"))
     {
         let name = path.display().to_string();
         let src = fs::read_to_string(&path).unwrap();
@@ -107,7 +109,11 @@ fn layout_does_not_depend_on_the_input() {
 
 #[test]
 fn examples_are_formatted() {
-    for path in programs("examples").into_iter().chain(programs("core")) {
+    for path in programs("examples")
+        .into_iter()
+        .chain(programs("core"))
+        .chain(programs("alloc"))
+    {
         let name = path.display().to_string();
         let src = fs::read_to_string(&path).unwrap();
         let formatted = format(&src).unwrap_or_else(|e| panic!("{}", e.render(&name, &src)));

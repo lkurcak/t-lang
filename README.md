@@ -287,6 +287,11 @@ has to fit that:
   the rest are checked like any program; all the checker takes on trust is
   its intrinsics, `swap`, `panic` and `checked_mul`, and the arithmetic
   operators. See [docs/06e-core.md](docs/06e-core.md).
+- **Unsafe code is marked, and small.** What the checker can't check, like
+  which slots of a raw buffer hold values, is `unsafe`, an effect only an
+  `unsafe` block takes away, so the trust is exactly those blocks. The
+  `alloc` library builds on `RawBuf<T>`, the one way to get memory for
+  many values. See [docs/09-unsafe.md](docs/09-unsafe.md).
 
 Within that, the aim is to push the type system as far as it goes, and keep
 it sound: well-typed programs don't go wrong, including the ones that
@@ -315,7 +320,9 @@ combine features in ways nobody planned for.
 | 7.1 ✅ | impl parameters a bound decides, `where` on impls; `Map<I, F>` and `Filter<I, P>` | functional dependencies (a parameter as a function of the type), termination of resolution with bounds on projections (strongly connected components of the trait graph) | [docs/07.1-impl-parameters.md](docs/07.1-impl-parameters.md) |
 | 8 ✅ | refinement types, `{ d: int \| d > 0 }`, on parameters, results and `let`s; arithmetic proved total | refinement types, verification conditions from facts along each path (static single assignment), linear integer arithmetic decided by Fourier–Motzkin with integer rounding: sound, incomplete | [docs/08-refinement-types.md](docs/08-refinement-types.md) |
 | 8.1 ✅ | refinements on struct fields, `hi: { h: int \| h >= lo }`; facts through field reads | invariants of a type, kept by every value; facts about places (fields, `*`), forgotten where they may change | [docs/08.1-field-refinements.md](docs/08.1-field-refinements.md) |
-| — | `alloc` (a dense, resizable `List`) and `std` | | after effects, once raw memory has a design |
+| 9 ✅ | `unsafe` blocks, `with unsafe`; an `alloc` library with `RawBuf<T>`, a buffer of slots | unsafe code as an effect, discharged only by a block; a small trusted base, and its obligations checked as the program runs (as Miri does) | [docs/09-unsafe.md](docs/09-unsafe.md) |
+| 9.1 | `alloc::list::List<T>`, a dense, resizable array, and iterating it | a safe interface over unsafe code, kept by a type's invariant | |
+| — | `std` | | |
 | — | C backend | | when it's worth it |
 
 ## License

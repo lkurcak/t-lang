@@ -850,6 +850,8 @@ fn dropped(
                 "; to let it be thrown away, declare it in the trait as `type {a}: Discard;`"
             ),
         },
+        // A library's type is what it is: `RawBuf` is used up by `free`.
+        Some(u) if b.cx.is_library_type(&u) => String::new(),
         Some(u) => format!(
             "; to let it be thrown away, add `#[derive(Discard)]` to `{}`",
             crate::check::source_name(&u.to_string())
