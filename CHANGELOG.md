@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.22.0 (2026-10-23)
 
 Step 12: bits. See [docs/12-bits.md](docs/12-bits.md).
 
