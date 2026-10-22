@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.20.0 (2026-10-22)
 
 Step 10: slices. See [docs/10-slices.md](docs/10-slices.md).
 
