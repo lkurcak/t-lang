@@ -864,6 +864,12 @@ impl Interp<'_, '_> {
                 let slots = vec![Value::Moved; usize::try_from(cap).unwrap_or(0)];
                 Ok(Value::RawBuf(self.memory.alloc(Value::Slots(slots), true)))
             }
+            // No slots, so nothing to allocate: a compiled program's would
+            // be a dangling pointer. It's on the heap here only so that
+            // the leak check sees it freed, as every buffer must be.
+            "empty" => Ok(Value::RawBuf(
+                self.memory.alloc(Value::Slots(Vec::new()), true),
+            )),
             "cap" => {
                 let q = buf(self, &arg());
                 Ok(Value::Int(slots(self, &q) as i64))

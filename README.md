@@ -291,7 +291,9 @@ has to fit that:
   which slots of a raw buffer hold values, is `unsafe`, an effect only an
   `unsafe` block takes away, so the trust is exactly those blocks. The
   `alloc` library builds on `RawBuf<T>`, the one way to get memory for
-  many values. See [docs/09-unsafe.md](docs/09-unsafe.md).
+  many values. See [docs/09-unsafe.md](docs/09-unsafe.md). Its `List<T>`
+  is a safe interface over it, which nothing outside can break (see
+  [docs/09.1-list.md](docs/09.1-list.md)).
 
 Within that, the aim is to push the type system as far as it goes, and keep
 it sound: well-typed programs don't go wrong, including the ones that
@@ -321,7 +323,7 @@ combine features in ways nobody planned for.
 | 8 ✅ | refinement types, `{ d: int \| d > 0 }`, on parameters, results and `let`s; arithmetic proved total | refinement types, verification conditions from facts along each path (static single assignment), linear integer arithmetic decided by Fourier–Motzkin with integer rounding: sound, incomplete | [docs/08-refinement-types.md](docs/08-refinement-types.md) |
 | 8.1 ✅ | refinements on struct fields, `hi: { h: int \| h >= lo }`; facts through field reads | invariants of a type, kept by every value; facts about places (fields, `*`), forgotten where they may change | [docs/08.1-field-refinements.md](docs/08.1-field-refinements.md) |
 | 9 ✅ | `unsafe` blocks, `with unsafe`; an `alloc` library with `RawBuf<T>`, a buffer of slots | unsafe code as an effect, discharged only by a block; a small trusted base, and its obligations checked as the program runs (as Miri does) | [docs/09-unsafe.md](docs/09-unsafe.md) |
-| 9.1 | `alloc::list::List<T>`, a dense, resizable array, and iterating it | a safe interface over unsafe code, kept by a type's invariant | |
+| 9.1 ✅ | `alloc::list::List<T>`, a dense, resizable array, and iterating it | a safe interface over unsafe code, kept by a type's invariant (representation invariants, as RustBelt's), which privacy, borrows and linearity protect | [docs/09.1-list.md](docs/09.1-list.md) |
 | — | `std` | | |
 | — | C backend | | when it's worth it |
 

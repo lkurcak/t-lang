@@ -1595,3 +1595,33 @@ fn hovers_the_alloc_library_but_goes_nowhere_in_it() {
 
     stop(child, c);
 }
+
+/// A list's methods hover with their docs, from `alloc/list.t`.
+#[test]
+fn hovers_list_methods() {
+    let (child, mut c) = start();
+    let uri = "file:///tmp/list.t";
+    let src = "use alloc::list::List;\n\nfn main() with {alloc, panic} {\n    let mut l: List<int> = List::new();\n    l.push(1);\n    print(l.iter().count());\n    l.free();\n}\n";
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
+        }}),
+    );
+    let diagnostics = c.diagnostics();
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    let at = |line: u32, character: u32| json!({"textDocument": {"uri": uri}, "position": {"line": line, "character": character}});
+
+    c.send(json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": at(4, 7)}));
+    let hover = c.response(2)["result"]["contents"]["value"].clone();
+    let hover = hover.as_str().unwrap();
+    assert!(hover.contains("push"), "{hover}");
+    assert!(hover.contains("Puts `v` at the end."), "{hover}");
+
+    c.send(json!({"jsonrpc": "2.0", "id": 3, "method": "textDocument/hover", "params": at(5, 14)}));
+    let hover = c.response(3)["result"]["contents"]["value"].clone();
+    let hover = hover.as_str().unwrap();
+    assert!(hover.contains("Iter<"), "{hover}");
+    assert!(hover.contains("front to back"), "{hover}");
+
+    stop(child, c);
+}

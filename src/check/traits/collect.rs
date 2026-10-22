@@ -24,12 +24,6 @@ impl Checker {
                 };
                 return Err(Error::ty(name.span, message));
             }
-            if prog.types.iter().any(|d| d.name().name == name.name) {
-                return Err(Error::ty(
-                    name.span,
-                    format!("`{}` is already the name of a type", name.name),
-                ));
-            }
             let def = TraitDef {
                 span: Some(name.span),
                 supers: Vec::new(),

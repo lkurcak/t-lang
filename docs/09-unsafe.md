@@ -243,7 +243,7 @@ arguments', so a buffer of `&'a int` can't outlive `'a`.
 
 | Missing | Why it's missing | Step |
 |---|---|---|
-| `alloc::list::List<T>`, the dense resizable array, and iterating it | built on `RawBuf`, with its own obligations to get right | 9.1 |
+| `alloc::list::List<T>`, the dense resizable array, and iterating it | built on `RawBuf`, with its own obligations to get right | 9.1 ✅ |
 | destructors, `Discard` with a `fn discard(self)` | a drop would be a call nobody wrote | — |
 | raw pointers, byte buffers, casts | need an aliasing model, and layouts | — |
 | failing allocation, `RawBuf::try_new` | needs `Result` from an intrinsic | — |

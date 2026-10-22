@@ -102,6 +102,7 @@ pub const INTRINSICS: &[&str] = &[
     "core::panic::panic",
     "core::num::checked_mul",
     "alloc::raw::RawBuf::new",
+    "alloc::raw::RawBuf::empty",
     "alloc::raw::RawBuf::cap",
     "alloc::raw::RawBuf::grow",
     "alloc::raw::RawBuf::write",

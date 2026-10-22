@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+Step 9.1: lists. See [docs/09.1-list.md](docs/09.1-list.md).
+
+### Added
+
+- `alloc::list::List<T>`: a dense, resizable array, written in T on
+  `RawBuf<T>`, with `new`, `with_capacity`, `len`, `is_empty`,
+  `capacity`, `push`, `pop`, `get` and `get_mut` (which return `None` for
+  an index out of range), `swap`, `iter`, and, when its values are
+  `Discard`, `truncate` and `clear`. It's linear: it's used up by `free`,
+  when its values are `Discard`, or by `free_with(f)`, which gives each to
+  `f`. Only `push` and `with_capacity` may allocate or panic.
+- `alloc::list::Iter<'a, T>`, what `List::iter` gives: a `Discard`
+  iterator of `&T`s, front to back.
+- `RawBuf::empty()`: a buffer of no slots, which allocates nothing, so it
+  has no effects.
+
+### Fixed
+
+- A trait can have the name of a type in another module: `trait Range {}`
+  in a program was an error, as `core` has a `Range`.
+
 ## 0.18.0 (2026-10-22)
 
 Step 9: unsafe code and raw memory. See

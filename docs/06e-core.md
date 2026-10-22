@@ -507,7 +507,7 @@ nowhere, and it can't be renamed.
 | `unwrap`, `panic` | panics weren't in function types yet | 7 ✅ |
 | `expect` | needs strings | — |
 | `filter` | closures can't be higher-ranked when a bound says they should | 6e.1 ✅ |
-| `IntoIterator`, `for x in &list` | needs equality bounds with projections in them, and there are no collections yet | with `alloc` |
+| `IntoIterator`, `for x in &list` | needs equality bounds with projections in them, and negative reasoning to tell its blanket impl from one for `&List<T>` (docs/09.1-list.md) | — |
 | `a..=b`, `a..`, `..b`, `.rev()` | not needed yet | — |
 | `<` on any `Ord`, `#[derive(Ord)]` | would make `Ord` part of the language | — |
 | `Clone`, `Default`, `Show` | `Show` needs strings | — |

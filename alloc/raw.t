@@ -20,6 +20,11 @@ impl<T> RawBuf<T> {
     #[intrinsic]
     pub fn new(cap: { c: int | c >= 0 }) -> RawBuf<T> with {alloc, panic};
 
+    /// A buffer of no slots. It allocates nothing, so it can't fail, and
+    /// `grow` gives it some.
+    #[intrinsic]
+    pub fn empty() -> RawBuf<T>;
+
     /// How many slots it has.
     #[intrinsic]
     pub fn cap(&self) -> { c: int | c >= 0 };

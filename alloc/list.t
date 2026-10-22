@@ -1,0 +1,162 @@
+// Lists: dense, resizable arrays.
+
+use crate::raw::RawBuf;
+
+/// A list of `T`s, one after another in a buffer on the heap, which grows
+/// as values are pushed. `get` sees a value by its index, from `0` up to,
+/// not including, `len()`.
+///
+/// It isn't `Discard`, as its buffer isn't: it's used up by `free`, or by
+/// `free_with` when its values aren't `Discard` either.
+///
+/// # Invariant
+///
+/// Slots `0..len` of `buf` hold values, and the rest don't, so `len <=
+/// buf.cap()`. Every `unsafe` block here counts on it, and every method
+/// keeps it. Its fields are private, so nothing else can break it.
+pub struct List<T> { buf: RawBuf<T>, len: { l: int | l >= 0 } }
+
+impl<T> List<T> {
+    /// An empty list. It allocates nothing until something's pushed.
+    pub fn new() -> List<T> { List { buf: RawBuf::empty(), len: 0 } }
+
+    /// An empty list with room for `cap` values before it grows.
+    pub fn with_capacity(cap: { c: int | c >= 0 }) -> List<T> with {alloc, panic} {
+        List { buf: RawBuf::new(cap), len: 0 }
+    }
+
+    /// How many values it holds.
+    pub fn len(&self) -> { n: int | n >= 0 } { self.len }
+
+    /// Does it hold none?
+    pub fn is_empty(&self) -> bool { self.len == 0 }
+
+    /// How many values it has room for before it grows.
+    pub fn capacity(&self) -> { c: int | c >= 0 } { self.buf.cap() }
+
+    /// Puts `v` at the end. When there's no room, it doubles the buffer
+    /// first, which moves its values somewhere new.
+    pub fn push(&mut self, v: T) with {alloc, panic} {
+        let cap = self.buf.cap();
+        if self.len == cap {
+            if cap == 0 {
+                self.buf.grow(4);
+            } else {
+                self.buf.grow(cap * 2);
+            }
+        }
+        // SAFETY: slot `len` is past those that hold values, so it holds
+        // none, and it's less than `cap()`, which is more than `len` now.
+        unsafe { self.buf.write(self.len, v) };
+        self.len = self.len + 1;
+    }
+
+    /// Takes the last value out, or `None` if it's empty.
+    pub fn pop(&mut self) -> Option<T> {
+        if self.len == 0 {
+            return Option::None;
+        }
+        self.len = self.len - 1;
+        // SAFETY: slot `len` held the last value, and is past those that
+        // hold values now.
+        Option::Some(unsafe { self.buf.read(self.len) })
+    }
+
+    /// The value at `i`, or `None` if there's none: if `i` is negative, or
+    /// not less than `len()`.
+    pub fn get(&self, i: int) -> Option<&T> {
+        if i >= 0 && i < self.len {
+            // SAFETY: slot `i` is below `len`, so it holds a value.
+            Option::Some(unsafe { self.buf.get(i) })
+        } else {
+            Option::None
+        }
+    }
+
+    /// The value at `i`, to change, or `None` if there's none.
+    pub fn get_mut(&mut self, i: int) -> Option<&mut T> {
+        if i >= 0 && i < self.len {
+            // SAFETY: slot `i` is below `len`, so it holds a value.
+            Option::Some(unsafe { self.buf.get_mut(i) })
+        } else {
+            Option::None
+        }
+    }
+
+    /// Its values, by reference, front to back.
+    pub fn iter(&self) -> Iter<T> { Iter { list: self, next: 0 } }
+
+    /// Swaps the values at `i` and `j`, if both are less than `len()`, and
+    /// says whether it did.
+    pub fn swap(&mut self, i: { i: int | i >= 0 }, j: { j: int | j >= 0 }) -> bool {
+        if i >= self.len || j >= self.len {
+            return false;
+        }
+        if i == j {
+            return true;
+        }
+        // SAFETY: slots `i` and `j` are below `len`, so they hold values,
+        // and they're different slots, so each is read once and then
+        // written once, after it's empty.
+        unsafe {
+            let a = self.buf.read(i);
+            let b = self.buf.read(j);
+            self.buf.write(i, b);
+            self.buf.write(j, a);
+        }
+        true
+    }
+
+    /// Gives each value, front to back, to `f`, and then the buffer back.
+    pub fn free_with<e, F: FnMut(T) with e + Discard>(mut self, mut f: F) with e {
+        let mut i: { i: int | i >= 0 } = 0;
+        while i < self.len {
+            // SAFETY: slots `i..len` still hold values, and slot `i` is
+            // read only this once.
+            f(unsafe { self.buf.read(i) });
+            i = i + 1;
+        }
+        // SAFETY: the values in slots `0..len` have been read out, and the
+        // slots after them never held any, so every slot is empty.
+        unsafe { self.buf.free() };
+    }
+}
+
+impl<T: Discard> List<T> {
+    /// Throws its values away, and gives the buffer back.
+    pub fn free(self) { self.free_with(|_x| {}) }
+
+    /// Throws away the values from index `n` on, if there are any, so it
+    /// holds at most `n`. It's `pop` until then, so safe code.
+    pub fn truncate(&mut self, n: { n: int | n >= 0 }) {
+        while self.len > n {
+            self.pop();
+        }
+    }
+
+    /// Throws all its values away, keeping the buffer for more.
+    pub fn clear(&mut self) { self.truncate(0) }
+}
+
+/// What `List::iter` gives: a reference to each value of `list`, from
+/// index `next` on.
+#[derive(Discard)]
+pub struct Iter<'a, T> { list: &'a List<T>, next: { n: int | n >= 0 } }
+
+/// Safe code over `List::get`: each reference it gives borrows the list
+/// for as long as the iterator does.
+impl<'a, T> Iterator for Iter<'a, T> {
+    type Item = &'a T;
+    effect e = {};
+
+    fn next(&mut self) -> Option<&'a T> {
+        let list: &'a List<T> = self.list;
+        if self.next < list.len() {
+            let i = self.next;
+            self.next = i + 1;
+            list.get(i)
+        } else {
+            Option::None
+        }
+    }
+}
