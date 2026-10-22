@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.21.0 (2026-10-22)
 
 Step 11: integer types. See [docs/11-integers.md](docs/11-integers.md).
 
