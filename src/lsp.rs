@@ -81,39 +81,27 @@ pub fn run() -> Result<()> {
     // The files each program last had diagnostics published for, by the
     // path of its first file, to clear those of a file no longer in it.
     let mut published: HashMap<PathBuf, Vec<Uri>> = HashMap::new();
+    // A message the server can't make sense of, such as one with a URI
+    // that isn't one, gets an error, if it's a request, and is otherwise
+    // skipped: it mustn't stop the server, and with it the editor's help
+    // for every other file.
     for msg in &conn.receiver {
         match msg {
             Message::Request(req) => {
                 if conn.handle_shutdown(&req)? {
                     break;
                 }
-                conn.sender.send(respond(req, &docs)?.into())?;
+                let id = req.id.clone();
+                let response = respond(req, &docs).unwrap_or_else(|e| {
+                    Response::new_err(id, ErrorCode::InvalidParams as i32, e.to_string())
+                });
+                conn.sender.send(response.into())?;
             }
-            Message::Notification(n) => match n.method.as_str() {
-                DidOpenTextDocument::METHOD => {
-                    let p: DidOpenTextDocumentParams = serde_json::from_value(n.params)?;
-                    let doc = p.text_document;
-                    docs.0.insert(doc.uri.as_str().to_string(), doc.text);
-                    let version = (doc.uri, doc.version);
-                    publish_all(&conn, &docs, version, &mut published)?;
+            Message::Notification(n) => {
+                if let Err(e) = notify(&conn, n, &mut docs, &mut published) {
+                    eprintln!("t lsp: {e}");
                 }
-                DidChangeTextDocument::METHOD => {
-                    let p: DidChangeTextDocumentParams = serde_json::from_value(n.params)?;
-                    // With FULL sync, the last change holds the whole new text.
-                    if let Some(change) = p.content_changes.into_iter().last() {
-                        let doc = p.text_document;
-                        docs.0.insert(doc.uri.as_str().to_string(), change.text);
-                        let version = (doc.uri, doc.version);
-                        publish_all(&conn, &docs, version, &mut published)?;
-                    }
-                }
-                DidCloseTextDocument::METHOD => {
-                    let p: DidCloseTextDocumentParams = serde_json::from_value(n.params)?;
-                    docs.0.remove(p.text_document.uri.as_str());
-                    publish(&conn, p.text_document.uri, None, Vec::new())?;
-                }
-                _ => {}
-            },
+            }
             Message::Response(_) => {}
         }
     }
@@ -125,16 +113,70 @@ pub fn run() -> Result<()> {
     Ok(())
 }
 
-/// The text of every open file, by URI.
+/// Handles notification `n`: a file opened, changed or closed.
+fn notify(
+    conn: &Connection,
+    n: Notification,
+    docs: &mut Docs,
+    published: &mut HashMap<PathBuf, Vec<Uri>>,
+) -> Result<()> {
+    match n.method.as_str() {
+        DidOpenTextDocument::METHOD => {
+            let p: DidOpenTextDocumentParams = serde_json::from_value(n.params)?;
+            let doc = p.text_document;
+            docs.open(&doc.uri, doc.text);
+            publish_all(conn, docs, (doc.uri, doc.version), published)?;
+        }
+        DidChangeTextDocument::METHOD => {
+            let p: DidChangeTextDocumentParams = serde_json::from_value(n.params)?;
+            // With FULL sync, the last change holds the whole new text.
+            if let Some(change) = p.content_changes.into_iter().last() {
+                let doc = p.text_document;
+                docs.open(&doc.uri, change.text);
+                publish_all(conn, docs, (doc.uri, doc.version), published)?;
+            }
+        }
+        DidCloseTextDocument::METHOD => {
+            let p: DidCloseTextDocumentParams = serde_json::from_value(n.params)?;
+            docs.0.remove(&uri_path(&p.text_document.uri));
+            publish(conn, p.text_document.uri, None, Vec::new())?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Every open file, by path: its URI, as the editor wrote it, and its
+/// text. By path, as editors write the same file's URI differently on
+/// Windows, `file:///c%3A/..` or `file:///C:/..`, and the server must
+/// answer with the one the editor knows the file by.
 #[derive(Default)]
-struct Docs(HashMap<String, String>);
+struct Docs(HashMap<PathBuf, (Uri, String)>);
 
 impl Docs {
+    /// The editor has the file at `uri` open, with `text`.
+    fn open(&mut self, uri: &Uri, text: String) {
+        self.0.insert(uri_path(uri), (uri.clone(), text));
+    }
+
+    /// The text of the open file at `uri`.
+    fn text(&self, uri: &Uri) -> Option<&String> {
+        self.0.get(&uri_path(uri)).map(|(_, text)| text)
+    }
+
+    /// The URI of the file at `path`: the editor's, if it's open.
+    fn uri(&self, path: &Path) -> Uri {
+        match self.0.get(path) {
+            Some((uri, _)) => uri.clone(),
+            None => path_uri(path),
+        }
+    }
+
     /// Reads a file: what the editor has, if it's open, or else what's on
     /// disk.
     fn read(&self, path: &Path) -> std::io::Result<String> {
-        match self.0.get(path_uri(path).as_str()) {
-            Some(text) => Ok(text.clone()),
+        match self.0.get(path) {
+            Some((_, text)) => Ok(text.clone()),
             None => crate::load::read_file(path),
         }
     }
@@ -143,7 +185,7 @@ impl Docs {
     /// of the nearest `main.t` above it that has it as a module's file, or
     /// else the file alone (see `load.rs`).
     fn analyse(&self, uri: &Uri) -> Option<Analysis> {
-        let src = self.0.get(uri.as_str())?;
+        let src = self.text(uri)?;
         let path = uri_path(uri);
         let read = |p: &Path| self.read(p);
         let mut dirs = path.parent().into_iter().flat_map(Path::ancestors);
@@ -162,7 +204,7 @@ impl Docs {
             .sources
             .files()
             .iter()
-            .map(|f| path_uri(&f.path))
+            .map(|f| self.uri(&f.path))
             .collect();
         Some(Analysis {
             root,
@@ -385,7 +427,7 @@ fn respond(req: Request, docs: &Docs) -> Result<Response> {
         }
         DocumentSymbolRequest::METHOD => {
             let p: DocumentSymbolParams = serde_json::from_value(req.params)?;
-            let outline = docs.0.get(p.text_document.uri.as_str()).and_then(|src| {
+            let outline = docs.text(&p.text_document.uri).and_then(|src| {
                 let prog = crate::lexer::lex(src).and_then(crate::parser::parse).ok()?;
                 Some(DocumentSymbolResponse::Nested(outline(src, &prog)))
             });
@@ -402,7 +444,7 @@ fn respond(req: Request, docs: &Docs) -> Result<Response> {
         }
         Formatting::METHOD => {
             let p: DocumentFormattingParams = serde_json::from_value(req.params)?;
-            let Some(src) = docs.0.get(p.text_document.uri.as_str()) else {
+            let Some(src) = docs.text(&p.text_document.uri) else {
                 return Ok(Response::new_ok(req.id, ()));
             };
             match crate::fmt::format(src) {
@@ -485,7 +527,7 @@ fn publish_all(
         let diags: Vec<Diagnostic> = diagnose(&a, file).into_iter().map(|(d, _)| d).collect();
         // A file neither open nor with anything to say, now or before,
         // needs nothing published.
-        if diags.is_empty() && !docs.0.contains_key(file.as_str()) && !before.contains(file) {
+        if diags.is_empty() && docs.text(file).is_none() && !before.contains(file) {
             continue;
         }
         let version = (*file == uri).then_some(version);
@@ -830,8 +872,28 @@ fn warning_diagnostic(a: &Analysis, uri: &Uri, w: &Warning) -> Option<Diagnostic
 /// The path of a `file:` URI. Any other URI, of a file not saved, is a
 /// path of its own, which no `main.t` is above.
 fn uri_path(uri: &Uri) -> PathBuf {
-    let Some(rest) = uri.as_str().strip_prefix("file://") else {
-        return PathBuf::from(uri.as_str());
+    PathBuf::from(file_path(uri.as_str(), cfg!(windows)))
+}
+
+/// The `file:` URI of a path, the inverse of `uri_path`.
+fn path_uri(path: &Path) -> Uri {
+    let s = path.to_string_lossy();
+    // Not a path, but the URI of a file not saved, as `uri_path` gives.
+    if !path.has_root()
+        && let Ok(uri) = s.parse()
+    {
+        return uri;
+    }
+    file_uri(&s, cfg!(windows)).parse().expect("a file URI")
+}
+
+/// The path `uri` names, on Windows if `windows`: `file:///home/a.t` is
+/// `/home/a.t`; on Windows, `file:///c%3A/a.t` is `C:\a.t`, with its drive
+/// letter in capitals, as editors differ, and `file://server/share/a.t` is
+/// `\\server\share\a.t`. A URI that isn't a `file:` one is its own path.
+fn file_path(uri: &str, windows: bool) -> String {
+    let Some(rest) = uri.strip_prefix("file://") else {
+        return uri.to_string();
     };
     let bytes = rest.as_bytes();
     let mut out = Vec::new();
@@ -853,27 +915,51 @@ fn uri_path(uri: &Uri) -> PathBuf {
             }
         }
     }
-    PathBuf::from(String::from_utf8_lossy(&out).into_owned())
+    let path = String::from_utf8_lossy(&out).into_owned();
+    if !windows {
+        return path;
+    }
+    let path = match path.strip_prefix('/') {
+        Some(local) if drive(local) => local[..1].to_ascii_uppercase() + &local[1..],
+        Some(_) => path,
+        // A host: a share on another machine.
+        None => format!("//{path}"),
+    };
+    path.replace('/', "\\")
 }
 
-/// The `file:` URI of a path, the inverse of `uri_path`.
-fn path_uri(path: &Path) -> Uri {
-    let s = path.to_string_lossy();
-    if !s.starts_with('/')
-        && let Ok(uri) = s.parse()
-    {
-        return uri;
-    }
-    let mut out = String::from("file://");
-    for b in s.bytes() {
+/// The `file:` URI of `path`, on Windows if `windows`: the inverse of
+/// `file_path`. Each byte but the few a URI path may have as they are is
+/// escaped, `%20` for a space, and so is `\` elsewhere than on Windows,
+/// where it separates the parts of a path.
+fn file_uri(path: &str, windows: bool) -> String {
+    let path = match windows {
+        true => path.replace('\\', "/"),
+        false => path.to_string(),
+    };
+    let (start, path) = match path.strip_prefix("//") {
+        Some(share) if windows => ("file://", share.to_string()),
+        _ if windows && drive(&path) => ("file:///", path),
+        _ => ("file://", path),
+    };
+    let mut out = String::from(start);
+    for (i, b) in path.bytes().enumerate() {
         match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'/' | b'-' | b'_' | b'.' | b'~' => {
                 out.push(b as char)
             }
+            // A drive's `C:` as it is, as RFC 8089 and Neovim write it.
+            b':' if windows && i == 1 && start == "file:///" => out.push(':'),
             _ => out.push_str(&format!("%{b:02X}")),
         }
     }
-    out.parse().expect("a file URI")
+    out
+}
+
+/// Whether `path` starts with a Windows drive, `C:`.
+fn drive(path: &str) -> bool {
+    let b = path.as_bytes();
+    b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b.len() == 2 || b[2] == b'/')
 }
 
 fn lsp_range(src: &str, span: Span) -> Range {
@@ -920,6 +1006,47 @@ mod tests {
         assert_eq!(position(src, x), Position::new(1, 3));
         assert_eq!(position(src, 0), Position::new(0, 0));
         assert_eq!(position(src, src.len()), Position::new(2, 0));
+    }
+
+    #[test]
+    fn file_uris_are_paths_on_unix() {
+        assert_eq!(file_path("file:///home/a%20b/m.t", false), "/home/a b/m.t");
+        assert_eq!(file_uri("/home/a b/m.t", false), "file:///home/a%20b/m.t");
+        assert_eq!(
+            file_path("untitled:Untitled-1", false),
+            "untitled:Untitled-1"
+        );
+    }
+
+    /// Editors write a Windows path's URI differently, VS Code
+    /// `file:///c%3A/..` and Neovim `file:///C:/..`: both are the same path.
+    #[test]
+    fn file_uris_are_paths_on_windows() {
+        let path = r"C:\Users\me\t lang\main.t";
+        assert_eq!(
+            file_path("file:///c%3A/Users/me/t%20lang/main.t", true),
+            path
+        );
+        assert_eq!(file_path("file:///C:/Users/me/t%20lang/main.t", true), path);
+        assert_eq!(file_uri(path, true), "file:///C:/Users/me/t%20lang/main.t");
+        assert_eq!(
+            file_path("file://server/share/m.t", true),
+            r"\\server\share\m.t"
+        );
+        assert_eq!(
+            file_uri(r"\\server\share\m.t", true),
+            "file://server/share/m.t"
+        );
+        // A path with no drive, as `file:///tmp/a.t` is, is on the current one.
+        assert_eq!(file_path("file:///tmp/a.t", true), r"\tmp\a.t");
+        assert_eq!(file_uri(r"\tmp\a.t", true), "file:///tmp/a.t");
+        for uri in [
+            "file:///C:/a.t",
+            "file://server/share/m.t",
+            "file:///tmp/a.t",
+        ] {
+            assert_eq!(file_uri(&file_path(uri, true), true), uri);
+        }
     }
 
     #[test]

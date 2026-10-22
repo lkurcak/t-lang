@@ -1430,6 +1430,56 @@ fn main() with panic {
 }
 
 /// The next `publishDiagnostics` for `uri`, skipping others.
+/// The `file:` URI of an absolute path, as an editor writes it:
+/// `file:///tmp/a.t`, or on Windows `file:///C:/Users/a.t`.
+fn file_uri(path: &std::path::Path) -> String {
+    let path = path.to_string_lossy().replace('\\', "/");
+    let path = match path.starts_with('/') {
+        true => path,
+        false => format!("/{path}"),
+    };
+    let mut out = String::from("file://");
+    for (i, b) in path.bytes().enumerate() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'/' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            b':' if i == 2 => out.push(':'),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+/// A message the server can't make sense of, here a URI that isn't one,
+/// doesn't stop it: a request gets an error, and the server goes on.
+#[test]
+fn survives_messages_it_cannot_read() {
+    let (child, mut c) = start();
+    let bad = r"file://C:\Users\me\main.t";
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": bad, "languageId": "t", "version": 1, "text": "fn main() {}\n"}
+        }}),
+    );
+    c.send(
+        json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": {
+            "textDocument": {"uri": bad}, "position": {"line": 0, "character": 3}
+        }}),
+    );
+    let r = c.response(2);
+    assert!(r.get("error").is_some(), "{r}");
+    // And it still answers about a file it can read.
+    let uri = "file:///tmp/after.t";
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": "fn main() {}\n"}
+        }}),
+    );
+    assert_eq!(diagnostics_for(&mut c, uri), Vec::<Value>::new());
+    stop(child, c);
+}
+
 fn diagnostics_for(c: &mut Client, uri: &str) -> Vec<Value> {
     loop {
         let msg = c.recv();
@@ -1451,8 +1501,8 @@ fn files_of_modules_are_checked_with_their_program() {
     let main = "mod util;\nfn main() {\n    print(util::helper());\n}\n";
     std::fs::write(dir.join("main.t"), main).unwrap();
     std::fs::write(dir.join("util.t"), "pub fn helper() -> i64 { 1 }\n").unwrap();
-    let main_uri = format!("file://{}/main.t", dir.display());
-    let util_uri = format!("file://{}/util.t", dir.display());
+    let main_uri = file_uri(&dir.join("main.t"));
+    let util_uri = file_uri(&dir.join("util.t"));
 
     let (child, mut c) = start();
     // Opened with an error that isn't on disk: it's in `util.t`, and
