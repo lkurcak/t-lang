@@ -45,7 +45,14 @@ impl fmt::Display for Pred {
 /// needs `Discard` (see docs/06a.1-linear-types.md); and `Int`, which only
 /// the integer types implement, and says the arithmetic operators work on
 /// a type (see docs/11-integers.md).
-pub const BUILTIN_TRAITS: &[&str] = &["Copy", "Discard", "Eq", "Fn", "FnMut", "FnOnce", "Int"];
+pub const BUILTIN_TRAITS: &[&str] = &[
+    "Copy", "Discard", "Eq", "Fn", "FnMut", "FnOnce", "Int", "Signed", "Unsigned",
+];
+
+/// The built-in traits no impl can add to: the integer types are all
+/// there are, and generic code may count on what they have in common
+/// (see docs/11-integers.md).
+pub const SEALED_TRAITS: &[&str] = &["Int", "Signed", "Unsigned"];
 
 /// The traits of what can be called: `F: Fn(i64) -> i64` says a value of
 /// type `F` can be called with an `i64`, giving an `i64`. Functions and
@@ -375,6 +382,23 @@ impl Traits {
                 methods: Vec::new(),
             },
         );
+        // trait Signed: Int {}
+        // trait Unsigned: Int {}
+        //
+        // `Int`'s two halves, sealed too: of a `T: Signed`, the least
+        // value is -1 minus the greatest, and of a `T: Unsigned` it's 0
+        // (see docs/12-bits.md).
+        for name in ["Signed", "Unsigned"] {
+            traits.insert(
+                name.to_string(),
+                TraitDef {
+                    span: None,
+                    supers: vec!["Int".to_string()],
+                    assoc: Vec::new(),
+                    methods: Vec::new(),
+                },
+            );
+        }
         // trait FnOnce { type (signature); }
         // trait FnMut: FnOnce {}
         // trait Fn: FnMut {}
@@ -551,6 +575,9 @@ impl Traits {
                 return Ok(Source::Builtin);
             }
             ("Int", Type::Int(_)) => return Ok(Source::Builtin),
+            ("Signed", Type::Int(t)) if t.signed() => return Ok(Source::Builtin),
+            ("Unsigned", Type::Int(t)) if !t.signed() => return Ok(Source::Builtin),
+            ("Signed" | "Unsigned", Type::Int(_)) => return Err(fail()),
             // References and boxes compare what they point to.
             ("Eq", Type::Ref(_, _, inner) | Type::Box(inner)) => return all(&[inner]),
             ("Eq", Type::Fn(_)) => return Err(fail()),

@@ -103,6 +103,7 @@ pub const INTRINSICS: &[&str] = &[
     "core::mem::swap",
     "core::panic::panic",
     "core::num::checked_mul",
+    "core::num::wrapping_mul",
     "core::num::least",
     "core::num::greatest",
     "core::slice::empty",
@@ -455,6 +456,9 @@ pub(crate) struct Checker {
     /// and patterns, each to be checked to fit in its type once that's
     /// known (`Checker::literals`).
     literals: Vec<Literal>,
+    /// The type of what each `!` of the function works on, with where it
+    /// is, of those not known when it was checked (`Checker::nots`).
+    nots: Vec<(Type, Span)>,
 }
 
 /// A projection `proj`, `<T as Tr>::Item`, whose type `T` isn't known yet,
@@ -557,6 +561,7 @@ impl Checker {
             field_refined: HashMap::new(),
             pred_names: HashMap::new(),
             literals: Vec::new(),
+            nots: Vec::new(),
             modules,
             module: ROOT,
         }

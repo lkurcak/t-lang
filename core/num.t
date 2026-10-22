@@ -5,7 +5,8 @@
 // its least to its greatest, and the operators give the same number as in
 // the integers, ℤ, or panic when that doesn't fit in the type, and `/` and
 // `%` when dividing by zero: `a + b` is `checked_add(a, b)`, or a panic on
-// `None`. These say so instead.
+// `None`. These say so instead, or wrap around, as a machine's arithmetic
+// does: modulo 2^w, for a type `w` bits wide.
 //
 // They're written once, for every integer type, as `T: Int`. In code like
 // that the checker knows only what holds of all of them: that the least
@@ -84,4 +85,64 @@ pub fn checked_neg<T: Int>(a: T) -> Option<T> {
     } else {
         Option::None
     }
+}
+
+/// `a + b`, modulo 2^w for a `T` that's `w` bits wide: past the greatest
+/// value, it goes on from the least. `wrapping_add(255u8, 1)` is 0.
+pub fn wrapping_add<T: Int>(a: T, b: T) -> T {
+    if b > 0 {
+        if a <= greatest::<T>() - b {
+            a + b
+        } else {
+            // a + b - 2^w, as 2^w is the greatest minus the least, plus 1.
+            a - (greatest::<T>() - b) - 1 + least::<T>()
+        }
+    } else if a >= least::<T>() - b {
+        a + b
+    } else {
+        // a + b + 2^w.
+        a - (least::<T>() - b) + 1 + greatest::<T>()
+    }
+}
+
+/// `-a`, modulo 2^w: `wrapping_neg(1u8)` is 255, and the least value of a
+/// signed type is its own negation.
+pub fn wrapping_neg<T: Int>(a: T) -> T {
+    if a > 0 {
+        if a + least::<T>() <= 0 {
+            -a
+        } else {
+            // -a + 2^w.
+            greatest::<T>() - a + 1 + least::<T>()
+        }
+    } else if a + greatest::<T>() >= 0 {
+        -a
+    } else {
+        // Only the least value of a signed type, -2^(w-1), gets here: and
+        // -a - 2^w is that.
+        a
+    }
+}
+
+/// `a - b`, modulo 2^w: `wrapping_sub(0u8, 1)` is 255.
+pub fn wrapping_sub<T: Int>(a: T, b: T) -> T { wrapping_add(a, wrapping_neg(b)) }
+
+/// `a * b`, modulo 2^w.
+#[intrinsic]
+pub fn wrapping_mul<T: Int>(a: T, b: T) -> T;
+
+/// How far `x` is from 0: it panics at the least value, whose distance is
+/// one more than the greatest.
+pub fn abs<T: Signed>(x: T) -> T with panic {
+    if x < 0 { -x } else { x }
+}
+
+/// How far `x` is from 0, or `None` at the least value.
+pub fn checked_abs<T: Signed>(x: T) -> Option<T> {
+    if x < 0 { checked_neg(x) } else { Option::Some(x) }
+}
+
+/// How far `x` is from 0, modulo 2^w: the least value is its own.
+pub fn wrapping_abs<T: Signed>(x: T) -> T {
+    if x < 0 { wrapping_neg(x) } else { x }
 }

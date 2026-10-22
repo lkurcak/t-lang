@@ -10,7 +10,12 @@
 //! depends on the machine, and all the checker knows of it is that it's
 //! between the greatest 32-bit and the greatest 64-bit number: so what it
 //! proves, it proves of every machine. A type parameter `T: Int`'s values
-//! are between two such variables (see docs/11-integers.md).
+//! are between two such variables, the greatest at least -1 minus the
+//! least, as in every two's complement type; of a `T: Unsigned` the least
+//! is 0, and of a `T: Signed` it's -1 minus the greatest (see
+//! docs/11-integers.md and docs/12-bits.md). What the bitwise operators
+//! give isn't linear: the logic knows only some facts of it
+//! (`refine::bitwise`).
 //!
 //! `valid(facts, goal)` says whether the goal follows from the facts. It
 //! asks the opposite question, whether the facts and the goal's negation

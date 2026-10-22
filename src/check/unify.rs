@@ -456,6 +456,7 @@ impl Checker {
     /// A type a `!` was wanted as that nothing decided is `!` (see `fits`).
     pub(super) fn solve_all(&mut self, vars: usize, f: &crate::ast::FnDecl) -> Result<(), Error> {
         self.settle_goals()?;
+        self.nots()?;
         self.literals()?;
         for t in std::mem::take(&mut self.diverging) {
             // An integer type can't be `!`: that's left to be inferred.

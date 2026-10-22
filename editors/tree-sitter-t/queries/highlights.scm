@@ -88,11 +88,13 @@
   "+" "-" "*" "/" "%"
   "==" "!=" "<" "<=" ">" ">="
   "&&" "!" "&"
-  "=" "+=" "-=" "*=" "/=" "%="
+  "^" "<<" ">>"
+  "=" "+=" "-=" "*=" "/=" "%=" "&=" "|=" "^=" "<<=" ">>="
   "->" "=>" ".." "..="
 ] @operator
 
 (binary_expression "||" @operator)
+(binary_expression "|" @operator)
 (closure_parameters "|" @punctuation.bracket)
 (closure_parameters "||" @punctuation.bracket)
 (or_pattern "|" @operator)

@@ -174,6 +174,25 @@ impl<'s> Trivia<'s> {
             .map_or(Span::new(self.src.len(), self.src.len()), |t| t.span)
     }
 
+    /// How the integer literal at `span` is written, `0xFF_u8`, or the
+    /// literal pattern, `-0x80..=0x7F`: its tokens, with nothing between
+    /// them. `None` if there's anything else there.
+    pub fn spelled(&self, span: Span) -> Option<String> {
+        let mut out = String::new();
+        for t in &self.toks[self.tok_index(span.start)..] {
+            if t.span.start >= span.end {
+                break;
+            }
+            match t.tok {
+                Tok::Int(..) | Tok::Minus | Tok::DotDot | Tok::DotDotEq => {
+                    out.push_str(&self.src[t.span.start..t.span.end]);
+                }
+                _ => return None,
+            }
+        }
+        (!out.is_empty()).then_some(out)
+    }
+
     /// The token just before the one at `pos`: the `fn` before a function's
     /// name, or the `let` before a pattern.
     pub fn before(&self, pos: usize) -> Span {

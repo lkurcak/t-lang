@@ -455,6 +455,42 @@ fn formats_documents() {
     stop(child, c);
 }
 
+/// Formatting keeps how a literal is written and the parentheses that
+/// say which of two bitwise operators comes first; hovering over a `!`
+/// of an integer shows the integer's type.
+#[test]
+fn formats_and_hovers_bitwise_operators() {
+    let (child, mut c) = start();
+    let uri = "file:///tmp/bits.t";
+    let src = "fn low(x: u16) -> u8 {   ((x >> 4)  & 0x0F) as u8 | 0b1000_0000 }\nfn main() { let m = !low(0xF0); print(m) }\n";
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
+        }}),
+    );
+    assert_eq!(c.diagnostics(), Vec::<Value>::new());
+    c.send(
+        json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/formatting", "params": {
+            "textDocument": {"uri": uri},
+            "options": {"tabSize": 4, "insertSpaces": true}
+        }}),
+    );
+    let response = c.response(2);
+    assert_eq!(
+        response["result"][0]["newText"],
+        "fn low(x: u16) -> u8 { ((x >> 4) & 0x0F) as u8 | 0b1000_0000 }\nfn main() {\n    let m = !low(0xF0);\n    print(m)\n}\n",
+        "{response}"
+    );
+    c.send(
+        json!({"jsonrpc": "2.0", "id": 3, "method": "textDocument/hover", "params": {
+            "textDocument": {"uri": uri}, "position": {"line": 1, "character": 16}
+        }}),
+    );
+    let hover = c.response(3)["result"].clone();
+    assert_eq!(hover["contents"]["value"], "```t\nm: u8\n```", "{hover}");
+    stop(child, c);
+}
+
 /// Hover and go to definition find the function a name refers to, when
 /// nested functions share a name with each other and with a top-level one.
 #[test]

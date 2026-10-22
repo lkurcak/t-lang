@@ -1,6 +1,6 @@
 //! Turns source text into a flat list of tokens.
 
-use crate::error::{Error, Span};
+use crate::error::{Edit, Error, Fix, Span};
 use crate::types::IntTy;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -80,6 +80,11 @@ pub enum Tok {
     AndAnd,
     OrOr,
     Pipe,
+    Caret,
+    /// `<<`. There's no `>>` token: a type's arguments may end with two
+    /// `>`s, as in `Option<Option<u8>>`, so the parser takes two `>`s
+    /// with nothing between them as a shift.
+    Shl,
     /// A `///` doc comment line: the text after the `///`. The parser sets
     /// these aside, and attaches them to what comes after.
     Doc(String),
@@ -161,6 +166,8 @@ impl Tok {
             Tok::AndAnd => "&&",
             Tok::OrOr => "||",
             Tok::Pipe => "|",
+            Tok::Caret => "^",
+            Tok::Shl => "<<",
         };
         format!("`{s}`")
     }
@@ -174,6 +181,11 @@ pub enum OpEq {
     Mul,
     Div,
     Rem,
+    And,
+    Or,
+    Xor,
+    Shl,
+    Shr,
 }
 
 impl OpEq {
@@ -184,6 +196,11 @@ impl OpEq {
             OpEq::Mul => "*",
             OpEq::Div => "/",
             OpEq::Rem => "%",
+            OpEq::And => "&",
+            OpEq::Or => "|",
+            OpEq::Xor => "^",
+            OpEq::Shl => "<<",
+            OpEq::Shr => ">>",
         }
     }
 }
@@ -238,12 +255,55 @@ pub fn lex_with_comments(src: &str) -> Result<(Vec<Token>, Vec<Comment>), Error>
         }
 
         let tok = if c.is_ascii_digit() {
-            while i < bytes.len() && (bytes[i].is_ascii_digit() || bytes[i] == b'_') {
+            let radix = match (c, bytes.get(i + 1)) {
+                (b'0', Some(b'x')) => 16,
+                (b'0', Some(b'b')) => 2,
+                (b'0', Some(b'o')) => 8,
+                (b'0', Some(&p @ (b'X' | b'B' | b'O'))) => {
+                    let lower = (p as char).to_ascii_lowercase();
+                    let span = Span::new(start, start + 2);
+                    return Err(
+                        Error::syntax(span, format!("write `0{lower}`, in lowercase")).with_fix(
+                            Fix::new(
+                                format!("write `0{lower}`"),
+                                vec![Edit::replace(span, format!("0{lower}"))],
+                            ),
+                        ),
+                    );
+                }
+                _ => 10,
+            };
+            if radix != 10 {
+                i += 2;
+            }
+            // Its digits: hexadecimal ones for any radix, so that `0b102`
+            // says `2` isn't a binary digit rather than that `2` isn't a
+            // suffix. A suffix starts with `i` or `u`, which aren't any.
+            let at = i;
+            while i < bytes.len() && (bytes[i].is_ascii_hexdigit() || bytes[i] == b'_') {
                 i += 1;
             }
-            let digits: String = src[start..i].chars().filter(|&c| c != '_').collect();
-            let n = digits
-                .parse::<u64>()
+            let digits: String = src[at..i].chars().filter(|&c| c != '_').collect();
+            if digits.is_empty() {
+                let prefix = &src[start..at];
+                return Err(Error::syntax(
+                    Span::new(start, at),
+                    format!("`{prefix}` needs digits after it"),
+                ));
+            }
+            if let Some(off) = src[at..i].find(|c: char| !c.is_digit(radix) && c != '_') {
+                let d = &src[at + off..at + off + 1];
+                let what = match radix {
+                    2 => "a binary digit",
+                    8 => "an octal digit",
+                    _ => "a decimal digit",
+                };
+                return Err(Error::syntax(
+                    Span::new(at + off, at + off + 1),
+                    format!("`{d}` isn't {what}"),
+                ));
+            }
+            let n = u64::from_str_radix(&digits, radix)
                 .map_err(|_| Error::syntax(Span::new(start, i), "integer literal is too large"))?;
             // A suffix, `255u8`, says which integer type it is.
             let at = i;
@@ -334,6 +394,12 @@ pub fn lex_with_comments(src: &str) -> Result<(Vec<Token>, Vec<Comment>), Error>
                 (b'*', Some(b'=')) => (Tok::OpEq(OpEq::Mul), 2),
                 (b'/', Some(b'=')) => (Tok::OpEq(OpEq::Div), 2),
                 (b'%', Some(b'=')) => (Tok::OpEq(OpEq::Rem), 2),
+                (b'&', Some(b'=')) => (Tok::OpEq(OpEq::And), 2),
+                (b'|', Some(b'=')) => (Tok::OpEq(OpEq::Or), 2),
+                (b'^', Some(b'=')) => (Tok::OpEq(OpEq::Xor), 2),
+                (b'<', Some(b'<')) if third == Some(b'=') => (Tok::OpEq(OpEq::Shl), 3),
+                (b'<', Some(b'<')) => (Tok::Shl, 2),
+                (b'^', _) => (Tok::Caret, 1),
                 (b'&', _) => (Tok::Amp, 1),
                 (b'|', _) => (Tok::Pipe, 1),
                 (b'(', _) => (Tok::LParen, 1),

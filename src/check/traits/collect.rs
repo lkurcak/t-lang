@@ -356,11 +356,18 @@ impl Checker {
                         ),
                     ));
                 }
-                (Some(tr), _) if tr == "Int" => {
+                (Some(tr), _) if crate::traits::SEALED_TRAITS.contains(&tr.as_str()) => {
+                    let which = match tr.as_str() {
+                        "Signed" => "the signed integer types",
+                        "Unsigned" => "the unsigned integer types",
+                        _ => "the integer types",
+                    };
                     return Err(Error::ty(
                         header,
-                        "`Int` is built in: only the integer types implement it, so generic \
-                         code over it may count on what they have in common",
+                        format!(
+                            "`{tr}` is built in: only {which} implement it, so generic code over \
+                             it may count on what they have in common"
+                        ),
                     ));
                 }
                 (Some(tr), _) if crate::traits::FN_TRAITS.contains(&tr.as_str()) => {

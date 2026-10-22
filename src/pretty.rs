@@ -115,10 +115,23 @@ fn prec(op: BinOp) -> u8 {
         BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => CMP,
         BinOp::Add | BinOp::Sub => 4,
         BinOp::Mul | BinOp::Div | BinOp::Rem => 5,
+        // As in the parser, though which comes first of these and the
+        // others above needs parentheses: see `BinOp::nests_in`.
+        BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => 4,
     }
 }
 
 const CMP: u8 = 3;
+
+/// What `min` an operand `e` of `op` needs: more than any, so
+/// parentheses, if it's an operator that can't be `op`'s operand without
+/// them (`BinOp::nests_in`).
+fn apart(e: &Expr, op: BinOp, min: u8) -> u8 {
+    match e.kind {
+        ExprKind::Binary(inner, ..) if !inner.nests_in(op) => UNARY + 1,
+        _ => min,
+    }
+}
 
 /// `as`: tighter than any binary operator, looser than a unary one.
 const AS: u8 = 6;
@@ -312,6 +325,17 @@ impl Printer<'_> {
     /// Are there comments to print before `pos`?
     fn comments_before(&self, pos: usize) -> bool {
         self.trivia.as_ref().is_some_and(|t| t.any_before(pos))
+    }
+
+    /// An integer literal or literal pattern at `span`, as the source
+    /// writes it when formatting it, `0xFF`, and else as `plain` says.
+    fn spelled(&self, span: Span, plain: String) -> Doc {
+        text(
+            self.trivia
+                .as_ref()
+                .and_then(|t| t.spelled(span))
+                .unwrap_or(plain),
+        )
     }
 
     /// Where the first `tok` at or after `pos` starts in the source.
@@ -876,8 +900,8 @@ impl Printer<'_> {
 
     fn expr_inner(&mut self, e: &Expr, ctx: Ctx) -> Doc {
         match &e.kind {
-            ExprKind::Int(n, None) => text(n.to_string()),
-            ExprKind::Int(n, Some(t)) => text(format!("{n}{}", t.name())),
+            ExprKind::Int(n, None) => self.spelled(e.span, n.to_string()),
+            ExprKind::Int(n, Some(t)) => self.spelled(e.span, format!("{n}{}", t.name())),
             ExprKind::Bool(b) => text(b.to_string()),
             ExprKind::Unit => text("()"),
             ExprKind::Var(name, targs) => text(name) + self.turbofish(targs),
@@ -1063,11 +1087,12 @@ impl Printer<'_> {
         // Collect the run down its left side: ((a + b) - c) is a, b, c.
         let mut rights = Vec::new();
         let mut left = e;
-        while let ExprKind::Binary(op, l, r) = &left.kind
-            && prec(*op) == p
+        while let ExprKind::Binary(inner, l, r) = &left.kind
+            && prec(*inner) == p
+            && inner.nests_in(op)
             && (p != CMP || rights.is_empty())
         {
-            rights.push((*op, &**r));
+            rights.push((*inner, &**r));
             left = l;
         }
         rights.reverse();
@@ -1079,12 +1104,12 @@ impl Printer<'_> {
             _ if p == CMP => p + 1,
             _ => p,
         };
-        let first = self.expr(left, min, ctx);
+        let first = self.expr(left, apart(left, op, min), ctx);
         let mut rest = Doc::nil();
         let inner = Ctx { stmt: false, ..ctx };
         for (op, r) in rights {
             let min = if op == BinOp::Or { min } else { p + 1 };
-            rest = rest + Doc::Line + op.to_string() + " " + self.expr(r, min, inner);
+            rest = rest + Doc::Line + op.to_string() + " " + self.expr(r, apart(r, op, min), inner);
         }
         group(first + nest(rest))
     }
@@ -1366,8 +1391,10 @@ impl Printer<'_> {
             PatternKind::Wild => text("_"),
             PatternKind::Bind(name, false) => text(name),
             PatternKind::Bind(name, true) => text(format!("mut {name}")),
-            PatternKind::Int(n) => text(n.to_string()),
-            PatternKind::Range(lo, hi, inclusive) => text(range(*lo, *hi, *inclusive)),
+            PatternKind::Int(n) => self.spelled(p.span, n.to_string()),
+            PatternKind::Range(lo, hi, inclusive) => {
+                self.spelled(p.span, range(*lo, *hi, *inclusive))
+            }
             PatternKind::Bool(b) => text(b.to_string()),
             PatternKind::Unit => text("()"),
             PatternKind::Variant(ty, targs, variant, args) => {

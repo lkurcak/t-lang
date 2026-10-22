@@ -1737,7 +1737,17 @@ impl Parser {
                 OpEq::Mul => BinOp::Mul,
                 OpEq::Div => BinOp::Div,
                 OpEq::Rem => BinOp::Rem,
+                OpEq::And => BinOp::BitAnd,
+                OpEq::Or => BinOp::BitOr,
+                OpEq::Xor => BinOp::BitXor,
+                OpEq::Shl => BinOp::Shl,
+                OpEq::Shr => BinOp::Shr,
             }),
+            // `>>=`, which is lexed `>` `>=`: see `Parser::binop`.
+            Tok::Gt if *self.peek2() == Tok::Ge && self.adjacent() => {
+                self.bump();
+                Some(BinOp::Shr)
+            }
             _ => return Ok(lhs),
         };
         self.bump();
@@ -1789,28 +1799,72 @@ impl Parser {
     /// Precedence climbing: parses an expression whose operators all bind at
     /// least as tightly as `min_prec`.
     fn binary(&mut self, min_prec: u8) -> Result<Expr, Error> {
+        Ok(self.binary_op(min_prec)?.0)
+    }
+
+    /// `binary`, and the operator of what it parsed if that's a binary
+    /// operation, not in parentheses: whether it may be the operand of
+    /// another is `BinOp::nests_in`.
+    fn binary_op(&mut self, min_prec: u8) -> Result<(Expr, Option<BinOp>), Error> {
         let mut lhs = self.cast()?;
-        while let Some((op, prec)) = binop(self.peek()) {
+        let mut lhs_op = None;
+        while let Some((op, prec)) = self.binop() {
             if prec < min_prec {
                 break;
             }
+            let at = self.span();
+            if op == BinOp::Shr {
+                self.bump();
+            }
             self.bump();
-            let rhs = self.binary(prec + 1)?;
+            let (rhs, rhs_op) = self.binary_op(prec + 1)?;
+            for inner in [lhs_op, rhs_op].into_iter().flatten() {
+                if !inner.nests_in(op) {
+                    return Err(Error::syntax(
+                        at,
+                        format!(
+                            "use parentheses to say which of `{inner}` and `{op}` comes first: \
+                             there's no precedence between them"
+                        ),
+                    ));
+                }
+            }
             let span = lhs.span.to(rhs.span);
             lhs = Expr {
                 kind: ExprKind::Binary(op, Box::new(lhs), Box::new(rhs)),
                 span,
                 id: self.id(),
             };
+            lhs_op = Some(op);
 
-            if prec == CMP_PREC && binop(self.peek()).is_some_and(|(_, p)| p == CMP_PREC) {
+            if prec == CMP_PREC && self.binop().is_some_and(|(_, p)| p == CMP_PREC) {
                 return Err(Error::syntax(
                     self.span(),
                     "comparison operators cannot be chained; use `&&` (e.g. `a < b && b < c`)",
                 ));
             }
         }
-        Ok(lhs)
+        Ok((lhs, lhs_op))
+    }
+
+    /// The binary operator next, and how tightly it binds. `>>` is two
+    /// `>`s with nothing between them (see `Tok::Shl`), and `>>=` a `>`
+    /// and a `>=`, which isn't a binary operator but an assignment.
+    fn binop(&self) -> Option<(BinOp, u8)> {
+        if *self.peek() == Tok::Gt && self.adjacent() {
+            return match self.peek2() {
+                Tok::Gt => Some((BinOp::Shr, BITS_PREC)),
+                Tok::Ge => None,
+                _ => binop(self.peek()),
+            };
+        }
+        binop(self.peek())
+    }
+
+    /// Whether the next two tokens have nothing between them.
+    fn adjacent(&self) -> bool {
+        let next = (self.pos + 1).min(self.toks.len() - 1);
+        self.toks[self.pos].span.end == self.toks[next].span.start
     }
 
     /// `x as u8 as i64`, or just `x`. `as` binds more tightly than any
@@ -2498,6 +2552,11 @@ fn starts_expr(tok: &Tok) -> bool {
 
 const CMP_PREC: u8 = 3;
 
+/// How tightly `&`, `|`, `^`, `<<` and `>>` bind: more than comparisons,
+/// and as `+`, though which of them comes first, or of them and
+/// arithmetic, needs parentheses (`BinOp::nests_in`).
+const BITS_PREC: u8 = 4;
+
 fn binop(tok: &Tok) -> Option<(BinOp, u8)> {
     Some(match tok {
         Tok::OrOr => (BinOp::Or, 1),
@@ -2513,6 +2572,10 @@ fn binop(tok: &Tok) -> Option<(BinOp, u8)> {
         Tok::Star => (BinOp::Mul, 5),
         Tok::Slash => (BinOp::Div, 5),
         Tok::Percent => (BinOp::Rem, 5),
+        Tok::Amp => (BinOp::BitAnd, BITS_PREC),
+        Tok::Pipe => (BinOp::BitOr, BITS_PREC),
+        Tok::Caret => (BinOp::BitXor, BITS_PREC),
+        Tok::Shl => (BinOp::Shl, BITS_PREC),
         _ => return None,
     })
 }

@@ -22,6 +22,9 @@
 //! patterns of a `match` on an `i64`, from what a `let` or an assignment
 //! gives a *place* (a variable, or a field or `*` of one: `self.start`),
 //! and from operators that returned, as they'd have panicked otherwise.
+//! What an operator gives is exact where it's linear (`+`, `-`, `!` of an
+//! integer, `*`, `/`, `%`, `<<` and `>>` by a constant), and otherwise a
+//! new value of which some lemmas say something (`bitwise`).
 //! They're about *values*: each time a place gets a new one, it's a new
 //! variable of the logic (*static single assignment*), so a fact, once
 //! true, stays true, and only what a place stands for changes.
@@ -458,7 +461,13 @@ impl Checker {
                     }
                     Ok(Sort::Int)
                 }
-                BinOp::Div | BinOp::Rem => Err(Error::ty(
+                BinOp::Div
+                | BinOp::Rem
+                | BinOp::BitAnd
+                | BinOp::BitOr
+                | BinOp::BitXor
+                | BinOp::Shl
+                | BinOp::Shr => Err(Error::ty(
                     e.span,
                     format!(
                         "a refinement can't use `{op}` yet: only `+`, `-` and `*` by a constant"
@@ -498,6 +507,7 @@ impl Checker {
             cx: self,
             kinds: Vec::new(),
             facts: Vec::new(),
+            laws: Vec::new(),
             reachable: true,
             cur: HashMap::new(),
             invariants: HashMap::new(),
@@ -706,9 +716,15 @@ struct Walk<'c> {
     /// it is depends on the machine. The greatest `usize` is twice it, plus
     /// one, and the least `isize` minus it, minus one.
     size: Option<Var>,
-    /// The variables for the least and greatest values of each type
-    /// parameter `T: Int`, once there are some: it can be any integer type.
-    bounds: HashMap<String, (Var, Var)>,
+    /// The least and greatest values of each type parameter `T: Int`, once
+    /// there are some: it can be any integer type, so they're variables,
+    /// or, of a `T: Signed`, the least is -1 minus the greatest, and of a
+    /// `T: Unsigned`, 0.
+    bounds: HashMap<String, (Lin, Lin)>,
+    /// What's true everywhere in the function, of the variables of
+    /// `size` and `bounds`, which no path forgets, as those are made once,
+    /// on whichever path first needs them.
+    laws: Vec<Formula>,
 }
 
 /// How a predicate's names other than its binder get their values: those
@@ -763,19 +779,33 @@ impl Walk<'_> {
                 Some((Lin::constant(lo), Lin::constant(hi)))
             }
             Type::Param(p) if self.is_int(t) => {
-                let (lo, hi) = match self.bounds.get(p) {
-                    Some(&b) => b,
-                    None => {
-                        let (min, _) = IntTy::I64.range_64();
-                        let (_, max) = IntTy::U64.range_64();
-                        let (every_lo, every_hi) = super::ints::EVERY_INT;
-                        let lo = self.fresh(Kind::Bound(min, every_lo));
-                        let hi = self.fresh(Kind::Bound(every_hi, max));
-                        self.bounds.insert(p.clone(), (lo, hi));
-                        (lo, hi)
-                    }
+                if let Some(b) = self.bounds.get(p) {
+                    return Some(b.clone());
+                }
+                let (min, _) = IntTy::I64.range_64();
+                let (_, max) = IntTy::U64.range_64();
+                let (every_lo, every_hi) = super::ints::param_range(self.cx, t);
+                let b = if self.implements(t, "Unsigned") {
+                    let hi = self.fresh(Kind::Bound(every_hi, max));
+                    (Lin::constant(0), Lin::var(hi))
+                } else if self.implements(t, "Signed") {
+                    let (_, i64_max) = IntTy::I64.range_64();
+                    let hi = Lin::var(self.fresh(Kind::Bound(every_hi, i64_max)));
+                    (hi.scale(-1)?.plus(-1)?, hi)
+                } else {
+                    let (lo, hi) = (
+                        Lin::var(self.fresh(Kind::Bound(min, every_lo))),
+                        Lin::var(self.fresh(Kind::Bound(every_hi, max))),
+                    );
+                    // Two's complement: the greatest is at least -1 minus
+                    // the least, as it's equal in a signed type, and the
+                    // least is 0 in an unsigned one.
+                    let law = Formula::le(&Lin::constant(-1), &hi.add(&lo)?)?;
+                    self.laws.push(law);
+                    (lo, hi)
                 };
-                Some((Lin::var(lo), Lin::var(hi)))
+                self.bounds.insert(p.clone(), b.clone());
+                Some(b)
             }
             _ => None,
         }
@@ -785,12 +815,15 @@ impl Walk<'_> {
     fn is_int(&self, t: &Type) -> bool {
         match t {
             Type::Int(_) => true,
-            Type::Param(_) => {
-                let cx = self.cx;
-                (cx.traits.implements(t, "Int", &cx.env, &cx.adts.proj.local)).is_ok()
-            }
+            Type::Param(_) => self.implements(t, "Int"),
             _ => false,
         }
+    }
+
+    /// Does `t` implement built-in trait `name`, where the function is?
+    fn implements(&self, t: &Type, name: &str) -> bool {
+        let cx = self.cx;
+        (cx.traits.implements(t, name, &cx.env, &cx.adts.proj.local)).is_ok()
     }
 
     /// The kind of variable for a value of type `t`, if it's an integer or
@@ -936,10 +969,14 @@ impl Walk<'_> {
         if !self.reachable {
             return true;
         }
-        match goal {
-            Some(g) => logic::valid(&self.facts, &g, &self.kinds),
-            None => false,
+        let Some(g) = goal else {
+            return false;
+        };
+        if self.laws.is_empty() {
+            return logic::valid(&self.facts, &g, &self.kinds);
         }
+        let all: Vec<Formula> = self.facts.iter().chain(&self.laws).cloned().collect();
+        logic::valid(&all, &g, &self.kinds)
     }
 
     /// Does pattern `pat` bind anything by `&mut`?
@@ -1562,6 +1599,9 @@ impl Walk<'_> {
     /// proves it can't panic if it can, and gives its value, which it has
     /// if it didn't panic.
     fn arith(&mut self, site: NodeId, op: BinOp, l: Val, r: Val, ty: &Type) -> Val {
+        if op.bitwise() {
+            return self.bits(site, op, l, r, ty);
+        }
         let (Val::Int(a), Val::Int(b), Some((min, max))) = (l, r, self.range(ty)) else {
             return self.unknown(ty);
         };
@@ -1611,6 +1651,39 @@ impl Walk<'_> {
                 result
             }
         }
+    }
+
+    /// `l op r` for a bitwise operator or a shift at node `site`, on
+    /// integers of type `ty`. Only `<<` can panic: by a constant it's
+    /// multiplying, so linear, and proved not to as `*` is; by anything
+    /// else it isn't proved. The others aren't linear, but for `>>` by a
+    /// constant, so their result is a new value, of which the logic knows
+    /// what `bitwise` says.
+    fn bits(&mut self, site: NodeId, op: BinOp, l: Val, r: Val, ty: &Type) -> Val {
+        let (Val::Int(a), Val::Int(b)) = (l, r) else {
+            return self.unknown(ty);
+        };
+        if op == BinOp::Shl {
+            let shifted = b
+                .as_constant()
+                .filter(|k| (0..=MAX_SHIFT).contains(k))
+                .and_then(|k| a.scale(1 << k));
+            let Some(v) = shifted else {
+                return self.unknown(ty);
+            };
+            let goal = self.fits(&v, ty);
+            if self.proves(goal) {
+                self.proved.insert(site);
+            }
+            return Val::Int(v);
+        }
+        let result = self.unknown(ty);
+        if let Val::Int(q) = &result
+            && let Some(f) = bitwise(op, &a, &b, q)
+        {
+            self.fact(f);
+        }
+        result
     }
 
     /// That `v` is a value of `ty`, if it's known to be, as a goal: for
@@ -1781,10 +1854,21 @@ impl Walk<'_> {
                 }
                 Ok(Val::Int(a))
             }
-            ExprKind::Unary(UnOp::Not, x) => Ok(match self.expr(x)? {
-                Val::Bool(f) => Val::Bool(f.not()),
-                _ => self.unknown(&Type::Bool),
-            }),
+            // Of an integer, the least plus the greatest minus it: each bit
+            // flipped, which is linear.
+            ExprKind::Unary(UnOp::Not, x) => {
+                let v = self.expr(x)?;
+                let ty = self.ty_of(e);
+                let flipped = match (v, self.range(&ty)) {
+                    (Val::Bool(f), _) => return Ok(Val::Bool(f.not())),
+                    (Val::Int(a), Some((min, max))) => min.add(&max).and_then(|m| m.sub(&a)),
+                    _ => None,
+                };
+                Ok(match flipped {
+                    Some(v) => Val::Int(v),
+                    None => self.unknown(&ty),
+                })
+            }
             ExprKind::Unary(UnOp::Deref, x) => match self.place_of(e) {
                 Some(p) => Ok(self.read_place(&p)),
                 None => {
@@ -1820,7 +1904,7 @@ impl Walk<'_> {
                 let a = self.expr(l)?;
                 let b = self.expr(r)?;
                 Ok(match (op, a, b) {
-                    (BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem, a, b) => {
+                    (op, a, b) if op.arith() || op.bitwise() => {
                         let ty = self.ty_of(e);
                         self.arith(e.id, *op, a, b, &ty)
                     }
@@ -2311,6 +2395,100 @@ fn compare(op: BinOp, a: &Lin, b: &Lin) -> Option<Formula> {
         BinOp::Ne => Some(Formula::eq(a, b)?.not()),
         _ => None,
     }
+}
+
+/// The greatest constant `k` the logic takes `x << k` and `x >> k` to be
+/// linear by, as `x` times or divided by 2^k: the integers of every type
+/// are less than 2^64 from 0, so further is as good as infinitely far.
+const MAX_SHIFT: i128 = 64;
+
+/// What the logic knows of `q`, the result of `a op b` for a bitwise
+/// operator or `>>`. Each part is a lemma of two's complement arithmetic,
+/// in which a non-negative number has finitely many 1 bits and a negative
+/// one infinitely many, to its left:
+///
+/// - `a & b` has only bits both have, so it's between 0 and `a` if `a >= 0`,
+///   and the same of `b`; and it's negative if both are. If `b` is all
+///   ones, `2^m - 1`, a number from 0 to `b` keeps all of its bits.
+/// - `a | b` has the bits either has: so it's at least each and at most
+///   their sum if both are non-negative (it's `a + b - (a & b)`), and
+///   negative if either is.
+/// - `a ^ b` is non-negative when they have the same sign, and at most their
+///   sum if both are non-negative (it's `a + b - 2·(a & b)`).
+/// - `a >> b` is `a` divided by 2^b, rounding down: between 0 and `a`, or
+///   `a` and -1. By a constant `k`, `2^k·q <= a <= 2^k·q + 2^k - 1`.
+///
+/// `None` if a number gets too big.
+fn bitwise(op: BinOp, a: &Lin, b: &Lin, q: &Lin) -> Option<Formula> {
+    let zero = Lin::constant(0);
+    let natural = |x: &Lin| Formula::le(&zero, x);
+    let implies = |p: Formula, c: Formula| Formula::or([p.not(), c]);
+    let between = |lo: &Lin, x: &Lin, hi: &Lin| {
+        Some(Formula::and([Formula::le(lo, x)?, Formula::le(x, hi)?]))
+    };
+    Some(match op {
+        BinOp::BitAnd => {
+            let mut parts = vec![
+                implies(natural(a)?, between(&zero, q, a)?),
+                implies(natural(b)?, between(&zero, q, b)?),
+                implies(
+                    Formula::and([natural(a)?.not(), natural(b)?.not()]),
+                    natural(q)?.not(),
+                ),
+            ];
+            for (x, mask) in [(a, b), (b, a)] {
+                if let Some(k) = mask.as_constant()
+                    && k >= 0
+                    && (k + 1).count_ones() == 1
+                {
+                    parts.push(implies(between(&zero, x, mask)?, Formula::eq(q, x)?));
+                }
+            }
+            Formula::and(parts)
+        }
+        BinOp::BitOr => Formula::and([
+            implies(
+                Formula::and([natural(a)?, natural(b)?]),
+                Formula::and([
+                    Formula::le(a, q)?,
+                    Formula::le(b, q)?,
+                    Formula::le(q, &a.add(b)?)?,
+                ]),
+            ),
+            implies(
+                Formula::or([natural(a)?.not(), natural(b)?.not()]),
+                natural(q)?.not(),
+            ),
+        ]),
+        BinOp::BitXor => Formula::and([
+            implies(
+                Formula::and([natural(a)?, natural(b)?]),
+                Formula::le(q, &a.add(b)?)?,
+            ),
+            Formula::iff(natural(q)?, Formula::iff(natural(a)?, natural(b)?)),
+        ]),
+        BinOp::Shr => {
+            let minus_one = Lin::constant(-1);
+            let mut parts = vec![
+                implies(natural(a)?, between(&zero, q, a)?),
+                implies(natural(a)?.not(), between(a, q, &minus_one)?),
+            ];
+            match b.as_constant() {
+                Some(k @ 0..MAX_SHIFT) => {
+                    let p = 1i128 << k;
+                    let pq = q.scale(p)?;
+                    parts.push(between(&pq, a, &pq.plus(p - 1)?)?);
+                }
+                Some(MAX_SHIFT..) => {
+                    parts.push(implies(natural(a)?, Formula::eq(q, &zero)?));
+                    parts.push(implies(natural(a)?.not(), Formula::eq(q, &minus_one)?));
+                }
+                _ => {}
+            }
+            Formula::and(parts)
+        }
+        _ => return None,
+    })
 }
 
 /// What `q`, the result of `a / k` or `a % k` (`op`) for a constant `k > 0`,

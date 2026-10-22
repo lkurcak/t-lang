@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+Step 12: bits. See [docs/12-bits.md](docs/12-bits.md).
+
+### Added
+
+- `&`, `|` and `^` on integers: both sides and the result of one integer
+  type, bit by bit on two's complement. They never panic: the result
+  always fits. Not on `bool`, which has `&&`, `||` and `!=`.
+- `!x` of an integer flips its bits: the type's least plus its greatest,
+  minus `x`, so `!0u8` is 255 and `!0i8` is -1. Which `!` it is depends
+  only on the operand's type; if that's never decided, it's "cannot
+  infer".
+- `x << n` is `x` times 2^n, and panics unless it fits (or is proved to);
+  `x >> n` is `x` divided by 2^n, rounding down, and never panics, for any
+  `n`. The same for signed and unsigned types. `n` is a `u32`.
+- `&=`, `|=`, `^=`, `<<=` and `>>=`.
+- Literals `0xFF`, `0b1010_0000` and `0o17`, with `_` and suffixes, in
+  expressions and patterns. `t fmt` keeps a literal as it's written.
+- `core::num::wrapping_add`, `wrapping_sub` and `wrapping_neg`, written in
+  T for every `T: Int` and proved not to panic, and the intrinsic
+  `wrapping_mul`: arithmetic modulo 2^w.
+- `Signed` and `Unsigned`, built-in sealed traits with `Int` as their
+  supertrait. A `T: Unsigned`'s least value is 0, and its literals may be
+  0 to 255; a `T: Signed`'s least is -1 minus its greatest, and its
+  literals may be -128 to 127. `core::num::abs`, `checked_abs` and
+  `wrapping_abs` for `T: Signed`.
+- The refinement logic knows `!x`, and `x << k` and `x >> k` for a
+  constant `k`, exactly, and facts about `&`, `|`, `^` and `>>` by a
+  variable: enough to prove masking and packing bytes, as UTF-8 does,
+  can't panic. It knows that the greatest value of every `T: Int` is at
+  least -1 minus its least.
+- tree-sitter: the new operators and literals.
+
+### Changed
+
+- Mixing two of `&`, `|`, `^`, `<<` and `>>`, or one of them with
+  arithmetic, needs parentheses: `(a & b) | c`, `(a + b) << 2`. They bind
+  more tightly than comparisons, so `a & b == 0` is `(a & b) == 0`.
+- `!` takes an integer as well as a `bool`, so its operand's type is no
+  longer taken to be `bool` before anything says so.
+- `!` of what never finishes, `!panic()`, is an error, as `-panic()`
+  already was: an operator's operand must be of a type it works on, and
+  `!` isn't one.
+
 ### Fixed
 
 - The language server on Windows: it read a file's URI, `file:///C:/..`

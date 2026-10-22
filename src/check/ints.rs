@@ -3,8 +3,10 @@
 //! A literal's type is worked out from how it's used, so whether it fits
 //! can only be checked once that's known, at the end of the function. In
 //! generic code, of a type parameter `T: Int`, it must fit in every integer
-//! type there is, so be from 0 to 127, as `T` may be any of them. Of
-//! `usize` and `isize`, it must fit on every machine, so in 32 bits.
+//! type there is, so be from 0 to 127, as `T` may be any of them; of a
+//! `T: Unsigned`, in every unsigned one, 0 to 255, and of a `T: Signed`,
+//! in every signed one, -128 to 127. Of `usize` and `isize`, it must fit
+//! on every machine, so in 32 bits.
 
 use super::Checker;
 use crate::error::Error;
@@ -25,6 +27,24 @@ pub(crate) fn portable_range(t: IntTy) -> (i128, i128) {
 /// What every integer type can hold: 0 to 127.
 pub(crate) const EVERY_INT: (i128, i128) = (0, 127);
 
+/// What every integer type a type parameter `t` may be can hold: every
+/// unsigned one, 0 to 255, if it's `Unsigned`; every signed one, -128 to
+/// 127, if it's `Signed`; and else every one.
+pub(crate) fn param_range(cx: &Checker, t: &Type) -> (i128, i128) {
+    let is = |name| {
+        (cx.traits)
+            .implements(t, name, &cx.env, &cx.adts.proj.local)
+            .is_ok()
+    };
+    if is("Unsigned") {
+        IntTy::U8.range_64()
+    } else if is("Signed") {
+        IntTy::I8.range_64()
+    } else {
+        EVERY_INT
+    }
+}
+
 impl Checker {
     /// Checks that every literal of the function fits in its type, those
     /// whose types are known: the rest can't be inferred, which is said
@@ -35,7 +55,7 @@ impl Checker {
             let (lo, hi) = match self.solved(&l.ty) {
                 Type::Int(t) => portable_range(t),
                 Type::Var(_) => continue,
-                _ => EVERY_INT,
+                t => param_range(self, &t),
             };
             if (lo..=hi).contains(&l.value) {
                 continue;
@@ -59,11 +79,26 @@ impl Checker {
                     l.value,
                     t.a()
                 ),
-                t => format!(
-                    "`{}` may not fit in `{t}`: a literal of a type parameter must fit in every \
-                     integer type, so be between 0 and 127",
-                    l.value
-                ),
+                t => {
+                    let half = match (lo, hi) {
+                        (0, 255) => Some("Unsigned"),
+                        (-128, _) => Some("Signed"),
+                        _ => None,
+                    };
+                    match half {
+                        Some(h) => format!(
+                            "`{}` may not fit in `{t}`: a literal of a type parameter that's \
+                             `{h}` must fit in every {} integer type, so be between {lo} and {hi}",
+                            l.value,
+                            h.to_lowercase()
+                        ),
+                        None => format!(
+                            "`{}` may not fit in `{t}`: a literal of a type parameter must fit in \
+                             every integer type, so be between 0 and 127",
+                            l.value
+                        ),
+                    }
+                }
             };
             return Err(Error::ty(l.span, message));
         }

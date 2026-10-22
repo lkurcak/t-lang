@@ -1439,6 +1439,50 @@ pub enum BinOp {
     Ge,
     And,
     Or,
+    /// `&`: of integers, bit by bit.
+    BitAnd,
+    /// `|`: of integers, bit by bit.
+    BitOr,
+    /// `^`: of integers, bit by bit.
+    BitXor,
+    /// `<<`: times 2 to the power of the right side, a `u32`.
+    Shl,
+    /// `>>`: divided by 2 to the power of the right side, rounding down.
+    Shr,
+}
+
+impl BinOp {
+    /// Whether it's one of `&`, `|`, `^`, `<<` and `>>`.
+    pub fn bitwise(self) -> bool {
+        matches!(
+            self,
+            BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr
+        )
+    }
+
+    /// Whether it's one of `+`, `-`, `*`, `/` and `%`.
+    pub fn arith(self) -> bool {
+        matches!(
+            self,
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem
+        )
+    }
+
+    /// Whether `self` may be an operand of `outer` without parentheses.
+    /// Comparisons and `&&` and `||` take anything that binds more
+    /// tightly; arithmetic, by its precedence. But how a bitwise operator
+    /// or a shift goes with another, or with arithmetic, has no precedence
+    /// to remember: it's said with parentheses, `(a & b) | c`. A chain of
+    /// one is fine: `a | b | c`.
+    pub fn nests_in(self, outer: BinOp) -> bool {
+        if outer.bitwise() {
+            self == outer
+        } else if outer.arith() {
+            !self.bitwise()
+        } else {
+            true
+        }
+    }
 }
 
 impl fmt::Display for UnOp {
@@ -1469,6 +1513,11 @@ impl fmt::Display for BinOp {
             BinOp::Ge => ">=",
             BinOp::And => "&&",
             BinOp::Or => "||",
+            BinOp::BitAnd => "&",
+            BinOp::BitOr => "|",
+            BinOp::BitXor => "^",
+            BinOp::Shl => "<<",
+            BinOp::Shr => ">>",
         })
     }
 }

@@ -289,9 +289,9 @@ a `u8` to a `u16` there is a checker bug, which it reports.
 | Missing | Why it's missing | Step |
 |---|---|---|
 | `i128`, `u128` | the logic's constants are `i128`s, and `u128`'s greatest isn't one | — |
-| wrapping and truncating arithmetic, bitwise operators, shifts | for bytes and strings, where they're first needed | — |
+| wrapping and truncating arithmetic, bitwise operators, shifts | for bytes and strings, where they're first needed | 12 |
 | a default type for literals | can be added; can't be taken back | — |
-| `T: Signed`, `T: Unsigned` | `Int`'s two halves, for `abs` over signed types | — |
+| `T: Signed`, `T: Unsigned` | `Int`'s two halves, for `abs` over signed types | 12 |
 | `From`/`TryFrom` | `as` and an `if` do it; traits for conversions belong to `std` | — |
 | refinements of a type parameter, `{ x: T \| x > 0 }` | refinements of integer types only, as before | — |
 

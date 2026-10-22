@@ -318,6 +318,7 @@ pub(super) struct Outer {
     unsafe_blocks: Vec<Span>,
     unsafe_uses: Vec<(Span, crate::types::Type)>,
     literals: Vec<super::Literal>,
+    nots: Vec<(crate::types::Type, Span)>,
 }
 
 impl Checker {
@@ -352,6 +353,7 @@ impl Checker {
             unsafe_blocks: std::mem::take(&mut self.unsafe_blocks),
             unsafe_uses: std::mem::take(&mut self.unsafe_uses),
             literals: std::mem::take(&mut self.literals),
+            nots: std::mem::take(&mut self.nots),
         };
         self.closure_fix = fix.map(|fix| (outer.barrier, fix));
         let result = self.body(f, id);
@@ -376,6 +378,7 @@ impl Checker {
         self.unsafe_blocks = outer.unsafe_blocks;
         self.unsafe_uses = outer.unsafe_uses;
         self.literals = outer.literals;
+        self.nots = outer.nots;
         result
     }
 }

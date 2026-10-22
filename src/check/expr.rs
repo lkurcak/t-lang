@@ -161,13 +161,18 @@ impl Checker {
     /// Requires `t`, the type of what `what` works on at `span`, to be an
     /// integer type, or one that implements `Int`.
     pub(super) fn integer(&mut self, t: &Type, span: Span, what: &str) -> Result<(), Error> {
+        self.integer_or(t, span, what, "integers")
+    }
+
+    /// `integer`, saying that what `what` works on is `these`.
+    fn integer_or(&mut self, t: &Type, span: Span, what: &str, these: &str) -> Result<(), Error> {
         let int = self.fresh_int(
             span,
             format!("the type of what {what} works on"),
             "say which integer type it is".into(),
         );
         self.unify_or(t, &int, span, |t, _| {
-            format!("{what} works on integers, not on `{t}`")
+            format!("{what} works on {these}, not on `{t}`")
         })?;
         // A type parameter or opaque type is one only if it's `Int`: say
         // so here, rather than where the obligation fails.
@@ -184,8 +189,37 @@ impl Checker {
             };
             return Err(Error::ty(
                 span,
-                format!("{what} works on integers, not on `{t}`{fix}"),
+                format!("{what} works on {these}, not on `{t}`{fix}"),
             ));
+        }
+        Ok(())
+    }
+
+    /// Requires `t`, the type of what a `!` at `span` works on, to be
+    /// `bool` or an integer type, if it's known which, and else waits
+    /// until it is (`Checker::nots`): which it is isn't guessed.
+    pub(super) fn not_operand(&mut self, t: &Type, span: Span) -> Result<(), Error> {
+        match self.shallow(t) {
+            Type::Bool => Ok(()),
+            Type::Var(_) if !self.int_var(t) => {
+                self.nots.push((t.clone(), span));
+                Ok(())
+            }
+            _ => self.integer_or(t, span, "`!`", "`bool` and integers"),
+        }
+    }
+
+    /// Checks each `!` whose operand's type wasn't known when it was
+    /// checked: it's `bool` or an integer type. One still not known is
+    /// reported as such, later.
+    pub(super) fn nots(&mut self) -> Result<(), Error> {
+        for (t, span) in std::mem::take(&mut self.nots) {
+            if let Type::Var(_) = self.shallow(&t)
+                && !self.int_var(&t)
+            {
+                continue;
+            }
+            self.not_operand(&t, span)?;
         }
         Ok(())
     }
@@ -362,9 +396,9 @@ impl Checker {
                 Ok(t)
             }
 
-            //   Γ ⊢ e : τ  τ: Int       Γ ⊢ e : bool
-            //  ------------------ (T-Neg) -------------- (T-Not)
-            //     Γ ⊢ -e : τ              Γ ⊢ !e : bool
+            //   Γ ⊢ e : τ  τ: Int     Γ ⊢ e : bool         Γ ⊢ e : τ  τ: Int
+            //  ------------------ (T-Neg) -------------- (T-Not) ------------------ (T-Compl)
+            //     Γ ⊢ -e : τ            Γ ⊢ !e : bool           Γ ⊢ !e : τ
             //
             // `-x` panics if its result doesn't fit in `τ`: at the least
             // value of a signed type, which has no positive counterpart, and
@@ -382,9 +416,15 @@ impl Checker {
                 self.operator(e, "`-`");
                 Ok(t)
             }
+            // `!` of a `bool` is its negation; of an integer, it flips each
+            // bit, which is its type's least plus its greatest, minus it:
+            // that's in its type, so it never panics. Which it is is said
+            // by the operand's type, and only by that: if that isn't known
+            // yet, it waits (see `not_operand`).
             ExprKind::Unary(UnOp::Not, x) => {
-                self.check(x, &Type::Bool)?;
-                Ok(Type::Bool)
+                let t = self.synth(x)?;
+                self.not_operand(&t, e.span)?;
+                Ok(t)
             }
 
             //   Γ ⊢ e : σ   σ: Int   τ: Int
@@ -477,11 +517,22 @@ impl Checker {
                     None => {
                         self.check(value, &t)?;
                     }
+                    // As `l op r` does: `r` is a `u32` for a shift, and only
+                    // `&`, `|`, `^` and `>>` can't panic.
                     Some(op) => {
                         self.integer(&t, place.span, &format!("`{op}=`"))?;
-                        self.check(value, &t)?;
-                        // As `+` does.
-                        self.operator(e, format!("`{op}=`"));
+                        match op {
+                            BinOp::Shl | BinOp::Shr => {
+                                self.check(value, &Type::Int(crate::types::IntTy::U32))?
+                            }
+                            _ => self.check(value, &t)?,
+                        }
+                        if !matches!(
+                            op,
+                            BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shr
+                        ) {
+                            self.operator(e, format!("`{op}=`"));
+                        }
                     }
                 }
                 Ok(Type::Unit)
@@ -793,6 +844,37 @@ impl Checker {
                 self.check(r, &t)?;
                 self.integer(&t, l.span, &format!("`{op}`"))?;
                 self.operator(e, format!("`{op}`"));
+                Ok(t)
+            }
+
+            //   Γ ⊢ l : τ   Γ ⊢ r : τ   τ: Int
+            //  -------------------------------- (T-Bits)    for & | ^
+            //          Γ ⊢ l & r : τ
+            //
+            // Bit by bit, on two's complement: the result is in `τ`
+            // whatever the operands are, so these never panic.
+            BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor => {
+                let t = self.synth(l)?;
+                self.check(r, &t)?;
+                self.integer(&t, l.span, &format!("`{op}`"))?;
+                Ok(t)
+            }
+
+            //   Γ ⊢ l : τ   Γ ⊢ n : u32   τ: Int
+            //  ---------------------------------- (T-Shift)   for << >>
+            //          Γ ⊢ l << n : τ
+            //
+            // `l << n` is `l` times 2^n, and panics if that doesn't fit in
+            // `τ`, unless it's proved not to (see `refine`); `l >> n` is `l`
+            // divided by 2^n, rounding down, which always fits. How far is a
+            // `u32`, whatever `τ` is: it's a count, not a `τ`.
+            BinOp::Shl | BinOp::Shr => {
+                let t = self.synth(l)?;
+                self.integer(&t, l.span, &format!("`{op}`"))?;
+                self.check(r, &Type::Int(crate::types::IntTy::U32))?;
+                if *op == BinOp::Shl {
+                    self.operator(e, format!("`{op}`"));
+                }
                 Ok(t)
             }
 

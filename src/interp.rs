@@ -273,6 +273,16 @@ fn int_of(n: i128, t: IntTy) -> Value {
     Value::Int(n, t)
 }
 
+/// The `t` that `n` is congruent to modulo 2^w, if `t` is `w` bits wide:
+/// `n` is right in its last `w` bits, which is all that's kept of a
+/// product that overflowed `i128`, as `wrapping_mul` is.
+fn wrap(n: i128, t: IntTy) -> i128 {
+    let (lo, hi) = t.range_64();
+    let modulus = hi - lo + 1;
+    let m = n.rem_euclid(modulus);
+    if m > hi { m - modulus } else { m }
+}
+
 /// A `usize`, from a count the interpreter keeps.
 fn usize_of(n: usize) -> Value {
     int_of(n as i128, IntTy::Usize)
@@ -861,6 +871,16 @@ impl Interp<'_, '_> {
                 None => Value::Variant(option.clone(), "None".into(), Vec::new()),
             });
         }
+        if name == "core::num::wrapping_mul" {
+            let [a, b] = <[Value; 2]>::try_from(args).unwrap_or_else(|_| unsound("checked arity"));
+            let (Value::Int(a, t), Value::Int(b, u)) = (a, b) else {
+                unsound("`wrapping_mul` of what isn't an integer")
+            };
+            if t != u {
+                unsound("`wrapping_mul` of two integer types");
+            }
+            return Ok(int_of(wrap(a.wrapping_mul(b), t), t));
+        }
         if let Some(end) = name.strip_prefix("core::num::") {
             let t = int_ty(&self.fns[copy].ret);
             let (lo, hi) = t.range_64();
@@ -1355,7 +1375,15 @@ impl Interp<'_, '_> {
                         };
                         self.arith(BinOp::Sub, zero, v, e)?
                     }
-                    _ => Value::Bool(!bool(v)),
+                    // Each bit flipped: the least plus the greatest, minus
+                    // it, which is in its type, so never panics.
+                    _ => match v {
+                        Value::Int(n, t) => {
+                            let (lo, hi) = t.range_64();
+                            int_of(lo + hi - n, t)
+                        }
+                        v => Value::Bool(!bool(v)),
+                    },
                 }
             }
 
@@ -1877,12 +1905,28 @@ impl Interp<'_, '_> {
         let (Value::Int(l, t), Value::Int(r, u)) = (&l, &r) else {
             unsound(&format!("`{op}` of `{l}` and `{r}`"))
         };
-        if t != u {
+        let shift = matches!(op, BinOp::Shl | BinOp::Shr);
+        if shift && *u != IntTy::U32 {
+            unsound(&format!("`{op}` by {}", u.a()));
+        }
+        if !shift && t != u {
             unsound(&format!("`{op}` of {} and {}", t.a(), u.a()));
         }
         let (l, r, t) = (*l, *r, *t);
         let (lo, hi) = t.range_64();
         let n = match op {
+            // Bit by bit, which `i128`'s operators are, on two's
+            // complement: the result is in `t` (`int_of` checks).
+            BinOp::BitAnd => return Ok(int_of(l & r, t)),
+            BinOp::BitOr => return Ok(int_of(l | r, t)),
+            BinOp::BitXor => return Ok(int_of(l ^ r, t)),
+            // Rounding down, as `i128`'s `>>` does. Past 126 bits, every
+            // integer of any type is 0, or -1 if it's negative.
+            BinOp::Shr => return Ok(int_of(l >> r.min(127), t)),
+            // Times 2^r, which overflows `i128` past 126 bits but for 0.
+            BinOp::Shl if l == 0 => Some(0),
+            BinOp::Shl if r >= 127 => None,
+            BinOp::Shl => l.checked_mul(1 << r),
             BinOp::Lt => return Ok(Value::Bool(l < r)),
             BinOp::Le => return Ok(Value::Bool(l <= r)),
             BinOp::Gt => return Ok(Value::Bool(l > r)),

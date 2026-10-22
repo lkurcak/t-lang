@@ -21,10 +21,14 @@ const PREC = {
   cast: 11,
   multiplicative: 10,
   additive: 9,
-  comparative: 8,
-  and: 7,
-  or: 6,
-  range: 5,
+  // `&`, `|`, `^`, `<<` and `>>`. Mixing them with each other or with
+  // arithmetic needs parentheses, which the compiler checks: any
+  // precedence parses what it accepts the same.
+  bitwise: 8,
+  comparative: 7,
+  and: 6,
+  or: 5,
+  range: 4,
   assign: 0,
   closure: -1,
 };
@@ -550,10 +554,15 @@ module.exports = grammar({
       $._block_like,
     ),
 
-    // `42`, `1_000`, or `255u8`, with a suffix that says its type.
+    // `42`, `1_000`, `0xFF`, `0b1010`, `0o17`, or `255u8`, with a suffix
+    // that says its type.
     integer_literal: _ => token(seq(
-      /[0-9]/,
-      /[0-9_]*/,
+      choice(
+        /[0-9][0-9_]*/,
+        /0x[0-9a-fA-F_]+/,
+        /0b[01_]+/,
+        /0o[0-7_]+/,
+      ),
       optional(/(i8|i16|i32|i64|isize|u8|u16|u32|u64|usize)/),
     )),
 
@@ -583,7 +592,7 @@ module.exports = grammar({
 
     compound_assignment_expr: $ => prec.right(PREC.assign, seq(
       field('left', $._expression),
-      field('operator', choice('+=', '-=', '*=', '/=', '%=')),
+      field('operator', choice('+=', '-=', '*=', '/=', '%=', '&=', '|=', '^=', '<<=', '>>=')),
       field('right', $._expression),
     )),
 
@@ -592,6 +601,7 @@ module.exports = grammar({
         [PREC.or, '||'],
         [PREC.and, '&&'],
         [PREC.comparative, choice('==', '!=', '<', '<=', '>', '>=')],
+        [PREC.bitwise, choice('&', '|', '^', '<<', '>>')],
         [PREC.additive, choice('+', '-')],
         [PREC.multiplicative, choice('*', '/', '%')],
       ];
