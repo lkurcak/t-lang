@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- The language server on Windows: it read a file's URI, `file:///C:/..`
+  or `file:///c%3A/..`, as the path `/C:/..`, so it found no `main.t`
+  above a module's file, and made URIs of Windows paths that editors
+  didn't recognise. Open files are now looked up by path, and answered
+  about by the URI the editor gave.
+- The language server no longer stops at a message it can't read, such as
+  one with a malformed URI: a request gets an error, and anything else is
+  skipped.
+
 ## 0.21.0 (2026-10-22)
 
 Step 11: integer types. See [docs/11-integers.md](docs/11-integers.md).
