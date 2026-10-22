@@ -1,14 +1,14 @@
 // Functions are named in snake_case. Two nested ones share a name: each
 // fix renames only one of them, and what uses it.
-fn addOne(x: int) -> int with panic { x + 1 }
+fn addOne(x: i64) -> i64 with panic { x + 1 }
 
 fn main() with panic {
-    fn doIt() -> int with panic { addOne(1) }
+    fn doIt() -> i64 with panic { addOne(1) }
     print(doIt() + other());
 }
 
-fn other() -> int {
-    fn doIt() -> int { 10 }
+fn other() -> i64 {
+    fn doIt() -> i64 { 10 }
     doIt()
 }
 // warning: function `addOne` should have a snake case name: `add_one`

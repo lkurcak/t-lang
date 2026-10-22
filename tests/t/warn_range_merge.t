@@ -1,5 +1,5 @@
 // Two ranges end to end are one range.
-fn f(n: int) -> int {
+fn f(n: i64) -> i64 {
     match n {
         0..10 | 10..20 => 1,
         _ => 2,

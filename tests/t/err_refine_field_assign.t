@@ -1,6 +1,6 @@
 // Assigning a refined field must keep its refinement.
 #[derive(Copy, Discard)]
-struct Span { lo: int, hi: { h: int | h >= lo } }
+struct Span { lo: i64, hi: { h: i64 | h >= lo } }
 
 fn main() {
     let mut s = Span { lo: 1, hi: 3 };

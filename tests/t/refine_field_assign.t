@@ -2,8 +2,8 @@
 // and those of later fields that name it.
 #[derive(Copy, Discard)]
 struct Span {
-    lo: { l: int | l >= 0 },
-    hi: { h: int | h >= lo },
+    lo: { l: i64 | l >= 0 },
+    hi: { h: i64 | h >= lo },
 }
 
 impl Span {

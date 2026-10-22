@@ -2,17 +2,17 @@
 // every path that goes on, rather than thrown away. Here that's `Fd`, a
 // stand-in for a file descriptor, which only `close` uses up.
 
-struct Fd { n: int }
+struct Fd { n: i64 }
 
-fn open(n: int) -> Fd { Fd { n } }
+fn open(n: i64) -> Fd { Fd { n } }
 
 // Taking it apart, by value, uses it up.
-fn close(fd: Fd) -> int {
+fn close(fd: Fd) -> i64 {
     let Fd { n } = fd;
     n
 }
 
-fn peek(fd: &Fd) -> int { fd.n }
+fn peek(fd: &Fd) -> i64 { fd.n }
 
 #[allow(dead_code)]
 #[derive(Discard)]
@@ -28,12 +28,12 @@ fn die() -> ! {
 }
 
 // Every path uses it up, one way or another.
-fn branch(c: bool, fd: Fd) -> int with panic {
+fn branch(c: bool, fd: Fd) -> i64 with panic {
     if c { close(fd) } else { 10 + close(fd) }
 }
 
 // A path that never goes on is exempt: it never comes to dropping `fd`.
-fn checked(n: int, fd: Fd) -> int {
+fn checked(n: i64, fd: Fd) -> i64 {
     if n < 0 {
         die();
     }

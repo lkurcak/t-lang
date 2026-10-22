@@ -2,4 +2,4 @@
 fn main() {
     if 1 { print(1) }
 }
-// error: expected `bool`, found `int`
+// error: expected `bool`, found `{integer}`

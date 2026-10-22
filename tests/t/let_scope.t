@@ -2,7 +2,7 @@
 
 fn main() {
     let x = 1;
-    let y: int = x + 1;
+    let y: i64 = x + 1;
     print(y);                 // expect: 2
     let x = x * 10;           // shadows the old x
     print(x);                 // expect: 10
@@ -14,5 +14,5 @@ fn main() {
     print(x);                 // expect: 10
     let b: bool = z > x;      // a different type is fine when shadowing too
     let x = b;
-    if x { print(1) }         // expect: 1
+    if x { print(1i64) }         // expect: 1
 }

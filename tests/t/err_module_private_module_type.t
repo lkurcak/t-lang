@@ -3,13 +3,13 @@
 mod a {
     mod b {
         #[derive(Discard)]
-        pub struct P { pub n: int }
+        pub struct P { pub n: i64 }
     }
 
-    pub fn n() -> int { 1 }
+    pub fn n() -> i64 { 1 }
 }
 
-fn f(p: a::b::P) -> int { p.n }
+fn f(p: a::b::P) -> i64 { p.n }
 
 fn main() { print(a::n()); }
 // error: module `b` is private to `a`

@@ -1,4 +1,4 @@
-// `mk`'s `T` is only in `T::Out`, and that `T::Out` is an `int` doesn't
+// `mk`'s `T` is only in `T::Out`, and that `T::Out` is an `i64` doesn't
 // say which `T` it is: both impls give one. Working out a projection only
 // goes forward, from the type to what it stands for.
 trait Tr {
@@ -6,17 +6,17 @@ trait Tr {
 }
 
 impl Tr for bool {
-    type Out = int;
+    type Out = i64;
 }
 
 impl Tr for () {
-    type Out = int;
+    type Out = i64;
 }
 
 fn mk<T: Tr>(x: T::Out) -> T::Out { x }
 
 fn main() {
-    let x: int = mk(1);
+    let x: i64 = mk(1);
     print(x);
 }
 // error: cannot infer

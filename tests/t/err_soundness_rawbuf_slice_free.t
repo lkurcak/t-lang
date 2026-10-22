@@ -3,7 +3,7 @@
 use alloc::raw::RawBuf;
 
 fn main() with {alloc, panic} {
-    let mut b: RawBuf<int> = RawBuf::new(1);
+    let mut b: RawBuf<i64> = RawBuf::new(1);
     // SAFETY: slot 0 is uninitialised, then holds 5, which is read out
     // before the buffer is freed.
     unsafe {

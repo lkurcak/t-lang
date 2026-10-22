@@ -2,7 +2,7 @@
 // with a top-level type and with a local one elsewhere: each fix renames
 // only one of them.
 #[derive(Discard)]
-struct my_pair { a: int, b: int }
+struct my_pair { a: i64, b: i64 }
 
 fn main() {
     #[derive(Discard)]

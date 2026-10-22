@@ -2,14 +2,14 @@
 // its block: *non-lexical lifetimes*.
 
 #[derive(Discard)]
-struct Account { balance: int }
+struct Account { balance: i64 }
 
-fn deposit(a: &mut Account, n: int) with panic { a.balance += n; }
+fn deposit(a: &mut Account, n: i64) with panic { a.balance += n; }
 
-fn balance(a: &Account) -> int { a.balance }
+fn balance(a: &Account) -> i64 { a.balance }
 
 fn main() with panic {
-    let mut x = 1;
+    let mut x: i64 = 1;
     let r = &x;
     print(*r);                  // expect: 1
     x = 2;                      // `r` isn't used after this, so it's fine
@@ -31,7 +31,7 @@ fn main() with panic {
     print(pair.balance + other.balance); // expect: 3
 
     // A borrow in a loop, a new one each time round.
-    let mut total = 0;
+    let mut total: i64 = 0;
     let mut i = 0;
     while i < 4 {
         let t = &mut total;
@@ -41,7 +41,7 @@ fn main() with panic {
     print(total);               // expect: 6
 
     // In one branch only.
-    let mut y = 5;
+    let mut y: i64 = 5;
     let s = &y;
     if *s > 3 {
         y = 0;

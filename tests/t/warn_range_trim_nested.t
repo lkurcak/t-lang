@@ -1,6 +1,6 @@
 #[derive(Discard)]
-enum Opt { None, Some(int) }
-fn f(o: Opt) -> int {
+enum Opt { None, Some(i64) }
+fn f(o: Opt) -> i64 {
     match o {
         Opt::Some(0..=5) => 1,
         Opt::Some(5..10) => 2,

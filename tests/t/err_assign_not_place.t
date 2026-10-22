@@ -1,4 +1,4 @@
-fn one() -> int { 1 }
+fn one() -> i64 { 1 }
 
 fn main() {
     one() = 2;

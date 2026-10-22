@@ -1,16 +1,16 @@
 // ...and it can't need more of `T` than the trait says, as callers go by
 // the trait's signature.
-struct Fd { n: int }
+struct Fd { n: i64 }
 
 trait Sink {
-    fn put<T>(&self, x: T) -> int;
+    fn put<T>(&self, x: T) -> i64;
 }
 
 #[derive(Discard)]
 struct S {}
 
 impl Sink for S {
-    fn put<T: Discard>(&self, _x: T) -> int { 0 }
+    fn put<T: Discard>(&self, _x: T) -> i64 { 0 }
 }
 
 fn main() {

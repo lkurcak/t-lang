@@ -1,6 +1,7 @@
 // The core library: what every program can use. It's written in T, checked
 // like any other code, and needs no allocation and no I/O. What the checker
 // takes on trust is its intrinsics: `mem::swap`, `panic::panic`,
+// `num::least`, `num::greatest`,
 // `num::checked_mul`, and a slice's few in `slice`.
 //
 // The items `prelude` brings in are in scope in every module, unless a

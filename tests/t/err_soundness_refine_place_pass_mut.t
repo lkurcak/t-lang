@@ -1,10 +1,10 @@
 // Passing on a `&mut` lets the callee write through it.
 #[derive(Copy, Discard)]
-struct P { x: int }
+struct P { x: i64 }
 
 fn zero(p: &mut P) { p.x = 0; }
 
-fn f(r: &mut P) -> int {
+fn f(r: &mut P) -> i64 {
     if r.x > 0 {
         zero(r);
         10 / r.x

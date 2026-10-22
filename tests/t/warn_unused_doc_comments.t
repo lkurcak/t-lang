@@ -4,7 +4,7 @@
 fn main() {
     /// Before a statement.
     // warning: unused doc comment
-    let x = 1;
+    let x: i64 = 1;
     print(x); // expect: 1
     // warning: unused doc comment
     /// At the end of a block.

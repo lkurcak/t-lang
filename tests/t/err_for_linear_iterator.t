@@ -1,12 +1,12 @@
 // A `for` drops its iterator when it ends, so it must be `Discard`; to keep
 // a linear one, iterate over `&mut it`.
-struct Lines { left: int }
+struct Lines { left: i64 }
 
 impl Iterator for Lines {
-    type Item = int;
+    type Item = i64;
     effect e = {};
 
-    fn next(&mut self) -> Option<int> {
+    fn next(&mut self) -> Option<i64> {
         if self.left == 0 { return Option::None; }
         self.left = self.left - 1;
         Option::Some(self.left)

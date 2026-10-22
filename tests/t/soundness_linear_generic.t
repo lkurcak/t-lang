@@ -2,29 +2,29 @@
 // run as they were checked: the interpreter counts throwing away a value
 // that isn't `Discard` as a leak, and moves every value that isn't `Copy`.
 
-struct Fd { n: int }
+struct Fd { n: i64 }
 
-fn close(fd: Fd) -> int {
+fn close(fd: Fd) -> i64 {
     let Fd { n } = fd;
     n
 }
 
-fn ignore(_n: int) -> int { 0 }
+fn ignore(_n: i64) -> i64 { 0 }
 
 fn throw<T: Discard>(_x: T) {}
 
 // `Discard` for every `T`: the field is a function.
 #[derive(Discard)]
-struct W<T> { f: fn(T) -> int }
+struct W<T> { f: fn(T) -> i64 }
 
 #[allow(dead_code)]
 #[derive(Discard)]
-enum E<T> { A(fn(T) -> int), B }
+enum E<T> { A(fn(T) -> i64), B }
 
 #[derive(Discard)]
 enum Option<T> { Some(T), None }
 
-fn take<T>(o: Option<T>, k: fn(T) -> int) -> int {
+fn take<T>(o: Option<T>, k: fn(T) -> i64) -> i64 {
     match o {
         Option::Some(x) => k(x),
         Option::None => 0,
@@ -33,28 +33,28 @@ fn take<T>(o: Option<T>, k: fn(T) -> int) -> int {
 
 // A blanket impl for every `Discard` type, through a supertrait.
 trait Sub: Discard {
-    fn m(&self) -> int { 1 }
+    fn m(&self) -> i64 { 1 }
 }
 
 impl<T: Discard> Sub for T {}
 
-fn drop_sub<T: Sub>(x: T) -> int { x.m() }
+fn drop_sub<T: Sub>(x: T) -> i64 { x.m() }
 
 // A default that throws `self` away, allowed by the supertrait.
 trait Eat: Discard {
-    fn eat(self) -> int { 2 }
+    fn eat(self) -> i64 { 2 }
 }
 
 #[derive(Discard)]
-struct D { n: int }
+struct D { n: i64 }
 
 impl Eat for D {}
 
 // `Copy` for every `T`, so copied even at `T` = `Fd`.
 #[derive(Discard, Copy)]
-struct C<T> { f: fn(T) -> int }
+struct C<T> { f: fn(T) -> i64 }
 
-fn dup<T: Copy>(x: T) -> int {
+fn dup<T: Copy>(x: T) -> i64 {
     let _a = x;
     let _b = x;
     2
@@ -73,7 +73,7 @@ fn main() with panic {
     let _e: E<Fd> = E::B;
     print(take(Option::Some(Fd { n: 3 }), close)); // expect: 3
     print(take(Option::None, close));              // expect: 0
-    print(drop_sub(3));                            // expect: 1
+    print(drop_sub(3i64));                            // expect: 1
     print(D { n: 1 }.eat());                       // expect: 2
     print(dup(C { f: close }));                    // expect: 2
     print(dup(C { f: ignore }));                   // expect: 2

@@ -2,7 +2,7 @@
 // checked knowing the lifetimes are the same, would hand back `&inner` as
 // if it lived as long as `outer`.
 #[derive(Discard)]
-struct Pair<'a, 'b> { long: &'a int, short: &'b int }
+struct Pair<'a, 'b> { long: &'a i64, short: &'b i64 }
 
 trait Leak { fn leak(self) -> Self; }
 

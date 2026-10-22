@@ -1,9 +1,9 @@
 // A coerced argument is a borrow of a place, `&**r`, taken after the other
 // arguments like any other.
 
-fn first(a: &int, _n: int) -> int { *a }
+fn first(a: &i64, _n: i64) -> i64 { *a }
 
-fn get(r: &int) -> int { *r }
+fn get(r: &i64) -> i64 { *r }
 
 fn main() with {alloc, panic} {
     let one = Box::new(1);

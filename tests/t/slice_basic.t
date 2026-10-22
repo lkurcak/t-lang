@@ -3,7 +3,7 @@
 use alloc::list::List;
 use core::slice::Split;
 
-fn sum(s: &[int]) -> int with panic {
+fn sum(s: &[i64]) -> i64 with panic {
     let mut total = 0;
     let mut i = 0;
     while i < s.len() {
@@ -14,7 +14,7 @@ fn sum(s: &[int]) -> int with panic {
 }
 
 fn main() with {alloc, panic} {
-    let mut l: List<int> = List::new();
+    let mut l: List<i64> = List::new();
     for i in 1..5 {
         l.push(i * 10);
     }
@@ -24,7 +24,6 @@ fn main() with {alloc, panic} {
     print(*s.first().unwrap());      // expect: 10
     print(*s.last().unwrap());       // expect: 40
     print_bool(s.get(4).is_none());  // expect: true
-    print_bool(s.get(-1).is_none()); // expect: true
     print(sum(s));                   // expect: 100
     let Split { head, tail } = s.split_at(1).unwrap();
     print(head.len());                        // expect: 1

@@ -299,13 +299,16 @@ impl<'p> Cx<'p> {
                 unreachable!("rewritten when paths are resolved")
             }
             ExprKind::Move(_) => unreachable!("written here"),
-            ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit | ExprKind::Continue(_) => {
+            ExprKind::Int(..) | ExprKind::Bool(_) | ExprKind::Unit | ExprKind::Continue(_) => {
                 e.kind.clone()
             }
             ExprKind::Var(name, targs) => {
                 ExprKind::Var(self.renamed(name, e.id), self.types(targs))
             }
             ExprKind::Unary(op, x) => ExprKind::Unary(*op, Box::new(self.expr(x, nested))),
+            ExprKind::As(x, t) => {
+                ExprKind::As(Box::new(self.expr(x, nested)), Box::new(self.ty(t)))
+            }
             ExprKind::Binary(op, l, r) => ExprKind::Binary(
                 *op,
                 Box::new(self.expr(l, nested)),

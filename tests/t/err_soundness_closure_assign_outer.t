@@ -1,7 +1,7 @@
 // A closure given to a variable from further out can't outlive what it
 // borrows.
 #[derive(Discard, Copy)]
-struct R<'a> { r: &'a int }
+struct R<'a> { r: &'a i64 }
 
 fn main() with {alloc, panic} {
     let f;

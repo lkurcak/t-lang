@@ -15,12 +15,12 @@ impl<U, F: Fn() -> U> Get for Thunk<F> {
     fn get(&self) -> U { (self.f)() }
 }
 
-fn twice<G: Get<Out = int>>(g: &G) -> int with panic { g.get() + g.get() }
+fn twice<G: Get<Out = i64>>(g: &G) -> i64 with panic { g.get() + g.get() }
 
 fn main() with panic {
     let t = Thunk { f: || 21 };
     print(twice(&t));                   // expect: 42
-    let b = Thunk { f: || Option::Some(7) };
+    let b = Thunk { f: || Option::Some(7i64) };
     match b.get() {
         Option::Some(n) => print(n),    // expect: 7
         Option::None => {},

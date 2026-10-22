@@ -7,16 +7,16 @@
 enum Option<T> { Some(T), None }
 
 #[derive(Discard)]
-struct Two { a: Box<int>, b: Box<int> }
+struct Two { a: Box<i64>, b: Box<i64> }
 
-fn two(n: int) -> Two with {alloc, panic} { Two { a: Box::new(n), b: Box::new(n + 1) } }
+fn two(n: i64) -> Two with {alloc, panic} { Two { a: Box::new(n), b: Box::new(n + 1) } }
 
-fn first(t: Two) -> int { *t.a }    // `t.b` is freed when `first` returns
+fn first(t: Two) -> i64 { *t.a }    // `t.b` is freed when `first` returns
 
 fn main() with {alloc, panic} {
     // Temporaries are freed at the end of their statement.
-    print(*Box::new(1));                // expect: 1
-    Box::new(2);
+    print(*Box::new(1i64));                // expect: 1
+    Box::new(2i64);
     print(*two(3).b);                   // expect: 4
     print(first(two(5)));               // expect: 5
 
@@ -39,7 +39,7 @@ fn main() with {alloc, panic} {
     }
 
     // A new box each time round a loop, and an old one freed by assigning.
-    let mut keep = Box::new(0);
+    let mut keep = Box::new(0i64);
     let mut i = 0;
     while i < 5 {
         let fresh = Box::new(i);
@@ -49,7 +49,7 @@ fn main() with {alloc, panic} {
     print(*keep);                       // expect: 4
 
     // A reference to a box, then the box moved after the reference is done.
-    let b = Box::new(12);
+    let b = Box::new(12i64);
     let r = &b;
     print(**r);                         // expect: 12
     let moved = b;

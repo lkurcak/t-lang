@@ -2,16 +2,16 @@
 // them.
 #[derive(Copy, Discard)]
 struct Span {
-    lo: { l: int | l >= 0 },
-    hi: { h: int | h >= lo },
+    lo: { l: i64 | l >= 0 },
+    hi: { h: i64 | h >= lo },
 }
 
-fn len(s: Span) -> int {
+fn len(s: Span) -> i64 {
     let Span { lo, hi } = s;
     hi - lo
 }
 
-fn len_match(s: &Span) -> int {
+fn len_match(s: &Span) -> i64 {
     match s {
         Span { lo, hi } => *hi - *lo,
     }

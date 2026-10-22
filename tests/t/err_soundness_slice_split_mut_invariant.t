@@ -2,7 +2,7 @@
 // `SplitMut`'s halves could be written through.
 use core::slice::SplitMut;
 
-fn shorter<'a, 'b>(s: SplitMut<'b, &'static int>) -> SplitMut<'b, &'a int> { s }
+fn shorter<'a, 'b>(s: SplitMut<'b, &'static i64>) -> SplitMut<'b, &'a i64> { s }
 
 fn main() {}
 // error: lifetime may not live long enough

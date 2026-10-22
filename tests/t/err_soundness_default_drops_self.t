@@ -1,9 +1,9 @@
 // A default method is checked once, for every `Self`, so it can't throw
 // `self` away unless `Discard` is a supertrait.
-struct Fd { n: int }
+struct Fd { n: i64 }
 
 trait Eat {
-    fn eat(self) -> int { 0 }
+    fn eat(self) -> i64 { 0 }
 }
 
 impl Eat for Fd {}

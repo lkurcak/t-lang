@@ -136,8 +136,8 @@ fn fmt(src: &str) -> String {
 fn keeps_comments() {
     let src = "\
 // Leading, at the top.
-struct P { x: int, // the x
-  y: int }
+struct P { x: i64, // the x
+  y: i64 }
 fn main() { // after the brace
     // before a statement
     let p = P { x: 1, y: 2 };   // trailing
@@ -154,8 +154,8 @@ fn main() { // after the brace
         "\
 // Leading, at the top.
 struct P {
-    x: int, // the x
-    y: int,
+    x: i64, // the x
+    y: i64,
 }
 fn main() { // after the brace
     // before a statement
@@ -178,12 +178,12 @@ fn prints_doc_comments_from_the_ast() {
 ///
 /// With `b`.
 struct P { /// The first.
-a: int, b: int }
+a: i64, b: i64 }
 enum E { /// One.
 A, B }
 /// Adds.
 // plain
-fn add(p: P) -> int {
+fn add(p: P) -> i64 {
     /// documents nothing
     p.a + p.b
 }
@@ -197,8 +197,8 @@ fn add(p: P) -> int {
 /// With `b`.
 struct P {
     /// The first.
-    a: int,
-    b: int,
+    a: i64,
+    b: i64,
 }
 enum E {
     /// One.
@@ -207,7 +207,7 @@ enum E {
 }
 /// Adds.
 // plain
-fn add(p: P) -> int {
+fn add(p: P) -> i64 {
     /// documents nothing
     p.a + p.b
 }
@@ -228,15 +228,15 @@ fn main() {
     /// Doubles.
     ///   Indented.
     // plain, between the doc and the `fn`
-    fn double(x: int) -> int { x * 2 } // after it
-    fn half<T>(x: int, f: fn(int) -> T) -> T {
+    fn double(x: i64) -> i64 { x * 2 } // after it
+    fn half<T>(x: i64, f: fn(i64) -> T) -> T {
         // inside
         f(x / 2)
     }
 
 
 
-    let x = half(double(3), |n| n); fn id(x: int) -> int { x }
+    let x = half(double(3), |n| n); fn id(x: i64) -> i64 { x }
     print(id(x))
 
 
@@ -249,14 +249,14 @@ fn main() {
     /// Doubles.
     ///   Indented.
     // plain, between the doc and the `fn`
-    fn double(x: int) -> int { x * 2 } // after it
-    fn half<T>(x: int, f: fn(int) -> T) -> T {
+    fn double(x: i64) -> i64 { x * 2 } // after it
+    fn half<T>(x: i64, f: fn(i64) -> T) -> T {
         // inside
         f(x / 2)
     }
 
     let x = half(double(3), |n| n);
-    fn id(x: int) -> int { x }
+    fn id(x: i64) -> i64 { x }
     print(id(x))
 }
 "
@@ -274,7 +274,7 @@ fn main() {
     /// A point.
     // plain, between the doc and the `struct`
     struct P { /// The x.
-    x: int, y: int } // after it
+    x: i64, y: i64 } // after it
     enum Shape<T> {
         // inside
         Circle(T), Empty
@@ -296,8 +296,8 @@ fn main() {
     // plain, between the doc and the `struct`
     struct P {
         /// The x.
-        x: int,
-        y: int,
+        x: i64,
+        y: i64,
     } // after it
     enum Shape<T> {
         // inside
@@ -321,35 +321,35 @@ fn main() {
 fn docs_that_document_nothing_keep_documenting_nothing() {
     let src = "\
 struct P /// before the brace
-{ a: int /// before the comma
-, b: int, /// after the comma, so it documents c
-c: int }
-enum E { A(int /// in a variant's fields
+{ a: i64 /// before the comma
+, b: i64, /// after the comma, so it documents c
+c: i64 }
+enum E { A(i64 /// in a variant's fields
 ), /// documents B
 B }
 fn f(/// before a parameter
-x: int) {}
+x: i64) {}
 ";
     assert_eq!(
         fmt(src),
         "\
 struct P {
-    a: int,
-    b: int,
+    a: i64,
+    b: i64,
     /// after the comma, so it documents c
-    c: int,
+    c: i64,
     /// before the brace
     /// before the comma
 }
 enum E {
-    A(int),
+    A(i64),
     /// documents B
     B,
     /// in a variant's fields
 }
 fn f(
     /// before a parameter
-    x: int,
+    x: i64,
 ) {}
 "
     );
@@ -414,7 +414,7 @@ fn keeps_single_blank_lines() {
 
 #[test]
 fn keeps_the_order_of_items() {
-    let src = "fn main() { f(P { x: 1 }) }\nstruct P { x: int }\nfn f(p: P) -> int { p.x }\n";
+    let src = "fn main() { f(P { x: 1 }) }\nstruct P { x: i64 }\nfn f(p: P) -> i64 { p.x }\n";
     let out = fmt(src);
     let main = out.find("fn main").unwrap();
     let p = out.find("struct P").unwrap();
@@ -467,28 +467,28 @@ let p = Pair {
 #[test]
 fn signatures_and_declarations_break_like_lists() {
     let src = "\
-struct Configuration { width_in_columns: int, height_in_rows: int, depth_in_layers: int, colour: bool }
-enum E<A> { One(A), Two(int, int) }
-fn combine<Alpha, Beta>(first_argument: Alpha, second_argument: Beta, third_argument: int) -> int { 1 }
-fn combine<Alpha, Beta>(first_argument: Alpha, second_argument: Beta, third_argument: int) -> Option<Beta> { 1 }
+struct Configuration { width_in_columns: i64, height_in_rows: i64, depth_in_layers: i64, colour: bool }
+enum E<A> { One(A), Two(i64, i64) }
+fn combine<Alpha, Beta>(first_argument: Alpha, second_argument: Beta, third_argument: i64) -> i64 { 1 }
+fn combine<Alpha, Beta>(first_argument: Alpha, second_argument: Beta, third_argument: i64) -> Option<Beta> { 1 }
 ";
     assert_eq!(
         fmt(src),
         "\
 struct Configuration {
-    width_in_columns: int,
-    height_in_rows: int,
-    depth_in_layers: int,
+    width_in_columns: i64,
+    height_in_rows: i64,
+    depth_in_layers: i64,
     colour: bool,
 }
-enum E<A> { One(A), Two(int, int) }
-fn combine<Alpha, Beta>(first_argument: Alpha, second_argument: Beta, third_argument: int) -> int {
+enum E<A> { One(A), Two(i64, i64) }
+fn combine<Alpha, Beta>(first_argument: Alpha, second_argument: Beta, third_argument: i64) -> i64 {
     1
 }
 fn combine<Alpha, Beta>(
     first_argument: Alpha,
     second_argument: Beta,
-    third_argument: int,
+    third_argument: i64,
 ) -> Option<Beta> { 1 }
 "
     );
@@ -530,14 +530,14 @@ where
 #[test]
 fn a_last_closure_or_block_argument_breaks_inside() {
     let src = "\
-apply(first_argument, second_argument, |x: int| -> int { let y = x * 2; y + 1 });
+apply(first_argument, second_argument, |x: i64| -> i64 { let y = x * 2; y + 1 });
 print(match some_long_scrutinee { Shape::Circle(radius) => radius, Shape::Empty => 0 });
 print(compute_something_long(first_argument, second_argument, third_argument, fourth_argument, fifth));
 ";
     assert_eq!(
         fmt_body(src),
         "\
-apply(first_argument, second_argument, |x: int| -> int {
+apply(first_argument, second_argument, |x: i64| -> i64 {
     let y = x * 2;
     y + 1
 });

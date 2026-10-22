@@ -1,4 +1,4 @@
-fn main() -> int {
+fn main() -> i64 {
     1 + false
 }
-// error: expected `int`, found `bool`
+// error: expected `{integer}`, found `bool`

@@ -1,6 +1,6 @@
-// The closure only holds an `int`, so it's `Copy`, but the return type
+// The closure only holds an `i64`, so it's `Copy`, but the return type
 // doesn't say so: callers can't copy it.
-fn adder(n: int) -> impl Fn(int) -> int with panic + Discard { move |x| x + n }
+fn adder(n: i64) -> impl Fn(i64) -> i64 with panic + Discard { move |x| x + n }
 
 fn twice<F: Copy>(f: F) -> F {
     let _g = f;
@@ -8,4 +8,4 @@ fn twice<F: Copy>(f: F) -> F {
 }
 
 fn main() { print(twice(adder(1))(2)); }
-// error: `twice` needs its `F` to implement `Copy`, and `impl Fn(int) -> int with panic + Discard` doesn't
+// error: `twice` needs its `F` to implement `Copy`, and `impl Fn(i64) -> i64 with panic + Discard` doesn't

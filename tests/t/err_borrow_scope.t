@@ -1,5 +1,5 @@
 fn main() {
-    let mut r = &0;
+    let mut r = &0i64;
     {
         let x = 1;
         r = &x;

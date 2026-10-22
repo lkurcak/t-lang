@@ -1,7 +1,7 @@
 mod m {
-    pub fn f() -> int { 1 }
+    pub fn f() -> i64 { 1 }
 
-    pub fn g() -> int { 2 }
+    pub fn g() -> i64 { 2 }
 }
 
 use m::f;

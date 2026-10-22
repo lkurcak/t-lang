@@ -5,7 +5,7 @@
 enum Option<T> { Some(T), None }
 
 #[derive(Discard)]
-struct Money { cents: int }
+struct Money { cents: i64 }
 
 // Equal to the dollar.
 impl Eq for Money {
@@ -13,7 +13,7 @@ impl Eq for Money {
 }
 
 #[derive(Discard, Eq)]
-struct Account { id: int, balance: Money }
+struct Account { id: i64, balance: Money }
 
 fn main() {
     print_bool(Money { cents: 101 } == Money { cents: 199 });   // expect: true
@@ -22,9 +22,9 @@ fn main() {
     let b = Account { id: 1, balance: Money { cents: 120 } };
     print_bool(a == b);                                         // expect: true
     print_bool(Option::Some(Money { cents: 5 }) == Option::Some(Money { cents: 95 })); // expect: true
-    print_bool(Option::Some(1) == Option::None);                // expect: false
+    print_bool(Option::Some(1i64) == Option::None);                // expect: false
     // `eq` is a method like any other.
-    print_bool(1.eq(&1));                                       // expect: true
+    print_bool(1i64.eq(&1i64));                                       // expect: true
     print_bool(Eq::eq(&a, &b));                                 // expect: true
     print_bool(a.balance.eq(&Money { cents: 300 }));            // expect: false
 }

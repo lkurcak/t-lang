@@ -7,7 +7,7 @@ fn main() {
     let r;
     {
         let n = 2;
-        let f = |x: &int| -> &int { if *x > 0 { x } else { &n } };
+        let f = |x: &i64| -> &i64 { if *x > 0 { x } else { &n } };
         r = f(&a);
     }
     print(*r);

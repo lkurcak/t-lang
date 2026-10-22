@@ -1,6 +1,6 @@
 // A linear variable in a loop body, left behind by `continue` and by the
 // end of the body.
-struct Fd { n: int }
+struct Fd { n: i64 }
 
 fn main() {
     let mut i = 0;

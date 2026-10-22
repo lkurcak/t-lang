@@ -19,7 +19,7 @@ impl<T: Discard, I: Iterator<Item = T>> Iterator for Skip1<I> {
 }
 
 fn main() with panic {
-    for x in (Skip1 { iter: 0..4, skipped: false }).map(|x| x * 10) {
+    for x in (Skip1 { iter: 0..4, skipped: false }).map(|x| x * 10i64) {
         print(x);
     }
     // expect: 10

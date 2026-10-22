@@ -4,14 +4,14 @@
 
 use core::mem::replace;
 
-struct Fd { n: int }
+struct Fd { n: i64 }
 
-fn close(fd: Fd) -> int {
+fn close(fd: Fd) -> i64 {
     let Fd { n } = fd;
     n
 }
 
-fn swap_in(slot: &mut Fd, n: int) -> Fd { replace(slot, Fd { n }) }
+fn swap_in(slot: &mut Fd, n: i64) -> Fd { replace(slot, Fd { n }) }
 
 // Generic: a `T` needn't be `Discard`.
 fn rotate<T>(a: &mut T, b: &mut T, c: T) -> T {
@@ -20,21 +20,21 @@ fn rotate<T>(a: &mut T, b: &mut T, c: T) -> T {
 }
 
 #[derive(Discard)]
-struct Holder<'a> { r: &'a mut int }
+struct Holder<'a> { r: &'a mut i64 }
 
 fn main() with {alloc, panic} {
     let mut slot = Fd { n: 1 };
     print(close(swap_in(&mut slot, 2))); // expect: 1
     print(close(slot));                  // expect: 2
 
-    let mut x = 1;
+    let mut x: i64 = 1;
     let mut y = 2;
     print(rotate(&mut x, &mut y, 3)); // expect: 1
     print(x);                         // expect: 2
     print(y);                         // expect: 3
 
     // Boxes: the old one comes back, and is freed when it's done with.
-    let mut b = Box::new(4);
+    let mut b = Box::new(4i64);
     let old = replace(&mut b, Box::new(5));
     print(*old + *b); // expect: 9
 
@@ -45,7 +45,7 @@ fn main() with {alloc, panic} {
     print(n);               // expect: 7
 
     // As a value.
-    let f = replace::<int>;
+    let f = replace::<i64>;
     let mut z = 8;
     print(f(&mut z, 9) + z); // expect: 17
 }

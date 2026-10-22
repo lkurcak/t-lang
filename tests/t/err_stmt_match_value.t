@@ -1,4 +1,4 @@
-fn main() -> int {
+fn main() -> i64 {
     match true { true => 1, false => 2 }
     + 1
 }

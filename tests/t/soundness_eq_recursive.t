@@ -5,7 +5,7 @@
 enum List<T> { Cons(T, Box<List<T>>), Nil }
 
 #[derive(Discard)]
-struct Digit { n: int }
+struct Digit { n: i64 }
 
 // Only the last digit counts.
 impl Eq for Digit {
@@ -23,5 +23,5 @@ fn main() with {alloc, panic} {
     print_bool(a == b); // expect: true
     let c = List::Cons(Digit { n: 11 }, Box::new(List::Nil));
     print_bool(a == c); // expect: false
-    print_bool(same(P { a: 1, b: Box::new(Digit { n: 5 }) }, P { a: 1, b: Box::new(Digit { n: 15 }) })); // expect: true
+    print_bool(same(P { a: 1i64, b: Box::new(Digit { n: 5 }) }, P { a: 1, b: Box::new(Digit { n: 15 }) })); // expect: true
 }

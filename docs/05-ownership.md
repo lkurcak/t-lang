@@ -6,9 +6,9 @@ assignment and `while` in the type checker), `src/borrowck.rs` and `src/borrowck
 
 ```rust
 #[derive(Discard)]
-enum List { Nil, Cons(int, Box<List>) }
+enum List { Nil, Cons(i64, Box<List>) }
 
-fn sum(l: &List) -> int with panic {
+fn sum(l: &List) -> i64 with panic {
     match l {
         List::Nil => 0,
         List::Cons(x, rest) => *x + sum(rest),
@@ -71,9 +71,9 @@ a `T` on the heap, so freeing the box frees the `T`:
 
 ```rust
 fn main() with {alloc, panic} {
-    let b = Box::new(5); // allocates
-    print(*b);           // expect: 5
-}                        // `b` goes away: the box is freed
+    let b = Box::new(5i64); // allocates
+    print(*b);              // expect: 5
+}                           // `b` goes away: the box is freed
 ```
 
 `Box::new` is the only way a T program allocates, and it's explicit:
@@ -86,7 +86,7 @@ old one can't be used again until it gets a new value.
 
 ```rust,error
 fn main() with {alloc, panic} {
-    let b = Box::new(1);
+    let b = Box::new(1i64);
     let c = b; // moved: `c` owns the box now
     print(*c);
     print(*b); // error: use of moved value `b`
@@ -103,13 +103,13 @@ types are affine, since a value can always be dropped.
 
 ### Copy
 
-Some types are fine to duplicate: an `int` owns nothing. Those are `Copy`:
-`int`, `bool`, `()`, functions, shared references (below), and structs and
+Some types are fine to duplicate: an `i64` owns nothing. Those are `Copy`:
+`i64`, `bool`, `()`, functions, shared references (below), and structs and
 enums that say so with `#[derive(Copy)]`, if all their fields are `Copy`:
 
 ```rust
 #[derive(Discard, Copy)]
-struct Point { x: int, y: int }
+struct Point { x: i64, y: i64 }
 
 fn main() {
     let p = Point { x: 1, y: 2 };
@@ -145,11 +145,11 @@ what its arm binds (`err_move_match.t`).
 ## Mutation
 
 Variables are immutable unless declared `mut`. Then they can be assigned to,
-as can their fields, and `+=` and the like work on `int`s. With mutation
+as can their fields, and `+=` and the like work on `i64`s. With mutation
 comes the `while` loop, which needs it to ever end:
 
 ```rust
-fn fib(n: int) -> int with panic {
+fn fib(n: i64) -> i64 with panic {
     let mut a = 0;
     let mut b = 1;
     let mut i = 0;
@@ -175,7 +175,7 @@ removes the `mut` (`unused_mut`).
 
 `let r;` declares a variable with no value: an assignment gives it one
 later. Its type is a new type variable, which that assignment solves
-(`let r: int;` says it up front). It's as if it had been moved out of, so
+(`let r: i64;` says it up front). It's as if it had been moved out of, so
 the move check already rejects using it before then
 (`err_let_deferred_unset.t`), and an assignment gives it a value as it
 would a moved-out variable. Only a whole variable can be declared this way:
@@ -183,7 +183,7 @@ an assignment can't give `x` and `y` of `let P { x, y };` their values.
 
 ```rust
 fn main() {
-    let x = 1;
+    let x: i64 = 1;
     let y = 2;
     let r;
     if x < y {
@@ -222,7 +222,7 @@ else is reading it" impossible:
 
 ```rust,error
 fn main() {
-    let mut x = 1;
+    let mut x: i64 = 1;
     let r = &x;
     x = 2; // error: cannot assign to `x` while `x` is borrowed
     print(*r);
@@ -241,7 +241,7 @@ A borrow mustn't outlive what it borrows, either. Here `x` is freed at the
 
 ```rust,error
 fn main() {
-    let mut r = &0;
+    let mut r = &0i64;
     {
         let x = 1;
         r = &x;
@@ -266,7 +266,7 @@ T's syntax. A function says how the lifetimes of what it takes and returns
 are related:
 
 ```rust
-fn longer<'a>(x: &'a int, y: &'a int) -> &'a int {
+fn longer<'a>(x: &'a i64, y: &'a i64) -> &'a i64 {
     if *x >= *y { x } else { y }
 }
 
@@ -282,7 +282,7 @@ picks a region for it, and the result can only be used where both
 arguments are alive. Most signatures needn't write them, thanks to
 *lifetime elision*, as in Rust: each reference parameter gets a lifetime of
 its own, and if there's exactly one, the result has it. `fn first(p:
-&Pair) -> &int` means `fn first<'a>(p: &'a Pair) -> &'a int`. With two,
+&Pair) -> &i64` means `fn first<'a>(p: &'a Pair) -> &'a i64`. With two,
 it has to be written (`err_lifetime_elision.t`).
 
 A struct can hold a reference, given a lifetime parameter, and that's the
@@ -295,9 +295,9 @@ other way a type can hold itself, with nothing on the heap
 enum Option<T> { Some(T), None }
 
 #[derive(Discard)]
-struct Node<'a> { value: int, next: Option<&'a Node<'a>> }
+struct Node<'a> { value: i64, next: Option<&'a Node<'a>> }
 
-fn total(n: &Node) -> int with panic {
+fn total(n: &Node) -> i64 with panic {
     match n.next {
         Option::Some(next) => n.value + total(next),
         Option::None => n.value,
@@ -315,7 +315,7 @@ fn main() with panic {
 ## The borrow checker
 
 Type checking (`check.rs`) treats regions as if they weren't there: `&'a
-int` and `&'b int` are the same type to it. Working them out is a separate
+i64` and `&'b i64` are the same type to it. Working them out is a separate
 pass, the *borrow checker* (`borrowck.rs`), which runs on each function
 once its types are known. T's is modelled on rustc's since 2018:
 *non-lexical lifetimes* (NLL, RFC 2094). Non-lexical, because a borrow
@@ -324,7 +324,7 @@ in:
 
 ```rust
 fn main() {
-    let mut x = 1;
+    let mut x: i64 = 1;
     let r = &x;
     print(*r); // expect: 1
     x = 2;     // fine: `r` isn't used after this
@@ -383,11 +383,11 @@ assignment to a variable that isn't `mut` is an error, with a fix.
 
 ### Variance
 
-Subtyping on references raises a question: if `&'long int` is a `&'short
-int`, is a `&mut &'long int` a `&mut &'short int`? It mustn't be:
+Subtyping on references raises a question: if `&'long i64` is a `&'short
+i64`, is a `&mut &'long i64` a `&mut &'short i64`? It mustn't be:
 
 ```rust,error
-fn assign<'a>(r: &mut &'a int, v: &'a int) {
+fn assign<'a>(r: &mut &'a i64, v: &'a i64) {
     *r = v;
 }
 
@@ -407,7 +407,7 @@ outlives `y`. So `&'a mut T` is *invariant* in `T`: a `&mut T` is only ever
 a `&mut T` for the very same `T`, regions and all. `&'a T` and `Box<T>`
 are *covariant* (a subtype inside makes a subtype outside), and function
 types are *contravariant* in their parameters: a function that takes any
-`&'short int` can be used as one that takes `&'long int`s, not the other
+`&'short i64` can be used as one that takes `&'long i64`s, not the other
 way round. A struct or enum's variance in each parameter comes from how its
 fields use it, worked out to a fixpoint (`AdtInfo::new`).
 
@@ -416,15 +416,15 @@ fields use it, worked out to a fixpoint (`AdtInfo::new`).
 Inside a function, its lifetime parameters are *universal* regions: they
 contain the whole body, and the end of themselves, somewhere in the caller.
 Nothing more is known about them than the signature says. Returning `y` as
-a `&'a int` needs `'b: 'a`, which it doesn't say:
+a `&'a i64` needs `'b: 'a`, which it doesn't say:
 
 ```rust,error
-fn second<'a, 'b>(_x: &'a int, y: &'b int) -> &'a int { y }
+fn second<'a, 'b>(_x: &'a i64, y: &'b i64) -> &'a i64 { y }
 // error: lifetime may not live long enough: this needs `'b` to outlive `'a`
 ```
 
 Bounds say what the signature promises: `<'a, 'b: 'a>`. So do the types
-themselves: a `&'a &'b int` only makes sense if `'b: 'a`, so a function
+themselves: a `&'a &'b i64` only makes sense if `'b: 'a`, so a function
 taking one may assume it (*implied bounds*). Callers have to show it, at
 each call. That last part is where Rust's longest-standing soundness bug
 lives (rust#25860, the root of `cve-rs`): implied bounds of a function
@@ -438,17 +438,17 @@ A type parameter is a universal type, and `T: 'a` says every reference in a
 
 ### Function types
 
-What's `fn(&int) -> int`? Not a function that takes references of one
+What's `fn(&i64) -> i64`? Not a function that takes references of one
 particular lifetime, which would be useless: nothing could pass it a
 reference to a local. It's one that takes a reference of *any* lifetime,
-like a generic function: `for<'x> fn(&'x int) -> int`, in Rust's syntax.
+like a generic function: `for<'x> fn(&'x i64) -> i64`, in Rust's syntax.
 A lifetime left out in a function type is bound by it (`FnType::bound`),
 and each call picks a new one. That makes function types *higher-ranked*
 in their lifetimes, a small corner of System F (docs/04-generics.md) that
 monomorphisation doesn't mind, since lifetimes don't exist at run time.
 
 ```rust
-fn apply(f: fn(&int) -> int with panic, x: &int) -> int with panic { f(x) }
+fn apply(f: fn(&i64) -> i64 with panic, x: &i64) -> i64 with panic { f(x) }
 
 fn main() with panic {
     let n = 3;
@@ -459,7 +459,7 @@ fn main() with panic {
 Using a function where a higher-ranked type is wanted means checking it
 works for any lifetime: each is a new *placeholder* region, universal like
 a lifetime parameter, which the function mustn't need anything of. A
-function that only takes `&'static int`s isn't *general enough*
+function that only takes `&'static i64`s isn't *general enough*
 (`err_lifetime_fn_type.t`).
 
 ### Closures
@@ -467,8 +467,8 @@ function that only takes `&'static int`s isn't *general enough*
 A closure's body is checked as a function of its own, with the regions in
 its signature as its universal regions. What it needs of those, it can't
 decide, so it's passed up to the function it's in, as constraints on the
-closure's type there: that's how `|r| r` checks against `fn(&int) ->
-&int`. (Since step 6e.1, a closure's type can be higher-ranked itself, and
+closure's type there: that's how `|r| r` checks against `fn(&i64) ->
+&i64`. (Since step 6e.1, a closure's type can be higher-ranked itself, and
 then its body is checked with placeholders for those lifetimes:
 docs/06e.1-higher-ranked-closures.md.)
 
@@ -484,7 +484,7 @@ lifetimes of what it borrows: see [06c-closures.md](06c-closures.md).
 Matching on a reference looks through it, and binds variables *by
 reference*, to what they match inside the value it points to. That's
 Rust's *match ergonomics* (RFC 2005): in `match l { List::Cons(x, rest) =>
-.. }` with `l: &List`, `x` is a `&int` and `rest` a `&Box<List>`, and
+.. }` with `l: &List`, `x` is a `&i64` and `rest` a `&Box<List>`, and
 nothing is moved out of `*l`, which would be an error, since it's behind a
 reference (`err_move_behind_ref.t`). Through a `&mut`, they're `&mut`s,
 which is how `bump` changes the list in place.
@@ -581,7 +581,7 @@ room for, came right after: docs/05.1-control-flow.md.
 5. `let r;` works for a variable only. Make it work for any irrefutable
    pattern, `let P { x, y };`, each variable given its value by an
    assignment of its own. What does `moves::deferred` need to change?
-6. `fn f<'a>(x: &'a mut int) -> &'a int { x }` takes a mutable reference
+6. `fn f<'a>(x: &'a mut i64) -> &'a i64 { x }` takes a mutable reference
    and returns a shared one. Is `x`'s referent still mutably borrowed while
    the result is in use? Should it be?
 7. `Cx::inhabited_in` in `exhaust.rs` says `struct Stream { next:

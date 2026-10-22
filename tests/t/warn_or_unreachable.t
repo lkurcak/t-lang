@@ -1,7 +1,7 @@
 // Covered by the arm above, alternative by alternative.
 #[derive(Discard)]
 enum C { R, G, B }
-fn f(c: C) -> int {
+fn f(c: C) -> i64 {
     match c {
         C::R | C::G => 1,
         C::B => 2,

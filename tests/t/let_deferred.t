@@ -3,10 +3,10 @@
 // already. It can't be used before then.
 
 #[derive(Discard)]
-struct Pair { a: Box<int>, b: int }
+struct Pair { a: Box<i64>, b: i64 }
 
 fn main() with {alloc, panic} {
-    let x = 1;
+    let x: i64 = 1;
     let y = 2;
     let r;
     if x < y {
@@ -17,7 +17,7 @@ fn main() with {alloc, panic} {
     print(*r);              // expect: 1
 
     // A new variable each time round, with no value.
-    let mut i = 0;
+    let mut i: i64 = 0;
     while i < 2 {
         let n;
         n = Box::new(i);
@@ -31,7 +31,7 @@ fn main() with {alloc, panic} {
     print(*p.a + p.b);      // expect: 7
 
     // Given a value more than once, it has to be `mut`.
-    let mut m;
+    let mut m: i64;
     m = 1;
     m += 1;
     print(m);               // expect: 2

@@ -1,7 +1,7 @@
 // Through `&mut d`, `zero` changes `d`.
-fn zero(r: &mut int) { *r = 0; }
+fn zero(r: &mut i64) { *r = 0; }
 
-fn f() -> int {
+fn f() -> i64 {
     let mut d = 1;
     zero(&mut d);
     10 / d

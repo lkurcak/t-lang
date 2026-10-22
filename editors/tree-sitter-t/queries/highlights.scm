@@ -20,9 +20,9 @@
 ; Types
 
 ((type_identifier) @type.builtin
-  (#match? @type.builtin "^(int|bool)$"))
+  (#match? @type.builtin "^([iu](8|16|32|64|size)|bool)$"))
 ((type_identifier) @type
-  (#not-match? @type "^(int|bool)$"))
+  (#not-match? @type "^([iu](8|16|32|64|size)|bool)$"))
 (unit_type) @type.builtin
 (never_type) @type.builtin
 (type_parameter) @type.parameter

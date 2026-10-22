@@ -1,13 +1,13 @@
 // A closure that moves a captured value out is only `FnOnce`, so it can't
 // be passed where it would be called more than once.
-struct B { x: int }
+struct B { x: i64 }
 
-fn take(b: B) -> int {
+fn take(b: B) -> i64 {
     let B { x } = b;
     x
 }
 
-fn twice<F: Fn() -> int + Discard>(f: F) -> int with panic { f() + f() }
+fn twice<F: Fn() -> i64 + Discard>(f: F) -> i64 with panic { f() + f() }
 
 fn main() {
     let b = B { x: 1 };

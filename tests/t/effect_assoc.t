@@ -1,12 +1,12 @@
 // Iterators set their effects; generic code passes them on.
 #[derive(Discard)]
-struct Ones { left: int }
+struct Ones { left: i64 }
 
 impl Iterator for Ones {
-    type Item = int;
+    type Item = i64;
     effect e = panic;
 
-    fn next(&mut self) -> Option<int> with panic {
+    fn next(&mut self) -> Option<i64> with panic {
         if self.left == 0 {
             Option::None
         } else {
@@ -16,11 +16,11 @@ impl Iterator for Ones {
     }
 }
 
-fn first<I: Iterator<Item = int> + Discard>(mut it: I) -> Option<int> with I::e { it.next() }
+fn first<I: Iterator<Item = i64> + Discard>(mut it: I) -> Option<i64> with I::e { it.next() }
 
 fn main() with panic {
     print(first(Ones { left: 1 }).unwrap()); // expect: 1
     // A range's `next` can't panic, so neither can this call.
     print_bool(first(0..3).is_some()); // expect: true
-    print((0..4).map(|x| x * 2).fold(0, |a, b| a + b)); // expect: 12
+    print((0..4).map(|x| x * 2i64).fold(0, |a, b| a + b)); // expect: 12
 }

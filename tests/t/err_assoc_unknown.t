@@ -2,8 +2,8 @@ trait Tr {
     type Out;
 }
 
-impl Tr for int {
-    type Out = int;
+impl Tr for i64 {
+    type Out = i64;
     type Other = bool;
 }
 

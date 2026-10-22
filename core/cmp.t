@@ -60,16 +60,49 @@ pub trait Ord: Eq {
     }
 }
 
-impl Ord for int {
-    fn cmp(&self, other: &int) -> Ordering {
-        if *self < *other {
-            Ordering::Less
-        } else if *self == *other {
-            Ordering::Equal
-        } else {
-            Ordering::Greater
-        }
-    }
+/// Integers in their order, which `<` says.
+fn compare<T: Int>(a: T, b: T) -> Ordering {
+    if a < b { Ordering::Less } else if a == b { Ordering::Equal } else { Ordering::Greater }
+}
+
+impl Ord for i8 {
+    fn cmp(&self, other: &i8) -> Ordering { compare(*self, *other) }
+}
+
+impl Ord for i16 {
+    fn cmp(&self, other: &i16) -> Ordering { compare(*self, *other) }
+}
+
+impl Ord for i32 {
+    fn cmp(&self, other: &i32) -> Ordering { compare(*self, *other) }
+}
+
+impl Ord for i64 {
+    fn cmp(&self, other: &i64) -> Ordering { compare(*self, *other) }
+}
+
+impl Ord for isize {
+    fn cmp(&self, other: &isize) -> Ordering { compare(*self, *other) }
+}
+
+impl Ord for u8 {
+    fn cmp(&self, other: &u8) -> Ordering { compare(*self, *other) }
+}
+
+impl Ord for u16 {
+    fn cmp(&self, other: &u16) -> Ordering { compare(*self, *other) }
+}
+
+impl Ord for u32 {
+    fn cmp(&self, other: &u32) -> Ordering { compare(*self, *other) }
+}
+
+impl Ord for u64 {
+    fn cmp(&self, other: &u64) -> Ordering { compare(*self, *other) }
+}
+
+impl Ord for usize {
+    fn cmp(&self, other: &usize) -> Ordering { compare(*self, *other) }
 }
 
 /// `false` before `true`: the order in which `a <= b` means `a` implies `b`.

@@ -3,7 +3,7 @@
 use alloc::list::List;
 
 fn main() with {alloc, panic} {
-    let mut l: List<int> = List::new();
+    let mut l: List<i64> = List::new();
     l.push(1);
     l.push(2);
     let s = l.as_mut_slice();

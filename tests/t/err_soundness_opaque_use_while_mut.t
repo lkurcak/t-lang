@@ -1,5 +1,5 @@
 // `a` holds a `&mut n` until it's last used.
-fn bump(r: &mut int) -> impl FnMut() with panic + Discard { move || *r += 1 }
+fn bump(r: &mut i64) -> impl FnMut() with panic + Discard { move || *r += 1 }
 
 fn main() with panic {
     let mut n = 0;

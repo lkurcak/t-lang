@@ -1,7 +1,7 @@
 // An inherent impl for `P<'a, 'a>`: its method, called on a `P` whose two
 // lifetimes differ, makes them the same, so `x` can't outlive `short`.
 #[derive(Discard)]
-struct P<'a, 'b> { x: &'a int, y: &'b int }
+struct P<'a, 'b> { x: &'a i64, y: &'b i64 }
 
 impl<'a> P<'a, 'a> {
     fn flip(&mut self) {

@@ -1,9 +1,9 @@
 // What an impl's `where` clause needs, it needs where the impl is used:
 // `Second` throws away every other value, and an `Fd` can't be.
-struct Fd { n: int }
+struct Fd { n: i64 }
 
 #[derive(Discard)]
-struct Fds { left: int }
+struct Fds { left: i64 }
 
 impl Iterator for Fds {
     type Item = Fd;

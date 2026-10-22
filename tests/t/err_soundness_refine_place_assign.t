@@ -1,9 +1,9 @@
 // Assigning a field gives it a new value: what was known of the old one
 // isn't of it.
 #[derive(Copy, Discard)]
-struct P { x: int }
+struct P { x: i64 }
 
-fn f(mut p: P) -> int {
+fn f(mut p: P) -> i64 {
     if p.x > 0 {
         p.x = 0;
         10 / p.x

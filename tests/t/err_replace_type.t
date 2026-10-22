@@ -6,4 +6,4 @@ fn main() {
     let mut x = 1;
     print(replace(&mut x, true));
 }
-// error: expected `int`, found `bool`
+// error: expected `{integer}`, found `bool`

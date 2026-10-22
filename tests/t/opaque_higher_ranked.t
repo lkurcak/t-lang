@@ -1,6 +1,6 @@
 // A bound with references in it is for every lifetime, so the closure
 // returned for it is too.
-fn same() -> impl Fn(&int) -> &int + Discard { |x| x }
+fn same() -> impl Fn(&i64) -> &i64 + Discard { |x| x }
 
 fn main() {
     let f = same();

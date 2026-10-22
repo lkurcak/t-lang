@@ -356,6 +356,13 @@ impl Checker {
                         ),
                     ));
                 }
+                (Some(tr), _) if tr == "Int" => {
+                    return Err(Error::ty(
+                        header,
+                        "`Int` is built in: only the integer types implement it, so generic \
+                         code over it may count on what they have in common",
+                    ));
+                }
                 (Some(tr), _) if crate::traits::FN_TRAITS.contains(&tr.as_str()) => {
                     return Err(Error::ty(
                         header,
@@ -506,7 +513,7 @@ impl Checker {
     ///   new one each time it's mentioned. Only inside a function type, it
     ///   would be decided as a region only that function type means, as
     ///   finding an impl doesn't look at what function types are generic
-    ///   over: `impl<A, B> Tr for fn(A) -> B` is found for `fn(&int) ->
+    ///   over: `impl<A, B> Tr for fn(A) -> B` is found for `fn(&i64) ->
     ///   &int`, with `B` the result's `&int`, of whatever lifetime a call
     ///   picks.
     /// - It *terminates*: each projection in it is on a type smaller than
@@ -697,7 +704,7 @@ pub(in crate::check) struct Outer {
 /// each lifetime in the impl's type is a parameter of its own, unbounded
 /// and written once, and so is each type parameter, which could stand for a
 /// type with lifetimes in it (`impl<T> Tr for Pair<T, T>` at `Pair<&'x
-/// int, &'y int>`). That's Haskell 98's rule for instance heads, distinct
+/// i64, &'y i64>`). That's Haskell 98's rule for instance heads, distinct
 /// variables, with lifetimes counted. Accepting more would need resolution
 /// to say what it needs of lifetimes, for the borrow checker to check.
 ///

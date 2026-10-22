@@ -2,11 +2,11 @@
 // builds, enums it never mentions and variants it never constructs. A name
 // starting with `_` says that's on purpose.
 #[derive(Discard)]
-struct Used { a: int }
+struct Used { a: i64 }
 #[derive(Discard)]
-struct Unbuilt { a: int }
+struct Unbuilt { a: i64 }
 #[derive(Discard)]
-struct _Kept { a: int }
+struct _Kept { a: i64 }
 #[derive(Discard)]
 enum Color { Red, Green, _Blue }
 #[derive(Discard)]
@@ -18,20 +18,20 @@ enum Inner { X }
 #[derive(Discard)]
 struct Holder { i: Inner }
 
-fn helper() -> int { 1 }
+fn helper() -> i64 { 1 }
 
 // They call each other, but nothing live calls either.
-fn ping(n: int) -> int with panic { if n == 0 { 0 } else { pong(n - 1) } }
-fn pong(n: int) -> int with panic { ping(n) }
+fn ping(n: i64) -> i64 with panic { if n == 0 { 0 } else { pong(n - 1) } }
+fn pong(n: i64) -> i64 with panic { ping(n) }
 
 // Named but never called still counts as used.
-fn passed(x: int) -> int { x }
-fn apply(f: fn(int) -> int) -> int { f(2) }
+fn passed(x: i64) -> i64 { x }
+fn apply(f: fn(i64) -> i64) -> i64 { f(2) }
 
-fn _scratch() -> int { helper() }
+fn _scratch() -> i64 { helper() }
 
 // Takes an `Unbuilt`, which never exists, but `main` names it.
-fn read(u: Unbuilt) -> int { u.a }
+fn read(u: Unbuilt) -> i64 { u.a }
 
 fn red(c: Color) -> bool {
     match c {

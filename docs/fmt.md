@@ -6,8 +6,8 @@ layout), `src/doc.rs` (the layout engine), and `tests/fmt.rs`.
 
 ```rust,unformatted
 #[derive(Discard)]
-struct Point{x:int,y:int}
-fn dist(p:Point,q:Point)->int with panic{
+struct Point{x:i64,y:i64}
+fn dist(p:Point,q:Point)->i64 with panic{
 let dx=p.x-q.x;let dy=p.y-q.y;  // no square roots yet
 dx*dx+dy*dy}
 
@@ -21,8 +21,8 @@ fn main() with panic{print(dist(Point{x:0,y:0},Point{x:3,y:4})); // expect: 25
 
 ```rust
 #[derive(Discard)]
-struct Point { x: int, y: int }
-fn dist(p: Point, q: Point) -> int with panic {
+struct Point { x: i64, y: i64 }
+fn dist(p: Point, q: Point) -> i64 with panic {
     let dx = p.x - q.x;
     let dy = p.y - q.y; // no square roots yet
     dx * dx + dy * dy
@@ -173,7 +173,7 @@ break:
   rule Wadler's groups can't express:
 
   ```rust,fragment
-  apply(first_argument, second_argument, |x: int| -> int {
+  apply(first_argument, second_argument, |x: i64| -> i64 {
       let y = x * 2;
       y + 1
   });

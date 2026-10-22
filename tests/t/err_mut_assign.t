@@ -1,5 +1,5 @@
 fn main() {
-    let x = 1;
+    let x: i64 = 1;
     x = 2;
     print(x);
 }

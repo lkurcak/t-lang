@@ -1,6 +1,6 @@
 // A literal must have its struct's refinements.
 #[derive(Copy, Discard)]
-struct Span { lo: int, hi: { h: int | h >= lo } }
+struct Span { lo: i64, hi: { h: i64 | h >= lo } }
 
 fn main() {
     let s = Span { lo: 5, hi: 3 };

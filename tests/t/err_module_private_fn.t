@@ -1,7 +1,7 @@
 mod m {
-    pub fn open() -> int { secret() }
+    pub fn open() -> i64 { secret() }
 
-    fn secret() -> int { 1 }
+    fn secret() -> i64 { 1 }
 }
 
 fn main() { print(m::secret()); }

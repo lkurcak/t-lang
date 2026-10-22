@@ -16,7 +16,7 @@ trait Show {
 }
 
 #[derive(Discard)]
-struct Point { x: int, y: int }
+struct Point { x: i64, y: i64 }
 
 impl Show for Point {
     fn show(&self) {
@@ -32,7 +32,7 @@ impl<T: Show> Show for Option<T> {
     fn show(&self) {
         match self {
             Option::Some(x) => x.show(),
-            Option::None => print(0),
+            Option::None => print(0i64),
         }
     }
 }
@@ -79,7 +79,7 @@ Haskell's type classes (Wadler and Blott, 1989), and Rust's traits.
 
 A bound is an assumption. In the body of `fn show_all<T: Show>`, `T: Show`
 holds, though nothing says which impl it's by; that's for each caller to
-show, for the `T` it picks. Each obligation, such as `int: Show` for
+show, for the `T` it picks. Each obligation, such as `i64: Show` for
 `show_all(&1, &2)`, waits until its type is known, at the end of the
 function, as `==` on a type to be inferred did in step 3.
 
@@ -94,9 +94,9 @@ fn show_all<T: Show>(a: &T, b: &T) {
 }
 
 fn main() {
-    show_all(&1, &2);
+    show_all(&1i64, &2);
 }
-// error: `show_all` needs its `T` to implement `Show`, and `int` doesn't
+// error: `show_all` needs its `T` to implement `Show`, and `i64` doesn't
 ```
 
 A *supertrait* is a rule the other way: `trait Ord: Eq` says every `Ord`
@@ -124,20 +124,20 @@ impl<T: Show> Print for T {
     fn print(&self) { self.show() }
 }
 
-impl Print for int {
+impl Print for i64 {
     fn print(&self) { print(*self) }
 }
 // error: this impl of `Print` overlaps `impl Print for T`
 ```
 
-`int` isn't `Show`, so the two can't both apply today. But if someone
-made it `Show`, the impl for `int` would quietly stop being the only one:
+`i64` isn't `Show`, so the two can't both apply today. But if someone
+made it `Show`, the impl for `i64` would quietly stop being the only one:
 an impl far away would change what code here means. Rust decided the same,
 and has *specialization* as an unfinished way out; T has none.
 
 **Termination.** Proving a goal by an impl needs what the impl needs. Each
 impl's type parameters are parts of its type (an impl whose parameter
-isn't, like `impl<T> Show for int`, is rejected: nothing could say what
+isn't, like `impl<T> Show for i64`, is rejected: nothing could say what
 `T` is; one that a bound decides is fine, and so are bounds on what
 isn't a part, under a rule of their own: docs/07.1-impl-parameters.md).
 So what an impl needs is about smaller types than what it proves,
@@ -158,22 +158,22 @@ trait Describe {
 
 impl<T: Show> Describe for T {
     fn describe(&self) {
-        print(0);
+        print(0i64);
         self.show();
     }
 }
 
-impl Show for int {
+impl Show for i64 {
     fn show(&self) { print(*self) }
 }
 
 fn main() {
-    5.describe(); // expect: 0
-                  // expect: 5
+    5i64.describe(); // expect: 0
+    // expect: 5
 }
 ```
 
-Proving `int: Describe` needs `int: Show`: the same size, but another
+Proving `i64: Describe` needs `i64: Show`: the same size, but another
 trait. That ends unless there's a way back, so the blanket impls between
 traits can't form a cycle. Strict Paterson would reject this one too;
 T only rejects what could actually loop:
@@ -221,12 +221,12 @@ path without `(..)` is the method as a function, `let f = Point::len;`.
 
 ```rust
 #[derive(Discard)]
-struct Stack { top: int, size: int }
+struct Stack { top: i64, size: i64 }
 
 impl Stack {
-    fn len(&self) -> int { self.size }
+    fn len(&self) -> i64 { self.size }
 
-    fn push(&mut self, x: int) with panic {
+    fn push(&mut self, x: i64) with panic {
         self.top = x;
         self.size += 1;
     }
@@ -267,7 +267,7 @@ call. That's needed there because finding a place can run code, through
 `==` is `Eq`'s: `l == r` is `Eq::eq(&l, &r)`, and `!=` its negation. That
 replaces step 1's rule that `==` works on anything without a function in
 it, and step 4's error for `==` on a `T` now has its answer, `T: Eq`.
-`int`, `bool` and `()` are `Eq`, and references and boxes if what they
+`i64`, `bool` and `()` are `Eq`, and references and boxes if what they
 point to is. A struct or enum is if it says so, with `#[derive(Eq)]` to
 compare field by field (each field by its own type's `==`, so a field with
 an `eq` of its own counts it), or with an impl. Functions never are.
@@ -282,9 +282,9 @@ A derived impl needs of the type's parameters only what its fields need:
 
 ```rust
 #[derive(Discard, Copy)]
-struct Callback<T> { f: fn(T) -> int }
+struct Callback<T> { f: fn(T) -> i64 }
 
-fn unbox(b: Box<int>) -> int { *b }
+fn unbox(b: Box<i64>) -> i64 { *b }
 
 fn main() with {alloc, panic} {
     let c = Callback { f: unbox };
@@ -293,7 +293,7 @@ fn main() with {alloc, panic} {
 }
 ```
 
-`Callback<Box<int>>` is `Copy`, as a function is. Rust's derive would
+`Callback<Box<i64>>` is `Copy`, as a function is. Rust's derive would
 need `T: Copy`: it bounds every parameter, whatever the fields need, which
 is why the trivial impl sometimes has to be written by hand. Rust keeps
 that because bounds worked out from fields make a type's public bounds
@@ -316,18 +316,18 @@ A trait call can hide polymorphic recursion (docs/04-generics.md):
 
 ```rust,error
 trait Tr {
-    fn f(&self) -> int;
+    fn f(&self) -> i64;
 }
 
 #[derive(Discard)]
 struct W<X> { x: X }
 
 impl<X: Tr> Tr for W<X> {
-    fn f(&self) -> int { (W { x: self }).f() }
+    fn f(&self) -> i64 { (W { x: self }).f() }
 }
 
 impl<'a, X: Tr> Tr for &'a X {
-    fn f(&self) -> int { (**self).f() }
+    fn f(&self) -> i64 { (**self).f() }
 }
 // error: polymorphic recursion
 ```

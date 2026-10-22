@@ -1,5 +1,5 @@
 trait Half {
-    fn half(self, by: { b: int | b > 0 }) -> int;
+    fn half(self, by: { b: i64 | b > 0 }) -> i64;
 }
 
 fn main() {}

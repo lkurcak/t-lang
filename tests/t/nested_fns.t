@@ -5,19 +5,19 @@ fn main() with panic {
     print(double(1)); // expect: 2
 
     /// Doubles `x`.
-    fn double(x: int) -> int with panic { x * 2 }
+    fn double(x: i64) -> i64 with panic { x * 2 }
 
     // Recursive.
-    fn fact(n: int) -> int with panic {
+    fn fact(n: i64) -> i64 with panic {
         if n == 0 { 1 } else { n * fact(n - 1) }
     }
     print(fact(5)); // expect: 120
 
     // Mutually recursive.
-    fn is_even(n: int) -> bool with panic {
+    fn is_even(n: i64) -> bool with panic {
         if n == 0 { true } else { is_odd(n - 1) }
     }
-    fn is_odd(n: int) -> bool with panic {
+    fn is_odd(n: i64) -> bool with panic {
         if n == 0 { false } else { is_even(n - 1) }
     }
     print_bool(is_even(10)); // expect: true
@@ -29,16 +29,16 @@ fn main() with panic {
     print_bool(twice::<bool>(|b| !b, true)); // expect: true
 
     // Nested in a nested `fn`, and in a closure's block.
-    fn sum_to(n: int) -> int with panic {
-        fn go(i: int, acc: int, n: int) -> int with panic {
+    fn sum_to(n: i64) -> i64 with panic {
+        fn go(i: i64, acc: i64, n: i64) -> i64 with panic {
             if i > n { acc } else { go(i + 1, acc + i, n) }
         }
         go(1, 0, n)
     }
     print(sum_to(4)); // expect: 10
     let k = 3;
-    let add_k = |x: int| {
-        fn inc(x: int) -> int with panic { x + 1 }
+    let add_k = |x: i64| {
+        fn inc(x: i64) -> i64 with panic { x + 1 }
         inc(x) + k
     };
     print(add_k(1)); // expect: 5
@@ -50,24 +50,24 @@ fn main() with panic {
     print(top()); // expect: 1
 }
 
-fn pick(b: bool) -> fn(int) -> int with panic {
-    fn neg(x: int) -> int with panic { -x }
+fn pick(b: bool) -> fn(i64) -> i64 with panic {
+    fn neg(x: i64) -> i64 with panic { -x }
     if b { double_it() } else { neg }
 }
 
 #[derive(Discard)]
-struct Holder { f: fn(int) -> int with panic }
+struct Holder { f: fn(i64) -> i64 with panic }
 
-fn double_it() -> fn(int) -> int with panic {
-    fn double(x: int) -> int with panic { x + x }
+fn double_it() -> fn(i64) -> i64 with panic {
+    fn double(x: i64) -> i64 with panic { x + x }
     let h = Holder { f: double };
     h.f
 }
 
 // Outer functions and types are fine to use.
 #[derive(Discard)]
-struct One { n: int }
-fn top() -> int {
+struct One { n: i64 }
+fn top() -> i64 {
     fn one() -> One { One { n: 1 } }
     one().n
 }

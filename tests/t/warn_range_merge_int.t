@@ -1,5 +1,5 @@
-// A single int at the end of a range counts too.
-fn f(n: int) -> int {
+// A single i64 at the end of a range counts too.
+fn f(n: i64) -> i64 {
     match n {
         0..10 | 10 => 1,
         _ => 2,

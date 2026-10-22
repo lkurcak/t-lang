@@ -1,7 +1,7 @@
 //! Prints a program back out as source, for `t mono` and `t fmt`. A
 //! program without generics, nested functions or local types prints as T
 //! that parses back to the same program; the names monomorphisation gives
-//! its copies, like `id::<int>`, and the symbols nested functions and local
+//! its copies, like `id::<i64>`, and the symbols nested functions and local
 //! types are lifted under, like `main::helper`, don't parse.
 //!
 //! The printer turns the AST into a `Doc`, which says where lines may
@@ -120,9 +120,12 @@ fn prec(op: BinOp) -> u8 {
 
 const CMP: u8 = 3;
 
-/// Binds tighter than any binary operator: unary operators, calls and
-/// everything else.
-const UNARY: u8 = 6;
+/// `as`: tighter than any binary operator, looser than a unary one.
+const AS: u8 = 6;
+
+/// Binds tighter than any binary operator or `as`: unary operators, calls
+/// and everything else.
+const UNARY: u8 = 7;
 
 fn block_like(e: &Expr) -> bool {
     matches!(
@@ -594,7 +597,7 @@ impl Printer<'_> {
         )
     }
 
-    /// `Show`, `Iter<Item = int>` or `Fn(int) -> int`.
+    /// `Show`, `Iter<Item = i64>` or `Fn(i64) -> i64`.
     fn bound(&mut self, b: &BoundItem) -> Doc {
         let mut out = text(&b.name.name);
         if let Some((params, ret)) = &b.sig {
@@ -846,6 +849,7 @@ impl Printer<'_> {
     fn expr(&mut self, e: &Expr, min: u8, ctx: Ctx) -> Doc {
         let own = match &e.kind {
             ExprKind::Binary(op, ..) => prec(*op),
+            ExprKind::As(..) => AS,
             // A closure's body runs as far right as it can, and so do the
             // value of an assignment, `return` and `break`. Even without a
             // value they need parentheses as an operand: `return - 1`
@@ -872,7 +876,8 @@ impl Printer<'_> {
 
     fn expr_inner(&mut self, e: &Expr, ctx: Ctx) -> Doc {
         match &e.kind {
-            ExprKind::Int(n) => text(n.to_string()),
+            ExprKind::Int(n, None) => text(n.to_string()),
+            ExprKind::Int(n, Some(t)) => text(format!("{n}{}", t.name())),
             ExprKind::Bool(b) => text(b.to_string()),
             ExprKind::Unit => text("()"),
             ExprKind::Var(name, targs) => text(name) + self.turbofish(targs),
@@ -880,6 +885,7 @@ impl Printer<'_> {
             // of, as how a closure captures isn't printed either.
             ExprKind::Move(x) => self.expr_inner(x, ctx),
             ExprKind::Unary(op, x) => text(op.to_string()) + self.expr(x, UNARY, ctx.inner()),
+            ExprKind::As(x, t) => self.expr(x, AS, ctx.inner()) + " as " + self.ty(t),
             ExprKind::Binary(..) => self.binary(e, ctx),
             ExprKind::Call(f, args) => {
                 // Something more than a name or a call needs parentheses to
@@ -1270,7 +1276,7 @@ impl Printer<'_> {
         pat + " => " + self.expr(&arm.body, 0, Ctx::default())
     }
 
-    /// `::<int, bool>` after a name, or nothing if there are no type
+    /// `::<i64, bool>` after a name, or nothing if there are no type
     /// arguments.
     fn turbofish(&mut self, targs: &[TypeExpr]) -> Doc {
         match targs.last() {
@@ -1442,15 +1448,12 @@ fn type_lead_start(d: &TypeDecl, pos: usize) -> usize {
 
 /// A range pattern as written. Unlike `exhaust::show_range`, which tidies
 /// ranges up for messages, this keeps `0..1` from turning into `0`.
-fn range(lo: i64, hi: i64, inclusive: bool) -> String {
-    let lo = match lo {
-        i64::MIN => String::new(),
-        lo => lo.to_string(),
-    };
+fn range(lo: Option<i128>, hi: Option<i128>, inclusive: bool) -> String {
+    let lo = lo.map_or(String::new(), |lo| lo.to_string());
     match hi {
-        _ if inclusive => format!("{lo}..={hi}"),
-        i64::MAX => format!("{lo}.."),
-        hi => format!("{lo}..{}", hi + 1),
+        None => format!("{lo}.."),
+        Some(hi) if inclusive => format!("{lo}..={hi}"),
+        Some(hi) => format!("{lo}..{}", hi + 1),
     }
 }
 
@@ -1460,7 +1463,7 @@ enum BodyItem<'a> {
     Fn(&'a FnDecl, bool),
     /// `type Item: Discard;`, in a trait.
     Decl(&'a AssocDecl),
-    /// `type Item = int;`, in an impl.
+    /// `type Item = i64;`, in an impl.
     Def(&'a AssocDef),
     /// `effect e;`, in a trait.
     EffectDecl(&'a EffectDecl),

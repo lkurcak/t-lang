@@ -3,7 +3,7 @@
 fn id<T>(x: &T) -> &T { x }
 
 fn main() {
-    let s: &[int] = core::slice::empty();
+    let s: &[i64] = core::slice::empty();
     id(s);
 }
-// error: a type parameter can't stand for the slice `[int]`: it's only ever behind a reference
+// error: a type parameter can't stand for the slice `[i64]`: it's only ever behind a reference

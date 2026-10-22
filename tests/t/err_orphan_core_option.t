@@ -4,9 +4,9 @@
 struct Mine {}
 
 impl Iterator for Option<Mine> {
-    type Item = int;
+    type Item = i64;
 
-    fn next(&mut self) -> Option<int> { Option::None }
+    fn next(&mut self) -> Option<i64> { Option::None }
 }
 
 fn main() {}

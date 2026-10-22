@@ -1,6 +1,6 @@
 // `S<T>` holds a box of a `T::Out`, and `<W<U> as Tr>::Out` is an
-// `S<W<W<U>>>`: so `S<W<int>>` holds an `S<W<W<int>>>`, which holds an
-// `S<W<W<W<int>>>>`, and so on. Each is finite, through a box, but there's
+// `S<W<W<U>>>`: so `S<W<i64>>` holds an `S<W<W<i64>>>`, which holds an
+// `S<W<W<W<i64>>>>`, and so on. Each is finite, through a box, but there's
 // no end of them to monomorphise.
 #[derive(Discard)]
 struct W<T> { t: T }
@@ -15,7 +15,7 @@ impl<U> Tr for W<U> {
     type Out = S<W<W<U>>>;
 }
 
-fn size(_s: &S<W<int>>) -> int { 0 }
+fn size(_s: &S<W<i64>>) -> i64 { 0 }
 
 fn main() {
     print(1);

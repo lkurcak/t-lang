@@ -1,13 +1,13 @@
 // `continue` skips the rest of the body, which would use up the item.
-struct Fd { n: int }
+struct Fd { n: i64 }
 
-fn close(fd: Fd) -> int {
+fn close(fd: Fd) -> i64 {
     let Fd { n } = fd;
     n
 }
 
 #[derive(Discard)]
-struct Fds { left: int }
+struct Fds { left: i64 }
 
 impl Iterator for Fds {
     type Item = Fd;

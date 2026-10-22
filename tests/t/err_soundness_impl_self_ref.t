@@ -1,11 +1,11 @@
-// An impl for `&'a int` is for every `'a`, so its method can't make one out
+// An impl for `&'a i64` is for every `'a`, so its method can't make one out
 // of a shorter reference.
 trait Mk {
-    fn mk(x: &int) -> Self;
+    fn mk(x: &i64) -> Self;
 }
 
-impl<'a> Mk for &'a int {
-    fn mk(x: &int) -> &'a int { x }
+impl<'a> Mk for &'a i64 {
+    fn mk(x: &i64) -> &'a i64 { x }
 }
 
 fn main() {}

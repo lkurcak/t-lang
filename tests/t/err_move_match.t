@@ -4,15 +4,15 @@
 enum Option<T> { Some(T), None }
 
 fn main() with {alloc, panic} {
-    let o = Option::Some(Box::new(1));
+    let o = Option::Some(Box::new(1i64));
     match o {
         Option::Some(b) => print(*b),
         Option::None => {}
     }
     // Looking at which variant it is is fine...
     match o {
-        Option::Some(_) => print(0),
-        Option::None => print(1),
+        Option::Some(_) => print(0i64),
+        Option::None => print(1i64),
     }
     // ...but not at what was moved.
     match o {

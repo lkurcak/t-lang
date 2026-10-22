@@ -1,0 +1,6 @@
+fn main() with panic {
+    let mut a: u8 = 1;
+    let b: u16 = 2;
+    a += b;
+}
+// error: expected `u8`, found `u16`

@@ -6,10 +6,10 @@ trait Tr {
     fn out(self) -> Self::Out;
 }
 
-impl<'a> Tr for &'a int {
-    type Out = &'a int;
+impl<'a> Tr for &'a i64 {
+    type Out = &'a i64;
 
-    fn out(self) -> &'a int { self }
+    fn out(self) -> &'a i64 { self }
 }
 
 fn keep<T: Tr>(t: T) -> T::Out { t.out() }
@@ -17,7 +17,7 @@ fn keep<T: Tr>(t: T) -> T::Out { t.out() }
 fn main() {
     let r;
     {
-        let x = 1;
+        let x: i64 = 1;
         r = keep(&x);
     }
     print(*r);

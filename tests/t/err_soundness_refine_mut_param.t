@@ -1,6 +1,6 @@
 // A `mut` parameter can change, so its refinement is an invariant, checked
 // at each assignment.
-fn f(mut x: { v: int | v > 0 }) -> int {
+fn f(mut x: { v: i64 | v > 0 }) -> i64 {
     x = 0;
     10 / x
 }

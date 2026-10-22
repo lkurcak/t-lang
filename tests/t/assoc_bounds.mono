@@ -1,5 +1,5 @@
 #[derive(Discard)]
-struct A { n: int }
+struct A { n: i64 }
 
 #[derive(Discard)]
 struct B { b: bool }
@@ -8,15 +8,15 @@ struct B { b: bool }
 struct W::<A> { t: A }
 
 #[derive(Discard)]
-struct Count::<A> { of: A, n: int }
+struct Count::<A> { of: A, n: i64 }
 
 #[derive(Discard)]
-struct Hold::<int><'r> { u: int, r: &'r int }
+struct Hold::<i64><'r> { u: i64, r: &'r i64 }
 
-fn shown::<W<A>>(s: &W::<A>) -> int with panic { <W::<A> as Show>::show(&*s) }
+fn shown::<W<A>>(s: &W::<A>) -> i64 with panic { <W::<A> as Show>::show(&*s) }
 
 fn count::<A>(of: A) -> Count::<A> with panic {
-    let n = <A as Tr>::out(&of) + 1;
+    let n = <A as Tr>::out(&of) + 1i64;
     Count::<A> { of, n }
 }
 
@@ -24,22 +24,22 @@ fn same::<A>(x: &A, y: &A) -> bool { <A as Tr>::out(&*x) == <A as Tr>::out(&*y) 
 
 fn same::<B>(x: &B, y: &B) -> bool { <B as Tr>::out(&*x) == <B as Tr>::out(&*y) }
 
-fn hold::<A><'r>(t: &A, r: &'r int) -> int {
-    let h: Hold::<int><'r> = Hold::<int> { u: <A as Tr>::out(&*t), r };
+fn hold::<A><'r>(t: &A, r: &'r i64) -> i64 {
+    let h: Hold::<i64><'r> = Hold::<i64> { u: <A as Tr>::out(&*t), r };
     *h.r
 }
 
 fn main() with panic {
-    print(shown::<W<A>>(&W::<A> { t: A { n: 4 } }));
-    let c = count::<A>(A { n: 1 });
+    print(shown::<W<A>>(&W::<A> { t: A { n: 4i64 } }));
+    let c = count::<A>(A { n: 1i64 });
     print(c.n + c.of.n);
-    print_bool(same::<A>(&A { n: 1 }, &A { n: 1 }));
+    print_bool(same::<A>(&A { n: 1i64 }, &A { n: 1i64 }));
     print_bool(same::<B>(&B { b: true }, &B { b: false }));
-    print(hold::<A>(&A { n: 1 }, &5));
+    print(hold::<A>(&A { n: 1i64 }, &5i64));
 }
 
-fn <A as Tr>::out(&self) -> int { self.n }
+fn <A as Tr>::out(&self) -> i64 { self.n }
 
 fn <B as Tr>::out(&self) -> bool { self.b }
 
-fn <W::<A> as Show>::show(&self) -> int with panic { <A as Tr>::out(&self.t) * 10 }
+fn <W::<A> as Show>::show(&self) -> i64 with panic { <A as Tr>::out(&self.t) * 10i64 }

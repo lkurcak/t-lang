@@ -1,10 +1,10 @@
 // The `&mut v` for `push` becomes a real one at the call, and `r` is still
 // in use then.
 #[derive(Discard)]
-struct Stack { size: int }
+struct Stack { size: i64 }
 impl Stack {
-    fn len(&self) -> int { self.size }
-    fn push(&mut self, x: int) { self.size += x }
+    fn len(&self) -> i64 { self.size }
+    fn push(&mut self, x: i64) { self.size += x }
 }
 fn main() {
     let mut v = Stack { size: 0 };

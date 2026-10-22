@@ -23,7 +23,7 @@
 //! gparam   = LIFETIME (":" LIFETIME ("+" LIFETIME)*)? | IDENT (":" bound ("+" bound)*)?
 //! bound    = LIFETIME | path                          -- a lifetime, or a trait
 //!          | path "<" (IDENT ("=" type | ":" path ("+" path)*)),* ">"
-//!          | path "(" (type ("," type)*)? ")" ("->" type)?  -- `Fn(int) -> int`
+//!          | path "(" (type ("," type)*)? ")" ("->" type)?  -- `Fn(i64) -> i64`
 //! param    = "mut"? IDENT ":" type
 //! trait    = "trait" IDENT (":" path ("+" path)*)? "{" (head method)* "}"
 //! impl     = "impl" generics? (path "for")? type "{" (head "pub"? method)* "}"
@@ -47,7 +47,8 @@
 //! and      = cmp ("&&" cmp)*
 //! cmp      = add (("==" | "!=" | "<" | "<=" | ">" | ">=") add)?   -- no chaining
 //! add      = mul (("+" | "-") mul)*
-//! mul      = unary (("*" | "/" | "%") unary)*
+//! mul      = cast (("*" | "/" | "%") cast)*
+//! cast     = unary ("as" IDENT)*
 //! unary    = ("-" | "!" | "*" | "&" "mut"?) unary | call
 //! postfix  = primary ("(" args ")" | "." IDENT | "." IDENT targs? "(" args ")")*
 //! primary  = INT | "true" | "false" | IDENT targs? | "(" ")" | "(" expr ")" | block
@@ -73,6 +74,10 @@
 //! pat_range = int ".." int? | int "..=" int | ".." int | "..=" int
 //! int      = "-"? INT
 //! ```
+//!
+//! An `INT` is digits, with `_`s between them if wanted, and a suffix that
+//! names an integer type if it says which one it is: `255u8`, `1_000_i64`.
+//! A pattern's can't have one: its type is that of what it matches.
 //!
 //! Like Rust, an `if`, `match` or block at the *start* of a statement is the
 //! whole statement, so `if c { a } else { b } - x` is two statements, not a
@@ -587,7 +592,7 @@ impl Parser {
         Ok(path)
     }
 
-    /// `a::Shape::<int>::Dot`: names with `::` between, each maybe with
+    /// `a::Shape::<i64>::Dot`: names with `::` between, each maybe with
     /// type arguments, up to a `::` that has neither a name nor `<`
     /// after it.
     fn segments(&mut self) -> Result<Vec<Segment>, Error> {
@@ -953,7 +958,7 @@ impl Parser {
         })
     }
 
-    /// `type Item = int;` in an impl, after its head.
+    /// `type Item = i64;` in an impl, after its head.
     fn assoc_def(&mut self, head: Head) -> Result<AssocDef, Error> {
         let start = self.expect(Tok::Type)?;
         head.no_allows()?;
@@ -1216,7 +1221,7 @@ impl Parser {
         Ok(g)
     }
 
-    /// `Show`, or `Iter<Item = int, Other: Discard>`, after a `:` in
+    /// `Show`, or `Iter<Item = i64, Other: Discard>`, after a `:` in
     /// generics.
     fn trait_bound(&mut self) -> Result<BoundItem, Error> {
         let name = self.path()?;
@@ -1266,7 +1271,7 @@ impl Parser {
                     return Err(Error::syntax(
                         name.span,
                         "a trait has no type parameters; this can only say what one of its \
-                         associated types is, as in `Iter<Item = int>`, or what it implements, \
+                         associated types is, as in `Iter<Item = i64>`, or what it implements, \
                          as in `Iter<Item: Discard>`",
                     ));
                 }
@@ -1294,7 +1299,7 @@ impl Parser {
         }
     }
 
-    /// A function parameter: `x: int` or `mut x: int`.
+    /// A function parameter: `x: i64` or `mut x: i64`.
     fn param(&mut self) -> Result<Param, Error> {
         let mutable = (*self.peek() == Tok::Mut).then(|| self.bump().span);
         let name = self.binder()?;
@@ -1524,7 +1529,7 @@ impl Parser {
                     id: self.id(),
                 })
             }
-            // `{ v: int | v > 0 }`
+            // `{ v: i64 | v > 0 }`
             Tok::LBrace => {
                 self.bump();
                 let binder = self.ident()?;
@@ -1784,7 +1789,7 @@ impl Parser {
     /// Precedence climbing: parses an expression whose operators all bind at
     /// least as tightly as `min_prec`.
     fn binary(&mut self, min_prec: u8) -> Result<Expr, Error> {
-        let mut lhs = self.unary()?;
+        let mut lhs = self.cast()?;
         while let Some((op, prec)) = binop(self.peek()) {
             if prec < min_prec {
                 break;
@@ -1806,6 +1811,31 @@ impl Parser {
             }
         }
         Ok(lhs)
+    }
+
+    /// `x as u8 as i64`, or just `x`. `as` binds more tightly than any
+    /// binary operator, and less than a prefix one: `-x as u8` is `(-x) as
+    /// u8`, and `a * b as u8` is `a * (b as u8)`, as in Rust. What follows
+    /// it is a type's name, as only an integer type or a type parameter
+    /// can be: so `x as u8 < y` is a comparison, where it would otherwise
+    /// start `u8`'s type arguments.
+    fn cast(&mut self) -> Result<Expr, Error> {
+        let mut e = self.unary()?;
+        while self.eat(&Tok::As) {
+            let name = self.ident()?;
+            let ty = TypeExpr {
+                kind: TypeExprKind::Named(name.name, Vec::new()),
+                span: name.span,
+                id: self.id(),
+            };
+            let span = e.span.to(ty.span);
+            e = Expr {
+                kind: ExprKind::As(Box::new(e), Box::new(ty)),
+                span,
+                id: self.id(),
+            };
+        }
+        Ok(e)
     }
 
     fn unary(&mut self) -> Result<Expr, Error> {
@@ -1913,7 +1943,7 @@ impl Parser {
     fn primary(&mut self) -> Result<Expr, Error> {
         let span = self.span();
         let kind = match self.peek().clone() {
-            Tok::Int(n) => ExprKind::Int(n),
+            Tok::Int(n, suffix) => ExprKind::Int(n, suffix),
             Tok::True => ExprKind::Bool(true),
             Tok::False => ExprKind::Bool(false),
             Tok::Crate | Tok::Super => return self.path_expr(),
@@ -2096,7 +2126,7 @@ impl Parser {
         })
     }
 
-    /// `::<int, bool>` after a name, if it's there: explicit type arguments.
+    /// `::<i64, bool>` after a name, if it's there: explicit type arguments.
     /// Like Rust, the `::` keeps the `<` from reading as less-than.
     fn turbofish(&mut self) -> Result<(Vec<TypeExpr>, Option<Span>), Error> {
         if *self.peek() == Tok::ColonColon && *self.peek2() == Tok::Lt {
@@ -2110,7 +2140,7 @@ impl Parser {
     }
 
     /// A name followed by `::`: `Shape::Rect(2, 3)`, `Shape::Empty`,
-    /// `Option::<int>::None`, `id::<int>`, `Pair::<int, bool> { .. }`, or a
+    /// `Option::<i64>::None`, `id::<i64>`, `Pair::<i64, bool> { .. }`, or a
     /// path that starts with a module: `geometry::origin()`,
     /// `crate::a::Point { .. }`. Which of a path's names are modules isn't
     /// known yet: `a::f(1)` is read as a variant `f` of an `a`, until
@@ -2176,7 +2206,7 @@ impl Parser {
         })
     }
 
-    /// `|x, y: int| x + y`, `|x| -> int { x }` or `|| 1`. As in Rust, the body
+    /// `|x, y: i64| x + y`, `|x| -> i64 { x }` or `|| 1`. As in Rust, the body
     /// runs as far right as an expression can, and a return type needs a
     /// block after it.
     fn lambda(&mut self) -> Result<Expr, Error> {
@@ -2245,26 +2275,25 @@ impl Parser {
     fn pat_atom(&mut self) -> Result<Pattern, Error> {
         let start = self.span();
         let kind = match self.peek().clone() {
-            Tok::Int(_) | Tok::Minus => {
+            Tok::Int(..) | Tok::Minus => {
                 let (lo, mut end) = self.pat_int()?;
                 let kind = match self.peek() {
                     Tok::DotDot => {
                         end = self.bump().span;
-                        if matches!(self.peek(), Tok::Int(_) | Tok::Minus) {
+                        if matches!(self.peek(), Tok::Int(..) | Tok::Minus) {
                             let (hi, e) = self.pat_int()?;
                             end = e;
-                            // Can't overflow: the smallest int literal is
-                            // `-9223372036854775807`, one above `i64::MIN`.
-                            PatternKind::Range(lo, hi - 1, false)
+                            // Can't overflow: a literal is at most `u64::MAX`.
+                            PatternKind::Range(Some(lo), Some(hi - 1), false)
                         } else {
-                            PatternKind::Range(lo, i64::MAX, false)
+                            PatternKind::Range(Some(lo), None, false)
                         }
                     }
                     Tok::DotDotEq => {
                         self.bump();
                         let (hi, e) = self.pat_int()?;
                         end = e;
-                        PatternKind::Range(lo, hi, true)
+                        PatternKind::Range(Some(lo), Some(hi), true)
                     }
                     _ => PatternKind::Int(lo),
                 };
@@ -2279,7 +2308,7 @@ impl Parser {
                 let (hi, end) = self.pat_int()?;
                 let hi = if inclusive { hi } else { hi - 1 };
                 return Ok(Pattern {
-                    kind: PatternKind::Range(i64::MIN, hi, inclusive),
+                    kind: PatternKind::Range(None, Some(hi), inclusive),
                     span: start.to(end),
                     id: self.id(),
                 });
@@ -2337,7 +2366,7 @@ impl Parser {
         })
     }
 
-    /// `Shape::Dot(p)`, `a::Shape::Empty` or `a::P::<int> { .. }`: a
+    /// `Shape::Dot(p)`, `a::Shape::Empty` or `a::P::<i64> { .. }`: a
     /// pattern that starts with a path.
     fn path_pattern(&mut self) -> Result<Pattern, Error> {
         let start = self.span();
@@ -2375,13 +2404,20 @@ impl Parser {
     }
 
     /// `5` or `-5` in a pattern.
-    fn pat_int(&mut self) -> Result<(i64, Span), Error> {
+    fn pat_int(&mut self) -> Result<(i128, Span), Error> {
         let start = self.span();
         let neg = self.eat(&Tok::Minus);
-        let Tok::Int(n) = *self.peek() else {
+        let Tok::Int(n, suffix) = *self.peek() else {
             return Err(self.unexpected("an integer"));
         };
         let end = self.bump().span;
+        if suffix.is_some() {
+            return Err(Error::syntax(
+                end,
+                "an integer in a pattern can't have a suffix: its type is that of what it matches",
+            ));
+        }
+        let n = i128::from(n);
         Ok((if neg { -n } else { n }, start.to(end)))
     }
 
@@ -2433,7 +2469,7 @@ impl Parser {
 fn starts_expr(tok: &Tok) -> bool {
     matches!(
         tok,
-        Tok::Int(_)
+        Tok::Int(..)
             | Tok::Ident(_)
             | Tok::True
             | Tok::False

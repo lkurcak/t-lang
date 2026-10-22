@@ -5,5 +5,5 @@ mod quiet;
 mod loud;
 
 fn main() {
-    print(1);   // expect: 1
+    print(1i64);   // expect: 1
 }

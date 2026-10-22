@@ -9,11 +9,11 @@ written bounds, and `lookup_method`, for which traits a call sees).
 ```rust
 mod geometry {
     #[derive(Copy, Discard)]
-    pub struct Point { pub x: int, pub y: int }
+    pub struct Point { pub x: i64, pub y: i64 }
 
-    pub fn dist(a: Point, b: Point) -> int with panic { abs(a.x - b.x) + abs(a.y - b.y) }
+    pub fn dist(a: Point, b: Point) -> i64 with panic { abs(a.x - b.x) + abs(a.y - b.y) }
 
-    fn abs(n: int) -> int with panic {
+    fn abs(n: i64) -> i64 with panic {
         if n < 0 { -n } else { n }
     }
 }
@@ -42,10 +42,10 @@ and modules, and *values* its functions, so a module `main` and a function
 imports, and nothing else: the modules around it aren't in scope.
 
 ```rust,error
-fn helper() -> int { 1 }
+fn helper() -> i64 { 1 }
 
 mod m {
-    pub fn f() -> int { helper() }
+    pub fn f() -> i64 { helper() }
 }
 
 fn main() {
@@ -68,7 +68,7 @@ declared there, maybe under another one:
 ```rust
 mod shapes {
     pub mod round {
-        pub fn area(r: int) -> int with panic { 3 * r * r }
+        pub fn area(r: i64) -> i64 with panic { 3 * r * r }
     }
 }
 
@@ -102,7 +102,7 @@ public what isn't:
 
 ```rust,error
 mod a {
-    fn f() -> int { 1 }
+    fn f() -> i64 { 1 }
 
     pub use self::f as g;
 }
@@ -120,7 +120,7 @@ write down its signature.
 ```rust,error
 mod m {
     #[derive(Discard)]
-    struct Hidden { n: int }
+    struct Hidden { n: i64 }
 
     pub fn make() -> Hidden { Hidden { n: 1 } }
 }
@@ -151,11 +151,11 @@ and only `close` can take one apart, so every file that's opened is closed:
 
 ```rust
 mod fs {
-    pub struct Fd { pub id: int, raw: int }
+    pub struct Fd { pub id: i64, raw: i64 }
 
-    pub fn open(id: int) -> Fd with panic { Fd { id, raw: id * 10 } }
+    pub fn open(id: i64) -> Fd with panic { Fd { id, raw: id * 10 } }
 
-    pub fn close(fd: Fd) -> int with panic {
+    pub fn close(fd: Fd) -> i64 with panic {
         let Fd { id, raw } = fd;
         id + raw
     }
@@ -170,7 +170,7 @@ fn main() with panic {
 
 But a pub field is a way in. Moving it out, or matching the `Fd` by value
 with `fs::Fd { id, .. }`, would take the `Fd` apart and throw the private
-rest away, closing nothing: the `raw` field is an `int`, which may be
+rest away, closing nothing: the `raw` field is an `i64`, which may be
 thrown away, so the linear check alone wouldn't stop it. So outside its
 module, a struct with private fields can't be taken apart at all, unless
 it's `Discard`, which is its module saying that throwing it away is fine.
@@ -180,13 +180,13 @@ nothing apart:
 ```rust,error
 mod fs {
     #[derive(Discard)]
-    pub struct Id { pub n: int }
+    pub struct Id { pub n: i64 }
 
-    pub struct Fd { pub id: Id, raw: int }
+    pub struct Fd { pub id: Id, raw: i64 }
 
-    pub fn open(n: int) -> Fd { Fd { id: Id { n }, raw: n } }
+    pub fn open(n: i64) -> Fd { Fd { id: Id { n }, raw: n } }
 
-    pub fn close(fd: Fd) -> int with panic {
+    pub fn close(fd: Fd) -> i64 with panic {
         let Fd { id, raw } = fd;
         id.n + raw
     }
@@ -220,18 +220,18 @@ wherever it is.
 ```rust,error
 mod show {
     pub trait Show {
-        fn show(&self) -> int;
+        fn show(&self) -> i64;
     }
 
-    impl Show for int {
-        fn show(&self) -> int { *self }
+    impl Show for i64 {
+        fn show(&self) -> i64 { *self }
     }
 }
 
 fn main() {
-    print(1.show());
+    print(1i64.show());
 }
-// error: `int` has no method `show` in scope; trait `show::Show` has one: import it with `use show::Show;`
+// error: `i64` has no method `show` in scope; trait `show::Show` has one: import it with `use show::Show;`
 ```
 
 What's in scope picks which trait a call means, never which impl: that's
@@ -253,7 +253,7 @@ or of its type. Within one package, overlap is checked across all of it, so
 the rule is per package, not per module, and impls can go in any module.
 For now the only other package is what's built in, and the rule is the one
 T already had: a built-in trait like `Eq` can't be implemented for a
-built-in type like `int`. With `core` (step 6e), it's a real package.
+built-in type like `i64`. With `core` (step 6e), it's a real package.
 
 ## Derives at the boundary
 
@@ -272,8 +272,8 @@ mod cells {
 }
 
 fn main() with {alloc, panic} {
-    // A `Cell<int>` is `Discard`, so it can be thrown away.
-    let _c = cells::cell(5);
+    // A `Cell<i64>` is `Discard`, so it can be thrown away.
+    let _c = cells::cell(5i64);
 }
 ```
 
@@ -337,7 +337,7 @@ monomorphisation and the interpreter don't know modules exist.
    tests. Which fails, and what would that program be allowed to do?
 3. Why are an enum's variants public wherever it is, instead of each being
    `pub` or not? What would `match` need to know if they weren't?
-4. Two modules each declare a trait with a method `size`, and `int`
+4. Two modules each declare a trait with a method `size`, and `i64`
    implements both. Which calls of `1.size()` are fine, and which aren't?
 5. Write a program whose meaning would change if impls were scoped: one
    where which impl of `Eq` is used depends on which module a function is

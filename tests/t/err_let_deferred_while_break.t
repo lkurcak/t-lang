@@ -1,7 +1,7 @@
 // A `while` loop can end without its `break`, by its condition, so `x` may
 // have no value after it.
 fn main() {
-    let x;
+    let x: i64;
     let mut i = 0;
     while i < 3 {
         i += 1;

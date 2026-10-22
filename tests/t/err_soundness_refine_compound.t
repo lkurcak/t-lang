@@ -1,5 +1,5 @@
 // `+=` is `+`, and must fit too.
-fn f(x: { v: int | v >= 0 }) -> int {
+fn f(x: { v: i64 | v >= 0 }) -> i64 {
     let mut y = x;
     y += 1;
     y

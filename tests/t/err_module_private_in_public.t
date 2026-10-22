@@ -1,6 +1,6 @@
 mod m {
     #[derive(Discard)]
-    struct Hidden { n: int }
+    struct Hidden { n: i64 }
 
     pub fn make() -> Hidden { Hidden { n: 1 } }
 }

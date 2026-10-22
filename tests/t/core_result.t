@@ -1,6 +1,6 @@
 // `Result` comes from `core`, through the prelude.
 
-fn div(a: int, b: int) -> Result<int, bool> with panic {
+fn div(a: i64, b: i64) -> Result<i64, bool> with panic {
     if b == 0 { Result::Err(false) } else { Result::Ok(a / b) }
 }
 

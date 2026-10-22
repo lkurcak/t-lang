@@ -1,8 +1,8 @@
 // `c` borrows `b` mutably until its last call, so `b` can't be moved
 // before that.
-struct B { x: int }
+struct B { x: i64 }
 
-fn take(b: B) -> int {
+fn take(b: B) -> i64 {
     let B { x } = b;
     x
 }

@@ -2,12 +2,12 @@
 fn main() {
     let p = {
         #[derive(Discard)]
-        struct P { x: int }
+        struct P { x: i64 }
         P { x: 1 }
     };
     let q = {
         #[derive(Discard)]
-        struct P { x: int }
+        struct P { x: i64 }
         P { x: 2 }
     };
     let r = if true { p } else { q };

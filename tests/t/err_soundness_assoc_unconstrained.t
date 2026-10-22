@@ -6,14 +6,14 @@
 use core::mem::replace;
 
 #[derive(Discard)]
-struct S { n: int }
+struct S { n: i64 }
 
 trait Tr {
     type Out: Discard;
 }
 
 impl<'a> Tr for S {
-    type Out = &'a int;
+    type Out = &'a i64;
 }
 
 fn put<T: Tr>(slot: &mut T::Out, v: T::Out) {

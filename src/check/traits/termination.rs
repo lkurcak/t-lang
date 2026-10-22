@@ -107,8 +107,8 @@ impl Checker {
     }
 
     /// No type holds itself by value through a projection: `struct S<T:
-    /// Tr> { x: T::Out }` with `impl Tr for int { type Out = S<int>; }` has
-    /// an `S<int>` hold an `S<int>`, so it would have infinite size, which
+    /// Tr> { x: T::Out }` with `impl Tr for i64 { type Out = S<i64>; }` has
+    /// an `S<i64>` hold an `S<i64>`, so it would have infinite size, which
     /// neither says alone (`collect_adts` checks each struct and enum on
     /// its own). Every such cycle goes through some impl's associated type,
     /// so from each, what it holds by value is followed, through fields and

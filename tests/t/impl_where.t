@@ -3,11 +3,11 @@
 #[derive(Discard where I: Discard)]
 struct Evens<I> { iter: I }
 
-impl<I: Iterator<Item = int>> Iterator for Evens<I> {
-    type Item = int;
+impl<I: Iterator<Item = i64>> Iterator for Evens<I> {
+    type Item = i64;
     effect e = {I::e, panic};
 
-    fn next(&mut self) -> Option<int> with {I::e, panic} {
+    fn next(&mut self) -> Option<i64> with {I::e, panic} {
         loop {
             match self.iter.next() {
                 Option::Some(x) => {
@@ -40,7 +40,7 @@ where
 }
 
 fn main() with panic {
-    for x in (Second { iter: Evens { iter: 0..10 } }) {
+    for x in (Second { iter: Evens { iter: 0..10i64 } }) {
         print(x);
     }
     // expect: 2

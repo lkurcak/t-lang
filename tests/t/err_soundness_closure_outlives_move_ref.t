@@ -2,7 +2,7 @@
 // still can't outlive what it points to.
 fn main() {
     let c = {
-        let n = 1;
+        let n: i64 = 1;
         let r = &n;
         move || *r
     };

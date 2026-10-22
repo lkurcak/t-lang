@@ -6,7 +6,7 @@ mod cells {
 
     pub fn later<T>(of: fn() -> T) -> Later<T> { Later { of } }
 
-    pub struct Fd { n: int }
+    pub struct Fd { n: i64 }
 
     pub fn fd() -> Fd { Fd { n: 1 } }
 }

@@ -1,5 +1,5 @@
 #[derive(Discard)]
-enum Opt { None, Some(int) }
+enum Opt { None, Some(i64) }
 fn main() {
     let Opt::Some(x) = Opt::Some(1);
 }

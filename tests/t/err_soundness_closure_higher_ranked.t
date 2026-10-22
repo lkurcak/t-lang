@@ -1,7 +1,7 @@
-// `F: Fn(&int) -> &int` returns a reference as long-lived as its argument,
+// `F: Fn(&i64) -> &i64` returns a reference as long-lived as its argument,
 // whatever that is, even `'static`. A closure returning a captured `&n`
 // can only promise that if `n` lives for ever, which it doesn't.
-fn app<F: Fn(&int) -> &int + Discard>(f: F) -> int {
+fn app<F: Fn(&i64) -> &i64 + Discard>(f: F) -> i64 {
     let y = 1;
     *f(&y)
 }

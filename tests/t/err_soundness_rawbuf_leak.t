@@ -3,6 +3,6 @@
 use alloc::raw::RawBuf;
 
 fn main() with {alloc, panic} {
-    let _b: RawBuf<int> = RawBuf::new(4);
+    let _b: RawBuf<i64> = RawBuf::new(4);
 }
-// error: `_b` is never used up, and its type, `RawBuf<int>`, isn't `Discard`
+// error: `_b` is never used up, and its type, `RawBuf<i64>`, isn't `Discard`

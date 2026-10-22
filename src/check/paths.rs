@@ -113,7 +113,7 @@ impl Checker {
         rest: &str,
     ) -> Result<Vec<Type>, Error> {
         if targs.is_empty() {
-            let example = vec!["int"; params.len()].join(", ");
+            let example = vec!["i64"; params.len()].join(", ");
             return Ok(params
                 .iter()
                 .map(|p| {
@@ -159,7 +159,7 @@ impl Checker {
     }
 
     /// A type argument written in `::<..>`, where `_` may stand for any part
-    /// of it, to be inferred: `pair::<int, _>`, `id::<Option<_>>`.
+    /// of it, to be inferred: `pair::<i64, _>`, `id::<Option<_>>`.
     ///
     /// `resolve` can't make type variables, so each `_` is renamed to a
     /// type parameter no source program can name, resolved like any other,
@@ -319,12 +319,14 @@ impl Checker {
     }
 
     /// What `ty` in a path `ty::m` names, if it's a type: `Self`, a type
-    /// parameter, or `int` or `bool`. Structs and enums are instantiated by
+    /// parameter, an integer type or `bool`. Structs and enums are instantiated by
     /// `path`, as they may be generic.
     fn path_type(&self, ty: &Ident) -> Option<Type> {
         match ty.name.as_str() {
             "Self" if self.self_ty.is_some() => self.self_ty.clone(),
-            "int" => Some(Type::Int),
+            n if crate::types::IntTy::named(n).is_some() => {
+                crate::types::IntTy::named(n).map(Type::Int)
+            }
             "bool" => Some(Type::Bool),
             n if self.type_params.iter().any(|p| p == n) => Some(Type::Param(n.into())),
             n if self.traits.traits.contains_key(n) => Some(Type::Unit),

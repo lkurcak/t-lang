@@ -3,7 +3,7 @@
 use alloc::raw::RawBuf;
 
 fn main() with {alloc, panic} {
-    let b: RawBuf<int> = RawBuf::new(4);
+    let b: RawBuf<i64> = RawBuf::new(4);
     let RawBuf {} = b;
 }
 // error: `RawBuf` is intrinsic

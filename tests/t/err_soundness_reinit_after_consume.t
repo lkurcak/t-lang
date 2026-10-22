@@ -1,7 +1,7 @@
 // After a pattern has used `p` up, there's no `p.a` to give a value to.
-struct Fd { n: int }
+struct Fd { n: i64 }
 
-fn close(f: Fd) -> int {
+fn close(f: Fd) -> i64 {
     let Fd { n } = f;
     n
 }

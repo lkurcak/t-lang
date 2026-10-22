@@ -4,7 +4,7 @@
 use core::mem::swap;
 
 fn main() with {alloc, panic} {
-    let mut a = Box::new(1);
+    let mut a = Box::new(1i64);
     let mut b = Box::new(2);
     let mut r = &mut a;
     swap(&mut *r, { r = &mut b; &mut b });

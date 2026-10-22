@@ -2,13 +2,13 @@
 // calling it would be unsafe with nothing to say so.
 use alloc::raw::RawBuf;
 
-fn take(b: &mut RawBuf<int>) -> int with unsafe { b.read(0) }
+fn take(b: &mut RawBuf<i64>) -> i64 with unsafe { b.read(0) }
 
 fn main() with {alloc, panic} {
-    let f: fn(&mut RawBuf<int>) -> int = take;
-    let mut b: RawBuf<int> = RawBuf::new(1);
+    let f: fn(&mut RawBuf<i64>) -> i64 = take;
+    let mut b: RawBuf<i64> = RawBuf::new(1);
     print(f(&mut b));
     // SAFETY: the slot is uninitialised.
     unsafe { b.free() };
 }
-// error: expected `fn(&mut RawBuf<int>) -> int`, found `fn(&mut RawBuf<int>) -> int with unsafe`
+// error: expected `fn(&mut RawBuf<i64>) -> i64`, found `fn(&mut RawBuf<i64>) -> i64 with unsafe`

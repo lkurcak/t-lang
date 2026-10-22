@@ -1,10 +1,10 @@
 // An inherent impl for `S<'static>` only: calling its method on a shorter
 // `S` needs that to be `'static`.
 #[derive(Discard)]
-struct S<'a> { r: &'a int }
+struct S<'a> { r: &'a i64 }
 
 impl S<'static> {
-    fn get(&self) -> &'static int { self.r }
+    fn get(&self) -> &'static i64 { self.r }
 }
 
 fn main() with {alloc, panic} {

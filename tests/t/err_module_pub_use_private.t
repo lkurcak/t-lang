@@ -1,5 +1,5 @@
 mod a {
-    fn f() -> int { 1 }
+    fn f() -> i64 { 1 }
 
     pub use self::f as g;
 }

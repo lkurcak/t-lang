@@ -1,13 +1,13 @@
 // An impl's method has the trait's `where` clause, no more and no less.
 trait Tr {
-    fn f(self) -> int where Self: Discard;
+    fn f(self) -> i64 where Self: Discard;
 }
 
 #[derive(Discard, Eq)]
 struct S {}
 
 impl Tr for S {
-    fn f(self) -> int where Self: Eq { 1 }
+    fn f(self) -> i64 where Self: Eq { 1 }
 }
 
 fn main() {}

@@ -15,41 +15,44 @@ use crate::option::Option;
 impl<T> [T] {
     /// How many values it has.
     #[intrinsic]
-    pub fn len(&self) -> { n: int | n >= 0 };
+    pub fn len(&self) -> usize;
 
     /// Has it none?
     pub fn is_empty(&self) -> bool { self.len() == 0 }
 
-    /// The value at `i`, or `None` if there's none: if `i` is negative, or
-    /// not less than `len()`.
+    /// The value at `i`, or `None` if there's none: if `i` isn't less than
+    /// `len()`.
     #[intrinsic]
-    pub fn get(&self, i: int) -> Option<&T>;
+    pub fn get(&self, i: usize) -> Option<&T>;
 
     /// The value at `i`, to change, or `None` if there's none.
     #[intrinsic]
-    pub fn get_mut(&mut self, i: int) -> Option<&mut T>;
+    pub fn get_mut(&mut self, i: usize) -> Option<&mut T>;
 
     /// The first value, or `None` if it's empty.
     pub fn first(&self) -> Option<&T> { self.get(0) }
 
     /// The last value, or `None` if it's empty.
-    pub fn last(&self) -> Option<&T> { self.get(self.len() - 1) }
+    pub fn last(&self) -> Option<&T> {
+        let n = self.len();
+        if n == 0 { Option::None } else { self.get(n - 1) }
+    }
 
     /// The values before index `mid` and those from it on, or `None` if
-    /// `mid` is negative or more than `len()`.
+    /// `mid` is more than `len()`.
     #[intrinsic]
-    pub fn split_at<'a>(&'a self, mid: int) -> Option<Split<'a, T>>;
+    pub fn split_at<'a>(&'a self, mid: usize) -> Option<Split<'a, T>>;
 
     /// The values before index `mid` and those from it on, each to change,
-    /// or `None` if `mid` is negative or more than `len()`. They share no
-    /// values, so both can be changed at once.
+    /// or `None` if `mid` is more than `len()`. They share no values, so
+    /// both can be changed at once.
     #[intrinsic]
-    pub fn split_at_mut<'a>(&'a mut self, mid: int) -> Option<SplitMut<'a, T>>;
+    pub fn split_at_mut<'a>(&'a mut self, mid: usize) -> Option<SplitMut<'a, T>>;
 
     /// Swaps the values at `i` and `j`, if there are values there, and says
     /// whether it did. It's `split_at_mut` between them, so safe code.
-    pub fn swap(&mut self, i: int, j: int) -> bool {
-        if i < 0 || j < 0 || i >= self.len() || j >= self.len() {
+    pub fn swap(&mut self, i: usize, j: usize) -> bool {
+        if i >= self.len() || j >= self.len() {
             return false;
         }
         if i == j {

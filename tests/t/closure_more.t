@@ -1,11 +1,11 @@
 // More of what closures can do.
-struct Fd { n: int }
+struct Fd { n: i64 }
 
-fn close(fd: Fd) -> int {
+fn close(fd: Fd) -> i64 {
     let Fd { n } = fd;
     n
 }
-fn twice<e, F: FnMut() -> int with e>(f: &mut F) -> int with {panic, e} { f() + f() }
+fn twice<e, F: FnMut() -> i64 with e>(f: &mut F) -> i64 with {panic, e} { f() + f() }
 
 fn main() with panic {
     // An `FnMut` closure lent by `&mut`.
@@ -18,14 +18,14 @@ fn main() with panic {
     print(twice(&mut c));           // expect: 7
     print(n);                       // expect: 4
     // Through a `&mut` it captured, a closure can read, and is `Fn`.
-    let mut m = 5;
+    let mut m: i64 = 5;
     let r = &mut m;
     let get = || *r + 1;
     print(get() + get());           // expect: 12
     *r = 7;
     print(m);                       // expect: 7
     // A `move` closure changes its own copy.
-    let mut k = 0;
+    let mut k: i64 = 0;
     let mut count = move || {
         k = k + 1;
         k
@@ -39,7 +39,7 @@ fn main() with panic {
     print(peek());                  // expect: 4
     print(close(fd));               // expect: 4
     // In a loop, each closure borrows that time round's `i`.
-    let mut total = 0;
+    let mut total: i64 = 0;
     let mut i = 0;
     while i < 3 {
         let double = || i * 2;

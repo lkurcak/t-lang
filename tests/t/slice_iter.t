@@ -3,7 +3,7 @@
 use alloc::list::List;
 
 fn main() with {alloc, panic} {
-    let mut l: List<int> = List::new();
+    let mut l: List<i64> = List::new();
     for i in 1..5 {
         l.push(i);
     }
@@ -13,7 +13,7 @@ fn main() with {alloc, panic} {
     for x in l.as_mut_slice().iter_mut() {
         *x = *x + 1;
     }
-    print(l.iter().fold(0, |a, x: &int| a + *x)); // expect: 34
+    print(l.iter().fold(0, |a, x: &i64| a + *x)); // expect: 34
     let mut it = l.iter_mut();
     let a = it.next().unwrap();
     let b = it.next().unwrap();

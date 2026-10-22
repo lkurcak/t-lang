@@ -1,6 +1,6 @@
 // `apply` says it has its closure's effects, so passing one that may panic
 // makes the call one that may panic.
-fn apply<e, F: Fn(int) -> int with e + Discard>(f: F) -> int with e { f(1) }
+fn apply<e, F: Fn(i64) -> i64 with e + Discard>(f: F) -> i64 with e { f(1) }
 
 fn main() {
     print(apply(|x| x + 1));

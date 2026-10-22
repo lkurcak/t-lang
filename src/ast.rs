@@ -199,7 +199,7 @@ impl UseTree {
     }
 }
 
-/// `struct Point { x: int, y: int }` or `enum Shape { Circle(int), Empty }`.
+/// `struct Point { x: i64, y: i64 }` or `enum Shape { Circle(i64), Empty }`.
 #[derive(Debug, Clone)]
 pub enum TypeDecl {
     Struct(StructDecl),
@@ -342,13 +342,13 @@ impl Generics {
 }
 
 /// What's after a `:` in a bound: a lifetime, or a trait, maybe saying
-/// something of its associated types, as in `Iter<Item = int>` or
+/// something of its associated types, as in `Iter<Item = i64>` or
 /// `Iter<Item: Discard>`.
 #[derive(Debug, Clone)]
 pub struct BoundItem {
     pub name: Ident,
     pub assoc: Vec<AssocBound>,
-    /// `(int, bool) -> int` after `Fn`, `FnMut` or `FnOnce`: the
+    /// `(i64, bool) -> i64` after `Fn`, `FnMut` or `FnOnce`: the
     /// parameters and result of a call, as in a function type.
     pub sig: Option<(Vec<TypeExpr>, Option<Box<TypeExpr>>)>,
     /// `with e` after an `Fn` bound's signature: what its calls may do, at
@@ -401,7 +401,7 @@ impl BoundItem {
     }
 }
 
-/// As written: `Show`, `Iter<Item = int>`, `Fn(int) -> int`.
+/// As written: `Show`, `Iter<Item = i64>`, `Fn(i64) -> i64`.
 impl fmt::Display for BoundItem {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.write_str(&self.name.name)?;
@@ -432,7 +432,7 @@ impl fmt::Display for BoundItem {
     }
 }
 
-/// `Item = int` or `Item: Discard + Show` in a trait bound.
+/// `Item = i64` or `Item: Discard + Show` in a trait bound.
 #[derive(Debug, Clone)]
 pub struct AssocBound {
     pub name: Ident,
@@ -441,7 +441,7 @@ pub struct AssocBound {
 
 #[derive(Debug, Clone)]
 pub enum AssocBoundKind {
-    /// `Item = int`: an *equality bound*.
+    /// `Item = i64`: an *equality bound*.
     Eq(TypeExpr),
     /// `Item: Discard + Show`: the traits it implements.
     Bounds(Vec<Ident>),
@@ -505,7 +505,7 @@ pub struct EnumDecl {
     pub variants: Vec<Variant>,
 }
 
-/// One case of an enum: `Rect(int, int)`, or `Empty` with no fields.
+/// One case of an enum: `Rect(i64, i64)`, or `Empty` with no fields.
 #[derive(Debug, Clone)]
 pub struct Variant {
     pub doc: Option<DocComment>,
@@ -591,7 +591,7 @@ pub struct AssocDecl {
     pub bounds: Vec<Ident>,
 }
 
-/// `type Item = int;` in an impl: what the trait's associated type is for
+/// `type Item = i64;` in an impl: what the trait's associated type is for
 /// the impl's type.
 #[derive(Debug, Clone)]
 pub struct AssocDef {
@@ -726,7 +726,7 @@ pub struct ImplDecl {
     pub trait_name: Option<Ident>,
     /// The type it's for, which `Self` means in it.
     pub self_ty: TypeExpr,
-    /// `type Item = int;`: what the trait's associated types are.
+    /// `type Item = i64;`: what the trait's associated types are.
     pub assoc: Vec<AssocDef>,
     /// `effect e = panic;`: what the trait's associated effects are.
     pub effects: Vec<EffectDef>,
@@ -807,12 +807,13 @@ impl Expr {
     /// of the functions declared in it, which are separate functions.
     pub fn children(&self) -> Vec<&Expr> {
         match &self.kind {
-            ExprKind::Int(_)
+            ExprKind::Int(..)
             | ExprKind::Bool(_)
             | ExprKind::Unit
             | ExprKind::Var(..)
             | ExprKind::Continue(_) => Vec::new(),
             ExprKind::Unary(_, x)
+            | ExprKind::As(x, _)
             | ExprKind::Field(x, _)
             | ExprKind::Loop(_, x)
             | ExprKind::Unsafe(x)
@@ -894,13 +895,13 @@ pub struct TypeExpr {
 
 #[derive(Debug, Clone)]
 pub enum TypeExprKind {
-    /// `int`, `bool`, a type parameter, a struct or enum with its type
-    /// arguments (`Option<int>`), or a name that doesn't exist (caught by the
+    /// `i64`, `bool`, a type parameter, a struct or enum with its type
+    /// arguments (`Option<i64>`), or a name that doesn't exist (caught by the
     /// checker).
     Named(String, Vec<TypeExpr>),
     /// `()`
     Unit,
-    /// `fn(int, bool) -> int`, or `fn(int) -> int with panic` with the
+    /// `fn(i64, bool) -> i64`, or `fn(i64) -> i64 with panic` with the
     /// effects its calls may have.
     Fn(Vec<TypeExpr>, Box<TypeExpr>, Option<EffectSet>),
     /// `&T`, `&'a T`, `&mut T` or `&'a mut T`: a reference, with its
@@ -909,7 +910,7 @@ pub enum TypeExprKind {
     /// `[T]`, a slice: only right after `&` or `&mut` (see
     /// docs/10-slices.md).
     Slice(Box<TypeExpr>),
-    /// `'a`, as a lifetime argument: the `'a` of `Holder<'a, int>`. Lifetime
+    /// `'a`, as a lifetime argument: the `'a` of `Holder<'a, i64>`. Lifetime
     /// arguments come before type arguments, and can only be there.
     Lifetime(String),
     /// `!`, the type with no values.
@@ -918,11 +919,11 @@ pub enum TypeExprKind {
     /// the type an impl of the trait picks for its associated type, for the
     /// type before the `as`.
     Proj(Box<TypeExpr>, Option<Ident>, Ident),
-    /// `impl Fn(int) -> int + Discard`, in a function's return type: some
+    /// `impl Fn(i64) -> i64 + Discard`, in a function's return type: some
     /// type the function picks, of which callers only know that it
     /// implements these traits (see docs/06c.1-opaque-types.md).
     Impl(Vec<BoundItem>),
-    /// `{ v: int | v > 0 }`: a *refinement type*, the values of the base
+    /// `{ v: i64 | v > 0 }`: a *refinement type*, the values of the base
     /// type `.1` that make the predicate `.2` true of `.0`, the name it
     /// gives the value (see docs/08-refinement-types.md). Only as the whole
     /// type of a parameter, a result, a `let` or a struct's field
@@ -948,7 +949,7 @@ impl TypeExpr {
     }
 }
 
-/// As written: `Option<int>`, `fn(int) -> bool`, `()`.
+/// As written: `Option<i64>`, `fn(i64) -> bool`, `()`.
 impl fmt::Display for TypeExpr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match &self.kind {
@@ -1004,17 +1005,21 @@ pub struct Expr {
 
 #[derive(Debug, Clone)]
 pub enum ExprKind {
-    Int(i64),
+    /// An integer literal, `42`: its digits. Its type is worked out from
+    /// how it's used; monomorphisation writes it here, for the interpreter.
+    Int(u64, Option<crate::types::IntTy>),
     Bool(bool),
     Unit,
-    /// `x`, or `id::<int>` with type arguments (a *turbofish*) for a generic
+    /// `x`, or `id::<i64>` with type arguments (a *turbofish*) for a generic
     /// function. Every list of type arguments here and below is empty if none
     /// were written, and then the checker infers them.
     Var(String, Vec<TypeExpr>),
     Unary(UnOp, Box<Expr>),
+    /// `x as u8`: the same integer, as another integer type.
+    As(Box<Expr>, Box<TypeExpr>),
     Binary(BinOp, Box<Expr>, Box<Expr>),
     Call(Box<Expr>, Vec<Expr>),
-    /// `x.m(a, b)`, or `x.m::<int>(a, b)` with type arguments: a call of
+    /// `x.m(a, b)`, or `x.m::<i64>(a, b)` with type arguments: a call of
     /// method `m` of what `x` is, which gets `x` as its receiver.
     MethodCall(Box<Expr>, Ident, Vec<TypeExpr>, Vec<Expr>),
     /// `if c { .. } else { .. }`; the `else` is optional.
@@ -1025,12 +1030,12 @@ pub enum ExprKind {
     /// unsafe operations in it, so it doesn't have the effect `unsafe`
     /// they do (see docs/09-unsafe.md).
     Unsafe(Box<Expr>),
-    /// `Point { x: 1, y: 2 }`, or `Pair::<int, bool> { .. }`
+    /// `Point { x: 1, y: 2 }`, or `Pair::<i64, bool> { .. }`
     StructLit(Ident, Vec<TypeExpr>, Vec<FieldInit>),
     /// `p.x`
     Field(Box<Expr>, Ident),
     /// `Shape::Rect(2, 3)`, `Shape::Empty` with no arguments, or
-    /// `Option::<int>::None` with type arguments. Or a *path*, which looks
+    /// `Option::<i64>::None` with type arguments. Or a *path*, which looks
     /// the same: `Point::new(1, 2)` calls a method of `Point`, `Show::show(x)`
     /// one of trait `Show`, and `Point::len` with no `(..)` is that method,
     /// as a function value. Only the checker can tell which it is. The
@@ -1038,7 +1043,7 @@ pub enum ExprKind {
     Variant(Ident, Vec<TypeExpr>, Ident, Vec<Expr>, bool),
     /// `match e { pat => e, .. }`
     Match(Box<Expr>, Vec<Arm>),
-    /// `|x, y: int| x + y`. Shared, because the closure values the
+    /// `|x, y: i64| x + y`. Shared, because the closure values the
     /// interpreter makes from it point to it.
     Lambda(Arc<Lambda>),
     /// `place = value`, or `place += value` and the like with an operator.
@@ -1115,7 +1120,7 @@ impl Expr {
     }
 }
 
-/// An anonymous function: `|x| x + 1`, `|x: int| -> int { x + 1 }`, or `|| 1`
+/// An anonymous function: `|x| x + 1`, `|x: i64| -> i64 { x + 1 }`, or `|| 1`
 /// with no parameters. Any type left out is inferred. `move |x| ..` takes
 /// what it captures by value.
 #[derive(Debug, Clone)]
@@ -1172,7 +1177,7 @@ impl Lambda {
 fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
     let mut go = |e: &Expr, bound: &mut Vec<String>| free_vars(e, bound, out);
     match &e.kind {
-        ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit | ExprKind::Continue(_) => {}
+        ExprKind::Int(..) | ExprKind::Bool(_) | ExprKind::Unit | ExprKind::Continue(_) => {}
         // A path, `a::f`, names a function, which needs no capturing.
         ExprKind::Var(name, _) if name.contains("::") => {}
         ExprKind::Var(name, _) => {
@@ -1181,6 +1186,7 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
             }
         }
         ExprKind::Unary(_, x)
+        | ExprKind::As(x, _)
         | ExprKind::Field(x, _)
         | ExprKind::Loop(_, x)
         | ExprKind::Unsafe(x)
@@ -1371,16 +1377,17 @@ pub enum PatternKind {
     /// `x`: matches anything and names it. `mut x` if the `bool` is set:
     /// then the variable can be changed.
     Bind(String, bool),
-    Int(i64),
-    /// An int range, with both bounds inclusive: `1..=9` is `Range(1, 9, true)`,
-    /// `1..10` is `Range(1, 9, false)`, `10..` runs to the largest int and
-    /// `..=-1` from the smallest. The `bool` says whether it was written with
-    /// `..=`, so suggestions can keep the style. `lo > hi` means the range is
-    /// empty, which the checker rejects.
-    Range(i64, i64, bool),
+    Int(i128),
+    /// An integer range, with both bounds inclusive: `1..=9` is
+    /// `Range(Some(1), Some(9), true)`, `1..10` is `Range(Some(1), Some(9),
+    /// false)`, `10..` runs to the greatest value of the type matched, with
+    /// no upper bound, and `..=-1` from the least. The `bool` says whether
+    /// it was written with `..=`, so suggestions can keep the style. `lo >
+    /// hi` means the range is empty, which the checker rejects.
+    Range(Option<i128>, Option<i128>, bool),
     Bool(bool),
     Unit,
-    /// `Shape::Rect(w, _)`, or `Option::<int>::Some(x)` with type arguments.
+    /// `Shape::Rect(w, _)`, or `Option::<i64>::Some(x)` with type arguments.
     Variant(Ident, Vec<TypeExpr>, Ident, Vec<Pattern>),
     /// `Point { x, y: 0 }`, or `Point { x, .. }` to ignore the other fields
     /// (the `bool`).

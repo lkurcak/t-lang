@@ -1,65 +1,65 @@
 #[derive(Discard)]
-struct Holder { f: fn(int) -> int with panic }
+struct Holder { f: fn(i64) -> i64 with panic }
 
 #[derive(Discard)]
-struct One { n: int }
+struct One { n: i64 }
 
 fn main() with panic {
-    print(main::double(1));
-    print(main::fact(5));
-    print_bool(main::is_even(10));
-    print_bool(main::is_odd(10));
-    print(main::twice::<int>(main::double, 3));
+    print(main::double(1i64));
+    print(main::fact(5i64));
+    print_bool(main::is_even(10i64));
+    print_bool(main::is_odd(10i64));
+    print(main::twice::<i64>(main::double, 3i64));
     print_bool(main::twice::<bool>(|b| !b, true));
-    print(main::sum_to(4));
-    let k = 3;
-    let add_k = |x: int| { main::inc(x) + k };
-    print((&add_k)(1));
+    print(main::sum_to(4i64));
+    let k = 3i64;
+    let add_k = |x: i64| { main::inc(x) + k };
+    print((&add_k)(1i64));
     let f = pick(true);
-    print(f(7));
+    print(f(7i64));
     print(top());
 }
 
 /// Doubles `x`.
-fn main::double(x: int) -> int with panic { x * 2 }
+fn main::double(x: i64) -> i64 with panic { x * 2i64 }
 
-fn main::fact(n: int) -> int with panic {
-    if n == 0 { 1 } else { n * main::fact(n - 1) }
+fn main::fact(n: i64) -> i64 with panic {
+    if n == 0i64 { 1i64 } else { n * main::fact(n - 1i64) }
 }
 
-fn main::is_even(n: int) -> bool with panic {
-    if n == 0 { true } else { main::is_odd(n - 1) }
+fn main::is_even(n: i64) -> bool with panic {
+    if n == 0i64 { true } else { main::is_odd(n - 1i64) }
 }
 
-fn main::is_odd(n: int) -> bool with panic {
-    if n == 0 { false } else { main::is_even(n - 1) }
+fn main::is_odd(n: i64) -> bool with panic {
+    if n == 0i64 { false } else { main::is_even(n - 1i64) }
 }
 
-fn main::twice::<int>(f: fn(int) -> int with panic, x: int) -> int with panic { f(f(x)) }
+fn main::twice::<i64>(f: fn(i64) -> i64 with panic, x: i64) -> i64 with panic { f(f(x)) }
 
 fn main::twice::<bool>(f: fn(bool) -> bool with panic, x: bool) -> bool with panic { f(f(x)) }
 
-fn main::sum_to(n: int) -> int with panic { main::sum_to::go(1, 0, n) }
+fn main::sum_to(n: i64) -> i64 with panic { main::sum_to::go(1i64, 0i64, n) }
 
-fn main::sum_to::go(i: int, acc: int, n: int) -> int with panic {
-    if i > n { acc } else { main::sum_to::go(i + 1, acc + i, n) }
+fn main::sum_to::go(i: i64, acc: i64, n: i64) -> i64 with panic {
+    if i > n { acc } else { main::sum_to::go(i + 1i64, acc + i, n) }
 }
 
-fn main::inc(x: int) -> int with panic { x + 1 }
+fn main::inc(x: i64) -> i64 with panic { x + 1i64 }
 
-fn pick(b: bool) -> fn(int) -> int with panic {
+fn pick(b: bool) -> fn(i64) -> i64 with panic {
     if b { double_it() } else { pick::neg }
 }
 
-fn pick::neg(x: int) -> int with panic { -x }
+fn pick::neg(x: i64) -> i64 with panic { -x }
 
-fn double_it() -> fn(int) -> int with panic {
+fn double_it() -> fn(i64) -> i64 with panic {
     let h = Holder { f: double_it::double };
     h.f
 }
 
-fn double_it::double(x: int) -> int with panic { x + x }
+fn double_it::double(x: i64) -> i64 with panic { x + x }
 
-fn top() -> int { top::one().n }
+fn top() -> i64 { top::one().n }
 
-fn top::one() -> One { One { n: 1 } }
+fn top::one() -> One { One { n: 1i64 } }

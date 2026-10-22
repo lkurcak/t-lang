@@ -11,14 +11,14 @@ impl Tr for B {
 }
 
 trait Show {
-    fn show(&self) -> int;
+    fn show(&self) -> i64;
 }
 
 #[derive(Discard)]
 struct W<T> { t: T }
 
-impl<T: Tr<Out = int>> Show for W<T> {
-    fn show(&self) -> int { 1 }
+impl<T: Tr<Out = i64>> Show for W<T> {
+    fn show(&self) -> i64 { 1 }
 }
 
 fn main() {

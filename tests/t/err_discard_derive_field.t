@@ -1,5 +1,5 @@
 // A type that holds what can't be thrown away can't be thrown away.
-struct Fd { n: int }
+struct Fd { n: i64 }
 
 #[derive(Discard)]
 struct Holder { fd: Fd }

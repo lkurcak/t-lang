@@ -2,12 +2,12 @@
 
 #[derive(Discard, Eq)]
 enum Shape {
-    Circle(int),
-    Rect(int, int),
+    Circle(i64),
+    Rect(i64, i64),
     Empty,
 }
 
-fn area(s: Shape) -> int with panic {
+fn area(s: Shape) -> i64 with panic {
     match s {
         Shape::Circle(r) => 3 * r * r,
         Shape::Rect(w, h) => w * h,

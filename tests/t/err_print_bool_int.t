@@ -1,4 +1,4 @@
 fn main() {
     print_bool(1);
 }
-// error: expected `bool`, found `int`
+// error: expected `bool`, found `{integer}`

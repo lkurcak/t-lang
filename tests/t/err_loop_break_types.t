@@ -7,4 +7,4 @@ fn main() {
     };
     print(x);
 }
-// error: expected `int`, found `bool`
+// error: expected `{integer}`, found `bool`

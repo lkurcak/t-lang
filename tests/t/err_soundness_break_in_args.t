@@ -1,16 +1,16 @@
 // The same for `break`.
-struct Fd { n: int }
+struct Fd { n: i64 }
 
-fn close(f: Fd) -> int {
+fn close(f: Fd) -> i64 {
     let Fd { n } = f;
     n
 }
 
-fn two(a: Fd, b: int) -> int with panic { close(a) + b }
+fn two(a: Fd, b: i64) -> i64 with panic { close(a) + b }
 
 fn main() with panic {
     let x = loop {
-        two(Fd { n: 1 }, break 3);
+        two(Fd { n: 1 }, break 3i64);
     };
     print(x);
 }

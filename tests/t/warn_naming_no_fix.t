@@ -1,8 +1,8 @@
 // No fix when the name it would get is a keyword, or would clash with
 // another. The message only suggests a name that is one.
-fn Match() -> int { 1 }
-fn myFn() -> int { 2 }
-fn my_fn() -> int { 3 }
+fn Match() -> i64 { 1 }
+fn myFn() -> i64 { 2 }
+fn my_fn() -> i64 { 3 }
 
 fn main() with panic {
     let True = Match();

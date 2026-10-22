@@ -106,7 +106,7 @@ fn reports_and_clears_diagnostics() {
     let uri = "file:///tmp/test.t";
 
     // Open a file with a type error on line 2 (0-based line 1).
-    let bad = "fn main() {\n    let x: int = true;\n}\n";
+    let bad = "fn main() {\n    let x: i64 = true;\n}\n";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
             "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": bad}
@@ -116,7 +116,7 @@ fn reports_and_clears_diagnostics() {
     assert_eq!(diags.len(), 1, "{diags:?}");
     assert_eq!(
         diags[0]["message"],
-        "type error: expected `int`, found `bool`"
+        "type error: expected `i64`, found `bool`"
     );
     assert_eq!(
         diags[0]["range"]["start"],
@@ -128,7 +128,7 @@ fn reports_and_clears_diagnostics() {
     );
 
     // Fix it: the diagnostics are cleared.
-    let good = "fn main() {\n    let _x: int = 1;\n}\n";
+    let good = "fn main() {\n    let _x: i64 = 1;\n}\n";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
             "textDocument": {"uri": uri, "version": 2},
@@ -144,7 +144,8 @@ fn reports_and_clears_diagnostics() {
 fn borrow_errors_point_at_the_borrow() {
     let (child, mut c) = start();
     let uri = "file:///tmp/borrow.t";
-    let src = "fn main() {\n    let mut x = 1;\n    let r = &x;\n    x = 2;\n    print(*r);\n}\n";
+    let src =
+        "fn main() {\n    let mut x: i64 = 1;\n    let r = &x;\n    x = 2;\n    print(*r);\n}\n";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
             "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
@@ -175,7 +176,7 @@ fn warns_and_offers_quick_fixes() {
     let uri = "file:///tmp/warn.t";
 
     // The `false` arm (0-based line 4) can never run.
-    let src = "fn f(b: bool) -> int {\n    match b {\n        true => 1,\n        _ => 2,\n        false => 3,\n    }\n}\nfn main() {\n    print(f(true));\n}\n";
+    let src = "fn f(b: bool) -> i64 {\n    match b {\n        true => 1,\n        _ => 2,\n        false => 3,\n    }\n}\nfn main() {\n    print(f(true));\n}\n";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
             "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
@@ -232,7 +233,7 @@ fn warns_and_offers_quick_fixes() {
 fn hovers_hints_and_goes_to_definitions() {
     let (child, mut c) = start();
     let uri = "file:///tmp/generic.t";
-    let src = "fn id<T>(x: T) -> T { x }\nfn main() {\n    let n = id(1);\n    print(n);\n    print(id::<int>(2));\n}\n";
+    let src = "fn id<T>(x: T) -> T { x }\nfn main() {\n    let n = id(1i64);\n    print(n);\n    print(id::<i64>(2));\n}\n";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
             "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
@@ -241,11 +242,11 @@ fn hovers_hints_and_goes_to_definitions() {
     assert_eq!(c.diagnostics(), Vec::<Value>::new());
     let at = |line: u32, character: u32| json!({"textDocument": {"uri": uri}, "position": {"line": line, "character": character}});
 
-    // `id` in `id(1)` is the copy of `id` for `int`.
+    // `id` in `id(1)` is the copy of `id` for `i64`.
     c.send(json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": at(2, 13)}));
     let hover = c.response(2)["result"].clone();
     assert_eq!(
-        hover["contents"]["value"], "```t\nfn id::<int>: fn(int) -> int\n```",
+        hover["contents"]["value"], "```t\nfn id::<i64>: fn(i64) -> i64\n```",
         "{hover}"
     );
     // Inside `id`, `x` is a `T`.
@@ -269,7 +270,7 @@ fn hovers_hints_and_goes_to_definitions() {
     );
 
     // The type of `n` and the type argument of `id`, both inferred. Not the
-    // one written out in `id::<int>(2)`.
+    // one written out in `id::<i64>(2)`.
     let whole = json!({"start": {"line": 0, "character": 0}, "end": {"line": 6, "character": 0}});
     c.send(
         json!({"jsonrpc": "2.0", "id": 6, "method": "textDocument/inlayHint", "params": {
@@ -286,8 +287,8 @@ fn hovers_hints_and_goes_to_definitions() {
     assert_eq!(
         hints,
         vec![
-            (json!({"line": 2, "character": 9}), json!(": int")),
-            (json!({"line": 2, "character": 14}), json!("::<int>")),
+            (json!({"line": 2, "character": 9}), json!(": i64")),
+            (json!({"line": 2, "character": 14}), json!("::<i64>")),
         ]
     );
 
@@ -298,7 +299,7 @@ fn hovers_hints_and_goes_to_definitions() {
 fn hovers_and_hints_show_opaque_types_as_written() {
     let (child, mut c) = start();
     let uri = "file:///tmp/opaque.t";
-    let src = "fn adder(n: int) -> impl Fn(int) -> int with panic + Discard { move |x| x + n }\nfn main() with panic {\n    let f = adder(1);\n    print(f(2));\n}\n";
+    let src = "fn adder(n: i64) -> impl Fn(i64) -> i64 with panic + Discard { move |x| x + n }\nfn main() with panic {\n    let f = adder(1);\n    print(f(2));\n}\n";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
             "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
@@ -311,7 +312,7 @@ fn hovers_and_hints_show_opaque_types_as_written() {
     c.send(json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": at(3, 10)}));
     let hover = c.response(2)["result"].clone();
     assert_eq!(
-        hover["contents"]["value"], "```t\nf: impl Fn(int) -> int with panic + Discard\n```",
+        hover["contents"]["value"], "```t\nf: impl Fn(i64) -> i64 with panic + Discard\n```",
         "{hover}"
     );
     let whole = json!({"start": {"line": 0, "character": 0}, "end": {"line": 5, "character": 0}});
@@ -328,7 +329,7 @@ fn hovers_and_hints_show_opaque_types_as_written() {
         .map(|h| h["label"].clone())
         .collect();
     assert!(
-        labels.contains(&json!(": impl Fn(int) -> int with panic + Discard")),
+        labels.contains(&json!(": impl Fn(i64) -> i64 with panic + Discard")),
         "{hints}"
     );
 
@@ -345,14 +346,14 @@ fn hovers_show_doc_comments() {
 ///     Indented, so code.
 struct P {
     /// Across.
-    x: int,
+    x: i64,
 }
 enum E {
     /// The only one.
-    A(int),
+    A(i64),
 }
 /// Reads `x`.
-fn get(p: P) -> int { p.x }
+fn get(p: P) -> i64 { p.x }
 fn main() {
     print(get(P { x: 1 }));
     match E::A(2) {
@@ -385,17 +386,17 @@ impl Discard for E {}
 
     // The signature, then the doc as Markdown, without the indentation
     // all its lines share.
-    let get = "```t\nfn get: fn(P) -> int\n```\n\n---\n\nReads `x`.";
+    let get = "```t\nfn get: fn(P) -> i64\n```\n\n---\n\nReads `x`.";
     assert_eq!(hover(&mut c, "get", 0), get, "the declaration");
     assert_eq!(hover(&mut c, "get", 1), get, "a use");
     let p = "```t\nstruct P\n```\n\n---\n\nA point.\n\n    Indented, so code.";
     assert_eq!(hover(&mut c, "P {", 0), p);
     assert_eq!(hover(&mut c, "P {", 1), p, "a struct literal");
     assert_eq!(hover(&mut c, "P)", 0), p, "a type in a signature");
-    let x = "```t\nfield x: int\n```\n\n---\n\nAcross.";
-    assert_eq!(hover(&mut c, "x: int", 0), x);
+    let x = "```t\nfield x: i64\n```\n\n---\n\nAcross.";
+    assert_eq!(hover(&mut c, "x: i64", 0), x);
     assert_eq!(hover(&mut c, "x }", 0), x, "a field read");
-    let a = "```t\nE::A: fn(int) -> E\n```\n\n---\n\nThe only one.";
+    let a = "```t\nE::A: fn(i64) -> E\n```\n\n---\n\nThe only one.";
     assert_eq!(hover(&mut c, "A(", 1), a, "a variant built");
     assert_eq!(hover(&mut c, "A(", 2), a, "a variant matched");
     // Nothing documents `E` or `main`: just the signature.
@@ -462,18 +463,18 @@ fn finds_nested_functions_that_share_a_name() {
     let uri = "file:///tmp/nested.t";
     let src = "\
 /// The top-level one.
-fn helper() -> int { 1 }
+fn helper() -> i64 { 1 }
 fn main() {
     print(helper());
     {
         print_bool(helper(2));
         /// The nested one.
-        fn helper(x: int) -> bool { x > 1 }
+        fn helper(x: i64) -> bool { x > 1 }
     }
     print(other());
 }
-fn other() -> int {
-    fn helper() -> int { 3 }
+fn other() -> i64 {
+    fn helper() -> i64 { 3 }
     helper()
 }
 ";
@@ -505,9 +506,9 @@ fn other() -> int {
 
     // `helper`s in order: 0 the top-level one, 1 its use in `main`, 2 the
     // nested one's use before it, 3 the nested one, 4 `other`'s, 5 its use.
-    let top = "```t\nfn helper: fn() -> int\n```\n\n---\n\nThe top-level one.";
-    let nested = "```t\nfn helper: fn(int) -> bool\n```\n\n---\n\nThe nested one.";
-    let others = "```t\nfn helper: fn() -> int\n```";
+    let top = "```t\nfn helper: fn() -> i64\n```\n\n---\n\nThe top-level one.";
+    let nested = "```t\nfn helper: fn(i64) -> bool\n```\n\n---\n\nThe nested one.";
+    let others = "```t\nfn helper: fn() -> i64\n```";
     assert_eq!(ask(&mut c, hover, 1)["contents"]["value"], top);
     assert_eq!(ask(&mut c, def, 1)["range"]["start"], at("helper", 0));
     let used_before = ask(&mut c, hover, 2);
@@ -536,7 +537,7 @@ fn finds_local_types_that_share_a_name() {
     let uri = "file:///tmp/local.t";
     let src = "\
 /// The top-level one.
-struct P { x: int }
+struct P { x: i64 }
 fn main() {
     let a: P = P { x: 1 };
     print(a.x);
@@ -550,10 +551,10 @@ fn main() {
 }
 fn other() -> P {
     let local = P { z: 3 };
-    #[derive(Discard)] struct P { z: int }
+    #[derive(Discard)] struct P { z: i64 }
     top(local.z)
 }
-fn top(x: int) -> P { P { x } }
+fn top(x: i64) -> P { P { x } }
 impl Discard for P {}
 ";
     c.send(
@@ -738,13 +739,13 @@ impl Doc {
 fn references_highlights_and_renames_follow_scopes() {
     let (child, mut c) = start();
     let src = "\
-fn helper() -> int { 1 }
+fn helper() -> i64 { 1 }
 fn main() with panic {
     print(helper());
     {
         print_bool(helper(2));
         // helper is nested here.
-        fn helper(x: int) -> bool { x > 1 }
+        fn helper(x: i64) -> bool { x > 1 }
     }
     let p = P { x: 1 };
     print(p.x + other());
@@ -754,11 +755,11 @@ fn main() with panic {
         #[derive(Discard)] struct P { y: bool }
     }
 }
-fn other() -> int {
-    fn helper() -> int { 3 }
+fn other() -> i64 {
+    fn helper() -> i64 { 3 }
     helper()
 }
-struct P { x: int }
+struct P { x: i64 }
 impl Discard for P {}
 ";
     let (mut d, diags) = Doc::open(&mut c, "file:///tmp/refs.t", src);
@@ -824,7 +825,7 @@ impl Discard for P {}
 fn renames_shorthand_fields_and_variables() {
     let (child, mut c) = start();
     let src = "\
-struct P { x: int }
+struct P { x: i64 }
 fn main() {
     let x = 1;
     let p = P { x };
@@ -853,7 +854,7 @@ fn main() {
     );
     assert_eq!(
         d.rename(&mut c, "x", 0, "y").unwrap(),
-        src.replace("{ x: int", "{ y: int")
+        src.replace("{ x: i64", "{ y: i64")
             .replace("P { x };", "P { y: x };")
             .replace("P { x } =", "P { y: x } =")
     );
@@ -879,8 +880,8 @@ fn area<T: Discard>(s: Shape<T>, w: Wrap<T>) -> T {
     }
 }
 fn main() {
-    print(area(Shape::Circle(2), Wrap { inner: 1 }));
-    print(area(Shape::Empty, Wrap::<int> { inner: 3 }));
+    print(area(Shape::Circle(2i64), Wrap { inner: 1 }));
+    print(area(Shape::Empty, Wrap::<i64> { inner: 3 }));
 }
 impl<T: Discard> Discard for Shape<T> {}
 impl<T: Discard> Discard for Wrap<T> {}
@@ -921,7 +922,7 @@ fn renames_fields_in_refinements() {
     let (child, mut c) = start();
     let src = "\
 #[derive(Copy, Discard)]
-struct Span { lo: int, hi: { h: int | h >= lo } }
+struct Span { lo: i64, hi: { h: i64 | h >= lo } }
 fn main() {
     let s = Span { lo: 1, hi: 2 };
     print(s.hi - s.lo);
@@ -935,7 +936,7 @@ fn main() {
     );
     assert_eq!(
         d.rename(&mut c, "h", 1, "high").unwrap(),
-        src.replace("h: int | h >=", "high: int | high >=")
+        src.replace("h: i64 | h >=", "high: i64 | high >=")
     );
 
     stop(child, c);
@@ -946,15 +947,15 @@ fn main() {
 fn refuses_bad_renames() {
     let (child, mut c) = start();
     let src = "\
-struct P { x: int }
+struct P { x: i64 }
 fn main() with panic {
-    let a = 1;
+    let a: i64 = 1;
     let b = 2;
     let p = P { x: 4 };
-    fn helper() -> int { c() }
+    fn helper() -> i64 { c() }
     print(a + b + p.x + helper());
 }
-fn c() -> int { 3 }
+fn c() -> i64 { 3 }
 impl Discard for P {}
 ";
     let (mut d, diags) = Doc::open(&mut c, "file:///tmp/bad.t", src);
@@ -971,8 +972,8 @@ impl Discard for P {}
         Err(json!("`print` is a built-in function"))
     );
     assert_eq!(
-        prepare(&mut c, "int", 0),
-        Err(json!("`int` is a built-in type"))
+        prepare(&mut c, "i64", 0),
+        Err(json!("`i64` is a built-in type"))
     );
     assert_eq!(
         prepare(&mut c, "let", 0),
@@ -1008,8 +1009,8 @@ impl Discard for P {}
         Err("`_` can't be a name".into())
     );
     assert_eq!(
-        d.rename(&mut c, "P", 0, "int"),
-        Err("`int` is a built-in type".into())
+        d.rename(&mut c, "P", 0, "i64"),
+        Err("`i64` is a built-in type".into())
     );
     // A variable shadowed by another of the new name.
     assert_eq!(
@@ -1024,7 +1025,7 @@ impl Discard for P {}
     assert_eq!(
         d.rename(&mut c, "a", 2, "print"),
         Err(
-            "can't rename `a` to `print`: line 7 would be an error: `int` is not a function".into()
+            "can't rename `a` to `print`: line 7 would be an error: `i64` is not a function".into()
         )
     );
     // A nested `fn` would then capture it.
@@ -1038,7 +1039,7 @@ impl Discard for P {}
     );
     // A use of the renamed one would refer to another.
     assert_eq!(
-        d.rename(&mut c, "c() -> int { 3", 0, "helper"),
+        d.rename(&mut c, "c() -> i64 { 3", 0, "helper"),
         Err(
             "can't rename `c` to `helper`: `helper` on line 6 would refer to the function \
              `helper` on line 6 instead"
@@ -1056,7 +1057,7 @@ impl Discard for P {}
     );
     // Two of one name.
     assert_eq!(
-        d.rename(&mut c, "c() -> int { 3", 0, "main"),
+        d.rename(&mut c, "c() -> i64 { 3", 0, "main"),
         Err(
             "can't rename `c` to `main`: line 9 would be an error: `main` is already defined"
                 .into()
@@ -1075,8 +1076,8 @@ enum Option<T> {
     Some(T),
     None,
 }
-struct P { x: int }
-fn get(o: Option<P>) -> int {
+struct P { x: i64 }
+fn get(o: Option<P>) -> i64 {
     match o {
         Option::Some(p) => p.x,
         Option::None => 0,
@@ -1087,7 +1088,7 @@ fn main() {
     let o = Option::Some(P { x: 1 });
     print(get(o));
     print(get(Option::None));
-    print(id(2));
+    print(id(2i64));
 }
 impl<T: Discard> Discard for Option<T> {}
 impl Discard for P {}
@@ -1117,7 +1118,7 @@ impl Discard for P {}
     assert_eq!(ty(&mut c, "o))", 0), vec![option.clone(), p.clone()]);
     assert_eq!(ty(&mut c, "p)", 0), vec![p.clone()], "a pattern binding");
     assert_eq!(ty(&mut c, "get", 1), vec![option, p], "a function");
-    assert_eq!(ty(&mut c, "x", 1), Vec::<Value>::new(), "an `int` field");
+    assert_eq!(ty(&mut c, "x", 1), Vec::<Value>::new(), "an `i64` field");
     assert_eq!(
         ty(&mut c, "t }", 0),
         Vec::<Value>::new(),
@@ -1160,12 +1161,12 @@ struct Pair<A, B> {
 }
 fn main() {
     print(helper(1));
-    fn helper(x: int) -> int {
-        enum E { A(int), B }
+    fn helper(x: i64) -> i64 {
+        enum E { A(i64), B }
         fn inner() {}
         x
     }
-    struct P { x: int }
+    struct P { x: i64 }
 }
 enum Option<T> {
     Some(T),
@@ -1192,18 +1193,18 @@ enum Option<T> {
                     [
                         "helper",
                         12,
-                        "fn(int) -> int",
+                        "fn(i64) -> i64",
                         [
                             [
                                 "E",
                                 10,
                                 "enum E",
-                                [["A", 22, "fn(int) -> E", []], ["B", 22, "E", []],]
+                                [["A", 22, "fn(i64) -> E", []], ["B", 22, "E", []],]
                             ],
                             ["inner", 12, "fn() -> ()", []],
                         ]
                     ],
-                    ["P", 23, "struct P", [["x", 8, "int", []]]],
+                    ["P", 23, "struct P", [["x", 8, "i64", []]]],
                 ]
             ]),
             json!([
@@ -1232,7 +1233,7 @@ enum Option<T> {
     let (d, diags) = Doc::open(
         &mut c,
         "file:///tmp/outline_err.t",
-        "fn main() { let x: int = true; }\nstruct S {}\n",
+        "fn main() { let x: i64 = true; }\nstruct S {}\n",
     );
     assert_eq!(diags.len(), 1);
     assert_eq!(
@@ -1253,16 +1254,16 @@ fn traits_and_methods() {
     let (child, mut c) = start();
     let src = "\
 trait Show {
-    fn show(&self) -> int;
+    fn show(&self) -> i64;
 }
-struct P { x: int }
+struct P { x: i64 }
 impl P {
-    fn get(&self) -> int { self.x }
+    fn get(&self) -> i64 { self.x }
 }
 impl Show for P {
-    fn show(&self) -> int { self.get() }
+    fn show(&self) -> i64 { self.get() }
 }
-fn twice<T: Show + Discard>(t: T) -> int with panic { t.show() * 2 }
+fn twice<T: Show + Discard>(t: T) -> i64 with panic { t.show() * 2 }
 fn main() with panic {
     let p = P { x: 1 };
     print(twice(p));
@@ -1280,7 +1281,7 @@ impl Discard for P {}
     let hover = d.ask(&mut c, "textDocument/hover", "get()", 0, json!({}));
     assert_eq!(
         hover["result"]["contents"]["value"],
-        "```t\nfn get: fn(&P) -> int\n```"
+        "```t\nfn get: fn(&P) -> i64\n```"
     );
 
     // A call of a trait's method goes to the trait's, and `get` to the impl's.
@@ -1350,18 +1351,18 @@ fn modules() {
     let src = "\
 mod shapes {
     pub trait Area {
-        fn area(&self) -> int with panic;
+        fn area(&self) -> i64 with panic;
     }
     #[derive(Discard)]
-    pub struct Sq { pub side: int }
-    pub fn sq(side: int) -> Sq { Sq { side } }
+    pub struct Sq { pub side: i64 }
+    pub fn sq(side: i64) -> Sq { Sq { side } }
     pub mod more {
-        pub fn twice(n: int) -> int with panic { n * 2 }
+        pub fn twice(n: i64) -> i64 with panic { n * 2 }
     }
 }
 use shapes::{Area, Sq, more::twice as double};
 impl Area for Sq {
-    fn area(&self) -> int with panic { self.side * self.side }
+    fn area(&self) -> i64 with panic { self.side * self.side }
 }
 fn main() with panic {
     let s: Sq = shapes::sq(3);
@@ -1373,7 +1374,7 @@ fn main() with panic {
     let hover = d.ask(&mut c, "textDocument/hover", "sq(3)", 0, json!({}));
     assert_eq!(
         hover["result"]["contents"]["value"],
-        "```t\nfn sq: fn(int) -> Sq\n```"
+        "```t\nfn sq: fn(i64) -> Sq\n```"
     );
     let def = d.ask(&mut c, "textDocument/definition", "sq(3)", 0, json!({}));
     assert_eq!(def["result"]["range"], d.range("sq", 0));
@@ -1449,14 +1450,14 @@ fn files_of_modules_are_checked_with_their_program() {
     std::fs::create_dir_all(&dir).unwrap();
     let main = "mod util;\nfn main() {\n    print(util::helper());\n}\n";
     std::fs::write(dir.join("main.t"), main).unwrap();
-    std::fs::write(dir.join("util.t"), "pub fn helper() -> int { 1 }\n").unwrap();
+    std::fs::write(dir.join("util.t"), "pub fn helper() -> i64 { 1 }\n").unwrap();
     let main_uri = format!("file://{}/main.t", dir.display());
     let util_uri = format!("file://{}/util.t", dir.display());
 
     let (child, mut c) = start();
     // Opened with an error that isn't on disk: it's in `util.t`, and
     // `main.t`, not open, has none.
-    let util = "pub fn helper() -> int {\n    true\n}\n";
+    let util = "pub fn helper() -> i64 {\n    true\n}\n";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
             "textDocument": {"uri": util_uri, "languageId": "t", "version": 1, "text": util}
@@ -1470,7 +1471,7 @@ fn files_of_modules_are_checked_with_their_program() {
     );
 
     // Fixed, then `main.t` opened: going to `helper` goes to `util.t`.
-    let util = "pub fn helper() -> int { 1 }\n";
+    let util = "pub fn helper() -> i64 { 1 }\n";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
             "textDocument": {"uri": util_uri, "version": 2},
@@ -1526,7 +1527,7 @@ fn files_of_modules_are_checked_with_their_program() {
 fn hovers_the_core_library_but_goes_nowhere_in_it() {
     let (child, mut c) = start();
     let uri = "file:///tmp/core.t";
-    let src = "fn main() {\n    let o = Option::Some(1);\n    for i in 0..3 {\n        print(o.unwrap_or(i));\n    }\n}\n";
+    let src = "fn main() {\n    let o = Option::Some(1);\n    for i in 0..3i64 {\n        print(o.unwrap_or(i));\n    }\n}\n";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
             "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
@@ -1550,7 +1551,7 @@ fn hovers_the_core_library_but_goes_nowhere_in_it() {
     // The loop's variable, and nothing on `for` or `in`.
     c.send(json!({"jsonrpc": "2.0", "id": 4, "method": "textDocument/hover", "params": at(2, 8)}));
     let hover = c.response(4)["result"]["contents"]["value"].clone();
-    assert_eq!(hover, "```t\ni: int\n```");
+    assert_eq!(hover, "```t\ni: i64\n```");
     for (id, character) in [(5, 5), (6, 11)] {
         let params = at(2, character);
         c.send(
@@ -1569,7 +1570,7 @@ fn hovers_the_core_library_but_goes_nowhere_in_it() {
 fn hovers_the_alloc_library_but_goes_nowhere_in_it() {
     let (child, mut c) = start();
     let uri = "file:///tmp/alloc.t";
-    let src = "use alloc::raw::RawBuf;\n\nfn main() with {alloc, panic} {\n    let b: RawBuf<int> = RawBuf::new(1);\n    unsafe { b.free() };\n}\n";
+    let src = "use alloc::raw::RawBuf;\n\nfn main() with {alloc, panic} {\n    let b: RawBuf<i64> = RawBuf::new(1);\n    unsafe { b.free() };\n}\n";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
             "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
@@ -1601,7 +1602,7 @@ fn hovers_the_alloc_library_but_goes_nowhere_in_it() {
 fn hovers_list_methods() {
     let (child, mut c) = start();
     let uri = "file:///tmp/list.t";
-    let src = "use alloc::list::List;\n\nfn main() with {alloc, panic} {\n    let mut l: List<int> = List::new();\n    l.push(1);\n    print(l.iter().count());\n    l.free();\n}\n";
+    let src = "use alloc::list::List;\n\nfn main() with {alloc, panic} {\n    let mut l: List<i64> = List::new();\n    l.push(1);\n    print(l.iter().count());\n    l.free();\n}\n";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
             "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
@@ -1632,7 +1633,7 @@ fn hovers_list_methods() {
 fn hovers_slice_methods() {
     let (child, mut c) = start();
     let uri = "file:///tmp/slice.t";
-    let src = "fn main() {\n    let s: &[int] = core::slice::empty();\n    print(s.len());\n}\n";
+    let src = "fn main() {\n    let s: &[i64] = core::slice::empty();\n    print(s.len());\n}\n";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
             "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
@@ -1651,7 +1652,7 @@ fn hovers_slice_methods() {
     c.send(json!({"jsonrpc": "2.0", "id": 3, "method": "textDocument/hover", "params": at(2, 10)}));
     let hover = c.response(3)["result"]["contents"]["value"].clone();
     let hover = hover.as_str().unwrap();
-    assert!(hover.contains("&[int]"), "{hover}");
+    assert!(hover.contains("&[i64]"), "{hover}");
 
     stop(child, c);
 }

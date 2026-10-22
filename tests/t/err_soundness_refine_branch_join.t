@@ -1,5 +1,5 @@
 // Only one branch makes `d` non-zero.
-fn f(c: bool) -> int {
+fn f(c: bool) -> i64 {
     let mut d = 0;
     if c {
         d = 1;

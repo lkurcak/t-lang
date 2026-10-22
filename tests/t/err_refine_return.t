@@ -1,5 +1,5 @@
 // The result must have the refinement the signature promises.
-fn pos(x: int) -> { r: int | r > 0 } { x }
+fn pos(x: i64) -> { r: i64 | r > 0 } { x }
 
 fn main() {
     print(pos(1));

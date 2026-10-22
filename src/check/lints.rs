@@ -146,7 +146,12 @@ fn alternatives(p: &Pattern, span: Span) -> Option<(&[Pattern], usize)> {
 }
 
 /// The range at `span`, somewhere in `pats`, only reaches `lo..=hi`.
-pub(super) fn narrowable(span: Span, lo: i64, hi: i64, pats: &[Pattern]) -> Warning {
+pub(super) fn narrowable(
+    span: Span,
+    lo: Option<i128>,
+    hi: Option<i128>,
+    pats: &[Pattern],
+) -> Warning {
     let inclusive = pats.iter().find_map(|p| written_inclusive(p, span));
     let range = exhaust::show_range(lo, hi, inclusive.unwrap_or(true));
     Warning {
@@ -170,29 +175,36 @@ pub(super) fn narrowable(span: Span, lo: i64, hi: i64, pats: &[Pattern]) -> Warn
 /// in the source, and deletes the others with the `|` before each.
 pub(super) fn mergeable(p: &Pattern, alts: &[Pattern]) -> Vec<Warning> {
     // `(lo, hi, is a range, written with ..=, index in alts)`
-    let mut ints: Vec<(i64, i64, bool, bool, usize)> = alts
+    // An open end is past every value: an integer is at most `u64::MAX`.
+    let (min, max) = (i128::MIN, i128::MAX);
+    let mut ints: Vec<(i128, i128, bool, bool, usize)> = alts
         .iter()
         .enumerate()
         .filter_map(|(k, a)| match a.kind {
             PatternKind::Int(n) => Some((n, n, false, true, k)),
-            PatternKind::Range(lo, hi, inclusive) => Some((lo, hi, true, inclusive, k)),
+            PatternKind::Range(lo, hi, inclusive) => {
+                Some((lo.unwrap_or(min), hi.unwrap_or(max), true, inclusive, k))
+            }
             _ => None,
         })
         .collect();
     ints.sort_by_key(|&(lo, ..)| lo);
+    let open = |lo: i128, hi: i128| ((lo != min).then_some(lo), (hi != max).then_some(hi));
     ints.chunk_by(|a, b| a.1.checked_add(1) == Some(b.0))
         .filter(|run| run.len() > 1 && run.iter().any(|&(_, _, range, _, _)| range))
         .map(|run| {
             let names: Vec<String> = run
                 .iter()
                 .map(|&(lo, hi, _, inclusive, _)| {
+                    let (lo, hi) = open(lo, hi);
                     format!("`{}`", exhaust::show_range(lo, hi, inclusive))
                 })
                 .collect();
             let (last, rest) = names.split_last().expect("a run has two or more");
             // Written in the style of the highest one.
             let &(_, hi, _, inclusive, _) = run.last().expect("a run has two or more");
-            let merged = exhaust::show_range(run[0].0, hi, inclusive);
+            let (lo, hi) = open(run[0].0, hi);
+            let merged = exhaust::show_range(lo, hi, inclusive);
 
             let mut ks: Vec<usize> = run.iter().map(|&(.., k)| k).collect();
             ks.sort_unstable();

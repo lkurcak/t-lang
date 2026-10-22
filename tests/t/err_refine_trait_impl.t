@@ -1,13 +1,13 @@
 // Called through the trait, as in `call`, nothing would check `by`.
 trait Half {
-    fn half(self, by: int) -> int;
+    fn half(self, by: i64) -> i64;
 }
 
-impl Half for int {
-    fn half(self, by: { b: int | b > 0 }) -> int { self / by }
+impl Half for i64 {
+    fn half(self, by: { b: i64 | b > 0 }) -> i64 { self / by }
 }
 
-fn call<T: Half>(x: T) -> int { x.half(0) }
+fn call<T: Half>(x: T) -> i64 { x.half(0) }
 
 fn main() {
     print(call(4));

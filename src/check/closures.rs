@@ -113,7 +113,7 @@ impl Checker {
 
     // A closure is generic over lifetimes as a function type is: over the
     // ones `sig` is, if it's wanted, or else over those left out in its
-    // annotations, `|x: &int|` taking a reference of any lifetime, which
+    // annotations, `|x: &i64|` taking a reference of any lifetime, which
     // each call picks. Unless `sig` says, its result's lifetimes, written
     // or not, are worked out from its body at the end of the function, as
     // one of those, or one fixed where it's made, such as of what it
@@ -177,7 +177,7 @@ impl Checker {
                 _ => self.fresh(
                     p.name.span,
                     format!("the type of `{name}`"),
-                    format!("annotate it, e.g. `|{name}: int|`"),
+                    format!("annotate it, e.g. `|{name}: i64|`"),
                 ),
             };
             params.push(t.clone());

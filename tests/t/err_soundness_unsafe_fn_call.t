@@ -2,10 +2,10 @@
 // it is unsafe too.
 use alloc::raw::RawBuf;
 
-fn first(b: &RawBuf<int>) -> int with unsafe { b.slice(0, 1).len() }
+fn first(b: &RawBuf<i64>) -> usize with unsafe { b.slice(0, 1).len() }
 
 fn main() with {alloc, panic} {
-    let mut b: RawBuf<int> = RawBuf::new(1);
+    let mut b: RawBuf<i64> = RawBuf::new(1);
     // SAFETY: slot 0 is uninitialised, and there is one.
     unsafe { b.write(0, 7) };
     print(first(&b));

@@ -3,7 +3,7 @@
 use alloc::raw::RawBuf;
 
 fn main() with {alloc, panic} {
-    let b: RawBuf<int> = RawBuf::new(1);
+    let b: RawBuf<i64> = RawBuf::new(1);
     unsafe { b.free() };
 }
 // warning: this `unsafe` block has no `// SAFETY:` comment saying why its obligations are kept

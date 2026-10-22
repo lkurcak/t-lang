@@ -2,7 +2,7 @@
 use core::mem::swap;
 
 #[derive(Copy, Discard)]
-struct Pos { n: { v: int | v > 0 } }
+struct Pos { n: { v: i64 | v > 0 } }
 
 fn main() {
     let mut p = Pos { n: 1 };

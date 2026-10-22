@@ -1,5 +1,5 @@
 // Inside the loop, `d` may be 0 on the second time round.
-fn f() -> int {
+fn f() -> i64 {
     let mut d = 1;
     let mut acc = 0;
     loop {

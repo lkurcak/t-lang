@@ -1,8 +1,8 @@
 // A branch that never ends tells what comes after that its condition
 // didn't hold.
-fn div(a: int, d: { d: int | d > 0 }) -> int { a / d }
+fn div(a: i64, d: { d: i64 | d > 0 }) -> i64 { a / d }
 
-fn checked(a: int, d: int) -> int with panic {
+fn checked(a: i64, d: i64) -> i64 with panic {
     if d <= 0 {
         panic();
     }

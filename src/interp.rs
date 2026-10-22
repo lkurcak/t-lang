@@ -26,7 +26,7 @@
 //! the borrow checker decided, by the types it knew, as `lift` wrote it
 //! out (`ExprKind::Move`, `PatternKind::Move`): in generic code, a value of
 //! a type parameter that isn't known to be `Copy` moves, even where it's an
-//! `int`, so that a body means the same at every type. The types
+//! `i64`, so that a body means the same at every type. The types
 //! monomorphisation made, which say which are `Copy` and which `Discard`,
 //! only check those decisions: a copy of a value whose type isn't `Copy`,
 //! or a value taken apart by value and not used up whose type isn't
@@ -44,6 +44,7 @@
 use crate::ast::*;
 use crate::check::BUILTINS;
 use crate::error::{Error, Span};
+use crate::types::IntTy;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
@@ -54,7 +55,9 @@ const MAX_CALL_DEPTH: usize = 10_000;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
-    Int(i64),
+    /// An integer, of its type: always one of that type's values, here on
+    /// a 64-bit machine.
+    Int(i128, IntTy),
     Bool(bool),
     Unit,
     /// A function, by name. It can only see its own parameters and other
@@ -134,7 +137,7 @@ impl PartialEq for Closure {
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Value::Int(n) => write!(f, "{n}"),
+            Value::Int(n, _) => write!(f, "{n}"),
             Value::Bool(b) => write!(f, "{b}"),
             Value::Unit => f.write_str("()"),
             Value::Fn(name) => write!(f, "<fn {}>", crate::check::source_name(name)),
@@ -254,10 +257,34 @@ fn unsound(what: &str) -> ! {
     unreachable!("type soundness violated: {what}. This is a bug in the type checker.")
 }
 
-fn int(v: Value) -> i64 {
+fn int(v: Value) -> i128 {
     match v {
-        Value::Int(n) => n,
-        other => unsound(&format!("expected an int, got `{other}`")),
+        Value::Int(n, _) => n,
+        other => unsound(&format!("expected an integer, got `{other}`")),
+    }
+}
+
+/// `n`, as a `t`, which it must be one of.
+fn int_of(n: i128, t: IntTy) -> Value {
+    let (lo, hi) = t.range_64();
+    if !(lo..=hi).contains(&n) {
+        unsound(&format!("{n} as {}", t.a()));
+    }
+    Value::Int(n, t)
+}
+
+/// A `usize`, from a count the interpreter keeps.
+fn usize_of(n: usize) -> Value {
+    int_of(n as i128, IntTy::Usize)
+}
+
+/// The integer type written `t`, after monomorphisation.
+fn int_ty(t: &TypeExpr) -> IntTy {
+    match &t.kind {
+        TypeExprKind::Named(name, _) => {
+            IntTy::named(name).unwrap_or_else(|| unsound(&format!("`{name}` as an integer type")))
+        }
+        _ => unsound("an integer type that isn't named"),
     }
 }
 
@@ -442,19 +469,19 @@ impl Refined {
     fn eval(&self, e: &Expr, v: &Value) -> PredValue {
         let int = |p: PredValue| match p {
             PredValue::Int(n) => n,
-            PredValue::Bool(_) => unsound("a refinement's `bool` used as an `int`"),
+            PredValue::Bool(_) => unsound("a refinement's `bool` used as an integer"),
         };
         let boolean = |p: PredValue| match p {
             PredValue::Bool(b) => b,
-            PredValue::Int(_) => unsound("a refinement's `int` used as a `bool`"),
+            PredValue::Int(_) => unsound("a refinement's integer used as a `bool`"),
         };
         let value = |v: &Value| match v {
-            Value::Int(n) => PredValue::Int(*n as i128),
+            Value::Int(n, _) => PredValue::Int(*n),
             Value::Bool(b) => PredValue::Bool(*b),
             other => unsound(&format!("a refinement of `{other}`")),
         };
         match &e.kind {
-            ExprKind::Int(n) => PredValue::Int(*n as i128),
+            ExprKind::Int(n, _) => PredValue::Int(i128::from(*n)),
             ExprKind::Bool(b) => PredValue::Bool(*b),
             ExprKind::Var(name, _) if *name == self.binder => value(v),
             ExprKind::Var(name, _) => match self.env.iter().find(|(n, _)| n == name) {
@@ -758,7 +785,7 @@ impl Interp<'_, '_> {
                     .params
                     .iter()
                     .zip(&args)
-                    .filter(|(_, v)| matches!(v, Value::Int(_) | Value::Bool(_)))
+                    .filter(|(_, v)| matches!(v, Value::Int(..) | Value::Bool(_)))
                     .map(|(p, v)| (p.name.name.clone(), v.clone()))
                     .collect();
                 let refinement = |t: &TypeExpr| {
@@ -815,20 +842,32 @@ impl Interp<'_, '_> {
         args: Vec<Value>,
         span: Span,
     ) -> Result<Value, Error> {
-        if let Some(op) = name.strip_prefix("core::num::checked_") {
+        if name == "core::num::checked_mul" {
             let [a, b] = <[Value; 2]>::try_from(args).unwrap_or_else(|_| unsound("checked arity"));
-            let (a, b) = (int(a), int(b));
-            let result = match op {
-                "mul" => a.checked_mul(b),
-                _ => unsound(&format!("unknown intrinsic `{name}`")),
+            let (Value::Int(a, t), Value::Int(b, u)) = (a, b) else {
+                unsound("`checked_mul` of what isn't an integer")
             };
-            // The copy of `Option<int>` the intrinsic returns.
+            if t != u {
+                unsound("`checked_mul` of two integer types");
+            }
+            let (lo, hi) = t.range_64();
+            let result = a.checked_mul(b).filter(|n| (lo..=hi).contains(n));
+            // The copy of `Option<T>` the intrinsic returns.
             let TypeExprKind::Named(option, _) = &self.fns[copy].ret.kind else {
-                unsound("`checked_` returns an `Option<int>`")
+                unsound("`checked_mul` returns an `Option<T>`")
             };
             return Ok(match result {
-                Some(n) => Value::Variant(option.clone(), "Some".into(), vec![Value::Int(n)]),
+                Some(n) => Value::Variant(option.clone(), "Some".into(), vec![Value::Int(n, t)]),
                 None => Value::Variant(option.clone(), "None".into(), Vec::new()),
+            });
+        }
+        if let Some(end) = name.strip_prefix("core::num::") {
+            let t = int_ty(&self.fns[copy].ret);
+            let (lo, hi) = t.range_64();
+            return Ok(match end {
+                "least" => Value::Int(lo, t),
+                "greatest" => Value::Int(hi, t),
+                _ => unsound(&format!("unknown intrinsic `{name}`")),
             });
         }
         if name == "<alloc::raw::RawBuf" {
@@ -900,7 +939,7 @@ impl Interp<'_, '_> {
             usize::try_from(i).ok().filter(|i| *i <= max)
         };
         let made = match op {
-            "len" => return Value::Int(len as i64),
+            "len" => return usize_of(len),
             "get" | "get_mut" => {
                 let i = index(args.next(), len).filter(|i| *i < len);
                 i.map(|i| {
@@ -933,7 +972,7 @@ impl Interp<'_, '_> {
     /// blaming the `unsafe` block that said they were kept.
     fn raw_buf(&mut self, op: &str, args: Vec<Value>, span: Span) -> Result<Value, Error> {
         /// More slots than this is running out of memory.
-        const MAX_SLOTS: i64 = 1 << 20;
+        const MAX_SLOTS: i128 = 1 << 20;
         // The buffer that `self`, a `&RawBuf` or `&mut RawBuf`, points to.
         let buf = |this: &Interp, v: &Value| -> Ptr {
             let Value::Ref(p) = v else {
@@ -970,14 +1009,14 @@ impl Interp<'_, '_> {
             )),
             "cap" => {
                 let q = buf(self, &arg());
-                Ok(Value::Int(slots(self, &q) as i64))
+                Ok(usize_of(slots(self, &q)))
             }
             "grow" => {
                 let this = arg();
                 let (q, new_cap) = (buf(self, &this), int(arg()));
                 let cap = slots(self, &q);
                 self.effect("alloc");
-                if new_cap < cap as i64 {
+                if new_cap < cap as i128 {
                     let message = format!("`grow` to {new_cap} slots, but it has {cap}");
                     return Err(self.panics(span, message));
                 }
@@ -1003,11 +1042,11 @@ impl Interp<'_, '_> {
                 let (lo, hi) = (int(arg()), int(arg()));
                 let cap = slots(self, &q);
                 let what = format!("`RawBuf::{op}` of slots {lo}..{hi}");
-                // That half is its type's, `{ l: int | l >= 0 }`.
+                // That half is its type's, `{ l: i64 | l >= 0 }`.
                 if lo < 0 {
                     unsound(&format!("{what}, but {lo} isn't `>= 0`"));
                 }
-                if hi > cap as i64 {
+                if hi > cap as i128 {
                     let why = format!("{what}, but the buffer has {cap}");
                     return Err(self.broken(span, block, why));
                 }
@@ -1030,11 +1069,11 @@ impl Interp<'_, '_> {
                 let (q, i) = (buf(self, &this), int(arg()));
                 let cap = slots(self, &q);
                 let what = format!("`RawBuf::{op}` of slot {i}");
-                // That half is its type's, `{ i: int | i >= 0 }`.
+                // That half is its type's, `{ i: i64 | i >= 0 }`.
                 if i < 0 {
                     unsound(&format!("{what}, which isn't `>= 0`"));
                 }
-                if i >= cap as i64 {
+                if i >= cap as i128 {
                     let why = format!("{what}, but it has {cap} slots");
                     return Err(self.broken(span, block, why));
                 }
@@ -1268,7 +1307,28 @@ impl Interp<'_, '_> {
             ExprKind::For(_) | ExprKind::Range(..) => {
                 unreachable!("rewritten when paths are resolved")
             }
-            ExprKind::Int(n) => Value::Int(*n),
+            ExprKind::Int(n, t) => {
+                let t = t.unwrap_or_else(|| unsound("a literal of no type"));
+                int_of(i128::from(*n), t)
+            }
+            // `-` of a literal is a literal: `-128` is an `i8`, though `128`
+            // isn't.
+            ExprKind::Unary(UnOp::Neg, x) if let ExprKind::Int(n, t) = x.kind => {
+                let t = t.unwrap_or_else(|| unsound("a literal of no type"));
+                int_of(-i128::from(n), t)
+            }
+            // The same number, if it fits.
+            ExprKind::As(x, t) => {
+                let n = int(self.eval(x)?);
+                let t = int_ty(t);
+                let (lo, hi) = t.range_64();
+                if !(lo..=hi).contains(&n) {
+                    self.not_proved(e.id);
+                    let message = format!("`as` overflowed: {n} isn't {}", t.a());
+                    return Err(self.panics(e.span, message).into());
+                }
+                Value::Int(n, t)
+            }
             ExprKind::Bool(b) => Value::Bool(*b),
             ExprKind::Unit => Value::Unit,
             ExprKind::Var(name, _) => match self.local(name) {
@@ -1288,13 +1348,13 @@ impl Interp<'_, '_> {
             ExprKind::Unary(op, x) => {
                 let v = self.eval(x)?;
                 match op {
-                    UnOp::Neg => match int(v).checked_neg() {
-                        Some(n) => Value::Int(n),
-                        None => {
-                            self.not_proved(e.id);
-                            return Err(self.panics(e.span, "integer overflow").into());
-                        }
-                    },
+                    UnOp::Neg => {
+                        let zero = match v {
+                            Value::Int(_, t) => Value::Int(0, t),
+                            ref other => unsound(&format!("`-` of `{other}`")),
+                        };
+                        self.arith(BinOp::Sub, zero, v, e)?
+                    }
                     _ => Value::Bool(!bool(v)),
                 }
             }
@@ -1318,7 +1378,7 @@ impl Interp<'_, '_> {
             ExprKind::Binary(op, l, r) => {
                 let l = self.eval(l)?;
                 let r = self.eval(r)?;
-                self.arith(*op, int(l), int(r), e)?
+                self.arith(*op, l, r, e)?
             }
 
             // A function value owns nothing, so there's nothing to drop if
@@ -1376,8 +1436,8 @@ impl Interp<'_, '_> {
                 };
                 let v = match op {
                     Some(op) => {
-                        let old = int(self.memory.get(&p).clone());
-                        self.arith(*op, old, int(v), e)?
+                        let old = self.memory.get(&p).clone();
+                        self.arith(*op, old, v, e)?
                     }
                     None => v,
                 };
@@ -1641,8 +1701,10 @@ impl Interp<'_, '_> {
         }
         match (&p.kind, self.memory.get(&v)) {
             (PatternKind::Wild | PatternKind::Bind(..), _) => true,
-            (PatternKind::Int(n), Value::Int(m)) => n == m,
-            (PatternKind::Range(lo, hi, _), Value::Int(m)) => lo <= m && m <= hi,
+            (PatternKind::Int(n), Value::Int(m, _)) => n == m,
+            (PatternKind::Range(lo, hi, _), Value::Int(m, _)) => {
+                lo.is_none_or(|lo| lo <= *m) && hi.is_none_or(|hi| *m <= hi)
+            }
             (PatternKind::Bool(b), Value::Bool(c)) => b == c,
             (PatternKind::Unit, Value::Unit) => true,
             (PatternKind::Variant(_, _, variant, pats), Value::Variant(_, name, _)) => {
@@ -1808,9 +1870,18 @@ impl Interp<'_, '_> {
         }
     }
 
-    /// `l op r`, for the operator `e`.
-    fn arith(&mut self, op: BinOp, l: i64, r: i64, e: &Expr) -> Result<Value, Error> {
+    /// `l op r`, for the operator `e`: in ℤ, as long as the result fits in
+    /// their type.
+    fn arith(&mut self, op: BinOp, l: Value, r: Value, e: &Expr) -> Result<Value, Error> {
         let span = e.span;
+        let (Value::Int(l, t), Value::Int(r, u)) = (&l, &r) else {
+            unsound(&format!("`{op}` of `{l}` and `{r}`"))
+        };
+        if t != u {
+            unsound(&format!("`{op}` of {} and {}", t.a(), u.a()));
+        }
+        let (l, r, t) = (*l, *r, *t);
+        let (lo, hi) = t.range_64();
         let n = match op {
             BinOp::Lt => return Ok(Value::Bool(l < r)),
             BinOp::Le => return Ok(Value::Bool(l <= r)),
@@ -1824,11 +1895,14 @@ impl Interp<'_, '_> {
             BinOp::Sub => l.checked_sub(r),
             BinOp::Mul => l.checked_mul(r),
             BinOp::Div => l.checked_div(r),
+            // Its result would fit, as it's 0, but it's an overflow on a
+            // machine, which divides to find it.
+            BinOp::Rem if l == lo && r == -1 => None,
             BinOp::Rem => l.checked_rem(r),
             BinOp::Eq | BinOp::Ne | BinOp::And | BinOp::Or => unreachable!("handled in eval"),
         };
-        match n {
-            Some(n) => Ok(Value::Int(n)),
+        match n.filter(|n| (lo..=hi).contains(n)) {
+            Some(n) => Ok(Value::Int(n, t)),
             None => {
                 self.not_proved(e.id);
                 Err(self.panics(span, "integer overflow"))

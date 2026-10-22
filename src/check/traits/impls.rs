@@ -92,7 +92,7 @@ impl Checker {
     /// mentions, even through a box, and a field's projection is what an
     /// impl says it is, which can mention more: `struct S<T: Tr> { b:
     /// Box<T::Out> }` with `type Out = S<W<W<U>>>` for `W<U>` makes
-    /// `S<W<int>>` need `S<W<W<int>>>`, and so on, with no end. So that's
+    /// `S<W<i64>>` need `S<W<W<i64>>>`, and so on, with no end. So that's
     /// polymorphic recursion too (`generics::polymorphic_recursion`), with
     /// each impl's associated type a node of its own, generic over the
     /// impl's parameters, which a projection in a field gets to the way a
@@ -514,7 +514,7 @@ impl Checker {
     /// No two impls of a trait can be for the same type, whatever their
     /// type parameters are: then which one a use means would be a choice.
     /// Their bounds don't count. `impl<T: Show> Print for T` and `impl
-    /// Print for int` overlap even if `int` isn't `Show`, because someone
+    /// Print for i64` overlap even if `i64` isn't `Show`, because someone
     /// might make it so, and then an impl far away would change meaning.
     ///
     /// Inherent impls can overlap, as long as they don't both define a

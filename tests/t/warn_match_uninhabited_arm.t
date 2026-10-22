@@ -3,8 +3,8 @@
 #[derive(Discard)]
 enum Never {}
 #[derive(Discard)]
-enum Maybe { Real(int), Impossible(Never) }
-fn get(m: Maybe) -> int {
+enum Maybe { Real(i64), Impossible(Never) }
+fn get(m: Maybe) -> i64 {
     match m {
         Maybe::Real(x) => x,
         Maybe::Impossible(n) => match n {},

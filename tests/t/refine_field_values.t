@@ -1,7 +1,7 @@
 // What's known of a struct's fields goes with its value: from a literal,
 // through a copy, and stays with the copy when the original changes.
 #[derive(Copy, Discard)]
-struct P { x: int }
+struct P { x: i64 }
 
 fn main() with {alloc, panic} {
     let mut p = P { x: 4 };

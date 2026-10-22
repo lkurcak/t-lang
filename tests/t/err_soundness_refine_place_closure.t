@@ -1,9 +1,9 @@
 // A closure that captures the struct can change its fields when it's
 // called.
 #[derive(Copy, Discard)]
-struct P { x: int }
+struct P { x: i64 }
 
-fn f(mut p: P) -> int {
+fn f(mut p: P) -> i64 {
     if p.x > 0 {
         let mut c = || p.x = 0;
         c();

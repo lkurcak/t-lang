@@ -11,20 +11,20 @@ fn id<T>(x: T) -> T { x }
 fn forever() -> ! { loop {} }
 
 // So this one only ever takes the first branch's way out.
-fn pick(c: bool) -> int {
+fn pick(c: bool) -> i64 {
     if c { 1 } else { forever() }
 }
 
 // An `Option<!>` is never `Some`, so a `match` needs no arm for it.
-fn always_none(o: Option<!>) -> int {
+fn always_none(o: Option<!>) -> i64 {
     match o {
         Option::None => 0,
     }
 }
 
 // What a `!` was wanted as, if nothing else says, is a `!`: `id::<!>`. The
-// block never ends, so it's a `!` too, which fits as the `int`.
-fn returns_early() -> int {
+// block never ends, so it's a `!` too, which fits as the `i64`.
+fn returns_early() -> i64 {
     let _x = id(return 5);
 }
 
@@ -36,7 +36,7 @@ enum _Void {}
 fn _absurd(v: _Void) -> bool {
     let _b: ! = match v {};
 }
-fn _spin() -> int {
+fn _spin() -> i64 {
     let _n: ! = loop {};
 }
 

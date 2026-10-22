@@ -5,7 +5,7 @@ struct Holder<F> { f: F }
 
 fn main() {
     let h = {
-        let n = 5;
+        let n: i64 = 5;
         Holder { f: || n }
     };
     print((h.f)());

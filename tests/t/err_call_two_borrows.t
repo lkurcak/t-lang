@@ -1,6 +1,6 @@
 // Both borrows are taken at the call, and they clash there.
 #[derive(Discard)]
-struct Stack { top: int }
+struct Stack { top: i64 }
 fn both(a: &mut Stack, b: &Stack) { a.top = b.top }
 fn main() {
     let mut v = Stack { top: 1 };

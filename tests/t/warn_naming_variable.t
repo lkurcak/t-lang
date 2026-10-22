@@ -3,9 +3,9 @@
 // an or-pattern is warned about once. A leading `_` doesn't count, and
 // digits are fine.
 #[derive(Discard)]
-enum Shape { Circle(int), Square(int), Empty }
+enum Shape { Circle(i64), Square(i64), Empty }
 
-fn side(s: Shape, Default: int) -> int {
+fn side(s: Shape, Default: i64) -> i64 {
     match s {
         Shape::Circle(sideLen) | Shape::Square(sideLen) => sideLen,
         Shape::Empty => Default,
@@ -15,8 +15,8 @@ fn side(s: Shape, Default: int) -> int {
 fn main() with panic {
     let firstTry = side(Shape::Circle(2), 0);
     let x1 = side(Shape::Square(3), 0);
-    let _ignoredValue = 4;
-    let addTo = |baseValue: int| baseValue + firstTry;
+    let _ignoredValue = 4i64;
+    let addTo = |baseValue: i64| baseValue + firstTry;
     print(addTo(x1) + side(Shape::Empty, 5));
 }
 // warning: variable `Default` should have a snake case name: `default`

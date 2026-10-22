@@ -2,10 +2,10 @@
 // caller's block's to answer for: that's where it was said to be kept.
 use alloc::raw::RawBuf;
 
-fn second(b: &RawBuf<int>) -> int with unsafe { b.slice(1, 2).len() }
+fn second(b: &RawBuf<i64>) -> usize with unsafe { b.slice(1, 2).len() }
 
 fn main() with {alloc, panic} {
-    let mut b: RawBuf<int> = RawBuf::new(2);
+    let mut b: RawBuf<i64> = RawBuf::new(2);
     // SAFETY: wrong: `second` needs slot 1 written.
     unsafe {
         b.write(0, 1);

@@ -4,18 +4,18 @@
 #[derive(Discard, Copy)]
 struct W<T> { x: T }
 
-fn outer<'a>(f: fn(&'a int) -> int, x: &'a int) -> int {
+fn outer<'a>(f: fn(&'a i64) -> i64, x: &'a i64) -> i64 {
     let g = || f(x);
     g()
 }
-fn call<T: Copy>(x: T, k: fn(T) -> int) -> int {
+fn call<T: Copy>(x: T, k: fn(T) -> i64) -> i64 {
     let g = || k(x);
     g()
 }
-fn deref(r: &int) -> int { *r }
+fn deref(r: &i64) -> i64 { *r }
 
 fn main() with {alloc, panic} {
-    let b = Box::new(1);
+    let b = Box::new(1i64);
     let get = || *b;
     print(get());                   // expect: 1
     let n = 2;

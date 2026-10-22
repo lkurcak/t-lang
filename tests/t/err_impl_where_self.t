@@ -1,7 +1,7 @@
 // An impl's `where` clause can't bound the impl's own type: that's what
 // the impl is about.
 trait Tr {
-    fn a(&self) -> int;
+    fn a(&self) -> i64;
 }
 
 #[derive(Discard where T: Discard)]
@@ -11,7 +11,7 @@ impl<T> Tr for W<T>
 where
     Self: Discard,
 {
-    fn a(&self) -> int { 1 }
+    fn a(&self) -> i64 { 1 }
 }
 
 fn main() {}

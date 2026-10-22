@@ -28,7 +28,7 @@ pub(super) fn arity_error(what: &str, arity: usize, given: usize, span: Span) ->
 }
 
 /// What a name in a type refers to, if it isn't a type parameter of what
-/// it's written in, or `int` or `bool`.
+/// it's written in, or `i64` or `bool`.
 pub(crate) enum TypeName {
     /// A struct or enum, by its symbol (see `check/names.rs`), with how
     /// many lifetime and type arguments it takes.
@@ -125,7 +125,7 @@ impl Lifetimes<'_> {
                 format!(
                     "missing lifetime: this returns a reference, but the parameters have {n} \
                      lifetimes, so it's not clear which it borrows from; name the one it \
-                     does, as in `fn f<'a>(x: &'a int, y: &int) -> &'a int`"
+                     does, as in `fn f<'a>(x: &'a i64, y: &i64) -> &'a i64`"
                 ),
             )),
             Lifetimes::ClosureParams { bound, .. } => {
@@ -137,12 +137,12 @@ impl Lifetimes<'_> {
             Lifetimes::Fields { .. } => Err(Error::ty(
                 span,
                 "missing lifetime: a reference in a struct or enum needs one, as in \
-                 `struct S<'a> { r: &'a int }`",
+                 `struct S<'a> { r: &'a i64 }`",
             )),
             Lifetimes::Assoc { .. } => Err(Error::ty(
                 span,
                 "missing lifetime: a reference here needs one, a lifetime of the type the impl \
-                 is for, as in `impl<'a> Tr for &'a int { type Out = &'a int; }`, or \
+                 is for, as in `impl<'a> Tr for &'a i64 { type Out = &'a i64; }`, or \
                  `'static`",
             )),
         }
@@ -299,7 +299,7 @@ fn resolve_in(
                     ));
                 }
                 None if params.contains(name) => (Type::Param(name.clone()), 0, 0),
-                None if name == "int" => (Type::Int, 0, 0),
+                None if let Some(t) = crate::types::IntTy::named(name) => (Type::Int(t), 0, 0),
                 None if name == "bool" => (Type::Bool, 0, 0),
                 None if name == "Box" => (Type::Box(Box::new(Type::Unit)), 0, 1),
                 None => return Err(Error::ty(t.span, format!("unknown type `{name}`"))),
@@ -311,7 +311,7 @@ fn resolve_in(
                 };
                 return Err(arity_error(&what, arity, args.len(), t.span));
             }
-            // Left out, they're all elided, as in `fn f(h: Holder) -> int`.
+            // Left out, they're all elided, as in `fn f(h: Holder) -> i64`.
             let regions = match lt_args.len() {
                 0 => (0..lt_arity)
                     .map(|_| region(None, t.span, lifetimes, binder.as_deref_mut()))
@@ -485,7 +485,7 @@ pub(super) fn declare(params: &[Ident]) -> Result<Vec<String>, Error> {
                 "a type parameter needs a name; `_` means \"infer this\" in type arguments",
             ));
         }
-        if matches!(p.name.as_str(), "int" | "bool" | "Box") {
+        if crate::types::is_builtin_type(&p.name) {
             return Err(Error::ty(
                 p.span,
                 format!("`{}` is a built-in type", p.name),
@@ -603,8 +603,8 @@ pub(super) struct Use<'a> {
 }
 
 /// Rejects polymorphic recursion that would make monomorphisation go on
-/// forever, like `fn f<T>(x: T) { f(Option::Some(x)) }`: `f<int>` needs
-/// `f<Option<int>>`, which needs `f<Option<Option<int>>>`, and so on.
+/// forever, like `fn f<T>(x: T) { f(Option::Some(x)) }`: `f<i64>` needs
+/// `f<Option<i64>>`, which needs `f<Option<Option<i64>>>`, and so on.
 ///
 /// Every copy monomorphisation makes is of some item with arguments built
 /// from the arguments of the copy that needed it, or found inside them.

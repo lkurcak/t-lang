@@ -1,5 +1,5 @@
 #[derive(Discard)]
-struct P { x: int, y: int }
+struct P { x: i64, y: i64 }
 fn main() {
     let P { x, y: x } = P { x: 1, y: 2 };
 }

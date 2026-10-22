@@ -87,7 +87,7 @@ impl Checker {
     }
 
     /// Rejects opaque types that stand for types that hold them, through
-    /// others or not: `fn f() -> impl Fn() -> int` whose closure holds
+    /// others or not: `fn f() -> impl Fn() -> i64` whose closure holds
     /// what `f()` returns would be a type that holds itself, which no
     /// finite type is. Then replacing each with what it stands for, as
     /// monomorphisation does (`Projections::reveal`), ends.

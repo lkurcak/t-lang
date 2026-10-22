@@ -1,8 +1,8 @@
 // Nor the locals of a function further out.
 fn main() {
     let n = 1;
-    fn outer() -> int {
-        fn inner() -> int { n }
+    fn outer() -> i64 {
+        fn inner() -> i64 { n }
         inner()
     }
     print(outer());

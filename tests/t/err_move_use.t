@@ -1,5 +1,5 @@
 fn main() with {alloc, panic} {
-    let b = Box::new(1);
+    let b = Box::new(1i64);
     let c = b;
     print(*c);
     print(*b);

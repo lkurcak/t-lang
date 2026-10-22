@@ -3,8 +3,8 @@
 use alloc::raw::RawBuf;
 
 struct Stack {
-    buf: RawBuf<int>,
-    len: { l: int | l >= 0 },
+    buf: RawBuf<i64>,
+    len: usize,
 }
 
 impl Stack {
@@ -12,7 +12,7 @@ impl Stack {
         Stack { buf: RawBuf::new(0), len: 0 }
     }
 
-    fn push(&mut self, v: int) with {alloc, panic} {
+    fn push(&mut self, v: i64) with {alloc, panic} {
         if self.len == self.buf.cap() {
             self.buf.grow(self.len * 2 + 1);
         }
@@ -21,7 +21,7 @@ impl Stack {
         self.len = self.len + 1;
     }
 
-    fn pop(&mut self) -> Option<int> {
+    fn pop(&mut self) -> Option<i64> {
         if self.len == 0 {
             return Option::None;
         }
@@ -30,7 +30,7 @@ impl Stack {
         Option::Some(unsafe { self.buf.read(self.len) })
     }
 
-    fn top(&self) -> Option<&int> {
+    fn top(&self) -> Option<&i64> {
         if self.len == 0 {
             return Option::None;
         }
@@ -46,11 +46,11 @@ impl Stack {
 }
 
 /// Unsafe itself: the caller must know slot 0 holds a value.
-fn bump_first(b: &mut RawBuf<int>) with {panic, unsafe} {
+fn bump_first(b: &mut RawBuf<i64>) with {panic, unsafe} {
     *b.slice_mut(0, 1).get_mut(0).unwrap() += 1;
 }
 
-fn apply<e, F: FnOnce() -> int with e>(f: F) -> int with e { f() }
+fn apply<e, F: FnOnce() -> i64 with e>(f: F) -> i64 with e { f() }
 
 fn main() with {alloc, panic} {
     let mut s = Stack::new();

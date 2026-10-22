@@ -1,5 +1,5 @@
 #[derive(Discard)]
-enum W { Only(int) }
+enum W { Only(i64) }
 fn main() {
     let W::Only(x) | W::Only(x) = W::Only(1);
     print(x);

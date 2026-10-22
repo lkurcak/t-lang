@@ -1,5 +1,5 @@
-// `T` could be `&int` at two different lifetimes: found for a
-// `Pair<&'x int, &'y int>`, `leak` would swap them.
+// `T` could be `&i64` at two different lifetimes: found for a
+// `Pair<&'x i64, &'y i64>`, `leak` would swap them.
 #[derive(Discard)]
 struct Pair<A, B> { long: A, short: B }
 

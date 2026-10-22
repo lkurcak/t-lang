@@ -1,7 +1,7 @@
 // In the second arm, `d` is anything but 0, not 0.
-fn zero(z: { v: int | v == 0 }) -> int { z }
+fn zero(z: { v: i64 | v == 0 }) -> i64 { z }
 
-fn f(d: int) -> int {
+fn f(d: i64) -> i64 {
     match d {
         0 => 0,
         _ => zero(d),

@@ -2,11 +2,11 @@
 // changed through references, and freed when it goes away.
 
 #[derive(Discard)]
-enum List { Nil, Cons(int, Box<List>) }
+enum List { Nil, Cons(i64, Box<List>) }
 
-fn push(l: List, x: int) -> List with {alloc, panic} { List::Cons(x, Box::new(l)) }
+fn push(l: List, x: i64) -> List with {alloc, panic} { List::Cons(x, Box::new(l)) }
 
-fn sum(l: &List) -> int with panic {
+fn sum(l: &List) -> i64 with panic {
     match l {
         List::Nil => 0,
         List::Cons(x, rest) => *x + sum(rest),

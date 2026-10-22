@@ -14,12 +14,12 @@ trait Container {
 }
 
 #[derive(Discard)]
-struct Ints { x: int, y: int }
+struct Ints { x: i64, y: i64 }
 
 impl Container for Ints {
-    type Item = int;
+    type Item = i64;
 
-    fn first(&self) -> int { self.x }
+    fn first(&self) -> i64 { self.x }
 }
 
 #[derive(Discard)]
@@ -40,9 +40,9 @@ fn main() {
 ```
 
 A trait can say that each impl picks a *type*, as well as methods: `type
-Item;` in the trait, `type Item = int;` in an impl. Code names that type with
+Item;` in the trait, `type Item = i64;` in an impl. Code names that type with
 a *projection*, `<C as Container>::Item`, "the `Item` of `C`'s impl of
-`Container`", or `C::Item` for short. `get` returns an `int` for `Ints` and a
+`Container`", or `C::Item` for short. `get` returns an `i64` for `Ints` and a
 `bool` for `Flags`: its result type depends on its type argument, through the
 impls. `Container::Item` is a function from types to types, defined case by
 case, an impl at a time. Haskell calls that an open *type family*.
@@ -65,7 +65,7 @@ trait Tr {
 }
 
 impl Tr for bool {
-    type Out = int;
+    type Out = i64;
 }
 
 fn main() {
@@ -74,18 +74,18 @@ fn main() {
 // error: `bool::Out` is short for a projection on a type parameter; on `bool`, say which trait's `Out` it is: write `<bool as Tr>::Out`
 ```
 
-`<bool as Tr>::Out` is `int`: once the type it's on is known, a projection
+`<bool as Tr>::Out` is `i64`: once the type it's on is known, a projection
 *normalises* to what its impl says. In generic code it often isn't known:
 `C::Item` in `get` is a type of its own, *rigid*, equal only to itself, like
 `C`. That's what keeps generic code honest: `get` can't treat its result as
-an `int`, since for `Flags` it isn't one. Dictionary passing explains it:
+an `i64`, since for `Flags` it isn't one. Dictionary passing explains it:
 compiling `get` once, its caller would pass a dictionary for `C: Container`
 holding `first` and the type `Item`, and `get` could only use them as given,
 like the abstract type of an ML module.
 
 Default methods see `Self::Item` rigid too. That's why an associated type
 can't have a default: a default method could be checked knowing `Item` is
-`int`, and an impl that picks `bool` would make that method wrong.
+`i64`, and an impl that picks `bool` would make that method wrong.
 
 ## Bounds
 
@@ -100,19 +100,19 @@ trait Make {
 }
 
 #[derive(Discard)]
-struct Two { n: int }
+struct Two { n: i64 }
 
 impl Make for Two {
-    type Out = int;
+    type Out = i64;
 
-    fn make(&self) -> int with panic { self.n * 2 }
+    fn make(&self) -> i64 with panic { self.n * 2 }
 }
 
-// An equality bound: `M::Out` is `int`, so it can be added.
-fn plus_one<M: Make<Out = int>>(m: &M) -> int with panic { m.make() + 1 }
+// An equality bound: `M::Out` is `i64`, so it can be added.
+fn plus_one<M: Make<Out = i64>>(m: &M) -> i64 with panic { m.make() + 1 }
 
 // A bound on the projection: `M::Out` may be thrown away.
-fn ignore<M: Make<Out: Discard>>(m: &M) -> int with panic {
+fn ignore<M: Make<Out: Discard>>(m: &M) -> i64 with panic {
     let _ = m.make();
     0
 }
@@ -137,7 +137,7 @@ trait Make {
     fn make(&self) -> Self::Out;
 }
 
-fn ignore<M: Make>(m: &M) -> int {
+fn ignore<M: Make>(m: &M) -> i64 {
     let _x = m.make();
     0
 }
@@ -178,7 +178,7 @@ associated type must use them:
 
 ```rust,error
 #[derive(Discard)]
-struct Pair<'a, 'b> { a: &'a int, b: &'b int }
+struct Pair<'a, 'b> { a: &'a i64, b: &'b i64 }
 
 trait Second {
     type Out;
@@ -187,9 +187,9 @@ trait Second {
 }
 
 impl<'a, 'b> Second for Pair<'a, 'b> {
-    type Out = &'b int;
+    type Out = &'b i64;
 
-    fn second(self) -> &'b int { self.b }
+    fn second(self) -> &'b i64 { self.b }
 }
 
 fn get<T: Second>(t: T) -> T::Out { t.second() }
@@ -206,7 +206,7 @@ fn main() {
 // error: `short` doesn't live long enough
 ```
 
-`<Pair<'x, 'y> as Second>::Out` is `&'y int`: matching the header
+`<Pair<'x, 'y> as Second>::Out` is `&'y i64`: matching the header
 `Pair<'a, 'b>` to the type gives `'a` and `'b` the type's lifetimes, each in
 its place, and the associated type is what the impl says with those. That
 it's a function of the type, regions and all, is what makes it sound to work
@@ -225,7 +225,7 @@ Two rules keep "the impl's type with the header's lifetimes" well defined:
 
 - **Constrained:** an associated type can only mention lifetimes and type
   parameters that are in the impl's type, outside every function type. Not in
-  it at all, `impl<'a> Tr for S { type Out = &'a int; }`, nothing says what
+  it at all, `impl<'a> Tr for S { type Out = &'a i64; }`, nothing says what
   `'a` is, so each mention of `<S as Tr>::Out` could be a different type, and
   `fn put<T: Tr>(slot: &mut T::Out, v: T::Out)` could write a short-lived
   reference into a long-lived slot. Only inside a function type, it's
@@ -243,18 +243,18 @@ impl<A, B> Tr for fn(A) -> B {
 // error: `B` is only inside a function type in `fn(A) -> B`
 ```
 
-  At `fn(&int) -> &int`, `B` would be the `&int` it returns, whose lifetime
+  At `fn(&i64) -> &i64`, `B` would be the `&i64` it returns, whose lifetime
   is whatever a call picks.
 
 - **Closed:** every lifetime in an associated type is one of the impl's or
-  `'static`, written out: `type Out = &int;` is an error. So a projection's
+  `'static`, written out: `type Out = &i64;` is an error. So a projection's
   regions are its type's and `'static`, and `T: 'r` gives `T::Out: 'r`
   (Rust's RFC 1214). That's how the borrow checker knows how long a rigid
   projection lives: as long as its type does, or as long as the signature
   says it does, but no longer.
 
 A rigid projection is *invariant* in its type: `W<'a>` may be covariant, but
-`<W<'a> as Tr>::Out` can be a `&'a mut &'a int`, so a struct with a field of
+`<W<'a> as Tr>::Out` can be a `&'a mut &'a i64`, so a struct with a field of
 type `T::Out` is invariant in `T` (`AdtInfo`'s `vary`).
 `tests/t/err_soundness_assoc_variance.t` shows what covariance would let
 through.
@@ -272,13 +272,14 @@ trait Tr {
 }
 
 impl Tr for bool {
-    type Out = int;
+    type Out = i64;
 }
 
 fn mk<T: Tr>(x: T::Out) -> T::Out { x }
 
 fn main() {
-    print(mk(1));
+    let n: i64 = mk(1);
+    print(n);
 }
 // error: cannot infer `T` for this use of `mk`
 ```
@@ -301,7 +302,7 @@ Two other things can go wrong only through impls, which is why they're
 checked for the whole program:
 
 - A type that holds itself: `struct S<T: Tr> { x: T::Out }` with `impl Tr for
-  int { type Out = S<int>; }` has an infinite size, which neither says alone
+  i64 { type Out = S<i64>; }` has an infinite size, which neither says alone
   (`assoc_sizes`).
 - Polymorphic recursion (docs/04-generics.md): `T::Out` can be as much bigger
   than `T` as an impl likes, so a use of `f::<T::Out>` in `f`, or a method
@@ -337,13 +338,13 @@ checked for the whole program:
 | equality bounds with projections in them | needs a termination check | — |
 | bounds on projections in impls and structs | breaks resolution's termination argument | — |
 | `Iterator` and `for` | done in the core library (docs/06e-core.md) | 6e ✅ |
-| `dyn Trait<Item = int>` | no trait objects | — |
+| `dyn Trait<Item = i64>` | no trait objects | — |
 
 ## Exercises
 
 1. Write `impl<T: Tr> Tr for Box<T> { type Out = T::Out; }` and a function
-   that uses it at `Box<Box<int>>`. Trace how `Projections::normalise` works
-   out `<Box<Box<int>> as Tr>::Out`, and why it ends.
+   that uses it at `Box<Box<i64>>`. Trace how `Projections::normalise` works
+   out `<Box<Box<i64>> as Tr>::Out`, and why it ends.
 2. Make `regions_at` give every lifetime `Region::Erased`. Why does the
    checker, not the interpreter, now reject `tests/t/assoc_lifetimes.t`?
    Undo that, and instead make `Builder::instantiate` take each projection
@@ -359,7 +360,7 @@ checked for the whole program:
 5. Allow `T::Out: Show` on impls. Write a program whose resolution then goes
    on forever, and say what whole-program check would rule it out.
 6. Why does forward-only inference reject `mk(1)` above, though `bool` is
-   the only `T` it could be? Add `impl Tr for () { type Out = int; }` and
+   the only `T` it could be? Add `impl Tr for () { type Out = i64; }` and
    argue that a check that accepted it before would now have to change its
    mind.
 7. Write `Iterator` with `type Item;` and `fn next(&mut self) ->

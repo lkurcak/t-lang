@@ -7,7 +7,9 @@ use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Type {
-    Int,
+    /// An integer type: `i8` to `i64`, `u8` to `u64`, `isize` or `usize`
+    /// (see docs/11-integers.md).
+    Int(IntTy),
     Bool,
     /// The type with exactly one value, `()`. "Nothing interesting to return."
     Unit,
@@ -19,12 +21,12 @@ pub enum Type {
     /// `fn(A, B) -> R`. The arrow type `A × B → R` of the lambda calculus.
     Fn(FnType),
     /// A struct or enum, by its symbol, with its type arguments: `Shape`,
-    /// or `Option<int>`. Its definition lives in an `Adts` table. The
+    /// or `Option<i64>`. Its definition lives in an `Adts` table. The
     /// symbol is its name, unless it's a local type (see `check/names.rs`).
     /// `Display` shows the name, as written.
     ///
-    /// Types are compared by *name* (nominal typing): `struct A { x: int }`
-    /// and `struct B { x: int }` are different types even though they look
+    /// Types are compared by *name* (nominal typing): `struct A { x: i64 }`
+    /// and `struct B { x: i64 }` are different types even though they look
     /// the same. The alternative, structural typing, would compare what's
     /// inside instead.
     Adt(String, Vec<Region>, Vec<Type>),
@@ -60,7 +62,7 @@ pub enum Type {
     /// parameter, in generic code, where it's a type that's equal only to
     /// itself, like the parameter; or on a type variable, until it's known.
     Proj(Box<Type>, String, String),
-    /// `impl Fn(int) -> int`, as a function's return type: an *opaque*
+    /// `impl Fn(i64) -> i64`, as a function's return type: an *opaque*
     /// type, standing for one type the function picks, its *hidden* type,
     /// of which the rest of the program knows only what the bounds say
     /// (see docs/06c.1-opaque-types.md). By its symbol, with every lifetime
@@ -149,8 +151,8 @@ pub struct FnType {
     pub params: Vec<Type>,
     pub ret: Box<Type>,
     /// The lifetimes it's generic over, named `'^0`, `'^1` and so on in it:
-    /// those left out where it's written. `fn(&int) -> int` takes a
-    /// reference of *any* lifetime, as `for<'x> fn(&'x int) -> int` would
+    /// those left out where it's written. `fn(&i64) -> i64` takes a
+    /// reference of *any* lifetime, as `for<'x> fn(&'x i64) -> i64` would
     /// say in Rust: it's *higher-ranked*. Each call picks the lifetimes.
     pub bound: Vec<String>,
     /// What its calls may do: always a `Type::Effects`, empty if they can
@@ -268,7 +270,7 @@ pub struct AdtDef {
     /// The traits it needs its type parameters to implement, like
     /// `T: Show`: every use of it must show they do.
     pub preds: Vec<Pred>,
-    /// What its equality bounds say, like `(T::Item, int)`: every use
+    /// What its equality bounds say, like `(T::Item, i64)`: every use
     /// must show that too.
     pub eqs: Vec<(Type, Type)>,
     pub kind: AdtKind,
@@ -332,7 +334,7 @@ impl std::ops::DerefMut for Adts {
 // Looking inside struct and enum values. Everything that needs a field's type
 // goes through these instead of reading an `AdtDef`, because the types an
 // `AdtDef` holds mention its type parameters, and these put the type's
-// arguments in their place: the field of `Option<int>::Some` is an `int`.
+// arguments in their place: the field of `Option<i64>::Some` is an `i64`.
 
 /// What `name<regions, args>` is made of, with `regions` and `args`
 /// substituted for the parameters.
@@ -394,7 +396,7 @@ pub fn all_fields(adts: &Adts, ty: &Type) -> Vec<Type> {
 
 /// A *substitution*: which type each type parameter stands for, and which
 /// region each lifetime parameter does. Applying one to `fn(T) -> Option<T>`
-/// with `T := int` gives `fn(int) -> Option<int>`.
+/// with `T := i64` gives `fn(i64) -> Option<i64>`.
 #[derive(Debug, Clone, Default)]
 pub struct Subst {
     types: HashMap<String, Type>,
@@ -469,7 +471,7 @@ impl Type {
             Type::Ref(_, _, t) | Type::Box(t) | Type::Slice(t) | Type::Proj(t, ..) => {
                 (&[], Some(t), None)
             }
-            Type::Int
+            Type::Int(_)
             | Type::Bool
             | Type::Unit
             | Type::Never
@@ -515,7 +517,7 @@ impl Type {
             Type::Box(t) => Type::Box(Box::new(f(t))),
             Type::Slice(t) => Type::Slice(Box::new(f(t))),
             Type::Proj(t, tr, name) => Type::Proj(Box::new(f(t)), tr.clone(), name.clone()),
-            Type::Int
+            Type::Int(_)
             | Type::Bool
             | Type::Unit
             | Type::Never
@@ -529,8 +531,8 @@ impl Type {
 
     /// Do `self` and `other` have the same outermost shape, so that they're
     /// equal exactly when their `parts` are? `fn(A) -> B` and `fn(C) -> D`
-    /// do, `Option<A>` and `Option<B>` do, `int` and `bool` don't. Regions
-    /// don't count: `&'a int` and `&'b int` have the same shape, and type
+    /// do, `Option<A>` and `Option<B>` do, `i64` and `bool` don't. Regions
+    /// don't count: `&'a i64` and `&'b i64` have the same shape, and type
     /// checking treats them as the same type.
     pub fn same_shape(&self, other: &Type) -> bool {
         match (self, other) {
@@ -642,7 +644,7 @@ impl Type {
     /// stand for a type that does? Then a value of it may hold a reference,
     /// or be a function that's only good with references of a certain
     /// lifetime. Not if the regions are those a function type is generic
-    /// over: `fn(&int) -> int` takes references of any lifetime.
+    /// over: `fn(&i64) -> i64` takes references of any lifetime.
     pub fn may_borrow(&self) -> bool {
         fn has_param(t: &Type) -> bool {
             matches!(t, Type::Param(_) | Type::Proj(..)) || t.parts().any(has_param)
@@ -701,6 +703,100 @@ impl Type {
     }
 }
 
+/// An integer type: the integers from its least to its greatest. Every
+/// operator on one gives the same number as in the integers, ℤ, or panics:
+/// none wraps around (see docs/11-integers.md).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum IntTy {
+    I8,
+    I16,
+    I32,
+    I64,
+    Isize,
+    U8,
+    U16,
+    U32,
+    U64,
+    Usize,
+}
+
+impl IntTy {
+    pub const ALL: [IntTy; 10] = [
+        IntTy::I8,
+        IntTy::I16,
+        IntTy::I32,
+        IntTy::I64,
+        IntTy::Isize,
+        IntTy::U8,
+        IntTy::U16,
+        IntTy::U32,
+        IntTy::U64,
+        IntTy::Usize,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            IntTy::I8 => "i8",
+            IntTy::I16 => "i16",
+            IntTy::I32 => "i32",
+            IntTy::I64 => "i64",
+            IntTy::Isize => "isize",
+            IntTy::U8 => "u8",
+            IntTy::U16 => "u16",
+            IntTy::U32 => "u32",
+            IntTy::U64 => "u64",
+            IntTy::Usize => "usize",
+        }
+    }
+
+    /// The integer type called `name`, if there's one.
+    pub fn named(name: &str) -> Option<IntTy> {
+        IntTy::ALL.into_iter().find(|t| t.name() == name)
+    }
+
+    pub fn signed(self) -> bool {
+        self < IntTy::U8
+    }
+
+    /// Its least and greatest values, unless it's `isize` or `usize`, whose
+    /// size depends on the machine.
+    pub fn range(self) -> Option<(i128, i128)> {
+        let bits = match self {
+            IntTy::I8 | IntTy::U8 => 8,
+            IntTy::I16 | IntTy::U16 => 16,
+            IntTy::I32 | IntTy::U32 => 32,
+            IntTy::I64 | IntTy::U64 => 64,
+            IntTy::Isize | IntTy::Usize => return None,
+        };
+        Some(match self.signed() {
+            true => (-(1i128 << (bits - 1)), (1i128 << (bits - 1)) - 1),
+            false => (0, (1i128 << bits) - 1),
+        })
+    }
+
+    /// Its range on a 64-bit machine, which the interpreter is.
+    pub fn range_64(self) -> (i128, i128) {
+        match self {
+            IntTy::Isize => IntTy::I64.range_64(),
+            IntTy::Usize => IntTy::U64.range_64(),
+            t => t.range().expect("a fixed size"),
+        }
+    }
+
+    /// "a `u8`", "an `i8`".
+    pub fn a(self) -> String {
+        match self.signed() {
+            true => format!("an `{}`", self.name()),
+            false => format!("a `{}`", self.name()),
+        }
+    }
+}
+
+/// Is `name` a built-in type's: an integer type's, `bool` or `Box`?
+pub fn is_builtin_type(name: &str) -> bool {
+    IntTy::named(name).is_some() || matches!(name, "bool" | "Box")
+}
+
 /// `a, b, c`
 pub fn comma_list<T: fmt::Display>(items: &[T]) -> String {
     let items: Vec<String> = items.iter().map(T::to_string).collect();
@@ -710,7 +806,7 @@ pub fn comma_list<T: fmt::Display>(items: &[T]) -> String {
 impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Type::Int => f.write_str("int"),
+            Type::Int(t) => f.write_str(t.name()),
             Type::Bool => f.write_str("bool"),
             Type::Unit => f.write_str("()"),
             Type::Never => f.write_str("!"),
@@ -815,8 +911,8 @@ fn hidden(r: &Region) -> bool {
 /// plain `Type`, with no `∀` inside. That's *rank-1* (or *prenex*)
 /// polymorphism (see docs/04-generics.md).
 ///
-/// It's generic over lifetimes too: `fn first<'a>(x: &'a P) -> &'a int`
-/// has `lifetimes: ["'a"]`, as does `fn first(x: &P) -> &int`, where
+/// It's generic over lifetimes too: `fn first<'a>(x: &'a P) -> &'a i64`
+/// has `lifetimes: ["'a"]`, as does `fn first(x: &P) -> &i64`, where
 /// elision named it `'_0`. Type checking ignores those; the borrow checker
 /// instantiates them at each use.
 #[derive(Debug, Clone)]
@@ -828,8 +924,8 @@ pub struct Scheme {
     /// `fn f<T: Show>`. Every use has to show they do, for the type
     /// arguments it picks.
     pub preds: Vec<Pred>,
-    /// What its equality bounds say projections are: `(T::Item, int)` for
-    /// `fn f<T: Iter<Item = int>>`. Every use has to show they are.
+    /// What its equality bounds say projections are: `(T::Item, i64)` for
+    /// `fn f<T: Iter<Item = i64>>`. Every use has to show they are.
     pub eqs: Vec<(Type, Type)>,
     pub ty: Type,
 }

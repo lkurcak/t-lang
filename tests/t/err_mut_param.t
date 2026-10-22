@@ -1,4 +1,4 @@
-fn count(n: int) -> int with panic {
+fn count(n: i64) -> i64 with panic {
     n += 1;
     n
 }

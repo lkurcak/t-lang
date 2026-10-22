@@ -15,12 +15,12 @@ trait Container {
 struct Pair<T> { a: T, b: T }
 
 #[derive(Discard)]
-struct Ints { x: int, y: int }
+struct Ints { x: i64, y: i64 }
 
 impl Container for Ints {
-    type Item = int;
+    type Item = i64;
 
-    fn first(&self) -> int { self.x }
+    fn first(&self) -> i64 { self.x }
 }
 
 #[derive(Discard)]
@@ -34,7 +34,7 @@ impl Container for Flags {
 
 // Generic code knows nothing of `C::Item` but what the trait says: here,
 // that it's `Discard`, so it may be thrown away.
-fn ignore_first<C: Container>(c: &C) -> int {
+fn ignore_first<C: Container>(c: &C) -> i64 {
     let _ = c.first();
     1
 }
@@ -42,7 +42,7 @@ fn ignore_first<C: Container>(c: &C) -> int {
 fn get<C: Container>(c: &C) -> <C as Container>::Item { c.first() }
 
 // An equality bound says what the projection is, so it can be used as that.
-fn total<C: Container<Item = int>>(c: &C) -> int with panic { c.first() + get(c) }
+fn total<C: Container<Item = i64>>(c: &C) -> i64 with panic { c.first() + get(c) }
 
 // A projection's type can be a field's.
 #[derive(Discard)]
@@ -58,23 +58,23 @@ trait Make {
 }
 
 impl Make for Ints {
-    type Out = Pair<int>;
+    type Out = Pair<i64>;
 
-    fn make(&self) -> Pair<int> { Pair { a: self.x, b: self.y } }
+    fn make(&self) -> Pair<i64> { Pair { a: self.x, b: self.y } }
 }
 
-fn make_and_drop<M: Make<Out: Discard>>(m: &M) -> int {
+fn make_and_drop<M: Make<Out: Discard>>(m: &M) -> i64 {
     let _p = m.make();
     2
 }
 
 // A supertrait's associated type, by the shorthand too.
 trait Sized2: Container {
-    fn size(&self) -> int;
+    fn size(&self) -> i64;
 }
 
 impl Sized2 for Ints {
-    fn size(&self) -> int { 2 }
+    fn size(&self) -> i64 { 2 }
 }
 
 fn first_of<S: Sized2>(s: &S) -> S::Item { s.first() }

@@ -5,7 +5,7 @@
 #[derive(Discard)]
 enum Never {}
 
-fn absurd(n: Never) -> int {
+fn absurd(n: Never) -> i64 {
     match n {}
 }
 
@@ -16,9 +16,9 @@ fn absurd_bool(n: Never) -> bool { match n {} }
 // No value can be built with `Maybe::Impossible`, since it needs a `Never`.
 // So it needs no arm: matching `Real` covers every `Maybe` there is.
 #[derive(Discard)]
-enum Maybe { Real(int), Impossible(Never) }
+enum Maybe { Real(i64), Impossible(Never) }
 
-fn get(m: Maybe) -> int {
+fn get(m: Maybe) -> i64 {
     match m {
         Maybe::Real(x) => x,
     }

@@ -1,7 +1,7 @@
 #[derive(Discard)]
-struct P { n: int }
+struct P { n: i64 }
 impl P {
-    fn take(self) -> int { self.n }
+    fn take(self) -> i64 { self.n }
 }
 fn main() {
     let p = P { n: 1 };

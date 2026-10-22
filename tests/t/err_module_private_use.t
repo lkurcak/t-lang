@@ -1,5 +1,5 @@
 mod m {
-    fn secret() -> int { 1 }
+    fn secret() -> i64 { 1 }
 }
 
 use m::secret;

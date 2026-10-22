@@ -7,18 +7,18 @@ trait Tr {
     fn out(self) -> Self::Out;
 }
 
-impl<'a> Tr for &'a int {
-    type Out = &'a int;
+impl<'a> Tr for &'a i64 {
+    type Out = &'a i64;
 
-    fn out(self) -> &'a int { self }
+    fn out(self) -> &'a i64 { self }
 }
 
 fn main() with panic {
-    let long = 1;
+    let long: i64 = 1;
     let r1 = Tr::out(&long);
     let r2;
     {
-        let short = 2;
+        let short: i64 = 2;
         r2 = Tr::out(&short);
     }
     print(*r1 + *r2);

@@ -6,7 +6,7 @@ trait Tr {
     fn out(&self) -> Self::Out;
 }
 
-fn f<T: Tr>(t: &T) -> int {
+fn f<T: Tr>(t: &T) -> i64 {
     let _x = t.out();
     1
 }

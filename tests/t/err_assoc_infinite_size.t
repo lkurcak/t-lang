@@ -1,4 +1,4 @@
-// `S<int>` holds an `<int as Tr>::Out`, which is `S<int>`: a type that
+// `S<i64>` holds an `<i64 as Tr>::Out`, which is `S<i64>`: a type that
 // holds itself, of infinite size, though neither `S` nor the impl says so
 // alone.
 trait Tr {
@@ -7,8 +7,8 @@ trait Tr {
 
 struct S<T: Tr> { x: T::Out }
 
-impl Tr for int {
-    type Out = S<int>;
+impl Tr for i64 {
+    type Out = S<i64>;
 }
 
 fn main() {}

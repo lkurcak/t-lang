@@ -1,9 +1,9 @@
 // A derived impl needs exactly what makes its fields implement the trait,
 // which can be another trait: `Q<T>: Eq` needs `T: Show`, so `W<T>`'s
-// derived `Eq` does too. It used to need `T: Eq` instead, so `W<int>`
-// passed, and monomorphisation then couldn't find `int: Show`.
+// derived `Eq` does too. It used to need `T: Eq` instead, so `W<i64>`
+// passed, and monomorphisation then couldn't find `i64: Show`.
 trait Show {
-    fn show(&self) -> int;
+    fn show(&self) -> i64;
 }
 
 #[derive(Discard)]
@@ -17,8 +17,8 @@ impl<T: Show> Eq for Q<T> {
 struct W<T> { q: Q<T> }
 
 fn main() {
-    let a = W { q: Q { x: 1 } };
+    let a = W { q: Q { x: 1i64 } };
     let b = W { q: Q { x: 1 } };
     print_bool(a == b);
 }
-// error: cannot compare `W<int>` with `==`: that needs `int: Show`
+// error: cannot compare `W<i64>` with `==`: that needs `i64: Show`

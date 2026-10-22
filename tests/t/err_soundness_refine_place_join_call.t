@@ -1,11 +1,11 @@
 // After an `if` whose branch lends the struct to a call, its field is
 // whatever the call left, or what it was.
 #[derive(Copy, Discard)]
-struct P { x: int }
+struct P { x: i64 }
 
 fn zero(p: &mut P) { p.x = 0; }
 
-fn f(mut p: P, c: bool) -> int {
+fn f(mut p: P, c: bool) -> i64 {
     if p.x > 0 {
         if c {
             zero(&mut p);

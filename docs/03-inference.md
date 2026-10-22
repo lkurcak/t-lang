@@ -7,12 +7,12 @@ for nested functions `src/check/scope.rs` and `src/lift.rs`.
 ```rust
 fn main() with panic {
     let twice = |f, x| f(f(x));
-    print(twice(|x| x + 5, 0)); // expect: 10
+    print(twice(|x| x + 5, 0i64)); // expect: 10
 }
 ```
 
 Nothing says what `f` and `x` are, yet the checker works out that `twice` is
-`fn(fn(int) -> int, int) -> int`. This step is about how.
+`fn(fn(i64) -> i64, i64) -> i64`. This step is about how.
 
 > Since step 6c, a closure that captures, like `|x| x + n`, has a type of
 > its own rather than a function type, and borrows what it captures. Where
@@ -36,7 +36,7 @@ in scope: `|x| x + n` reads the `n` around it. That's what makes it a
 parameters and other functions.
 
 Closures and functions have the same types, so either can go wherever a
-`fn(int) -> int` is wanted. (Since step 6c, only closures that capture
+`fn(i64) -> i64` is wanted. (Since step 6c, only closures that capture
 nothing do.)
 
 ### Nested functions
@@ -49,7 +49,7 @@ it would at the top level; only its name is scoped, to the block
 fn main() with panic {
     print(fact(5)); // expect: 120
 
-    fn fact(n: int) -> int with panic {
+    fn fact(n: i64) -> i64 with panic {
         if n == 0 { 1 } else { n * fact(n - 1) }
     }
 }
@@ -69,7 +69,7 @@ type parameters of the function it's in, only other functions and types:
 ```rust,error
 fn main() {
     let n = 5;
-    fn add_n(x: int) -> int {
+    fn add_n(x: i64) -> i64 {
         x + n // error: can't capture `n` in a nested `fn`; use a closure
     }
     print(add_n(1));
@@ -116,8 +116,8 @@ fn main() with panic {
     print(perimeter(Rect { w: 2, h: 3 })); // expect: 10
 
     #[derive(Discard)]
-    struct Rect { w: int, h: int }
-    fn perimeter(r: Rect) -> int with panic { 2 * (r.w + r.h) }
+    struct Rect { w: i64, h: i64 }
+    fn perimeter(r: Rect) -> i64 with panic { 2 * (r.w + r.h) }
 }
 ```
 
@@ -133,7 +133,7 @@ leave the block, since inference doesn't need the name:
 fn main() {
     let p = {
         #[derive(Discard)]
-        struct P { x: int }
+        struct P { x: i64 }
         P { x: 1 }
     };
     print(p.x); // expect: 1
@@ -145,13 +145,13 @@ two types. They look the same in a message, so when they meet, it says
 which is which:
 
 ```rust,error
-fn f() -> int {
+fn f() -> i64 {
     #[derive(Discard)]
-    struct P { x: int }
-    fn g(p: P) -> int { p.x }
-    fn h() -> int {
+    struct P { x: i64 }
+    fn g(p: P) -> i64 { p.x }
+    fn h() -> i64 {
         #[derive(Discard)]
-        struct P { x: int }
+        struct P { x: i64 }
         g(P { x: 1 }) // error: these are two different types called `P`
     }
     h()
@@ -171,11 +171,11 @@ T-Abs has a problem the step 1 rules didn't: nothing in `|x| x + 1` says what
 T1 is. Rules are read bottom-up as an algorithm, and this one needs to *guess*.
 There are three places the checker can learn it from, tried in this order:
 
-1. **An annotation:** `|x: int| x + 1`.
+1. **An annotation:** `|x: i64| x + 1`.
 2. **The context:** in `apply(|x| x + 1, 2)`, `apply` takes a
-   `fn(int) -> int`, so `x` must be an `int`. That's bidirectional typing,
+   `fn(i64) -> i64`, so `x` must be an `i64`. That's bidirectional typing,
    below.
-3. **How `x` is used:** `x + 1` only works if `x` is an `int`. That's
+3. **How `x` is used:** `x + 1` only works if `x` is an `i64`. That's
    inference by unification, next.
 
 ## Type variables and unification
@@ -205,11 +205,11 @@ f(f(x))    f(x) : δ is its argument:              δ = β
 twice : fn(fn(β) -> β, β) -> β
 
 twice(adder(5), 0)
-           fn(int) -> int = fn(β) -> β:           β = int
-           0 : int = β                            fine, β is int
+           fn(i64) -> i64 = fn(β) -> β:           β = i64
+           0 : i64 = β                            fine, β is i64
 ```
 
-So `twice(adder(5), 0)` is an `int`. Notice that `β` was only found at the
+So `twice(adder(5), 0)` is an `i64`. Notice that `β` was only found at the
 call, two lines after `twice` was defined. Unification doesn't care what
 order it learns things in.
 
@@ -250,8 +250,8 @@ need it known right then:
 
 ```rust,error
 #[derive(Discard)]
-struct P { x: int, y: int }
-fn on_point(f: fn(P) -> int) -> int { f(P { x: 3, y: 4 }) }
+struct P { x: i64, y: i64 }
+fn on_point(f: fn(P) -> i64) -> i64 { f(P { x: 3, y: 4 }) }
 
 fn main() {
     print(on_point(|p| p.x)); // fine
@@ -269,7 +269,7 @@ already there since step 1:
 - `check(e, T)` is told the type `e` should have (Γ ⊢ e ⇐ T).
 
 Until now, checking was just "synthesize, then compare". It becomes its own
-mode for closures: `check(|p| p.x, fn(P) -> int)` gives `p` the type `P`
+mode for closures: `check(|p| p.x, fn(P) -> i64)` gives `p` the type `P`
 *before* looking at the body. Every place with a known type checks against it:
 arguments against parameter types, `let x: T = e`, a function's body against
 its return type, struct fields, and blocks and `match` arms against the type
@@ -304,8 +304,8 @@ And a variable has *one* type:
 ```rust,error
 fn main() {
     let id = |x| x;
-    print(id(1));         // id : fn(int) -> int from here on
-    print_bool(id(true)); // error: expected `int`, found `bool`
+    print(id(1i64));      // id : fn(i64) -> i64 from here on
+    print_bool(id(true)); // error: expected `i64`, found `bool`
 }
 ```
 
@@ -344,7 +344,7 @@ get() + n  // 3
 The hard part is where the environment *lives*. Take
 
 ```rust,error
-fn adder(n: int) -> fn(int) -> int { |x| x + n } // error: found a closure that captures `n`
+fn adder(n: i64) -> fn(i64) -> i64 { |x| x + n } // error: found a closure that captures `n`
 ```
 
 `n` is a parameter, on `adder`'s stack frame, but the closure outlives that
@@ -374,7 +374,7 @@ captures.)
 Closures that capture nothing are plain functions, and go anywhere.
 
 The rule (`src/check/escape.rs`) follows *where a value may have come from*,
-not its type: `fn(int) -> int` is one type, whether or not the function
+not its type: `fn(i64) -> i64` is one type, whether or not the function
 behind it captures. A value may be a closure that captures if it's
 
 - a closure literal that captures a local,
@@ -390,7 +390,7 @@ the heap, returning and storing are the only ways a value can outlive its
 frame. So that's the whole rule. (Step 5 adds two more ways, assigning and
 boxing, and the rule covers them too.)
 
-It's also coarse. `fn id(f: fn(int) -> int) -> fn(int) -> int { f }` is an
+It's also coarse. `fn id(f: fn(i64) -> i64) -> fn(i64) -> i64 { f }` is an
 error, though it only hands the caller back its own closure, which is still
 alive. Telling those apart means saying in the type *which* frame a closure
 borrows from: `id` returns something that lives as long as its argument. That's
@@ -413,7 +413,7 @@ rule was in the checker, so that a compiled T would never need to.
 
 ## Design decisions worth noticing
 
-- **Rust's syntax:** `|x| x + 1`, `|x: int| -> int { .. }` (a return type
+- **Rust's syntax:** `|x| x + 1`, `|x: i64| -> i64 { .. }` (a return type
   needs a block), and `|| 1` with no parameters. `||` is a single token, so
   the parser accepts it where an expression starts as an empty parameter list.
 - **Capturing closures went down, not up**, until 6c. See *Closures and
@@ -460,12 +460,12 @@ rule was in the checker, so that a compiled T would never need to.
 5. `Lambda::captures` lists functions a closure calls too, and the
    interpreter skips them. Why can't it tell them apart from locals
    when it computes them? Could the checker?
-6. Until step 6c, `fn id(f: fn(int) -> int) -> fn(int) -> int { f }` was
+6. Until step 6c, `fn id(f: fn(i64) -> i64) -> fn(i64) -> i64 { f }` was
    rejected, though it's harmless on its own. Write a program that would
    have gone wrong if it weren't, using `id` and a closure that captures.
    Then: why can't it go wrong since 6c?
 7. *Defunctionalization* (Reynolds, 1972) compiles closures without a heap
-   differently: every closure of type `fn(int) -> int` in the program
+   differently: every closure of type `fn(i64) -> i64` in the program
    becomes a variant of one enum holding its environment, and calling one is
    a `match`. Then `adder` works, returning an enum. What's the size of that
    enum? What goes wrong with `closure_chain.t` if each closure there is

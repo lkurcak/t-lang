@@ -1,10 +1,10 @@
 // So can a `&mut` to the field.
 #[derive(Copy, Discard)]
-struct P { x: int }
+struct P { x: i64 }
 
-fn zero(r: &mut int) { *r = 0; }
+fn zero(r: &mut i64) { *r = 0; }
 
-fn f(mut p: P) -> int {
+fn f(mut p: P) -> i64 {
     if p.x > 0 {
         zero(&mut p.x);
         10 / p.x

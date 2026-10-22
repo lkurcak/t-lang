@@ -1,9 +1,9 @@
 // Giving a variable a new value throws the old one away.
-struct Fd { n: int }
+struct Fd { n: i64 }
 
-fn open(n: int) -> Fd { Fd { n } }
+fn open(n: i64) -> Fd { Fd { n } }
 
-fn close(fd: Fd) -> int {
+fn close(fd: Fd) -> i64 {
     let Fd { n } = fd;
     n
 }

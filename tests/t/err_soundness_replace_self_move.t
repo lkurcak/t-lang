@@ -2,9 +2,9 @@
 
 use core::mem::replace;
 
-struct Fd { n: int }
+struct Fd { n: i64 }
 
-fn close(f: Fd) -> int {
+fn close(f: Fd) -> i64 {
     let Fd { n } = f;
     n
 }

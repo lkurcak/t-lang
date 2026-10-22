@@ -1,5 +1,5 @@
 #[derive(Discard, Copy)]
-enum E<'a> { A(&'a mut int), B }
+enum E<'a> { A(&'a mut i64), B }
 
 fn main() {}
-// error: `E` can't be `Copy`: its variant `A` holds a `&'a mut int`, which isn't
+// error: `E` can't be `Copy`: its variant `A` holds a `&'a mut i64`, which isn't

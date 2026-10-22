@@ -1,4 +1,4 @@
-fn f(b: bool) -> int {
+fn f(b: bool) -> i64 {
     match b { true => 1 }
 }
 fn main() {}

@@ -114,7 +114,7 @@ pub(super) fn symbols(prog: &Program, modules: &Modules) -> Vec<String> {
 
 /// The name a function or type was written with, from its symbol or the
 /// name of a copy of it that monomorphisation made: `helper` for
-/// `main::helper#2`, `id::<int>` for `id::<int>`, `helper::<Point>` for
+/// `main::helper#2`, `id::<i64>` for `id::<i64>`, `helper::<Point>` for
 /// `main::helper::<main::Point>`. For messages, which shouldn't show
 /// symbols. Anything else in `symbol`, like the `fn(..) -> ..` of a type,
 /// stays as it is.
@@ -317,6 +317,7 @@ pub(super) struct Outer {
     withins: Vec<super::effects::Within>,
     unsafe_blocks: Vec<Span>,
     unsafe_uses: Vec<(Span, crate::types::Type)>,
+    literals: Vec<super::Literal>,
 }
 
 impl Checker {
@@ -350,6 +351,7 @@ impl Checker {
             withins: std::mem::take(&mut self.withins),
             unsafe_blocks: std::mem::take(&mut self.unsafe_blocks),
             unsafe_uses: std::mem::take(&mut self.unsafe_uses),
+            literals: std::mem::take(&mut self.literals),
         };
         self.closure_fix = fix.map(|fix| (outer.barrier, fix));
         let result = self.body(f, id);
@@ -373,6 +375,7 @@ impl Checker {
         self.withins = outer.withins;
         self.unsafe_blocks = outer.unsafe_blocks;
         self.unsafe_uses = outer.unsafe_uses;
+        self.literals = outer.literals;
         result
     }
 }

@@ -1,59 +1,59 @@
 #[derive(Discard)]
-enum Option::<int> { Some(int), None }
+enum Option::<i64> { Some(i64), None }
 
 #[derive(Discard)]
-enum Option::<Pair<Option<int>, int>> { Some(Pair::<Option<int>, int>), None }
+enum Option::<Pair<Option<i64>, i64>> { Some(Pair::<Option<i64>, i64>), None }
 
 #[derive(Discard)]
 enum Option::<bool> { Some(bool), None }
 
 #[derive(Discard)]
-struct Pair::<int, bool> { first: int, second: bool }
+struct Pair::<i64, bool> { first: i64, second: bool }
 
 #[derive(Discard)]
-struct Pair::<Option<int>, int> { first: Option::<int>, second: int }
+struct Pair::<Option<i64>, i64> { first: Option::<i64>, second: i64 }
 
 #[derive(Discard)]
-struct Pair::<bool, int> { first: bool, second: int }
+struct Pair::<bool, i64> { first: bool, second: i64 }
 
-fn id::<int>(x: int) -> int { x }
+fn id::<i64>(x: i64) -> i64 { x }
 
 fn id::<bool>(x: bool) -> bool { x }
 
-fn flip::<int, bool>(p: Pair::<int, bool>) -> Pair::<bool, int> {
-    Pair::<bool, int> { first: p.second, second: p.first }
+fn flip::<i64, bool>(p: Pair::<i64, bool>) -> Pair::<bool, i64> {
+    Pair::<bool, i64> { first: p.second, second: p.first }
 }
 
-fn map::<{panic}, int, int, {closure#1619}>(o: Option::<int>, f: {closure#1619}) -> Option::<int>
+fn map::<{panic}, i64, i64, {closure#1630}>(o: Option::<i64>, f: {closure#1630}) -> Option::<i64>
 with panic
 {
     match o {
-        Option::<int>::Some(x) => Option::<int>::Some(f(x)),
-        Option::<int>::None => Option::<int>::None,
+        Option::<i64>::Some(x) => Option::<i64>::Some(f(x)),
+        Option::<i64>::None => Option::<i64>::None,
     }
 }
 
-fn map::<{panic}, int, int, fn(int) -> int with panic>(
-    o: Option::<int>,
-    f: fn(int) -> int with panic,
-) -> Option::<int> with panic {
+fn map::<{panic}, i64, i64, fn(i64) -> i64 with panic>(
+    o: Option::<i64>,
+    f: fn(i64) -> i64 with panic,
+) -> Option::<i64> with panic {
     match o {
-        Option::<int>::Some(x) => Option::<int>::Some(f(x)),
-        Option::<int>::None => Option::<int>::None,
+        Option::<i64>::Some(x) => Option::<i64>::Some(f(x)),
+        Option::<i64>::None => Option::<i64>::None,
     }
 }
 
-fn map::<{}, int, bool, fn(int) -> bool>(o: Option::<int>, f: fn(int) -> bool) -> Option::<bool> {
+fn map::<{}, i64, bool, fn(i64) -> bool>(o: Option::<i64>, f: fn(i64) -> bool) -> Option::<bool> {
     match o {
-        Option::<int>::Some(x) => Option::<bool>::Some(f(x)),
-        Option::<int>::None => Option::<bool>::None,
+        Option::<i64>::Some(x) => Option::<bool>::Some(f(x)),
+        Option::<i64>::None => Option::<bool>::None,
     }
 }
 
-fn unwrap_or::<int>(o: Option::<int>, default: int) -> int {
+fn unwrap_or::<i64>(o: Option::<i64>, default: i64) -> i64 {
     match o {
-        Option::<int>::Some(x) => x,
-        Option::<int>::None => default,
+        Option::<i64>::Some(x) => x,
+        Option::<i64>::None => default,
     }
 }
 
@@ -64,43 +64,43 @@ fn unwrap_or::<bool>(o: Option::<bool>, default: bool) -> bool {
     }
 }
 
-fn twice::<int>(f: fn(int) -> int with panic, x: int) -> int with panic { f(id::<int>(f(x))) }
+fn twice::<i64>(f: fn(i64) -> i64 with panic, x: i64) -> i64 with panic { f(id::<i64>(f(x))) }
 
-fn repeat::<int>(f: fn(int) -> int with panic, x: int, n: int) -> int with panic {
-    if n == 0 { x } else { repeat::<int>(f, f(x), n - 1) }
+fn repeat::<i64>(f: fn(i64) -> i64 with panic, x: i64, n: i64) -> i64 with panic {
+    if n == 0i64 { x } else { repeat::<i64>(f, f(x), n - 1i64) }
 }
 
-fn inc(x: int) -> int with panic { x + 1 }
+fn inc(x: i64) -> i64 with panic { x + 1i64 }
 
 fn main() with panic {
-    print(id::<int>(1));
+    print(id::<i64>(1i64));
     print_bool(id::<bool>(true));
-    let p = flip::<int, bool>(Pair::<int, bool> { first: 1, second: false });
+    let p = flip::<i64, bool>(Pair::<i64, bool> { first: 1i64, second: false });
     print_bool(p.first);
     print(p.second);
-    let n = 10;
-    let o = map::<{panic}, int, int, {closure#1619}>(Option::<int>::Some(4), |x| x * n);
-    print(unwrap_or::<int>(o, 0));
-    let none: Option::<int> = Option::<int>::None;
-    print(unwrap_or::<int>(
-        map::<{panic}, int, int, fn(int) -> int with panic>(none, |x| x + 1),
-        -1,
+    let n: i64 = 10i64;
+    let o = map::<{panic}, i64, i64, {closure#1630}>(Option::<i64>::Some(4i64), |x| x * n);
+    print(unwrap_or::<i64>(o, 0i64));
+    let none: Option::<i64> = Option::<i64>::None;
+    print(unwrap_or::<i64>(
+        map::<{panic}, i64, i64, fn(i64) -> i64 with panic>(none, |x| x + 1i64),
+        -1i64,
     ));
     print_bool(unwrap_or::<bool>(
-        map::<{}, int, bool, fn(int) -> bool>(Option::<int>::Some(3), |x| x > 2),
+        map::<{}, i64, bool, fn(i64) -> bool>(Option::<i64>::Some(3i64), |x| x > 2i64),
         false,
     ));
-    print(twice::<int>(inc, 0));
-    print(repeat::<int>(|x| x * 2, 1, 10));
-    let nested = Option::<Pair<Option<int>, int>>::Some(Pair::<Option<int>, int> {
-        first: Option::<int>::Some(1),
-        second: 2,
+    print(twice::<i64>(inc, 0i64));
+    print(repeat::<i64>(|x| x * 2i64, 1i64, 10i64));
+    let nested = Option::<Pair<Option<i64>, i64>>::Some(Pair::<Option<i64>, i64> {
+        first: Option::<i64>::Some(1i64),
+        second: 2i64,
     });
     match nested {
-        Option::<Pair<Option<int>, int>>::Some(
-            Pair::<Option<int>, int> { first: Option::<int>::Some(a), second: b },
+        Option::<Pair<Option<i64>, i64>>::Some(
+            Pair::<Option<i64>, i64> { first: Option::<i64>::Some(a), second: b },
         ) => print(a + b),
-        _ => print(0),
+        _ => print(0i64),
     }
-    print(twice::<int>(id::<int>, 7));
+    print(twice::<i64>(id::<i64>, 7i64));
 }

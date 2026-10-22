@@ -3,7 +3,7 @@
 fn main() {
     let r;
     'outer: loop {
-        let y = 5;
+        let y: i64 = 5;
         loop {
             r = &y;
             break 'outer;

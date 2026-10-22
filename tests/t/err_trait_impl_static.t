@@ -1,12 +1,12 @@
 // Found for a `&S` of any lifetime, so `get` would return a reference to
 // a local as `'static`.
 #[derive(Discard)]
-struct S { x: int }
+struct S { x: i64 }
 
-trait Get { fn get(self) -> &'static int; }
+trait Get { fn get(self) -> &'static i64; }
 
 impl Get for &'static S {
-    fn get(self) -> &'static int { &self.x }
+    fn get(self) -> &'static i64 { &self.x }
 }
 
 fn main() {

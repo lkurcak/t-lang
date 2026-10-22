@@ -3,7 +3,7 @@
 
 use core::mem::swap;
 
-struct Fd { n: int }
+struct Fd { n: i64 }
 
 struct P { a: Fd, b: Fd }
 

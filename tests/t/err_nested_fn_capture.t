@@ -3,7 +3,7 @@
 fn main() {
     let n = 2;
     /// Adds `n`.
-    fn add_n(x: int) -> int { x + n }
+    fn add_n(x: i64) -> i64 { x + n }
     print(add_n(1));
 }
 // error: can't capture `n` in a nested `fn`; use a closure

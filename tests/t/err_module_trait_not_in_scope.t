@@ -1,16 +1,16 @@
 // `x.show()` only looks at traits in scope here: `Show` isn't.
 mod show {
     pub trait Show {
-        fn show(&self) -> int;
+        fn show(&self) -> i64;
     }
 
     impl Show for super::P {
-        fn show(&self) -> int { self.n }
+        fn show(&self) -> i64 { self.n }
     }
 }
 
 #[derive(Discard)]
-struct P { n: int }
+struct P { n: i64 }
 
 fn main() {
     let p = P { n: 1 };

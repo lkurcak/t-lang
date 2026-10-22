@@ -1,5 +1,5 @@
 // Nor does an impl's: its methods could have a `T` by value. So this
-// impl isn't one for `&[int]`.
+// impl isn't one for `&[i64]`.
 trait Show {
     fn show(&self);
 }
@@ -9,7 +9,7 @@ impl<T> Show for &T {
 }
 
 fn main() {
-    let s: &[int] = core::slice::empty();
+    let s: &[i64] = core::slice::empty();
     Show::show(&s);
 }
-// error: `&[int]` doesn't implement `Show`
+// error: `&[i64]` doesn't implement `Show`

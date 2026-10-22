@@ -1,8 +1,8 @@
 // Assigning the whole struct changes its fields.
 #[derive(Copy, Discard)]
-struct P { x: int }
+struct P { x: i64 }
 
-fn f(mut p: P, q: P) -> int {
+fn f(mut p: P, q: P) -> i64 {
     if p.x > 0 {
         p = q;
         10 / p.x

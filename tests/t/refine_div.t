@@ -1,6 +1,6 @@
 // A divisor known to be positive can't be zero, nor -1 under the least
-// `int`, so dividing by it can't panic.
-fn div(a: int, d: { d: int | d > 0 }) -> int { a / d }
+// `i64`, so dividing by it can't panic.
+fn div(a: i64, d: { d: i64 | d > 0 }) -> i64 { a / d }
 
 fn main() {
     print(div(10, 3)); // expect: 3

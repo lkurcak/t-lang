@@ -29,7 +29,7 @@ pub(crate) struct Typed {
     pub(crate) sites: HashMap<NodeId, NodeId>,
     /// How many references each pattern looked through before matching
     /// (*match ergonomics*): `Option::Some(x)` matching a
-    /// `&Option<int>` looks through one, and binds `x` to a `&int`.
+    /// `&Option<i64>` looks through one, and binds `x` to a `&i64`.
     pub(crate) peels: HashMap<NodeId, usize>,
     /// The struct each struct pattern matches, by the pattern's id.
     pub(crate) struct_pats: HashMap<NodeId, Type>,

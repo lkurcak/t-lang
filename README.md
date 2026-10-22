@@ -7,10 +7,10 @@ type-theory concept at a time, mainly to learn what those concepts are and why
 they matter.
 
 ```rust
-enum Shape { Circle(int), Rect(int, int), Empty }
+enum Shape { Circle(i64), Rect(i64, i64), Empty }
 
 /// The area of `s`, with π rounded down to 3.
-fn area(s: Shape) -> int with panic {
+fn area(s: Shape) -> i64 with panic {
     match s {
         Shape::Circle(r) => 3 * r * r,
         Shape::Rect(w, h) => w * h,
@@ -18,11 +18,11 @@ fn area(s: Shape) -> int with panic {
     }
 }
 
-fn fact(n: int) -> int with panic {
+fn fact(n: i64) -> i64 with panic {
     if n <= 1 { 1 } else { n * fact(n - 1) }
 }
 
-fn twice<e, F: Fn(int) -> int with e + Discard>(f: F, x: int) -> int with e { f(f(x)) }
+fn twice<e, F: Fn(i64) -> i64 with e + Discard>(f: F, x: i64) -> i64 with e { f(f(x)) }
 
 fn main() with panic {
     let n = 5;
@@ -34,7 +34,7 @@ fn main() with panic {
     print(area(Shape::Circle(2)) + area(Shape::Empty)); // expect: 12
 
     // A nested `fn`: only `main` can see it.
-    fn square(x: int) -> int with panic { x * x }
+    fn square(x: i64) -> i64 with panic { x * x }
 }
 ```
 
@@ -85,8 +85,8 @@ enum ffi_result { OK, Retry, Fatal }
 fn main() {
     let r = ffi_result::OK;
     match r {
-        ffi_result::OK => print(0), // expect: 0
-        _ => print(1),
+        ffi_result::OK => print(0i64), // expect: 0
+        _ => print(1i64),
     }
 }
 ```
@@ -220,7 +220,7 @@ Each `tests/t/*.t` file is a program with its expectations in comments:
 
 ```rust,fragment
 print(1 + 2); // expect: 3
-// error: expected `int`, found `bool`
+// error: expected `i64`, found `bool`
 // warning: unreachable pattern
 ```
 
@@ -268,14 +268,14 @@ has to fit that:
   or own, called through the `Fn` traits, like Rust's: no closure needs the
   heap. The borrow checker sees what each borrows. See
   [docs/06c-closures.md](docs/06c-closures.md). A function returns one as
-  `impl Fn(int) -> int`, a type its callers know only by what it can do
+  `impl Fn(i64) -> i64`, a type its callers know only by what it can do
   (see [docs/06c.1-opaque-types.md](docs/06c.1-opaque-types.md)).
 - **Errors are values, not exceptions.** There's no unwinding. A panic
-  aborts, and a function's type says if it may: `fn mean(a: int, b: int) ->
-  int with panic`. One that doesn't say so can't, nor can a `main` that
+  aborts, and a function's type says if it may: `fn mean(a: i64, b: i64) ->
+  i64 with panic`. One that doesn't say so can't, nor can a `main` that
   doesn't, nor anything it calls; allocating is in types the same way,
   `with alloc`. See [docs/07-effects.md](docs/07-effects.md). Arithmetic
-  the checker proves can't overflow, from refinement types like `{ d: int
+  the checker proves can't overflow, from refinement types like `{ d: i64
   | d > 0 }`, can't panic (see
   [docs/08-refinement-types.md](docs/08-refinement-types.md)). A struct's
   fields can have them too, which every value of it keeps (see
@@ -285,8 +285,14 @@ has to fit that:
   be forgotten. See [docs/06a.1-linear-types.md](docs/06a.1-linear-types.md).
 - **The core library is written in T.** `Option`, `Result`, `Iterator` and
   the rest are checked like any program; all the checker takes on trust is
-  its intrinsics, `swap`, `panic`, `checked_mul` and a slice's few, and
-  the arithmetic operators. See [docs/06e-core.md](docs/06e-core.md).
+  its intrinsics, `swap`, `panic`, `checked_mul`, `least`, `greatest` and a
+  slice's few, and the arithmetic operators. See
+  [docs/06e-core.md](docs/06e-core.md).
+- **Integers say how big they are.** `i8` to `i64`, `u8` to `u64`, `isize`
+  and `usize`, and no `int`: an operator gives the number it does in ℤ, or
+  panics, and never wraps; `x as u8` is the same number or a panic. What the
+  checker proves of `usize` holds on 32- and 64-bit machines alike. See
+  [docs/11-integers.md](docs/11-integers.md).
 - **Unsafe code is marked, and small.** What the checker can't check, like
   which slots of a raw buffer hold values, is `unsafe`, an effect only an
   `unsafe` block takes away, so the trust is exactly those blocks. The
@@ -314,18 +320,19 @@ combine features in ways nobody planned for.
 | 6a.1 ✅ | values must be used up, unless `Discard`; `replace` | linear types, substructural rules (weakening, contraction) | [docs/06a.1-linear-types.md](docs/06a.1-linear-types.md) |
 | 6b ✅ | associated types, projections, equality bounds | type-level functions (open type families), normalisation with lifetimes | [docs/06b-associated-types.md](docs/06b-associated-types.md) |
 | 6c ✅ | closures as `Fn` traits | closure conversion, a type per closure, capturing by reference | [docs/06c-closures.md](docs/06c-closures.md) |
-| 6c.1 ✅ | returning closures, `-> impl Fn(int) -> int` | existential (opaque) types, which lifetimes they capture | [docs/06c.1-opaque-types.md](docs/06c.1-opaque-types.md) |
+| 6c.1 ✅ | returning closures, `-> impl Fn(i64) -> i64` | existential (opaque) types, which lifetimes they capture | [docs/06c.1-opaque-types.md](docs/06c.1-opaque-types.md) |
 | 6d ✅ | modules: `mod`, `use`, `pub` | namespaces, abstract types (existential types, representation independence), coherence and orphan rules | [docs/06d-modules.md](docs/06d-modules.md) |
 | 6d.1 ✅ | modules in files of their own: `mod m;` | a file is the module's braces; one file per module path | [docs/06d.1-files.md](docs/06d.1-files.md) |
 | 6e ✅ | a small `core` library: `Option`, `Result`, `Ord`, `Iterator`, `for`, `a..b`, `where` clauses | a library written in T with one trusted intrinsic, a prelude that can't change a program, orphan rules between packages, `for` as a desugaring | [docs/06e-core.md](docs/06e-core.md) |
 | 6e.1 ✅ | closures that take a reference of any lifetime; `Iterator::filter` | higher-ranked closure types: a closure's body checked for every lifetime, with placeholders; its result's lifetimes inferred from its body, then checked; signatures equal up to renaming | [docs/06e.1-higher-ranked-closures.md](docs/06e.1-higher-ranked-closures.md) |
 | 7 ✅ | `with panic`, `with alloc`: what a call may do, in its type; `panic()`, `unwrap`, `checked_add` | effect systems, effect polymorphism (effects as a kind, least solutions), associated effects; divergence left for a termination checker | [docs/07-effects.md](docs/07-effects.md) |
 | 7.1 ✅ | impl parameters a bound decides, `where` on impls; `Map<I, F>` and `Filter<I, P>` | functional dependencies (a parameter as a function of the type), termination of resolution with bounds on projections (strongly connected components of the trait graph) | [docs/07.1-impl-parameters.md](docs/07.1-impl-parameters.md) |
-| 8 ✅ | refinement types, `{ d: int \| d > 0 }`, on parameters, results and `let`s; arithmetic proved total | refinement types, verification conditions from facts along each path (static single assignment), linear integer arithmetic decided by Fourier–Motzkin with integer rounding: sound, incomplete | [docs/08-refinement-types.md](docs/08-refinement-types.md) |
-| 8.1 ✅ | refinements on struct fields, `hi: { h: int \| h >= lo }`; facts through field reads | invariants of a type, kept by every value; facts about places (fields, `*`), forgotten where they may change | [docs/08.1-field-refinements.md](docs/08.1-field-refinements.md) |
+| 8 ✅ | refinement types, `{ d: i64 \| d > 0 }`, on parameters, results and `let`s; arithmetic proved total | refinement types, verification conditions from facts along each path (static single assignment), linear integer arithmetic decided by Fourier–Motzkin with integer rounding: sound, incomplete | [docs/08-refinement-types.md](docs/08-refinement-types.md) |
+| 8.1 ✅ | refinements on struct fields, `hi: { h: i64 \| h >= lo }`; facts through field reads | invariants of a type, kept by every value; facts about places (fields, `*`), forgotten where they may change | [docs/08.1-field-refinements.md](docs/08.1-field-refinements.md) |
 | 9 ✅ | `unsafe` blocks, `with unsafe`; an `alloc` library with `RawBuf<T>`, a buffer of slots | unsafe code as an effect, discharged only by a block; a small trusted base, and its obligations checked as the program runs (as Miri does) | [docs/09-unsafe.md](docs/09-unsafe.md) |
 | 9.1 ✅ | `alloc::list::List<T>`, a dense, resizable array, and iterating it | a safe interface over unsafe code, kept by a type's invariant (representation invariants, as RustBelt's), which privacy, borrows and linearity protect | [docs/09.1-list.md](docs/09.1-list.md) |
 | 10 ✅ | slices, `&[T]` and `&mut [T]`; `List::as_slice`, `iter_mut` | a kind of types that are only ever behind a reference, so no `?Sized`; splitting a unique borrow into disjoint ones (`split_at_mut`), so `iter_mut` is safe code | [docs/10-slices.md](docs/10-slices.md) |
+| 11 ✅ | integer types `i8`..`u64`, `isize`, `usize`, no `int`; literals inferred, or `255u8`; `x as u8`; `T: Int` | a family of base types, each an interval of ℤ; literals typed by inference with no default; proofs about a size the machine decides, by a symbolic bound; generic code over a closed (sealed) trait | [docs/11-integers.md](docs/11-integers.md) |
 | — | `std` | | |
 | — | C backend | | when it's worth it |
 

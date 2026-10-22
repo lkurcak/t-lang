@@ -4,8 +4,13 @@
 //! The logic is quantifier-free linear integer arithmetic: sums of
 //! variables times constants, compared with `<=` and `==`, under `&&`, `||`
 //! and `!`. A `bool` is a variable that's 0 or 1. Integers are the
-//! mathematical ones; that every `int` is between the least and the
-//! greatest is a fact like any other, which each variable comes with.
+//! mathematical ones; that a `u8` is between 0 and 255 is a fact like any
+//! other, which each variable comes with. So is that a `usize` is between
+//! 0 and the greatest `usize`, which is a variable too, as how big it is
+//! depends on the machine, and all the checker knows of it is that it's
+//! between the greatest 32-bit and the greatest 64-bit number: so what it
+//! proves, it proves of every machine. A type parameter `T: Int`'s values
+//! are between two such variables (see docs/11-integers.md).
 //!
 //! `valid(facts, goal)` says whether the goal follows from the facts. It
 //! asks the opposite question, whether the facts and the goal's negation
@@ -36,11 +41,18 @@ use std::collections::{BTreeMap, HashMap};
 /// A variable of the logic, by number (see `Kind`).
 pub(crate) type Var = u32;
 
-/// What values a variable stands for: an `int` or a `bool` (0 or 1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// What values a variable stands for.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Kind {
-    Int,
+    /// An integer from the first sum to the second: its type's least and
+    /// greatest values. Each is a constant, or a sum of `Bound`s.
+    Int(Lin, Lin),
+    /// A `bool`: 0 or 1.
     Bool,
+    /// An integer from the first constant to the second: the least or
+    /// greatest value of a type whose size isn't known, a `usize` or a type
+    /// parameter's.
+    Bound(i128, i128),
 }
 
 /// A linear sum, `c1·x1 + .. + cn·xn + k`, with no zero coefficients and
@@ -377,21 +389,29 @@ fn impossible(atoms: &[Formula], kinds: &[Kind]) -> Option<bool> {
             _ => unreachable!("atoms only"),
         }
     }
-    // Each variable's range.
-    let mut vars = Vec::new();
+    // Each variable's range, and the ranges of the bounds those mention.
+    let mut vars: Vec<Var> = Vec::new();
     for l in les.iter().chain(&eqs) {
         vars.extend(l.vars());
     }
-    vars.sort();
-    vars.dedup();
-    for &v in &vars {
-        let (lo, hi) = match kinds[v as usize] {
-            Kind::Int => (i64::MIN as i128, i64::MAX as i128),
-            Kind::Bool => (0, 1),
+    let mut i = 0;
+    while i < vars.len() {
+        let v = vars[i];
+        i += 1;
+        if vars[..i - 1].contains(&v) {
+            continue;
+        }
+        let (lo, hi) = match &kinds[v as usize] {
+            Kind::Int(lo, hi) => {
+                vars.extend(lo.vars().chain(hi.vars()));
+                (lo.clone(), hi.clone())
+            }
+            Kind::Bool => (Lin::constant(0), Lin::constant(1)),
+            Kind::Bound(lo, hi) => (Lin::constant(*lo), Lin::constant(*hi)),
         };
         // lo - v <= 0 and v - hi <= 0
-        les.push(Lin::constant(lo).sub(&Lin::var(v))?);
-        les.push(Lin::var(v).plus(-hi)?);
+        les.push(lo.sub(&Lin::var(v))?);
+        les.push(Lin::var(v).sub(&hi)?);
     }
     // Equations: one with a variable of coefficient ±1 says what that
     // variable is, everywhere. Others become two inequalities.
@@ -542,26 +562,49 @@ mod tests {
         Lin::constant(k)
     }
 
-    const INTS: &[Kind] = &[Kind::Int, Kind::Int, Kind::Int];
+    fn i64() -> Kind {
+        Kind::Int(c(i64::MIN as i128), c(i64::MAX as i128))
+    }
+
+    fn ints() -> Vec<Kind> {
+        vec![i64(), i64(), i64()]
+    }
 
     #[test]
     fn simple() {
         // x > 0 ⇒ x != 0
         let f = Formula::lt(&c(0), &x()).unwrap();
         let g = Formula::eq(&x(), &c(0)).unwrap().not();
-        assert!(valid(std::slice::from_ref(&f), &g, INTS));
+        assert!(valid(std::slice::from_ref(&f), &g, &ints()));
         // x > 0 ⇏ x > 1
         let g = Formula::lt(&c(1), &x()).unwrap();
-        assert!(!valid(&[f], &g, INTS));
+        assert!(!valid(&[f], &g, &ints()));
     }
 
     #[test]
     fn machine_range() {
         // x + 1 <= MAX doesn't follow from nothing, but from x < y.
         let g = Formula::le(&x().plus(1).unwrap(), &c(i64::MAX as i128)).unwrap();
-        assert!(!valid(&[], &g, INTS));
+        assert!(!valid(&[], &g, &ints()));
         let f = Formula::lt(&x(), &y()).unwrap();
-        assert!(valid(&[f], &g, INTS));
+        assert!(valid(&[f], &g, &ints()));
+    }
+
+    #[test]
+    fn unknown_size() {
+        // x: usize, whose greatest, y, is from 2^32 - 1 to 2^64 - 1.
+        let kinds = &[
+            Kind::Int(c(0), y()),
+            Kind::Bound((1 << 32) - 1, (1 << 64) - 1),
+        ];
+        // x < 2^32 - 1 ⇒ x + 1 <= y, but x < 2^32 ⇏ x + 1 <= y.
+        let g = Formula::le(&x().plus(1).unwrap(), &y()).unwrap();
+        let f = Formula::lt(&x(), &c((1 << 32) - 1)).unwrap();
+        assert!(valid(&[f], &g, kinds));
+        let f = Formula::lt(&x(), &c(1 << 32)).unwrap();
+        assert!(!valid(&[f], &g, kinds));
+        // And nothing says x + 1 fits, without a fact.
+        assert!(!valid(&[], &g, kinds));
     }
 
     #[test]
@@ -569,11 +612,11 @@ mod tests {
         // 2x == 1 has no integer solution, so anything about x follows.
         let anything = Formula::eq(&x(), &c(5)).unwrap();
         let f = Formula::eq(&x().scale(2).unwrap(), &c(1)).unwrap();
-        assert!(valid(&[f], &anything, INTS));
+        assert!(valid(&[f], &anything, &ints()));
         // 1 <= 2x <= 1 neither, which only rounding sees.
         let lo = Formula::le(&c(1), &x().scale(2).unwrap()).unwrap();
         let hi = Formula::le(&x().scale(2).unwrap(), &c(1)).unwrap();
-        assert!(valid(&[lo, hi], &anything, INTS));
+        assert!(valid(&[lo, hi], &anything, &ints()));
     }
 
     #[test]
@@ -584,14 +627,14 @@ mod tests {
             Formula::eq(&x(), &c(2)).unwrap(),
         ]);
         let g = Formula::eq(&x(), &c(1)).unwrap().not();
-        assert!(valid(std::slice::from_ref(&f), &g, INTS));
+        assert!(valid(std::slice::from_ref(&f), &g, &ints()));
         let g = Formula::eq(&x(), &c(2)).unwrap().not();
-        assert!(!valid(&[f], &g, INTS));
+        assert!(!valid(&[f], &g, &ints()));
     }
 
     #[test]
     fn bools() {
-        let kinds = &[Kind::Bool, Kind::Int];
+        let kinds = &[Kind::Bool, i64()];
         // b ⇔ y > 0, b ⇒ y != 0
         let f = Formula::iff(Formula::holds(0), Formula::lt(&c(0), &y()).unwrap());
         let g = Formula::eq(&y(), &c(0)).unwrap().not();

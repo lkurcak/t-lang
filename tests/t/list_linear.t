@@ -3,7 +3,7 @@
 // rest. A list of lists is used up the same way.
 use alloc::list::List;
 
-struct Fd { n: int }
+struct Fd { n: i64 }
 
 fn close(fd: Fd) {
     let Fd { n } = fd;
@@ -20,12 +20,12 @@ fn main() with {alloc, panic} {
     // expect: 1
     // expect: 2
 
-    let mut ll: List<List<int>> = List::new();
-    let mut a: List<int> = List::new();
+    let mut ll: List<List<i64>> = List::new();
+    let mut a: List<i64> = List::new();
     a.push(4);
     ll.push(a);
     ll.push(List::new());
-    ll.free_with(|x: List<int>| {
+    ll.free_with(|x: List<i64>| {
         print(x.len());
         x.free()
     });

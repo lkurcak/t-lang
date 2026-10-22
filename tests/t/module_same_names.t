@@ -3,7 +3,7 @@
 // functions nested in it.
 mod a {
     #[derive(Discard)]
-    pub struct Point { pub v: int }
+    pub struct Point { pub v: i64 }
 
     pub fn make() -> Point { Point { v: 1 } }
 }
@@ -16,7 +16,7 @@ mod b {
 }
 
 mod main {
-    pub fn helper() -> int { 10 }
+    pub fn helper() -> i64 { 10 }
 }
 
 fn main() {
@@ -27,5 +27,5 @@ fn main() {
     print(helper());         // expect: 20
     print(main::helper());   // expect: 10
 
-    fn helper() -> int { 20 }
+    fn helper() -> i64 { 20 }
 }

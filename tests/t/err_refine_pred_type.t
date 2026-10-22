@@ -1,4 +1,4 @@
-fn f(k: { v: int | v + 1 }) -> int { k }
+fn f(k: { v: i64 | v + 1 }) -> i64 { k }
 
 fn main() {}
-// error: expected `bool`, found `int`
+// error: expected `bool`, found an integer

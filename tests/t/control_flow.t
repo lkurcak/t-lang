@@ -13,15 +13,15 @@ fn login(user_exists: bool) -> State {
     State::Ok
 }
 
-fn show(s: State) -> int {
+fn show(s: State) -> i64 {
     match s {
         State::Ok => 1,
         State::Unauthorized => 0,
     }
 }
 
-// The `None` arm is a `!`, which fits as the `int` the other arm is.
-fn or_minus_one(o: Option<int>) -> int with panic {
+// The `None` arm is a `!`, which fits as the `i64` the other arm is.
+fn or_minus_one(o: Option<i64>) -> i64 with panic {
     let n = match o {
         Option::Some(n) => n,
         Option::None => return -1,
@@ -30,7 +30,7 @@ fn or_minus_one(o: Option<int>) -> int with panic {
 }
 
 // A `loop`'s value is what its `break` gives it.
-fn first_square_above(n: int) -> int with panic {
+fn first_square_above(n: i64) -> i64 with panic {
     let mut i = 0;
     loop {
         if i * i > n { break i * i; }
@@ -39,7 +39,7 @@ fn first_square_above(n: int) -> int with panic {
 }
 
 // `continue` skips the rest of the body, `break` leaves the loop.
-fn sum_odd_below(n: int) -> int with panic {
+fn sum_odd_below(n: i64) -> i64 with panic {
     let mut sum = 0;
     let mut i = 0;
     while true {
@@ -52,7 +52,7 @@ fn sum_odd_below(n: int) -> int with panic {
 }
 
 // A `break` leaves the innermost loop only.
-fn pairs(n: int) -> int with panic {
+fn pairs(n: i64) -> i64 with panic {
     let mut count = 0;
     let mut i = 0;
     while i < n {
@@ -68,7 +68,7 @@ fn pairs(n: int) -> int with panic {
 }
 
 // A body that ends in a `return` is a `!`, and fits the result type.
-fn sign(n: int) -> int {
+fn sign(n: i64) -> i64 {
     if n < 0 { return -1; }
     if n == 0 { return 0; }
     return 1;
@@ -76,17 +76,17 @@ fn sign(n: int) -> int {
 
 // `return a + b` returns `a + b`: what follows a `return` runs as far right
 // as an expression can.
-fn add(a: int, b: int) -> int with panic {
+fn add(a: i64, b: i64) -> i64 with panic {
     return a + b;
 }
 
 // `return` with nothing after it returns `()`.
-fn print_positive(n: int) {
+fn print_positive(n: i64) {
     if n <= 0 { return; }
     print(n);
 }
 
-fn apply(f: fn(int) -> int, x: int) -> int { f(x) }
+fn apply(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }
 
 fn main() with panic {
     print(show(login(true)));                       // expect: 1
@@ -109,8 +109,8 @@ fn main() with panic {
     };
     print(apply(clamp, 50) + apply(clamp, 3));      // expect: 13
 
-    // `if` and `else` can be a `!` and an `int`.
-    let mut i = 0;
+    // `if` and `else` can be a `!` and an `i64`.
+    let mut i: i64 = 0;
     let found = loop {
         let v = if i < 3 { i * 2 } else { break -1; };
         if v == 4 { break v; }

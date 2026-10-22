@@ -2,13 +2,13 @@
 // One in a function that's never used goes without saying.
 fn main() {
     #[derive(Discard)]
-    struct Unused { x: int }
+    struct Unused { x: i64 }
     #[derive(Discard)]
     enum E { A, B }
     let _e = E::A;
     #[derive(Discard)]
     struct _OnPurpose {}
-    print(1); // expect: 1
+    print(1i64); // expect: 1
 }
 
 fn dead() {

@@ -2,7 +2,7 @@
 use alloc::list::List;
 
 fn main() with {alloc, panic} {
-    let mut l: List<&int> = List::new();
+    let mut l: List<&i64> = List::new();
     {
         let n = 1;
         l.push(&n);

@@ -549,6 +549,6 @@ fn could_match_in(
 fn builtin_eq(t: &Type) -> bool {
     matches!(
         t,
-        Type::Int | Type::Bool | Type::Unit | Type::Never | Type::Ref(..) | Type::Box(_)
+        Type::Int(_) | Type::Bool | Type::Unit | Type::Never | Type::Ref(..) | Type::Box(_)
     )
 }

@@ -1,12 +1,13 @@
 // Types left out are inferred from how values are used.
 
 #[derive(Discard, Eq)]
-enum Opt { None, Some(int) }
+enum Opt { None, Some(i64) }
 
 fn main() with panic {
-    // `x`'s type is unknown until `+ 1` says it's an int.
+    // `x`'s type is unknown until `+ 1` says it's an integer, and the call
+    // says which.
     let inc = |x| x + 1;
-    print(inc(1));                          // expect: 2
+    print(inc(1i64));                       // expect: 2
     // Learned from a later use: the call says `x` is a bool.
     let not = |x| if x { false } else { true };
     print_bool(not(false));                 // expect: true
@@ -17,19 +18,19 @@ fn main() with panic {
     let same = |a, b| a == b;
     print_bool(same(Opt::None, Opt::None)); // expect: true
     // Through a variable: `id`'s parameter is the same type everywhere, so
-    // once it's called with an int it's `fn(int) -> int`.
+    // once it's called with an i64 it's `fn(i64) -> i64`.
     let id = |x| x;
-    let y = id(3);
+    let y = id(3i64);
     print(y + 1);                           // expect: 4
     // Higher-order: `f` is a function because it's called.
     let call = |f, x| f(x);
     print(call(inc, 9));                    // expect: 10
 }
 
-// A match with no arms is a `!`, which fits any type: `int` here. (It can
+// A match with no arms is a `!`, which fits any type: `i64` here. (It can
 // never run, so neither can this function: `_` says that's on purpose.)
 #[derive(Discard)]
 enum _Never {}
-fn _absurd(n: _Never) -> int {
+fn _absurd(n: _Never) -> i64 {
     match n {}
 }

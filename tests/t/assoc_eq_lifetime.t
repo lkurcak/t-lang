@@ -3,20 +3,20 @@
 // one the closure knows.
 trait Tr { type Out: Discard; fn out(&self) -> Self::Out; }
 #[derive(Discard)]
-struct W<'b> { r: &'b int }
+struct W<'b> { r: &'b i64 }
 impl<'b> Tr for W<'b> {
-    type Out = &'b int;
-    fn out(&self) -> &'b int { self.r }
+    type Out = &'b i64;
+    fn out(&self) -> &'b i64 { self.r }
 }
 #[derive(Discard)]
 struct Hold<T: Tr> { o: T::Out }
 
-fn field<'a, T: Tr<Out = &'a int> + Discard>(x: T) -> &'a int {
+fn field<'a, T: Tr<Out = &'a i64> + Discard>(x: T) -> &'a i64 {
     let h = Hold::<T> { o: x.out() };
     h.o
 }
-fn in_closure<'a, T: Tr<Out = &'a int> + Discard>(x: T) -> int {
-    let f = |y: T| -> int { *y.out() };
+fn in_closure<'a, T: Tr<Out = &'a i64> + Discard>(x: T) -> i64 {
+    let f = |y: T| -> i64 { *y.out() };
     f(x)
 }
 

@@ -2,9 +2,9 @@
 // reads `r` before the next argument changes it; but `r` has one type for
 // as long as it lives, so it can't be given a reference to `tmp`, which
 // doesn't live as long as what came out of `id_ref`.
-fn id_ref(r: &Box<int>) -> &Box<int> { r }
+fn id_ref(r: &Box<i64>) -> &Box<i64> { r }
 
-fn f(x: &int, n: int) -> int with panic { *x + n }
+fn f(x: &i64, n: i64) -> i64 with panic { *x + n }
 
 fn main() with {alloc, panic} {
     let b1 = Box::new(1);

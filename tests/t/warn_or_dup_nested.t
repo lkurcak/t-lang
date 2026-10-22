@@ -1,7 +1,7 @@
 // Not a top-level alternative, so checking those alone would miss it.
 #[derive(Discard)]
-enum Opt { None, Some(int) }
-fn f(o: Opt) -> int {
+enum Opt { None, Some(i64) }
+fn f(o: Opt) -> i64 {
     match o {
         Opt::Some(1 | 1) => 1,
         _ => 0,

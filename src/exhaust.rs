@@ -40,18 +40,22 @@ pub enum Pat {
     /// be narrowed. `useful` never sees one: `plain` turns it into
     /// `Ctor::Int(lo, hi)` first. (A single int is a `Ctor::Int` from the
     /// start. It can't be narrowed, only be unreachable.)
-    Range(i64, i64, Span),
+    Range(i128, i128, Span, Ends),
     /// Matches if any alternative does. Each alternative keeps its source
     /// span, to point at it if it's unreachable.
     Or(Vec<(Pat, Span)>),
 }
+
+/// The least and greatest values of an integer type, which a range with an
+/// end left open runs to.
+pub type Ends = (i128, i128);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ctor {
     Bool(bool),
     Unit,
     /// The ints from the first to the second, inclusive.
-    Int(i64, i64),
+    Int(i128, i128),
     /// A struct has a single constructor.
     Struct,
     /// The n-th variant of an enum.
@@ -70,7 +74,7 @@ pub enum Redundant {
     /// narrower range: earlier arms and alternatives match the ints at one or
     /// both of its ends. Ints they match in the middle are fine, as in
     /// `5 => .., 0..10 => ..`, since there's no narrower range to write.
-    Trim(Span, i64, i64),
+    Trim(Span, Option<i128>, Option<i128>),
 }
 
 /// Finds every arm and or-pattern alternative that can never match, and every
@@ -117,12 +121,13 @@ pub fn redundant(adts: &Adts, ty: &Type, arms: &[Pat]) -> Vec<Redundant> {
                 }
             }
             if useful {
-                for (lo, hi, span) in ranges_in(&p) {
+                for (lo, hi, span, ends) in ranges_in(&p) {
                     let (a, b) = cx.reached(&rows, ty, &p, lo, hi, span);
                     match ranges.iter_mut().find(|r| r.span == span) {
                         Some(r) => r.reached = (r.reached.0.min(a), r.reached.1.max(b)),
                         None => ranges.push(Reach {
                             span,
+                            ends,
                             written: (lo, hi),
                             reached: (a, b),
                         }),
@@ -146,10 +151,10 @@ pub fn redundant(adts: &Adts, ty: &Type, arms: &[Pat]) -> Vec<Redundant> {
             .filter(|r| r.written != r.reached)
             .collect();
         wide.sort_by_key(|r| r.span.start);
-        found.extend(
-            wide.into_iter()
-                .map(|r| Redundant::Trim(r.span, r.reached.0, r.reached.1)),
-        );
+        found.extend(wide.into_iter().map(|r| {
+            let (lo, hi) = open(r.reached.0, r.reached.1, r.ends);
+            Redundant::Trim(r.span, lo, hi)
+        }));
     }
     found
 }
@@ -159,8 +164,9 @@ pub fn redundant(adts: &Adts, ty: &Type, arms: &[Pat]) -> Vec<Redundant> {
 /// union, from the lowest int any of them reaches to the highest.
 struct Reach {
     span: Span,
-    written: (i64, i64),
-    reached: (i64, i64),
+    ends: Ends,
+    written: (i128, i128),
+    reached: (i128, i128),
 }
 
 /// `p` with its ranges turned into plain constructors, for `useful`. The one
@@ -168,7 +174,7 @@ struct Reach {
 fn plain(p: &Pat, narrow: Option<(Span, Ctor)>) -> Pat {
     match p {
         Pat::Wild => Pat::Wild,
-        Pat::Range(lo, hi, span) => match narrow {
+        Pat::Range(lo, hi, span, _) => match narrow {
             Some((s, c)) if s == *span => Pat::Ctor(c, Vec::new()),
             _ => Pat::Ctor(Ctor::Int(*lo, *hi), Vec::new()),
         },
@@ -178,10 +184,10 @@ fn plain(p: &Pat, narrow: Option<(Span, Ctor)>) -> Pat {
 }
 
 /// The ranges in an or-free pattern, as `(lo, hi, span)`.
-fn ranges_in(p: &Pat) -> Vec<(i64, i64, Span)> {
+fn ranges_in(p: &Pat) -> Vec<(i128, i128, Span, Ends)> {
     match p {
         Pat::Wild => Vec::new(),
-        Pat::Range(lo, hi, span) => vec![(*lo, *hi, *span)],
+        Pat::Range(lo, hi, span, ends) => vec![(*lo, *hi, *span, *ends)],
         Pat::Ctor(_, args) => args.iter().flat_map(ranges_in).collect(),
         Pat::Or(_) => unreachable!("expanded before looking for ranges"),
     }
@@ -273,10 +279,10 @@ impl Cx<'_> {
         rows: &[Vec<Pat>],
         ty: &Type,
         p: &Pat,
-        lo: i64,
-        hi: i64,
+        lo: i128,
+        hi: i128,
         span: Span,
-    ) -> (i64, i64) {
+    ) -> (i128, i128) {
         let mut seen = Vec::new();
         for row in rows {
             ints_in(&row[0], &mut seen);
@@ -408,7 +414,11 @@ impl Cx<'_> {
     /// through it (*match ergonomics*). A box has none: patterns can't.
     fn all_ctors(&self, ty: &Type, seen: &[Ctor]) -> Option<Vec<Ctor>> {
         match peel(ty) {
-            Type::Int => Some(split(i64::MIN, i64::MAX, seen)),
+            // All of them, on every machine: a `usize` may be 64 bits wide.
+            Type::Int(t) => {
+                let (lo, hi) = t.range_64();
+                Some(split(lo, hi, seen))
+            }
             Type::Bool => Some(vec![Ctor::Bool(false), Ctor::Bool(true)]),
             Type::Unit => Some(vec![Ctor::Unit]),
             Type::Never => Some(Vec::new()),
@@ -519,7 +529,11 @@ impl Cx<'_> {
         match (c, ty) {
             (Ctor::Bool(b), _) => b.to_string(),
             (Ctor::Unit, _) => "()".to_string(),
-            (Ctor::Int(lo, hi), _) => show_range(*lo, *hi, true),
+            (Ctor::Int(lo, hi), Type::Int(t)) => {
+                let (lo, hi) = open(*lo, *hi, t.range_64());
+                show_range(lo, hi, true)
+            }
+            (Ctor::Int(lo, hi), _) => show_range(Some(*lo), Some(*hi), true),
             (Ctor::Struct, Type::Adt(symbol, ..)) => {
                 let name = crate::check::source_name(symbol);
                 let fields = struct_fields(self.adts, ty).expect("a struct");
@@ -561,18 +575,24 @@ fn peel(ty: &Type) -> &Type {
 
 /// Writes the ints `lo..=hi` as a pattern: `5`, `1..=9` (or `1..10` if not
 /// `inclusive`), `10..`, `..=-1` (or `..0`), or `_` for all of them.
-pub fn show_range(lo: i64, hi: i64, inclusive: bool) -> String {
-    let start = if lo == i64::MIN {
-        String::new()
-    } else {
-        lo.to_string()
-    };
-    match hi {
-        _ if lo == hi => lo.to_string(),
-        i64::MAX if lo == i64::MIN => "_".to_string(),
-        i64::MAX => format!("{start}.."),
-        _ if inclusive => format!("{start}..={hi}"),
-        _ => format!("{start}..{}", hi + 1),
+pub fn show_range(lo: Option<i128>, hi: Option<i128>, inclusive: bool) -> String {
+    let start = lo.map_or(String::new(), |lo| lo.to_string());
+    match (lo, hi) {
+        (Some(lo), Some(hi)) if lo == hi => lo.to_string(),
+        (None, None) => "_".to_string(),
+        (_, None) => format!("{start}.."),
+        (_, Some(hi)) if inclusive => format!("{start}..={hi}"),
+        (_, Some(hi)) => format!("{start}..{}", hi + 1),
+    }
+}
+
+/// The ints `lo..=hi` of a type whose values are `ends`, with an end
+/// that's the type's left open, as it can be written: `200..` of a `u8`.
+/// Unless it's just one.
+fn open(lo: i128, hi: i128, (min, max): Ends) -> (Option<i128>, Option<i128>) {
+    match lo < hi {
+        true => ((lo != min).then_some(lo), (hi != max).then_some(hi)),
+        false => (Some(lo), Some(hi)),
     }
 }
 
@@ -622,14 +642,14 @@ fn covers(d: Ctor, c: Ctor) -> bool {
 
 /// Cuts `lo..=hi` into consecutive ranges at every boundary of the int ranges
 /// in `seen`, so each piece is wholly inside or wholly outside each of them.
-fn split(lo: i64, hi: i64, seen: &[Ctor]) -> Vec<Ctor> {
+fn split(lo: i128, hi: i128, seen: &[Ctor]) -> Vec<Ctor> {
     // Where each piece starts: `lo`, and wherever a seen range starts, or
-    // starts having ended. In i128, since one past `i64::MAX` is a boundary.
-    let (lo, hi) = (i128::from(lo), i128::from(hi));
+    // starts having ended. Values are at most `u64::MAX`, so one past one
+    // can't overflow.
     let mut starts = vec![lo];
     for c in seen {
         if let Ctor::Int(a, b) = *c {
-            starts.extend([i128::from(a), i128::from(b) + 1]);
+            starts.extend([a, b + 1]);
         }
     }
     starts.retain(|s| (lo..=hi).contains(s));
@@ -639,7 +659,7 @@ fn split(lo: i64, hi: i64, seen: &[Ctor]) -> Vec<Ctor> {
     starts
         .iter()
         .zip(ends)
-        .map(|(&a, b)| Ctor::Int(a as i64, b as i64))
+        .map(|(&a, b)| Ctor::Int(a, b))
         .collect()
 }
 

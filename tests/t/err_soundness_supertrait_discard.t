@@ -1,6 +1,6 @@
 // `trait Sub: Discard` lets a bound `T: Sub` throw a `T` away, so only a
 // `Discard` type can implement it.
-struct Fd { n: int }
+struct Fd { n: i64 }
 
 trait Sub: Discard {}
 

@@ -2,7 +2,7 @@
 fn main() {
     {
         #[derive(Discard)]
-        struct P { x: int }
+        struct P { x: i64 }
     }
     let p = P { x: 1 };
 }

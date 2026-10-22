@@ -1,5 +1,5 @@
 // Proving the operators can't panic leaves nothing that may.
-fn add_one(x: { v: int | v < 10 }) -> int with panic { x + 1 }
+fn add_one(x: { v: i64 | v < 10 }) -> i64 with panic { x + 1 }
 
 fn main() with panic {
     print(add_one(1)); // expect: 2

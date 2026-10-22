@@ -7,7 +7,7 @@ fn wrap<T>(x: T) -> Option<T> { Option::Some(x) }
 fn twice_wrapped<T>(x: T) -> Option<T> { wrap(x) }
 
 fn main() with panic {
-    let n = 1;
+    let n: i64 = 1;
     match twice_wrapped(|y| y + n) {
         Option::Some(f) => print(f(1)), // expect: 2
         Option::None => {}

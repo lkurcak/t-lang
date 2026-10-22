@@ -1,5 +1,5 @@
 fn main() {
-    let x = 1;
+    let x: i64 = 1;
     print(*x);
 }
-// error: can't use `*` on `int`: only on a reference or a box
+// error: can't use `*` on `i64`: only on a reference or a box

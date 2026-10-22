@@ -1,5 +1,5 @@
 // Earlier alternatives count, as for unreachable alternatives.
-fn f(n: int) -> int {
+fn f(n: i64) -> i64 {
     match n {
         0..10 | 5..20 => 1,
         _ => 2,

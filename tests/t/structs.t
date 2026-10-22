@@ -1,15 +1,15 @@
 // Structs: product types. A value has every field.
 
 #[derive(Discard, Copy, Eq)]
-struct Point { x: int, y: int }
+struct Point { x: i64, y: i64 }
 #[derive(Discard)]
 struct Rect { min: Point, max: Point }
 
-fn area(r: Rect) -> int with panic {
+fn area(r: Rect) -> i64 with panic {
     (r.max.x - r.min.x) * (r.max.y - r.min.y)
 }
 
-fn translate(p: Point, dx: int) -> Point with panic {
+fn translate(p: Point, dx: i64) -> Point with panic {
     Point { x: p.x + dx, y: p.y }
 }
 

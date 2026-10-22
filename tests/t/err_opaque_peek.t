@@ -1,13 +1,13 @@
-// Callers only know what the return type says: not that it's an `int`.
+// Callers only know what the return type says: not that it's an `i64`.
 trait Show {
-    fn show(&self) -> int;
+    fn show(&self) -> i64;
 }
 
-impl Show for int {
-    fn show(&self) -> int { *self }
+impl Show for i64 {
+    fn show(&self) -> i64 { *self }
 }
 
-fn f() -> impl Show + Discard { 1 }
+fn f() -> impl Show + Discard { 1i64 }
 
 fn main() { print(f() + 1); }
-// error: found `impl Show + Discard`
+// error: `+` works on integers, not on `impl Show + Discard`

@@ -55,7 +55,9 @@ pub fn target<'i>(
 ) -> Result<&'i Note, String> {
     let Some(note) = info.note_at(offset) else {
         return Err(match word_at(sources.text(), offset) {
-            name @ ("int" | "bool") => format!("`{name}` is a built-in type"),
+            name if crate::types::IntTy::named(name).is_some() || name == "bool" => {
+                format!("`{name}` is a built-in type")
+            }
             _ => "there's nothing here to rename".to_string(),
         });
     };
@@ -255,17 +257,19 @@ pub fn is_name(name: &str) -> bool {
     valid(name, false).is_ok()
 }
 
-/// Is `new` something a name can be changed to? A type's can't be `int` or
+/// Is `new` something a name can be changed to? A type's can't be `i64` or
 /// `bool`.
 fn valid(new: &str, is_type: bool) -> Result<(), String> {
     match lexer::lex(new).as_deref() {
         Ok([t, eof]) if eof.tok == Tok::Eof && t.span == Span::new(0, new.len()) => match &t.tok {
             Tok::Ident(name) if name == "_" => Err("`_` can't be a name".to_string()),
-            Tok::Ident(name) if is_type && matches!(name.as_str(), "int" | "bool") => {
+            Tok::Ident(name)
+                if is_type && (crate::types::IntTy::named(name).is_some() || name == "bool") =>
+            {
                 Err(format!("`{name}` is a built-in type"))
             }
             Tok::Ident(_) => Ok(()),
-            Tok::Int(_) => Err(format!("`{new}` isn't a name")),
+            Tok::Int(..) => Err(format!("`{new}` isn't a name")),
             _ if new.chars().all(|c| c.is_ascii_alphabetic()) => {
                 Err(format!("`{new}` is a keyword"))
             }

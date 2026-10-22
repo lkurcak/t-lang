@@ -1,6 +1,6 @@
 // Counting through a range can't panic: `Range::next` checks before it
 // adds one. The sum can.
-fn sum(n: int) -> int with panic {
+fn sum(n: i64) -> i64 with panic {
     let mut s = 0;
     for i in 0..n {
         s = s + i;
@@ -8,7 +8,7 @@ fn sum(n: int) -> int with panic {
     s
 }
 
-fn count(n: int) -> bool {
+fn count(n: i64) -> bool {
     for _i in 0..n {
         return true;
     }

@@ -1,9 +1,9 @@
 // A pattern binding by `&mut` through a `&mut` reference writes the
 // field.
 #[derive(Copy, Discard)]
-struct P { x: int }
+struct P { x: i64 }
 
-fn f(r: &mut P) -> int {
+fn f(r: &mut P) -> i64 {
     if r.x > 0 {
         match r {
             P { x } => *x = 0,

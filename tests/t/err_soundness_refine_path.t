@@ -3,7 +3,7 @@
 struct S {}
 
 impl S {
-    fn div(a: int, d: { d: int | d > 0 }) -> int { a / d }
+    fn div(a: i64, d: { d: i64 | d > 0 }) -> i64 { a / d }
 }
 
 fn main() {

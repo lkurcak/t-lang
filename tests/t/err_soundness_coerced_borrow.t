@@ -1,12 +1,12 @@
-// `&mut b` used as a `&&int` borrows what's in the box, `&'x int`, so the
+// `&mut b` used as a `&&i64` borrows what's in the box, `&'x i64`, so the
 // result can't outlive `'x`. The borrow checker used to relate `&mut
-// Box<&'x int>` to `&&'y int` part by part, skip the parts that didn't
+// Box<&'x i64>` to `&&'y i64` part by part, skip the parts that didn't
 // line up, and so lose `'x: 'y`: `out` dangled.
-fn inner<'y>(r: &&'y int) -> &'y int { *r }
+fn inner<'y>(r: &&'y i64) -> &'y i64 { *r }
 
 fn main() with {alloc, panic} {
     let out;
-    let mut b: Box<&int>;
+    let mut b: Box<&i64>;
     {
         let n = Box::new(5);
         b = Box::new(&*n);

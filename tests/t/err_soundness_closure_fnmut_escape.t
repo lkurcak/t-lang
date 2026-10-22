@@ -1,7 +1,7 @@
 // A `FnMut` closure can't hand out a `&mut` to what it captured: two calls
 // would give two `&mut x` at once.
 fn main() {
-    let mut x = 0;
+    let mut x: i64 = 0;
     let mut c = || &mut x;
     let a = c();
     let b = c();

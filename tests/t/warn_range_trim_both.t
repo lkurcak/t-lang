@@ -1,5 +1,5 @@
 // Both ends covered: narrowed on both sides.
-fn f(n: int) -> int {
+fn f(n: i64) -> i64 {
     match n {
         0 => 1,
         10 => 2,

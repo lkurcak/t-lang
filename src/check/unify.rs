@@ -9,11 +9,16 @@ use crate::types::Type;
 /// A type variable: a type the checker hasn't worked out yet.
 pub(super) struct Var {
     /// What it turned out to be, once `unify` finds out. That can be another
-    /// variable, or a type with variables in it, like `fn(_) -> int`.
+    /// variable, or a type with variables in it, like `fn(_) -> i64`.
     pub(super) solution: Option<Type>,
     /// Is it for what a type parameter stands for, in a use of something
     /// generic? Only for what its errors say: no variable is ever a slice.
     pub(super) param: bool,
+    /// Is it the type of an integer literal, or of an operator's operands?
+    /// Then it can only be an integer type, or a type parameter, opaque
+    /// type or projection that implements `Int`, which an obligation made
+    /// with it says (`Checker::fresh_int`).
+    pub(super) int: bool,
     /// Where it came from, for when it's never solved: the span, what it's
     /// the type of ("the type of `x`") and how to fix that.
     span: Span,
@@ -23,7 +28,7 @@ pub(super) struct Var {
 
 /// Why two types can't be made equal.
 pub(super) enum Clash {
-    /// Different shapes, like `int` and `bool`.
+    /// Different shapes, like `i64` and `bool`.
     Mismatch,
     /// Variable `.0` would have to equal type `.1`, which contains it.
     Infinite(u32, Type),
@@ -112,6 +117,7 @@ impl Checker {
         self.vars.push(Var {
             solution: None,
             param: false,
+            int: false,
             span,
             what,
             hint,
@@ -119,12 +125,45 @@ impl Checker {
         Type::Var(self.vars.len() as u32 - 1)
     }
 
+    /// A new variable for an integer type, for the type of something at
+    /// `span`: a literal's, or an operator's operands'. Whatever it turns out
+    /// to be must implement `Int`, which only the integer types do, and
+    /// type parameters bounded by it.
+    pub(super) fn fresh_int(&mut self, span: Span, what: String, hint: String) -> Type {
+        let t = self.fresh(span, what, hint);
+        let Type::Var(v) = t else {
+            unreachable!("a variable")
+        };
+        self.vars[v as usize].int = true;
+        let pred = crate::traits::Pred {
+            ty: t.clone(),
+            trait_name: "Int".into(),
+        };
+        // Its type isn't known, so this only remembers it.
+        let _ = self.oblige(pred, span, super::traits::Why::Integer);
+        t
+    }
+
+    /// Is `t` a variable for an integer type, not known yet?
+    pub(super) fn int_var(&self, t: &Type) -> bool {
+        matches!(self.shallow(t), Type::Var(v) if self.vars[v as usize].int)
+    }
+
+    /// `t`, with each variable for an integer type that isn't known yet
+    /// shown as `{integer}`, for a message.
+    pub(super) fn shown(&self, t: &Type) -> Type {
+        match self.shallow(t) {
+            Type::Var(v) if self.vars[v as usize].int => Type::Param("{integer}".into()),
+            t => t.map(|p| self.shown(p)),
+        }
+    }
+
     /// `t`, looking through variables that are solved, as far as the
-    /// outermost type: `fn(_) -> _`, not necessarily `fn(int) -> bool`.
+    /// outermost type: `fn(_) -> _`, not necessarily `fn(i64) -> bool`.
     ///
     /// A projection whose type is known by now is worked out, so what's
     /// outermost is what it stands for: `<_ as Tr>::Out`, once `_` is
-    /// `int`, is what `impl Tr for int` says.
+    /// `i64`, is what `impl Tr for i64` says.
     pub(super) fn shallow(&self, t: &Type) -> Type {
         let mut t = t.clone();
         loop {
@@ -263,21 +302,21 @@ impl Checker {
     /// says why that's impossible. This is *unification* (Robinson, 1965):
     ///
     /// - A variable unifies with anything, by being solved as it. Unless it
-    ///   occurs in that thing: `T = fn(T) -> int` has no finite solution.
+    ///   occurs in that thing: `T = fn(T) -> i64` has no finite solution.
     /// - Two types of the same shape unify if their parts do: two function
     ///   types if their parameters and results do, `Option<A>` and
     ///   `Option<B>` if `A` and `B` do.
     /// - Anything else must be the very same type. A type parameter is only
     ///   ever the same as itself.
     ///
-    /// Solving `T` as `int` here holds for the rest of the function, so the
+    /// Solving `T` as `i64` here holds for the rest of the function, so the
     /// order types are learned in doesn't matter, up to a point (see
     /// docs/03-inference.md).
     ///
     /// A projection on a type not known yet can't be unified with anything
     /// now, as what it stands for depends on that type. It waits, as a
-    /// goal, until the type is (`settle_goals`). Unifying it with `int`
-    /// never makes its type a type whose impl says `int`: that would make
+    /// goal, until the type is (`settle_goals`). Unifying it with `i64`
+    /// never makes its type a type whose impl says `i64`: that would make
     /// what a program means depend on which impls there are, and there may
     /// be several, or none yet.
     pub(super) fn unify(&mut self, a: &Type, b: &Type) -> Result<(), Clash> {
@@ -305,9 +344,15 @@ impl Checker {
                 }
                 match &t {
                     Type::Slice(_) => return Err(Clash::Unsized(v, t)),
-                    Type::Var(w) if self.vars[v as usize].param => {
-                        self.vars[*w as usize].param = true;
+                    Type::Var(w) => {
+                        let (param, int) = (self.vars[v as usize].param, self.vars[v as usize].int);
+                        let w = &mut self.vars[*w as usize];
+                        w.param |= param;
+                        w.int |= int;
                     }
+                    // Its obligation, `Int`, says whether these may be.
+                    Type::Int(_) | Type::Param(_) | Type::Opaque(..) | Type::Proj(..) => {}
+                    _ if self.vars[v as usize].int => return Err(Clash::Mismatch),
                     _ => {}
                 }
                 self.vars[v as usize].solution = Some(t);
@@ -381,7 +426,7 @@ impl Checker {
         match self.unify(a, b) {
             Ok(()) => Ok(()),
             Err(Clash::Mismatch) => {
-                let (a, b) = (self.solved(a), self.solved(b));
+                let (a, b) = (self.shown(&self.solved(a)), self.shown(&self.solved(b)));
                 let message = mismatch(&a, &b) + &same_name(&a, &b);
                 Err(Error::ty(span, message))
             }
@@ -411,10 +456,22 @@ impl Checker {
     /// A type a `!` was wanted as that nothing decided is `!` (see `fits`).
     pub(super) fn solve_all(&mut self, vars: usize, f: &crate::ast::FnDecl) -> Result<(), Error> {
         self.settle_goals()?;
+        self.literals()?;
         for t in std::mem::take(&mut self.diverging) {
-            if let Type::Var(_) = self.shallow(&t) {
+            // An integer type can't be `!`: that's left to be inferred.
+            if let Type::Var(v) = self.shallow(&t)
+                && !self.vars[v as usize].int
+            {
                 self.unify(&t, &Type::Never)
                     .unwrap_or_else(|_| unreachable!("a variable fits anything"));
+            }
+        }
+        // An integer type nothing in the body decided is never decided:
+        // nothing after this unifies. Say so now, as what comes next needs
+        // to know which it is: a closure's captures, for one.
+        for v in vars..self.vars.len() {
+            if self.int_var(&Type::Var(v as u32)) {
+                return Err(self.unsolved(v));
             }
         }
         // Which operators can't panic, before effects are settled.
@@ -425,20 +482,26 @@ impl Checker {
         self.settle_closures()?;
         self.prove_all()?;
         for v in vars..self.vars.len() {
-            let t = self.solved(&Type::Var(v as u32));
-            if has_vars(&t) {
-                let Var {
-                    span, what, hint, ..
-                } = &self.vars[v];
-                let message = match t {
-                    Type::Var(_) => format!("cannot infer {what}; {hint}"),
-                    t => format!("cannot fully infer {what}, only that it's `{t}`; {hint}"),
-                };
-                return Err(Error::ty(*span, message));
+            if has_vars(&self.solved(&Type::Var(v as u32))) {
+                return Err(self.unsolved(v));
             }
         }
         self.settle_unused();
         Ok(())
+    }
+
+    /// That variable `v` is never solved.
+    fn unsolved(&self, v: usize) -> Error {
+        let t = self.shown(&self.solved(&Type::Var(v as u32)));
+        let Var {
+            span, what, hint, ..
+        } = &self.vars[v];
+        let message = match t {
+            Type::Var(_) => format!("cannot infer {what}; {hint}"),
+            Type::Param(p) if p == "{integer}" => format!("cannot infer {what}; {hint}"),
+            t => format!("cannot fully infer {what}, only that it's `{t}`; {hint}"),
+        };
+        Error::ty(*span, message)
     }
 
     /// An unused variable whose type isn't `Discard` must still be used

@@ -1,4 +1,4 @@
-fn main() -> int {
+fn main() -> i64 {
     if true { 1 } else { false }
 }
-// error: `if` and `else` have different types: `int` and `bool`
+// error: `if` and `else` have different types: `{integer}` and `bool`

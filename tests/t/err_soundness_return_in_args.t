@@ -1,15 +1,15 @@
 // `return` in an argument leaves the arguments before it behind, and a
 // linear one isn't used up.
-struct Fd { n: int }
+struct Fd { n: i64 }
 
-fn close(f: Fd) -> int {
+fn close(f: Fd) -> i64 {
     let Fd { n } = f;
     n
 }
 
-fn two(a: Fd, b: int) -> int with panic { close(a) + b }
+fn two(a: Fd, b: i64) -> i64 with panic { close(a) + b }
 
-fn g() -> int with panic {
+fn g() -> i64 with panic {
     two(Fd { n: 1 }, return 2)
 }
 

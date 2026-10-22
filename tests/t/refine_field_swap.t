@@ -5,11 +5,11 @@ use core::mem::swap;
 
 #[derive(Copy, Discard)]
 struct Span {
-    lo: int,
-    hi: { h: int | h >= lo },
+    lo: i64,
+    hi: { h: i64 | h >= lo },
 }
 
-fn set_hi(s: &mut Span, h: int) {
+fn set_hi(s: &mut Span, h: i64) {
     if h >= s.lo {
         s.hi = h;
     }

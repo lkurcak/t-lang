@@ -2,7 +2,7 @@
 // borrows them.
 use alloc::list::List;
 
-fn count<T>(s: &[T]) -> int { s.len() }
+fn count<T>(s: &[T]) -> usize { s.len() }
 
 fn biggest<T: Ord + Copy>(s: &[T]) -> Option<T> {
     let mut best: Option<T> = Option::None;
@@ -18,10 +18,10 @@ fn biggest<T: Ord + Copy>(s: &[T]) -> Option<T> {
     best
 }
 
-struct Token { n: int }
+struct Token { n: i64 }
 
 fn main() with {alloc, panic} {
-    let mut l: List<int> = List::new();
+    let mut l: List<i64> = List::new();
     l.push(3);
     l.push(9);
     l.push(4);

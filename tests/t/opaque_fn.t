@@ -1,8 +1,8 @@
 // A function can return a closure: its return type says only what the
-// closure can do, `impl Fn(int) -> int`, not which closure it is.
-fn adder(n: int) -> impl Fn(int) -> int with panic + Discard { move |x| x + n }
+// closure can do, `impl Fn(i64) -> i64`, not which closure it is.
+fn adder(n: i64) -> impl Fn(i64) -> i64 with panic + Discard { move |x| x + n }
 
-fn counter() -> impl FnMut() -> int with panic + Discard {
+fn counter() -> impl FnMut() -> i64 with panic + Discard {
     let mut n = 0;
     move || {
         n += 1;
@@ -10,15 +10,15 @@ fn counter() -> impl FnMut() -> int with panic + Discard {
     }
 }
 
-fn compose<e, F: Fn(int) -> int with e + Discard, G: Fn(int) -> int with e + Discard>(
+fn compose<e, F: Fn(i64) -> i64 with e + Discard, G: Fn(i64) -> i64 with e + Discard>(
     f: F,
     g: G,
-) -> impl Fn(int) -> int with e + Discard {
+) -> impl Fn(i64) -> i64 with e + Discard {
     move |x| g(f(x))
 }
 
 // Two calls of one function return the same type.
-fn pick(c: bool) -> impl Fn(int) -> int with panic + Discard {
+fn pick(c: bool) -> impl Fn(i64) -> i64 with panic + Discard {
     let a = adder(1);
     let b = adder(2);
     if c { a } else { b }

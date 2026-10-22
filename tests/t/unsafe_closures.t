@@ -3,14 +3,14 @@
 // keeps them, in a block, or by being unsafe itself.
 use alloc::raw::RawBuf;
 
-fn apply<e, F: FnOnce() -> int with e>(f: F) -> int with e { f() }
+fn apply<e, F: FnOnce() -> i64 with e>(f: F) -> i64 with e { f() }
 
 /// The caller must know slot 0 holds a value, and leave it uninitialised.
-fn take_first(b: &mut RawBuf<int>) -> int with unsafe { apply(|| b.read(0)) }
+fn take_first(b: &mut RawBuf<i64>) -> i64 with unsafe { apply(|| b.read(0)) }
 
 fn main() with {alloc, panic} {
-    let mut b: RawBuf<int> = RawBuf::new(2);
-    let put = |b: &mut RawBuf<int>, first: bool, v: int| {
+    let mut b: RawBuf<i64> = RawBuf::new(2);
+    let put = |b: &mut RawBuf<i64>, first: bool, v: i64| {
         let i = if first { 0 } else { 1 };
         // SAFETY: wrong in general, but each slot is written once here, and
         // there are two.

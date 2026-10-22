@@ -1,11 +1,11 @@
 // A call whose result can hold the `&mut` it's lent lends it for longer
 // than the call: writes through the result change the place.
 #[derive(Copy, Discard)]
-struct P { x: int }
+struct P { x: i64 }
 
-fn field(p: &mut P) -> &mut int { &mut p.x }
+fn field(p: &mut P) -> &mut i64 { &mut p.x }
 
-fn f(mut p: P) -> int {
+fn f(mut p: P) -> i64 {
     if p.x > 0 {
         let r = field(&mut p);
         *r = 0;

@@ -1,6 +1,6 @@
 // The second time round, `r` has a value from the first.
 fn main() {
-    let r;
+    let r: i64;
     let mut i = 0;
     while i < 2 {
         r = i;

@@ -1,6 +1,6 @@
 #[derive(Discard)]
-struct F { f: fn() -> int }
-fn one() -> int { 1 }
+struct F { f: fn() -> i64 }
+fn one() -> i64 { 1 }
 fn main() {
     let s = F { f: one };
     print(s.f());

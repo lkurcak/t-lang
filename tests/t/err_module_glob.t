@@ -1,5 +1,5 @@
 mod a {
-    pub fn f() -> int { 1 }
+    pub fn f() -> i64 { 1 }
 }
 
 use a::*;

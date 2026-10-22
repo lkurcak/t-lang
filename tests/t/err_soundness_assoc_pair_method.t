@@ -1,7 +1,7 @@
 // The same through a method call, whose `Self::Out` is worked out at the
 // lifetimes of the receiver's type.
 #[derive(Discard)]
-struct Pair<'a, 'b> { a: &'a int, b: &'b int }
+struct Pair<'a, 'b> { a: &'a i64, b: &'b i64 }
 
 trait Second {
     type Out;
@@ -10,9 +10,9 @@ trait Second {
 }
 
 impl<'a, 'b> Second for Pair<'a, 'b> {
-    type Out = &'b int;
+    type Out = &'b i64;
 
-    fn second(self) -> &'b int { self.b }
+    fn second(self) -> &'b i64 { self.b }
 }
 
 fn main() {

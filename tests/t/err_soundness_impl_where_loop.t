@@ -3,11 +3,11 @@
 // can lead back to the impl, and then finding out what implements what
 // never ends. So it can't lead back to the trait it's in an impl of.
 trait Tr {
-    fn a(&self) -> int;
+    fn a(&self) -> i64;
 }
 
 trait Tr2 {
-    fn b(&self) -> int;
+    fn b(&self) -> i64;
 }
 
 #[derive(Discard where I: Discard)]
@@ -20,11 +20,11 @@ impl<I: Iterator> Tr for W<I>
 where
     I::Item: Tr2,
 {
-    fn a(&self) -> int { 1 }
+    fn a(&self) -> i64 { 1 }
 }
 
 impl<T: Tr> Tr2 for V<T> {
-    fn b(&self) -> int { 2 }
+    fn b(&self) -> i64 { 2 }
 }
 
 #[derive(Discard)]

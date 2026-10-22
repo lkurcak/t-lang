@@ -4,7 +4,7 @@
 enum Option<T> { None, Some(T) }
 
 fn main() {
-    fn grow<T>(x: T) -> int { grow(Option::Some(x)) }
-    print(grow(1));
+    fn grow<T>(x: T) -> i64 { grow(Option::Some(x)) }
+    print(grow(1i64));
 }
 // error: polymorphic recursion: `grow` uses itself with `T` = `Option<T>`

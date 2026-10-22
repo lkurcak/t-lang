@@ -1,9 +1,9 @@
 mod a {
     mod b {
-        pub fn f() -> int { 1 }
+        pub fn f() -> i64 { 1 }
     }
 
-    pub fn g() -> int { b::f() }
+    pub fn g() -> i64 { b::f() }
 }
 
 use a::b::f;

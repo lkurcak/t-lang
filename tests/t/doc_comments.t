@@ -5,28 +5,28 @@
 #[derive(Discard)]
 struct Pair {
     /// The first.
-    a: int,
+    a: i64,
     /// The second.
     ///
     /// Doc comments can run over several lines.
-    b: int,
+    b: i64,
 }
 
 /// A shape.
 #[derive(Discard)]
 enum Shape {
     /// Its radius.
-    Circle(int),
+    Circle(i64),
     /// No shape at all.
     Empty,
 }
 
 /// The sum of both halves of `p`.
 // A plain comment between a doc comment and its function is fine.
-fn sum(p: Pair) -> int with panic { p.a + p.b }
+fn sum(p: Pair) -> i64 with panic { p.a + p.b }
 
 /// Roughly, with π rounded down.
-fn area(s: Shape) -> int with panic {
+fn area(s: Shape) -> i64 with panic {
     match s {
         Shape::Circle(r) => 3 * r * r,
         Shape::Empty => 0,

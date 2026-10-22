@@ -1,6 +1,6 @@
 #[derive(Discard)]
 enum Option<T> { Some(T), None }
-fn f(o: Option<bool>) -> int {
+fn f(o: Option<bool>) -> i64 {
     match o {
         Option::Some(true) => 1,
         Option::None => 0,

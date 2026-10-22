@@ -1,5 +1,5 @@
-// `Discard` is built into `int`.
-impl Discard for int {}
+// `Discard` is built into `i64`.
+impl Discard for i64 {}
 
 fn main() {}
 // error: `Discard` can only be implemented for a struct or enum

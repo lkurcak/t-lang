@@ -1,8 +1,8 @@
 // `panic()` aborts the program.
 fn main() with panic {
-    print(1); // expect: 1
+    print(1i64); // expect: 1
     panic();
-    print(2);
+    print(2i64);
 }
 // error: runtime error: panicked
 // warning: unreachable code

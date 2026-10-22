@@ -2,16 +2,16 @@
 // `self`, if it takes `&self` and nothing says otherwise, as in Rust.
 
 #[derive(Discard)]
-struct Holder<'a> { r: &'a int }
+struct Holder<'a> { r: &'a i64 }
 
 impl<'a> Holder<'a> {
-    fn new(r: &'a int) -> Holder<'a> { Holder { r } }
+    fn new(r: &'a i64) -> Holder<'a> { Holder { r } }
 
     // Borrowed from what the holder holds, so it outlives the holder.
-    fn get(&self) -> &'a int { self.r }
+    fn get(&self) -> &'a i64 { self.r }
 
     // Borrowed from the holder itself.
-    fn peek(&self) -> &int { self.r }
+    fn peek(&self) -> &i64 { self.r }
 }
 
 fn main() with panic {

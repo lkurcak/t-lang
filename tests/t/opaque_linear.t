@@ -1,6 +1,6 @@
 // What a function returns needn't be `Discard`: then it must be used up,
 // here by calling it.
-fn once(b: Box<int>) -> impl FnOnce() -> int { move || *b }
+fn once(b: Box<i64>) -> impl FnOnce() -> i64 { move || *b }
 
 fn main() with {alloc, panic} {
     let f = once(Box::new(4));

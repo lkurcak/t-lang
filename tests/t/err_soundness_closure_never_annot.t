@@ -3,4 +3,4 @@ fn main() {
     let k: fn() -> ! = || return 1;
     k();
 }
-// error: expected `!`, found `int`
+// error: expected `!`, found `{integer}`

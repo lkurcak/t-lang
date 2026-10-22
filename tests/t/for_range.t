@@ -1,7 +1,7 @@
 // `for` over a range: `a..b` counts from `a` up to, not including, `b`. A
 // range whose start isn't before its end is empty.
 
-fn sum_to(n: int) -> int with panic {
+fn sum_to(n: i64) -> i64 with panic {
     let mut s = 0;
     for i in 0..n {
         s = s + i;
@@ -15,7 +15,7 @@ fn main() with panic {
     print(sum_to(-3)); // expect: 0
 
     // `break` and `continue`, and labels.
-    let mut found = 0;
+    let mut found: i64 = 0;
     for i in 1..100 {
         if i % 7 != 0 {
             continue;
@@ -24,8 +24,8 @@ fn main() with panic {
         break;
     }
     print(found); // expect: 7
-    let mut pairs = 0;
-    'outer: for i in 0..10 {
+    let mut pairs: i64 = 0;
+    'outer: for i in 0..10i64 {
         for j in 0..10 {
             if i * j > 6 {
                 continue 'outer;
@@ -39,15 +39,15 @@ fn main() with panic {
     print(pairs); // expect: 26
 
     // Precedence: arithmetic before `..`.
-    let n = 2;
-    let mut c = 0;
+    let n: i64 = 2;
+    let mut c: i64 = 0;
     for _ in n - 1..n * 3 {
         c = c + 1;
     }
     print(c); // expect: 5
 
-    // It doesn't overflow at the very end of `int`.
-    let big = 9223372036854775807;
+    // It doesn't overflow at the very end of `i64`.
+    let big: i64 = 9223372036854775807;
     let mut last = 0;
     for i in big - 2..big {
         last = i;
@@ -55,14 +55,14 @@ fn main() with panic {
     print(last - big); // expect: -1
 
     // A range is a value, and its ends can be read.
-    let r = 3..8;
+    let r = 3..8i64;
     print(r.start() + r.end()); // expect: 11
     let mut r = r;
     print(r.next().unwrap_or(0)); // expect: 3
     print(r.start()); // expect: 4
 
     // A `for` is `()`: one can end a block.
-    let f = || for i in 0..3 { print(i * 10); };
+    let f = || for i in 0..3i64 { print(i * 10); };
     f();
     // expect: 0
     // expect: 10

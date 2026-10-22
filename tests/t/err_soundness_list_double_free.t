@@ -2,7 +2,7 @@
 use alloc::list::List;
 
 fn main() {
-    let l: List<int> = List::new();
+    let l: List<i64> = List::new();
     l.free();
     l.free();
 }

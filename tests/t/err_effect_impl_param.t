@@ -1,14 +1,14 @@
 // An effect parameter of an impl must be decided by an `Fn` bound, if it
 // isn't in the impl's type.
 trait Tr {
-    fn a(&self) -> int;
+    fn a(&self) -> i64;
 }
 
 #[derive(Discard)]
 struct W {}
 
 impl<f> Tr for W {
-    fn a(&self) -> int { 1 }
+    fn a(&self) -> i64 { 1 }
 }
 
 fn main() {}

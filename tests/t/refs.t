@@ -2,11 +2,11 @@
 // a reference is a field of what it points to.
 
 #[derive(Discard, Copy, Eq)]
-struct Point { x: int, y: int }
+struct Point { x: i64, y: i64 }
 
-fn sum(p: &Point) -> int with panic { p.x + p.y }
+fn sum(p: &Point) -> i64 with panic { p.x + p.y }
 
-fn first(p: &Point) -> &int { &p.x }
+fn first(p: &Point) -> &i64 { &p.x }
 
 fn larger<'a>(a: &'a Point, b: &'a Point) -> &'a Point with panic {
     if sum(a) >= sum(b) { a } else { b }

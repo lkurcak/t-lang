@@ -1,13 +1,13 @@
 // A closure that owns a value that must be used up is called once, and
 // uses it up.
-struct Fd { n: int }
+struct Fd { n: i64 }
 
-fn close(fd: Fd) -> int {
+fn close(fd: Fd) -> i64 {
     let Fd { n } = fd;
     n
 }
 
-fn later<F: FnOnce() -> int>(f: F) -> int { f() }
+fn later<F: FnOnce() -> i64>(f: F) -> i64 { f() }
 
 fn main() {
     let fd = Fd { n: 3 };

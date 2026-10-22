@@ -1,21 +1,21 @@
 // Function values can go anywhere: functions, closures that capture nothing,
 // and fields of function types, which hold only those.
 #[derive(Discard, Copy)]
-struct Fs { f: fn(int) -> int with panic, n: int }
+struct Fs { f: fn(i64) -> i64 with panic, n: i64 }
 
-fn inc(x: int) -> int with panic { x + 1 }
-fn first(fs: Fs) -> fn(int) -> int with panic { fs.f }
-fn unpack(fs: Fs) -> fn(int) -> int with panic {
+fn inc(x: i64) -> i64 with panic { x + 1 }
+fn first(fs: Fs) -> fn(i64) -> i64 with panic { fs.f }
+fn unpack(fs: Fs) -> fn(i64) -> i64 with panic {
     let Fs { f, .. } = fs;
     f
 }
 fn same(fs: Fs) -> Fs { fs }
-fn n(x: int) -> int { x }
+fn n(x: i64) -> i64 { x }
 fn make() -> Fs {
     let g = inc;
     Fs { f: g, n: 1 }
 }
-fn call<e, F: Fn(int) -> int with e + Copy>(f: F) -> int with e {
+fn call<e, F: Fn(i64) -> i64 with e + Copy>(f: F) -> i64 with e {
     // A closure made from a parameter.
     let twice = |x| f(f(x));
     twice(0)

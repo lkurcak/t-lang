@@ -39,7 +39,7 @@ pub(super) struct TypeDef {
 
 /// What a name in a type refers to, where it's written: a struct or enum,
 /// by its symbol, or a type parameter it can't use. One that isn't here is
-/// a type parameter of what it's written in, or `int` or `bool`, or nothing.
+/// a type parameter of what it's written in, or `i64` or `bool`, or nothing.
 #[derive(Debug, Clone)]
 pub(super) enum Scoped {
     Adt(String),
@@ -284,8 +284,8 @@ impl Walk<'_> {
         self.current.pop();
     }
 
-    /// The types in the bounds of `g`, like `int` in `T: Iter<Item = int>`
-    /// and `F: Fn(int) -> bool`.
+    /// The types in the bounds of `g`, like `i64` in `T: Iter<Item = i64>`
+    /// and `F: Fn(i64) -> bool`.
     fn bounds(&mut self, g: &Generics) {
         for (_, items) in &g.bounds {
             for t in items.iter().flat_map(|b| b.types()) {

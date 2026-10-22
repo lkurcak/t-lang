@@ -1,10 +1,10 @@
-// Working out `<int as Tr>::Out` would need `<int as Tr>::Out` first.
+// Working out `<i64 as Tr>::Out` would need `<i64 as Tr>::Out` first.
 trait Tr {
     type Out;
 }
 
-impl Tr for int {
-    type Out = <int as Tr>::Out;
+impl Tr for i64 {
+    type Out = <i64 as Tr>::Out;
 }
 
 fn main() {}

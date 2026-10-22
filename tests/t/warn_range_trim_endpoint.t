@@ -1,5 +1,5 @@
 // Sharing one endpoint is almost always an off-by-one.
-fn f(n: int) -> int {
+fn f(n: i64) -> i64 {
     match n {
         0..=5 => 1,
         5..=10 => 2,

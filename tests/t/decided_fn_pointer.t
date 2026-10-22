@@ -15,7 +15,7 @@ impl<U, F: Fn() -> U> Get for Thunk<F> {
     fn get(&self) -> U { (self.f)() }
 }
 
-fn id(x: &int) -> &int { x }
+fn id(x: &i64) -> &i64 { x }
 
 fn main() {
     let t = Thunk { f: || id };

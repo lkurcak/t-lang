@@ -1,7 +1,7 @@
 fn main() {
-    let x: int = loop {
+    let x: i64 = loop {
         break;
     };
     print(x);
 }
-// error: a `break` with no value gives the loop `()`, but it should be `int`
+// error: a `break` with no value gives the loop `()`, but it should be `i64`

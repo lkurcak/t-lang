@@ -1,9 +1,9 @@
 // `List::new` allocates nothing, but `with_capacity` does.
 use alloc::list::List;
 
-fn empty() -> List<int> { List::new() }
+fn empty() -> List<i64> { List::new() }
 
-fn two() -> List<int> { List::with_capacity(2) }
+fn two() -> List<i64> { List::with_capacity(2) }
 
 fn main() with {alloc, panic} {
     empty().free();

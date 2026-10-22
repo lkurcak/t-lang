@@ -1,5 +1,5 @@
-// The same for `&rb`, a `&&Box<int>`.
-fn get(r: &int) -> &int { r }
+// The same for `&rb`, a `&&Box<i64>`.
+fn get(r: &i64) -> &i64 { r }
 
 fn main() {
     let b = Box::new(1);
@@ -7,4 +7,4 @@ fn main() {
     let r = get(&rb);
     print(*r);
 }
-// error: expected `int`, found `&Box<int>`
+// error: expected `i64`, found `&Box<{integer}>`

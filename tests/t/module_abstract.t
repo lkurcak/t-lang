@@ -2,28 +2,28 @@
 // outside, it can be moved, borrowed and handed back. Its pub field can be
 // read through a place.
 mod fs {
-    pub struct Fd { pub id: int, raw: int }
+    pub struct Fd { pub id: i64, raw: i64 }
 
-    pub fn open(id: int) -> Fd with panic { Fd { id, raw: id * 100 } }
+    pub fn open(id: i64) -> Fd with panic { Fd { id, raw: id * 100 } }
 
-    pub fn close(fd: Fd) -> int with panic {
+    pub fn close(fd: Fd) -> i64 with panic {
         let Fd { id, raw } = fd;
         id + raw
     }
 
     impl Fd {
-        pub fn raw(&self) -> int { self.raw }
+        pub fn raw(&self) -> i64 { self.raw }
     }
 
     // A `Discard` one can be taken apart anywhere its fields can be seen:
     // the module said throwing its parts away is fine.
     #[derive(Discard)]
-    pub struct Token { pub n: Box<int>, secret: int }
+    pub struct Token { pub n: Box<i64>, secret: i64 }
 
-    pub fn token(n: int) -> Token with {alloc, panic} { Token { n: Box::new(n), secret: 0 } }
+    pub fn token(n: i64) -> Token with {alloc, panic} { Token { n: Box::new(n), secret: 0 } }
 }
 
-fn keep(fd: &fs::Fd) -> int with panic { fd.id + fd.raw() }
+fn keep(fd: &fs::Fd) -> i64 with panic { fd.id + fd.raw() }
 
 fn main() with {panic, alloc} {
     let fd = fs::open(2);

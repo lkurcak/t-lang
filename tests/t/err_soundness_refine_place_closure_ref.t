@@ -1,8 +1,8 @@
 // So can one that captures a `&mut` to it, which isn't `mut` itself.
 #[derive(Copy, Discard)]
-struct P { x: int }
+struct P { x: i64 }
 
-fn f(r: &mut P) -> int {
+fn f(r: &mut P) -> i64 {
     if r.x > 0 {
         let mut c = || r.x = 0;
         c();

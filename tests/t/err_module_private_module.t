@@ -2,10 +2,10 @@
 // `a`, `pub` or not.
 mod a {
     mod b {
-        pub fn f() -> int { 1 }
+        pub fn f() -> i64 { 1 }
     }
 
-    pub fn g() -> int { b::f() }
+    pub fn g() -> i64 { b::f() }
 }
 
 fn main() { print(a::b::f()); }

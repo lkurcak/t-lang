@@ -1,5 +1,5 @@
 #[derive(Discard, Eq)]
-struct P { x: int }
+struct P { x: i64 }
 impl Eq for P {
     fn eq(&self, other: &P) -> bool { true }
 }

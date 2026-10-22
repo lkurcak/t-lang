@@ -3,16 +3,16 @@
 // value.
 
 #[derive(Discard, Copy)]
-struct Point { x: int, y: int }
+struct Point { x: i64, y: i64 }
 
 #[derive(Discard)]
-struct Owner { name: int, data: Box<int> }
+struct Owner { name: i64, data: Box<i64> }
 
 #[allow(dead_code)]
 #[derive(Discard)]
 enum Option<T> { Some(T), None }
 
-fn take(o: Owner) -> int with panic { o.name + *o.data }
+fn take(o: Owner) -> i64 with panic { o.name + *o.data }
 
 fn main() with {panic, alloc} {
     let p = Point { x: 1, y: 2 };
@@ -24,7 +24,7 @@ fn main() with {panic, alloc} {
     print(o.name);              // expect: 10
     print(*d);                  // expect: 5
 
-    let mut b = Box::new(1);
+    let mut b = Box::new(1i64);
     let c = b;                  // moves `b`...
     b = Box::new(2);            // ...which can then get a new value
     print(*b + *c);             // expect: 3
@@ -33,7 +33,7 @@ fn main() with {panic, alloc} {
     print(take(o2));            // expect: 3
 
     // A `match` moves out of what it matches only what it binds.
-    let opt = Option::Some(Box::new(4));
+    let opt = Option::Some(Box::new(4i64));
     match opt {
         Option::Some(inner) => print(*inner), // expect: 4
         Option::None => {}

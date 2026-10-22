@@ -1,4 +1,4 @@
-fn f() -> int { 1 }
+fn f() -> i64 { 1 }
 
 fn main() { print(super::f()); }
 // error: `super` at the crate root

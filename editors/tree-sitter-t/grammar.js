@@ -18,6 +18,7 @@ const PREC = {
   call: 15,
   field: 14,
   unary: 12,
+  cast: 11,
   multiplicative: 10,
   additive: 9,
   comparative: 8,
@@ -52,7 +53,7 @@ module.exports = grammar({
     // parser forbids struct literals there, here the struct reading loses.
     [$._expression, $._type_identifier],
     // `a::f` could be a path to a function or a type, and `x::` could go
-    // on as `x::<int>` (a function) or `x::V` (a variant): the tokens
+    // on as `x::<i64>` (a function) or `x::V` (a variant): the tokens
     // after decide.
     [$._path, $._type_identifier],
     [$._path, $.generic_function],
@@ -229,7 +230,7 @@ module.exports = grammar({
       '}',
     ),
 
-    // `type Item: Discard;` in a trait, or `type Item = int;` in an impl.
+    // `type Item: Discard;` in a trait, or `type Item = i64;` in an impl.
     associated_type: $ => seq(
       'type',
       field('name', $._type_identifier),
@@ -274,7 +275,7 @@ module.exports = grammar({
       $.trait_with_signature,
     ),
 
-    // `Fn(int) -> int`, `FnMut()` or `FnOnce(T)` in a bound.
+    // `Fn(i64) -> i64`, `FnMut()` or `FnOnce(T)` in a bound.
     trait_with_signature: $ => prec.right(seq(
       field('trait', $._path_type),
       field('parameters', $.type_parameters_list),
@@ -282,7 +283,7 @@ module.exports = grammar({
       optional(field('effects', $.effects)),
     )),
 
-    // `Iter<Item = int>` or `Iter<Item: Discard>` in a bound.
+    // `Iter<Item = i64>` or `Iter<Item: Discard>` in a bound.
     trait_with_associated: $ => seq(
       field('trait', $._path_type),
       '<',
@@ -399,7 +400,7 @@ module.exports = grammar({
     // says.
     slice_type: $ => seq('[', field('element', $._type), ']'),
 
-    // `{ v: int | v > 0 }`: the values of a type a predicate holds of.
+    // `{ v: i64 | v > 0 }`: the values of a type a predicate holds of.
     refinement_type: $ => seq(
       '{',
       field('name', $.identifier),
@@ -410,7 +411,7 @@ module.exports = grammar({
       '}',
     ),
 
-    // `impl Fn(int) -> int + Discard`, in a return type: an opaque type.
+    // `impl Fn(i64) -> i64 + Discard`, in a return type: an opaque type.
     impl_type: $ => prec.right(seq(
       'impl',
       $._trait_bound,
@@ -456,7 +457,7 @@ module.exports = grammar({
       field('type', $._type),
     ),
 
-    // `Option<int>`
+    // `Option<i64>`
     generic_type: $ => seq(
       field('type', choice($._type_identifier, $.projection_type)),
       field('type_arguments', $.type_arguments),
@@ -464,7 +465,7 @@ module.exports = grammar({
 
     type_arguments: $ => seq('<', commaSep1(choice($.lifetime, $._type)), '>'),
 
-    // `::<int, bool>`: type arguments written out where a type can't go
+    // `::<i64, bool>`: type arguments written out where a type can't go
     // straight after a name, since `<` would read as less-than.
     _turbofish: $ => seq('::', field('type_arguments', $.type_arguments)),
 
@@ -532,6 +533,7 @@ module.exports = grammar({
       $.unary_expression,
       $.reference_expression,
       $.binary_expression,
+      $.cast_expression,
       $.range_expression,
       $.assignment_expression,
       $.compound_assignment_expr,
@@ -548,7 +550,12 @@ module.exports = grammar({
       $._block_like,
     ),
 
-    integer_literal: _ => token(seq(/[0-9]/, /[0-9_]*/)),
+    // `42`, `1_000`, or `255u8`, with a suffix that says its type.
+    integer_literal: _ => token(seq(
+      /[0-9]/,
+      /[0-9_]*/,
+      optional(/(i8|i16|i32|i64|isize|u8|u16|u32|u64|usize)/),
+    )),
 
     boolean_literal: _ => choice('true', 'false'),
 
@@ -596,6 +603,16 @@ module.exports = grammar({
       ))));
     },
 
+    // `x as u8`: the same integer, as another integer type. Only a name
+    // can follow `as` here, as only an integer type or a type parameter
+    // can be right there: any other type would make `x as T < y` and
+    // others ambiguous.
+    cast_expression: $ => prec.left(PREC.cast, seq(
+      field('value', $._expression),
+      'as',
+      field('type', $._type_identifier),
+    )),
+
     call_expression: $ => prec(PREC.call, seq(
       field('function', $._expression),
       field('arguments', $.arguments),
@@ -603,7 +620,7 @@ module.exports = grammar({
 
     arguments: $ => seq('(', commaSep($._expression), ')'),
 
-    // `v.push(1)`, `x.m::<int>()`
+    // `v.push(1)`, `x.m::<i64>()`
     method_call_expression: $ => prec(PREC.call, seq(
       field('receiver', $._expression),
       '.',
@@ -618,7 +635,7 @@ module.exports = grammar({
       field('field', $._field_identifier),
     )),
 
-    // `id::<int>`
+    // `id::<i64>`
     generic_function: $ => seq(
       field('function', choice($.identifier, $.scoped_identifier)),
       $._turbofish,

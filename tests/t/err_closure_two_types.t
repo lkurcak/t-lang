@@ -3,7 +3,7 @@
 #[derive(Discard)]
 struct Slot<F> { f: F }
 
-fn put<F: Fn() -> int + Discard>(s: &mut Slot<F>, f: F) { s.f = f; }
+fn put<F: Fn() -> i64 + Discard>(s: &mut Slot<F>, f: F) { s.f = f; }
 
 fn main() {
     let a = 1;

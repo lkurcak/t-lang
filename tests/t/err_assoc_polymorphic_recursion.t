@@ -8,7 +8,7 @@ trait Tr {
 
     fn next(self) -> Self::Out;
 
-    fn done(self) -> int;
+    fn done(self) -> i64;
 }
 
 impl<T: Discard> Tr for W<T> {
@@ -16,14 +16,14 @@ impl<T: Discard> Tr for W<T> {
 
     fn next(self) -> W<W<T>> { W { t: self } }
 
-    fn done(self) -> int { 0 }
+    fn done(self) -> i64 { 0 }
 }
 
-fn f<T: Tr>(x: T, n: int) -> int with panic {
+fn f<T: Tr>(x: T, n: i64) -> i64 with panic {
     if n == 0 { x.done() } else { f(x.next(), n - 1) }
 }
 
 fn main() with panic {
-    print(f(W { t: 1 }, 3));
+    print(f(W { t: 1i64 }, 3));
 }
 // error: polymorphic recursion

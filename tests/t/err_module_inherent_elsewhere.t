@@ -1,10 +1,10 @@
 mod a {
     #[derive(Discard)]
-    pub struct P { pub n: int }
+    pub struct P { pub n: i64 }
 }
 
 impl a::P {
-    fn n(&self) -> int { self.n }
+    fn n(&self) -> i64 { self.n }
 }
 
 fn main() {}

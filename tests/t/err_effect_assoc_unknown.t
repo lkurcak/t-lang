@@ -2,11 +2,11 @@
 struct Ones {}
 
 impl Iterator for Ones {
-    type Item = int;
+    type Item = i64;
     effect e = {};
     effect f = {};
 
-    fn next(&mut self) -> Option<int> { Option::Some(1) }
+    fn next(&mut self) -> Option<i64> { Option::Some(1) }
 }
 
 fn main() {}

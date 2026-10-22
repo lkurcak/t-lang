@@ -1,4 +1,4 @@
-fn f(o: { v: Option<int> | true }) -> int { 1 }
+fn f(o: { v: Option<i64> | true }) -> i64 { 1 }
 
 fn main() {}
-// error: only `int` and `bool` can be refined, not `Option<int>`
+// error: only integer types and `bool` can be refined, not `Option<i64>`

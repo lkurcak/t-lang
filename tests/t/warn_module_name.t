@@ -1,5 +1,5 @@
 mod Geometry {
-    pub fn one() -> int { 1 }
+    pub fn one() -> i64 { 1 }
 }
 
 fn main() {

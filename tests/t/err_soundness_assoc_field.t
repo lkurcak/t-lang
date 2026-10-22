@@ -1,14 +1,14 @@
 // The same through a field of a projection type: `Hold<Pair<'x, 'y>>`'s
-// field `v` is a `&'y int`.
+// field `v` is a `&'y i64`.
 #[derive(Discard)]
-struct Pair<'a, 'b> { a: &'a int, b: &'b int }
+struct Pair<'a, 'b> { a: &'a i64, b: &'b i64 }
 
 trait Second {
     type Out: Discard;
 }
 
 impl<'a, 'b> Second for Pair<'a, 'b> {
-    type Out = &'b int;
+    type Out = &'b i64;
 }
 
 #[derive(Discard)]

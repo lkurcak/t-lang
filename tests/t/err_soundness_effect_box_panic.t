@@ -1,5 +1,5 @@
 // Running out of memory aborts, so allocating may panic too.
-fn boxed(n: int) -> Box<int> with alloc { Box::new(n) }
+fn boxed(n: i64) -> Box<i64> with alloc { Box::new(n) }
 
 fn main() with {alloc, panic} {
     print(*boxed(1));

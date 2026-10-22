@@ -1,6 +1,6 @@
-fn f(x: int) -> bool {
+fn f(x: i64) -> bool {
     let y = x + 1;
     y
 }
 fn main() {}
-// error: expected `bool`, found `int`
+// error: expected `bool`, found `i64`

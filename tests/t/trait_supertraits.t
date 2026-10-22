@@ -10,14 +10,14 @@ trait Ord: Eq + Discard {
 }
 
 #[derive(Discard, Copy, Eq)]
-struct Money { cents: int }
+struct Money { cents: i64 }
 
 impl Ord for Money {
     fn lt(&self, other: &Money) -> bool { self.cents < other.cents }
 }
 
-impl Ord for int {
-    fn lt(&self, other: &int) -> bool { *self < *other }
+impl Ord for i64 {
+    fn lt(&self, other: &i64) -> bool { *self < *other }
 }
 
 fn largest<T: Ord + Copy>(a: T, b: T, c: T) -> T { a.max(b).max(c) }
@@ -27,7 +27,7 @@ fn same<T: Ord>(a: &T, b: &T) -> bool { a == b && !a.lt(b) }
 fn main() {
     let m = largest(Money { cents: 3 }, Money { cents: 9 }, Money { cents: 5 });
     print(m.cents);                            // expect: 9
-    print(largest(4, 1, 2));                   // expect: 4
+    print(largest(4i64, 1, 2));                   // expect: 4
     print_bool(same(&m, &Money { cents: 9 })); // expect: true
-    print_bool(same(&1, &2));                  // expect: false
+    print_bool(same(&1i64, &2));                  // expect: false
 }

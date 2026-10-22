@@ -32,15 +32,20 @@ it's `Checker::locals` plus `Checker::globals`.
 Rules are written as fractions: premises on top, conclusion below.
 
 ```text
-  Γ ⊢ l : int    Γ ⊢ r : int
+  Γ ⊢ l : i64    Γ ⊢ r : i64
   --------------------------- (T-Arith)
-       Γ ⊢ l + r : int
+       Γ ⊢ l + r : i64
 ```
 
-"If `l` is an int and `r` is an int, then `l + r` is an int." Every arm of
+"If `l` is an i64 and `r` is an i64, then `l + r` is an i64." Every arm of
 `Checker::synth` is one such rule, and the rule is written above it in a
 comment. Read them side by side: the code is the rules, written as a recursive
 function.
+
+> Step 1 had one integer type, `int`. Since step 11 there are ten, from
+> `i8` to `usize`, and no `int`: T-Arith is for any one of them, both sides
+> the same, and a literal's type is worked out from how it's used (see
+> [11-integers.md](11-integers.md)).
 
 The two most important rules:
 
@@ -98,7 +103,7 @@ example, refinement types can rule out division by zero.
   rejects `string`. Keeping them apart matters later, when `T` in a generic
   function and `T` in the source are different things.
 - **No truthiness.** `if 1 { .. }` is a type error, unlike C.
-  `bool` and `int` are different types.
+  `bool` and `i64` are different types.
 - **`if` without `else` has type `()`.** Otherwise, what would it produce
   when the condition is false?
 - **No `==` on functions.** Deciding whether two functions are equal is

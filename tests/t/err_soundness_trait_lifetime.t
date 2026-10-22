@@ -1,14 +1,14 @@
 // `get`'s result lives as long as the borrow of `s`, as the trait says,
 // even though the impl knows it could live as long as `'a`.
 trait Get {
-    fn get(&self) -> &int;
+    fn get(&self) -> &i64;
 }
 
 #[derive(Discard)]
-struct S<'a> { r: &'a int }
+struct S<'a> { r: &'a i64 }
 
 impl<'a> Get for S<'a> {
-    fn get(&self) -> &int { self.r }
+    fn get(&self) -> &i64 { self.r }
 }
 
 fn main() with {alloc, panic} {

@@ -3,10 +3,10 @@
 // obvious ones.
 
 #[derive(Discard)]
-struct Pair { a: int, b: int }
+struct Pair { a: i64, b: i64 }
 
 // Elided: one lifetime in, so the result has it.
-fn first(p: &Pair) -> &int { &p.a }
+fn first(p: &Pair) -> &i64 { &p.a }
 
 // Written: the result lives as long as both arguments do.
 fn longer<'a>(x: &'a Pair, y: &'a Pair) -> &'a Pair with panic {
@@ -14,7 +14,7 @@ fn longer<'a>(x: &'a Pair, y: &'a Pair) -> &'a Pair with panic {
 }
 
 // The result borrows from `x` only, so `y` can be anything.
-fn left<'a, 'b>(x: &'a int, y: &'b int) -> &'a int {
+fn left<'a, 'b>(x: &'a i64, y: &'b i64) -> &'a i64 {
     print(*y);
     x
 }
@@ -23,17 +23,17 @@ fn left<'a, 'b>(x: &'a int, y: &'b int) -> &'a int {
 #[derive(Discard)]
 struct View<'a> { pair: &'a Pair, which: bool }
 
-fn get(v: View) -> int {
+fn get(v: View) -> i64 {
     if v.which { v.pair.a } else { v.pair.b }
 }
 
 // `'b: 'a` says `'b` lasts at least as long as `'a`.
-fn shorter<'a, 'b: 'a>(x: &'a int, y: &'b int) -> &'a int {
+fn shorter<'a, 'b: 'a>(x: &'a i64, y: &'b i64) -> &'a i64 {
     if *x < *y { x } else { y }
 }
 
 // A reference to a reference: the inner one outlives the outer.
-fn deref<'a, 'b>(r: &'a &'b int) -> &'b int { *r }
+fn deref<'a, 'b>(r: &'a &'b i64) -> &'b i64 { *r }
 
 fn main() with panic {
     let p = Pair { a: 1, b: 2 };

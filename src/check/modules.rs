@@ -893,7 +893,7 @@ impl Rewrite<'_> {
     /// written with a `::`.
     fn type_path(&mut self, name: &Ident) -> Result<(), Error> {
         if !name.name.contains("::") {
-            // A type parameter, or `int`, or a local type, or one of the
+            // A type parameter, or `i64`, or a local type, or one of the
             // module's: only the last can be private, and only it can be
             // in the interface of an item of the module.
             if !self.params.contains(&name.name)
@@ -1473,9 +1473,9 @@ fn no_break_value(e: &Expr, label: Option<&String>, depth: usize) -> Result<(), 
 }
 
 /// The value of `e`, if it's an integer constant: `3` or `-3`.
-fn constant(e: &Expr) -> Option<i64> {
+fn constant(e: &Expr) -> Option<i128> {
     match &e.kind {
-        ExprKind::Int(n) => Some(*n),
+        ExprKind::Int(n, _) => Some(i128::from(*n)),
         ExprKind::Unary(UnOp::Neg, x) => constant(x)?.checked_neg(),
         _ => None,
     }
@@ -1536,12 +1536,13 @@ fn plain_path(t: &TypeExpr) -> Option<Ident> {
 fn children_mut(e: &mut Expr) -> Vec<&mut Expr> {
     match &mut e.kind {
         ExprKind::Move(_) => unreachable!("written by lift"),
-        ExprKind::Int(_)
+        ExprKind::Int(..)
         | ExprKind::Bool(_)
         | ExprKind::Unit
         | ExprKind::Var(..)
         | ExprKind::Continue(_) => Vec::new(),
         ExprKind::Unary(_, x)
+        | ExprKind::As(x, _)
         | ExprKind::Field(x, _)
         | ExprKind::Loop(_, x)
         | ExprKind::Unsafe(x) => vec![&mut **x],

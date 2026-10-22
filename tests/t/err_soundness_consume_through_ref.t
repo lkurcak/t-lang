@@ -2,14 +2,14 @@
 // reference, and using `p` up doesn't touch what that points to. Rust
 // accepts this; the borrow checker here treats moving `p` as reaching
 // through the references in it.
-struct Fd { n: int }
+struct Fd { n: i64 }
 
 #[derive(Discard)]
 struct Q<'a> { r: &'a Fd }
 
 struct P<'a> { a: Fd, q: Q<'a> }
 
-fn close(f: Fd) -> int {
+fn close(f: Fd) -> i64 {
     let Fd { n } = f;
     n
 }

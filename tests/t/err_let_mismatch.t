@@ -1,4 +1,4 @@
 fn main() {
-    let x: int = true;
+    let x: i64 = true;
 }
-// error: expected `int`, found `bool`
+// error: expected `i64`, found `bool`

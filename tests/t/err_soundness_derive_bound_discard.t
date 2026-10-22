@@ -1,7 +1,7 @@
 // `Token<T>` must be used up unless `T: Copy`, so a derived `Discard` of
 // what holds one needs `T: Copy` too. With `T: Discard` instead, a
 // `W<Thing>` could be thrown away, and the `Token<Thing>` in it with it.
-struct Token<T> { f: fn(T) -> int }
+struct Token<T> { f: fn(T) -> i64 }
 
 impl<T: Copy> Discard for Token<T> {}
 
@@ -9,9 +9,9 @@ impl<T: Copy> Discard for Token<T> {}
 struct W<T> { t: Token<T> }
 
 #[derive(Discard)]
-struct Thing { n: int }
+struct Thing { n: i64 }
 
-fn ignore(t: Thing) -> int { t.n }
+fn ignore(t: Thing) -> i64 { t.n }
 
 fn main() {
     let _w = W { t: Token { f: ignore } };

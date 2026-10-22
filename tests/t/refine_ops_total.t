@@ -1,12 +1,12 @@
 // Operators the checker can prove don't overflow, or don't divide by
 // zero, can't panic.
-fn inc(x: { v: int | v < 100 }) -> int { x + 1 }
+fn inc(x: { v: i64 | v < 100 }) -> i64 { x + 1 }
 
-fn neg_five() -> int { -5 }
+fn neg_five() -> i64 { -5 }
 
-fn half(n: int) -> int { n / 2 }
+fn half(n: i64) -> i64 { n / 2 }
 
-fn guarded(a: int, d: int) -> int {
+fn guarded(a: i64, d: i64) -> i64 {
     if d == 0 {
         return 0;
     }
@@ -16,9 +16,9 @@ fn guarded(a: int, d: int) -> int {
     a / d
 }
 
-fn short_circuit(a: int, d: int) -> bool { d > 0 && a / d > 1 }
+fn short_circuit(a: i64, d: i64) -> bool { d > 0 && a / d > 1 }
 
-fn sum_small(a: { v: int | v >= 0 && v <= 1000 }, b: { v: int | v >= -1000 && v <= 0 }) -> int {
+fn sum_small(a: { v: i64 | v >= 0 && v <= 1000 }, b: { v: i64 | v >= -1000 && v <= 0 }) -> i64 {
     a + b + a * 3 - b
 }
 
@@ -31,5 +31,5 @@ fn main() {
     print_bool(short_circuit(10, 0)); // expect: false
     print_bool(short_circuit(10, 3)); // expect: true
     print(sum_small(10, -5)); // expect: 40
-    print(1 + 2 * 3); // expect: 7
+    print(1i64 + 2 * 3); // expect: 7
 }

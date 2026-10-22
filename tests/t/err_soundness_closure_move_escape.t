@@ -2,7 +2,7 @@
 // it can't be returned from a call: the closure may be gone before it is,
 // as here.
 fn main() {
-    let x = 5;
+    let x: i64 = 5;
     let r = {
         let c = move || &x;
         c()

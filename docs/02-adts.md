@@ -5,9 +5,9 @@ Code: `src/check/expr.rs` and `src/check/patterns.rs` (typing rules),
 
 ```rust
 #[derive(Discard)]
-enum Shape { Circle(int), Rect(int, int), Empty }
+enum Shape { Circle(i64), Rect(i64, i64), Empty }
 
-fn area(s: Shape) -> int {
+fn area(s: Shape) -> i64 {
     match s {
         Shape::Circle(r) => 3 * r * r,
         Shape::Rect(w, h) => w * h,
@@ -22,7 +22,7 @@ Step 1 had a fixed set of types. Step 2 lets programs define their own, and
 there are exactly two basic ways to do it:
 
 - **Product** (`struct`): a value has field 1 **and** field 2 **and** ...
-  `struct Point { x: int, y: int }` holds both an `x` and a `y`.
+  `struct Point { x: i64, y: i64 }` holds both an `x` and a `y`.
 - **Sum** (`enum`): a value is variant 1 **or** variant 2 **or** ...
   A `Shape` is a `Circle` or a `Rect` or `Empty`, never more than one, and it
   carries only that variant's fields.
@@ -77,7 +77,7 @@ for *any* part:
 ```
 
 `p : T ⊣ Δ` is a judgment about patterns: "`p` matches values of type `T` and
-binds the variables `Δ`". For example, `Shape::Rect(w, _) : Shape ⊣ w : int`.
+binds the variables `Δ`". For example, `Shape::Rect(w, _) : Shape ⊣ w : i64`.
 That's `Checker::pattern`. Each arm's body is checked in a context extended
 with that arm's bindings, just as T-Let extends the context with one variable.
 
@@ -109,7 +109,7 @@ the program would be **stuck**, with no rule saying what happens next. That's
 exactly what step 1's soundness theorem rules out. So exhaustiveness checking
 isn't a lint, it's how *progress* survives the addition of sum types. In
 `interp.rs`, a `match` where no arm fits calls `unsound(..)`, next to adding a
-bool and calling an int.
+bool and calling an i64.
 
 The same goes for `let`: `let Shape::Circle(r) = s;` is rejected because `s`
 might be something else (`tests/t/err_let_refutable.t`). Patterns that can't
@@ -253,7 +253,7 @@ constructors: `_` is never useful), and since that match can never run, it
 can have *any* type:
 
 ```rust
-fn absurd(n: Never) -> int {
+fn absurd(n: Never) -> i64 {
     match n {}
 }
 ```
@@ -280,7 +280,7 @@ its own, `!` (docs/05.1-control-flow.md). Now that's what an empty match is.
 
 ## Design decisions worth noticing
 
-- **Nominal typing.** `struct Meters { v: int }` and `struct Feet { v: int }`
+- **Nominal typing.** `struct Meters { v: i64 }` and `struct Feet { v: i64 }`
   are different types, though they have the same shape (`Type::Adt` holds a
   *name*). That's what makes them useful for keeping units apart. Structural
   typing (TypeScript, OCaml objects) would compare the fields instead.
@@ -301,7 +301,7 @@ its own, `!` (docs/05.1-control-flow.md). Now that's what an empty match is.
 - **No struct literals in `if`/`match` heads.** In `if x { .. }`, is `x {`
   a struct literal? Rust's answer, copied here: not in that position. Use
   parentheses: `if p == (P { x: 1 }) { .. }` (`tests/t/if_struct_literal.t`).
-- **No recursive types.** `enum List { Nil, Cons(int, List) }` is rejected:
+- **No recursive types.** `enum List { Nil, Cons(i64, List) }` is rejected:
   a `List` would contain a `List`, so it would have infinite size. C needs a
   pointer for this, and so do we, which means deciding who frees it (no GC!).
   That's step 5, ownership. T won't have ML-style recursive types that hold
@@ -314,8 +314,8 @@ its own, `!` (docs/05.1-control-flow.md). Now that's what an empty match is.
 | Missing | Why it's missing | Step |
 |---|---|---|
 | `enum Option<T>` | generic types | 4 |
-| `enum List { Nil, Cons(int, List) }` | a type holding itself needs a pointer, and an owner for it | 5 |
-| tuples `(int, bool)` | anonymous structs; easy, just not needed yet | — |
+| `enum List { Nil, Cons(i64, List) }` | a type holding itself needs a pointer, and an owner for it | 5 |
+| tuples `(i64, bool)` | anonymous structs; easy, just not needed yet | — |
 | guards `x if x > 0 => ..` | they make exhaustiveness approximate: the checker can't see through `if` | — |
 | mutation of fields | ownership | 5 |
 

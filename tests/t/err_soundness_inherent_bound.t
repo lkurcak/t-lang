@@ -1,5 +1,5 @@
 // An inherent impl's bounds are needed where its methods are called.
-struct Fd { n: int }
+struct Fd { n: i64 }
 
 struct W<T> { x: T }
 

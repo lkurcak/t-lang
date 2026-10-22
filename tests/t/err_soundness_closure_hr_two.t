@@ -4,7 +4,7 @@
 fn main() {
     let a = 1;
     let mut keep = &a;
-    let put = |out: &mut &int, x: &int| { *out = x; };
+    let put = |out: &mut &i64, x: &i64| { *out = x; };
     {
         let b = 2;
         put(&mut keep, &b);

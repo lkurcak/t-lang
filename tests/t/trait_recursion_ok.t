@@ -1,6 +1,6 @@
 // Calling a trait's method at a bigger type is fine if the types don't keep
-// growing: `W<int>` shows an `Option<&int>`, which shows a `&int`, which
-// shows an `int`.
+// growing: `W<i64>` shows an `Option<&i64>`, which shows a `&i64`, which
+// shows an `i64`.
 
 trait Show {
     fn show(&self);
@@ -13,7 +13,7 @@ impl<T: Show> Show for Option<T> {
     fn show(&self) {
         match self {
             Option::Some(x) => x.show(),
-            Option::None => print(0),
+            Option::None => print(0i64),
         }
     }
 }
@@ -22,7 +22,7 @@ impl<'a, T: Show> Show for &'a T {
     fn show(&self) { (**self).show() }
 }
 
-impl Show for int {
+impl Show for i64 {
     fn show(&self) { print(*self) }
 }
 
@@ -34,6 +34,6 @@ impl<T: Show> Show for W<T> {
 }
 
 fn main() {
-    W { x: W { x: 5 } }.show();         // expect: 5
-    Option::<int>::None.show();          // expect: 0
+    W { x: W { x: 5i64 } }.show();         // expect: 5
+    Option::<i64>::None.show();          // expect: 0
 }

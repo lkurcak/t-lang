@@ -1,6 +1,6 @@
 // A variable declared with no value, and not `mut`, gets one value.
 fn main() {
-    let r;
+    let r: i64;
     r = 1;
     r = 2;
     print(r);

@@ -1,5 +1,5 @@
 #[derive(Discard)]
-struct P { x: int }
+struct P { x: i64 }
 
 fn main() {
     let P { mut x } = P { x: 1 };

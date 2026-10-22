@@ -2,4 +2,4 @@ fn main() {
     let x = 5;
     x(1);
 }
-// error: `int` is not a function
+// error: `{integer}` is not a function

@@ -5,8 +5,8 @@ use super::lints::{mergeable, narrowable, unreachable_alt, unreachable_arm};
 use super::{Checker, Local, plural, result_span};
 use crate::ast::*;
 use crate::error::{Error, Span};
-use crate::exhaust::{self, Ctor, Pat, Redundant};
-use crate::types::{Region, Type, struct_fields, variant_fields};
+use crate::exhaust::{self, Ctor, Ends, Pat, Redundant};
+use crate::types::{IntTy, Region, Type, struct_fields, variant_fields};
 
 impl Checker {
     //   Γ ⊢ e : T    pi : T ⊣ Δi    Γ, Δi ⊢ ei : R  (each arm i)    p1..pn cover T
@@ -92,9 +92,9 @@ impl Checker {
     /// they're bound to (`None`), or by reference to it (`Some`, with whether
     /// it's `&mut`). They bind by value until the pattern looks through a
     /// reference: that's *match ergonomics*, as in Rust. In
-    /// `match r { Option::Some(x) => .. }` with `r: &Option<int>`, the
-    /// variant pattern looks through the `&` to the `Option<int>` behind it,
-    /// and `x` is a `&int`, borrowed from inside it.
+    /// `match r { Option::Some(x) => .. }` with `r: &Option<i64>`, the
+    /// variant pattern looks through the `&` to the `Option<i64>` behind it,
+    /// and `x` is a `&i64`, borrowed from inside it.
     ///
     /// Returns the pattern in the reduced form the exhaustiveness checker
     /// uses.
@@ -154,18 +154,20 @@ impl Checker {
                 Pat::Wild
             }
             PatternKind::Int(n) => {
-                self.pattern_is(p, ty, Type::Int)?;
+                self.int_pattern(p, ty, &[*n])?;
                 Pat::Ctor(Ctor::Int(*n, *n), Vec::new())
             }
             PatternKind::Range(lo, hi, _) => {
-                self.pattern_is(p, ty, Type::Int)?;
+                let ends =
+                    self.int_pattern(p, ty, &[*lo, *hi].into_iter().flatten().collect::<Vec<_>>())?;
+                let (lo, hi) = (lo.unwrap_or(ends.0), hi.unwrap_or(ends.1));
                 if lo > hi {
                     return Err(Error::ty(
                         p.span,
                         "this range is empty, so it can never match",
                     ));
                 }
-                Pat::Range(*lo, *hi, p.span)
+                Pat::Range(lo, hi, p.span, ends)
             }
             PatternKind::Bool(b) => {
                 self.pattern_is(p, ty, Type::Bool)?;
@@ -295,6 +297,31 @@ impl Checker {
 
     /// Unifies the type `ty` a pattern should match with the type `found` it
     /// does match.
+    /// Requires `ty`, what pattern `p` matches, to be an integer type, as
+    /// the integers `values` it's written with must fit in. Gives its
+    /// least and greatest values, which an end of a range left open runs
+    /// to. If the type isn't known yet, or is a type parameter, they're
+    /// all an integer type can have, from the least `i64` to the greatest
+    /// `u64`, as nothing narrower is sure to be covered.
+    fn int_pattern(&mut self, p: &Pattern, ty: &Type, values: &[i128]) -> Result<Ends, Error> {
+        let int = self.fresh_int(p.span, String::new(), String::new());
+        self.unify_or(&int, ty, p.span, |found, ty| {
+            format!("expected `{ty}`, found `{found}`")
+        })?;
+        for &value in values {
+            self.literals.push(super::Literal {
+                node: p.id,
+                span: p.span,
+                value,
+                ty: ty.clone(),
+            });
+        }
+        Ok(match self.solved(ty) {
+            Type::Int(t) => t.range_64(),
+            _ => (IntTy::I64.range_64().0, IntTy::U64.range_64().1),
+        })
+    }
+
     fn pattern_is(&mut self, p: &Pattern, ty: &Type, found: Type) -> Result<(), Error> {
         self.unify_or(&found, ty, p.span, |found, ty| {
             format!("expected `{ty}`, found `{found}`")

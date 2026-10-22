@@ -1,9 +1,9 @@
 mod m {
     #[derive(Discard)]
-    pub struct P { pub n: int }
+    pub struct P { pub n: i64 }
 
     impl P {
-        fn secret(&self) -> int { self.n }
+        fn secret(&self) -> i64 { self.n }
     }
 }
 

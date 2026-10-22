@@ -10,9 +10,9 @@ enum Never {}
 struct Stream { next: Box<Stream> }
 
 #[derive(Discard)]
-enum Shape<'a> { Circle(int), Ref(&'a Never), Boxed(Box<Never>), Forever(Stream) }
+enum Shape<'a> { Circle(i64), Ref(&'a Never), Boxed(Box<Never>), Forever(Stream) }
 
-fn radius(s: Shape) -> int {
+fn radius(s: Shape) -> i64 {
     match s {
         Shape::Circle(r) => r,
     }

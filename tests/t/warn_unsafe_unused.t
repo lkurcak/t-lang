@@ -2,7 +2,7 @@
 // only hides where the unsafe operations aren't.
 fn main() {
     // SAFETY: nothing to keep.
-    let n = unsafe { 1 };
+    let n = unsafe { 1i64 };
     print(n); // expect: 1
 }
 // warning: this `unsafe` block has nothing unsafe in it

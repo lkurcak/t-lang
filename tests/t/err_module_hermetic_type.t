@@ -1,9 +1,9 @@
 // `Point` from the module around it needs `super::` too.
 #[derive(Discard)]
-struct Point { x: int }
+struct Point { x: i64 }
 
 mod m {
-    pub fn f(p: Point) -> int { 1 }
+    pub fn f(p: Point) -> i64 { 1 }
 }
 
 fn main() {}

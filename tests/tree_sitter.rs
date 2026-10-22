@@ -184,7 +184,7 @@ fn parses_nested_functions() {
 
 #[test]
 fn parses_local_types() {
-    let src = "fn main() {\n    /// Doc.\n    struct P { x: int }\n    enum E<T> { A(T) }\n    P { x: 1 }.x\n}\n";
+    let src = "fn main() {\n    /// Doc.\n    struct P { x: i64 }\n    enum E<T> { A(T) }\n    P { x: 1 }.x\n}\n";
     let tree = parser().parse(src, None).unwrap();
     let root = tree.root_node();
     assert!(first_error(root).is_none(), "{}", root.to_sexp());
@@ -212,7 +212,7 @@ fn parses_local_types() {
 /// highlighted as a variable, so not at all; the `y` of `y: 1` is a field.
 #[test]
 fn highlights_shorthand_fields_as_variables() {
-    let src = "struct P { x: int, y: int }\nfn main() {\n    let x = 1;\n    let P { x, y: _ } = P { x, y: 1 };\n    x\n}\n";
+    let src = "struct P { x: i64, y: i64 }\nfn main() {\n    let x = 1;\n    let P { x, y: _ } = P { x, y: 1 };\n    x\n}\n";
     let tree = parser().parse(src, None).unwrap();
     let root = tree.root_node();
     assert!(first_error(root).is_none(), "{}", root.to_sexp());

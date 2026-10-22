@@ -2,7 +2,7 @@
 // of linear ones is used up by `free_with`.
 use alloc::list::List;
 
-struct Fd { n: int }
+struct Fd { n: i64 }
 
 fn main() with {alloc, panic} {
     let mut l: List<Fd> = List::new();

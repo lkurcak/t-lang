@@ -10,7 +10,7 @@ rule in `src/check/generics.rs` (`unsized_slice`), `src/check/unify.rs`
 ```rust
 use alloc::list::List;
 
-fn total(s: &[int]) -> int with panic {
+fn total(s: &[i64]) -> i64 with panic {
     let mut sum = 0;
     for x in s.iter() {
         sum = sum + *x;
@@ -19,7 +19,7 @@ fn total(s: &[int]) -> int with panic {
 }
 
 fn main() with {alloc, panic} {
-    let mut l: List<int> = List::new();
+    let mut l: List<i64> = List::new();
     for i in 1..5 {
         l.push(i);
     }
@@ -38,7 +38,7 @@ A *slice*, `[T]`, is some number of `T`s one after another in memory,
 seen through a reference: `&[T]` to read them, `&mut [T]` to change them.
 How many there are is known only as the program runs, and the reference
 carries it, so `s.len()` is a field of the reference, not of what it
-points to. `total` takes any run of `int`s, whoever owns them: a list's,
+points to. `total` takes any run of `i64`s, whoever owns them: a list's,
 part of one, or none at all.
 
 ## A slice is only behind a reference
@@ -48,19 +48,19 @@ of its own: not a parameter, a local, a field, a type argument, or what's
 in a `Box`. Each of these is an error:
 
 ```rust,error
-fn f(s: [int]) {}
-// error: a slice `[int]` can only be behind a reference, as in `&[int]`
+fn f(s: [i64]) {}
+// error: a slice `[i64]` can only be behind a reference, as in `&[i64]`
 ```
 
-Nor is `*s` a value, as it would be for a `&int`: it's only a place, to
+Nor is `*s` a value, as it would be for a `&i64`: it's only a place, to
 borrow again (`&*s`, `&mut *s`) or call a method of.
 
 ```rust,error
 fn main() {
-    let s: &[int] = core::slice::empty();
+    let s: &[i64] = core::slice::empty();
     let v = *s;
 }
-// error: a slice `[int]` can only be behind a reference, as in `&[int]`
+// error: a slice `[i64]` can only be behind a reference, as in `&[i64]`
 ```
 
 What a type parameter stands for is never a slice either, though the
@@ -72,11 +72,11 @@ place, and the body of a generic function isn't in its signature:
 use core::mem::swap;
 
 fn main() {
-    let a: &mut [int] = core::slice::empty_mut();
-    let b: &mut [int] = core::slice::empty_mut();
+    let a: &mut [i64] = core::slice::empty_mut();
+    let b: &mut [i64] = core::slice::empty_mut();
     swap(a, b);
 }
-// error: a type parameter can't stand for the slice `[int]`: it's only ever behind a reference
+// error: a type parameter can't stand for the slice `[i64]`: it's only ever behind a reference
 ```
 
 So the rule is one of *kinds*: types split into those a value can have,
@@ -88,7 +88,7 @@ generic code ever sees a slice by value, and `&T` for a type parameter
 places: where a type is written (`resolve`), where a type variable is
 solved (`unify` never solves one to a slice), and where an impl is found
 (`matches` never lets an impl's parameter stand for one), so `impl<T> Tr
-for &T` isn't an impl for `&[int]`.
+for &T` isn't an impl for `&[i64]`.
 
 In return, `&[T]` and `&mut [T]` are references like any other. A `&'a
 [T]` is `Copy` and covariant in `'a` and `T`; a `&'a mut [T]` is
@@ -96,7 +96,7 @@ reborrowed when it's used, not `Copy`, covariant in `'a` and invariant in
 `T`, for the reason a `&mut T` is (docs/05-ownership.md):
 
 ```rust,error
-fn shorter<'a, 'b>(s: &'b mut [&'static int]) -> &'b mut [&'a int] { s }
+fn shorter<'a, 'b>(s: &'b mut [&'static i64]) -> &'b mut [&'a i64] { s }
 // error: lifetime may not live long enough
 ```
 
@@ -108,9 +108,9 @@ trusts:
 
 | Intrinsic | What it does |
 |---|---|
-| `len(&self)` | how many values it has |
-| `get(&self, i)`, `get_mut(&mut self, i)` | the value at `i`, or `None` if `i` is negative or not less than `len()` |
-| `split_at(&self, mid)`, `split_at_mut(&mut self, mid)` | the values before `mid` and from it on, or `None` if `mid` is negative or more than `len()` |
+| `len(&self)` | how many values it has, a `usize` (docs/11-integers.md) |
+| `get(&self, i)`, `get_mut(&mut self, i)` | the value at `i`, or `None` if `i` isn't less than `len()` |
+| `split_at(&self, mid)`, `split_at_mut(&mut self, mid)` | the values before `mid` and from it on, or `None` if `mid` is more than `len()` |
 | `slice::empty()`, `slice::empty_mut()` | a slice of no values, of any lifetime |
 
 None is `unsafe`, and none panics: each checks the index it's given
@@ -128,7 +128,7 @@ know whether `i` and `j` are the same index, so it treats them as the
 same value.
 
 ```rust,error
-fn both(s: &mut [int]) with panic {
+fn both(s: &mut [i64]) with panic {
     let a = s.get_mut(0).unwrap();
     let b = s.get_mut(1).unwrap();
     *a = *b;
@@ -147,7 +147,7 @@ half, then `core::mem::swap`.
 use core::slice::SplitMut;
 
 fn main() with {alloc, panic} {
-    let mut l: alloc::list::List<int> = alloc::list::List::new();
+    let mut l: alloc::list::List<i64> = alloc::list::List::new();
     l.push(1);
     l.push(2);
     let SplitMut { head, tail } = l.as_mut_slice().split_at_mut(1).unwrap();
@@ -194,7 +194,7 @@ reference borrows the slice, for `'a`:
 use alloc::list::List;
 
 fn main() with {alloc, panic} {
-    let mut l: List<int> = List::new();
+    let mut l: List<i64> = List::new();
     l.push(1);
     let s = l.as_mut_slice();
     let mut it = s.iter_mut();
@@ -216,7 +216,7 @@ operations, which replace `RawBuf::get` and `get_mut`:
 - `slice(&self, lo, hi) -> &[T]` and `slice_mut(&mut self, lo, hi) -> &mut
   [T]`: the values in slots `lo..hi`. Their obligation is `lo <= hi <=
   cap()`, and that slots `lo..hi` are initialised. `lo >= 0` is the
-  type's, as an index's is.
+  type's, `usize`, as an index's is.
 
 The slice borrows the buffer, so while it lives nothing can `write`,
 `read`, `grow` or `free` it, and the slots stay initialised: nothing done
@@ -228,7 +228,7 @@ made, and the interpreter does check it:
 use alloc::raw::RawBuf;
 
 fn main() with {alloc, panic} {
-    let mut b: RawBuf<int> = RawBuf::new(2);
+    let mut b: RawBuf<i64> = RawBuf::new(2);
     // SAFETY: slot 0 is uninitialised.
     unsafe { b.write(0, 1) };
     // SAFETY: wrong: slot 1 holds nothing.
@@ -254,7 +254,7 @@ may move the values, can't run while it lives:
 use alloc::list::List;
 
 fn main() with {alloc, panic} {
-    let mut l: List<int> = List::new();
+    let mut l: List<i64> = List::new();
     l.push(1);
     let s = l.as_slice();
     l.push(2);
@@ -274,7 +274,7 @@ There's no `s[i]`:
 
 ```text
 fn main() {
-    let s: &[int] = core::slice::empty();
+    let s: &[i64] = core::slice::empty();
     let x = s[0];
 }
 // syntax error: there's no indexing with `[..]` yet; use `.get(..)`, which gives an `Option`

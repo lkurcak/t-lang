@@ -4,9 +4,9 @@
 use alloc::raw::RawBuf;
 
 fn main() with {alloc, panic} {
-    let mut b: RawBuf<int> = RawBuf::new(1);
+    let mut b: RawBuf<i64> = RawBuf::new(1);
     // SAFETY: the closure isn't called here.
-    let mut f = unsafe { |b: &mut RawBuf<int>| b.read(0) };
+    let mut f = unsafe { |b: &mut RawBuf<i64>| b.read(0) };
     print(f(&mut b));
     // SAFETY: the slot is uninitialised.
     unsafe { b.free() };

@@ -7,7 +7,7 @@ body) and `src/borrowck/build.rs` (making a closure, and calling one),
 `src/lift.rs` and `src/interp.rs` (`Closure`).
 
 ```rust
-fn apply<e, F: Fn(int) -> int with e + Discard>(f: F, x: int) -> int with e { f(x) }
+fn apply<e, F: Fn(i64) -> i64 with e + Discard>(f: F, x: i64) -> i64 with e { f(x) }
 
 fn count<e, F: FnMut() with e + Discard>(mut tick: F) with e {
     tick();
@@ -17,7 +17,7 @@ fn count<e, F: FnMut() with e + Discard>(mut tick: F) with e {
 fn main() with panic {
     let k = 10;
     print(apply(|x| x * k, 4)); // expect: 40
-    let mut n = 0;
+    let mut n: i64 = 0;
     count(|| n = n + 1);
     print(n); // expect: 2
 }
@@ -35,8 +35,8 @@ that doesn't outlive them. This step does what Rust does instead.
 struct, with a field for `k`, and a function that takes it:
 
 ```text
-struct Closure<'a> { k: &'a int }
-fn call(self: &Closure<'a>, x: int) -> int { x * *self.k }
+struct Closure<'a> { k: &'a i64 }
+fn call(self: &Closure<'a>, x: i64) -> i64 { x * *self.k }
 ```
 
 Turning a closure into that is *closure conversion*, and here it's done in
@@ -54,21 +54,21 @@ Calling it is what a trait says. There are three, built in:
 - `FnMut(A) -> R`: calls borrow it mutably. `trait FnMut: FnOnce`.
 - `Fn(A) -> R`: calls borrow it. `trait Fn: FnMut`.
 
-`F: Fn(int) -> int` is a bound, as `T: Show` is, and it's how generic code
+`F: Fn(i64) -> i64` is a bound, as `T: Show` is, and it's how generic code
 takes a closure. What a call takes and gives is an equality bound on an
-associated type of `FnOnce` that nothing else can name: `F: Fn(int) -> int`
-is `F: Fn<(signature) = fn(int) -> int>`, worked out and checked as in
+associated type of `FnOnce` that nothing else can name: `F: Fn(i64) -> i64`
+is `F: Fn<(signature) = fn(i64) -> i64>`, worked out and checked as in
 docs/06b-associated-types.md. Inside `apply`, `f(x)` is `F`'s call, with
 `F`'s signature.
 
 Functions and closures that capture nothing keep their function types, and
 implement all three traits, so `apply(inc, 1)` works too. A function type
-holds only those, which is why `fn(int) -> int` can be a field or a result
+holds only those, which is why `fn(i64) -> i64` can be a field or a result
 type while a closure that captures can't be put there:
 
 ```rust,error
-fn adder(n: int) -> fn(int) -> int {
-    |x| x + n // error: expected `fn(int) -> int`, found a closure that captures `n`
+fn adder(n: i64) -> fn(i64) -> i64 {
+    |x| x + n // error: expected `fn(i64) -> i64`, found a closure that captures `n`
 }
 ```
 
@@ -76,7 +76,7 @@ That's what keeps function types sound under the rule trait resolution
 relies on: a function value works at every lifetime (`traits::matches`),
 which is true when it holds no references. Returning a closure that captures
 needs a way to say "some type that implements `Fn`" in a signature, `impl
-Fn(int) -> int`: that's step 6c.1, docs/06c.1-opaque-types.md.
+Fn(i64) -> i64`: that's step 6c.1, docs/06c.1-opaque-types.md.
 
 ## How a closure captures
 
@@ -104,7 +104,7 @@ Which trait a closure implements follows from what its body does:
 - `Fn` otherwise.
 
 ```rust,error
-fn twice<e, F: Fn() -> int with e + Discard>(f: F) -> int with {panic, e} { f() + f() }
+fn twice<e, F: Fn() -> i64 with e + Discard>(f: F) -> i64 with {panic, e} { f() + f() }
 
 fn main() {
     let mut n = 0;
@@ -131,7 +131,7 @@ can't give out anything borrowed through it:
 
 ```rust,error
 fn main() {
-    let mut x = 0;
+    let mut x: i64 = 0;
     let mut c = || &mut x; // error: this closure returns a reference to what it captured
     let a = c();
     let b = c();
@@ -172,7 +172,7 @@ borrowing drops it after. So a closure that owns a value that isn't
 does with it:
 
 ```rust,error
-struct Fd { n: int }
+struct Fd { n: i64 }
 
 fn main() {
     let fd = Fd { n: 3 };
@@ -192,7 +192,7 @@ implementations that aren't closures.
 can be lent to a function and called again after:
 
 ```rust
-fn apply<e, F: Fn(int) -> int with e>(f: &F, x: int) -> int with e { f(x) }
+fn apply<e, F: Fn(i64) -> i64 with e>(f: &F, x: i64) -> i64 with e { f(x) }
 
 fn main() with panic {
     let k = 3;
@@ -222,7 +222,7 @@ function can't go wrong where the function didn't.
 ## Design decisions worth noticing
 
 - **The `Fn` traits are built in.** T's traits have no type parameters, so
-  `Fn(int) -> int` can't be a trait applied to `int`; instead, the signature
+  `Fn(i64) -> i64` can't be a trait applied to `i64`; instead, the signature
   is an equality bound on an associated type only these bounds can name.
   Nothing else can implement them, so there's no coherence question.
 - **Capture by the least that works.** As in Rust, so closures borrow by
@@ -241,9 +241,9 @@ function can't go wrong where the function didn't.
 
 | Missing | Why it's missing | Step |
 |---|---|---|
-| returning closures, `-> impl Fn(int) -> int` | existential types, and which lifetimes they capture | 6c.1 |
-| a closure's type generic over lifetimes, `\|x: &int\| -> &int { x }` called at two | higher-ranked closure types | 6e.1 |
-| `dyn Fn(int) -> int` | no trait objects | — |
+| returning closures, `-> impl Fn(i64) -> i64` | existential types, and which lifetimes they capture | 6c.1 |
+| a closure's type generic over lifetimes, `\|x: &i64\| -> &i64 { x }` called at two | higher-ranked closure types | 6e.1 |
+| `dyn Fn(i64) -> i64` | no trait objects | — |
 | `Box<F>` callable | only useful with `dyn` | — |
 | capturing fields, `p.x`, not `p` | path rules; relaxes compatibly | — |
 | the result of `F` as `F::Output` | the bound always says it | — |
@@ -252,7 +252,7 @@ function can't go wrong where the function didn't.
 ## Exercises
 
 1. Write the struct and the function that `|y| x + y` turns into, for
-   `x: int` captured by `&`. Then for `move |y| x + y`.
+   `x: i64` captured by `&`. Then for `move |y| x + y`.
 2. Why must a closure that changes a captured `n` be called through `&mut`?
    Write the program that would go wrong if `Fn` closures could change
    what they capture.

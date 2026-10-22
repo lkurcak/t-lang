@@ -3,24 +3,24 @@
 // of it if the method takes `&self` or `&mut self`.
 
 #[derive(Discard)]
-struct Counter { n: int }
+struct Counter { n: i64 }
 
 impl Counter {
     /// No `self`: called by its path, `Counter::new()`.
     fn new() -> Counter { Counter { n: 0 } }
 
-    fn get(&self) -> int { self.n }
+    fn get(&self) -> i64 { self.n }
 
-    fn add(&mut self, k: int) -> &mut Counter with panic {
+    fn add(&mut self, k: i64) -> &mut Counter with panic {
         self.n += k;
         self
     }
 
-    fn into_inner(self) -> int { self.n }
+    fn into_inner(self) -> i64 { self.n }
 
-    fn doubled(&self) -> int with panic { Self::twice(self.get()) }
+    fn doubled(&self) -> i64 with panic { Self::twice(self.get()) }
 
-    fn twice(x: int) -> int with panic { x * 2 }
+    fn twice(x: i64) -> i64 with panic { x * 2 }
 }
 
 #[derive(Discard)]
@@ -33,7 +33,7 @@ impl<T> Wrapper<T> {
     fn map<U>(self, f: fn(T) -> U) -> Wrapper<U> { Wrapper { x: f(self.x) } }
 }
 
-fn half(x: int) -> int { x / 2 }
+fn half(x: i64) -> i64 { x / 2 }
 
 fn main() with {alloc, panic} {
     let mut c = Counter::new();

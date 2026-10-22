@@ -1,5 +1,5 @@
 #[derive(Discard)]
-struct Owner { a: Box<int>, b: Box<int> }
+struct Owner { a: Box<i64>, b: Box<i64> }
 
 fn main() with {alloc, panic} {
     let o = Owner { a: Box::new(1), b: Box::new(2) };

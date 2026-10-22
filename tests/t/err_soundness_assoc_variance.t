@@ -1,16 +1,16 @@
 // `W<'m, 'b>` gets shorter with `'b`, but `<W<'m, 'b> as Tr>::Out`, a `&'m
-// mut &'b int`, can't: so `H<T>`, holding a `T::Out`, mustn't either. If
+// mut &'b i64`, can't: so `H<T>`, holding a `T::Out`, mustn't either. If
 // `H` were covariant in `T`, `shrink` would let a short-lived reference
 // into a slot that outlives it.
 #[derive(Discard)]
-struct W<'m, 'b> { m: &'m int, b: &'b int }
+struct W<'m, 'b> { m: &'m i64, b: &'b i64 }
 
 trait Tr {
     type Out: Discard;
 }
 
 impl<'m, 'b> Tr for W<'m, 'b> {
-    type Out = &'m mut &'b int;
+    type Out = &'m mut &'b i64;
 }
 
 #[derive(Discard)]

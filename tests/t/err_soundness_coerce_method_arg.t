@@ -3,7 +3,7 @@
 struct S {}
 
 impl S {
-    fn get<'a>(&self, r: &'a int) -> &'a int { r }
+    fn get<'a>(&self, r: &'a i64) -> &'a i64 { r }
 }
 
 fn main() {
@@ -12,4 +12,4 @@ fn main() {
     let r = s.get(&b);
     print(*r);
 }
-// error: expected `int`, found `Box<int>`
+// error: expected `i64`, found `Box<{integer}>`

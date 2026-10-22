@@ -1,8 +1,8 @@
 // Same fields, different names: different types (nominal typing).
 #[derive(Discard)]
-struct Meters { v: int }
+struct Meters { v: i64 }
 #[derive(Discard)]
-struct Feet { v: int }
+struct Feet { v: i64 }
 fn main() {
     let m: Meters = Feet { v: 3 };
 }

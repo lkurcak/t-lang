@@ -1,18 +1,18 @@
 // Closures as values of their own types, taken by generic functions through
 // the `Fn` traits.
 
-fn apply<e, F: Fn(int) -> int with e + Discard>(f: F, x: int) -> int with e { f(x) }
+fn apply<e, F: Fn(i64) -> i64 with e + Discard>(f: F, x: i64) -> i64 with e { f(x) }
 fn twice<e, F: FnMut() with e>(mut f: F) -> F with e {
     f();
     f();
     f
 }
-fn once<e, F: FnOnce() -> int with e>(f: F) -> int with e { f() }
-fn inc(x: int) -> int with panic { x + 1 }
+fn once<e, F: FnOnce() -> i64 with e>(f: F) -> i64 with e { f() }
+fn inc(x: i64) -> i64 with panic { x + 1 }
 
-struct B { x: int }
+struct B { x: i64 }
 
-fn take(b: B) -> int {
+fn take(b: B) -> i64 {
     let B { x } = b;
     x
 }
@@ -27,7 +27,7 @@ fn main() with panic {
     print(apply(|x| x - 1, 1));             // expect: 0
     // Changing a captured variable borrows it mutably, for as long as the
     // closure is used.
-    let mut n = 0;
+    let mut n: i64 = 0;
     let c = twice(|| n = n + 1);
     let mut c = twice(c);
     c();

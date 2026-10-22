@@ -1,7 +1,7 @@
 // Each closure captures the one before it, which holds the one before that.
 // Each borrows the one before, so each is only one reference big.
 fn main() with panic {
-    let f0 = || 1;
+    let f0 = || 1i64;
     let f1 = || f0() + 1;
     let f2 = || f1() + 1;
     let f3 = || f2() + 1;

@@ -1,9 +1,9 @@
-fn adder(n: int) -> {closure#210} { move |x| x + n }
+fn adder(n: i64) -> {closure#210} { move |x| x + n }
 
 fn counter() -> {closure#309} {
-    let mut n = 0;
+    let mut n = 0i64;
     move || {
-        n += 1;
+        n += 1i64;
         n
     }
 }
@@ -14,19 +14,19 @@ fn compose::<{panic}, {closure#210}, {closure#210}>(
 ) -> {closure#510}::<{panic}, {closure#210}, {closure#210}> { move |x| (&g)((&f)(x)) }
 
 fn pick(c: bool) -> {closure#210} {
-    let a = adder(1);
-    let b = adder(2);
+    let a = adder(1i64);
+    let b = adder(2i64);
     if c { a } else { b }
 }
 
 fn main() with panic {
-    let add5 = adder(5);
-    print((&add5)(1));
+    let add5 = adder(5i64);
+    print((&add5)(1i64));
     let mut c = counter();
     print((&mut c)());
     print((&mut c)());
-    let h = compose::<{panic}, {closure#210}, {closure#210}>(adder(1), adder(10));
-    print((&h)(0));
-    print((&pick(false))(0));
-    print((&adder(2))(3));
+    let h = compose::<{panic}, {closure#210}, {closure#210}>(adder(1i64), adder(10i64));
+    print((&h)(0i64));
+    print((&pick(false))(0i64));
+    print((&adder(2i64))(3i64));
 }

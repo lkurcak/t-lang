@@ -1,17 +1,17 @@
 //! Monomorphisation: turns a checked program with generics into one
 //! without, by making a copy of each generic function, struct and enum for
 //! each list of type arguments it's used with. `id(1)` and `id(true)` call
-//! two different functions, `id::<int>` and `id::<bool>`, each of which
+//! two different functions, `id::<i64>` and `id::<bool>`, each of which
 //! is plain non-generic code. See docs/04-generics.md.
 //!
-//! The copies are named after what they're copies of, like `id::<int>` and
-//! `Option::<int>`. No name in the source can look like that, so they can't
+//! The copies are named after what they're copies of, like `id::<i64>` and
+//! `Option::<i64>`. No name in the source can look like that, so they can't
 //! clash with anything.
 //!
 //! The checker has already worked out the type arguments of every use of
 //! something generic (`Info::instances`). In a generic function those can
-//! mention its own type parameters; the copy for `T = int` substitutes
-//! `int` for them, and so on down. It finishes because the checker rejects
+//! mention its own type parameters; the copy for `T = i64` substitutes
+//! `i64` for them, and so on down. It finishes because the checker rejects
 //! polymorphic recursion.
 //!
 //! It works on a program with no nested functions or local types left (see
@@ -32,7 +32,7 @@
 //! to (`Cx::need_eq`): the interpreter can't tell a missing one from a
 //! derived one.
 //!
-//! An opaque type, `impl Fn(int) -> int` in a function's return type, is
+//! An opaque type, `impl Fn(i64) -> i64` in a function's return type, is
 //! replaced by the type it stands for, in the copy at the type arguments
 //! it's at (`Projections::reveal`). That's sound for the same reason as for
 //! a trait's method: the checker only let callers rely on its bounds, which
@@ -248,7 +248,7 @@ impl<'p> Mono<'p> {
     /// anything generic is only made where it's used.
     fn without_unused_core(&self, out: &mut Program) {
         // Copies of the core library's generic types too, which its
-        // functions' signatures may make, like `Option<int>`.
+        // functions' signatures may make, like `Option<i64>`.
         let lazy = |name: &str| {
             let of = name.split("::<").next().unwrap_or(name);
             self.info.library_symbols.contains(name) || self.info.library_symbols.contains(of)
@@ -653,7 +653,7 @@ impl Cx<'_, '_, '_> {
     /// How to write `t`, which has no type parameters left in it.
     fn written(&mut self, t: &Type, span: Span) -> TypeExpr {
         let kind = match t {
-            Type::Int => TypeExprKind::Named("int".into(), Vec::new()),
+            Type::Int(t) => TypeExprKind::Named(t.name().into(), Vec::new()),
             Type::Bool => TypeExprKind::Named("bool".into(), Vec::new()),
             Type::Unit => TypeExprKind::Unit,
             Type::Never => TypeExprKind::Never,
@@ -908,9 +908,14 @@ impl Cx<'_, '_, '_> {
             ExprKind::For(_) | ExprKind::Range(..) => {
                 unreachable!("rewritten when paths are resolved")
             }
-            ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit | ExprKind::Continue(_) => {
-                e.kind.clone()
+            ExprKind::Int(n, _) => {
+                let t = self.m.info.literals.get(&e.id).map(|t| self.subst(t));
+                match t {
+                    Some(Type::Int(t)) => ExprKind::Int(*n, Some(t)),
+                    _ => unreachable!("an integer literal of type {t:?}"),
+                }
             }
+            ExprKind::Bool(_) | ExprKind::Unit | ExprKind::Continue(_) => e.kind.clone(),
             // Type arguments written in the source are in `info.instances`
             // like the inferred ones, and the copy's name says them.
             ExprKind::Var(name, _) => match self.m.info.instances.get(&e.id).cloned() {
@@ -948,6 +953,7 @@ impl Cx<'_, '_, '_> {
                 ),
             },
             ExprKind::Unary(op, x) => ExprKind::Unary(*op, Box::new(self.expr(x))),
+            ExprKind::As(x, t) => ExprKind::As(Box::new(self.expr(x)), Box::new(self.ty(t))),
             ExprKind::Binary(op, l, r) => {
                 if let Some(Instance::Fn(_, args)) = self.m.info.instances.get(&e.id).cloned() {
                     self.need_eq(&self.subst(&args[0]));

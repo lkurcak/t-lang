@@ -1,6 +1,6 @@
-// `&mut b` used as a `&int` keeps `b` borrowed as long as the result is
+// `&mut b` used as a `&i64` keeps `b` borrowed as long as the result is
 // used.
-fn get(r: &int) -> &int { r }
+fn get(r: &i64) -> &i64 { r }
 
 fn main() with {alloc, panic} {
     let mut b = Box::new(1);

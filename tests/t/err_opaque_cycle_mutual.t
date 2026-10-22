@@ -1,10 +1,10 @@
 // `f` returns what holds what `g` returns, which holds what `f` returns.
-fn f(n: int) -> impl Fn() -> int + Discard {
+fn f(n: i64) -> impl Fn() -> i64 + Discard {
     let h = g(n);
     move || h()
 }
 
-fn g(n: int) -> impl Fn() -> int + Discard {
+fn g(n: i64) -> impl Fn() -> i64 + Discard {
     let h = f(n);
     move || h()
 }

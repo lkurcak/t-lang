@@ -5,15 +5,15 @@
 // wait with all of `*{ .. }`, and so ran the move of `a` below first.)
 
 #[derive(Discard)]
-struct S { n: int }
+struct S { n: i64 }
 
 impl S {
-    fn get(&self, k: Box<int>) -> int with panic { self.n + *k }
+    fn get(&self, k: Box<i64>) -> i64 with panic { self.n + *k }
 }
 
-fn f(x: &int, y: Box<int>) -> int with panic { *x + *y }
+fn f(x: &i64, y: Box<i64>) -> i64 with panic { *x + *y }
 
-fn g(x: &mut Box<int>, n: int) -> int with panic { **x + n }
+fn g(x: &mut Box<i64>, n: i64) -> i64 with panic { **x + n }
 
 fn main() with {alloc, panic} {
     let mut a = Box::new(1);

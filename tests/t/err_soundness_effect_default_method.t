@@ -3,9 +3,9 @@
 trait Gen {
     effect e;
 
-    fn next(&mut self) -> int with Self::e;
+    fn next(&mut self) -> i64 with Self::e;
 
-    fn two(&mut self) -> int { self.next() }
+    fn two(&mut self) -> i64 { self.next() }
 }
 
 #[derive(Discard)]
@@ -14,7 +14,7 @@ struct Z {}
 impl Gen for Z {
     effect e = panic;
 
-    fn next(&mut self) -> int with panic { panic() }
+    fn next(&mut self) -> i64 with panic { panic() }
 }
 
 fn main() {

@@ -8,15 +8,15 @@ trait Tr {
 }
 
 #[derive(Discard)]
-struct A { n: int }
+struct A { n: i64 }
 
 impl Tr for A {
-    type item = int;
+    type item = i64;
 
-    fn out(&self) -> int { self.n }
+    fn out(&self) -> i64 { self.n }
 }
 
-fn f<T: Tr>(t: &T) -> int {
+fn f<T: Tr>(t: &T) -> i64 {
     let x = t.out();
     1
 }

@@ -1,7 +1,7 @@
 // A closure that owns a value that must be used up must be called.
-struct Fd { n: int }
+struct Fd { n: i64 }
 
-fn close(fd: Fd) -> int {
+fn close(fd: Fd) -> i64 {
     let Fd { n } = fd;
     n
 }

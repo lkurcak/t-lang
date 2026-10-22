@@ -7,7 +7,7 @@ fn main() with panic {
     if b {
         spin();
     }
-    print(1); // expect: 1
+    print(1i64); // expect: 1
     panic();
 }
 // error: runtime error: panicked

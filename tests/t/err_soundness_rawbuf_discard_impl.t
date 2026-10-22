@@ -5,6 +5,6 @@ use alloc::raw::RawBuf;
 impl<T> Discard for RawBuf<T> {}
 
 fn main() with {alloc, panic} {
-    let _b: RawBuf<int> = RawBuf::new(4);
+    let _b: RawBuf<i64> = RawBuf::new(4);
 }
 // error: `Discard` is `core`'s and `RawBuf` is `alloc`'s, so only `core` or `alloc` can implement one for the other

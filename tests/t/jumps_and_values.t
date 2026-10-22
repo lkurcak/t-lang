@@ -2,17 +2,17 @@
 // later, moves, borrows and closures. The checks follow the paths control
 // can take: a `return` or `break` ends one.
 
-fn consume(b: Box<int>) -> int { *b }
+fn consume(b: Box<i64>) -> i64 { *b }
 
 // `x` has a value on every path that gets to the `print`: the other returns.
 fn deferred_return(c: bool) {
-    let x;
+    let x: i64;
     if c { x = 1; } else { return; }
     print(x);
 }
 
 // The only way out of the `loop` is the `break`, after `x` gets its value.
-fn deferred_loop() -> int with panic {
+fn deferred_loop() -> i64 with panic {
     let x;
     let mut i = 0;
     loop {
@@ -27,7 +27,7 @@ fn deferred_loop() -> int with panic {
 
 // A `break` in a `while`'s condition leaves the loop around the `while`:
 // the condition isn't part of the `while`'s body.
-fn break_in_condition() -> int with panic {
+fn break_in_condition() -> i64 with panic {
     let mut n = 0;
     loop {
         while if n > 4 { break; } else { true } {
@@ -40,7 +40,7 @@ fn break_in_condition() -> int with panic {
 }
 
 // Borrowed on one path, which returns; changed on the other.
-fn borrow_or_change(c: bool) -> int {
+fn borrow_or_change(c: bool) -> i64 {
     let mut x = 1;
     let r = &mut x;
     if c { return *r; }
@@ -59,7 +59,7 @@ fn main() with {panic, alloc} {
 
     // Moved, then out of the loop for good.
     let b = Box::new(7);
-    let mut i = 0;
+    let mut i: i64 = 0;
     while i < 10 {
         i += 1;
         if i == 2 {
@@ -70,7 +70,7 @@ fn main() with {panic, alloc} {
 
     // A closure that captures can leave a loop, as long as it isn't
     // returned or stored.
-    let n = 5;
+    let n: i64 = 5;
     let f = loop {
         break |x| x + n;
     };

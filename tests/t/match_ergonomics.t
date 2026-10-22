@@ -6,18 +6,18 @@
 enum Option<T> { Some(T), None }
 
 #[derive(Discard)]
-struct Wrapper { inner: Option<Box<int>> }
+struct Wrapper { inner: Option<Box<i64>> }
 
-fn peek(o: &Option<Box<int>>) -> int {
+fn peek(o: &Option<Box<i64>>) -> i64 {
     match o {
-        Option::Some(b) => **b, // `b` is a `&Box<int>`
+        Option::Some(b) => **b, // `b` is a `&Box<i64>`
         Option::None => 0,
     }
 }
 
-fn bump(o: &mut Option<int>) with panic {
+fn bump(o: &mut Option<i64>) with panic {
     match o {
-        Option::Some(n) => *n += 1, // `n` is a `&mut int`
+        Option::Some(n) => *n += 1, // `n` is a `&mut i64`
         Option::None => {}
     }
 }

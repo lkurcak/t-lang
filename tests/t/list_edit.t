@@ -3,14 +3,14 @@
 // buffer.
 use alloc::list::List;
 
-fn show(l: &List<int>) {
+fn show(l: &List<i64>) {
     for x in l.iter() {
         print(*x);
     }
 }
 
 fn main() with {alloc, panic} {
-    let mut l: List<int> = List::new();
+    let mut l: List<i64> = List::new();
     for i in 0..4 {
         l.push(i);
     }
@@ -37,7 +37,7 @@ fn main() with {alloc, panic} {
     l.free();
 
     // `swap` needs no `Discard`.
-    let mut b: List<Box<int>> = List::new();
+    let mut b: List<Box<i64>> = List::new();
     b.push(Box::new(1));
     b.push(Box::new(2));
     b.swap(0, 1);

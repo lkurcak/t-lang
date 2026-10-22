@@ -5,8 +5,8 @@ trait Ord: Eq {
     fn lt(&self, other: &Self) -> bool;
 }
 
-impl Ord for int {
-    fn lt(&self, other: &int) -> bool { *self < *other }
+impl Ord for i64 {
+    fn lt(&self, other: &i64) -> bool { *self < *other }
 }
 
 #[derive(Discard)]
@@ -18,7 +18,7 @@ impl<T: Ord> Sorted<T> {
     }
 }
 
-fn width(s: Sorted<int>) -> int with panic { s.hi - s.lo }
+fn width(s: Sorted<i64>) -> i64 with panic { s.hi - s.lo }
 
 fn main() with panic {
     print(width(Sorted::of(9, 3)));  // expect: 6

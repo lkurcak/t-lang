@@ -1,11 +1,11 @@
 // What changes other than by assignment still has its struct's
 // refinements, but each read can be a different value.
 #[derive(Copy, Discard)]
-struct Span { lo: int, hi: { h: int | h >= lo } }
+struct Span { lo: i64, hi: { h: i64 | h >= lo } }
 
 fn shift(s: &mut Span) { *s = Span { lo: 0, hi: 0 }; }
 
-fn f(mut s: Span) -> int {
+fn f(mut s: Span) -> i64 {
     if s.lo > 0 {
         shift(&mut s);
         10 / s.hi

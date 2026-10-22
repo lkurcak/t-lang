@@ -1,5 +1,5 @@
 #[derive(Discard)]
-enum Shape { Rect(int, int) }
+enum Shape { Rect(i64, i64) }
 fn main() {
     let s = Shape::Rect(1);
 }

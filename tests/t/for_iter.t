@@ -2,13 +2,13 @@
 // types can implement. Its provided methods build on `next`.
 
 #[derive(Discard)]
-struct Countdown { n: int }
+struct Countdown { n: i64 }
 
 impl Iterator for Countdown {
-    type Item = int;
+    type Item = i64;
     effect e = panic;
 
-    fn next(&mut self) -> Option<int> with panic {
+    fn next(&mut self) -> Option<i64> with panic {
         if self.n == 0 {
             return Option::None;
         }
@@ -18,15 +18,15 @@ impl Iterator for Countdown {
 }
 
 // Items needn't be `Discard`: the body uses each up.
-struct Fd { n: int }
+struct Fd { n: i64 }
 
-fn close(fd: Fd) -> int {
+fn close(fd: Fd) -> i64 {
     let Fd { n } = fd;
     n
 }
 
 #[derive(Discard)]
-struct Fds { left: int }
+struct Fds { left: i64 }
 
 impl Iterator for Fds {
     type Item = Fd;
@@ -41,7 +41,7 @@ impl Iterator for Fds {
     }
 }
 
-fn total<I: Iterator<Item = int> + Discard>(it: I) -> int with {panic, I::e} {
+fn total<I: Iterator<Item = i64> + Discard>(it: I) -> i64 with {panic, I::e} {
     it.fold(0, |acc, x| acc + x)
 }
 
@@ -55,7 +55,7 @@ fn main() with panic {
 
     print(total(0..5)); // expect: 10
     print(total((0..5).map(|x| x * x))); // expect: 30
-    print((0..10).map(|x| x * 2).count()); // expect: 10
+    print((0..10).map(|x| x * 2i64).count()); // expect: 10
     print(total((Countdown { n: 4 }).map(|x| x - 1))); // expect: 6
 
     let mut closed = 0;

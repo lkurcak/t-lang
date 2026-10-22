@@ -8,11 +8,11 @@ trait Tr {
 struct W<F> { f: F }
 
 trait Get {
-    fn get(&self) -> int;
+    fn get(&self) -> i64;
 }
 
 impl<T: Tr, F: Fn() -> T::Out> Get for W<F> {
-    fn get(&self) -> int { 1 }
+    fn get(&self) -> i64 { 1 }
 }
 
 fn main() {}

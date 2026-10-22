@@ -4,7 +4,7 @@
 // unless something called that `eq` by name.)
 
 #[derive(Discard)]
-struct S { n: int }
+struct S { n: i64 }
 
 // Every `S` is the same as every other.
 impl Eq for S {
@@ -15,14 +15,14 @@ impl Eq for S {
 struct W<T> { x: T }
 
 #[derive(Discard)]
-struct Tagged<T> { x: T, tag: int }
+struct Tagged<T> { x: T, tag: i64 }
 
 impl<T> Eq for Tagged<T> {
     fn eq(&self, o: &Tagged<T>) -> bool { self.tag == o.tag }
 }
 
 #[derive(Discard)]
-enum E { A(int), B }
+enum E { A(i64), B }
 
 impl Eq for E {
     fn eq(&self, _o: &E) -> bool { true }
@@ -34,8 +34,8 @@ fn main() with {alloc, panic} {
     print_bool(S { n: 1 } == S { n: 2 });                     // expect: true
     print_bool(same(&S { n: 1 }, &S { n: 2 }));               // expect: true
     print_bool(W { x: S { n: 1 } } == W { x: S { n: 2 } });   // expect: true
-    print_bool(Tagged { x: 1, tag: 1 } == Tagged { x: 2, tag: 1 }); // expect: true
-    print_bool(Tagged { x: 1, tag: 1 } != Tagged { x: 1, tag: 2 }); // expect: true
+    print_bool(Tagged { x: 1i64, tag: 1 } == Tagged { x: 2, tag: 1 }); // expect: true
+    print_bool(Tagged { x: 1i64, tag: 1 } != Tagged { x: 1, tag: 2 }); // expect: true
     print_bool(E::A(1) == E::B);                              // expect: true
     print_bool(Box::new(S { n: 1 }) == Box::new(S { n: 2 })); // expect: true
     let a = S { n: 1 };
@@ -44,5 +44,5 @@ fn main() with {alloc, panic} {
     // As a function: the derived `eq` of `W`, which is `==`.
     let f = W::<S>::eq;
     print_bool(f(&W { x: S { n: 1 } }, &W { x: S { n: 4 } })); // expect: true
-    print_bool(Eq::eq(&1, &2));                               // expect: false
+    print_bool(Eq::eq(&1i64, &2));                               // expect: false
 }

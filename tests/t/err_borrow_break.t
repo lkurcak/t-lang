@@ -2,7 +2,7 @@
 // reference it gives the loop would dangle.
 fn main() {
     let r = loop {
-        let y = 5;
+        let y: i64 = 5;
         break &y;
     };
     print(*r);

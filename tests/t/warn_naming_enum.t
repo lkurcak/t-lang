@@ -2,7 +2,7 @@
 #[derive(Discard)]
 enum light_color { Red, yellow, GREEN_LIGHT }
 
-fn code(c: light_color) -> int {
+fn code(c: light_color) -> i64 {
     match c {
         light_color::Red => 1,
         light_color::yellow => 2,

@@ -274,20 +274,20 @@ mod tests {
     #[test]
     fn files_mean_what_inline_modules_do() {
         let files = [
-            ("p/a.t", "pub mod b;\npub fn f() -> int { b::g() }\n"),
-            ("p/a/b.t", "pub fn g() -> int { crate::c::d::h() }\n"),
-            ("p/c/d.t", "pub fn h() -> int { 42 }\n"),
+            ("p/a.t", "pub mod b;\npub fn f() -> i64 { b::g() }\n"),
+            ("p/a/b.t", "pub fn g() -> i64 { crate::c::d::h() }\n"),
+            ("p/c/d.t", "pub fn h() -> i64 { 42 }\n"),
         ];
         let read = |p: &Path| match files.iter().find(|(f, _)| Path::new(f) == p) {
             Some((_, text)) => Ok(text.to_string()),
             None => crate::no_files(p),
         };
-        let main = "mod a;\nmod c { pub mod d; }\nfn main() -> int { a::f() }\n";
+        let main = "mod a;\nmod c { pub mod d; }\nfn main() -> i64 { a::f() }\n";
         let split = crate::check_files(Path::new("p/main.t"), main, &read);
-        let inline = "mod a {\n    pub mod b { pub fn g() -> int { crate::c::d::h() } }\n    \
-                      pub fn f() -> int { b::g() }\n}\n\
-                      mod c { pub mod d { pub fn h() -> int { 42 } } }\n\
-                      fn main() -> int { a::f() }\n";
+        let inline = "mod a {\n    pub mod b { pub fn g() -> i64 { crate::c::d::h() } }\n    \
+                      pub fn f() -> i64 { b::g() }\n}\n\
+                      mod c { pub mod d { pub fn h() -> i64 { 42 } } }\n\
+                      fn main() -> i64 { a::f() }\n";
         let inline = crate::check_source(inline);
         let shown = |c: crate::Checked| {
             let mut items: Vec<String> = c

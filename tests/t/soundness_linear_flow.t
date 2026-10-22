@@ -3,9 +3,9 @@
 
 use core::mem::swap;
 
-struct Fd { n: int }
+struct Fd { n: i64 }
 
-fn close(f: Fd) -> int {
+fn close(f: Fd) -> i64 {
     let Fd { n } = f;
     n
 }
@@ -14,7 +14,7 @@ fn die() -> ! {
     loop {}
 }
 
-fn two(a: Fd, b: int) -> int with panic { close(a) + b }
+fn two(a: Fd, b: i64) -> i64 with panic { close(a) + b }
 
 struct P { a: Fd, b: Fd }
 
@@ -48,7 +48,7 @@ fn main() with {panic, alloc} {
 
     // Out of two loops, and round them with `continue`.
     let mut fd = Fd { n: 1 };
-    let mut i = 0;
+    let mut i: i64 = 0;
     'outer: loop {
         loop {
             i += 1;
@@ -91,7 +91,7 @@ fn main() with {panic, alloc} {
     print(r); // expect: 3
 
     // A path that never goes on leaves its temporaries behind.
-    let x = 1;
+    let x: i64 = 1;
     if x == 2 {
         two(Fd { n: 1 }, die());
     }

@@ -1,9 +1,9 @@
 // `d` is 1 before the loop, but not each time round it: the body changes it.
-fn pos(d: { v: int | v > 0 }) -> int { d }
+fn pos(d: { v: i64 | v > 0 }) -> i64 { d }
 
 fn main() with panic {
     let mut d = 1;
-    let mut n = 3;
+    let mut n: i64 = 3;
     while n > 0 {
         print(pos(d));
         d = d - 1;

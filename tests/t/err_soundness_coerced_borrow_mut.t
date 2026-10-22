@@ -1,6 +1,6 @@
 // `&mut b` coerced to a `&` is still a `&mut` borrow of `b` first, so `b`
 // must be `mut`.
-fn get(r: &int) -> int { *r }
+fn get(r: &i64) -> i64 { *r }
 
 fn main() with {alloc, panic} {
     let b = Box::new(1);

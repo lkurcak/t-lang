@@ -1,8 +1,8 @@
-//! Refinement types: `{ d: int | d != 0 }`, the `int`s that aren't 0 (see
+//! Refinement types: `{ d: i64 | d != 0 }`, the `i64`s that aren't 0 (see
 //! docs/08-refinement-types.md and docs/08.1-field-refinements.md).
 //!
 //! A refinement is the whole type of a parameter, a result, a `let` or a
-//! struct's field, never part of another type, and only of an `int` or a
+//! struct's field, never part of another type, and only of an `i64` or a
 //! `bool`. It isn't in `Type` at all: unification, traits and
 //! monomorphisation never see one. What it says is checked by a pass of its
 //! own over each body, once its types are known (`Checker::refine`), which
@@ -19,7 +19,7 @@
 //! Facts come from refined parameters and `let`s, from the refinements of
 //! the fields of every struct value, from what calls of refined functions
 //! return, from the conditions of `if`, `while`, `&&`, `||` and the
-//! patterns of a `match` on an `int`, from what a `let` or an assignment
+//! patterns of a `match` on an `i64`, from what a `let` or an assignment
 //! gives a *place* (a variable, or a field or `*` of one: `self.start`),
 //! and from operators that returned, as they'd have panicked otherwise.
 //! They're about *values*: each time a place gets a new one, it's a new
@@ -58,7 +58,7 @@ use super::Checker;
 use super::typed::Res;
 use crate::ast::*;
 use crate::error::{Error, Span};
-use crate::types::{Region, Type, all_fields, struct_fields};
+use crate::types::{IntTy, Region, Type, all_fields, struct_fields};
 use logic::{Formula, Kind, Lin, Var};
 use std::collections::{HashMap, HashSet};
 
@@ -71,6 +71,23 @@ pub(super) struct Refinement {
 impl Refinement {
     fn text(&self) -> String {
         crate::pretty::expr_text(&self.pred)
+    }
+}
+
+/// What a predicate's part is, in the logic: an integer, of ℤ, whatever
+/// the integer types of what it names, or a `bool`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Sort {
+    Int,
+    Bool,
+}
+
+impl std::fmt::Display for Sort {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str(match self {
+            Sort::Int => "an integer",
+            Sort::Bool => "`bool`",
+        })
     }
 }
 
@@ -329,7 +346,7 @@ impl Checker {
     }
 
     /// The refinement written as `t`, whose base type is `base`, if it's
-    /// one, checked: its base is an `int` or a `bool`, and its predicate a
+    /// one, checked: its base is an `i64` or a `bool`, and its predicate a
     /// `bool` in the logic, naming what `scope` says.
     fn refinement(
         &mut self,
@@ -341,10 +358,10 @@ impl Checker {
             return Ok(None);
         };
         let base = self.solved(base);
-        if !matches!(base, Type::Int | Type::Bool) {
+        if !matches!(base, Type::Int(_) | Type::Bool) {
             return Err(Error::ty(
                 t.unrefined().span,
-                format!("only `int` and `bool` can be refined, not `{base}`"),
+                format!("only integer types and `bool` can be refined, not `{base}`"),
             ));
         }
         let kind = super::NoteKind::Var(binder.name.clone());
@@ -354,51 +371,57 @@ impl Checker {
             false => scope(name),
         };
         let got = self.pred_type(pred, &scope)?;
-        if got != Type::Bool {
+        if got != Sort::Bool {
             return Err(Error::ty(
                 pred.span,
-                format!("expected `bool`, found `{got}`"),
+                format!("expected `bool`, found {got}"),
             ));
         }
         Ok(Some(Refinement { pred: pred.clone() }))
     }
 
-    /// The type of predicate (part) `e`, which must be in the logic:
-    /// linear arithmetic on `int`s, compared, and `bool`s.
+    /// The sort of predicate (part) `e`, which must be in the logic:
+    /// linear arithmetic on integers, of any integer types, which are all
+    /// the integers in it, ℤ, compared, and `bool`s.
     fn pred_type(
         &mut self,
         e: &Expr,
         scope: &dyn Fn(&str) -> Option<Named>,
-    ) -> Result<Type, Error> {
-        let want = |cx: &mut Checker, e: &Expr, t: Type| -> Result<(), Error> {
+    ) -> Result<Sort, Error> {
+        let want = |cx: &mut Checker, e: &Expr, t: Sort| -> Result<(), Error> {
             let got = cx.pred_type(e, scope)?;
             if got != t {
-                return Err(Error::ty(e.span, format!("expected `{t}`, found `{got}`")));
+                return Err(Error::ty(e.span, format!("expected {t}, found {got}")));
             }
             Ok(())
         };
         match &e.kind {
-            ExprKind::Int(_) => Ok(Type::Int),
-            ExprKind::Bool(_) => Ok(Type::Bool),
+            ExprKind::Int(..) => Ok(Sort::Int),
+            ExprKind::Bool(_) => Ok(Sort::Bool),
             ExprKind::Var(name, targs) if targs.is_empty() => match scope(name) {
                 Some(Named::Value(t, what, def)) => {
-                    let t = self.solved(&t);
-                    if !matches!(t, Type::Int | Type::Bool) {
-                        return Err(Error::ty(
-                            e.span,
-                            format!(
-                                "a refinement can only name `int`s and `bool`s, and `{name}` is \
-                                 a `{t}`"
-                            ),
-                        ));
-                    }
+                    let sort = match self.solved(&t) {
+                        // An integer of a type not known yet.
+                        _ if self.int_var(&t) => Sort::Int,
+                        Type::Int(_) => Sort::Int,
+                        Type::Bool => Sort::Bool,
+                        _ => {
+                            return Err(Error::ty(
+                                e.span,
+                                format!(
+                                    "a refinement can only name integers and `bool`s, and \
+                                     `{name}` is a `{t}`"
+                                ),
+                            ));
+                        }
+                    };
                     self.pred_names.insert(e.id, what);
                     let kind = match what {
                         PredName::Field(_) => super::NoteKind::Field(name.clone()),
                         _ => super::NoteKind::Var(name.clone()),
                     };
-                    self.note(e.span, kind, Some(t.clone()), Some(def));
-                    Ok(t)
+                    self.note(e.span, kind, Some(self.solved(&t)), Some(def));
+                    Ok(sort)
                 }
                 Some(Named::Not(why)) => Err(Error::ty(e.span, why)),
                 Some(Named::Mut) => Err(Error::ty(
@@ -413,17 +436,17 @@ impl Checker {
                     format!("cannot find value `{name}` in this refinement"),
                 )),
             },
-            ExprKind::Unary(UnOp::Neg, x) => want(self, x, Type::Int).map(|()| Type::Int),
-            ExprKind::Unary(UnOp::Not, x) => want(self, x, Type::Bool).map(|()| Type::Bool),
+            ExprKind::Unary(UnOp::Neg, x) => want(self, x, Sort::Int).map(|()| Sort::Int),
+            ExprKind::Unary(UnOp::Not, x) => want(self, x, Sort::Bool).map(|()| Sort::Bool),
             ExprKind::Binary(op, l, r) => match op {
                 BinOp::Add | BinOp::Sub => {
-                    want(self, l, Type::Int)?;
-                    want(self, r, Type::Int)?;
-                    Ok(Type::Int)
+                    want(self, l, Sort::Int)?;
+                    want(self, r, Sort::Int)?;
+                    Ok(Sort::Int)
                 }
                 BinOp::Mul => {
-                    want(self, l, Type::Int)?;
-                    want(self, r, Type::Int)?;
+                    want(self, l, Sort::Int)?;
+                    want(self, r, Sort::Int)?;
                     if !constant(l) && !constant(r) {
                         return Err(Error::ty(
                             e.span,
@@ -433,7 +456,7 @@ impl Checker {
                             ),
                         ));
                     }
-                    Ok(Type::Int)
+                    Ok(Sort::Int)
                 }
                 BinOp::Div | BinOp::Rem => Err(Error::ty(
                     e.span,
@@ -442,19 +465,19 @@ impl Checker {
                     ),
                 )),
                 BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
-                    want(self, l, Type::Int)?;
-                    want(self, r, Type::Int)?;
-                    Ok(Type::Bool)
+                    want(self, l, Sort::Int)?;
+                    want(self, r, Sort::Int)?;
+                    Ok(Sort::Bool)
                 }
                 BinOp::Eq | BinOp::Ne => {
                     let t = self.pred_type(l, scope)?;
                     want(self, r, t)?;
-                    Ok(Type::Bool)
+                    Ok(Sort::Bool)
                 }
                 BinOp::And | BinOp::Or => {
-                    want(self, l, Type::Bool)?;
-                    want(self, r, Type::Bool)?;
-                    Ok(Type::Bool)
+                    want(self, l, Sort::Bool)?;
+                    want(self, r, Sort::Bool)?;
+                    Ok(Sort::Bool)
                 }
             },
             _ => Err(Error::ty(
@@ -487,6 +510,8 @@ impl Checker {
             ret: None,
             closures: 0,
             loops: Vec::new(),
+            size: None,
+            bounds: HashMap::new(),
         };
         w.unstable_in(&f.body, false);
         let mut ret = None;
@@ -541,14 +566,14 @@ fn each_bind(pat: &Pattern, f: &mut impl FnMut(&Pattern)) {
 /// Is `e` a constant: no names in it?
 fn constant(e: &Expr) -> bool {
     match &e.kind {
-        ExprKind::Int(_) => true,
+        ExprKind::Int(..) => true,
         ExprKind::Unary(UnOp::Neg, x) => constant(x),
         ExprKind::Binary(BinOp::Add | BinOp::Sub | BinOp::Mul, l, r) => constant(l) && constant(r),
         _ => false,
     }
 }
 
-/// What an expression is, to the logic: an `int`, as a linear sum, a
+/// What an expression is, to the logic: an `i64`, as a linear sum, a
 /// `bool`, as a formula, a struct, as its fields' values, or anything else,
 /// of which nothing is known.
 #[derive(Debug, Clone)]
@@ -651,7 +676,7 @@ struct Walk<'c> {
     facts: Vec<Formula>,
     /// Whether this point can be reached at all.
     reachable: bool,
-    /// Which variable of the logic each `int` or `bool` place stands for
+    /// Which variable of the logic each `i64` or `bool` place stands for
     /// here. One that isn't in it is a value nothing's known of yet, but
     /// its refinements.
     cur: HashMap<Place, Var>,
@@ -677,6 +702,13 @@ struct Walk<'c> {
     /// How many closures deep this is.
     closures: usize,
     loops: Vec<Loop>,
+    /// The variable for the greatest `isize`, once there's one: how big
+    /// it is depends on the machine. The greatest `usize` is twice it, plus
+    /// one, and the least `isize` minus it, minus one.
+    size: Option<Var>,
+    /// The variables for the least and greatest values of each type
+    /// parameter `T: Int`, once there are some: it can be any integer type.
+    bounds: HashMap<String, (Var, Var)>,
 }
 
 /// How a predicate's names other than its binder get their values: those
@@ -698,8 +730,75 @@ impl Walk<'_> {
     /// Variable `v` of the logic, as a value.
     fn var(&self, v: Var) -> Val {
         match self.kinds[v as usize] {
-            Kind::Int => Val::Int(Lin::var(v)),
+            Kind::Int(..) | Kind::Bound(..) => Val::Int(Lin::var(v)),
             Kind::Bool => Val::Bool(Formula::holds(v)),
+        }
+    }
+
+    /// The least and greatest values of `t`, if it's an integer type, or a
+    /// type parameter that's `Int`, which can be any of them. What's known
+    /// of one whose size isn't, as the logic says, is only what holds of
+    /// all it can be: of `isize` and `usize`, what holds of 32 and 64 bits,
+    /// and of a type parameter, what holds of every integer type, that its
+    /// least is at most 0 and its greatest at least 127.
+    fn range(&mut self, t: &Type) -> Option<(Lin, Lin)> {
+        let size = |w: &mut Self| match w.size {
+            Some(v) => Lin::var(v),
+            None => {
+                let (_, lo) = IntTy::I32.range_64();
+                let (_, hi) = IntTy::I64.range_64();
+                let v = w.fresh(Kind::Bound(lo, hi));
+                w.size = Some(v);
+                Lin::var(v)
+            }
+        };
+        match t {
+            Type::Int(IntTy::Isize) => {
+                let max = size(self);
+                Some((max.scale(-1)?.plus(-1)?, max))
+            }
+            Type::Int(IntTy::Usize) => Some((Lin::constant(0), size(self).scale(2)?.plus(1)?)),
+            Type::Int(t) => {
+                let (lo, hi) = t.range()?;
+                Some((Lin::constant(lo), Lin::constant(hi)))
+            }
+            Type::Param(p) if self.is_int(t) => {
+                let (lo, hi) = match self.bounds.get(p) {
+                    Some(&b) => b,
+                    None => {
+                        let (min, _) = IntTy::I64.range_64();
+                        let (_, max) = IntTy::U64.range_64();
+                        let (every_lo, every_hi) = super::ints::EVERY_INT;
+                        let lo = self.fresh(Kind::Bound(min, every_lo));
+                        let hi = self.fresh(Kind::Bound(every_hi, max));
+                        self.bounds.insert(p.clone(), (lo, hi));
+                        (lo, hi)
+                    }
+                };
+                Some((Lin::var(lo), Lin::var(hi)))
+            }
+            _ => None,
+        }
+    }
+
+    /// Is `t` an integer type, or a type parameter that's `Int`?
+    fn is_int(&self, t: &Type) -> bool {
+        match t {
+            Type::Int(_) => true,
+            Type::Param(_) => {
+                let cx = self.cx;
+                (cx.traits.implements(t, "Int", &cx.env, &cx.adts.proj.local)).is_ok()
+            }
+            _ => false,
+        }
+    }
+
+    /// The kind of variable for a value of type `t`, if it's an integer or
+    /// a `bool`.
+    fn kind(&mut self, t: &Type) -> Option<Kind> {
+        match t {
+            Type::Bool => Some(Kind::Bool),
+            t => self.range(t).map(|(lo, hi)| Kind::Int(lo, hi)),
         }
     }
 
@@ -707,7 +806,10 @@ impl Walk<'_> {
     /// struct, its fields have its refinements.
     fn unknown(&mut self, t: &Type) -> Val {
         match t {
-            Type::Int => Val::Int(Lin::var(self.fresh(Kind::Int))),
+            Type::Int(_) | Type::Param(_) if self.is_int(t) => match self.kind(t) {
+                Some(k) => Val::Int(Lin::var(self.fresh(k))),
+                None => Val::Other,
+            },
             Type::Bool => Val::Bool(Formula::holds(self.fresh(Kind::Bool))),
             Type::Adt(..) => match struct_fields(&self.cx.adts, t) {
                 Some(fields) => {
@@ -1047,7 +1149,7 @@ impl Walk<'_> {
     /// Can a value of type `t` hold a reference, or might it?
     fn can_hold(&self, t: &Type, seen: &mut HashSet<Type>) -> bool {
         match t {
-            Type::Int | Type::Bool | Type::Unit | Type::Never | Type::Fn(_) => false,
+            Type::Int(_) | Type::Bool | Type::Unit | Type::Never | Type::Fn(_) => false,
             Type::Ref(..) => true,
             Type::Box(inner) => self.can_hold(&self.cx.solved(inner), seen),
             Type::Adt(..) => {
@@ -1066,7 +1168,7 @@ impl Walk<'_> {
     /// a `&mut`, or might it?
     fn has_mut_ref(&self, t: &Type, seen: &mut HashSet<Type>) -> bool {
         match t {
-            Type::Int | Type::Bool | Type::Unit | Type::Never | Type::Fn(_) => false,
+            Type::Int(_) | Type::Bool | Type::Unit | Type::Never | Type::Fn(_) => false,
             Type::Ref(_, m, _) => *m,
             Type::Box(inner) => self.has_mut_ref(&self.cx.solved(inner), seen),
             Type::Adt(..) => {
@@ -1085,7 +1187,8 @@ impl Walk<'_> {
     fn read_place(&mut self, p: &Place) -> Val {
         let t = self.place_ty(p);
         match t {
-            Type::Int | Type::Bool => self.leaf(p, &t),
+            Type::Bool => self.leaf(p, &t),
+            _ if self.is_int(&t) => self.leaf(p, &t),
             Type::Adt(..) => match self.fields_of(p, &t) {
                 Some(vals) => Val::Struct(vals),
                 None => Val::Other,
@@ -1104,13 +1207,9 @@ impl Walk<'_> {
         for (j, (_, ft)) in fields.iter().enumerate() {
             let ft = self.cx.solved(ft);
             let p = q.then(Proj::Field(j));
-            let kind = match ft {
-                Type::Int => Kind::Int,
-                Type::Bool => Kind::Bool,
-                _ => {
-                    vals.push(self.read_place(&p));
-                    continue;
-                }
+            let Some(kind) = self.kind(&ft) else {
+                vals.push(self.read_place(&p));
+                continue;
             };
             let stable = !self.is_unstable(&p);
             let v = match self.cur.get(&p) {
@@ -1132,7 +1231,7 @@ impl Walk<'_> {
         Some(vals)
     }
 
-    /// The `int` or `bool`, of type `t`, at place `p`.
+    /// The `i64` or `bool`, of type `t`, at place `p`.
     fn leaf(&mut self, p: &Place, t: &Type) -> Val {
         if let Some((q, i)) = p.field_of() {
             let qt = self.place_ty(&q);
@@ -1168,13 +1267,11 @@ impl Walk<'_> {
     }
 
     /// What's at `p`, of type `t`, which nothing's known of, is `val`, if
-    /// that's known: each `int` or `bool` in it stands for a new variable of
+    /// that's known: each `i64` or `bool` in it stands for a new variable of
     /// the logic, equal to its part of `val`, which has its local's
     /// refinement, if it has one.
     fn set(&mut self, p: &Place, t: &Type, val: Option<Val>) {
         let kind = match t {
-            Type::Int => Kind::Int,
-            Type::Bool => Kind::Bool,
             Type::Adt(..) => {
                 if let (Some(Val::Struct(vals)), Some(fields)) =
                     (val, struct_fields(&self.cx.adts, t))
@@ -1186,7 +1283,10 @@ impl Walk<'_> {
                 }
                 return;
             }
-            _ => return,
+            t => match self.kind(t) {
+                Some(kind) => kind,
+                None => return,
+            },
         };
         let v = self.fresh(kind);
         if !self.is_unstable(p) {
@@ -1236,7 +1336,7 @@ impl Walk<'_> {
             _ => None,
         };
         Some(match &e.kind {
-            ExprKind::Int(n) => Val::Int(Lin::constant(*n as i128)),
+            ExprKind::Int(n, _) => Val::Int(Lin::constant(i128::from(*n))),
             ExprKind::Bool(b) => Val::Bool(if *b { Formula::True } else { Formula::False }),
             ExprKind::Var(..) => match (self.cx.pred_names.get(&e.id)?, env) {
                 (PredName::Binder, _) => binder.clone(),
@@ -1407,7 +1507,7 @@ impl Walk<'_> {
                 }
                 _ => {
                     let had = vars.iter().flatten().next().expect("in one");
-                    let n = self.fresh(self.kinds[*had as usize]);
+                    let n = self.fresh(self.kinds[*had as usize].clone());
                     cur.insert(p.clone(), n);
                     new.push((n, vars));
                 }
@@ -1458,16 +1558,13 @@ impl Walk<'_> {
         }
     }
 
-    /// `l op r`, an operator at node `site`: proves it can't panic if it
-    /// can, and gives its value, which it has if it didn't panic.
-    fn arith(&mut self, site: NodeId, op: BinOp, l: Val, r: Val) -> Val {
-        let (Val::Int(a), Val::Int(b)) = (l, r) else {
-            return Val::Int(Lin::var(self.fresh(Kind::Int)));
+    /// `l op r`, an operator at node `site` on integers of type `ty`:
+    /// proves it can't panic if it can, and gives its value, which it has
+    /// if it didn't panic.
+    fn arith(&mut self, site: NodeId, op: BinOp, l: Val, r: Val, ty: &Type) -> Val {
+        let (Val::Int(a), Val::Int(b), Some((min, max))) = (l, r, self.range(ty)) else {
+            return self.unknown(ty);
         };
-        let (min, max) = (
-            Lin::constant(i64::MIN as i128),
-            Lin::constant(i64::MAX as i128),
-        );
         let in_range = |l: &Lin| Some(Formula::and([Formula::le(&min, l)?, Formula::le(l, &max)?]));
         let (value, goal) = match op {
             BinOp::Add | BinOp::Sub | BinOp::Mul => {
@@ -1479,7 +1576,13 @@ impl Walk<'_> {
                 let goal = value.as_ref().and_then(in_range);
                 (value, goal)
             }
-            // Not by zero, nor the least `int` by -1.
+            // Not by zero, nor the least value by -1. Whatever else is
+            // divided fits: the quotient is no further from 0 than what's
+            // divided, but for the least value of a signed type by -1, which
+            // in each is one past its greatest. So this suffices of every
+            // integer type, and so of a type parameter's, though the logic
+            // knows of none of them what its greatest value is, but that
+            // it's at least -1 minus its least: it holds in every one.
             _ => {
                 let goal = (|| {
                     let zero = Formula::eq(&b, &Lin::constant(0))?;
@@ -1497,8 +1600,24 @@ impl Walk<'_> {
         }
         match value {
             Some(v) => Val::Int(v),
-            None => Val::Int(Lin::var(self.fresh(Kind::Int))),
+            None => {
+                let result = self.unknown(ty);
+                if let (Val::Int(q), Some(k)) = (&result, b.as_constant())
+                    && k > 0
+                    && let Some(f) = divided(op, &a, k, q)
+                {
+                    self.fact(f);
+                }
+                result
+            }
         }
+    }
+
+    /// That `v` is a value of `ty`, if it's known to be, as a goal: for
+    /// `-x` and `x as T`, whose values are what's in ℤ.
+    fn fits(&mut self, v: &Lin, ty: &Type) -> Option<Formula> {
+        let (min, max) = self.range(ty)?;
+        Some(Formula::and([Formula::le(&min, v)?, Formula::le(v, &max)?]))
     }
 
     /// What function `callee` names, if it names one: its symbol.
@@ -1552,6 +1671,14 @@ impl Walk<'_> {
             self.reachable = false;
         }
         let result = self.unknown(&ty);
+        // What the two intrinsics that say how big an integer type is give.
+        if let (Some(f @ ("core::num::least" | "core::num::greatest")), Val::Int(v)) =
+            (symbol, &result)
+            && let Some((lo, hi)) = self.range(&ty)
+            && let Some(f) = Formula::eq(v, if f.ends_with("least") { &lo } else { &hi })
+        {
+            self.fact(f);
+        }
         if let Some(r) = sig.as_ref().and_then(|s| s.ret.as_ref())
             && let Some(f) = self.pred(r, &result, Env::Call(&vals))
         {
@@ -1615,7 +1742,7 @@ impl Walk<'_> {
 
     fn expr(&mut self, e: &Expr) -> Result<Val, Error> {
         match &e.kind {
-            ExprKind::Int(n) => Ok(Val::Int(Lin::constant(*n as i128))),
+            ExprKind::Int(n, _) => Ok(Val::Int(Lin::constant(i128::from(*n)))),
             ExprKind::Bool(b) => Ok(Val::Bool(if *b { Formula::True } else { Formula::False })),
             ExprKind::Unit => Ok(Val::Other),
             ExprKind::Var(..) => match self.cx.typed.vars.get(&e.id) {
@@ -1628,17 +1755,31 @@ impl Walk<'_> {
             },
             ExprKind::Unary(UnOp::Neg, x) => {
                 let v = self.expr(x)?;
-                let Val::Int(a) = v else {
-                    return Ok(self.unknown(&Type::Int));
+                let ty = self.ty_of(e);
+                let Some(neg) = (match v {
+                    Val::Int(a) => a.scale(-1),
+                    _ => None,
+                }) else {
+                    return Ok(self.unknown(&ty));
                 };
-                let min = Lin::constant(i64::MIN as i128);
-                if self.proves(Formula::lt(&min, &a)) {
+                let goal = self.fits(&neg, &ty);
+                if self.proves(goal) {
                     self.proved.insert(e.id);
                 }
-                Ok(match a.scale(-1) {
-                    Some(l) => Val::Int(l),
-                    None => self.unknown(&Type::Int),
-                })
+                Ok(Val::Int(neg))
+            }
+            // The same number, if it fits.
+            ExprKind::As(x, _) => {
+                let v = self.expr(x)?;
+                let ty = self.ty_of(e);
+                let Val::Int(a) = v else {
+                    return Ok(self.unknown(&ty));
+                };
+                let goal = self.fits(&a, &ty);
+                if self.proves(goal) {
+                    self.proved.insert(e.id);
+                }
+                Ok(Val::Int(a))
             }
             ExprKind::Unary(UnOp::Not, x) => Ok(match self.expr(x)? {
                 Val::Bool(f) => Val::Bool(f.not()),
@@ -1680,7 +1821,8 @@ impl Walk<'_> {
                 let b = self.expr(r)?;
                 Ok(match (op, a, b) {
                     (BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem, a, b) => {
-                        self.arith(e.id, *op, a, b)
+                        let ty = self.ty_of(e);
+                        self.arith(e.id, *op, a, b, &ty)
                     }
                     (_, Val::Int(a), Val::Int(b)) => match compare(*op, &a, &b) {
                         Some(f) => Val::Bool(f),
@@ -1801,9 +1943,10 @@ impl Walk<'_> {
             ExprKind::Assign(op, place, value) => {
                 let v = self.expr(value)?;
                 let target = self.place_of(place);
+                let ty = self.ty_of(place);
                 let old = |w: &mut Self| match &target {
                     Some(p) => w.read_place(p),
-                    None => w.unknown(&Type::Int),
+                    None => w.unknown(&ty),
                 };
                 match (&place.kind, self.cx.typed.vars.get(&place.id)) {
                     (ExprKind::Var(name, _), Some(Res::Local(id))) => {
@@ -1812,7 +1955,7 @@ impl Walk<'_> {
                             None => v,
                             Some(op) => {
                                 let old = old(self);
-                                self.arith(e.id, *op, old, v)
+                                self.arith(e.id, *op, old, v, &ty)
                             }
                         };
                         if let Some((r, _)) = self.invariants.get(&id).cloned() {
@@ -1853,7 +1996,7 @@ impl Walk<'_> {
                             None => v,
                             Some(op) => {
                                 let old = vals.get(i).cloned().unwrap_or(Val::Other);
-                                self.arith(e.id, *op, old, v)
+                                self.arith(e.id, *op, old, v, &ty)
                             }
                         };
                         if i < vals.len() {
@@ -1872,7 +2015,7 @@ impl Walk<'_> {
                             None => v,
                             Some(op) => {
                                 let old = old(self);
-                                self.arith(e.id, *op, old, v)
+                                self.arith(e.id, *op, old, v, &ty)
                             }
                         };
                         if let Some(p) = &target {
@@ -2009,7 +2152,7 @@ impl Walk<'_> {
     }
 
     /// Binds the variables of `pat`, which matched `s` if it's known, at
-    /// `place` if it's one: a variable bound by value to an `int`, a
+    /// `place` if it's one: a variable bound by value to an `i64`, a
     /// `bool` or a struct is equal to what it's bound to, and one bound by
     /// `&` to a place points to it. `of` is the field of a struct `pat`
     /// matches, by the struct's type, if it matches one.
@@ -2170,15 +2313,55 @@ fn compare(op: BinOp, a: &Lin, b: &Lin) -> Option<Formula> {
     }
 }
 
+/// What `q`, the result of `a / k` or `a % k` (`op`) for a constant `k > 0`,
+/// is, which the logic can say, as it's linear: rounding towards zero, the
+/// quotient is the `q` with `k·q <= a <= k·q + k - 1` if `a >= 0`, and `k·q
+/// - k + 1 <= a <= k·q` if `a <= 0`; the remainder has the sign of `a`, and
+/// is less than `k` from 0. `None` if a number gets too big.
+fn divided(op: BinOp, a: &Lin, k: i128, q: &Lin) -> Option<Formula> {
+    let zero = Lin::constant(0);
+    let (pos, neg) = (Formula::le(&zero, a)?, Formula::le(a, &zero)?);
+    let (when_pos, when_neg) = match op {
+        BinOp::Div => {
+            let kq = q.scale(k)?;
+            (
+                Formula::and([Formula::le(&kq, a)?, Formula::le(a, &kq.plus(k - 1)?)?]),
+                Formula::and([Formula::le(&kq.plus(1 - k)?, a)?, Formula::le(a, &kq)?]),
+            )
+        }
+        BinOp::Rem => (
+            Formula::and([
+                Formula::le(&zero, q)?,
+                Formula::le(q, &Lin::constant(k - 1))?,
+            ]),
+            Formula::and([
+                Formula::le(&Lin::constant(1 - k), q)?,
+                Formula::le(q, &zero)?,
+            ]),
+        ),
+        _ => return None,
+    };
+    Some(Formula::and([
+        Formula::or([pos.not(), when_pos]),
+        Formula::or([neg.not(), when_neg]),
+    ]))
+}
+
 /// That `pat` matches `s`, if that can be said: `None` for a pattern of a
 /// struct or enum, which nothing's known of.
 fn pattern_formula(pat: &Pattern, s: &Val) -> Option<Formula> {
     match (&pat.kind, s) {
         (PatternKind::Wild | PatternKind::Bind(..), _) => Some(Formula::True),
-        (PatternKind::Int(n), Val::Int(l)) => Formula::eq(l, &Lin::constant(*n as i128)),
+        (PatternKind::Int(n), Val::Int(l)) => Formula::eq(l, &Lin::constant(*n)),
         (PatternKind::Range(lo, hi, _), Val::Int(l)) => Some(Formula::and([
-            Formula::le(&Lin::constant(*lo as i128), l)?,
-            Formula::le(l, &Lin::constant(*hi as i128))?,
+            match lo {
+                Some(lo) => Formula::le(&Lin::constant(*lo), l)?,
+                None => Formula::True,
+            },
+            match hi {
+                Some(hi) => Formula::le(l, &Lin::constant(*hi))?,
+                None => Formula::True,
+            },
         ])),
         (PatternKind::Bool(b), Val::Bool(f)) => Some(if *b { f.clone() } else { f.clone().not() }),
         (PatternKind::Or(alts), _) => Some(Formula::or(

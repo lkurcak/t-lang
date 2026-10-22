@@ -4,14 +4,14 @@ trait Tr {
 }
 
 impl Tr for bool {
-    type Out = int;
+    type Out = i64;
 }
 
 #[derive(Discard)]
 struct S { b: bool }
 
 impl Tr for S {
-    type Out = int;
+    type Out = i64;
 }
 
 fn main() {

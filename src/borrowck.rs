@@ -17,7 +17,7 @@
 //! - `loans.rs`: nothing borrowed is used in a way that clashes with the
 //!   borrow while it lasts.
 //!
-//! A function that returns an opaque type, `impl Fn(int) -> int`, returns
+//! A function that returns an opaque type, `impl Fn(i64) -> i64`, returns
 //! the type it stands for, with regions of its own, each of which must be
 //! one of the function's lifetimes (`member_constraints`).
 //!
@@ -76,7 +76,7 @@ pub(crate) fn check(cx: &Checker, f: &FnDecl, scheme: &Scheme) -> Result<Vec<War
             }
         }
         // What its equality bounds say, with regions: a closure that
-        // returns `&'a int` isn't an `impl Fn() -> &'static int`.
+        // returns `&'a i64` isn't an `impl Fn() -> &'static i64`.
         let generic = d.generic(symbol);
         for (lhs, rhs) in &d.eqs {
             let lhs = adts.normalise(&replace_type(lhs, &generic, h));
@@ -222,7 +222,7 @@ fn or_list(items: &[String]) -> String {
 
 /// The checker's structs and enums, with what the equality bounds in scope
 /// say numbered as the regions of a body with `regions`: `T::Out` for `T:
-/// Tr<Out = &'a int>` normalises to `&'a int`, with `'a` the body's
+/// Tr<Out = &'a i64>` normalises to `&'a i64`, with `'a` the body's
 /// universal region. The checker keeps them as written, regions erased or
 /// named, which the borrow checker can't relate.
 fn local_adts(cx: &Checker, regions: &Regions) -> crate::types::Adts {

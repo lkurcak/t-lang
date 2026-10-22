@@ -11,7 +11,7 @@ use crate::types::Type;
 impl Checker {
     /// The trait bounds in `g`, whose type parameters are `params` and
     /// lifetimes `lifetimes`, and what its equality bounds say: `T: Iter`
-    /// and `(T::Item, int)` for `T: Iter<Item = int>`. Bounds on
+    /// and `(T::Item, i64)` for `T: Iter<Item = i64>`. Bounds on
     /// projections, like `T::Item: Discard` for `T: Iter<Item: Discard>`,
     /// only if `on_projections`: a function's, not an impl's or a struct's,
     /// whose bounds resolution would then have to prove of what `T::Item`
@@ -111,7 +111,7 @@ impl Checker {
                         trait_name: tr.clone(),
                     },
                 );
-                // `F: Fn(int) -> int` says what `F`'s calls take and give,
+                // `F: Fn(i64) -> i64` says what `F`'s calls take and give,
                 // as an equality bound on `FnOnce`'s signature.
                 let callable = crate::traits::FN_TRAITS.contains(&tr.as_str());
                 match (&b.sig, callable) {
@@ -154,8 +154,8 @@ impl Checker {
                         return Err(Error::ty(
                             b.span,
                             format!(
-                                "say what calls of `{0}` take and give, as in `{0}: {tr}(int) -> \
-                                 int`",
+                                "say what calls of `{0}` take and give, as in `{0}: {tr}(i64) -> \
+                                 i64`",
                                 subject.name
                             ),
                         ));

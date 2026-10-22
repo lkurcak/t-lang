@@ -2,24 +2,24 @@
 // `core`'s, which is still there by its path.
 
 #[derive(Discard)]
-enum Option { Some(int), None }
+enum Option { Some(i64), None }
 
-fn mine(n: int) -> Option { if n > 0 { Option::Some(n) } else { Option::None } }
+fn mine(n: i64) -> Option { if n > 0 { Option::Some(n) } else { Option::None } }
 
-fn theirs(n: int) -> core::option::Option<int> { core::option::Option::Some(n) }
+fn theirs(n: i64) -> core::option::Option<i64> { core::option::Option::Some(n) }
 
 mod inner {
     // A module sees the prelude, not the crate root's `Option`.
-    pub fn wrap(n: int) -> Option<int> { Option::Some(n) }
+    pub fn wrap(n: i64) -> Option<i64> { Option::Some(n) }
 }
 
 // Nor can a program's own `Iterator`, which isn't what `for` uses.
 trait Iterator {
-    fn next(&mut self) -> int;
+    fn next(&mut self) -> i64;
 }
 
 fn main() with panic {
-    let mut sum = 0;
+    let mut sum: i64 = 0;
     for i in 0..4 {
         sum = sum + i;
     }

@@ -11,7 +11,7 @@ checks every obligation as the program runs).
 use alloc::raw::RawBuf;
 
 fn main() with {alloc, panic} {
-    let mut b: RawBuf<int> = RawBuf::new(2);
+    let mut b: RawBuf<i64> = RawBuf::new(2);
     // SAFETY: both slots are uninitialised, and there are two.
     unsafe {
         b.write(0, 3);
@@ -46,8 +46,8 @@ see docs/10-slices.md; until then it was `get` and `get_mut`, of one
 slot), and `free` gives the memory back when they're all empty. Each has
 an *obligation*, written in its `# Safety`, that the checker doesn't
 check: the index is less than `cap()`, and the slot is initialised, or
-isn't. That the index isn't negative is its type,
-`{ i: int | i >= 0 }`, which the checker does prove (see
+isn't. That the index isn't negative is its type, `usize` (until step 11
+`{ i: int | i >= 0 }`, which the checker proved, see
 docs/08-refinement-types.md): the upper bound would need a refinement to
 name `cap()`, which it can't yet. Nothing in the buffer remembers which slots hold
 what. The code using it does, with `len` in a `List`.
@@ -62,7 +62,7 @@ a slice of it can't outlive it, nor a `grow` that moves the slots.
 use alloc::raw::RawBuf;
 
 fn main() with {alloc, panic} {
-    let mut b: RawBuf<int> = RawBuf::new(1);
+    let mut b: RawBuf<i64> = RawBuf::new(1);
     // SAFETY: slot 0 is uninitialised, then holds the 5.
     let s = unsafe {
         b.write(0, 5);
@@ -105,10 +105,10 @@ the obligations of the operations in it, so it doesn't have the effect:
 use alloc::raw::RawBuf;
 
 /// The caller must know slot 0 holds a value.
-fn first(b: &RawBuf<int>) -> Option<&int> with unsafe { b.slice(0, 1).first() }
+fn first(b: &RawBuf<i64>) -> Option<&i64> with unsafe { b.slice(0, 1).first() }
 
 fn main() with {alloc, panic} {
-    let mut b: RawBuf<int> = RawBuf::new(1);
+    let mut b: RawBuf<i64> = RawBuf::new(1);
     // SAFETY: slot 0 is uninitialised; then it holds the 7, which is read
     // out before the buffer is freed.
     unsafe {
@@ -126,8 +126,8 @@ blocks doesn't, and is as safe to call as any other. `main` can't say
 `with unsafe`: nothing calls it to keep its obligations.
 
 Everything the effects already did, `unsafe` gets for free. A function
-type says it: an unsafe `fn` won't do as a `fn(int) -> int`. An `Fn`
-bound says it: `F: Fn() -> int` doesn't hold of an unsafe closure. A
+type says it: an unsafe `fn` won't do as a `fn(i64) -> i64`. An `Fn`
+bound says it: `F: Fn() -> i64` doesn't hold of an unsafe closure. A
 trait's method says what its impls may do. And effect parameters carry it
 through generic code: `apply(f)` of an unsafe `f` is unsafe.
 
@@ -137,13 +137,13 @@ it, not what an effect parameter turns out to be:
 ```rust,error
 use alloc::raw::RawBuf;
 
-fn call<e, F: FnOnce() -> int with e>(f: F) -> int with e {
+fn call<e, F: FnOnce() -> i64 with e>(f: F) -> i64 with e {
     // SAFETY: nothing here is unsafe but `f`, whose obligations aren't ours.
     unsafe { f() }
 }
 
 fn main() with {alloc, panic} {
-    let mut b: RawBuf<int> = RawBuf::new(1);
+    let mut b: RawBuf<i64> = RawBuf::new(1);
     print(call(|| b.read(0)));
     // SAFETY: there's nothing in the slot to leave behind.
     unsafe { b.free() };
@@ -175,7 +175,7 @@ first that's broken, blaming the innermost block running:
 use alloc::raw::RawBuf;
 
 fn main() with {alloc, panic} {
-    let mut b: RawBuf<int> = RawBuf::new(2);
+    let mut b: RawBuf<i64> = RawBuf::new(2);
     // SAFETY: wrong: slot 1 was never written.
     unsafe {
         b.write(0, 1);
@@ -220,7 +220,7 @@ then only when it's empty, so nothing in it is lost, and nothing is left
 pointing into it: `slice` and `slice_mut` borrow it, and `free` takes it by
 value, as `grow` takes it by `&mut`. Its type parameter is covariant,
 which is sound for what owns its `T`s, and its regions are its type's
-arguments', so a buffer of `&'a int` can't outlive `'a`.
+arguments', so a buffer of `&'a i64` can't outlive `'a`.
 
 ## Design decisions worth noticing
 
@@ -254,7 +254,7 @@ arguments', so a buffer of `&'a int` can't outlive `'a`.
 
 ## Exercises
 
-1. Write a `Stack` of `int`s on a `RawBuf<int>`, with `push`, `pop` and
+1. Write a `Stack` of `i64`s on a `RawBuf<i64>`, with `push`, `pop` and
    `free`, keeping `len <= cap()`. Which of its methods need `unsafe`
    blocks, and what does each `// SAFETY:` say?
 2. Why can't `free` be safe for a `RawBuf<T>` with `T: Discard`, when

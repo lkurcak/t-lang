@@ -1,9 +1,9 @@
 // A reference that's assigned points somewhere else: what was known
 // through it isn't any more.
 #[derive(Copy, Discard)]
-struct P { x: int }
+struct P { x: i64 }
 
-fn f(a: &P, b: &P) -> int {
+fn f(a: &P, b: &P) -> i64 {
     let mut r = a;
     if r.x > 0 {
         r = b;

@@ -1,6 +1,6 @@
 // A whole run is merged at once, whatever order it is written in. The
 // result takes the style of the highest range.
-fn f(n: int) -> int {
+fn f(n: i64) -> i64 {
     match n {
         10..=14 | 0..5 | 5..10 => 1,
         _ => 2,

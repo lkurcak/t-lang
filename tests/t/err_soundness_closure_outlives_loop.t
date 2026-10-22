@@ -6,7 +6,7 @@ enum Opt<F> { None, Some(F) }
 
 fn main() with panic {
     let mut v = Opt::None;
-    let mut i = 0;
+    let mut i: i64 = 0;
     loop {
         let n = i;
         v = Opt::Some(|| n);

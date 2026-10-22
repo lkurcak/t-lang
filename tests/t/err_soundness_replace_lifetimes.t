@@ -3,7 +3,7 @@
 use core::mem::replace;
 
 fn main() with {alloc, panic} {
-    let long = Box::new(1);
+    let long = Box::new(1i64);
     let mut a = &*long;
     {
         let short = Box::new(2);

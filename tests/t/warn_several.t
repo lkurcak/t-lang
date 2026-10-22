@@ -1,5 +1,5 @@
 // Every warning is reported, not just the first, in source order.
-fn f(n: int) -> int {
+fn f(n: i64) -> i64 {
     match n {
         0..=5 => 1,
         5..=10 => 2,
@@ -7,7 +7,7 @@ fn f(n: int) -> int {
         _ => 4,
     }
 }
-fn g(b: bool) -> int {
+fn g(b: bool) -> i64 {
     match b {
         true | true => 1,
         false => 2,

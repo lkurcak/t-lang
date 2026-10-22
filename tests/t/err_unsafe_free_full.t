@@ -3,7 +3,7 @@
 use alloc::raw::RawBuf;
 
 fn main() with {alloc, panic} {
-    let mut b: RawBuf<int> = RawBuf::new(3);
+    let mut b: RawBuf<i64> = RawBuf::new(3);
     // SAFETY: wrong: slot 2 still holds a value at `free`.
     unsafe {
         b.write(2, 1);

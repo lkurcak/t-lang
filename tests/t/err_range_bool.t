@@ -1,4 +1,4 @@
-// A range of anything can be written, but only one of `int`s is an
+// A range of anything can be written, but only one of `i64`s is an
 // iterator.
 fn main() {
     for b in false..true {

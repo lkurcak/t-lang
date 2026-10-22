@@ -9,9 +9,9 @@ refinement needs, which operators can't panic), `src/check/refine/logic.rs`
 time).
 
 ```rust
-fn div(a: int, d: { d: int | d > 0 }) -> int { a / d }
+fn div(a: i64, d: { d: i64 | d > 0 }) -> i64 { a / d }
 
-fn clamp(x: int, hi: { h: int | h >= 0 }) -> { r: int | r <= hi } {
+fn clamp(x: i64, hi: { h: i64 | h >= 0 }) -> { r: i64 | r <= hi } {
     if x < hi { x } else { hi }
 }
 
@@ -25,10 +25,10 @@ fn main() {
 }
 ```
 
-A *refinement type* is a type with a condition on its values: `{ d: int |
-d > 0 }` is the `int`s greater than 0. `d` names the value, and the
+A *refinement type* is a type with a condition on its values: `{ d: i64 |
+d > 0 }` is the `i64`s greater than 0. `d` names the value, and the
 condition after `|`, the *predicate*, says what's true of it. `div`
-divides by `d`, and `/` panics only on 0, or on the least `int` divided by
+divides by `d`, and `/` panics only on 0, or on the least `i64` divided by
 -1, neither of which `d` can be, so `div` can't panic, and says so: no
 `with panic`. Its callers have to show that what they pass is positive.
 `div(10, 3)` is, and so is `div(100, k)` inside the `if`: the checker
@@ -42,17 +42,17 @@ to prove an operator can't panic: then it has no `panic` at all.
 ## Where a refinement can be
 
 The whole type of a parameter, of a result, or of a `let` of one
-variable, and only of an `int` or a `bool`. A result's predicate can name
+variable, and only of an integer type or a `bool`. A result's predicate can name
 the parameters, as `clamp`'s names `hi`; a parameter's, those before it;
 a `let`'s, the variables in scope. None can name a `mut` variable: which
 of its values would it mean?
 
-Not inside another type (`Option<{ v: int | v > 0 }>`), not a closure's
+Not inside another type (`Option<{ v: i64 | v > 0 }>`), not a closure's
 parameter, and not in a trait's methods, nor an impl's of a trait:
 
 ```rust,error
 trait Half {
-    fn half(self, by: { b: int | b > 0 }) -> int;
+    fn half(self, by: { b: i64 | b > 0 }) -> i64;
 }
 // error: refinements can't be in a trait's methods yet
 ```
@@ -66,8 +66,9 @@ can come later without changing what's here.
 Literals, names, `+`, `-`, `*` by a constant, comparisons, `&&`, `||` and
 `!`: *linear integer arithmetic*. `v * v < 10` isn't linear, and is an
 error, as is `/`. Integers in a predicate are the mathematical ones, so
-`v + 1 > v` is always true there; that an `int` is between the least and
-the greatest is just another fact.
+`v + 1 > v` is always true there; that a `u8` is between 0 and 255 is
+just another fact. So a predicate can compare integers of different
+types: they're all integers there (see docs/11-integers.md).
 
 That's a small logic on purpose: the question "does this follow from
 that?" can always be answered for it (it's *decidable*), so the checker
@@ -84,20 +85,20 @@ The checker walks each body knowing a list of *facts*, and adds to it:
 - a condition, inside the branch it decides: in `if k > 0 { .. }`, `k >
   0`; after `if d == 0 { return 0; }`, `d != 0`, as the other branch
   doesn't come back; on the right of `d != 0 && a / d > 1`, `d != 0`;
-- what a `match` on an `int` matched, and what its earlier arms didn't;
+- what a `match` on an `i64` matched, and what its earlier arms didn't;
 - what a `let` or an assignment gives a variable: after `let y = x + 1;`,
   `y == x + 1`;
 - what an operator gave, as it'd have panicked otherwise.
 
 ```rust
-fn guarded(a: int, d: int) -> int {
+fn guarded(a: i64, d: i64) -> i64 {
     if d == 0 || d == -1 {
         return 0;
     }
     a / d
 }
 
-fn small_inc(n: int) -> int {
+fn small_inc(n: i64) -> i64 {
     match n {
         0..=9 => n + 1,
         _ => 0,
@@ -131,8 +132,8 @@ loops and all. That's how a loop says what it keeps true, its *loop
 invariant*:
 
 ```rust
-fn count(n: int) -> int {
-    let mut i: { v: int | v >= 0 } = 0;
+fn count(n: i64) -> i64 {
+    let mut i: { v: i64 | v >= 0 } = 0;
     while i < n {
         i = i + 1;
     }
@@ -144,7 +145,7 @@ fn main() {
 }
 ```
 
-`i + 1` can't overflow, as `i < n`, and `n` is an `int`; it's at least 0,
+`i + 1` can't overflow, as `i < n`, and `n` is an `i64`; it's at least 0,
 as `i` is. A refined variable can't be borrowed `&mut`: a write through
 the reference could break its refinement, and nothing would check.
 
@@ -163,7 +164,8 @@ more. `core` uses it: `Range::next` adds one to what's less than the
 range's end, and `checked_add`, `checked_sub` and `checked_div` are
 written in T with the operators, each proved total. The checker takes
 only `swap`, `panic` and `checked_mul` on trust, which is the one that
-would need products of unknowns.
+would need products of unknowns (and since step 11 `least` and
+`greatest`, which say how big an integer type is).
 
 When it can't prove an operator safe, nothing is wrong: it may panic, as
 in step 7, and its function says `with panic`. The checker isn't always
@@ -171,7 +173,7 @@ right that it can't: `x * x` for `0 <= x < 100` can't overflow, but
 that's not linear.
 
 ```rust,error
-fn square(x: { v: int | v >= 0 && v < 100 }) -> int { x * x }
+fn square(x: { v: i64 | v >= 0 && v < 100 }) -> i64 { x * x }
 // error: `*` may panic, but `square` doesn't say `with panic`
 ```
 
@@ -181,16 +183,16 @@ A value with a refinement is a value of its base type, so it can go
 anywhere one can; it just loses what's known of it, which is always
 sound. The other way, a value is checked against a refinement wherever
 step 7 checks effects against a type: an argument, a return, a `let` with
-a type. That's the only subtyping: `{ v: int | v > 1 }` is a `{ v: int |
+a type. That's the only subtyping: `{ v: i64 | v > 1 }` is a `{ v: i64 |
 v > 0 }`, at those places, as one implies the other.
 
 A function with a refined parameter can't be used as a value, as `apply`
 couldn't check what it passes:
 
 ```rust,error
-fn div(a: int, d: { d: int | d > 0 }) -> int { a / d }
+fn div(a: i64, d: { d: i64 | d > 0 }) -> i64 { a / d }
 
-fn apply(f: fn(int, int) -> int, d: int) -> int { f(1, d) }
+fn apply(f: fn(i64, i64) -> i64, d: i64) -> i64 { f(1, d) }
 
 fn main() {
     print(apply(div, 0));
@@ -267,7 +269,7 @@ the checker proved, which must not panic. Either failing stops it with
 | Missing | Why it's missing | Step |
 |---|---|---|
 | refinements on struct fields, facts through field reads | needs facts about places, not just variables | 8.1 ([docs](08.1-field-refinements.md)) |
-| refinements inside other types, `Option<{ v: int \| v > 0 }>` | needs subtyping inside type constructors, and refinements on type parameters | — |
+| refinements inside other types, `Option<{ v: i64 \| v > 0 }>` | needs subtyping inside type constructors, and refinements on type parameters | — |
 | refined trait methods | an impl's must ask no more and promise no less | — |
 | `&mut` to a refined value | writes through it must keep the refinement | — |
 | functions in predicates (`r.start() <= r.end()`) | needs pure functions, *measures* | — |
@@ -278,14 +280,14 @@ the checker proved, which must not panic. Either failing stops it with
 
 ## Exercises
 
-1. Write `fn abs(x: { v: int | v > -9223372036854775807 - 1 }) -> { r: int
+1. Write `fn abs(x: { v: i64 | v > -9223372036854775807 - 1 }) -> { r: i64
    | r >= 0 }` without `with panic`. Why does the parameter need its
    refinement?
 2. Why can't a refinement name a `mut` parameter? Write a function where
    allowing it would make the checker prove something false.
 3. In `Walk::leaf`, return what the variable stood for even if it can
    change other than by assignment. Which test catches it, and how?
-4. `count` above works with `i: { v: int | v >= 0 }`. What goes wrong with
+4. `count` above works with `i: { v: i64 | v >= 0 }`. What goes wrong with
    a plain `let mut i = 0;`? What would inferring the invariant need?
 5. Find two facts the solver can't combine though they contradict, using
    only integers. (Hint: `2x == 2y + 1`.) Is that a soundness problem?

@@ -1,7 +1,7 @@
 // The bound would be assumed in `leak`, but nothing checks it where the
 // impl is found.
 #[derive(Discard)]
-struct Pair<'a, 'b> { long: &'a int, short: &'b int }
+struct Pair<'a, 'b> { long: &'a i64, short: &'b i64 }
 
 trait Leak { fn leak(self) -> Self; }
 

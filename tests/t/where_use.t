@@ -2,11 +2,11 @@
 // function's or an impl's, as in `<..>`.
 mod m {
     pub trait Show {
-        fn show(&self) -> int;
+        fn show(&self) -> i64;
     }
 
-    impl Show for int {
-        fn show(&self) -> int { *self }
+    impl Show for i64 {
+        fn show(&self) -> i64 { *self }
     }
 }
 
@@ -15,7 +15,7 @@ use m::Show;
 trait Total {
     effect e;
 
-    fn total(&mut self) -> int with {Self::e, panic};
+    fn total(&mut self) -> i64 with {Self::e, panic};
 }
 
 #[derive(Discard where I: Discard)]
@@ -24,7 +24,7 @@ struct W<I> { iter: I }
 impl<I: Iterator> Total for W<I> where I::Item: Show + Discard {
     effect e = I::e;
 
-    fn total(&mut self) -> int with {I::e, panic} {
+    fn total(&mut self) -> i64 with {I::e, panic} {
         let mut n = 0;
         loop {
             match self.iter.next() {
@@ -35,7 +35,7 @@ impl<I: Iterator> Total for W<I> where I::Item: Show + Discard {
     }
 }
 
-fn first<I: Iterator + Discard>(mut i: I) -> int with I::e where I::Item: Show + Discard {
+fn first<I: Iterator + Discard>(mut i: I) -> i64 with I::e where I::Item: Show + Discard {
     match i.next() {
         Option::Some(x) => x.show(),
         Option::None => 0,
@@ -43,6 +43,6 @@ fn first<I: Iterator + Discard>(mut i: I) -> int with I::e where I::Item: Show +
 }
 
 fn main() with panic {
-    print((W { iter: 0..4 }).total()); // expect: 6
-    print(first(5..7));                // expect: 5
+    print((W { iter: 0..4i64 }).total()); // expect: 6
+    print(first(5..7i64));                // expect: 5
 }

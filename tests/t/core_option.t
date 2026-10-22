@@ -2,14 +2,14 @@
 // methods that would throw a value away ask for `Discard` where they do,
 // so an `Option` of something linear works with the rest.
 
-struct Fd { n: int }
+struct Fd { n: i64 }
 
-fn close(fd: Fd) -> int {
+fn close(fd: Fd) -> i64 {
     let Fd { n } = fd;
     n
 }
 
-fn half(n: int) -> Option<int> {
+fn half(n: i64) -> Option<i64> {
     if n % 2 == 0 { Option::Some(n / 2) } else { Option::None }
 }
 
@@ -49,10 +49,10 @@ fn main() with panic {
     print_bool(slot.is_none()); // expect: true
     match slot {
         Option::Some(fd) => print(close(fd)),
-        Option::None => print(0), // expect: 0
+        Option::None => print(0i64), // expect: 0
     }
 
-    // `Option<int>` is `Copy` and `Eq`, as `int` is.
+    // `Option<i64>` is `Copy` and `Eq`, as `i64` is.
     let c = a;
     print_bool(a == c); // expect: true
     print_bool(a != b); // expect: true

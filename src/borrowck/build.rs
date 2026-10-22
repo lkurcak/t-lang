@@ -389,7 +389,7 @@ impl<'a> Builder<'a> {
             ExprKind::For(_) | ExprKind::Range(..) => {
                 unreachable!("rewritten when paths are resolved")
             }
-            ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit => {
+            ExprKind::Int(..) | ExprKind::Bool(_) | ExprKind::Unit => {
                 let t = self.ty(e);
                 self.assign(dest, Rvalue::Use(Operand::Const), &t, span, false);
             }
@@ -412,6 +412,12 @@ impl<'a> Builder<'a> {
                 let (o, _) = self.operand(x);
                 let t = self.ty(e);
                 self.assign(dest, Rvalue::Unary(*op, o), &t, span, false);
+            }
+            // An integer, which is `Copy`, as the same number.
+            ExprKind::As(x, _) => {
+                let (o, _) = self.operand(x);
+                let t = self.ty(e);
+                self.assign(dest, Rvalue::Use(o), &t, span, false);
             }
             ExprKind::Binary(op @ (BinOp::And | BinOp::Or), l, r) => {
                 self.expr_into(l, dest);
@@ -579,7 +585,7 @@ impl<'a> Builder<'a> {
                 match op {
                     Some(op) => {
                         let value = Rvalue::Binary(*op, Operand::Copy(p.clone()), v);
-                        self.assign(&p, value, &Type::Int, span, false);
+                        self.assign(&p, value, &vt, span, false);
                     }
                     None => self.assign(&p, Rvalue::Use(v), &vt, span, false),
                 }
@@ -963,8 +969,8 @@ impl<'a> Builder<'a> {
         // then given new ones, they'd be tied to nothing.
         let t = self.adts().normalise(&s.apply(&scheme.ty));
         // What its equality bounds say holds of the types they're at, with
-        // their regions: `T: Tr<Out = &'a int>` at `T` = `W<'?1>` relates
-        // `<W<'?1> as Tr>::Out` and `&'?2 int`, so `'?1` is `'?2`. The
+        // their regions: `T: Tr<Out = &'a i64>` at `T` = `W<'?1>` relates
+        // `<W<'?1> as Tr>::Out` and `&'?2 i64`, so `'?1` is `'?2`. The
         // checker saw they're the same type but for regions.
         for (lhs, rhs) in &scheme.eqs {
             let lhs = self.adts().normalise(&s.apply(lhs));

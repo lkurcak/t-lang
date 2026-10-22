@@ -1,5 +1,5 @@
 #[derive(Discard)]
-struct View<'a> { r: &'a int }
+struct View<'a> { r: &'a i64 }
 
 fn f(v: View<'static, 'static>) {}
 

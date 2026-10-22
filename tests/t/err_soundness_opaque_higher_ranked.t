@@ -1,6 +1,6 @@
-// `Fn(&int) -> &int` returns a reference as long-lived as its argument,
+// `Fn(&i64) -> &i64` returns a reference as long-lived as its argument,
 // whatever that is, but this closure returns `x`, which lives for `'a`.
-fn keep<'a>(x: &'a int) -> impl Fn(&int) -> &int + Discard { move |_y| x }
+fn keep<'a>(x: &'a i64) -> impl Fn(&i64) -> &i64 + Discard { move |_y| x }
 
 fn main() {
     let n = 1;

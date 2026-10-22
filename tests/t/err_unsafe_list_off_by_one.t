@@ -3,11 +3,11 @@
 // interpreter catches it.
 use alloc::raw::RawBuf;
 
-struct Bad { buf: RawBuf<int>, len: { l: int | l >= 0 } }
+struct Bad { buf: RawBuf<i64>, len: usize }
 
 impl Bad {
-    fn get(&self, i: int) -> Option<&int> {
-        if i >= 0 && i <= self.len && i < self.buf.cap() {
+    fn get(&self, i: usize) -> Option<&i64> {
+        if i <= self.len && i < self.buf.cap() {
             // SAFETY: wrong: slot `len` isn't in use.
             unsafe { self.buf.slice(i, i + 1).get(0) }
         } else {

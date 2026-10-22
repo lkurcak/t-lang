@@ -1,7 +1,7 @@
 // Called through a function value, nothing would check the argument.
-fn div(a: int, d: { d: int | d > 0 }) -> int { a / d }
+fn div(a: i64, d: { d: i64 | d > 0 }) -> i64 { a / d }
 
-fn apply(f: fn(int, int) -> int, d: int) -> int { f(1, d) }
+fn apply(f: fn(i64, i64) -> i64, d: i64) -> i64 { f(1, d) }
 
 fn main() {
     print(apply(div, 0));

@@ -2,7 +2,7 @@
 // hold another, without end.
 
 #[derive(Discard)]
-struct Stream { head: int, next: Box<Stream> }
+struct Stream { head: i64, next: Box<Stream> }
 
 // Each holding the other is the same.
 #[derive(Discard)]
@@ -20,7 +20,7 @@ struct Chain<T> { value: T, next: Box<Chain<T>> }
 
 // Fine: `Nil` stops it.
 #[derive(Discard)]
-enum List { Nil, Cons(int, Box<List>) }
+enum List { Nil, Cons(i64, Box<List>) }
 
 // Fine: no values on purpose.
 #[derive(Discard)]
@@ -38,7 +38,7 @@ struct Quiet { next: Box<Quiet> }
 fn main() with {alloc, panic} {
     let l = List::Cons(1, Box::new(List::Nil));
     match l {
-        List::Nil => print(0),
+        List::Nil => print(0i64),
         List::Cons(x, _) => print(x), // expect: 1
     }
 }

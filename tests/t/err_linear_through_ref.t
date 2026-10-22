@@ -1,9 +1,9 @@
 // What's behind a `&mut` can't be thrown away either: `replace` gives it back.
-struct Fd { n: int }
+struct Fd { n: i64 }
 
-fn open(n: int) -> Fd { Fd { n } }
+fn open(n: i64) -> Fd { Fd { n } }
 
-fn close(fd: Fd) -> int {
+fn close(fd: Fd) -> i64 {
     let Fd { n } = fd;
     n
 }

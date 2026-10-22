@@ -1,5 +1,5 @@
 // What one function's bounds say isn't known in the next.
-struct Fd { n: int }
+struct Fd { n: i64 }
 
 fn a<T: Discard>(_x: T) {}
 

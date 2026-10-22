@@ -4,7 +4,7 @@ use alloc::list::List;
 use alloc::raw::RawBuf;
 
 fn main() {
-    let l: List<int> = List { buf: RawBuf::empty(), len: 3 };
+    let l: List<i64> = List { buf: RawBuf::empty(), len: 3 };
     print(*l.get(0).unwrap());
     l.free();
 }

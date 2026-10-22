@@ -9,13 +9,13 @@ its trait's), `core/panic.t`, `core/num.t`, and `src/interp.rs`
 (`Interp::effect`, which checks it all at run time).
 
 ```rust
-fn max(a: int, b: int) -> int {
+fn max(a: i64, b: i64) -> i64 {
     if a < b { b } else { a }
 }
 
-fn mean(a: int, b: int) -> int with panic { (a + b) / 2 }
+fn mean(a: i64, b: i64) -> i64 with panic { (a + b) / 2 }
 
-fn twice<e, F: Fn(int) -> int with e + Discard>(f: F, x: int) -> int with e { f(f(x)) }
+fn twice<e, F: Fn(i64) -> i64 with e + Discard>(f: F, x: i64) -> i64 with e { f(f(x)) }
 
 fn main() with panic {
     print(max(3, 4));                // expect: 4
@@ -30,7 +30,7 @@ result: its *effects*. There are two (step 9 adds a third, `unsafe`: see
 docs/09-unsafe.md). `panic` says a call may abort the
 program, and `alloc` that it may allocate. `max` has neither, and that's
 checked: nothing it does, and nothing it calls, can panic. `mean` adds,
-and `+` panics when the sum doesn't fit in an `int`, so `mean` says `with
+and `+` panics when the sum doesn't fit in an `i64`, so `mean` says `with
 panic`. A `main` with no `with` is a whole program that can't panic.
 
 This is what the README promised from the start, "errors are values, not
@@ -42,10 +42,11 @@ which do means reading every function they call.
 ## What has effects
 
 - **Arithmetic.** `+`, `-`, `*` and unary `-` panic on overflow, and `/`
-  and `%` on dividing by zero, or the least `int` by `-1`. Not where the
-  checker proves they can't (step 8, docs/08-refinement-types.md): not
-  `-5`, as a literal is at most the greatest `int`, nor `/` or `%` by a
-  literal other than `0` or `-1`, nor `1 + 2`.
+  and `%` on dividing by zero, or the least value of a signed type by
+  `-1`; since step 11, `as` too, when the number doesn't fit in the type
+  it's converted to (docs/11-integers.md). Not where the checker proves
+  they can't (step 8, docs/08-refinement-types.md): not `-5`, nor `/` or
+  `%` by a literal other than `0` or `-1`, nor `1 + 2`.
 - **`panic()`**, from the core library, whose type is `fn() -> ! with
   panic`: it aborts.
 - **`Box::new`**, `with {alloc, panic}`: it allocates, and aborts if memory
@@ -59,7 +60,7 @@ which do means reading every function they call.
 `panic()` on `None`:
 
 ```rust
-fn add(a: int, b: int) -> int with panic {
+fn add(a: i64, b: i64) -> i64 with panic {
     match checked_add(a, b) {
         Option::Some(c) => c,
         Option::None => panic(),
@@ -67,8 +68,8 @@ fn add(a: int, b: int) -> int with panic {
 }
 
 fn main() with panic {
-    print(add(1, 2));                                          // expect: 3
-    print_bool(checked_add(9223372036854775807, 1).is_none()); // expect: true
+    print(add(1, 2));                                             // expect: 3
+    print_bool(checked_add(9223372036854775807i64, 1).is_none()); // expect: true
 }
 ```
 
@@ -79,7 +80,8 @@ and it used `checked_add`; since step 8 it proves it, as it proves that
 `checked_add`, `checked_sub` and `checked_div` don't panic, which are
 written in T with the operators now (see
 docs/08-refinement-types.md). Only `checked_mul`, which needs to reason
-about products of unknowns, is an intrinsic.
+about products of unknowns, is an intrinsic. Since step 11 each is
+generic, for every integer type (docs/11-integers.md).
 
 ## Saying them
 
@@ -91,7 +93,7 @@ can count on. A body with an effect its signature doesn't have is an
 error, with a fix that adds it:
 
 ```rust,error
-fn next(n: int) -> int { n + 1 }
+fn next(n: i64) -> i64 { n + 1 }
 
 fn main() {
     print(next(1));
@@ -111,7 +113,7 @@ is.
 A closure has no signature to say its effects in, so they're worked out
 from its body, as its captures are. A bound says what a closure, or
 anything else called through a type parameter, may do, *at most*: `F:
-Fn(int) -> int` holds of what can't panic, and `F: Fn(int) -> int with
+Fn(i64) -> i64` holds of what can't panic, and `F: Fn(i64) -> i64 with
 panic` of what may or mayn't.
 
 What a higher-order function does depends on what it's given, so it's
@@ -133,16 +135,16 @@ hold (`Checker::settle_effects`).
 
 ## Function types
 
-A function type says its effects too: `fn(int) -> int with panic`. A
+A function type says its effects too: `fn(i64) -> i64 with panic`. A
 function that can't panic will do where one that may is wanted, so a
 function's type gains effects where it's used as a whole value:
 
 ```rust
-fn inc(n: int) -> int with panic { n + 1 }
+fn inc(n: i64) -> i64 with panic { n + 1 }
 
-fn id(n: int) -> int { n }
+fn id(n: i64) -> i64 { n }
 
-fn apply(f: fn(int) -> int with panic, x: int) -> int with panic { f(x) }
+fn apply(f: fn(i64) -> i64 with panic, x: i64) -> i64 with panic { f(x) }
 
 fn main() with panic {
     print(apply(inc, 1)); // expect: 2
@@ -150,7 +152,7 @@ fn main() with panic {
 }
 ```
 
-Never the other way: a `fn(int) -> int` can't hold `inc`. Nor inside
+Never the other way: a `fn(i64) -> i64` can't hold `inc`. Nor inside
 another type: there's no subtyping, so an `Option<fn()>` isn't an
 `Option<fn() with panic>` (`err_effect_coerce_nested.t`). That can come
 later without breaking anything.
@@ -167,13 +169,13 @@ impl says, as it says `Item`:
 
 ```rust
 #[derive(Discard)]
-struct Down { n: int }
+struct Down { n: i64 }
 
 impl Iterator for Down {
-    type Item = int;
+    type Item = i64;
     effect e = panic;
 
-    fn next(&mut self) -> Option<int> with panic {
+    fn next(&mut self) -> Option<i64> with panic {
         if self.n == 0 {
             return Option::None;
         }
@@ -182,7 +184,7 @@ impl Iterator for Down {
     }
 }
 
-fn first<I: Iterator<Item = int> + Discard>(mut it: I) -> Option<int> with I::e { it.next() }
+fn first<I: Iterator<Item = i64> + Discard>(mut it: I) -> Option<i64> with I::e { it.next() }
 
 fn main() with panic {
     print(first(Down { n: 3 }).unwrap()); // expect: 2
@@ -191,7 +193,7 @@ fn main() with panic {
 ```
 
 `I::e` is a projection, as `I::Item` is, and normalises the same way:
-`first(0..3)` has the effects of `<Range<int> as Iterator>::e`, which are
+`first(0..3)` has the effects of `<Range<i64> as Iterator>::e`, which are
 none. An adapter has those of what it adapts and what it calls: `Map`'s
 are `{I::e, f}`, where `f` is the impl's effect parameter for its
 closure's. That isn't in the impl's type, as a type parameter must be
@@ -231,8 +233,8 @@ violated", as it does on a leak.
 **Divergence.** "Can't panic" isn't "finishes": `fn spin() -> ! { loop {}
 }` has no effects. Saying a function finishes is a different kind of
 claim, and the induction above doesn't prove it. "No recursion" isn't
-enough either. With `struct R { f: fn(&R) -> int }` and `fn app(r: &R) ->
-int { (r.f)(r) }`, the call `app(&R { f: app })` never ends, and nothing
+enough either. With `struct R { f: fn(&R) -> i64 }` and `fn app(r: &R) ->
+i64 { (r.f)(r) }`, the call `app(&R { f: app })` never ends, and nothing
 in it calls itself: that's *Landin's knot*. And a trait's method can call
 a generic function that calls the trait's method again, which only
 monomorphising shows. Tracking it soundly takes a termination checker,
@@ -272,7 +274,7 @@ work out; that's for when there's a backend.
 
 ## Exercises
 
-1. Write `fn sum(n: int) -> Option<int>`, the sum of `0..n`, so that it
+1. Write `fn sum(n: i64) -> Option<i64>`, the sum of `0..n`, so that it
    can't panic. What does it give when the sum doesn't fit?
 2. Why must `Eq::eq` be unable to panic? What would `==` on an
    `Option<T>` need otherwise?
@@ -282,7 +284,7 @@ work out; that's for when there's a backend.
 4. `Filter`'s impl has an effect parameter `p` that isn't in its type.
    Write an impl whose effect parameter nothing decides, and read the
    error. Why would accepting it break coherence?
-5. Make `fn app(r: &R) -> int` from *What isn't an effect yet* loop
+5. Make `fn app(r: &R) -> i64` from *What isn't an effect yet* loop
    forever. Which of T's features does Landin's knot need, and which
    would a termination checker have to restrict?
 

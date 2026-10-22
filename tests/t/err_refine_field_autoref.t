@@ -3,12 +3,12 @@ trait Clear {
     fn clear(&mut self);
 }
 
-impl Clear for int {
+impl Clear for i64 {
     fn clear(&mut self) { *self = 0; }
 }
 
 #[derive(Copy, Discard)]
-struct Pos { n: { v: int | v > 0 } }
+struct Pos { n: { v: i64 | v > 0 } }
 
 fn main() {
     let mut p = Pos { n: 1 };

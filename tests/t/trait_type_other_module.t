@@ -2,15 +2,15 @@
 // or alloc's `Iter`, here, or one of the program's own.
 mod a {
     #[derive(Discard)]
-    pub struct Foo { pub x: int }
+    pub struct Foo { pub x: i64 }
 }
 
 trait Foo {
-    fn f(&self) -> int;
+    fn f(&self) -> i64;
 }
 
 impl Foo for a::Foo {
-    fn f(&self) -> int { self.x }
+    fn f(&self) -> i64 { self.x }
 }
 
 trait Range {}

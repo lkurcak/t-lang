@@ -1,5 +1,5 @@
 fn main() with panic {
-    let mut x = 1;
+    let mut x: i64 = 1;
     let a = &mut x;
     let b = &mut x;
     *a += 1;

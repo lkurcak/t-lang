@@ -2,7 +2,7 @@
 use alloc::raw::RawBuf;
 
 fn main() with {alloc, panic} {
-    let b: RawBuf<int> = RawBuf::new(1);
+    let b: RawBuf<i64> = RawBuf::new(1);
     // SAFETY: wrong: there's no slot 1.
     let s = unsafe { b.slice(1, 2) };
     print(s.len());

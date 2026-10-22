@@ -3,7 +3,7 @@
 use core::mem::swap;
 
 fn main() {
-    let mut x = 1;
+    let mut x: i64 = 1;
     swap(&mut x, &mut x);
     print(x);
 }

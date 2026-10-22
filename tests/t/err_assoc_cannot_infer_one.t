@@ -5,12 +5,12 @@ trait Tr {
 }
 
 impl Tr for bool {
-    type Out = int;
+    type Out = i64;
 }
 
 fn mk<T: Tr>(x: T::Out) -> T::Out { x }
 
 fn main() {
-    print(mk(1));
+    print(mk(1i64));
 }
-// error: cannot infer
+// error: cannot fully infer

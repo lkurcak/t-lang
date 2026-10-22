@@ -1,6 +1,6 @@
 mod m {
     #[derive(Discard)]
-    struct Hidden { n: int }
+    struct Hidden { n: i64 }
 
     #[derive(Discard)]
     pub struct Open { pub h: Hidden }

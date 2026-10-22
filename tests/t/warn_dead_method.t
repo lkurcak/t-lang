@@ -1,8 +1,8 @@
 #[derive(Discard)]
-struct P { x: int }
+struct P { x: i64 }
 impl P {
-    fn used(&self) -> int { self.x }
-    fn unused(&self) -> int { 0 }
+    fn used(&self) -> i64 { self.x }
+    fn unused(&self) -> i64 { 0 }
 }
 // Methods of impls of traits are never reported: which one runs depends on
 // types.

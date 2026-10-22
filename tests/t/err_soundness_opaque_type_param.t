@@ -1,10 +1,10 @@
-// The type `hold` returns may hold its `T`: here a `&int`, so it can't
+// The type `hold` returns may hold its `T`: here a `&i64`, so it can't
 // outlive `n`.
 fn hold<T: Copy>(x: T) -> impl Fn() -> T + Discard { move || x }
 
 fn main() {
     let f = {
-        let n = 1;
+        let n: i64 = 1;
         hold(&n)
     };
     print(*f());

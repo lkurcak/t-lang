@@ -1,9 +1,9 @@
 // Changing through a captured `&mut`, by a method, a call or a reborrow,
 // needs it unique, not `mut`, as anywhere else.
 #[derive(Discard)]
-struct V { n: int }
+struct V { n: i64 }
 impl V {
-    fn push(&mut self, k: int) with panic {
+    fn push(&mut self, k: i64) with panic {
         self.n = self.n + k;
     }
 }

@@ -1,11 +1,11 @@
 // `let` takes any irrefutable pattern: one that matches every value of its type.
 
 #[derive(Discard)]
-struct Point { x: int, y: int }
+struct Point { x: i64, y: i64 }
 #[derive(Discard)]
 struct Line { from: Point, to: Point }
 #[derive(Discard)]
-enum Wrapper { Only(int) }   // one variant, so matching it can't fail
+enum Wrapper { Only(i64) }   // one variant, so matching it can't fail
 
 fn main() {
     let Point { x, y } = Point { x: 1, y: 2 };
@@ -15,6 +15,6 @@ fn main() {
     print(x0 + y1);         // expect: 30
     let Wrapper::Only(n) = Wrapper::Only(5);
     print(n);               // expect: 5
-    let _ = 99;
+    let _: i64 = 99;
     let () = ();
 }

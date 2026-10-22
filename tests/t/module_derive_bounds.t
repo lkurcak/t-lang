@@ -9,11 +9,11 @@ mod cells {
 
     // Needs nothing of `T`, and says so by writing nothing.
     #[derive(Copy, Discard)]
-    pub struct Tag<T> { raw: int, of: fn() -> T }
+    pub struct Tag<T> { raw: i64, of: fn() -> T }
 
-    pub fn tag<T>(raw: int, of: fn() -> T) -> Tag<T> { Tag { raw, of } }
+    pub fn tag<T>(raw: i64, of: fn() -> T) -> Tag<T> { Tag { raw, of } }
 
-    pub fn raw<T>(t: Tag<T>) -> int { t.raw }
+    pub fn raw<T>(t: Tag<T>) -> i64 { t.raw }
 
     // Stronger than needed: room to hold a `T` later.
     #[derive(Discard where T: Discard)]
@@ -26,14 +26,14 @@ mod cells {
     pub struct Open<T> { pub v: Box<T> }
 }
 
-fn five() -> int { 5 }
+fn five() -> i64 { 5 }
 
 fn main() with {alloc, panic} {
-    let _c = cells::cell(1);
+    let _c = cells::cell(1i64);
     let t = cells::tag(3, five);
     let u = t;
     print(cells::raw(t) + cells::raw(u)); // expect: 6
     let _l = cells::later(five);
-    let o = cells::Open { v: Box::new(2) };
+    let o = cells::Open { v: Box::new(2i64) };
     print(*o.v);                           // expect: 2
 }

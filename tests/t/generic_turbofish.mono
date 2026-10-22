@@ -1,37 +1,37 @@
 #[derive(Discard)]
-enum Option::<int> { Some(int), None }
+enum Option::<i64> { Some(i64), None }
 
 #[derive(Discard)]
 enum Option::<bool> { Some(bool), None }
 
 #[derive(Discard)]
-struct Pair::<int, bool> { first: int, second: bool }
+struct Pair::<i64, bool> { first: i64, second: bool }
 
 #[derive(Discard)]
-struct Pair::<int, int> { first: int, second: int }
+struct Pair::<i64, i64> { first: i64, second: i64 }
 
 #[derive(Discard)]
-struct Id::<Pair<int, int>> { n: int }
+struct Id::<Pair<i64, i64>> { n: i64 }
 
 #[derive(Discard)]
-struct Id::<bool> { n: int }
+struct Id::<bool> { n: i64 }
 
 fn none::<bool>() -> Option::<bool> { Option::<bool>::None }
 
-fn count::<Pair<int, bool>>(n: int) -> int { n }
+fn count::<Pair<i64, bool>>(n: i64) -> i64 { n }
 
-fn id::<int>(x: int) -> int { x }
+fn id::<i64>(x: i64) -> i64 { x }
 
-fn id::<Option<int>>(x: Option::<int>) -> Option::<int> { x }
+fn id::<Option<i64>>(x: Option::<i64>) -> Option::<i64> { x }
 
-fn second::<bool, int>(_a: bool, b: int) -> int { b }
+fn second::<bool, i64>(_a: bool, b: i64) -> i64 { b }
 
-fn apply::<int>(f: fn(int) -> int, x: int) -> int { f(x) }
+fn apply::<i64>(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }
 
-fn is_some::<int>(o: Option::<int>) -> bool {
+fn is_some::<i64>(o: Option::<i64>) -> bool {
     match o {
-        Option::<int>::Some(_) => true,
-        Option::<int>::None => false,
+        Option::<i64>::Some(_) => true,
+        Option::<i64>::None => false,
     }
 }
 
@@ -43,30 +43,30 @@ fn is_some::<bool>(o: Option::<bool>) -> bool {
 }
 
 fn main() {
-    print(id::<int>(1));
-    print_bool(is_some::<int>(Option::<int>::None));
+    print(id::<i64>(1i64));
+    print_bool(is_some::<i64>(Option::<i64>::None));
     print_bool(is_some::<bool>(none::<bool>()));
-    print(count::<Pair<int, bool>>(3));
-    print(apply::<int>(id::<int>, 4));
-    let p = Pair::<int, bool> { first: 5, second: true };
+    print(count::<Pair<i64, bool>>(3i64));
+    print(apply::<i64>(id::<i64>, 4i64));
+    let p = Pair::<i64, bool> { first: 5i64, second: true };
     print(p.first);
-    let users: Id::<Pair<int, int>> = Id::<Pair<int, int>> { n: 6 };
+    let users: Id::<Pair<i64, i64>> = Id::<Pair<i64, i64>> { n: 6i64 };
     print(users.n);
-    let things = Id::<bool> { n: 7 };
+    let things = Id::<bool> { n: 7i64 };
     print(things.n);
-    match Option::<int>::Some(8) {
-        Option::<int>::Some(n) => print(n),
-        Option::<int>::None => {},
+    match Option::<i64>::Some(8i64) {
+        Option::<i64>::Some(n) => print(n),
+        Option::<i64>::None => {},
     }
-    let Pair::<int, bool> { first, .. } = p;
+    let Pair::<i64, bool> { first, .. } = p;
     print(first);
-    print(second::<bool, int>(true, 9));
-    print(unwrap(id::<Option<int>>(Option::<int>::Some(10))));
+    print(second::<bool, i64>(true, 9i64));
+    print(unwrap(id::<Option<i64>>(Option::<i64>::Some(10i64))));
 }
 
-fn unwrap(o: Option::<int>) -> int {
+fn unwrap(o: Option::<i64>) -> i64 {
     match o {
-        Option::<int>::Some(n) => n,
-        Option::<int>::None => 0,
+        Option::<i64>::Some(n) => n,
+        Option::<i64>::None => 0i64,
     }
 }

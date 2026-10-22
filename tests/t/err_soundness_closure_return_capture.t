@@ -5,7 +5,7 @@ fn main() {
     let r;
     {
         let n = 2;
-        let f = |_x: &int| -> &int { &n };
+        let f = |_x: &i64| -> &i64 { &n };
         r = f(&a);
     }
     print(*r);

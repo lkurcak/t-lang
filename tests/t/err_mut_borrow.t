@@ -1,4 +1,4 @@
-fn bump(n: &mut int) with panic { *n += 1; }
+fn bump(n: &mut i64) with panic { *n += 1; }
 
 fn main() with panic {
     let x = 1;

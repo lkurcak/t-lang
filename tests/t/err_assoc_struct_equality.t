@@ -8,10 +8,10 @@ impl Tr for bool {
 }
 
 #[derive(Discard)]
-struct S<T: Tr<Out = int>> { x: T::Out }
+struct S<T: Tr<Out = i64>> { x: T::Out }
 
 fn main() {
     let s: S<bool> = S { x: 1 };
     print(s.x);
 }
-// error: `<bool as Tr>::Out` is `bool`, but `S` needs it to be `int`
+// error: `<bool as Tr>::Out` is `bool`, but `S` needs it to be `i64`

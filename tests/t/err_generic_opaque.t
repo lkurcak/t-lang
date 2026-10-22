@@ -1,4 +1,4 @@
-// Inside `add_one`, `T` could be any type, so it can't be added to.
-fn add_one<T>(x: T) -> int { x + 1 }
-fn main() { print(add_one(1)); }
-// error: expected `int`, found `T`
+// Inside `as_i64`, `T` could be any type, so it isn't an `i64`.
+fn as_i64<T>(x: T) -> i64 { x }
+fn main() { print(as_i64(1i64)); }
+// error: expected `i64`, found `T`

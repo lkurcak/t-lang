@@ -1,1 +1,1 @@
-fn hidden() -> int { 1 }
+fn hidden() -> i64 { 1 }

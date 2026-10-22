@@ -1,6 +1,6 @@
 fn main() {
-    for x in 3 {
+    for x in 3i64 {
         print(x);
     }
 }
-// error: `int` doesn't implement `core::iter::Iterator`
+// error: `i64` doesn't implement `core::iter::Iterator`

@@ -67,7 +67,7 @@ impl Checker {
                         None => None,
                     },
                     // What a bound on a type to be inferred says calls of it
-                    // take and give: `F: Fn(int) -> int` for `apply`'s `F`
+                    // take and give: `F: Fn(i64) -> i64` for `apply`'s `F`
                     // in `apply(|x| x + 1)`.
                     Type::Var(v) => self.wanted_sig(v, l.params.len()),
                     _ => None,
@@ -156,6 +156,49 @@ impl Checker {
             self.diverging.push(want.clone());
         }
         Ok(())
+    }
+
+    /// Requires `t`, the type of what `what` works on at `span`, to be an
+    /// integer type, or one that implements `Int`.
+    pub(super) fn integer(&mut self, t: &Type, span: Span, what: &str) -> Result<(), Error> {
+        let int = self.fresh_int(
+            span,
+            format!("the type of what {what} works on"),
+            "say which integer type it is".into(),
+        );
+        self.unify_or(t, &int, span, |t, _| {
+            format!("{what} works on integers, not on `{t}`")
+        })?;
+        // A type parameter or opaque type is one only if it's `Int`: say
+        // so here, rather than where the obligation fails.
+        let t = self.solved(t);
+        if matches!(t, Type::Param(_) | Type::Opaque(..) | Type::Proj(..))
+            && !crate::check::unify::has_vars(&t)
+            && (self.traits)
+                .implements(&t, "Int", &self.env, &self.adts.proj.local)
+                .is_err()
+        {
+            let fix = match &t {
+                Type::Param(p) => format!("; add a bound: `{p}: Int`"),
+                _ => String::new(),
+            };
+            return Err(Error::ty(
+                span,
+                format!("{what} works on integers, not on `{t}`{fix}"),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Is `t` an integer type, or a type that may be one: a type parameter,
+    /// opaque type or projection, which must then implement `Int`, or a
+    /// variable for one?
+    fn is_integer(&self, t: &Type) -> bool {
+        match self.shallow(t) {
+            Type::Int(_) | Type::Param(_) | Type::Opaque(..) | Type::Proj(..) => true,
+            t @ Type::Var(_) => self.int_var(&t),
+            _ => false,
+        }
     }
 
     /// The type of two branches of types `a` and `b`, one of which runs:
@@ -254,9 +297,30 @@ impl Checker {
             ExprKind::For(_) | ExprKind::Range(..) => {
                 unreachable!("rewritten when paths are resolved")
             }
-            //  ----------------- (T-Int)       ------------------- (T-True/False)
-            //   Γ ⊢ 42 : int                    Γ ⊢ true : bool
-            ExprKind::Int(_) => Ok(Type::Int),
+            //   τ an integer type          ------------------- (T-True/False)
+            //  ------------------- (T-Int)   Γ ⊢ true : bool
+            //      Γ ⊢ 42 : τ
+            //
+            // Which integer type is worked out from how it's used, as any
+            // type the program doesn't write: there's no default. That it
+            // fits in its type is checked once that's known (`literals`).
+            ExprKind::Int(n, suffix) => {
+                let ty = match suffix {
+                    Some(t) => Type::Int(*t),
+                    None => self.fresh_int(
+                        e.span,
+                        "the type of this integer".into(),
+                        "say which integer type it is, as `5i64` does".into(),
+                    ),
+                };
+                self.literals.push(super::Literal {
+                    node: e.id,
+                    span: e.span,
+                    value: i128::from(*n),
+                    ty: ty.clone(),
+                });
+                Ok(ty)
+            }
             ExprKind::Bool(_) => Ok(Type::Bool),
 
             //  -------------- (T-Unit)
@@ -298,24 +362,55 @@ impl Checker {
                 Ok(t)
             }
 
-            //   Γ ⊢ e : int            Γ ⊢ e : bool
-            //  -------------- (T-Neg)  -------------- (T-Not)
-            //   Γ ⊢ -e : int            Γ ⊢ !e : bool
+            //   Γ ⊢ e : τ  τ: Int       Γ ⊢ e : bool
+            //  ------------------ (T-Neg) -------------- (T-Not)
+            //     Γ ⊢ -e : τ              Γ ⊢ !e : bool
             //
-            // `-x` panics at the least `int`, which has no positive
-            // counterpart, unless it's proved not to be that (see
-            // `refine`): `-5` can't be, as a literal is at most the
-            // greatest `int`.
-            ExprKind::Unary(op @ (UnOp::Neg | UnOp::Not), x) => {
-                let t = match op {
-                    UnOp::Neg => Type::Int,
-                    _ => Type::Bool,
-                };
-                self.check(x, &t)?;
-                if *op == UnOp::Neg {
-                    self.operator(e, "`-`");
+            // `-x` panics if its result doesn't fit in `τ`: at the least
+            // value of a signed type, which has no positive counterpart, and
+            // at all but 0 of an unsigned one. Unless it's proved not to
+            // (see `refine`): `-5` can't, as `-` of a literal is a literal.
+            ExprKind::Unary(UnOp::Neg, x) => {
+                let t = self.synth(x)?;
+                if let ExprKind::Int(..) = x.kind
+                    && let Some(l) = self.literals.iter_mut().find(|l| l.node == x.id)
+                {
+                    l.value = -l.value;
+                    l.span = e.span;
                 }
+                self.integer(&t, e.span, "`-`")?;
+                self.operator(e, "`-`");
                 Ok(t)
+            }
+            ExprKind::Unary(UnOp::Not, x) => {
+                self.check(x, &Type::Bool)?;
+                Ok(Type::Bool)
+            }
+
+            //   Γ ⊢ e : σ   σ: Int   τ: Int
+            //  ----------------------------- (T-As)
+            //         Γ ⊢ e as τ : τ
+            //
+            // The same number, as a `τ`: it panics if it doesn't fit in
+            // one, unless that's proved not to happen (see `refine`), as it
+            // always is from a type into one with a wider range. It never
+            // changes the number, so unlike Rust's `as` it never truncates.
+            ExprKind::As(x, ty) => {
+                let from = self.synth(x)?;
+                let to = self.resolve(ty)?;
+                let not = |t: &Type, dir: &str| {
+                    format!("`as` converts between integer types, not {dir} `{t}`")
+                };
+                if !self.is_integer(&from) && !matches!(self.shallow(&from), Type::Var(_)) {
+                    return Err(Error::ty(x.span, not(&self.solved(&from), "from")));
+                }
+                self.integer(&from, x.span, "`as`")?;
+                if !self.is_integer(&to) {
+                    return Err(Error::ty(ty.span, not(&to, "to")));
+                }
+                self.integer(&to, ty.span, "`as`")?;
+                self.operator(e, "`as`");
+                Ok(to)
             }
 
             //        Γ ⊢ e : T                   Γ ⊢ e : T
@@ -383,10 +478,8 @@ impl Checker {
                         self.check(value, &t)?;
                     }
                     Some(op) => {
-                        self.unify_or(&t, &Type::Int, place.span, |t, _| {
-                            format!("`{op}=` works on an `int`, not on `{t}`")
-                        })?;
-                        self.check(value, &Type::Int)?;
+                        self.integer(&t, place.span, &format!("`{op}=`"))?;
+                        self.check(value, &t)?;
                         // As `+` does.
                         self.operator(e, format!("`{op}=`"));
                     }
@@ -418,7 +511,7 @@ impl Checker {
                         let ret = self.fresh(
                             e.span,
                             what,
-                            "annotate it, e.g. `|x| -> int { .. }`".into(),
+                            "annotate it, e.g. `|x| -> i64 { .. }`".into(),
                         );
                         self.ret = Some(ret.clone());
                         ret
@@ -687,26 +780,29 @@ impl Checker {
     // `l op r`, by the rule for its operator.
     fn binary(&mut self, e: &Expr, op: &BinOp, l: &Expr, r: &Expr) -> Result<Type, Error> {
         match op {
-            //   Γ ⊢ l : int   Γ ⊢ r : int
-            //  --------------------------- (T-Arith)   for + - * / %
-            //       Γ ⊢ l + r : int
+            //   Γ ⊢ l : τ   Γ ⊢ r : τ   τ: Int
+            //  -------------------------------- (T-Arith)   for + - * / %
+            //          Γ ⊢ l + r : τ
             //
-            // Each may panic: on overflow, or `/` and `%` by zero or the
-            // least `int` by -1. Unless it's proved not to (see `refine`):
-            // `x / 2` can't.
+            // Both sides are of the same integer type: none is widened.
+            // Each may panic, if its result doesn't fit in `τ`, or `/` and
+            // `%` by zero. Unless it's proved not to (see `refine`): `x / 2`
+            // can't.
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => {
-                self.check(l, &Type::Int)?;
-                self.check(r, &Type::Int)?;
+                let t = self.synth(l)?;
+                self.check(r, &t)?;
+                self.integer(&t, l.span, &format!("`{op}`"))?;
                 self.operator(e, format!("`{op}`"));
-                Ok(Type::Int)
+                Ok(t)
             }
 
-            //   Γ ⊢ l : int   Γ ⊢ r : int
-            //  --------------------------- (T-Cmp)     for < <= > >=
-            //       Γ ⊢ l < r : bool
+            //   Γ ⊢ l : τ   Γ ⊢ r : τ   τ: Int
+            //  -------------------------------- (T-Cmp)     for < <= > >=
+            //         Γ ⊢ l < r : bool
             BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
-                self.check(l, &Type::Int)?;
-                self.check(r, &Type::Int)?;
+                let t = self.synth(l)?;
+                self.check(r, &t)?;
+                self.integer(&t, l.span, &format!("`{op}`"))?;
                 Ok(Type::Bool)
             }
 
@@ -729,7 +825,7 @@ impl Checker {
             //         Γ ⊢ l == r : bool
             //
             // `==` is `Eq::eq(&l, &r)`, and `!=` its negation, so T
-            // must implement `Eq`. `int`, `bool` and `()` do, and
+            // must implement `Eq`. `i64`, `bool` and `()` do, and
             // references and boxes if what they point to does: they
             // compare that, not addresses. A struct or enum does if
             // it says so, with `#[derive(Eq)]` to compare field by
@@ -779,6 +875,9 @@ impl Checker {
                 self.effect(e.span, what, *sig.effects);
                 (sig.params, *sig.ret)
             }
+            t @ Type::Var(_) if self.int_var(&t) => {
+                return Err(Error::ty(f.span, "`{integer}` is not a function"));
+            }
             Type::Var(_) => {
                 let params: Vec<Type> = args
                     .iter()
@@ -810,7 +909,7 @@ impl Checker {
                     let hint = match &t {
                         Type::Param(p) => format!(
                             "; to call it, say what it takes and gives with a bound, \
-                             like `{p}: Fn(int) -> int`"
+                             like `{p}: Fn(i64) -> i64`"
                         ),
                         _ => String::new(),
                     };
@@ -1182,7 +1281,7 @@ impl Checker {
                             self.fresh(
                                 pat.span,
                                 format!("the type of `{name}`"),
-                                format!("annotate it, e.g. `let {name}: int;`"),
+                                format!("annotate it, e.g. `let {name}: i64;`"),
                             )
                         }
                     };

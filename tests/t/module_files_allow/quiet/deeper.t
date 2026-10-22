@@ -1,1 +1,1 @@
-fn never_either() { let y = 2; }
+fn never_either() { let y = 2i64; }

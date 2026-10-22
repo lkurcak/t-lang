@@ -3,16 +3,16 @@
 use alloc::list::List;
 use alloc::raw::RawBuf;
 
-fn empty() -> List<int> { List::new() }
+fn empty() -> List<i64> { List::new() }
 
-fn first(l: &List<int>) -> Option<int> {
+fn first(l: &List<i64>) -> Option<i64> {
     match l.get(0) {
         Option::Some(x) => Option::Some(*x),
         Option::None => Option::None,
     }
 }
 
-fn drain(l: &mut List<int>) -> int {
+fn drain(l: &mut List<i64>) -> i64 {
     let mut n = 0;
     while l.pop().is_some() {
         n = checked_add(n, 1).unwrap_or(0);
@@ -30,7 +30,7 @@ fn main() with {alloc, panic} {
     l.free();
 
     // An empty buffer has no slots, and grows as any other.
-    let mut b: RawBuf<int> = RawBuf::empty();
+    let mut b: RawBuf<i64> = RawBuf::empty();
     print(b.cap()); // expect: 0
     b.grow(1);
     // SAFETY: slot 0 is uninitialised, then holds the 8, which is read out

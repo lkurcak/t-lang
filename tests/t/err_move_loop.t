@@ -1,8 +1,8 @@
-fn consume(b: Box<int>) -> int { *b }
+fn consume(b: Box<i64>) -> i64 { *b }
 
 fn main() with {alloc, panic} {
     let b = Box::new(1);
-    let mut i = 0;
+    let mut i: i64 = 0;
     while i < 2 {
         print(consume(b));
         i += 1;

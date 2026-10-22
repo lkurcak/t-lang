@@ -18,7 +18,7 @@ pub struct RawBuf<T> {}
 impl<T> RawBuf<T> {
     /// A buffer of `cap` uninitialised slots.
     #[intrinsic]
-    pub fn new(cap: { c: int | c >= 0 }) -> RawBuf<T> with {alloc, panic};
+    pub fn new(cap: usize) -> RawBuf<T> with {alloc, panic};
 
     /// A buffer of no slots. It allocates nothing, so it can't fail, and
     /// `grow` gives it some.
@@ -27,13 +27,13 @@ impl<T> RawBuf<T> {
 
     /// How many slots it has.
     #[intrinsic]
-    pub fn cap(&self) -> { c: int | c >= 0 };
+    pub fn cap(&self) -> usize;
 
     /// Gives it `new_cap` slots, keeping what's in the first `cap()`. The
     /// slots after them are uninitialised. It panics if `new_cap` is less
     /// than `cap()`.
     #[intrinsic]
-    pub fn grow(&mut self, new_cap: int) with {alloc, panic};
+    pub fn grow(&mut self, new_cap: usize) with {alloc, panic};
 
     /// Puts `v` in slot `i`.
     ///
@@ -41,7 +41,7 @@ impl<T> RawBuf<T> {
     ///
     /// `i < cap()`, and slot `i` is uninitialised.
     #[intrinsic]
-    pub fn write(&mut self, i: { i: int | i >= 0 }, v: T) with unsafe;
+    pub fn write(&mut self, i: usize, v: T) with unsafe;
 
     /// Moves the value out of slot `i`, which is uninitialised after.
     ///
@@ -49,7 +49,7 @@ impl<T> RawBuf<T> {
     ///
     /// `i < cap()`, and slot `i` is initialised.
     #[intrinsic]
-    pub fn read(&mut self, i: { i: int | i >= 0 }) -> T with unsafe;
+    pub fn read(&mut self, i: usize) -> T with unsafe;
 
     /// The values in slots `lo` up to, not including, `hi`, as a slice.
     ///
@@ -58,7 +58,7 @@ impl<T> RawBuf<T> {
     /// `lo <= hi <= cap()`, and slots `lo..hi` are initialised. The slice
     /// borrows the buffer, so they stay so while it lives.
     #[intrinsic]
-    pub fn slice(&self, lo: { l: int | l >= 0 }, hi: int) -> &[T] with unsafe;
+    pub fn slice(&self, lo: usize, hi: usize) -> &[T] with unsafe;
 
     /// The values in slots `lo` up to, not including, `hi`, as a slice to
     /// change.
@@ -69,7 +69,7 @@ impl<T> RawBuf<T> {
     /// borrows the buffer, so they stay so while it lives: nothing it does
     /// can take a value out.
     #[intrinsic]
-    pub fn slice_mut(&mut self, lo: { l: int | l >= 0 }, hi: int) -> &mut [T] with unsafe;
+    pub fn slice_mut(&mut self, lo: usize, hi: usize) -> &mut [T] with unsafe;
 
     /// Gives its memory back.
     ///

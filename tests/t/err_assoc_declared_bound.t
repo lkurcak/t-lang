@@ -4,9 +4,9 @@ trait Container {
     type Item: Discard;
 }
 
-struct Fd { n: int }
+struct Fd { n: i64 }
 
-impl Container for int {
+impl Container for i64 {
     type Item = Fd;
 }
 

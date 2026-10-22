@@ -1,11 +1,11 @@
 // What a closure borrows, and for how long.
 
 #[derive(Discard)]
-struct P { x: int, y: int }
+struct P { x: i64, y: i64 }
 
 fn main() with panic {
     // Borrows end with the closure's last use.
-    let mut n = 0;
+    let mut n: i64 = 0;
     let mut inc = || n = n + 1;
     inc();
     inc();
@@ -20,7 +20,7 @@ fn main() with panic {
     print(g());                     // expect: 10
     // `move` copies `Copy` values in: changing `m` afterwards doesn't
     // change the closure's.
-    let mut m = 1;
+    let mut m: i64 = 1;
     let get = move || m;
     m = 5;
     print(get() + m);               // expect: 6

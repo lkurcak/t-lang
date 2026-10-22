@@ -16,7 +16,7 @@ fn map<T, U>(o: Option<T>, f: fn(T) -> U) -> Option<U> {
 }
 
 fn main() {
-    match map(Option::Some(40), |x| x / 10) {
+    match map(Option::Some(40i64), |x| x / 10) {
         Option::Some(y) => print(y), // expect: 4
         Option::None => {},
     }
@@ -24,14 +24,14 @@ fn main() {
 ```
 
 `map` works for every `T` and `U`. Nothing at the call says which: the
-checker works out `T = int` and `U = int` from the arguments. Then, before
-the program runs, `map` is copied into a version just for `int`s, and that's
+checker works out `T = i64` and `U = i64` from the arguments. Then, before
+the program runs, `map` is copied into a version just for `i64`s, and that's
 what runs. This step is about both halves: what a type like "for every `T`"
 means, and how to compile it with no runtime.
 
 ## Parametric polymorphism
 
-Until now every function had one type. `fn id(x: int) -> int { x }` works for
+Until now every function had one type. `fn id(x: i64) -> i64 { x }` works for
 ints only, and the same function for bools has to be written again. A
 *generic* function is written once, for every type:
 
@@ -51,8 +51,8 @@ on floats are different code chosen by type.
 Structs and enums take type parameters too, and that's where generics earn
 their keep: one `Option<T>`, not an `OptionInt`, `OptionBool` and
 `OptionShape`. `Option` on its own isn't a type; it's a *type constructor*,
-a function from types to types, and `Option<int>` is a type. Reading a field
-of an `Option<int>` substitutes `int` for `T` in the declared field types:
+a function from types to types, and `Option<i64>` is a type. Reading a field
+of an `Option<i64>` substitutes `i64` for `T` in the declared field types:
 `types::struct_fields` and friends do that, so nothing else in the checker
 has to.
 
@@ -60,19 +60,19 @@ has to.
 
 There are two ways to check a generic function.
 
-C++ templates check each *use*: `id<int>` is checked as if written out with
-`int`, then `id<bool>` with `bool`. An error in a template shows up at the
+C++ templates check each *use*: `id<i64>` is checked as if written out with
+`i64`, then `id<bool>` with `bool`. An error in a template shows up at the
 use that triggers it, deep in someone else's code, and a template's
 signature promises nothing.
 
 T, like Rust, ML and Haskell, checks the *definition*, once. Inside `id`, `T`
 is a type the checker knows nothing about. `Type::Param("T")` unifies with
-itself and nothing else: not `int`, not `bool`, not `U`
+itself and nothing else: not `i64`, not `bool`, not `U`
 (`err_generic_opaque.t`, `err_generic_param_distinct.t`):
 
 ```rust,error
-fn add_one<T>(x: T) -> int { x + 1 }
-// error: expected `int`, found `T`
+fn as_i64<T>(x: T) -> i64 { x }
+// error: expected `i64`, found `T`
 ```
 
 If the body checks with `T` opaque, it checks for every `T`, and callers only
@@ -103,8 +103,8 @@ closure parameter. Then inference carries on as before:
 
 ```text
 id(1)        id : fn(α) -> α       (α fresh, for T)
-             1 : int = α           α = int
-             id(1) : int
+             1 : i64 = α           α = i64
+             id(1) : i64
 id(true)     id : fn(β) -> β       (β fresh: a new use, a new variable)
              ...                   β = bool
 ```
@@ -116,15 +116,15 @@ Option::None;` doesn't say what `T` is, so it's an error asking for an
 annotation (`err_generic_infer.t`).
 
 Or the type arguments can be written out, with Rust's *turbofish*:
-`id::<int>(1)`, `Option::<int>::None`, `Pair::<int, bool> { .. }`, and the
+`id::<i64>(1)`, `Option::<i64>::None`, `Pair::<i64, bool> { .. }`, and the
 same in patterns (`generic_turbofish.t`). The `::` is there because
-`id<int>(1)` would read as `id < int > (1)`, two comparisons. Written type
+`id<i64>(1)` would read as `id < i64 > (1)`, two comparisons. Written type
 arguments simply take the place of the fresh variables, so everything else
 works the same. They're what makes a type parameter that the signature
 doesn't mention usable: `fn none<T>() -> Option<T>` can be inferred from
-where its result goes, but `fn count<T>(n: int) -> int` can only be called
+where its result goes, but `fn count<T>(n: i64) -> i64` can only be called
 as `count::<bool>(3)` (`err_generic_infer_fn.t`). A struct can have such a
-*phantom* parameter too: `struct Id<T> { n: int }` is just an int, but an
+*phantom* parameter too: `struct Id<T> { n: i64 }` is just an i64, but an
 `Id<User>` and an `Id<Order>` can't be mixed up.
 
 Inference stays inside function bodies. Generic signatures are written by
@@ -138,7 +138,7 @@ Where can a `∀` go? That one question separates the classic systems.
 A function can take a polymorphic function as an argument:
 
 ```text
-apply_both : (∀T. fn(T) -> T) -> (int, bool)
+apply_both : (∀T. fn(T) -> T) -> (i64, bool)
 apply_both(f) = (f(1), f(true))
 ```
 
@@ -176,8 +176,8 @@ fn id<T>(x: T) -> T { x }
 
 fn main() {
     let f = id;          // id instantiated once: f : fn(α) -> α
-    print(f(1));         // α = int
-    print_bool(f(true)); // error: expected `int`, found `bool`
+    print(f(1i64));      // α = i64
+    print_bool(f(true)); // error: expected `i64`, found `bool`
 }
 ```
 
@@ -193,7 +193,7 @@ written by hand.
 
 T has to compile to bare metal (see the README): every value needs a size
 known at compile time, and there's no runtime to carry type information. But
-a `T` could be an `int`, or a `Pair<int, int>` twice the size. How big is
+a `T` could be an `i64`, or a `Pair<i64, i64>` twice the size. How big is
 the `x` in `fn id<T>(x: T) -> T`?
 
 There are two classic answers.
@@ -202,8 +202,8 @@ There are two classic answers.
   pointer, so every `T` is one word, and `id` is compiled once. That needs a
   heap and something to free it, which T doesn't have.
 - **Monomorphisation** (C++, Rust, MLton): compile a separate copy of `id`
-  for each type it's used at. `id::<int>` moves 8 bytes, `id::<Pair<int,
-  int>>` moves 16, and each is ordinary non-generic code.
+  for each type it's used at. `id::<i64>` moves 8 bytes, `id::<Pair<i64,
+  i64>>` moves 16, and each is ordinary non-generic code.
 
 T monomorphises, and `src/mono.rs` does it as a real pass: it takes the
 checked program and makes a new one with no generics in it, which the
@@ -212,10 +212,10 @@ interpreter then runs. `t mono` prints it:
 ```sh
 $ t mono tests/t/generics.t
 ...
-fn map::<int, int>(o: Option::<int>, f: fn(int) -> int) -> Option::<int> {
+fn map::<i64, i64>(o: Option::<i64>, f: fn(i64) -> i64) -> Option::<i64> {
     match o {
-        Option::<int>::Some(x) => Option::<int>::Some(f(x)),
-        Option::<int>::None => Option::<int>::None,
+        Option::<i64>::Some(x) => Option::<i64>::Some(f(x)),
+        Option::<i64>::None => Option::<i64>::None,
     }
 }
 ```
@@ -223,8 +223,8 @@ fn map::<int, int>(o: Option::<int>, f: fn(int) -> int) -> Option::<int> {
 Starting from every non-generic function, it reads the type arguments the
 checker worked out for each use of something generic (`Info::instances`),
 and asks for that copy. Inside a copy of a generic function, those type
-arguments can mention its own type parameters, so the copy for `T = int`
-substitutes `int` into them first. Each copy may need more copies, and so on
+arguments can mention its own type parameters, so the copy for `T = i64`
+substitutes `i64` into them first. Each copy may need more copies, and so on
 until nothing new is needed. `tests/t/*.mono` holds what it makes for a few
 programs, and the golden tests check it.
 
@@ -236,7 +236,7 @@ its type arguments right there, and they're built from types known at the
 use. Follow those
 from `main` and you have them all.
 
-With rank 2, `apply_both(f)` uses `f` at `int` and `bool`, but `f` is a
+With rank 2, `apply_both(f)` uses `f` at `i64` and `bool`, but `f` is a
 parameter: which function is that? Any polymorphic function a caller passes
 in, at run time. There's no name to copy, so no copy to make: `f` would have
 to be compiled once for every type, which is boxing again (or passing type
@@ -249,13 +249,13 @@ a `dyn Trait` method can't be generic.
 Rank 1 is necessary but not quite enough. This is rank 1, and checks fine:
 
 ```rust
-fn nest<T>(x: T, n: int) -> int {
+fn nest<T>(x: T, n: i64) -> i64 {
     if n == 0 { 0 } else { nest(Option::Some(x), n - 1) }
 }
 ```
 
-But `nest::<int>` calls `nest::<Option<int>>`, which calls
-`nest::<Option<Option<int>>>`, and monomorphisation never ends. A function
+But `nest::<i64>` calls `nest::<Option<i64>>`, which calls
+`nest::<Option<Option<i64>>>`, and monomorphisation never ends. A function
 calling itself at a different type is *polymorphic recursion* (Mycroft,
 1984). HM can't even infer it, since inside its own definition a function
 isn't generalised yet. With signatures it can be checked, and boxing
@@ -269,10 +269,10 @@ the edge *grows* if `A` is anything more than that parameter itself. Every
 copy's type arguments are built along these edges, so monomorphisation goes
 on forever exactly when some cycle has an edge that grows. That catches
 mutual recursion (`err_generic_poly_rec_mutual.t`) and types too:
-`struct Tree<T> { deeper: fn(int) -> Tree<Pair<T>> }` needs a `Tree<Pair<T>>`
+`struct Tree<T> { deeper: fn(i64) -> Tree<Pair<T>> }` needs a `Tree<Pair<T>>`
 for its field's type, then a `Tree<Pair<Pair<T>>>`
 (`err_generic_poly_rec_type.t`). Recursion that changes type arguments
-without growing them, like a `count<T>` that calls `count<int>` or a
+without growing them, like a `count<T>` that calls `count<i64>` or a
 `flip<A, B>` that calls `flip<B, A>`, needs only finitely many copies, so
 it's allowed (`generic_recursion_ok.t`).
 
@@ -289,7 +289,7 @@ fn id<T>(x: T) -> T { x }
 ```
 
 returning `x` is fine for any `T` the checker can see, since `T` isn't a
-function type. But its copy for `T = fn(int) -> int` returns a function
+function type. But its copy for `T = fn(i64) -> i64` returns a function
 parameter, which may be a closure that captures, and that's exactly what
 step 3 forbids. Whether a value may hold a stack frame isn't part of its
 type, so a body checked with `T` opaque can't know. That rule isn't
@@ -299,13 +299,13 @@ So monomorphisation's output was checked again, and an error in a copy was
 reported at the use that made it:
 
 ```text
-type error: cannot use `id` with `T` = `fn(int) -> int` here: in that copy of
+type error: cannot use `id` with `T` = `fn(i64) -> i64` here: in that copy of
 it, cannot return `x`: it may be a closure that captures, and closures that
 capture can only be passed down, not returned
 ```
 
 That included `id(inc)` for a top-level `inc`, just as step 3 rejected a
-non-generic `fn id(f: fn(int) -> int) -> fn(int) -> int { f }`. This is a
+non-generic `fn id(f: fn(i64) -> i64) -> fn(i64) -> i64 { f }`. This is a
 small taste of C++'s errors-at-instantiation, kept to one rule. It went away
 when the type said where a value may live. Step 5 did that for references,
 with lifetimes, where a `T` that holds one is written `T: 'a` and checked
@@ -333,10 +333,10 @@ diverge. Two things here are shaped for that:
 While checking, the checker now records what it learns about every name
 (`check::Info`): each variable's type where it's bound and used, what each
 name refers to, and the type arguments of each use of something generic. `t
-lsp` answers from it: hovering shows a type (`fn id::<int>: fn(int) ->
-int`), go to definition jumps to where a variable, function, type, field or
+lsp` answers from it: hovering shows a type (`fn id::<i64>: fn(i64) ->
+i64`), go to definition jumps to where a variable, function, type, field or
 variant is declared, and inlay hints show the types inference found (`let n:
-int = ..`) and the type arguments it picked (`id::<int>(1)`). Monomorphisation
+i64 = ..`) and the type arguments it picked (`id::<i64>(1)`). Monomorphisation
 reads the same table.
 
 ## Design decisions worth noticing
@@ -354,7 +354,7 @@ reads the same table.
 - **The checker's opinion of a type parameter is fixed.** `Type::Param`
   isn't a variable; the body can't learn anything about it. A *rigid* or
   *skolem* variable, in the jargon.
-- **Copies are named `id::<int>`**: Rust's syntax for explicit type
+- **Copies are named `id::<i64>`**: Rust's syntax for explicit type
   arguments, which is what using a copy amounts to. Nothing in a source
   program can be *declared* with that name, so copies can't clash with
   anything, but it also means `t mono` output with copies in it doesn't

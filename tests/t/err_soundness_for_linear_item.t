@@ -1,8 +1,8 @@
 // Each item a `for` binds must be used up by its body, like any variable.
-struct Fd { n: int }
+struct Fd { n: i64 }
 
 #[derive(Discard)]
-struct Fds { left: int }
+struct Fds { left: i64 }
 
 impl Iterator for Fds {
     type Item = Fd;

@@ -9,6 +9,6 @@ impl<T: Eq> Eq for W<T> {
 }
 
 fn main() {
-    print_bool(W { x: 1 } == W { x: 1 });
+    print_bool(W { x: 1i64 } == W { x: 1 });
 }
 // error: polymorphic recursion: `<W<T> as Eq>::eq` uses itself with `T` = `&W<T>`

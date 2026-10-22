@@ -2,7 +2,7 @@
 use alloc::raw::RawBuf;
 
 fn main() with {alloc, panic} {
-    let mut b: RawBuf<int> = RawBuf::new(2);
+    let mut b: RawBuf<i64> = RawBuf::new(2);
     // SAFETY: slot 0 is uninitialised.
     unsafe { b.write(0, 1) };
     // SAFETY: wrong: slot 1 holds nothing.

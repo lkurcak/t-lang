@@ -4,13 +4,13 @@
 // passes an unsafe closure, must keep them.
 use alloc::raw::RawBuf;
 
-fn call<e, F: FnOnce() -> int with e>(f: F) -> int with e {
+fn call<e, F: FnOnce() -> i64 with e>(f: F) -> i64 with e {
     // SAFETY: nothing here is unsafe but `f`, whose obligations aren't ours.
     unsafe { f() }
 }
 
 fn main() with {alloc, panic} {
-    let mut b: RawBuf<int> = RawBuf::new(1);
+    let mut b: RawBuf<i64> = RawBuf::new(1);
     print(call(|| b.read(0)));
     // SAFETY: there's nothing in the slot to leave behind.
     unsafe { b.free() };

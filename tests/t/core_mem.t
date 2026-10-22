@@ -3,16 +3,16 @@
 
 use core::mem::{replace, swap};
 
-struct Fd { n: int }
+struct Fd { n: i64 }
 
-fn close(fd: Fd) -> int {
+fn close(fd: Fd) -> i64 {
     let Fd { n } = fd;
     n
 }
 
 mod deep {
     // A module of its own needs its own `use`, or the whole path.
-    pub fn bump(r: &mut int) -> int with panic {
+    pub fn bump(r: &mut i64) -> i64 with panic {
         let next = *r + 1;
         core::mem::replace(r, next)
     }

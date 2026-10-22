@@ -1,21 +1,21 @@
 // A type can hold itself through a box: a linked list.
 
 #[derive(Discard)]
-enum List { Nil, Cons(int, Box<List>) }
+enum List { Nil, Cons(i64, Box<List>) }
 
-fn push(l: List, x: int) -> List with {alloc, panic} { List::Cons(x, Box::new(l)) }
+fn push(l: List, x: i64) -> List with {alloc, panic} { List::Cons(x, Box::new(l)) }
 
 // `l` is a reference, so `match` looks through it, and binds `x` and
 // `rest` by reference: `rest` is a `&Box<List>`, which is used as the
 // `&List` `sum` wants.
-fn sum(l: &List) -> int with panic {
+fn sum(l: &List) -> i64 with panic {
     match l {
         List::Nil => 0,
         List::Cons(x, rest) => *x + sum(rest),
     }
 }
 
-fn len(l: &List) -> int with panic {
+fn len(l: &List) -> i64 with panic {
     let mut n = 0;
     let mut at = l;
     let mut more = true;
@@ -59,7 +59,7 @@ fn reverse(l: List) -> List with {alloc, panic} {
     done
 }
 
-fn first(l: &List) -> int {
+fn first(l: &List) -> i64 {
     match l {
         List::Nil => 0,
         List::Cons(x, _) => *x,

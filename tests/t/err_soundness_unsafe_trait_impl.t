@@ -3,11 +3,11 @@
 use alloc::raw::RawBuf;
 
 trait Take {
-    fn take(&mut self) -> int;
+    fn take(&mut self) -> i64;
 }
 
-impl Take for RawBuf<int> {
-    fn take(&mut self) -> int with unsafe { self.read(0) }
+impl Take for RawBuf<i64> {
+    fn take(&mut self) -> i64 with unsafe { self.read(0) }
 }
 
 fn main() {}

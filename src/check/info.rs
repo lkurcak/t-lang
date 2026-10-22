@@ -18,6 +18,9 @@ pub struct Info {
     /// The operators proved not to panic, by node (see `check/refine.rs`),
     /// which the interpreter checks.
     pub proved: std::collections::HashSet<NodeId>,
+    /// The type of each integer literal, by node, which in a generic
+    /// function can be a type parameter, for monomorphisation to write.
+    pub literals: HashMap<NodeId, Type>,
     /// One per name in the program that means something: variables where
     /// they're bound and where they're used, functions, types, fields and
     /// variants. In no particular order.
@@ -138,7 +141,7 @@ impl Info {
 }
 
 /// A use of something generic, with its type arguments: `id` in `id(1)` is
-/// `Fn("id", [int])`. Each is named by its symbol.
+/// `Fn("id", [i64])`. Each is named by its symbol.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Instance {
     Fn(String, Vec<Type>),
@@ -162,7 +165,7 @@ pub struct Note {
     pub doc: Option<String>,
     /// Whether nothing in the source says what `ty` is, or for a use of
     /// something generic, what `args` are, so an editor might show it: a
-    /// `let` without an annotation, say, or `id(1)` without `::<int>`.
+    /// `let` without an annotation, say, or `id(1)` without `::<i64>`.
     pub inferred: bool,
 }
 
@@ -229,8 +232,8 @@ impl Note {
     }
 
     /// What an editor might show right after it, if anything: the type of a
-    /// variable whose type was inferred (`: int`), or the type arguments of a
-    /// use of something generic (`::<int>`). Without lifetimes: inferred
+    /// variable whose type was inferred (`: i64`), or the type arguments of a
+    /// use of something generic (`::<i64>`). Without lifetimes: inferred
     /// ones are the borrow checker's business, and have no names.
     pub fn hint(&self) -> Option<String> {
         if !self.inferred {
@@ -329,7 +332,7 @@ impl Checker {
 
     /// Like `note`, for a use of something with type arguments `args`, if
     /// it's generic, which monomorphisation will need, by the node of the
-    /// use, with the span of the whole of it: `id::<int>` rather than just
+    /// use, with the span of the whole of it: `id::<i64>` rather than just
     /// `id`. Uses of things that
     /// aren't generic need nothing. The type arguments were `inferred`
     /// unless they were written out.
@@ -381,8 +384,8 @@ impl Checker {
                     args: Vec::new(),
                     def: Some(l.sites[0].span),
                     doc: None,
-                    // `P { x }` binds `x`, but `P { x: int }` would read as
-                    // a field holding the pattern `int`.
+                    // `P { x }` binds `x`, but `P { x: i64 }` would read as
+                    // a field holding the pattern `i64`.
                     inferred: inferred && !site.shorthand,
                 });
             }
@@ -705,8 +708,12 @@ fn each_annotation(e: &Expr, f: &mut impl FnMut(&TypeExpr)) {
         ExprKind::For(_) | ExprKind::Range(..) => {
             unreachable!("rewritten when paths are resolved")
         }
-        ExprKind::Int(_) | ExprKind::Bool(_) | ExprKind::Unit | ExprKind::Continue(_) => {}
+        ExprKind::Int(..) | ExprKind::Bool(_) | ExprKind::Unit | ExprKind::Continue(_) => {}
         ExprKind::Var(_, targs) => targs.iter().for_each(&mut *f),
+        ExprKind::As(x, t) => {
+            each_annotation(x, f);
+            f(t);
+        }
         ExprKind::Unary(_, x)
         | ExprKind::Field(x, _)
         | ExprKind::Loop(_, x)

@@ -1,2 +1,2 @@
 mod deeper;
-fn never() { let x = 1; }
+fn never() { let x = 1i64; }

@@ -1,6 +1,6 @@
 // Reading a field needs the type now: which struct is it?
 #[derive(Discard)]
-struct P { x: int }
+struct P { x: i64 }
 fn main() {
     let get = |p| p.x;
     print(get(P { x: 1 }));

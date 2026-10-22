@@ -1,19 +1,19 @@
 // A type parameter never stands for a slice, so a blanket impl for `&T`
-// and one for `&[int]` don't overlap: each type has one impl.
+// and one for `&[i64]` don't overlap: each type has one impl.
 trait Show { fn show(&self); }
 
 impl<T> Show for &T {
-    fn show(&self) { print(1); }
+    fn show(&self) { print(1i64); }
 }
 
-impl Show for &[int] {
-    fn show(&self) { print(2); }
+impl Show for &[i64] {
+    fn show(&self) { print(2i64); }
 }
 
 fn main() {
-    let n = 5;
+    let n: i64 = 5;
     let r = &n;
-    let s: &[int] = core::slice::empty();
+    let s: &[i64] = core::slice::empty();
     Show::show(&r); // expect: 1
     Show::show(&s); // expect: 2
 }

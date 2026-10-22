@@ -7,10 +7,10 @@ fn first<I: Iterator + Discard, U: Discard, f, F: FnMut(I::Item) -> U with f + D
 ) -> Option<U> with {I::e, f} { m.next() }
 
 fn main() with panic {
-    match first((3..10).map(|x| x * x)) {
+    match first((3i64..10).map(|x| x * x)) {
         Option::Some(n) => print(n), // expect: 9
         Option::None => {},
     }
-    let total = (1..4).map(|x| x * 2).filter(|x| *x > 2).fold(0, |a, b| a + b);
+    let total = (1..4i64).map(|x| x * 2).filter(|x| *x > 2).fold(0, |a, b| a + b);
     print(total); // expect: 10
 }

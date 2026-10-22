@@ -1,12 +1,12 @@
 // Or-patterns: an arm matches if any alternative does.
 
 #[derive(Discard)]
-enum Shape { Circle(int), Square(int), Rect(int, int), Empty }
+enum Shape { Circle(i64), Square(i64), Rect(i64, i64), Empty }
 #[derive(Discard)]
-enum Opt { None, Some(int) }
+enum Opt { None, Some(i64) }
 
 // Every alternative binds `side`, at the same type.
-fn first_side(s: Shape) -> int {
+fn first_side(s: Shape) -> i64 {
     match s {
         Shape::Circle(side) | Shape::Square(side) | Shape::Rect(side, _) => side,
         Shape::Empty => 0,
@@ -28,7 +28,7 @@ struct Light { on: bool, color: Color }
 #[derive(Discard)]
 enum Color { Red, Green, Blue }
 
-fn code(l: Light) -> int {
+fn code(l: Light) -> i64 {
     match l {
         Light { on: true, color: Color::Red | Color::Green } => 1,
         Light { on: true | false, color: Color::Blue | Color::Red } => 2,
@@ -44,9 +44,9 @@ fn xor(a: bool, b: bool) -> bool {
 
 // Alternatives may bind in a different order.
 #[derive(Discard)]
-enum Pair { IntBool(int, bool), BoolInt(bool, int) }
+enum Pair { IntBool(i64, bool), BoolInt(bool, i64) }
 #[derive(Discard)]
-struct S { a: int, b: int }
+struct S { a: i64, b: i64 }
 
 fn main() {
     print(first_side(Shape::Circle(1)));    // expect: 1

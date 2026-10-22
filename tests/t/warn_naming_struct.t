@@ -1,11 +1,11 @@
 // Structs are named in UpperCamelCase. The fix renames every use too, in
 // types, literals and patterns.
 #[derive(Discard)]
-struct my_point { x: int, y: int }
+struct my_point { x: i64, y: i64 }
 #[derive(Discard)]
-struct HTTPServer { port: int }
+struct HTTPServer { port: i64 }
 #[derive(Discard)]
-struct Vec2 { x: int, y: int }
+struct Vec2 { x: i64, y: i64 }
 
 fn shift(p: my_point) -> my_point with panic {
     let my_point { x, y } = p;

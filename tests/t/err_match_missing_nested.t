@@ -2,7 +2,7 @@
 enum Color { Red, Green }
 #[derive(Discard)]
 struct Pixel { color: Color, bright: bool }
-fn f(p: Pixel) -> int {
+fn f(p: Pixel) -> i64 {
     match p {
         Pixel { color: Color::Red, .. } => 1,
         Pixel { color: Color::Green, bright: true } => 2,

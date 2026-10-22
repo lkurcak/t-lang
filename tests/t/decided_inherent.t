@@ -7,7 +7,7 @@ impl<U, F: Fn() -> U> Thunk<F> {
 }
 
 fn main() {
-    let k = 5;
+    let k: i64 = 5;
     let t = Thunk { f: || k };
     print(t.call());    // expect: 5
 }

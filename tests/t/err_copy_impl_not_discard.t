@@ -1,5 +1,5 @@
 // The same for a written impl.
-struct Point { x: int, y: int }
+struct Point { x: i64, y: i64 }
 
 impl Copy for Point {}
 

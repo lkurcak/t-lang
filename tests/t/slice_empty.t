@@ -3,7 +3,7 @@
 use core::slice;
 
 fn main() {
-    let s: &[int] = slice::empty();
+    let s: &[i64] = slice::empty();
     print(s.len());                        // expect: 0
     print_bool(s.first().is_none());       // expect: true
     print_bool(s.iter().next().is_none()); // expect: true

@@ -1,7 +1,7 @@
 // Calling something that may panic may panic.
-fn half(n: int, two: int) -> int with panic { n / two }
+fn half(n: i64, two: i64) -> i64 with panic { n / two }
 
-fn quarter(n: int) -> int { half(half(n, 2), 2) }
+fn quarter(n: i64) -> i64 { half(half(n, 2), 2) }
 
 fn main() with panic {
     print(quarter(8));

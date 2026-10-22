@@ -2,10 +2,10 @@
 // prelude will be.
 mod lib {
     mod inner {
-        pub fn one() -> int { 1 }
+        pub fn one() -> i64 { 1 }
 
         #[derive(Copy, Discard)]
-        pub struct Unit { pub n: int }
+        pub struct Unit { pub n: i64 }
     }
 
     pub use self::inner::{one, Unit as One};

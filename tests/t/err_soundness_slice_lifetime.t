@@ -1,7 +1,7 @@
 // A slice can't outlive what its values point to.
 use alloc::list::List;
 
-fn put<'a>(s: &mut [&'a int], r: &'a int) {
+fn put<'a>(s: &mut [&'a i64], r: &'a i64) {
     match s.get_mut(0) {
         Option::Some(x) => *x = r,
         Option::None => {},
@@ -10,7 +10,7 @@ fn put<'a>(s: &mut [&'a int], r: &'a int) {
 
 fn main() with {alloc, panic} {
     let n = 1;
-    let mut l: List<&int> = List::new();
+    let mut l: List<&i64> = List::new();
     l.push(&n);
     {
         let m = 2;

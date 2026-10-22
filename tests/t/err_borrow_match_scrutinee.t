@@ -2,7 +2,7 @@
 enum Option<T> { Some(T), None }
 
 fn main() with panic {
-    let mut o = Option::Some(1);
+    let mut o = Option::Some(1i64);
     match &mut o {
         Option::Some(n) => {
             o = Option::None;

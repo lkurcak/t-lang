@@ -1,13 +1,13 @@
 // An impl for a linear type may define a method whose `where` clause it
 // doesn't meet; nothing can call it.
-struct Fd { n: int }
+struct Fd { n: i64 }
 
 trait Tr {
-    fn gone(self) -> int where Self: Discard;
+    fn gone(self) -> i64 where Self: Discard;
 }
 
 impl Tr for Fd {
-    fn gone(self) -> int where Self: Discard { 0 }
+    fn gone(self) -> i64 where Self: Discard { 0 }
 }
 
 fn main() {

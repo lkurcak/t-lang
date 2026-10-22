@@ -1,11 +1,11 @@
 // A `&mut self` method called on `self` can change `self`'s fields.
 #[derive(Copy, Discard)]
-struct P { x: int }
+struct P { x: i64 }
 
 impl P {
     fn clear(&mut self) { self.x = 0; }
 
-    fn f(&mut self) -> int {
+    fn f(&mut self) -> i64 {
         if self.x > 0 {
             self.clear();
             10 / self.x

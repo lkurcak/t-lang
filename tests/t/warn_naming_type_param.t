@@ -12,7 +12,7 @@ fn unwrap<My_item>(w: Wrap<My_item>) -> My_item {
 fn id<T>(x: T) -> T { x }
 
 fn main() {
-    print(unwrap(Wrap { inner: id::<int>(1) }));
+    print(unwrap(Wrap { inner: id::<i64>(1) }));
 }
 // warning: type parameter `My_item` should have an upper camel case name: `MyItem`
 // warning: type parameter `My_item` should have an upper camel case name: `MyItem`

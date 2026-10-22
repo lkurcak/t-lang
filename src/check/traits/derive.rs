@@ -12,7 +12,7 @@ impl Checker {
     /// The impl of each `#[derive(..)]`. What it needs of the type's
     /// parameters is worked out from its fields: exactly the bounds that
     /// make every field implement the trait. `#[derive(Copy)] struct
-    /// W<T> { f: fn(T) -> int }` is `Copy` for every `T`, and `struct P<A,
+    /// W<T> { f: fn(T) -> i64 }` is `Copy` for every `T`, and `struct P<A,
     /// B> { a: Option<A>, b: &B }` only needs `A: Copy`. A bound can be of
     /// another trait: with `impl<T: Show> Eq for Q<T>`, a derived `Eq` of
     /// `struct W<T> { q: Q<T> }` needs `T: Show`, and `T: Eq` wouldn't do,

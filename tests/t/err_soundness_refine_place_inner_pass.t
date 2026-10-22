@@ -3,11 +3,11 @@
 struct W<'a> { r: &'a mut P }
 
 #[derive(Copy, Discard)]
-struct P { x: int }
+struct P { x: i64 }
 
 fn zero(p: &mut P) { p.x = 0; }
 
-fn f(w: W) -> int {
+fn f(w: W) -> i64 {
     if w.r.x > 0 {
         zero(w.r);
         10 / w.r.x

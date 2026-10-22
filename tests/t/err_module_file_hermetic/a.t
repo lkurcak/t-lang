@@ -1,1 +1,1 @@
-pub fn f() -> int { helper() } // error: unknown variable `helper`
+pub fn f() -> i64 { helper() } // error: unknown variable `helper`

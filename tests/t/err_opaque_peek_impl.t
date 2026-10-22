@@ -1,21 +1,21 @@
-// `int` implements `Tr`, but callers don't know `f` returns one.
+// `i64` implements `Tr`, but callers don't know `f` returns one.
 trait Show {
-    fn show(&self) -> int;
+    fn show(&self) -> i64;
 }
 
-impl Show for int {
-    fn show(&self) -> int { *self }
+impl Show for i64 {
+    fn show(&self) -> i64 { *self }
 }
 
 trait Tr {
-    fn t(&self) -> int;
+    fn t(&self) -> i64;
 }
 
-impl Tr for int {
-    fn t(&self) -> int { 1 }
+impl Tr for i64 {
+    fn t(&self) -> i64 { 1 }
 }
 
-fn f() -> impl Show + Discard { 1 }
+fn f() -> impl Show + Discard { 1i64 }
 
 fn main() { print(f().t()); }
 // error: `impl Show + Discard` has no method `t`; trait `Tr` has one, but `impl Show + Discard` doesn't implement it

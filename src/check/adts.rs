@@ -20,7 +20,7 @@ impl Checker {
         let mut declared = HashSet::new();
         for ((d, _), def) in decls.iter().zip(&self.types) {
             let name = d.name();
-            if matches!(name.name.as_str(), "int" | "bool" | "Box" | "Self") {
+            if crate::types::is_builtin_type(&name.name) || name.name == "Self" {
                 return Err(Error::ty(
                     name.span,
                     format!("`{}` is a built-in type", name.name),
@@ -129,8 +129,8 @@ impl Checker {
             adts.insert(symbol.clone(), adt);
         }
 
-        // `struct S<T> { f: fn(S<Option<T>>) -> int }` would need `S<int>`,
-        // so `S<Option<int>>`, so `S<Option<Option<int>>>`...
+        // `struct S<T> { f: fn(S<Option<T>>) -> i64 }` would need `S<i64>`,
+        // so `S<Option<i64>>`, so `S<Option<Option<i64>>>`...
         let mut uses = Vec::new();
         for (owner, span, t) in &field_types {
             each_adt(t, &mut |name, args| {

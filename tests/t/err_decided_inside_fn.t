@@ -2,11 +2,11 @@
 // outside function types: matching decides `A` here as a type that may hold
 // a lifetime only `fn(A)` means, and `U` would have it too.
 trait Tr {
-    fn go(&self) -> int;
+    fn go(&self) -> i64;
 }
 
 impl<U, A: Iterator<Item = U>> Tr for fn(A) {
-    fn go(&self) -> int { 1 }
+    fn go(&self) -> i64 { 1 }
 }
 
 fn main() {}

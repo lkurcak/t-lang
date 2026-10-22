@@ -1,19 +1,19 @@
 // A linear iterator can be iterated through `&mut`, and then used up by
 // its owner: here, closed.
-struct Lines { left: int }
+struct Lines { left: i64 }
 
 impl Iterator for Lines {
-    type Item = int;
+    type Item = i64;
     effect e = panic;
 
-    fn next(&mut self) -> Option<int> with panic {
+    fn next(&mut self) -> Option<i64> with panic {
         if self.left == 0 { return Option::None; }
         self.left = self.left - 1;
         Option::Some(self.left)
     }
 }
 
-fn close(lines: Lines) -> int {
+fn close(lines: Lines) -> i64 {
     let Lines { left } = lines;
     left
 }

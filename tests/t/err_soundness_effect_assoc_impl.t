@@ -1,13 +1,13 @@
 // An impl sets its associated effect, and its methods can't do more:
 // generic code calling `next` knows only `Self::e`, here nothing.
 #[derive(Discard)]
-struct Down { n: int }
+struct Down { n: i64 }
 
 impl Iterator for Down {
-    type Item = int;
+    type Item = i64;
     effect e = {};
 
-    fn next(&mut self) -> Option<int> with Self::e {
+    fn next(&mut self) -> Option<i64> with Self::e {
         let n = self.n;
         self.n = n - 1;
         Option::Some(n)

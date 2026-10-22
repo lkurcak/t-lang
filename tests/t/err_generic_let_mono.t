@@ -6,4 +6,4 @@ fn main() {
     print(f(1));
     print_bool(f(true));
 }
-// error: expected `int`, found `bool`
+// error: expected `{integer}`, found `bool`

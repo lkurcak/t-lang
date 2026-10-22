@@ -5,9 +5,9 @@ trait Container {
     fn first(&self) -> Self::Item;
 }
 
-fn total<C: Container<Item = int>>(c: &C) -> int { c.first() }
+fn total<C: Container<Item = i64>>(c: &C) -> i64 { c.first() }
 
-fn g<T: Container>(t: &T) -> int { total(t) }
+fn g<T: Container>(t: &T) -> i64 { total(t) }
 
 fn main() {}
-// error: `total` needs `T::Item` to be `int`, and nothing says it is; say it is with a bound: `T: Container<Item = int>`
+// error: `total` needs `T::Item` to be `i64`, and nothing says it is; say it is with a bound: `T: Container<Item = i64>`

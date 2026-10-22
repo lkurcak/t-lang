@@ -1,5 +1,5 @@
 #[derive(Discard)]
-struct C { n: int }
+struct C { n: i64 }
 impl C {
     fn inc(&mut self) { self.n += 1 }
 }

@@ -1,12 +1,12 @@
 // Two local types of the same name are different types, and the message
 // says so, since they look the same in it.
-fn f() -> int {
+fn f() -> i64 {
     #[derive(Discard)]
-    struct P { x: int }
-    fn g(p: P) -> int { p.x }
-    fn h() -> int {
+    struct P { x: i64 }
+    fn g(p: P) -> i64 { p.x }
+    fn h() -> i64 {
         #[derive(Discard)]
-        struct P { x: int }
+        struct P { x: i64 }
         g(P { x: 1 })
     }
     h()

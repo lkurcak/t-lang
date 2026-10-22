@@ -42,8 +42,8 @@ pub trait Iterator {
     }
 
     /// How many values there are, throwing each away. Counting past the
-    /// greatest `int` panics.
-    fn count(self) -> int with {Self::e, panic} where Self: Discard, Self::Item: Discard {
+    /// greatest `usize` panics.
+    fn count(self) -> usize with {Self::e, panic} where Self: Discard, Self::Item: Discard {
         self.fold(0, |n, _x| n + 1)
     }
 }

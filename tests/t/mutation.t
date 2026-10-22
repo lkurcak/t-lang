@@ -2,18 +2,18 @@
 // fields, or through a `&mut` to them.
 
 #[derive(Discard)]
-struct Counter { count: int, step: int }
+struct Counter { count: i64, step: i64 }
 
 fn tick(c: &mut Counter) with panic { c.count += c.step; }
 
-fn exchange(a: &mut int, b: &mut int) {
+fn exchange(a: &mut i64, b: &mut i64) {
     let t = *a;
     *a = *b;
     *b = t;
 }
 
 fn main() with panic {
-    let mut x = 1;
+    let mut x: i64 = 1;
     x = x + 1;
     x *= 10;
     print(x);                   // expect: 20

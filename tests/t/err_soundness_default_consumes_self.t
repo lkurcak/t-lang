@@ -1,14 +1,14 @@
 // Calling a method of `&self` doesn't use `self` up.
-struct Fd { n: int }
+struct Fd { n: i64 }
 
 trait Tr {
-    fn get(&self) -> int;
+    fn get(&self) -> i64;
 
-    fn consume(self) -> int { self.get() }
+    fn consume(self) -> i64 { self.get() }
 }
 
 impl Tr for Fd {
-    fn get(&self) -> int { self.n }
+    fn get(&self) -> i64 { self.n }
 }
 
 fn main() {

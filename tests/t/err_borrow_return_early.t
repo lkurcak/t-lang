@@ -1,6 +1,6 @@
 // A reference returned early has to live as long as the result's lifetime
 // says, as one returned at the end does.
-fn pick<'a>(a: &'a int, c: bool) -> &'a int {
+fn pick<'a>(a: &'a i64, c: bool) -> &'a i64 {
     let local = 5;
     if c { return &local; }
     a

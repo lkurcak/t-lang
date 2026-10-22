@@ -20,13 +20,13 @@ impl<T: Copy> Range<T> {
 }
 
 /// Counts up, and can't panic: it adds one only to what's less than the
-/// end, which can't overflow, even at the end of `int`, as the checker
-/// proves (see docs/08-refinement-types.md).
-impl Iterator for Range<int> {
-    type Item = int;
+/// end, which can't overflow, even at the end of its type, as the checker
+/// proves of every integer type (see docs/08-refinement-types.md).
+impl<T: Int> Iterator for Range<T> {
+    type Item = T;
     effect e = {};
 
-    fn next(&mut self) -> Option<int> {
+    fn next(&mut self) -> Option<T> {
         if self.start < self.end {
             let n = self.start;
             self.start = self.start + 1;

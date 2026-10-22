@@ -5,9 +5,9 @@ enum Color { Red, Green, Blue }
 #[derive(Discard)]
 struct Pixel { color: Color, bright: bool }
 #[derive(Discard)]
-enum Opt { None, Some(int) }
+enum Opt { None, Some(i64) }
 
-fn describe(p: Pixel) -> int {
+fn describe(p: Pixel) -> i64 {
     match p {
         Pixel { color: Color::Red, bright: true } => 1,
         Pixel { color: Color::Red, .. } => 2,
@@ -19,7 +19,7 @@ fn describe(p: Pixel) -> int {
     }
 }
 
-fn classify(n: int) -> int with panic {
+fn classify(n: i64) -> i64 with panic {
     match n {
         0 => 100,
         -1 => 200,
@@ -27,7 +27,7 @@ fn classify(n: int) -> int with panic {
     }
 }
 
-fn both(a: bool, b: bool) -> int {
+fn both(a: bool, b: bool) -> i64 {
     // Tuples would let us match both at once. Without them, nest the matches.
     match a {
         true => match b { true => 3, false => 2 },
@@ -35,7 +35,7 @@ fn both(a: bool, b: bool) -> int {
     }
 }
 
-fn unwrap_or(o: Opt, default: int) -> int {
+fn unwrap_or(o: Opt, default: i64) -> i64 {
     match o {
         Opt::Some(x) => x,
         Opt::None => default,
@@ -54,7 +54,7 @@ fn main() with panic {
     print(both(true, false));   // expect: 2
     print(unwrap_or(Opt::Some(7), 0));  // expect: 7
     print(unwrap_or(Opt::None, 9));     // expect: 9
-    match () { () => print(1) }         // expect: 1
+    match () { () => print(1i64) }         // expect: 1
     let k = match Opt::Some(3) { Opt::Some(n) => { let m = n * n; m } Opt::None => 0 };
     print(k);                           // expect: 9
 }

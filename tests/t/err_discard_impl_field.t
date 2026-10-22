@@ -1,5 +1,5 @@
 // Nor can a written impl say so.
-struct Fd { n: int }
+struct Fd { n: i64 }
 
 struct Holder { fd: Box<Fd> }
 

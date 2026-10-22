@@ -1,16 +1,16 @@
 // Used up on one path only.
-struct Fd { n: int }
+struct Fd { n: i64 }
 
-fn open(n: int) -> Fd { Fd { n } }
+fn open(n: i64) -> Fd { Fd { n } }
 
-fn close(fd: Fd) -> int {
+fn close(fd: Fd) -> i64 {
     let Fd { n } = fd;
     n
 }
 
 fn main() {
     let fd = open(1);
-    if 1 < 2 {
+    if 1i64 < 2 {
         print(close(fd));
     }
 }

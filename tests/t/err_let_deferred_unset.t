@@ -1,6 +1,6 @@
 // `r` only has a value if the `if` assigns one.
 fn main() {
-    let r;
+    let r: i64;
     let c = true;
     if c {
         r = 1;

@@ -3,11 +3,11 @@
 #[derive(Discard where I: Discard, F: Discard)]
 struct Apply<I, F> { iter: I, f: F }
 
-impl<f, I: Iterator<Item = int>, F: FnMut(int) -> int with f> Iterator for Apply<I, F> {
-    type Item = int;
+impl<f, I: Iterator<Item = i64>, F: FnMut(i64) -> i64 with f> Iterator for Apply<I, F> {
+    type Item = i64;
     effect e = I::e;
 
-    fn next(&mut self) -> Option<int> with Self::e {
+    fn next(&mut self) -> Option<i64> with Self::e {
         match self.iter.next() {
             Option::Some(x) => Option::Some((self.f)(x)),
             Option::None => Option::None,
@@ -16,7 +16,7 @@ impl<f, I: Iterator<Item = int>, F: FnMut(int) -> int with f> Iterator for Apply
 }
 
 fn main() with panic {
-    let mut a = Apply { iter: 0..3, f: |x| x / 0 };
+    let mut a = Apply { iter: 0..3i64, f: |x: i64| x / 0 };
     print(a.next().unwrap());
 }
 // error: this call may have the effects `f`, but `next` doesn't say `with f`

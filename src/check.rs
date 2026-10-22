@@ -1,5 +1,5 @@
 //! The type checker. This is the simply typed lambda calculus (STLC) with base
-//! types `int`, `bool`, `()` and function types, plus `let`, `if` and
+//! types `i64`, `bool`, `()` and function types, plus `let`, `if` and
 //! recursive functions (step 1), plus structs, enums and `match`
 //! (step 2, see docs/02-adts.md), plus closures, nested functions and types,
 //! and type inference (step 3, see docs/03-inference.md), plus generics
@@ -8,7 +8,7 @@
 //! `continue`, `loop` and the never type `!` (see
 //! docs/05.1-control-flow.md), plus traits, impls and methods (step 6,
 //! see docs/06-traits.md, and `check/traits.rs`), plus opaque types, `impl
-//! Fn(int) -> int` in a return type (see docs/06c.1-opaque-types.md), plus
+//! Fn(i64) -> i64` in a return type (see docs/06c.1-opaque-types.md), plus
 //! modules, resolved before anything else (step 6d, see
 //! docs/06d-modules.md, and `check/modules.rs`).
 //! Whether a program uses its
@@ -55,6 +55,7 @@ mod effects;
 mod expr;
 mod generics;
 mod info;
+mod ints;
 mod lints;
 pub(crate) mod modules;
 mod names;
@@ -102,6 +103,8 @@ pub const INTRINSICS: &[&str] = &[
     "core::mem::swap",
     "core::panic::panic",
     "core::num::checked_mul",
+    "core::num::least",
+    "core::num::greatest",
     "core::slice::empty",
     "core::slice::empty_mut",
     "[T]::len",
@@ -143,8 +146,15 @@ pub(super) fn not_library(at: Span) -> Error {
 /// The type of built-in function `name`.
 pub(crate) fn builtin_scheme(name: &str) -> Scheme {
     match name {
-        // print : fn(int) -> ()
-        "print" => Scheme::mono(Type::func(vec![Type::Int], Type::Unit)),
+        // print : fn<T: Int>(T) -> ()
+        "print" => Scheme {
+            params: vec!["T".into()],
+            preds: vec![Pred {
+                ty: Type::Param("T".into()),
+                trait_name: "Int".into(),
+            }],
+            ..Scheme::mono(Type::func(vec![Type::Param("T".into())], Type::Unit))
+        },
         // print_bool : fn(bool) -> ()
         "print_bool" => Scheme::mono(Type::func(vec![Type::Bool], Type::Unit)),
         _ => unreachable!("unknown builtin `{name}`"),
@@ -441,6 +451,10 @@ pub(crate) struct Checker {
     refined_lets: HashMap<NodeId, refine::Refinement>,
     /// What each name in a refinement's predicate is, by node.
     pred_names: HashMap<NodeId, refine::PredName>,
+    /// The integer literals of the function being checked, in expressions
+    /// and patterns, each to be checked to fit in its type once that's
+    /// known (`Checker::literals`).
+    literals: Vec<Literal>,
 }
 
 /// A projection `proj`, `<T as Tr>::Item`, whose type `T` isn't known yet,
@@ -456,6 +470,16 @@ pub(super) struct Goal {
     /// What needs it to be `is`, if something said so: an equality bound
     /// of what's named this.
     who: Option<String>,
+}
+
+/// An integer literal, `value`, written at `span`, of type `ty`: in an
+/// expression or a pattern. `-` of one is one too, so that the least `i8`
+/// can be written `-128`.
+pub(super) struct Literal {
+    node: NodeId,
+    span: Span,
+    value: i128,
+    ty: Type,
 }
 
 impl Checker {
@@ -532,6 +556,7 @@ impl Checker {
             refined_lets: HashMap::new(),
             field_refined: HashMap::new(),
             pred_names: HashMap::new(),
+            literals: Vec::new(),
             modules,
             module: ROOT,
         }
@@ -732,7 +757,7 @@ impl Checker {
     ///
     /// That's *lifetime elision*, as in Rust. A lifetime its return type
     /// leaves out is the one lifetime its parameters have, if they have
-    /// exactly one: `fn first(p: &Pair) -> &int` returns something borrowed
+    /// exactly one: `fn first(p: &Pair) -> &i64` returns something borrowed
     /// from `p`. Or a method's, if it takes `&self` or `&mut self`: what it
     /// returns is borrowed from that. Otherwise it has to be written.
     ///

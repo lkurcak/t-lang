@@ -4,19 +4,19 @@
 // another, and the impl chosen is the same either way.
 mod show {
     pub trait Show {
-        fn show(&self) -> int with panic;
+        fn show(&self) -> i64 with panic;
     }
 
-    pub fn twice<T: Show>(x: &T) -> int with panic { x.show() * 2 }
+    pub fn twice<T: Show>(x: &T) -> i64 with panic { x.show() * 2 }
 }
 
 mod shapes {
     #[derive(Discard)]
-    pub struct Sq { side: int }
+    pub struct Sq { side: i64 }
 
-    pub fn sq(side: int) -> Sq { Sq { side } }
+    pub fn sq(side: i64) -> Sq { Sq { side } }
 
-    pub fn side(s: &Sq) -> int { s.side }
+    pub fn side(s: &Sq) -> i64 { s.side }
 }
 
 mod impls {
@@ -24,7 +24,7 @@ mod impls {
     use crate::shapes::{Sq, side};
 
     impl Show for Sq {
-        fn show(&self) -> int with panic { side(self) * side(self) }
+        fn show(&self) -> i64 with panic { side(self) * side(self) }
     }
 }
 

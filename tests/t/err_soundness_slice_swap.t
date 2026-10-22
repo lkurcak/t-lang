@@ -3,8 +3,8 @@
 use core::mem::swap;
 
 fn main() {
-    let a: &mut [int] = core::slice::empty_mut();
-    let b: &mut [int] = core::slice::empty_mut();
+    let a: &mut [i64] = core::slice::empty_mut();
+    let b: &mut [i64] = core::slice::empty_mut();
     swap(a, b);
 }
-// error: a type parameter can't stand for the slice `[int]`: it's only ever behind a reference
+// error: a type parameter can't stand for the slice `[i64]`: it's only ever behind a reference

@@ -10,13 +10,13 @@ Every program has the core library. What its prelude brings in needs no
 
 ```rust
 #[derive(Discard)]
-struct Countdown { n: int }
+struct Countdown { n: i64 }
 
 impl Iterator for Countdown {
-    type Item = int;
+    type Item = i64;
     effect e = panic;
 
-    fn next(&mut self) -> Option<int> with panic {
+    fn next(&mut self) -> Option<i64> with panic {
         if self.n == 0 {
             return Option::None;
         }
@@ -32,9 +32,9 @@ fn main() with panic {
     // expect: 3
     // expect: 2
     // expect: 1
-    let total = (0..4).map(|x| x * x).fold(0, |a, b| a + b);
-    print(total);    // expect: 14
-    print(5.max(9)); // expect: 9
+    let total = (0..4i64).map(|x| x * x).fold(0, |a, b| a + b);
+    print(total);       // expect: 14
+    print(5i64.max(9)); // expect: 9
 }
 ```
 
@@ -48,9 +48,9 @@ can be anywhere T can, down to bare metal.
 |---|---|---|
 | `core::option` | `Option<T>`: `is_some`, `is_none`, `as_ref`, `as_mut`, `take`, `map`, `and_then`, `or_else`, `unwrap_or`, `unwrap_or_else` | `Option` |
 | `core::result` | `Result<T, E>`: `is_ok`, `is_err`, `as_ref`, `map`, `and_then`, `map_err`, `or_else`, `ok`, `err`, `unwrap_or`, `unwrap_or_else` | `Result` |
-| `core::cmp` | `Ordering`, and `Ord`: `cmp`, `lt`, `le`, `gt`, `ge`, `max`, `min`, for `int` and `bool` | `Ord` |
+| `core::cmp` | `Ordering`, and `Ord`: `cmp`, `lt`, `le`, `gt`, `ge`, `max`, `min`, for `i64` and `bool` | `Ord` |
 | `core::iter` | `Iterator`: `next`, `map`, `filter` (6e.1), `fold`, `count`; `Map`, `Filter` | `Iterator` |
-| `core::ops` | `Range<T>`, what `a..b` makes, an `Iterator` for `int`s | — |
+| `core::ops` | `Range<T>`, what `a..b` makes, an `Iterator` for `i64`s | — |
 | `core::mem` | `swap` and `replace` | — |
 
 The traits built into the language, `Copy`, `Discard`, `Eq` and the `Fn`
@@ -63,9 +63,9 @@ the rest. `unwrap_or` throws one of its two values away, and is only for
 a `T` that's `Discard`:
 
 ```rust
-struct Fd { n: int }
+struct Fd { n: i64 }
 
-fn close(fd: Fd) -> int {
+fn close(fd: Fd) -> i64 {
     let Fd { n } = fd;
     n
 }
@@ -79,7 +79,7 @@ fn main() {
     }
     match slot {
         Option::Some(fd) => print(close(fd)),
-        Option::None => print(0), // expect: 0
+        Option::None => print(0i64), // expect: 0
     }
 }
 ```
@@ -108,13 +108,13 @@ path:
 
 ```rust
 #[derive(Discard)]
-enum Option { Some(int), Empty }
+enum Option { Some(i64), Empty }
 
-fn mine(n: int) -> Option {
+fn mine(n: i64) -> Option {
     if n > 0 { Option::Some(n) } else { Option::Empty }
 }
 
-fn theirs(n: int) -> core::option::Option<int> { core::option::Option::Some(n) }
+fn theirs(n: i64) -> core::option::Option<i64> { core::option::Option::Some(n) }
 
 fn main() {
     match mine(1) {
@@ -144,7 +144,7 @@ private items are its own.
 
 ```rust,error
 fn main() {
-    let x: crate::core::option::Option<int> = Option::None;
+    let x: crate::core::option::Option<i64> = Option::None;
 }
 // error: the crate root has no item `core`
 ```
@@ -161,7 +161,7 @@ see symbols, so for them the library is just more items.
 **Lemma C2 (coherence, package by package).** An impl of a trait for a
 type must be in the package of the trait, or of the type's head: its
 outermost constructor, `Option` in `Option<Mine>`. The built-in traits and
-types, `int`, `&T`, `Box<T>` and the rest, are the core library's. So:
+types, `i64`, `&T`, `Box<T>` and the rest, are the core library's. So:
 
 - the library's impls are all there are of its traits for its types,
   whatever program it's in; and
@@ -175,16 +175,16 @@ they can't be for the same trait and type.
 ```rust,error
 use core::cmp::Ordering;
 
-impl Ord for int {
-    fn cmp(&self, other: &int) -> Ordering { Ordering::Equal }
+impl Ord for i64 {
+    fn cmp(&self, other: &i64) -> Ordering { Ordering::Equal }
 }
 
 fn main() {}
-// error: `Ord` and `int` are both `core`'s, so only `core` can implement one for the other
+// error: `Ord` and `i64` are both `core`'s, so only `core` can implement one for the other
 ```
 
 Only the head counts, so `impl Iterator for Option<Mine>` is rejected too,
-and a blanket `impl<T: Eq> Ord for T` most of all: it would cover `int`.
+and a blanket `impl<T: Eq> Ord for T` most of all: it would cover `i64`.
 Rust lets a local type further in count, under rules that took several
 RFCs to get right. That's a relaxation for later, if it's needed.
 
@@ -246,13 +246,13 @@ fine only if its type is `Discard` (docs/06a.1-linear-types.md). Each value
 it, `break` and `continue` included.
 
 ```rust,error
-struct Lines { left: int }
+struct Lines { left: i64 }
 
 impl Iterator for Lines {
-    type Item = int;
+    type Item = i64;
     effect e = panic;
 
-    fn next(&mut self) -> Option<int> {
+    fn next(&mut self) -> Option<i64> {
         if self.left == 0 {
             return Option::None;
         }
@@ -275,13 +275,13 @@ I`, which calls `I`'s `next`. Afterwards it's still there, for its owner to
 close, and after a `break` what it hasn't given yet is still in it:
 
 ```rust
-struct Lines { left: int }
+struct Lines { left: i64 }
 
 impl Iterator for Lines {
-    type Item = int;
+    type Item = i64;
     effect e = panic;
 
-    fn next(&mut self) -> Option<int> with panic {
+    fn next(&mut self) -> Option<i64> with panic {
         if self.left == 0 {
             return Option::None;
         }
@@ -290,7 +290,7 @@ impl Iterator for Lines {
     }
 }
 
-fn close(lines: Lines) -> int {
+fn close(lines: Lines) -> i64 {
     let Lines { left } = lines;
     left
 }
@@ -332,19 +332,19 @@ a direction for later, with effects.
 `b`. Its operands bind more tightly than it does, so `0..n + 1` is
 `0..(n + 1)`.
 
-**Lemma C5 (counting up stops).** `Range<int>`'s `next` checks that `start`
-is before `end` before it adds one, so it never overflows, even for a
-range that ends at the largest `int`.
+**Lemma C5 (counting up stops).** `Range<T>`'s `next`, for an integer type
+`T`, checks that `start` is before `end` before it adds one, so it never
+overflows, even for a range that ends at the greatest `T`.
 
 ```rust
 fn main() with panic {
-    let big = 9223372036854775807;
+    let big: i64 = 9223372036854775807;
     let mut last = 0;
     for i in big - 2..big {
         last = i;
     }
     print(last - big); // expect: -1
-    let r = 3..8;
+    let r = 3..8i64;
     print(r.start() + r.end()); // expect: 11
 }
 ```
@@ -358,10 +358,10 @@ warning:
 
 ```rust
 fn main() {
-    for i in 5..0 {
+    for i in 5..0i64 {
         print(i);
     }
-    print(1); // expect: 1
+    print(1i64); // expect: 1
 }
 // warning: this range is empty: `5` is after `0`, so it never yields anything
 ```
@@ -370,7 +370,8 @@ fn main() {
 representation is the library's to change, to a start and a length, say,
 or to a type that proves `start <= end` once refinement types can say so
 (step 8). It's generic, `Range<T>`: a range of anything ordered is a range,
-though only `Range<int>` is an iterator for now. It isn't `Copy`: a copy of
+though only a range of integers, `Range<T>` for `T: Int`, is an iterator
+for now. It isn't `Copy`: a copy of
 an iterator that's advanced is easy to mistake for the iterator itself.
 
 ## `where` clauses
@@ -385,7 +386,7 @@ trait Source {
     fn get(&mut self) -> Self::Out with panic;
 
     // Only for a source that may be thrown away, whose items may be too.
-    fn skip(mut self, n: int) -> int with panic where Self: Discard, Self::Out: Discard {
+    fn skip(mut self, n: i64) -> i64 with panic where Self: Discard, Self::Out: Discard {
         let mut i = 0;
         while i < n {
             let _x = self.get();
@@ -396,12 +397,12 @@ trait Source {
 }
 
 #[derive(Discard)]
-struct Nat { n: int }
+struct Nat { n: i64 }
 
 impl Source for Nat {
-    type Out = int;
+    type Out = i64;
 
-    fn get(&mut self) -> int with panic {
+    fn get(&mut self) -> i64 with panic {
         self.n = self.n + 1;
         self.n
     }
@@ -419,13 +420,13 @@ a provided method like `fold`, which throws the iterator away at the end,
 can only be called on an iterator that may be thrown away:
 
 ```rust,error
-struct Lines { left: int }
+struct Lines { left: i64 }
 
 impl Iterator for Lines {
-    type Item = int;
+    type Item = i64;
     effect e = panic;
 
-    fn next(&mut self) -> Option<int> {
+    fn next(&mut self) -> Option<i64> {
         if self.left == 0 {
             return Option::None;
         }
@@ -495,7 +496,7 @@ nowhere, and it can't be renamed.
   `PartialOrd` above it: T has no floats, so there's nothing only partly
   ordered to compare yet. Its laws, like consistency with `==`, are in its
   doc comment. Nothing relies on them to be sound, so a wrong impl gives
-  wrong answers, not undefined behaviour. `<` stays on `int`: no operator
+  wrong answers, not undefined behaviour. `<` stays on `i64`: no operator
   means a trait's method yet.
 - **Empty, not invalid.** A reversed range is empty, so `0..n` is total; a
   stricter range is a refinement type, later.

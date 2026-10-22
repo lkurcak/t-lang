@@ -1,10 +1,10 @@
-// `&mut x` used as a `&int`, for `x` a `&int`: the result is what `x`
+// `&mut x` used as a `&i64`, for `x` a `&i64`: the result is what `x`
 // points to, so it can't outlive that.
-fn id<'y>(r: &'y int) -> &'y int { r }
+fn id<'y>(r: &'y i64) -> &'y i64 { r }
 
 fn main() with {alloc, panic} {
     let out;
-    let mut x: &int;
+    let mut x: &i64;
     {
         let n = Box::new(5);
         x = &*n;

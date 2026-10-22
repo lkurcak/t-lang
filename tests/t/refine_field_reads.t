@@ -1,13 +1,13 @@
 // A field of a variable that can't change has the same value each time
 // it's read, so what's known of it carries over (step 8.1).
 #[derive(Copy, Discard)]
-struct P { x: int }
+struct P { x: i64 }
 
-fn f(p: P) -> int {
+fn f(p: P) -> i64 {
     if p.x != 0 && p.x != -1 { 10 / p.x } else { 0 }
 }
 
-fn g(r: &P) -> int {
+fn g(r: &P) -> i64 {
     if r.x > 0 { 10 / r.x } else { 0 }
 }
 

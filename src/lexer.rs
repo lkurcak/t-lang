@@ -1,10 +1,13 @@
 //! Turns source text into a flat list of tokens.
 
 use crate::error::{Error, Span};
+use crate::types::IntTy;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Tok {
-    Int(i64),
+    /// An integer literal: its value, and the type its suffix says, as
+    /// in `255u8`, if it has one.
+    Int(u64, Option<IntTy>),
     Ident(String),
     // keywords
     Fn,
@@ -87,7 +90,8 @@ impl Tok {
     /// How the token is shown in error messages.
     pub fn describe(&self) -> String {
         let s = match self {
-            Tok::Int(n) => return format!("`{n}`"),
+            Tok::Int(n, None) => return format!("`{n}`"),
+            Tok::Int(n, Some(t)) => return format!("`{n}{}`", t.name()),
             Tok::Ident(name) => return format!("`{name}`"),
             Tok::Doc(_) => return "a doc comment".to_string(),
             Tok::Lifetime(name) => return format!("`{name}`"),
@@ -239,9 +243,26 @@ pub fn lex_with_comments(src: &str) -> Result<(Vec<Token>, Vec<Comment>), Error>
             }
             let digits: String = src[start..i].chars().filter(|&c| c != '_').collect();
             let n = digits
-                .parse::<i64>()
+                .parse::<u64>()
                 .map_err(|_| Error::syntax(Span::new(start, i), "integer literal is too large"))?;
-            Tok::Int(n)
+            // A suffix, `255u8`, says which integer type it is.
+            let at = i;
+            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                i += 1;
+            }
+            let suffix = match &src[at..i] {
+                "" => None,
+                s => Some(IntTy::named(s).ok_or_else(|| {
+                    Error::syntax(
+                        Span::new(at, i),
+                        format!(
+                            "`{s}` isn't an integer type, so it can't be a literal's suffix, as \
+                             `u8` is in `255u8`"
+                        ),
+                    )
+                })?),
+            };
+            Tok::Int(n, suffix)
         } else if c.is_ascii_alphabetic() || c == b'_' {
             while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
                 i += 1;

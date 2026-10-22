@@ -1,31 +1,31 @@
 // A `struct` or `enum` in a block is local to it: it means what it would
 // at the top level, and its name is in scope in the whole block.
 #[derive(Discard)]
-struct P { x: int }
+struct P { x: i64 }
 
-fn total() -> int with panic {
+fn total() -> i64 with panic {
     // Used before it's declared.
     let pair = Pair { left: P { x: 1 }, right: P { x: 2 } };
     /// Two of the top-level `P`.
     #[derive(Discard)]
     struct Pair { left: P, right: P }
     // A nested `fn` can use it, in its signature too.
-    fn sum(p: Pair) -> int with panic { p.left.x + p.right.x }
+    fn sum(p: Pair) -> i64 with panic { p.left.x + p.right.x }
     sum(pair)
 }
 
-fn shapes() -> int with panic {
+fn shapes() -> i64 with panic {
     // Generic.
     #[derive(Discard)]
     enum Shape<T> { Circle(T), Rect(T, T), Empty }
-    fn area(s: Shape<int>) -> int with panic {
+    fn area(s: Shape<i64>) -> i64 with panic {
         match s {
             Shape::Circle(r) => 3 * r * r,
             Shape::Rect(w, h) => w * h,
             Shape::Empty => 0,
         }
     }
-    area(Shape::Circle(2)) + area(Shape::Rect(2, 3)) + area(Shape::<int>::Empty)
+    area(Shape::Circle(2)) + area(Shape::Rect(2, 3)) + area(Shape::<i64>::Empty)
 }
 
 fn main() with panic {
@@ -39,14 +39,14 @@ fn main() with panic {
     // name the type, but inference doesn't need to.
     let q = {
         #[derive(Discard)]
-        struct Q { n: int }
+        struct Q { n: i64 }
         Q { n: 7 }
     };
     print(q.n); // expect: 7
     // A second `P` in `main`, in a block of its own.
     {
         #[derive(Discard)]
-        struct P { z: int }
+        struct P { z: i64 }
         let P { z } = P { z: 9 };
         print(z); // expect: 9
     }
@@ -55,18 +55,18 @@ fn main() with panic {
 }
 
 // Another function's `P`.
-fn other() -> int {
+fn other() -> i64 {
     #[derive(Discard)]
-    struct P { y: int }
+    struct P { y: i64 }
     P { y: 4 }.y
 }
 
 // In a nested `fn`.
-fn outer() -> int with panic {
-    fn inner() -> int with panic {
+fn outer() -> i64 with panic {
+    fn inner() -> i64 with panic {
         #[derive(Discard)]
         enum Sign { Minus, Plus }
-        fn value(s: Sign) -> int {
+        fn value(s: Sign) -> i64 {
             match s {
                 Sign::Minus => -5,
                 Sign::Plus => 5,

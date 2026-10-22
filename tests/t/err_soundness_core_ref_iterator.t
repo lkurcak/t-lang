@@ -1,5 +1,5 @@
 // `&mut I` is an iterator, borrowing `I`; it can't outlive it.
-fn keep<'a>(it: &'a mut core::ops::Range<int>) -> &'a mut core::ops::Range<int> { it }
+fn keep<'a>(it: &'a mut core::ops::Range<i64>) -> &'a mut core::ops::Range<i64> { it }
 
 fn main() {
     let r;

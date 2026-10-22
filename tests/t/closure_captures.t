@@ -2,7 +2,7 @@
 // and only the variables in scope there, not ones of the same name that its
 // own parameters, `let`s or patterns shadow.
 #[derive(Discard)]
-enum Opt { None, Some(int) }
+enum Opt { None, Some(i64) }
 
 fn main() with panic {
     let a = 1;
@@ -25,4 +25,4 @@ fn main() with panic {
     print(h());                     // expect: 4
 }
 
-fn double(x: int) -> int with panic { x * 2 }
+fn double(x: i64) -> i64 with panic { x * 2 }

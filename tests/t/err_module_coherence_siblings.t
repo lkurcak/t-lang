@@ -1,19 +1,19 @@
 // Impls are global wherever they are: two in different modules overlap.
 trait Show {
-    fn show(&self) -> int;
+    fn show(&self) -> i64;
 }
 
 mod a {
-    impl super::Show for int {
-        fn show(&self) -> int { 1 }
+    impl super::Show for i64 {
+        fn show(&self) -> i64 { 1 }
     }
 }
 
 mod b {
-    impl super::Show for int {
-        fn show(&self) -> int { 2 }
+    impl super::Show for i64 {
+        fn show(&self) -> i64 { 2 }
     }
 }
 
 fn main() {}
-// error: `int` implements `Show` twice
+// error: `i64` implements `Show` twice

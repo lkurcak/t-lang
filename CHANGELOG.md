@@ -1,5 +1,52 @@
 # Changelog
 
+## Unreleased
+
+Step 11: integer types. See [docs/11-integers.md](docs/11-integers.md).
+
+### Added
+
+- Ten integer types: `i8`, `i16`, `i32`, `i64`, `isize`, `u8`, `u16`,
+  `u32`, `u64` and `usize`. Each is the integers from its least to its
+  greatest; `+`, `-`, `*`, `/`, `%` and unary `-` take two of one type and
+  give it, and panic if the result doesn't fit (unless proved not to),
+  never wrapping. Unary `-` works on unsigned types too, and fits only at 0.
+- Integer literals get their type from how they're used, with no default:
+  `let x = 5;` alone is "cannot infer". A suffix says it in place: `255u8`,
+  `1_000_i64`. `-128` is one literal, so it fits in an `i8`. A literal must
+  fit in its type: of a `usize` or `isize`, on a 32-bit machine; of a type
+  parameter, in every integer type, 0 to 127.
+- `x as T`: the same number as an integer type `T`. It panics if it doesn't
+  fit, unless the checker proves it does, as it does for every widening
+  conversion. It never truncates. A type's name follows `as`, so `x as u8 <
+  y` is a comparison.
+- `Int`, a built-in trait that only the integer types implement, and no
+  impl can be written of: `T: Int` lets generic code use the operators,
+  comparisons and literals from 0 to 127. `trait Int: Copy + Eq`.
+- `core::num::least::<T>()` and `greatest::<T>()`, intrinsics whose values
+  the checker knows.
+- The refinement logic knows each type's range. `usize`'s greatest is a
+  variable between the greatest 32- and 64-bit numbers, so what's proved
+  holds on both: `u32 as usize` can't panic, `u64 as usize` may. A type
+  parameter `T: Int`'s range is two such variables, at most 0 and at least
+  127.
+- A `match` on an integer covers its type: `0..=255` covers a `u8`, and an
+  open end runs to its type's end.
+
+### Changed
+
+- `int` is gone. `i64` is what it was.
+- Lengths and indices are `usize`: `[T]::len`, `get`, `get_mut`,
+  `split_at`, `split_at_mut` and `swap`, `List::len`, `capacity`, `get`,
+  `get_mut`, `swap`, `truncate` and `with_capacity`, `RawBuf::new`, `cap`,
+  `grow`, `write`, `read`, `slice` and `slice_mut`, and `Iterator::count`.
+- `checked_add`, `checked_sub`, `checked_mul`, `checked_div`, `checked_rem`
+  and `checked_neg` are generic, `T: Int`; `Range<T>` is an iterator for
+  every `T: Int`; `Ord` is implemented for every integer type.
+- `print` takes any integer type, `print<T: Int>`, so `print(5)` alone is
+  "cannot infer": `print(5i64)`.
+- Messages show an integer type not known yet as `{integer}`.
+
 ## 0.20.0 (2026-10-22)
 
 Step 10: slices. See [docs/10-slices.md](docs/10-slices.md).

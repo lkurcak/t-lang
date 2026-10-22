@@ -1,17 +1,17 @@
-// Through a generic function, `T` = `&'x int` for one `'x`, so both
+// Through a generic function, `T` = `&'x i64` for one `'x`, so both
 // arguments must live as long as the result.
 trait Pick {
     fn pick(self, other: Self) -> Self;
 }
 
-impl<'a> Pick for &'a int {
-    fn pick(self, other: &'a int) -> &'a int { other }
+impl<'a> Pick for &'a i64 {
+    fn pick(self, other: &'a i64) -> &'a i64 { other }
 }
 
 fn choose<T: Pick>(a: T, b: T) -> T { a.pick(b) }
 
 fn main() with {alloc, panic} {
-    let long = Box::new(1);
+    let long = Box::new(1i64);
     let r;
     {
         let short = Box::new(2);

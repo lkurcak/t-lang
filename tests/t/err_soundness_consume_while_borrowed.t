@@ -1,8 +1,8 @@
 // A pattern that takes a linear value apart moves all of it, so not while
 // part of it is borrowed.
-struct Fd { n: int }
+struct Fd { n: i64 }
 
-fn close(f: Fd) -> int {
+fn close(f: Fd) -> i64 {
     let Fd { n } = f;
     n
 }

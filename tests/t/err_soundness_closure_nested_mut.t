@@ -3,7 +3,7 @@
 fn call<e, F: Fn() with e + Discard>(f: F) with e { f() }
 
 fn main() {
-    let mut n = 0;
+    let mut n: i64 = 0;
     call(|| {
         let mut g = || n = n + 1;
         g();

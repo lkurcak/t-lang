@@ -1,9 +1,9 @@
-// Through a `&mut int`, anything could be written to `i`, which would break
+// Through a `&mut i64`, anything could be written to `i`, which would break
 // its refinement.
-fn zero(r: &mut int) { *r = 0; }
+fn zero(r: &mut i64) { *r = 0; }
 
 fn main() {
-    let mut i: { v: int | v > 0 } = 1;
+    let mut i: { v: i64 | v > 0 } = 1;
     zero(&mut i);
     print(i);
 }

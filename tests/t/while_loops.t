@@ -1,6 +1,6 @@
 // `while` loops, with mutable variables to count with.
 
-fn fib(n: int) -> int with panic {
+fn fib(n: i64) -> i64 with panic {
     let mut a = 0;
     let mut b = 1;
     let mut i = 0;
@@ -15,7 +15,7 @@ fn fib(n: int) -> int with panic {
 
 fn main() with panic {
     print(fib(10));             // expect: 55
-    let mut n = 0;
+    let mut n: i64 = 0;
     while n < 3 { n += 1; }
     print(n);                   // expect: 3
     let mut never = true;

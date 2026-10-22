@@ -10,7 +10,7 @@ struct Pair<A, B> { a: A, b: B }
 
 fn flip<A, B>(p: Pair<A, B>) -> Pair<B, A> { Pair { a: p.b, b: p.a } }
 
-fn largest<'a>(x: &'a int, y: &'a int) -> &'a int { if *x > *y { x } else { y } }
+fn largest<'a>(x: &'a i64, y: &'a i64) -> &'a i64 { if *x > *y { x } else { y } }
 
 #[derive(Discard)]
 struct Slot<'a, T: 'a> { r: &'a T }
@@ -33,7 +33,7 @@ fn main() {
         Option::None => {}
     }
     print(*read(Slot { r: &x }));   // expect: 1
-    let pp = Pair { a: 1, b: true };
-    let pq = pp;                    // `Pair<int, bool>` is `Copy`
+    let pp = Pair { a: 1i64, b: true };
+    let pq = pp;                    // `Pair<i64, bool>` is `Copy`
     print(pp.a + pq.a);             // expect: 2
 }

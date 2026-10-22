@@ -1,6 +1,6 @@
 // A pattern that binds a refined field by `&mut` borrows it.
 #[derive(Copy, Discard)]
-struct Pos { n: { v: int | v > 0 } }
+struct Pos { n: { v: i64 | v > 0 } }
 
 fn main() {
     let mut p = Pos { n: 1 };

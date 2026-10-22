@@ -1,6 +1,6 @@
 // A default method's `Self` may be any type that implements the trait.
 trait Eat {
-    fn eat(self) -> int { 0 }
+    fn eat(self) -> i64 { 0 }
 }
 
 fn main() {}

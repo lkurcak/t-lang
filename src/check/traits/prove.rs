@@ -168,6 +168,10 @@ impl Checker {
                 fix(&bad)
             ),
             Why::Call => format!("`{ty}` can't be called{needs}"),
+            Why::Integer => format!(
+                "`{ty}` doesn't implement `{tr}`, so it isn't an integer type, which this needs{}",
+                fix(&bad)
+            ),
             Why::Returns(f) if *ty == Type::Never => format!(
                 "can't tell what type `{f}` returns: it never returns, so nothing says which \
                  type this is"
@@ -217,8 +221,8 @@ impl Checker {
     }
 
     /// Requires what struct or enum types in `t` need of their type
-    /// arguments, by their bounds: `S<int>` for `struct S<T: Show>` needs
-    /// `int: Show`.
+    /// arguments, by their bounds: `S<i64>` for `struct S<T: Show>` needs
+    /// `i64: Show`.
     pub(in crate::check) fn well_formed(&mut self, t: &Type, span: Span) -> Result<(), Error> {
         let mut preds = Vec::new();
         let mut eqs = Vec::new();
@@ -267,6 +271,8 @@ pub(in crate::check) enum Why {
     Call,
     /// The return type of function `.0`, an opaque type, says it does.
     Returns(String),
+    /// It's an integer literal's type, or an operator's operands'.
+    Integer,
 }
 
 /// An obligation the checker has to prove once the types in it are known.

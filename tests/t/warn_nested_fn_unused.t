@@ -2,14 +2,14 @@
 // top-level one that `main` can't reach. One in a function that's never
 // used goes without saying.
 fn main() {
-    fn unused() -> int { 1 }
+    fn unused() -> i64 { 1 }
     // Only used by each other.
-    fn ping(n: int) -> int with panic {
+    fn ping(n: i64) -> i64 with panic {
         if n == 0 { 0 } else { pong(n - 1) }
     }
-    fn pong(n: int) -> int with panic { ping(n) }
+    fn pong(n: i64) -> i64 with panic { ping(n) }
     fn _on_purpose() {}
-    fn used() -> int {
+    fn used() -> i64 {
         fn also_unused() {}
         2
     }

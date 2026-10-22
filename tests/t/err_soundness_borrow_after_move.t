@@ -1,8 +1,8 @@
 // The borrow of `x` waits for the arguments, and the one after it moves
 // `x`.
-struct Fd { n: int }
+struct Fd { n: i64 }
 
-fn two(a: &Fd, b: Fd) -> int with panic {
+fn two(a: &Fd, b: Fd) -> i64 with panic {
     let Fd { n } = b;
     a.n + n
 }

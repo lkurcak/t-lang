@@ -1,5 +1,5 @@
 // Two ranges between them cover the third, though neither does alone.
-fn f(n: int) -> int {
+fn f(n: i64) -> i64 {
     match n {
         0..10 => 1,
         10..=20 => 2,

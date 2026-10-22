@@ -29,9 +29,9 @@ use std::collections::HashMap;
 
 /// How a type depends on one of its parameters, which decides how
 /// subtyping on the parameter becomes subtyping on the type. `&'a T` is
-/// *covariant* in `'a` and `T`: a `&'long int` is a `&'short int`. `&'a mut
-/// T` is *invariant* in `T`, or a `&mut &'long int` could be used to write a
-/// `&'short int` where the long one is expected. A function type is
+/// *covariant* in `'a` and `T`: a `&'long i64` is a `&'short i64`. `&'a mut
+/// T` is *invariant* in `T`, or a `&mut &'long i64` could be used to write a
+/// `&'short i64` where the long one is expected. A function type is
 /// *contravariant* in its parameters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Variance {
@@ -228,7 +228,7 @@ fn vary(
             }
         }
         // What a projection stands for may use its type's parameters any
-        // way at all: `<W<'a> as Tr>::Out` can be a `&'a mut &'a int`
+        // way at all: `<W<'a> as Tr>::Out` can be a `&'a mut &'a i64`
         // though `W` is covariant. So it's invariant in them.
         Type::Proj(inner, ..) => vary(inner, Variance::Inv, d, variances, out),
         // How an opaque type's hidden type uses its parameters isn't for
@@ -241,7 +241,7 @@ fn vary(
                 vary(a, Variance::Inv, d, variances, out);
             }
         }
-        Type::Int
+        Type::Int(_)
         | Type::Bool
         | Type::Unit
         | Type::Never
@@ -306,7 +306,7 @@ fn wf_into(t: &Type, adts: &Adts, outlives: &HashMap<String, Vec<Bound>>, out: &
         | Type::Alloc
         | Type::Panic
         | Type::Unsafe
-        | Type::Int
+        | Type::Int(_)
         | Type::Bool
         | Type::Unit
         | Type::Never
@@ -356,7 +356,7 @@ pub(crate) fn type_outlives(t: &Type, r: &Region, out: &mut Vec<Bound>) {
         | Type::Alloc
         | Type::Panic
         | Type::Unsafe
-        | Type::Int
+        | Type::Int(_)
         | Type::Bool
         | Type::Unit
         | Type::Never
@@ -631,7 +631,7 @@ impl Regions {
                 }
             }
             // No regions to relate. A `!` goes anywhere, having no values.
-            (Type::Int, Type::Int)
+            (Type::Int(_), Type::Int(_))
             | (Type::Bool, Type::Bool)
             | (Type::Unit, Type::Unit)
             | (Type::Never, _)

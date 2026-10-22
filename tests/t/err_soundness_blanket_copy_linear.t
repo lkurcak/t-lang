@@ -1,12 +1,12 @@
 // A blanket impl for every `Copy` type doesn't reach one that isn't.
-struct Fd { n: int }
+struct Fd { n: i64 }
 
 trait Tr {
-    fn f(self) -> int;
+    fn f(self) -> i64;
 }
 
 impl<T: Copy> Tr for T {
-    fn f(self) -> int { 1 }
+    fn f(self) -> i64 { 1 }
 }
 
 fn main() {

@@ -3,7 +3,7 @@
 use alloc::list::List;
 use core::slice::SplitMut;
 
-fn bump(s: &mut [int]) with panic {
+fn bump(s: &mut [i64]) with panic {
     let mut i = 0;
     while i < s.len() {
         match s.get_mut(i) {
@@ -15,7 +15,7 @@ fn bump(s: &mut [int]) with panic {
 }
 
 fn main() with {alloc, panic} {
-    let mut l: List<int> = List::new();
+    let mut l: List<i64> = List::new();
     for i in 0..4 {
         l.push(i);
     }

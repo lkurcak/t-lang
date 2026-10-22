@@ -1,7 +1,7 @@
 // As a function's can't, an impl's `where` clause can't say what outlives
 // what.
 trait Tr {
-    fn a(&self) -> int;
+    fn a(&self) -> i64;
 }
 
 #[derive(Discard where T: Discard)]
@@ -11,7 +11,7 @@ impl<T> Tr for W<T>
 where
     T: 'static,
 {
-    fn a(&self) -> int { 1 }
+    fn a(&self) -> i64 { 1 }
 }
 
 fn main() {}

@@ -4,4 +4,4 @@ fn main() {
     loop { break 5; }
     print(1);
 }
-// error: expected `()`, found `int`: this `loop` is a statement
+// error: expected `()`, found `{integer}`: this `loop` is a statement,

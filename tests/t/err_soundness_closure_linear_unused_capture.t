@@ -1,6 +1,6 @@
 // A `move` closure that owns `fd` but only reads it would be callable many
 // times and never give `fd` back: `fd` would be dropped with it.
-struct Fd { n: int }
+struct Fd { n: i64 }
 
 fn main() {
     let fd = Fd { n: 3 };

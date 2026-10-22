@@ -11,6 +11,6 @@ impl<T: Eq> Eq for V<T> {
 }
 
 fn main() {
-    print_bool(V { x: 1 } == V { x: 1 });
+    print_bool(V { x: 1i64 } == V { x: 1 });
 }
 // error: polymorphic recursion: this use of `<D<U> as Eq>::eq` with `U` = `&V<T>` leads back

@@ -1,8 +1,8 @@
 // Closures can be stored, as long as what they borrow outlives them.
 #[derive(Discard)]
-struct Counter<F> { next: F, calls: int }
+struct Counter<F> { next: F, calls: i64 }
 
-fn step<e, F: FnMut() -> int with e>(c: &mut Counter<F>) -> int with {panic, e} {
+fn step<e, F: FnMut() -> i64 with e>(c: &mut Counter<F>) -> i64 with {panic, e} {
     c.calls = c.calls + 1;
     (c.next)()
 }

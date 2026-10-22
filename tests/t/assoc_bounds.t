@@ -8,12 +8,12 @@ trait Tr {
 }
 
 #[derive(Discard)]
-struct A { n: int }
+struct A { n: i64 }
 
 impl Tr for A {
-    type Out = int;
+    type Out = i64;
 
-    fn out(&self) -> int { self.n }
+    fn out(&self) -> i64 { self.n }
 }
 
 #[derive(Discard)]
@@ -26,24 +26,24 @@ impl Tr for B {
 }
 
 trait Show {
-    fn show(&self) -> int with panic;
+    fn show(&self) -> i64 with panic;
 }
 
 #[derive(Discard)]
 struct W<T> { t: T }
 
-// Only for a `T` whose `Out` is an `int`.
-impl<T: Tr<Out = int>> Show for W<T> {
-    fn show(&self) -> int with panic { self.t.out() * 10 }
+// Only for a `T` whose `Out` is an `i64`.
+impl<T: Tr<Out = i64>> Show for W<T> {
+    fn show(&self) -> i64 with panic { self.t.out() * 10 }
 }
 
-fn shown<S: Show>(s: &S) -> int with panic { s.show() }
+fn shown<S: Show>(s: &S) -> i64 with panic { s.show() }
 
-// A struct that's only for such a `T`, whose field is an `int`.
+// A struct that's only for such a `T`, whose field is an `i64`.
 #[derive(Discard)]
-struct Count<T: Tr<Out = int>> { of: T, n: T::Out }
+struct Count<T: Tr<Out = i64>> { of: T, n: T::Out }
 
-fn count<T: Tr<Out = int>>(of: T) -> Count<T> with panic {
+fn count<T: Tr<Out = i64>>(of: T) -> Count<T> with panic {
     let n = of.out() + 1;
     Count { of, n }
 }
@@ -53,9 +53,9 @@ fn same<T: Tr<Out: Eq + Discard>>(x: &T, y: &T) -> bool { x.out() == y.out() }
 
 // A rigid projection outlives `'r` when its type does.
 #[derive(Discard)]
-struct Hold<'r, U: 'r> { u: U, r: &'r int }
+struct Hold<'r, U: 'r> { u: U, r: &'r i64 }
 
-fn hold<'r, T: Tr<Out: Discard> + 'r>(t: &T, r: &'r int) -> int {
+fn hold<'r, T: Tr<Out: Discard> + 'r>(t: &T, r: &'r i64) -> i64 {
     let h: Hold<'r, T::Out> = Hold { u: t.out(), r };
     *h.r
 }

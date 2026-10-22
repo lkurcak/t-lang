@@ -41,19 +41,21 @@ impl fmt::Display for Pred {
 
 /// The traits built into the language: `Eq`, behind `==` and `!=`;
 /// `Discard`, which says a type's values may be thrown away rather than
-/// used up; and `Copy`, which says they're copied rather than moved, and
-/// needs `Discard` (see docs/06a.1-linear-types.md).
-pub const BUILTIN_TRAITS: &[&str] = &["Copy", "Discard", "Eq", "Fn", "FnMut", "FnOnce"];
+/// used up; `Copy`, which says they're copied rather than moved, and
+/// needs `Discard` (see docs/06a.1-linear-types.md); and `Int`, which only
+/// the integer types implement, and says the arithmetic operators work on
+/// a type (see docs/11-integers.md).
+pub const BUILTIN_TRAITS: &[&str] = &["Copy", "Discard", "Eq", "Fn", "FnMut", "FnOnce", "Int"];
 
-/// The traits of what can be called: `F: Fn(int) -> int` says a value of
-/// type `F` can be called with an `int`, giving an `int`. Functions and
+/// The traits of what can be called: `F: Fn(i64) -> i64` says a value of
+/// type `F` can be called with an `i64`, giving an `i64`. Functions and
 /// closures implement them, and nothing else can (see
 /// docs/06c-closures.md). Each is stronger than the next: `trait Fn:
 /// FnMut` and `trait FnMut: FnOnce`.
 pub const FN_TRAITS: &[&str] = &["Fn", "FnMut", "FnOnce"];
 
-/// The associated type of `FnOnce` that a bound like `Fn(int) -> int`
-/// says is `fn(int) -> int`: what a call takes and gives. Its name can't
+/// The associated type of `FnOnce` that a bound like `Fn(i64) -> i64`
+/// says is `fn(i64) -> i64`: what a call takes and gives. Its name can't
 /// be written, so only such bounds can say what it is.
 pub const SIG: &str = "(signature)";
 
@@ -134,7 +136,7 @@ impl ClosureDef {
     }
 }
 
-/// What an opaque type, `impl Fn(int) -> int` in a function's return type,
+/// What an opaque type, `impl Fn(i64) -> i64` in a function's return type,
 /// is (see `Type::Opaque`). Its type is generic over every lifetime and type
 /// parameter of the function, as the hidden type it stands for may mention
 /// any of them; it's *invariant* in each, as how the hidden type uses them
@@ -158,7 +160,7 @@ pub struct OpaqueDef {
     /// What it implements, on itself as `generic` or on projections of
     /// that, mentioning `params` and `lifetimes`.
     pub preds: Vec<Pred>,
-    /// What its equality bounds say, like `(<Self as Iter>::Item, int)`,
+    /// What its equality bounds say, like `(<Self as Iter>::Item, i64)`,
     /// with `generic` for `Self`.
     pub eqs: Vec<(Type, Type)>,
     /// The type it stands for, mentioning `params`, once the function's
@@ -261,7 +263,7 @@ pub struct ImplDef {
     pub self_ty: Type,
     /// What it needs, on `params`: `T: Show` in `impl<T: Show> ..`.
     pub preds: Vec<Pred>,
-    /// What its equality bounds say, like `(T::Item, int)`.
+    /// What its equality bounds say, like `(T::Item, i64)`.
     pub eqs: Vec<(Type, Type)>,
     /// What it says each of the trait's associated types is, by name, as
     /// written, mentioning `params` and `lifetimes`.
@@ -296,7 +298,7 @@ pub struct Traits {
 /// How a type implements a trait.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Source {
-    /// It's built into the language, like `int: Eq`.
+    /// It's built into the language, like `i64: Eq`.
     Builtin,
     /// By the impl at this index in `Traits::impls`, at these type
     /// arguments.
@@ -357,6 +359,20 @@ impl Traits {
                 supers: Vec::new(),
                 assoc: Vec::new(),
                 methods: vec![eq],
+            },
+        );
+        // trait Int: Copy + Eq {}
+        //
+        // Sealed: no impl can be written, so the integer types are all
+        // there ever are, and generic code over them may count on what
+        // they all have in common (see docs/11-integers.md).
+        traits.insert(
+            "Int".to_string(),
+            TraitDef {
+                span: None,
+                supers: vec!["Copy".to_string(), "Eq".to_string()],
+                assoc: Vec::new(),
+                methods: Vec::new(),
             },
         );
         // trait FnOnce { type (signature); }
@@ -523,17 +539,18 @@ impl Traits {
         match (tr, ty) {
             (
                 "Discard",
-                Type::Int | Type::Bool | Type::Unit | Type::Never | Type::Fn(_) | Type::Ref(..),
+                Type::Int(_) | Type::Bool | Type::Unit | Type::Never | Type::Fn(_) | Type::Ref(..),
             ) => return Ok(Source::Builtin),
             ("Discard", Type::Box(inner)) => return all(&[inner]),
-            ("Copy", Type::Int | Type::Bool | Type::Unit | Type::Never | Type::Fn(_)) => {
+            ("Copy", Type::Int(_) | Type::Bool | Type::Unit | Type::Never | Type::Fn(_)) => {
                 return Ok(Source::Builtin);
             }
             ("Copy", Type::Ref(_, false, _)) => return Ok(Source::Builtin),
             ("Copy", Type::Ref(_, true, _) | Type::Box(_)) => return Err(fail()),
-            ("Eq", Type::Int | Type::Bool | Type::Unit | Type::Never) => {
+            ("Eq", Type::Int(_) | Type::Bool | Type::Unit | Type::Never) => {
                 return Ok(Source::Builtin);
             }
+            ("Int", Type::Int(_)) => return Ok(Source::Builtin),
             // References and boxes compare what they point to.
             ("Eq", Type::Ref(_, _, inner) | Type::Box(inner)) => return all(&[inner]),
             ("Eq", Type::Fn(_)) => return Err(fail()),
@@ -684,11 +701,11 @@ pub fn subset(a: &Type, b: &Type) -> bool {
 /// Each type parameter in the header is from the match. One that isn't is
 /// *decided* by an equality bound (`decider`): it's the part of the
 /// bound's type where the parameter is, in what the bound's projection is
-/// at the matched type, as `U` is `int` in `impl<U, F: Fn() -> U> Get for
-/// Thunk<F>` at `Thunk<fn() -> int>`. That's a function of the type too,
+/// at the matched type, as `U` is `i64` in `impl<U, F: Fn() -> U> Get for
+/// Thunk<F>` at `Thunk<fn() -> i64>`. That's a function of the type too,
 /// as normalising is, and none if the projection's still rigid there, or
 /// what it is has no such part, or the part has a region of a function
-/// type it's in (`'^0` of `fn(&int) -> &int` is no region outside it).
+/// type it's in (`'^0` of `fn(&i64) -> &i64` is no region outside it).
 ///
 /// An effect parameter's needn't be in the header, as in `impl<f, F: Fn()
 /// with f> Tr for W<F>`: then it's the least that makes the impl's `Fn`
@@ -859,8 +876,8 @@ pub struct Anon<'a> {
 ///   least effects that make it hold at the type matched (`impl_args`):
 ///   functions of that type too, so substitution still commutes. The
 ///   projections that decide them end as an associated type's do.
-/// - It's never cached by type with regions erased: `<&'x int as Tr>::Out`
-///   and `<&'y int as Tr>::Out` are different types.
+/// - It's never cached by type with regions erased: `<&'x i64 as Tr>::Out`
+///   and `<&'y i64 as Tr>::Out` are different types.
 /// - It ends: the projections in an impl's associated type are on smaller
 ///   types than its header, or on the same type parameter, for a blanket
 ///   impl, to a trait that can't lead back (`Checker::assoc_termination`).
@@ -874,8 +891,8 @@ pub struct Projections {
     /// Every opaque type, by symbol: what its equality bounds say a
     /// projection on it is.
     pub opaques: HashMap<String, OpaqueDef>,
-    /// What the equality bounds in scope say: `(T::Item, int)` for
-    /// `T: Iter<Item = int>`.
+    /// What the equality bounds in scope say: `(T::Item, i64)` for
+    /// `T: Iter<Item = i64>`.
     pub local: Vec<(Type, Type)>,
 }
 
@@ -1059,8 +1076,8 @@ fn param(name: &str) -> Type {
 ///   where the header has it (`project`), never with regions erased, and
 ///   only from what's outside function types.
 /// - Nor does it look at what a function type is generic over: an impl for
-///   `fn(&int) -> &int`, for every lifetime, is found for a `fn(&'a int) ->
-///   &'a int`. That's sound only because every function value works at
+///   `fn(&i64) -> &i64`, for every lifetime, is found for a `fn(&'a i64) ->
+///   &'a i64`. That's sound only because every function value works at
 ///   every lifetime, and because an associated type can't mention a
 ///   parameter that's only inside a function type. A function value holds
 ///   no references: a closure that captures anything has a type of its own
@@ -1091,7 +1108,7 @@ fn param(name: &str) -> Type {
 /// - A parameter never matches a slice, `[T]`, as no type parameter
 ///   stands for one (`Type::Slice`): an impl's methods could have its `T`
 ///   by value. `overlap` agrees, so `impl<T> Tr for &T` and `impl Tr for
-///   &[int]` don't overlap, and the checker and monomorphisation find the
+///   &[i64]` don't overlap, and the checker and monomorphisation find the
 ///   same one.
 pub fn matches(pat: &Type, t: &Type, params: &[String], found: &mut HashMap<String, Type>) -> bool {
     match pat {
