@@ -33,6 +33,37 @@ fn programs() -> Vec<PathBuf> {
     paths
 }
 
+/// `f` of each of `paths`, in order, worked out on as many threads as there
+/// are cores. Each thread takes the next program as it finishes one, so a
+/// slow program holds up only itself.
+fn on_all_cores<R: Send>(paths: &[PathBuf], f: impl Fn(&Path) -> R + Sync) -> Vec<R> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let next = AtomicUsize::new(0);
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let mut results: Vec<(usize, R)> = std::thread::scope(|s| {
+        let handles: Vec<_> = (0..threads.min(paths.len()))
+            .map(|_| {
+                s.spawn(|| {
+                    let mut done = Vec::new();
+                    loop {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        let Some(path) = paths.get(i) else {
+                            return done;
+                        };
+                        done.push((i, f(path)));
+                    }
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|h| h.join().unwrap())
+            .collect()
+    });
+    results.sort_by_key(|&(i, _)| i);
+    results.into_iter().map(|(_, r)| r).collect()
+}
+
 /// What a test is called: its file's name, or its directory's.
 fn name(path: &Path) -> String {
     let path = match path.file_name().is_some_and(|n| n == "main.t") {
@@ -45,23 +76,22 @@ fn name(path: &Path) -> String {
 #[test]
 fn golden() {
     let paths = programs();
-
-    let mut failures = Vec::new();
-    for path in &paths {
+    let failures: Vec<String> = on_all_cores(&paths, |path| {
         let name = name(path);
         let files = expect::files_of(path);
         let all: String = files.iter().map(|(_, src)| src.as_str()).collect();
         let want = Expectations::of(&all);
         if want.output.is_empty() && want.error.is_none() && want.warnings.is_empty() {
-            failures.push(format!(
+            return Some(format!(
                 "{name}: has no `// expect:`, `// error:` or `// warning:` lines"
             ));
-            continue;
         }
-        if let Err(failure) = expect::check_files(&files) {
-            failures.push(format!("{name}: {failure}"));
-        }
-    }
+        let failure = expect::check_files(&files).err()?;
+        Some(format!("{name}: {failure}"))
+    })
+    .into_iter()
+    .flatten()
+    .collect();
 
     if !failures.is_empty() {
         panic!(
@@ -136,41 +166,38 @@ fn mono() {
 /// one names, like `{closure#12}`, don't parse.)
 #[test]
 fn printing_round_trips() {
-    let mut failures = Vec::new();
-    for path in programs() {
-        let name = name(&path);
-        let files = expect::files_of(&path);
-        let Ok(program) = expect::run_checked(&files) else {
-            continue;
-        };
-        let printed = program.to_string();
-        let lifted = program.fns.iter().map(|f| &f.name.name);
-        let lifted = lifted.chain(program.types.iter().map(|d| &d.name().name));
-        if printed.contains("::<")
-            || printed.contains("{closure#")
-            || lifted.into_iter().any(|name| name.contains("::"))
-        {
-            continue;
-        }
-        let reprinted = match t_lang::check_source(&printed).result {
-            Ok(p) => p.to_string(),
-            Err(e) => {
-                failures.push(format!("{name}: {}", e.render(&name, &printed)));
-                continue;
-            }
-        };
-        if reprinted != printed {
-            failures.push(format!("{name}: printed\n{printed}\nthen\n{reprinted}"));
-            continue;
-        }
-        let (before, after) = (expect::run(&files), t_lang::run_source(&printed));
-        if !expect::same_behaviour(&before, &after) {
-            failures.push(format!(
-                "{name}: does something else once printed:\n{printed}"
-            ));
-        }
-    }
+    let failures: Vec<String> = on_all_cores(&programs(), round_trip)
+        .into_iter()
+        .flatten()
+        .collect();
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
+/// Whether the program at `path` prints as itself, if it should: what went
+/// wrong, if anything.
+fn round_trip(path: &Path) -> Option<String> {
+    let name = name(path);
+    let files = expect::files_of(path);
+    let program = expect::run_checked(&files).ok()?;
+    let printed = program.to_string();
+    let lifted = program.fns.iter().map(|f| &f.name.name);
+    let lifted = lifted.chain(program.types.iter().map(|d| &d.name().name));
+    if printed.contains("::<")
+        || printed.contains("{closure#")
+        || lifted.into_iter().any(|name| name.contains("::"))
+    {
+        return None;
+    }
+    let reprinted = match t_lang::check_source(&printed).result {
+        Ok(p) => p.to_string(),
+        Err(e) => return Some(format!("{name}: {}", e.render(&name, &printed))),
+    };
+    if reprinted != printed {
+        return Some(format!("{name}: printed\n{printed}\nthen\n{reprinted}"));
+    }
+    let (before, after) = (expect::run(&files), t_lang::run_source(&printed));
+    (!expect::same_behaviour(&before, &after))
+        .then(|| format!("{name}: does something else once printed:\n{printed}"))
 }
 
 /// Every node of a program has an id of its own (`ast::NodeId`), by which
@@ -181,24 +208,25 @@ fn printing_round_trips() {
 /// ranges written out), in programs that check and programs that don't.
 #[test]
 fn node_ids_are_unique() {
-    let mut failures = Vec::new();
-    let mut nodes = 0;
-    for path in programs() {
-        let files = expect::files_of(&path);
+    let results = on_all_cores(&programs(), |path| {
+        let files = expect::files_of(path);
         let read = |p: &Path| match files.iter().find(|(f, _)| f == p) {
             Some((_, src)) => Ok(src.clone()),
             None => t_lang::no_files(p),
         };
-        let (_, prog) = t_lang::load::load(&path, &files[0].1, &read);
+        let (_, prog) = t_lang::load::load(path, &files[0].1, &read);
         let Ok(mut prog) = prog else {
-            continue;
+            return Ok(0);
         };
         let _ = t_lang::check::check(&mut prog, &mut Vec::new());
-        match node_ids(&format!("{prog:?}"), prog.next_id) {
-            Ok(n) => nodes += n,
-            Err(why) => failures.push(format!("{}: {why}", name(&path))),
-        }
-    }
+        let why = |why| format!("{}: {why}", name(path));
+        node_ids(&format!("{prog:?}"), prog.next_id).map_err(why)
+    });
+    let nodes: usize = results.iter().flatten().sum();
+    let failures: Vec<&str> = results
+        .iter()
+        .filter_map(|r| r.as_ref().err().map(String::as_str))
+        .collect();
     assert!(nodes > 100_000, "only {nodes} nodes");
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
@@ -281,21 +309,8 @@ fn node_ids(debug: &str, next_id: u32) -> Result<usize, String> {
 /// it is found, and nothing else is touched.
 #[test]
 fn renaming_keeps_meaning() {
-    // Each program on its own, as many at once as there are cores: every
-    // rename checks a program again, the core library and all.
-    let paths = programs();
-    let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
-    let chunk = paths.len().div_ceil(threads);
-    let results: Vec<(Vec<String>, usize)> = std::thread::scope(|s| {
-        let handles: Vec<_> = paths
-            .chunks(chunk)
-            .map(|paths| s.spawn(move || paths.iter().map(|p| renames_in(p)).collect::<Vec<_>>()))
-            .collect();
-        handles
-            .into_iter()
-            .flat_map(|h| h.join().unwrap())
-            .collect()
-    });
+    // Every rename checks a program again, the core library and all.
+    let results = on_all_cores(&programs(), renames_in);
     let failures: Vec<String> = results.iter().flat_map(|(f, _)| f.clone()).collect();
     let renamed: usize = results.iter().map(|(_, n)| n).sum();
     assert!(renamed > 100, "only {renamed} renames");
