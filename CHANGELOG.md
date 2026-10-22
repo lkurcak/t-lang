@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.18.0 (2026-10-22)
 
 Step 9: unsafe code and raw memory. See
 [docs/09-unsafe.md](docs/09-unsafe.md).
