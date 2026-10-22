@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.19.0 (2026-10-22)
 
 Step 9.1: lists. See [docs/09.1-list.md](docs/09.1-list.md).
 
