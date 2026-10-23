@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.24.0 (2026-10-23)
+
+Installing T's tree-sitter parser for syntax highlighting, from `t` itself.
 
 ### Added
 
