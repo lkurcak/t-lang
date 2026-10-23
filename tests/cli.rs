@@ -38,7 +38,13 @@ fn version_is_the_crate_version() {
 /// A mistake still gets the short usage, on stderr, and exit code 2.
 #[test]
 fn bad_arguments_print_usage() {
-    for args in [&[][..], &["--nope"], &["check", "a.t", "b.t"]] {
+    for args in [
+        &[][..],
+        &["--nope"],
+        &["check", "a.t", "b.t"],
+        &["tree-sitter"],
+        &["tree-sitter", "--out"],
+    ] {
         let out = t(args);
         assert_eq!(out.status.code(), Some(2), "{args:?}");
         assert!(out.stdout.is_empty(), "{args:?}");
@@ -67,4 +73,28 @@ fn reads_the_files_of_modules() {
         stderr.contains("err_module_file_type_error/a/b.t:2:5"),
         "{stderr}"
     );
+}
+
+/// `t tree-sitter <dir>` installs the parser and queries as Neovim looks for
+/// them, replacing what's there.
+#[test]
+fn tree_sitter_installs_the_parser_and_queries() {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("tree_sitter_cli");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("queries/t")).unwrap();
+    std::fs::write(dir.join("queries/t/highlights.scm"), "old").unwrap();
+
+    let out = t(&["tree-sitter", dir.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert!(out.stdout.is_empty() && out.stderr.is_empty(), "{out:?}");
+    assert!(std::fs::metadata(dir.join("parser/t.so")).unwrap().len() > 0);
+    assert_eq!(
+        std::fs::read_to_string(dir.join("queries/t/highlights.scm")).unwrap(),
+        tree_sitter_t::HIGHLIGHTS_QUERY
+    );
+    let names: Vec<_> = std::fs::read_dir(dir.join("parser"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(names, ["t.so"], "no temporary files left behind");
 }

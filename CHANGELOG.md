@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `t tree-sitter <dir>` installs T's tree-sitter parser and highlight
+  queries into `<dir>/parser` and `<dir>/queries/t`, as Neovim looks for
+  them. The parser is built into `t`, so they match what it accepts, and
+  installing them needs no C compiler or network.
+
 ## 0.23.0 (2026-10-23)
 
 Step 13: strings. See [docs/13-strings.md](docs/13-strings.md).

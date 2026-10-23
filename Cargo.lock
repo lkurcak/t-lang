@@ -259,6 +259,7 @@ dependencies = [
 name = "t-lang"
 version = "0.23.0"
 dependencies = [
+ "cc",
  "lsp-server",
  "lsp-types",
  "serde_json",

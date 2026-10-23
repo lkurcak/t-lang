@@ -193,16 +193,13 @@ mkdir -p ~/.config/helix/runtime/queries/t
 cp editors/tree-sitter-t/queries/highlights.scm ~/.config/helix/runtime/queries/t/
 ```
 
-**Neovim (0.11+):** with [t-lang.nvim](https://github.com/lkurcak/t-lang.nvim),
-run `:TInstallParser`. Without it, build the parser and copy the queries into
-your `site` directory, from a checkout:
+**Neovim (0.11+):** [t-lang.nvim](https://github.com/lkurcak/t-lang.nvim)
+installs the parser the first time you open a T file, and again after you
+upgrade `t`. Without it, `t` installs the parser it was built with, and its
+highlight queries, into your `site` directory:
 
 ```sh
-site=~/.local/share/nvim/site
-mkdir -p $site/parser $site/queries/t
-cc -shared -fPIC -O2 -I editors/tree-sitter-t/src \
-    editors/tree-sitter-t/src/parser.c -o $site/parser/t.so
-cp editors/tree-sitter-t/queries/highlights.scm $site/queries/t/
+t tree-sitter ~/.local/share/nvim/site
 ```
 
 and turn it on for T files in your config:

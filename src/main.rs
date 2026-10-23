@@ -2,8 +2,7 @@ use std::process::ExitCode;
 use t_lang::error::Warning;
 use t_lang::interp::Value;
 
-const USAGE: &str =
-    "usage: t [run|check|mono] <file.t>\n       t fmt [--check] <file.t>...\n       t lsp";
+const USAGE: &str = "usage: t [run|check|mono] <file.t>\n       t fmt [--check] <file.t>...\n       t lsp\n       t tree-sitter <dir>";
 
 const HELP: &str = "\
 T: like C, but a different letter.
@@ -11,12 +10,16 @@ T: like C, but a different letter.
 usage: t [run|check|mono] <file.t>
        t fmt [--check] <file.t>...
        t lsp
+       t tree-sitter <dir>
 
   t <file.t>          type-check and run
   t check <file.t>    type-check only
   t mono <file.t>     print the program after monomorphisation
   t fmt <file.t>...   format the files in place (--check: just print a diff)
   t lsp               language server, over stdio
+  t tree-sitter <dir> install T's tree-sitter parser and highlight queries
+                      into <dir>/parser and <dir>/queries/t, as Neovim
+                      looks for them in its `site` directory
   t --help, -h        print this
   t --version, -V     print the version";
 
@@ -43,6 +46,17 @@ fn main() -> ExitCode {
             Err(e) => {
                 eprintln!("t lsp: {e}");
                 ExitCode::FAILURE
+            }
+        };
+    }
+    if let [cmd, rest @ ..] = args.as_slice()
+        && cmd == "tree-sitter"
+    {
+        return match rest {
+            [dir] if !dir.starts_with('-') => tree_sitter(std::path::Path::new(dir)),
+            _ => {
+                eprintln!("{USAGE}");
+                ExitCode::from(2)
             }
         };
     }
@@ -151,4 +165,46 @@ fn fmt(args: &[String]) -> ExitCode {
     } else {
         ExitCode::FAILURE
     }
+}
+
+/// The tree-sitter parser for `editors/tree-sitter-t`, built by `build.rs`,
+/// and its highlight queries: those of this `t`, so what's highlighted is
+/// what it accepts.
+const TREE_SITTER_PARSER: &[u8] = include_bytes!(env!("T_TREE_SITTER_PARSER"));
+const TREE_SITTER_HIGHLIGHTS: &str =
+    include_str!("../editors/tree-sitter-t/queries/highlights.scm");
+
+/// `t tree-sitter <dir>` writes the parser to `<dir>/parser/t.so` and the
+/// highlight queries to `<dir>/queries/t/highlights.scm`.
+fn tree_sitter(dir: &std::path::Path) -> ExitCode {
+    let files: [(&str, &[u8]); 2] = [
+        ("parser/t.so", TREE_SITTER_PARSER),
+        (
+            "queries/t/highlights.scm",
+            TREE_SITTER_HIGHLIGHTS.as_bytes(),
+        ),
+    ];
+    for (name, contents) in files {
+        let path = dir.join(name);
+        if let Err(e) = write_replacing(&path, contents) {
+            eprintln!("error: cannot write `{}`: {e}", path.display());
+            return ExitCode::FAILURE;
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+/// Writes `path` by renaming a new file over it, rather than rewriting it in
+/// place: an editor may have the old parser loaded, and changing the file
+/// under it can crash it.
+fn write_replacing(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(format!(".{}.tmp", std::process::id()));
+    std::fs::write(&tmp, contents)?;
+    std::fs::rename(&tmp, path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
 }
