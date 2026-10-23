@@ -41,6 +41,7 @@ use std::sync::Arc;
 
 /// A closure in the function being checked whose captures, if it has any,
 /// or the lifetimes of whose result, are to be worked out at its end.
+#[derive(Clone)]
 pub(super) struct Pending {
     /// Its symbol, if it captures: then its type is one of its own.
     pub(super) symbol: Option<String>,

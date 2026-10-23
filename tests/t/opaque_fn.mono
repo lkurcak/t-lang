@@ -1,6 +1,6 @@
-fn adder(n: i64) -> {closure#210} { move |x| x + n }
+fn adder(n: i64) -> {closure#49955} { move |x| x + n }
 
-fn counter() -> {closure#309} {
+fn counter() -> {closure#50054} {
     let mut n = 0i64;
     move || {
         n += 1i64;
@@ -8,12 +8,12 @@ fn counter() -> {closure#309} {
     }
 }
 
-fn compose::<{panic}, {closure#210}, {closure#210}>(
-    f: {closure#210},
-    g: {closure#210},
-) -> {closure#510}::<{panic}, {closure#210}, {closure#210}> { move |x| (&g)((&f)(x)) }
+fn compose::<{panic}, {closure#49955}, {closure#49955}>(
+    f: {closure#49955},
+    g: {closure#49955},
+) -> {closure#50255}::<{panic}, {closure#49955}, {closure#49955}> { move |x| (&g)((&f)(x)) }
 
-fn pick(c: bool) -> {closure#210} {
+fn pick(c: bool) -> {closure#49955} {
     let a = adder(1i64);
     let b = adder(2i64);
     if c { a } else { b }
@@ -25,7 +25,7 @@ fn main() with panic {
     let mut c = counter();
     print((&mut c)());
     print((&mut c)());
-    let h = compose::<{panic}, {closure#210}, {closure#210}>(adder(1i64), adder(10i64));
+    let h = compose::<{panic}, {closure#49955}, {closure#49955}>(adder(1i64), adder(10i64));
     print((&h)(0i64));
     print((&pick(false))(0i64));
     print((&adder(2i64))(3i64));

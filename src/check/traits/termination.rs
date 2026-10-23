@@ -26,6 +26,10 @@ impl Checker {
     /// bound on a part of the impl's type, or a blanket impl's (which
     /// `termination` sees to), or goes to a component lower down, which
     /// can only happen as often as there are components.
+    ///
+    /// The packages before the one being checked kept this on their own,
+    /// so a way back that's new goes through one of its impls, which is
+    /// what's at fault.
     pub(super) fn bound_termination(&self) -> Result<(), Error> {
         let mut edges: Vec<(&str, &str, &ImplDef)> = Vec::new();
         for d in &self.traits.impls {
@@ -34,7 +38,7 @@ impl Checker {
                 edges.push((tr, &pred.trait_name, d));
             }
         }
-        for d in &self.traits.impls {
+        for d in self.newest_first() {
             let Some(tr) = &d.trait_name else { continue };
             let part = |t: &Type| matches!(t, Type::Param(p) if mentions(&d.self_ty, p));
             for pred in d.preds.iter().filter(|p| !part(&p.ty)) {
@@ -43,6 +47,21 @@ impl Checker {
                 let Some(back) = reach(&edges, to, tr, &mut seen) else {
                     continue;
                 };
+                if !self.current(d.span)
+                    && let Some(own) = back.iter().find(|b| self.current(b.span))
+                {
+                    return Err(Error::ty(
+                        own.span,
+                        format!(
+                            "proving that a type implements `{tr}` could go on forever: `impl \
+                             {}` needs `{}: {to}`, which isn't a part of `{}`, so it can be a \
+                             bigger type, and this impl lets proving that lead back to `{tr}`",
+                            d.header(),
+                            pred.ty,
+                            d.self_ty
+                        ),
+                    ));
+                }
                 let how = match back.first() {
                     None => String::new(),
                     Some(b) => format!(", by the bounds of `impl {}`", b.header()),
@@ -69,6 +88,9 @@ impl Checker {
     /// can't go round in a cycle. Then each step goes down in size, or stays
     /// the same size and goes down in an order of the traits, and that
     /// can't go on forever.
+    ///
+    /// A new cycle has an edge of the package being checked, which is
+    /// what's reported: those are looked at first.
     pub(super) fn assoc_termination(&self) -> Result<(), Error> {
         let mut edges: Vec<(&str, &str, &ImplDef)> = Vec::new();
         for d in &self.traits.impls {
@@ -90,7 +112,7 @@ impl Checker {
                 });
             }
         }
-        for &(from, to, d) in &edges {
+        for &(from, to, d) in self.newest_edges(&edges) {
             let mut seen = HashSet::new();
             if reach(&edges, to, from, &mut seen).is_some() {
                 return Err(Error::ty(
@@ -115,8 +137,14 @@ impl Checker {
     /// the impls projections are worked out by: getting back to an impl
     /// already on the way is a type that holds itself, or holds a bigger
     /// one of itself, again and again, which is as infinite.
+    ///
+    /// Only the package being checked's impls are looked at: an earlier
+    /// package's associated types can't get to its impls, as they can only
+    /// project on their own types and type parameters, and a projection on
+    /// a parameter is worked out by no impl.
     pub(super) fn assoc_sizes(&self) -> Result<(), Error> {
-        for (k, d) in self.traits.impls.iter().enumerate() {
+        let own = self.traits.impls.iter().enumerate().skip(self.impls_from);
+        for (k, d) in own {
             for (name, t) in &d.assoc {
                 let mut path = vec![k];
                 if let Some(back) = self.holds(t, &mut path, &mut HashSet::new()) {
@@ -177,6 +205,9 @@ impl Checker {
     /// for T`, needs `T: A` to prove `T: B`: the same type. That still ends
     /// unless there's a way back from `A` to `B`, like `impl<T: B> A for T`,
     /// so the blanket impls between traits can't form a cycle.
+    ///
+    /// A new cycle has an edge of the package being checked, which is
+    /// what's reported: those are looked at first.
     pub(super) fn termination(&self) -> Result<(), Error> {
         // An edge from each trait a blanket impl is of to each it needs.
         let mut edges: Vec<(&str, &str, &ImplDef)> = Vec::new();
@@ -188,7 +219,7 @@ impl Checker {
                 edges.push((tr, &pred.trait_name, d));
             }
         }
-        for &(from, to, d) in &edges {
+        for &(from, to, d) in self.newest_edges(&edges) {
             // A path back from `to` to `from`.
             let mut path: Vec<&ImplDef> = vec![d];
             let mut seen = HashSet::new();
@@ -223,6 +254,25 @@ impl Checker {
             }
         }
         Ok(())
+    }
+}
+
+impl Checker {
+    /// Every impl, the package being checked's first.
+    fn newest_first(&self) -> impl Iterator<Item = &ImplDef> {
+        let impls = &self.traits.impls;
+        impls[self.impls_from..]
+            .iter()
+            .chain(&impls[..self.impls_from])
+    }
+
+    /// `edges`, those of impls of the package being checked first.
+    fn newest_edges<'e, 'a>(
+        &self,
+        edges: &'e [(&'a str, &'a str, &'a ImplDef)],
+    ) -> impl Iterator<Item = &'e (&'a str, &'a str, &'a ImplDef)> {
+        let (own, older): (Vec<_>, Vec<_>) = edges.iter().partition(|e| self.current(e.2.span));
+        own.into_iter().chain(older)
     }
 }
 

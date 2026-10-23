@@ -20,6 +20,7 @@ use crate::ast::*;
 use std::collections::{HashMap, HashSet};
 
 /// A struct or enum's definition, besides what it's made of.
+#[derive(Clone)]
 pub(super) struct TypeDef {
     pub(super) symbol: String,
     /// The function it's declared in, if it's local.
@@ -48,15 +49,21 @@ pub(super) enum Scoped {
     OuterParam(&'static str, String),
 }
 
-/// Every type's definition, in the order of `Program::all_types`, and what
-/// every name in a type refers to, by its node (a `TypeExpr`, or the
+/// The definition of each type of the package whose items come after
+/// `from` (see `Counts`), in the order of `Program::all_types`, and what
+/// every name in a type of it refers to, by its node (a `TypeExpr`, or the
 /// `Ident` of a struct literal, pattern or declaration): in types written anywhere,
-/// struct literals and patterns, and where types are declared.
+/// struct literals and patterns, and where types are declared. `before`
+/// are the earlier packages' types, whose symbols are taken, and `blocks`
+/// how many blocks have declared types so far, which this goes on from.
 pub(super) fn names(
     prog: &Program,
-    fns: &[(&FnDecl, Option<usize>)],
+    fns: &[(&FnDecl, Option<usize>, Option<MethodOf>)],
     fn_symbols: &[String],
     modules: &Modules,
+    from: Counts,
+    before: &[TypeDef],
+    blocks: &mut usize,
 ) -> (Vec<TypeDef>, HashMap<NodeId, Scoped>) {
     // The symbols of the types in modules come first, so no local type's
     // can be one of them.
@@ -65,30 +72,32 @@ pub(super) fn names(
         .iter()
         .map(|d| format!("{}{}", modules.mods[d.module()].prefix, d.name().name))
         .collect();
+    let taken = top.iter().chain(before.iter().map(|d| &d.symbol));
     let mut w = Walk {
         modules,
         top: top.clone(),
+        first: from.types,
         levels: Vec::new(),
         items: Vec::new(),
         fn_ids: fns
             .iter()
             .enumerate()
-            .map(|(i, &(f, _))| (f.name.id, FnId(i)))
+            .map(|(i, &(f, ..))| (f.name.id, FnId(i)))
             .collect(),
         fn_symbols,
         current: Vec::new(),
-        taken: top.iter().cloned().collect(),
-        blocks: 0,
+        taken: taken.cloned().collect(),
+        blocks: *blocks,
         defs: HashMap::new(),
         names: HashMap::new(),
     };
-    w.declare(prog.types.iter().map(|d| (d, None)).collect());
-    for f in &prog.fns {
+    w.declare(prog.types[from.types..].iter().map(|d| (d, None)).collect());
+    for f in &prog.fns[from.fns..] {
         w.module(f.module);
         w.function(f, &[]);
     }
     // A method can use its impl's type parameters as well as its own.
-    for d in &prog.impls {
+    for d in &prog.impls[from.impls..] {
         w.module(d.module);
         let params: Vec<String> = d.generics.types.iter().map(|p| p.name.clone()).collect();
         w.levels.push(Level::Params(params.clone(), w.items.len()));
@@ -103,7 +112,7 @@ pub(super) fn names(
             w.function(f, &params);
         }
     }
-    for t in &prog.traits {
+    for t in &prog.traits[from.traits..] {
         w.module(t.module);
         for m in &t.methods {
             match m.provided {
@@ -122,8 +131,10 @@ pub(super) fn names(
     let defs = prog
         .all_types()
         .into_iter()
+        .skip(from.all_types)
         .map(|(d, _)| w.defs.remove(&d.name().id).expect("every type is walked"))
         .collect();
+    *blocks = w.blocks;
     (defs, w.names)
 }
 
@@ -142,6 +153,8 @@ struct Walk<'a> {
     modules: &'a Modules,
     /// The symbol of each type in `Program::types`.
     top: Vec<String>,
+    /// Where the package's own are in `Program::types`.
+    first: usize,
     /// The scopes around what's being walked, innermost last.
     levels: Vec<Level>,
     /// The functions and types being walked, innermost last, as keyword and
@@ -222,7 +235,7 @@ impl Walk<'_> {
         for (k, &(d, parent)) in decls.iter().enumerate() {
             let name = d.name();
             let symbol = match parent {
-                None => self.top[k].clone(),
+                None => self.top[self.first + k].clone(),
                 Some(f) => symbol(&self.fn_symbols[f.0], &name.name, &self.taken),
             };
             self.taken.insert(symbol.clone());

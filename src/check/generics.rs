@@ -636,10 +636,14 @@ pub(super) struct Use<'a> {
 /// of those. (This extends how .NET's ECMA-335 spec rules out "expansive"
 /// generic types, where an edge only either grows or doesn't.)
 ///
-/// `params` holds each item's type parameters.
+/// `params` holds each item's type parameters. `current` says whether a
+/// use is in the package being checked: those before it kept this on their
+/// own, so a cycle that weighs more than 0 now has a use of its on it,
+/// which is what's reported.
 pub(super) fn polymorphic_recursion(
     uses: &[Use],
     params: &HashMap<&str, &[String]>,
+    current: &dyn Fn(Span) -> bool,
 ) -> Result<(), Error> {
     // Edges between `(item, parameter index)` nodes, with their weights.
     type Node<'a> = (&'a str, usize);
@@ -714,29 +718,77 @@ pub(super) fn polymorphic_recursion(
     if !heaviest(None).contains(&Some(i64::MAX)) {
         return Ok(());
     }
-    // An edge that makes types deeper on a cycle that does, in source
-    // order, to point at.
-    for &(a, b, w, u) in edges.iter().filter(|e| e.2 > 0) {
+    // An edge on a cycle that does, to point at: of the package being
+    // checked, in the order of `uses`, and one that makes types deeper if
+    // there's one.
+    let on_cycle = |&&(a, b, w, _): &&(Node, Node, i64, &Use)| {
         let back = heaviest(Some(b))[index(&a)];
-        if back.is_none_or(|back| back != i64::MAX && back + w <= 0) {
-            continue;
-        }
-        let arg = &u.args[b.1];
-        let to_p = &params[u.to][b.1];
-        let (from, to) = (source_name(u.from), source_name(u.to));
-        let message = if u.from == u.to {
-            format!(
-                "polymorphic recursion: `{from}` uses itself with `{to_p}` = `{arg}`, a bigger \
+        back.is_some_and(|back| back == i64::MAX || back + w > 0)
+    };
+    let own = |e: &&(Node, Node, i64, &Use)| current(e.3.span);
+    let found = (edges.iter().filter(own).filter(|e| e.2 > 0).find(on_cycle))
+        .or_else(|| edges.iter().filter(own).find(on_cycle))
+        .or_else(|| edges.iter().filter(|e| e.2 > 0).find(on_cycle));
+    let Some(&(_, b, w, u)) = found else {
+        unreachable!("a cycle that weighs more than 0 has an edge that does")
+    };
+    let arg = &u.args[b.1];
+    let to_p = &params[u.to][b.1];
+    let (from, to) = (source_name(u.from), source_name(u.to));
+    let message = if w <= 0 {
+        format!(
+            "polymorphic recursion: this use of `{to}` leads back to `{from}` through uses \
+             with a bigger type each time round, so monomorphising them would never end"
+        )
+    } else if u.from == u.to {
+        format!(
+            "polymorphic recursion: `{from}` uses itself with `{to_p}` = `{arg}`, a bigger \
                  type each time round, so monomorphising it would never end"
-            )
-        } else {
-            format!(
-                "polymorphic recursion: this use of `{to}` with `{to_p}` = `{arg}` leads \
+        )
+    } else {
+        format!(
+            "polymorphic recursion: this use of `{to}` with `{to_p}` = `{arg}` leads \
                  back to `{from}`, with a bigger type each time round, so monomorphising \
                  them would never end"
-            )
+        )
+    };
+    Err(Error::ty(u.span, message))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A library's `g<T>` uses `h<Option<T>>`, and alone that's fine; a
+    /// program's `h<U>` uses `g<U>`, which makes a cycle that gets bigger
+    /// each time round, though only the library's use adds to it. The
+    /// library checked on its own, so the program's use is the one at
+    /// fault, and the error is there.
+    #[test]
+    fn a_cycle_through_a_library_is_the_programs_fault() {
+        let t = |p: &str| Type::Param(p.into());
+        let option = |a: Type| Type::Adt("core::option::Option".into(), Vec::new(), vec![a]);
+        let library = Use {
+            from: "lib::g",
+            to: "h",
+            args: vec![option(t("T"))],
+            inside: Vec::new(),
+            span: Span::new(10, 11),
         };
-        return Err(Error::ty(u.span, message));
+        let program = Use {
+            from: "h",
+            to: "lib::g",
+            args: vec![t("U")],
+            inside: Vec::new(),
+            span: Span::new(100, 101),
+        };
+        let (gt, hu) = (["T".to_string()], ["U".to_string()]);
+        let params = HashMap::from([("lib::g", &gt[..]), ("h", &hu[..])]);
+        let current = |s: Span| s.start >= 50;
+        let alone = polymorphic_recursion(std::slice::from_ref(&library), &params, &current);
+        assert!(alone.is_ok());
+        let e = polymorphic_recursion(&[library, program], &params, &current).unwrap_err();
+        assert_eq!(e.span, Span::new(100, 101), "{}", e.message);
+        assert!(e.message.contains("leads back to `h`"), "{}", e.message);
     }
-    unreachable!("a cycle that weighs more than 0 has an edge that does")
 }

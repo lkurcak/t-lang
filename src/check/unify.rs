@@ -7,6 +7,7 @@ use crate::error::{Error, Span};
 use crate::types::Type;
 
 /// A type variable: a type the checker hasn't worked out yet.
+#[derive(Clone)]
 pub(super) struct Var {
     /// What it turned out to be, once `unify` finds out. That can be another
     /// variable, or a type with variables in it, like `fn(_) -> i64`.

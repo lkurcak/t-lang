@@ -37,7 +37,7 @@ impl Checker {
         let decls = prog.all_types();
         // (impl index, type, the derive, trait)
         let mut derived: Vec<(usize, usize, Span, &'static str)> = Vec::new();
-        for (i, (d, _)) in decls.iter().enumerate() {
+        for (i, (d, _)) in decls.iter().enumerate().skip(self.from.all_types) {
             for tr in ["Copy", "Discard", "Eq"] {
                 let Some(at) = d.derive_of(tr) else {
                     continue;

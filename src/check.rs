@@ -178,21 +178,58 @@ pub(crate) fn builtin_scheme(name: &str) -> Scheme {
     }
 }
 
+/// What reading and checking the libraries built into the compiler left,
+/// which every program's checking starts from (see docs/14-packages.md):
+/// their files, their items, with their paths resolved, and an empty crate
+/// root, and what the checker knows of them.
+pub struct Libraries {
+    pub sources: crate::source::Sources,
+    pub prog: Program,
+    /// Behind a lock only as it has cells in it, which each program's
+    /// checking clones.
+    cx: std::sync::Mutex<Checker>,
+}
+
+/// The libraries, read and checked, each against those before it: core
+/// alone, then alloc. Only once, as they're the same for every program.
+pub fn libraries() -> &'static Libraries {
+    static LIBRARIES: std::sync::OnceLock<Libraries> = std::sync::OnceLock::new();
+    LIBRARIES.get_or_init(|| {
+        let (mut sources, mut prog) = crate::load::empty();
+        let mut cx = Checker::new();
+        for library in crate::load::LIBRARIES {
+            let from = prog.counts();
+            let checked = crate::load::library(&mut prog, &mut sources, library)
+                .and_then(|root| cx.package(&mut prog, root, from));
+            if let Err(e) = checked {
+                panic!(
+                    "the {} library doesn't check: {}",
+                    library.0,
+                    e.render_in(&sources)
+                );
+            }
+        }
+        // Its own business, as `check_files` says.
+        cx.warnings.clear();
+        Libraries {
+            sources,
+            prog,
+            cx: std::sync::Mutex::new(cx),
+        }
+    })
+}
+
 /// Type-checks `prog`, adding any warnings to `warnings`, in source order.
 /// Those found before an error are kept, and so is what was learned about
 /// the program up to it. Resolving its paths first rewrites it, as
 /// `check/modules.rs` says.
+///
+/// Its libraries are `libraries()`'s, as `load` reads them, so only the
+/// crate root's package is checked here, against what checking them left.
 pub fn check(prog: &mut Program, warnings: &mut Vec<Warning>) -> (Info, Result<(), Error>) {
-    let mut modules = match modules::resolve(prog) {
-        Ok(modules) => modules,
-        Err(e) => return (Info::default(), Err(e)),
-    };
-    let resolved = std::mem::take(&mut modules.warnings);
-    let mut cx = Checker::new(&*prog, modules);
-    cx.warnings.extend(resolved);
-    cx.warnings.extend(prog.stray_docs.iter().map(unused_doc));
-    let result = cx.program(prog);
-    cx.type_notes(prog);
+    let libraries = libraries();
+    let mut cx = libraries.cx.lock().expect("never poisoned").clone();
+    let result = cx.package(prog, ROOT, libraries.prog.counts());
     cx.info.types = cx.defs.types.clone();
     let lib_types = cx.types.iter().map(|t| (&t.symbol, t.module));
     let lib_fns = cx.fns.iter().map(|f| (&f.symbol, f.module));
@@ -216,7 +253,11 @@ fn check_main(prog: &Program) -> Result<(), Error> {
         .iter()
         .find(|f| f.module == ROOT && f.name.name == "main")
     {
-        None => Err(Error::ty(Span::new(0, 0), "program has no `main` function")),
+        None => {
+            let start = prog.mods[ROOT].span.start;
+            let at = Span::new(start, start);
+            Err(Error::ty(at, "program has no `main` function"))
+        }
         Some(main) if !main.params.is_empty() => {
             Err(Error::ty(main.name.span, "`main` must not take parameters"))
         }
@@ -303,10 +344,25 @@ fn plural(n: usize, what: &str) -> String {
     format!("{n} {what}{}", if n == 1 { "" } else { "s" })
 }
 
+#[derive(Clone)]
 pub(crate) struct Checker {
     /// `Program::next_id`, while checking: the nodes the checker makes up
     /// take ids from it, and the program's goes on from where it got to.
     next_id: u32,
+    /// What the packages before the one being checked have, which it comes
+    /// after: its own items are the rest (see `Counts`).
+    from: Counts,
+    /// Where its `use`s' names start in `modules.leaf_items`.
+    leaves_from: usize,
+    /// How many blocks have declared types so far (see `names`).
+    blocks: usize,
+    /// Where the package being checked has its impls in `traits.impls`:
+    /// those before are the packages' before it, which were checked
+    /// against everything they could be checked against.
+    impls_from: usize,
+    /// Where the package being checked starts in the sources: its spans
+    /// are after, as each package is read after those before it.
+    spans_from: usize,
     /// What every struct and enum is made of, by symbol.
     adts: Adts,
     /// How many lifetime and type arguments each struct and enum takes, by
@@ -495,6 +551,7 @@ pub(super) struct Goal {
 /// An integer literal, `value`, written at `span`, of type `ty`: in an
 /// expression or a pattern. `-` of one is one too, so that the least `i8`
 /// can be written `-128`.
+#[derive(Clone)]
 pub(super) struct Literal {
     node: NodeId,
     span: Span,
@@ -509,29 +566,27 @@ impl Checker {
         NodeId(self.next_id - 1)
     }
 
-    fn new(prog: &Program, modules: modules::Modules) -> Checker {
-        let fn_symbols = scope::symbols(prog, &modules);
-        let (types, type_names) = names::names(prog, &prog.all_fns(), &fn_symbols, &modules);
-        let mut info = Info::default();
-        for (id, name) in &type_names {
-            if let Scoped::Adt(symbol) = name {
-                info.symbols.insert(*id, symbol.clone());
-            }
-        }
+    /// A checker that knows of nothing but what's built in.
+    fn new() -> Checker {
         Checker {
             adts: Adts::new(),
             arities: HashMap::new(),
-            defs: Defs::new(prog, &types),
-            types,
-            type_names,
-            fn_symbols,
+            defs: Defs::default(),
+            types: Vec::new(),
+            type_names: HashMap::new(),
+            fn_symbols: Vec::new(),
+            blocks: 0,
+            impls_from: 0,
+            spans_from: 0,
+            from: Counts::default(),
+            leaves_from: 0,
             fns: Vec::new(),
             nested_ids: HashMap::new(),
             scopes: Vec::new(),
             current: None,
             type_params: Vec::new(),
             lifetimes: Vec::new(),
-            next_id: prog.next_id,
+            next_id: 0,
             typed: Typed::default(),
             closures: Vec::new(),
             decided: HashMap::new(),
@@ -551,7 +606,7 @@ impl Checker {
             unused: Vec::new(),
             uses: Vec::new(),
             warnings: Vec::new(),
-            info,
+            info: Info::default(),
             pending: Vec::new(),
             instance_at: HashMap::new(),
             ret: None,
@@ -578,26 +633,61 @@ impl Checker {
             pred_names: HashMap::new(),
             literals: Vec::new(),
             nots: Vec::new(),
-            modules,
+            modules: modules::Modules::default(),
             module: ROOT,
         }
     }
 
-    fn program(&mut self, prog: &Program) -> Result<(), Error> {
+    /// Checks the package of `prog` whose root module is `root`, and whose
+    /// items are those after `from` (see `Counts`), against what checking
+    /// those before it left. Resolving its paths first rewrites them, as
+    /// `check/modules.rs` says.
+    fn package(&mut self, prog: &mut Program, root: usize, from: Counts) -> Result<(), Error> {
+        self.from = from;
+        self.leaves_from = self.modules.leaf_items.len();
+        self.impls_from = self.traits.impls.len();
+        self.spans_from = prog.mods[root].span.start;
+        let resolved = modules::resolve(prog, &mut self.modules, from);
+        self.next_id = prog.next_id;
+        resolved?;
+        let resolved = std::mem::take(&mut self.modules.warnings);
+        self.warnings.extend(resolved);
+        let stray = &prog.stray_docs[from.stray_docs..];
+        self.warnings.extend(stray.iter().map(unused_doc));
+        self.fn_symbols = scope::symbols(prog, &self.modules, &self.fn_symbols);
+        let (types, type_names) = names::names(
+            prog,
+            &prog.all_fns(),
+            &self.fn_symbols,
+            &self.modules,
+            from,
+            &self.types,
+            &mut self.blocks,
+        );
+        for (id, name) in &type_names {
+            if let Scoped::Adt(symbol) = name {
+                self.info.symbols.insert(*id, symbol.clone());
+            }
+        }
+        self.defs.add(prog, &types, from);
+        self.types.extend(types);
+        self.type_names.extend(type_names);
+        let result = self.program(prog, root);
+        self.type_notes(prog);
+        result
+    }
+
+    fn program(&mut self, prog: &Program, root: usize) -> Result<(), Error> {
         self.trait_names(prog)?;
         self.collect_adts(prog)?;
         self.collect_traits(prog)?;
         let fns = prog.all_fns();
-        for (i, (f, _)) in fns
-            .iter()
-            .enumerate()
-            .skip(prog.fns.len())
-            .take(prog.methods().len())
-        {
+        let own = fns.iter().enumerate().skip(self.from.all_fns);
+        for (i, (f, ..)) in own.filter(|(_, (.., m))| m.is_some()) {
             self.method_ids.insert(f.name.id, FnId(i));
         }
         self.collect_impls(prog)?;
-        self.projections_known();
+        self.projections_known(prog);
         self.derive(prog)?;
         self.signatures(prog, &fns)?;
         self.check_impls(prog)?;
@@ -610,12 +700,15 @@ impl Checker {
         self.info.traits.opaques = self.traits.opaques.clone();
         self.info.opaques = self.opaque_at.clone();
         self.no_polymorphic_recursion()?;
-        check_main(prog)?;
-        // What's dead depends on the whole program, so only once it all checks.
-        self.dead_code(prog);
-        let unused = self
-            .modules
-            .imports
+        // A library has no `main`, and nothing in it is dead that a program
+        // could use.
+        if root == ROOT {
+            check_main(prog)?;
+            // What's dead depends on the whole program, so only once it all
+            // checks.
+            self.dead_code(prog);
+        }
+        let unused = self.modules.imports[self.leaves_from..]
             .iter()
             .filter(|i| !i.public && !i.used.get());
         self.warnings.extend(unused.map(lints::unused_import));
@@ -635,12 +728,10 @@ impl Checker {
     fn signatures(
         &mut self,
         prog: &Program,
-        fns: &[(&FnDecl, Option<usize>)],
+        fns: &[(&FnDecl, Option<usize>, Option<MethodOf>)],
     ) -> Result<(), Error> {
-        let methods = prog.methods();
-        for (i, &(f, parent)) in fns.iter().enumerate() {
+        for (i, &(f, parent, method)) in fns.iter().enumerate().skip(self.from.all_fns) {
             let parent = parent.map(FnId);
-            let method = i.checked_sub(prog.fns.len()).and_then(|j| methods.get(j));
             if parent.is_none()
                 && method.is_none()
                 && f.module == ROOT
@@ -658,13 +749,11 @@ impl Checker {
                 }
                 // A method's is its type's: `alloc::raw::RawBuf::new`.
                 let name = match method {
-                    Some(&(_, MethodOf::Impl(k))) => {
-                        match &self.traits.impls[self.impl_ids[k]].self_ty {
-                            Type::Adt(symbol, ..) => format!("{symbol}::{}", f.name.name),
-                            Type::Slice(_) => format!("[T]::{}", f.name.name),
-                            t => format!("{t}::{}", f.name.name),
-                        }
-                    }
+                    Some(MethodOf::Impl(k)) => match &self.traits.impls[self.impl_ids[k]].self_ty {
+                        Type::Adt(symbol, ..) => format!("{symbol}::{}", f.name.name),
+                        Type::Slice(_) => format!("[T]::{}", f.name.name),
+                        t => format!("{t}::{}", f.name.name),
+                    },
                     _ => self.fn_symbols[i].clone(),
                 };
                 if !INTRINSICS.contains(&name.as_str()) {
@@ -676,7 +765,7 @@ impl Checker {
             }
             self.sig_owner = (self.fn_symbols[i].clone(), f.name.name.clone());
             let scheme = match method {
-                Some(&(_, MethodOf::Impl(k))) => {
+                Some(MethodOf::Impl(k)) => {
                     let d = self.traits.impls[self.impl_ids[k]].clone();
                     let outer = traits::Outer {
                         params: d.params.clone(),
@@ -691,7 +780,7 @@ impl Checker {
                     });
                     self.method_scheme(f, &outer, this, Some(&d.self_ty))?
                 }
-                Some(&(_, MethodOf::Trait(k))) => {
+                Some(MethodOf::Trait(k)) => {
                     let tr = &prog.traits[k].name.name;
                     let m = self.traits.method(tr, &f.name.name).expect("collected");
                     m.scheme.clone()
@@ -746,7 +835,7 @@ impl Checker {
                 public: f.public.is_some(),
             });
         }
-        self.uses = (0..fns.len()).map(|_| Uses::default()).collect();
+        self.uses.resize_with(fns.len(), Uses::default);
         Ok(())
     }
 
@@ -848,25 +937,24 @@ impl Checker {
     }
 
     /// Pass 5: checks each function's body against its declared return
-    /// type. The methods' too, which come right after the top-level
-    /// functions in `Program::all_fns`.
+    /// type. The methods' too. Nested functions are checked with the
+    /// bodies they're in.
     fn bodies(&mut self, prog: &Program) -> Result<(), Error> {
-        let methods = prog.methods();
-        let fns = prog.fns.iter().chain(methods.iter().map(|&(f, _)| f));
-        for (i, f) in fns.enumerate() {
+        let fns = prog.all_fns().into_iter().enumerate();
+        for (i, (f, parent, method)) in fns.skip(self.from.all_fns) {
             // What an intrinsic does isn't written in T.
-            if f.intrinsic.is_some() {
+            if f.intrinsic.is_some() || parent.is_some() {
                 continue;
             }
-            self.self_ty = match methods.get(i.wrapping_sub(prog.fns.len())) {
-                Some(&(_, MethodOf::Impl(k))) => {
+            self.self_ty = match method {
+                Some(MethodOf::Impl(k)) => {
                     Some(self.traits.impls[self.impl_ids[k]].self_ty.clone())
                 }
                 _ => None,
             };
             self.in_trait_impl = matches!(
-                methods.get(i.wrapping_sub(prog.fns.len())),
-                Some(&(_, MethodOf::Impl(k))) if prog.impls[k].trait_name.is_some()
+                method,
+                Some(MethodOf::Impl(k)) if prog.impls[k].trait_name.is_some()
             );
             let notes = self.info.notes.len();
             let result = self.body(f, FnId(i));
@@ -1262,7 +1350,14 @@ impl Checker {
                 params.insert(eq, &d.params);
             }
         }
-        generics::polymorphic_recursion(&uses, &params)
+        generics::polymorphic_recursion(&uses, &params, &|s| self.current(s))
+    }
+
+    /// Is `span` in the package being checked, rather than one before it?
+    /// What breaks a rule only with the packages before it is its fault,
+    /// as each of those kept the rules on its own.
+    pub(super) fn current(&self, span: Span) -> bool {
+        span.start >= self.spans_from
     }
 
     /// What the function being checked refers to.
@@ -1299,4 +1394,108 @@ impl Checker {
     // This rule isn't syntax-directed: it applies to any expression. So it's
     // only used where the type wanted is known, as `fits`, rather than by
     // `unify`, which would have to guess.
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    impl Checker {
+        /// What checking the libraries left, as `base` has it, which a
+        /// program's checking must leave as it is: their traits, impls,
+        /// opaque types, closures, structs and enums, functions' types and
+        /// modules' names. Shown in a fixed order, as hash maps have none.
+        fn library_part(&self, base: &Checker) -> Vec<String> {
+            let mut out = Vec::new();
+            let sorted = |keys: Vec<&String>| {
+                let mut keys: Vec<String> = keys.into_iter().cloned().collect();
+                keys.sort();
+                keys
+            };
+            for name in sorted(base.traits.traits.keys().collect()) {
+                out.push(format!("trait {name}: {:?}", self.traits.traits[&name]));
+            }
+            for d in &self.traits.impls[..base.traits.impls.len()] {
+                out.push(format!("impl {d:?}"));
+            }
+            for s in sorted(base.traits.opaques.keys().collect()) {
+                out.push(format!("opaque {s}: {:?}", self.traits.opaques[&s]));
+            }
+            for s in sorted(base.traits.closures.keys().collect()) {
+                out.push(format!("closure {s}: {:?}", self.traits.closures[&s]));
+            }
+            for s in sorted(base.adts.keys().collect()) {
+                out.push(format!("type {s}: {:?}", self.adts[&s]));
+            }
+            for f in &self.fns[..base.fns.len()] {
+                out.push(format!("fn {}: {:?}", f.symbol, f.scheme));
+            }
+            // Not the crate root's, which is the program's.
+            for m in &self.modules.mods[1..base.modules.mods.len()] {
+                for (ns, table) in [("type", &m.types), ("value", &m.values)] {
+                    for name in sorted(table.keys().collect()) {
+                        let item = table[&name].item;
+                        out.push(format!("{} {ns} {name}: {item:?}", m.path));
+                    }
+                }
+            }
+            out
+        }
+    }
+
+    /// Each library is checked on its own, before any program, against
+    /// those before it: core alone, then alloc. Checking a program goes on
+    /// from there and must leave what's known of them as it was, whether
+    /// the program checks or not: else a library would mean something
+    /// different with some programs than alone.
+    #[test]
+    fn checking_a_program_leaves_the_libraries_as_they_were() {
+        let libraries = libraries();
+        let base = libraries.cx.lock().unwrap().clone();
+        let want = base.library_part(&base);
+        assert!(want.len() > 100, "only {} things known", want.len());
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/t");
+        let mut paths: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.extension().is_some_and(|e| e == "t"))
+            .collect();
+        paths.sort();
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+        let failures: Vec<String> = std::thread::scope(|s| {
+            let handles: Vec<_> = (0..threads)
+                .map(|_| {
+                    s.spawn(|| {
+                        let base = libraries.cx.lock().unwrap().clone();
+                        let mut failures = Vec::new();
+                        loop {
+                            let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            let Some(path) = paths.get(i) else {
+                                return failures;
+                            };
+                            let src = std::fs::read_to_string(path).unwrap();
+                            let (_, prog) = crate::load::load(path, &src, &crate::no_files);
+                            let Ok(mut prog) = prog else {
+                                continue;
+                            };
+                            let mut cx = base.clone();
+                            let _ = cx.package(&mut prog, ROOT, libraries.prog.counts());
+                            let got = cx.library_part(&base);
+                            if let Some((w, g)) = want.iter().zip(&got).find(|(w, g)| w != g) {
+                                let name = path.file_name().unwrap().to_string_lossy();
+                                failures.push(format!("{name}:\n  was {w}\n  now {g}"));
+                            }
+                        }
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .flat_map(|h| h.join().unwrap())
+                .collect()
+        });
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
 }

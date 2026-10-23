@@ -19,7 +19,7 @@ impl Checker {
     /// and proving
     /// that a type implements a trait always ends.
     pub(in crate::check) fn check_impls(&mut self, prog: &Program) -> Result<(), Error> {
-        for (k, d) in prog.impls.iter().enumerate() {
+        for (k, d) in prog.impls.iter().enumerate().skip(self.from.impls) {
             let def = self.traits.impls[self.impl_ids[k]].clone();
             self.env = def.preds.clone();
             self.well_formed_now(&def.self_ty, d.self_ty.span)?;
@@ -222,7 +222,7 @@ impl Checker {
         for (k, _, node) in &nodes {
             params.insert(node, &self.traits.impls[*k].params);
         }
-        generics::polymorphic_recursion(&uses, &params)
+        generics::polymorphic_recursion(&uses, &params, &|s| self.current(s))
     }
 
     /// The name a struct or enum's symbol is a node by, in `assoc_regular`.
@@ -521,8 +521,9 @@ impl Checker {
     /// method of the same name.
     fn coherence(&self) -> Result<(), Error> {
         let impls = &self.traits.impls;
-        for (i, a) in impls.iter().enumerate() {
-            for b in &impls[..i] {
+        // Two impls of the packages before were checked by them.
+        for (i, a) in impls.iter().enumerate().skip(self.impls_from) {
+            for (j, b) in impls[..i].iter().enumerate() {
                 if a.trait_name != b.trait_name {
                     continue;
                 }
@@ -556,8 +557,9 @@ impl Checker {
                     }
                     continue;
                 };
-                // Point at the one written, rather than a derive.
-                let (a, b) = match a.derived && !b.derived {
+                // Point at the one written, rather than a derive, if it's
+                // this package's.
+                let (a, b) = match a.derived && !b.derived && j >= self.impls_from {
                     true => (b, a),
                     false => (a, b),
                 };

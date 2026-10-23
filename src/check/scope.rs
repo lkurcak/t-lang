@@ -30,6 +30,7 @@ use std::collections::HashSet;
 pub(super) struct FnId(pub(super) usize);
 
 /// A function's definition.
+#[derive(Clone)]
 pub(super) struct FnDef {
     /// Its name, as written.
     pub(super) name: Ident,
@@ -47,6 +48,7 @@ pub(super) struct FnDef {
 /// The functions a block declares, which are in scope in all of it. Locals
 /// bound before the block (at indexes below `at` in `Checker::locals`) are
 /// shadowed by them, and those bound in it shadow them.
+#[derive(Clone)]
 pub(super) struct FnScope {
     pub(super) at: usize,
     pub(super) fns: Vec<FnId>,
@@ -74,16 +76,15 @@ pub(super) fn symbol(parent: &str, name: &str, taken: &HashSet<String>) -> Strin
 }
 
 /// The symbol of each function of `prog`, in the order of
-/// `Program::all_fns`.
-pub(super) fn symbols(prog: &Program, modules: &Modules) -> Vec<String> {
-    let methods = prog.methods();
-    let mut out: Vec<String> = Vec::new();
-    let mut taken = HashSet::new();
-    for (i, (f, parent)) in prog.all_fns().into_iter().enumerate() {
-        let method = i.checked_sub(prog.fns.len()).and_then(|j| methods.get(j));
+/// `Program::all_fns`: `before`, those of the packages before, then the
+/// rest.
+pub(super) fn symbols(prog: &Program, modules: &Modules, before: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = before.to_vec();
+    let mut taken: HashSet<String> = before.iter().cloned().collect();
+    for (f, parent, method) in prog.all_fns().into_iter().skip(before.len()) {
         let symbol = match (parent, method) {
             (Some(p), _) => symbol(&out[p], &f.name.name, &taken),
-            (None, Some(&(_, MethodOf::Impl(k)))) => {
+            (None, Some(MethodOf::Impl(k))) => {
                 let d = &prog.impls[k];
                 let header = match &d.trait_name {
                     Some(t) => format!("{} as {}", d.self_ty, t.name),
@@ -101,7 +102,7 @@ pub(super) fn symbols(prog: &Program, modules: &Modules) -> Vec<String> {
                     .find(|s| !taken.contains(s))
                     .expect("there are always more numbers")
             }
-            (None, Some(&(_, MethodOf::Trait(k)))) => {
+            (None, Some(MethodOf::Trait(k))) => {
                 super::traits::trait_method_symbol(&prog.traits[k].name.name, &f.name.name)
             }
             (None, None) => format!("{}{}", modules.mods[f.module].prefix, f.name.name),

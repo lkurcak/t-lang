@@ -251,7 +251,7 @@ impl Note {
 
 /// Where each type, field and variant is declared, by the type's symbol.
 /// The checker keeps track of functions itself.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(super) struct Defs {
     pub(super) types: HashMap<String, Span>,
     /// By `(type, field)`.
@@ -264,19 +264,20 @@ pub(super) struct Defs {
 }
 
 impl Defs {
-    /// The first declaration of each: the checker rejects the others.
-    /// `types` are those of `Program::all_types`, in order.
-    pub(super) fn new(prog: &Program, types: &[super::TypeDef]) -> Defs {
-        let mut defs = Defs::default();
+    /// Adds those of the package whose items come after `from` (see
+    /// `Counts`): the first declaration of each, as the checker rejects the
+    /// others. `types` are its types, in the order of `Program::all_types`.
+    pub(super) fn add(&mut self, prog: &Program, types: &[super::TypeDef], from: Counts) {
+        let defs = self;
         let mut doc = |name: &Ident, doc: Option<&DocComment>| {
             if let Some(d) = doc {
                 defs.docs.insert(name.span, d.markdown());
             }
         };
-        for (f, _) in prog.all_fns() {
+        for (f, ..) in prog.all_fns().into_iter().skip(from.all_fns) {
             doc(&f.name, f.doc.as_ref());
         }
-        let all = prog.all_types();
+        let all: Vec<_> = prog.all_types().into_iter().skip(from.all_types).collect();
         for (d, _) in &all {
             doc(d.name(), d.doc());
             match d {
@@ -302,7 +303,6 @@ impl Defs {
                 }
             }
         }
-        defs
     }
 }
 
@@ -433,7 +433,9 @@ impl Checker {
     /// type, type parameter, field or variant. None of that needs inference,
     /// so it's done for the whole program, even past an error.
     pub(super) fn type_notes(&mut self, prog: &Program) {
-        for (i, (d, _)) in prog.all_types().into_iter().enumerate() {
+        let from = self.from;
+        let types = prog.all_types().into_iter().enumerate();
+        for (i, (d, _)) in types.skip(from.all_types) {
             let params = d.type_params();
             let name = &d.name().name;
             let symbol = &self.types[i].symbol;
@@ -495,7 +497,8 @@ impl Checker {
             }
         }
         // What each `use` names.
-        for (name, items) in self.modules.leaf_items.clone() {
+        let leaves = self.modules.leaf_items[self.leaves_from..].to_vec();
+        for (name, items) in leaves {
             for item in items {
                 let (kind, ty, def) = match item {
                     Item::Fn(i) => {
@@ -530,7 +533,7 @@ impl Checker {
         }
         // A method can use its impl's type parameters too.
         let mut outer: HashMap<NodeId, Vec<Ident>> = HashMap::new();
-        for d in &prog.impls {
+        for d in &prog.impls[from.impls..] {
             let params = &d.generics.types;
             self.param_notes(params);
             self.type_expr_notes(&d.self_ty, params);
@@ -545,7 +548,7 @@ impl Checker {
                 outer.insert(f.name.id, params.clone());
             }
         }
-        for (f, _) in prog.all_fns() {
+        for (f, ..) in prog.all_fns().into_iter().skip(from.all_fns) {
             let mut params = outer.get(&f.name.id).cloned().unwrap_or_default();
             params.extend(f.generics.types.iter().cloned());
             let params = &params;
@@ -558,7 +561,7 @@ impl Checker {
             self.effect_notes(f.effects.as_ref(), params);
             each_annotation(&f.body, &mut |t| self.type_expr_notes(t, params));
         }
-        for t in &prog.traits {
+        for t in &prog.traits[from.traits..] {
             let kind = NoteKind::Trait(t.name.name.clone());
             self.note(t.name.span, kind, None, Some(t.name.span));
             for m in t.methods.iter().filter(|m| !m.provided) {

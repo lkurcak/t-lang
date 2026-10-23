@@ -15,7 +15,7 @@ impl Checker {
     /// Pass 0: the names of the traits, so that anything can mention any
     /// of them.
     pub(in crate::check) fn trait_names(&mut self, prog: &Program) -> Result<(), Error> {
-        for t in &prog.traits {
+        for t in &prog.traits[self.from.traits..] {
             let name = &t.name;
             if self.traits.traits.contains_key(&name.name) {
                 let message = match crate::traits::BUILTIN_TRAITS.contains(&name.name.as_str()) {
@@ -35,7 +35,7 @@ impl Checker {
         }
         // Each trait's supertraits and associated types, which a type
         // anywhere can mention, as `T::Item`.
-        for t in &prog.traits {
+        for t in &prog.traits[self.from.traits..] {
             let mut supers = Vec::new();
             for s in &t.supers {
                 let s = self.trait_named(s)?;
@@ -106,7 +106,7 @@ impl Checker {
     /// No trait can be its own supertrait, even through others: then
     /// implementing it would need it implemented already.
     pub(in crate::check) fn collect_traits(&mut self, prog: &Program) -> Result<(), Error> {
-        for t in &prog.traits {
+        for t in &prog.traits[self.from.traits..] {
             if let Some(i) = t
                 .supers
                 .iter()
@@ -122,7 +122,7 @@ impl Checker {
                 ));
             }
         }
-        for t in &prog.traits {
+        for t in &prog.traits[self.from.traits..] {
             let mut methods: Vec<MethodDef> = Vec::new();
             for m in &t.methods {
                 let f = &m.decl;
@@ -281,7 +281,7 @@ impl Checker {
     }
 
     fn collect_impls_in(&mut self, prog: &Program) -> Result<(), Error> {
-        for d in &prog.impls {
+        for d in &prog.impls[self.from.impls..] {
             let params = generics::declare(&d.generics.types)?;
             let declared = generics::declare_lifetimes(&d.generics.lifetimes)?;
             let mut lts = Lifetimes::Params {
@@ -672,14 +672,24 @@ impl Checker {
         Ok(out)
     }
 
-    /// Once every impl is collected, what each projection stands for is
-    /// known: the types already resolved, of fields and of trait methods,
-    /// get theirs worked out.
-    pub(in crate::check) fn projections_known(&mut self) {
+    /// Once every impl of the package is collected, what each projection
+    /// stands for is known: the types already resolved, of its fields and
+    /// of its traits' methods, get theirs worked out. Those of the packages
+    /// before it are as they were: what a projection in them stands for
+    /// can't change, as a later package's impls are of its own types or
+    /// traits (see `orphan`).
+    pub(in crate::check) fn projections_known(&mut self, prog: &Program) {
         let local = std::mem::take(&mut self.adts.proj.local);
         self.adts.proj = crate::traits::Projections::new(&self.traits);
         let proj = self.adts.proj.clone();
-        for def in self.adts.values_mut() {
+        let own: std::collections::HashSet<&str> = (self.types[self.from.all_types..].iter())
+            .map(|t| t.symbol.as_str())
+            .collect();
+        let defs = self
+            .adts
+            .iter_mut()
+            .filter(|(s, _)| own.contains(s.as_str()));
+        for (_, def) in defs {
             let mut p = proj.clone();
             p.local = def.eqs.clone();
             match &mut def.kind {
@@ -695,7 +705,8 @@ impl Checker {
                 }
             }
         }
-        for def in self.traits.traits.values_mut() {
+        for t in &prog.traits[self.from.traits..] {
+            let def = self.traits.traits.get_mut(&t.name.name).expect("collected");
             for m in &mut def.methods {
                 m.scheme.ty = proj.normalise(&m.scheme.ty);
             }

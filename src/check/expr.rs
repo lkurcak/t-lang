@@ -1506,7 +1506,7 @@ impl Checker {
 }
 
 /// What a `break` or `continue` goes to.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) enum Target {
     Loop(Box<LoopCx>),
     /// The start of a closure's body, which is a function of its own: no
@@ -1515,7 +1515,7 @@ pub(crate) enum Target {
 }
 
 /// A loop being checked.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct LoopCx {
     label: Option<Label>,
     /// Whether a `break` or `continue` has used its label.

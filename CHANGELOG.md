@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+Step 14: checking packages separately. See
+[docs/14-packages.md](docs/14-packages.md).
+
+### Changed
+
+- The core and alloc libraries are checked once, each against those
+  before it (core alone, then alloc), and every program's checking starts
+  from what that left: only the program's own code is checked for it.
+  After the first program in a process, checking `fn main() {}` takes
+  about 4 ms rather than 29 ms; the test suite takes half as long.
+- An error that only a program's code together with a library's makes
+  is reported in the program: an impl whose bounds let a library impl's
+  loop (as `impl<T: Iterator + Discard> Discard for W<T>` did with core's
+  `Filter`, whose error used to point into `<core>/iter.t`), and
+  polymorphic recursion through library functions.
+- Closures' symbols, as `t mono` shows them, have other numbers, as the
+  libraries are read before the program.
+
 ## 0.25.0 (2026-10-23)
 
 Step 13.1: owned strings. See [docs/13.1-string.md](docs/13.1-string.md).

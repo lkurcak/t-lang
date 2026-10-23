@@ -10,7 +10,7 @@ use crate::source::Sources;
 
 pub fn warnings(sources: &Sources, prog: &Program) -> Vec<Warning> {
     let mut blocks = Vec::new();
-    for (f, _) in prog.all_fns() {
+    for (f, ..) in prog.all_fns() {
         unsafe_blocks(&f.body, &mut blocks);
     }
     let text = sources.text();

@@ -14,10 +14,10 @@
 //! link, which could otherwise make `a/a/a/..` go on forever.
 //!
 //! Every program has the core library too (see docs/06e-core.md): a module
-//! tree of its own beside the crate root's, read after it, from the files
+//! tree of its own beside the crate root's, read before it, from the files
 //! of `core/` that are built into the compiler. Its root is `lib.t`, and
 //! the file of its module `a::b` is `a/b.t` there. Its paths are shown as
-//! `<core>/a/b.t`. The alloc library is the same, read last, from `alloc/`
+//! `<core>/a/b.t`. The alloc library is the same, read next, from `alloc/`
 //! (see docs/09-unsafe.md).
 
 use crate::ast::{Ident, ModDecl, Program, ROOT};
@@ -64,14 +64,14 @@ pub const ALLOC_DIR: &str = "<alloc>";
 
 /// A library built into the compiler: its name, its files and where they
 /// seem to be.
-type Library = (
+pub(crate) type Library = (
     &'static str,
     &'static [(&'static str, &'static str)],
     &'static str,
 );
 
 /// The libraries built into the compiler, in the order they're read.
-const LIBRARIES: [Library; 2] = [
+pub(crate) const LIBRARIES: [Library; 2] = [
     ("core", CORE_FILES, CORE_DIR),
     ("alloc", ALLOC_FILES, ALLOC_DIR),
 ];
@@ -83,50 +83,83 @@ pub fn read_file(path: &Path) -> std::io::Result<String> {
 
 /// Parses the program that starts at `path`, whose text is `src`, and the
 /// files of its modules, read with `read`. The sources are what was read,
-/// as far as it got.
+/// as far as it got: the libraries' first, then the program's.
+///
+/// The libraries are as checking them left them (see `check::libraries`),
+/// with their paths resolved: they're read and checked only once.
 pub fn load(path: &Path, src: &str, read: Read) -> (Sources, Result<Program, Error>) {
-    let mut sources = Sources::single(path, src);
-    let result = files(path, &mut sources, read);
+    let libraries = crate::check::libraries();
+    let (mut sources, mut prog) = (libraries.sources.clone(), libraries.prog.clone());
+    let result = files(path, src, &mut prog, &mut sources, read).map(|()| prog);
     (sources, result)
 }
 
-fn files(path: &Path, sources: &mut Sources, read: Read) -> Result<Program, Error> {
-    let mut prog = lexer::lex(sources.text()).and_then(parser::parse)?;
-    let dir = path.parent().unwrap_or(Path::new(""));
-    let starts_in_main = path.file_name().is_some_and(|n| n == "main.t");
-    let mut seen = vec![canonical(path)];
-    // Modules are added as files are parsed, so this sees those too. The
-    // program's first, then each library's.
-    let mut m = 0;
-    loop {
-        if m == prog.mods.len() {
-            let Some(&library) = LIBRARIES.iter().find(|(name, ..)| match *name {
-                "core" => prog.core.is_none(),
-                _ => prog.alloc.is_none(),
-            }) else {
-                break;
-            };
-            add_library(&mut prog, sources, library)?;
-            m += 1;
-            continue;
-        }
-        if !prog.mods[m].in_file {
-            m += 1;
-            continue;
-        }
-        if prog.core.is_some_and(|core| m > core) {
-            let segments = module_path(&prog, m);
+/// No files, and a program of nothing but an empty crate root, which a
+/// program's first file fills: what reading the libraries starts with.
+pub(crate) fn empty() -> (Sources, Program) {
+    let prog = lexer::lex("")
+        .and_then(parser::parse)
+        .expect("an empty program parses");
+    (Sources::default(), prog)
+}
+
+/// Reads `library` into `prog`, after what's there, and returns its root
+/// module.
+pub(crate) fn library(
+    prog: &mut Program,
+    sources: &mut Sources,
+    library: Library,
+) -> Result<usize, Error> {
+    let m = prog.mods.len();
+    add_library(prog, sources, library)?;
+    library_files(prog, sources, m)?;
+    Ok(m)
+}
+
+/// Reads the files of the modules of the library whose root is module
+/// `m`, and of those after it, which are its.
+fn library_files(prog: &mut Program, sources: &mut Sources, mut m: usize) -> Result<(), Error> {
+    while m < prog.mods.len() {
+        if prog.mods[m].in_file {
+            let segments = module_path(prog, m);
             let (name, files, dir) = LIBRARIES
                 .into_iter()
                 .find(|(name, ..)| *name == segments[0])
-                .expect("a module after the crate's is a library's");
+                .expect("a library's module is in its tree");
             let file = segments[1..].join("/") + ".t";
             let Some(&(_, text)) = files.iter().find(|(f, _)| *f == file) else {
                 unreachable!("the {name} library has no file `{file}`");
             };
             let path = Path::new(dir).join(&file);
             let start = sources.add(path, text, m, Some(prog.mods[m].name.span));
-            parse_file(&mut prog, m, text, start)?;
+            parse_file(prog, m, text, start)?;
+        }
+        m += 1;
+    }
+    Ok(())
+}
+
+/// Parses the program's first file, at `path`, whose text is `src`, into
+/// the crate root of `prog`, and then the files of its modules.
+fn files(
+    path: &Path,
+    src: &str,
+    prog: &mut Program,
+    sources: &mut Sources,
+    read: Read,
+) -> Result<(), Error> {
+    let start = sources.add(path.to_path_buf(), src, ROOT, None);
+    prog.mods[ROOT].span = Span::new(start, start + src.len());
+    prog.mods[ROOT].name.span = Span::new(start, start);
+    let first = prog.mods.len();
+    parse_file(prog, ROOT, src, start)?;
+    let dir = path.parent().unwrap_or(Path::new(""));
+    let starts_in_main = path.file_name().is_some_and(|n| n == "main.t");
+    let mut seen = vec![canonical(path)];
+    // Modules are added as files are parsed, so this sees those too.
+    let mut m = first;
+    while m < prog.mods.len() {
+        if !prog.mods[m].in_file {
             m += 1;
             continue;
         }
@@ -152,7 +185,7 @@ fn files(path: &Path, sources: &mut Sources, read: Read) -> Result<Program, Erro
                  where a program starts",
             ));
         }
-        let segments = module_path(&prog, m);
+        let segments = module_path(prog, m);
         // A directory for each module it's in, joined as paths are where
         // it runs: `a\b.t` on Windows, not `a/b.t`.
         let (last, outer) = segments.split_last().expect("a module has a name");
@@ -181,10 +214,10 @@ fn files(path: &Path, sources: &mut Sources, read: Read) -> Result<Program, Erro
         }
         seen.push(id);
         let start = sources.add(file, &text, m, Some(prog.mods[m].name.span));
-        parse_file(&mut prog, m, &text, start)?;
+        parse_file(prog, m, &text, start)?;
         m += 1;
     }
-    Ok(prog)
+    Ok(())
 }
 
 /// Parses `text`, which starts at `start` in the sources, into module `m`.

@@ -91,8 +91,14 @@ impl Checker {
     /// what `f()` returns would be a type that holds itself, which no
     /// finite type is. Then replacing each with what it stands for, as
     /// monomorphisation does (`Projections::reveal`), ends.
+    ///
+    /// Only the package being checked's need looking at: an earlier
+    /// package's can't hold its, which they can't name.
     pub(super) fn opaque_cycles(&self) -> Result<(), Error> {
-        let mut symbols: Vec<&String> = self.traits.opaques.keys().collect();
+        let opaques = &self.traits.opaques;
+        let mut symbols: Vec<&String> = (opaques.keys())
+            .filter(|s| self.current(opaques[*s].span))
+            .collect();
         symbols.sort_by_key(|s| self.traits.opaques[*s].span.start);
         for start in symbols {
             let mut todo = vec![start.clone()];

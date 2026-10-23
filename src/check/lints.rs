@@ -269,7 +269,7 @@ pub(super) fn unused_doc(doc: &DocComment) -> Warning {
 }
 
 /// What one function refers to, for finding dead code.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct Uses {
     /// Functions it names, called or not.
     pub(super) fns: HashSet<FnId>,
@@ -308,17 +308,18 @@ impl Checker {
     /// if nothing live calls it.
     pub(super) fn dead_code(&mut self, prog: &Program) {
         // Everything reachable from `main`, by following which function
-        // names which. Functions that only call each other aren't. The
-        // top-level ones come first, so `main`'s id is where it is in
-        // `prog.fns`, and the methods right after.
-        let main = prog.fns.iter().position(|f| f.name.name == "main");
+        // names which. Functions that only call each other aren't.
+        let fns = prog.all_fns();
+        let main = fns.iter().position(|(f, parent, method)| {
+            parent.is_none() && method.is_none() && f.module == ROOT && f.name.name == "main"
+        });
         let mut live = vec![false; self.fns.len()];
         let mut todo = vec![FnId(main.expect("checked that there's a `main`"))];
-        let methods = prog.methods();
-        for (j, (_, of)) in methods.iter().enumerate() {
-            let inherent = matches!(of, MethodOf::Impl(k) if prog.impls[*k].trait_name.is_none());
-            if !inherent {
-                todo.push(FnId(prog.fns.len() + j));
+        for (i, (.., method)) in fns.iter().enumerate() {
+            let inherent =
+                matches!(method, Some(MethodOf::Impl(k)) if prog.impls[*k].trait_name.is_none());
+            if method.is_some() && !inherent {
+                todo.push(FnId(i));
             }
         }
         while let Some(f) = todo.pop() {
@@ -352,11 +353,12 @@ impl Checker {
         }
 
         let on_purpose = |id: &Ident| id.name.starts_with('_');
-        let method_ids = prog.fns.len()..prog.fns.len() + methods.len();
-        for (i, (f, is_live)) in self.fns.iter().zip(&live).enumerate() {
+        // The libraries' are their own business.
+        let own = self.fns.iter().zip(&live).zip(&fns).skip(self.from.all_fns);
+        for ((f, is_live), (.., method)) in own {
             let in_live = f.parent.is_none_or(|p| live[p.0]);
             if !is_live && in_live && !on_purpose(&f.name) {
-                let what = if method_ids.contains(&i) {
+                let what = if method.is_some() {
                     "method"
                 } else {
                     "function"
@@ -365,7 +367,8 @@ impl Checker {
                 self.warnings.push(dead(f.name.span, message));
             }
         }
-        for ((d, _), def) in prog.all_types().into_iter().zip(&self.types) {
+        let types = prog.all_types().into_iter().zip(&self.types);
+        for ((d, _), def) in types.skip(self.from.all_types) {
             let in_live = def.parent.is_none_or(|p| live[p.0]);
             if on_purpose(d.name()) || !in_live {
                 continue;
@@ -411,7 +414,8 @@ impl Checker {
     /// Such a type can't be constructed, so `dead_code` says so too: this
     /// says why instead.
     pub(super) fn infinite_types(&mut self, prog: &Program) {
-        for ((d, _), def) in prog.all_types().into_iter().zip(&self.types) {
+        let types = prog.all_types().into_iter().zip(&self.types);
+        for ((d, _), def) in types.skip(self.from.all_types) {
             let symbol = &def.symbol;
             let generic = self.adts[symbol].generic(symbol);
             if d.name().name.starts_with('_')

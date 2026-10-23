@@ -86,7 +86,13 @@ pub fn check(name: &str, src: &str) -> Result<(), String> {
 /// say.
 pub fn check_files(files: &Files) -> Result<(), String> {
     let run = run(files);
-    let want = Expectations::of(run.sources.text());
+    let sources = &run.sources;
+    let texts: Vec<&str> = sources
+        .program_files()
+        .iter()
+        .map(|f| sources.src(f))
+        .collect();
+    let want = Expectations::of(&texts.join("\n"));
     let warnings = t_lang::error::Warning::render_all_in(&run.warnings, &run.sources);
     let matches = warnings.len() == want.warnings.len()
         && warnings
@@ -135,7 +141,7 @@ pub fn check_files(files: &Files) -> Result<(), String> {
 /// The files of `run`'s program with `fix` made, and those it didn't read
 /// as they were.
 pub fn fixed(files: &Files, run: &RunResult, fix: &t_lang::error::Fix) -> Files {
-    let read = run.sources.files().iter().map(|f| f.path.clone());
+    let read = run.sources.program_files().iter().map(|f| f.path.clone());
     let mut out: Files = read.zip(run.sources.edited(&fix.edits)).collect();
     let unread: Files = files
         .iter()

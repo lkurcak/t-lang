@@ -37,14 +37,15 @@ fn allowed<'p>(prog: &'p Program, sources: &Sources) -> Vec<(Span, &'p [Allow])>
     for m in &prog.mods[1..] {
         out.push((m.span, &m.allows));
     }
-    for file in &sources.files()[1..] {
+    let first = sources.first().start;
+    for file in sources.files().iter().filter(|f| f.start != first) {
         let mut m = Some(file.module);
         while let Some(i) = m.filter(|&i| i != ROOT) {
             out.push((file.span(), &prog.mods[i].allows));
             m = prog.mods[i].parent;
         }
     }
-    for (f, _) in prog.all_fns() {
+    for (f, ..) in prog.all_fns() {
         out.push((f.span, &f.allows));
     }
     for (d, _) in prog.all_types() {

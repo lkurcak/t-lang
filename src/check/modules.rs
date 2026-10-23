@@ -62,7 +62,7 @@ pub(crate) enum Item {
     Type(usize),
     /// By its index in `Program::traits`.
     Trait(usize),
-    /// By its index in `Program::fns`, which is also its `FnId`.
+    /// A top-level function, by its `FnId`: its index in `Program::all_fns`.
     Fn(usize),
 }
 
@@ -79,7 +79,7 @@ pub(crate) struct Binding {
     pub(crate) import: Option<usize>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct Module {
     pub(crate) parent: Option<usize>,
     /// What the symbols of the items in it start with: nothing at the crate
@@ -92,7 +92,7 @@ pub(crate) struct Module {
 }
 
 /// A name a `use` brings in, and whether anything uses it.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct Import {
     pub(crate) name: Ident,
     /// The whole `use`, for a fix that removes it, if it brings in only
@@ -103,7 +103,7 @@ pub(crate) struct Import {
     pub(crate) used: Cell<bool>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct Modules {
     pub(crate) mods: Vec<Module>,
     /// What each path with a `::` refers to, by its node: one to a type
@@ -126,6 +126,12 @@ pub(crate) struct Modules {
     pub(crate) prelude: Option<usize>,
     /// Warnings about what's rewritten here: empty ranges.
     pub(crate) warnings: Vec<Warning>,
+    /// Where each item is declared, and whether it's `pub` there.
+    decls: HashMap<Item, (usize, bool)>,
+    /// Each name each `use` brings in, and how far resolving it has got:
+    /// a later package's paths can go through an earlier one's `pub use`.
+    leaves: Vec<Leaf>,
+    states: Vec<State>,
 }
 
 /// Which namespace a name is looked up in.
@@ -299,87 +305,98 @@ fn trait_symbol(mods: &[Module], t: &TraitDecl) -> String {
     format!("{}{}", mods[t.module].prefix, t.name.name)
 }
 
-/// Resolves the paths of `prog`, rewriting it as the module docs say.
-pub(crate) fn resolve(prog: &mut Program) -> Result<Modules, Error> {
-    let mut mods: Vec<Module> = Vec::new();
-    for (i, m) in prog.mods.iter().enumerate() {
-        let (prefix, path) = match m.parent {
-            None => (String::new(), String::new()),
-            Some(p) => {
-                let path = match p {
-                    ROOT => m.name.name.clone(),
-                    p => format!("{}::{}", mods[p].path, m.name.name),
-                };
-                (format!("{path}::"), path)
-            }
-        };
-        debug_assert_eq!(i, mods.len());
-        // A library's root is a package's: no module is around it.
-        let parent = match prog.is_library_root(i) {
-            true => None,
-            false => m.parent,
-        };
-        mods.push(Module {
-            parent,
-            prefix,
-            path,
-            ..Module::default()
-        });
-    }
+/// Resolves the paths of the package of `prog` whose items come after
+/// `from` (see `Counts`), rewriting them as the module docs say, in
+/// `modules`, what resolving those before left. Theirs stay as they are.
+pub(crate) fn resolve(
+    prog: &mut Program,
+    modules: &mut Modules,
+    from: Counts,
+) -> Result<(), Error> {
     let mut r = Resolver {
-        m: Modules {
-            mods,
-            core: prog.core,
-            alloc: prog.alloc,
-            ..Modules::default()
-        },
-        leaves: Vec::new(),
-        states: Vec::new(),
-        decls: HashMap::new(),
+        m: std::mem::take(modules),
     };
-    r.declare(prog)?;
-    r.imports(prog)?;
-    r.m.prelude = prog
-        .core
-        .and_then(|c| match r.m.mods[c].types.get("prelude") {
-            Some(Binding {
-                item: Item::Mod(p), ..
-            }) => Some(*p),
-            _ => None,
-        });
-    let symbols: Vec<String> = prog
-        .traits
-        .iter()
-        .map(|t| trait_symbol(&r.m.mods, t))
-        .collect();
-    r.m.ends = prog
-        .mods
-        .iter()
-        .map(|m| match m.parent {
-            None => m.span.end,
-            Some(_) => m.span.end - 1,
-        })
-        .collect();
-    r.m.trait_symbols = symbols.clone();
-    let mut w = Rewrite {
-        r: &mut r,
-        symbols: &symbols,
-        module: ROOT,
-        params: Vec::new(),
-        interface: None,
-        next_id: prog.next_id,
-    };
-    let rewritten = w.program(prog);
-    // What's rewritten stays rewritten, ids and all, even past an error.
-    prog.next_id = w.next_id;
-    rewritten?;
-    for (t, symbol) in prog.traits.iter_mut().zip(symbols) {
-        t.name.name = symbol;
+    let result = r.package(prog, from);
+    *modules = r.m;
+    result
+}
+
+impl Resolver {
+    fn package(&mut self, prog: &mut Program, from: Counts) -> Result<(), Error> {
+        let r = self;
+        for (i, m) in prog.mods.iter().enumerate().skip(r.m.mods.len()) {
+            let (prefix, path) = match m.parent {
+                None => (String::new(), String::new()),
+                Some(p) => {
+                    let path = match p {
+                        ROOT => m.name.name.clone(),
+                        p => format!("{}::{}", r.m.mods[p].path, m.name.name),
+                    };
+                    (format!("{path}::"), path)
+                }
+            };
+            debug_assert_eq!(i, r.m.mods.len());
+            // A library's root is a package's: no module is around it.
+            let parent = match prog.is_library_root(i) {
+                true => None,
+                false => m.parent,
+            };
+            r.m.mods.push(Module {
+                parent,
+                prefix,
+                path,
+                ..Module::default()
+            });
+        }
+        r.m.core = prog.core;
+        r.m.alloc = prog.alloc;
+        r.declare(prog, from)?;
+        r.imports(prog, from)?;
+        if r.m.prelude.is_none() {
+            r.m.prelude = prog
+                .core
+                .and_then(|c| match r.m.mods[c].types.get("prelude") {
+                    Some(Binding {
+                        item: Item::Mod(p), ..
+                    }) => Some(*p),
+                    _ => None,
+                });
+        }
+        let symbols: Vec<String> = prog.traits[from.traits..]
+            .iter()
+            .map(|t| trait_symbol(&r.m.mods, t))
+            .collect();
+        r.m.ends = prog
+            .mods
+            .iter()
+            .map(|m| match m.parent {
+                None => m.span.end,
+                Some(_) => m.span.end - 1,
+            })
+            .collect();
+        r.m.trait_symbols.extend(symbols.iter().cloned());
+        let all = r.m.trait_symbols.clone();
+        let mut w = Rewrite {
+            r,
+            symbols: &all,
+            module: ROOT,
+            params: Vec::new(),
+            interface: None,
+            next_id: prog.next_id,
+        };
+        let rewritten = w.program(prog, from);
+        // What's rewritten stays rewritten, ids and all, even past an error.
+        prog.next_id = w.next_id;
+        rewritten?;
+        for (t, symbol) in prog.traits[from.traits..].iter_mut().zip(symbols) {
+            t.name.name = symbol;
+        }
+        Ok(())
     }
-    Ok(r.m)
 }
 
 /// A name a `use` brings in, as written.
+#[derive(Clone, Debug)]
 struct Leaf {
     module: usize,
     path: Vec<Ident>,
@@ -389,7 +406,7 @@ struct Leaf {
 }
 
 /// How far resolving a `use` has got.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum State {
     Todo,
     Doing,
@@ -399,17 +416,13 @@ enum State {
 
 struct Resolver {
     m: Modules,
-    /// Where each item is declared, and whether it's `pub` there.
-    decls: HashMap<Item, (usize, bool)>,
-    leaves: Vec<Leaf>,
-    states: Vec<State>,
 }
 
 impl Resolver {
     /// Puts each item in its module's namespace.
-    fn declare(&mut self, prog: &Program) -> Result<(), Error> {
+    fn declare(&mut self, prog: &Program, from: Counts) -> Result<(), Error> {
         let mut items: Vec<(usize, &Ident, bool, Item, Ns)> = Vec::new();
-        for (i, m) in prog.mods.iter().enumerate().skip(1) {
+        for (i, m) in prog.mods.iter().enumerate().skip(from.mods.max(1)) {
             // A library isn't a module of the crate root's.
             if prog.is_library_root(i) {
                 continue;
@@ -417,21 +430,24 @@ impl Resolver {
             let parent = m.parent.expect("not the crate root");
             items.push((parent, &m.name, m.public.is_some(), Item::Mod(i), Ns::Types));
         }
-        for (k, d) in prog.types.iter().enumerate() {
+        for (k, d) in prog.types.iter().enumerate().skip(from.types) {
             let public = d.public().is_some();
             items.push((d.module(), d.name(), public, Item::Type(k), Ns::Types));
         }
-        for (k, t) in prog.traits.iter().enumerate() {
+        for (k, t) in prog.traits.iter().enumerate().skip(from.traits) {
             let public = t.public.is_some();
             items.push((t.module, &t.name, public, Item::Trait(k), Ns::Types));
         }
-        for (i, f) in prog.fns.iter().enumerate() {
+        let fns = prog.all_fns().into_iter().enumerate().skip(from.all_fns);
+        for (i, (f, ..)) in
+            fns.filter(|(_, (_, parent, method))| parent.is_none() && method.is_none())
+        {
             let public = f.public.is_some();
             items.push((f.module, &f.name, public, Item::Fn(i), Ns::Values));
         }
         items.sort_by_key(|(_, name, ..)| name.span.start);
         for &(module, _, public, item, _) in &items {
-            self.decls.insert(item, (module, public));
+            self.m.decls.insert(item, (module, public));
         }
         for (module, name, public, item, ns) in items {
             let binding = Binding {
@@ -453,10 +469,11 @@ impl Resolver {
 
     /// Resolves every `use`, then adds the names they bring in to their
     /// modules.
-    fn imports(&mut self, prog: &Program) -> Result<(), Error> {
-        for u in &prog.uses {
+    fn imports(&mut self, prog: &Program, from: Counts) -> Result<(), Error> {
+        let first = self.m.leaves.len();
+        for u in &prog.uses[from.uses..] {
             for (path, name) in u.tree.leaves() {
-                self.leaves.push(Leaf {
+                self.m.leaves.push(Leaf {
                     module: u.module,
                     path: path.into_iter().cloned().collect(),
                     name: name.clone(),
@@ -465,19 +482,19 @@ impl Resolver {
                 });
             }
         }
-        self.states = vec![State::Todo; self.leaves.len()];
-        for i in 0..self.leaves.len() {
+        self.m.states.resize(self.m.leaves.len(), State::Todo);
+        for i in first..self.m.leaves.len() {
             self.leaf(i)?;
         }
-        for (i, leaf) in self.leaves.iter().enumerate() {
-            let alone = self.leaves.iter().filter(|l| l.decl == leaf.decl).count() == 1;
+        for (i, leaf) in self.m.leaves.iter().enumerate().skip(first) {
+            let alone = self.m.leaves.iter().filter(|l| l.decl == leaf.decl).count() == 1;
             self.m.imports.push(Import {
                 name: leaf.name.clone(),
                 alone: alone.then_some(leaf.decl),
                 public: leaf.public.is_some(),
                 used: Cell::new(false),
             });
-            let State::Done(types, values) = &self.states[i] else {
+            let State::Done(types, values) = &self.m.states[i] else {
                 unreachable!("every `use` is resolved");
             };
             let items = [types, values].into_iter().flatten().map(|b| b.item);
@@ -523,18 +540,18 @@ impl Resolver {
 
     /// Resolves `use` leaf `i`, and those it goes through.
     fn leaf(&mut self, i: usize) -> Result<(Option<Binding>, Option<Binding>), Error> {
-        match &self.states[i] {
+        match &self.m.states[i] {
             State::Done(t, v) => return Ok((t.clone(), v.clone())),
             State::Doing => {
                 return Err(Error::ty(
-                    self.leaves[i].decl,
+                    self.m.leaves[i].decl,
                     "these imports go round in a circle: each needs another to say what it is",
                 ));
             }
             State::Todo => {}
         }
-        self.states[i] = State::Doing;
-        let leaf = &self.leaves[i];
+        self.m.states[i] = State::Doing;
+        let leaf = &self.m.leaves[i];
         let (from, path) = (leaf.module, leaf.path.clone());
         let (last, init) = path.split_last().expect("a path has a segment");
         let module = match init.is_empty() {
@@ -575,7 +592,7 @@ impl Resolver {
                 return Err(private(&self.m, &last.name, b, last.span));
             }
         };
-        let leaf = &self.leaves[i];
+        let leaf = &self.m.leaves[i];
         if leaf.public.is_some() && [&types, &values].into_iter().flatten().any(|b| !b.public) {
             return Err(Error::ty(
                 last.span,
@@ -585,7 +602,7 @@ impl Resolver {
                 ),
             ));
         }
-        self.states[i] = State::Done(types.clone(), values.clone());
+        self.m.states[i] = State::Done(types.clone(), values.clone());
         Ok((types, values))
     }
 
@@ -600,8 +617,8 @@ impl Resolver {
         if let Some(b) = own {
             return Ok(Some(b.clone()));
         }
-        let leaves: Vec<usize> = (0..self.leaves.len())
-            .filter(|&i| self.leaves[i].module == m && self.leaves[i].name.name == name)
+        let leaves: Vec<usize> = (0..self.m.leaves.len())
+            .filter(|&i| self.m.leaves[i].module == m && self.m.leaves[i].name.name == name)
             .collect();
         for i in leaves {
             let (types, values) = self.leaf(i)?;
@@ -610,7 +627,7 @@ impl Resolver {
                 Ns::Values => values,
             };
             if let Some(t) = target {
-                let public = self.leaves[i].public.is_some();
+                let public = self.m.leaves[i].public.is_some();
                 return Ok(Some(Binding {
                     item: t.item,
                     module: m,
@@ -740,12 +757,12 @@ impl Rewrite<'_> {
         NodeId(self.next_id - 1)
     }
 
-    fn program(&mut self, prog: &mut Program) -> Result<(), Error> {
-        for d in &mut prog.types {
+    fn program(&mut self, prog: &mut Program, from: Counts) -> Result<(), Error> {
+        for d in &mut prog.types[from.types..] {
             self.module = d.module();
             self.type_decl(d)?;
         }
-        for t in &mut prog.traits {
+        for t in &mut prog.traits[from.traits..] {
             self.module = t.module;
             self.params.push("Self".into());
             let interface = t
@@ -766,7 +783,7 @@ impl Rewrite<'_> {
             }
             self.params.pop();
         }
-        for d in &mut prog.impls {
+        for d in &mut prog.impls[from.impls..] {
             self.module = d.module;
             let params = d.generics.types.len() + 1;
             self.params
@@ -786,7 +803,7 @@ impl Rewrite<'_> {
             }
             self.params.truncate(self.params.len() - params);
         }
-        for f in &mut prog.fns {
+        for f in &mut prog.fns[from.fns..] {
             self.module = f.module;
             let interface = signature(f, true);
             self.function(f, interface)?;
@@ -848,7 +865,7 @@ impl Rewrite<'_> {
         let Some(interface) = &self.interface else {
             return Ok(());
         };
-        let (module, public) = self.r.decls[&item];
+        let (module, public) = self.r.m.decls[&item];
         if public {
             return Ok(());
         }

@@ -37,7 +37,7 @@ fn reparsed(
     sources: &Sources,
     texts: &[String],
 ) -> (Sources, Result<Program, crate::error::Error>) {
-    let files = sources.files();
+    let files = sources.program_files();
     let read = |path: &Path| match files.iter().position(|f| f.path == path) {
         Some(i) => Ok(texts[i].clone()),
         None => crate::no_files(path),
@@ -311,7 +311,7 @@ fn what(kind: &NoteKind) -> &'static str {
 /// for `P { x: x }`: the span of each such `x`.
 fn shorthands(prog: &Program) -> HashSet<Span> {
     let mut out = HashSet::new();
-    for (f, _) in prog.all_fns() {
+    for (f, ..) in prog.all_fns() {
         shorthand_exprs(&f.body, &mut out);
     }
     out

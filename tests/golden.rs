@@ -360,7 +360,7 @@ fn renames_in(path: &Path) -> (Vec<String>, usize) {
             }
         };
         renamed += 1;
-        let paths = sources.files().iter().map(|f| f.path.clone());
+        let paths = sources.program_files().iter().map(|f| f.path.clone());
         let after: expect::Files = paths.zip(sources.edited(&edits)).collect();
         // Printed values and messages show the names of functions,
         // types, fields and variants.

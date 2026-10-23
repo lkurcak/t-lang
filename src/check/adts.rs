@@ -13,12 +13,16 @@ impl Checker {
     /// fills in `arities`. Rejects duplicate names, fields, variants and
     /// type parameters, type parameters no field uses, types that contain
     /// themselves, and polymorphic recursion.
+    ///
+    /// Those of the packages before are known already. Theirs can't
+    /// mention this one's, so a cycle of types is in one package.
     pub(super) fn collect_adts(&mut self, prog: &Program) -> Result<(), Error> {
-        let decls = prog.all_types();
+        let from = self.from.all_types;
+        let decls: Vec<_> = prog.all_types().into_iter().skip(from).collect();
         // All names first, so declarations can mention each other in any
         // order.
         let mut declared = HashSet::new();
-        for ((d, _), def) in decls.iter().zip(&self.types) {
+        for ((d, _), def) in decls.iter().zip(&self.types[from..]) {
             let name = d.name();
             if crate::types::is_builtin_type(&name.name) || name.name == "Self" {
                 return Err(Error::ty(
@@ -65,12 +69,16 @@ impl Checker {
             self.arities.insert(def.symbol.clone(), arity);
         }
 
+        // No projection's known yet: `projections_known` sees to them.
+        self.adts.proj = Default::default();
         let mut adts = Adts::new();
-        adts.proj = std::mem::take(&mut self.adts.proj);
         // Every field's type, with the symbol of the type it's in and where
         // it was written, for the recursion checks.
         let mut field_types = Vec::new();
-        let symbols: Vec<String> = self.types.iter().map(|t| t.symbol.clone()).collect();
+        let symbols: Vec<String> = self.types[from..]
+            .iter()
+            .map(|t| t.symbol.clone())
+            .collect();
         for ((d, _), symbol) in decls.iter().zip(&symbols) {
             let params = generics::declare(d.type_params())?;
             let lifetimes = generics::declare_lifetimes(&d.generics().lifetimes)?;
@@ -128,6 +136,10 @@ impl Checker {
             };
             adts.insert(symbol.clone(), adt);
         }
+        self.env.clear();
+        self.adts.proj.local.clear();
+        self.adts.extend(adts.drain());
+        let adts = &self.adts;
 
         // `struct S<T> { f: fn(S<Option<T>>) -> i64 }` would need `S<i64>`,
         // so `S<Option<i64>>`, so `S<Option<Option<i64>>>`...
@@ -147,14 +159,14 @@ impl Checker {
             .iter()
             .map(|(name, def)| (name.as_str(), def.params.as_slice()))
             .collect();
-        generics::polymorphic_recursion(&uses, &params)?;
+        generics::polymorphic_recursion(&uses, &params, &|_| true)?;
 
         // A struct that holds itself, even via other types, would need
         // infinite memory: `struct A { a: A }` has the size of an int
         // plus... itself. It can hold itself through a pointer, which has a
         // size of its own: `Box<A>` or `&A`.
         for (owner, span, t) in &field_types {
-            if contains(&adts, t, owner, &mut HashSet::new()) {
+            if contains(adts, t, owner, &mut HashSet::new()) {
                 let name = source_name(owner);
                 return Err(Error::ty(
                     *span,
@@ -165,10 +177,6 @@ impl Checker {
                 ));
             }
         }
-        self.env.clear();
-        adts.proj = std::mem::take(&mut self.adts.proj);
-        adts.proj.local.clear();
-        self.adts = adts;
         for ((d, _), symbol) in decls.iter().zip(&symbols) {
             if let TypeDecl::Struct(s) = d {
                 self.field_refinements(s, symbol)?;

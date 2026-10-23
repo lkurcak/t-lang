@@ -53,6 +53,24 @@ impl Program {
     }
 }
 
+/// How many of each kind of item a program has, in its lists and in
+/// `Program::all_fns` and `all_types`: as a package's checking starts, those
+/// of the packages before it, so its own are the ones after (see
+/// `Program::counts`). The crate root, module 0, is the exception: it's
+/// there before any package is read, and it's the program's.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Counts {
+    pub mods: usize,
+    pub uses: usize,
+    pub types: usize,
+    pub traits: usize,
+    pub impls: usize,
+    pub fns: usize,
+    pub stray_docs: usize,
+    pub all_fns: usize,
+    pub all_types: usize,
+}
+
 /// Which node of the AST an `Expr`, `Pattern`, `Ident`, `TypeExpr` or
 /// `Lambda` is, unique in the program: the parser numbers each as it makes
 /// it, and whatever makes one later takes a fresh one
@@ -741,51 +759,120 @@ pub enum MethodOf {
 }
 
 impl Program {
-    /// Every method with a body: those of each impl in order, then the
-    /// defaults of each trait.
+    /// The root module of the package module `m` is in: the crate root,
+    /// or a library's (see `load.rs`).
+    pub fn package_of(&self, mut m: usize) -> usize {
+        while let Some(parent) = self.mods[m].parent
+            && !self.is_library_root(m)
+        {
+            m = parent;
+        }
+        m
+    }
+
+    /// How many items of each kind there are so far: where the next
+    /// package's start, as each is read after those it depends on (see
+    /// `load.rs`).
+    pub fn counts(&self) -> Counts {
+        Counts {
+            mods: self.mods.len(),
+            uses: self.uses.len(),
+            types: self.types.len(),
+            traits: self.traits.len(),
+            impls: self.impls.len(),
+            fns: self.fns.len(),
+            stray_docs: self.stray_docs.len(),
+            all_fns: self.all_fns().len(),
+            all_types: self.all_types().len(),
+        }
+    }
+
+    /// The packages, by their root modules, in the order they're checked:
+    /// each library's in the order they're loaded, then the crate root's,
+    /// which depends on them all.
+    pub fn packages(&self) -> Vec<usize> {
+        let libraries = [self.core, self.alloc].into_iter().flatten();
+        libraries.chain([ROOT]).collect()
+    }
+
+    /// Every method with a body: package by package (see `packages`),
+    /// those of each impl in order, then the defaults of each trait.
     pub fn methods(&self) -> Vec<(&FnDecl, MethodOf)> {
+        self.packages()
+            .into_iter()
+            .flat_map(|p| self.methods_of(p))
+            .collect()
+    }
+
+    /// The methods with a body of the package whose root is `package`.
+    fn methods_of(&self, package: usize) -> Vec<(&FnDecl, MethodOf)> {
         let impls = self
             .impls
             .iter()
             .enumerate()
+            .filter(|(_, d)| self.package_of(d.module) == package)
             .flat_map(|(i, d)| d.methods.iter().map(move |f| (f, MethodOf::Impl(i))));
-        let traits = self.traits.iter().enumerate().flat_map(|(i, t)| {
-            t.methods
-                .iter()
-                .filter(|m| m.provided)
-                .map(move |m| (&m.decl, MethodOf::Trait(i)))
-        });
+        let traits = self
+            .traits
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| self.package_of(t.module) == package)
+            .flat_map(|(i, t)| {
+                t.methods
+                    .iter()
+                    .filter(|m| m.provided)
+                    .map(move |m| (&m.decl, MethodOf::Trait(i)))
+            });
         impls.chain(traits).collect()
     }
 
-    /// Every function, nested ones too: the top-level ones in order, then
-    /// the methods (as `methods` gives them), then the ones nested in
+    /// Every function, nested ones too, package by package (see
+    /// `packages`), so that each package's are a part of the list that
+    /// ends where the next's starts: of each, the top-level ones in order,
+    /// then the methods (as `methods` gives them), then the ones nested in
     /// those, and so on. Each comes with the index in this list of the
-    /// function it's nested in, if it's nested.
-    pub fn all_fns(&self) -> Vec<(&FnDecl, Option<usize>)> {
-        let mut out: Vec<(&FnDecl, Option<usize>)> = self.fns.iter().map(|f| (f, None)).collect();
-        out.extend(self.methods().into_iter().map(|(f, _)| (f, None)));
-        let mut i = 0;
-        while i < out.len() {
-            let mut fns = Vec::new();
-            nested(&out[i].0.body, Stmt::as_fn, &mut fns);
-            out.extend(fns.into_iter().map(|f| (f, Some(i))));
-            i += 1;
+    /// function it's nested in, if it's nested, and which impl or trait
+    /// it's a method of, if it is one.
+    pub fn all_fns(&self) -> Vec<(&FnDecl, Option<usize>, Option<MethodOf>)> {
+        let mut out: Vec<(&FnDecl, Option<usize>, Option<MethodOf>)> = Vec::new();
+        for p in self.packages() {
+            let mut i = out.len();
+            let fns = self.fns.iter().filter(|f| self.package_of(f.module) == p);
+            out.extend(fns.map(|f| (f, None, None)));
+            let methods = self.methods_of(p).into_iter();
+            out.extend(methods.map(|(f, m)| (f, None, Some(m))));
+            while i < out.len() {
+                let mut fns = Vec::new();
+                nested(&out[i].0.body, Stmt::as_fn, &mut fns);
+                out.extend(fns.into_iter().map(|f| (f, Some(i), None)));
+                i += 1;
+            }
         }
         out
     }
 
-    /// Every struct and enum, local ones too: the top-level ones in order,
-    /// then the ones declared in each function in `all_fns`, in that order.
-    /// Each comes with the index in `all_fns` of the function it's in, if
-    /// it's local.
+    /// Every struct and enum, local ones too, package by package (see
+    /// `packages`): of each, the top-level ones in order, then the ones
+    /// declared in each of its functions in `all_fns`, in that order. Each
+    /// comes with the index in `all_fns` of the function it's in, if it's
+    /// local.
     pub fn all_types(&self) -> Vec<(&TypeDecl, Option<usize>)> {
-        let mut out: Vec<(&TypeDecl, Option<usize>)> =
-            self.types.iter().map(|d| (d, None)).collect();
-        for (i, (f, _)) in self.all_fns().into_iter().enumerate() {
-            let mut local = Vec::new();
-            nested(&f.body, Stmt::as_type, &mut local);
-            out.extend(local.into_iter().map(|d| (d, Some(i))));
+        let fns = self.all_fns();
+        let mut out: Vec<(&TypeDecl, Option<usize>)> = Vec::new();
+        for p in self.packages() {
+            let types = self
+                .types
+                .iter()
+                .filter(|d| self.package_of(d.module()) == p);
+            out.extend(types.map(|d| (d, None)));
+            for (i, (f, ..)) in fns.iter().enumerate() {
+                if self.package_of(f.module) != p {
+                    continue;
+                }
+                let mut local = Vec::new();
+                nested(&f.body, Stmt::as_type, &mut local);
+                out.extend(local.into_iter().map(|d| (d, Some(i))));
+            }
         }
         out
     }

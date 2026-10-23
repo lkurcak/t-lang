@@ -14,7 +14,7 @@ use crate::traits::FnKind;
 use crate::types::Type;
 use std::collections::HashMap;
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct Typed {
     /// The type of every expression.
     pub(crate) exprs: HashMap<NodeId, Type>,

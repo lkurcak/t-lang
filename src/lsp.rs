@@ -624,7 +624,6 @@ fn adts<'t>(t: &'t Type, out: &mut Vec<&'t str>) {
 /// and local types of each function, under it. In source order.
 fn outline(src: &str, prog: &Program) -> Vec<DocumentSymbol> {
     let fns = prog.all_fns();
-    let methods = prog.methods();
     let mut inside: Vec<Vec<DocumentSymbol>> = vec![Vec::new(); fns.len()];
     let mut impls: Vec<Vec<DocumentSymbol>> = vec![Vec::new(); prog.impls.len()];
     let mut traits: Vec<Vec<DocumentSymbol>> = vec![Vec::new(); prog.traits.len()];
@@ -646,14 +645,13 @@ fn outline(src: &str, prog: &Program) -> Vec<DocumentSymbol> {
         }
     }
     // Nested functions come after the ones they're in.
-    for (i, &(f, parent)) in fns.iter().enumerate().rev() {
+    for (i, &(f, parent, method)) in fns.iter().enumerate().rev() {
         let mut children = std::mem::take(&mut inside[i]);
         sort(&mut children);
         let mut s = fn_symbol(src, f, children);
-        let method = i.checked_sub(prog.fns.len()).and_then(|j| methods.get(j));
         match (parent, method) {
             (Some(p), _) => inside[p].push(s),
-            (None, Some(&(_, of))) => {
+            (None, Some(of)) => {
                 s.kind = SymbolKind::METHOD;
                 match of {
                     MethodOf::Impl(k) => impls[k].push(s),

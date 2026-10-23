@@ -194,12 +194,10 @@ fn decls(prog: &Program) -> Vec<Decl<'_>> {
     for d in &prog.impls {
         params(&d.generics.types, &mut out);
     }
-    let methods = prog.methods();
-    for (i, (f, _)) in prog.all_fns().into_iter().enumerate() {
-        let method = i.checked_sub(prog.fns.len()).and_then(|j| methods.get(j));
+    for (f, _, method) in prog.all_fns() {
         match method {
             // Named by the trait: the warning is there.
-            Some((_, MethodOf::Impl(k))) if prog.impls[*k].trait_name.is_some() => {}
+            Some(MethodOf::Impl(k)) if prog.impls[k].trait_name.is_some() => {}
             Some(_) => out.push(ident(&f.name, "method", Case::Snake)),
             None => out.push(ident(&f.name, "function", Case::Snake)),
         }

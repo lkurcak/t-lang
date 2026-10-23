@@ -7,7 +7,7 @@
 use crate::error::{Edit, Span};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Sources {
     text: String,
     files: Vec<File>,
@@ -44,10 +44,7 @@ impl File {
 impl Sources {
     /// A program of one file.
     pub fn single(path: impl Into<PathBuf>, src: &str) -> Sources {
-        let mut sources = Sources {
-            text: String::new(),
-            files: Vec::new(),
-        };
+        let mut sources = Sources::default();
         sources.add(path.into(), src, crate::ast::ROOT, None);
         sources
     }
@@ -81,9 +78,21 @@ impl Sources {
         &self.text
     }
 
-    /// Every file, in the order they're in the text: the first one first.
+    /// Every file, in the order they're in the text: the libraries' first
+    /// (see `load.rs`), then the program's.
     pub fn files(&self) -> &[File] {
         &self.files
+    }
+
+    /// The program's own files, its first first: not the libraries'.
+    pub fn program_files(&self) -> &[File] {
+        let libraries = self.files.iter().take_while(|f| f.is_library()).count();
+        &self.files[libraries..]
+    }
+
+    /// The program's first file, where it starts.
+    pub fn first(&self) -> &File {
+        &self.program_files()[0]
     }
 
     /// The file `offset` is in, or at the end of.
@@ -116,20 +125,20 @@ impl Sources {
     }
 
     /// The line `offset` is on, for messages: `3`, or `3 of a/b.t` if it
-    /// isn't in the first file.
+    /// isn't in the program's first file.
     pub fn line(&self, offset: usize) -> String {
         let (file, at) = self.local(Span::new(offset, offset));
         let line = self.src(file)[..at.start].matches('\n').count() + 1;
-        match file.start {
-            0 => line.to_string(),
-            _ => format!("{line} of {}", file.path.display()),
+        match file.start == self.first().start {
+            true => line.to_string(),
+            false => format!("{line} of {}", file.path.display()),
         }
     }
 
-    /// Each file's text with `edits` made, in the order of `files`. An edit
-    /// is in the file its span starts in.
+    /// Each of the program's files' text with `edits` made, in the order
+    /// of `program_files`. An edit is in the file its span starts in.
     pub fn edited(&self, edits: &[Edit]) -> Vec<String> {
-        self.files
+        self.program_files()
             .iter()
             .map(|f| crate::error::Fix::new("", self.edits_in(f, edits)).apply(self.src(f)))
             .collect()
