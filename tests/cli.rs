@@ -44,6 +44,8 @@ fn bad_arguments_print_usage() {
         &["check", "a.t", "b.t"],
         &["tree-sitter"],
         &["tree-sitter", "--out"],
+        &["tree-sitter", "--helix"],
+        &["tree-sitter", "--nope", "dir"],
     ] {
         let out = t(args);
         assert_eq!(out.status.code(), Some(2), "{args:?}");
@@ -97,4 +99,49 @@ fn tree_sitter_installs_the_parser_and_queries() {
         .map(|e| e.unwrap().file_name())
         .collect();
     assert_eq!(names, ["t.so"], "no temporary files left behind");
+
+    // Again, with nothing to change: the files are left as they are, so an
+    // editor with the parser loaded keeps a file that matches it.
+    let modified = |name: &str| {
+        std::fs::metadata(dir.join(name))
+            .unwrap()
+            .modified()
+            .unwrap()
+    };
+    let before = [
+        modified("parser/t.so"),
+        modified("queries/t/highlights.scm"),
+    ];
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    let out = t(&["tree-sitter", dir.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(
+        [
+            modified("parser/t.so"),
+            modified("queries/t/highlights.scm")
+        ],
+        before
+    );
+}
+
+/// `t tree-sitter --helix <dir>` puts the parser where Helix looks for it.
+#[test]
+fn tree_sitter_installs_for_helix() {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("tree_sitter_helix");
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let out = t(&["tree-sitter", "--helix", dir.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let parser = if cfg!(windows) { "t.dll" } else { "t.so" };
+    assert!(
+        std::fs::metadata(dir.join("grammars").join(parser))
+            .unwrap()
+            .len()
+            > 0
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("queries/t/highlights.scm")).unwrap(),
+        tree_sitter_t::HIGHLIGHTS_QUERY
+    );
+    assert!(!dir.join("parser").exists());
 }

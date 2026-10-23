@@ -2,7 +2,7 @@ use std::process::ExitCode;
 use t_lang::error::Warning;
 use t_lang::interp::Value;
 
-const USAGE: &str = "usage: t [run|check|mono] <file.t>\n       t fmt [--check] <file.t>...\n       t lsp\n       t tree-sitter <dir>";
+const USAGE: &str = "usage: t [run|check|mono] <file.t>\n       t fmt [--check] <file.t>...\n       t lsp\n       t tree-sitter [--helix] <dir>";
 
 const HELP: &str = "\
 T: like C, but a different letter.
@@ -10,7 +10,7 @@ T: like C, but a different letter.
 usage: t [run|check|mono] <file.t>
        t fmt [--check] <file.t>...
        t lsp
-       t tree-sitter <dir>
+       t tree-sitter [--helix] <dir>
 
   t <file.t>          type-check and run
   t check <file.t>    type-check only
@@ -19,7 +19,9 @@ usage: t [run|check|mono] <file.t>
   t lsp               language server, over stdio
   t tree-sitter <dir> install T's tree-sitter parser and highlight queries
                       into <dir>/parser and <dir>/queries/t, as Neovim
-                      looks for them in its `site` directory
+                      looks for them in its `site` directory (--helix:
+                      the parser into <dir>/grammars, as Helix looks for
+                      it in its `runtime` directory)
   t --help, -h        print this
   t --version, -V     print the version";
 
@@ -53,7 +55,12 @@ fn main() -> ExitCode {
         && cmd == "tree-sitter"
     {
         return match rest {
-            [dir] if !dir.starts_with('-') => tree_sitter(std::path::Path::new(dir)),
+            [dir] if !dir.starts_with('-') => {
+                tree_sitter(std::path::Path::new(dir), Editor::Neovim)
+            }
+            [flag, dir] if flag == "--helix" && !dir.starts_with('-') => {
+                tree_sitter(std::path::Path::new(dir), Editor::Helix)
+            }
             _ => {
                 eprintln!("{USAGE}");
                 ExitCode::from(2)
@@ -174,11 +181,27 @@ const TREE_SITTER_PARSER: &[u8] = include_bytes!(env!("T_TREE_SITTER_PARSER"));
 const TREE_SITTER_HIGHLIGHTS: &str =
     include_str!("../editors/tree-sitter-t/queries/highlights.scm");
 
+/// Where `t tree-sitter` puts the parser: editors agree on where the
+/// queries go, but not on the parser's directory or file name.
+enum Editor {
+    Neovim,
+    Helix,
+}
+
 /// `t tree-sitter <dir>` writes the parser to `<dir>/parser/t.so` and the
-/// highlight queries to `<dir>/queries/t/highlights.scm`.
-fn tree_sitter(dir: &std::path::Path) -> ExitCode {
+/// highlight queries to `<dir>/queries/t/highlights.scm`; with `--helix`,
+/// the parser to `<dir>/grammars/t.so` (`t.dll` on Windows). Files that are
+/// already as they'd be written are left alone, so running it on every
+/// start is cheap and an editor can tell whether anything changed.
+fn tree_sitter(dir: &std::path::Path, editor: Editor) -> ExitCode {
+    let parser = match editor {
+        // Neovim loads `parser/t.*`, whatever the extension.
+        Editor::Neovim => "parser/t.so",
+        Editor::Helix if cfg!(windows) => "grammars/t.dll",
+        Editor::Helix => "grammars/t.so",
+    };
     let files: [(&str, &[u8]); 2] = [
-        ("parser/t.so", TREE_SITTER_PARSER),
+        (parser, TREE_SITTER_PARSER),
         (
             "queries/t/highlights.scm",
             TREE_SITTER_HIGHLIGHTS.as_bytes(),
@@ -186,6 +209,9 @@ fn tree_sitter(dir: &std::path::Path) -> ExitCode {
     ];
     for (name, contents) in files {
         let path = dir.join(name);
+        if std::fs::read(&path).is_ok_and(|old| old == contents) {
+            continue;
+        }
         if let Err(e) = write_replacing(&path, contents) {
             eprintln!("error: cannot write `{}`: {e}", path.display());
             return ExitCode::FAILURE;
