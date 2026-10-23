@@ -389,7 +389,15 @@ impl<'a> Builder<'a> {
             ExprKind::For(_) | ExprKind::Range(..) => {
                 unreachable!("rewritten when paths are resolved")
             }
-            ExprKind::Int(..) | ExprKind::Bool(_) | ExprKind::Unit => {
+            // A string literal's region is a new variable, constrained by
+            // nothing but its uses: its bytes are there as long as the
+            // program runs, so it may be as long as any of them needs.
+            ExprKind::Int(..)
+            | ExprKind::Bool(_)
+            | ExprKind::Char(_)
+            | ExprKind::Str(_)
+            | ExprKind::ByteStr(_)
+            | ExprKind::Unit => {
                 let t = self.ty(e);
                 self.assign(dest, Rvalue::Use(Operand::Const), &t, span, false);
             }
@@ -1211,7 +1219,7 @@ impl<'a> Builder<'a> {
         }
         match &p.kind {
             PatternKind::Move(_) => unreachable!("written by lift"),
-            PatternKind::Int(_)
+            PatternKind::Int(..)
             | PatternKind::Range(..)
             | PatternKind::Bool(_)
             | PatternKind::Unit => self.push(StmtKind::Inspect(place), p.span),

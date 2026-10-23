@@ -4,7 +4,7 @@ fn div(a: i64, d: { d: i64 | d > 0 }) -> i64 { a / d }
 
 fn checked(a: i64, d: i64) -> i64 with panic {
     if d <= 0 {
-        panic();
+        panic("stop");
     }
     div(a, d)
 }

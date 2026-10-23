@@ -529,6 +529,10 @@ module.exports = grammar({
 
     _expression: $ => choice(
       $.integer_literal,
+      $.char_literal,
+      $.byte_literal,
+      $.string_literal,
+      $.byte_string_literal,
       $.boolean_literal,
       $.unit_expression,
       $.identifier,
@@ -564,6 +568,35 @@ module.exports = grammar({
         /0o[0-7_]+/,
       ),
       optional(/(i8|i16|i32|i64|isize|u8|u16|u32|u64|usize)/),
+    )),
+
+    // `'a'`, `'\n'`, `'\u{20AC}'`: one character. Longer than a
+    // lifetime, `'a`, so the lexer takes it where both could start.
+    char_literal: _ => token(seq(
+      "'",
+      choice(/[^'\\\n\r\t]/, /\\[nrt\\0'"]/, /\\u\{[0-9a-fA-F]{1,6}\}/),
+      "'",
+    )),
+
+    // `b'a'`, `b'\xFF'`: a byte, a `u8`.
+    byte_literal: _ => token(seq(
+      "b'",
+      choice(/[ -&(-\[\]-~]/, /\\[nrt\\0'"]/, /\\x[0-9a-fA-F]{2}/),
+      "'",
+    )),
+
+    // `"hi\n"`, a `&'static str`; escapes as in a character literal.
+    string_literal: _ => token(seq(
+      '"',
+      repeat(choice(/[^"\\]/, /\\[nrt\\0'"]/, /\\u\{[0-9a-fA-F]{1,6}\}/)),
+      '"',
+    )),
+
+    // `b"hi\xFF"`, a `&'static [u8]`: ASCII and `\x` escapes.
+    byte_string_literal: _ => token(seq(
+      'b"',
+      repeat(choice(/[\x00-!#-\[\]-\x7F]/, /\\[nrt\\0'"]/, /\\x[0-9a-fA-F]{2}/)),
+      '"',
     )),
 
     boolean_literal: _ => choice('true', 'false'),
@@ -789,7 +822,11 @@ module.exports = grammar({
     // `mut x`
     mut_pattern: $ => seq($.mutable_specifier, $.identifier),
 
-    integer_pattern: $ => seq(optional('-'), $.integer_literal),
+    integer_pattern: $ => choice(
+      seq(optional('-'), $.integer_literal),
+      $.char_literal,
+      $.byte_literal,
+    ),
 
     range_pattern: $ => prec.right(choice(
       seq($.integer_pattern, '..', optional($.integer_pattern)),

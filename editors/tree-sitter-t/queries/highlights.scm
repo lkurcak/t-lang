@@ -13,6 +13,10 @@
 ; Literals
 
 (integer_literal) @constant.numeric
+(byte_literal) @constant.numeric
+(char_literal) @constant.character
+(string_literal) @string
+(byte_string_literal) @string
 (boolean_literal) @constant.builtin.boolean
 (unit_expression) @constant.builtin
 (unit_pattern) @constant.builtin

@@ -506,7 +506,7 @@ nowhere, and it can't be renamed.
 | Missing | Why it's missing | Step |
 |---|---|---|
 | `unwrap`, `panic` | panics weren't in function types yet | 7 ✅ |
-| `expect` | needs strings | — |
+| `expect` | needs strings | 13 ✅ |
 | `filter` | closures can't be higher-ranked when a bound says they should | 6e.1 ✅ |
 | `IntoIterator`, `for x in &list` | needs equality bounds with projections in them, and negative reasoning to tell its blanket impl from one for `&List<T>` (docs/09.1-list.md) | — |
 | `a..=b`, `a..`, `..b`, `.rev()` | not needed yet | — |

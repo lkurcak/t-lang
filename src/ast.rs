@@ -809,6 +809,9 @@ impl Expr {
         match &self.kind {
             ExprKind::Int(..)
             | ExprKind::Bool(_)
+            | ExprKind::Char(_)
+            | ExprKind::Str(_)
+            | ExprKind::ByteStr(_)
             | ExprKind::Unit
             | ExprKind::Var(..)
             | ExprKind::Continue(_) => Vec::new(),
@@ -1007,8 +1010,16 @@ pub struct Expr {
 pub enum ExprKind {
     /// An integer literal, `42`: its digits. Its type is worked out from
     /// how it's used; monomorphisation writes it here, for the interpreter.
+    /// A byte literal, `b'a'`, is one too, of type `u8`.
     Int(u64, Option<crate::types::IntTy>),
     Bool(bool),
+    /// `'a'`: a character literal.
+    Char(char),
+    /// `"hi"`: a string literal, a `&'static str`. Its bytes are part of
+    /// the program, so they're there as long as it runs, and never change.
+    Str(String),
+    /// `b"hi"`: a byte string literal, a `&'static [u8]`.
+    ByteStr(Vec<u8>),
     Unit,
     /// `x`, or `id::<i64>` with type arguments (a *turbofish*) for a generic
     /// function. Every list of type arguments here and below is empty if none
@@ -1177,7 +1188,13 @@ impl Lambda {
 fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
     let mut go = |e: &Expr, bound: &mut Vec<String>| free_vars(e, bound, out);
     match &e.kind {
-        ExprKind::Int(..) | ExprKind::Bool(_) | ExprKind::Unit | ExprKind::Continue(_) => {}
+        ExprKind::Int(..)
+        | ExprKind::Bool(_)
+        | ExprKind::Char(_)
+        | ExprKind::Str(_)
+        | ExprKind::ByteStr(_)
+        | ExprKind::Unit
+        | ExprKind::Continue(_) => {}
         // A path, `a::f`, names a function, which needs no capturing.
         ExprKind::Var(name, _) if name.contains("::") => {}
         ExprKind::Var(name, _) => {
@@ -1274,7 +1291,7 @@ fn pattern_binds(p: &Pattern, out: &mut Vec<String>) {
             fields.iter().for_each(|f| pattern_binds(&f.pat, out))
         }
         PatternKind::Wild
-        | PatternKind::Int(_)
+        | PatternKind::Int(..)
         | PatternKind::Range(..)
         | PatternKind::Bool(_)
         | PatternKind::Unit => {}
@@ -1370,6 +1387,28 @@ impl Pattern {
     }
 }
 
+/// How a literal pattern is written: as an integer, `97`, a byte, `b'a'`,
+/// which is a `u8`, or a character, `'a'`. A range is of bytes if either
+/// end is one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lit {
+    Int,
+    Byte,
+    Char,
+}
+
+impl Lit {
+    /// Value `n` as a literal of this kind: `97`, `b'a'`, `'a'`.
+    pub fn show(self, n: i128) -> String {
+        let ch = || u32::try_from(n).ok().and_then(char::from_u32);
+        match self {
+            Lit::Byte if let Ok(b) = u8::try_from(n) => crate::lexer::byte_literal(b),
+            Lit::Char if let Some(c) = ch() => crate::lexer::char_literal(c),
+            _ => n.to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum PatternKind {
     /// `_`: matches anything, binds nothing.
@@ -1377,14 +1416,16 @@ pub enum PatternKind {
     /// `x`: matches anything and names it. `mut x` if the `bool` is set:
     /// then the variable can be changed.
     Bind(String, bool),
-    Int(i128),
+    /// A literal: `5`, `b'a'` or `'a'`, by its value; `Lit` says which.
+    Int(i128, Lit),
     /// An integer range, with both bounds inclusive: `1..=9` is
     /// `Range(Some(1), Some(9), true)`, `1..10` is `Range(Some(1), Some(9),
     /// false)`, `10..` runs to the greatest value of the type matched, with
     /// no upper bound, and `..=-1` from the least. The `bool` says whether
     /// it was written with `..=`, so suggestions can keep the style. `lo >
-    /// hi` means the range is empty, which the checker rejects.
-    Range(Option<i128>, Option<i128>, bool),
+    /// hi` means the range is empty, which the checker rejects. Of bytes
+    /// or characters too, by their values, as `Lit` says.
+    Range(Option<i128>, Option<i128>, bool, Lit),
     Bool(bool),
     Unit,
     /// `Shape::Rect(w, _)`, or `Option::<i64>::Some(x)` with type arguments.

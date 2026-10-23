@@ -1,8 +1,8 @@
-// The operators are what `checked_*` and `panic()` make of them.
+// The operators are what `checked_*` and `panic("stop")` make of them.
 fn add(a: i64, b: i64) -> i64 with panic {
     match checked_add(a, b) {
         Option::Some(c) => c,
-        Option::None => panic(),
+        Option::None => panic("stop"),
     }
 }
 

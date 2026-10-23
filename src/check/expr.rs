@@ -10,7 +10,7 @@ use crate::ast::*;
 use crate::error::{Edit, Error, Fix, Span};
 use crate::exhaust::{self, Redundant};
 use crate::traits::Pred;
-use crate::types::{FnType, Region, Type, struct_fields, variant_fields};
+use crate::types::{FnType, IntTy, Region, Type, struct_fields, variant_fields};
 
 impl Checker {
     /// Checks that `e` has type `want`.
@@ -78,7 +78,7 @@ impl Checker {
             ExprKind::Unary(op @ (UnOp::Ref | UnOp::RefMut), x) => match self.shallow(want) {
                 Type::Ref(_, m, inner) if m == (*op == UnOp::RefMut) => {
                     match self.shallow(&inner) {
-                        Type::Slice(_) => {
+                        Type::Slice(_) | Type::Str => {
                             let t = self.synth_pointee(x)?;
                             self.unify_or(&t, &inner, x.span, |a, b| {
                                 format!("expected `{b}`, found `{a}`")
@@ -316,7 +316,7 @@ impl Checker {
         if let ExprKind::Unary(UnOp::Deref, x) = &e.kind {
             let t = self.synth(x)?;
             if let Type::Ref(_, _, inner) = self.shallow(&t)
-                && let Type::Slice(_) = *inner
+                && inner.is_unsized()
             {
                 self.typed.exprs.insert(e.id, (*inner).clone());
                 return Ok(*inner);
@@ -356,6 +356,21 @@ impl Checker {
                 Ok(ty)
             }
             ExprKind::Bool(_) => Ok(Type::Bool),
+
+            //  -------------- (T-Char)   ------------------------ (T-Str)
+            //   Γ ⊢ 'a' : char             Γ ⊢ "a" : &'static str
+            //
+            // A literal's bytes are the program's: they're there for as long
+            // as it runs, and nothing changes them. So a string literal is a
+            // shared reference of any lifetime, and a byte string literal
+            // too, `&'static [u8]`.
+            ExprKind::Char(_) => Ok(Type::Char),
+            ExprKind::Str(_) => Ok(Type::Ref(Region::Static, false, Box::new(Type::Str))),
+            ExprKind::ByteStr(_) => Ok(Type::Ref(
+                Region::Static,
+                false,
+                Box::new(Type::Slice(Box::new(Type::Int(IntTy::U8)))),
+            )),
 
             //  -------------- (T-Unit)
             //   Γ ⊢ () : ()
@@ -427,28 +442,39 @@ impl Checker {
                 Ok(t)
             }
 
-            //   Γ ⊢ e : σ   σ: Int   τ: Int
-            //  ----------------------------- (T-As)
-            //         Γ ⊢ e as τ : τ
+            //   Γ ⊢ e : σ   σ, τ integer types or char
+            //  ----------------------------------------- (T-As)
+            //               Γ ⊢ e as τ : τ
             //
             // The same number, as a `τ`: it panics if it doesn't fit in
             // one, unless that's proved not to happen (see `refine`), as it
             // always is from a type into one with a wider range. It never
             // changes the number, so unlike Rust's `as` it never truncates.
+            // A character's number is its scalar value, and a number fits
+            // in a `char` if it's one: not a surrogate, nor past `10FFFF`.
             ExprKind::As(x, ty) => {
                 let from = self.synth(x)?;
                 let to = self.resolve(ty)?;
                 let not = |t: &Type, dir: &str| {
-                    format!("`as` converts between integer types, not {dir} `{t}`")
+                    format!("`as` converts between integer types and `char`, not {dir} `{t}`")
                 };
-                if !self.is_integer(&from) && !matches!(self.shallow(&from), Type::Var(_)) {
+                let from_char = matches!(self.shallow(&from), Type::Char);
+                if !from_char
+                    && !self.is_integer(&from)
+                    && !matches!(self.shallow(&from), Type::Var(_))
+                {
                     return Err(Error::ty(x.span, not(&self.solved(&from), "from")));
                 }
-                self.integer(&from, x.span, "`as`")?;
-                if !self.is_integer(&to) {
+                if !from_char {
+                    self.integer(&from, x.span, "`as`")?;
+                }
+                let to_char = matches!(to, Type::Char);
+                if !to_char && !self.is_integer(&to) {
                     return Err(Error::ty(ty.span, not(&to, "to")));
                 }
-                self.integer(&to, ty.span, "`as`")?;
+                if !to_char {
+                    self.integer(&to, ty.span, "`as`")?;
+                }
                 self.operator(e, "`as`");
                 Ok(to)
             }
@@ -476,7 +502,7 @@ impl Checker {
             ExprKind::Unary(UnOp::Deref, x) => {
                 let t = self.synth(x)?;
                 match self.shallow(&t) {
-                    Type::Ref(_, _, inner) if matches!(*inner, Type::Slice(_)) => {
+                    Type::Ref(_, _, inner) if inner.is_unsized() => {
                         Err(generics::unsized_slice(e.span, self.solved(&inner)))
                     }
                     Type::Ref(_, _, inner) | Type::Box(inner) => Ok(*inner),

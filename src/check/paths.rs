@@ -319,7 +319,7 @@ impl Checker {
     }
 
     /// What `ty` in a path `ty::m` names, if it's a type: `Self`, a type
-    /// parameter, an integer type or `bool`. Structs and enums are instantiated by
+    /// parameter, an integer type, `bool` or `char`. Structs and enums are instantiated by
     /// `path`, as they may be generic.
     fn path_type(&self, ty: &Ident) -> Option<Type> {
         match ty.name.as_str() {
@@ -328,6 +328,7 @@ impl Checker {
                 crate::types::IntTy::named(n).map(Type::Int)
             }
             "bool" => Some(Type::Bool),
+            "char" => Some(Type::Char),
             n if self.type_params.iter().any(|p| p == n) => Some(Type::Param(n.into())),
             n if self.traits.traits.contains_key(n) => Some(Type::Unit),
             _ => None,

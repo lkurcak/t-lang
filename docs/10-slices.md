@@ -351,8 +351,9 @@ checks as the program runs.
 |---|---|---|
 | `s[i]` | it should be proved in range, with no panic: refinements that name `len(s)` (measures) | — |
 | ranges, `s.slice(lo, hi)`, `&s[lo..hi]` | `split_at` twice does it; a method of its own when it's wanted | — |
-| `==` on slices | element by element, through `Eq` of `T`: a built-in impl to write | — |
-| `Box<[T]>`, `str` | values whose size is known only as the program runs, owned: what a string needs | — |
+| `==` on slices | element by element, through `Eq` of `T`: a built-in impl to write | 13 ✅ |
+| `str` | a slice of bytes that are UTF-8 | 13 ✅ |
+| `Box<[T]>`, `Box<str>` | values whose size is known only as the program runs, owned | — |
 | arrays, `[T; N]` | a length in the type: const generics | — |
 | `for x in s` | `IntoIterator`, which still needs negative reasoning (docs/09.1-list.md) | — |
 | tuples | `Split` and `SplitMut` are structs until there are | — |

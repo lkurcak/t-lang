@@ -1742,3 +1742,35 @@ fn hovers_slice_methods() {
 
     stop(child, c);
 }
+
+#[test]
+fn hovers_strings_and_characters() {
+    let (child, mut c) = start();
+    let uri = "file:///tmp/str.t";
+    let src = "fn main() {\n    let s = \"a\\u{20AC}\";\n    print(s.len());\n    let c = 'x';\n    print(c as u32);\n}\n";
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
+        }}),
+    );
+    let diagnostics = c.diagnostics();
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    let at = |line: u32, character: u32| json!({"textDocument": {"uri": uri}, "position": {"line": line, "character": character}});
+
+    c.send(json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": at(1, 8)}));
+    let hover = c.response(2)["result"]["contents"]["value"].clone();
+    let hover = hover.as_str().unwrap();
+    assert!(hover.contains("&'static str"), "{hover}");
+
+    c.send(json!({"jsonrpc": "2.0", "id": 3, "method": "textDocument/hover", "params": at(2, 13)}));
+    let hover = c.response(3)["result"]["contents"]["value"].clone();
+    let hover = hover.as_str().unwrap();
+    assert!(hover.contains("How many bytes it has"), "{hover}");
+
+    c.send(json!({"jsonrpc": "2.0", "id": 4, "method": "textDocument/hover", "params": at(3, 8)}));
+    let hover = c.response(4)["result"]["contents"]["value"].clone();
+    let hover = hover.as_str().unwrap();
+    assert!(hover.contains("char"), "{hover}");
+
+    stop(child, c);
+}

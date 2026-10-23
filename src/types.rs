@@ -11,6 +11,10 @@ pub enum Type {
     /// (see docs/11-integers.md).
     Int(IntTy),
     Bool,
+    /// A *character*: a Unicode scalar value, a number in 0 to `D7FF` or
+    /// `E000` to `10FFFF` (see docs/13-strings.md). Not an integer: it has
+    /// no arithmetic, and `as` converts it to and from one.
+    Char,
     /// The type with exactly one value, `()`. "Nothing interesting to return."
     Unit,
     /// `!`, the type with no values at all: *never*. It's the type of what
@@ -54,6 +58,11 @@ pub enum Type {
     /// what a type parameter stands for, so generic code never has one by
     /// value either (`Checker::sized`).
     Slice(Box<Type>),
+    /// `str`: a *string*, bytes that are UTF-8, how many known only as the
+    /// program runs. Like a slice, it's only ever what a reference points
+    /// to, and only a shared one, `&'a str`: changing its bytes could make
+    /// them not UTF-8 (see docs/13-strings.md).
+    Str,
     /// `<T as Iter>::Item`: a *projection*, the type that the impl of trait
     /// `.1` for type `.0` picks for its associated type `.2` (see
     /// docs/06b-associated-types.md). Once the type's outermost shape is
@@ -473,6 +482,8 @@ impl Type {
             }
             Type::Int(_)
             | Type::Bool
+            | Type::Char
+            | Type::Str
             | Type::Unit
             | Type::Never
             | Type::Param(_)
@@ -484,14 +495,22 @@ impl Type {
         params.iter().chain(ret).chain(effects)
     }
 
-    /// A slice in this type that isn't right behind a reference, if there's
-    /// one: where it would be a value of its own.
+    /// Is it a slice or `str`: a type whose values' size is known only as
+    /// the program runs, so it's only ever behind a reference?
+    pub fn is_unsized(&self) -> bool {
+        matches!(self, Type::Slice(_) | Type::Str)
+    }
+
+    /// A slice or `str` in this type that isn't right behind a reference
+    /// (a shared one, for `str`), if there's one: where it would be a value
+    /// of its own.
     pub fn unsized_part(&self) -> Option<&Type> {
         match self {
-            Type::Slice(_) => Some(self),
+            Type::Slice(_) | Type::Str => Some(self),
             Type::Ref(_, _, inner) if matches!(**inner, Type::Slice(_)) => {
                 inner.parts().find_map(Type::unsized_part)
             }
+            Type::Ref(_, false, inner) if matches!(**inner, Type::Str) => None,
             t => t.parts().find_map(Type::unsized_part),
         }
     }
@@ -519,6 +538,8 @@ impl Type {
             Type::Proj(t, tr, name) => Type::Proj(Box::new(f(t)), tr.clone(), name.clone()),
             Type::Int(_)
             | Type::Bool
+            | Type::Char
+            | Type::Str
             | Type::Unit
             | Type::Never
             | Type::Param(_)
@@ -792,9 +813,10 @@ impl IntTy {
     }
 }
 
-/// Is `name` a built-in type's: an integer type's, `bool` or `Box`?
+/// Is `name` a built-in type's: an integer type's, `bool`, `char`, `str`
+/// or `Box`?
 pub fn is_builtin_type(name: &str) -> bool {
-    IntTy::named(name).is_some() || matches!(name, "bool" | "Box")
+    IntTy::named(name).is_some() || matches!(name, "bool" | "char" | "str" | "Box")
 }
 
 /// `a, b, c`
@@ -808,6 +830,8 @@ impl fmt::Display for Type {
         match self {
             Type::Int(t) => f.write_str(t.name()),
             Type::Bool => f.write_str("bool"),
+            Type::Char => f.write_str("char"),
+            Type::Str => f.write_str("str"),
             Type::Unit => f.write_str("()"),
             Type::Never => f.write_str("!"),
             // Effects not worked out yet aren't shown: what's known is.

@@ -358,7 +358,7 @@ fn shorthand_pats(p: &Pattern, out: &mut HashSet<Span>) {
         }
         PatternKind::Wild
         | PatternKind::Bind(..)
-        | PatternKind::Int(_)
+        | PatternKind::Int(..)
         | PatternKind::Range(..)
         | PatternKind::Bool(_)
         | PatternKind::Unit => {}

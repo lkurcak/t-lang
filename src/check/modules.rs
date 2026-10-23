@@ -1424,7 +1424,7 @@ impl Rewrite<'_> {
             }
             PatternKind::Wild
             | PatternKind::Bind(..)
-            | PatternKind::Int(_)
+            | PatternKind::Int(..)
             | PatternKind::Range(..)
             | PatternKind::Bool(_)
             | PatternKind::Unit => {}
@@ -1538,6 +1538,9 @@ fn children_mut(e: &mut Expr) -> Vec<&mut Expr> {
         ExprKind::Move(_) => unreachable!("written by lift"),
         ExprKind::Int(..)
         | ExprKind::Bool(_)
+        | ExprKind::Char(_)
+        | ExprKind::Str(_)
+        | ExprKind::ByteStr(_)
         | ExprKind::Unit
         | ExprKind::Var(..)
         | ExprKind::Continue(_) => Vec::new(),

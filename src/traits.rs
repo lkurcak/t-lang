@@ -563,17 +563,31 @@ impl Traits {
         match (tr, ty) {
             (
                 "Discard",
-                Type::Int(_) | Type::Bool | Type::Unit | Type::Never | Type::Fn(_) | Type::Ref(..),
+                Type::Int(_)
+                | Type::Bool
+                | Type::Char
+                | Type::Unit
+                | Type::Never
+                | Type::Fn(_)
+                | Type::Ref(..),
             ) => return Ok(Source::Builtin),
             ("Discard", Type::Box(inner)) => return all(&[inner]),
-            ("Copy", Type::Int(_) | Type::Bool | Type::Unit | Type::Never | Type::Fn(_)) => {
+            (
+                "Copy",
+                Type::Int(_) | Type::Bool | Type::Char | Type::Unit | Type::Never | Type::Fn(_),
+            ) => {
                 return Ok(Source::Builtin);
             }
             ("Copy", Type::Ref(_, false, _)) => return Ok(Source::Builtin),
             ("Copy", Type::Ref(_, true, _) | Type::Box(_)) => return Err(fail()),
-            ("Eq", Type::Int(_) | Type::Bool | Type::Unit | Type::Never) => {
+            ("Eq", Type::Int(_) | Type::Bool | Type::Char | Type::Unit | Type::Never) => {
                 return Ok(Source::Builtin);
             }
+            // A string compares by its bytes, and a slice value by value,
+            // if its values compare: the same length, and equal values at
+            // each index.
+            ("Eq", Type::Str) => return Ok(Source::Builtin),
+            ("Eq", Type::Slice(inner)) => return all(&[inner]),
             ("Int", Type::Int(_)) => return Ok(Source::Builtin),
             ("Signed", Type::Int(t)) if t.signed() => return Ok(Source::Builtin),
             ("Unsigned", Type::Int(t)) if !t.signed() => return Ok(Source::Builtin),
@@ -1132,17 +1146,17 @@ fn param(name: &str) -> Type {
 ///   bounds (`Checker::hide`), so the same blanket impl is found for that,
 ///   and, by coherence, no other impl of the trait exists: monomorphisation,
 ///   which only sees the hidden type, finds the impl the checker did.
-/// - A parameter never matches a slice, `[T]`, as no type parameter
-///   stands for one (`Type::Slice`): an impl's methods could have its `T`
+/// - A parameter never matches a slice, `[T]`, or `str`, as no type
+///   parameter stands for one (`Type::Slice`): an impl's methods could have its `T`
 ///   by value. `overlap` agrees, so `impl<T> Tr for &T` and `impl Tr for
 ///   &[i64]` don't overlap, and the checker and monomorphisation find the
 ///   same one.
 pub fn matches(pat: &Type, t: &Type, params: &[String], found: &mut HashMap<String, Type>) -> bool {
     match pat {
-        // A parameter never stands for a slice (see `Type::Slice`).
+        // A parameter never stands for a slice or `str` (see `Type::Slice`).
         Type::Param(p) if params.contains(p) => match found.get(p) {
             Some(prev) => prev.erased() == t.erased(),
-            None if matches!(t, Type::Slice(_)) => false,
+            None if t.is_unsized() => false,
             None => {
                 found.insert(p.clone(), t.clone());
                 true
@@ -1181,7 +1195,7 @@ fn unify(a: &Type, b: &Type, params: &[String], s: &mut HashMap<String, Type>) -
     match (&a, &b) {
         (Type::Param(p), Type::Param(q)) if p == q => true,
         (Type::Param(p), t) | (t, Type::Param(p)) if var(&Type::Param(p.clone())) => {
-            if occurs(p, t, s) || matches!(t, Type::Slice(_)) {
+            if occurs(p, t, s) || t.is_unsized() {
                 return false;
             }
             s.insert(p.clone(), t.clone());

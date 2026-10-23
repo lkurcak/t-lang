@@ -24,11 +24,23 @@
         "named": true
       },
       {
+        "type": "byte_literal",
+        "named": true
+      },
+      {
+        "type": "byte_string_literal",
+        "named": true
+      },
+      {
         "type": "call_expression",
         "named": true
       },
       {
         "type": "cast_expression",
+        "named": true
+      },
+      {
+        "type": "char_literal",
         "named": true
       },
       {
@@ -97,6 +109,10 @@
       },
       {
         "type": "self",
+        "named": true
+      },
+      {
+        "type": "string_literal",
         "named": true
       },
       {
@@ -1652,6 +1668,14 @@
       "multiple": false,
       "required": true,
       "types": [
+        {
+          "type": "byte_literal",
+          "named": true
+        },
+        {
+          "type": "char_literal",
+          "named": true
+        },
         {
           "type": "integer_literal",
           "named": true
@@ -3463,6 +3487,18 @@
     "named": false
   },
   {
+    "type": "byte_literal",
+    "named": true
+  },
+  {
+    "type": "byte_string_literal",
+    "named": true
+  },
+  {
+    "type": "char_literal",
+    "named": true
+  },
+  {
     "type": "continue",
     "named": false
   },
@@ -3566,6 +3602,10 @@
   },
   {
     "type": "self",
+    "named": true
+  },
+  {
+    "type": "string_literal",
     "named": true
   },
   {

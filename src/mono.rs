@@ -251,7 +251,12 @@ impl<'p> Mono<'p> {
         // functions' signatures may make, like `Option<i64>`.
         let lazy = |name: &str| {
             let of = name.split("::<").next().unwrap_or(name);
-            self.info.library_symbols.contains(name) || self.info.library_symbols.contains(of)
+            // Only the built-in libraries give slices, strings and
+            // characters methods, or implement traits for them.
+            let builtin = ["<[", "<str", "<char"].iter().any(|p| name.starts_with(p));
+            builtin
+                || self.info.library_symbols.contains(name)
+                || self.info.library_symbols.contains(of)
         };
         let mut used = HashSet::new();
         let mut kept_types: Vec<bool> = out.types.iter().map(|d| !lazy(&d.name().name)).collect();
@@ -655,6 +660,8 @@ impl Cx<'_, '_, '_> {
         let kind = match t {
             Type::Int(t) => TypeExprKind::Named(t.name().into(), Vec::new()),
             Type::Bool => TypeExprKind::Named("bool".into(), Vec::new()),
+            Type::Char => TypeExprKind::Named("char".into(), Vec::new()),
+            Type::Str => TypeExprKind::Named("str".into(), Vec::new()),
             Type::Unit => TypeExprKind::Unit,
             Type::Never => TypeExprKind::Never,
             Type::Fn(sig) => TypeExprKind::Fn(
@@ -915,7 +922,12 @@ impl Cx<'_, '_, '_> {
                     _ => unreachable!("an integer literal of type {t:?}"),
                 }
             }
-            ExprKind::Bool(_) | ExprKind::Unit | ExprKind::Continue(_) => e.kind.clone(),
+            ExprKind::Bool(_)
+            | ExprKind::Char(_)
+            | ExprKind::Str(_)
+            | ExprKind::ByteStr(_)
+            | ExprKind::Unit
+            | ExprKind::Continue(_) => e.kind.clone(),
             // Type arguments written in the source are in `info.instances`
             // like the inferred ones, and the copy's name says them.
             ExprKind::Var(name, _) => match self.m.info.instances.get(&e.id).cloned() {

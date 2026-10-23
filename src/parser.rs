@@ -1998,6 +1998,10 @@ impl Parser {
         let span = self.span();
         let kind = match self.peek().clone() {
             Tok::Int(n, suffix) => ExprKind::Int(n, suffix),
+            Tok::Byte(b) => ExprKind::Int(u64::from(b), Some(crate::types::IntTy::U8)),
+            Tok::Char(c) => ExprKind::Char(c),
+            Tok::Str(s) => ExprKind::Str(s),
+            Tok::ByteStr(b) => ExprKind::ByteStr(b),
             Tok::True => ExprKind::Bool(true),
             Tok::False => ExprKind::Bool(false),
             Tok::Crate | Tok::Super => return self.path_expr(),
@@ -2329,27 +2333,33 @@ impl Parser {
     fn pat_atom(&mut self) -> Result<Pattern, Error> {
         let start = self.span();
         let kind = match self.peek().clone() {
-            Tok::Int(..) | Tok::Minus => {
-                let (lo, mut end) = self.pat_int()?;
+            Tok::Str(_) | Tok::ByteStr(_) => {
+                return Err(Error::syntax(
+                    start,
+                    "a string literal can't be a pattern yet; compare with `==`",
+                ));
+            }
+            Tok::Int(..) | Tok::Minus | Tok::Byte(_) | Tok::Char(_) => {
+                let (lo, a, mut end) = self.pat_int()?;
                 let kind = match self.peek() {
                     Tok::DotDot => {
                         end = self.bump().span;
-                        if matches!(self.peek(), Tok::Int(..) | Tok::Minus) {
-                            let (hi, e) = self.pat_int()?;
+                        if starts_pat_int(self.peek()) {
+                            let (hi, b, e) = self.pat_int()?;
                             end = e;
                             // Can't overflow: a literal is at most `u64::MAX`.
-                            PatternKind::Range(Some(lo), Some(hi - 1), false)
+                            PatternKind::Range(Some(lo), Some(hi - 1), false, a.with(b, end)?)
                         } else {
-                            PatternKind::Range(Some(lo), None, false)
+                            PatternKind::Range(Some(lo), None, false, a)
                         }
                     }
                     Tok::DotDotEq => {
                         self.bump();
-                        let (hi, e) = self.pat_int()?;
+                        let (hi, b, e) = self.pat_int()?;
                         end = e;
-                        PatternKind::Range(Some(lo), Some(hi), true)
+                        PatternKind::Range(Some(lo), Some(hi), true, a.with(b, end)?)
                     }
-                    _ => PatternKind::Int(lo),
+                    _ => PatternKind::Int(lo, a),
                 };
                 return Ok(Pattern {
                     kind,
@@ -2359,10 +2369,10 @@ impl Parser {
             }
             Tok::DotDot | Tok::DotDotEq => {
                 let inclusive = self.bump().tok == Tok::DotDotEq;
-                let (hi, end) = self.pat_int()?;
+                let (hi, lit, end) = self.pat_int()?;
                 let hi = if inclusive { hi } else { hi - 1 };
                 return Ok(Pattern {
-                    kind: PatternKind::Range(None, Some(hi), inclusive),
+                    kind: PatternKind::Range(None, Some(hi), inclusive, lit),
                     span: start.to(end),
                     id: self.id(),
                 });
@@ -2457,9 +2467,14 @@ impl Parser {
         })
     }
 
-    /// `5` or `-5` in a pattern.
-    fn pat_int(&mut self) -> Result<(i128, Span), Error> {
+    /// `5` or `-5` in a pattern, or `b'a'` or `'a'`, by its value.
+    fn pat_int(&mut self) -> Result<(i128, Lit, Span), Error> {
         let start = self.span();
+        match *self.peek() {
+            Tok::Byte(b) => return Ok((i128::from(b), Lit::Byte, self.bump().span)),
+            Tok::Char(c) => return Ok((i128::from(u32::from(c)), Lit::Char, self.bump().span)),
+            _ => {}
+        }
         let neg = self.eat(&Tok::Minus);
         let Tok::Int(n, suffix) = *self.peek() else {
             return Err(self.unexpected("an integer"));
@@ -2472,7 +2487,7 @@ impl Parser {
             ));
         }
         let n = i128::from(n);
-        Ok((if neg { -n } else { n }, start.to(end)))
+        Ok((if neg { -n } else { n }, Lit::Int, start.to(end)))
     }
 
     /// `Point { x, y: 0, .. }`
@@ -2519,11 +2534,36 @@ impl Parser {
     }
 }
 
+/// Can a literal in a pattern start with `tok`?
+fn starts_pat_int(tok: &Tok) -> bool {
+    matches!(tok, Tok::Int(..) | Tok::Minus | Tok::Byte(_) | Tok::Char(_))
+}
+
+impl Lit {
+    /// The kind of a range from a literal of this kind to one of kind
+    /// `other`, which ends at `end`: characters go only with characters,
+    /// and a byte makes it a range of bytes.
+    fn with(self, other: Lit, end: Span) -> Result<Lit, Error> {
+        match (self, other) {
+            (a, b) if a == b => Ok(a),
+            (Lit::Char, _) | (_, Lit::Char) => Err(Error::syntax(
+                end,
+                "a range of characters goes from a character to a character",
+            )),
+            _ => Ok(Lit::Byte),
+        }
+    }
+}
+
 /// Can an expression start with `tok`?
 fn starts_expr(tok: &Tok) -> bool {
     matches!(
         tok,
         Tok::Int(..)
+            | Tok::Byte(_)
+            | Tok::Char(_)
+            | Tok::Str(_)
+            | Tok::ByteStr(_)
             | Tok::Ident(_)
             | Tok::True
             | Tok::False

@@ -33,10 +33,13 @@ impl<T> Option<T> {
     }
 
     /// What's in it, or else a panic.
-    pub fn unwrap(self) -> T with panic {
+    pub fn unwrap(self) -> T with panic { self.expect("`unwrap` of `None`") }
+
+    /// What's in it, or else a panic, saying `why`.
+    pub fn expect(self, why: &str) -> T with panic {
         match self {
             Option::Some(x) => x,
-            Option::None => crate::panic::panic(),
+            Option::None => crate::panic::panic(why),
         }
     }
 

@@ -903,6 +903,9 @@ impl Printer<'_> {
             ExprKind::Int(n, None) => self.spelled(e.span, n.to_string()),
             ExprKind::Int(n, Some(t)) => self.spelled(e.span, format!("{n}{}", t.name())),
             ExprKind::Bool(b) => text(b.to_string()),
+            ExprKind::Char(c) => self.spelled(e.span, crate::lexer::char_literal(*c)),
+            ExprKind::Str(s) => self.spelled(e.span, crate::lexer::str_literal(s)),
+            ExprKind::ByteStr(b) => self.spelled(e.span, crate::lexer::byte_str_literal(b)),
             ExprKind::Unit => text("()"),
             ExprKind::Var(name, targs) => text(name) + self.turbofish(targs),
             // There's no syntax for one: printed as the place it moves out
@@ -1391,9 +1394,9 @@ impl Printer<'_> {
             PatternKind::Wild => text("_"),
             PatternKind::Bind(name, false) => text(name),
             PatternKind::Bind(name, true) => text(format!("mut {name}")),
-            PatternKind::Int(n) => self.spelled(p.span, n.to_string()),
-            PatternKind::Range(lo, hi, inclusive) => {
-                self.spelled(p.span, range(*lo, *hi, *inclusive))
+            PatternKind::Int(n, lit) => self.spelled(p.span, lit.show(*n)),
+            PatternKind::Range(lo, hi, inclusive, lit) => {
+                self.spelled(p.span, range(*lo, *hi, *inclusive, *lit))
             }
             PatternKind::Bool(b) => text(b.to_string()),
             PatternKind::Unit => text("()"),
@@ -1475,12 +1478,12 @@ fn type_lead_start(d: &TypeDecl, pos: usize) -> usize {
 
 /// A range pattern as written. Unlike `exhaust::show_range`, which tidies
 /// ranges up for messages, this keeps `0..1` from turning into `0`.
-fn range(lo: Option<i128>, hi: Option<i128>, inclusive: bool) -> String {
-    let lo = lo.map_or(String::new(), |lo| lo.to_string());
+fn range(lo: Option<i128>, hi: Option<i128>, inclusive: bool, lit: Lit) -> String {
+    let lo = lo.map_or(String::new(), |lo| lit.show(lo));
     match hi {
         None => format!("{lo}.."),
-        Some(hi) if inclusive => format!("{lo}..={hi}"),
-        Some(hi) => format!("{lo}..{}", hi + 1),
+        Some(hi) if inclusive => format!("{lo}..={}", lit.show(hi)),
+        Some(hi) => format!("{lo}..{}", lit.show(hi + 1)),
     }
 }
 

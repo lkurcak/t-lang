@@ -14,7 +14,7 @@ struct Z {}
 impl Gen for Z {
     effect e = panic;
 
-    fn next(&mut self) -> i64 with panic { panic() }
+    fn next(&mut self) -> i64 with panic { panic("stop") }
 }
 
 fn main() {

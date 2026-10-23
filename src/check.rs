@@ -91,7 +91,7 @@ use typed::{Bind, Typed};
 use unify::Var;
 
 /// Built-in functions, available everywhere. Shared with the interpreter.
-pub const BUILTINS: &[&str] = &["print", "print_bool"];
+pub const BUILTINS: &[&str] = &["print", "print_bool", "print_str"];
 
 /// The intrinsics: functions the core and alloc libraries declare with no
 /// body, which the compiler provides (see `core/mem.t`, `alloc/raw.t`), by
@@ -107,6 +107,8 @@ pub const INTRINSICS: &[&str] = &[
     "core::num::least",
     "core::num::greatest",
     "core::slice::empty",
+    "core::str::from_utf8_unchecked",
+    "str::as_bytes",
     "core::slice::empty_mut",
     "[T]::len",
     "[T]::get",
@@ -158,6 +160,20 @@ pub(crate) fn builtin_scheme(name: &str) -> Scheme {
         },
         // print_bool : fn(bool) -> ()
         "print_bool" => Scheme::mono(Type::func(vec![Type::Bool], Type::Unit)),
+        // print_str : fn<'a>(&'a str) -> ()
+        //
+        // One line for each in the text, as it may hold line breaks.
+        "print_str" => Scheme {
+            lifetimes: vec!["'a".into()],
+            ..Scheme::mono(Type::func(
+                vec![Type::Ref(
+                    Region::Named("'a".into()),
+                    false,
+                    Box::new(Type::Str),
+                )],
+                Type::Unit,
+            ))
+        },
         _ => unreachable!("unknown builtin `{name}`"),
     }
 }

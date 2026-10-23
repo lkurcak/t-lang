@@ -343,7 +343,7 @@ impl Checker {
                     return Err(Clash::Infinite(v, t));
                 }
                 match &t {
-                    Type::Slice(_) => return Err(Clash::Unsized(v, t)),
+                    Type::Slice(_) | Type::Str => return Err(Clash::Unsized(v, t)),
                     Type::Var(w) => {
                         let (param, int) = (self.vars[v as usize].param, self.vars[v as usize].int);
                         let w = &mut self.vars[*w as usize];
@@ -399,10 +399,15 @@ impl Checker {
         Err(Clash::Mismatch)
     }
 
-    /// That variable `v` can't be `t`, a slice, at `span` (`Clash::Unsized`).
+    /// That variable `v` can't be `t`, a slice or `str`, at `span`
+    /// (`Clash::Unsized`).
     pub(super) fn unsized_var(&self, v: u32, t: &Type, span: Span) -> Error {
         let t = self.solved(t);
         match self.vars[v as usize].param {
+            true if t == Type::Str => Error::ty(
+                span,
+                "a type parameter can't stand for `str`: it's only ever behind a reference",
+            ),
             true => Error::ty(
                 span,
                 format!(

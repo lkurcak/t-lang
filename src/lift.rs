@@ -299,9 +299,13 @@ impl<'p> Cx<'p> {
                 unreachable!("rewritten when paths are resolved")
             }
             ExprKind::Move(_) => unreachable!("written here"),
-            ExprKind::Int(..) | ExprKind::Bool(_) | ExprKind::Unit | ExprKind::Continue(_) => {
-                e.kind.clone()
-            }
+            ExprKind::Int(..)
+            | ExprKind::Bool(_)
+            | ExprKind::Char(_)
+            | ExprKind::Str(_)
+            | ExprKind::ByteStr(_)
+            | ExprKind::Unit
+            | ExprKind::Continue(_) => e.kind.clone(),
             ExprKind::Var(name, targs) => {
                 ExprKind::Var(self.renamed(name, e.id), self.types(targs))
             }

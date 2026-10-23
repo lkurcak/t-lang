@@ -106,10 +106,14 @@ impl<T: Discard, E: Discard> Result<T, E> {
 
 impl<T, E: Discard> Result<T, E> {
     /// What's in an `Ok`, or else a panic. The error is thrown away.
-    pub fn unwrap(self) -> T with panic {
+    pub fn unwrap(self) -> T with panic { self.expect("`unwrap` of `Err`") }
+
+    /// What's in an `Ok`, or else a panic, saying `why`. The error is
+    /// thrown away.
+    pub fn expect(self, why: &str) -> T with panic {
         match self {
             Result::Ok(x) => x,
-            Result::Err(_) => crate::panic::panic(),
+            Result::Err(_) => crate::panic::panic(why),
         }
     }
 }

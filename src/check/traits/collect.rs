@@ -307,6 +307,16 @@ impl Checker {
                 TypeExprKind::Slice(elem) if d.trait_name.is_none() => {
                     Type::Slice(Box::new(self.resolve_with(elem, &params, &mut lts)?))
                 }
+                // `impl str`, and in the built-in libraries, `impl Ord for
+                // str`: they take care that each method of the trait has
+                // `Self` behind a reference, or a bound no `str` meets.
+                TypeExprKind::Named(n, args)
+                    if n == "str"
+                        && args.is_empty()
+                        && (d.trait_name.is_none() || self.modules.in_library(d.module)) =>
+                {
+                    Type::Str
+                }
                 _ => self.resolve_with(&d.self_ty, &params, &mut lts)?,
             };
             let mut lifetimes = declared.clone();
@@ -346,7 +356,8 @@ impl Checker {
                         ));
                     }
                 }
-                (None, Type::Slice(_)) if self.modules.in_library(d.module) => {}
+                (None, Type::Slice(_) | Type::Str | Type::Char)
+                    if self.modules.in_library(d.module) => {}
                 (None, t) => {
                     return Err(Error::ty(
                         d.self_ty.span,

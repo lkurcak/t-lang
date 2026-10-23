@@ -2,7 +2,7 @@
 // that can't is wanted is no more allowed than storing it.
 fn call(f: fn() -> i64) -> i64 { f() }
 
-fn boom() -> i64 with panic { panic() }
+fn boom() -> i64 with panic { panic("stop") }
 
 fn main() with panic {
     print(call(boom));

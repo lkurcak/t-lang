@@ -158,10 +158,23 @@ pub(crate) type ProjNames<'a> =
 /// That slice `t` is written somewhere other than right after `&` or
 /// `&mut`, where it would be a value of its own.
 pub(crate) fn unsized_slice(span: Span, t: impl std::fmt::Display) -> Error {
-    Error::ty(
-        span,
-        format!("a slice `{t}` can only be behind a reference, as in `&{t}`"),
-    )
+    match t.to_string().as_str() {
+        "str" => Error::ty(
+            span,
+            "`str` can only be behind a shared reference, as in `&str`",
+        ),
+        t => Error::ty(
+            span,
+            format!("a slice `{t}` can only be behind a reference, as in `&{t}`"),
+        ),
+    }
+}
+
+/// Is `t` the built-in `str`, written as `name`, which `names` says no
+/// declared type is?
+fn is_str(t: &TypeExpr, names: &dyn Fn(&str, &TypeExpr) -> Option<TypeName>) -> bool {
+    matches!(&t.kind, TypeExprKind::Named(n, args) if n == "str" && args.is_empty())
+        && names("str", t).is_none()
 }
 
 /// Turns a type as written (`TypeExpr`) into a type as understood (`Type`).
@@ -252,9 +265,10 @@ fn resolve_in(
             let span = Span::new(t.span.start, t.span.start + 1);
             let l = l.as_ref().map(|l| l.name.as_str());
             let region = region(l, span, lifetimes, binder.as_deref_mut())?;
-            // The one place a slice can be.
+            // The one place a slice can be, and, if it's shared, a `str`.
             let inner = match &inner.kind {
                 TypeExprKind::Slice(elem) => Type::Slice(Box::new(go(elem, lifetimes, binder)?)),
+                _ if is_str(inner, names) && !*mutable => Type::Str,
                 _ => go(inner, lifetimes, binder)?,
             };
             Ok(Type::Ref(region, *mutable, Box::new(inner)))
@@ -301,6 +315,8 @@ fn resolve_in(
                 None if params.contains(name) => (Type::Param(name.clone()), 0, 0),
                 None if let Some(t) = crate::types::IntTy::named(name) => (Type::Int(t), 0, 0),
                 None if name == "bool" => (Type::Bool, 0, 0),
+                None if name == "char" => (Type::Char, 0, 0),
+                None if name == "str" => return Err(unsized_slice(t.span, "str")),
                 None if name == "Box" => (Type::Box(Box::new(Type::Unit)), 0, 1),
                 None => return Err(Error::ty(t.span, format!("unknown type `{name}`"))),
             };

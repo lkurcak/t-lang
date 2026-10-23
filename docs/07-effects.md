@@ -47,8 +47,8 @@ which do means reading every function they call.
   it's converted to (docs/11-integers.md). Not where the checker proves
   they can't (step 8, docs/08-refinement-types.md): not `-5`, nor `/` or
   `%` by a literal other than `0` or `-1`, nor `1 + 2`.
-- **`panic()`**, from the core library, whose type is `fn() -> ! with
-  panic`: it aborts.
+- **`panic("why")`**, from the core library, whose type is `fn(&str) -> !
+  with panic`: it aborts, saying why (docs/13-strings.md).
 - **`Box::new`**, `with {alloc, panic}`: it allocates, and aborts if memory
   has run out. A box that can fail without aborting, `Box::try_new`, comes
   with the `alloc` library.
@@ -57,13 +57,13 @@ which do means reading every function they call.
 `core::num` has arithmetic that can't panic: `checked_add`, `checked_sub`,
 `checked_mul`, `checked_div`, `checked_rem` and `checked_neg`, each giving
 `None` where the operator panics. The operators are what they are with a
-`panic()` on `None`:
+`panic` on `None`:
 
 ```rust
 fn add(a: i64, b: i64) -> i64 with panic {
     match checked_add(a, b) {
         Option::Some(c) => c,
-        Option::None => panic(),
+        Option::None => panic("no value"),
     }
 }
 
@@ -207,7 +207,7 @@ for, which is what coherence needs.
 
 > A function whose effects don't have `panic` never reaches a panic.
 
-Look at the stack when a panic happens, at an operator, `panic()` or
+Look at the stack when a panic happens, at an operator, `panic` or
 `Box::new`. The function running it has `panic` among its effects, as its
 body's sites must be among them. Its caller called something whose
 effects have `panic`, at the effect arguments of that call: directly, or
@@ -265,7 +265,7 @@ work out; that's for when there's a backend.
 | Missing | Why it's missing | Step |
 |---|---|---|
 | divergence as an effect, total functions | needs a termination checker | — |
-| `expect`, a message for `panic` | needs strings | — |
+| `expect`, a message for `panic` | needs strings | 13 ✅ |
 | `Box::try_new` | fallible allocation belongs with `alloc` | `alloc` |
 | bounds on associated effects, `I: Iterator<e = {}>` | not needed yet | — |
 | effect arguments in turbofish, other than `_` | not needed yet | — |

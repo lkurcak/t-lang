@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+Step 13: strings. See [docs/13-strings.md](docs/13-strings.md).
+
+### Added
+
+- `str`, a string: bytes that are UTF-8, only ever behind a shared
+  reference, `&str`, never `&mut str`, nor what a type parameter stands
+  for. `core::str` has `len`, `is_empty`, `as_bytes`, `is_char_boundary`,
+  `split_at` and `get` (which cut only where a character starts),
+  `chars`, and `from_utf8`, all safe code in T over two trusted
+  operations: `as_bytes`, and `from_utf8_unchecked`, which is `unsafe`,
+  its obligation checked as the program runs. `==` compares bytes; `Ord`
+  orders them.
+- `char`, a Unicode scalar value. `c as u32` never panics; `n as char`
+  panics unless `n` is a scalar value, or is proved one. `char::from_u32`,
+  `len_utf8`, `encode_utf8` and `is_ascii*`, in T. Character patterns and
+  ranges, exhaustive over the scalar values. The refinement logic knows a
+  character's number is a scalar value.
+- Literals `"text"` (`&'static str`), `'a'` (`char`), `b"bytes"`
+  (`&'static [u8]`) and `b'a'` (`u8`, in patterns too). Escapes `\n \r
+  \t \\ \0 \' \"`; `\u{..}`, a character, only in text, and `\x..`, a
+  byte, only in byte literals. `t fmt` keeps them as written.
+- `==` on slices whose values are `Eq`, value by value.
+- `Option::expect` and `Result::expect`.
+- `print_str`, until there's I/O.
+- tree-sitter: the new literals.
+
+### Changed
+
+- `panic` takes a message, `panic("why")`, which the panic shows.
+  `panic()` is gone. `unwrap` says what it was of.
+- `as` converts between integer types and `char`.
+
 ## 0.22.0 (2026-10-23)
 
 Step 12: bits. See [docs/12-bits.md](docs/12-bits.md).

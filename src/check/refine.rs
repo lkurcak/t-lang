@@ -566,7 +566,7 @@ fn each_bind(pat: &Pattern, f: &mut impl FnMut(&Pattern)) {
         PatternKind::Struct(_, _, fields, _) => fields.iter().for_each(|fp| each_bind(&fp.pat, f)),
         PatternKind::Move(p) => each_bind(p, f),
         PatternKind::Wild
-        | PatternKind::Int(_)
+        | PatternKind::Int(..)
         | PatternKind::Range(..)
         | PatternKind::Bool(_)
         | PatternKind::Unit => {}
@@ -778,6 +778,8 @@ impl Walk<'_> {
                 let (lo, hi) = t.range()?;
                 Some((Lin::constant(lo), Lin::constant(hi)))
             }
+            // But for the surrogates, in between: see `scalar`.
+            Type::Char => Some((Lin::constant(0), Lin::constant(0x10FFFF))),
             Type::Param(p) if self.is_int(t) => {
                 if let Some(b) = self.bounds.get(p) {
                     return Some(b.clone());
@@ -811,6 +813,28 @@ impl Walk<'_> {
         }
     }
 
+    /// That `v`, a character's value, is a Unicode scalar value: in its
+    /// range, and not a surrogate. Its range is a variable's kind, but the
+    /// gap in it isn't, as a kind is an interval: it's said where a
+    /// character's value turns into an integer, by `as`, the only place
+    /// it's seen as a number.
+    fn scalar(v: &Lin) -> Option<Formula> {
+        Some(Formula::and([
+            Formula::le(&Lin::constant(0), v)?,
+            Formula::le(v, &Lin::constant(0x10FFFF))?,
+            Formula::or([
+                Formula::le(v, &Lin::constant(0xD7FF))?,
+                Formula::le(&Lin::constant(0xE000), v)?,
+            ]),
+        ]))
+    }
+
+    /// Is `t` an integer type, a type parameter that's `Int`, or `char`:
+    /// is its value a number, in the logic?
+    fn is_scalar(&self, t: &Type) -> bool {
+        matches!(t, Type::Char) || self.is_int(t)
+    }
+
     /// Is `t` an integer type, or a type parameter that's `Int`?
     fn is_int(&self, t: &Type) -> bool {
         match t {
@@ -839,7 +863,7 @@ impl Walk<'_> {
     /// struct, its fields have its refinements.
     fn unknown(&mut self, t: &Type) -> Val {
         match t {
-            Type::Int(_) | Type::Param(_) if self.is_int(t) => match self.kind(t) {
+            Type::Int(_) | Type::Param(_) | Type::Char if self.is_scalar(t) => match self.kind(t) {
                 Some(k) => Val::Int(Lin::var(self.fresh(k))),
                 None => Val::Other,
             },
@@ -1225,7 +1249,7 @@ impl Walk<'_> {
         let t = self.place_ty(p);
         match t {
             Type::Bool => self.leaf(p, &t),
-            _ if self.is_int(&t) => self.leaf(p, &t),
+            _ if self.is_scalar(&t) => self.leaf(p, &t),
             Type::Adt(..) => match self.fields_of(p, &t) {
                 Some(vals) => Val::Struct(vals),
                 None => Val::Other,
@@ -1374,6 +1398,7 @@ impl Walk<'_> {
         };
         Some(match &e.kind {
             ExprKind::Int(n, _) => Val::Int(Lin::constant(i128::from(*n))),
+            ExprKind::Char(c) => Val::Int(Lin::constant(i128::from(u32::from(*c)))),
             ExprKind::Bool(b) => Val::Bool(if *b { Formula::True } else { Formula::False }),
             ExprKind::Var(..) => match (self.cx.pred_names.get(&e.id)?, env) {
                 (PredName::Binder, _) => binder.clone(),
@@ -1816,8 +1841,9 @@ impl Walk<'_> {
     fn expr(&mut self, e: &Expr) -> Result<Val, Error> {
         match &e.kind {
             ExprKind::Int(n, _) => Ok(Val::Int(Lin::constant(i128::from(*n)))),
+            ExprKind::Char(c) => Ok(Val::Int(Lin::constant(i128::from(u32::from(*c))))),
             ExprKind::Bool(b) => Ok(Val::Bool(if *b { Formula::True } else { Formula::False })),
-            ExprKind::Unit => Ok(Val::Other),
+            ExprKind::Unit | ExprKind::Str(_) | ExprKind::ByteStr(_) => Ok(Val::Other),
             ExprKind::Var(..) => match self.cx.typed.vars.get(&e.id) {
                 Some(Res::Local(id)) => Ok(self.read_place(&Place::local(*id))),
                 Some(Res::Fn(symbol, _)) => {
@@ -1841,14 +1867,23 @@ impl Walk<'_> {
                 }
                 Ok(Val::Int(neg))
             }
-            // The same number, if it fits.
+            // The same number, if it fits. A character's is a scalar
+            // value, and one fits in a `char` if it's one.
             ExprKind::As(x, _) => {
                 let v = self.expr(x)?;
                 let ty = self.ty_of(e);
                 let Val::Int(a) = v else {
                     return Ok(self.unknown(&ty));
                 };
-                let goal = self.fits(&a, &ty);
+                if self.ty_of(x) == Type::Char
+                    && let Some(law) = Self::scalar(&a)
+                {
+                    self.laws.push(law);
+                }
+                let goal = match ty {
+                    Type::Char => Self::scalar(&a),
+                    _ => self.fits(&a, &ty),
+                };
                 if self.proves(goal) {
                     self.proved.insert(e.id);
                 }
@@ -2320,7 +2355,7 @@ impl Walk<'_> {
             }
             PatternKind::Move(p) => self.bind_pattern(p, s.as_ref(), place, of)?,
             PatternKind::Wild
-            | PatternKind::Int(_)
+            | PatternKind::Int(..)
             | PatternKind::Range(..)
             | PatternKind::Bool(_)
             | PatternKind::Unit => {}
@@ -2530,8 +2565,8 @@ fn divided(op: BinOp, a: &Lin, k: i128, q: &Lin) -> Option<Formula> {
 fn pattern_formula(pat: &Pattern, s: &Val) -> Option<Formula> {
     match (&pat.kind, s) {
         (PatternKind::Wild | PatternKind::Bind(..), _) => Some(Formula::True),
-        (PatternKind::Int(n), Val::Int(l)) => Formula::eq(l, &Lin::constant(*n)),
-        (PatternKind::Range(lo, hi, _), Val::Int(l)) => Some(Formula::and([
+        (PatternKind::Int(n, _), Val::Int(l)) => Formula::eq(l, &Lin::constant(*n)),
+        (PatternKind::Range(lo, hi, ..), Val::Int(l)) => Some(Formula::and([
             match lo {
                 Some(lo) => Formula::le(&Lin::constant(*lo), l)?,
                 None => Formula::True,

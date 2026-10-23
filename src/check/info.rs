@@ -708,7 +708,13 @@ fn each_annotation(e: &Expr, f: &mut impl FnMut(&TypeExpr)) {
         ExprKind::For(_) | ExprKind::Range(..) => {
             unreachable!("rewritten when paths are resolved")
         }
-        ExprKind::Int(..) | ExprKind::Bool(_) | ExprKind::Unit | ExprKind::Continue(_) => {}
+        ExprKind::Int(..)
+        | ExprKind::Bool(_)
+        | ExprKind::Char(_)
+        | ExprKind::Str(_)
+        | ExprKind::ByteStr(_)
+        | ExprKind::Unit
+        | ExprKind::Continue(_) => {}
         ExprKind::Var(_, targs) => targs.iter().for_each(&mut *f),
         ExprKind::As(x, t) => {
             each_annotation(x, f);
@@ -799,7 +805,7 @@ fn pattern_annotations(p: &Pattern, f: &mut impl FnMut(&TypeExpr)) {
         PatternKind::Or(alts) => alts.iter().for_each(|p| pattern_annotations(p, f)),
         PatternKind::Wild
         | PatternKind::Bind(..)
-        | PatternKind::Int(_)
+        | PatternKind::Int(..)
         | PatternKind::Range(..)
         | PatternKind::Bool(_)
         | PatternKind::Unit => {}

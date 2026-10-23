@@ -26,6 +26,7 @@
 //! range. From there they work like any other constructors. This is what rustc
 //! does too.
 
+use crate::ast::Lit;
 use crate::error::Span;
 use crate::types::{AdtKind, Adts, Type, struct_fields, variant_fields};
 
@@ -419,6 +420,12 @@ impl Cx<'_> {
                 let (lo, hi) = t.range_64();
                 Some(split(lo, hi, seen))
             }
+            // The scalar values: all but the surrogates.
+            Type::Char => {
+                let mut all = split(0, 0xD7FF, seen);
+                all.extend(split(0xE000, 0x10FFFF, seen));
+                Some(all)
+            }
             Type::Bool => Some(vec![Ctor::Bool(false), Ctor::Bool(true)]),
             Type::Unit => Some(vec![Ctor::Unit]),
             Type::Never => Some(Vec::new()),
@@ -435,7 +442,8 @@ impl Cx<'_> {
             | Type::Opaque(..)
             | Type::Var(_)
             | Type::Box(_)
-            | Type::Slice(_) => None,
+            | Type::Slice(_)
+            | Type::Str => None,
             Type::Ref(..) => unreachable!("peeled"),
             Type::Effects(_) | Type::Alloc | Type::Panic | Type::Unsafe => {
                 unreachable!("effects have no values")
@@ -531,9 +539,13 @@ impl Cx<'_> {
             (Ctor::Unit, _) => "()".to_string(),
             (Ctor::Int(lo, hi), Type::Int(t)) => {
                 let (lo, hi) = open(*lo, *hi, t.range_64());
-                show_range(lo, hi, true)
+                show_range(lo, hi, true, Lit::Int)
             }
-            (Ctor::Int(lo, hi), _) => show_range(Some(*lo), Some(*hi), true),
+            (Ctor::Int(lo, hi), Type::Char) => {
+                let (lo, hi) = open(*lo, *hi, (0, 0x10FFFF));
+                show_range(lo, hi, true, Lit::Char)
+            }
+            (Ctor::Int(lo, hi), _) => show_range(Some(*lo), Some(*hi), true, Lit::Int),
             (Ctor::Struct, Type::Adt(symbol, ..)) => {
                 let name = crate::check::source_name(symbol);
                 let fields = struct_fields(self.adts, ty).expect("a struct");
@@ -575,14 +587,20 @@ fn peel(ty: &Type) -> &Type {
 
 /// Writes the ints `lo..=hi` as a pattern: `5`, `1..=9` (or `1..10` if not
 /// `inclusive`), `10..`, `..=-1` (or `..0`), or `_` for all of them.
-pub fn show_range(lo: Option<i128>, hi: Option<i128>, inclusive: bool) -> String {
-    let start = lo.map_or(String::new(), |lo| lo.to_string());
+///
+/// Each end is written as a `lit`: `b'a'..=b'z'`, `'a'..='z'`. A range
+/// of characters ending just before the surrogates is written with `..=`,
+/// as the character after it would be one.
+pub fn show_range(lo: Option<i128>, hi: Option<i128>, inclusive: bool, lit: Lit) -> String {
+    let start = lo.map_or(String::new(), |lo| lit.show(lo));
     match (lo, hi) {
-        (Some(lo), Some(hi)) if lo == hi => lo.to_string(),
+        (Some(lo), Some(hi)) if lo == hi => lit.show(lo),
         (None, None) => "_".to_string(),
         (_, None) => format!("{start}.."),
-        (_, Some(hi)) if inclusive => format!("{start}..={hi}"),
-        (_, Some(hi)) => format!("{start}..{}", hi + 1),
+        (_, Some(hi)) if inclusive || (lit == Lit::Char && hi == 0xD7FF) => {
+            format!("{start}..={}", lit.show(hi))
+        }
+        (_, Some(hi)) => format!("{start}..{}", lit.show(hi + 1)),
     }
 }
 

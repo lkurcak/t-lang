@@ -59,6 +59,8 @@ pub enum Value {
     /// a 64-bit machine.
     Int(i128, IntTy),
     Bool(bool),
+    /// A character: a Unicode scalar value, as Rust's `char` is.
+    Char(char),
     Unit,
     /// A function, by name. It can only see its own parameters and other
     /// functions. Nested ones have been lifted to the top level by now,
@@ -139,6 +141,7 @@ impl fmt::Display for Value {
         match self {
             Value::Int(n, _) => write!(f, "{n}"),
             Value::Bool(b) => write!(f, "{b}"),
+            Value::Char(c) => write!(f, "{c}"),
             Value::Unit => f.write_str("()"),
             Value::Fn(name) => write!(f, "<fn {}>", crate::check::source_name(name)),
             Value::Builtin(name) => write!(f, "<fn {name}>"),
@@ -211,6 +214,7 @@ pub fn run(prog: &Program, out: &mut Vec<String>) -> Result<Value, Error> {
         structs,
         enums,
         nowhere,
+        literals: HashMap::new(),
         copy: derived("Copy"),
         discard: derived("Discard"),
         aborting: false,
@@ -413,6 +417,9 @@ struct Interp<'p, 'o> {
     enums: HashMap<&'p str, &'p EnumDecl>,
     /// The `Slots` every empty slice is of.
     nowhere: Ptr,
+    /// Where each literal's bytes are, by what they are: slots of `u8`s,
+    /// never freed nor changed, made the first time they're needed.
+    literals: HashMap<Vec<u8>, Ptr>,
     /// The structs and enums that are `Copy`, and that are `Discard`, as
     /// monomorphisation's copies of them say.
     copy: HashSet<&'p str>,
@@ -777,6 +784,13 @@ impl Interp<'_, '_> {
                 self.out.push(int(arg).to_string());
                 Ok(Value::Unit)
             }
+            Value::Builtin("print_str") => {
+                let [arg] =
+                    <[Value; 1]>::try_from(args).unwrap_or_else(|_| unsound("print_str arity"));
+                let text = self.text(&arg);
+                self.out.extend(text.split('\n').map(str::to_string));
+                Ok(Value::Unit)
+            }
             Value::Builtin("print_bool") => {
                 let [arg] =
                     <[Value; 1]>::try_from(args).unwrap_or_else(|_| unsound("print_bool arity"));
@@ -894,6 +908,11 @@ impl Interp<'_, '_> {
             let op = copy.rsplit("::").next().unwrap_or_default();
             return self.raw_buf(op, args, span);
         }
+        // A string is its bytes.
+        if name == "str::as_bytes" || name == "<str>::as_bytes" {
+            let [s] = <[Value; 1]>::try_from(args).unwrap_or_else(|_| unsound("arity"));
+            return Ok(s);
+        }
         if name.starts_with("<[") {
             let op = copy.rsplit("::").next().unwrap_or_default();
             return Ok(self.slice(op, copy, args));
@@ -903,8 +922,22 @@ impl Interp<'_, '_> {
             "core::slice::empty" | "core::slice::empty_mut" => {
                 Ok(Value::Ref(self.nowhere.slice(0, 0)))
             }
-            // Aborts.
-            "core::panic::panic" => Err(self.panics(span, "panicked")),
+            // Aborts, saying why.
+            "core::panic::panic" => {
+                let [why] = <[Value; 1]>::try_from(args).unwrap_or_else(|_| unsound("panic arity"));
+                let why = self.text(&why);
+                Err(self.panics(span, format!("panicked: {why}")))
+            }
+            // The same bytes: a `str`'s are UTF-8, which is what it adds.
+            "core::str::from_utf8_unchecked" => {
+                let [b] = <[Value; 1]>::try_from(args).unwrap_or_else(|_| unsound("arity"));
+                let block = self.unsafe_op();
+                if std::str::from_utf8(&self.bytes(&b)).is_err() {
+                    let why = "`str::from_utf8_unchecked` of bytes that aren't UTF-8".to_string();
+                    return Err(self.broken(span, block, why));
+                }
+                Ok(b)
+            }
             // Exchanges two values, making and throwing away none.
             "core::mem::swap" => {
                 let [a, b] = <[Value; 2]>::try_from(args).unwrap_or_else(|_| unsound("swap arity"));
@@ -921,6 +954,53 @@ impl Interp<'_, '_> {
             }
             _ => unsound(&format!("unknown intrinsic `{name}`")),
         }
+    }
+
+    /// Where the literal of bytes `bytes` is: a slice of `u8`s, which a
+    /// string literal is too.
+    fn literal(&mut self, bytes: &[u8]) -> Ptr {
+        if let Some(p) = self.literals.get(bytes) {
+            return p.clone();
+        }
+        let slots = bytes
+            .iter()
+            .map(|&b| Value::Int(i128::from(b), IntTy::U8))
+            .collect();
+        let p = self
+            .memory
+            .alloc(Value::Slots(slots), false)
+            .slice(0, bytes.len());
+        self.literals.insert(bytes.to_vec(), p.clone());
+        p
+    }
+
+    /// The bytes of the slice of `u8`s `v` is a reference to: a `&[u8]` or
+    /// a `&str`.
+    fn bytes(&self, v: &Value) -> Vec<u8> {
+        let Value::Ref(
+            p @ Ptr {
+                range: Some((lo, len)),
+                ..
+            },
+        ) = v
+        else {
+            unsound(&format!("`{v}` as a slice of bytes"))
+        };
+        let Value::Slots(slots) = self.memory.get(p) else {
+            unsound("a slice that isn't of slots")
+        };
+        slots[*lo..lo + len]
+            .iter()
+            .map(|v| match v {
+                Value::Int(n, IntTy::U8) => *n as u8,
+                v => unsound(&format!("`{v}` as a byte")),
+            })
+            .collect()
+    }
+
+    /// The text of string `v`, a `&str`, which is UTF-8.
+    fn text(&self, v: &Value) -> String {
+        String::from_utf8(self.bytes(v)).unwrap_or_else(|_| unsound("a `str` that isn't UTF-8"))
     }
 
     /// Runs a slice's intrinsic method `op`, whose copy is `copy`, on
@@ -1337,9 +1417,31 @@ impl Interp<'_, '_> {
                 let t = t.unwrap_or_else(|| unsound("a literal of no type"));
                 int_of(-i128::from(n), t)
             }
+            ExprKind::Char(c) => Value::Char(*c),
+            ExprKind::Str(s) => Value::Ref(self.literal(s.as_bytes())),
+            ExprKind::ByteStr(b) => Value::Ref(self.literal(b)),
+            // A character's scalar value; a number as a character, if it's
+            // one.
+            ExprKind::As(x, t) if matches!(&t.kind, TypeExprKind::Named(n, _) if n == "char") => {
+                let n = match self.eval(x)? {
+                    Value::Char(c) => i128::from(u32::from(c)),
+                    v => int(v),
+                };
+                match u32::try_from(n).ok().and_then(char::from_u32) {
+                    Some(c) => Value::Char(c),
+                    None => {
+                        self.not_proved(e.id);
+                        let message = format!("`{n}` isn't a character");
+                        return Err(self.panics(e.span, message).into());
+                    }
+                }
+            }
             // The same number, if it fits.
             ExprKind::As(x, t) => {
-                let n = int(self.eval(x)?);
+                let n = match self.eval(x)? {
+                    Value::Char(c) => i128::from(u32::from(c)),
+                    v => int(v),
+                };
                 let t = int_ty(t);
                 let (lo, hi) = t.range_64();
                 if !(lo..=hi).contains(&n) {
@@ -1729,9 +1831,14 @@ impl Interp<'_, '_> {
         }
         match (&p.kind, self.memory.get(&v)) {
             (PatternKind::Wild | PatternKind::Bind(..), _) => true,
-            (PatternKind::Int(n), Value::Int(m, _)) => n == m,
-            (PatternKind::Range(lo, hi, _), Value::Int(m, _)) => {
+            (PatternKind::Int(n, _), Value::Int(m, _)) => n == m,
+            (PatternKind::Range(lo, hi, ..), Value::Int(m, _)) => {
                 lo.is_none_or(|lo| lo <= *m) && hi.is_none_or(|hi| *m <= hi)
+            }
+            (PatternKind::Int(n, _), Value::Char(c)) => *n == i128::from(u32::from(*c)),
+            (PatternKind::Range(lo, hi, ..), Value::Char(c)) => {
+                let m = i128::from(u32::from(*c));
+                lo.is_none_or(|lo| lo <= m) && hi.is_none_or(|hi| m <= hi)
             }
             (PatternKind::Bool(b), Value::Bool(c)) => b == c,
             (PatternKind::Unit, Value::Unit) => true,
@@ -1807,7 +1914,7 @@ impl Interp<'_, '_> {
             }
             PatternKind::Move(_) => unsound("a pattern moving twice"),
             PatternKind::Wild
-            | PatternKind::Int(_)
+            | PatternKind::Int(..)
             | PatternKind::Range(..)
             | PatternKind::Bool(_)
             | PatternKind::Unit => {}
@@ -1846,6 +1953,29 @@ impl Interp<'_, '_> {
     /// one with `#[derive(Eq)]` compares field by field, each by its own
     /// type's `==`.
     fn equal(&mut self, p: &Ptr, q: &Ptr, span: Span) -> Result<bool, Error> {
+        // Slices, and strings, which are slices of bytes: of the same
+        // length, with equal values at each index.
+        if let (Some((a, n)), Some((b, m))) = (p.range, q.range) {
+            if n != m {
+                return Ok(false);
+            }
+            for i in 0..n {
+                let (x, y) = (
+                    Ptr {
+                        range: None,
+                        ..p.field(a + i)
+                    },
+                    Ptr {
+                        range: None,
+                        ..q.field(b + i)
+                    },
+                );
+                if !self.equal(&x, &y, span)? {
+                    return Ok(false);
+                }
+            }
+            return Ok(true);
+        }
         // The type, and how many fields to compare: none if they're
         // different variants.
         let (ty, fields) = match (self.memory.get(p), self.memory.get(q)) {

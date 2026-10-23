@@ -8,6 +8,6 @@ fn main() with panic {
         spin();
     }
     print(1i64); // expect: 1
-    panic();
+    panic("stop");
 }
 // error: runtime error: panicked

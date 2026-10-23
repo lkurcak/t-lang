@@ -34,6 +34,7 @@ pub type Read<'r> = &'r dyn Fn(&Path) -> std::io::Result<String>;
 /// The files of the core library, by their paths in `core/`.
 pub const CORE_FILES: &[(&str, &str)] = &[
     ("lib.t", include_str!("../core/lib.t")),
+    ("char.t", include_str!("../core/char.t")),
     ("cmp.t", include_str!("../core/cmp.t")),
     ("iter.t", include_str!("../core/iter.t")),
     ("mem.t", include_str!("../core/mem.t")),
@@ -44,6 +45,7 @@ pub const CORE_FILES: &[(&str, &str)] = &[
     ("prelude.t", include_str!("../core/prelude.t")),
     ("result.t", include_str!("../core/result.t")),
     ("slice.t", include_str!("../core/slice.t")),
+    ("str.t", include_str!("../core/str.t")),
 ];
 
 /// Where the core library's files seem to be, in messages and to editors.

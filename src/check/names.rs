@@ -415,7 +415,7 @@ impl Walk<'_> {
             PatternKind::Or(alts) => alts.iter().for_each(|p| self.pattern(p)),
             PatternKind::Wild
             | PatternKind::Bind(..)
-            | PatternKind::Int(_)
+            | PatternKind::Int(..)
             | PatternKind::Range(..)
             | PatternKind::Bool(_)
             | PatternKind::Unit => {}

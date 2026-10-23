@@ -152,8 +152,11 @@ pub(super) fn narrowable(
     hi: Option<i128>,
     pats: &[Pattern],
 ) -> Warning {
-    let inclusive = pats.iter().find_map(|p| written_inclusive(p, span));
-    let range = exhaust::show_range(lo, hi, inclusive.unwrap_or(true));
+    let (inclusive, lit) = pats
+        .iter()
+        .find_map(|p| written_range(p, span))
+        .unwrap_or((true, Lit::Int));
+    let range = exhaust::show_range(lo, hi, inclusive, lit);
     Warning {
         lint: Lint::OverlappingRanges,
         span,
@@ -177,17 +180,21 @@ pub(super) fn mergeable(p: &Pattern, alts: &[Pattern]) -> Vec<Warning> {
     // `(lo, hi, is a range, written with ..=, index in alts)`
     // An open end is past every value: an integer is at most `u64::MAX`.
     let (min, max) = (i128::MIN, i128::MAX);
-    let mut ints: Vec<(i128, i128, bool, bool, usize)> = alts
-        .iter()
-        .enumerate()
-        .filter_map(|(k, a)| match a.kind {
-            PatternKind::Int(n) => Some((n, n, false, true, k)),
-            PatternKind::Range(lo, hi, inclusive) => {
-                Some((lo.unwrap_or(min), hi.unwrap_or(max), true, inclusive, k))
+    let mut ints: Vec<(i128, i128, bool, bool, usize)> = Vec::new();
+    let mut lit = Lit::Int;
+    for (k, a) in alts.iter().enumerate() {
+        match a.kind {
+            PatternKind::Int(n, l) => {
+                ints.push((n, n, false, true, k));
+                lit = l;
             }
-            _ => None,
-        })
-        .collect();
+            PatternKind::Range(lo, hi, inclusive, l) => {
+                ints.push((lo.unwrap_or(min), hi.unwrap_or(max), true, inclusive, k));
+                lit = l;
+            }
+            _ => {}
+        }
+    }
     ints.sort_by_key(|&(lo, ..)| lo);
     let open = |lo: i128, hi: i128| ((lo != min).then_some(lo), (hi != max).then_some(hi));
     ints.chunk_by(|a, b| a.1.checked_add(1) == Some(b.0))
@@ -197,14 +204,14 @@ pub(super) fn mergeable(p: &Pattern, alts: &[Pattern]) -> Vec<Warning> {
                 .iter()
                 .map(|&(lo, hi, _, inclusive, _)| {
                     let (lo, hi) = open(lo, hi);
-                    format!("`{}`", exhaust::show_range(lo, hi, inclusive))
+                    format!("`{}`", exhaust::show_range(lo, hi, inclusive, lit))
                 })
                 .collect();
             let (last, rest) = names.split_last().expect("a run has two or more");
             // Written in the style of the highest one.
             let &(_, hi, _, inclusive, _) = run.last().expect("a run has two or more");
             let (lo, hi) = open(run[0].0, hi);
-            let merged = exhaust::show_range(lo, hi, inclusive);
+            let merged = exhaust::show_range(lo, hi, inclusive, lit);
 
             let mut ks: Vec<usize> = run.iter().map(|&(.., k)| k).collect();
             ks.sort_unstable();
@@ -228,15 +235,16 @@ pub(super) fn mergeable(p: &Pattern, alts: &[Pattern]) -> Vec<Warning> {
         .collect()
 }
 
-/// Whether the range pattern at `span` inside `p` was written with `..=`.
-fn written_inclusive(p: &Pattern, span: Span) -> Option<bool> {
+/// Whether the range pattern at `span` inside `p` was written with `..=`,
+/// and what its ends are written as.
+fn written_range(p: &Pattern, span: Span) -> Option<(bool, Lit)> {
     match &p.kind {
-        PatternKind::Range(_, _, inclusive) if p.span == span => Some(*inclusive),
+        PatternKind::Range(_, _, inclusive, lit) if p.span == span => Some((*inclusive, *lit)),
         PatternKind::Variant(_, _, _, pats) | PatternKind::Or(pats) => {
-            pats.iter().find_map(|p| written_inclusive(p, span))
+            pats.iter().find_map(|p| written_range(p, span))
         }
         PatternKind::Struct(_, _, fields, _) => {
-            fields.iter().find_map(|f| written_inclusive(&f.pat, span))
+            fields.iter().find_map(|f| written_range(&f.pat, span))
         }
         _ => None,
     }

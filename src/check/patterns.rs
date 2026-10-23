@@ -153,13 +153,13 @@ impl Checker {
                 binds.push(local);
                 Pat::Wild
             }
-            PatternKind::Int(n) => {
-                self.int_pattern(p, ty, &[*n])?;
+            PatternKind::Int(n, lit) => {
+                self.int_pattern(p, ty, &[*n], *lit)?;
                 Pat::Ctor(Ctor::Int(*n, *n), Vec::new())
             }
-            PatternKind::Range(lo, hi, _) => {
-                let ends =
-                    self.int_pattern(p, ty, &[*lo, *hi].into_iter().flatten().collect::<Vec<_>>())?;
+            PatternKind::Range(lo, hi, _, lit) => {
+                let values = [*lo, *hi].into_iter().flatten().collect::<Vec<_>>();
+                let ends = self.int_pattern(p, ty, &values, *lit)?;
                 let (lo, hi) = (lo.unwrap_or(ends.0), hi.unwrap_or(ends.1));
                 if lo > hi {
                     return Err(Error::ty(
@@ -303,7 +303,23 @@ impl Checker {
     /// to. If the type isn't known yet, or is a type parameter, they're
     /// all an integer type can have, from the least `i64` to the greatest
     /// `u64`, as nothing narrower is sure to be covered.
-    fn int_pattern(&mut self, p: &Pattern, ty: &Type, values: &[i128]) -> Result<Ends, Error> {
+    /// A literal pattern of `values`, written as `lit`s, matching a `ty`:
+    /// the least and greatest values of its type.
+    fn int_pattern(
+        &mut self,
+        p: &Pattern,
+        ty: &Type,
+        values: &[i128],
+        lit: Lit,
+    ) -> Result<Ends, Error> {
+        // A character is one, and needs no checking: the lexer did.
+        if lit == Lit::Char {
+            self.pattern_is(p, ty, Type::Char)?;
+            return Ok((0, 0x10FFFF));
+        }
+        if lit == Lit::Byte {
+            self.pattern_is(p, ty, Type::Int(IntTy::U8))?;
+        }
         let int = self.fresh_int(p.span, String::new(), String::new());
         self.unify_or(&int, ty, p.span, |found, ty| {
             format!("expected `{ty}`, found `{found}`")

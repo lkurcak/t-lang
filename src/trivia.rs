@@ -174,9 +174,9 @@ impl<'s> Trivia<'s> {
             .map_or(Span::new(self.src.len(), self.src.len()), |t| t.span)
     }
 
-    /// How the integer literal at `span` is written, `0xFF_u8`, or the
-    /// literal pattern, `-0x80..=0x7F`: its tokens, with nothing between
-    /// them. `None` if there's anything else there.
+    /// How the literal at `span` is written, `0xFF_u8` or `"a\u{20AC}"`,
+    /// or the literal pattern, `-0x80..=0x7F`: its tokens, with nothing
+    /// between them. `None` if there's anything else there.
     pub fn spelled(&self, span: Span) -> Option<String> {
         let mut out = String::new();
         for t in &self.toks[self.tok_index(span.start)..] {
@@ -184,7 +184,14 @@ impl<'s> Trivia<'s> {
                 break;
             }
             match t.tok {
-                Tok::Int(..) | Tok::Minus | Tok::DotDot | Tok::DotDotEq => {
+                Tok::Int(..)
+                | Tok::Byte(_)
+                | Tok::Char(_)
+                | Tok::Str(_)
+                | Tok::ByteStr(_)
+                | Tok::Minus
+                | Tok::DotDot
+                | Tok::DotDotEq => {
                     out.push_str(&self.src[t.span.start..t.span.end]);
                 }
                 _ => return None,

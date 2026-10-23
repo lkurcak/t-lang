@@ -8,6 +8,14 @@ pub enum Tok {
     /// An integer literal: its value, and the type its suffix says, as
     /// in `255u8`, if it has one.
     Int(u64, Option<IntTy>),
+    /// `b'a'`: a byte literal, a `u8`.
+    Byte(u8),
+    /// `'a'`: a character literal.
+    Char(char),
+    /// `"hi"`: a string literal, its escapes worked out.
+    Str(String),
+    /// `b"hi"`: a byte string literal, its escapes worked out.
+    ByteStr(Vec<u8>),
     Ident(String),
     // keywords
     Fn,
@@ -97,6 +105,10 @@ impl Tok {
         let s = match self {
             Tok::Int(n, None) => return format!("`{n}`"),
             Tok::Int(n, Some(t)) => return format!("`{n}{}`", t.name()),
+            Tok::Byte(b) => return format!("`{}`", byte_literal(*b)),
+            Tok::Char(c) => return format!("`{}`", char_literal(*c)),
+            Tok::Str(_) => return "a string literal".to_string(),
+            Tok::ByteStr(_) => return "a byte string literal".to_string(),
             Tok::Ident(name) => return format!("`{name}`"),
             Tok::Doc(_) => return "a doc comment".to_string(),
             Tok::Lifetime(name) => return format!("`{name}`"),
@@ -202,6 +214,226 @@ impl OpEq {
             OpEq::Shl => "<<",
             OpEq::Shr => ">>",
         }
+    }
+}
+
+/// Which kind of quoted literal `quoted` reads.
+#[derive(Clone, Copy, PartialEq)]
+enum Quote {
+    Str,
+    Char,
+    ByteStr,
+    Byte,
+}
+
+impl Quote {
+    fn bytes(self) -> bool {
+        matches!(self, Quote::ByteStr | Quote::Byte)
+    }
+
+    fn one(self) -> bool {
+        matches!(self, Quote::Char | Quote::Byte)
+    }
+}
+
+/// Does the `'` at `at` start a character literal, rather than a
+/// lifetime? It does if it's followed by one character and a `'`, or by
+/// an escape: `'a'`, `'é'`, `'\n'`, as against `'a`.
+fn is_char_literal(src: &str, at: usize) -> bool {
+    let rest = &src[at + 1..];
+    let mut chars = rest.chars();
+    match chars.next() {
+        Some('\\') => true,
+        Some('\'') => true,
+        Some(c) => chars.next() == Some('\'') || !(c.is_ascii_alphanumeric() || c == '_'),
+        None => false,
+    }
+}
+
+/// The quoted literal starting with the quote at `at`: what it holds,
+/// with its escapes worked out, and where it ends, after the closing
+/// quote. Each escape means one thing: `\u{..}` a character, in text,
+/// written as UTF-8, and `\x..` a byte, in a byte literal.
+fn quoted(src: &str, at: usize, kind: Quote) -> Result<(Vec<u8>, usize), Error> {
+    let bytes = src.as_bytes();
+    let quote = bytes[at];
+    let what = match kind {
+        Quote::Str => "string literal",
+        Quote::ByteStr => "byte string literal",
+        Quote::Char => "character literal",
+        Quote::Byte => "byte literal",
+    };
+    let start = if kind.bytes() { at - 1 } else { at };
+    let mut out = Vec::new();
+    let mut count = 0;
+    let mut i = at + 1;
+    loop {
+        let Some(c) = src[i..].chars().next() else {
+            return Err(Error::syntax(
+                Span::new(start, start + 1),
+                format!("this {what} never ends"),
+            ));
+        };
+        if c as u32 == u32::from(quote) {
+            i += 1;
+            break;
+        }
+        if kind.one() && matches!(c, '\n' | '\r' | '\t') {
+            return Err(Error::syntax(
+                Span::new(i, i + 1),
+                format!(
+                    "a {what} can't hold a raw tab or line break; write it as an escape, like `\\n`"
+                ),
+            ));
+        }
+        count += 1;
+        if c != '\\' {
+            if kind.bytes() && !c.is_ascii() {
+                return Err(Error::syntax(
+                    Span::new(i, i + c.len_utf8()),
+                    "a byte literal holds only ASCII characters; write other bytes as `\\x..`",
+                ));
+            }
+            let mut buf = [0; 4];
+            out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+            i += c.len_utf8();
+            continue;
+        }
+        let esc = i;
+        let Some(e) = src[i + 1..].chars().next() else {
+            i += 1;
+            continue;
+        };
+        i += 1 + e.len_utf8();
+        let simple = match e {
+            'n' => Some(b'\n'),
+            'r' => Some(b'\r'),
+            't' => Some(b'\t'),
+            '\\' => Some(b'\\'),
+            '0' => Some(0),
+            '\'' => Some(b'\''),
+            '"' => Some(b'"'),
+            _ => None,
+        };
+        if let Some(b) = simple {
+            out.push(b);
+            continue;
+        }
+        match (e, kind.bytes()) {
+            ('x', true) => {
+                let hex = src
+                    .get(i..i + 2)
+                    .filter(|h| h.bytes().all(|b| b.is_ascii_hexdigit()));
+                let Some(hex) = hex else {
+                    return Err(Error::syntax(
+                        Span::new(esc, i),
+                        "`\\x` takes two hexadecimal digits, as in `\\x7F`",
+                    ));
+                };
+                out.push(u8::from_str_radix(hex, 16).expect("hex digits"));
+                i += 2;
+            }
+            ('x', false) => {
+                return Err(Error::syntax(
+                    Span::new(esc, i),
+                    "`\\x` escapes are for byte literals; write a character as `\\u{..}`",
+                ));
+            }
+            ('u', true) => {
+                return Err(Error::syntax(
+                    Span::new(esc, i),
+                    "`\\u{..}` escapes are for characters; write a byte as `\\x..`",
+                ));
+            }
+            ('u', false) => {
+                let close = src[i..].find('}').map(|n| i + n);
+                let digits = match close {
+                    Some(close) if src[i..].starts_with('{') => &src[i + 1..close],
+                    _ => "",
+                };
+                if digits.is_empty()
+                    || digits.len() > 6
+                    || !digits.bytes().all(|b| b.is_ascii_hexdigit())
+                {
+                    return Err(Error::syntax(
+                        Span::new(esc, i),
+                        "`\\u` takes one to six hexadecimal digits in braces, as in `\\u{20AC}`",
+                    ));
+                }
+                let end = close.expect("found") + 1;
+                let n = u32::from_str_radix(digits, 16).expect("hex digits");
+                let Some(ch) = char::from_u32(n) else {
+                    return Err(Error::syntax(
+                        Span::new(esc, end),
+                        format!("`\\u{{{digits}}}` isn't a Unicode scalar value"),
+                    ));
+                };
+                let mut buf = [0; 4];
+                out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
+                i = end;
+            }
+            _ => {
+                return Err(Error::syntax(
+                    Span::new(esc, i),
+                    format!("unknown escape `\\{e}`"),
+                ));
+            }
+        }
+    }
+    if kind.one() && count != 1 {
+        return Err(Error::syntax(
+            Span::new(start, i),
+            format!("a {what} holds exactly one character"),
+        ));
+    }
+    Ok((out, i))
+}
+
+/// Character `c` as a literal: `'a'`, `'\n'`, `'\u{e000}'`.
+pub fn char_literal(c: char) -> String {
+    match c {
+        '"' => "'\"'".to_string(),
+        '\0' => "'\\0'".to_string(),
+        c => format!("'{}'", c.escape_debug()),
+    }
+}
+
+/// String `s` as a literal: `"a\tb"`.
+pub fn str_literal(s: &str) -> String {
+    let mut out = String::from('"');
+    for c in s.chars() {
+        match c {
+            '\'' => out.push('\''),
+            '\0' => out.push_str("\\0"),
+            c => out.extend(c.escape_debug()),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// Byte `b` as a literal: `b'a'`, `b'\xFF'`.
+pub fn byte_literal(b: u8) -> String {
+    format!("b'{}'", escape_byte(b, b'\''))
+}
+
+/// Bytes `bs` as a byte string literal: `b"a\xFF"`.
+pub fn byte_str_literal(bs: &[u8]) -> String {
+    let body: String = bs.iter().map(|&b| escape_byte(b, b'"')).collect();
+    format!("b\"{body}\"")
+}
+
+/// Byte `b` as it's written in a byte literal quoted with `quote`.
+fn escape_byte(b: u8, quote: u8) -> String {
+    match b {
+        b'\n' => "\\n".into(),
+        b'\r' => "\\r".into(),
+        b'\t' => "\\t".into(),
+        b'\\' => "\\\\".into(),
+        0 => "\\0".into(),
+        b if b == quote => format!("\\{}", b as char),
+        b' '..=b'~' => (b as char).to_string(),
+        b => format!("\\x{b:02X}"),
     }
 }
 
@@ -323,6 +555,27 @@ pub fn lex_with_comments(src: &str) -> Result<(Vec<Token>, Vec<Comment>), Error>
                 })?),
             };
             Tok::Int(n, suffix)
+        } else if c == b'"' {
+            let (text, end) = quoted(src, i, Quote::Str)?;
+            i = end;
+            // Its bytes are those of the source, which is UTF-8, and of
+            // escapes of scalar values: UTF-8 too.
+            Tok::Str(String::from_utf8(text).expect("UTF-8"))
+        } else if c == b'b' && matches!(bytes.get(i + 1), Some(b'"' | b'\'')) {
+            let (text, end) = match bytes[i + 1] {
+                b'"' => quoted(src, i + 1, Quote::ByteStr)?,
+                _ => quoted(src, i + 1, Quote::Byte)?,
+            };
+            i = end;
+            match bytes[start + 1] {
+                b'"' => Tok::ByteStr(text),
+                _ => Tok::Byte(text[0]),
+            }
+        } else if c == b'\'' && is_char_literal(src, i) {
+            let (text, end) = quoted(src, i, Quote::Char)?;
+            i = end;
+            let text = String::from_utf8(text).expect("UTF-8");
+            Tok::Char(text.chars().next().expect("one character"))
         } else if c.is_ascii_alphabetic() || c == b'_' {
             while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
                 i += 1;
@@ -371,6 +624,13 @@ pub fn lex_with_comments(src: &str) -> Result<(Vec<Token>, Vec<Comment>), Error>
                 return Err(Error::syntax(
                     span,
                     "expected a lifetime name after `'`, like `'a`",
+                ));
+            }
+            // `'ab'` is no lifetime, but a character literal of two.
+            if bytes.get(i) == Some(&b'\'') {
+                return Err(Error::syntax(
+                    Span::new(start, i + 1),
+                    "a character literal holds exactly one character",
                 ));
             }
             Tok::Lifetime(src[start..i].to_string())

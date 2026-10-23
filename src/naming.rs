@@ -275,7 +275,7 @@ fn bindings<'a>(p: &'a Pattern, out: &mut Vec<Decl<'a>>) {
         PatternKind::Variant(_, _, _, pats) => pats.iter().for_each(|p| bindings(p, out)),
         PatternKind::Struct(_, _, fields, _) => fields.iter().for_each(|f| bindings(&f.pat, out)),
         PatternKind::Wild
-        | PatternKind::Int(_)
+        | PatternKind::Int(..)
         | PatternKind::Range(..)
         | PatternKind::Bool(_)
         | PatternKind::Unit => {}
