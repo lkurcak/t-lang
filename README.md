@@ -335,7 +335,7 @@ combine features in ways nobody planned for.
 | 11 ✅ | integer types `i8`..`u64`, `isize`, `usize`, no `int`; literals inferred, or `255u8`; `x as u8`; `T: Int` | a family of base types, each an interval of ℤ; literals typed by inference with no default; proofs about a size the machine decides, by a symbolic bound; generic code over a closed (sealed) trait | [docs/11-integers.md](docs/11-integers.md) |
 | 12 ✅ | bitwise `&`, `\|`, `^`, `!`, shifts `<<` `>>`; `0xFF`, `0b1010`; `wrapping_add` and friends; `T: Signed`, `T: Unsigned` | bitwise operations on two's complement as operations in ℤ (2-adic integers), so the same rule as arithmetic; precedence as a partial order; non-linear operators known to a linear logic by lemmas | [docs/12-bits.md](docs/12-bits.md) |
 | 13 ✅ | strings: `str`, `char`, `"text"`, `'a'`, `b"bytes"`, escapes; `chars`, `from_utf8`; `panic("why")` | a type's invariant (UTF-8) kept by what can make and change its values, as a safety invariant unsafe code relies on; a type with a gap in its range, known to a linear logic by a disjunction | [docs/13-strings.md](docs/13-strings.md) |
-| 13.1 | `alloc::string::String`, an owned, growing string | | |
+| 13.1 ✅ | `alloc::string::String`, an owned, growing string: `push`, `push_str`, `pop`, `truncate`, `from_utf8` | an `unsafe` block whose proof rests on safe code: the invariant's reach is the module that can touch the state, which privacy bounds | [docs/13.1-string.md](docs/13.1-string.md) |
 | — | `std` | | |
 | — | C backend | | when it's worth it |
 

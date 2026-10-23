@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+Step 13.1: owned strings. See [docs/13.1-string.md](docs/13.1-string.md).
+
+### Added
+
+- `alloc::string::String`, an owned string that grows: UTF-8 bytes in a
+  `List<u8>`. `new`, `with_capacity`, `from(&str)`, `push(char)`,
+  `push_str`, `pop`, `truncate` (which says `false`, and cuts nothing, if
+  no character starts there), `clear`, `as_str`, `as_bytes`, `len`,
+  `is_empty`, `capacity`, `from_utf8(List<u8>)` (which gives the list back
+  if it isn't UTF-8), `into_bytes` and `free`; `==` and `Ord`. It isn't
+  `Discard`. It's safe code in T but for one `unsafe` block, in `as_str`,
+  which counts on the invariant the rest keep.
+
 ## 0.24.0 (2026-10-23)
 
 Installing T's tree-sitter parser for syntax highlighting, from `t` itself.

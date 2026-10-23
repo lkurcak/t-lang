@@ -56,6 +56,7 @@ pub const ALLOC_FILES: &[(&str, &str)] = &[
     ("lib.t", include_str!("../alloc/lib.t")),
     ("list.t", include_str!("../alloc/list.t")),
     ("raw.t", include_str!("../alloc/raw.t")),
+    ("string.t", include_str!("../alloc/string.t")),
 ];
 
 /// Where the alloc library's files seem to be.
