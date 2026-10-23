@@ -50,7 +50,7 @@ can be anywhere T can, down to bare metal.
 | `core::result` | `Result<T, E>`: `is_ok`, `is_err`, `as_ref`, `map`, `and_then`, `map_err`, `or_else`, `ok`, `err`, `unwrap_or`, `unwrap_or_else` | `Result` |
 | `core::cmp` | `Ordering`, and `Ord`: `cmp`, `lt`, `le`, `gt`, `ge`, `max`, `min`, for `i64` and `bool` | `Ord` |
 | `core::iter` | `Iterator`: `next`, `map`, `filter` (6e.1), `fold`, `count`; `Map`, `Filter` | `Iterator` |
-| `core::ops` | `Range<T>`, what `a..b` makes, an `Iterator` for `i64`s | — |
+| `core::ops` | `Range<T>`, what `a..b` makes, an `Iterator` for `i64`s; since step 15, `Try` and `ControlFlow`, what `?` means | — |
 | `core::mem` | `swap` and `replace` | — |
 
 The traits built into the language, `Copy`, `Discard`, `Eq` and the `Fn`

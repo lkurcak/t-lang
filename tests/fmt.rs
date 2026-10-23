@@ -717,3 +717,21 @@ fn cli_rewrites_or_checks() {
     assert_eq!(t(&[]).status.code(), Some(1));
     assert_eq!(fs::read_to_string(&path).unwrap(), "fn main() {");
 }
+
+#[test]
+fn prints_try_as_tightly_as_a_call() {
+    let src = "fn f() { let a = - x ?; let b = ( - x ) ?; let c = ( a . b ) ?; let d = (a?)?.c()?; let e = (*r)?; let f = (if c { a } else { b })?; }\n";
+    assert_eq!(
+        fmt(src),
+        "\
+fn f() {
+    let a = -x?;
+    let b = (-x)?;
+    let c = a.b?;
+    let d = a??.c()?;
+    let e = (*r)?;
+    let f = (if c { a } else { b })?;
+}
+"
+    );
+}

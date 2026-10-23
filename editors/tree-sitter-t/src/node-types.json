@@ -120,6 +120,10 @@
         "named": true
       },
       {
+        "type": "try_expression",
+        "named": true
+      },
+      {
         "type": "unary_expression",
         "named": true
       },
@@ -2865,6 +2869,22 @@
     }
   },
   {
+    "type": "try_expression",
+    "named": true,
+    "fields": {
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "_expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "type_arguments",
     "named": true,
     "fields": {},
@@ -3460,6 +3480,10 @@
   },
   {
     "type": ">>=",
+    "named": false
+  },
+  {
+    "type": "?",
     "named": false
   },
   {

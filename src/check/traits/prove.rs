@@ -172,6 +172,16 @@ impl Checker {
                 "`{ty}` doesn't implement `{tr}`, so it isn't an integer type, which this needs{}",
                 fix(&bad)
             ),
+            Why::TryBranch => format!(
+                "`?` needs a `Result`, an `Option` or another type that implements `{tr}`, and \
+                 `{ty}` doesn't{needs}{}",
+                fix(&bad)
+            ),
+            Why::TryReturn(who) => format!(
+                "`?` returns early from {who}, but its result, `{ty}`, doesn't implement \
+                 `{tr}`{needs}{}",
+                fix(&bad)
+            ),
             Why::Returns(f) if *ty == Type::Never => format!(
                 "can't tell what type `{f}` returns: it never returns, so nothing says which \
                  type this is"
@@ -273,6 +283,11 @@ pub(in crate::check) enum Why {
     Returns(String),
     /// It's an integer literal's type, or an operator's operands'.
     Integer,
+    /// What a `?` is of.
+    TryBranch,
+    /// What `.0`, a function or closure, returns, which a `?` in it
+    /// returns early as.
+    TryReturn(String),
 }
 
 /// An obligation the checker has to prove once the types in it are known.

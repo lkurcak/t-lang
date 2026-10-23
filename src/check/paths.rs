@@ -421,8 +421,14 @@ impl Checker {
         };
         self.info.methods.insert(name.id, resolved);
         // What `Self` is may only be known from the arguments.
+        // A call a `?` means (`modules::Rewrite::try_expr`) is the `?`'s.
+        let why = match (self.is_try(name.span), name.name.as_str()) {
+            (true, "branch") => traits::Why::TryBranch,
+            (true, _) => traits::Why::TryReturn(self.returning_from()),
+            (false, _) => traits::Why::Method(name.name.clone()),
+        };
         let oblige = |cx: &mut Checker| match found.of_trait.clone() {
-            Some(pred) => cx.oblige(pred, name.span, traits::Why::Method(name.name.clone())),
+            Some(pred) => cx.oblige(pred, name.span, why.clone()),
             None => Ok(()),
         };
         if !parens {
@@ -449,7 +455,29 @@ impl Checker {
             ));
         }
         for (arg, param) in args.iter().zip(&sig.params) {
-            self.check(arg, param)?;
+            match self.is_try(name.span) && name.name == "from_residual" {
+                // What a `?` returns early must be what the function's
+                // result is made from: lemma Q2's equal residuals.
+                // What's returned is the function's result, which `return`
+                // already has: so it's known before its residual is, and
+                // whether it's `Try` is said before how they differ.
+                true => {
+                    let ret = self.ret.clone().expect("a `?` is in a `return`");
+                    // `Self` is still a variable here, so this can't clash.
+                    let _ = self.unify(&sig.ret, &ret);
+                    oblige(self)?;
+                    let got = self.synth(arg)?;
+                    let who = self.returning_from();
+                    let ret = self.shown(&self.solved(&ret));
+                    self.unify_or(&got, param, name.span, |got, want| {
+                        format!(
+                            "`?` can't return early here: {who} returns `{ret}`, so a `?` in it \
+                             must stop with `{want}`, and this one stops with `{got}`"
+                        )
+                    })?;
+                }
+                false => self.check(arg, param)?,
+            }
         }
         self.effect(e.span, format!("`{}`", name.name), (*sig.effects).clone());
         oblige(self)?;

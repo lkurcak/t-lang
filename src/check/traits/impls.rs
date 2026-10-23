@@ -434,6 +434,7 @@ impl Checker {
             );
             // Unless what's more is the impl's own, the trait's can say it;
             // or rather the impl's associated effect, if the trait says one.
+            // Only if the trait is this package's: a library's is as it is.
             let own = more
                 .effect_items()
                 .iter()
@@ -442,7 +443,7 @@ impl Checker {
                     .flat_map(|(_, w)| w)
                     .any(|w| w.starts_with("Self::"));
             return Err(match (&want.effects_at, own) {
-                (Some((span, written)), true) => {
+                (Some((span, written)), true) if self.current(*span) => {
                     let mut items = written.clone();
                     items.extend(more.effect_items().iter().map(Type::to_string));
                     let text = crate::check::effects::set_text(&items);

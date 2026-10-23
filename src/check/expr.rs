@@ -328,7 +328,7 @@ impl Checker {
     fn synth_inner(&mut self, e: &Expr) -> Result<Type, Error> {
         match &e.kind {
             ExprKind::Move(_) => unreachable!("written by lift"),
-            ExprKind::For(_) | ExprKind::Range(..) => {
+            ExprKind::For(_) | ExprKind::Range(..) | ExprKind::Try(..) => {
                 unreachable!("rewritten when paths are resolved")
             }
             //   τ an integer type          ------------------- (T-True/False)

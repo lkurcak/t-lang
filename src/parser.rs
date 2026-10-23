@@ -1983,6 +1983,14 @@ impl Parser {
                         }
                     }
                 };
+            } else if *self.peek() == Tok::Question {
+                let q = self.bump().span;
+                let span = e.span.to(q);
+                e = Expr {
+                    kind: ExprKind::Try(Box::new(e), q),
+                    span,
+                    id: self.id(),
+                };
             } else {
                 return Ok(e);
             }

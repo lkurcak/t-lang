@@ -1404,7 +1404,7 @@ impl Interp<'_, '_> {
 
     fn eval(&mut self, e: &Expr) -> Result<Value, Flow> {
         Ok(match &e.kind {
-            ExprKind::For(_) | ExprKind::Range(..) => {
+            ExprKind::For(_) | ExprKind::Range(..) | ExprKind::Try(..) => {
                 unreachable!("rewritten when paths are resolved")
             }
             ExprKind::Int(n, t) => {

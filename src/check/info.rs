@@ -708,7 +708,7 @@ fn names(params: &[Ident]) -> Vec<String> {
 fn each_annotation(e: &Expr, f: &mut impl FnMut(&TypeExpr)) {
     match &e.kind {
         ExprKind::Move(_) => unreachable!("written by lift"),
-        ExprKind::For(_) | ExprKind::Range(..) => {
+        ExprKind::For(_) | ExprKind::Range(..) | ExprKind::Try(..) => {
             unreachable!("rewritten when paths are resolved")
         }
         ExprKind::Int(..)

@@ -1087,6 +1087,26 @@ impl Checker {
         })
     }
 
+    /// Is `span` a `?`'s, so that what's there is one of the calls it means
+    /// (see `modules::Rewrite::try_expr`)?
+    pub(crate) fn is_try(&self, span: Span) -> bool {
+        self.modules.tries.contains(&span)
+    }
+
+    /// What a `return` here returns from, for messages: the innermost
+    /// closure, or else the function.
+    pub(crate) fn returning_from(&self) -> String {
+        match (
+            self.loops
+                .iter()
+                .any(|t| matches!(t, expr::Target::Closure)),
+            self.current,
+        ) {
+            (false, Some(f)) => format!("`{}`", self.fns[f.0].name.name),
+            _ => "this closure".to_string(),
+        }
+    }
+
     /// Is `t` a struct or enum of a library built into the compiler, which
     /// a program can't change?
     pub(crate) fn is_library_type(&self, t: &Type) -> bool {

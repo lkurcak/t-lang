@@ -933,6 +933,7 @@ impl Expr {
                 vec![l, r]
             }
             ExprKind::For(f) => vec![&f.iter, &f.body],
+            ExprKind::Try(e, _) => vec![e],
         }
     }
 
@@ -1157,6 +1158,9 @@ pub enum ExprKind {
     /// `a..b`. Only until paths are resolved, which rewrites it as a call
     /// of `core::ops::Range::new`.
     Range(Box<Expr>, Box<Expr>),
+    /// `e?`, with the span of the `?`. Only until paths are resolved,
+    /// which rewrites it as the `match` it means (see `check/modules.rs`).
+    Try(Box<Expr>, Span),
     /// `return e`, or `return` for `return ()`.
     Return(Option<Box<Expr>>),
     /// `break e` out of a `loop`, giving it the value of `e`, or `break`
@@ -1363,6 +1367,7 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
             go(&f.body, bound);
             bound.truncate(scope);
         }
+        ExprKind::Try(e, _) => go(e, bound),
     }
 }
 

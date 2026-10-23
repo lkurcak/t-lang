@@ -51,7 +51,7 @@
 use crate::ast::*;
 use crate::error::{Error, Lint, Span, Warning};
 use std::cell::Cell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// An item, by where it is in the program.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -111,6 +111,10 @@ pub(crate) struct Modules {
     /// literal or pattern (by its name), and one to a function where one is
     /// used (by the expression).
     pub(crate) paths: HashMap<NodeId, Item>,
+    /// Where each `?` is, which is where the calls it means are
+    /// (`Rewrite::try_expr`), for saying what's wrong with them in terms of
+    /// the `?`.
+    pub(crate) tries: HashSet<Span>,
     pub(crate) imports: Vec<Import>,
     /// The symbol of each trait, by its index in `Program::traits`.
     pub(crate) trait_symbols: Vec<String>,
@@ -1105,6 +1109,14 @@ impl Rewrite<'_> {
                 e.kind = self.for_loop(*f, e.span);
                 return Ok(());
             }
+            ExprKind::Try(x, _) => {
+                self.expr(x)?;
+                let ExprKind::Try(x, q) = std::mem::replace(&mut e.kind, ExprKind::Unit) else {
+                    unreachable!("matched above");
+                };
+                e.kind = self.try_expr(*x, q);
+                return Ok(());
+            }
             ExprKind::Range(l, r) => {
                 self.expr(l)?;
                 self.expr(r)?;
@@ -1413,6 +1425,100 @@ impl Rewrite<'_> {
         ExprKind::Block(vec![init, Stmt::BlockLike(looped)], None)
     }
 
+    /// What `x?`, with its `?` at `q`, means (lemma Q1):
+    ///
+    /// ```text
+    /// match core::ops::Try::branch(x) {
+    ///     core::ops::ControlFlow::Continue(v) => v,
+    ///     core::ops::ControlFlow::Break(r) => return core::ops::Try::from_residual(r),
+    /// }
+    /// ```
+    ///
+    /// with `v` and `r` a name no program can write, and the library's items
+    /// named by their symbols, so a program's own `Try` doesn't change it.
+    /// The calls are at the `?`, which is where an error about them is: what
+    /// `x` is (`branch`), or what the function returns (`from_residual`).
+    fn try_expr(&mut self, x: Expr, q: Span) -> ExprKind {
+        // The names it's made of are at an empty span, at the `?`: where
+        // errors about them are, and as names the program doesn't have, with
+        // nothing to show or rename (`info::unwritten`).
+        let at = Span::new(q.start, q.start);
+        self.r.m.tries.insert(at);
+        let try_trait = &self.symbols[match self.core_item("ops", "Try") {
+            Item::Trait(k) => k,
+            _ => unreachable!("`core::ops::Try` is a trait"),
+        }]
+        .clone();
+        let call = |cx: &mut Self, method: &str, arg: Expr| {
+            let name = Ident {
+                name: method.into(),
+                span: at,
+                id: cx.id(),
+            };
+            Expr {
+                kind: ExprKind::Variant(
+                    Ident {
+                        name: try_trait.clone(),
+                        span: at,
+                        id: cx.id(),
+                    },
+                    Vec::new(),
+                    name,
+                    vec![arg],
+                    true,
+                ),
+                span: q,
+                id: cx.id(),
+            }
+        };
+        let var = |cx: &mut Self| Expr {
+            kind: ExprKind::Var(TRY_VALUE.into(), Vec::new()),
+            span: at,
+            id: cx.id(),
+        };
+        let branch = call(self, "branch", x);
+        let control_flow = self.core_item("ops", "ControlFlow");
+        let arm = |cx: &mut Self, variant: &str, body: Expr| {
+            let ty_id = cx.id();
+            cx.r.m.paths.insert(ty_id, control_flow);
+            let bind = Pattern {
+                kind: PatternKind::Bind(TRY_VALUE.into(), false),
+                span: at,
+                id: cx.id(),
+            };
+            let pat = Pattern {
+                kind: PatternKind::Variant(
+                    Ident {
+                        name: "core::ops::ControlFlow".into(),
+                        span: at,
+                        id: ty_id,
+                    },
+                    Vec::new(),
+                    Ident {
+                        name: variant.into(),
+                        span: at,
+                        id: cx.id(),
+                    },
+                    vec![bind],
+                ),
+                span: q,
+                id: cx.id(),
+            };
+            Arm { pat, body }
+        };
+        let value = var(self);
+        let go_on = arm(self, "Continue", value);
+        let residual = var(self);
+        let from_residual = call(self, "from_residual", residual);
+        let stop = Expr {
+            kind: ExprKind::Return(Some(Box::new(from_residual))),
+            span: q,
+            id: self.id(),
+        };
+        let stop = arm(self, "Break", stop);
+        ExprKind::Match(Box::new(branch), vec![go_on, stop])
+    }
+
     fn pattern(&mut self, p: &mut Pattern) -> Result<(), Error> {
         match &mut p.kind {
             PatternKind::Move(_) => unreachable!("written by lift"),
@@ -1453,6 +1559,10 @@ impl Rewrite<'_> {
 /// The name of the variable a `for` loop keeps its iterator in, which no
 /// program can write (see `Rewrite::for_loop`).
 pub(crate) const FOR_ITERATOR: &str = "{for}";
+
+/// The name of the variable each arm of what `?` means binds, which no
+/// program can write (see `Rewrite::try_expr`).
+pub(crate) const TRY_VALUE: &str = "{try}";
 
 /// Checks that no `break` in `e`, the body of a `for` labelled `label`, if
 /// it is, gives that loop a value: a `for` can end without a `break`, so it
@@ -1574,6 +1684,7 @@ fn children_mut(e: &mut Expr) -> Vec<&mut Expr> {
             vec![&mut **l, &mut **r]
         }
         ExprKind::For(f) => vec![&mut f.iter, &mut f.body],
+        ExprKind::Try(e, _) => vec![e],
         ExprKind::Call(f, args) | ExprKind::MethodCall(f, _, _, args) => {
             std::iter::once(&mut **f).chain(args.iter_mut()).collect()
         }

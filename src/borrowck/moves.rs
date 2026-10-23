@@ -900,8 +900,14 @@ fn dropped(
                 Some(at) => e.with_note(at, "it's used up here, on some paths".to_string()),
                 None => e,
             };
+            // A `?` returns early there (`modules::Rewrite::try_expr`).
+            let early = b.cx.is_try(Span::new(span.start, span.start));
             let gone = match (temp, decl.kind) {
                 (true, _) => "it's dropped here, at the end of the statement".to_string(),
+                (_, _) if early => format!(
+                    "`{}` goes out of scope here, if this `?` returns early",
+                    decl.name.clone().unwrap_or_default()
+                ),
                 (_, LocalKind::Param) => format!(
                     "`{}` is dropped here, when the function returns",
                     decl.name.clone().unwrap_or_default()

@@ -337,6 +337,7 @@ combine features in ways nobody planned for.
 | 13 ✅ | strings: `str`, `char`, `"text"`, `'a'`, `b"bytes"`, escapes; `chars`, `from_utf8`; `panic("why")` | a type's invariant (UTF-8) kept by what can make and change its values, as a safety invariant unsafe code relies on; a type with a gap in its range, known to a linear logic by a disjunction | [docs/13-strings.md](docs/13-strings.md) |
 | 13.1 ✅ | `alloc::string::String`, an owned, growing string: `push`, `push_str`, `pop`, `truncate`, `from_utf8` | an `unsafe` block whose proof rests on safe code: the invariant's reach is the module that can touch the state, which privacy bounds | [docs/13.1-string.md](docs/13.1-string.md) |
 | 14 ✅ | each package checked once, against those it depends on: core, then alloc, then the program | separate compilation: whole-program rules (no cycles, no overlap) split into one per package, so a library that checked stays checked, and an error is the newest package's | [docs/14-packages.md](docs/14-packages.md) |
+| 15 ✅ | `e?`: what's in an `Ok` or `Some`, or else return early; `core::ops::Try`, `ControlFlow` | early return as a desugaring through a trait; residuals (`Result<!, E>`, `Option<!>`), uninhabited types keeping kinds of failure apart | [docs/15-try.md](docs/15-try.md) |
 | — | `std` | | |
 | — | C backend | | when it's worth it |
 

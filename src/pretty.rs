@@ -925,6 +925,7 @@ impl Printer<'_> {
                 self.expr(f, min, ctx) + self.args(f.span.end, args)
             }
             ExprKind::Field(x, field) => self.receiver(x, ctx) + "." + &field.name,
+            ExprKind::Try(x, _) => self.receiver(x, ctx) + "?",
             ExprKind::MethodCall(x, method, targs, args) => {
                 let end = targs.last().map_or(method.span.end, |t| t.span.end);
                 self.receiver(x, ctx)

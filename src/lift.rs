@@ -295,7 +295,7 @@ impl<'p> Cx<'p> {
     /// order. Local types are taken out too: `lift` has them already.
     fn expr(&self, e: &'p Expr, nested: &mut Vec<&'p FnDecl>) -> Expr {
         let kind = match &e.kind {
-            ExprKind::For(_) | ExprKind::Range(..) => {
+            ExprKind::For(_) | ExprKind::Range(..) | ExprKind::Try(..) => {
                 unreachable!("rewritten when paths are resolved")
             }
             ExprKind::Move(_) => unreachable!("written here"),

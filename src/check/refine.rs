@@ -2264,7 +2264,7 @@ impl Walk<'_> {
                 }
             }
             ExprKind::Move(x) => self.expr(x),
-            ExprKind::For(_) | ExprKind::Range(..) => {
+            ExprKind::For(_) | ExprKind::Range(..) | ExprKind::Try(..) => {
                 unreachable!("rewritten when paths are resolved")
             }
         }

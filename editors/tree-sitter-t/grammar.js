@@ -548,6 +548,7 @@ module.exports = grammar({
       $.call_expression,
       $.method_call_expression,
       $.field_expression,
+      $.try_expression,
       $.parenthesized_expression,
       $.struct_expression,
       $.variant_expression,
@@ -676,6 +677,12 @@ module.exports = grammar({
       field('value', $._expression),
       '.',
       field('field', $._field_identifier),
+    )),
+
+    // `f(x)?`: binds as tightly as a call
+    try_expression: $ => prec(PREC.call, seq(
+      field('value', $._expression),
+      '?',
     )),
 
     // `id::<i64>`

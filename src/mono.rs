@@ -912,7 +912,7 @@ impl Cx<'_, '_, '_> {
 
     fn expr(&mut self, e: &Expr) -> Expr {
         let kind = match &e.kind {
-            ExprKind::For(_) | ExprKind::Range(..) => {
+            ExprKind::For(_) | ExprKind::Range(..) | ExprKind::Try(..) => {
                 unreachable!("rewritten when paths are resolved")
             }
             ExprKind::Int(n, _) => {

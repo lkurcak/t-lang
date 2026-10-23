@@ -97,6 +97,8 @@
   "->" "=>" ".." "..="
 ] @operator
 
+(try_expression "?" @operator)
+
 (binary_expression "||" @operator)
 (binary_expression "|" @operator)
 (closure_parameters "|" @punctuation.bracket)

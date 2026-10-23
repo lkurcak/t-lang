@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+Step 15: `?`. See [docs/15-try.md](docs/15-try.md).
+
+### Added
+
+- `e?`: the value in an `Ok` or a `Some`, or else return the `Err` or the
+  `None` from the function (or closure) it's in. It's rewritten into a
+  `match` on `core::ops::Try::branch(e)`, so it has no rules of its own.
+- `core::ops::Try`, with `Output`, `Residual`, `branch` and
+  `from_residual`, for `Option` and `Result`, and which a program can
+  implement for its own types; and `core::ops::ControlFlow<B, C>`.
+- A `?` returns early only into a type with the same residual: an
+  `Option`'s into an `Option`, a `Result`'s into a `Result` with the same
+  error type. Errors aren't converted.
+- Errors about a `?` say so: what it's applied to, or what the function
+  returns, isn't `Try`; their residuals differ; a value that must be used
+  up goes out of scope where the `?` may return. Tree-sitter, highlighting
+  and `t fmt` know `?`.
+
+### Fixed
+
+- An impl's method with more effects than its trait's no longer offers a
+  fix that edits the trait, when the trait is a library's.
+
+### Changed
+
+- Closures' symbols, as `t mono` shows them, have other numbers, as the
+  core library has more in it.
+
 ## 0.26.0 (2026-10-24)
 
 Step 14: checking packages separately. See
