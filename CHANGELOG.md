@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.23.0 (2026-10-23)
 
 Step 13: strings. See [docs/13-strings.md](docs/13-strings.md).
 
