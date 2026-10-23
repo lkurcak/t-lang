@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.25.0 (2026-10-23)
 
 Step 13.1: owned strings. See [docs/13.1-string.md](docs/13.1-string.md).
 
