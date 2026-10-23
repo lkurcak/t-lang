@@ -50,6 +50,9 @@ or
 cargo install t-lang    # either way, installs the `t` command
 ```
 
+(`cargo install` also needs a C compiler, for the tree-sitter parser `t`
+carries; see [Syntax highlighting](#syntax-highlighting).)
+
 ## Usage
 
 ```sh
@@ -177,32 +180,29 @@ vim.api.nvim_create_autocmd("BufWritePre", {
 
 [editors/tree-sitter-t](editors/tree-sitter-t) is a
 [tree-sitter](https://tree-sitter.github.io/) grammar for T, with highlight
-queries in `queries/highlights.scm` that work in both editors below. The
-generated parser (`src/parser.c`) is checked in, so all you need is a C
-compiler. After changing `grammar.js`, regenerate it with
+queries in `queries/highlights.scm` that work in both editors below. `t`
+carries the parser, built from it, and its queries: `t tree-sitter` installs
+them, so what's highlighted matches what that `t` accepts, and needs no
+network or C compiler. Run it again after you upgrade `t`. The generated
+parser (`src/parser.c`) is checked in. After changing `grammar.js`, regenerate it with
 `tree-sitter generate` in that directory; `cargo test` checks that it parses
 every program in `tests/t/` and `examples/`.
 
-**Helix:** [editors/helix/languages.toml](editors/helix/languages.toml)
-already points Helix at the grammar. Then fetch and build it, and copy the
-queries where Helix looks for them:
+**Helix:** with [editors/helix/languages.toml](editors/helix/languages.toml)
+merged into your config, install the parser and queries into Helix's
+`runtime` directory (`%AppData%\helix\runtime` on Windows):
 
 ```sh
-hx --grammar fetch && hx --grammar build
-mkdir -p ~/.config/helix/runtime/queries/t
-cp editors/tree-sitter-t/queries/highlights.scm ~/.config/helix/runtime/queries/t/
+t tree-sitter --helix ~/.config/helix/runtime
 ```
 
-**Neovim (0.11+):** with [t-lang.nvim](https://github.com/lkurcak/t-lang.nvim),
-run `:TInstallParser`. Without it, build the parser and copy the queries into
-your `site` directory, from a checkout:
+**Neovim (0.11+):** [t-lang.nvim](https://github.com/lkurcak/t-lang.nvim)
+installs the parser the first time you open a T file, and again after you
+upgrade `t`. Without it, `t` installs the parser it was built with, and its
+highlight queries, into your `site` directory:
 
 ```sh
-site=~/.local/share/nvim/site
-mkdir -p $site/parser $site/queries/t
-cc -shared -fPIC -O2 -I editors/tree-sitter-t/src \
-    editors/tree-sitter-t/src/parser.c -o $site/parser/t.so
-cp editors/tree-sitter-t/queries/highlights.scm $site/queries/t/
+t tree-sitter ~/.local/share/nvim/site
 ```
 
 and turn it on for T files in your config:

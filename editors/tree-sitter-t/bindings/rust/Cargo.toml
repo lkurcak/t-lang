@@ -1,3 +1,7 @@
+# This lives here rather than in editors/tree-sitter-t, as `tree-sitter init`
+# puts it, because `cargo package` leaves out any directory with a
+# Cargo.toml: t-lang's crate needs the grammar, to build the parser `t
+# tree-sitter` installs.
 [package]
 name = "tree-sitter-t"
 version = "0.1.0"
@@ -7,11 +11,9 @@ description = "Tree-sitter grammar for T, for syntax highlighting"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/lkurcak/t-lang"
 publish = false
-build = "bindings/rust/build.rs"
-include = ["bindings/rust/*", "grammar.js", "queries/*", "src/*", "tree-sitter.json"]
 
 [lib]
-path = "bindings/rust/lib.rs"
+path = "lib.rs"
 
 [dependencies]
 tree-sitter-language = "0.1.9"

@@ -1,5 +1,8 @@
 # Merge into ~/.config/helix/languages.toml. Needs `t` on $PATH. For syntax
-# highlighting, see "Syntax highlighting" in the README.
+# highlighting, `t tree-sitter --helix ~/.config/helix/runtime` installs the
+# parser and queries of that `t` (see "Syntax highlighting" in the README).
+# There's no [[grammar]] entry: `hx --grammar build` would replace that
+# parser with one built from the newest grammar, whatever your `t` accepts.
 
 [language-server.t]
 command = "t"
@@ -16,7 +19,3 @@ indent = { tab-width = 4, unit = "    " }
 language-servers = ["t"]
 # Format with `t lsp` (as `t fmt` does) on every save.
 auto-format = true
-
-[[grammar]]
-name = "t"
-source = { git = "https://github.com/lkurcak/t-lang", rev = "main", subpath = "editors/tree-sitter-t" }

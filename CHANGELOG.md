@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `t tree-sitter <dir>` installs T's tree-sitter parser and highlight
+  queries into `<dir>/parser` and `<dir>/queries/t`, as Neovim looks for
+  them, and `t tree-sitter --helix <dir>` into `<dir>/grammars` and
+  `<dir>/queries/t`, as Helix does. The parser is built into `t`, so they
+  match what it accepts, and installing them needs no C compiler or network.
+  Files already up to date are left alone, so it's cheap to run every time.
+
+### Changed
+
+- Building `t` (so `cargo install t-lang`) needs a C compiler, for that
+  parser.
+- [editors/helix/languages.toml](editors/helix/languages.toml) has no
+  `[[grammar]]` entry any more: install the parser with `t tree-sitter
+  --helix` instead of `hx --grammar fetch` and `build`.
+
 ## 0.23.0 (2026-10-23)
 
 Step 13: strings. See [docs/13-strings.md](docs/13-strings.md).
