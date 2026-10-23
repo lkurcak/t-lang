@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.26.0 (2026-10-24)
 
 Step 14: checking packages separately. See
 [docs/14-packages.md](docs/14-packages.md).
