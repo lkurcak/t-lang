@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.33.0 (2026-10-24)
 
 Step 20: destructors. See [docs/20-destructors.md](docs/20-destructors.md).
 
