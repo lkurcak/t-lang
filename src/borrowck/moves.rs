@@ -656,7 +656,10 @@ enum Dropped {
 /// `Assign` (what the place held), and at a `Consume` (what the pattern
 /// didn't move out); and moves exactly where it does. The interpreter
 /// checks each drop for a leak (`Interp::drop`), so a program this lets
-/// through that throws away a linear value fails there.
+/// through that throws away a linear value fails there. Where the value's
+/// type has a `discard` of its own, the interpreter calls it at that drop,
+/// unless the value's been taken apart, as here; `drop_uses` makes such a
+/// drop a use of the value.
 ///
 /// Whether it's been used up depends on the path, so it's a dataflow
 /// problem, like `moves`, but asking what *must* be gone: where paths meet,
