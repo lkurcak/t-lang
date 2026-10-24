@@ -2,21 +2,26 @@
 // them: `free_with` hands each to a function, front to back, and frees the
 // rest. A list of lists is used up the same way.
 use alloc::list::List;
+use alloc::string::String;
+use core::fmt::Write;
 
 struct Fd { n: i64 }
 
-fn close(fd: Fd) {
+fn close(fd: Fd) -> i64 {
     let Fd { n } = fd;
-    print(n);
+    n
 }
 
-fn main() with {alloc, panic} {
+fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+    let mut out = String::new();
     let mut l: List<Fd> = List::new();
     l.push(Fd { n: 1 });
     l.push(Fd { n: 2 });
     l.push(Fd { n: 3 });
-    close(l.pop().unwrap()); // expect: 3
-    l.free_with(close);
+    out.line(&close(l.pop().unwrap())); // expect: 3
+    l.free_with(|fd: Fd| {
+        out.line(&close(fd));
+    });
     // expect: 1
     // expect: 2
 
@@ -26,9 +31,13 @@ fn main() with {alloc, panic} {
     ll.push(a);
     ll.push(List::new());
     ll.free_with(|x: List<i64>| {
-        print(x.len());
+        out.line(&x.len());
         x.free()
     });
     // expect: 1
     // expect: 0
+    let mut stdout = os.stdout;
+    let w = stdout.put(&out.as_str());
+    out.free();
+    w
 }

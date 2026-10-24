@@ -4,38 +4,41 @@
 
 use alloc::boxed::Box;
 use alloc::list::List;
+use alloc::string::String;
+use core::fmt::Write;
 
-fn show(l: &List<i64>) {
+fn show(out: &mut String, l: &List<i64>) with alloc {
     for x in l.iter() {
-        print(*x);
+        out.line(x);
     }
 }
 
-fn main() with {alloc, panic} {
+fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+    let mut out = String::new();
     let mut l: List<i64> = List::new();
     for i in 0..4 {
         l.push(i);
     }
-    print_bool(l.swap(0, 3)); // expect: true
-    print_bool(l.swap(1, 1)); // expect: true
-    print_bool(l.swap(2, 4)); // expect: false
-    show(&l);
+    out.line(&l.swap(0, 3)); // expect: true
+    out.line(&l.swap(1, 1)); // expect: true
+    out.line(&l.swap(2, 4)); // expect: false
+    show(&mut out, &l);
     // expect: 3
     // expect: 1
     // expect: 2
     // expect: 0
     l.truncate(9);
-    print(l.len()); // expect: 4
+    out.line(&l.len()); // expect: 4
     l.truncate(2);
-    show(&l);
+    show(&mut out, &l);
     // expect: 3
     // expect: 1
     let cap = l.capacity();
     l.clear();
-    print_bool(l.is_empty());        // expect: true
-    print_bool(l.capacity() == cap); // expect: true
+    out.line(&l.is_empty());        // expect: true
+    out.line(&(l.capacity() == cap)); // expect: true
     l.push(7);
-    show(&l); // expect: 7
+    show(&mut out, &l); // expect: 7
     l.free();
 
     // `swap` needs no `Discard`.
@@ -43,6 +46,10 @@ fn main() with {alloc, panic} {
     b.push(Box::new(1));
     b.push(Box::new(2));
     b.swap(0, 1);
-    print(**b.get(0).unwrap()); // expect: 2
+    out.line(&(**b.get(0).unwrap())); // expect: 2
     b.free();
+    let mut stdout = os.stdout;
+    let w = stdout.put(&out.as_str());
+    out.free();
+    w
 }

@@ -3,25 +3,22 @@
 // nothing leads back from `Show` to `Describe`.
 
 trait Show {
-    fn show(&self);
+    fn show(&self) -> i64;
 }
 
 trait Describe {
-    fn describe(&self);
+    fn describe(&self) -> i64;
 }
 
 impl<T: Show> Describe for T {
-    fn describe(&self) {
-        print(0i64);
-        self.show();
-    }
+    fn describe(&self) -> i64 { self.show() }
 }
 
 impl Show for i64 {
-    fn show(&self) { print(*self) }
+    fn show(&self) -> i64 { *self }
 }
 
-fn main() {
-    5i64.describe();   // expect: 0
-                    // expect: 5
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&5i64.describe()) // expect: 5
 }

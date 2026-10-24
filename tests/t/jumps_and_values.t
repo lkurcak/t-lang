@@ -6,11 +6,11 @@ use alloc::boxed::Box;
 
 fn consume(b: Box<i64>) -> i64 { *b }
 
-// `x` has a value on every path that gets to the `print`: the other returns.
-fn deferred_return(c: bool) {
+// `x` has a value on every path that gets to the `line`: the other returns.
+fn deferred_return(out: &mut std::io::Stdout, c: bool) -> Result<(), std::io::Error> {
     let x: i64;
-    if c { x = 1; } else { return; }
-    print(x);
+    if c { x = 1; } else { return Result::Ok(()); }
+    out.line(&x)
 }
 
 // The only way out of the `loop` is the `break`, after `x` gets its value.
@@ -50,14 +50,15 @@ fn borrow_or_change(c: bool) -> i64 {
     x
 }
 
-fn main() with {panic, alloc} {
-    deferred_return(true);                  // expect: 1
-    deferred_return(false);
-    print(deferred_loop());                 // expect: 30
-    print(break_in_condition());            // expect: 12
+fn main(os: std::Os) -> Result<(), std::io::Error> with {panic, alloc} {
+    let mut out = os.stdout;
+    deferred_return(&mut out, true)?;       // expect: 1
+    deferred_return(&mut out, false)?;
+    out.line(&deferred_loop())?;                 // expect: 30
+    out.line(&break_in_condition())?;            // expect: 12
 
-    print(borrow_or_change(true));          // expect: 1
-    print(borrow_or_change(false));         // expect: 2
+    out.line(&borrow_or_change(true))?;          // expect: 1
+    out.line(&borrow_or_change(false))?;         // expect: 2
 
     // Moved, then out of the loop for good.
     let b = Box::new(7);
@@ -65,7 +66,7 @@ fn main() with {panic, alloc} {
     while i < 10 {
         i += 1;
         if i == 2 {
-            print(consume(b));              // expect: 7
+            out.line(&consume(b))?;              // expect: 7
             break;
         }
     }
@@ -76,5 +77,6 @@ fn main() with {panic, alloc} {
     let f = loop {
         break |x| x + n;
     };
-    print(f(1));                            // expect: 6
+    out.line(&f(1))?;                            // expect: 6
+    Result::Ok(())
 }

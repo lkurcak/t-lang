@@ -38,15 +38,16 @@ fn two(s: &str) -> Parsed<u32> with panic {
     Parsed::Done(a * 10 + b)
 }
 
-fn show(p: Parsed<u32>) {
+fn show(out: &mut std::io::Stdout, p: Parsed<u32>) -> Result<(), std::io::Error> {
     match p {
-        Parsed::Done(v) => print(v),
-        Parsed::Failed(at) => print(at),
+        Parsed::Done(v) => out.line(&v),
+        Parsed::Failed(at) => out.line(&at),
     }
 }
 
-fn main() with panic {
-    show(two("42")); // expect: 42
-    show(two("4x")); // expect: 1
-    show(two("")); // expect: 0
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    show(&mut out, two("42"))?; // expect: 42
+    show(&mut out, two("4x"))?; // expect: 1
+    show(&mut out, two("")) // expect: 0
 }

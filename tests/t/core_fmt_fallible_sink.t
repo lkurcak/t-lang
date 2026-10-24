@@ -43,24 +43,29 @@ with W::e
     w.put(b)
 }
 
-fn attempt(room: usize) with alloc {
+fn attempt(out: &mut std::io::Stdout, room: usize) -> Result<(), std::io::Error> with alloc {
     let mut b = Bounded { s: String::new(), room };
     let r = both(&1234i64, &"abc", &mut b);
     let Bounded { s, room: _ } = b;
-    match r {
-        Result::Ok(()) => print_str(s.as_str()),
-        Result::Err(Full { wanted }) => {
-            print_str(s.as_str());
-            print(wanted);
-        },
-    }
+    let wanted = match r {
+        Result::Ok(()) => Option::None,
+        Result::Err(Full { wanted }) => Option::Some(wanted),
+    };
+    let w = out.line(&s.as_str());
     s.free();
+    w?;
+    match wanted {
+        Option::Some(n) => out.line(&n),
+        Option::None => Result::Ok(()),
+    }
 }
 
-fn main() with alloc {
-    attempt(10); // expect: 1234/abc
-    attempt(6);  // expect: 1234/
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
+    let mut out = os.stdout;
+    attempt(&mut out, 10)?; // expect: 1234/abc
+    attempt(&mut out, 6)?;  // expect: 1234/
                  // expect: 3
-    attempt(2);  // expect: 12
+    attempt(&mut out, 2)?;  // expect: 12
                  // expect: 1
+    Result::Ok(())
 }
