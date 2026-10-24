@@ -247,6 +247,9 @@ pub enum Lint {
     /// An `unsafe` block without a `// SAFETY:` comment just before it,
     /// saying why the obligations of what's in it are kept.
     MissingSafetyComments,
+    /// `unwrap`, `expect`, `unwrap_or` or `unwrap_or_else` of a `Result`
+    /// whose error type is `!`, so that it can't be an `Err`.
+    UnwrapInfallible,
 }
 
 impl Lint {
@@ -270,10 +273,11 @@ impl Lint {
             Lint::UnusedEffects => "unused_effects",
             Lint::UnusedUnsafe => "unused_unsafe",
             Lint::MissingSafetyComments => "missing_safety_comments",
+            Lint::UnwrapInfallible => "unwrap_infallible",
         }
     }
 
-    pub const ALL: [Lint; 18] = [
+    pub const ALL: [Lint; 19] = [
         Lint::UnreachablePatterns,
         Lint::OverlappingRanges,
         Lint::MergeableRanges,
@@ -292,6 +296,7 @@ impl Lint {
         Lint::UnusedEffects,
         Lint::UnusedUnsafe,
         Lint::MissingSafetyComments,
+        Lint::UnwrapInfallible,
     ];
 
     pub fn from_name(name: &str) -> Option<Lint> {

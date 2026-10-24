@@ -68,7 +68,15 @@ fn main() with alloc {
 
 `unwrap` can't be made to do it: its signature, the same for every
 `Result<T, E>`, says `with panic`, and a call has what the signature
-says, whatever `E` is (docs/14-packages.md).
+says, whatever `E` is (docs/14-packages.md). So where the error type is
+`!`, `unwrap` and `expect` get a warning, `unwrap_infallible`, whose fix
+is `into_ok()`: they make their caller say `with panic` for a panic that
+can't happen. `unwrap_or` and `unwrap_or_else` get it too, for a default
+made, or a function passed, for nothing, as a `match` gets one for an
+`Err` arm that can't match. Not `map_err`, which can be how a
+`Result<T, !>` becomes one another `?` wants, and not where the error type
+is a type parameter, or a sink's `W::Error`, which is `!` only in some
+uses.
 
 Core has `Display` for the ten integer types, in decimal, for `bool`,
 `char` and `str`, and for references to what has it; alloc for `String`

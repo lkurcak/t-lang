@@ -16,6 +16,9 @@ Step 18: `core::fmt`. See [docs/18-fmt.md](docs/18-fmt.md).
   `String::of(&x)` makes a string of anything `Display`.
 - `Result<T, !>::into_ok`: what's in a result that can't be an `Err`,
   with no `panic`.
+- Warning `unwrap_infallible`: `unwrap`, `expect`, `unwrap_or` or
+  `unwrap_or_else` of a `Result` whose error type is `!`. The fix is
+  `into_ok()`.
 
 ### Fixed
 
