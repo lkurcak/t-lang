@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.29.0 (2026-10-24)
 
 Step 17: what the first retrospective changed. See
 [docs/17-retrospective-1.md](docs/17-retrospective-1.md).
