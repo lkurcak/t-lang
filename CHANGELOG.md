@@ -14,6 +14,8 @@ Step 18: `core::fmt`. See [docs/18-fmt.md](docs/18-fmt.md).
   references to what has it; in alloc, `String` and `Box`.
 - `String` is a sink (`type Error = !`, `effect e = alloc`), and
   `String::of(&x)` makes a string of anything `Display`.
+- `Result<T, !>::into_ok`: what's in a result that can't be an `Err`,
+  with no `panic`.
 
 ### Fixed
 

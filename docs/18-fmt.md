@@ -46,7 +46,29 @@ pub trait Display {
 A `String` can't fail to take text, so its `Error` is `!`, and its `e` is
 `alloc`, as growing may run out of memory. A `Result<(), !>` can only be
 an `Ok`, and is `Discard`, so what writing to a string gives can be
-dropped, as above.
+dropped, as above. Where a value is wanted, as in a `match` arm whose
+others are `()`, `into_ok` gives what's in it. Unlike `unwrap`, it can't
+panic, as its signature says: it's only on a `Result<T, !>`.
+
+```rust
+use alloc::string::String;
+use core::fmt::Write;
+
+fn main() with alloc {
+    let mut s = String::new();
+    let n = 0u8;
+    match n {
+        0 => s.write_str("none").into_ok(),
+        _ => s.put(&n).into_ok(),
+    }
+    print_str(s.as_str()); // expect: none
+    s.free();
+}
+```
+
+`unwrap` can't be made to do it: its signature, the same for every
+`Result<T, E>`, says `with panic`, and a call has what the signature
+says, whatever `E` is (docs/14-packages.md).
 
 Core has `Display` for the ten integer types, in decimal, for `bool`,
 `char` and `str`, and for references to what has it; alloc for `String`
