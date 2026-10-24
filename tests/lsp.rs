@@ -464,6 +464,51 @@ fn main() with alloc {
 }
 
 #[test]
+fn hovers_show_the_traits_and_box_of_the_libraries() {
+    let (child, mut c) = start();
+    let uri = "file:///tmp/library_items.t";
+    let src = "\
+use alloc::boxed::Box;
+fn same<T: Eq>(a: &T, b: &T) -> bool { a == b }
+fn main() with alloc {
+    let b = Box::new(1i64);
+    print_bool(same(&*b, &*b));
+}
+";
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
+        }}),
+    );
+    assert_eq!(c.diagnostics(), Vec::<Value>::new());
+    let mut id = 1;
+    let mut ask = |c: &mut Client, method: &str, needle: &str| {
+        let offset = src.find(needle).unwrap();
+        let line = src[..offset].matches('\n').count();
+        let character = offset - src[..offset].rfind('\n').map_or(0, |i| i + 1);
+        id += 1;
+        c.send(
+            json!({"jsonrpc": "2.0", "id": id, "method": method, "params": {
+                "textDocument": {"uri": uri}, "position": {"line": line, "character": character}
+            }}),
+        );
+        c.response(id)["result"].clone()
+    };
+    // Core's `Eq`, in the prelude, with its doc. (Their files are built
+    // into the compiler, so there's nowhere to go to.)
+    let eq = ask(&mut c, "textDocument/hover", "Eq>");
+    let eq = eq["contents"]["value"].as_str().unwrap().to_string();
+    assert!(eq.starts_with("```t\ntrait Eq\n```"), "{eq}");
+    assert!(eq.contains("What `==` and `!=` compare with"), "{eq}");
+    // Alloc's `Box`, imported.
+    let boxed = ask(&mut c, "textDocument/hover", "Box::new");
+    let boxed = boxed["contents"]["value"].as_str().unwrap().to_string();
+    assert!(boxed.contains("A value on the heap"), "{boxed}");
+
+    stop(child, c);
+}
+
+#[test]
 fn formats_documents() {
     let (child, mut c) = start();
     let uri = "file:///tmp/fmt.t";

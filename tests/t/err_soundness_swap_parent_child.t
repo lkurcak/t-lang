@@ -1,5 +1,6 @@
 // A list and its own tail, through the borrow the `match` holds.
 
+use alloc::boxed::Box;
 use core::mem::swap;
 
 #[derive(Discard)]

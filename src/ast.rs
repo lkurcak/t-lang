@@ -603,6 +603,9 @@ impl FnDecl {
 pub struct TraitDecl {
     pub doc: Option<DocComment>,
     pub allows: Vec<Allow>,
+    /// Where its `#[intrinsic]` is, if it has one: the checker knows the
+    /// trait, and gives some types it, as it does `Eq` to `i64`.
+    pub intrinsic: Option<Span>,
     /// From the `trait` to the `}`.
     pub span: Span,
     pub module: usize,
@@ -1647,6 +1650,19 @@ impl fmt::Display for UnOp {
             UnOp::Ref => "&",
             UnOp::RefMut => "&mut ",
         })
+    }
+}
+
+impl BinOp {
+    /// The method of `Ord` comparison `self` calls, if it's one.
+    pub fn ord_method(self) -> &'static str {
+        match self {
+            BinOp::Lt => "lt",
+            BinOp::Le => "le",
+            BinOp::Gt => "gt",
+            BinOp::Ge => "ge",
+            op => unreachable!("`{op}` isn't an `Ord` comparison"),
+        }
     }
 }
 

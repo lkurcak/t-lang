@@ -76,6 +76,7 @@ pub use scope::source_name;
 
 use crate::ast::*;
 use crate::error::{Error, Fix, Span, Warning};
+use crate::traits::{EQ, INT};
 use crate::traits::{Pred, Traits};
 use crate::types::{Adts, Params, Region, Scheme, Type};
 use adts::{adt_names, each_adt};
@@ -130,7 +131,10 @@ pub const INTRINSICS: &[&str] = &[
 /// The intrinsic structs, by symbol: types the alloc library declares
 /// with no fields, which only the compiler makes and looks inside, by the
 /// intrinsic methods of their impls.
-pub const INTRINSIC_TYPES: &[&str] = &["alloc::raw::RawBuf"];
+pub const INTRINSIC_TYPES: &[&str] = &[BOX, "alloc::raw::RawBuf"];
+
+/// The symbol of the alloc library's `Box`, which is `Type::Box`.
+pub const BOX: &str = "alloc::boxed::Box";
 
 pub(crate) use modules::FOR_ITERATOR;
 
@@ -155,7 +159,7 @@ pub(crate) fn builtin_scheme(name: &str) -> Scheme {
             params: Params::types(vec!["T".into()]),
             preds: vec![Pred {
                 ty: Type::Param("T".into()),
-                trait_name: "Int".into(),
+                trait_name: INT.into(),
             }],
             ..Scheme::mono(Type::func(vec![Type::Param("T".into())], Type::Unit))
         },
@@ -230,7 +234,10 @@ pub fn libraries() -> &'static Libraries {
 pub fn check(prog: &mut Program, warnings: &mut Vec<Warning>) -> (Info, Result<(), Error>) {
     let libraries = libraries();
     let mut cx = libraries.cx.lock().expect("never poisoned").clone();
-    let result = cx.package(prog, ROOT, libraries.prog.counts());
+    let mut result = cx.package(prog, ROOT, libraries.prog.counts());
+    if let Err(e) = &mut result {
+        import_fix(prog, &cx.modules, e);
+    }
     cx.info.types = cx.defs.types.clone();
     let lib_types = cx.types.iter().map(|t| (&t.symbol, t.module));
     let lib_fns = cx.fns.iter().map(|f| (&f.symbol, f.module));
@@ -245,6 +252,37 @@ pub fn check(prog: &mut Program, warnings: &mut Vec<Warning>) -> (Info, Result<(
     warnings.append(&mut cx.warnings);
     prog.next_id = cx.next_id;
     (cx.info, result)
+}
+
+/// Adds to `e`, if it's that a type is unknown that a library has, a fix
+/// that imports it, into the innermost module of the program around it:
+/// `use alloc::boxed::Box;` for `Box`, which isn't in the prelude.
+fn import_fix(prog: &Program, modules: &modules::Modules, e: &mut Error) {
+    let Some(name) = (e.message.strip_prefix("unknown type `"))
+        .and_then(|rest| rest.strip_suffix('`'))
+        .map(str::to_string)
+    else {
+        return;
+    };
+    let Some(path) = modules.library_type(&name) else {
+        return;
+    };
+    let around = |s: Span| s.start <= e.span.start && e.span.end <= s.end;
+    let Some(m) = (0..prog.mods.len())
+        .filter(|&m| !modules.in_library(m) && around(prog.mods[m].span))
+        .min_by_key(|&m| prog.mods[m].span.end - prog.mods[m].span.start)
+    else {
+        return;
+    };
+    e.message
+        .push_str(&format!("; import it with `use {path};`"));
+    e.fixes.push(Fix::new(
+        format!("import `{name}`"),
+        vec![crate::error::Edit::insert(
+            modules.ends[m],
+            format!("\nuse {path};\n"),
+        )],
+    ));
 }
 
 /// Checks that there's a `main`, and that it takes nothing.
@@ -461,6 +499,10 @@ pub(crate) struct Checker {
     /// is. `finish_notes` moves them to `info`, and the spans to
     /// `instance_at`.
     pending: Vec<(NodeId, Span, Instance)>,
+    /// The comparisons `<`, `<=`, `>` and `>=` in the function being
+    /// checked, by node, with the type of what they compare: `Ord` calls,
+    /// unless that turns out to be an integer type.
+    compares: HashMap<NodeId, Type>,
     /// Where each use in `info.instances` is, by its node: what function
     /// it's in is worked out from that (`no_polymorphic_recursion`).
     instance_at: HashMap<NodeId, Span>,
@@ -612,6 +654,7 @@ impl Checker {
             warnings: Vec::new(),
             info: Info::default(),
             pending: Vec::new(),
+            compares: HashMap::new(),
             instance_at: HashMap::new(),
             ret: None,
             loops: Vec::new(),
@@ -1316,11 +1359,11 @@ impl Checker {
             .impls
             .iter()
             .map(|d| {
-                let eq = d.derived && d.trait_name.as_deref() == Some("Eq");
+                let eq = d.derived && d.trait_name.as_deref() == Some(EQ);
                 eq.then(|| format!("<{} as Eq>::eq", d.self_ty.symbols()))
             })
             .collect();
-        let eq = traits::trait_method_symbol("Eq", "eq");
+        let eq = traits::trait_method_symbol(EQ, "eq");
         let mut uses = Vec::new();
         for (k, d) in self.traits.impls.iter().enumerate() {
             let (Some(from), Type::Adt(symbol, ..)) = (&derived_eq[k], &d.self_ty) else {

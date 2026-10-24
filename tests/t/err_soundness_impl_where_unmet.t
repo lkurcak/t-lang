@@ -38,4 +38,4 @@ fn main() with panic {
         print(n);
     }
 }
-// error: `Second<Fds>` doesn't implement `core::iter::Iterator`, which method `next` is of; that needs `Fd: Discard`
+// error: `Second<Fds>` doesn't implement `Iterator`, which method `next` is of; that needs `Fd: Discard`

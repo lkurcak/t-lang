@@ -253,7 +253,8 @@ or of its type. Within one package, overlap is checked across all of it, so
 the rule is per package, not per module, and impls can go in any module.
 For now the only other package is what's built in, and the rule is the one
 T already had: a built-in trait like `Eq` can't be implemented for a
-built-in type like `i64`. With `core` (step 6e), it's a real package.
+built-in type like `i64`. With `core` (step 6e), it's a real package, and
+since step 17.1 `Eq` is one of its items.
 
 ## Derives at the boundary
 
@@ -265,6 +266,8 @@ derive what it needs, and the checker checks that it's enough:
 
 ```rust
 mod cells {
+    use alloc::boxed::Box;
+
     #[derive(Discard where T: Discard)]
     pub struct Cell<T> { v: Box<T> }
 
@@ -283,6 +286,8 @@ derive needs nothing, and is an error if it does, with a fix:
 
 ```rust,error
 mod cells {
+    use alloc::boxed::Box;
+
     #[derive(Discard)]
     pub struct Cell<T> { v: Box<T> }
 }

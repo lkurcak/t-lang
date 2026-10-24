@@ -18,6 +18,22 @@
 
 use crate::option::Option;
 
+/// Says a type is one of the ten integer types, so the arithmetic
+/// operators work on it, and literals like `0` and `127` are of it. It's
+/// sealed: no impl can add to it, so code over a `T: Int` may count on
+/// what all ten have in common.
+#[intrinsic]
+pub trait Int: Copy + Eq + Ord {}
+
+/// Says an integer type is signed: its least value is -1 minus its
+/// greatest (see docs/12-bits.md). Sealed too.
+#[intrinsic]
+pub trait Signed: Int {}
+
+/// Says an integer type is unsigned: its least value is 0. Sealed too.
+#[intrinsic]
+pub trait Unsigned: Int {}
+
 /// The least value of integer type `T`: `least::<i8>()` is -128, and
 /// `least::<u8>()` is 0. The checker knows it is.
 #[intrinsic]

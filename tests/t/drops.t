@@ -2,6 +2,8 @@
 // checks, and fails on a double free, a use after a move, or a box that's
 // never freed.
 
+use alloc::boxed::Box;
+
 #[allow(dead_code)]
 #[derive(Discard)]
 enum Option<T> { Some(T), None }

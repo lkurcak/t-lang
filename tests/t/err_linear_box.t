@@ -1,4 +1,7 @@
 // A box is `Discard` only if what it holds is.
+
+use alloc::boxed::Box;
+
 struct Fd { n: i64 }
 
 fn open(n: i64) -> Fd { Fd { n } }

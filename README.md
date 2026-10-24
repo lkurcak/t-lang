@@ -261,8 +261,9 @@ has to fit that:
 - **Nothing allocates behind your back.** `Box::new(x)` is the only thing
   that touches the heap, and the box is freed when its owner goes away,
   which the borrow checker works out at compile time: no garbage collector,
-  no reference counting. `Box` will move to a library, as in Rust's split
-  between `core`, `alloc` and `std`. See
+  no reference counting. `Box` is the alloc library's,
+  `alloc::boxed::Box`, as in Rust's split between `core`, `alloc` and
+  `std`. See
   [docs/05-ownership.md](docs/05-ownership.md).
 - **Closures are values of their own types**, structs of what they borrow
   or own, called through the `Fn` traits, like Rust's: no closure needs the
@@ -340,6 +341,7 @@ combine features in ways nobody planned for.
 | 15 ✅ | `e?`: what's in an `Ok` or `Some`, or else return early; `core::ops::Try`, `ControlFlow` | early return as a desugaring through a trait; residuals (`Result<!, E>`, `Option<!>`), uninhabited types keeping kinds of failure apart | [docs/15-try.md](docs/15-try.md) |
 | 16 ✅ | running out of memory is part of `alloc`, not `panic`: `Box::new`, `List::push`, `String::push` say `with alloc`; `RawBuf::grow(extra)`, `alloc::raw::out_of_memory` | which effect an abort is: `panic` for bugs, `alloc` for resources, and the library's signatures proved without `panic` | [docs/16-out-of-memory.md](docs/16-out-of-memory.md) |
 | 17 ✅ | retrospective 1: effect parameters declared `effect e`; `Discard` and `Copy` only derived; `//!` module docs | kinds given by declaration, not spelling; marker traits whose proofs are closed under their own trait, so no cycle can run through them | [docs/17-retrospective-1.md](docs/17-retrospective-1.md) |
+| 17.1 ✅ | `Discard`, `Copy`, `Eq`, `Int`, `Fn`… are core's `#[intrinsic]` traits, in the prelude; `Box` is `alloc::boxed::Box`; `<` is `Ord`'s, for any ordered type | the checker knows items by symbol, never by name; operators as trait methods, with the machine's `<` on integers the only one the refinement logic reads | [docs/17.1-library-items.md](docs/17.1-library-items.md) |
 | — | `std` | | |
 | — | C backend | | when it's worth it |
 

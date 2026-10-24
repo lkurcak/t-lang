@@ -1,6 +1,8 @@
 // Matching on a reference looks through it, and binds variables by
 // reference: to what's inside the value it points to.
 
+use alloc::boxed::Box;
+
 #[allow(dead_code)]
 #[derive(Discard)]
 enum Option<T> { Some(T), None }

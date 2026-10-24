@@ -1,6 +1,8 @@
 // A call works out its arguments, then takes its borrows of places, just
 // before the call: `v.push(v.len())` is `let n = v.len(); v.push(n)`.
 
+use alloc::boxed::Box;
+
 #[derive(Discard)]
 struct Stack { top: i64, size: i64 }
 

@@ -15,6 +15,7 @@ use super::describe;
 use super::mir::*;
 use crate::ast::Capture;
 use crate::error::{Edit, Error, Fix, Span};
+use crate::traits::DISCARD;
 use crate::types::{Type, struct_fields, variant_fields};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -835,30 +836,30 @@ fn dropped(
     let what = describe(b, &q);
     let hint = match b.cx.missing_discard(&t) {
         Some(Type::Param(p)) if p == "Self" => {
-            "; to let it be thrown away, make `Discard` a supertrait of the trait".to_string()
+            format!("; to let it be thrown away, make `{DISCARD}` a supertrait of the trait")
         }
         Some(Type::Param(p)) => {
-            format!("; to let it be thrown away, add a bound: `{p}: Discard`")
+            format!("; to let it be thrown away, add a bound: `{p}: {DISCARD}`")
         }
         // A function's bound can say it of a projection on its parameter;
         // otherwise only the trait can.
         Some(Type::Proj(s, tr, a)) => match *s {
             Type::Param(p) if p != "Self" => {
-                format!("; to let it be thrown away, add a bound: `{p}: {tr}<{a}: Discard>`")
+                format!("; to let it be thrown away, add a bound: `{p}: {tr}<{a}: {DISCARD}>`")
             }
             _ => format!(
-                "; to let it be thrown away, declare it in the trait as `type {a}: Discard;`"
+                "; to let it be thrown away, declare it in the trait as `type {a}: {DISCARD};`"
             ),
         },
         // A library's type is what it is: `RawBuf` is used up by `free`.
         Some(u) if b.cx.is_library_type(&u) => String::new(),
         Some(u) => format!(
-            "; to let it be thrown away, add `#[derive(Discard)]` to `{}`",
+            "; to let it be thrown away, add `#[derive({DISCARD})]` to `{}`",
             crate::check::source_name(&u.to_string())
         ),
         None => String::new(),
     };
-    let isnt = format!("its type, `{t}`, isn't `Discard`{hint}");
+    let isnt = format!("its type, `{t}`, isn't `{DISCARD}`{hint}");
     // Where it, or part of it, was used up on some paths, but not all.
     let some_paths = state
         .may
@@ -880,7 +881,7 @@ fn dropped(
         Dropped::Dead if decl.name.as_deref() == Some(crate::check::FOR_ITERATOR) => Error::ty(
             decl.span,
             format!(
-                "a `for` throws its iterator away when it ends, and `{t}` isn't `Discard`; to \
+                "a `for` throws its iterator away when it ends, and `{t}` isn't `{DISCARD}`; to \
                  keep it, iterate over a mutable reference to it: `for x in &mut it`"
             ),
         ),

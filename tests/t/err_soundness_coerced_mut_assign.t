@@ -1,5 +1,8 @@
 // `&mut b` used as a `&i64` keeps `b` borrowed as long as the result is
 // used.
+
+use alloc::boxed::Box;
+
 fn get(r: &i64) -> &i64 { r }
 
 fn main() with alloc {

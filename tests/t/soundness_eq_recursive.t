@@ -1,6 +1,8 @@
 // A derived `Eq` of a type that holds itself compares field by field, all
 // the way down, with each field's own `eq`.
 
+use alloc::boxed::Box;
+
 #[derive(Discard, Eq)]
 enum List<T> { Cons(T, Box<List<T>>), Nil }
 

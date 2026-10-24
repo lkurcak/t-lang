@@ -1,4 +1,7 @@
 // Not even in a box, for now.
+
+use alloc::boxed::Box;
+
 fn f(b: Box<[i64]>) {}
 
 fn main() {}

@@ -39,32 +39,71 @@ impl fmt::Display for Pred {
     }
 }
 
-/// The traits built into the language: `Eq`, behind `==` and `!=`;
-/// `Discard`, which says a type's values may be thrown away rather than
-/// used up; `Copy`, which says they're copied rather than moved, and
-/// needs `Discard` (see docs/06a.1-linear-types.md); and `Int`, which only
-/// the integer types implement, and says the arithmetic operators work on
-/// a type (see docs/11-integers.md).
+/// `core::mem::Discard`: a type's values may be thrown away rather than
+/// used up (see docs/06a.1-linear-types.md).
+pub const DISCARD: &str = "core::mem::Discard";
+/// `core::mem::Copy`: a type's values are copied rather than moved, which
+/// needs `Discard`.
+pub const COPY: &str = "core::mem::Copy";
+/// `core::cmp::Eq`, behind `==` and `!=`.
+pub const EQ: &str = "core::cmp::Eq";
+/// `core::cmp::Ord`, behind `<`, `<=`, `>` and `>=`. It isn't intrinsic:
+/// core implements it, for the integers too.
+pub const ORD: &str = "core::cmp::Ord";
+/// `core::num::Int`: only the integer types implement it, and it says the
+/// arithmetic operators work on a type (see docs/11-integers.md).
+pub const INT: &str = "core::num::Int";
+/// `core::num::Signed`, `Int`'s signed half.
+pub const SIGNED: &str = "core::num::Signed";
+/// `core::num::Unsigned`, `Int`'s unsigned half.
+pub const UNSIGNED: &str = "core::num::Unsigned";
+/// `core::ops::Fn`.
+pub const FN: &str = "core::ops::Fn";
+/// `core::ops::FnMut`.
+pub const FN_MUT: &str = "core::ops::FnMut";
+/// `core::ops::FnOnce`.
+pub const FN_ONCE: &str = "core::ops::FnOnce";
+
+/// The intrinsic traits: declared in core with `#[intrinsic]`, which the
+/// checker gives impls of its own, as `Eq` to `i64`, and rules of its own,
+/// as `Discard` to linear values. A program's trait of the same name is
+/// another trait, with none of them.
 pub const BUILTIN_TRAITS: &[&str] = &[
-    "Copy", "Discard", "Eq", "Fn", "FnMut", "FnOnce", "Int", "Signed", "Unsigned",
+    COPY, DISCARD, EQ, FN, FN_MUT, FN_ONCE, INT, SIGNED, UNSIGNED,
 ];
 
 /// The built-in traits no impl can add to: the integer types are all
 /// there are, and generic code may count on what they have in common
 /// (see docs/11-integers.md).
-pub const SEALED_TRAITS: &[&str] = &["Int", "Signed", "Unsigned"];
+pub const SEALED_TRAITS: &[&str] = &[INT, SIGNED, UNSIGNED];
 
 /// The traits of what can be called: `F: Fn(i64) -> i64` says a value of
 /// type `F` can be called with an `i64`, giving an `i64`. Functions and
 /// closures implement them, and nothing else can (see
 /// docs/06c-closures.md). Each is stronger than the next: `trait Fn:
 /// FnMut` and `trait FnMut: FnOnce`.
-pub const FN_TRAITS: &[&str] = &["Fn", "FnMut", "FnOnce"];
+pub const FN_TRAITS: &[&str] = &[FN, FN_MUT, FN_ONCE];
 
 /// The associated type of `FnOnce` that a bound like `Fn(i64) -> i64`
 /// says is `fn(i64) -> i64`: what a call takes and gives. Its name can't
 /// be written, so only such bounds can say what it is.
 pub const SIG: &str = "(signature)";
+
+/// The traits `core::prelude` brings in, which messages name by their
+/// names alone (see `Traits::shorten`).
+const PRELUDE_TRAITS: &[&str] = &[
+    "core::iter::Iterator",
+    COPY,
+    DISCARD,
+    EQ,
+    FN_MUT,
+    FN_ONCE,
+    FN,
+    INT,
+    ORD,
+    SIGNED,
+    UNSIGNED,
+];
 
 /// How a call of a callable value gets at it: `Fn` borrows it, `FnMut`
 /// borrows it mutably, and `FnOnce` takes it. In that order, each allows
@@ -79,17 +118,17 @@ pub enum FnKind {
 impl FnKind {
     pub fn name(self) -> &'static str {
         match self {
-            FnKind::Fn => "Fn",
-            FnKind::FnMut => "FnMut",
-            FnKind::FnOnce => "FnOnce",
+            FnKind::Fn => FN,
+            FnKind::FnMut => FN_MUT,
+            FnKind::FnOnce => FN_ONCE,
         }
     }
 
     pub fn of(trait_name: &str) -> Option<FnKind> {
         match trait_name {
-            "Fn" => Some(FnKind::Fn),
-            "FnMut" => Some(FnKind::FnMut),
-            "FnOnce" => Some(FnKind::FnOnce),
+            FN => Some(FnKind::Fn),
+            FN_MUT => Some(FnKind::FnMut),
+            FN_ONCE => Some(FnKind::FnOnce),
             _ => None,
         }
     }
@@ -318,119 +357,30 @@ pub enum Source {
 }
 
 impl Traits {
-    /// The built-in traits, and nothing else yet.
+    /// `text`, a message, with each trait the prelude brings in named by
+    /// its name, as a program writes it, rather than by its symbol:
+    /// `Discard`, not `core::mem::Discard`. Not if another trait has that
+    /// name, as a program's own `Eq` does: then the two need telling apart.
+    pub fn shorten(&self, text: &str) -> String {
+        let mut text = text.to_string();
+        // Longest first, so `core::ops::Fn` doesn't take `FnMut`'s start.
+        let mut symbols = PRELUDE_TRAITS.to_vec();
+        symbols.sort_by_key(|s| std::cmp::Reverse(s.len()));
+        for symbol in symbols {
+            let name = symbol.rsplit("::").next().expect("a path");
+            let clash =
+                (self.traits.keys()).any(|k| k != symbol && k.rsplit("::").next() == Some(name));
+            if !clash {
+                text = text.replace(symbol, name);
+            }
+        }
+        text
+    }
+
+    /// No traits yet: even the intrinsic ones are core's, declared
+    /// there.
     pub fn new() -> Traits {
-        let mut traits = HashMap::new();
-        traits.insert(
-            "Discard".to_string(),
-            TraitDef {
-                span: None,
-                supers: Vec::new(),
-                assoc: Vec::new(),
-                methods: Vec::new(),
-            },
-        );
-        // trait Copy: Discard {}
-        traits.insert(
-            "Copy".to_string(),
-            TraitDef {
-                span: None,
-                supers: vec!["Discard".to_string()],
-                assoc: Vec::new(),
-                methods: Vec::new(),
-            },
-        );
-        // trait Eq { fn eq(&self, other: &Self) -> bool; }
-        let this = || Type::Ref(Region::Named("'_0".into()), false, Box::new(param("Self")));
-        let other = Type::Ref(Region::Named("'_1".into()), false, Box::new(param("Self")));
-        let eq = MethodDef {
-            name: "eq".into(),
-            symbol: "<Eq>::eq".into(),
-            effects_at: None,
-            scheme: Scheme {
-                params: crate::types::Params::types(vec!["Self".into()]),
-                lifetimes: vec!["'_0".into(), "'_1".into()],
-                bounds: Vec::new(),
-                preds: vec![Pred {
-                    ty: param("Self"),
-                    trait_name: "Eq".into(),
-                }],
-                eqs: Vec::new(),
-                ty: Type::func(vec![this(), other], Type::Bool),
-            },
-            provided: false,
-            receiver: true,
-            span: None,
-        };
-        traits.insert(
-            "Eq".to_string(),
-            TraitDef {
-                span: None,
-                supers: Vec::new(),
-                assoc: Vec::new(),
-                methods: vec![eq],
-            },
-        );
-        // trait Int: Copy + Eq {}
-        //
-        // Sealed: no impl can be written, so the integer types are all
-        // there ever are, and generic code over them may count on what
-        // they all have in common (see docs/11-integers.md).
-        traits.insert(
-            "Int".to_string(),
-            TraitDef {
-                span: None,
-                supers: vec!["Copy".to_string(), "Eq".to_string()],
-                assoc: Vec::new(),
-                methods: Vec::new(),
-            },
-        );
-        // trait Signed: Int {}
-        // trait Unsigned: Int {}
-        //
-        // `Int`'s two halves, sealed too: of a `T: Signed`, the least
-        // value is -1 minus the greatest, and of a `T: Unsigned` it's 0
-        // (see docs/12-bits.md).
-        for name in ["Signed", "Unsigned"] {
-            traits.insert(
-                name.to_string(),
-                TraitDef {
-                    span: None,
-                    supers: vec!["Int".to_string()],
-                    assoc: Vec::new(),
-                    methods: Vec::new(),
-                },
-            );
-        }
-        // trait FnOnce { type (signature); }
-        // trait FnMut: FnOnce {}
-        // trait Fn: FnMut {}
-        //
-        // Calling isn't a method, as a call takes any number of arguments.
-        for (name, supers) in [
-            ("FnOnce", None),
-            ("FnMut", Some("FnOnce")),
-            ("Fn", Some("FnMut")),
-        ] {
-            let assoc = match supers {
-                None => vec![AssocDecl {
-                    name: SIG.into(),
-                    effect: false,
-                    bounds: Vec::new(),
-                    span: Span::new(0, 0),
-                }],
-                Some(_) => Vec::new(),
-            };
-            traits.insert(
-                name.to_string(),
-                TraitDef {
-                    span: None,
-                    supers: supers.into_iter().map(str::to_string).collect(),
-                    assoc,
-                    methods: Vec::new(),
-                },
-            );
-        }
+        let traits = HashMap::new();
         Traits {
             traits,
             impls: Vec::new(),
@@ -566,7 +516,7 @@ impl Traits {
         // that. A box holds what it points to, so it may be if that may.
         match (tr, ty) {
             (
-                "Discard",
+                DISCARD,
                 Type::Int(_)
                 | Type::Bool
                 | Type::Char
@@ -575,44 +525,44 @@ impl Traits {
                 | Type::Fn(_)
                 | Type::Ref(..),
             ) => return Ok(Source::Builtin),
-            ("Discard", Type::Box(inner)) => return all(&[inner]),
+            (DISCARD, Type::Box(inner)) => return all(&[inner]),
             (
-                "Copy",
+                COPY,
                 Type::Int(_) | Type::Bool | Type::Char | Type::Unit | Type::Never | Type::Fn(_),
             ) => {
                 return Ok(Source::Builtin);
             }
-            ("Copy", Type::Ref(_, false, _)) => return Ok(Source::Builtin),
-            ("Copy", Type::Ref(_, true, _) | Type::Box(_)) => return Err(fail()),
-            ("Eq", Type::Int(_) | Type::Bool | Type::Char | Type::Unit | Type::Never) => {
+            (COPY, Type::Ref(_, false, _)) => return Ok(Source::Builtin),
+            (COPY, Type::Ref(_, true, _) | Type::Box(_)) => return Err(fail()),
+            (EQ, Type::Int(_) | Type::Bool | Type::Char | Type::Unit | Type::Never) => {
                 return Ok(Source::Builtin);
             }
             // A string compares by its bytes, and a slice value by value,
             // if its values compare: the same length, and equal values at
             // each index.
-            ("Eq", Type::Str) => return Ok(Source::Builtin),
-            ("Eq", Type::Slice(inner)) => return all(&[inner]),
-            ("Int", Type::Int(_)) => return Ok(Source::Builtin),
-            ("Signed", Type::Int(t)) if t.signed() => return Ok(Source::Builtin),
-            ("Unsigned", Type::Int(t)) if !t.signed() => return Ok(Source::Builtin),
-            ("Signed" | "Unsigned", Type::Int(_)) => return Err(fail()),
+            (EQ, Type::Str) => return Ok(Source::Builtin),
+            (EQ, Type::Slice(inner)) => return all(&[inner]),
+            (INT, Type::Int(_)) => return Ok(Source::Builtin),
+            (SIGNED, Type::Int(t)) if t.signed() => return Ok(Source::Builtin),
+            (UNSIGNED, Type::Int(t)) if !t.signed() => return Ok(Source::Builtin),
+            (SIGNED | UNSIGNED, Type::Int(_)) => return Err(fail()),
             // References and boxes compare what they point to.
-            ("Eq", Type::Ref(_, _, inner) | Type::Box(inner)) => return all(&[inner]),
-            ("Eq", Type::Fn(_)) => return Err(fail()),
+            (EQ, Type::Ref(_, _, inner) | Type::Box(inner)) => return all(&[inner]),
+            (EQ, Type::Fn(_)) => return Err(fail()),
             // Functions can be called any number of times. A reference to
             // what can be called through a shared reference can be too, and
             // one to what can be through a mutable one, as long as it's
             // mutable: calling `&F` calls `F` by `&`.
-            ("Fn" | "FnMut" | "FnOnce", Type::Fn(_)) => return Ok(Source::Builtin),
-            ("Fn" | "FnMut" | "FnOnce", Type::Ref(_, false, inner)) => {
-                self.implements_at(inner, "Fn", env, eqs, depth + 1)?;
+            (FN | FN_MUT | FN_ONCE, Type::Fn(_)) => return Ok(Source::Builtin),
+            (FN | FN_MUT | FN_ONCE, Type::Ref(_, false, inner)) => {
+                self.implements_at(inner, FN, env, eqs, depth + 1)?;
                 return Ok(Source::Builtin);
             }
-            ("FnMut" | "FnOnce", Type::Ref(_, true, inner)) => {
-                self.implements_at(inner, "FnMut", env, eqs, depth + 1)?;
+            (FN_MUT | FN_ONCE, Type::Ref(_, true, inner)) => {
+                self.implements_at(inner, FN_MUT, env, eqs, depth + 1)?;
                 return Ok(Source::Builtin);
             }
-            ("Fn", Type::Ref(_, true, _)) => return Err(fail()),
+            (FN, Type::Ref(_, true, _)) => return Err(fail()),
             _ => {}
         }
         // A closure is what it captures: it may be thrown away, or copied,
@@ -625,7 +575,7 @@ impl Traits {
                 unreachable!("`{ty}: {tr}` asked before the closure's captures were known")
             };
             return match (tr, FnKind::of(tr)) {
-                ("Discard" | "Copy", _) => all(&c.fields_at(ty).iter().collect::<Vec<_>>()),
+                (DISCARD | COPY, _) => all(&c.fields_at(ty).iter().collect::<Vec<_>>()),
                 (_, Some(wanted)) if kind <= wanted => Ok(Source::Builtin),
                 _ => Err(fail()),
             };
@@ -1033,7 +983,7 @@ pub fn project(
             Type::Adt(symbol, ..) => Some(anon.closures.get(symbol)?.sig_at(s)),
             Type::Ref(_, _, inner) => match &**inner {
                 Type::Param(_) | Type::Var(_) | Type::Proj(..) => {
-                    Some(Type::Proj(inner.clone(), "FnOnce".into(), SIG.into()))
+                    Some(Type::Proj(inner.clone(), FN_ONCE.into(), SIG.into()))
                 }
                 inner => project(impls, anon, local, inner, tr, name),
             },
@@ -1099,10 +1049,6 @@ pub(crate) fn eq_subject(t: &Type) -> &Type {
         Type::Ref(_, _, inner) | Type::Box(inner) => eq_subject(inner),
         t => t,
     }
-}
-
-fn param(name: &str) -> Type {
-    Type::Param(name.to_string())
 }
 
 /// Does `pat`, a type mentioning type parameters `params`, match `t` for

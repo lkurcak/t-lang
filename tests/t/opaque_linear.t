@@ -1,5 +1,8 @@
 // What a function returns needn't be `Discard`: then it must be used up,
 // here by calling it.
+
+use alloc::boxed::Box;
+
 fn once(b: Box<i64>) -> impl FnOnce() -> i64 { move || *b }
 
 fn main() with alloc {

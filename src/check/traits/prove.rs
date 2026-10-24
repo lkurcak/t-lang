@@ -5,6 +5,7 @@ use super::fields;
 use crate::ast::*;
 use crate::check::Checker;
 use crate::error::{Error, Span};
+use crate::traits::{COPY, DISCARD, EQ};
 use crate::traits::{ImplDef, Pred};
 use crate::types::{Subst, Type};
 
@@ -13,7 +14,7 @@ impl Checker {
     /// in scope?
     pub(crate) fn is_copy(&self, t: &Type) -> bool {
         self.traits
-            .implements(t, "Copy", &self.env, &self.adts.proj.local)
+            .implements(t, COPY, &self.env, &self.adts.proj.local)
             .is_ok()
     }
 
@@ -22,7 +23,7 @@ impl Checker {
     /// monomorphisation: the borrow checker asks it, and it's done by then.
     pub(crate) fn is_discard(&self, t: &Type) -> bool {
         self.traits
-            .implements(t, "Discard", &self.env, &self.adts.proj.local)
+            .implements(t, DISCARD, &self.env, &self.adts.proj.local)
             .is_ok()
     }
 
@@ -33,12 +34,12 @@ impl Checker {
     pub(crate) fn missing_discard(&self, t: &Type) -> Option<Type> {
         let bad = self
             .traits
-            .implements(t, "Discard", &self.env, &self.adts.proj.local)
+            .implements(t, DISCARD, &self.env, &self.adts.proj.local)
             .err()?;
         let Type::Adt(symbol, ..) = &bad.ty else {
             return matches!(bad.ty, Type::Param(_) | Type::Proj(..)).then_some(bad.ty);
         };
-        if self.traits.select(&bad.ty, Some("Discard"), &[]).is_some() {
+        if self.traits.select(&bad.ty, Some(DISCARD), &[]).is_some() {
             return None;
         }
         // As if it were `#[derive(Discard)]`, needing it of every type
@@ -49,13 +50,13 @@ impl Checker {
             .iter()
             .map(|p| Pred {
                 ty: Type::Param(p.clone()),
-                trait_name: "Discard".into(),
+                trait_name: DISCARD.into(),
             })
             .collect();
         let mut traits = self.traits.clone();
         traits.impls.push(ImplDef {
             span: Span::new(0, 0),
-            trait_name: Some("Discard".into()),
+            trait_name: Some(DISCARD.into()),
             params: adt.params.clone(),
             lifetimes: adt.lifetimes.clone(),
             bounds: adt.bounds.clone(),
@@ -68,10 +69,10 @@ impl Checker {
         });
         let fields_may = fields(&adt.kind)
             .iter()
-            .all(|(_, f)| traits.implements(f, "Discard", &assumed, &[]).is_ok());
+            .all(|(_, f)| traits.implements(f, DISCARD, &assumed, &[]).is_ok());
         (fields_may
             && traits
-                .implements(t, "Discard", &self.env, &self.adts.proj.local)
+                .implements(t, DISCARD, &self.env, &self.adts.proj.local)
                 .is_ok())
         .then_some(bad.ty)
     }
@@ -119,13 +120,14 @@ impl Checker {
         // How to fix what doesn't hold, if it's simple, or why it can't be.
         let at_bottom = bad == o.pred;
         let fix = |p: &Pred| match (&p.ty, p.trait_name.as_str()) {
-            (Type::Param(t), tr) => format!("; add a bound: `{t}: {tr}`"),
-            (Type::Fn(_), "Eq") if at_bottom => ": functions can't be compared".to_string(),
-            (Type::Fn(_), "Eq") => ", and functions can't be compared".to_string(),
+            (Type::Param(t), tr) => format!("; add a bound: `{t}: {}`", tr),
+            (Type::Fn(_), EQ) if at_bottom => ": functions can't be compared".to_string(),
+            (Type::Fn(_), EQ) => ", and functions can't be compared".to_string(),
             (Type::Adt(s, ..), _) if crate::types::is_closure(s) => String::new(),
-            (t @ Type::Adt(..), tr @ ("Eq" | "Copy" | "Discard")) => {
+            (t @ Type::Adt(..), tr @ (EQ | COPY | DISCARD)) => {
                 format!(
-                    "; add `#[derive({tr})]` to `{}`",
+                    "; add `#[derive({})]` to `{}`",
+                    tr,
                     crate::check::source_name(&t.to_string())
                 )
             }
@@ -144,14 +146,14 @@ impl Checker {
                 }
                 (Type::Param(p), true) => format!(
                     "cannot compare values of type `{p}` with `{op}`: `{p}` doesn't implement \
-                     `Eq`{}",
+                     `{tr}`{}",
                     fix(&bad)
                 ),
                 (t, true) => format!(
-                    "cannot compare `{t}` with `{op}`: it doesn't implement `Eq`{}",
-                    match t {
-                        Type::Adt(..) => "; add `#[derive(Eq)]` to it",
-                        _ => "",
+                    "cannot compare `{t}` with `{op}`: it doesn't implement `{tr}`{}",
+                    match (t, o.pred.trait_name.as_str()) {
+                        (Type::Adt(..), EQ) => format!("; add `#[derive({tr})]` to it"),
+                        _ => String::new(),
                     }
                 ),
                 (t, false) => format!(

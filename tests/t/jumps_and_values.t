@@ -2,6 +2,8 @@
 // later, moves, borrows and closures. The checks follow the paths control
 // can take: a `return` or `break` ends one.
 
+use alloc::boxed::Box;
+
 fn consume(b: Box<i64>) -> i64 { *b }
 
 // `x` has a value on every path that gets to the `print`: the other returns.

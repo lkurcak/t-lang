@@ -2,6 +2,8 @@
 // `&Never` or `Box<Never>` can't exist, and nor can a value that must hold
 // itself forever. A `match` needn't cover them.
 
+use alloc::boxed::Box;
+
 #[derive(Discard)]
 enum Never {}
 

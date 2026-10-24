@@ -1,0 +1,5 @@
+fn main() {
+    let less = |a, b| a < b;
+    print_bool(less(1i64, 2i64));
+    print_bool(less(2i64, 1i64));
+}

@@ -61,6 +61,7 @@ use super::Checker;
 use super::typed::Res;
 use crate::ast::*;
 use crate::error::{Error, Span};
+use crate::traits::{INT, SIGNED, UNSIGNED};
 use crate::types::{IntTy, Region, Type, all_fields, struct_fields};
 use logic::{Formula, Kind, Lin, Var};
 use std::collections::{HashMap, HashSet};
@@ -787,10 +788,10 @@ impl Walk<'_> {
                 let (min, _) = IntTy::I64.range_64();
                 let (_, max) = IntTy::U64.range_64();
                 let (every_lo, every_hi) = super::ints::param_range(self.cx, t);
-                let b = if self.implements(t, "Unsigned") {
+                let b = if self.implements(t, UNSIGNED) {
                     let hi = self.fresh(Kind::Bound(every_hi, max));
                     (Lin::constant(0), Lin::var(hi))
-                } else if self.implements(t, "Signed") {
+                } else if self.implements(t, SIGNED) {
                     let (_, i64_max) = IntTy::I64.range_64();
                     let hi = Lin::var(self.fresh(Kind::Bound(every_hi, i64_max)));
                     (hi.scale(-1)?.plus(-1)?, hi)
@@ -839,7 +840,7 @@ impl Walk<'_> {
     fn is_int(&self, t: &Type) -> bool {
         match t {
             Type::Int(_) => true,
-            Type::Param(_) => self.implements(t, "Int"),
+            Type::Param(_) => self.implements(t, INT),
             _ => false,
         }
     }
@@ -1939,6 +1940,9 @@ impl Walk<'_> {
                 let a = self.expr(l)?;
                 let b = self.expr(r)?;
                 Ok(match (op, a, b) {
+                    // An `Ord` call says nothing the logic knows: only the
+                    // machine's comparison of integers does.
+                    _ if self.cx.is_ord_call(e.id) => self.unknown(&Type::Bool),
                     (op, a, b) if op.arith() || op.bitwise() => {
                         let ty = self.ty_of(e);
                         self.arith(e.id, *op, a, b, &ty)

@@ -813,10 +813,10 @@ impl IntTy {
     }
 }
 
-/// Is `name` a built-in type's: an integer type's, `bool`, `char`, `str`
-/// or `Box`?
+/// Is `name` a built-in type's: an integer type's, `bool`, `char` or
+/// `str`?
 pub fn is_builtin_type(name: &str) -> bool {
-    IntTy::named(name).is_some() || matches!(name, "bool" | "char" | "str" | "Box")
+    IntTy::named(name).is_some() || matches!(name, "bool" | "char" | "str")
 }
 
 /// `a, b, c`

@@ -1,4 +1,7 @@
 // The same for `&rb`, a `&&Box<i64>`.
+
+use alloc::boxed::Box;
+
 fn get(r: &i64) -> &i64 { r }
 
 fn main() {

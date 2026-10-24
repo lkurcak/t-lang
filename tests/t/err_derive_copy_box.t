@@ -1,3 +1,5 @@
+use alloc::boxed::Box;
+
 #[derive(Discard, Copy)]
 struct Owner { b: Box<i64> }
 

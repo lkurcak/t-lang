@@ -1,5 +1,8 @@
 // `get`'s result lives as long as the borrow of `s`, as the trait says,
 // even though the impl knows it could live as long as `'a`.
+
+use alloc::boxed::Box;
+
 trait Get {
     fn get(&self) -> &i64;
 }

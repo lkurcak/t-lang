@@ -20,6 +20,7 @@ use crate::ast::*;
 use crate::check::typed::Res;
 use crate::check::{Checker, MoveSite, first_use};
 use crate::error::Span;
+use crate::traits::FN_ONCE;
 use crate::traits::{FnKind, SIG};
 use crate::types::{AdtKind, Adts, Region, Scheme, Subst, Type, struct_fields, variant_fields};
 use std::collections::HashMap;
@@ -440,8 +441,12 @@ impl<'a> Builder<'a> {
                 self.goto(join);
                 self.block = join;
             }
-            // Looked at where they are, not used up.
-            ExprKind::Binary(op @ (BinOp::Eq | BinOp::Ne), l, r) => {
+            // Looked at where they are, not used up: `==` and `<` borrow.
+            ExprKind::Binary(
+                op @ (BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge),
+                l,
+                r,
+            ) => {
                 let l = self.place(l);
                 let r = self.place(r);
                 let value = Rvalue::Binary(*op, Operand::Copy(l), Operand::Copy(r));
@@ -466,7 +471,7 @@ impl<'a> Builder<'a> {
                     recv = recv.project(Proj::Deref);
                 }
                 let t = self.place_ty(&recv);
-                let sig = Type::Proj(Box::new(t.clone()), "FnOnce".into(), SIG.into());
+                let sig = Type::Proj(Box::new(t.clone()), FN_ONCE.into(), SIG.into());
                 let Type::Fn(mut sig) = self.adts().normalise(&sig) else {
                     unreachable!("`{t}` can be called")
                 };
@@ -618,7 +623,9 @@ impl<'a> Builder<'a> {
                 let ops = ops.into_iter().map(|o| o.expect("every field")).collect();
                 self.assign(dest, Rvalue::Aggregate(ops), &t, span, false);
             }
-            ExprKind::Variant(ty, _, _, args, ..) if ty.name == "Box" => {
+            // `Box::new(x)`: the one expression of a box type that names
+            // one, as no struct or enum is one.
+            ExprKind::Variant(_, _, _, args, ..) if matches!(self.ty(e), Type::Box(_)) => {
                 let t = self.ty(e);
                 let Type::Box(inner) = &t else {
                     unreachable!("`Box::new` makes a box")

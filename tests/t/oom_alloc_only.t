@@ -1,5 +1,7 @@
 // Running out of memory is part of `alloc`, not `panic`: what allocates
 // says `with alloc`, and `panic` is left for bugs. None of these can panic.
+
+use alloc::boxed::Box;
 use alloc::list::List;
 use alloc::raw::RawBuf;
 use alloc::string::String;

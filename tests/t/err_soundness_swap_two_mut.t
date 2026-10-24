@@ -1,6 +1,7 @@
 // An argument that borrows `b`, and keeps it borrowed, while the call
 // borrows it again.
 
+use alloc::boxed::Box;
 use core::mem::swap;
 
 fn main() with {alloc, panic} {

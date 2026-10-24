@@ -1,5 +1,6 @@
 // `r` itself, and a reborrow of what it points to.
 
+use alloc::boxed::Box;
 use core::mem::swap;
 
 fn main() with alloc {

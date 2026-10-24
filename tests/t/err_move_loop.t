@@ -1,3 +1,5 @@
+use alloc::boxed::Box;
+
 fn consume(b: Box<i64>) -> i64 { *b }
 
 fn main() with alloc {

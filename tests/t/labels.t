@@ -1,6 +1,8 @@
 // Labels: `'a:` before a `loop` or `while` lets a `break` or `continue` in a
 // loop inside it say it's for that loop.
 
+use alloc::boxed::Box;
+
 fn consume(b: Box<i64>) -> i64 { *b }
 
 // The first pair of numbers below `n` that multiply to `target`: a `break`

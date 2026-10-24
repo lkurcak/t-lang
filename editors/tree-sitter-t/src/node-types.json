@@ -416,11 +416,27 @@
       "required": false,
       "types": [
         {
+          "type": "crate",
+          "named": true
+        },
+        {
           "type": "derive_with_bounds",
           "named": true
         },
         {
           "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "scoped_identifier",
+          "named": true
+        },
+        {
+          "type": "self",
+          "named": true
+        },
+        {
+          "type": "super",
           "named": true
         }
       ]
@@ -912,6 +928,10 @@
         "multiple": false,
         "required": true,
         "types": [
+          {
+            "type": "scoped_type_identifier",
+            "named": true
+          },
           {
             "type": "type_identifier",
             "named": true

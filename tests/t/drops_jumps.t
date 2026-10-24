@@ -3,6 +3,8 @@
 // leaks and double frees. So is what an expression had worked out before a
 // jump out of the middle of it.
 
+use alloc::boxed::Box;
+
 #[derive(Discard)]
 struct Two { a: Box<i64>, b: Box<i64> }
 

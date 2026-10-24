@@ -55,7 +55,9 @@ can be anywhere T can, down to bare metal.
 
 The traits built into the language, `Copy`, `Discard`, `Eq` and the `Fn`
 traits, are everywhere as before. They aren't the library's: `==`,
-`#[derive]` and closures are defined by what they are.
+`#[derive]` and closures are defined by what they are. (Since step 17.1
+they are core's, declared `#[intrinsic]` and brought in by the prelude;
+see docs/17.1-library-items.md.)
 
 A method that would throw a value away says so with a bound, on the
 method, not on the type, so an `Option` of something linear still has all

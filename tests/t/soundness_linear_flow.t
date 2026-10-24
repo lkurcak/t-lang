@@ -1,6 +1,7 @@
 // Linear values through `swap`, loops and `break`, patterns that take part
 // of a value, and paths that never go on.
 
+use alloc::boxed::Box;
 use core::mem::swap;
 
 struct Fd { n: i64 }

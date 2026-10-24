@@ -321,18 +321,6 @@ impl Parser {
             let end = self.expect(Tok::RBracket)?;
             let span = start.to(end);
             if derive {
-                if let Some(n) = names
-                    .iter()
-                    .find(|n| !matches!(n.name.as_str(), "Copy" | "Discard" | "Eq"))
-                {
-                    return Err(Error::syntax(
-                        n.span,
-                        format!(
-                            "can't derive `{}`; only `Copy`, `Discard` and `Eq` can be derived",
-                            n.name
-                        ),
-                    ));
-                }
                 derives.push(Derive {
                     span,
                     names,
@@ -365,7 +353,7 @@ impl Parser {
         let mut names = Vec::new();
         let mut wheres = Vec::new();
         while *self.peek() != Tok::RParen {
-            names.push(self.ident()?);
+            names.push(self.path()?);
             let w = match *self.peek() == Tok::Where {
                 false => None,
                 true => {
@@ -438,7 +426,7 @@ impl Parser {
             let head = self.head()?;
             let public = (*self.peek() == Tok::Pub).then(|| self.bump().span);
             let head = match self.peek() {
-                Tok::Fn | Tok::Struct => head,
+                Tok::Fn | Tok::Struct | Tok::Trait => head,
                 _ => head.no_intrinsic()?,
             };
             match self.peek() {
@@ -967,6 +955,7 @@ impl Parser {
         Ok(TraitDecl {
             doc: head.doc,
             allows: head.allows,
+            intrinsic: head.intrinsic,
             span: start.to(end),
             module: self.module,
             public: None,
@@ -2704,8 +2693,8 @@ impl Head {
         match self.intrinsic {
             Some(at) => Err(Error::syntax(
                 at,
-                "`#[intrinsic]` can only be on a function, a struct, or a method of an impl \
-                 that isn't a trait's",
+                "`#[intrinsic]` can only be on a function, a struct, a trait, or a method of an \
+                 impl that isn't a trait's",
             )),
             None => Ok(self),
         }

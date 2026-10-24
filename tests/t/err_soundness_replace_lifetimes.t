@@ -1,5 +1,6 @@
 // The same for `replace`.
 
+use alloc::boxed::Box;
 use core::mem::replace;
 
 fn main() with alloc {

@@ -8,6 +8,7 @@ use crate::check::generics::{self, Lifetimes};
 use crate::check::{Checker, plural};
 use crate::error::{Edit, Error, Fix, Span};
 use crate::traits::{AssocDecl, ImplDef, MethodDef, Pred, TraitDef};
+use crate::traits::{COPY, DISCARD, FN_ONCE, SIGNED, UNSIGNED};
 use crate::types::{AdtKind, Bound, Region, Scheme, Subst, Type};
 
 impl Checker {
@@ -17,16 +18,39 @@ impl Checker {
         for t in &prog.traits[self.from.traits..] {
             let name = &t.name;
             if self.traits.traits.contains_key(&name.name) {
-                let message = match crate::traits::BUILTIN_TRAITS.contains(&name.name.as_str()) {
-                    true => format!("`{}` is a built-in trait", name.name),
-                    false => format!("trait `{}` is already defined", name.name),
-                };
+                let message = format!("trait `{}` is already defined", name.name);
                 return Err(Error::ty(name.span, message));
             }
+            let intrinsic = crate::traits::BUILTIN_TRAITS.contains(&name.name.as_str());
+            match t.intrinsic {
+                Some(at) if !self.modules.in_library(t.module) => {
+                    return Err(crate::check::not_library(at));
+                }
+                Some(_) if !intrinsic => {
+                    let message = format!("there's no intrinsic trait `{}`", name.name);
+                    return Err(Error::ty(name.span, message));
+                }
+                None if intrinsic => {
+                    let message = format!("`{}` must be `#[intrinsic]`", name.name);
+                    return Err(Error::ty(name.span, message));
+                }
+                _ => {}
+            }
+            // `FnOnce`'s signature: what a bound like `Fn(i64) -> i64`
+            // says it is. Its name can't be written, so nothing else can.
+            let assoc = match name.name == FN_ONCE {
+                true => vec![AssocDecl {
+                    name: crate::traits::SIG.into(),
+                    effect: false,
+                    bounds: Vec::new(),
+                    span: name.span,
+                }],
+                false => Vec::new(),
+            };
             let def = TraitDef {
                 span: Some(name.span),
                 supers: Vec::new(),
-                assoc: Vec::new(),
+                assoc,
                 methods: Vec::new(),
             };
             self.traits.traits.insert(name.name.clone(), def);
@@ -42,7 +66,14 @@ impl Checker {
                     supers.push(s);
                 }
             }
-            let mut assoc: Vec<AssocDecl> = Vec::new();
+            let mut assoc = std::mem::take(
+                &mut self
+                    .traits
+                    .traits
+                    .get_mut(&t.name.name)
+                    .expect("named")
+                    .assoc,
+            );
             for a in &t.assoc {
                 if assoc.iter().any(|b| b.name == a.name.name) {
                     return Err(Error::ty(
@@ -369,8 +400,8 @@ impl Checker {
                 }
                 (Some(tr), _) if crate::traits::SEALED_TRAITS.contains(&tr.as_str()) => {
                     let which = match tr.as_str() {
-                        "Signed" => "the signed integer types",
-                        "Unsigned" => "the unsigned integer types",
+                        SIGNED => "the signed integer types",
+                        UNSIGNED => "the unsigned integer types",
                         _ => "the integer types",
                     };
                     return Err(Error::ty(
@@ -393,7 +424,7 @@ impl Checker {
                 // Only derived, so whether a type is one follows from its
                 // fields alone: a proof of either needs only more of the
                 // same, never another trait (see `derive`).
-                (Some(tr), t) if tr == "Discard" || tr == "Copy" => {
+                (Some(tr), t) if tr == DISCARD || tr == COPY => {
                     let e = Error::ty(
                         header,
                         format!(

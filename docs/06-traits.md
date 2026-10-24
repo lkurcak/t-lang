@@ -283,6 +283,8 @@ docs/17-retrospective-1.md.) A bound `T: Copy` lets generic code copy a
 A derived impl needs of the type's parameters only what its fields need:
 
 ```rust
+use alloc::boxed::Box;
+
 #[derive(Discard, Copy)]
 struct Callback<T> { f: fn(T) -> i64 }
 

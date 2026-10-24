@@ -16,6 +16,9 @@
 //! takes it: `v.push(1)` becomes `<V>::push(&mut v, 1)`. The methods stay
 //! in their impls and traits, renamed the same way, for monomorphisation
 //! to pick from.
+//! A comparison that's an `Ord` call, of a type that isn't an integer
+//! type (`Info::ord_calls`), becomes one the same way: `a < b` becomes
+//! `<core::cmp::Ord>::lt(&a, &b)`.
 //!
 //! And it writes out what the borrow checker moved, rather than copied
 //! (`Info::moves`): `ExprKind::Move` and `PatternKind::Move`. That's
@@ -312,6 +315,27 @@ impl<'p> Cx<'p> {
             ExprKind::Unary(op, x) => ExprKind::Unary(*op, Box::new(self.expr(x, nested))),
             ExprKind::As(x, t) => {
                 ExprKind::As(Box::new(self.expr(x, nested)), Box::new(self.ty(t)))
+            }
+            // `l < r` of a type that isn't an integer type is
+            // `Ord::lt(&l, &r)`, named as the checker noted it.
+            ExprKind::Binary(op, l, r) if self.info.ord_calls.contains(&e.id) => {
+                let span = e.span;
+                let Some(crate::check::Instance::Fn(symbol, _)) = self.info.instances.get(&e.id)
+                else {
+                    unreachable!("`{op}` calls an `Ord` method")
+                };
+                let f = Expr {
+                    kind: ExprKind::Var(symbol.clone(), Vec::new()),
+                    span,
+                    id: e.id,
+                };
+                let by_ref = |x: Expr| Expr {
+                    span: x.span,
+                    kind: ExprKind::Unary(UnOp::Ref, Box::new(x)),
+                    id: self.id(),
+                };
+                let args = vec![by_ref(self.expr(l, nested)), by_ref(self.expr(r, nested))];
+                ExprKind::Call(Box::new(f), args)
             }
             ExprKind::Binary(op, l, r) => ExprKind::Binary(
                 *op,

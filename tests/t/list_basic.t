@@ -1,5 +1,7 @@
 // A `List` is a dense, resizable array: `push` grows it, `pop` shrinks it,
 // and `get` and `get_mut` see one value, or `None` past the end.
+
+use alloc::boxed::Box;
 use alloc::list::List;
 
 fn main() with {alloc, panic} {

@@ -50,6 +50,7 @@
 
 use crate::ast::*;
 use crate::error::{Error, Lint, Span, Warning};
+use crate::traits::{COPY, DISCARD, EQ};
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 
@@ -184,11 +185,9 @@ impl Modules {
     }
 
     /// Is trait `symbol` in scope in module `m`: declared or imported
-    /// there? The built-in ones are everywhere.
+    /// there, or brought in by the prelude?
     pub(crate) fn trait_in_scope(&self, m: usize, symbol: &str) -> bool {
-        let builtin = crate::traits::BUILTIN_TRAITS.contains(&symbol)
-            || crate::traits::FN_TRAITS.contains(&symbol);
-        builtin || self.trait_binding(m, symbol).is_some()
+        self.trait_binding(m, symbol).is_some()
     }
 
     /// The binding that puts trait `symbol` in scope in module `m`, if any:
@@ -240,6 +239,25 @@ impl Modules {
                     .values
                     .get(name)
                     .is_some_and(|b| b.public && b.import.is_none())
+            })
+            .collect();
+        match found[..] {
+            [module] => Some(format!("{}{name}", module.prefix)),
+            _ => None,
+        }
+    }
+
+    /// The path of the public struct or enum `name` of the core or alloc
+    /// library, if there's exactly one, in a public module of its own:
+    /// `alloc::boxed::Box` for `Box`.
+    pub(crate) fn library_type(&self, name: &str) -> Option<String> {
+        let found: Vec<&Module> = (self.mods.iter().enumerate())
+            .filter(|&(m, _)| Some(m) != self.core && Some(m) != self.alloc && self.in_library(m))
+            .map(|(_, module)| module)
+            .filter(|module| {
+                module.types.get(name).is_some_and(|b| {
+                    b.public && b.import.is_none() && matches!(b.item, Item::Type(_))
+                })
             })
             .collect();
         match found[..] {
@@ -990,6 +1008,35 @@ impl Rewrite<'_> {
                 &mut e.derives
             }
         };
+        // Each derived trait by its symbol: only core's three can be.
+        for name in derives.iter_mut().flat_map(|d| &mut d.names) {
+            let written = name.name.clone();
+            let a_trait = written.contains("::")
+                || matches!(
+                    self.r.m.get(self.module, &written, Ns::Types),
+                    Some(Binding {
+                        item: Item::Trait(_),
+                        ..
+                    })
+                );
+            self.trait_ref(name)?;
+            if ![DISCARD, COPY, EQ].contains(&name.name.as_str()) {
+                let message = match !a_trait {
+                    true => format!(
+                        "can't derive `{written}`; only `Copy`, `Discard` and `Eq` can be derived"
+                    ),
+                    false => format!(
+                        "only `core`'s `Discard`, `Copy` and `Eq` can be derived, and `{written}` \
+                         here is `{}`",
+                        match name.name.starts_with("core::") || name.name.starts_with("alloc::") {
+                            true => name.name.clone(),
+                            false => format!("crate::{}", name.name),
+                        }
+                    ),
+                };
+                return Err(Error::ty(name.span, message));
+            }
+        }
         for w in derives.iter_mut().flat_map(|d| &mut d.wheres).flatten() {
             for (_, items) in &mut w.bounds {
                 for b in items {

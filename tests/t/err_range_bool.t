@@ -5,4 +5,4 @@ fn main() {
         print_bool(b);
     }
 }
-// error: `Range<bool>` doesn't implement `core::iter::Iterator`
+// error: `Range<bool>` doesn't implement `Iterator`

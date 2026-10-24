@@ -3,6 +3,8 @@
 // is. A struct or enum is when it says so, with `#[derive(Discard)]`, the
 // only way, and `Copy` needs it.
 
+use alloc::boxed::Box;
+
 #[allow(dead_code)]
 #[derive(Discard)]
 enum Option<T> { Some(T), None }

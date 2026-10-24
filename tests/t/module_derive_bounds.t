@@ -1,7 +1,12 @@
 // A public struct with a private field writes what its derives need, so
 // changing the private field can't change what callers may do. Saying more
 // than the fields need is allowed.
+
+use alloc::boxed::Box;
+
 mod cells {
+    use alloc::boxed::Box;
+
     #[derive(Discard where T: Discard)]
     pub struct Cell<T> { v: Box<T> }
 

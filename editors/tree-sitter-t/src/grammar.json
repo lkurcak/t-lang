@@ -502,7 +502,7 @@
                           "members": [
                             {
                               "type": "SYMBOL",
-                              "name": "identifier"
+                              "name": "_path"
                             },
                             {
                               "type": "SYMBOL",
@@ -524,7 +524,7 @@
                                 "members": [
                                   {
                                     "type": "SYMBOL",
-                                    "name": "identifier"
+                                    "name": "_path"
                                   },
                                   {
                                     "type": "SYMBOL",
@@ -579,7 +579,7 @@
           "name": "trait",
           "content": {
             "type": "SYMBOL",
-            "name": "_type_identifier"
+            "name": "_path_type"
           }
         },
         {

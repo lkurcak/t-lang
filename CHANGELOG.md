@@ -1,5 +1,45 @@
 # Changelog
 
+## Unreleased
+
+Step 17.1: built-ins are library items. See
+[docs/17.1-library-items.md](docs/17.1-library-items.md).
+
+### Changed
+
+- `Discard`, `Copy` (`core::mem`), `Eq` (`core::cmp`), `Int`, `Signed`,
+  `Unsigned` (`core::num`), `Fn`, `FnMut` and `FnOnce` (`core::ops`) are
+  core's traits, declared `#[intrinsic]`, and in scope through the
+  prelude. A program may declare a trait by any of their names: it's
+  another trait, with none of what core's has.
+- `Box` is `alloc::boxed::Box`, and a program that uses it says `use
+  alloc::boxed::Box;`. A program may declare its own `Box`.
+- `<`, `<=`, `>` and `>=` are `Ord`'s `lt`, `le`, `gt` and `ge`, as `==`
+  is `Eq`'s: they compare anything `Ord`, looking at their operands
+  without moving them. Of an integer type they're the machine's, as
+  before. `Int` needs `Ord`.
+- `#[derive(..)]` names its traits as paths do, in scope or by a path,
+  and only core's `Discard`, `Copy` and `Eq`. `#[derive(Eq)]` where a
+  program's own `Eq` is in scope is an error.
+- Messages name the prelude's traits by their names (`Iterator`, not
+  `core::iter::Iterator`), unless a program has another trait of that
+  name.
+- Closures' symbols, as `t mono` shows them, have other numbers, and `t
+  mono` writes a box's type and `Box::new` by their paths.
+
+### Added
+
+- `impl Ord for char`, by code point; `Ord` for `&T` when `T: Ord`, and
+  for `&str`.
+- An unknown type that exactly one module of core or alloc has, like
+  `Box`, `List` or `String`, gets a fix that imports it.
+- `#[intrinsic]` on a trait, in core and alloc only. When core is
+  checked, each built-in impl of an intrinsic trait must have that
+  trait's supertraits.
+- Hovering a trait shows its doc comment, and hovering `Box::new`'s
+  `Box` shows `Box`'s.
+- tree-sitter parses paths in `#[derive(..)]`.
+
 ## 0.29.0 (2026-10-24)
 
 Step 17: what the first retrospective changed. See

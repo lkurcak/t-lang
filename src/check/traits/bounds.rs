@@ -5,6 +5,7 @@ use crate::ast::*;
 use crate::check::Checker;
 use crate::check::generics::Lifetimes;
 use crate::error::Error;
+use crate::traits::FN_ONCE;
 use crate::traits::Pred;
 use crate::types::Type;
 
@@ -136,7 +137,7 @@ impl Checker {
                         let rhs = self.resolve_with(&written, params, &mut lts)?;
                         let lhs = Type::Proj(
                             Box::new(ty.clone()),
-                            "FnOnce".into(),
+                            FN_ONCE.into(),
                             crate::traits::SIG.into(),
                         );
                         if eqs.iter().any(|(l, _)| *l == lhs) {

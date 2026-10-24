@@ -191,7 +191,9 @@ fn main() with panic {
 ```
 
 `Int` is a built-in trait that the ten integer types implement, and no
-impl can add to: it's *sealed*. A `T: Int` may be any of them, so generic
+impl can add to: it's *sealed*. (Since step 17.1 it's core's,
+`core::num::Int`, declared `#[intrinsic]`, and needs `Ord` too; see
+docs/17.1-library-items.md.) A `T: Int` may be any of them, so generic
 code over it can count on what they all have in common, and that's all:
 the operators and comparisons work on it, it's `Copy` and `Eq`
 (`trait Int: Copy + Eq`), and a literal of type `T` must fit in every

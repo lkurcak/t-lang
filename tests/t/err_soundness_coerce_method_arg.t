@@ -1,4 +1,7 @@
 // The same for a method's argument.
+
+use alloc::boxed::Box;
+
 #[derive(Discard)]
 struct S {}
 

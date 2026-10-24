@@ -261,7 +261,7 @@ the invariant but the `unsafe` blocks, each of which says why it's kept.
 | `Box<str>`, `Box<[T]>` | values whose size is known only as the program runs, owned | — |
 | `s[i]`, `&s[1..3]` | indexing, with proofs about lengths (measures) | — |
 | string patterns, `"a" => ..` | they'd compare with `==`, which a pattern can't call yet | — |
-| `<` on strings and characters | `<` is for integers; `Ord` orders strings, and `as u32` characters | — |
+| `<` on strings and characters | `<` is for integers; `Ord` orders strings, and `as u32` characters | 17.1 |
 | `starts_with`, `find`, `split`, `trim`, `lines` | safe code over `as_bytes`, any time | — |
 | raw strings, `r"…"`, and `\` before a line break | nothing needs them yet | — |
 | `print_str` going away | std I/O | — |

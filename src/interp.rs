@@ -1606,7 +1606,8 @@ impl Interp<'_, '_> {
             // own slot, and deep recursion multiplies the frame size.
             ExprKind::StructLit(name, _, inits) => self.struct_lit(name, inits)?,
             ExprKind::MethodCall(..) => unreachable!("lifting makes method calls plain calls"),
-            ExprKind::Variant(ty, _, _, args, ..) if ty.name == "Box" => {
+            // Named by its symbol, as lifting names everything.
+            ExprKind::Variant(ty, _, _, args, ..) if ty.name == crate::check::BOX => {
                 let v = self.eval(&args[0])?;
                 self.effect("alloc");
                 Value::Box(self.memory.alloc(v, true))
@@ -2017,7 +2018,7 @@ impl Interp<'_, '_> {
     /// `==` can get to (`mono::Cx::need_eq`): here a missing one looks like
     /// a derived `Eq`, and the values would be compared field by field.
     fn user_eq(&self, ty: &str) -> Option<String> {
-        let name = format!("<{ty} as Eq>::eq");
+        let name = format!("<{ty} as {}>::eq", crate::traits::EQ);
         self.fns.contains_key(name.as_str()).then_some(name)
     }
 

@@ -3,6 +3,8 @@
 // field, through references and boxes. (It used to compare field by field
 // unless something called that `eq` by name.)
 
+use alloc::boxed::Box;
+
 #[derive(Discard)]
 struct S { n: i64 }
 

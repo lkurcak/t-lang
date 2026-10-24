@@ -155,7 +155,7 @@ module.exports = grammar({
       field('name', $.identifier),
       optional(seq(
         '(',
-        commaSep(choice($.identifier, $.derive_with_bounds)),
+        commaSep(choice($._path, $.derive_with_bounds)),
         ')',
       )),
       ']',
@@ -163,7 +163,7 @@ module.exports = grammar({
 
     // `Discard where T: Discard` in a `#[derive(..)]`: what the derived
     // impl needs, written down.
-    derive_with_bounds: $ => seq(field('trait', $._type_identifier), $.where_clause),
+    derive_with_bounds: $ => seq(field('trait', $._path_type), $.where_clause),
 
     // In a derive, or after a function's signature, where what's bounded
     // can be `Self` or a projection, `Self::Item`.

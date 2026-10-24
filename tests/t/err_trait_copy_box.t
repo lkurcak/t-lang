@@ -1,3 +1,5 @@
+use alloc::boxed::Box;
+
 #[derive(Discard, Copy)]
 struct B { b: Box<i64> }
 fn main() {}

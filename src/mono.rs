@@ -43,6 +43,7 @@
 use crate::ast::*;
 use crate::check::{self, Info, Instance};
 use crate::error::Span;
+use crate::traits::{COPY, DISCARD, EQ};
 use crate::traits::{Projections, Source, eq_subject};
 use crate::types::{Params, Region, Subst, Type};
 use std::collections::{HashMap, HashSet};
@@ -377,11 +378,11 @@ impl<'p> Mono<'p> {
         // this makes takes the copy's word for.
         let ty = Type::Adt(d.name().name.clone(), Vec::new(), args.to_vec());
         let traits = &cx.m.info.traits;
-        let names: Vec<Ident> = ["Discard", "Copy", "Eq"]
+        let names: Vec<Ident> = [DISCARD, COPY, EQ]
             .into_iter()
             .filter(|tr| traits.implements(&ty, tr, &[], &[]).is_ok())
             .map(|tr| Ident {
-                name: tr.into(),
+                name: tr.rsplit("::").next().expect("a path").into(),
                 span: d.name().span,
                 id: cx.m.id(),
             })
@@ -625,7 +626,7 @@ impl Cx<'_, '_, '_> {
         if !matches!(t, Type::Adt(..)) || !self.m.compared.insert(t.clone()) {
             return;
         }
-        match self.target("<Eq>::eq", vec![t.clone()]) {
+        match self.target(&format!("<{}>::eq", crate::traits::EQ), vec![t.clone()]) {
             Target::Fn(of, args, copy) => {
                 self.m.named_copy(&of, args, copy);
             }
@@ -715,7 +716,9 @@ impl Cx<'_, '_, '_> {
                 };
                 TypeExprKind::Ref(lifetime, *m, Box::new(self.written(inner, span)))
             }
-            Type::Box(inner) => TypeExprKind::Named("Box".into(), vec![self.written(inner, span)]),
+            Type::Box(inner) => {
+                TypeExprKind::Named(crate::check::BOX.into(), vec![self.written(inner, span)])
+            }
             Type::Slice(inner) => TypeExprKind::Slice(Box::new(self.written(inner, span))),
             Type::Param(_) | Type::Var(_) | Type::Proj(..) | Type::Opaque(..) => {
                 unreachable!("`{t}` left after monomorphising")

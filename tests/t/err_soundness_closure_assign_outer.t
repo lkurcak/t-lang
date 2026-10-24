@@ -1,5 +1,8 @@
 // A closure given to a variable from further out can't outlive what it
 // borrows.
+
+use alloc::boxed::Box;
+
 #[derive(Discard, Copy)]
 struct R<'a> { r: &'a i64 }
 

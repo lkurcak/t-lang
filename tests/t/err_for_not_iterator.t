@@ -3,4 +3,4 @@ fn main() {
         print(x);
     }
 }
-// error: `i64` doesn't implement `core::iter::Iterator`
+// error: `i64` doesn't implement `Iterator`

@@ -4,6 +4,7 @@
 use super::Checker;
 use super::scope::{declared_in, source_name};
 use crate::error::{Error, Span};
+use crate::traits::INT;
 use crate::types::Type;
 
 /// A type variable: a type the checker hasn't worked out yet.
@@ -138,7 +139,7 @@ impl Checker {
         self.vars[v as usize].int = true;
         let pred = crate::traits::Pred {
             ty: t.clone(),
-            trait_name: "Int".into(),
+            trait_name: INT.into(),
         };
         // Its type isn't known, so this only remembers it.
         let _ = self.oblige(pred, span, super::traits::Why::Integer);

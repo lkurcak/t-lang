@@ -1,6 +1,9 @@
 // `g` borrows `v`, so `v` can't be given a new value while `g` is still to
 // be used: what `g` reads would change under it. (`move || v` would take a
 // copy instead.)
+
+use alloc::boxed::Box;
+
 fn call<T: Copy>(x: T, y: T) -> T {
     let mut v = x;
     let g = || v;

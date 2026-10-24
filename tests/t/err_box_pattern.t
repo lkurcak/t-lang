@@ -1,3 +1,5 @@
+use alloc::boxed::Box;
+
 fn main() {
     let b = Box::new(1);
     match b {

@@ -297,6 +297,10 @@ fn resolve_in(
                 ));
             }
             let (ty, lt_arity, arity) = match names(name, t) {
+                // The alloc library's `Box`, which the checker knows.
+                Some(TypeName::Adt(symbol, ..)) if symbol == super::BOX => {
+                    (Type::Box(Box::new(Type::Unit)), 0, 1)
+                }
                 Some(TypeName::Adt(symbol, l, n)) => {
                     (Type::Adt(symbol, Vec::new(), Vec::new()), l, n)
                 }
@@ -323,7 +327,6 @@ fn resolve_in(
                 None if name == "bool" => (Type::Bool, 0, 0),
                 None if name == "char" => (Type::Char, 0, 0),
                 None if name == "str" => return Err(unsized_slice(t.span, "str")),
-                None if name == "Box" => (Type::Box(Box::new(Type::Unit)), 0, 1),
                 None => return Err(Error::ty(t.span, format!("unknown type `{name}`"))),
             };
             if args.len() != arity {

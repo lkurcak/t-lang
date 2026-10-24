@@ -307,7 +307,8 @@ fn respond(req: Request, docs: &Docs) -> Result<Response> {
                 let note = a.info().note_at(a.offset(uri, at.position)?)?;
                 // The signature, then the doc comment, as rust-analyzer
                 // shows them.
-                let mut value = format!("```t\n{}\n```", note.hover());
+                let hover = a.info().traits.shorten(&note.hover());
+                let mut value = format!("```t\n{hover}\n```");
                 if let Some(doc) = &note.doc {
                     value.push_str(&format!("\n\n---\n\n{doc}"));
                 }
@@ -811,7 +812,7 @@ fn inlay_hints(a: &Analysis, uri: &Uri, range: Range) -> Vec<InlayHint> {
     notes
         .iter()
         .filter_map(|n| {
-            let hint = n.hint()?;
+            let hint = a.info().traits.shorten(&n.hint()?);
             let end = Span::new(n.span.end, n.span.end);
             let pos = a.range_in(uri, end)?.start;
             (range.start <= pos && pos <= range.end).then(|| InlayHint {

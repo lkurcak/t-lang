@@ -1,4 +1,7 @@
 // A `match` moves out what its arm binds: here the box in `o`.
+
+use alloc::boxed::Box;
+
 #[allow(dead_code)]
 #[derive(Discard)]
 enum Option<T> { Some(T), None }

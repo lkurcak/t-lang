@@ -2,6 +2,9 @@
 // reads `r` before the next argument changes it; but `r` has one type for
 // as long as it lives, so it can't be given a reference to `tmp`, which
 // doesn't live as long as what came out of `id_ref`.
+
+use alloc::boxed::Box;
+
 fn id_ref(r: &Box<i64>) -> &Box<i64> { r }
 
 fn f(x: &i64, n: i64) -> i64 with panic { *x + n }

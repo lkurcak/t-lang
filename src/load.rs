@@ -54,6 +54,7 @@ pub const CORE_DIR: &str = "<core>";
 /// The files of the alloc library, by their paths in `alloc/`.
 pub const ALLOC_FILES: &[(&str, &str)] = &[
     ("lib.t", include_str!("../alloc/lib.t")),
+    ("boxed.t", include_str!("../alloc/boxed.t")),
     ("list.t", include_str!("../alloc/list.t")),
     ("raw.t", include_str!("../alloc/raw.t")),
     ("string.t", include_str!("../alloc/string.t")),

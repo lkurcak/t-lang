@@ -7,6 +7,7 @@ use crate::ast::*;
 use crate::check::generics;
 use crate::check::{Checker, plural};
 use crate::error::{Edit, Error, Fix, Span};
+use crate::traits::{COPY, DISCARD};
 use crate::traits::{ImplDef, MethodDef, Pred, overlap};
 use crate::types::{Bound, Region, Scheme, Subst, Type};
 use std::collections::HashMap;
@@ -18,7 +19,51 @@ impl Checker {
     /// `Discard` is for a type whose fields all are; no two impls overlap;
     /// and proving
     /// that a type implements a trait always ends.
+    /// Checks, in the package that declares them, that what the checker
+    /// gives an intrinsic trait has its supertraits too (lemma L4 of
+    /// docs/17.1-library-items.md): each integer type is `Int`, so must be
+    /// `Ord`, which core's impls say. Otherwise `T: Int` would promise an
+    /// `Ord` that monomorphisation can't find. Each built-in rule is tried
+    /// at a type it covers.
+    fn builtin_supertraits(&self, prog: &Program) -> Result<(), Error> {
+        use crate::types::{IntTy, Region};
+        let declared = |tr: &str| {
+            prog.traits[self.from.traits..]
+                .iter()
+                .find(|t| t.name.name == tr)
+                .map(|t| t.name.span)
+        };
+        let reference = |m| Type::Ref(Region::Static, m, Box::new(Type::Int(IntTy::I64)));
+        let witnesses: Vec<Type> = (IntTy::ALL.iter().map(|&t| Type::Int(t)))
+            .chain([Type::Bool, Type::Char, Type::Unit, Type::Never, Type::Str])
+            .chain([reference(false), reference(true)])
+            .chain([Type::Box(Box::new(Type::Int(IntTy::I64)))])
+            .chain([Type::Slice(Box::new(Type::Int(IntTy::I64)))])
+            .chain([Type::func(Vec::new(), Type::Unit)])
+            .collect();
+        for &tr in crate::traits::BUILTIN_TRAITS {
+            let Some(at) = declared(tr) else {
+                continue;
+            };
+            for w in &witnesses {
+                if self.traits.implements(w, tr, &[], &[]).is_err() {
+                    continue;
+                }
+                for s in self.traits.implied(tr) {
+                    if self.traits.implements(w, &s, &[], &[]).is_err() {
+                        return Err(Error::ty(
+                            at,
+                            format!("`{w}` is `{tr}`, built in, but not `{s}`, which `{tr}` needs"),
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub(in crate::check) fn check_impls(&mut self, prog: &Program) -> Result<(), Error> {
+        self.builtin_supertraits(prog)?;
         for (k, d) in prog.impls.iter().enumerate().skip(self.from.impls) {
             let def = self.traits.impls[self.impl_ids[k]].clone();
             self.env = def.preds.clone();
@@ -54,7 +99,7 @@ impl Checker {
                 }
             }
             self.assoc_bounds(&def, d)?;
-            if tr == "Copy" || tr == "Discard" {
+            if tr == COPY || tr == DISCARD {
                 let Type::Adt(symbol, ..) = &def.self_ty else {
                     unreachable!("checked")
                 };

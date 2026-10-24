@@ -1,5 +1,8 @@
 // An inherent impl for `P<'a, 'a>`: its method, called on a `P` whose two
 // lifetimes differ, makes them the same, so `x` can't outlive `short`.
+
+use alloc::boxed::Box;
+
 #[derive(Discard)]
 struct P<'a, 'b> { x: &'a i64, y: &'b i64 }
 

@@ -2,6 +2,8 @@
 // references and boxes to what `x` points to, and then takes `&` or `&mut`
 // of it if the method takes `&self` or `&mut self`.
 
+use alloc::boxed::Box;
+
 #[derive(Discard)]
 struct Counter { n: i64 }
 

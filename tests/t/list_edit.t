@@ -1,6 +1,8 @@
 // `swap` exchanges two values, and says if both indices were in range;
 // `truncate` and `clear` throw values away from the end, and keep the
 // buffer.
+
+use alloc::boxed::Box;
 use alloc::list::List;
 
 fn show(l: &List<i64>) {

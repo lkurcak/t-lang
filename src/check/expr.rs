@@ -10,6 +10,7 @@ use crate::ast::*;
 use crate::error::{Edit, Error, Fix, Span};
 use crate::exhaust::{self, Redundant};
 use crate::traits::Pred;
+use crate::traits::{DISCARD, EQ, FN_ONCE, INT, ORD};
 use crate::types::{FnType, IntTy, Region, Type, struct_fields, variant_fields};
 
 impl Checker {
@@ -164,6 +165,28 @@ impl Checker {
         self.integer_or(t, span, what, "integers")
     }
 
+    /// Is `t` an integer type, or one an integer type must be: a literal's,
+    /// or a type parameter, opaque type or projection that's `Int`?
+    pub(super) fn int_like(&self, t: &Type) -> bool {
+        match t {
+            Type::Int(_) => true,
+            t @ Type::Var(_) => self.int_var(t),
+            Type::Param(_) | Type::Opaque(..) | Type::Proj(..) => {
+                !crate::check::unify::has_vars(t)
+                    && (self.traits)
+                        .implements(t, INT, &self.env, &self.adts.proj.local)
+                        .is_ok()
+            }
+            _ => false,
+        }
+    }
+
+    /// Is comparison `id` a call of an `Ord` method, rather than the
+    /// machine's comparison of integers? Asked before `finish_notes`.
+    pub(super) fn is_ord_call(&self, id: NodeId) -> bool {
+        (self.compares.get(&id)).is_some_and(|t| !self.int_like(&self.solved(t)))
+    }
+
     /// `integer`, saying that what `what` works on is `these`.
     fn integer_or(&mut self, t: &Type, span: Span, what: &str, these: &str) -> Result<(), Error> {
         let int = self.fresh_int(
@@ -180,11 +203,11 @@ impl Checker {
         if matches!(t, Type::Param(_) | Type::Opaque(..) | Type::Proj(..))
             && !crate::check::unify::has_vars(&t)
             && (self.traits)
-                .implements(&t, "Int", &self.env, &self.adts.proj.local)
+                .implements(&t, INT, &self.env, &self.adts.proj.local)
                 .is_err()
         {
             let fix = match &t {
-                Type::Param(p) => format!("; add a bound: `{p}: Int`"),
+                Type::Param(p) => format!("; add a bound: `{p}: {INT}`"),
                 _ => String::new(),
             };
             return Err(Error::ty(
@@ -815,6 +838,9 @@ impl Checker {
             // A sum type is *introduced* by picking one variant and giving its
             // fields. Its eliminator is `match`.
             ExprKind::Variant(ty, targs, variant, args, ..) if self.is_box(ty) => {
+                let def = self.defs.types.get(super::BOX).copied();
+                let kind = super::NoteKind::Struct(ty.name.clone());
+                self.note(ty.span, kind, None, def);
                 self.box_new(e, targs, variant, args)
             }
             ExprKind::Variant(ty, targs, method, args, parens) if !self.is_variant(ty, method) => {
@@ -904,13 +930,37 @@ impl Checker {
                 Ok(t)
             }
 
-            //   Γ ⊢ l : τ   Γ ⊢ r : τ   τ: Int
-            //  -------------------------------- (T-Cmp)     for < <= > >=
+            //   Γ ⊢ l : T   Γ ⊢ r : T   T: Ord
+            //  ------------------------------- (T-Cmp)     for < <= > >=
             //         Γ ⊢ l < r : bool
+            //
+            // `<` is `Ord::lt(&l, &r)`, and `<=`, `>` and `>=` its `le`,
+            // `gt` and `ge`: it looks at its operands where they are, as
+            // `==` does, and moves neither. Of an integer type, which is
+            // `Ord` as `Int: Ord`, it's the machine's comparison, which the
+            // refinement checker reasons about. That's the same answer:
+            // core's `Ord` for each integer type compares with it, and no
+            // program can say otherwise, as both are core's (lemma L3 of
+            // docs/17.1-library-items.md).
+            //
+            // If T isn't known yet, the obligation waits, and so does
+            // which it is: an integer type then makes it the machine's.
             BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
                 let t = self.synth(l)?;
                 self.check(r, &t)?;
-                self.integer(&t, l.span, &format!("`{op}`"))?;
+                if self.int_like(&self.solved(&t)) {
+                    self.integer(&t, l.span, &format!("`{op}`"))?;
+                    return Ok(Type::Bool);
+                }
+                let method = traits::trait_method_symbol(ORD, op.ord_method());
+                self.pending
+                    .push((e.id, e.span, Instance::Fn(method, vec![t.clone()])));
+                self.compares.insert(e.id, t.clone());
+                let pred = Pred {
+                    ty: t,
+                    trait_name: ORD.into(),
+                };
+                self.oblige(pred, e.span, traits::Why::Compare(*op))?;
                 Ok(Type::Bool)
             }
 
@@ -953,12 +1003,12 @@ impl Checker {
             BinOp::Eq | BinOp::Ne => {
                 let t = self.synth(l)?;
                 self.check(r, &t)?;
-                let eq = traits::trait_method_symbol("Eq", "eq");
+                let eq = traits::trait_method_symbol(EQ, "eq");
                 self.pending
                     .push((e.id, e.span, Instance::Fn(eq, vec![t.clone()])));
                 let pred = Pred {
                     ty: t,
-                    trait_name: "Eq".into(),
+                    trait_name: EQ.into(),
                 };
                 self.oblige(pred, e.span, traits::Why::Compare(*op))?;
                 Ok(Type::Bool)
@@ -1010,7 +1060,7 @@ impl Checker {
             t => {
                 let sig = Type::Proj(
                     Box::new(t.clone()),
-                    "FnOnce".into(),
+                    FN_ONCE.into(),
                     crate::traits::SIG.into(),
                 );
                 let Type::Fn(sig) = self.shallow(&sig) else {
@@ -1492,7 +1542,7 @@ impl Checker {
         }
         let (env, eqs) = (&self.env, &self.adts.proj.local);
         let implements = |tr: &str| self.traits.implements(t, tr, env, eqs).is_ok();
-        if !implements(ITERATOR) || implements("Discard") {
+        if !implements(ITERATOR) || implements(DISCARD) {
             return Ok(());
         }
         Err(Error::ty(

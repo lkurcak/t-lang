@@ -86,7 +86,15 @@ pub fn check_files(path: &Path, src: &str, read: load::Read) -> Checked {
     // The core library's are its own business: what a program doesn't
     // use of it isn't dead, for one.
     warnings.retain(|w| !sources.in_library(w.span.start));
-    let result = result.map(|()| mono::monomorphise(&lift::lift(&program, &info), &info));
+    let mut result = result.map(|()| mono::monomorphise(&lift::lift(&program, &info), &info));
+    // Messages name the prelude's traits as programs do.
+    let shorten = |t: &str| info.traits.shorten(t);
+    for w in &mut warnings {
+        w.map_text(&shorten);
+    }
+    if let Err(e) = &mut result {
+        e.map_text(&shorten);
+    }
     Checked {
         sources,
         warnings,

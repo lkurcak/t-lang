@@ -4,6 +4,8 @@
 // argument after it can't change what it saw. (The interpreter used to
 // wait with all of `*{ .. }`, and so ran the move of `a` below first.)
 
+use alloc::boxed::Box;
+
 #[derive(Discard)]
 struct S { n: i64 }
 

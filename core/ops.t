@@ -1,5 +1,21 @@
 //! What operators are written with.
 
+/// What can be called, taking it: `F: FnOnce(i64) -> i64` says a value
+/// of type `F` can be called once with an `i64`, giving an `i64`.
+/// Functions and closures have it, and nothing else can (see
+/// docs/06c-closures.md).
+#[intrinsic]
+pub trait FnOnce {}
+
+/// What can be called, borrowing it mutably, so as often as wanted.
+#[intrinsic]
+pub trait FnMut: FnOnce {}
+
+/// What can be called, borrowing it, so as often as wanted, and from
+/// anywhere it's shared.
+#[intrinsic]
+pub trait Fn: FnMut {}
+
 /// `start..end`: from `start` up to, not including, `end`. It's empty if
 /// `start` isn't before `end`. Its fields are private, so only `a..b` and
 /// `Range::new` make one.

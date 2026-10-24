@@ -2,6 +2,8 @@
 // rather than moved. `#[derive(Copy)]` needs of the type parameters only
 // what the fields need.
 
+use alloc::boxed::Box;
+
 #[derive(Discard, Copy)]
 struct Pair<A, B> { a: A, b: B }
 

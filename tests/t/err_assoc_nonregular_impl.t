@@ -2,6 +2,9 @@
 // `S<W<W<U>>>`: so `S<W<i64>>` holds an `S<W<W<i64>>>`, which holds an
 // `S<W<W<W<i64>>>>`, and so on. Each is finite, through a box, but there's
 // no end of them to monomorphise.
+
+use alloc::boxed::Box;
+
 #[derive(Discard)]
 struct W<T> { t: T }
 

@@ -434,6 +434,7 @@ impl Printer<'_> {
                 Item::Fn(f) => lead_start(f.doc.as_ref(), &f.allows, fn_start(f)),
                 Item::Trait(t) => {
                     let start = t.public.map_or(t.span.start, |p| p.start);
+                    let start = t.intrinsic.map_or(start, |i| i.start.min(start));
                     lead_start(t.doc.as_ref(), &t.allows, start)
                 }
                 Item::Impl(d) => lead_start(d.doc.as_ref(), &d.allows, d.span.start),
@@ -529,7 +530,11 @@ impl Printer<'_> {
 
     /// `trait Ord: Eq { .. }`
     fn trait_decl(&mut self, t: &TraitDecl) -> Doc {
-        let doc = self.lead(t.doc.as_ref(), &t.allows, t.span.start);
+        let mut doc = self.lead(t.doc.as_ref(), &t.allows, t.span.start);
+        if let Some(at) = t.intrinsic {
+            doc = doc + "#[intrinsic]" + self.trailing(at.end) + Doc::HardLine;
+            doc = doc + self.element(self.before(t.span.start), true);
+        }
         let supers: Vec<&str> = t.supers.iter().map(|s| s.name.as_str()).collect();
         let supers = match supers.is_empty() {
             true => String::new(),

@@ -1,7 +1,10 @@
 // `Fd` has a private field, so only `fs` can make one or take one apart:
 // outside, it can be moved, borrowed and handed back. Its pub field can be
 // read through a place.
+
 mod fs {
+    use alloc::boxed::Box;
+
     pub struct Fd { pub id: i64, raw: i64 }
 
     pub fn open(id: i64) -> Fd with panic { Fd { id, raw: id * 100 } }

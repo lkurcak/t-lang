@@ -6,6 +6,7 @@ use crate::ast::*;
 use crate::check::Checker;
 use crate::check::generics;
 use crate::error::{Edit, Error, Fix, Span};
+use crate::traits::EQ;
 use crate::traits::{Pred, eq_subject, overlap};
 use crate::types::{Subst, Type};
 use std::collections::HashMap;
@@ -106,7 +107,7 @@ impl Checker {
                     })
                     .collect();
                 if builtin_eq(&ty) {
-                    out.push("Eq".into());
+                    out.push(EQ.into());
                 }
                 // What an opaque type's bounds say it implements.
                 if let Type::Opaque(symbol, ..) = &ty {
@@ -345,7 +346,7 @@ impl Checker {
         };
         let (self_ty, own) = args.split_first().expect("`Self` first");
         let self_ty = match tr.as_str() {
-            "Eq" => eq_subject(self_ty),
+            EQ => eq_subject(self_ty),
             _ => self_ty,
         };
         // A projection in it can be any type, so any impl may be for it,

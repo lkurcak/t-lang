@@ -1,6 +1,8 @@
 // A type that holds itself with no way to stop has no values: each would
 // hold another, without end.
 
+use alloc::boxed::Box;
+
 #[derive(Discard)]
 struct Stream { head: i64, next: Box<Stream> }
 

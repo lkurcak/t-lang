@@ -2,6 +2,8 @@
 // new one, after which the old one can't be used, until it's given a new
 // value.
 
+use alloc::boxed::Box;
+
 #[derive(Discard, Copy)]
 struct Point { x: i64, y: i64 }
 

@@ -1,5 +1,8 @@
 // Through a generic function, `T` = `&'x i64` for one `'x`, so both
 // arguments must live as long as the result.
+
+use alloc::boxed::Box;
+
 trait Pick {
     fn pick(self, other: Self) -> Self;
 }

@@ -2,6 +2,8 @@
 // every path that goes on, rather than thrown away. Here that's `Fd`, a
 // stand-in for a file descriptor, which only `close` uses up.
 
+use alloc::boxed::Box;
+
 struct Fd { n: i64 }
 
 fn open(n: i64) -> Fd { Fd { n } }

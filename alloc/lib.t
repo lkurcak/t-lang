@@ -6,8 +6,11 @@
 //! interface over it (see docs/09.1-list.md), and `string::String` one over
 //! a list of bytes (see docs/13.1-string.md).
 //!
+//! `boxed::Box` is intrinsic too: the checker knows what a box is.
+//!
 //! Nothing here is in the prelude: a program says what it uses.
 
+pub mod boxed;
 pub mod list;
 pub mod raw;
 pub mod string;

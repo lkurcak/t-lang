@@ -34,6 +34,7 @@ use super::typed::Res;
 use super::{Checker, Local, Target, result_span};
 use crate::ast::*;
 use crate::error::{Error, Span};
+use crate::traits::FN_ONCE;
 use crate::traits::{FnKind, Pred};
 use crate::types::{FnType, Region, Type};
 use std::collections::HashMap;
@@ -787,7 +788,7 @@ impl Checker {
     pub(super) fn callable_pred(t: &Type) -> Pred {
         Pred {
             ty: t.clone(),
-            trait_name: "FnOnce".into(),
+            trait_name: FN_ONCE.into(),
         }
     }
 }

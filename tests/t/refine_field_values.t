@@ -1,5 +1,8 @@
 // What's known of a struct's fields goes with its value: from a literal,
 // through a copy, and stays with the copy when the original changes.
+
+use alloc::boxed::Box;
+
 #[derive(Copy, Discard)]
 struct P { x: i64 }
 

@@ -1,4 +1,7 @@
 // Moved in one branch, so maybe moved after.
+
+use alloc::boxed::Box;
+
 fn main() with alloc {
     let b = Box::new(1i64);
     if true {

@@ -1,4 +1,7 @@
 // Through a box, too.
+
+use alloc::boxed::Box;
+
 mod fs {
     pub struct Fd { pub id: Id, raw: i64 }
 

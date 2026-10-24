@@ -1,5 +1,8 @@
 // An inherent impl for `S<'static>` only: calling its method on a shorter
 // `S` needs that to be `'static`.
+
+use alloc::boxed::Box;
+
 #[derive(Discard)]
 struct S<'a> { r: &'a i64 }
 

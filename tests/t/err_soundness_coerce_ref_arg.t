@@ -1,5 +1,8 @@
 // `&b` is a `&Box<i64>`; only a reference that's already one is coerced,
 // not a `&` written there.
+
+use alloc::boxed::Box;
+
 fn get(r: &i64) -> &i64 { r }
 
 fn main() {

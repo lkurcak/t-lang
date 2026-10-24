@@ -1,6 +1,8 @@
 //! A linked list on the heap: built by moving nodes into boxes, read and
 //! changed through references, and freed when it goes away.
 
+use alloc::boxed::Box;
+
 #[derive(Discard)]
 enum List { Nil, Cons(i64, Box<List>) }
 

@@ -251,7 +251,7 @@ impl Checker {
     ) -> Result<(Type, usize), Error> {
         let symbol = self.adt_symbol(ty.id).map(str::to_string);
         let def = symbol.as_ref().and_then(|s| self.adts.get(s));
-        if def.is_none() && ty.name == "Box" {
+        if symbol.as_deref() == Some(super::BOX) {
             return Err(Error::ty(
                 ty.span,
                 "`Box` isn't an enum: `Box::new(x)` makes one, and `*b` is what box `b` holds",
@@ -489,7 +489,7 @@ impl Checker {
 
     /// Does `name`, written as the type in `name::new(..)`, mean `Box`?
     pub(super) fn is_box(&self, name: &Ident) -> bool {
-        name.name == "Box" && self.adt_symbol(name.id).is_none()
+        self.adt_symbol(name.id) == Some(super::BOX)
     }
 
     //        Γ ⊢ e : T

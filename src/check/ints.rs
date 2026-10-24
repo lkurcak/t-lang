@@ -10,6 +10,7 @@
 
 use super::Checker;
 use crate::error::Error;
+use crate::traits::{SIGNED, UNSIGNED};
 use crate::types::{IntTy, Type};
 
 /// The values every `usize` and `isize` can hold, whatever the machine: a
@@ -36,9 +37,9 @@ pub(crate) fn param_range(cx: &Checker, t: &Type) -> (i128, i128) {
             .implements(t, name, &cx.env, &cx.adts.proj.local)
             .is_ok()
     };
-    if is("Unsigned") {
+    if is(UNSIGNED) {
         IntTy::U8.range_64()
-    } else if is("Signed") {
+    } else if is(SIGNED) {
         IntTy::I8.range_64()
     } else {
         EVERY_INT

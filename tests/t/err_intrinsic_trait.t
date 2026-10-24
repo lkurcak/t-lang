@@ -1,0 +1,6 @@
+// Only `core` and `alloc` can say the checker supplies a trait's impls.
+#[intrinsic]
+trait Magic {}
+
+fn main() {}
+// error: only `core` and `alloc` can declare an intrinsic

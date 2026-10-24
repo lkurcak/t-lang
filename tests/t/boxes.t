@@ -1,6 +1,8 @@
 // Boxes: values on the heap, freed when their owner goes out of scope.
 // The interpreter checks that each is freed exactly once.
 
+use alloc::boxed::Box;
+
 #[derive(Discard)]
 struct Big { a: i64, b: i64 }
 

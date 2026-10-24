@@ -1,4 +1,7 @@
 // `main` says what the program may do, like any function.
+
+use alloc::boxed::Box;
+
 fn main() {
     let b = Box::new(1i64);
     print(*b);

@@ -1,6 +1,7 @@
 // `swap(&mut a, &mut b)` exchanges two values, making and throwing away
 // none, so it works for any type, `Discard` or not.
 
+use alloc::boxed::Box;
 use core::mem::swap;
 
 struct Fd { n: i64 }

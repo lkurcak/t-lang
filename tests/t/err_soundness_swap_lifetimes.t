@@ -1,6 +1,7 @@
 // `swap` makes both places hold a reference that lives as long as the
 // other did: `a` can't end up pointing into `short`.
 
+use alloc::boxed::Box;
 use core::mem::swap;
 
 fn main() with alloc {

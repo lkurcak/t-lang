@@ -1,6 +1,9 @@
 // Closures can capture anything, as they borrow it: boxes, references,
 // structs holding references, and functions that only take references of
 // one lifetime, which can't outlive the borrow either.
+
+use alloc::boxed::Box;
+
 #[derive(Discard, Copy)]
 struct W<T> { x: T }
 

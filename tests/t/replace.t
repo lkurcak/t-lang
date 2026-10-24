@@ -2,6 +2,7 @@
 // nothing is thrown away: how to change what's behind a `&mut` whose type
 // isn't `Discard`.
 
+use alloc::boxed::Box;
 use core::mem::replace;
 
 struct Fd { n: i64 }

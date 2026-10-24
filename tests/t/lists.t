@@ -1,5 +1,7 @@
 // A type can hold itself through a box: a linked list.
 
+use alloc::boxed::Box;
+
 #[derive(Discard)]
 enum List { Nil, Cons(i64, Box<List>) }
 

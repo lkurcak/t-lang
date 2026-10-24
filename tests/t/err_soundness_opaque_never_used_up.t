@@ -1,4 +1,7 @@
 // What `once` returns owns a `Box` and isn't `Discard`: it must be called.
+
+use alloc::boxed::Box;
+
 fn once(b: Box<i64>) -> impl FnOnce() -> i64 { move || *b }
 
 fn main() with alloc {

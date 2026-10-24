@@ -49,6 +49,17 @@ pub struct Error {
 }
 
 impl Error {
+    /// It, with its message, notes and fixes changed by `f`.
+    pub fn map_text(&mut self, f: &impl Fn(&str) -> String) {
+        self.message = f(&self.message);
+        for (_, n) in &mut self.notes {
+            *n = f(n);
+        }
+        for fix in &mut self.fixes {
+            fix.map(f);
+        }
+    }
+
     pub fn syntax(span: Span, message: impl Into<String>) -> Error {
         Error::new(Phase::Syntax, span, message)
     }
@@ -142,6 +153,14 @@ pub struct Warning {
 }
 
 impl Warning {
+    /// It, with its message and fixes changed by `f`.
+    pub fn map_text(&mut self, f: &impl Fn(&str) -> String) {
+        self.message = f(&self.message);
+        for fix in &mut self.fixes {
+            fix.map(f);
+        }
+    }
+
     /// Renders the warning rustc-style. With `note`, it ends by saying how
     /// to turn its lint off, as it should the first time the lint comes up.
     pub fn render(&self, path: &str, src: &str, note: bool) -> String {
@@ -299,6 +318,17 @@ pub struct Edit {
 }
 
 impl Fix {
+    /// It, with its title and edits' text changed by `f`, but for edits
+    /// that write a `use`, whose paths must stay as they are.
+    pub fn map(&mut self, f: &impl Fn(&str) -> String) {
+        self.title = f(&self.title);
+        for e in &mut self.edits {
+            if !e.text.trim_start().starts_with("use ") {
+                e.text = f(&e.text);
+            }
+        }
+    }
+
     pub fn new(title: impl Into<String>, edits: Vec<Edit>) -> Fix {
         Fix {
             title: title.into(),

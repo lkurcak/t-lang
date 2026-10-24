@@ -1,6 +1,8 @@
 // A coerced argument is a borrow of a place, `&**r`, taken after the other
 // arguments like any other.
 
+use alloc::boxed::Box;
+
 fn first(a: &i64, _n: i64) -> i64 { *a }
 
 fn get(r: &i64) -> i64 { *r }

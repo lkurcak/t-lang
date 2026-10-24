@@ -30,6 +30,10 @@ pub struct Info {
     /// function, or the name of a method or of a struct or enum. In a
     /// generic function these can mention its own type parameters.
     pub instances: HashMap<NodeId, Instance>,
+    /// The comparisons `<`, `<=`, `>` and `>=` that are calls of `Ord`'s
+    /// methods, by node: those not of an integer type, whose are the
+    /// machine's. Each has its method's instance in `instances`.
+    pub ord_calls: std::collections::HashSet<NodeId>,
     /// The symbol of every function, struct and enum, by the node of its
     /// name where it's declared and where it's used: a name for it that's
     /// unique in the program, unlike the one it's written with (see
@@ -287,6 +291,9 @@ impl Defs {
         for (f, ..) in prog.all_fns().into_iter().skip(from.all_fns) {
             doc(&f.name, f.doc.as_ref());
         }
+        for t in &prog.traits[from.traits..] {
+            doc(&t.name, t.doc.as_ref());
+        }
         let all: Vec<_> = prog.all_types().into_iter().skip(from.all_types).collect();
         for (d, _) in &all {
             doc(d.name(), d.doc());
@@ -420,6 +427,13 @@ impl Checker {
             n.args = args;
         }
         for (id, span, instance) in std::mem::take(&mut self.pending) {
+            // A comparison of integers is the machine's, not a call.
+            if let Some(t) = self.compares.remove(&id) {
+                if self.int_like(&self.solved(&t)) {
+                    continue;
+                }
+                self.info.ord_calls.insert(id);
+            }
             let instance = match instance {
                 Instance::Fn(name, args) => Instance::Fn(
                     name,

@@ -1,10 +1,25 @@
 //! Comparing and ordering.
 
+/// What `==` and `!=` compare with: `a == b` is `a.eq(&b)`.
+///
+/// The integers, `bool`, `char`, `()` and `str` have it, and references,
+/// boxes and slices of `Eq` values, which compare what they point to. A
+/// struct or enum has it with `#[derive(Eq)]`, field by field, or with an
+/// impl of its own. Functions don't, and can't: whether two do the same
+/// for every argument can't be decided.
+#[intrinsic]
+pub trait Eq {
+    /// Is `self` equal to `other`?
+    fn eq(&self, other: &Self) -> bool;
+}
+
 /// How one value compares with another.
 #[derive(Discard, Copy, Eq)]
 pub enum Ordering { Less, Equal, Greater }
 
-/// A total order: any two values compare, one way.
+/// A total order: any two values compare, one way. `a < b` is
+/// `a.lt(&b)`, and `<=`, `>` and `>=` alike, but for the integers, whose
+/// `<` is the machine's, and which the checker reasons about.
 ///
 /// An impl must be one: `cmp` is `Equal` exactly when `==` is true, if `a`
 /// is less than `b` then `b` is greater than `a`, and if `a` is less than
@@ -103,6 +118,24 @@ impl Ord for u64 {
 
 impl Ord for usize {
     fn cmp(&self, other: &usize) -> Ordering { compare(*self, *other) }
+}
+
+/// Characters by their numbers, the Unicode scalar values: `'a'` before
+/// `'b'`, and `'z'` before `'é'`.
+impl Ord for char {
+    fn cmp(&self, other: &char) -> Ordering { compare(*self as u32, *other as u32) }
+}
+
+/// References by what they point to, as `==` compares them: so `a < b` of
+/// two `&str`s compares the strings.
+impl<'a, T: Ord> Ord for &'a T {
+    fn cmp(&self, other: &&'a T) -> Ordering { (**self).cmp(*other) }
+}
+
+/// String slices by the strings, which `&'a T` can't say, as `T` can't be
+/// `str`.
+impl<'a> Ord for &'a str {
+    fn cmp(&self, other: &&'a str) -> Ordering { (**self).cmp(*other) }
 }
 
 /// `false` before `true`: the order in which `a <= b` means `a` implies `b`.

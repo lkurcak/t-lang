@@ -4,6 +4,7 @@ use super::fields;
 use crate::ast::*;
 use crate::check::Checker;
 use crate::error::{Edit, Error, Fix, Span};
+use crate::traits::{COPY, DISCARD, EQ};
 use crate::traits::{ImplDef, Pred};
 use crate::types::{Subst, Type};
 use std::collections::HashMap;
@@ -41,7 +42,7 @@ impl Checker {
         // (impl index, type, the derive, trait)
         let mut derived: Vec<(usize, usize, Span, &'static str)> = Vec::new();
         for (i, (d, _)) in decls.iter().enumerate().skip(self.from.all_types) {
-            for tr in ["Copy", "Discard", "Eq"] {
+            for tr in [COPY, DISCARD, EQ] {
                 let Some(at) = d.derive_of(tr) else {
                     continue;
                 };
@@ -88,7 +89,7 @@ impl Checker {
                 }
                 // A derived `Discard` or `Copy` needs only more of the same
                 // (see `collect_impls_in`), so that's all it can say.
-                if (tr == "Discard" || tr == "Copy")
+                if (tr == DISCARD || tr == COPY)
                     && let Some(b) = w
                         .bounds
                         .iter()
@@ -140,7 +141,7 @@ impl Checker {
                             ));
                         }
                         let why = match (&bad.ty, tr) {
-                            (Type::Fn(_), "Eq") => " (functions can't be compared)".to_string(),
+                            (Type::Fn(_), EQ) => " (functions can't be compared)".to_string(),
                             (b, _) if *b == t => String::new(),
                             (b, _) => format!(" (it needs `{b}: {tr}`, and that doesn't hold)"),
                         };
@@ -228,10 +229,10 @@ impl Checker {
         }
         for &(k, i, span, tr) in &derived {
             let def = &self.traits.impls[k];
-            if tr != "Copy"
+            if tr != COPY
                 || self
                     .traits
-                    .implements(&def.self_ty, "Discard", &def.preds, &def.eqs)
+                    .implements(&def.self_ty, DISCARD, &def.preds, &def.eqs)
                     .is_ok()
             {
                 continue;
@@ -245,8 +246,8 @@ impl Checker {
                      value that's copied can't be used up exactly once"
                 ),
             );
-            let copy = d.derive_of("Copy").expect("derived");
-            return Err(match d.derive_of("Discard") {
+            let copy = d.derive_of(COPY).expect("derived");
+            return Err(match d.derive_of(DISCARD) {
                 Some(_) => e,
                 None => e.with_fix(Fix::new(
                     "derive `Discard` too",
@@ -278,10 +279,10 @@ impl Checker {
                 }
                 return Ok(());
             }
-            Type::Ref(_, _, inner) | Type::Box(inner) if tr == "Eq" => {
+            Type::Ref(_, _, inner) | Type::Box(inner) if tr == EQ => {
                 return self.needs(inner, tr, params, out);
             }
-            Type::Box(inner) if tr == "Discard" => return self.needs(inner, tr, params, out),
+            Type::Box(inner) if tr == DISCARD => return self.needs(inner, tr, params, out),
             Type::Adt(..) => {}
             t => {
                 return self

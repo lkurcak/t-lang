@@ -2,6 +2,9 @@
 // result can't outlive `'x`. The borrow checker used to relate `&mut
 // Box<&'x i64>` to `&&'y i64` part by part, skip the parts that didn't
 // line up, and so lose `'x: 'y`: `out` dangled.
+
+use alloc::boxed::Box;
+
 fn inner<'y>(r: &&'y i64) -> &'y i64 { *r }
 
 fn main() with alloc {

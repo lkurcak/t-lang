@@ -24,7 +24,7 @@ fn flip::<i64, bool>(p: Pair::<i64, bool>) -> Pair::<bool, i64> {
     Pair::<bool, i64> { first: p.second, second: p.first }
 }
 
-fn map::<{panic}, i64, i64, {closure#54485}>(o: Option::<i64>, f: {closure#54485}) -> Option::<i64>
+fn map::<{panic}, i64, i64, {closure#58749}>(o: Option::<i64>, f: {closure#58749}) -> Option::<i64>
 with panic
 {
     match o {
@@ -79,7 +79,7 @@ fn main() with panic {
     print_bool(p.first);
     print(p.second);
     let n: i64 = 10i64;
-    let o = map::<{panic}, i64, i64, {closure#54485}>(Option::<i64>::Some(4i64), |x| x * n);
+    let o = map::<{panic}, i64, i64, {closure#58749}>(Option::<i64>::Some(4i64), |x| x * n);
     print(unwrap_or::<i64>(o, 0i64));
     let none: Option::<i64> = Option::<i64>::None;
     print(unwrap_or::<i64>(
