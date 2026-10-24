@@ -248,12 +248,12 @@ impl Modules {
         }
     }
 
-    /// The path of the public struct or enum `name` of the core or alloc
-    /// library, if there's exactly one, in a public module of its own:
-    /// `alloc::boxed::Box` for `Box`.
+    /// The path of the public struct or enum `name` of a library built into
+    /// the compiler, if there's exactly one, declared where it is:
+    /// `alloc::boxed::Box` for `Box`, `std::Os` for `Os`.
     pub(crate) fn library_type(&self, name: &str) -> Option<String> {
         let found: Vec<&Module> = (self.mods.iter().enumerate())
-            .filter(|&(m, _)| !self.libraries.contains(&m) && self.in_library(m))
+            .filter(|&(m, _)| self.in_library(m))
             .map(|(_, module)| module)
             .filter(|module| {
                 module.types.get(name).is_some_and(|b| {

@@ -67,10 +67,12 @@ impl Expectations {
                 .lines()
                 .filter_map(|l| directive(l, "// stderr: "))
                 .collect(),
+            // As written, but for the space after the `:`: an empty line is
+            // `// stdin:`.
             input: src
                 .lines()
-                .filter_map(|l| directive(l, "// stdin: "))
-                .flat_map(|l| l.into_bytes().into_iter().chain([b'\n']))
+                .filter_map(|l| l.find("// stdin:").map(|i| &l[i + "// stdin:".len()..]))
+                .flat_map(|l| l.strip_prefix(' ').unwrap_or(l).bytes().chain([b'\n']))
                 .collect(),
             error: src.lines().find_map(|l| directive(l, "// error: ")),
             warnings: src

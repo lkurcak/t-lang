@@ -1489,7 +1489,8 @@ impl Checker {
                     self.locals.extend(binds);
                 }
                 Stmt::Expr(e) => {
-                    self.synth(e)?;
+                    let t = self.synth(e)?;
+                    self.dropped.push((e.span, t));
                 }
                 // Rust's rule, and the reason for it: in
                 // `if c { 10 } else { 20 } - x` the `if` is its own statement,

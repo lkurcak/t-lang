@@ -18,6 +18,7 @@ use crate::io::{Stderr, Stdin, Stdout};
 /// What a program can do to the world outside it: the operating system's
 /// streams, for now. `fn main(os: Os)` is given the only one there is,
 /// and passes on what each part of the program needs.
+#[derive(Discard)]
 pub struct Os {
     /// Where input comes from: the terminal, or a file or pipe instead.
     pub stdin: Stdin,

@@ -250,6 +250,9 @@ pub enum Lint {
     /// `unwrap`, `expect`, `unwrap_or` or `unwrap_or_else` of a `Result`
     /// whose error type is `!`, so that it can't be an `Err`.
     UnwrapInfallible,
+    /// A statement whose value is a `Result` that may be an `Err`, which
+    /// is thrown away unseen.
+    UnusedResults,
 }
 
 impl Lint {
@@ -274,10 +277,11 @@ impl Lint {
             Lint::UnusedUnsafe => "unused_unsafe",
             Lint::MissingSafetyComments => "missing_safety_comments",
             Lint::UnwrapInfallible => "unwrap_infallible",
+            Lint::UnusedResults => "unused_results",
         }
     }
 
-    pub const ALL: [Lint; 19] = [
+    pub const ALL: [Lint; 20] = [
         Lint::UnreachablePatterns,
         Lint::OverlappingRanges,
         Lint::MergeableRanges,
@@ -297,6 +301,7 @@ impl Lint {
         Lint::UnusedUnsafe,
         Lint::MissingSafetyComments,
         Lint::UnwrapInfallible,
+        Lint::UnusedResults,
     ];
 
     pub fn from_name(name: &str) -> Option<Lint> {

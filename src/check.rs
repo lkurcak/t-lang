@@ -526,6 +526,10 @@ pub(crate) struct Checker {
     /// see once it's solved whether there can be one (see
     /// `lints::unwrap_infallible`).
     unwraps: Vec<(lints::Unwrap, Type)>,
+    /// Statements `e;`, with the type of `e`, to see once it's solved
+    /// whether an error is thrown away with it (see
+    /// `lints::unused_results`).
+    dropped: Vec<(Span, Type)>,
     /// What must hold of effect sets once the function's variables are
     /// solved.
     withins: Vec<effects::Within>,
@@ -717,6 +721,7 @@ impl Checker {
             sig_owner: Default::default(),
             effect_sites: Vec::new(),
             unwraps: Vec::new(),
+            dropped: Vec::new(),
             withins: Vec::new(),
             unsafe_blocks: Vec::new(),
             unsafe_uses: Vec::new(),
@@ -1093,6 +1098,18 @@ impl Checker {
         for (call, err) in std::mem::take(&mut self.unwraps) {
             if self.solved(&err) == Type::Never {
                 self.warnings.push(lints::unwrap_infallible(&call));
+            }
+        }
+        // One that isn't `Discard` can't be thrown away at all, which is
+        // an error of its own.
+        for (at, t) in std::mem::take(&mut self.dropped) {
+            let t = self.solved(&t);
+            if let Type::Adt(symbol, _, args) = &t
+                && symbol == RESULT
+                && args.get(1).is_some_and(|e| *e != Type::Never)
+                && self.is_discard(&t)
+            {
+                self.warnings.push(lints::unused_results(at));
             }
         }
         self.body_effects(f, &sig.effects)?;

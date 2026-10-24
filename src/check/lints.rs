@@ -83,6 +83,26 @@ pub(super) fn unwrap_infallible(call: &Unwrap) -> Warning {
     }
 }
 
+/// A statement `e;` at `span`, whose value is a `Result` that may be an
+/// `Err`: the error is thrown away with it, unseen. A `Result` is
+/// `Discard` when its values are, so nothing else stops that; this is
+/// Rust's `must_use` on `Result`, for one type. The fix says it's on
+/// purpose, `let _ = e;`, which does the same. Not when the error type is
+/// `!`: then there's no error to lose.
+pub(super) fn unused_results(span: Span) -> Warning {
+    Warning {
+        lint: Lint::UnusedResults,
+        span,
+        message: "this `Result` is thrown away, and any error in it unseen: handle it, pass it on \
+                  with `?`, or write `let _ =` to throw it away"
+            .into(),
+        fixes: vec![Fix::new(
+            "throw it away with `let _ =`",
+            vec![Edit::insert(span.start, "let _ = ")],
+        )],
+    }
+}
+
 /// The statement or expression at `span` never runs: what comes before it
 /// never finishes.
 pub(super) fn unreachable_code(span: Span) -> Warning {
