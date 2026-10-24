@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.32.0 (2026-10-24)
 
 Step 19: std I/O. See [docs/19-std-io.md](docs/19-std-io.md).
 
