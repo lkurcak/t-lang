@@ -795,7 +795,8 @@ pub(crate) fn drop_uses(b: &Builder) -> HashSet<Point> {
 
 /// May dropping a value of type `t` call a `discard` of its own: is it, or
 /// does it own, a struct or enum with one, or what might be one? `seen`,
-/// the structs and enums looked in already, as a type can hold itself.
+/// the structs, enums and opaque types looked in already, as a type can
+/// hold itself.
 fn reaches_own_discard(b: &Builder, t: &Type, seen: &mut Vec<Type>) -> bool {
     match t {
         Type::Adt(symbol, ..) if b.cx.traits().own_discard(symbol) => true,
@@ -820,9 +821,15 @@ fn reaches_own_discard(b: &Builder, t: &Type, seen: &mut Vec<Type>) -> bool {
         Type::Box(inner) => reaches_own_discard(b, inner, seen),
         // An opaque type is the type it stands for, which is what's dropped:
         // so whether that has one shows through, as whether it's `Discard`
-        // doesn't. Unknown yet, it might.
+        // doesn't. Unknown yet, it might. One that holds itself is an error
+        // found later (`Checker::opaque_cycles`).
         Type::Opaque(symbol, ..) => {
             let d = &b.cx.traits().opaques[symbol];
+            let erased = t.erased();
+            if seen.contains(&erased) {
+                return false;
+            }
+            seen.push(erased);
             d.hidden.is_none() || reaches_own_discard(b, &d.hidden_at(t), seen)
         }
         Type::Param(_) | Type::Proj(..) => true,

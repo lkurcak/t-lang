@@ -10,4 +10,4 @@ impl<T: Iterator + Discard> Discard for W<T> {
 }
 
 fn main() {}
-// error: an impl of `Discard` may only need its type parameters to be `Discard`, not `core::iter::Iterator` of `T`
+// error: an impl of `Discard` may only need its type parameters to be `Discard`, not `Iterator` of `T`
