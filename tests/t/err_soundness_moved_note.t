@@ -5,10 +5,12 @@ struct B { n: i64 }
 
 fn two(a: &B, b: B) -> i64 with panic { a.n + b.n }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let x = B { n: 1 };
     let y = B { n: 2 };
     let c = true;
-    print(two(&x, if c { x } else { y }));
+    out.line(&two(&x, if c { x } else { y }))?;
+    Result::Ok(())
 }
 // error: `x` was moved here

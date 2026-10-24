@@ -13,16 +13,17 @@ fn translate(p: Point, dx: i64) -> Point with panic {
     Point { x: p.x + dx, y: p.y }
 }
 
-fn main() -> Point with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let p = Point { y: 2, x: 1 };       // field order doesn't matter
-    print(p.x);                         // expect: 1
+    out.line(&p.x)?;                    // expect: 1
     let r = Rect { min: p, max: Point { x: 4, y: 6 } };
-    print(area(r));                     // expect: 12
+    out.line(&area(r))?;                // expect: 12
     let x = 10;
     let y = 20;
     let q = Point { x, y };             // short for `Point { x: x, y: y }`
-    print(q.y);                         // expect: 20
-    print_bool(p == Point { x: 1, y: 2 });  // expect: true
-    print_bool(p != q);                 // expect: true
-    translate(p, 5)                     // expect: Point { x: 6, y: 2 }
+    out.line(&q.y)?;                    // expect: 20
+    out.line(&(p == Point { x: 1, y: 2 }))?;  // expect: true
+    out.line(&(p != q))?;               // expect: true
+    out.line(&translate(p, 5).x)        // expect: 6
 }

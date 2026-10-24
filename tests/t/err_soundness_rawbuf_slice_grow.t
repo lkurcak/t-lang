@@ -10,7 +10,7 @@ fn main() with alloc {
         b.slice(0, 1)
     };
     b.grow(8);
-    print(r.len());
+    let _v = r.len();
     // SAFETY: slot 0 holds the 5; then every slot is uninitialised.
     unsafe {
         b.read(0);

@@ -20,13 +20,15 @@ fn put<T: Tr>(slot: &mut T::Out, v: T::Out) {
     let _old = replace(slot, v);
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let long = 1;
     let mut slot = &long;
     {
         let short = 2;
         put::<S>(&mut slot, &short);
     }
-    print(*slot);
+    out.line(&(*slot))?;
+    Result::Ok(())
 }
 // error: `'a` isn't in `S`

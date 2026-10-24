@@ -2,8 +2,10 @@
 
 use alloc::boxed::Box;
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let b = Box::new(1i64);
-    print(*b);
+    out.line(&(*b))?;
+    Result::Ok(())
 }
 // error: `Box::new` may allocate, but `main` doesn't say `with alloc`

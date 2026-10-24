@@ -6,11 +6,13 @@ fn first<I: Iterator + Discard, U: Discard, effect f, F: FnMut(I::Item) -> U wit
     mut m: Map<I, F>,
 ) -> Option<U> with {I::e, f} { m.next() }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     match first((3i64..10).map(|x| x * x)) {
-        Option::Some(n) => print(n), // expect: 9
+        Option::Some(n) => out.line(&n)?, // expect: 9
         Option::None => {},
     }
     let total = (1..4i64).map(|x| x * 2).filter(|x| *x > 2).fold(0, |a, b| a + b);
-    print(total); // expect: 10
+    out.line(&total)?; // expect: 10
+    Result::Ok(())
 }

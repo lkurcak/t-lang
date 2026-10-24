@@ -6,13 +6,15 @@ fn sink<'b, 'a>(slot: &'b mut &'a i64) -> impl FnMut(&'a i64) + Discard { move |
 
 fn feed<'s, F: FnMut(&'s i64) + Discard>(mut f: F, v: &'s i64) { f(v) }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let long = 1;
     let mut r = &long;
     {
         let short = 2;
         feed(sink(&mut r), &short);
     }
-    print(*r);
+    out.line(&(*r))?;
+    Result::Ok(())
 }
 // error: `short` doesn't live long enough

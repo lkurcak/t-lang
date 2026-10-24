@@ -14,8 +14,10 @@ mod fs {
     }
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let fs::Fd { id, .. } = fs::open(1);
-    print(id.n);
+    out.line(&id.n)?;
+    Result::Ok(())
 }
 // error: can't take `Fd` apart here: it has private fields and isn't `Discard`, so only `fs` can

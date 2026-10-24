@@ -41,15 +41,16 @@ fn half_struct(c: bool) -> i64 with {alloc, panic} {
     *t.a + *t.b
 }
 
-fn main() with {alloc, panic} {
-    print(early(true));                 // expect: 1
-    print(early(false));                // expect: 3
-    print(moved_then_return(true));     // expect: 3
-    print(moved_then_return(false));    // expect: 3
-    print(half_made(true));             // expect: 0
-    print(half_made(false));            // expect: 15
-    print(half_struct(true));           // expect: 7
-    print(half_struct(false));          // expect: 3
+fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+    let mut out = os.stdout;
+    out.line(&early(true))?;                 // expect: 1
+    out.line(&early(false))?;                // expect: 3
+    out.line(&moved_then_return(true))?;     // expect: 3
+    out.line(&moved_then_return(false))?;    // expect: 3
+    out.line(&half_made(true))?;             // expect: 0
+    out.line(&half_made(false))?;            // expect: 15
+    out.line(&half_struct(true))?;           // expect: 7
+    out.line(&half_struct(false))?;          // expect: 3
 
     // A new box each time round, freed by `continue` and `break` too.
     let mut i: i64 = 0;
@@ -61,19 +62,20 @@ fn main() with {alloc, panic} {
         if i > 6 { break; }
         sum += *b;
     }
-    print(sum);                         // expect: 6
+    out.line(&sum)?;                         // expect: 6
 
     // The value a `break` gives a loop leaves it, and isn't freed.
     let kept = loop {
         let b = Box::new(42i64);
         break b;
     };
-    print(*kept);                       // expect: 42
+    out.line(&(*kept))?;                       // expect: 42
 
     // Moved, then the loop left before the next time round.
     let b = Box::new(5);
     loop {
-        print(consume(b));              // expect: 5
+        out.line(&consume(b))?;              // expect: 5
         break;
     }
+    Result::Ok(())
 }

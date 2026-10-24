@@ -7,7 +7,7 @@ fn main() with {alloc, panic} {
         let n = 1;
         l.push(&n);
     }
-    print(**l.get(0).unwrap());
+    let _v = **l.get(0).unwrap();
     l.free();
 }
 // error: `n` doesn't live long enough: it goes out of scope here while still borrowed

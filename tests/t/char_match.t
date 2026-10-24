@@ -9,9 +9,11 @@ fn kind(c: char) -> u8 {
     }
 }
 
-fn main() {
-    print(kind('q')); // expect: 1
-    print(kind('7')); // expect: 2
-    print(kind(' ')); // expect: 3
-    print(kind('\u{FFFD}')); // expect: 4
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&kind('q'))?; // expect: 1
+    out.line(&kind('7'))?; // expect: 2
+    out.line(&kind(' '))?; // expect: 3
+    out.line(&kind('\u{FFFD}'))?; // expect: 4
+    Result::Ok(())
 }

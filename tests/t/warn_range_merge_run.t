@@ -6,11 +6,13 @@ fn f(n: i64) -> i64 {
         _ => 2,
     }
 }
-fn main() {
-    print(f(0));
-    print(f(7));
-    print(f(14));
-    print(f(15));
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&f(0))?;
+    out.line(&f(7))?;
+    out.line(&f(14))?;
+    out.line(&f(15))?;
+    Result::Ok(())
 }
 // warning: `0..5`, `5..10` and `10..=14` can be merged into `0..=14`
 // expect: 1

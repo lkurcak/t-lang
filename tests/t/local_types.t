@@ -28,13 +28,14 @@ fn shapes() -> i64 with panic {
     area(Shape::Circle(2)) + area(Shape::Rect(2, 3)) + area(Shape::<i64>::Empty)
 }
 
-fn main() with panic {
-    print(total());  // expect: 3
-    print(shapes()); // expect: 18
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&total())?;  // expect: 3
+    out.line(&shapes())?; // expect: 18
     // Shadows the top-level `P`.
     #[derive(Discard)]
     struct P { y: bool }
-    print_bool(P { y: true }.y); // expect: true
+    out.line(&(P { y: true }.y))?; // expect: true
     // A value of a local type can leave its block: nothing outside can
     // name the type, but inference doesn't need to.
     let q = {
@@ -42,16 +43,17 @@ fn main() with panic {
         struct Q { n: i64 }
         Q { n: 7 }
     };
-    print(q.n); // expect: 7
+    out.line(&q.n)?; // expect: 7
     // A second `P` in `main`, in a block of its own.
     {
         #[derive(Discard)]
         struct P { z: i64 }
         let P { z } = P { z: 9 };
-        print(z); // expect: 9
+        out.line(&z)?; // expect: 9
     }
-    print(other()); // expect: 4
-    print(outer()); // expect: 5
+    out.line(&other())?; // expect: 4
+    out.line(&outer())?; // expect: 5
+    Result::Ok(())
 }
 
 // Another function's `P`.

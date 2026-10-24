@@ -14,13 +14,15 @@ impl<'a> Holder<'a> {
     fn peek(&self) -> &i64 { self.r }
 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let n = 7;
     let r;
     {
         let h = Holder::new(&n);
         r = h.get();
-        print(*h.peek());    // expect: 7
+        out.line(&(*h.peek()))?;    // expect: 7
     }
-    print(*r + 1);           // expect: 8
+    out.line(&(*r + 1))?;           // expect: 8
+    Result::Ok(())
 }

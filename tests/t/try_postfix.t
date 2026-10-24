@@ -13,8 +13,10 @@ fn neg(x: i64) -> Option<i64> with panic { Option::Some(-p(x)?.get()? * 2) }
 
 fn field(x: i64) -> Option<i64> { Option::Some(p(x)?.x) }
 
-fn main() with panic {
-    print(neg(3).unwrap_or(0)); // expect: -6
-    print(neg(-3).unwrap_or(0)); // expect: 0
-    print(field(7).unwrap_or(0)); // expect: 7
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&neg(3).unwrap_or(0))?; // expect: -6
+    out.line(&neg(-3).unwrap_or(0))?; // expect: 0
+    out.line(&field(7).unwrap_or(0))?; // expect: 7
+    Result::Ok(())
 }

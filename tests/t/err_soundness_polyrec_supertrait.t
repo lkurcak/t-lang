@@ -31,7 +31,9 @@ impl<'a, T: B> A for &'a T {
 
 impl<'a, T: B> B for &'a T {}
 
-fn main() with panic {
-    print(W { x: 1i64 }.b(3));
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&(W { x: 1i64 }.b(3)))?;
+    Result::Ok(())
 }
 // error: polymorphic recursion: this use of `B::b` with `Self` = `W<&W<T>>` leads back

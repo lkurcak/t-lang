@@ -7,17 +7,19 @@ fn close(f: Fd) -> i64 {
     n
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let x;
     if true {
         x = Fd { n: 1 };
     } else {
         x = Fd { n: 2 };
     }
-    print(close(x));
+    out.line(&close(x))?;
     let mut y;
     y = Fd { n: 3 };
     y = Fd { n: 4 };
-    print(close(y));
+    out.line(&close(y))?;
+    Result::Ok(())
 }
 // error: this assignment would throw away the value `y` holds, and its type, `Fd`, isn't `Discard`

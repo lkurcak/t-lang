@@ -13,9 +13,11 @@ mod fs {
     }
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let mut fd = fs::open(1);
     fd.raw = 5;
-    print(fs::close(fd));
+    out.line(&fs::close(fd))?;
+    Result::Ok(())
 }
 // error: field `raw` of `Fd` is private

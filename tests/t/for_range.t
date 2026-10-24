@@ -9,10 +9,11 @@ fn sum_to(n: i64) -> i64 with panic {
     s
 }
 
-fn main() with panic {
-    print(sum_to(5)); // expect: 10
-    print(sum_to(0)); // expect: 0
-    print(sum_to(-3)); // expect: 0
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&sum_to(5))?; // expect: 10
+    out.line(&sum_to(0))?; // expect: 0
+    out.line(&sum_to(-3))?; // expect: 0
 
     // `break` and `continue`, and labels.
     let mut found: i64 = 0;
@@ -23,7 +24,7 @@ fn main() with panic {
         found = i;
         break;
     }
-    print(found); // expect: 7
+    out.line(&found)?; // expect: 7
     let mut pairs: i64 = 0;
     'outer: for i in 0..10i64 {
         for j in 0..10 {
@@ -36,7 +37,7 @@ fn main() with panic {
             pairs = pairs + 1;
         }
     }
-    print(pairs); // expect: 26
+    out.line(&pairs)?; // expect: 26
 
     // Precedence: arithmetic before `..`.
     let n: i64 = 2;
@@ -44,7 +45,7 @@ fn main() with panic {
     for _ in n - 1..n * 3 {
         c = c + 1;
     }
-    print(c); // expect: 5
+    out.line(&c)?; // expect: 5
 
     // It doesn't overflow at the very end of `i64`.
     let big: i64 = 9223372036854775807;
@@ -52,18 +53,21 @@ fn main() with panic {
     for i in big - 2..big {
         last = i;
     }
-    print(last - big); // expect: -1
+    out.line(&(last - big))?; // expect: -1
 
     // A range is a value, and its ends can be read.
     let r = 3..8i64;
-    print(r.start() + r.end()); // expect: 11
+    out.line(&(r.start() + r.end()))?; // expect: 11
     let mut r = r;
-    print(r.next().unwrap_or(0)); // expect: 3
-    print(r.start()); // expect: 4
+    out.line(&r.next().unwrap_or(0))?; // expect: 3
+    out.line(&r.start())?; // expect: 4
 
     // A `for` is `()`: one can end a block.
-    let f = || for i in 0..3i64 { print(i * 10); };
-    f();
+    let mut f = || -> Result<(), std::io::Error> {
+        for i in 0..3i64 { out.line(&(i * 10))?; }
+        Result::Ok(())
+    };
+    f()
     // expect: 0
     // expect: 10
     // expect: 20

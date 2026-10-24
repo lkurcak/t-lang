@@ -7,7 +7,9 @@ fn f(c: bool) -> i64 {
     10 / d
 }
 
-fn main() with panic {
-    print(f(false));
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&f(false))?;
+    Result::Ok(())
 }
 // error: `/` may panic, but `f` doesn't say `with panic`

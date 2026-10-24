@@ -5,14 +5,17 @@ use alloc::raw::RawBuf;
 
 fn shorten<'a>(b: RawBuf<&'static i64>) -> RawBuf<&'a i64> { b }
 
-fn main() with alloc {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
+    let mut stdout = os.stdout;
     let n = 7;
     let mut b: RawBuf<&i64> = shorten(RawBuf::new(1));
     // SAFETY: slot 0 is uninitialised; then it holds `&n`, which is read
     // out before the buffer is freed.
-    unsafe {
+    let m = unsafe {
         b.write(0, &n);
-        print(*b.read(0)); // expect: 7
+        let m = *b.read(0);
         b.free();
-    }
+        m
+    };
+    stdout.line(&m) // expect: 7
 }

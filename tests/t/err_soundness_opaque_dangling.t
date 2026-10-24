@@ -2,11 +2,13 @@
 // borrows for `'a`, and the borrow checker sees that wherever it goes.
 fn reader<'a>(x: &'a i64) -> impl Fn() -> i64 + Discard { move || *x }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let r = {
         let n = 3;
         reader(&n)
     };
-    print(r());
+    out.line(&r())?;
+    Result::Ok(())
 }
 // error: `n` doesn't live long enough

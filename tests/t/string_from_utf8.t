@@ -11,22 +11,27 @@ fn bytes(b: &[u8]) -> List<u8> with alloc {
     l
 }
 
-fn main() with alloc {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
+    let mut out = os.stdout;
     match String::from_utf8(bytes(b"caf\xC3\xA9")) {
         Result::Ok(s) => {
-            print_str(s.as_str()); // expect: café
+            let w = out.line(&s.as_str()); // expect: café
             let l = s.into_bytes();
-            print(l.len()); // expect: 5
+            let n = l.len();
             l.free();
+            w?;
+            out.line(&n)?; // expect: 5
         },
         Result::Err(l) => l.free(),
     }
     match String::from_utf8(bytes(b"caf\xC3")) {
         Result::Ok(s) => s.free(),
         Result::Err(l) => {
-            print_str("not UTF-8"); // expect: not UTF-8
-            print(l.len());         // expect: 4
+            let n = l.len();
             l.free();
+            out.line(&"not UTF-8")?; // expect: not UTF-8
+            out.line(&n)?; // expect: 4
         },
     }
+    Result::Ok(())
 }

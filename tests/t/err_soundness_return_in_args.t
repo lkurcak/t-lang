@@ -13,7 +13,9 @@ fn g() -> i64 with panic {
     two(Fd { n: 1 }, return 2)
 }
 
-fn main() {
-    print(g());
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&g())?;
+    Result::Ok(())
 }
 // error: this value is never used up, and its type, `Fd`, isn't `Discard`

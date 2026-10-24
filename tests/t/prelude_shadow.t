@@ -18,16 +18,18 @@ trait Iterator {
     fn next(&mut self) -> i64;
 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let mut sum: i64 = 0;
     for i in 0..4 {
         sum = sum + i;
     }
-    print(sum); // expect: 6
+    out.line(&sum)?; // expect: 6
     match mine(1) {
-        Option::Some(n) => print(n), // expect: 1
+        Option::Some(n) => out.line(&n)?, // expect: 1
         Option::None => {}
     }
-    print(theirs(2).unwrap_or(0));      // expect: 2
-    print(inner::wrap(3).unwrap_or(0)); // expect: 3
+    out.line(&theirs(2).unwrap_or(0))?;      // expect: 2
+    out.line(&inner::wrap(3).unwrap_or(0))?; // expect: 3
+    Result::Ok(())
 }

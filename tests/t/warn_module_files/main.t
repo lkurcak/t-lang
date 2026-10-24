@@ -2,6 +2,8 @@
 // needs it: renaming `Helper` renames it in `util.t` and here.
 mod util;
 
-fn main() {
-    print(util::Helper());   // expect: 2
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&util::Helper())?;   // expect: 2
+    Result::Ok(())
 }

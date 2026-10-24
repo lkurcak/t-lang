@@ -68,23 +68,28 @@ impl Eq for Fd {
 #[derive(Eq)]
 struct P { a: Fd }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     throw(W { f: close });
     let _e: E<Fd> = E::B;
-    print(take(Option::Some(Fd { n: 3 }), close)); // expect: 3
-    print(take(Option::None, close));              // expect: 0
-    print(drop_sub(3i64));                            // expect: 1
-    print(D { n: 1 }.eat());                       // expect: 2
-    print(dup(C { f: close }));                    // expect: 2
-    print(dup(C { f: ignore }));                   // expect: 2
+    out.line(&take(Option::Some(Fd { n: 3 }), close))?; // expect: 3
+    out.line(&take(Option::None, close))?;              // expect: 0
+    out.line(&drop_sub(3i64))?;                            // expect: 1
+    out.line(&(D { n: 1 }.eat()))?;                       // expect: 2
+    out.line(&dup(C { f: close }))?;                    // expect: 2
+    out.line(&dup(C { f: ignore }))?;                   // expect: 2
     let a = Fd { n: 1 };
     let b = Fd { n: 1 };
-    print_bool(a == b);                            // expect: true
-    print(close(a) + close(b));                    // expect: 2
+    let same = a == b;
+    let sum = close(a) + close(b);
+    out.line(&same)?;                                   // expect: true
+    out.line(&sum)?;                                    // expect: 2
     let x = P { a: Fd { n: 4 } };
     let y = P { a: Fd { n: 4 } };
-    print_bool(x == y);                            // expect: true
+    let same = x == y;
     let P { a } = x;
     let P { a: c } = y;
-    print(close(a) + close(c));                    // expect: 8
+    let sum = close(a) + close(c);
+    out.line(&same)?;                                   // expect: true
+    out.line(&sum)                                      // expect: 8
 }

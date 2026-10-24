@@ -6,10 +6,12 @@ impl Stack {
     fn len(&self) -> i64 { self.size }
     fn push(&mut self, x: i64) { self.size += x }
 }
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let mut v = Stack { size: 0 };
     let r = &v;
     v.push(r.len());
-    print(r.size);
+    out.line(&r.size)?;
+    Result::Ok(())
 }
 // error: cannot borrow `v` as mutable while `v` is borrowed

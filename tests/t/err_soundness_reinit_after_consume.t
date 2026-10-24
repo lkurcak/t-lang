@@ -8,10 +8,12 @@ fn close(f: Fd) -> i64 {
 
 struct P { a: Fd, b: Fd }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let mut p = P { a: Fd { n: 1 }, b: Fd { n: 2 } };
     let P { a, b } = p;
     p.a = Fd { n: 3 };
-    print(close(a) + close(b));
+    out.line(&(close(a) + close(b)))?;
+    Result::Ok(())
 }
 // error: cannot assign to `p.a`, part of `p`, which was moved out of

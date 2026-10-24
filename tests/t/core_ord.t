@@ -27,21 +27,23 @@ fn largest<T: Ord + Discard>(a: T, b: T, c: T) -> T {
     a.max(b).max(c)
 }
 
-fn main() {
-    print(show(1i64.cmp(&2i64)));          // expect: -1
-    print(show(2i64.cmp(&2)));          // expect: 0
-    print(show(true.cmp(&false)));   // expect: 1
-    print_bool(false.lt(&true));     // expect: true
-    print_bool(3i64.le(&3));            // expect: true
-    print_bool(3i64.gt(&4));            // expect: false
-    print_bool(4i64.ge(&3));            // expect: true
-    print(5i64.min(2));                 // expect: 2
-    print(largest(3i64, 9, 4));         // expect: 9
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&show(1i64.cmp(&2i64)))?;          // expect: -1
+    out.line(&show(2i64.cmp(&2)))?;          // expect: 0
+    out.line(&show(true.cmp(&false)))?;   // expect: 1
+    out.line(&false.lt(&true))?;     // expect: true
+    out.line(&3i64.le(&3))?;            // expect: true
+    out.line(&3i64.gt(&4))?;            // expect: false
+    out.line(&4i64.ge(&3))?;            // expect: true
+    out.line(&5i64.min(2))?;                 // expect: 2
+    out.line(&largest(3i64, 9, 4))?;         // expect: 9
     let v = largest(
         Version { major: 1, minor: 2 },
         Version { major: 1, minor: 10 },
         Version { major: 0, minor: 99 },
     );
-    print(v.minor);                  // expect: 10
-    print(show(Version { major: 2, minor: 0 }.cmp(&v))); // expect: 1
+    out.line(&v.minor)?;                  // expect: 10
+    out.line(&show(Version { major: 2, minor: 0 }.cmp(&v)))?; // expect: 1
+    Result::Ok(())
 }

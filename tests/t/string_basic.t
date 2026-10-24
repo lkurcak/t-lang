@@ -1,33 +1,39 @@
 // A `String` grows as characters and strings are pushed, and gives them
 // back as a `&str`.
 use alloc::string::String;
+use core::fmt::Write;
 
-fn main() with {alloc, panic} {
+fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+    let mut out = String::new();
     let mut s = String::new();
-    print_bool(s.is_empty()); // expect: true
+    out.line(&s.is_empty()); // expect: true
     s.push('a');
     s.push('ñ');
     s.push('€');
     s.push('😀');
-    print(s.len());        // expect: 10
-    print_str(s.as_str()); // expect: añ€😀
+    out.line(&s.len());        // expect: 10
+    out.line(&s.as_str()); // expect: añ€😀
     s.push_str(" ok");
-    print_str(s.as_str());     // expect: añ€😀 ok
-    print(s.as_bytes().len()); // expect: 13
+    out.line(&s.as_str());     // expect: añ€😀 ok
+    out.line(&s.as_bytes().len()); // expect: 13
     let mut n = 0u32;
     for _c in s.as_str().chars() {
         n = n + 1;
     }
-    print(n); // expect: 7
+    out.line(&n); // expect: 7
     s.free();
 
     let t = String::from("héllo");
-    print(t.len());        // expect: 6
-    print_str(t.as_str()); // expect: héllo
+    out.line(&t.len());        // expect: 6
+    out.line(&t.as_str()); // expect: héllo
     t.free();
 
     let e = String::with_capacity(8);
-    print_bool(e.capacity() >= 8); // expect: true
-    print(e.len());                // expect: 0
+    out.line(&(e.capacity() >= 8)); // expect: true
+    out.line(&e.len());                // expect: 0
     e.free();
+    let mut stdout = os.stdout;
+    let w = stdout.put(&out.as_str());
+    out.free();
+    w
 }

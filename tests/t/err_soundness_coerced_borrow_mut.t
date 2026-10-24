@@ -5,8 +5,10 @@ use alloc::boxed::Box;
 
 fn get(r: &i64) -> i64 { *r }
 
-fn main() with alloc {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
+    let mut out = os.stdout;
     let b = Box::new(1);
-    print(get(&mut b));
+    out.line(&get(&mut b))?;
+    Result::Ok(())
 }
 // error: cannot borrow `b` as mutable, as `b` isn't declared `mut`

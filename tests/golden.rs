@@ -142,7 +142,7 @@ fn mono() {
         let src = fs::read_to_string(&path).unwrap();
         let checked = t_lang::check_files(&path, &src, &t_lang::load::read_file);
         let actual = match checked.result {
-            Ok(program) => program.to_string(),
+            Ok(program) => without_std(program).to_string(),
             Err(e) => {
                 failures.push(format!("{name}: {}", e.render_in(&checked.sources)));
                 continue;
@@ -160,6 +160,67 @@ fn mono() {
     }
     assert!(checked > 0, "no `.mono` files");
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
+/// `program` without the std library's functions, structs and enums, the
+/// copies of others made for them, as `<i64 as core::fmt::Display>::fmt::<std::io::Stdout>`,
+/// and what only they use of the other libraries: what printing adds, the
+/// same in every program, and not what a `.mono` file is there to show.
+fn without_std(program: t_lang::ast::Program) -> t_lang::ast::Program {
+    use t_lang::ast::{FnDecl, Program, TypeDecl};
+    let library = |name: &str| {
+        let name = name.strip_prefix('<').unwrap_or(name);
+        ["core::", "alloc::", "std::", "[", "str", "char", "bool", "i", "u"]
+            .iter()
+            .any(|p| name.starts_with(p))
+            && !name.starts_with("impl")
+    };
+    let text = |types: Vec<TypeDecl>, fns: Vec<FnDecl>| {
+        let mut p = program.clone();
+        (p.types, p.fns) = (types, fns);
+        p.to_string()
+    };
+    let (mut types, mut fns) = (Vec::new(), Vec::new());
+    let (mut left_types, mut left_fns) = (Vec::new(), Vec::new());
+    for d in &program.types {
+        match library(&d.name().name) {
+            true if !d.name().name.contains("std::") => left_types.push(d.clone()),
+            true => {}
+            false => types.push(d.clone()),
+        }
+    }
+    for f in &program.fns {
+        match library(&f.name.name) {
+            true if !f.name.name.contains("std::") => left_fns.push(f.clone()),
+            true => {}
+            false => fns.push(f.clone()),
+        }
+    }
+    // What the program refers to, and what that does, and so on.
+    loop {
+        let kept = text(types.clone(), fns.clone());
+        // A name that's part of a longer one keeps more than it needs to,
+        // which only makes the file longer.
+        let used = |name: &str| kept.contains(name);
+        let before = types.len() + fns.len();
+        let (now, later): (Vec<_>, Vec<_>) =
+            left_types.into_iter().partition(|d| used(&d.name().name));
+        types.extend(now);
+        left_types = later;
+        let (now, later): (Vec<_>, Vec<_>) =
+            left_fns.into_iter().partition(|f| used(&f.name.name));
+        fns.extend(now);
+        left_fns = later;
+        if types.len() + fns.len() == before {
+            break;
+        }
+    }
+    // In the order they were.
+    let order = |name: &str| program.types.iter().position(|d| d.name().name == name);
+    types.sort_by_key(|d| order(&d.name().name));
+    let order = |name: &str| program.fns.iter().position(|f| f.name.name == name);
+    fns.sort_by_key(|f| order(&f.name.name));
+    Program { types, fns, ..program }
 }
 
 /// A program without generics, nested functions or local types prints as

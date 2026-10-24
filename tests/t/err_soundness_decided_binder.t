@@ -22,7 +22,8 @@ impl<T, U, F: Fn(T) -> U> Call for W<F> {
 
 fn id(x: &i64) -> &i64 { x }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let f: fn(&i64) -> &i64 = id;
     let w = W { f };
     let r;
@@ -30,6 +31,7 @@ fn main() {
         let n = 5;
         r = w.call(&n);
     }
-    print(*r);
+    out.line(&(*r))?;
+    Result::Ok(())
 }
 // error: expected `<W<fn(&i64) -> &i64> as Call>::In`, found `&{integer}`

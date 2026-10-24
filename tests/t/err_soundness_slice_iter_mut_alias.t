@@ -8,7 +8,7 @@ fn main() with {alloc, panic} {
     let s = l.as_mut_slice();
     let mut it = s.iter_mut();
     let a = it.next().unwrap();
-    print(*s.get(0).unwrap());
+    let _v = *s.get(0).unwrap();
     *a = 2;
     l.free();
 }

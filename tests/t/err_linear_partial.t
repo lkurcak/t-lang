@@ -10,9 +10,11 @@ fn close(fd: Fd) -> i64 {
 
 struct Pair { a: Fd, b: Fd }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let p = Pair { a: open(1), b: open(2) };
     let a = p.a;
-    print(close(a));
+    out.line(&close(a))?;
+    Result::Ok(())
 }
 // error: `p.b` is never used up

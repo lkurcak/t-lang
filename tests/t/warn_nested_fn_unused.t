@@ -1,7 +1,8 @@
 // A nested `fn` that nothing in its block uses is never used, like a
 // top-level one that `main` can't reach. One in a function that's never
 // used goes without saying.
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     fn unused() -> i64 { 1 }
     // Only used by each other.
     fn ping(n: i64) -> i64 with panic {
@@ -13,7 +14,8 @@ fn main() {
         fn also_unused() {}
         2
     }
-    print(used()); // expect: 2
+    out.line(&used())?; // expect: 2
+    Result::Ok(())
 }
 
 fn dead() {

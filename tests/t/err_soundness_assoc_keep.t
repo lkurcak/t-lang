@@ -14,12 +14,14 @@ impl<'a> Tr for &'a i64 {
 
 fn keep<T: Tr>(t: T) -> T::Out { t.out() }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let r;
     {
         let x: i64 = 1;
         r = keep(&x);
     }
-    print(*r);
+    out.line(&(*r))?;
+    Result::Ok(())
 }
 // error: `x` doesn't live long enough

@@ -17,7 +17,9 @@ fn len_match(s: &Span) -> i64 {
     }
 }
 
-fn main() {
-    print(len(Span { lo: 1, hi: 4 })); // expect: 3
-    print(len_match(&Span { lo: 2, hi: 4 })); // expect: 2
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&len(Span { lo: 1, hi: 4 }))?; // expect: 3
+    out.line(&len_match(&Span { lo: 2, hi: 4 }))?; // expect: 2
+    Result::Ok(())
 }

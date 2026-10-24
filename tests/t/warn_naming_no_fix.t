@@ -4,9 +4,11 @@ fn Match() -> i64 { 1 }
 fn myFn() -> i64 { 2 }
 fn my_fn() -> i64 { 3 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let True = Match();
-    print(True + myFn() + my_fn());
+    out.line(&(True + myFn() + my_fn()))?;
+    Result::Ok(())
 }
 // warning: function `Match` should have a snake case name
 // warning: function `myFn` should have a snake case name: `my_fn`

@@ -30,9 +30,11 @@ mod impls {
 
 use show::Show;
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let s = shapes::sq(3);
-    print(s.show());               // expect: 9
-    print(show::twice(&s));        // expect: 18
-    print(show::Show::show(&s));   // expect: 9
+    out.line(&s.show())?;               // expect: 9
+    out.line(&show::twice(&s))?;        // expect: 18
+    out.line(&show::Show::show(&s))?;   // expect: 9
+    Result::Ok(())
 }

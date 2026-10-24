@@ -13,9 +13,11 @@ impl<F: Fn() -> i64> Run for W<F> {
 
 fn go<R: Run>(r: &R) -> i64 { r.run() }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let z: i64 = 0;
     let w = W { f: || 1 / z };
-    print(go(&w));
+    out.line(&go(&w))?;
+    Result::Ok(())
 }
 // error: `go` needs its `R` to implement `Run`, and `W<{closure}>` doesn't

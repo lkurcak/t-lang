@@ -29,13 +29,77 @@ fn hold::<A><'r>(t: &A, r: &'r i64) -> i64 {
     *h.r
 }
 
-fn main() with panic {
-    print(shown::<W<A>>(&W::<A> { t: A { n: 4i64 } }));
+fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<i64>(&mut out, &shown::<W<A>>(&W::<A> { t: A { n: 4i64 } })),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
     let c = count::<A>(A { n: 1i64 });
-    print(c.n + c.of.n);
-    print_bool(same::<A>(&A { n: 1i64 }, &A { n: 1i64 }));
-    print_bool(same::<B>(&B { b: true }, &B { b: false }));
-    print(hold::<A>(&A { n: 1i64 }, &5i64));
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<i64>(&mut out, &(c.n + c.of.n)),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<bool>(&mut out, &same::<A>(&A { n: 1i64 }, &A { n: 1i64 })),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<bool>(&mut out, &same::<B>(&B { b: true }, &B { b: false })),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<i64>(&mut out, &hold::<A>(&A { n: 1i64 }, &5i64)),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
+    core::result::Result::<(), std::io::Error>::Ok(())
+}
+
+fn <&str as core::fmt::Display>::fmt::<std::io::Stderr><'a>(
+    &self,
+    w: &mut std::io::Stderr,
+) -> core::result::Result::<(), std::io::Error> {
+    <std::io::Stderr as core::fmt::Write>::write_str(&mut *w, *self)
 }
 
 fn <A as Tr>::out(&self) -> i64 { self.n }

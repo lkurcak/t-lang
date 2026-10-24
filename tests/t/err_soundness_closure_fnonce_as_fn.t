@@ -9,8 +9,10 @@ fn take(b: B) -> i64 {
 
 fn twice<F: Fn() -> i64 + Discard>(f: F) -> i64 with panic { f() + f() }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let b = B { x: 1 };
-    print(twice(|| take(b)));
+    out.line(&twice(|| take(b)))?;
+    Result::Ok(())
 }
 // error: this closure is only `FnOnce`, as it moves `b` out, but `twice` needs it to implement `Fn`

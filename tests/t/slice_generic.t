@@ -1,6 +1,8 @@
 // Slices of any `T`, also of values that aren't `Discard`: a slice only
 // borrows them.
 use alloc::list::List;
+use alloc::string::String;
+use core::fmt::Write;
 
 fn count<T>(s: &[T]) -> usize { s.len() }
 
@@ -20,23 +22,28 @@ fn biggest<T: Ord + Copy>(s: &[T]) -> Option<T> {
 
 struct Token { n: i64 }
 
-fn main() with {alloc, panic} {
+fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+    let mut out = String::new();
     let mut l: List<i64> = List::new();
     l.push(3);
     l.push(9);
     l.push(4);
-    print(count(l.as_slice()));            // expect: 3
-    print(biggest(l.as_slice()).unwrap()); // expect: 9
+    out.line(&count(l.as_slice()));            // expect: 3
+    out.line(&biggest(l.as_slice()).unwrap()); // expect: 9
     l.free();
     let mut t: List<Token> = List::new();
     t.push(Token { n: 1 });
     t.push(Token { n: 2 });
-    print(count(t.as_slice()));            // expect: 2
-    print(t.as_slice().last().unwrap().n); // expect: 2
+    out.line(&count(t.as_slice()));            // expect: 2
+    out.line(&t.as_slice().last().unwrap().n); // expect: 2
+    let mut freed = 0;
     t.free_with(|x: Token| {
         let Token { n } = x;
-        print(n);
+        freed = freed * 10 + n;
     });
-    // expect: 1
-    // expect: 2
+    out.line(&freed); // expect: 12
+    let mut stdout = os.stdout;
+    let w = stdout.put(&out.as_str());
+    out.free();
+    w
 }

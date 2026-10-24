@@ -11,11 +11,13 @@ fn close(fd: Fd) -> i64 {
 #[derive(Discard)]
 enum Option<T> { Some(T), None }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let o = Option::Some(open(1));
     match o {
-        Option::Some(fd) => print(close(fd)),
+        Option::Some(fd) => out.line(&close(fd))?,
         _ => {},
     }
+    Result::Ok(())
 }
 // error: `o` isn't used up on every path

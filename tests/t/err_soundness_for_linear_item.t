@@ -15,9 +15,11 @@ impl Iterator for Fds {
     }
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     for fd in (Fds { left: 2 }) {
-        print(fd.n);
+        out.line(&fd.n)?;
     }
+    Result::Ok(())
 }
 // error: `fd` is never used up, and its type, `Fd`, isn't `Discard`

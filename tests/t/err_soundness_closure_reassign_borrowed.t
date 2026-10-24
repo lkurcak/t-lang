@@ -12,9 +12,11 @@ fn call<T: Copy>(x: T, y: T) -> T {
     g()
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let b = Box::new(5);
     let c = Box::new(6);
-    print(*call(&*b, &*c));
+    out.line(&(*call(&*b, &*c)))?;
+    Result::Ok(())
 }
 // error: cannot assign to `v` while `v` is borrowed

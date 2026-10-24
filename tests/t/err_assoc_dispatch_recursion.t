@@ -30,7 +30,9 @@ impl<U: Discard> Show for W<U> {
 
 fn go<T: Tr>(x: T, n: i64) -> i64 with panic { x.wrap().show(n) }
 
-fn main() with panic {
-    print(go(W { t: 1i64 }, 3));
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&go(W { t: 1i64 }, 3))?;
+    Result::Ok(())
 }
 // error: polymorphic recursion

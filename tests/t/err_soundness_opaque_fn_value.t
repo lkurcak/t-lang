@@ -3,12 +3,14 @@
 // is the opaque type at the lifetime of each call.
 fn reader(x: &i64) -> impl Fn() -> i64 + Discard { move || *x }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let g = reader;
     let f = {
         let n = 1;
         g(&n)
     };
-    print(f());
+    out.line(&f())?;
+    Result::Ok(())
 }
 // error: `n` doesn't live long enough

@@ -52,7 +52,8 @@ fn len<T: Discard>(l: &List<T>) -> i64 with panic {
 
 fn takes_fd(f: Fd) -> i64 { close(f) }
 
-fn main() with {alloc, panic} {
+fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+    let mut out = os.stdout;
     drop_it(1i64);
     drop_it(true);
     drop_it(());
@@ -64,8 +65,9 @@ fn main() with {alloc, panic} {
     drop_it(&fd);
     drop_it(Callback::<Fd> { f: takes_fd });
     drop_it(Tagged { a: Option::Some(1i64), b: &fd });
-    print(close(fd));                   // expect: 1
-    print(twice(Point { x: 1, y: 2 })); // expect: 2
+    out.line(&close(fd))?;                   // expect: 1
+    out.line(&twice(Point { x: 1, y: 2 }))?; // expect: 2
     let l = List::Cons(1i64, Box::new(List::Cons(2, Box::new(List::Nil))));
-    print(len(&l)); // expect: 2
+    out.line(&len(&l))?; // expect: 2
+    Result::Ok(())
 }

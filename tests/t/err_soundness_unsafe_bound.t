@@ -7,7 +7,7 @@ fn twice<F: FnMut() -> i64 + Discard>(mut f: F) -> i64 with panic { f() + f() }
 fn main() with {alloc, panic} {
     let mut b: RawBuf<i64> = RawBuf::new(1);
     // SAFETY: slot 0 is the only one, and it's read once.
-    print(unsafe { twice(|| b.read(0)) });
+    let _v = unsafe { twice(|| b.read(0)) };
     // SAFETY: the slot is uninitialised.
     unsafe { b.free() };
 }

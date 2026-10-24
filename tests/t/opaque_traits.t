@@ -49,12 +49,14 @@ impl<T: Show> Twice for T {
     fn twice(&self) -> i64 with panic { self.show() * 2 }
 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let s = shown();
-    print(s.show());                // expect: 12
-    print(s.twice());               // expect: 24
+    out.line(&s.show())?;                // expect: 12
+    out.line(&s.twice())?;               // expect: 24
     let mut i = from(5);
     let x: i64 = i.next();
-    print(x);                       // expect: 6
-    print(i.next() + 1);            // expect: 8
+    out.line(&x)?;                       // expect: 6
+    out.line(&(i.next() + 1))?;            // expect: 8
+    Result::Ok(())
 }

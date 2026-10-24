@@ -19,13 +19,15 @@ impl<'a, 'b> Second for Pair<'a, 'b> {
 
 fn get<T: Second>(t: T) -> T::Out { t.second() }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let long = 1;
     let r;
     {
         let short = 2;
         r = get(Pair { a: &long, b: &short });
     }
-    print(*r);
+    out.line(&(*r))?;
+    Result::Ok(())
 }
 // error: `short` doesn't live long enough

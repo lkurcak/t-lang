@@ -12,9 +12,11 @@ fn set(r: &mut Fd) {
     *r = open(2);
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let mut fd = open(1);
     set(&mut fd);
-    print(close(fd));
+    out.line(&close(fd))?;
+    Result::Ok(())
 }
 // error: use `core::mem::replace(&mut *r, ..)`

@@ -11,8 +11,10 @@ fn unwrap<My_item>(w: Wrap<My_item>) -> My_item {
 
 fn id<T>(x: T) -> T { x }
 
-fn main() {
-    print(unwrap(Wrap { inner: id::<i64>(1) }));
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&unwrap(Wrap { inner: id::<i64>(1) }))?;
+    Result::Ok(())
 }
 // warning: type parameter `My_item` should have an upper camel case name: `MyItem`
 // warning: type parameter `My_item` should have an upper camel case name: `MyItem`

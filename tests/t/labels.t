@@ -46,11 +46,12 @@ fn inner_never() -> i64 {
     }
 }
 
-fn main() with {panic, alloc} {
-    print(find(10, 12));                    // expect: 26
-    print(find(3, 100));                    // expect: -1
-    print(count_before_zero(3, 3));         // expect: 3
-    print(inner_never());                   // expect: 7
+fn main(os: std::Os) -> Result<(), std::io::Error> with {panic, alloc} {
+    let mut stdout = os.stdout;
+    stdout.line(&find(10, 12))?;                    // expect: 26
+    stdout.line(&find(3, 100))?;                    // expect: -1
+    stdout.line(&count_before_zero(3, 3))?;         // expect: 3
+    stdout.line(&inner_never())?;                   // expect: 7
 
     // Boxes in both loops' scopes are freed by the labelled `break`.
     let mut sum: i64 = 0;
@@ -62,13 +63,13 @@ fn main() with {panic, alloc} {
             if sum > 5 { break 'outer; }
         }
     }
-    print(sum);                             // expect: 6
+    stdout.line(&sum)?;                             // expect: 6
 
     // Moved, then out of both loops for good.
     let b = Box::new(4);
     'done: loop {
         loop {
-            print(consume(b));              // expect: 4
+            stdout.line(&consume(b))?;              // expect: 4
             break 'done;
         }
     }
@@ -83,7 +84,8 @@ fn main() with {panic, alloc} {
                 i += 1;
             }
         };
-        print(f(3));                        // expect: 3
+        stdout.line(&f(3))?;                        // expect: 3
         break 'a;
     }
+    Result::Ok(())
 }

@@ -13,9 +13,11 @@ impl Iterator for Lines {
     }
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     for n in (Lines { left: 2 }) {
-        print(n);
+        out.line(&n)?;
     }
+    Result::Ok(())
 }
 // error: a `for` throws its iterator away when it ends, and `Lines` isn't `Discard`; to keep it, iterate over a mutable reference to it: `for x in &mut it`

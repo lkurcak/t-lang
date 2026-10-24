@@ -5,7 +5,9 @@ fn f(x: { v: i64 | v >= 0 }) -> i64 {
     y
 }
 
-fn main() with panic {
-    print(f(9223372036854775807));
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&f(9223372036854775807))?;
+    Result::Ok(())
 }
 // error: `+=` may panic, but `f` doesn't say `with panic`

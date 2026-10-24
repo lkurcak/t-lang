@@ -21,7 +21,9 @@ fn outer(x: i64) -> i64 with panic {
     a * 10 + b
 }
 
-fn main() with panic {
-    print(outer(4)); // expect: 22
-    print(outer(3)); // expect: -11
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&outer(4))?; // expect: 22
+    out.line(&outer(3))?; // expect: -11
+    Result::Ok(())
 }

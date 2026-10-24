@@ -1,15 +1,18 @@
 // Slices compare value by value, when their values do.
 use alloc::list::List;
 
-fn main() with alloc {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
+    let mut out = os.stdout;
     let mut a: List<i64> = List::new();
     a.push(1);
     a.push(2);
     let mut b: List<i64> = List::new();
     b.push(1);
-    print_bool(a.as_slice() == b.as_slice()); // expect: false
+    let shorter = a.as_slice() == b.as_slice();
     b.push(2);
-    print_bool(a.as_slice() == b.as_slice()); // expect: true
+    let same = a.as_slice() == b.as_slice();
     a.free();
     b.free();
+    out.line(&shorter)?; // expect: false
+    out.line(&same) // expect: true
 }

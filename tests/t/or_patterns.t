@@ -48,31 +48,33 @@ enum Pair { IntBool(i64, bool), BoolInt(bool, i64) }
 #[derive(Discard)]
 struct S { a: i64, b: i64 }
 
-fn main() {
-    print(first_side(Shape::Circle(1)));    // expect: 1
-    print(first_side(Shape::Square(2)));    // expect: 2
-    print(first_side(Shape::Rect(3, 9)));   // expect: 3
-    print(first_side(Shape::Empty));        // expect: 0
-    print_bool(small(Opt::Some(2)));        // expect: true
-    print_bool(small(Opt::Some(3)));        // expect: false
-    print_bool(small(Opt::None));           // expect: false
-    print_bool(xor(true, false));           // expect: true
-    print(code(Light { on: true, color: Color::Red }));     // expect: 1
-    print(code(Light { on: false, color: Color::Red }));    // expect: 2
-    print(code(Light { on: true, color: Color::Blue }));    // expect: 2
-    print(code(Light { on: false, color: Color::Green }));  // expect: 3
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&first_side(Shape::Circle(1)))?;    // expect: 1
+    out.line(&first_side(Shape::Square(2)))?;    // expect: 2
+    out.line(&first_side(Shape::Rect(3, 9)))?;   // expect: 3
+    out.line(&first_side(Shape::Empty))?;        // expect: 0
+    out.line(&small(Opt::Some(2)))?;        // expect: true
+    out.line(&small(Opt::Some(3)))?;        // expect: false
+    out.line(&small(Opt::None))?;           // expect: false
+    out.line(&xor(true, false))?;           // expect: true
+    out.line(&code(Light { on: true, color: Color::Red }))?;     // expect: 1
+    out.line(&code(Light { on: false, color: Color::Red }))?;    // expect: 2
+    out.line(&code(Light { on: true, color: Color::Blue }))?;    // expect: 2
+    out.line(&code(Light { on: false, color: Color::Green }))?;  // expect: 3
     // Irrefutable, so fine in `let`.
     let Pair::IntBool(n, b) | Pair::BoolInt(b, n) = Pair::BoolInt(true, 7);
-    print(n);                               // expect: 7
-    print_bool(b);                          // expect: true
+    out.line(&n)?;                               // expect: 7
+    out.line(&b)?;                          // expect: true
     let Pair::IntBool(m, c) | Pair::BoolInt(c, m) = Pair::IntBool(8, false);
-    print(m);                               // expect: 8
-    print_bool(c);                          // expect: false
+    out.line(&m)?;                               // expect: 8
+    out.line(&c)?;                          // expect: false
     // The first alternative binds `x` = 0, then fails on `b: 0`. The second
     // then matches and binds `x` = 5.
     let x = match (S { a: 0, b: 5 }) {
         S { a: x, b: 0 } | S { a: 0, b: x } => x,
         _ => -1,
     };
-    print(x);                               // expect: 5
+    out.line(&x)?;                               // expect: 5
+    Result::Ok(())
 }

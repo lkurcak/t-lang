@@ -23,7 +23,9 @@ impl<'a, T: Tr> Tr for &'a T {
     fn go(&self, n: i64) -> i64 with panic { (*self).go(n) }
 }
 
-fn main() with panic {
-    print(1i64.go(3));
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&1i64.go(3))?;
+    Result::Ok(())
 }
 // error: polymorphic recursion: `<W<T> as Tr>::go` uses itself with `T` = `&W<T>`

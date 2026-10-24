@@ -8,10 +8,12 @@ fn close(fd: Fd) -> i64 {
     n
 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let fd = open(1);
     let r = &fd;
     let Fd { n } = fd;
-    print(r.n + n);
+    out.line(&(r.n + n))?;
+    Result::Ok(())
 }
 // error: cannot move out of `fd` while `fd` is borrowed

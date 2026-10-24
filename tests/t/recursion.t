@@ -1,11 +1,13 @@
 // Recursion and mutual recursion. Functions can be used before they're defined.
 
-fn main() with panic {
-    print(fact(10));        // expect: 3628800
-    print(fib(20));         // expect: 6765
-    print(b(is_even(10)));  // expect: 1
-    print(b(is_odd(7)));    // expect: 1
-    print(sum_to(5000));    // expect: 12502500
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&fact(10))?;        // expect: 3628800
+    out.line(&fib(20))?;         // expect: 6765
+    out.line(&b(is_even(10)))?;  // expect: 1
+    out.line(&b(is_odd(7)))?;    // expect: 1
+    out.line(&sum_to(5000))?;    // expect: 12502500
+    Result::Ok(())
 }
 
 fn fact(n: i64) -> i64 with panic { if n <= 1 { 1 } else { n * fact(n - 1) } }

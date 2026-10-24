@@ -33,9 +33,11 @@ impl<I: Iterator> Iterator for Second<I> where I::Item: Discard {
     }
 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     for Fd { n } in (Second { iter: Fds { left: 4 } }) {
-        print(n);
+        out.line(&n)?;
     }
+    Result::Ok(())
 }
 // error: `Second<Fds>` doesn't implement `Iterator`, which method `next` is of; that needs `Fd: Discard`

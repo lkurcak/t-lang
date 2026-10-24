@@ -8,15 +8,17 @@ use core::fmt::Write;
 
 fn sure(x: i64) -> Result<i64, !> { Result::Ok(x) }
 
-fn main() with {alloc, panic} {
-    print(sure(1).unwrap());              // expect: 1
-    print(sure(2).expect("can't fail"));  // expect: 2
-    print(sure(3).unwrap_or(0));          // expect: 3
-    print(sure(4).unwrap_or_else(|e| e)); // expect: 4
+fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+    let mut out = os.stdout;
+    out.line(&sure(1).unwrap())?;              // expect: 1
+    out.line(&sure(2).expect("can't fail"))?;  // expect: 2
+    out.line(&sure(3).unwrap_or(0))?;          // expect: 3
+    out.line(&sure(4).unwrap_or_else(|e| e))?; // expect: 4
     let mut s = String::new();
     s.write_str("ok").unwrap();
-    print_str(s.as_str()); // expect: ok
+    let w = out.line(&s.as_str()); // expect: ok
     s.free();
+    w
 }
 // warning: `unwrap` of a `Result` whose error type is `!`, which can't be an `Err`: it says it may panic, though it can't
 // warning: `expect` of a `Result` whose error type is `!`, which can't be an `Err`: it says it may panic, though it can't

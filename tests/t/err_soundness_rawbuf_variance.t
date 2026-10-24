@@ -13,7 +13,7 @@ fn main() with alloc {
     }
     // SAFETY: slot 0 holds a reference; then every slot is uninitialised.
     unsafe {
-        print(*b.read(0));
+        let _v = *b.read(0);
         b.free();
     }
 }

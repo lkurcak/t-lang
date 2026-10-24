@@ -77,35 +77,37 @@ fn either(q: Q) -> i64 {
     }
 }
 
-fn main() {
-    print(bucket(-5));      // expect: -1
-    print(bucket(0));       // expect: 0
-    print(bucket(1));       // expect: 1
-    print(bucket(9));       // expect: 1
-    print(bucket(10));      // expect: 2
-    print(bucket(99));      // expect: 2
-    print(bucket(100));     // expect: 3
-    print(sign(-9223372036854775807));  // expect: -1
-    print(sign(0));         // expect: 0
-    print(sign(9223372036854775807));   // expect: 1
-    print(overlap(7));      // expect: 1
-    print(overlap(2));      // expect: 2
-    print(overlap(12));     // expect: 2
-    print(overlap(25));     // expect: 3
-    print(lit(Q { x: 15, on: true }));      // expect: 1
-    print(lit(Q { x: 15, on: false }));     // expect: 2
-    print(lit(Q { x: 25, on: true }));      // expect: 2
-    print(either(Q { x: 5, on: true }));    // expect: 1
-    print(either(Q { x: 5, on: false }));   // expect: 2
-    print_bool(small(Opt::Some(2)));    // expect: true
-    print_bool(small(Opt::Some(3)));    // expect: false
-    print_bool(small(Opt::Some(7)));    // expect: true
-    print_bool(small(Opt::Some(-1)));   // expect: false
-    print_bool(small(Opt::None));       // expect: false
-    print(quadrant(P { x: 1, y: 2 }));  // expect: 1
-    print(quadrant(P { x: -1, y: 2 })); // expect: 2
-    print(quadrant(P { x: 1, y: -2 })); // expect: 4
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&bucket(-5))?;      // expect: -1
+    out.line(&bucket(0))?;       // expect: 0
+    out.line(&bucket(1))?;       // expect: 1
+    out.line(&bucket(9))?;       // expect: 1
+    out.line(&bucket(10))?;      // expect: 2
+    out.line(&bucket(99))?;      // expect: 2
+    out.line(&bucket(100))?;     // expect: 3
+    out.line(&sign(-9223372036854775807))?;  // expect: -1
+    out.line(&sign(0))?;         // expect: 0
+    out.line(&sign(9223372036854775807))?;   // expect: 1
+    out.line(&overlap(7))?;      // expect: 1
+    out.line(&overlap(2))?;      // expect: 2
+    out.line(&overlap(12))?;     // expect: 2
+    out.line(&overlap(25))?;     // expect: 3
+    out.line(&lit(Q { x: 15, on: true }))?;      // expect: 1
+    out.line(&lit(Q { x: 15, on: false }))?;     // expect: 2
+    out.line(&lit(Q { x: 25, on: true }))?;      // expect: 2
+    out.line(&either(Q { x: 5, on: true }))?;    // expect: 1
+    out.line(&either(Q { x: 5, on: false }))?;   // expect: 2
+    out.line(&small(Opt::Some(2)))?;    // expect: true
+    out.line(&small(Opt::Some(3)))?;    // expect: false
+    out.line(&small(Opt::Some(7)))?;    // expect: true
+    out.line(&small(Opt::Some(-1)))?;   // expect: false
+    out.line(&small(Opt::None))?;       // expect: false
+    out.line(&quadrant(P { x: 1, y: 2 }))?;  // expect: 1
+    out.line(&quadrant(P { x: -1, y: 2 }))?; // expect: 2
+    out.line(&quadrant(P { x: 1, y: -2 }))?; // expect: 4
     // Irrefutable, so fine in `let`.
     let Opt::Some(..0) | Opt::Some(0..) | Opt::None = Opt::Some(5);
-    print(1i64);               // expect: 1
+    out.line(&1i64)?;               // expect: 1
+    Result::Ok(())
 }

@@ -23,13 +23,15 @@ impl<T: Copy> Cell<T> {
     }
 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     match maybe(3) {
-        Option::Some(f) => print(f()), // expect: 3
-        Option::None => print(0i64),
+        Option::Some(f) => out.line(&f())?, // expect: 3
+        Option::None => out.line(&0i64)?,
     }
     let p = two(5);
-    print((p.a)() + (p.b)());       // expect: 11
+    out.line(&((p.a)() + (p.b)()))?;       // expect: 11
     let c = Cell { v: true };
-    print_bool(c.getter()());       // expect: true
+    out.line(&c.getter()())?;       // expect: true
+    Result::Ok(())
 }

@@ -12,7 +12,9 @@ fn f(stop: bool) -> i64 with panic {
     pos(x - 9)
 }
 
-fn main() with panic {
-    print(f(true));
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&f(true))?;
+    Result::Ok(())
 }
 // error: can't prove `v > 0` for argument `n` of `pos`

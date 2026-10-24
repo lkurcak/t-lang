@@ -6,7 +6,9 @@ fn call<T: Copy>(x: T) -> T {
     g()
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let n: i64 = 5;
-    print(*call(&n));               // expect: 5
+    out.line(&(*call(&n)))?;               // expect: 5
+    Result::Ok(())
 }

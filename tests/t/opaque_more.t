@@ -22,11 +22,13 @@ impl Show for i64 {
 
 fn same<T: Show + Discard>(x: T) -> impl Show + Discard { x }
 
-fn main() with panic {
-    print(count(3)());              // expect: 3
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&count(3)())?;              // expect: 3
     let f = adder(1);
     let g = f;
-    print(f(1) + g(2));             // expect: 5
-    print_bool(one() == one());     // expect: true
-    print(same(4i64).show());          // expect: 40
+    out.line(&(f(1) + g(2)))?;             // expect: 5
+    out.line(&(one() == one()))?;     // expect: true
+    out.line(&same(4i64).show())?;          // expect: 40
+    Result::Ok(())
 }

@@ -16,13 +16,15 @@ fn twice(n: i64) -> Result<i64, Fd> with panic {
     Result::Ok(close(fd) * 2)
 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     match twice(4) {
-        Result::Ok(v) => print(v), // expect: 8
-        Result::Err(fd) => print(close(fd)),
+        Result::Ok(v) => out.line(&v)?, // expect: 8
+        Result::Err(fd) => out.line(&close(fd))?,
     }
     match twice(-5) {
-        Result::Ok(v) => print(v),
-        Result::Err(fd) => print(close(fd)), // expect: 5
+        Result::Ok(v) => out.line(&v)?,
+        Result::Err(fd) => out.line(&close(fd))?, // expect: 5
     }
+    Result::Ok(())
 }

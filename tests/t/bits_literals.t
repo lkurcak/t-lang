@@ -8,14 +8,16 @@ fn class(b: u8) -> u8 {
     }
 }
 
-fn main() {
-    print(0xFFu8);              // expect: 255
-    print(0b1010_0000u8);       // expect: 160
-    print(0o17u8);              // expect: 15
-    print(0x7FFF_FFFFi32);      // expect: 2147483647
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&0xFFu8)?;              // expect: 255
+    out.line(&0b1010_0000u8)?;       // expect: 160
+    out.line(&0o17u8)?;              // expect: 15
+    out.line(&0x7FFF_FFFFi32)?;      // expect: 2147483647
     let m: i8 = -0x80;
-    print(m);                   // expect: -128
-    print(class(0x41));         // expect: 1
-    print(class(0xA9));         // expect: 0
-    print(class(0xE2));         // expect: 2
+    out.line(&m)?;                   // expect: -128
+    out.line(&class(0x41))?;         // expect: 1
+    out.line(&class(0xA9))?;         // expect: 0
+    out.line(&class(0xE2))?;         // expect: 2
+    Result::Ok(())
 }

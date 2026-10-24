@@ -1,11 +1,13 @@
 // When the closure runs, `d` may not be what it was when it was made.
 fn apply<F: FnMut() -> i64 + Discard>(mut f: F) -> i64 { f() }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let mut d = 1;
     let c = || 10 / d;
-    print(apply(c));
+    out.line(&apply(c))?;
     d = 0;
-    print(d);
+    out.line(&d)?;
+    Result::Ok(())
 }
 // error: this closure may panic, but `apply` needs calls of it to fit `fn() -> i64`, which can't panic

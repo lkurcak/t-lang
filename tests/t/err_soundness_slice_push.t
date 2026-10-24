@@ -7,7 +7,7 @@ fn main() with alloc {
     l.push(1);
     let s = l.as_slice();
     l.push(2);
-    print(s.len());
+    let _v = s.len();
     l.free();
 }
 // error: cannot borrow `l` as mutable while `l` is borrowed

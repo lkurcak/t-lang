@@ -12,11 +12,13 @@ fn shift(p: my_point) -> my_point with panic {
     my_point { x: x + 1, y }
 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let p = shift(my_point { x: 1, y: 2 });
     let s = HTTPServer { port: 80 };
     let v = Vec2 { x: 3, y: 4 };
-    print(p.x + p.y + s.port + v.x + v.y);
+    out.line(&(p.x + p.y + s.port + v.x + v.y))?;
+    Result::Ok(())
 }
 // warning: type `my_point` should have an upper camel case name: `MyPoint`
 // warning: type `HTTPServer` should have an upper camel case name: `HttpServer`

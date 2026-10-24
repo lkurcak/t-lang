@@ -3,10 +3,12 @@
 #[derive(Discard)]
 struct P { x: i64, y: i64 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let mut p: P;
     p.x = 1;
     p.y = 2;
-    print(p.x);
+    out.line(&p.x)?;
+    Result::Ok(())
 }
 // error: cannot assign to `p.x`, part of `p`, which has no value here

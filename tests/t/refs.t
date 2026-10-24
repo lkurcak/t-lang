@@ -12,15 +12,17 @@ fn larger<'a>(a: &'a Point, b: &'a Point) -> &'a Point with panic {
     if sum(a) >= sum(b) { a } else { b }
 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let p = Point { x: 1, y: 2 };
     let q = Point { x: 5, y: 5 };
     let r = &p;
-    print(sum(r));              // expect: 3
-    print(*first(&p));          // expect: 1
-    print(larger(&p, &q).x);    // expect: 5
+    out.line(&sum(r))?;              // expect: 3
+    out.line(&(*first(&p)))?;          // expect: 1
+    out.line(&larger(&p, &q).x)?;    // expect: 5
     let rr = &r;
-    print(rr.y);                // expect: 2
-    print_bool(**rr == p);      // expect: true
-    print_bool(&p == &q);       // expect: false
+    out.line(&rr.y)?;                // expect: 2
+    out.line(&(**rr == p))?;      // expect: true
+    out.line(&(&p == &q))?;       // expect: false
+    Result::Ok(())
 }

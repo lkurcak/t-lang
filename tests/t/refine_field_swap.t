@@ -15,13 +15,15 @@ fn set_hi(s: &mut Span, h: i64) {
     }
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let mut a = Span { lo: 1, hi: 2 };
     let mut b = Span { lo: 5, hi: 9 };
     swap(&mut a, &mut b);
-    print(a.lo); // expect: 5
+    out.line(&a.lo)?; // expect: 5
     set_hi(&mut b, 7);
-    print(b.hi); // expect: 7
+    out.line(&b.hi)?; // expect: 7
     set_hi(&mut b, 0);
-    print(b.hi); // expect: 7
+    out.line(&b.hi)?; // expect: 7
+    Result::Ok(())
 }

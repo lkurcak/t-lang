@@ -3,7 +3,7 @@
 fn main() with panic {
     let mut n: i64 = 0;
     let mut inc = || n = n + 1;
-    print(n);
+    let _v = n;
     inc();
 }
 // error: cannot use `n` while `n` is mutably borrowed

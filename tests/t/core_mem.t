@@ -18,14 +18,19 @@ mod deep {
     }
 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let mut a = Fd { n: 1 };
     let mut b = Fd { n: 2 };
     swap(&mut a, &mut b);
-    print(close(replace(&mut a, Fd { n: 3 }))); // expect: 2
-    print(close(a)); // expect: 3
-    print(close(b)); // expect: 1
+    let x = close(replace(&mut a, Fd { n: 3 }));
+    let y = close(a);
+    let z = close(b);
+    out.line(&x)?; // expect: 2
+    out.line(&y)?; // expect: 3
+    out.line(&z)?; // expect: 1
     let mut n = 7;
-    print(deep::bump(&mut n)); // expect: 7
-    print(n);                  // expect: 8
+    out.line(&deep::bump(&mut n))?; // expect: 7
+    out.line(&n)?;                  // expect: 8
+    Result::Ok(())
 }

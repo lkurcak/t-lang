@@ -3,10 +3,12 @@
 use alloc::boxed::Box;
 use core::mem::swap;
 
-fn main() with alloc {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
+    let mut out = os.stdout;
     let mut x = Box::new(1i64);
     let r = &mut x;
     swap(r, &mut *r);
-    print(*x);
+    out.line(&(*x))?;
+    Result::Ok(())
 }
 // error: cannot borrow `*r` as mutable more than once at a time

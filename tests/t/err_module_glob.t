@@ -4,5 +4,5 @@ mod a {
 
 use a::*;
 
-fn main() { print(f()); }
+fn main(os: std::Os) -> Result<(), std::io::Error> { let mut out = os.stdout; out.line(&f())?;  Result::Ok(()) }
 // error: glob imports

@@ -9,6 +9,6 @@ fn main() with {alloc, panic} {
     let mut b = Box::new(2);
     let mut r = &mut a;
     swap(&mut *r, { r = &mut b; &mut b });
-    print(*a + *b);
+    let _v = *a + *b;
 }
 // error: cannot borrow `b` as mutable more than once at a time

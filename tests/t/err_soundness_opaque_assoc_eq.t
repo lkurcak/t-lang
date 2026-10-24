@@ -23,5 +23,5 @@ fn from(n: i64) -> impl Iter + Discard { Up { n } }
 
 fn sum<I: Iter<Item = i64> + Discard>(mut i: I) -> i64 with panic { i.next() + i.next() }
 
-fn main() { print(sum(from(1))); }
+fn main(os: std::Os) -> Result<(), std::io::Error> { let mut out = os.stdout; out.line(&sum(from(1)))?;  Result::Ok(()) }
 // error: `sum` needs `<impl Iter + Discard as Iter>::Item` to be `i64`, and nothing says it is

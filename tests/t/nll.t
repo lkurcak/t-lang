@@ -8,18 +8,19 @@ fn deposit(a: &mut Account, n: i64) with panic { a.balance += n; }
 
 fn balance(a: &Account) -> i64 { a.balance }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let mut x: i64 = 1;
     let r = &x;
-    print(*r);                  // expect: 1
+    out.line(&(*r))?;                  // expect: 1
     x = 2;                      // `r` isn't used after this, so it's fine
-    print(x);                   // expect: 2
+    out.line(&x)?;                   // expect: 2
 
     let mut acct = Account { balance: 10 };
     let m = &mut acct;
     deposit(m, 5);
     deposit(m, 5);              // `m` can be used again: each call reborrows it
-    print(balance(&acct));      // expect: 20
+    out.line(&balance(&acct))?;      // expect: 20
 
     // Two `&mut`s to different fields at once.
     let mut pair = Account { balance: 0 };
@@ -28,7 +29,7 @@ fn main() with panic {
     let b = &mut other.balance;
     *a += 1;
     *b += 2;
-    print(pair.balance + other.balance); // expect: 3
+    out.line(&(pair.balance + other.balance))?; // expect: 3
 
     // A borrow in a loop, a new one each time round.
     let mut total: i64 = 0;
@@ -38,7 +39,7 @@ fn main() with panic {
         *t += i;
         i += 1;
     }
-    print(total);               // expect: 6
+    out.line(&total)?;               // expect: 6
 
     // In one branch only.
     let mut y: i64 = 5;
@@ -46,7 +47,8 @@ fn main() with panic {
     if *s > 3 {
         y = 0;
     } else {
-        print(*s);
+        out.line(&(*s))?;
     }
-    print(y);                   // expect: 0
+    out.line(&y)?;                   // expect: 0
+    Result::Ok(())
 }

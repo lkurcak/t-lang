@@ -7,8 +7,10 @@ fn two(a: &Fd, b: Fd) -> i64 with panic {
     a.n + n
 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let x = Fd { n: 1 };
-    print(two(&x, x));
+    out.line(&two(&x, x))?;
+    Result::Ok(())
 }
 // error: use of moved value `x`

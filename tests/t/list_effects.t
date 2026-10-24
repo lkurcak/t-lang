@@ -2,6 +2,8 @@
 // nor do `len`, `get` or `pop`. Only what may grow the buffer allocates.
 use alloc::list::List;
 use alloc::raw::RawBuf;
+use alloc::string::String;
+use core::fmt::Write;
 
 fn empty() -> List<i64> { List::new() }
 
@@ -20,24 +22,29 @@ fn drain(l: &mut List<i64>) -> i64 {
     n
 }
 
-fn main() with {alloc, panic} {
+fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+    let mut stdout = String::new();
     let mut l = empty();
-    print_bool(first(&l).is_none()); // expect: true
+    stdout.line(&first(&l).is_none()); // expect: true
     l.push(5);
     l.push(6);
-    print(first(&l).unwrap()); // expect: 5
-    print(drain(&mut l));      // expect: 2
+    stdout.line(&first(&l).unwrap()); // expect: 5
+    stdout.line(&drain(&mut l));      // expect: 2
     l.free();
 
     // An empty buffer has no slots, and grows as any other.
     let mut b: RawBuf<i64> = RawBuf::empty();
-    print(b.cap()); // expect: 0
+    stdout.line(&b.cap()); // expect: 0
     b.grow(1);
     // SAFETY: slot 0 is uninitialised, then holds the 8, which is read out
     // before the buffer is freed.
     unsafe {
         b.write(0, 8);
-        print(b.read(0)); // expect: 8
+        stdout.line(&b.read(0)); // expect: 8
         b.free();
     }
+    let mut out = os.stdout;
+    let w = out.put(&stdout.as_str());
+    stdout.free();
+    w
 }

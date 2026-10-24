@@ -10,7 +10,9 @@ fn count(n: i64) -> i64 {
     steps
 }
 
-fn main() {
-    print(count(5)); // expect: 5
-    print(count(-3)); // expect: 0
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&count(5))?; // expect: 5
+    out.line(&count(-3))?; // expect: 0
+    Result::Ok(())
 }

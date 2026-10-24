@@ -12,10 +12,10 @@ fn f(x: &i64, n: i64) -> i64 with panic { *x + n }
 fn main() with {alloc, panic} {
     let b1 = Box::new(1);
     let mut r = &b1;
-    print(f(&**id_ref(r), {
+    let _v = f(&**id_ref(r), {
         let tmp = Box::new(9);
         r = &tmp;
         0
-    }));
+    });
 }
 // error: `tmp` doesn't live long enough

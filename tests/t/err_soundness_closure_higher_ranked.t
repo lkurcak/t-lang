@@ -6,9 +6,11 @@ fn app<F: Fn(&i64) -> &i64 + Discard>(f: F) -> i64 {
     *f(&y)
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let n = 2;
     let r = &n;
-    print(app(|_x| r));
+    out.line(&app(|_x| r))?;
+    Result::Ok(())
 }
 // error: this closure's result has the lifetime of `_x`, which each call picks, so it could be any, even `'static`, but this only lives as long as the captured `r`

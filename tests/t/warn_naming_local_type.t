@@ -4,12 +4,14 @@
 #[derive(Discard)]
 struct my_pair { a: i64, b: i64 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     #[derive(Discard)]
     struct my_pair { a: bool }
     let p = my_pair { a: true };
-    print_bool(p.a);
-    print(other().b);
+    out.line(&p.a)?;
+    out.line(&other().b)?;
+    Result::Ok(())
 }
 
 fn other() -> my_pair {

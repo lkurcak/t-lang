@@ -15,8 +15,10 @@ impl Tr for () {
 
 fn mk<T: Tr>(x: T::Out) -> T::Out { x }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let x: i64 = mk(1);
-    print(x);
+    out.line(&x)?;
+    Result::Ok(())
 }
 // error: cannot infer

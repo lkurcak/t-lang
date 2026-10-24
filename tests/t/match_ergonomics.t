@@ -31,27 +31,29 @@ fn as_ref<T>(o: &Option<T>) -> Option<&T> {
     }
 }
 
-fn main() with {alloc, panic} {
+fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+    let mut stdout = os.stdout;
     let o = Option::Some(Box::new(7));
-    print(peek(&o));            // expect: 7
+    stdout.line(&peek(&o))?;            // expect: 7
     // Nothing was moved out of `o`, so again:
-    print(peek(&o));            // expect: 7
+    stdout.line(&peek(&o))?;            // expect: 7
     let mut n = Option::Some(1);
     bump(&mut n);
     bump(&mut n);
     match n {
-        Option::Some(v) => print(v), // expect: 3
+        Option::Some(v) => stdout.line(&v)?, // expect: 3
         Option::None => {}
     }
     let w = Wrapper { inner: Option::Some(Box::new(9)) };
     match &w.inner {
-        Option::Some(b) => print(**b), // expect: 9
+        Option::Some(b) => stdout.line(&(**b))?, // expect: 9
         Option::None => {}
     }
     match as_ref(&w.inner) {
-        Option::Some(b) => print(**b), // expect: 9
+        Option::Some(b) => stdout.line(&(**b))?, // expect: 9
         Option::None => {}
     }
     let Wrapper { inner } = &w;
-    print(peek(inner));         // expect: 9
+    stdout.line(&peek(inner))?;         // expect: 9
+    Result::Ok(())
 }

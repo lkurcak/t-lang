@@ -14,16 +14,18 @@ fn zero<T: Signed>() -> T { !0 + 1 }
 
 fn pred<T: Unsigned>(x: T) -> T { if x > 0 { x - 1 } else { x } }
 
-fn main() with panic {
-    print(byte_max::<u16>());           // expect: 255
-    print(minus_one::<i32>());          // expect: -1
-    print_bool(not_negative(3u8));      // expect: true
-    print(zero::<i16>());               // expect: 0
-    print(pred(0u64));                  // expect: 0
-    print(pred(7usize));                // expect: 6
-    print(abs(-5i16));                  // expect: 5
-    print(checked_abs(-128i8).unwrap_or(0)); // expect: 0
-    print(checked_abs(-127i8).unwrap_or(0)); // expect: 127
-    print(wrapping_abs(-128i8));        // expect: -128
-    print(wrapping_abs(-3i64));         // expect: 3
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&(byte_max::<u16>()))?;           // expect: 255
+    out.line(&(minus_one::<i32>()))?;          // expect: -1
+    out.line(&not_negative(3u8))?;      // expect: true
+    out.line(&(zero::<i16>()))?;               // expect: 0
+    out.line(&pred(0u64))?;                  // expect: 0
+    out.line(&pred(7usize))?;                // expect: 6
+    out.line(&abs(-5i16))?;                  // expect: 5
+    out.line(&checked_abs(-128i8).unwrap_or(0))?; // expect: 0
+    out.line(&checked_abs(-127i8).unwrap_or(0))?; // expect: 127
+    out.line(&wrapping_abs(-128i8))?;        // expect: -128
+    out.line(&wrapping_abs(-3i64))?;         // expect: 3
+    Result::Ok(())
 }

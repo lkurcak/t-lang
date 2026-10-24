@@ -1,10 +1,12 @@
 // `into_bytes` uses the string up.
 use alloc::string::String;
 
-fn main() with alloc {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
+    let mut out = os.stdout;
     let s = String::from("a");
     let l = s.into_bytes();
-    print_str(s.as_str());
+    out.line(&s.as_str())?;
     l.free();
+    Result::Ok(())
 }
 // error: use of moved value `s`

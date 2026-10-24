@@ -4,7 +4,8 @@
 #[derive(Discard)]
 enum Opt { None, Some(i64) }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let a = 1;
     let b = 2;
     let f = |b| {
@@ -16,13 +17,14 @@ fn main() with panic {
     };
     let a = 100;
     let _unused = Opt::None;
-    print(f(5) + a);                // expect: 115
+    out.line(&(f(5) + a))?;                // expect: 115
     // Nested closures capture through the outer one.
     let g = || { let h = || b; h() };
-    print(g());                     // expect: 2
+    out.line(&g())?;                     // expect: 2
     // Top-level functions aren't captured; they're always there.
     let h = || double(b);
-    print(h());                     // expect: 4
+    out.line(&h())?;                     // expect: 4
+    Result::Ok(())
 }
 
 fn double(x: i64) -> i64 with panic { x * 2 }

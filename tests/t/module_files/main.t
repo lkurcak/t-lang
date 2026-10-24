@@ -12,13 +12,18 @@ mod inner {
 
 use geo::Point;
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let p = geo::origin();
-    print(p.x);                    // expect: 0
+    let x = p.x;
     let q: Point = geo::at(3, 4);
-    print(geo::area::of(&q));      // expect: 12
-    print(shapes::square(5));      // expect: 25
-    print(inner::deep::answer());  // expect: 42
-    print(geo::close(q));          // expect: 7
-    print(geo::close(p));          // expect: 0
+    let area = geo::area::of(&q);
+    let cq = geo::close(q);
+    let cp = geo::close(p);
+    out.line(&x)?;                      // expect: 0
+    out.line(&area)?;                   // expect: 12
+    out.line(&shapes::square(5))?;      // expect: 25
+    out.line(&inner::deep::answer())?;  // expect: 42
+    out.line(&cq)?;                     // expect: 7
+    out.line(&cp)                       // expect: 0
 }

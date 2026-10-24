@@ -7,10 +7,12 @@ fn f(n: i64) -> i64 {
         _ => 4,
     }
 }
-fn main() {
-    print(f(5));
-    print(f(15));
-    print(f(21));
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&f(5))?;
+    out.line(&f(15))?;
+    out.line(&f(21))?;
+    Result::Ok(())
 }
 // warning: unreachable pattern
 // expect: 1

@@ -18,11 +18,13 @@ impl<'a> Write for Keep<'a> {
     fn write_char(&mut self, _c: char) -> Result<(), !> { Result::Ok(()) }
 }
 
-fn main() with alloc {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
+    let mut out = os.stdout;
     let mut k = Keep { last: "" };
     let s = String::from("gone");
     k.write_str(s.as_str());
     s.free();
-    print_str(k.last);
+    out.line(&k.last)?;
+    Result::Ok(())
 }
 // error: lifetime may not live long enough: this needs the lifetime of `s` to outlive `'a`, and the signature doesn't say it does

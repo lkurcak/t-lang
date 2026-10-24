@@ -16,11 +16,13 @@ fn sign(n: i8) -> i8 {
     }
 }
 
-fn main() {
-    print(kind(10));    // expect: 0
-    print(kind(65));    // expect: 1
-    print(kind(255));   // expect: 2
-    print(sign(-128));  // expect: -1
-    print(sign(0));     // expect: 0
-    print(sign(5));     // expect: 1
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&kind(10))?;    // expect: 0
+    out.line(&kind(65))?;    // expect: 1
+    out.line(&kind(255))?;   // expect: 2
+    out.line(&sign(-128))?;  // expect: -1
+    out.line(&sign(0))?;     // expect: 0
+    out.line(&sign(5))?;     // expect: 1
+    Result::Ok(())
 }

@@ -42,19 +42,21 @@ fn unwrap_or(o: Opt, default: i64) -> i64 {
     }
 }
 
-fn main() with panic {
-    print(describe(Pixel { color: Color::Red, bright: true }));    // expect: 1
-    print(describe(Pixel { color: Color::Red, bright: false }));   // expect: 2
-    print(describe(Pixel { color: Color::Blue, bright: false }));  // expect: 3
-    print(describe(Pixel { color: Color::Green, bright: true }));  // expect: 4
-    print(describe(Pixel { color: Color::Blue, bright: true }));   // expect: 5
-    print(classify(0));         // expect: 100
-    print(classify(-1));        // expect: 200
-    print(classify(21));        // expect: 42
-    print(both(true, false));   // expect: 2
-    print(unwrap_or(Opt::Some(7), 0));  // expect: 7
-    print(unwrap_or(Opt::None, 9));     // expect: 9
-    match () { () => print(1i64) }         // expect: 1
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&describe(Pixel { color: Color::Red, bright: true }))?;    // expect: 1
+    out.line(&describe(Pixel { color: Color::Red, bright: false }))?;   // expect: 2
+    out.line(&describe(Pixel { color: Color::Blue, bright: false }))?;  // expect: 3
+    out.line(&describe(Pixel { color: Color::Green, bright: true }))?;  // expect: 4
+    out.line(&describe(Pixel { color: Color::Blue, bright: true }))?;   // expect: 5
+    out.line(&classify(0))?;         // expect: 100
+    out.line(&classify(-1))?;        // expect: 200
+    out.line(&classify(21))?;        // expect: 42
+    out.line(&both(true, false))?;   // expect: 2
+    out.line(&unwrap_or(Opt::Some(7), 0))?;  // expect: 7
+    out.line(&unwrap_or(Opt::None, 9))?;     // expect: 9
+    match () { () => out.line(&1i64)? }         // expect: 1
     let k = match Opt::Some(3) { Opt::Some(n) => { let m = n * n; m } Opt::None => 0 };
-    print(k);                           // expect: 9
+    out.line(&k)?;                           // expect: 9
+    Result::Ok(())
 }

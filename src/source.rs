@@ -33,11 +33,10 @@ impl File {
         Span::new(self.start, self.start + self.len)
     }
 
-    /// Is it one of a library's built into the compiler, the core
-    /// library's or the alloc library's, rather than the program's own?
+    /// Is it one of a library's built into the compiler, such as the core
+    /// library's, rather than the program's own?
     pub fn is_library(&self) -> bool {
-        self.path.starts_with(crate::load::CORE_DIR)
-            || self.path.starts_with(crate::load::ALLOC_DIR)
+        (crate::load::LIBRARIES.iter()).any(|(.., dir)| self.path.starts_with(dir))
     }
 }
 

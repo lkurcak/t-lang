@@ -1,5 +1,7 @@
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let o: Option<i64> = Option::None;
-    print(o.unwrap());
+    out.line(&o.unwrap())?;
+    Result::Ok(())
 }
 // error: runtime error: panicked

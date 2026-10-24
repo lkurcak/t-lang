@@ -13,10 +13,12 @@ fn g(b: bool) -> i64 {
         false => 2,
     }
 }
-fn main() {
-    print(f(5));
-    print(f(6));
-    print(g(true));
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&f(5))?;
+    out.line(&f(6))?;
+    out.line(&g(true))?;
+    Result::Ok(())
 }
 // warning: this range can be narrowed to `6..=10`
 // warning: unreachable pattern

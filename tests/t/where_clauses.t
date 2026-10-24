@@ -43,8 +43,10 @@ fn apply<effect e, F>(f: F, x: i64) -> i64 with e where F: Fn(i64) -> i64 with e
     f(x)
 }
 
-fn main() with panic {
-    print(Nat { n: 0 }.skip(5)); // expect: 5
-    print(pick(1i64, 2, false));    // expect: 2
-    print(apply(|x| x * 2, 21)); // expect: 42
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&(Nat { n: 0 }.skip(5)))?; // expect: 5
+    out.line(&pick(1i64, 2, false))?;    // expect: 2
+    out.line(&apply(|x| x * 2, 21))?; // expect: 42
+    Result::Ok(())
 }

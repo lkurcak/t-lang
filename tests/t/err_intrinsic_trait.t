@@ -3,4 +3,4 @@
 trait Magic {}
 
 fn main() {}
-// error: only `core` and `alloc` can declare an intrinsic
+// error: only `core`, `alloc` and `std` can declare an intrinsic

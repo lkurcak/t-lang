@@ -4,5 +4,5 @@ mod m {
 
 use m::secret;
 
-fn main() { print(secret()); }
+fn main(os: std::Os) -> Result<(), std::io::Error> { let mut out = os.stdout; out.line(&secret())?;  Result::Ok(()) }
 // error: `secret` is private to `m`

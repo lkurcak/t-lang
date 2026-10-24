@@ -11,7 +11,9 @@ impl Tr for Fd {
     fn get(&self) -> i64 { self.n }
 }
 
-fn main() {
-    print(Fd { n: 1 }.consume());
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&(Fd { n: 1 }.consume()))?;
+    Result::Ok(())
 }
 // error: `self` is never used up, and its type, `Self`, isn't `Discard`

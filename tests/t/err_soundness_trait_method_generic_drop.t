@@ -13,7 +13,9 @@ impl Sink for S {
     fn put<T>(&self, _x: T) -> i64 { 0 }
 }
 
-fn main() {
-    print(S {}.put(Fd { n: 1 }));
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&(S {}.put(Fd { n: 1 })))?;
+    Result::Ok(())
 }
 // error: `_x` is never used up, and its type, `T`, isn't `Discard`; to let it be thrown away, add a bound: `T: Discard`

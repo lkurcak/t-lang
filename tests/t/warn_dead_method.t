@@ -8,5 +8,5 @@ impl P {
 // types.
 trait Show { fn show(&self); }
 impl Show for P { fn show(&self) {} }
-fn main() { print(P { x: 1 }.used()); } // expect: 1
+fn main(os: std::Os) -> Result<(), std::io::Error> { let mut out = os.stdout; out.line(&(P { x: 1 }.used()))?;  Result::Ok(()) } // expect: 1
 // warning: method `unused` is never used

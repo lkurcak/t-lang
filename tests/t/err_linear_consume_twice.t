@@ -8,10 +8,12 @@ fn close(fd: Fd) -> i64 {
     n
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let fd = open(1);
     let Fd { n } = fd;
-    print(n);
-    print(close(fd));
+    out.line(&n)?;
+    out.line(&close(fd))?;
+    Result::Ok(())
 }
 // error: use of moved value `fd`

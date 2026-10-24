@@ -13,7 +13,9 @@ impl Sink for S {
     fn put<T: Discard>(&self, _x: T) -> i64 { 0 }
 }
 
-fn main() {
-    print(S {}.put(Fd { n: 1 }));
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&(S {}.put(Fd { n: 1 })))?;
+    Result::Ok(())
 }
 // error: method `put` doesn't match its declaration in trait `Sink`: its bounds should be none

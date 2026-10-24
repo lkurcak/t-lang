@@ -8,10 +8,12 @@ fn close(fd: Fd) -> i64 {
     n
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let fd = open(1);
     match &fd {
-        Fd { n } => print(*n),
+        Fd { n } => out.line(&(*n))?,
     }
+    Result::Ok(())
 }
 // error: `fd` is never used up

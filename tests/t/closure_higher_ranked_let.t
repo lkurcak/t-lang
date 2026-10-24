@@ -9,25 +9,26 @@ fn twice(f: fn(&i64) -> &i64) -> i64 with panic {
     *r + *f(&b)
 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let id = |x: &i64| -> &i64 { x };
     let a = 3;
     let long = id(&a);
     {
         let b = 4;
-        print(*id(&b));             // expect: 4
+        out.line(&(*id(&b)))?;             // expect: 4
     }
-    print(*long);                   // expect: 3
-    print(twice(id));               // expect: 3
+    out.line(&(*long))?;                   // expect: 3
+    out.line(&twice(id))?;               // expect: 3
 
     // One that captures, and one that changes what it captures.
     let k: i64 = 10;
     let pick = |x: &i64| -> &i64 { if k > 0 { x } else { x } };
     {
         let c = 5;
-        print(*pick(&c));           // expect: 5
+        out.line(&(*pick(&c)))?;           // expect: 5
     }
-    print(*pick(&a));               // expect: 3
+    out.line(&(*pick(&a)))?;               // expect: 3
     let mut calls: i64 = 0;
     let mut count = |x: &i64| -> &i64 {
         calls += 1;
@@ -35,10 +36,10 @@ fn main() with panic {
     };
     {
         let d = 6;
-        print(*count(&d));          // expect: 6
+        out.line(&(*count(&d)))?;          // expect: 6
     }
-    print(*count(&a));              // expect: 3
-    print(calls);                   // expect: 2
+    out.line(&(*count(&a)))?;              // expect: 3
+    out.line(&calls)?;                   // expect: 2
 
     // A closure in a closure: each has a lifetime of its own.
     let outer = |x: &i64| -> i64 {
@@ -46,7 +47,7 @@ fn main() with panic {
         let e = 7;
         *inner(x) + *inner(&e)
     };
-    print(outer(&a));               // expect: 10
+    out.line(&outer(&a))?;               // expect: 10
 
     // One that captures a parameter of another's, of a lifetime that
     // closure is generic over, and returns it.
@@ -56,7 +57,8 @@ fn main() with panic {
     };
     {
         let f = 8;
-        print(*through(&f));        // expect: 8
+        out.line(&(*through(&f)))?;        // expect: 8
     }
-    print(*through(&a));            // expect: 3
+    out.line(&(*through(&a)))?;            // expect: 3
+    Result::Ok(())
 }

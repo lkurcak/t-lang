@@ -4,7 +4,8 @@
 #[derive(Discard)]
 enum Opt<F> { None, Some(F) }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let mut v = Opt::None;
     let mut i: i64 = 0;
     loop {
@@ -14,8 +15,9 @@ fn main() with panic {
         if i == 2 { break; }
     }
     match v {
-        Opt::Some(f) => print(f()),
+        Opt::Some(f) => out.line(&f())?,
         Opt::None => {}
     }
+    Result::Ok(())
 }
 // error: `n` doesn't live long enough

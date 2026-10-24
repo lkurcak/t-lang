@@ -5,8 +5,10 @@ use core::cmp::Eq as Same;
 #[derive(core::mem::Discard, core::mem::Copy, Same)]
 struct P { x: i64 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let p = P { x: 1 };
     let q = p;
-    print_bool(p == q); // expect: true
+    out.line(&(p == q))?; // expect: true
+    Result::Ok(())
 }

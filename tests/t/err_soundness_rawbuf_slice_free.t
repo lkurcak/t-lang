@@ -10,7 +10,7 @@ fn main() with alloc {
         b.write(0, 5);
         let s = b.slice(0, 1);
         b.read(0);
-        print(s.len());
+        let _v = s.len();
         b.free();
     }
 }

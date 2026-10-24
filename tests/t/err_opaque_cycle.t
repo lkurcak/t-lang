@@ -5,5 +5,5 @@ fn f(n: i64) -> impl Fn() -> i64 with panic + Discard with panic {
     move || g() + 1
 }
 
-fn main() with panic { print(f(1)()); }
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic { let mut out = os.stdout; out.line(&f(1)())?;  Result::Ok(()) }
 // error: the type `f` returns would contain itself

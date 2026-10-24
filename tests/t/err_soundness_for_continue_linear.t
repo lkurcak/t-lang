@@ -20,12 +20,14 @@ impl Iterator for Fds {
     }
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     for fd in (Fds { left: 2 }) {
         if fd.n == 1 {
             continue;
         }
-        print(close(fd));
+        out.line(&close(fd))?;
     }
+    Result::Ok(())
 }
 // error: `fd` is never used up

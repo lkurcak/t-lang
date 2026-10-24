@@ -20,8 +20,10 @@ fn radius(s: Shape) -> i64 {
     }
 }
 
-fn main() {
-    print(radius(Shape::Circle(2))); // expect: 2
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&radius(Shape::Circle(2)))?; // expect: 2
+    Result::Ok(())
 }
 // warning: variant `Shape::Ref` is never constructed
 // warning: variant `Shape::Boxed` is never constructed

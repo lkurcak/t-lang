@@ -7,10 +7,12 @@ fn take(b: B) -> i64 {
     x
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let b = B { x: 1 };
     let f = || take(b);
-    print(f());
-    print(f());
+    out.line(&f())?;
+    out.line(&f())?;
+    Result::Ok(())
 }
 // error: use of moved value `f`

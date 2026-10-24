@@ -19,11 +19,13 @@ impl Bag {
 
 fn wrap(n: i64) -> Option<Option<i64>> { Option::Some(if n > 0 { Option::Some(n) } else { Option::None }) }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     fn twice(n: i64) -> Option<i64> with panic { Option::Some(wrap(n)?? * 2) }
     let bag = Bag { n: 10 };
-    print(bag.take_all(1..4).unwrap_or(Bag { n: -1 }).n); // expect: 4
-    print(bag.take_all(3..6).unwrap_or(Bag { n: -1 }).n); // expect: -1
-    print(twice(4).unwrap_or(0)); // expect: 8
-    print(twice(-4).unwrap_or(0)); // expect: 0
+    out.line(&bag.take_all(1..4).unwrap_or(Bag { n: -1 }).n)?; // expect: 4
+    out.line(&bag.take_all(3..6).unwrap_or(Bag { n: -1 }).n)?; // expect: -1
+    out.line(&twice(4).unwrap_or(0))?; // expect: 8
+    out.line(&twice(-4).unwrap_or(0))?; // expect: 0
+    Result::Ok(())
 }

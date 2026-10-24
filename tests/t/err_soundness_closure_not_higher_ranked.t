@@ -18,7 +18,8 @@ impl<P: Fn(&i64) -> &i64> Call for Wrap<P> {
     }
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut stdout = os.stdout;
     let y = 1;
     let out;
     {
@@ -27,6 +28,7 @@ fn main() {
         let w = Wrap { p: |_x: &i64| r };
         out = w.call(&y);
     }
-    print(*out);
+    stdout.line(&(*out))?;
+    Result::Ok(())
 }
 // error: doesn't implement `Call`

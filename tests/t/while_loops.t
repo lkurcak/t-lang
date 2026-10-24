@@ -13,12 +13,14 @@ fn fib(n: i64) -> i64 with panic {
     a
 }
 
-fn main() with panic {
-    print(fib(10));             // expect: 55
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&fib(10))?;             // expect: 55
     let mut n: i64 = 0;
     while n < 3 { n += 1; }
-    print(n);                   // expect: 3
+    out.line(&n)?;                   // expect: 3
     let mut never = true;
     while false { never = false; }
-    print_bool(never);          // expect: true
+    out.line(&never)?;          // expect: true
+    Result::Ok(())
 }

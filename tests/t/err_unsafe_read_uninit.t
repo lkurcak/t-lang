@@ -8,7 +8,7 @@ fn main() with alloc {
     // SAFETY: wrong: slot 1 was never written.
     unsafe {
         b.write(0, 1);
-        print(b.read(1));
+        let _v = b.read(1);
         b.read(0);
         b.free();
     }

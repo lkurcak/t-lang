@@ -10,7 +10,8 @@ impl<'a> Leak for Pair<'a, 'a> {
     fn leak(self) -> Pair<'a, 'a> { Pair { long: self.short, short: self.short } }
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let outer = 1;
     let l;
     {
@@ -18,6 +19,7 @@ fn main() {
         let p = Pair { long: &outer, short: &inner };
         l = p.leak().long;
     }
-    print(*l);
+    out.line(&(*l))?;
+    Result::Ok(())
 }
 // error: `Pair<'a, 'a>` says two lifetimes are the same, but an impl of a trait must hold at every lifetime, as finding the impl for a type doesn't look at lifetimes

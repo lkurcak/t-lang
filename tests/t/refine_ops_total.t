@@ -22,14 +22,16 @@ fn sum_small(a: { v: i64 | v >= 0 && v <= 1000 }, b: { v: i64 | v >= -1000 && v 
     a + b + a * 3 - b
 }
 
-fn main() {
-    print(inc(41)); // expect: 42
-    print(neg_five()); // expect: -5
-    print(half(9)); // expect: 4
-    print(guarded(10, 0)); // expect: 0
-    print(guarded(10, 3)); // expect: 3
-    print_bool(short_circuit(10, 0)); // expect: false
-    print_bool(short_circuit(10, 3)); // expect: true
-    print(sum_small(10, -5)); // expect: 40
-    print(1i64 + 2 * 3); // expect: 7
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&inc(41))?; // expect: 42
+    out.line(&neg_five())?; // expect: -5
+    out.line(&half(9))?; // expect: 4
+    out.line(&guarded(10, 0))?; // expect: 0
+    out.line(&guarded(10, 3))?; // expect: 3
+    out.line(&short_circuit(10, 0))?; // expect: false
+    out.line(&short_circuit(10, 3))?; // expect: true
+    out.line(&sum_small(10, -5))?; // expect: 40
+    out.line(&(1i64 + 2 * 3))?; // expect: 7
+    Result::Ok(())
 }

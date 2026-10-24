@@ -7,13 +7,15 @@ fn first(a: &i64, _n: i64) -> i64 { *a }
 
 fn get(r: &i64) -> i64 { *r }
 
-fn main() with alloc {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
+    let mut out = os.stdout;
     let one = Box::new(1);
     let two = Box::new(2);
     let mut rb = &one;
-    print(first(rb, { rb = &two; 0 })); // expect: 2
+    out.line(&first(rb, { rb = &two; 0 }))?; // expect: 2
     let mut b = Box::new(3);
-    print(get(&mut b));                 // expect: 3
+    out.line(&get(&mut b))?;                 // expect: 3
     b = Box::new(4);
-    print(*b);                          // expect: 4
+    out.line(&(*b))?;                          // expect: 4
+    Result::Ok(())
 }

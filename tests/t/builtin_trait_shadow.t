@@ -15,8 +15,10 @@ impl Copy for S {
 // Copying out from behind a reference needs core's `Copy`.
 fn get<T: core::mem::Copy>(x: &T) -> T { *x }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let s = S { n: 7 };
-    print(s.copy()); // expect: 7
-    print(get(&3i64)); // expect: 3
+    out.line(&s.copy())?; // expect: 7
+    out.line(&get(&3i64))?; // expect: 3
+    Result::Ok(())
 }

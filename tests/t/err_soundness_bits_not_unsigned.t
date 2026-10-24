@@ -4,7 +4,9 @@ fn f(x: { v: u8 | v == 0 }) -> u8 {
     if !x == 255 { x - 1 } else { x }
 }
 
-fn main() {
-    print(f(0));
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&f(0))?;
+    Result::Ok(())
 }
 // error: `-` may panic, but `f` doesn't say `with panic`

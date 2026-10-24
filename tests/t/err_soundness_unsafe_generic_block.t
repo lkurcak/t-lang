@@ -11,7 +11,7 @@ fn call<effect e, F: FnOnce() -> i64 with e>(f: F) -> i64 with e {
 
 fn main() with {alloc, panic} {
     let mut b: RawBuf<i64> = RawBuf::new(1);
-    print(call(|| b.read(0)));
+    let _v = call(|| b.read(0));
     // SAFETY: there's nothing in the slot to leave behind.
     unsafe { b.free() };
 }

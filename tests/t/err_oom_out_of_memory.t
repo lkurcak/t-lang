@@ -9,8 +9,10 @@ fn give_up(n: i64) -> i64 with alloc {
     n
 }
 
-fn main() with alloc {
-    print(give_up(1)); // expect: 1
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
+    let mut out = os.stdout;
+    out.line(&give_up(1))?; // expect: 1
     give_up(0);
+    Result::Ok(())
 }
 // error: runtime error: out of memory

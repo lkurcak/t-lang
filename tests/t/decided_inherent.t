@@ -6,8 +6,10 @@ impl<U, F: Fn() -> U> Thunk<F> {
     fn call(&self) -> U { (self.f)() }
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let k: i64 = 5;
     let t = Thunk { f: || k };
-    print(t.call());    // expect: 5
+    out.line(&t.call())?;    // expect: 5
+    Result::Ok(())
 }

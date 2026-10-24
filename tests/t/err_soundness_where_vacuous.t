@@ -10,7 +10,9 @@ impl Tr for Fd {
     fn gone(self) -> i64 where Self: Discard { 0 }
 }
 
-fn main() {
-    print(Fd { n: 1 }.gone());
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&(Fd { n: 1 }.gone()))?;
+    Result::Ok(())
 }
 // error: `gone` needs its `Self` to implement `Discard`, and `Fd` doesn't

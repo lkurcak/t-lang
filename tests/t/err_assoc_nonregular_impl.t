@@ -20,7 +20,9 @@ impl<U> Tr for W<U> {
 
 fn size(_s: &S<W<i64>>) -> i64 { 0 }
 
-fn main() {
-    print(1);
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&1)?;
+    Result::Ok(())
 }
 // error: polymorphic recursion

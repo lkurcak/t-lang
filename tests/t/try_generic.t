@@ -5,9 +5,11 @@ fn again<T, E>(a: Result<T, E>) -> Result<T, E> {
     Result::Ok(x)
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let r: Result<i64, bool> = again(Result::Ok(1));
-    print(r.unwrap_or(0)); // expect: 1
+    out.line(&r.unwrap_or(0))?; // expect: 1
     let r: Result<i64, bool> = again(Result::Err(true));
-    print(r.unwrap_or(0)); // expect: 0
+    out.line(&r.unwrap_or(0))?; // expect: 0
+    Result::Ok(())
 }

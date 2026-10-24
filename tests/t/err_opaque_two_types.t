@@ -4,8 +4,10 @@ fn a() -> impl Fn() -> i64 + Discard { || 1 }
 
 fn b() -> impl Fn() -> i64 + Discard { || 2 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let f = if true { a() } else { b() };
-    print(f());
+    out.line(&f())?;
+    Result::Ok(())
 }
 // error: each `impl` type is a type of its own, even if two look the same

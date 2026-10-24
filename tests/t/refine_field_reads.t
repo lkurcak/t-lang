@@ -11,9 +11,11 @@ fn g(r: &P) -> i64 {
     if r.x > 0 { 10 / r.x } else { 0 }
 }
 
-fn main() {
-    print(f(P { x: 2 })); // expect: 5
-    print(g(&P { x: 5 })); // expect: 2
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&f(P { x: 2 }))?; // expect: 5
+    out.line(&g(&P { x: 5 }))?; // expect: 2
     let p = P { x: 2 };
-    print(10 / p.x); // expect: 5
+    out.line(&(10 / p.x))?; // expect: 5
+    Result::Ok(())
 }

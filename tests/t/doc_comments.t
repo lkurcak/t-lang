@@ -34,7 +34,9 @@ fn area(s: Shape) -> i64 with panic {
 }
 
 //// Four slashes make a plain comment, as in Rust.
-fn main() with panic {
-    print(sum(Pair { a: 1, b: 2 }));                    // expect: 3
-    print(area(Shape::Circle(2)) + area(Shape::Empty)); // expect: 12
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&sum(Pair { a: 1, b: 2 }))?;                    // expect: 3
+    out.line(&(area(Shape::Circle(2)) + area(Shape::Empty)))?; // expect: 12
+    Result::Ok(())
 }

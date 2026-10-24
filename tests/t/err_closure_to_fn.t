@@ -2,8 +2,10 @@
 // captures. Take it as a type parameter that implements `Fn`.
 fn apply(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let k = 10;
-    print(apply(|x| x * k, 4));
+    out.line(&apply(|x| x * k, 4))?;
+    Result::Ok(())
 }
 // error: expected `fn(i64) -> i64`, found a closure that captures `k`

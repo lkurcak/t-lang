@@ -16,9 +16,11 @@ impl<T: Show> Eq for Q<T> {
 #[derive(Discard, Eq)]
 struct W<T> { q: Q<T> }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let a = W { q: Q { x: 1i64 } };
     let b = W { q: Q { x: 1 } };
-    print_bool(a == b);
+    out.line(&(a == b))?;
+    Result::Ok(())
 }
 // error: cannot compare `W<i64>` with `==`: that needs `i64: Show`

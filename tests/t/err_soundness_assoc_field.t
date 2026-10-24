@@ -14,7 +14,8 @@ impl<'a, 'b> Second for Pair<'a, 'b> {
 #[derive(Discard)]
 struct Hold<T: Second> { v: T::Out, t: T }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let long = 1;
     let r;
     {
@@ -22,6 +23,7 @@ fn main() {
         let h: Hold<Pair> = Hold { v: &short, t: Pair { a: &long, b: &short } };
         r = h.v;
     }
-    print(*r);
+    out.line(&(*r))?;
+    Result::Ok(())
 }
 // error: `short` doesn't live long enough

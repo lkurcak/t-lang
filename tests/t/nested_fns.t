@@ -1,8 +1,9 @@
 // A `fn` can be declared in any block. It means what it would at the top
 // level; only its name is scoped, to the whole block it's in.
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     // Used before it's declared: the name is in scope in all the block.
-    print(double(1)); // expect: 2
+    out.line(&double(1))?; // expect: 2
 
     /// Doubles `x`.
     fn double(x: i64) -> i64 with panic { x * 2 }
@@ -11,7 +12,7 @@ fn main() with panic {
     fn fact(n: i64) -> i64 with panic {
         if n == 0 { 1 } else { n * fact(n - 1) }
     }
-    print(fact(5)); // expect: 120
+    out.line(&fact(5))?; // expect: 120
 
     // Mutually recursive.
     fn is_even(n: i64) -> bool with panic {
@@ -20,13 +21,13 @@ fn main() with panic {
     fn is_odd(n: i64) -> bool with panic {
         if n == 0 { false } else { is_even(n - 1) }
     }
-    print_bool(is_even(10)); // expect: true
-    print_bool(is_odd(10));  // expect: false
+    out.line(&is_even(10))?; // expect: true
+    out.line(&is_odd(10))?;  // expect: false
 
     // Generic, and used at two types.
     fn twice<T>(f: fn(T) -> T with panic, x: T) -> T with panic { f(f(x)) }
-    print(twice(double, 3));                 // expect: 12
-    print_bool(twice::<bool>(|b| !b, true)); // expect: true
+    out.line(&twice(double, 3))?;                 // expect: 12
+    out.line(&(twice::<bool>(|b| !b, true)))?; // expect: true
 
     // Nested in a nested `fn`, and in a closure's block.
     fn sum_to(n: i64) -> i64 with panic {
@@ -35,19 +36,20 @@ fn main() with panic {
         }
         go(1, 0, n)
     }
-    print(sum_to(4)); // expect: 10
+    out.line(&sum_to(4))?; // expect: 10
     let k = 3;
     let add_k = |x: i64| {
         fn inc(x: i64) -> i64 with panic { x + 1 }
         inc(x) + k
     };
-    print(add_k(1)); // expect: 5
+    out.line(&add_k(1))?; // expect: 5
 
     // A function value like any other. It captures nothing, so unlike a
     // closure that captures, it can be returned, and stored.
     let f = pick(true);
-    print(f(7));  // expect: 14
-    print(top()); // expect: 1
+    out.line(&f(7))?;  // expect: 14
+    out.line(&top())?; // expect: 1
+    Result::Ok(())
 }
 
 fn pick(b: bool) -> fn(i64) -> i64 with panic {

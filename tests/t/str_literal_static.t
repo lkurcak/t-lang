@@ -7,9 +7,11 @@ fn greeting(polite: bool) -> &'static str {
 #[derive(Discard)]
 struct Named { name: &'static str }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let n = Named { name: greeting(true) };
-    print_str(n.name); // expect: good morning
-    print_str(greeting(false)); // expect: hi
-    print(n.name.len()); // expect: 12
+    out.line(&n.name)?; // expect: good morning
+    out.line(&greeting(false))?; // expect: hi
+    out.line(&n.name.len())?; // expect: 12
+    Result::Ok(())
 }

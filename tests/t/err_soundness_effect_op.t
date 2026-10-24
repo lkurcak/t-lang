@@ -2,7 +2,9 @@
 // panic: `fn main()` with no `with` promises the program never does.
 fn next(n: i64) -> i64 { n + 1 }
 
-fn main() {
-    print(next(9223372036854775807));
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&next(9223372036854775807))?;
+    Result::Ok(())
 }
 // error: `+` may panic, but `next` doesn't say `with panic`

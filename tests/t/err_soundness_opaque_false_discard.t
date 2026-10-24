@@ -9,5 +9,5 @@ fn close(fd: Fd) -> i64 {
 
 fn once(fd: Fd) -> impl FnOnce() -> i64 + Discard { move || close(fd) }
 
-fn main() { print(once(Fd { n: 1 })()); }
+fn main(os: std::Os) -> Result<(), std::io::Error> { let mut out = os.stdout; out.line(&once(Fd { n: 1 })())?;  Result::Ok(()) }
 // error: doesn't implement `Discard`, which `once`'s return type says

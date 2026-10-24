@@ -7,8 +7,10 @@ mod m {
     }
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let p = m::P { n: 1 };
-    print(m::P::secret(&p));
+    out.line(&m::P::secret(&p))?;
+    Result::Ok(())
 }
 // error: method `secret` of `P` is private to `m`
