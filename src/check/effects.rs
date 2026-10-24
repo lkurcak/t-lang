@@ -399,6 +399,16 @@ impl Checker {
                     effects_text(&Type::effects([first.clone()])),
                 ),
             };
+            // An impl's method can say no more than its trait's (see
+            // `impls`), so saying it there isn't a fix.
+            if self.in_trait_impl {
+                let note = format!(
+                    "`{}` is a method of a trait's impl, which may do only what the trait's \
+                     method says it may",
+                    f.name.name
+                );
+                return Err(Error::ty(s.span, message).with_note(f.name.span, note));
+            }
             let fix = Fix::new(
                 format!("say `with {}`", effects_text(&all)),
                 vec![Edit {
