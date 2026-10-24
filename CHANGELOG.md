@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.30.0 (2026-10-24)
 
 Step 17.1: built-ins are library items. See
 [docs/17.1-library-items.md](docs/17.1-library-items.md).
