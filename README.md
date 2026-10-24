@@ -24,17 +24,19 @@ fn fact(n: i64) -> i64 with panic {
 
 fn twice<effect e, F: Fn(i64) -> i64 with e + Discard>(f: F, x: i64) -> i64 with e { f(f(x)) }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let n = 5;
-    print(fact(10));                                    // expect: 3628800
-    print(twice(fact, 3));                              // expect: 720
-    print(twice(|x| x + n, 0));                         // expect: 10
-    print(twice(square, 3));                            // expect: 81
-    print(area(Shape::Rect(3, 4)));                     // expect: 12
-    print(area(Shape::Circle(2)) + area(Shape::Empty)); // expect: 12
+    out.line(&fact(10))?;                                      // expect: 3628800
+    out.line(&twice(fact, 3))?;                                // expect: 720
+    out.line(&twice(|x| x + n, 0))?;                           // expect: 10
+    out.line(&twice(square, 3))?;                              // expect: 81
+    out.line(&area(Shape::Rect(3, 4)))?;                       // expect: 12
+    out.line(&(area(Shape::Circle(2)) + area(Shape::Empty)))?; // expect: 12
 
     // A nested `fn`: only `main` can see it.
     fn square(x: i64) -> i64 with panic { x * x }
+    Result::Ok(())
 }
 ```
 
@@ -85,12 +87,14 @@ it, a function's body and the functions nested in it included:
 #[derive(Discard)]
 enum ffi_result { OK, Retry, Fatal }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let r = ffi_result::OK;
     match r {
-        ffi_result::OK => print(0i64), // expect: 0
-        _ => print(1i64),
+        ffi_result::OK => out.line(&0i64)?, // expect: 0
+        _ => out.line(&1i64)?,
     }
+    Result::Ok(())
 }
 ```
 

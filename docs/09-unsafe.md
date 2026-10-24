@@ -10,7 +10,8 @@ checks every obligation as the program runs).
 ```rust
 use alloc::raw::RawBuf;
 
-fn main() with {alloc, panic} {
+fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+    let mut out = os.stdout;
     let mut b: RawBuf<i64> = RawBuf::new(2);
     // SAFETY: both slots are uninitialised, and there are two.
     unsafe {
@@ -20,10 +21,12 @@ fn main() with {alloc, panic} {
     b.grow(8);
     // SAFETY: slots 0 and 1 hold the 3 and the 4, and are read out once
     // each, so every slot is uninitialised when the buffer is freed.
-    unsafe {
-        print(b.read(0) + b.read(1)); // expect: 7
+    let sum = unsafe {
+        let sum = b.read(0) + b.read(1);
         b.free();
-    }
+        sum
+    };
+    out.line(&sum) // expect: 7
 }
 ```
 
@@ -69,7 +72,7 @@ fn main() with alloc {
         b.slice(0, 1)
     };
     b.grow(8);
-    print(s.len());
+    let _v = s.len();
     // SAFETY: slot 0 holds the 5; then every slot is uninitialised.
     unsafe {
         b.read(0);
@@ -109,16 +112,19 @@ use alloc::raw::RawBuf;
 /// The caller must know slot 0 holds a value.
 fn first(b: &RawBuf<i64>) -> Option<&i64> with unsafe { b.slice(0, 1).first() }
 
-fn main() with {alloc, panic} {
+fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+    let mut out = os.stdout;
     let mut b: RawBuf<i64> = RawBuf::new(1);
     // SAFETY: slot 0 is uninitialised; then it holds the 7, which is read
     // out before the buffer is freed.
-    unsafe {
+    let n = unsafe {
         b.write(0, 7);
-        print(*first(&b).unwrap()); // expect: 7
+        let n = *first(&b).unwrap();
         b.read(0);
         b.free();
-    }
+        n
+    };
+    out.line(&n) // expect: 7
 }
 ```
 
@@ -146,7 +152,7 @@ fn call<effect e, F: FnOnce() -> i64 with e>(f: F) -> i64 with e {
 
 fn main() with {alloc, panic} {
     let mut b: RawBuf<i64> = RawBuf::new(1);
-    print(call(|| b.read(0)));
+    let _v = call(|| b.read(0));
     // SAFETY: there's nothing in the slot to leave behind.
     unsafe { b.free() };
 }
@@ -181,7 +187,7 @@ fn main() with alloc {
     // SAFETY: wrong: slot 1 was never written.
     unsafe {
         b.write(0, 1);
-        print(b.read(1));
+        let _v = b.read(1);
         b.read(0);
         b.free();
     }

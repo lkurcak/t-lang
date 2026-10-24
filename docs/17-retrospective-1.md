@@ -31,9 +31,11 @@ fn apply<effect e, F: Fn() -> i64 with e + Discard>(f: F) -> i64 with e { f() }
 #[allow(non_camel_case_types)]
 fn id<t>(x: t) -> t { x }
 
-fn main() {
-    print(apply(|| 3)); // expect: 3
-    print(id(4i64));    // expect: 4
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&apply(|| 3))?; // expect: 3
+    out.line(&id(4i64))?;    // expect: 4
+    Result::Ok(())
 }
 ```
 
@@ -171,9 +173,11 @@ mod shapes {
     pub struct Point { pub x: i64 }
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let p = shapes::Point { x: 1 };
-    print(p.x); // expect: 1
+    out.line(&p.x)?; // expect: 1
+    Result::Ok(())
 }
 ```
 

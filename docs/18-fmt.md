@@ -14,13 +14,15 @@ written into a *sink*:
 use alloc::string::String;
 use core::fmt::Write;
 
-fn main() with alloc {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
+    let mut out = os.stdout;
     let mut s = String::new();
     s.write_str("x = ");
     s.put(&-42i64);
     s.write_char('!');
-    print_str(s.as_str()); // expect: x = -42!
+    let written = out.line(&s.as_str()); // expect: x = -42!
     s.free();
+    written
 }
 ```
 
@@ -54,15 +56,17 @@ panic, as its signature says: it's only on a `Result<T, !>`.
 use alloc::string::String;
 use core::fmt::Write;
 
-fn main() with alloc {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
+    let mut out = os.stdout;
     let mut s = String::new();
     let n = 0u8;
     match n {
         0 => s.write_str("none").into_ok(),
         _ => s.put(&n).into_ok(),
     }
-    print_str(s.as_str()); // expect: none
+    let written = out.line(&s.as_str()); // expect: none
     s.free();
+    written
 }
 ```
 
@@ -84,7 +88,6 @@ and `Box`. A program's own type says how it's written, from what's in it,
 with `?` passing a sink's error on:
 
 ```rust
-use alloc::string::String;
 use core::fmt::{Display, Write};
 
 #[derive(Discard)]
@@ -100,10 +103,9 @@ impl Display for Point {
     }
 }
 
-fn main() with alloc {
-    let s = String::of(&Point { x: 3, y: -4 });
-    print_str(s.as_str()); // expect: (3, -4)
-    s.free();
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&Point { x: 3, y: -4 }) // expect: (3, -4)
 }
 ```
 
@@ -150,8 +152,10 @@ fn width(x: i64) -> usize {
     c.n
 }
 
-fn main() {
-    print(width(-9223372036854775808)); // expect: 20
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&width(-9223372036854775808))?; // expect: 20
+    Result::Ok(())
 }
 ```
 

@@ -64,8 +64,6 @@ pub(crate) enum Res {
     Local(NodeId),
     /// A function, by symbol, with its type arguments.
     Fn(String, Vec<Type>),
-    /// A built-in function, by name, with its type arguments.
-    Builtin(&'static str, Vec<Type>),
 }
 
 /// A local variable.

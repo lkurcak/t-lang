@@ -145,7 +145,7 @@ fn borrow_errors_point_at_the_borrow() {
     let (child, mut c) = start();
     let uri = "file:///tmp/borrow.t";
     let src =
-        "fn main() {\n    let mut x: i64 = 1;\n    let r = &x;\n    x = 2;\n    print(*r);\n}\n";
+        "fn main() {\n    let mut x: i64 = 1;\n    let r = &x;\n    x = 2;\n    print(*r);\n}\nfn print<T: Int>(_x: T) {}\n";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
             "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
@@ -176,7 +176,7 @@ fn warns_and_offers_quick_fixes() {
     let uri = "file:///tmp/warn.t";
 
     // The `false` arm (0-based line 4) can never run.
-    let src = "fn f(b: bool) -> i64 {\n    match b {\n        true => 1,\n        _ => 2,\n        false => 3,\n    }\n}\nfn main() {\n    print(f(true));\n}\n";
+    let src = "fn f(b: bool) -> i64 {\n    match b {\n        true => 1,\n        _ => 2,\n        false => 3,\n    }\n}\nfn main() {\n    print(f(true));\n}\nfn print<T: Int>(_x: T) {}\n";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
             "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
@@ -233,7 +233,7 @@ fn warns_and_offers_quick_fixes() {
 fn hovers_hints_and_goes_to_definitions() {
     let (child, mut c) = start();
     let uri = "file:///tmp/generic.t";
-    let src = "fn id<T>(x: T) -> T { x }\nfn main() {\n    let n = id(1i64);\n    print(n);\n    print(id::<i64>(2));\n}\n";
+    let src = "fn id<T>(x: T) -> T { x }\nfn main() {\n    let n = id(1i64);\n    print(n);\n    print(id::<i64>(2));\n}\nfn print(_x: i64) {}\n";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
             "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
@@ -299,7 +299,7 @@ fn hovers_hints_and_goes_to_definitions() {
 fn hovers_and_hints_show_opaque_types_as_written() {
     let (child, mut c) = start();
     let uri = "file:///tmp/opaque.t";
-    let src = "fn adder(n: i64) -> impl Fn(i64) -> i64 with panic + Discard { move |x| x + n }\nfn main() with panic {\n    let f = adder(1);\n    print(f(2));\n}\n";
+    let src = "fn adder(n: i64) -> impl Fn(i64) -> i64 with panic + Discard { move |x| x + n }\nfn main() with panic {\n    let f = adder(1);\n    print(f(2));\n}\nfn print<T: Int>(_x: T) {}\n";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
             "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
@@ -360,7 +360,7 @@ fn main() {
         E::A(n) => print(n),
     }
 }
-";
+\nfn print<T: Int>(_x: T) {}\n";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
             "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
@@ -423,7 +423,7 @@ fn main() with alloc {
     print(l.len());
     l.free();
 }
-";
+\nfn print<T: Int>(_x: T) {}\n";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
             "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
@@ -474,7 +474,7 @@ fn main() with alloc {
     let b = Box::new(1i64);
     print_bool(same(&*b, &*b));
 }
-";
+\nfn print_bool(_b: bool) {}\n";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
             "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
@@ -564,7 +564,7 @@ fn formats_documents() {
 fn formats_and_hovers_bitwise_operators() {
     let (child, mut c) = start();
     let uri = "file:///tmp/bits.t";
-    let src = "fn low(x: u16) -> u8 {   ((x >> 4)  & 0x0F) as u8 | 0b1000_0000 }\nfn main() { let m = !low(0xF0); print(m) }\n";
+    let src = "fn low(x: u16) -> u8 {   ((x >> 4)  & 0x0F) as u8 | 0b1000_0000 }\nfn main() { let m = !low(0xF0); print(m) }\nfn print<T: Int>(_x: T) {}\n";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
             "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
@@ -580,7 +580,7 @@ fn formats_and_hovers_bitwise_operators() {
     let response = c.response(2);
     assert_eq!(
         response["result"][0]["newText"],
-        "fn low(x: u16) -> u8 { ((x >> 4) & 0x0F) as u8 | 0b1000_0000 }\nfn main() {\n    let m = !low(0xF0);\n    print(m)\n}\n",
+        "fn low(x: u16) -> u8 { ((x >> 4) & 0x0F) as u8 | 0b1000_0000 }\nfn main() {\n    let m = !low(0xF0);\n    print(m)\n}\nfn print<T: Int>(_x: T) {}\n",
         "{response}"
     );
     c.send(
@@ -615,7 +615,7 @@ fn other() -> i64 {
     fn helper() -> i64 { 3 }
     helper()
 }
-";
+\nfn print<T: Int>(_x: T) {}\nfn print_bool(_b: bool) {}\n";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
             "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
@@ -693,7 +693,7 @@ fn other() -> P {
     top(local.z)
 }
 fn top(x: i64) -> P { P { x } }
-";
+\nfn print<T: Int>(_x: T) {}\nfn print_bool(_b: bool) {}\n";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
             "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
@@ -897,7 +897,7 @@ fn other() -> i64 {
     helper()
 }
 #[derive(Discard)] struct P { x: i64 }
-";
+\nfn print<T: Int>(_x: T) {}\nfn print_bool(_b: bool) {}\n";
     let (mut d, diags) = Doc::open(&mut c, "file:///tmp/refs.t", src);
     assert_eq!(diags, Vec::<Value>::new());
 
@@ -968,7 +968,7 @@ fn main() {
     let P { x } = p;
     print(x);
 }
-";
+\nfn print<T: Int>(_x: T) {}\n";
     let (mut d, diags) = Doc::open(&mut c, "file:///tmp/shorthand.t", src);
     assert_eq!(diags, Vec::<Value>::new());
     // `x`s in order: 0 the field, 1 the first variable, 2 the literal, 3
@@ -1019,7 +1019,7 @@ fn main() {
     print(area(Shape::Circle(2i64), Wrap { inner: 1 }));
     print(area(Shape::Empty, Wrap::<i64> { inner: 3 }));
 }
-";
+\nfn print<T: Int>(_x: T) {}\n";
     let (mut d, diags) = Doc::open(&mut c, "file:///tmp/kinds.t", src);
     assert_eq!(diags, Vec::<Value>::new());
     assert_eq!(
@@ -1059,7 +1059,7 @@ fn apply<effect e, F: Fn() -> i64 with e + Discard>(f: F) -> i64 with e { f() }
 fn main() {
     print(apply(|| 1));
 }
-";
+\nfn print<T: Int>(_x: T) {}\n";
     let (mut d, diags) = Doc::open(&mut c, "file:///tmp/effects.t", src);
     assert_eq!(diags, Vec::<Value>::new());
     assert_eq!(
@@ -1085,7 +1085,7 @@ fn main() {
     let s = Span { lo: 1, hi: 2 };
     print(s.hi - s.lo);
 }
-";
+\nfn print<T: Int>(_x: T) {}\n";
     let (mut d, diags) = Doc::open(&mut c, "file:///tmp/fields.t", src);
     assert_eq!(diags, Vec::<Value>::new());
     assert_eq!(
@@ -1114,7 +1114,7 @@ fn main() with panic {
     print(a + b + p.x + helper());
 }
 fn c() -> i64 { 3 }
-";
+\nfn print<T: Int>(_x: T) {}\n";
     let (mut d, diags) = Doc::open(&mut c, "file:///tmp/bad.t", src);
     assert_eq!(diags, Vec::<Value>::new());
     let mut prepare = |c: &mut Client, needle: &str, nth: usize| {
@@ -1124,10 +1124,6 @@ fn c() -> i64 { 3 }
             None => Ok(r["result"].clone()),
         }
     };
-    assert_eq!(
-        prepare(&mut c, "print", 0),
-        Err(json!("`print` is a built-in function"))
-    );
     assert_eq!(
         prepare(&mut c, "i64", 0),
         Err(json!("`i64` is a built-in type"))
@@ -1247,7 +1243,7 @@ fn main() {
     print(get(Option::None));
     print(id(2i64));
 }
-";
+\nfn print<T: Int>(_x: T) {}\n";
     let (mut d, diags) = Doc::open(&mut c, "file:///tmp/typedef.t", src);
     assert_eq!(diags, Vec::<Value>::new());
     let mut ty = |c: &mut Client, needle: &str, nth: usize| {
@@ -1327,7 +1323,7 @@ enum Option<T> {
     Some(T),
     None,
 }
-";
+\nfn print<T: Int>(_x: T) {}\n";
     let (d, diags) = Doc::open(&mut c, "file:///tmp/outline.t", src);
     assert!(!diags.is_empty(), "dead code");
     let symbols = outline(&mut c, d.uri);
@@ -1371,6 +1367,7 @@ enum Option<T> {
                     ["None", 22, "Option<T>", []],
                 ]
             ]),
+            json!(["print", 12, "fn(T) -> ()", []]),
         ]
     );
     // The whole of `Pair`, and its name.
@@ -1424,7 +1421,7 @@ fn main() with panic {
     print(twice(p));
     print(P { x: 2 }.show());
 }
-";
+\nfn print<T: Int>(_x: T) {}\n";
     let (mut d, diags) = Doc::open(&mut c, "file:///tmp/traits.t", src);
     assert_eq!(diags, Vec::<Value>::new());
     let hover = d.ask(&mut c, "textDocument/hover", "Show +", 0, json!({}));
@@ -1489,6 +1486,7 @@ fn main() with panic {
             json!(["impl Show for P", 19, ["show"]]),
             json!(["twice", 12, []]),
             json!(["main", 12, []]),
+            json!(["print", 12, []]),
         ]
     );
 
@@ -1521,7 +1519,7 @@ fn main() with panic {
     let s: Sq = shapes::sq(3);
     print(s.area() + double(1) + shapes::more::twice(2));
 }
-";
+\nfn print<T: Int>(_x: T) {}\n";
     let (mut d, diags) = Doc::open(&mut c, "file:///tmp/modules.t", src);
     assert_eq!(diags, Vec::<Value>::new());
     let hover = d.ask(&mut c, "textDocument/hover", "sq(3)", 0, json!({}));
@@ -1576,6 +1574,7 @@ fn main() with panic {
             json!(["shapes", 2, ["Area", "Sq", "sq", "more"]]),
             json!(["impl Area for Sq", 19, ["area"]]),
             json!(["main", 12, []]),
+            json!(["print", 12, []]),
         ]
     );
 
@@ -1651,7 +1650,7 @@ fn files_of_modules_are_checked_with_their_program() {
     let dir = std::env::temp_dir().join(format!("t-lsp-files-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let main = "mod util;\nfn main() {\n    print(util::helper());\n}\n";
+    let main = "mod util;\nfn main() {\n    print(util::helper());\n}\nfn print<T: Int>(_x: T) {}\n";
     std::fs::write(dir.join("main.t"), main).unwrap();
     std::fs::write(dir.join("util.t"), "pub fn helper() -> i64 { 1 }\n").unwrap();
     let main_uri = file_uri(&dir.join("main.t"));
@@ -1730,7 +1729,7 @@ fn files_of_modules_are_checked_with_their_program() {
 fn hovers_the_core_library_but_goes_nowhere_in_it() {
     let (child, mut c) = start();
     let uri = "file:///tmp/core.t";
-    let src = "fn main() {\n    let o = Option::Some(1);\n    for i in 0..3i64 {\n        print(o.unwrap_or(i));\n    }\n}\n";
+    let src = "fn main() {\n    let o = Option::Some(1);\n    for i in 0..3i64 {\n        print(o.unwrap_or(i));\n    }\n}\nfn print<T: Int>(_x: T) {}\n";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
             "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
@@ -1805,7 +1804,7 @@ fn hovers_the_alloc_library_but_goes_nowhere_in_it() {
 fn hovers_list_methods() {
     let (child, mut c) = start();
     let uri = "file:///tmp/list.t";
-    let src = "use alloc::list::List;\n\nfn main() with {alloc, panic} {\n    let mut l: List<i64> = List::new();\n    l.push(1);\n    print(l.iter().count());\n    l.free();\n}\n";
+    let src = "use alloc::list::List;\n\nfn main() with {alloc, panic} {\n    let mut l: List<i64> = List::new();\n    l.push(1);\n    print(l.iter().count());\n    l.free();\n}\nfn print<T: Int>(_x: T) {}\n";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
             "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
@@ -1836,7 +1835,7 @@ fn hovers_list_methods() {
 fn hovers_slice_methods() {
     let (child, mut c) = start();
     let uri = "file:///tmp/slice.t";
-    let src = "fn main() {\n    let s: &[i64] = core::slice::empty();\n    print(s.len());\n}\n";
+    let src = "fn main() {\n    let s: &[i64] = core::slice::empty();\n    print(s.len());\n}\nfn print<T: Int>(_x: T) {}\n";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
             "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
@@ -1864,7 +1863,7 @@ fn hovers_slice_methods() {
 fn hovers_strings_and_characters() {
     let (child, mut c) = start();
     let uri = "file:///tmp/str.t";
-    let src = "fn main() {\n    let s = \"a\\u{20AC}\";\n    print(s.len());\n    let c = 'x';\n    print(c as u32);\n}\n";
+    let src = "fn main() {\n    let s = \"a\\u{20AC}\";\n    print(s.len());\n    let c = 'x';\n    print(c as u32);\n}\nfn print<T: Int>(_x: T) {}\n";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
             "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}

@@ -21,10 +21,12 @@ fn utf8_lead(c: { v: u32 | v <= 0x10FFFF }) -> u8 {
 
 fn utf8_cont(c: u32, shift: u32) -> u8 { ((c >> shift) & 0x3F) as u8 | 0x80 }
 
-fn main() {
-    print(utf8_lead(0x20AC));    // expect: 226
-    print(utf8_cont(0x20AC, 6)); // expect: 130
-    print(utf8_cont(0x20AC, 0)); // expect: 172
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&utf8_lead(0x20AC))?;    // expect: 226
+    out.line(&utf8_cont(0x20AC, 6))?; // expect: 130
+    out.line(&utf8_cont(0x20AC, 0))?; // expect: 172
+    Result::Ok(())
 }
 ```
 
@@ -58,17 +60,19 @@ gives the same number it gives in ℤ, or panics. And these never panic: the
 result always fits (B1, below).
 
 ```rust
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let a: u8 = 0b1100;
     let b: u8 = 0b1010;
-    print(a & b); // expect: 8
-    print(a | b); // expect: 14
-    print(a ^ b); // expect: 6
+    out.line(&(a & b))?; // expect: 8
+    out.line(&(a | b))?; // expect: 14
+    out.line(&(a ^ b))?; // expect: 6
     let m: i8 = -1;
-    print(m & 5); // expect: 5
-    print(m ^ 5); // expect: -6
-    print(!0u8);  // expect: 255
-    print(!0i8);  // expect: -1
+    out.line(&(m & 5))?; // expect: 5
+    out.line(&(m ^ 5))?; // expect: -6
+    out.line(&!0u8)?;    // expect: 255
+    out.line(&!0i8)?;    // expect: -1
+    Result::Ok(())
 }
 ```
 
@@ -88,11 +92,13 @@ literal. It doesn't guess `bool`.
 `x << n` is `x` times 2^n, and `x >> n` is `x` divided by 2^n, rounded down:
 
 ```rust
-fn main() {
-    print(1u8 << 7);    // expect: 128
-    print(-5i32 >> 1);  // expect: -3
-    print(-5i32 >> 99); // expect: -1
-    print(5i32 >> 99);  // expect: 0
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&(1u8 << 7))?;    // expect: 128
+    out.line(&(-5i32 >> 1))?;  // expect: -3
+    out.line(&(-5i32 >> 99))?; // expect: -1
+    out.line(&(5i32 >> 99))?;  // expect: 0
+    Result::Ok(())
 }
 ```
 
@@ -115,8 +121,10 @@ fn high_nibble(x: u8) -> u8 { x << 4 }
 ```rust
 fn high_nibble(x: u8) -> u8 { (x & 0x0F) << 4 }
 
-fn main() {
-    print(high_nibble(0xAB)); // expect: 176
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&high_nibble(0xAB))?; // expect: 176
+    Result::Ok(())
 }
 ```
 
@@ -143,13 +151,15 @@ them with arithmetic, needs parentheses. A chain of one is fine, as `a | b |
 c` means the same either way:
 
 ```rust
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let a: u8 = 1;
     let b: u8 = 2;
     let c: u8 = 4;
-    print(a | b | c);       // expect: 7
-    print_bool(a & b == 0); // expect: true
-    print((a | b) & c);     // expect: 0
+    out.line(&(a | b | c))?;   // expect: 7
+    out.line(&(a & b == 0))?;  // expect: true
+    out.line(&((a | b) & c))?; // expect: 0
+    Result::Ok(())
 }
 ```
 
@@ -175,11 +185,13 @@ operation from `+`, so it has its own names, in `core::num`:
 ```rust
 use core::num::{wrapping_add, wrapping_mul, wrapping_sub};
 
-fn main() {
-    print(wrapping_add(250u8, 10)); // expect: 4
-    print(wrapping_sub(0u8, 1));    // expect: 255
-    print(wrapping_add(127i8, 1));  // expect: -128
-    print(wrapping_mul(100i8, 3));  // expect: 44
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&wrapping_add(250u8, 10))?; // expect: 4
+    out.line(&wrapping_sub(0u8, 1))?;    // expect: 255
+    out.line(&wrapping_add(127i8, 1))?;  // expect: -128
+    out.line(&wrapping_mul(100i8, 3))?;  // expect: 44
+    Result::Ok(())
 }
 ```
 
@@ -214,9 +226,11 @@ fn minus_one<T: Signed>() -> T { -1 }
 
 fn zero<T: Signed>() -> T { !0 + 1 }
 
-fn main() {
-    print(minus_one::<i64>()); // expect: -1
-    print(zero::<i8>());       // expect: 0
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&minus_one::<i64>())?; // expect: -1
+    out.line(&zero::<i8>())?;       // expect: 0
+    Result::Ok(())
 }
 ```
 

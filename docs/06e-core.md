@@ -25,16 +25,18 @@ impl Iterator for Countdown {
     }
 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     for i in (Countdown { n: 3 }) {
-        print(i);
+        out.line(&i)?;
     }
     // expect: 3
     // expect: 2
     // expect: 1
     let total = (0..4i64).map(|x| x * x).fold(0, |a, b| a + b);
-    print(total);       // expect: 14
-    print(5i64.max(9)); // expect: 9
+    out.line(&total)?;       // expect: 14
+    out.line(&5i64.max(9))?; // expect: 9
+    Result::Ok(())
 }
 ```
 
@@ -72,17 +74,21 @@ fn close(fd: Fd) -> i64 {
     n
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let mut slot = Option::Some(Fd { n: 1 });
-    print_bool(slot.is_some()); // expect: true
-    match slot.take() {
-        Option::Some(fd) => print(close(fd)), // expect: 1
-        Option::None => {},
-    }
-    match slot {
-        Option::Some(fd) => print(close(fd)),
-        Option::None => print(0i64), // expect: 0
-    }
+    let full = slot.is_some();
+    let taken = match slot.take() {
+        Option::Some(fd) => close(fd),
+        Option::None => 0,
+    };
+    let left = match slot {
+        Option::Some(fd) => close(fd),
+        Option::None => 0,
+    };
+    out.line(&full)?;  // expect: true
+    out.line(&taken)?; // expect: 1
+    out.line(&left)    // expect: 0
 }
 ```
 
@@ -118,12 +124,14 @@ fn mine(n: i64) -> Option {
 
 fn theirs(n: i64) -> core::option::Option<i64> { core::option::Option::Some(n) }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     match mine(1) {
-        Option::Some(n) => print(n), // expect: 1
+        Option::Some(n) => out.line(&n)?, // expect: 1
         Option::Empty => {},
     }
-    print(theirs(2).unwrap_or(0)); // expect: 2
+    out.line(&theirs(2).unwrap_or(0))?; // expect: 2
+    Result::Ok(())
 }
 ```
 
@@ -265,7 +273,7 @@ impl Iterator for Lines {
 
 fn main() {
     for n in (Lines { left: 2 }) {
-        print(n);
+        let _v = n;
     }
 }
 // error: a `for` throws its iterator away when it ends, and `Lines` isn't `Discard`; to keep it, iterate over a mutable reference to it: `for x in &mut it`
@@ -297,17 +305,19 @@ fn close(lines: Lines) -> i64 {
     left
 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let mut lines = Lines { left: 5 };
+    let mut seen = 0;
     for n in &mut lines {
         if n == 2 {
             break;
         }
-        print(n);
+        seen = seen * 10 + n;
     }
-    // expect: 4
-    // expect: 3
-    print(close(lines)); // expect: 2
+    let left = close(lines);
+    out.line(&seen)?; // expect: 43
+    out.line(&left)   // expect: 2
 }
 ```
 
@@ -339,15 +349,17 @@ a direction for later, with effects.
 overflows, even for a range that ends at the greatest `T`.
 
 ```rust
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let big: i64 = 9223372036854775807;
     let mut last = 0;
     for i in big - 2..big {
         last = i;
     }
-    print(last - big); // expect: -1
+    out.line(&(last - big))?; // expect: -1
     let r = 3..8i64;
-    print(r.start() + r.end()); // expect: 11
+    out.line(&(r.start() + r.end()))?; // expect: 11
+    Result::Ok(())
 }
 ```
 
@@ -359,11 +371,13 @@ constants, though, it's most likely a countdown that won't run, so it's a
 warning:
 
 ```rust
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     for i in 5..0i64 {
-        print(i);
+        out.line(&i)?;
     }
-    print(1i64); // expect: 1
+    out.line(&1i64)?; // expect: 1
+    Result::Ok(())
 }
 // warning: this range is empty: `5` is after `0`, so it never yields anything
 ```
@@ -410,8 +424,10 @@ impl Source for Nat {
     }
 }
 
-fn main() with panic {
-    print((Nat { n: 0 }).skip(5)); // expect: 5
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&(Nat { n: 0 }).skip(5))?; // expect: 5
+    Result::Ok(())
 }
 ```
 
@@ -438,7 +454,7 @@ impl Iterator for Lines {
 }
 
 fn main() {
-    print((Lines { left: 3 }).fold(0, |a, b| a + b));
+    let _v = (Lines { left: 3 }).fold(0, |a, b| a + b);
 }
 // error: `fold` needs its `Self` to implement `Discard`, and `Lines` doesn't
 ```

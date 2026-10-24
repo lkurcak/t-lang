@@ -76,7 +76,7 @@ pub use scope::source_name;
 
 use crate::ast::*;
 use crate::error::{Error, Fix, Span, Warning};
-use crate::traits::{EQ, INT};
+use crate::traits::EQ;
 use crate::traits::{Pred, Traits};
 use crate::types::{Adts, Params, Region, Scheme, Type};
 use adts::{adt_names, each_adt};
@@ -91,8 +91,6 @@ use std::collections::{HashMap, HashSet};
 use typed::{Bind, Typed};
 use unify::Var;
 
-/// Built-in functions, available everywhere. Shared with the interpreter.
-pub const BUILTINS: &[&str] = &["print", "print_bool", "print_str"];
 
 /// The intrinsics: functions the core and alloc libraries declare with no
 /// body, which the compiler provides (see `core/mem.t`, `alloc/raw.t`), by
@@ -158,38 +156,6 @@ pub(super) fn not_library(at: Span) -> Error {
         "only `core`, `alloc` and `std` can declare an intrinsic: what it does is what the \
          checker trusts",
     )
-}
-
-/// The type of built-in function `name`.
-pub(crate) fn builtin_scheme(name: &str) -> Scheme {
-    match name {
-        // print : fn<T: Int>(T) -> ()
-        "print" => Scheme {
-            params: Params::types(vec!["T".into()]),
-            preds: vec![Pred {
-                ty: Type::Param("T".into()),
-                trait_name: INT.into(),
-            }],
-            ..Scheme::mono(Type::func(vec![Type::Param("T".into())], Type::Unit))
-        },
-        // print_bool : fn(bool) -> ()
-        "print_bool" => Scheme::mono(Type::func(vec![Type::Bool], Type::Unit)),
-        // print_str : fn<'a>(&'a str) -> ()
-        //
-        // One line for each in the text, as it may hold line breaks.
-        "print_str" => Scheme {
-            lifetimes: vec!["'a".into()],
-            ..Scheme::mono(Type::func(
-                vec![Type::Ref(
-                    Region::Named("'a".into()),
-                    false,
-                    Box::new(Type::Str),
-                )],
-                Type::Unit,
-            ))
-        },
-        _ => unreachable!("unknown builtin `{name}`"),
-    }
 }
 
 /// What reading and checking the libraries built into the compiler left,
@@ -926,24 +892,12 @@ impl Checker {
             {
                 self.info.main_error = self.main_signature(f, sig)?;
             }
-            let name = &f.name.name;
             let symbol = self.fn_symbols[i].clone();
             self.receivers.push(f.receiver().is_some());
-            match parent {
-                None if method.is_some() => {}
-                // Two in a module of the same name are found by resolving
-                // names (see `modules.rs`).
-                None => {
-                    if BUILTINS.contains(&name.as_str()) {
-                        return Err(Error::ty(
-                            f.name.span,
-                            format!("`{name}` is already defined"),
-                        ));
-                    }
-                }
-                Some(_) => {
-                    self.nested_ids.insert(f.name.id, FnId(i));
-                }
+            // Two in a module of the same name are found by resolving names
+            // (see `modules.rs`); nested ones, by scope.
+            if parent.is_some() {
+                self.nested_ids.insert(f.name.id, FnId(i));
             }
             self.info.symbols.insert(f.name.id, symbol.clone());
             self.fns.push(FnDef {

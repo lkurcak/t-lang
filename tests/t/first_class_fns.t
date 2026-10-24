@@ -15,7 +15,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     out.line(&apply(inc, 1))?;           // expect: 2
     out.line(&twice(double, 3))?;        // expect: 12
     out.line(&pick(false)(10))?;         // expect: 20
-    let p: fn(i64) -> () = print;   // even builtins are values
-    p(7);                           // expect: 7
-    Result::Ok(())
+    let add: fn(i64, i64) -> Option<i64> = checked_add; // the library's too
+    out.line(&add(3, 4).unwrap_or(0))      // expect: 7
 }

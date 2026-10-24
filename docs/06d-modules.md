@@ -20,10 +20,12 @@ mod geometry {
 
 use geometry::{Point, dist};
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let p = Point { x: 1, y: 2 };
-    print(dist(p, Point { x: 4, y: 6 })); // expect: 7
-    print(geometry::dist(p, p));          // expect: 0
+    out.line(&dist(p, Point { x: 4, y: 6 }))?; // expect: 7
+    out.line(&geometry::dist(p, p))?;          // expect: 0
+    Result::Ok(())
 }
 ```
 
@@ -49,7 +51,7 @@ mod m {
 }
 
 fn main() {
-    print(m::f());
+    let _v = m::f();
 }
 // error: unknown variable `helper`
 ```
@@ -74,8 +76,10 @@ mod shapes {
 
 use shapes::round::area as circle;
 
-fn main() with panic {
-    print(circle(2)); // expect: 12
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&circle(2))?; // expect: 12
+    Result::Ok(())
 }
 ```
 
@@ -108,7 +112,7 @@ mod a {
 }
 
 fn main() {
-    print(a::g());
+    let _v = a::g();
 }
 // error: `f` is private, so `pub use` can't make it public
 ```
@@ -161,10 +165,13 @@ mod fs {
     }
 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let fd = fs::open(2);
-    print(fd.id);         // expect: 2
-    print(fs::close(fd)); // expect: 22
+    let id = fd.id;
+    let closed = fs::close(fd);
+    out.line(&id)?;   // expect: 2
+    out.line(&closed) // expect: 22
 }
 ```
 
@@ -195,7 +202,7 @@ mod fs {
 fn main() {
     let fd = fs::open(1);
     let id = fd.id;
-    print(id.n);
+    let _v = id.n;
 }
 // error: can't take `Fd` apart here: it has private fields and isn't `Discard`, so only `fs` can
 ```
@@ -229,7 +236,7 @@ mod show {
 }
 
 fn main() {
-    print(1i64.show());
+    let _v = 1i64.show();
 }
 // error: `i64` has no method `show` in scope; trait `show::Show` has one: import it with `use show::Show;`
 ```

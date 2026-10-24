@@ -15,13 +15,15 @@ fn clamp(x: i64, hi: { h: i64 | h >= 0 }) -> { r: i64 | r <= hi } {
     if x < hi { x } else { hi }
 }
 
-fn main() {
-    print(div(10, 3)); // expect: 3
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&div(10, 3))?; // expect: 3
     let k = clamp(25, 7);
-    print(k); // expect: 7
+    out.line(&k)?; // expect: 7
     if k > 0 {
-        print(div(100, k)); // expect: 14
+        out.line(&div(100, k))?; // expect: 14
     }
+    Result::Ok(())
 }
 ```
 
@@ -105,9 +107,11 @@ fn small_inc(n: i64) -> i64 {
     }
 }
 
-fn main() {
-    print(guarded(10, 3)); // expect: 3
-    print(small_inc(3));   // expect: 4
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&guarded(10, 3))?; // expect: 3
+    out.line(&small_inc(3))?;   // expect: 4
+    Result::Ok(())
 }
 ```
 
@@ -140,8 +144,10 @@ fn count(n: i64) -> i64 {
     i
 }
 
-fn main() {
-    print(count(5)); // expect: 5
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&count(5))?; // expect: 5
+    Result::Ok(())
 }
 ```
 
@@ -195,7 +201,7 @@ fn div(a: i64, d: { d: i64 | d > 0 }) -> i64 { a / d }
 fn apply(f: fn(i64, i64) -> i64, d: i64) -> i64 { f(1, d) }
 
 fn main() {
-    print(apply(div, 0));
+    let _v = apply(div, 0);
 }
 // error: `div` can't be used as a value: its parameter `d` has a refinement, which a call through a value wouldn't check
 ```

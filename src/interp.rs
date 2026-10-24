@@ -42,7 +42,6 @@
 //! `f(Box::new(1), return 2)`, the box.
 
 use crate::ast::*;
-use crate::check::BUILTINS;
 use crate::error::{Error, Span};
 use crate::types::IntTy;
 use std::collections::{HashMap, HashSet};
@@ -66,7 +65,6 @@ pub enum Value {
     /// functions. Nested ones have been lifted to the top level by now,
     /// under their symbols (see `lift.rs`).
     Fn(String),
-    Builtin(&'static str),
     /// A closure: an anonymous function, plus the local variables it can see.
     Closure(Closure),
     /// A struct: its type's name, and its fields in declaration order.
@@ -144,7 +142,6 @@ impl fmt::Display for Value {
             Value::Char(c) => write!(f, "{c}"),
             Value::Unit => f.write_str("()"),
             Value::Fn(name) => write!(f, "<fn {}>", crate::check::source_name(name)),
-            Value::Builtin(name) => write!(f, "<fn {name}>"),
             Value::Closure(_) => f.write_str("<closure>"),
             Value::Ref(_) => f.write_str("<reference>"),
             Value::Box(_) => f.write_str("<box>"),
@@ -639,10 +636,7 @@ impl Interp<'_, '_> {
         if self.fns.contains_key(name) {
             return Value::Fn(name.to_string());
         }
-        match BUILTINS.iter().find(|&&b| b == name) {
-            Some(&b) => Value::Builtin(b),
-            None => unsound(&format!("unbound variable `{name}`")),
-        }
+        unsound(&format!("unbound variable `{name}`"))
     }
 
     /// The value at `p`, moved out if `moves`, or else copied, as the
@@ -861,24 +855,6 @@ impl Interp<'_, '_> {
 
     fn call(&mut self, f: Value, args: Vec<Value>, span: Span) -> Result<Value, Error> {
         match f {
-            Value::Builtin("print") => {
-                let [arg] = <[Value; 1]>::try_from(args).unwrap_or_else(|_| unsound("print arity"));
-                self.print(&int(arg).to_string());
-                Ok(Value::Unit)
-            }
-            Value::Builtin("print_str") => {
-                let [arg] =
-                    <[Value; 1]>::try_from(args).unwrap_or_else(|_| unsound("print_str arity"));
-                let text = self.text(&arg);
-                self.print(&text);
-                Ok(Value::Unit)
-            }
-            Value::Builtin("print_bool") => {
-                let [arg] =
-                    <[Value; 1]>::try_from(args).unwrap_or_else(|_| unsound("print_bool arity"));
-                self.print(&bool(arg).to_string());
-                Ok(Value::Unit)
-            }
             Value::Fn(name) if self.fns[name.as_str()].intrinsic.is_some() => {
                 let of = name.split("::<").next().unwrap_or_default().to_string();
                 self.intrinsic(&of, &name, args, span)
@@ -1039,14 +1015,6 @@ impl Interp<'_, '_> {
                 Ok(Value::Unit)
             }
             _ => unsound(&format!("unknown intrinsic `{name}`")),
-        }
-    }
-
-    /// A line of output from a `print` built-in.
-    fn print(&mut self, line: &str) {
-        for b in line.bytes().chain([b'\n']) {
-            // Nothing to do if it fails: the built-ins can't say.
-            let _ = self.term.write_byte(false, b);
         }
     }
 

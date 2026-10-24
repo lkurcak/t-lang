@@ -14,12 +14,14 @@ fn count<effect e, F: FnMut() with e + Discard>(mut tick: F) with e {
     tick();
 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let k = 10;
-    print(apply(|x| x * k, 4)); // expect: 40
+    out.line(&apply(|x| x * k, 4))?; // expect: 40
     let mut n: i64 = 0;
     count(|| n = n + 1);
-    print(n); // expect: 2
+    out.line(&n)?; // expect: 2
+    Result::Ok(())
 }
 ```
 
@@ -112,7 +114,7 @@ fn main() {
         n = n + 1;
         n
     };
-    print(twice(next)); // error: this closure is only `FnMut`, as it changes `n`
+    let _v = twice(next); // error: this closure is only `FnMut`, as it changes `n`
 }
 ```
 
@@ -177,7 +179,7 @@ struct Fd { n: i64 }
 fn main() {
     let fd = Fd { n: 3 };
     let c = move || fd.n; // error: `fd` is never used up
-    print(c());
+    let _v = c();
 }
 ```
 
@@ -194,10 +196,12 @@ can be lent to a function and called again after:
 ```rust
 fn apply<effect e, F: Fn(i64) -> i64 with e>(f: &F, x: i64) -> i64 with e { f(x) }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let k = 3;
     let add = |x| x + k;
-    print(apply(&add, 1) + apply(&add, 2)); // expect: 9
+    out.line(&(apply(&add, 1) + apply(&add, 2)))?; // expect: 9
+    Result::Ok(())
 }
 ```
 

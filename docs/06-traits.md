@@ -6,12 +6,14 @@ and `src/check/paths.rs` (T-Method, T-Path, T-Eq), `src/borrowck/build.rs` (a ca
 `src/mono.rs` (calls become impls' methods).
 
 ```rust
-trait Show {
-    fn show(&self);
+use std::io::{Error, Stdout};
 
-    fn show_twice(&self) {
-        self.show();
-        self.show();
+trait Show {
+    fn show(&self, out: &mut Stdout) -> Result<(), Error>;
+
+    fn show_twice(&self, out: &mut Stdout) -> Result<(), Error> {
+        self.show(out)?;
+        self.show(out)
     }
 }
 
@@ -19,9 +21,9 @@ trait Show {
 struct Point { x: i64, y: i64 }
 
 impl Show for Point {
-    fn show(&self) {
-        print(self.x);
-        print(self.y);
+    fn show(&self, out: &mut Stdout) -> Result<(), Error> {
+        out.line(&self.x)?;
+        out.line(&self.y)
     }
 }
 
@@ -29,26 +31,27 @@ impl Show for Point {
 enum Option<T> { Some(T), None }
 
 impl<T: Show> Show for Option<T> {
-    fn show(&self) {
+    fn show(&self, out: &mut Stdout) -> Result<(), Error> {
         match self {
-            Option::Some(x) => x.show(),
-            Option::None => print(0i64),
+            Option::Some(x) => x.show(out),
+            Option::None => out.line(&0i64),
         }
     }
 }
 
-fn show_all<T: Show>(a: &T, b: &T) {
-    a.show();
-    b.show();
+fn show_all<T: Show>(a: &T, b: &T, out: &mut Stdout) -> Result<(), Error> {
+    a.show(out)?;
+    b.show(out)
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), Error> {
+    let mut out = os.stdout;
     let p = Point { x: 1, y: 2 };
-    p.show_twice(); // expect: 1
-                    // expect: 2
-                    // expect: 1
-                    // expect: 2
-    show_all(&Option::Some(Point { x: 3, y: 4 }), &Option::None);
+    p.show_twice(&mut out)?; // expect: 1
+                             // expect: 2
+                             // expect: 1
+                             // expect: 2
+    show_all(&Option::Some(Point { x: 3, y: 4 }), &Option::None, &mut out)
     // expect: 3
     // expect: 4
     // expect: 0
@@ -125,7 +128,7 @@ impl<T: Show> Print for T {
 }
 
 impl Print for i64 {
-    fn print(&self) { print(*self) }
+    fn print(&self) {}
 }
 // error: this impl of `Print` overlaps `impl Print for T`
 ```
@@ -149,27 +152,24 @@ A *blanket impl*, for a bare parameter, needs the same type again:
 
 ```rust
 trait Show {
-    fn show(&self);
+    fn show(&self) -> i64;
 }
 
 trait Describe {
-    fn describe(&self);
+    fn describe(&self) -> i64;
 }
 
 impl<T: Show> Describe for T {
-    fn describe(&self) {
-        print(0i64);
-        self.show();
-    }
+    fn describe(&self) -> i64 { self.show() }
 }
 
 impl Show for i64 {
-    fn show(&self) { print(*self) }
+    fn show(&self) -> i64 { *self }
 }
 
-fn main() {
-    5i64.describe(); // expect: 0
-    // expect: 5
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&5i64.describe()) // expect: 5
 }
 ```
 
@@ -232,10 +232,12 @@ impl Stack {
     }
 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let mut v = Stack { top: 0, size: 0 };
     v.push(v.len());
-    print(v.size); // expect: 1
+    out.line(&v.size)?; // expect: 1
+    Result::Ok(())
 }
 ```
 
@@ -290,10 +292,12 @@ struct Callback<T> { f: fn(T) -> i64 }
 
 fn unbox(b: Box<i64>) -> i64 { *b }
 
-fn main() with {alloc, panic} {
+fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+    let mut out = os.stdout;
     let c = Callback { f: unbox };
     let d = c;
-    print((c.f)(Box::new(1)) + (d.f)(Box::new(2))); // expect: 3
+    out.line(&((c.f)(Box::new(1)) + (d.f)(Box::new(2))))?; // expect: 3
+    Result::Ok(())
 }
 ```
 

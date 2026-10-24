@@ -17,8 +17,10 @@ fn twice(x: Result<i64, bool>) -> Result<i64, bool> with panic {
     Result::Ok(v * 2)
 }
 
-fn main() with panic {
-    print(twice(Result::Ok(4)).unwrap_or(0)); // expect: 8
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&twice(Result::Ok(4)).unwrap_or(0))?; // expect: 8
+    Result::Ok(())
 }
 ```
 
@@ -36,9 +38,11 @@ fn quarter(x: i64) -> Result<i64, bool> {
     half(h)
 }
 
-fn main() {
-    print(quarter(8).unwrap_or(0)); // expect: 2
-    print(quarter(6).unwrap_or(0)); // expect: 0
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&quarter(8).unwrap_or(0))?; // expect: 2
+    out.line(&quarter(6).unwrap_or(0))?; // expect: 0
+    Result::Ok(())
 }
 ```
 
@@ -98,7 +102,7 @@ fn get() -> Option<i64> { Option::None }
 
 fn main() {
     let x = get()?;
-    print(x);
+    let _v = x;
 }
 // error: `?` returns early from `main`, but its result, `()`, doesn't implement `core::ops::Try`
 ```
@@ -220,11 +224,13 @@ fn two(s: &str) -> Parsed<u32> with panic {
     Parsed::Done(a * 10 + b)
 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     match two("4x") {
-        Parsed::Done(v) => print(v),
-        Parsed::Failed(at) => print(at), // expect: 1
+        Parsed::Done(v) => out.line(&v)?,
+        Parsed::Failed(at) => out.line(&at)?, // expect: 1
     }
+    Result::Ok(())
 }
 ```
 

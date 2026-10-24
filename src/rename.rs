@@ -64,7 +64,6 @@ pub fn target<'i>(
     let Some(def) = note.def else {
         return Err(match &note.kind {
             NoteKind::Trait(t) => format!("`{t}` is a built-in trait"),
-            NoteKind::Fn(m) => format!("`{m}` is a built-in function"),
             kind => format!("`{}` is built in", name(kind)),
         });
     };

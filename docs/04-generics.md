@@ -15,11 +15,13 @@ fn map<T, U>(o: Option<T>, f: fn(T) -> U) -> Option<U> {
     }
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     match map(Option::Some(40i64), |x| x / 10) {
-        Option::Some(y) => print(y), // expect: 4
+        Option::Some(y) => out.line(&y)?, // expect: 4
         Option::None => {},
     }
+    Result::Ok(())
 }
 ```
 
@@ -175,9 +177,9 @@ and only by saying so with `<T>`. A closure, and any `let`, has one type
 fn id<T>(x: T) -> T { x }
 
 fn main() {
-    let f = id;          // id instantiated once: f : fn(α) -> α
-    print(f(1i64));      // α = i64
-    print_bool(f(true)); // error: expected `i64`, found `bool`
+    let f = id;       // id instantiated once: f : fn(α) -> α
+    let _v = f(1i64); // α = i64
+    let _v = f(true); // error: expected `i64`, found `bool`
 }
 ```
 

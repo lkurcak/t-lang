@@ -897,10 +897,6 @@ impl<'a> Builder<'a> {
             ExprKind::Var(_, _) => {
                 let t = match &self.cx.typed().vars[&e.id] {
                     Res::Fn(symbol, targs) => self.fn_value(symbol, targs, e.span),
-                    Res::Builtin(name, targs) => {
-                        let scheme = crate::check::builtin_scheme(name);
-                        self.instantiate(&scheme, targs, e.span)
-                    }
                     Res::Local(_) => unreachable!("a place"),
                 };
                 (Operand::Const, t)

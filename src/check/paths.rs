@@ -5,7 +5,7 @@ use super::generics::{self, Lifetimes};
 use super::info::{Instance, NoteKind, Resolved};
 use super::scope::{Binding, FnId};
 use super::typed::Res;
-use super::{Checker, builtin_scheme, modules, plural, traits};
+use super::{Checker, modules, plural, traits};
 use crate::ast::*;
 use crate::error::{Error, Span};
 use crate::traits::Pred;
@@ -34,7 +34,7 @@ impl Checker {
             },
             false => self.binding(name),
         };
-        let (scheme, def, symbol, builtin) = match binding {
+        let (scheme, def, symbol) = match binding {
             None => return Ok(None),
             Some(Binding::Local(i)) => {
                 if i < self.barrier {
@@ -64,9 +64,8 @@ impl Checker {
                 self.uses().fns.insert(id);
                 let f = &self.fns[id.0];
                 let scheme = f.scheme.clone();
-                (scheme, Some(f.name.span), Some(f.symbol.clone()), None)
+                (scheme, f.name.span, f.symbol.clone())
             }
-            Some(Binding::Builtin(b)) => (builtin_scheme(b), None, None, Some(b)),
         };
         let args = self.type_args(name, &scheme.params, targs, span, "(..)")?;
         let s = Subst::new(&scheme.params, &args);
@@ -86,17 +85,11 @@ impl Checker {
         for (lhs, rhs) in &scheme.eqs {
             self.require_eq(s.apply(lhs), s.apply(rhs), at, name)?;
         }
-        let res = match (&symbol, builtin) {
-            (Some(symbol), _) => Res::Fn(symbol.clone(), args.clone()),
-            (None, Some(b)) => Res::Builtin(b, args.clone()),
-            (None, None) => unreachable!("a function or a built-in"),
-        };
-        let instance = symbol.map(|symbol| {
-            self.info.symbols.insert(id, symbol.clone());
-            (id, span, Instance::Fn(symbol, args))
-        });
+        let res = Res::Fn(symbol.clone(), args.clone());
+        self.info.symbols.insert(id, symbol.clone());
+        let instance = Some((id, span, Instance::Fn(symbol, args)));
         let kind = NoteKind::Fn(name.to_string());
-        self.note_use(at, kind, ty.clone(), def, instance, targs.is_empty());
+        self.note_use(at, kind, ty.clone(), Some(def), instance, targs.is_empty());
         Ok(Some((ty, res)))
     }
 
