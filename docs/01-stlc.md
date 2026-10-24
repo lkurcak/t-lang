@@ -129,8 +129,9 @@ example, refinement types can rule out division by zero.
 
 ## Exercises
 
-1. Add a `print_bool : fn(bool) -> ()` builtin. Touch `BUILTINS`,
-   `builtin_type` and `Interp::call`.
+1. Add an intrinsic `core::num::is_zero : fn(i64) -> bool`. Declare it in
+   `core/num.t` with `#[intrinsic]` and no body, and touch `INTRINSICS`
+   and `Interp::intrinsic`. Then write it in T instead: which is better?
 2. Comment out the `self.check(c, &Type::Bool)?` in the `If` case, then write a
    program that makes the interpreter hit `unsound`. You've just broken
    soundness on purpose.

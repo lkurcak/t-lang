@@ -223,10 +223,15 @@ vim.api.nvim_create_autocmd("FileType", {
 Each `tests/t/*.t` file is a program with its expectations in comments:
 
 ```rust,fragment
-print(1 + 2); // expect: 3
+out.line(&(1 + 2))?; // expect: 3
+// stderr: error: broken pipe
+// stdin: a line of input
 // error: expected `i64`, found `bool`
 // warning: unreachable pattern
 ```
+
+`// expect:` lines are what it writes to its output, `// stderr:` lines
+what it writes where errors go, and `// stdin:` lines its input.
 
 Every warning must be expected, and applying the warnings' fixes must not
 change what the program does. A program of several files is a directory,
@@ -306,6 +311,11 @@ has to fit that:
   is a safe interface over it, which nothing outside can break (see
   [docs/09.1-list.md](docs/09.1-list.md)), and its values are seen as a
   slice, `&[T]` (see [docs/10-slices.md](docs/10-slices.md)).
+- **No ambient authority.** A program reads and writes only through the
+  streams `main` is given, `fn main(os: Os)`, which no code can make or
+  copy: a function that isn't handed one can't do I/O. Writing gives an
+  error as a value, `out.line(&x)?`. See
+  [docs/19-std-io.md](docs/19-std-io.md).
 
 Within that, the aim is to push the type system as far as it goes, and keep
 it sound: well-typed programs don't go wrong, including the ones that
@@ -347,7 +357,7 @@ combine features in ways nobody planned for.
 | 17 ✅ | retrospective 1: effect parameters declared `effect e`; `Discard` and `Copy` only derived; `//!` module docs | kinds given by declaration, not spelling; marker traits whose proofs are closed under their own trait, so no cycle can run through them | [docs/17-retrospective-1.md](docs/17-retrospective-1.md) |
 | 17.1 ✅ | `Discard`, `Copy`, `Eq`, `Int`, `Fn`… are core's `#[intrinsic]` traits, in the prelude; `Box` is `alloc::boxed::Box`; `<` is `Ord`'s, for any ordered type | the checker knows items by symbol, never by name; operators as trait methods, with the machine's `<` on integers the only one the refinement logic reads | [docs/17.1-library-items.md](docs/17.1-library-items.md) |
 | 18 ✅ | `core::fmt`: `Write`, a sink of text, and `Display`, for integers, `bool`, `char`, strings and a program's own types; `w.put(&x)?`, `String::of(&x)` | effects bounded by an argument's: formatting does only what its sink does, so into a pure sink it's total; numbers in decimal proved not to panic, at every integer type; each sink's errors a type of its own | [docs/18-fmt.md](docs/18-fmt.md) |
-| — | `std` | | |
+| 19 ✅ | `std`: `fn main(os: Os)`, `out.line(&x)?`, `stdin.read_line(&mut line)?`, `main` giving back `Result<(), E>`; the `print` built-ins are gone | capabilities: what a function can do to the world is what it's handed, values no code can forge or copy (uniqueness, as Clean's world), not an effect; errors as values meeting linear types | [docs/19-std-io.md](docs/19-std-io.md) |
 | — | C backend | | when it's worth it |
 
 ## License

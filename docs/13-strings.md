@@ -209,8 +209,8 @@ fn main() with panic {
 // error: runtime error: panicked: o has a value
 ```
 
-Until there's I/O (std), `print_str` prints a string, one line of output
-for each line in it.
+A program writes a string to its output with `out.line(&s)?`, through
+std's `Stdout` (since step 19, docs/19-std-io.md).
 
 ## Why it's sound
 
@@ -274,7 +274,7 @@ the invariant but the `unsafe` blocks, each of which says why it's kept.
 | `<` on strings and characters | `<` is for integers; `Ord` orders strings, and `as u32` characters | 17.1 |
 | `starts_with`, `find`, `split`, `trim`, `lines` | safe code over `as_bytes`, any time | — |
 | raw strings, `r"…"`, and `\` before a line break | nothing needs them yet | — |
-| `print_str` going away | std I/O | — |
+| `print_str` going away | std I/O | 19 |
 
 ## Exercises
 

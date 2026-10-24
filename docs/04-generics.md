@@ -401,7 +401,7 @@ reads the same table.
 7. Make `let` generalise, as in exercise 4 of step 3, and monomorphise it
    by copying the `let` once per type it's used at:
    `let id = |x| x; id(1); id(true)` becomes two `let`s. Now try
-   `let id = { print(1); |x| x };`. What goes wrong, and how does ML's
+   `let id = { n += 1; |x| x };`. What goes wrong, and how does ML's
    *value restriction* avoid it?
 8. Before step 6c, why was it fine for `apply<T>(f: fn(T) -> T, x: T)` to
    be called with a closure that captured, when `id` wasn't?

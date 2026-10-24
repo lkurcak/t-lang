@@ -275,8 +275,9 @@ can't be `str`.
   and keeps `fmt`'s argument the sink, so a `Display` passes it on.
 - **Not in the prelude.** Nothing in it says I/O yet, and std's byte
   sinks will want the name `Write` too.
-- **The `print` built-ins are unchanged.** What printing does (an effect,
-  or a value standing for the terminal) is std I/O's question.
+- **The `print` built-ins were unchanged.** What printing does (an effect,
+  or a value standing for the terminal) was std I/O's question: a value,
+  and the built-ins are gone (docs/19-std-io.md).
 
 ## Deliberately missing (coming later)
 
@@ -286,7 +287,7 @@ can't be `str`.
 | width, padding, hexadecimal | wrapper types (`Hex(n)`, `Pad(..)`) implementing `Display`, not flags in a `Formatter` | — |
 | `Debug` and `#[derive(Debug)]` | a second trait, and a derive that writes code, with strings escaped | — |
 | `Display` for `Option` and `Result` | as in Rust: how to show one depends on the program | — |
-| printing to the terminal through a sink | std I/O | next |
+| printing to the terminal through a sink | std I/O | 19 |
 
 ## Exercises
 

@@ -366,9 +366,9 @@ regions are sets of. Roughly:
 
 ```text
 let r = &x;      _3 = &'?7 _1        // a loan of _1, for region '?7
-print(*r);       _2 = copy _3
+f(*r);           _2 = copy _3
                  _4 = copy *_2
-                 _5 = call print(_4)
+                 _5 = call f(_4)
 x = 2;           _1 = 2              // a write to _1
 ```
 
@@ -389,7 +389,7 @@ constraint say what's in them (`borrowck/regions.rs`):
 
 Then the smallest regions that satisfy the constraints are found by growing
 them until nothing changes. In the program above, `r`'s region is the two
-points between `let r` and `print(*r)`, since `r` is dead after that.
+points between `let r` and `f(*r)`, since `r` is dead after that.
 
 Each `&` makes a *loan*, of a place, for a region. Then a forward dataflow
 analysis finds which loans are *in scope* at each point, those whose region

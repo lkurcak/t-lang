@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+Step 19: std I/O. See [docs/19-std-io.md](docs/19-std-io.md).
+
+### Added
+
+- The `std` library, beside `core` and `alloc`, loaded for every program
+  and not in the prelude.
+- `fn main(os: std::Os)`: `Os` holds the program's streams, `stdin`,
+  `stdout` and `stderr`, intrinsic values no code can make or copy, so a
+  function does I/O only through a stream it's handed.
+- `Stdout` and `Stderr` are `core::fmt::Write` sinks whose `Error` is
+  `std::io::Error`, with `put` and `line` of their own;
+  `Stdin::read_line(&mut line)`, `Ok(false)` at the end of input.
+- `Write::line(&x)`: `x`, then a line break, for every sink.
+- `main` can give back `Result<(), E>`, with `E: Display + Discard`: an
+  `Err` is written to stderr, `error: ...`, and the program fails.
+- Warning `unused_results`: a statement that throws away a `Result`
+  whose error type isn't `!`. The fix is `let _ =`.
+- Tests: `// stdin:` lines give a program input, and `// stderr:` lines
+  say what it writes where errors go.
+
+### Changed
+
+- `t run` writes a program's output as it runs, not after, and before
+  each read of input, so a prompt is seen. Warnings come first.
+- The import fix for an unknown type also finds a library's root items:
+  `use std::Os;`.
+
+### Removed
+
+- The `print`, `print_bool` and `print_str` built-ins, and printing what
+  `main` gives back: a `main` gives back `()` or a `Result<(), E>`.
+
 ## 0.31.0 (2026-10-24)
 
 Step 18: `core::fmt`. See [docs/18-fmt.md](docs/18-fmt.md).
