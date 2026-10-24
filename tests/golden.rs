@@ -170,9 +170,11 @@ fn without_std(program: t_lang::ast::Program) -> t_lang::ast::Program {
     use t_lang::ast::{FnDecl, Program, TypeDecl};
     let library = |name: &str| {
         let name = name.strip_prefix('<').unwrap_or(name);
-        ["core::", "alloc::", "std::", "[", "str", "char", "bool", "i", "u"]
-            .iter()
-            .any(|p| name.starts_with(p))
+        [
+            "core::", "alloc::", "std::", "[", "str", "char", "bool", "i", "u",
+        ]
+        .iter()
+        .any(|p| name.starts_with(p))
             && !name.starts_with("impl")
     };
     let text = |types: Vec<TypeDecl>, fns: Vec<FnDecl>| {
@@ -207,8 +209,7 @@ fn without_std(program: t_lang::ast::Program) -> t_lang::ast::Program {
             left_types.into_iter().partition(|d| used(&d.name().name));
         types.extend(now);
         left_types = later;
-        let (now, later): (Vec<_>, Vec<_>) =
-            left_fns.into_iter().partition(|f| used(&f.name.name));
+        let (now, later): (Vec<_>, Vec<_>) = left_fns.into_iter().partition(|f| used(&f.name.name));
         fns.extend(now);
         left_fns = later;
         if types.len() + fns.len() == before {
@@ -220,7 +221,11 @@ fn without_std(program: t_lang::ast::Program) -> t_lang::ast::Program {
     types.sort_by_key(|d| order(&d.name().name));
     let order = |name: &str| program.fns.iter().position(|f| f.name.name == name);
     fns.sort_by_key(|f| order(&f.name.name));
-    Program { types, fns, ..program }
+    Program {
+        types,
+        fns,
+        ..program
+    }
 }
 
 /// A program without generics, nested functions or local types prints as

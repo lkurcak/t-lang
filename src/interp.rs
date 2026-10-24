@@ -254,7 +254,11 @@ pub fn run(prog: &Program, term: &mut dyn Terminal) -> Result<Value, Error> {
         };
         let at = interp.memory.alloc(e.clone(), false);
         let stderr = Value::Struct("std::io::Stderr".into(), Vec::new());
-        interp.call(Value::Fn(report), vec![Value::Ref(at.clone()), stderr], Span::new(0, 0))?;
+        interp.call(
+            Value::Fn(report),
+            vec![Value::Ref(at.clone()), stderr],
+            Span::new(0, 0),
+        )?;
         interp.memory.free(&at, false);
     }
     interp.drop(result.clone());

@@ -144,8 +144,7 @@ fn reports_and_clears_diagnostics() {
 fn borrow_errors_point_at_the_borrow() {
     let (child, mut c) = start();
     let uri = "file:///tmp/borrow.t";
-    let src =
-        "fn main() {\n    let mut x: i64 = 1;\n    let r = &x;\n    x = 2;\n    print(*r);\n}\nfn print<T: Int>(_x: T) {}\n";
+    let src = "fn main() {\n    let mut x: i64 = 1;\n    let r = &x;\n    x = 2;\n    print(*r);\n}\nfn print<T: Int>(_x: T) {}\n";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
             "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
@@ -1650,7 +1649,8 @@ fn files_of_modules_are_checked_with_their_program() {
     let dir = std::env::temp_dir().join(format!("t-lsp-files-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let main = "mod util;\nfn main() {\n    print(util::helper());\n}\nfn print<T: Int>(_x: T) {}\n";
+    let main =
+        "mod util;\nfn main() {\n    print(util::helper());\n}\nfn print<T: Int>(_x: T) {}\n";
     std::fs::write(dir.join("main.t"), main).unwrap();
     std::fs::write(dir.join("util.t"), "pub fn helper() -> i64 { 1 }\n").unwrap();
     let main_uri = file_uri(&dir.join("main.t"));

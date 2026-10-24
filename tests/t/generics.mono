@@ -24,7 +24,7 @@ fn flip::<i64, bool>(p: Pair::<i64, bool>) -> Pair::<bool, i64> {
     Pair::<bool, i64> { first: p.second, second: p.first }
 }
 
-fn map::<{panic}, i64, i64, {closure#74470}>(o: Option::<i64>, f: {closure#74470}) -> Option::<i64>
+fn map::<{panic}, i64, i64, {closure#74489}>(o: Option::<i64>, f: {closure#74489}) -> Option::<i64>
 with panic
 {
     match o {
@@ -124,7 +124,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         ),
     };
     let n: i64 = 10i64;
-    let o = map::<{panic}, i64, i64, {closure#74470}>(Option::<i64>::Some(4i64), |x| x * n);
+    let o = map::<{panic}, i64, i64, {closure#74489}>(Option::<i64>::Some(4i64), |x| x * n);
     match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
         <std::io::Stdout>::line::<i64>(&mut out, &unwrap_or::<i64>(o, 0i64)),
     ) {

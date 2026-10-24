@@ -216,9 +216,7 @@ impl Modules {
     /// from it, or else that after `crate::`.
     pub(crate) fn path_to_trait(&self, m: usize, symbol: &str) -> String {
         match m {
-            _ if is_library_symbol(symbol) => {
-                symbol.to_string()
-            }
+            _ if is_library_symbol(symbol) => symbol.to_string(),
             ROOT => symbol.to_string(),
             _ => format!("crate::{symbol}"),
         }
@@ -1784,5 +1782,7 @@ fn signature(f: &FnDecl, inherent: bool) -> Option<String> {
 /// with one's name, as `alloc::boxed::Box` does?
 pub(crate) fn is_library_symbol(symbol: &str) -> bool {
     let first = symbol.split("::").next().unwrap_or_default();
-    crate::load::LIBRARIES.iter().any(|(name, ..)| *name == first)
+    crate::load::LIBRARIES
+        .iter()
+        .any(|(name, ..)| *name == first)
 }

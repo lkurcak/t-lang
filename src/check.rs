@@ -91,7 +91,6 @@ use std::collections::{HashMap, HashSet};
 use typed::{Bind, Typed};
 use unify::Var;
 
-
 /// The intrinsics: functions the core and alloc libraries declare with no
 /// body, which the compiler provides (see `core/mem.t`, `alloc/raw.t`), by
 /// symbol, or for a method, its type's symbol and its name (`[T]` for a

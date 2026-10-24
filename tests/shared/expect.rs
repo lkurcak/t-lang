@@ -72,7 +72,7 @@ impl Expectations {
             input: src
                 .lines()
                 .filter_map(|l| l.find("// stdin:").map(|i| &l[i + "// stdin:".len()..]))
-                .flat_map(|l| l.strip_prefix(' ').unwrap_or(l).bytes().chain([b'\n']))
+                .flat_map(|l| l.strip_prefix(' ').unwrap_or(l).bytes().chain(*b"\n"))
                 .collect(),
             error: src.lines().find_map(|l| directive(l, "// error: ")),
             warnings: src
