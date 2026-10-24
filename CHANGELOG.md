@@ -22,6 +22,7 @@ Step 20: destructors. See [docs/20-destructors.md](docs/20-destructors.md).
 - Outside its module, a value whose type has a `discard` of its own can't
   be taken apart, by a pattern or by moving a field out; in its module, a
   by-value pattern uses it up, without calling `discard`.
+- tree-sitter 0.27 (was 0.26), for the parser `t tree-sitter` builds.
 
 ### Removed
 

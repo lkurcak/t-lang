@@ -108,7 +108,7 @@ fn highlights_capture_each_node_once() {
         let mut cursor = QueryCursor::new();
         let mut captures = cursor.captures(&query, tree.root_node(), src.as_bytes());
         while let Some((m, i)) = captures.next() {
-            let c = m.captures[*i];
+            let c = m.captures()[*i];
             let name = query.capture_names()[c.index as usize];
             if let Some(prev) = seen.insert(c.node.id(), name)
                 && prev != name
@@ -174,7 +174,7 @@ fn parses_nested_functions() {
     let mut captures = cursor.captures(&query, root, src.as_bytes());
     let mut function = None;
     while let Some((m, i)) = captures.next() {
-        let c = m.captures[*i];
+        let c = m.captures()[*i];
         if c.node.id() == name.id() {
             function = Some(query.capture_names()[c.index as usize]);
         }
@@ -222,7 +222,7 @@ fn highlights_shorthand_fields_as_variables() {
     let mut captures = cursor.captures(&query, root, src.as_bytes());
     let mut members = Vec::new();
     while let Some((m, i)) = captures.next() {
-        let c = m.captures[*i];
+        let c = m.captures()[*i];
         if query.capture_names()[c.index as usize] == "variable.other.member" {
             let line = c.node.start_position().row + 1;
             members.push((line, c.node.utf8_text(src.as_bytes()).unwrap()));

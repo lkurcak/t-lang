@@ -23,7 +23,7 @@ serde_json = "1.0.154"
 cc = "1.8.0"
 
 [dev-dependencies]
-tree-sitter = "0.26"
+tree-sitter = "0.27"
 tree-sitter-t = { path = "editors/tree-sitter-t/bindings/rust" }
 
 # The tests check each of about a thousand programs, and the core library
