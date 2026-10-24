@@ -342,6 +342,7 @@ combine features in ways nobody planned for.
 | 16 ✅ | running out of memory is part of `alloc`, not `panic`: `Box::new`, `List::push`, `String::push` say `with alloc`; `RawBuf::grow(extra)`, `alloc::raw::out_of_memory` | which effect an abort is: `panic` for bugs, `alloc` for resources, and the library's signatures proved without `panic` | [docs/16-out-of-memory.md](docs/16-out-of-memory.md) |
 | 17 ✅ | retrospective 1: effect parameters declared `effect e`; `Discard` and `Copy` only derived; `//!` module docs | kinds given by declaration, not spelling; marker traits whose proofs are closed under their own trait, so no cycle can run through them | [docs/17-retrospective-1.md](docs/17-retrospective-1.md) |
 | 17.1 ✅ | `Discard`, `Copy`, `Eq`, `Int`, `Fn`… are core's `#[intrinsic]` traits, in the prelude; `Box` is `alloc::boxed::Box`; `<` is `Ord`'s, for any ordered type | the checker knows items by symbol, never by name; operators as trait methods, with the machine's `<` on integers the only one the refinement logic reads | [docs/17.1-library-items.md](docs/17.1-library-items.md) |
+| 18 ✅ | `core::fmt`: `Write`, a sink of text, and `Display`, for integers, `bool`, `char`, strings and a program's own types; `w.put(&x)?`, `String::of(&x)` | effects bounded by an argument's: formatting does only what its sink does, so into a pure sink it's total; numbers in decimal proved not to panic, at every integer type; each sink's errors a type of its own | [docs/18-fmt.md](docs/18-fmt.md) |
 | — | `std` | | |
 | — | C backend | | when it's worth it |
 

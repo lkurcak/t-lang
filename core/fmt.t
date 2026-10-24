@@ -136,7 +136,7 @@ impl Display for usize {
 
 /// `n` in decimal, with a `-` if it's negative: once for every integer
 /// type, which the ten impls above call, as one impl for every `T: Int`
-/// would overlap the others.
+/// would overlap those for `bool` and `char`.
 fn decimal<T: Int, W: Write>(n: T, w: &mut W) -> Result<(), W::Error> with W::e {
     if n < 0 {
         w.write_char('-')?;
