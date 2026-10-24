@@ -1,5 +1,5 @@
 // An effect parameter said but never had: `f` is never called.
-fn ignore<e, F: Fn() with e + Discard>(f: F) with e {}
+fn ignore<effect e, F: Fn() with e + Discard>(f: F) with e {}
 
 fn main() {
     ignore(|| {});

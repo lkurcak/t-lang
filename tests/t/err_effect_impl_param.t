@@ -7,7 +7,7 @@ trait Tr {
 #[derive(Discard)]
 struct W {}
 
-impl<f> Tr for W {
+impl<effect f> Tr for W {
     fn a(&self) -> i64 { 1 }
 }
 

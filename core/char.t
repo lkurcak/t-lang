@@ -1,4 +1,4 @@
-// Characters: Unicode scalar values.
+//! Characters: Unicode scalar values.
 
 use crate::option::Option;
 use crate::str;

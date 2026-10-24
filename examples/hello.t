@@ -13,7 +13,7 @@ fn fact(n: i64) -> i64 with panic {
     if n <= 1 { 1 } else { n * fact(n - 1) }
 }
 
-fn twice<e, F: Fn(i64) -> i64 with e + Discard>(f: F, x: i64) -> i64 with e { f(f(x)) }
+fn twice<effect e, F: Fn(i64) -> i64 with e + Discard>(f: F, x: i64) -> i64 with e { f(f(x)) }
 
 fn main() with panic {
     let n = 5;

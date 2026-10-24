@@ -1,20 +1,20 @@
-// Integers, and arithmetic that can't panic.
-//
-// There are ten integer types: `i8`, `i16`, `i32`, `i64` and `isize`,
-// and `u8`, `u16`, `u32`, `u64` and `usize`. Each is the integers from
-// its least to its greatest, and the operators give the same number as in
-// the integers, ℤ, or panic when that doesn't fit in the type, and `/` and
-// `%` when dividing by zero: `a + b` is `checked_add(a, b)`, or a panic on
-// `None`. These say so instead, or wrap around, as a machine's arithmetic
-// does: modulo 2^w, for a type `w` bits wide.
-//
-// They're written once, for every integer type, as `T: Int`. In code like
-// that the checker knows only what holds of all of them: that the least
-// is at most 0 and the greatest at least 127, and what `least` and
-// `greatest` say. Each but `checked_mul` uses the operator only where the
-// checker proves it can't panic (see docs/08-refinement-types.md and
-// docs/11-integers.md), so it needn't be trusted; `checked_mul` would need
-// it to reason about products of unknowns, which it doesn't.
+//! Integers, and arithmetic that can't panic.
+//!
+//! There are ten integer types: `i8`, `i16`, `i32`, `i64` and `isize`,
+//! and `u8`, `u16`, `u32`, `u64` and `usize`. Each is the integers from
+//! its least to its greatest, and the operators give the same number as in
+//! the integers, ℤ, or panic when that doesn't fit in the type, and `/` and
+//! `%` when dividing by zero: `a + b` is `checked_add(a, b)`, or a panic on
+//! `None`. These say so instead, or wrap around, as a machine's arithmetic
+//! does: modulo 2^w, for a type `w` bits wide.
+//!
+//! They're written once, for every integer type, as `T: Int`. In code like
+//! that the checker knows only what holds of all of them: that the least
+//! is at most 0 and the greatest at least 127, and what `least` and
+//! `greatest` say. Each but `checked_mul` uses the operator only where the
+//! checker proves it can't panic (see docs/08-refinement-types.md and
+//! docs/11-integers.md), so it needn't be trusted; `checked_mul` would need
+//! it to reason about products of unknowns, which it doesn't.
 
 use crate::option::Option;
 

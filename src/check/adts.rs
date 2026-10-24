@@ -38,11 +38,7 @@ impl Checker {
             }
             // What a struct or enum holds has types, and a function type
             // among them says its effects itself.
-            if let Some(e) = d
-                .type_params()
-                .iter()
-                .find(|p| crate::parser::is_effect_name(&p.name))
-            {
+            if let Some(e) = d.type_params().iter().find(|p| d.generics().is_effect(p)) {
                 let what = match d {
                     TypeDecl::Struct(_) => "a struct",
                     _ => "an enum",
@@ -80,7 +76,7 @@ impl Checker {
             .map(|t| t.symbol.clone())
             .collect();
         for ((d, _), symbol) in decls.iter().zip(&symbols) {
-            let params = generics::declare(d.type_params())?;
+            let params = generics::declare(d.generics())?;
             let lifetimes = generics::declare_lifetimes(&d.generics().lifetimes)?;
             let bounds = generics::bounds(d.generics(), &lifetimes, &params)?;
             let (preds, eqs) = self.preds(d.generics(), &params, &lifetimes, false)?;

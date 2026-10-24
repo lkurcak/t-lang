@@ -1,4 +1,4 @@
-// What operators are written with.
+//! What operators are written with.
 
 /// `start..end`: from `start` up to, not including, `end`. It's empty if
 /// `start` isn't before `end`. Its fields are private, so only `a..b` and

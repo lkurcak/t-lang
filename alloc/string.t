@@ -1,4 +1,4 @@
-// Strings that grow: text in UTF-8, owned, on the heap.
+//! Strings that grow: text in UTF-8, owned, on the heap.
 
 use core::cmp::{Ord, Ordering};
 use core::str;

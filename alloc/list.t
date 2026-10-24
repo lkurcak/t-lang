@@ -1,4 +1,4 @@
-// Lists: dense, resizable arrays.
+//! Lists: dense, resizable arrays.
 
 use core::num::greatest;
 use core::slice::{Iter, IterMut};
@@ -96,7 +96,7 @@ impl<T> List<T> {
     pub fn swap(&mut self, i: usize, j: usize) -> bool { self.as_mut_slice().swap(i, j) }
 
     /// Gives each value, front to back, to `f`, and then the buffer back.
-    pub fn free_with<e, F: FnMut(T) with e + Discard>(mut self, mut f: F) with e {
+    pub fn free_with<effect e, F: FnMut(T) with e + Discard>(mut self, mut f: F) with e {
         let mut i: usize = 0;
         while i < self.len {
             // SAFETY: slots `i..len` still hold values, and slot `i` is

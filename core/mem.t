@@ -1,4 +1,4 @@
-// Moving values around without making or throwing away any.
+//! Moving values around without making or throwing away any.
 
 /// Exchanges the values `a` and `b` point to. Nothing is made, and nothing
 /// thrown away, so it works for any type, `Discard` or not.

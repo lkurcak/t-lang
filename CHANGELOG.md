@@ -1,5 +1,48 @@
 # Changelog
 
+## Unreleased
+
+Step 17: what the first retrospective changed. See
+[docs/17-retrospective-1.md](docs/17-retrospective-1.md).
+
+### Changed
+
+- An effect parameter is declared with `effect`: `fn apply<effect e, F:
+  Fn() with e>(f: F) with e`. Case no longer decides it, so `fn id<t>(x:
+  t) -> t` is a type parameter, with a naming warning, and a `with e`
+  naming a type parameter is an error whose message says to declare it
+  `effect e`. `panic` and `alloc` can't be effect parameters' names.
+- An associated effect's name needn't be lowercase either.
+- `Discard` and `Copy` can only be derived: `impl Discard for P {}` and
+  `impl Copy for P {}` are errors, whose fix derives them instead. A
+  derived one's `where` can only need the same trait.
+- A `///` doc comment before `mod` is an error: a module's doc comment
+  goes inside it, as `//!`. For an inline module, the fix moves it there.
+- Core's `Iterator::map`, `filter` and `fold` call their effect
+  parameters `fx` and `px`, not `f` and `p`, the names of their values.
+- Closures' symbols, as `t mono` shows them, have other numbers.
+
+### Added
+
+- `//!` doc comments, at the start of a file or of `mod m {`, document
+  the module. Hovering a module's name shows them, where it's declared,
+  in a `use` and at the start of a path; core's and alloc's files have
+  them. Anywhere else, `//!` gets the `unused_doc_comments` warning. `t
+  fmt` prints them first in the module, then a blank line; tree-sitter
+  highlights them.
+- Hovering an effect parameter says it's one; renaming one to `panic` or
+  `alloc` is refused.
+
+### Fixed
+
+- The kinds of associated items are checked: an associated type can't
+  be used as effects (`with Self::Item`), an associated effect can't be
+  a type, and an impl can't give an associated effect with `type e =
+  ..;`. Before, these were accepted, with messages like "may have the
+  effects `i64`".
+- An impl's method must have type and effect parameters of the kinds the
+  trait's method has.
+
 ## 0.28.0 (2026-10-24)
 
 Step 16: running out of memory is `alloc`. See

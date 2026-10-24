@@ -140,10 +140,17 @@ impl Checker {
         Type::effects([v])
     }
 
-    /// A fresh variable for type parameter `p`, or a set of effects not
-    /// known yet if it's an effect parameter.
-    pub(super) fn fresh_param(&mut self, p: &str, span: Span, what: String, hint: String) -> Type {
-        match crate::parser::is_effect_name(p) {
+    /// A fresh variable for parameter `p` of `params`, or a set of effects
+    /// not known yet if it's an effect parameter.
+    pub(super) fn fresh_param(
+        &mut self,
+        params: &crate::types::Params,
+        p: &str,
+        span: Span,
+        what: String,
+        hint: String,
+    ) -> Type {
+        match params.is_effect(p) {
             true => self.fresh_effects(span, what),
             false => {
                 let t = self.fresh(span, what, hint);

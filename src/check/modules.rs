@@ -123,6 +123,9 @@ pub(crate) struct Modules {
     /// The last segment of the path of each name a `use` brings in, and
     /// what it names: something in each namespace.
     pub(crate) leaf_items: Vec<(Ident, Vec<Item>)>,
+    /// The first segment of each path that names a module, and the module,
+    /// for hovers. Not the segments after it, whose spans aren't kept.
+    pub(crate) module_refs: Vec<(Span, usize)>,
     /// The core library's root module, and its prelude.
     pub(crate) core: Option<usize>,
     /// The alloc library's root module.
@@ -299,6 +302,17 @@ impl Modules {
         match m {
             ROOT => "the crate root".into(),
             m => format!("`{}`", self.mods[m].path),
+        }
+    }
+
+    /// Module `m`'s path as code would write it from anywhere: `crate`,
+    /// `crate::a::b`, `core`, `alloc::list`.
+    pub(crate) fn full_path(&self, m: usize) -> String {
+        // A library's start with its name already.
+        match (self.in_library(m), self.mods[m].path.as_str()) {
+            (true, path) => path.to_string(),
+            (false, "") => "crate".to_string(),
+            (false, path) => format!("crate::{path}"),
         }
     }
 }
@@ -675,6 +689,7 @@ impl Resolver {
                         && let Some(library) = self.m.library(name)
                     {
                         m = library;
+                        self.m.module_refs.push((seg.span, m));
                         continue;
                     }
                     let Some(b) = found else {
@@ -687,7 +702,12 @@ impl Resolver {
                         return Err(private(&self.m, name, &b, seg.span));
                     }
                     match b.item {
-                        Item::Mod(inner) => inner,
+                        Item::Mod(inner) => {
+                            if i == 0 {
+                                self.m.module_refs.push((seg.span, inner));
+                            }
+                            inner
+                        }
                         _ => {
                             return Err(Error::ty(seg.span, format!("`{name}` isn't a module")));
                         }

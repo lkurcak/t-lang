@@ -14,7 +14,7 @@ fn flip<A, B>(p: Pair<A, B>) -> Pair<B, A> {
 
 // A closure has a type of its own, so `map` takes any `F` that can be
 // called with a `T`. If there's no `T`, `f` isn't called, but dropped.
-fn map<e, T, U, F: FnOnce(T) -> U with e + Discard>(o: Option<T>, f: F) -> Option<U> with e {
+fn map<effect e, T, U, F: FnOnce(T) -> U with e + Discard>(o: Option<T>, f: F) -> Option<U> with e {
     match o {
         Option::Some(x) => Option::Some(f(x)),
         Option::None => Option::None,

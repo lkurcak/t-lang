@@ -1,4 +1,4 @@
-// Iterating.
+//! Iterating.
 
 use crate::option::Option;
 
@@ -14,24 +14,24 @@ pub trait Iterator {
     fn next(&mut self) -> Option<Self::Item> with Self::e;
 
     /// Gives `f` of each value. Nothing is called until it's iterated.
-    fn map<U, f, F: FnMut(Self::Item) -> U with f>(self, f: F) -> Map<Self, F> {
+    fn map<U, effect fx, F: FnMut(Self::Item) -> U with fx>(self, f: F) -> Map<Self, F> {
         Map { iter: self, f }
     }
 
     /// The values `p` says `true` of, throwing the rest away. `p` takes each
-    /// by `&`, for as long as the call, so `|x: &int| *x > 0` will do.
-    fn filter<p, P: FnMut(&Self::Item) -> bool with p>(self, p: P) -> Filter<Self, P>
+    /// by `&`, for as long as the call, so `|x: &i64| *x > 0` will do.
+    fn filter<effect px, P: FnMut(&Self::Item) -> bool with px>(self, p: P) -> Filter<Self, P>
     where
         Self::Item: Discard,
     { Filter { iter: self, p } }
 
     /// `f(..f(f(init, a), b).., z)` of the values `a`, `b`, .. `z`. It
     /// throws itself, and `f`, away at the end.
-    fn fold<B, f, F: FnMut(B, Self::Item) -> B with f + Discard>(mut self, init: B, mut f: F) -> B
-    with {Self::e, f}
-    where
-        Self: Discard,
-    {
+    fn fold<B, effect fx, F: FnMut(B, Self::Item) -> B with fx + Discard>(
+        mut self,
+        init: B,
+        mut f: F,
+    ) -> B with {Self::e, fx} where Self: Discard {
         let mut acc = init;
         loop {
             match self.next() {
@@ -62,11 +62,11 @@ impl<'a, I: Iterator> Iterator for &'a mut I {
 pub struct Map<I, F> { iter: I, f: F }
 
 /// Its values are `U`s, what `f` gives, which `F`'s bound decides.
-impl<U, f, I: Iterator, F: FnMut(I::Item) -> U with f> Iterator for Map<I, F> {
+impl<U, effect fx, I: Iterator, F: FnMut(I::Item) -> U with fx> Iterator for Map<I, F> {
     type Item = U;
-    effect e = {I::e, f};
+    effect e = {I::e, fx};
 
-    fn next(&mut self) -> Option<U> with {I::e, f} {
+    fn next(&mut self) -> Option<U> with {I::e, fx} {
         match self.iter.next() {
             Option::Some(x) => Option::Some((self.f)(x)),
             Option::None => Option::None,
@@ -80,14 +80,14 @@ impl<U, f, I: Iterator, F: FnMut(I::Item) -> U with f> Iterator for Map<I, F> {
 pub struct Filter<I, P> { iter: I, p: P }
 
 /// `next` throws away what `p` doesn't keep, so those must be `Discard`.
-impl<p, I: Iterator, P: FnMut(&I::Item) -> bool with p> Iterator for Filter<I, P>
+impl<effect px, I: Iterator, P: FnMut(&I::Item) -> bool with px> Iterator for Filter<I, P>
 where
     I::Item: Discard,
 {
     type Item = I::Item;
-    effect e = {I::e, p};
+    effect e = {I::e, px};
 
-    fn next(&mut self) -> Option<I::Item> with {I::e, p} {
+    fn next(&mut self) -> Option<I::Item> with {I::e, px} {
         loop {
             match self.iter.next() {
                 Option::Some(x) => {

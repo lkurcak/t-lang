@@ -49,7 +49,7 @@ fn trivia<'s>(
 ) -> Trivia<'s> {
     let toks = toks
         .into_iter()
-        .filter(|t| !matches!(t.tok, Tok::Doc(_)))
+        .filter(|t| !matches!(t.tok, Tok::Doc(_) | Tok::InnerDoc(_)))
         .collect();
     let stray = program.stray_docs.iter().flat_map(|d| &d.lines);
     comments.extend(stray.map(|l| Comment { span: l.span }));
@@ -76,8 +76,13 @@ pub fn shape(program: &Program) -> String {
     let mut program = program.clone();
     program.stray_docs = std::mem::take(&mut program.stray_docs)
         .into_iter()
-        .flat_map(|d| d.lines)
-        .map(|l| DocComment { lines: vec![l] })
+        .flat_map(|d| {
+            let inner = d.inner;
+            d.lines.into_iter().map(move |l| DocComment {
+                lines: vec![l],
+                inner,
+            })
+        })
         .collect();
     program.next_id = 0;
     let debug = format!("{program:?}");

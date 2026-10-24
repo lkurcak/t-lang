@@ -39,7 +39,7 @@ fn pick<T>(a: T, b: T, first: bool) -> T where T: Discard {
     if first { a } else { b }
 }
 
-fn apply<e, F>(f: F, x: i64) -> i64 with e where F: Fn(i64) -> i64 with e + Discard {
+fn apply<effect e, F>(f: F, x: i64) -> i64 with e where F: Fn(i64) -> i64 with e + Discard {
     f(x)
 }
 

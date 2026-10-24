@@ -406,7 +406,7 @@
                 "members": [
                   {
                     "type": "PATTERN",
-                    "value": "[^/\\n].*"
+                    "value": "[^/!\\n].*"
                   },
                   {
                     "type": "PATTERN",
@@ -442,6 +442,22 @@
                 "type": "BLANK"
               }
             ]
+          }
+        ]
+      }
+    },
+    "inner_doc_comment": {
+      "type": "TOKEN",
+      "content": {
+        "type": "SEQ",
+        "members": [
+          {
+            "type": "STRING",
+            "value": "//!"
+          },
+          {
+            "type": "PATTERN",
+            "value": ".*"
           }
         ]
       }
@@ -1510,6 +1526,10 @@
                     {
                       "type": "SYMBOL",
                       "name": "constrained_type_parameter"
+                    },
+                    {
+                      "type": "SYMBOL",
+                      "name": "effect_parameter"
                     }
                   ]
                 },
@@ -1532,6 +1552,10 @@
                           {
                             "type": "SYMBOL",
                             "name": "constrained_type_parameter"
+                          },
+                          {
+                            "type": "SYMBOL",
+                            "name": "effect_parameter"
                           }
                         ]
                       }
@@ -1560,6 +1584,28 @@
         {
           "type": "STRING",
           "value": ">"
+        }
+      ]
+    },
+    "effect_parameter": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "effect"
+        },
+        {
+          "type": "FIELD",
+          "name": "name",
+          "content": {
+            "type": "ALIAS",
+            "content": {
+              "type": "SYMBOL",
+              "name": "identifier"
+            },
+            "named": true,
+            "value": "effect"
+          }
         }
       ]
     },
@@ -5342,6 +5388,10 @@
     {
       "type": "SYMBOL",
       "name": "doc_comment"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "inner_doc_comment"
     }
   ],
   "conflicts": [

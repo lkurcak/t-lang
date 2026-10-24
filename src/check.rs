@@ -70,14 +70,14 @@ mod unify;
 
 pub(crate) use closures::is_result_lifetime;
 pub(crate) use expr::{first_use, result_span};
-pub(crate) use generics::{Lifetimes, ProjNames, TypeName, resolve, resolve_effects};
+pub(crate) use generics::{Kind, Lifetimes, ProjNames, TypeName, resolve, resolve_effects};
 pub use info::{Info, Instance, MoveSite, Note, NoteKind};
 pub use scope::source_name;
 
 use crate::ast::*;
 use crate::error::{Error, Fix, Span, Warning};
 use crate::traits::{Pred, Traits};
-use crate::types::{Adts, Region, Scheme, Type};
+use crate::types::{Adts, Params, Region, Scheme, Type};
 use adts::{adt_names, each_adt};
 use expr::Target;
 use generics::Use;
@@ -152,7 +152,7 @@ pub(crate) fn builtin_scheme(name: &str) -> Scheme {
     match name {
         // print : fn<T: Int>(T) -> ()
         "print" => Scheme {
-            params: vec!["T".into()],
+            params: Params::types(vec!["T".into()]),
             preds: vec![Pred {
                 ty: Type::Param("T".into()),
                 trait_name: "Int".into(),
@@ -355,6 +355,8 @@ pub(crate) struct Checker {
     from: Counts,
     /// Where its `use`s' names start in `modules.leaf_items`.
     leaves_from: usize,
+    /// Where its paths' modules start in `modules.module_refs`.
+    refs_from: usize,
     /// How many blocks have declared types so far (see `names`).
     blocks: usize,
     /// Where the package being checked has its impls in `traits.impls`:
@@ -392,7 +394,7 @@ pub(crate) struct Checker {
     /// The function being checked.
     current: Option<FnId>,
     /// The type parameters of the function being checked.
-    type_params: Vec<String>,
+    type_params: crate::types::Params,
     /// Its lifetime parameters, elided ones too.
     lifetimes: Vec<String>,
     /// What the borrow checker needs to know about each body.
@@ -581,11 +583,12 @@ impl Checker {
             spans_from: 0,
             from: Counts::default(),
             leaves_from: 0,
+            refs_from: 0,
             fns: Vec::new(),
             nested_ids: HashMap::new(),
             scopes: Vec::new(),
             current: None,
-            type_params: Vec::new(),
+            type_params: Params::default(),
             lifetimes: Vec::new(),
             next_id: 0,
             typed: Typed::default(),
@@ -646,6 +649,7 @@ impl Checker {
     fn package(&mut self, prog: &mut Program, root: usize, from: Counts) -> Result<(), Error> {
         self.from = from;
         self.leaves_from = self.modules.leaf_items.len();
+        self.refs_from = self.modules.module_refs.len();
         self.impls_from = self.traits.impls.len();
         self.spans_from = prog.mods[root].span.start;
         let resolved = modules::resolve(prog, &mut self.modules, from);
@@ -842,7 +846,7 @@ impl Checker {
 
     /// The type of function `f`, which isn't a method.
     fn fn_scheme(&mut self, f: &FnDecl) -> Result<Scheme, Error> {
-        let params = generics::declare(&f.generics.types)?;
+        let params = generics::declare(&f.generics)?;
         let declared = generics::declare_lifetimes(&f.generics.lifetimes)?;
         let bounds = generics::bounds(&f.generics, &declared, &params)?;
         let (preds, eqs) = self.preds(&f.generics, &params, &declared, true)?;
@@ -879,7 +883,7 @@ impl Checker {
     fn signature(
         &mut self,
         f: &FnDecl,
-        params: &[String],
+        params: &Params,
         declared: &[String],
         opaques: bool,
     ) -> Result<(Vec<Type>, Type, Type, Vec<String>), Error> {
@@ -918,7 +922,7 @@ impl Checker {
                  as for an associated type",
             ));
         }
-        let own: Vec<String> = params.iter().filter(|p| *p != "Self").cloned().collect();
+        let own = params.without("Self");
         for t in written {
             self.opaque(t, &own, &lifetimes)?;
         }
@@ -1235,13 +1239,13 @@ impl Checker {
     fn resolve_with(
         &self,
         t: &TypeExpr,
-        params: &[String],
+        params: &Params,
         lts: &mut Lifetimes,
     ) -> Result<Type, Error> {
         resolve(
             t,
             &|_, t| self.type_name(t),
-            &|s, tr, name, t| self.projection(s, tr, name, t),
+            &|s, tr, name, t, k| self.projection(s, tr, name, t, k),
             params,
             lts,
         )
@@ -1252,13 +1256,13 @@ impl Checker {
     fn resolve_effects_with(
         &self,
         e: &EffectSet,
-        params: &[String],
+        params: &Params,
         lts: &mut Lifetimes,
     ) -> Result<Type, Error> {
         resolve_effects(
             e,
             &|_, t| self.type_name(t),
-            &|s, tr, name, t| self.projection(s, tr, name, t),
+            &|s, tr, name, t, k| self.projection(s, tr, name, t, k),
             params,
             lts,
         )

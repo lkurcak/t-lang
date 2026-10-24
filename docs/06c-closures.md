@@ -7,9 +7,9 @@ body) and `src/borrowck/build.rs` (making a closure, and calling one),
 `src/lift.rs` and `src/interp.rs` (`Closure`).
 
 ```rust
-fn apply<e, F: Fn(i64) -> i64 with e + Discard>(f: F, x: i64) -> i64 with e { f(x) }
+fn apply<effect e, F: Fn(i64) -> i64 with e + Discard>(f: F, x: i64) -> i64 with e { f(x) }
 
-fn count<e, F: FnMut() with e + Discard>(mut tick: F) with e {
+fn count<effect e, F: FnMut() with e + Discard>(mut tick: F) with e {
     tick();
     tick();
 }
@@ -104,7 +104,7 @@ Which trait a closure implements follows from what its body does:
 - `Fn` otherwise.
 
 ```rust,error
-fn twice<e, F: Fn() -> i64 with e + Discard>(f: F) -> i64 with {panic, e} { f() + f() }
+fn twice<effect e, F: Fn() -> i64 with e + Discard>(f: F) -> i64 with {panic, e} { f() + f() }
 
 fn main() {
     let mut n = 0;
@@ -192,7 +192,7 @@ implementations that aren't closures.
 can be lent to a function and called again after:
 
 ```rust
-fn apply<e, F: Fn(i64) -> i64 with e>(f: &F, x: i64) -> i64 with e { f(x) }
+fn apply<effect e, F: Fn(i64) -> i64 with e>(f: &F, x: i64) -> i64 with e { f(x) }
 
 fn main() with panic {
     let k = 3;

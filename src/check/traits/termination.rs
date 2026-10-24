@@ -4,7 +4,6 @@
 use super::{each_proj, fields, has_proj, mentions, occurrences};
 use crate::check::Checker;
 use crate::error::{Error, Span};
-use crate::parser::is_effect_name;
 use crate::traits::ImplDef;
 use crate::types::{Subst, Type};
 use std::collections::HashSet;
@@ -100,7 +99,7 @@ impl Checker {
             // What a bound decides a parameter is, is worked out when the
             // impl's associated types are (`traits::impl_args`).
             let deciding = d.params.iter().filter_map(|p| {
-                let decided = !is_effect_name(p) && !mentions(&d.self_ty, p);
+                let decided = !d.params.is_effect(p) && !mentions(&d.self_ty, p);
                 let k = crate::traits::decider(&d.self_ty, &d.params, &d.eqs, p);
                 decided.then_some(&d.eqs[k?].0)
             });

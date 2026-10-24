@@ -323,7 +323,7 @@ diverge. Two things here are shaped for that:
   unification and substitution only need teaching once.
 - Type parameters are the first kind of parameter a `Scheme` can have. A
   generic `map` should panic exactly when the `f` it's given does, which is
-  *effect polymorphism*: `fn map<T, U, e>(o: Option<T>, f: fn(T) -> U ! e)
+  *effect polymorphism*: `fn map<T, U, effect e>(o: Option<T>, f: fn(T) -> U ! e)
   -> Option<U> ! e`, with `e` instantiated at each call just like `T`. Effects
   don't change a value's size or representation, so they can be checked and
   then erased rather than monomorphised.
@@ -376,7 +376,7 @@ reads the same table.
 | `Option<T>` holding itself, lists, trees | needs pointers | 5 |
 | returning a closure that captures | a type per closure, and `impl Fn` | 6c.1 |
 | higher-rank types, `fn(∀T. fn(T) -> T)` | can't be monomorphised | — |
-| `fn map<T, U, e>` | effect polymorphism | 7 |
+| `fn map<T, U, effect e>` | effect polymorphism | 7 |
 
 ## Exercises
 

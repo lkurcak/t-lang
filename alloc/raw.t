@@ -1,4 +1,4 @@
-// Raw memory: a buffer of slots for values, each there or not.
+//! Raw memory: a buffer of slots for values, each there or not.
 
 /// Aborts the program, as allocating does when there's no memory left.
 /// It's for what can't go on for lack of memory without allocating: a

@@ -91,7 +91,7 @@ fn layout_does_not_depend_on_the_input() {
             .iter()
             .filter(|t| !stray(t))
             .map(|t| match t.tok {
-                Tok::Doc(_) => format!("{}\n", &src[t.span.start..t.span.end]),
+                Tok::Doc(_) | Tok::InnerDoc(_) => format!("{}\n", &src[t.span.start..t.span.end]),
                 _ => src[t.span.start..t.span.end].to_string(),
             })
             .collect();
@@ -499,7 +499,7 @@ fn combine<Alpha, Beta>(
 #[test]
 fn impl_headers_break_their_generics_and_wheres() {
     let src = "\
-impl<Alpha: Iterator, Beta: FnMut(&Alpha::Item) -> bool with p, p, Gamma: Discard> Iterator for Filtered<Alpha, Beta, Gamma> {}
+impl<Alpha: Iterator, Beta: FnMut(&Alpha::Item) -> bool with p, effect p, Gamma: Discard> Iterator for Filtered<Alpha, Beta, Gamma> {}
 impl<I: Iterator> Iterator for Second<I> where I::Item: Discard { type Item = I::Item; }
 impl<I: Iterator> Tr for W<I> where I::Item: Discard, I::Item: Eq, I::Item: Copy, I::Item: Ord, I::Item: Tr {}
 ";
@@ -509,7 +509,7 @@ impl<I: Iterator> Tr for W<I> where I::Item: Discard, I::Item: Eq, I::Item: Copy
 impl<
     Alpha: Iterator,
     Beta: FnMut(&Alpha::Item) -> bool with p,
-    p,
+    effect p,
     Gamma: Discard,
 > Iterator for Filtered<Alpha, Beta, Gamma> {}
 impl<I: Iterator> Iterator for Second<I> where I::Item: Discard {

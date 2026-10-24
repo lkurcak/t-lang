@@ -6,8 +6,7 @@ use super::{mentions, occurrences, trait_method_symbol};
 use crate::ast::*;
 use crate::check::generics::{self, Lifetimes};
 use crate::check::{Checker, plural};
-use crate::error::{Error, Span};
-use crate::parser::is_effect_name;
+use crate::error::{Edit, Error, Fix, Span};
 use crate::traits::{AssocDecl, ImplDef, MethodDef, Pred, TraitDef};
 use crate::types::{AdtKind, Bound, Region, Scheme, Subst, Type};
 
@@ -60,6 +59,7 @@ impl Checker {
                 }
                 assoc.push(AssocDecl {
                     name: a.name.name.clone(),
+                    effect: false,
                     bounds,
                     span: a.name.span,
                 });
@@ -75,6 +75,7 @@ impl Checker {
                 }
                 assoc.push(AssocDecl {
                     name: e.name.name.clone(),
+                    effect: true,
                     bounds: Vec::new(),
                     span: e.name.span,
                 });
@@ -137,7 +138,7 @@ impl Checker {
                     trait_name: t.name.name.clone(),
                 };
                 let mut scheme = self.method_scheme(f, &Outer::default(), Some(this), None)?;
-                scheme.params.insert(0, "Self".into());
+                scheme.params.insert_type("Self".into());
                 scheme.preds.insert(
                     0,
                     Pred {
@@ -184,7 +185,7 @@ impl Checker {
             preds: impl_preds,
             eqs: impl_eqs,
         } = outer;
-        let own = generics::declare(&f.generics.types)?;
+        let own = generics::declare(&f.generics)?;
         if let Some(p) = f
             .generics
             .types
@@ -200,8 +201,7 @@ impl Checker {
             ));
         }
         let declared = generics::declare_lifetimes(&f.generics.lifetimes)?;
-        let mut params: Vec<String> = impl_params.to_vec();
-        params.extend(own.iter().cloned());
+        let params = impl_params.concat(&own);
         let mut lifetimes: Vec<String> = impl_lifetimes.to_vec();
         lifetimes.extend(declared.iter().cloned());
         let mut bounds = impl_bounds.to_vec();
@@ -212,7 +212,7 @@ impl Checker {
         // replaced by the impl's type. A `where` clause can bound it, or
         // its associated types, which the trait's bound on it says.
         let mut with_self = params.clone();
-        with_self.push("Self".into());
+        with_self.push_type("Self".into());
         self.env = preds.iter().cloned().chain(this.clone()).collect();
         self.adts.proj.local = eqs.clone();
         let (mut own_preds, mut own_eqs) = self.preds(&f.generics, &with_self, &lifetimes, true)?;
@@ -282,7 +282,7 @@ impl Checker {
 
     fn collect_impls_in(&mut self, prog: &Program) -> Result<(), Error> {
         for d in &prog.impls[self.from.impls..] {
-            let params = generics::declare(&d.generics.types)?;
+            let params = generics::declare(&d.generics)?;
             let declared = generics::declare_lifetimes(&d.generics.lifetimes)?;
             let mut lts = Lifetimes::Params {
                 declared: &declared,
@@ -390,6 +390,22 @@ impl Checker {
                         ),
                     ));
                 }
+                // Only derived, so whether a type is one follows from its
+                // fields alone: a proof of either needs only more of the
+                // same, never another trait (see `derive`).
+                (Some(tr), t) if tr == "Discard" || tr == "Copy" => {
+                    let e = Error::ty(
+                        header,
+                        format!(
+                            "`{tr}` can only be derived, with `#[derive({tr})]` on a struct or \
+                             enum, so that whether a type is `{tr}` follows from its fields alone"
+                        ),
+                    );
+                    return Err(match self.derive_fix(prog, d, tr, t) {
+                        Some(fix) => e.with_fix(fix),
+                        None => e,
+                    });
+                }
                 (Some(tr), t)
                     if crate::traits::BUILTIN_TRAITS.contains(&tr.as_str())
                         && !matches!(t, Type::Adt(..)) =>
@@ -416,7 +432,7 @@ impl Checker {
                 if mentions(&self_ty, p) {
                     continue;
                 }
-                if is_effect_name(p) {
+                if params.is_effect(p) {
                     if in_fn_bound(&d.generics, p) {
                         continue;
                     }
@@ -516,6 +532,34 @@ impl Checker {
         Ok(())
     }
 
+    /// The fix for impl `d` of `tr`, which can only be derived, for type
+    /// `t`: derive it instead, if `t` is a struct or enum of this package.
+    fn derive_fix(&self, prog: &Program, d: &ImplDecl, tr: &str, t: &Type) -> Option<Fix> {
+        let Type::Adt(symbol, ..) = t else {
+            return None;
+        };
+        let i = self.types.iter().position(|t| t.symbol == *symbol)?;
+        let (decl, _) = *prog.all_types().get(i)?;
+        if i < self.from.all_types {
+            return None;
+        }
+        let add = match decl.derives().first() {
+            Some(derive) => {
+                let last = derive.names.last()?;
+                Edit::insert(last.span.end, format!(", {tr}"))
+            }
+            None => {
+                let span = match decl {
+                    TypeDecl::Struct(s) => s.public.unwrap_or(s.span),
+                    TypeDecl::Enum(e) => e.public.unwrap_or(e.span),
+                };
+                Edit::insert(span.start, format!("#[derive({tr})]\n"))
+            }
+        };
+        let title = format!("derive `{tr}` instead");
+        Some(Fix::new(title, vec![add, Edit::delete(d.span)]))
+    }
+
     /// What impl `d`, of trait `tr` (if it's of one) for `self_ty`, says
     /// the trait's associated types are, with the rules that keep working
     /// them out sound (see `traits::Projections`):
@@ -544,7 +588,7 @@ impl Checker {
         d: &ImplDecl,
         tr: Option<&str>,
         self_ty: &Type,
-        params: &[String],
+        params: &crate::types::Params,
         lifetimes: &[String],
         preds: &[Pred],
         eqs: &[(Type, Type)],
@@ -569,7 +613,7 @@ impl Checker {
         let mut out: Vec<(String, Type)> = Vec::new();
         for a in &d.assoc {
             let n = &a.name.name;
-            if !decls.iter().any(|x| x.name == *n) {
+            if !decls.iter().any(|x| x.name == *n && !x.effect) {
                 return Err(Error::ty(
                     a.name.span,
                     format!("`{n}` isn't an associated type of trait `{tr}`"),
@@ -581,8 +625,8 @@ impl Checker {
                     format!("associated type `{n}` is defined twice"),
                 ));
             }
-            let mut with_self = params.to_vec();
-            with_self.push("Self".into());
+            let mut with_self = params.clone();
+            with_self.push_type("Self".into());
             let mut lts = Lifetimes::Assoc {
                 declared: lifetimes,
             };
@@ -610,7 +654,7 @@ impl Checker {
         }
         for e in &d.effects {
             let n = &e.name.name;
-            if !decls.iter().any(|x| x.name == *n) {
+            if !decls.iter().any(|x| x.name == *n && x.effect) {
                 return Err(Error::ty(
                     e.name.span,
                     format!(
@@ -625,8 +669,8 @@ impl Checker {
                     format!("associated effect `{n}` is defined twice"),
                 ));
             }
-            let mut with_self = params.to_vec();
-            with_self.push("Self".into());
+            let mut with_self = params.clone();
+            with_self.push_type("Self".into());
             let mut lts = Lifetimes::Assoc {
                 declared: lifetimes,
             };
@@ -650,7 +694,7 @@ impl Checker {
             .filter(|x| !out.iter().any(|(n, _)| *n == x.name))
             .collect();
         let (effects, types): (Vec<&AssocDecl>, Vec<&AssocDecl>) =
-            missing.into_iter().partition(|x| is_effect_name(&x.name));
+            missing.into_iter().partition(|x| x.effect);
         for (missing, what) in [(types, "associated type"), (effects, "associated effect")] {
             if missing.is_empty() {
                 continue;
@@ -719,7 +763,7 @@ impl Checker {
 /// and equality bounds, which it's generic over too. Nothing, in a trait.
 #[derive(Debug, Clone, Default)]
 pub(in crate::check) struct Outer {
-    pub(in crate::check) params: Vec<String>,
+    pub(in crate::check) params: crate::types::Params,
     pub(in crate::check) lifetimes: Vec<String>,
     pub(in crate::check) bounds: Vec<Bound>,
     pub(in crate::check) preds: Vec<Pred>,

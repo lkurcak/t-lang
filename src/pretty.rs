@@ -37,7 +37,15 @@ pub fn format(program: &Program, trivia: Trivia) -> String {
     let mut p = Printer {
         trivia: Some(trivia),
     };
-    let (mut doc, empty) = p.items(program, ROOT);
+    let docs = program.mods[ROOT].doc.as_ref().map(inner_doc);
+    let (mut doc, mut empty) = p.items(program, ROOT);
+    if let Some(docs) = docs {
+        doc = match empty {
+            true => docs,
+            false => docs + Doc::HardLine + Doc::HardLine + doc,
+        };
+        empty = false;
+    }
     for (i, c) in p.dangling(usize::MAX, empty).into_iter().enumerate() {
         if i > 0 || !empty {
             doc = doc + Doc::HardLine;
@@ -45,6 +53,18 @@ pub fn format(program: &Program, trivia: Trivia) -> String {
         doc = doc + c;
     }
     render(&doc)
+}
+
+/// A module's `//!` doc comment, a line each.
+fn inner_doc(d: &DocComment) -> Doc {
+    let mut doc = Doc::nil();
+    for (i, l) in d.lines.iter().enumerate() {
+        if i > 0 {
+            doc = doc + Doc::HardLine;
+        }
+        doc = doc + text(format!("//!{}", l.text));
+    }
+    doc
 }
 
 /// The items of module `module`, each with where its name is in the
@@ -417,7 +437,7 @@ impl Printer<'_> {
                     lead_start(t.doc.as_ref(), &t.allows, start)
                 }
                 Item::Impl(d) => lead_start(d.doc.as_ref(), &d.allows, d.span.start),
-                Item::Mod(_, m) => lead_start(m.doc.as_ref(), &m.allows, m.span.start),
+                Item::Mod(_, m) => lead_start(None, &m.allows, m.span.start),
                 Item::Use(u) => u.span.start,
             };
             doc = doc + self.element(start, i == 0);
@@ -450,7 +470,7 @@ impl Printer<'_> {
                 + match item {
                     Item::Mod(i, m) => {
                         let body = nest(Doc::HardLine + self.plain_items(program, i));
-                        self.lead(m.doc.as_ref(), &m.allows, m.span.start)
+                        self.lead(None, &m.allows, m.span.start)
                             + public(m.public)
                             + "mod "
                             + &m.name.name
@@ -467,21 +487,29 @@ impl Printer<'_> {
 
     /// `mod name { .. }` or `mod name;`, for `t fmt`.
     fn mod_decl(&mut self, program: &Program, i: usize, m: &ModDecl) -> Doc {
-        let lead = self.lead(m.doc.as_ref(), &m.allows, m.span.start);
+        // Its doc comment is `//!` lines in it, first.
+        let lead = self.lead(None, &m.allows, m.span.start);
         if m.in_file {
             return lead + public(m.public) + "mod " + &m.name.name + ";";
         }
         let head = lead + public(m.public) + "mod " + &m.name.name + " ";
         let open = self.find(m.name.span.end, &Tok::LBrace);
         let close = m.span.end - 1;
-        let (items, empty) = self.items(program, i);
-        if empty && !self.comments_before(close) {
+        let (items, mut empty) = self.items(program, i);
+        if empty && m.doc.is_none() && !self.comments_before(close) {
             return head + "{}";
         }
         let mut body = self.trailing(open + 1);
+        if let Some(d) = &m.doc {
+            body = body + Doc::HardLine + inner_doc(d);
+            if !empty {
+                body = body + Doc::HardLine;
+            }
+        }
         if !empty {
             body = body + Doc::HardLine + items;
         }
+        empty = empty && m.doc.is_none();
         for c in self.dangling(close, empty) {
             body = body + Doc::HardLine + c;
         }
@@ -612,7 +640,10 @@ impl Printer<'_> {
             |p| (p.span.start, end(p)),
             None,
             |pp, p| {
-                let mut out = text(&p.name);
+                let mut out = match g.is_effect(p) {
+                    true => text("effect ") + text(&p.name),
+                    false => text(&p.name),
+                };
                 for (i, b) in g.bounds_of(&p.name).into_iter().enumerate() {
                     out = out + if i == 0 { ": " } else { " + " } + pp.bound(b);
                 }

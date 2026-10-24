@@ -46,7 +46,7 @@ function commaSep1(rule) {
 module.exports = grammar({
   name: 't',
 
-  extras: $ => [/\s/, $.line_comment, $.doc_comment],
+  extras: $ => [/\s/, $.line_comment, $.doc_comment, $.inner_doc_comment],
 
   word: $ => $.identifier,
 
@@ -132,13 +132,16 @@ module.exports = grammar({
     super: _ => 'super',
 
     // `//`, but not `///` followed by anything but another `/`: `////` is
-    // a plain comment, as in Rust. The two never match the same line, so
-    // the longer match decides, with no precedence needed.
-    line_comment: _ => token(seq('//', optional(choice(/[^/\n].*/, /\/\/.*/)))),
+    // a plain comment, as in Rust. Nor `//!`. They never match the same
+    // line, so the longer match decides, with no precedence needed.
+    line_comment: _ => token(seq('//', optional(choice(/[^/!\n].*/, /\/\/.*/)))),
 
     // `///` documents the item, field or variant after it. Here it's only
     // for highlighting, so it can go anywhere a comment can.
     doc_comment: _ => token(seq('///', optional(/[^/\n].*/))),
+
+    // `//!` documents the module it starts. Also only for highlighting.
+    inner_doc_comment: _ => token(seq('//!', /.*/)),
 
     // Items
 
@@ -303,9 +306,12 @@ module.exports = grammar({
     // or after `impl`.
     type_parameters: $ => seq(
       '<',
-      commaSep(choice($.lifetime_parameter, $.constrained_type_parameter)),
+      commaSep(choice($.lifetime_parameter, $.constrained_type_parameter, $.effect_parameter)),
       '>',
     ),
+
+    // `effect e`: it stands for any effects, so it has no bounds.
+    effect_parameter: $ => seq('effect', field('name', alias($.identifier, $.effect))),
 
     lifetime_parameter: $ => seq(
       field('name', $.lifetime),

@@ -274,9 +274,11 @@ an `eq` of its own counts it), or with an impl. Functions never are.
 `Eq` has only `eq`, so `==` and `!=` can't disagree.
 
 `Copy` is a trait with no methods: a *marker*. `#[derive(Copy)]` is an
-impl, and so is `impl Copy for P {}`, which also needs every field `Copy`.
-A bound `T: Copy` lets generic code copy a `T`. Since step 6a.1, `Copy`
-needs `Discard` too (docs/06a.1-linear-types.md).
+impl, which needs every field `Copy`. (Until step 17, so was `impl Copy
+for P {}`; now `Copy` can only be derived, see
+docs/17-retrospective-1.md.) A bound `T: Copy` lets generic code copy a
+`T`. Since step 6a.1, `Copy` needs `Discard` too
+(docs/06a.1-linear-types.md).
 
 A derived impl needs of the type's parameters only what its fields need:
 

@@ -328,6 +328,11 @@ fn respond(req: Request, docs: &Docs) -> Result<Response> {
             let def = docs.analyse(uri).and_then(|a| {
                 let offset = a.offset(uri, at.position)?;
                 let location = match a.info().note_at(offset) {
+                    // A module in a file of its own goes to its file.
+                    Some(note) if matches!(note.kind, NoteKind::Module(_)) => {
+                        let def = note.def?;
+                        file_of_mod(&a, def.start).or_else(|| a.program_location(def))?
+                    }
                     Some(note) => a.program_location(note.def?)?,
                     // The name of a `mod m;` goes to its file.
                     None => file_of_mod(&a, offset)?,

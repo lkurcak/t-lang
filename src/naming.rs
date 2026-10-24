@@ -147,7 +147,7 @@ fn decls(prog: &Program) -> Vec<Decl<'_>> {
     }
     for (d, _) in prog.all_types() {
         out.push(ident(d.name(), "type", Case::Camel));
-        params(d.type_params(), &mut out);
+        params(d.generics(), &mut out);
         match d {
             TypeDecl::Struct(s) => {
                 out.extend(
@@ -186,13 +186,13 @@ fn decls(prog: &Program) -> Vec<Decl<'_>> {
         // Those with a default are among the functions.
         for m in t.methods.iter().filter(|m| !m.provided) {
             out.push(ident(&m.decl.name, "method", Case::Snake));
-            params(&m.decl.generics.types, &mut out);
+            params(&m.decl.generics, &mut out);
             let ps = m.decl.params.iter().filter(|p| p.name.name != "self");
             out.extend(ps.map(|p| ident(&p.name, "variable", Case::Snake)));
         }
     }
     for d in &prog.impls {
-        params(&d.generics.types, &mut out);
+        params(&d.generics, &mut out);
     }
     for (f, _, method) in prog.all_fns() {
         match method {
@@ -201,7 +201,7 @@ fn decls(prog: &Program) -> Vec<Decl<'_>> {
             Some(_) => out.push(ident(&f.name, "method", Case::Snake)),
             None => out.push(ident(&f.name, "function", Case::Snake)),
         }
-        params(&f.generics.types, &mut out);
+        params(&f.generics, &mut out);
         out.extend(
             f.params
                 .iter()
@@ -222,15 +222,11 @@ fn ident<'a>(id: &'a Ident, what: &'static str, case: Case) -> Decl<'a> {
     }
 }
 
-fn params<'a>(params: &'a [Ident], out: &mut Vec<Decl<'a>>) {
-    out.extend(
-        params
-            .iter()
-            .map(|p| match crate::parser::is_effect_name(&p.name) {
-                true => ident(p, "effect parameter", Case::Snake),
-                false => ident(p, "type parameter", Case::Camel),
-            }),
-    );
+fn params<'a>(g: &'a Generics, out: &mut Vec<Decl<'a>>) {
+    out.extend(g.types.iter().map(|p| match g.is_effect(p) {
+        true => ident(p, "effect parameter", Case::Snake),
+        false => ident(p, "type parameter", Case::Camel),
+    }));
 }
 
 /// Adds the variables `e` binds, in `let`s, closures and `match` arms, to

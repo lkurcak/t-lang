@@ -84,15 +84,19 @@ pub struct Counts {
 pub struct NodeId(pub u32);
 
 /// A `///` doc comment, of one or more lines in a row, before the `fn`,
-/// `struct`, `enum`, field or variant it documents.
+/// `struct`, `enum`, field or variant it documents. Or a `//!` one, at the
+/// start of the module it documents, before anything else in it.
 #[derive(Debug, Clone)]
 pub struct DocComment {
     pub lines: Vec<DocLine>,
+    /// Is it `//!`?
+    pub inner: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct DocLine {
-    /// What's after the `///`, as written: `/// Adds one.` is `" Adds one."`.
+    /// What's after the `///` or `//!`, as written: `/// Adds one.` is
+    /// `" Adds one."`.
     pub text: String,
     /// The whole line, `///` and all.
     pub span: Span,
@@ -322,13 +326,15 @@ impl TypeDecl {
 pub struct Generics {
     /// With their `'`: `'a`.
     pub lifetimes: Vec<Ident>,
-    /// Type parameters, and effect parameters among them, told apart by
-    /// case: the `e` of `fn apply<e, F: Fn() with e>(f: F) with e` is
-    /// lowercase (see `parser::is_effect_name`). An effect parameter is a
-    /// type parameter of a kind of its own, standing for a set of effects
-    /// (`Type::Effects`), so it's instantiated, substituted and
+    /// Type parameters, and effect parameters among them: the `e` of `fn
+    /// apply<effect e, F: Fn() with e>(f: F) with e`. An effect parameter
+    /// is a type parameter of a kind of its own, standing for a set of
+    /// effects (`Type::Effects`), so it's instantiated, substituted and
     /// monomorphised as one is.
     pub types: Vec<Ident>,
+    /// Which of `types` are effect parameters, by id: those declared with
+    /// `effect`. The keyword says the kind, never the case of the name.
+    pub effects: Vec<NodeId>,
     /// `'b: 'a` and `T: Show + 'a`, in the order written, each with what's
     /// before its `:` and the lifetimes and traits after it. Lifetimes start
     /// with a `'`, and traits don't.
@@ -346,6 +352,20 @@ pub struct Generics {
 impl Generics {
     pub fn is_empty(&self) -> bool {
         self.lifetimes.is_empty() && self.types.is_empty()
+    }
+
+    /// Is `p`, one of `types`, an effect parameter?
+    pub fn is_effect(&self, p: &Ident) -> bool {
+        self.effects.contains(&p.id)
+    }
+
+    /// The names of the effect parameters.
+    pub fn effect_names(&self) -> Vec<String> {
+        self.types
+            .iter()
+            .filter(|p| self.is_effect(p))
+            .map(|p| p.name.clone())
+            .collect()
     }
 
     /// The bounds on `name`, a lifetime or type parameter: lifetimes and

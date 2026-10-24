@@ -1,5 +1,5 @@
-// What's in scope in every module, after what the module declares and
-// imports itself.
+//! What's in scope in every module, after what the module declares and
+//! imports itself.
 
 pub use crate::cmp::Ord;
 pub use crate::iter::Iterator;

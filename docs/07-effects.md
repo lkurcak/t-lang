@@ -15,7 +15,7 @@ fn max(a: i64, b: i64) -> i64 {
 
 fn mean(a: i64, b: i64) -> i64 with panic { (a + b) / 2 }
 
-fn twice<e, F: Fn(i64) -> i64 with e + Discard>(f: F, x: i64) -> i64 with e { f(f(x)) }
+fn twice<effect e, F: Fn(i64) -> i64 with e + Discard>(f: F, x: i64) -> i64 with e { f(f(x)) }
 
 fn main() with panic {
     print(max(3, 4));                // expect: 4
@@ -118,8 +118,9 @@ Fn(i64) -> i64` holds of what can't panic, and `F: Fn(i64) -> i64 with
 panic` of what may or mayn't.
 
 What a higher-order function does depends on what it's given, so it's
-generic in that: `e` in `twice` is an *effect parameter*, named in
-lowercase among the type parameters, as types are named with a capital.
+generic in that: `e` in `twice` is an *effect parameter*, declared with
+`effect` among the type parameters. (Until step 17 it was told apart by
+being lowercase; see docs/17-retrospective-1.md.)
 `twice` has the effects `e`, and `F` has at most `e`. Each call picks `e`,
 as it picks a type parameter, but it's never written: it's the *least* set
 that makes the bounds hold, the effects of the closure passed. So
@@ -259,8 +260,9 @@ work out; that's for when there's a backend.
   the stack (docs/16-out-of-memory.md).
 - **Bounds are upper bounds, and effect parameters take their least
   solution**, so a call never has more effects than what it's given does.
-- **Lowercase means an effect parameter.** A type parameter named `t` is
-  an effect parameter now. Case already said what a name is.
+- **Lowercase meant an effect parameter.** Step 17 replaced that with
+  `effect e`: case is a lint, never what a name means
+  (docs/17-retrospective-1.md).
 - **No subtyping.** A function type gains effects only where a whole
   value is used.
 

@@ -19,7 +19,7 @@ impl Checker {
     pub(in crate::check) fn preds(
         &mut self,
         g: &Generics,
-        params: &[String],
+        params: &crate::types::Params,
         lifetimes: &[String],
         on_projections: bool,
     ) -> Result<(Vec<Pred>, Vec<Equality>), Error> {
@@ -47,7 +47,7 @@ impl Checker {
     fn preds_in(
         &mut self,
         g: &Generics,
-        params: &[String],
+        params: &crate::types::Params,
         lifetimes: &[String],
         on_projections: bool,
     ) -> Result<(Vec<Pred>, Vec<Equality>), Error> {
@@ -256,6 +256,7 @@ impl Checker {
         tr: Option<&Ident>,
         name: &Ident,
         t: &TypeExpr,
+        kind: crate::check::Kind,
     ) -> Result<Type, Error> {
         let (n, span) = (&name.name, t.span);
         // What the bounds in scope, and the trait's own for a projection,
@@ -348,6 +349,27 @@ impl Checker {
                 }
             }
         };
+        // What it's declared as says what it is, as for a parameter.
+        let effect = self.traits.traits[&tr]
+            .assoc
+            .iter()
+            .find(|a| a.name == *n)
+            .is_some_and(|a| a.effect);
+        match (effect, kind) {
+            (true, crate::check::Kind::Type) => {
+                return Err(Error::ty(
+                    span,
+                    format!("`{n}` is an associated effect of `{tr}`, not a type"),
+                ));
+            }
+            (false, crate::check::Kind::Effects) => {
+                return Err(Error::ty(
+                    span,
+                    format!("`{n}` is an associated type of `{tr}`, not an effect"),
+                ));
+            }
+            _ => {}
+        }
         if !hole {
             let known = match &s {
                 Type::Param(_) | Type::Proj(..) => traits_of(&s).contains(&tr),

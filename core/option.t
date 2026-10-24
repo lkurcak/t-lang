@@ -1,4 +1,4 @@
-// Optional values.
+//! Optional values.
 
 /// A value that may be missing: `Some(x)`, or `None`.
 #[derive(Discard, Copy, Eq)]
@@ -48,7 +48,7 @@ impl<T> Option<T> {
 
     /// `f` of what's in it, if anything. On `None`, `f` is thrown away
     /// uncalled, so it must be `Discard`.
-    pub fn map<U, e, F: FnOnce(T) -> U with e + Discard>(self, f: F) -> Option<U> with e {
+    pub fn map<U, effect e, F: FnOnce(T) -> U with e + Discard>(self, f: F) -> Option<U> with e {
         match self {
             Option::Some(x) => Option::Some(f(x)),
             Option::None => Option::None,
@@ -57,9 +57,9 @@ impl<T> Option<T> {
 
     /// `f` of what's in it, if anything, which may itself be `None`. On
     /// `None`, `f` is thrown away uncalled.
-    pub fn and_then<U, e, F: FnOnce(T) -> Option<U> with e + Discard>(self, f: F) -> Option<U>
-    with e
-    {
+    pub fn and_then<U, effect e, F: FnOnce(T) -> Option<U> with e + Discard>(self, f: F) -> Option<
+        U,
+    > with e {
         match self {
             Option::Some(x) => f(x),
             Option::None => Option::None,
@@ -68,7 +68,7 @@ impl<T> Option<T> {
 
     /// What's in it, or else what `f` makes. Nothing is thrown away but
     /// `f`, uncalled, so `T` needn't be `Discard`.
-    pub fn unwrap_or_else<e, F: FnOnce() -> T with e + Discard>(self, f: F) -> T with e {
+    pub fn unwrap_or_else<effect e, F: FnOnce() -> T with e + Discard>(self, f: F) -> T with e {
         match self {
             Option::Some(x) => x,
             Option::None => f(),
@@ -77,7 +77,9 @@ impl<T> Option<T> {
 
     /// What's in it, or else what `f` gives, which may be `None` too. On
     /// `Some`, `f` is thrown away uncalled.
-    pub fn or_else<e, F: FnOnce() -> Option<T> with e + Discard>(self, f: F) -> Option<T> with e {
+    pub fn or_else<effect e, F: FnOnce() -> Option<T> with e + Discard>(self, f: F) -> Option<T>
+    with e
+    {
         match self {
             Option::Some(x) => Option::Some(x),
             Option::None => f(),

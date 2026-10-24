@@ -208,9 +208,9 @@ impl Checker {
         };
         self.modules.use_trait(self.module, &tr);
         let def = self.traits.method(&tr, m).expect("it has it").clone();
-        let own = &def.scheme.params[1..];
+        let own = def.scheme.params.skip(1);
         let mut args = vec![ty.clone()];
-        args.extend(self.type_args(m, own, targs, name.span, "(..)")?);
+        args.extend(self.type_args(m, &own, targs, name.span, "(..)")?);
         let fn_ty = Subst::new(&def.scheme.params, &args).apply(&def.scheme.ty);
         // Its own bounds, besides `Self: Trait`.
         let s = Subst::new(&def.scheme.params, &args);
@@ -278,6 +278,7 @@ impl Checker {
             .iter()
             .map(|p| {
                 self.fresh_param(
+                    &d.params,
                     p,
                     name.span,
                     format!("`{p}` of the impl of `{}`", d.self_ty),
@@ -285,8 +286,8 @@ impl Checker {
                 )
             })
             .collect();
-        let own = &scheme.params[d.params.len()..];
-        args.extend(self.type_args(&name.name, own, targs, name.span, "(..)")?);
+        let own = scheme.params.skip(d.params.len());
+        args.extend(self.type_args(&name.name, &own, targs, name.span, "(..)")?);
         let s = Subst::new(&scheme.params, &args);
         let self_ty = s.apply(&d.self_ty);
         self.unify(&self_ty, ty)

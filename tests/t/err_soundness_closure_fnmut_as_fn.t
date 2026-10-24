@@ -1,6 +1,6 @@
 // A closure that changes a captured variable is `FnMut`, not `Fn`: calling
 // it through a shared reference could change `n` while someone reads it.
-fn call<e, F: Fn() with e + Discard>(f: F) with e { f() }
+fn call<effect e, F: Fn() with e + Discard>(f: F) with e { f() }
 
 fn main() {
     let mut n: i64 = 0;

@@ -98,6 +98,9 @@ pub enum Tok {
     /// A `///` doc comment line: the text after the `///`. The parser sets
     /// these aside, and attaches them to what comes after.
     Doc(String),
+    /// A `//!` doc comment line, documenting the module it starts: the
+    /// text after the `//!`.
+    InnerDoc(String),
     Eof,
 }
 
@@ -112,7 +115,7 @@ impl Tok {
             Tok::Str(_) => return "a string literal".to_string(),
             Tok::ByteStr(_) => return "a byte string literal".to_string(),
             Tok::Ident(name) => return format!("`{name}`"),
-            Tok::Doc(_) => return "a doc comment".to_string(),
+            Tok::Doc(_) | Tok::InnerDoc(_) => return "a doc comment".to_string(),
             Tok::Lifetime(name) => return format!("`{name}`"),
             Tok::OpEq(op) => return format!("`{}=`", op.symbol()),
             Tok::Eof => return "end of file".to_string(),
@@ -447,7 +450,8 @@ pub struct Token {
 }
 
 /// A `// ...` comment. The parser never sees these; `t fmt` keeps them.
-/// A `///` doc comment is a token instead (`Tok::Doc`).
+/// A `///` or `//!` doc comment is a token instead (`Tok::Doc`,
+/// `Tok::InnerDoc`).
 #[derive(Debug, Clone)]
 pub struct Comment {
     pub span: Span,
@@ -479,9 +483,14 @@ pub fn lex_with_comments(src: &str) -> Result<(Vec<Token>, Vec<Comment>), Error>
             let end = start + src[start..i].trim_end().len();
             let span = Span::new(start, end);
             // `///`, but not `////`, which is a plain comment, as in Rust.
-            match src[start..end].strip_prefix("///") {
-                Some(text) if !text.starts_with('/') => toks.push(Token {
+            let text = &src[start..end];
+            match (text.strip_prefix("///"), text.strip_prefix("//!")) {
+                (Some(text), _) if !text.starts_with('/') => toks.push(Token {
                     tok: Tok::Doc(text.to_string()),
+                    span,
+                }),
+                (_, Some(text)) => toks.push(Token {
+                    tok: Tok::InnerDoc(text.to_string()),
                     span,
                 }),
                 _ => comments.push(Comment { span }),

@@ -9,10 +9,8 @@ struct Pair<A, B> { a: A, b: B }
 #[derive(Discard, Copy)]
 struct Callback<T> { f: fn(T) -> i64 }
 
-#[derive(Discard)]
+#[derive(Discard, Copy)]
 struct Celsius { degrees: i64 }
-
-impl Copy for Celsius {}
 
 fn dup<T: Copy>(x: T) -> Pair<T, T> { Pair { a: x, b: x } }
 

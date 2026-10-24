@@ -1,4 +1,4 @@
-// Comparing and ordering.
+//! Comparing and ordering.
 
 /// How one value compares with another.
 #[derive(Discard, Copy, Eq)]

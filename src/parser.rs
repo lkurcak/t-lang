@@ -155,7 +155,7 @@ pub fn parse(tokens: Vec<Token>) -> Result<Program, Error> {
 pub fn parse_into(tokens: Vec<Token>, prog: &mut Program, module: usize) -> Result<(), Error> {
     let (docs, toks): (Vec<Token>, Vec<Token>) = tokens
         .into_iter()
-        .partition(|t| matches!(t.tok, Tok::Doc(_)));
+        .partition(|t| matches!(t.tok, Tok::Doc(_) | Tok::InnerDoc(_)));
     let mut p = Parser {
         toks,
         attached: vec![false; docs.len()],
@@ -174,7 +174,8 @@ pub fn parse_into(tokens: Vec<Token>, prog: &mut Program, module: usize) -> Resu
 struct Parser {
     /// Every token but doc comments.
     toks: Vec<Token>,
-    /// The doc comments, and whether each is attached to something yet.
+    /// The doc comments, `///` and `//!` in order, and whether each is
+    /// attached to something yet.
     docs: Vec<Token>,
     attached: Vec<bool>,
     pos: usize,
@@ -254,6 +255,19 @@ impl Parser {
     /// The doc comment for what starts at the next token: the `///` lines
     /// between the token before and it, if there are any.
     fn doc(&mut self) -> Option<DocComment> {
+        self.docs_before(false)
+    }
+
+    /// The `//!` lines between the token before and the next, if there are
+    /// any: the doc comment of the module whose body starts there.
+    fn inner_doc(&mut self) -> Option<DocComment> {
+        self.docs_before(true)
+    }
+
+    /// The doc comment lines of the kind `inner` says between the token
+    /// before and the next. Those of the other kind are left for others,
+    /// or to be stray.
+    fn docs_before(&mut self, inner: bool) -> Option<DocComment> {
         let from = match self.pos {
             0 => 0,
             i => self.toks[i - 1].span.end,
@@ -261,11 +275,15 @@ impl Parser {
         let to = self.span().start;
         let first = self.docs.partition_point(|d| d.span.start < from);
         let last = self.docs.partition_point(|d| d.span.start < to);
-        if first == last {
-            return None;
-        }
-        self.attached[first..last].fill(true);
-        Some(doc_comment(&self.docs[first..last]))
+        let kind = |d: &Token| matches!(d.tok, Tok::InnerDoc(_)) == inner;
+        let lines: Vec<Token> = (first..last)
+            .filter(|&i| kind(&self.docs[i]))
+            .map(|i| {
+                self.attached[i] = true;
+                self.docs[i].clone()
+            })
+            .collect();
+        (!lines.is_empty()).then(|| doc_comment(&lines))
     }
 
     /// The doc comment and attributes of what starts at the next token, or
@@ -388,27 +406,31 @@ impl Parser {
         Ok((names, wheres))
     }
 
-    /// The doc comments nothing took, each run of lines with no other token
-    /// between them as one.
+    /// The doc comments nothing took, each run of lines of one kind with
+    /// no other token between them as one.
     fn stray_docs(&self) -> Vec<DocComment> {
         let mut runs: Vec<Vec<Token>> = Vec::new();
-        let mut prev_next_tok = None;
+        let mut prev = None;
         for (d, _) in self.docs.iter().zip(&self.attached).filter(|(_, a)| !**a) {
             // The first token after it: the same for lines with nothing
             // between them.
             let next_tok = self.toks.partition_point(|t| t.span.start < d.span.start);
+            let this = (next_tok, matches!(d.tok, Tok::InnerDoc(_)));
             match runs.last_mut() {
-                Some(run) if prev_next_tok == Some(next_tok) => run.push(d.clone()),
+                Some(run) if prev == Some(this) => run.push(d.clone()),
                 _ => runs.push(vec![d.clone()]),
             }
-            prev_next_tok = Some(next_tok);
+            prev = Some(this);
         }
         runs.iter().map(|run| doc_comment(run)).collect()
     }
 
     /// The items of the module being parsed, up to `close`: `}`, or the end
-    /// of the file for the crate root.
+    /// of the file for the crate root, and its `//!` doc comment, first.
     fn items(&mut self, prog: &mut Program, close: Tok) -> Result<(), Error> {
+        if let Some(doc) = self.inner_doc() {
+            prog.mods[self.module].doc = Some(doc);
+        }
         while *self.peek() != close {
             if *self.peek() == Tok::Eof {
                 return Err(self.unexpected(&close.describe()));
@@ -485,8 +507,35 @@ impl Parser {
             ));
         }
         let in_file = *self.peek() == Tok::Semi;
+        // One place for a module's docs: in it, as for one in a file.
+        if let Some(doc) = &head.doc {
+            let e = Error::syntax(
+                doc.span(),
+                match in_file {
+                    true => format!(
+                        "a module's doc comment goes at the start of its file, as `//!` lines, \
+                         not before `mod {};`",
+                        name.name
+                    ),
+                    false => "a module's doc comment goes inside it, as `//!` lines at the \
+                              start"
+                        .to_string(),
+                },
+            );
+            if in_file || *self.peek() != Tok::LBrace {
+                return Err(e);
+            }
+            let mut edits: Vec<Edit> = doc.lines.iter().map(|l| Edit::delete(l.span)).collect();
+            let inner: String = doc
+                .lines
+                .iter()
+                .map(|l| format!("\n//!{}", l.text))
+                .collect();
+            edits.push(Edit::insert(self.span().end, inner));
+            return Err(e.with_fix(Fix::new("move it inside, as `//!`", edits)));
+        }
         let decl = ModDecl {
-            doc: head.doc,
+            doc: None,
             allows: head.allows,
             span: start,
             name,
@@ -978,7 +1027,7 @@ impl Parser {
     fn effect_decl(&mut self, head: Head) -> Result<EffectDecl, Error> {
         let start = self.expect(Tok::Effect)?;
         head.no_allows()?;
-        let name = self.effect_name()?;
+        let name = self.ident()?;
         if *self.peek() == Tok::Eq {
             return Err(Error::syntax(
                 self.span(),
@@ -998,7 +1047,7 @@ impl Parser {
     fn effect_def(&mut self, head: Head) -> Result<EffectDef, Error> {
         let start = self.expect(Tok::Effect)?;
         head.no_allows()?;
-        let name = self.effect_name()?;
+        let name = self.ident()?;
         self.expect(Tok::Eq)?;
         let effects = self.effect_set(None)?;
         let end = self.expect(Tok::Semi)?;
@@ -1008,18 +1057,6 @@ impl Parser {
             name,
             effects,
         })
-    }
-
-    /// The name of an effect, which is lowercase.
-    fn effect_name(&mut self) -> Result<Ident, Error> {
-        let name = self.ident()?;
-        if !is_effect_name(&name.name) {
-            return Err(Error::syntax(
-                name.span,
-                format!("an effect's name is lowercase, as `{}` isn't", name.name),
-            ));
-        }
-        Ok(name)
     }
 
     /// `with panic` or `with {alloc, e}`, if a `with` is next.
@@ -1181,18 +1218,21 @@ impl Parser {
                     g.lifetimes.push(l.clone());
                     l
                 }
+                Tok::Effect => {
+                    p.bump();
+                    let t = p.ident()?;
+                    if *p.peek() == Tok::Colon {
+                        return Err(Error::syntax(
+                            p.span(),
+                            "an effect parameter has no bounds: it stands for any effects",
+                        ));
+                    }
+                    g.effects.push(t.id);
+                    g.types.push(t);
+                    return Ok(());
+                }
                 _ => {
                     let t = p.ident()?;
-                    if is_effect_name(&t.name) {
-                        if *p.peek() == Tok::Colon {
-                            return Err(Error::syntax(
-                                p.span(),
-                                "an effect parameter has no bounds: it stands for any effects",
-                            ));
-                        }
-                        g.types.push(t);
-                        return Ok(());
-                    }
                     g.types.push(t.clone());
                     t
                 }
@@ -2687,10 +2727,11 @@ impl Head {
 /// One doc comment from a run of `///` lines.
 fn doc_comment(lines: &[Token]) -> DocComment {
     let text = |t: &Token| match &t.tok {
-        Tok::Doc(text) => text.clone(),
+        Tok::Doc(text) | Tok::InnerDoc(text) => text.clone(),
         _ => unreachable!("only doc comments are set aside"),
     };
     DocComment {
+        inner: matches!(lines[0].tok, Tok::InnerDoc(_)),
         lines: lines
             .iter()
             .map(|t| DocLine {
@@ -2711,13 +2752,4 @@ fn no_targs(segs: &[Segment]) -> Result<(), Error> {
         )),
         None => Ok(()),
     }
-}
-
-/// Is `name` an effect's: lowercase, as `e` or `panic`, after any `_`s?
-/// A type's starts with a capital.
-pub fn is_effect_name(name: &str) -> bool {
-    name.trim_start_matches('_')
-        .chars()
-        .next()
-        .is_some_and(|c| c.is_ascii_lowercase())
 }

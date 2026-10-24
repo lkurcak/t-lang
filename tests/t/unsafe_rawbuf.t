@@ -50,7 +50,7 @@ fn bump_first(b: &mut RawBuf<i64>) with {panic, unsafe} {
     *b.slice_mut(0, 1).get_mut(0).unwrap() += 1;
 }
 
-fn apply<e, F: FnOnce() -> i64 with e>(f: F) -> i64 with e { f() }
+fn apply<effect e, F: FnOnce() -> i64 with e>(f: F) -> i64 with e { f() }
 
 fn main() with {alloc, panic} {
     let mut s = Stack::new();

@@ -269,8 +269,8 @@ impl FnType {
 #[derive(Debug, Clone)]
 pub struct AdtDef {
     /// Its type parameters: `["T"]` for `enum Option<T>`. Field types use
-    /// them as `Type::Param`.
-    pub params: Vec<String>,
+    /// them as `Type::Param`. None is an effect parameter.
+    pub params: Params,
     /// Its lifetime parameters, with their `'`. Field types use them as
     /// `Region::Named`.
     pub lifetimes: Vec<String>,
@@ -892,13 +892,105 @@ impl fmt::Display for Type {
     }
 }
 
-/// Type parameter `name` as a type argument: `Type::Param`, or, for an
-/// effect parameter, the set of just it, as effect arguments are always
-/// sets.
-pub fn param(name: &str) -> Type {
-    match crate::parser::is_effect_name(name) {
-        true => Type::Effects(vec![Type::Param(name.to_string())]),
-        false => Type::Param(name.to_string()),
+/// The type and effect parameters of something generic, in order, as
+/// type arguments for them are. Which kind each is was declared, with
+/// `effect e` for an effect parameter, so it's known by the declaration,
+/// never by how the name is spelled.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Params {
+    names: Vec<String>,
+    /// Which of `names` are effect parameters.
+    effects: Vec<String>,
+}
+
+impl Params {
+    /// Type parameters `names`, of which `effects` are effect parameters.
+    pub fn new(names: Vec<String>, effects: Vec<String>) -> Params {
+        debug_assert!(effects.iter().all(|e| names.contains(e)));
+        Params { names, effects }
+    }
+
+    /// Only type parameters.
+    pub fn types(names: Vec<String>) -> Params {
+        Params::new(names, Vec::new())
+    }
+
+    /// Is `name` one of them, and an effect parameter?
+    pub fn is_effect(&self, name: &str) -> bool {
+        self.effects.iter().any(|e| e == name)
+    }
+
+    /// Is `name` one of them, and a type parameter?
+    pub fn is_type(&self, name: &str) -> bool {
+        self.names.iter().any(|n| n == name) && !self.is_effect(name)
+    }
+
+    /// These, then `more`.
+    pub fn concat(&self, more: &Params) -> Params {
+        let mut p = self.clone();
+        p.names.extend(more.names.iter().cloned());
+        p.effects.extend(more.effects.iter().cloned());
+        p
+    }
+
+    /// Adds a type parameter at the end.
+    pub fn push_type(&mut self, name: String) {
+        self.names.push(name);
+    }
+
+    /// Adds a type parameter at the front, as `Self` is for a trait's
+    /// methods.
+    pub fn insert_type(&mut self, name: String) {
+        self.names.insert(0, name);
+    }
+
+    pub fn as_slice(&self) -> &[String] {
+        &self.names
+    }
+
+    /// All but `name`.
+    pub fn without(&self, name: &str) -> Params {
+        let keep = |n: &&String| *n != name;
+        Params {
+            names: self.names.iter().filter(keep).cloned().collect(),
+            effects: self.effects.iter().filter(keep).cloned().collect(),
+        }
+    }
+
+    /// Those from the `n`th on.
+    pub fn skip(&self, n: usize) -> Params {
+        let names = self.names[n..].to_vec();
+        let effects = self
+            .effects
+            .iter()
+            .filter(|e| names.contains(e))
+            .cloned()
+            .collect();
+        Params { names, effects }
+    }
+
+    /// Parameter `name` as a type argument: `Type::Param`, or, for an
+    /// effect parameter, the set of just it, as effect arguments are always
+    /// sets.
+    pub fn arg(&self, name: &str) -> Type {
+        match self.is_effect(name) {
+            true => Type::Effects(vec![Type::Param(name.to_string())]),
+            false => Type::Param(name.to_string()),
+        }
+    }
+
+    /// Each as a type argument, which makes something generic over them
+    /// what it is.
+    pub fn args(&self) -> Vec<Type> {
+        self.names.iter().map(|p| self.arg(p)).collect()
+    }
+}
+
+impl std::ops::Deref for Params {
+    type Target = [String];
+
+    fn deref(&self) -> &[String] {
+        &self.names
     }
 }
 
@@ -941,7 +1033,7 @@ fn hidden(r: &Region) -> bool {
 /// instantiates them at each use.
 #[derive(Debug, Clone)]
 pub struct Scheme {
-    pub params: Vec<String>,
+    pub params: Params,
     pub lifetimes: Vec<String>,
     pub bounds: Vec<Bound>,
     /// The traits it needs its type parameters to implement: `T: Show` in
@@ -958,7 +1050,7 @@ impl Scheme {
     /// A scheme with no parameters.
     pub fn mono(ty: Type) -> Scheme {
         Scheme {
-            params: Vec::new(),
+            params: Params::default(),
             lifetimes: Vec::new(),
             bounds: Vec::new(),
             preds: Vec::new(),

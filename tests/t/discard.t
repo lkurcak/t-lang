@@ -1,7 +1,7 @@
 // `Discard`: which types' values may be thrown away. Built in for `i64`,
 // `bool`, `()`, `!`, functions and references; a box is when what it holds
-// is. A struct or enum is when it says so, with `#[derive(Discard)]` or an
-// impl, and `Copy` needs it.
+// is. A struct or enum is when it says so, with `#[derive(Discard)]`, the
+// only way, and `Copy` needs it.
 
 #[allow(dead_code)]
 #[derive(Discard)]
@@ -19,10 +19,8 @@ struct Tagged<'a, A, B> { a: Option<A>, b: &'a B }
 #[derive(Discard)]
 enum List<T> { Cons(T, Box<List<T>>), Nil }
 
-// Written out: every field must be `Discard`.
+#[derive(Discard)]
 struct Plain { n: i64 }
-
-impl Discard for Plain {}
 
 #[derive(Discard, Copy)]
 struct Point { x: i64, y: i64 }

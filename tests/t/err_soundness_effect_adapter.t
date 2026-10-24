@@ -3,7 +3,7 @@
 #[derive(Discard where I: Discard, F: Discard)]
 struct Apply<I, F> { iter: I, f: F }
 
-impl<f, I: Iterator<Item = i64>, F: FnMut(i64) -> i64 with f> Iterator for Apply<I, F> {
+impl<effect f, I: Iterator<Item = i64>, F: FnMut(i64) -> i64 with f> Iterator for Apply<I, F> {
     type Item = i64;
     effect e = I::e;
 

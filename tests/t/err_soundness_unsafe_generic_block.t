@@ -4,7 +4,7 @@
 // passes an unsafe closure, must keep them.
 use alloc::raw::RawBuf;
 
-fn call<e, F: FnOnce() -> i64 with e>(f: F) -> i64 with e {
+fn call<effect e, F: FnOnce() -> i64 with e>(f: F) -> i64 with e {
     // SAFETY: nothing here is unsafe but `f`, whose obligations aren't ours.
     unsafe { f() }
 }

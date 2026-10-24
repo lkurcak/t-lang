@@ -262,8 +262,14 @@ pub(super) fn unused_doc(doc: &DocComment) -> Warning {
     Warning {
         lint: Lint::UnusedDocComments,
         span: doc.span(),
-        message: "unused doc comment: only a `fn`, `struct`, `enum`, field or variant can have one"
-            .into(),
+        message: match doc.inner {
+            true => "unused doc comment: a `//!` one documents the module it's at the start of, \
+                     so it goes before anything else in the module"
+                .into(),
+            false => "unused doc comment: only a `fn`, `struct`, `enum`, field or variant can \
+                      have one"
+                .into(),
+        },
         fixes: vec![Fix::new("make it a plain `//` comment", edits)],
     }
 }

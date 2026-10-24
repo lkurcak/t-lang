@@ -345,9 +345,10 @@ fn renames_in(path: &Path) -> (Vec<String>, usize) {
             continue;
         }
         let new = match n.kind {
-            // An effect parameter is lowercase, and stays one.
-            NoteKind::TypeParam(ref p) if t_lang::parser::is_effect_name(p) => "renamed",
+            // An effect parameter too: its kind is declared, so the case of
+            // its name doesn't matter.
             NoteKind::Struct(_) | NoteKind::Enum(_) | NoteKind::TypeParam(_) => "Renamed",
+            NoteKind::EffectParam(_) => "Renamed",
             NoteKind::Variant(..) => "Renamed",
             _ => "renamed",
         };

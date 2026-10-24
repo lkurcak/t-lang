@@ -22,7 +22,7 @@ impl Twice for Counter {
 }
 #[derive(Discard)]
 struct Wrap<F> { f: F }
-impl<f, F: Fn(i64) -> i64 with f + Discard> Wrap<F> {
+impl<effect f, F: Fn(i64) -> i64 with f + Discard> Wrap<F> {
     fn run(&self, x: i64) -> i64 with f { (self.f)(x) }
 }
 fn main() with panic {

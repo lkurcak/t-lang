@@ -3,7 +3,7 @@
 // keeps them, in a block, or by being unsafe itself.
 use alloc::raw::RawBuf;
 
-fn apply<e, F: FnOnce() -> i64 with e>(f: F) -> i64 with e { f() }
+fn apply<effect e, F: FnOnce() -> i64 with e>(f: F) -> i64 with e { f() }
 
 /// The caller must know slot 0 holds a value, and leave it uninitialised.
 fn take_first(b: &mut RawBuf<i64>) -> i64 with unsafe { apply(|| b.read(0)) }

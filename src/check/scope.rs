@@ -299,7 +299,7 @@ fn only_called(e: &Expr, name: &str) -> bool {
 /// aside while it checks the nested one.
 pub(super) struct Outer {
     current: Option<FnId>,
-    type_params: Vec<String>,
+    type_params: crate::types::Params,
     lifetimes: Vec<String>,
     barrier: usize,
     env: Vec<crate::traits::Pred>,

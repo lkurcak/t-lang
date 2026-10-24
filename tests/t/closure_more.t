@@ -5,7 +5,7 @@ fn close(fd: Fd) -> i64 {
     let Fd { n } = fd;
     n
 }
-fn twice<e, F: FnMut() -> i64 with e>(f: &mut F) -> i64 with {panic, e} { f() + f() }
+fn twice<effect e, F: FnMut() -> i64 with e>(f: &mut F) -> i64 with {panic, e} { f() + f() }
 
 fn main() with panic {
     // An `FnMut` closure lent by `&mut`.

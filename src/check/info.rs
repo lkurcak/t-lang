@@ -177,6 +177,9 @@ pub enum NoteKind {
     Struct(String),
     Enum(String),
     TypeParam(String),
+    EffectParam(String),
+    /// By its path: `alloc::list`.
+    Module(String),
     Field(String),
     /// Enum, variant.
     Variant(String, String),
@@ -226,6 +229,8 @@ impl Note {
             NoteKind::Struct(_) => format!("struct {ty}"),
             NoteKind::Enum(_) => format!("enum {ty}"),
             NoteKind::TypeParam(name) => format!("type parameter {name}"),
+            NoteKind::EffectParam(name) => format!("effect parameter {name}"),
+            NoteKind::Module(path) => format!("mod {path}"),
             NoteKind::Field(name) => format!("field {name}: {ty}"),
             NoteKind::Variant(e, v) => format!("{e}{args}::{v}: {ty}"),
         }
@@ -269,6 +274,11 @@ impl Defs {
     /// others. `types` are its types, in the order of `Program::all_types`.
     pub(super) fn add(&mut self, prog: &Program, types: &[super::TypeDef], from: Counts) {
         let defs = self;
+        for (i, m) in prog.mods.iter().enumerate().skip(from.mods) {
+            if let Some(d) = &m.doc {
+                defs.docs.insert(module_def(prog, i), d.markdown());
+            }
+        }
         let mut doc = |name: &Ident, doc: Option<&DocComment>| {
             if let Some(d) = doc {
                 defs.docs.insert(name.span, d.markdown());
@@ -453,7 +463,7 @@ impl Checker {
             };
             let span = d.name().span;
             self.note(span, kind, Some(generic.clone()), Some(span));
-            self.param_notes(params);
+            self.param_notes(d.generics());
             self.bound_notes(d.generics(), params);
             // `where T: Discard` in a `#[derive(..)]`.
             for w in d.derives().iter().flat_map(|d| &d.wheres).flatten() {
@@ -526,16 +536,33 @@ impl Checker {
                         let t = &prog.traits[k];
                         (NoteKind::Trait(t.name.name.clone()), None, t.name.span)
                     }
-                    Item::Mod(_) => continue,
+                    Item::Mod(m) => {
+                        let kind = NoteKind::Module(self.modules.full_path(m));
+                        (kind, None, module_def(prog, m))
+                    }
                 };
                 self.note(name.span, kind, ty, Some(def));
             }
+        }
+        // Modules where they're declared, and at the start of paths.
+        for (i, m) in prog.mods.iter().enumerate().skip(from.mods) {
+            if m.parent.is_some() && !prog.is_library_root(i) {
+                let kind = NoteKind::Module(self.modules.full_path(i));
+                self.note(m.name.span, kind, None, Some(m.name.span));
+            }
+        }
+        let mut refs = self.modules.module_refs[self.refs_from..].to_vec();
+        refs.sort_by_key(|(s, _)| s.start);
+        refs.dedup();
+        for (span, m) in refs {
+            let kind = NoteKind::Module(self.modules.full_path(m));
+            self.note(span, kind, None, Some(module_def(prog, m)));
         }
         // A method can use its impl's type parameters too.
         let mut outer: HashMap<NodeId, Vec<Ident>> = HashMap::new();
         for d in &prog.impls[from.impls..] {
             let params = &d.generics.types;
-            self.param_notes(params);
+            self.param_notes(&d.generics);
             self.type_expr_notes(&d.self_ty, params);
             self.bound_notes(&d.generics, params);
             for a in &d.assoc {
@@ -552,7 +579,7 @@ impl Checker {
             let mut params = outer.get(&f.name.id).cloned().unwrap_or_default();
             params.extend(f.generics.types.iter().cloned());
             let params = &params;
-            self.param_notes(&f.generics.types);
+            self.param_notes(&f.generics);
             self.bound_notes(&f.generics, params);
             for p in &f.params {
                 self.type_expr_notes(&p.ty, params);
@@ -567,7 +594,7 @@ impl Checker {
             for m in t.methods.iter().filter(|m| !m.provided) {
                 let f = &m.decl;
                 let params = &f.generics.types;
-                self.param_notes(params);
+                self.param_notes(&f.generics);
                 let ty = self
                     .traits
                     .method(&t.name.name, &f.name.name)
@@ -600,7 +627,7 @@ impl Checker {
             if let EffectKind::Named(n) = &item.kind
                 && let Some(p) = params.iter().find(|p| p.name == n.name)
             {
-                let kind = NoteKind::TypeParam(n.name.clone());
+                let kind = NoteKind::EffectParam(n.name.clone());
                 self.note(n.span, kind, None, Some(p.span));
             }
         }
@@ -630,9 +657,12 @@ impl Checker {
         self.effect_param_notes(b.effects.as_ref(), params);
     }
 
-    fn param_notes(&mut self, params: &[Ident]) {
-        for p in params {
-            let kind = NoteKind::TypeParam(p.name.clone());
+    fn param_notes(&mut self, g: &Generics) {
+        for p in &g.types {
+            let kind = match g.is_effect(p) {
+                true => NoteKind::EffectParam(p.name.clone()),
+                false => NoteKind::TypeParam(p.name.clone()),
+            };
             self.note(p.span, kind, None, Some(p.span));
         }
     }
@@ -698,8 +728,20 @@ fn unwritten(span: Span, kind: &NoteKind) -> bool {
     span.start == span.end || matches!(kind, NoteKind::Var(n) if n.starts_with('{'))
 }
 
-fn names(params: &[Ident]) -> Vec<String> {
-    params.iter().map(|p| p.name.clone()).collect()
+/// Where module `m` is declared: its name, or the start of its file for a
+/// package's root, which has none.
+pub(super) fn module_def(prog: &Program, m: usize) -> Span {
+    let d = &prog.mods[m];
+    match d.parent.is_none() || prog.is_library_root(m) {
+        false => d.name.span,
+        true => Span::new(d.span.start, d.span.start),
+    }
+}
+
+/// For notes only, so all as type parameters: what an effect parameter
+/// can't be resolves to nothing either way.
+fn names(params: &[Ident]) -> crate::types::Params {
+    crate::types::Params::types(params.iter().map(|p| p.name.clone()).collect())
 }
 
 /// Calls `f` on every type written inside `e`: annotations on `let`s and

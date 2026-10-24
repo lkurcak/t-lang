@@ -2,8 +2,8 @@
 // `geo/area.t`, and `mod deep;` in the inline `mod inner { .. }` is
 // `inner/deep.t`. They mean just what they would written inline.
 mod geo;
-/// Re-exports what's in a file.
 pub mod shapes {
+    //! Re-exports what's in a file.
     pub use crate::geo::area::square;
 }
 mod inner {

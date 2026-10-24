@@ -15,7 +15,7 @@ fn make() -> Fs {
     let g = inc;
     Fs { f: g, n: 1 }
 }
-fn call<e, F: Fn(i64) -> i64 with e + Copy>(f: F) -> i64 with e {
+fn call<effect e, F: Fn(i64) -> i64 with e + Copy>(f: F) -> i64 with e {
     // A closure made from a parameter.
     let twice = |x| f(f(x));
     twice(0)

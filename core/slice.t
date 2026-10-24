@@ -1,4 +1,4 @@
-// Slices: values one after another in memory, seen through a reference.
+//! Slices: values one after another in memory, seen through a reference.
 
 use crate::iter::Iterator;
 use crate::mem;

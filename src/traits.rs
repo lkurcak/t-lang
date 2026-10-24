@@ -104,8 +104,8 @@ impl FnKind {
 /// expression runs, as a struct is, but for those regions.
 #[derive(Debug, Clone)]
 pub struct ClosureDef {
-    /// The type parameters in scope where it's written.
-    pub params: Vec<String>,
+    /// The type and effect parameters in scope where it's written.
+    pub params: crate::types::Params,
     /// Its lifetime parameters: none until its captures are worked out,
     /// at the end of the function it's in.
     pub lifetimes: Vec<String>,
@@ -162,7 +162,7 @@ pub struct OpaqueDef {
     pub owner: String,
     pub owner_name: String,
     /// The function's type and lifetime parameters, the elided ones too.
-    pub params: Vec<String>,
+    pub params: crate::types::Params,
     pub lifetimes: Vec<String>,
     /// What it implements, on itself as `generic` or on projections of
     /// that, mentioning `params` and `lifetimes`.
@@ -228,6 +228,9 @@ pub struct TraitDef {
 #[derive(Debug, Clone)]
 pub struct AssocDecl {
     pub name: String,
+    /// Is it an associated effect, declared `effect e;`, rather than a
+    /// type?
+    pub effect: bool,
     /// The traits every impl's type for it must implement, as written:
     /// generic code may assume it does.
     pub bounds: Vec<String>,
@@ -263,7 +266,7 @@ pub struct ImplDef {
     pub span: Span,
     pub trait_name: Option<String>,
     /// Its type and lifetime parameters, and the lifetime bounds on them.
-    pub params: Vec<String>,
+    pub params: crate::types::Params,
     pub lifetimes: Vec<String>,
     pub bounds: Vec<Bound>,
     /// The type it's for, which mentions `params`.
@@ -345,7 +348,7 @@ impl Traits {
             symbol: "<Eq>::eq".into(),
             effects_at: None,
             scheme: Scheme {
-                params: vec!["Self".into()],
+                params: crate::types::Params::types(vec!["Self".into()]),
                 lifetimes: vec!["'_0".into(), "'_1".into()],
                 bounds: Vec::new(),
                 preds: vec![Pred {
@@ -412,6 +415,7 @@ impl Traits {
             let assoc = match supers {
                 None => vec![AssocDecl {
                     name: SIG.into(),
+                    effect: false,
                     bounds: Vec::new(),
                     span: Span::new(0, 0),
                 }],
@@ -763,7 +767,7 @@ fn impl_args(
     anon: &Anon,
     local: &[(Type, Type)],
 ) -> Option<Vec<Type>> {
-    let unfound = |p: &String| match crate::parser::is_effect_name(p) {
+    let unfound = |p: &String| match d.params.is_effect(p) {
         true => Type::no_effects(),
         false => Type::Unit,
     };
@@ -776,7 +780,7 @@ fn impl_args(
     // one can be worked out now: its projection is on one of them.
     let s = Subst::new(&d.params, &args);
     for (i, p) in d.params.iter().enumerate() {
-        if found.contains_key(p) || crate::parser::is_effect_name(p) {
+        if found.contains_key(p) || d.params.is_effect(p) {
             continue;
         }
         let k = decider(&d.self_ty, &d.params, &d.eqs, p)?;
@@ -791,7 +795,7 @@ fn impl_args(
     }
     let s = Subst::new(&d.params, &args);
     for (i, p) in d.params.iter().enumerate() {
-        if found.contains_key(p) || !crate::parser::is_effect_name(p) {
+        if found.contains_key(p) || !d.params.is_effect(p) {
             continue;
         }
         let me = Type::Param(p.clone());

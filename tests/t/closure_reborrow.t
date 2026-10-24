@@ -10,7 +10,7 @@ impl V {
 fn bump(v: &mut V) with panic {
     v.push(1);
 }
-fn go<e, F: FnMut() with e>(f: &mut F) with e {
+fn go<effect e, F: FnMut() with e>(f: &mut F) with e {
     let mut g = || f();
     g();
 }

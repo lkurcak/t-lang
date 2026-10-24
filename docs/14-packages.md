@@ -88,14 +88,19 @@ core's came first:
 struct W<T> { t: T }
 
 impl<T: Iterator + Discard> Discard for W<T> {}
-// error: this impl lets proving that lead back to `core::iter::Iterator`
+// error: `Discard` can only be derived
 ```
 
 Proving that a type implements `Iterator` could then go on forever, as
 docs/07.1-impl-parameters.md explains for one package. Until now the
 error pointed at `Filter`'s impl, in `<core>/iter.t`, which the program
-can't change. Now it points at `W`'s impl, the one that made the cycle,
-and names `Filter`'s as the impl it makes loop.
+can't change. This step made it point at `W`'s impl, the one that made
+the cycle, naming `Filter`'s as the impl it makes loop.
+
+Since step 17 (docs/17-retrospective-1.md) this impl can't be written at
+all: `Discard` is only derived, and a derived `Discard` needs only
+`Discard`, so proving it never leads to another trait. The rule stays,
+for cycles through the impls of traits a program declares.
 
 The same goes for polymorphic recursion. If a cycle that makes types
 bigger runs through library functions, the error is at a use in the

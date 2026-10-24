@@ -17,7 +17,7 @@ impl Checker {
     pub(super) fn opaque(
         &mut self,
         t: &TypeExpr,
-        params: &[String],
+        params: &crate::types::Params,
         lifetimes: &[String],
     ) -> Result<(), Error> {
         let TypeExprKind::Impl(bounds) = &t.kind else {
@@ -33,14 +33,14 @@ impl Checker {
             bounds: vec![(subject, bounds.clone())],
             ..Generics::default()
         };
-        let mut with_it = params.to_vec();
-        with_it.push(symbol.clone());
+        let mut with_it = params.clone();
+        with_it.push_type(symbol.clone());
         let (preds, eqs) = self.preds(&g, &with_it, lifetimes, true)?;
         let (owner, owner_name) = self.sig_owner.clone();
         let mut def = crate::traits::OpaqueDef {
             owner,
             owner_name,
-            params: params.to_vec(),
+            params: params.clone(),
             lifetimes: lifetimes.to_vec(),
             preds: Vec::new(),
             eqs: Vec::new(),

@@ -107,7 +107,7 @@ impl Checker {
     pub(super) fn type_args(
         &mut self,
         name: &str,
-        params: &[String],
+        params: &crate::types::Params,
         targs: &[TypeExpr],
         span: Span,
         rest: &str,
@@ -118,6 +118,7 @@ impl Checker {
                 .iter()
                 .map(|p| {
                     self.fresh_param(
+                        params,
                         p,
                         span,
                         format!("`{p}` for this use of `{name}`"),
@@ -139,7 +140,7 @@ impl Checker {
         }
         let mut args = Vec::new();
         for (p, t) in params.iter().zip(targs) {
-            args.push(match crate::parser::is_effect_name(p) {
+            args.push(match params.is_effect(p) {
                 true if matches!(&t.kind, TypeExprKind::Named(n, a) if n == "_" && a.is_empty()) => {
                     self.fresh_effects(t.span, format!("`{p}` for this use of `{name}`"))
                 }
@@ -168,7 +169,9 @@ impl Checker {
         let mut holes = Vec::new();
         let t = generics::name_holes(t, &mut holes);
         let mut params = self.type_params.clone();
-        params.extend(holes.iter().map(|(name, _)| name.clone()));
+        holes
+            .iter()
+            .for_each(|(name, _)| params.push_type(name.clone()));
         let mut lts = Lifetimes::Body {
             declared: &self.lifetimes,
         };

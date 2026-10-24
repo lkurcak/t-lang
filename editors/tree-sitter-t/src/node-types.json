@@ -931,6 +931,22 @@
     }
   },
   {
+    "type": "effect_parameter",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "effect",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "effect_set",
     "named": true,
     "fields": {},
@@ -2916,6 +2932,10 @@
           "named": true
         },
         {
+          "type": "effect_parameter",
+          "named": true
+        },
+        {
           "type": "lifetime_parameter",
           "named": true
         }
@@ -3582,6 +3602,11 @@
   {
     "type": "in",
     "named": false
+  },
+  {
+    "type": "inner_doc_comment",
+    "named": true,
+    "extra": true
   },
   {
     "type": "integer_literal",

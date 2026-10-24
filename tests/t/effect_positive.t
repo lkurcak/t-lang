@@ -3,7 +3,7 @@
 // effect.
 fn max(a: i64, b: i64) -> i64 { if a < b { b } else { a } }
 
-fn apply<e, F: Fn(i64) -> i64 with e + Discard>(f: F, x: i64) -> i64 with e { f(x) }
+fn apply<effect e, F: Fn(i64) -> i64 with e + Discard>(f: F, x: i64) -> i64 with e { f(x) }
 
 fn inc(n: i64) -> i64 with panic { n + 1 }
 

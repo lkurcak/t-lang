@@ -10,7 +10,7 @@ fn counter() -> impl FnMut() -> i64 with panic + Discard {
     }
 }
 
-fn compose<e, F: Fn(i64) -> i64 with e + Discard, G: Fn(i64) -> i64 with e + Discard>(
+fn compose<effect e, F: Fn(i64) -> i64 with e + Discard, G: Fn(i64) -> i64 with e + Discard>(
     f: F,
     g: G,
 ) -> impl Fn(i64) -> i64 with e + Discard {

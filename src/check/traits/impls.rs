@@ -376,10 +376,26 @@ impl Checker {
                 theirs.len()
             )));
         }
+        // Each of the same kind, as the trait's callers give it a type
+        // argument of the trait's kind.
+        let kind = |effect: bool| match effect {
+            true => "an effect parameter",
+            false => "a type parameter",
+        };
+        for (p, q) in own.iter().zip(theirs) {
+            let (a, b) = (got.params.is_effect(p), want.scheme.params.is_effect(q));
+            if a != b {
+                return Err(mismatch(format!(
+                    "its `{p}` is {}, where the trait's `{q}` is {}",
+                    kind(a),
+                    kind(b)
+                )));
+            }
+        }
         // The trait's, at `Self` = the impl's type and with this one's
         // type parameter names.
         let mut args = vec![d.self_ty.clone()];
-        args.extend(own.iter().map(|p| crate::types::param(p)));
+        args.extend(own.iter().map(|p| got.params.arg(p)));
         let s = Subst::new(&want.scheme.params, &args);
         // `Self::Item` in the trait's is what this impl says it is, with
         // what its bounds say, which decide its effect parameters.
@@ -535,7 +551,7 @@ impl Checker {
                     .map(|p| Type::Param(format!("{p}'")))
                     .collect();
                 let b_ty = Subst::new(&b.params, &renamed).apply(&b.self_ty);
-                let mut params = a.params.clone();
+                let mut params = a.params.to_vec();
                 params.extend(b.params.iter().map(|p| format!("{p}'")));
                 if !overlap(&a.self_ty, &b_ty, &params) {
                     continue;

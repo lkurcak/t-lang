@@ -2,7 +2,7 @@
 // gives `U`s, as `F: FnMut(I::Item) -> U` says.
 use core::iter::Map;
 
-fn first<I: Iterator + Discard, U: Discard, f, F: FnMut(I::Item) -> U with f + Discard>(
+fn first<I: Iterator + Discard, U: Discard, effect f, F: FnMut(I::Item) -> U with f + Discard>(
     mut m: Map<I, F>,
 ) -> Option<U> with {I::e, f} { m.next() }
 

@@ -74,6 +74,11 @@ pub fn target<'i>(
             word_at(sources.text(), def.start)
         ));
     }
+    if let NoteKind::Module(m) = &note.kind {
+        return Err(format!(
+            "`{m}` is a module, and modules can't be renamed yet"
+        ));
+    }
     if matches!(&note.kind, NoteKind::Var(n) if n == "self") {
         return Err("`self` can't be renamed: it's what a method's receiver is called".into());
     }
@@ -115,12 +120,20 @@ pub fn rename(
         .iter()
         .find(|n| n.span == def && n.def == Some(def))
         .ok_or("there's nothing here to rename")?;
+    if let NoteKind::Module(m) = &decl.kind {
+        return Err(format!(
+            "`{m}` is a module, and modules can't be renamed yet"
+        ));
+    }
     let old = name(&decl.kind);
     let is_type = matches!(
         decl.kind,
         NoteKind::Struct(_) | NoteKind::Enum(_) | NoteKind::TypeParam(_)
     );
     valid(new, is_type)?;
+    if matches!(decl.kind, NoteKind::EffectParam(_)) && ["panic", "alloc"].contains(&new) {
+        return Err(format!("`{new}` is a built-in effect"));
+    }
     if new == old {
         return Ok(Vec::new());
     }
@@ -288,6 +301,8 @@ fn name(kind: &NoteKind) -> &str {
         | NoteKind::Struct(n)
         | NoteKind::Enum(n)
         | NoteKind::TypeParam(n)
+        | NoteKind::EffectParam(n)
+        | NoteKind::Module(n)
         | NoteKind::Field(n)
         | NoteKind::Variant(_, n) => n,
     }
@@ -302,6 +317,8 @@ fn what(kind: &NoteKind) -> &'static str {
         NoteKind::Struct(_) => "struct",
         NoteKind::Enum(_) => "enum",
         NoteKind::TypeParam(_) => "type parameter",
+        NoteKind::EffectParam(_) => "effect parameter",
+        NoteKind::Module(_) => "module",
         NoteKind::Field(_) => "field",
         NoteKind::Variant(..) => "variant",
     }

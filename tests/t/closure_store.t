@@ -2,7 +2,7 @@
 #[derive(Discard)]
 struct Counter<F> { next: F, calls: i64 }
 
-fn step<e, F: FnMut() -> i64 with e>(c: &mut Counter<F>) -> i64 with {panic, e} {
+fn step<effect e, F: FnMut() -> i64 with e>(c: &mut Counter<F>) -> i64 with {panic, e} {
     c.calls = c.calls + 1;
     (c.next)()
 }

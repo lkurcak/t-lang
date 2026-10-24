@@ -344,11 +344,11 @@ fn hovers_show_doc_comments() {
 /// A point.
 ///
 ///     Indented, so code.
-struct P {
+#[derive(Discard)] struct P {
     /// Across.
     x: i64,
 }
-enum E {
+#[derive(Discard)] enum E {
     /// The only one.
     A(i64),
 }
@@ -360,8 +360,6 @@ fn main() {
         E::A(n) => print(n),
     }
 }
-impl Discard for P {}
-impl Discard for E {}
 ";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
@@ -402,6 +400,65 @@ impl Discard for E {}
     // Nothing documents `E` or `main`: just the signature.
     assert_eq!(hover(&mut c, "E {", 0), "```t\nenum E\n```");
     assert_eq!(hover(&mut c, "main", 0), "```t\nfn main: fn() -> ()\n```");
+
+    stop(child, c);
+}
+
+/// A module's `//!` doc comment shows where it's declared, in a `use`, and
+/// at the start of a path; the libraries' modules' too.
+#[test]
+fn hovers_show_module_docs() {
+    let (child, mut c) = start();
+    let uri = "file:///tmp/modules.t";
+    let src = "\
+//! The program.
+use alloc::list;
+mod shapes {
+    //! Shapes.
+    pub fn one() -> i64 { 1 }
+}
+fn main() with alloc {
+    let mut l = list::List::new();
+    l.push(shapes::one());
+    print(l.len());
+    l.free();
+}
+";
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
+        }}),
+    );
+    assert_eq!(c.diagnostics(), Vec::<Value>::new());
+    let mut id = 1;
+    let mut hover = |c: &mut Client, needle: &str, nth: usize| {
+        let offset = src.match_indices(needle).nth(nth).unwrap().0;
+        let line = src[..offset].matches('\n').count();
+        let character = offset - src[..offset].rfind('\n').map_or(0, |i| i + 1);
+        id += 1;
+        c.send(
+            json!({"jsonrpc": "2.0", "id": id, "method": "textDocument/hover", "params": {
+                "textDocument": {"uri": uri}, "position": {"line": line, "character": character}
+            }}),
+        );
+        c.response(id)["result"]["contents"]["value"].clone()
+    };
+    let shapes = "```t\nmod crate::shapes\n```\n\n---\n\nShapes.";
+    assert_eq!(hover(&mut c, "shapes", 0), shapes, "the declaration");
+    assert_eq!(hover(&mut c, "shapes", 1), shapes, "a path");
+    let list = hover(&mut c, "list", 0);
+    let list = list.as_str().unwrap();
+    assert!(
+        list.starts_with("```t\nmod alloc::list\n```\n\n---\n\nLists"),
+        "{list}"
+    );
+    assert_eq!(hover(&mut c, "list::", 0).as_str(), Some(list), "a path");
+    let alloc = hover(&mut c, "alloc", 0);
+    let alloc = alloc.as_str().unwrap();
+    assert!(
+        alloc.starts_with("```t\nmod alloc\n```\n\n---\n\nThe alloc library"),
+        "{alloc}"
+    );
 
     stop(child, c);
 }
@@ -573,7 +630,7 @@ fn finds_local_types_that_share_a_name() {
     let uri = "file:///tmp/local.t";
     let src = "\
 /// The top-level one.
-struct P { x: i64 }
+#[derive(Discard)] struct P { x: i64 }
 fn main() {
     let a: P = P { x: 1 };
     print(a.x);
@@ -591,7 +648,6 @@ fn other() -> P {
     top(local.z)
 }
 fn top(x: i64) -> P { P { x } }
-impl Discard for P {}
 ";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
@@ -795,8 +851,7 @@ fn other() -> i64 {
     fn helper() -> i64 { 3 }
     helper()
 }
-struct P { x: i64 }
-impl Discard for P {}
+#[derive(Discard)] struct P { x: i64 }
 ";
     let (mut d, diags) = Doc::open(&mut c, "file:///tmp/refs.t", src);
     assert_eq!(diags, Vec::<Value>::new());
@@ -904,11 +959,11 @@ fn main() {
 fn renames_fields_variants_and_type_parameters() {
     let (child, mut c) = start();
     let src = "\
-enum Shape<T> {
+#[derive(Discard)] enum Shape<T> {
     Circle(T),
     Empty,
 }
-struct Wrap<T> { inner: T }
+#[derive(Discard)] struct Wrap<T> { inner: T }
 fn area<T: Discard>(s: Shape<T>, w: Wrap<T>) -> T {
     match s {
         Shape::Circle(r) => r,
@@ -919,8 +974,6 @@ fn main() {
     print(area(Shape::Circle(2i64), Wrap { inner: 1 }));
     print(area(Shape::Empty, Wrap::<i64> { inner: 3 }));
 }
-impl<T: Discard> Discard for Shape<T> {}
-impl<T: Discard> Discard for Wrap<T> {}
 ";
     let (mut d, diags) = Doc::open(&mut c, "file:///tmp/kinds.t", src);
     assert_eq!(diags, Vec::<Value>::new());
@@ -947,6 +1000,30 @@ impl<T: Discard> Discard for Wrap<T> {}
             "Shape<Item> {\n    Circle(Item)"
         )
     );
+
+    stop(child, c);
+}
+
+/// An effect parameter renames as a type parameter does, but not to a
+/// built-in effect's name, which `with` would then mean.
+#[test]
+fn renames_effect_parameters() {
+    let (child, mut c) = start();
+    let src = "\
+fn apply<effect e, F: Fn() -> i64 with e + Discard>(f: F) -> i64 with e { f() }
+fn main() {
+    print(apply(|| 1));
+}
+";
+    let (mut d, diags) = Doc::open(&mut c, "file:///tmp/effects.t", src);
+    assert_eq!(diags, Vec::<Value>::new());
+    assert_eq!(
+        d.rename(&mut c, "e,", 0, "fx").unwrap(),
+        src.replace("effect e,", "effect fx,")
+            .replace("with e", "with fx")
+    );
+    let refused = d.rename(&mut c, "e,", 0, "panic").unwrap_err();
+    assert_eq!(refused, "`panic` is a built-in effect");
 
     stop(child, c);
 }
@@ -983,7 +1060,7 @@ fn main() {
 fn refuses_bad_renames() {
     let (child, mut c) = start();
     let src = "\
-struct P { x: i64 }
+#[derive(Discard)] struct P { x: i64 }
 fn main() with panic {
     let a: i64 = 1;
     let b = 2;
@@ -992,7 +1069,6 @@ fn main() with panic {
     print(a + b + p.x + helper());
 }
 fn c() -> i64 { 3 }
-impl Discard for P {}
 ";
     let (mut d, diags) = Doc::open(&mut c, "file:///tmp/bad.t", src);
     assert_eq!(diags, Vec::<Value>::new());
@@ -1025,23 +1101,23 @@ impl Discard for P {}
             "`main` can't be renamed: it's where the program starts"
         ))
     );
-    let a = prepare(&mut c, "a", 2);
-    assert_eq!(a, Ok(d.range("a", 2)));
+    let a = prepare(&mut c, "a", 3);
+    assert_eq!(a, Ok(d.range("a", 3)));
 
     assert_eq!(
-        d.rename(&mut c, "a", 2, "1a"),
+        d.rename(&mut c, "a", 3, "1a"),
         Err("`1a` isn't a name".into())
     );
     assert_eq!(
-        d.rename(&mut c, "a", 2, "a b"),
+        d.rename(&mut c, "a", 3, "a b"),
         Err("`a b` isn't a name".into())
     );
     assert_eq!(
-        d.rename(&mut c, "a", 2, "match"),
+        d.rename(&mut c, "a", 3, "match"),
         Err("`match` is a keyword".into())
     );
     assert_eq!(
-        d.rename(&mut c, "a", 2, "_"),
+        d.rename(&mut c, "a", 3, "_"),
         Err("`_` can't be a name".into())
     );
     assert_eq!(
@@ -1050,7 +1126,7 @@ impl Discard for P {}
     );
     // A variable shadowed by another of the new name.
     assert_eq!(
-        d.rename(&mut c, "a", 2, "b"),
+        d.rename(&mut c, "a", 3, "b"),
         Err(
             "can't rename `a` to `b`: `b` on line 7 would refer to the variable `b` on line 4 \
              instead"
@@ -1059,14 +1135,14 @@ impl Discard for P {}
     );
     // A function that would be shadowed by the renamed variable.
     assert_eq!(
-        d.rename(&mut c, "a", 2, "print"),
+        d.rename(&mut c, "a", 3, "print"),
         Err(
             "can't rename `a` to `print`: line 7 would be an error: `i64` is not a function".into()
         )
     );
     // A nested `fn` would then capture it.
     assert_eq!(
-        d.rename(&mut c, "a", 2, "c"),
+        d.rename(&mut c, "a", 3, "c"),
         Err(
             "can't rename `a` to `c`: line 6 would be an error: can't capture `c` in a nested \
              `fn`; use a closure"
@@ -1108,11 +1184,11 @@ impl Discard for P {}
 fn goes_to_type_definitions() {
     let (child, mut c) = start();
     let src = "\
-enum Option<T> {
+#[derive(Discard)] enum Option<T> {
     Some(T),
     None,
 }
-struct P { x: i64 }
+#[derive(Discard)] struct P { x: i64 }
 fn get(o: Option<P>) -> i64 {
     match o {
         Option::Some(p) => p.x,
@@ -1126,8 +1202,6 @@ fn main() {
     print(get(Option::None));
     print(id(2i64));
 }
-impl<T: Discard> Discard for Option<T> {}
-impl Discard for P {}
 ";
     let (mut d, diags) = Doc::open(&mut c, "file:///tmp/typedef.t", src);
     assert_eq!(diags, Vec::<Value>::new());
@@ -1146,8 +1220,8 @@ impl Discard for P {}
         }
     };
     let (option, p) = (
-        json!({"line": 0, "character": 5}),
-        json!({"line": 4, "character": 7}),
+        json!({"line": 0, "character": 24}),
+        json!({"line": 4, "character": 26}),
     );
     // `o`s: 0 the parameter, 1 its use, 2 the variable, 3 its use.
     assert_eq!(ty(&mut c, "o:", 0), vec![option.clone(), p.clone()]);
@@ -1292,7 +1366,7 @@ fn traits_and_methods() {
 trait Show {
     fn show(&self) -> i64;
 }
-struct P { x: i64 }
+#[derive(Discard)] struct P { x: i64 }
 impl P {
     fn get(&self) -> i64 { self.x }
 }
@@ -1305,7 +1379,6 @@ fn main() with panic {
     print(twice(p));
     print(P { x: 2 }.show());
 }
-impl Discard for P {}
 ";
     let (mut d, diags) = Doc::open(&mut c, "file:///tmp/traits.t", src);
     assert_eq!(diags, Vec::<Value>::new());
@@ -1371,7 +1444,6 @@ impl Discard for P {}
             json!(["impl Show for P", 19, ["show"]]),
             json!(["twice", 12, []]),
             json!(["main", 12, []]),
-            json!(["impl Discard for P", 19, []]),
         ]
     );
 

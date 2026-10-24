@@ -16,7 +16,10 @@ impl Checker {
     /// B> { a: Option<A>, b: &B }` only needs `A: Copy`. A bound can be of
     /// another trait: with `impl<T: Show> Eq for Q<T>`, a derived `Eq` of
     /// `struct W<T> { q: Q<T> }` needs `T: Show`, and `T: Eq` wouldn't do,
-    /// as it doesn't make `Q<T>: Eq`.
+    /// as it doesn't make `Q<T>: Eq`. Not for `Discard` and `Copy`, which
+    /// are only derived (`collect_impls_in`): every impl of one is this or
+    /// built in, so by induction each needs only the same trait, and so
+    /// does any proof of one (lemma D1 of docs/17-retrospective-1.md).
     ///
     /// A field can be of a type whose impl is derived too, maybe the type
     /// itself, through a reference: `struct Node<'a, T> { v: T, next:
@@ -81,6 +84,23 @@ impl Checker {
                     return Err(Error::ty(
                         p.span,
                         format!("`{}` isn't a type parameter of `{}`", p.name, d.name().name),
+                    ));
+                }
+                // A derived `Discard` or `Copy` needs only more of the same
+                // (see `collect_impls_in`), so that's all it can say.
+                if (tr == "Discard" || tr == "Copy")
+                    && let Some(b) = w
+                        .bounds
+                        .iter()
+                        .flat_map(|(_, b)| b)
+                        .find(|b| b.name.name != tr)
+                {
+                    return Err(Error::ty(
+                        b.span,
+                        format!(
+                            "a derived `{tr}` can only need `{tr}` of type parameters: that's \
+                             all its fields can need"
+                        ),
                     ));
                 }
                 let g = Generics {

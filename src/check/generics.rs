@@ -5,8 +5,7 @@
 use super::scope::source_name;
 use crate::ast::*;
 use crate::error::{Error, Span};
-use crate::parser::is_effect_name;
-use crate::types::{FnType, Region, Type};
+use crate::types::{FnType, Params, Region, Type};
 use std::collections::HashMap;
 
 /// "1 type argument", "2 type arguments".
@@ -40,7 +39,7 @@ pub(crate) enum TypeName {
     /// An opaque type, `impl Tr`, in a function's return type: by its
     /// symbol, with the function's lifetime and type parameters, which
     /// are its arguments there.
-    Opaque(String, Vec<String>, Vec<String>),
+    Opaque(String, Vec<String>, Params),
 }
 
 /// What the lifetimes written in a type mean, which depends on where it's
@@ -153,7 +152,14 @@ impl Lifetimes<'_> {
 /// given last, is, given what's before the `as` (`T`), the trait if it's
 /// written, and the associated type's name.
 pub(crate) type ProjNames<'a> =
-    dyn Fn(Type, Option<&Ident>, &Ident, &TypeExpr) -> Result<Type, Error> + 'a;
+    dyn Fn(Type, Option<&Ident>, &Ident, &TypeExpr, Kind) -> Result<Type, Error> + 'a;
+
+/// What a name written must be: a type, or effects (`with e`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Kind {
+    Type,
+    Effects,
+}
 
 /// That slice `t` is written somewhere other than right after `&` or
 /// `&mut`, where it would be a value of its own.
@@ -185,7 +191,7 @@ pub(crate) fn resolve(
     t: &TypeExpr,
     names: &dyn Fn(&str, &TypeExpr) -> Option<TypeName>,
     proj: &ProjNames,
-    params: &[String],
+    params: &Params,
     lifetimes: &mut Lifetimes,
 ) -> Result<Type, Error> {
     resolve_in(t, names, proj, params, lifetimes, None)
@@ -235,7 +241,7 @@ fn resolve_in(
     t: &TypeExpr,
     names: &dyn Fn(&str, &TypeExpr) -> Option<TypeName>,
     proj: &ProjNames,
-    params: &[String],
+    params: &Params,
     lifetimes: &mut Lifetimes,
     mut binder: Option<&mut Binder>,
 ) -> Result<Type, Error> {
@@ -245,7 +251,7 @@ fn resolve_in(
     match &t.kind {
         TypeExprKind::Proj(inner, tr, name) => {
             let inner = go(inner, lifetimes, binder)?;
-            proj(inner, tr.as_ref(), name, t)
+            proj(inner, tr.as_ref(), name, t, Kind::Type)
         }
         // The places a refinement can be take it off first (see
         // `check/refine.rs`).
@@ -306,10 +312,10 @@ fn resolve_in(
                     ));
                 }
                 Some(TypeName::Opaque(..)) => unreachable!("an opaque type is written `impl`"),
-                None if params.contains(name) && crate::parser::is_effect_name(name) => {
+                None if params.is_effect(name) => {
                     return Err(Error::ty(
                         t.span,
-                        format!("`{name}` is an effect, not a type"),
+                        format!("`{name}` is an effect parameter, not a type"),
                     ));
                 }
                 None if params.contains(name) => (Type::Param(name.clone()), 0, 0),
@@ -367,7 +373,7 @@ fn resolve_in(
             Some(TypeName::Opaque(symbol, lifetimes, params)) => Ok(Type::Opaque(
                 symbol,
                 lifetimes.into_iter().map(Region::Named).collect(),
-                params.into_iter().map(Type::Param).collect(),
+                params.iter().cloned().map(Type::Param).collect(),
             )),
             _ => Err(Error::ty(
                 t.span,
@@ -416,7 +422,7 @@ pub(crate) fn resolve_effects(
     e: &EffectSet,
     names: &dyn Fn(&str, &TypeExpr) -> Option<TypeName>,
     proj: &ProjNames,
-    params: &[String],
+    params: &Params,
     lifetimes: &mut Lifetimes,
 ) -> Result<Type, Error> {
     let mut items = Vec::new();
@@ -426,15 +432,16 @@ pub(crate) fn resolve_effects(
                 "panic" => Type::Panic,
                 "alloc" => Type::Alloc,
                 "unsafe" => Type::Unsafe,
-                name if params.iter().any(|p| p == name) => match is_effect_name(name) {
-                    true => Type::Param(name.to_string()),
-                    false => {
-                        return Err(Error::ty(
-                            n.span,
-                            format!("`{name}` is a type, not an effect"),
-                        ));
-                    }
-                },
+                name if params.is_effect(name) => Type::Param(name.to_string()),
+                name if params.contains(&name.to_string()) => {
+                    return Err(Error::ty(
+                        n.span,
+                        format!(
+                            "`{name}` is a type parameter, not an effect; declare it as \
+                             `effect {name}`"
+                        ),
+                    ));
+                }
                 name => {
                     return Err(Error::ty(n.span, format!("there's no effect `{name}`")));
                 }
@@ -447,7 +454,7 @@ pub(crate) fn resolve_effects(
                     id: item.id,
                 };
                 let base = resolve_in(base, names, proj, params, lifetimes, None)?;
-                proj(base, tr.as_ref(), name, &written)?
+                proj(base, tr.as_ref(), name, &written, Kind::Effects)?
             }
         });
     }
@@ -490,11 +497,20 @@ pub(super) fn name_holes(t: &TypeExpr, holes: &mut Vec<(String, Span)>) -> TypeE
     }
 }
 
-/// Checks the type parameters declared by a function, struct or enum, and
-/// returns their names.
-pub(super) fn declare(params: &[Ident]) -> Result<Vec<String>, Error> {
+/// Checks the type and effect parameters declared by a function, impl,
+/// struct or enum, and returns them.
+pub(super) fn declare(g: &Generics) -> Result<Params, Error> {
     let mut names: Vec<String> = Vec::new();
-    for p in params {
+    for p in &g.types {
+        if g.is_effect(p) && ["panic", "alloc"].contains(&p.name.as_str()) {
+            return Err(Error::ty(
+                p.span,
+                format!(
+                    "`{}` is a built-in effect, so it can't be an effect parameter's name",
+                    p.name
+                ),
+            ));
+        }
         if p.name == "_" {
             return Err(Error::ty(
                 p.span,
@@ -522,7 +538,7 @@ pub(super) fn declare(params: &[Ident]) -> Result<Vec<String>, Error> {
         }
         names.push(p.name.clone());
     }
-    Ok(names)
+    Ok(Params::new(names, g.effect_names()))
 }
 
 /// Checks the lifetime parameters declared by a function, struct or enum,
@@ -552,7 +568,7 @@ pub(super) fn declare_lifetimes(params: &[Ident]) -> Result<Vec<String>, Error> 
 pub(super) fn bounds(
     g: &Generics,
     lifetimes: &[String],
-    params: &[String],
+    params: &Params,
 ) -> Result<Vec<crate::types::Bound>, Error> {
     use crate::types::Bound;
     let mut l = Lifetimes::Body {

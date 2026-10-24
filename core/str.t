@@ -1,4 +1,4 @@
-// Strings: text in UTF-8, seen through a reference.
+//! Strings: text in UTF-8, seen through a reference.
 
 use crate::cmp::{Ord, Ordering};
 use crate::iter::Iterator;

@@ -1,6 +1,6 @@
 // The inner closure changes `n`, so the outer one, which makes it, does
 // too, through what it captured: it's `FnMut`, not `Fn`.
-fn call<e, F: Fn() with e + Discard>(f: F) with e { f() }
+fn call<effect e, F: Fn() with e + Discard>(f: F) with e { f() }
 
 fn main() {
     let mut n: i64 = 0;

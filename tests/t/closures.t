@@ -5,8 +5,8 @@ struct P { x: i64, y: i64 }
 
 // A closure that captures has a type of its own, so a function that takes
 // one is generic over it.
-fn apply<e, F: Fn(i64) -> i64 with e + Discard>(f: F, x: i64) -> i64 with e { f(x) }
-fn compose<e, F: Fn(i64) -> i64 with e + Discard, G: Fn(i64) -> i64 with e + Discard>(
+fn apply<effect e, F: Fn(i64) -> i64 with e + Discard>(f: F, x: i64) -> i64 with e { f(x) }
+fn compose<effect e, F: Fn(i64) -> i64 with e + Discard, G: Fn(i64) -> i64 with e + Discard>(
     f: F,
     g: G,
     x: i64,
@@ -14,7 +14,7 @@ fn compose<e, F: Fn(i64) -> i64 with e + Discard, G: Fn(i64) -> i64 with e + Dis
     // A closure can capture a parameter.
     apply(|y| g(f(y)), x)
 }
-fn on_point<e, F: Fn(P) -> i64 with e + Discard>(f: F) -> i64 with e { f(P { x: 3, y: 4 }) }
+fn on_point<effect e, F: Fn(P) -> i64 with e + Discard>(f: F) -> i64 with e { f(P { x: 3, y: 4 }) }
 fn inc(x: i64) -> i64 with panic { x + 1 }
 // Closures that capture nothing can be returned: they're plain functions.
 fn pick(double: bool) -> fn(i64) -> i64 with panic {

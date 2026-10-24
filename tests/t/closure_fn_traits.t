@@ -1,13 +1,13 @@
 // Closures as values of their own types, taken by generic functions through
 // the `Fn` traits.
 
-fn apply<e, F: Fn(i64) -> i64 with e + Discard>(f: F, x: i64) -> i64 with e { f(x) }
-fn twice<e, F: FnMut() with e>(mut f: F) -> F with e {
+fn apply<effect e, F: Fn(i64) -> i64 with e + Discard>(f: F, x: i64) -> i64 with e { f(x) }
+fn twice<effect e, F: FnMut() with e>(mut f: F) -> F with e {
     f();
     f();
     f
 }
-fn once<e, F: FnOnce() -> i64 with e>(f: F) -> i64 with e { f() }
+fn once<effect e, F: FnOnce() -> i64 with e>(f: F) -> i64 with e { f() }
 fn inc(x: i64) -> i64 with panic { x + 1 }
 
 struct B { x: i64 }

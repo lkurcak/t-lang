@@ -22,7 +22,7 @@ fn fact(n: i64) -> i64 with panic {
     if n <= 1 { 1 } else { n * fact(n - 1) }
 }
 
-fn twice<e, F: Fn(i64) -> i64 with e + Discard>(f: F, x: i64) -> i64 with e { f(f(x)) }
+fn twice<effect e, F: Fn(i64) -> i64 with e + Discard>(f: F, x: i64) -> i64 with e { f(f(x)) }
 
 fn main() with panic {
     let n = 5;
@@ -339,6 +339,7 @@ combine features in ways nobody planned for.
 | 14 ✅ | each package checked once, against those it depends on: core, then alloc, then the program | separate compilation: whole-program rules (no cycles, no overlap) split into one per package, so a library that checked stays checked, and an error is the newest package's | [docs/14-packages.md](docs/14-packages.md) |
 | 15 ✅ | `e?`: what's in an `Ok` or `Some`, or else return early; `core::ops::Try`, `ControlFlow` | early return as a desugaring through a trait; residuals (`Result<!, E>`, `Option<!>`), uninhabited types keeping kinds of failure apart | [docs/15-try.md](docs/15-try.md) |
 | 16 ✅ | running out of memory is part of `alloc`, not `panic`: `Box::new`, `List::push`, `String::push` say `with alloc`; `RawBuf::grow(extra)`, `alloc::raw::out_of_memory` | which effect an abort is: `panic` for bugs, `alloc` for resources, and the library's signatures proved without `panic` | [docs/16-out-of-memory.md](docs/16-out-of-memory.md) |
+| 17 ✅ | retrospective 1: effect parameters declared `effect e`; `Discard` and `Copy` only derived; `//!` module docs | kinds given by declaration, not spelling; marker traits whose proofs are closed under their own trait, so no cycle can run through them | [docs/17-retrospective-1.md](docs/17-retrospective-1.md) |
 | — | `std` | | |
 | — | C backend | | when it's worth it |
 

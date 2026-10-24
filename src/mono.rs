@@ -44,7 +44,7 @@ use crate::ast::*;
 use crate::check::{self, Info, Instance};
 use crate::error::Span;
 use crate::traits::{Projections, Source, eq_subject};
-use crate::types::{Region, Subst, Type};
+use crate::types::{Params, Region, Subst, Type};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -84,7 +84,7 @@ struct Copy {
 /// method of an impl, and its impl's lifetime parameters.
 struct Decl<'p> {
     f: &'p FnDecl,
-    params: Vec<String>,
+    params: Params,
     self_ty: Option<Type>,
     lifetimes: Vec<Ident>,
 }
@@ -168,7 +168,7 @@ impl<'p> Mono<'p> {
         for f in prog.fns.iter().filter(|f| f.generics.types.is_empty()) {
             fns.insert(
                 f.name.name.clone(),
-                self.function(f, &Subst::default(), &[], None),
+                self.function(f, &Subst::default(), &Params::default(), None),
             );
         }
         let mut types: HashMap<String, TypeDecl> = HashMap::new();
@@ -323,9 +323,9 @@ impl<'p> Mono<'p> {
     /// The copy of `f`, which has type parameters `params`, with them
     /// replaced as `s` says, named `name` (or as it was, if it isn't
     /// generic).
-    fn function(&mut self, f: &FnDecl, s: &Subst, params: &[String], name: Option<&str>) -> FnDecl {
-        let mut params = params.to_vec();
-        params.push("Self".into());
+    fn function(&mut self, f: &FnDecl, s: &Subst, params: &Params, name: Option<&str>) -> FnDecl {
+        let mut params = params.clone();
+        params.push_type("Self".into());
         let mut cx = Cx { m: self, s, params };
         FnDecl {
             doc: f.doc.clone(),
@@ -361,7 +361,7 @@ impl<'p> Mono<'p> {
 
     /// The copy of struct or enum `d` for type arguments `args`.
     fn type_decl(&mut self, d: &TypeDecl, args: &[Type]) -> TypeDecl {
-        let params = names(d.type_params());
+        let params = names(d.generics());
         let s = Subst::new(&params, args);
         let mut cx = Cx {
             m: self,
@@ -443,8 +443,12 @@ impl<'p> Mono<'p> {
     }
 }
 
-fn names(params: &[Ident]) -> Vec<String> {
-    params.iter().map(|p| p.name.clone()).collect()
+/// The type and effect parameters `g` declares.
+fn names(g: &Generics) -> Params {
+    Params::new(
+        g.types.iter().map(|p| p.name.clone()).collect(),
+        g.effect_names(),
+    )
 }
 
 /// Every function of `prog`, which checked with `info` and was lifted, by
@@ -456,7 +460,7 @@ fn decls<'p>(prog: &'p Program, info: &Info) -> HashMap<&'p str, Decl<'p>> {
         .map(|f| {
             let d = Decl {
                 f,
-                params: names(&f.generics.types),
+                params: names(&f.generics),
                 self_ty: None,
                 lifetimes: Vec::new(),
             };
@@ -472,8 +476,7 @@ fn decls<'p>(prog: &'p Program, info: &Info) -> HashMap<&'p str, Decl<'p>> {
                 .iter()
                 .find(|i| i.methods.iter().any(|(_, s)| s == symbol))
                 .expect("a method of an impl");
-            let mut params = def.params.clone();
-            params.extend(names(&f.generics.types));
+            let params = def.params.concat(&names(&f.generics));
             let decl = Decl {
                 f,
                 params,
@@ -485,8 +488,7 @@ fn decls<'p>(prog: &'p Program, info: &Info) -> HashMap<&'p str, Decl<'p>> {
     }
     for t in &prog.traits {
         for m in t.methods.iter().filter(|m| m.provided) {
-            let mut params = vec!["Self".to_string()];
-            params.extend(names(&m.decl.generics.types));
+            let params = Params::types(vec!["Self".to_string()]).concat(&names(&m.decl.generics));
             let decl = Decl {
                 f: &m.decl,
                 params,
@@ -505,6 +507,7 @@ fn lifetimes_only(g: &Generics) -> Generics {
     Generics {
         lifetimes: g.lifetimes.clone(),
         types: Vec::new(),
+        effects: Vec::new(),
         bounds: g
             .bounds
             .iter()
@@ -523,7 +526,7 @@ struct Cx<'m, 'p, 's> {
     /// What each type parameter of the one being copied stands for.
     s: &'s Subst,
     /// Its type parameters.
-    params: Vec<String>,
+    params: Params,
 }
 
 impl Cx<'_, '_, '_> {
@@ -569,7 +572,7 @@ impl Cx<'_, '_, '_> {
         go: impl FnOnce(
             &dyn Fn(&str, &TypeExpr) -> Option<check::TypeName>,
             &check::ProjNames,
-            &[String],
+            &Params,
         ) -> Result<Type, crate::error::Error>,
     ) -> Type {
         // Everything is at the top level by now, named by its symbol.
@@ -589,7 +592,7 @@ impl Cx<'_, '_, '_> {
             }
         };
         let projections = &self.m.info.projections;
-        let proj = |s: Type, tr: Option<&Ident>, name: &Ident, t: &TypeExpr| {
+        let proj = |s: Type, tr: Option<&Ident>, name: &Ident, t: &TypeExpr, _: check::Kind| {
             let tr = match tr {
                 Some(tr) => tr.name.clone(),
                 None => projections[&t.id].clone(),
@@ -641,7 +644,7 @@ impl Cx<'_, '_, '_> {
             unreachable!("fields of `{t}`")
         };
         let d = self.m.types[name.as_str()];
-        let params = names(d.type_params());
+        let params = names(d.generics());
         let s = Subst::new(&params, args);
         let cx = Cx {
             m: &mut *self.m,
