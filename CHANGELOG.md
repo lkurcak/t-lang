@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.27.0 (2026-10-24)
 
 Step 15: `?`. See [docs/15-try.md](docs/15-try.md).
 
