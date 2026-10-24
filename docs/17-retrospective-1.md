@@ -111,16 +111,24 @@ Iterator for Filter<I, P>` needs `I::Item: Discard`, and an impl
 ```rust,error
 struct W<T> { t: T }
 
-impl<T: Iterator + Discard> Discard for W<T> {}
+impl<T: Iterator + Discard> Discard for W<T> {
+    fn discard(self) {}
+}
 
 fn main() {}
-// error: `Discard` can only be derived, with `#[derive(Discard)]` on a struct or enum, so that whether a type is `Discard` follows from its fields alone
+// error: an impl of `Discard` may only need its type parameters to be `Discard`, not `Iterator` of `T`
 ```
 
 The fix derives it instead. Nothing is lost by it: the traits have no
 methods, so a written impl could only differ from the derived one in what
 it needs, and the derive works out the least that makes every field
 implement it (docs/06-traits.md).
+
+(Step 20 gave `Discard` a method, `discard`, which an impl may write, to
+say how a value is thrown away, as a list frees its buffer. What makes
+this lemma go through stays: such an impl may need only `Discard` of the
+type's parameters, which is now the error above. See
+docs/20-destructors.md.)
 
 > **Lemma D1 (marker proofs are closed).** A proof of `t: Discard` or
 > `t: Copy` needs only obligations `u: Discard` or `u: Copy`, of the same
