@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.28.0 (2026-10-24)
 
 Step 16: running out of memory is `alloc`. See
 [docs/16-out-of-memory.md](docs/16-out-of-memory.md).
