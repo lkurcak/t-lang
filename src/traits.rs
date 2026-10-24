@@ -357,6 +357,19 @@ pub enum Source {
 }
 
 impl Traits {
+    /// Does struct or enum `symbol` have a `discard` of its own: an impl of
+    /// `Discard` that's written, not derived? Then dropping a value of it
+    /// calls that, which may do anything a total function may, so only its
+    /// module may skip it, by taking a value apart (lemma D4 of
+    /// docs/20-destructors.md).
+    pub fn own_discard(&self, symbol: &str) -> bool {
+        self.impls.iter().any(|d| {
+            !d.derived
+                && d.trait_name.as_deref() == Some(DISCARD)
+                && matches!(&d.self_ty, Type::Adt(s, ..) if s == symbol)
+        })
+    }
+
     /// `text`, a message, with each trait the prelude brings in named by
     /// its name, as a program writes it, rather than by its symbol:
     /// `Discard`, not `core::mem::Discard`. Not if another trait has that

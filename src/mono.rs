@@ -99,6 +99,9 @@ enum Target {
     Fn(String, Vec<Type>, String),
     /// The `eq` of a built-in or derived `Eq`, of the type: `==`.
     Eq(Type),
+    /// The `discard` of a built-in or derived `Discard`, of the type:
+    /// dropping it, which the interpreter does part by part.
+    Discard(Type),
 }
 
 struct Mono<'p> {
@@ -288,6 +291,7 @@ impl<'p> Mono<'p> {
                     seen_types[i] = true;
                     changed = true;
                     used::in_type_decl(d, &mut used);
+                    used.insert(format!("<{} as {DISCARD}>::discard", d.name().name));
                 }
             }
             for (i, f) in out.fns.iter().enumerate() {
@@ -403,6 +407,16 @@ impl<'p> Mono<'p> {
                 id: cx.m.id(),
             })
             .collect();
+        // A `discard` of its own is called wherever a value of it is
+        // dropped, which nothing names: so it's made with the type.
+        if let Ok(Source::Impl(i, _)) = traits.implements(&ty, DISCARD, &[], &[])
+            && !traits.impls[i].derived
+        {
+            let name = format!("<{DISCARD}>::discard");
+            if let Target::Fn(of, args, copy) = cx.target(&name, vec![ty.clone()]) {
+                cx.m.named_copy(&of, args, copy);
+            }
+        }
         let derives = match names.is_empty() {
             true => Vec::new(),
             false => vec![Derive {
@@ -651,6 +665,7 @@ impl Cx<'_, '_, '_> {
                     self.need_eq(&f);
                 }
             }
+            Target::Discard(_) => unreachable!("`eq` of `Eq`"),
         }
     }
 
@@ -791,6 +806,9 @@ impl Cx<'_, '_, '_> {
                 match self.target(&name, args) {
                     Target::Fn(of, args, copy) => self.m.named_copy(&of, args, copy),
                     Target::Eq(_) => unreachable!("`eq` of a built-in `Eq` is `==`"),
+                    Target::Discard(_) => {
+                        unreachable!("`discard` of a built-in `Discard` is a drop")
+                    }
                 }
             }
             Instance::Adt(name, args) => {
@@ -861,6 +879,7 @@ impl Cx<'_, '_, '_> {
                     None => Target::Fn(name.to_string(), args, copy),
                 }
             }
+            Ok(Source::Impl(..) | Source::Builtin) if tr == DISCARD => Target::Discard(self_ty),
             Ok(Source::Impl(..) | Source::Builtin) => Target::Eq(self_ty),
             r => unreachable!("`{self_ty}: {tr}` in a copy: {r:?}"),
         }
@@ -923,6 +942,27 @@ impl Cx<'_, '_, '_> {
         ExprKind::Lambda(Arc::new(Lambda::new(id, params, None, body)))
     }
 
+    /// `|x: T| {}`, at `span`: the `discard` of a built-in or derived
+    /// `Discard` of `T`, as a function, which drops `x`, part by part.
+    fn discard_fn(&mut self, t: &Type, span: Span) -> ExprKind {
+        let body = Expr {
+            kind: ExprKind::Block(Vec::new(), None),
+            span,
+            id: self.m.id(),
+        };
+        let params = vec![LambdaParam {
+            mutable: None,
+            name: Ident {
+                name: "x".into(),
+                span,
+                id: self.m.id(),
+            },
+            ty: Some(self.written(t, span)),
+        }];
+        let id = self.m.id();
+        ExprKind::Lambda(Arc::new(Lambda::new(id, params, None, body)))
+    }
+
     /// `id`, renamed to its copy if it names something generic.
     fn ident(&mut self, id: &Ident) -> Ident {
         Ident {
@@ -964,6 +1004,7 @@ impl Cx<'_, '_, '_> {
                             self.need_eq(&t);
                             self.eq_fn(&t, e.span)
                         }
+                        Target::Discard(t) => self.discard_fn(&t, e.span),
                     }
                 }
                 // A method that isn't generic still needs its copy made.
@@ -978,7 +1019,7 @@ impl Cx<'_, '_, '_> {
                             let name = self.m.named_copy(&of, args, copy);
                             ExprKind::Var(name, Vec::new())
                         }
-                        Target::Eq(_) => unreachable!("an inherent method"),
+                        Target::Eq(_) | Target::Discard(_) => unreachable!("an inherent method"),
                     }
                 }
                 _ => ExprKind::Var(

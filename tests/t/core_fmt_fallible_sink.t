@@ -52,7 +52,7 @@ fn attempt(out: &mut std::io::Stdout, room: usize) -> Result<(), std::io::Error>
         Result::Err(Full { wanted }) => Option::Some(wanted),
     };
     let w = out.line(&s.as_str());
-    s.free();
+    s.discard();
     w?;
     match wanted {
         Option::Some(n) => out.line(&n),

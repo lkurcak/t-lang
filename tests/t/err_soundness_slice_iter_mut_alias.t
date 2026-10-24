@@ -10,6 +10,6 @@ fn main() with {alloc, panic} {
     let a = it.next().unwrap();
     let _v = *s.get(0).unwrap();
     *a = 2;
-    l.free();
+    l.discard();
 }
 // error: while `*s` is mutably borrowed

@@ -544,6 +544,10 @@ pub(crate) struct Checker {
     effect_vars: HashSet<u32>,
     /// Is the function being checked a method of an impl of a trait?
     in_trait_impl: bool,
+    /// Is the body being checked an impl's own `discard`? Then `self`, at
+    /// its end, is dropped part by part (lemma D3 of
+    /// docs/20-destructors.md).
+    pub(crate) in_discard: bool,
     /// The refinements in each function's signature that has any, by
     /// symbol (see `refine`).
     refined: HashMap<String, refine::RefinedSig>,
@@ -727,6 +731,7 @@ impl Checker {
             effect_owners: HashMap::new(),
             effect_vars: HashSet::new(),
             in_trait_impl: false,
+            in_discard: false,
             refined: HashMap::new(),
             refined_lets: HashMap::new(),
             field_refined: HashMap::new(),
@@ -1035,6 +1040,12 @@ impl Checker {
                 method,
                 Some(MethodOf::Impl(k)) if prog.impls[k].trait_name.is_some()
             );
+            self.in_discard = matches!(
+                method,
+                Some(MethodOf::Impl(k))
+                    if self.traits.impls[self.impl_ids[k]].trait_name.as_deref()
+                        == Some(crate::traits::DISCARD)
+            );
             let notes = self.info.notes.len();
             let result = self.body(f, FnId(i));
             self.finish_notes(notes);
@@ -1213,6 +1224,14 @@ impl Checker {
     }
 
     /// The module of the struct or enum with symbol `symbol`, for messages.
+    /// Is the code being checked in the module that declares struct or
+    /// enum `symbol`, or one inside it, where its private fields are seen?
+    pub(crate) fn within_module_of(&self, symbol: &str) -> bool {
+        self.types
+            .iter()
+            .any(|d| d.symbol == symbol && self.modules.within(self.module, d.module))
+    }
+
     pub(crate) fn module_of(&self, symbol: &str) -> String {
         let def = self.types.iter().find(|d| d.symbol == symbol);
         self.modules.describe(def.map_or(ROOT, |d| d.module))

@@ -198,11 +198,42 @@ fn conflicts(b: &Builder, sol: &Solution, live: &[bool], s: &Statement) -> Resul
             }
             if overlaps(b, &loan.place, &place, access) {
                 let escapes = !sol.ends(loan.region, b.regions.universal.len()).is_empty();
-                return Err(clash(b, loan, mutable, &place, access, s.span, escapes));
+                let e = clash(b, loan, mutable, &place, access, s.span, escapes);
+                return Err(match dropped_later(b, sol, loan) {
+                    Some((name, span)) => e.with_note(
+                        span,
+                        format!(
+                            "{name} is dropped here, which may call a `discard` that uses \
+                             what it borrows (see docs/20-destructors.md)"
+                        ),
+                    ),
+                    None => e,
+                });
             }
         }
     }
     Ok(())
+}
+
+/// Where a drop that uses what it drops keeps `loan` alive, if one does:
+/// the first, by where it is, of those its region holds (`Body::drop_uses`),
+/// with what's dropped there.
+fn dropped_later(b: &Builder, sol: &Solution, loan: &Loan) -> Option<(String, Span)> {
+    let mut points: Vec<&Point> = (b.body.drop_uses.iter())
+        .filter(|p| sol.holds(loan.region, **p))
+        .collect();
+    points.sort_by_key(|p| (p.block.0, p.index));
+    let s = &b.body.blocks[points.first()?.block.0].stmts[points.first()?.index];
+    let l = match &s.kind {
+        StmtKind::Dead(l) => *l,
+        StmtKind::Assign { place, .. } => place.local,
+        _ => return None,
+    };
+    let name = match &b.body.locals[l.0].name {
+        Some(n) => format!("`{n}`"),
+        None => "a temporary".to_string(),
+    };
+    Some((name, s.span))
 }
 
 /// The error for `access` to `place` at `span` while `loan` is in scope,

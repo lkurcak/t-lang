@@ -261,7 +261,7 @@ pub fn run(prog: &Program, term: &mut dyn Terminal) -> Result<Value, Error> {
         )?;
         interp.memory.free(&at, false);
     }
-    interp.drop(result.clone());
+    interp.drop(result.clone())?;
     if interp.memory.on_heap > 0 {
         unsound(&format!(
             "memory leak: {} boxes or buffers were never freed",
@@ -331,6 +331,11 @@ fn int_ty(t: &TypeExpr) -> IntTy {
         }
         _ => unsound("an integer type that isn't named"),
     }
+}
+
+/// Is function `f` a copy of an impl's `discard`?
+fn is_discard_fn(f: &str) -> bool {
+    f.ends_with(&format!(" as {}>::discard", crate::traits::DISCARD))
 }
 
 fn bool(v: Value) -> bool {
@@ -693,7 +698,12 @@ impl Interp<'_, '_> {
     /// unless it's been taken apart, by moving out of it: then only what's
     /// left in it counts, each part on its own, as for the borrow checker
     /// (`moves::leftover`).
-    fn drop(&mut self, v: Value) {
+    ///
+    /// A struct or enum with a `discard` of its own, a function `<T as
+    /// Discard>::discard` for its type `T`, is dropped by calling that,
+    /// unless it's been taken apart, or the program is aborting. That can
+    /// fail only by running out of stack: `discard` is total.
+    fn drop(&mut self, v: Value) -> Result<(), Error> {
         if let Value::RawBuf(_) = v
             && !self.aborting
         {
@@ -709,21 +719,51 @@ impl Interp<'_, '_> {
                 crate::check::source_name(ty)
             ));
         }
-        self.drop_parts(v);
+        if let Value::Struct(ty, _) | Value::Variant(ty, ..) = &v
+            && !self.aborting
+            && !self.taken_apart(&v)
+            && let Some(f) = self.user_discard(ty)
+        {
+            return self
+                .call(Value::Fn(f), vec![v], Span::new(0, 0))
+                .map(|_| ());
+        }
+        self.drop_parts(v)
     }
 
-    /// Drops what `v` holds, but not `v` itself.
-    fn drop_parts(&mut self, v: Value) {
-        match v {
-            Value::Box(p) => {
-                let inner = self.memory.free(&p, true);
-                self.drop(inner);
+    /// Drops what `v` holds, but not `v` itself: the parts that are left,
+    /// in order.
+    fn drop_parts(&mut self, v: Value) -> Result<(), Error> {
+        let parts: Vec<Value> = match v {
+            Value::Box(p) => vec![self.memory.free(&p, true)],
+            Value::Struct(_, fields) => fields.into_iter().map(|(_, v)| v).collect(),
+            Value::Variant(_, _, fields) => fields,
+            Value::Closure(c) => c.env.into_iter().map(|(_, v)| v).collect(),
+            _ => Vec::new(),
+        };
+        self.drop_all(parts)
+    }
+
+    /// Drops each of `vs`, in order, all of them even if one fails, as
+    /// what's left must be freed anyway; the first failure is the result.
+    fn drop_all(&mut self, vs: impl IntoIterator<Item = Value>) -> Result<(), Error> {
+        let mut result = Ok(());
+        for v in vs {
+            let r = self.drop(v);
+            if result.is_ok() {
+                result = r;
             }
-            Value::Struct(_, fields) => fields.into_iter().for_each(|(_, v)| self.drop(v)),
-            Value::Variant(_, _, fields) => fields.into_iter().for_each(|v| self.drop(v)),
-            Value::Closure(c) => c.env.into_iter().for_each(|(_, v)| self.drop(v)),
-            _ => {}
         }
+        result
+    }
+
+    /// The `discard` of a struct or enum's own, if type `ty` has one.
+    ///
+    /// Relies on monomorphisation having made a copy of it for every type
+    /// that has one (`Mono::type_decl`).
+    fn user_discard(&self, ty: &str) -> Option<String> {
+        let name = format!("<{ty} as {}>::discard", crate::traits::DISCARD);
+        self.fns.contains_key(name.as_str()).then_some(name)
     }
 
     /// The error at `span`, of a program that panics: from here on,
@@ -770,15 +810,28 @@ impl Interp<'_, '_> {
 
     /// Drops the variables from `scope` on, the last declared first, and
     /// frees their slots.
-    fn end_scope(&mut self, scope: usize) {
+    ///
+    /// In a type's own `discard`, `self` is dropped part by part, as the
+    /// borrow checker has it (lemma D3 of docs/20-destructors.md): its
+    /// `discard` is what's running.
+    fn end_scope(&mut self, scope: usize) -> Result<(), Error> {
+        let discarding = self.frames.last().is_some_and(|f| is_discard_fn(f));
+        let mut result = Ok(());
         while self.locals.len() > scope {
-            let (_, p, owned) = self.locals.pop().expect("a local");
+            let (name, p, owned) = self.locals.pop().expect("a local");
             if !owned {
                 continue;
             }
             let v = self.memory.free(&p, false);
-            self.drop(v);
+            let r = match discarding && self.locals.is_empty() && name == "self" {
+                true => self.drop_parts(v),
+                false => self.drop(v),
+            };
+            if result.is_ok() {
+                result = r;
+            }
         }
+        result
     }
 
     /// Runs `f` as a statement: the temporaries it makes are dropped, in
@@ -786,11 +839,13 @@ impl Interp<'_, '_> {
     fn statement<T>(&mut self, f: impl FnOnce(&mut Self) -> Result<T, Flow>) -> Result<T, Flow> {
         self.temps.push(Vec::new());
         let result = f(self);
-        for p in self.temps.pop().expect("pushed").into_iter().rev() {
-            let v = self.memory.free(&p, false);
-            self.drop(v);
-        }
-        result
+        let temps: Vec<Value> = (self.temps.pop().expect("pushed").into_iter().rev())
+            .map(|p| self.memory.free(&p, false))
+            .collect();
+        let dropped = self.drop_all(temps);
+        let v = result?;
+        dropped?;
+        Ok(v)
     }
 
     /// A new temporary holding `v`, dropped at the end of the statement.
@@ -907,8 +962,10 @@ impl Interp<'_, '_> {
                 let at = self.memory.alloc(Value::Closure(c), false);
                 let result = self.call_closure(&at, args, span);
                 let left = self.memory.free(&at, false);
-                self.drop(left);
-                result
+                let dropped = self.drop(left);
+                let v = result?;
+                dropped?;
+                Ok(v)
             }
             // Through a reference, what it points to is called, in place.
             Value::Ref(p) => match self.memory.get(&p).clone() {
@@ -1390,9 +1447,13 @@ impl Interp<'_, '_> {
         self.depth += 1;
         let result = self.statement(|i| i.eval(body));
         self.depth -= 1;
-        self.end_scope(0);
+        let ended = self.end_scope(0);
         self.locals = saved;
         self.temps = saved_temps;
+        let result = match (result, ended) {
+            (Ok(_) | Err(Flow::Return(_)), Err(e)) => Err(Flow::Error(e)),
+            (result, _) => result,
+        };
         match result {
             Ok(v) | Err(Flow::Return(v)) => Ok(v),
             Err(Flow::Error(e)) => Err(e),
@@ -1410,7 +1471,7 @@ impl Interp<'_, '_> {
             match self.eval(e) {
                 Ok(v) => values.push(v),
                 Err(flow) => {
-                    values.into_iter().rev().for_each(|v| self.drop(v));
+                    self.drop_all(values.into_iter().rev())?;
                     return Err(flow);
                 }
             }
@@ -1438,9 +1499,7 @@ impl Interp<'_, '_> {
             match first {
                 Ok(first) => firsts.push(first),
                 Err(flow) => {
-                    for v in firsts.into_iter().rev().filter_map(Result::ok) {
-                        self.drop(v);
-                    }
+                    self.drop_all(firsts.into_iter().rev().filter_map(Result::ok))?;
                     return Err(flow);
                 }
             }
@@ -1479,7 +1538,7 @@ impl Interp<'_, '_> {
                 return Ok(Value::Unit);
             }
             match self.eval(body) {
-                Ok(v) => self.drop(v),
+                Ok(v) => self.drop(v)?,
                 Err(Flow::Break(l, v)) if ours(&l) => return Ok(v),
                 Err(Flow::Continue(l)) if ours(&l) => {}
                 Err(flow) => return Err(flow),
@@ -1645,7 +1704,7 @@ impl Interp<'_, '_> {
                 let p = match self.place(place) {
                     Ok(p) => p,
                     Err(flow) => {
-                        self.drop(v);
+                        self.drop(v)?;
                         return Err(flow);
                     }
                 };
@@ -1662,7 +1721,7 @@ impl Interp<'_, '_> {
                     r.check(&v, "a refined variable assigned");
                 }
                 let old = std::mem::replace(self.memory.get_mut(&p), v);
-                self.drop(old);
+                self.drop(old)?;
                 if !p.path.is_empty() {
                     let mut outer = p.clone();
                     outer.path.pop();
@@ -1723,8 +1782,10 @@ impl Interp<'_, '_> {
     fn block(&mut self, stmts: &[Stmt], tail: Option<&Expr>) -> Result<Value, Flow> {
         let scope = self.locals.len();
         let result = self.block_inner(stmts, tail);
-        self.end_scope(scope);
-        result
+        let ended = self.end_scope(scope);
+        let v = result?;
+        ended?;
+        Ok(v)
     }
 
     fn block_inner(&mut self, stmts: &[Stmt], tail: Option<&Expr>) -> Result<Value, Flow> {
@@ -1754,7 +1815,7 @@ impl Interp<'_, '_> {
                 Stmt::Expr(e) | Stmt::BlockLike(e) => {
                     self.statement(|i| {
                         let v = i.eval(e)?;
-                        i.drop(v);
+                        i.drop(v)?;
                         Ok(())
                     })?;
                 }
@@ -1812,7 +1873,7 @@ impl Interp<'_, '_> {
             self.locals.push((String::new(), p.clone(), true));
             let r = self.memory.alloc(Value::Ref(p), false);
             self.temps.push(vec![r.clone()]);
-            self.bind(pat, &r, false);
+            self.bind(pat, &r, false)?;
             let temps = self.temps.pop().expect("pushed");
             for p in temps {
                 self.memory.free(&p, false);
@@ -1832,7 +1893,7 @@ impl Interp<'_, '_> {
             if !i.matches(pat, &p) {
                 unsound("a `let` pattern didn't match");
             }
-            i.bind(pat, &p, false);
+            i.bind(pat, &p, false)?;
             Ok(())
         })
     }
@@ -1894,10 +1955,12 @@ impl Interp<'_, '_> {
                 unsound(&format!("no `match` arm fits `{}`", i.memory.get(&p)));
             };
             let scope = i.locals.len();
-            i.bind(&arm.pat, &p, false);
+            i.bind(&arm.pat, &p, false)?;
             let result = i.eval(&arm.body);
-            i.end_scope(scope);
-            result
+            let ended = i.end_scope(scope);
+            let v = result?;
+            ended?;
+            Ok(v)
         })
     }
 
@@ -1952,7 +2015,7 @@ impl Interp<'_, '_> {
     /// what it matches, moved out if the pattern says so, or else copied,
     /// or a reference to it if `by_ref` or the pattern looked through a
     /// reference to get there.
-    fn bind(&mut self, p: &Pattern, v: &Ptr, mut by_ref: bool) {
+    fn bind(&mut self, p: &Pattern, v: &Ptr, mut by_ref: bool) -> Result<(), Error> {
         let (p, moves) = match &p.kind {
             PatternKind::Move(p) => (&**p, true),
             _ => (p, false),
@@ -1978,9 +2041,9 @@ impl Interp<'_, '_> {
             }
             PatternKind::Variant(_, _, _, pats) => {
                 for (i, p) in pats.iter().enumerate() {
-                    self.bind(p, &v.field(i), by_ref);
+                    self.bind(p, &v.field(i), by_ref)?;
                 }
-                self.consume(&v, by_ref, moves);
+                self.consume(&v, by_ref, moves)?;
             }
             PatternKind::Struct(_, _, field_pats, _) => {
                 for fp in field_pats {
@@ -1989,14 +2052,14 @@ impl Interp<'_, '_> {
                     };
                     let i = fields.iter().position(|(f, _)| *f == fp.name.name);
                     let i = i.unwrap_or_else(|| unsound("no such field"));
-                    self.bind(&fp.pat, &v.field(i), by_ref);
+                    self.bind(&fp.pat, &v.field(i), by_ref)?;
                 }
-                self.consume(&v, by_ref, moves);
+                self.consume(&v, by_ref, moves)?;
             }
             PatternKind::Or(alts) => {
                 let alt = alts.iter().find(|alt| self.matches(alt, &v));
                 let alt = alt.unwrap_or_else(|| unsound("no alternative matches"));
-                self.bind(alt, &v, by_ref);
+                self.bind(alt, &v, by_ref)?;
             }
             PatternKind::Move(_) => unsound("a pattern moving twice"),
             PatternKind::Wild
@@ -2005,6 +2068,7 @@ impl Interp<'_, '_> {
             | PatternKind::Bool(_)
             | PatternKind::Unit => {}
         }
+        Ok(())
     }
 
     /// Uses up the value at `v`, which a pattern has just taken apart, if
@@ -2014,12 +2078,12 @@ impl Interp<'_, '_> {
     /// value must be `Discard`, if it's owned: the checker leaves only
     /// what it knew to be, which a type parameter is only if every type it
     /// can be is.
-    fn consume(&mut self, v: &Ptr, by_ref: bool, moves: bool) {
+    fn consume(&mut self, v: &Ptr, by_ref: bool, moves: bool) -> Result<(), Error> {
         match (by_ref, moves, self.memory.get(v)) {
             (true, true, _) => unsound("using up what's behind a reference"),
             (false, true, _) => {
                 let old = std::mem::replace(self.memory.get_mut(v), Value::Moved);
-                self.drop_parts(old);
+                return self.drop_parts(old);
             }
             (false, false, Value::Struct(ty, _) | Value::Variant(ty, ..))
                 if !self.discard.contains(ty.as_str()) =>
@@ -2031,6 +2095,7 @@ impl Interp<'_, '_> {
             }
             _ => {}
         }
+        Ok(())
     }
 
     /// `==` on the values at `p` and `q`, at `span`. References and boxes

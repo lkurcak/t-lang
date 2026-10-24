@@ -582,7 +582,7 @@ for as long as `r` (`err_borrow_temp.t`).
 | raw pointers, `unsafe` | for writing what the checker can't see is safe, like `Vec` itself | — |
 | a resizable array (`Vec`) | needs raw pointers, generics over sizes, and `alloc` | — |
 | returning closures | a type per closure (6c), and `impl Fn` | 6c.1 |
-| `Drop`, destructors | traits | 6 |
+| `Drop`, destructors | traits | 20 ✅ |
 | allocation that may fail | effects | 7 |
 | `v.push(v.len())`: a call's borrows taken after its arguments | no methods yet | 6 |
 

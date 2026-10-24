@@ -12,7 +12,7 @@ with alloc
     s.write_char(' ');
     s.put(&hi);
     let w = out.line(&s.as_str());
-    s.free();
+    s.discard();
     w
 }
 

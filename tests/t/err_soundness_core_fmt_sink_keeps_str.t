@@ -23,7 +23,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut k = Keep { last: "" };
     let s = String::from("gone");
     k.write_str(s.as_str());
-    s.free();
+    s.discard();
     out.line(&k.last)?;
     Result::Ok(())
 }

@@ -15,6 +15,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
         _ => s.put(&n).into_ok(),
     }
     let w = out.line(&s.as_str()); // expect: 3
-    s.free();
+    s.discard();
     w
 }

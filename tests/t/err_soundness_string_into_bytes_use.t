@@ -6,7 +6,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let s = String::from("a");
     let l = s.into_bytes();
     out.line(&s.as_str())?;
-    l.free();
+    l.discard();
     Result::Ok(())
 }
 // error: use of moved value `s`

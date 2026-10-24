@@ -8,6 +8,6 @@ fn main() with {alloc, panic} {
     l.push(0xFF);
     let s = String { bytes: l };
     let _v = s.as_str();
-    s.free();
+    s.discard();
 }
 // error: field `bytes` of `String` is private to `alloc::string`

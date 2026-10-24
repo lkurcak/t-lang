@@ -53,6 +53,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     out.line(&(f(&mut z, 9) + z)); // expect: 17
     let mut stdout = os.stdout;
     let w = stdout.put(&out.as_str());
-    out.free();
+    out.discard();
     w
 }

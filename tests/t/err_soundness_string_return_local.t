@@ -7,7 +7,7 @@ fn view(s: &String) -> &'static str { s.as_str() }
 fn main() with {alloc, panic} {
     let s = String::from("a");
     let r = view(&s);
-    s.free();
+    s.discard();
     let _v = r;
 }
 // error: lifetime may not live long enough: this needs the lifetime of `s` to outlive `'static`, and the signature doesn't say it does

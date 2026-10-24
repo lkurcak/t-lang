@@ -771,7 +771,9 @@ impl Solution {
 
 /// Which locals are *live* before each point: may be used after it, before
 /// they're given a new value. A local whose memory goes away doesn't count
-/// as used then: dropping a value never looks at the references in it.
+/// as used then, nor one given a new value, unless dropping what it held
+/// may call a `discard` of its own, which may look at the references in
+/// it (`Body::drop_uses`, lemma D1 of docs/20-destructors.md).
 pub(crate) fn liveness(body: &Body) -> HashMap<Point, Vec<bool>> {
     let n = body.locals.len();
     let preds = body.predecessors();
@@ -806,7 +808,11 @@ pub(crate) fn liveness(body: &Body) -> HashMap<Point, Vec<bool>> {
                     // Giving a local a whole new value ends its old one's
                     // life. Writing to part of it, or through it, doesn't,
                     // and is taken as using it.
-                    live[place.local.0] = !place.proj.is_empty();
+                    let point = Point {
+                        block: super::mir::Bb(b),
+                        index: i,
+                    };
+                    live[place.local.0] = !place.proj.is_empty() || body.drop_uses.contains(&point);
                     for o in value.operands() {
                         if let Some(p) = o.place() {
                             live[p.local.0] = true;
@@ -817,7 +823,13 @@ pub(crate) fn liveness(body: &Body) -> HashMap<Point, Vec<bool>> {
                     }
                 }
                 StmtKind::Inspect(p) | StmtKind::Consume(p, _) => live[p.local.0] = true,
-                StmtKind::Dead(l) => live[l.0] = false,
+                StmtKind::Dead(l) => {
+                    let point = Point {
+                        block: super::mir::Bb(b),
+                        index: i,
+                    };
+                    live[l.0] = body.drop_uses.contains(&point);
+                }
             }
             changed |= live_in[b][i] != live;
             live_in[b][i] = live.clone();

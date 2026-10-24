@@ -7,6 +7,6 @@ fn main() with alloc {
     for x in l.iter() {
         l.push(*x);
     }
-    l.free();
+    l.discard();
 }
 // error: cannot borrow `l` as mutable while `l` is borrowed

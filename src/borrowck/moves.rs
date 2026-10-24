@@ -17,7 +17,7 @@ use crate::ast::Capture;
 use crate::error::{Edit, Error, Fix, Span};
 use crate::traits::DISCARD;
 use crate::types::{Type, struct_fields, variant_fields};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 /// The places moved out of, each with where, in order.
 type Moved = BTreeMap<Place, Span>;
@@ -105,6 +105,20 @@ pub(crate) fn abstraction(b: &Builder) -> Result<(), Error> {
                 parts.push((t, true));
             }
             for (t, taken) in parts {
+                if let Type::Adt(symbol, ..) = &t
+                    && taken
+                    && b.cx.traits().own_discard(symbol)
+                    && !b.cx.within_module_of(symbol)
+                {
+                    return Err(Error::ty(
+                        s.span,
+                        format!(
+                            "can't take `{t}` apart here: it has a `discard` of its own, which \
+                             only {} may skip",
+                            b.cx.module_of(symbol)
+                        ),
+                    ));
+                }
                 if let Type::Adt(symbol, ..) = &t
                     && taken
                     && b.cx.is_abstract(symbol)
@@ -642,7 +656,10 @@ enum Dropped {
 /// `Assign` (what the place held), and at a `Consume` (what the pattern
 /// didn't move out); and moves exactly where it does. The interpreter
 /// checks each drop for a leak (`Interp::drop`), so a program this lets
-/// through that throws away a linear value fails there.
+/// through that throws away a linear value fails there. Where the value's
+/// type has a `discard` of its own, the interpreter calls it at that drop,
+/// unless the value's been taken apart, as here; `drop_uses` makes such a
+/// drop a use of the value.
 ///
 /// Whether it's been used up depends on the path, so it's a dataflow
 /// problem, like `moves`, but asking what *must* be gone: where paths meet,
@@ -664,6 +681,30 @@ enum Dropped {
 /// it as `FnOnce` does, after.
 pub(crate) fn linear(b: &Builder) -> Result<(), Error> {
     let body = &b.body;
+    let ins = gone_states(b);
+    let mut first: Option<Error> = None;
+    for (bb, block) in body.blocks.iter().enumerate() {
+        let Some(mut state) = ins[bb].clone() else {
+            continue;
+        };
+        for s in &block.stmts {
+            if let Err(e) = gone(b, &mut state, s, true)
+                && first.as_ref().is_none_or(|f| e.span.start < f.span.start)
+            {
+                first = Some(e);
+            }
+        }
+    }
+    match first {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
+}
+
+/// What's gone at the start of each block, by the dataflow `linear`
+/// describes: `None` for a block nothing reaches.
+fn gone_states(b: &Builder) -> Vec<Option<Gone>> {
+    let body = &b.body;
     let mut start = Gone {
         may: Moved::new(),
         must: BTreeSet::new(),
@@ -680,7 +721,7 @@ pub(crate) fn linear(b: &Builder) -> Result<(), Error> {
     while let Some(bb) = todo.pop() {
         let mut state = ins[bb].clone().expect("reached");
         for s in &body.blocks[bb].stmts {
-            gone(b, &mut state, s, false)?;
+            let _ = gone(b, &mut state, s, false);
         }
         for succ in body.successors(Bb(bb)) {
             let new = match &ins[succ.0] {
@@ -700,22 +741,102 @@ pub(crate) fn linear(b: &Builder) -> Result<(), Error> {
             }
         }
     }
-    let mut first: Option<Error> = None;
+    ins
+}
+
+/// Where a drop uses what it drops (lemma D1 of docs/20-destructors.md):
+/// the `Dead`s and `Assign`s to a whole local that drop a value that isn't
+/// definitely gone, whose type may reach a `discard` of its own. That's
+/// called on the value, and may read through any reference in it, so what
+/// those point to must still be there: the local is live at the drop, and
+/// the regions in its type hold it. Dropping one whose type can't reach
+/// one only frees memory, and never looks at the references in it.
+///
+/// Conservative: a type parameter or a projection may be one that does,
+/// and a list's `discard` doesn't read what its values borrow, but nothing
+/// says so (Rust's `#[may_dangle]` would).
+pub(crate) fn drop_uses(b: &Builder) -> HashSet<Point> {
+    let body = &b.body;
+    let ins = gone_states(b);
+    let mut out = HashSet::new();
     for (bb, block) in body.blocks.iter().enumerate() {
         let Some(mut state) = ins[bb].clone() else {
             continue;
         };
-        for s in &block.stmts {
-            if let Err(e) = gone(b, &mut state, s, true)
-                && first.as_ref().is_none_or(|f| e.span.start < f.span.start)
-            {
-                first = Some(e);
+        for (index, s) in block.stmts.iter().enumerate() {
+            let point = Point {
+                block: Bb(bb),
+                index,
+            };
+            let dropped = match &s.kind {
+                StmtKind::Dead(l) => Some(*l),
+                StmtKind::Assign { place, .. } if place.proj.is_empty() => Some(place.local),
+                _ => None,
+            };
+            if let Some(l) = dropped {
+                // What the statement moves out of goes first: `x = f(x)`
+                // drops nothing.
+                let mut before = state.clone();
+                if let StmtKind::Assign { value, .. } = &s.kind {
+                    for o in value.operands() {
+                        if let Operand::Move(p) = o {
+                            add(&mut before.must, owned(b, p).0);
+                        }
+                    }
+                }
+                if !covered(&before.must, &Place::local(l))
+                    && reaches_own_discard(b, &body.locals[l.0].ty, &mut Vec::new())
+                {
+                    out.insert(point);
+                }
             }
+            let _ = gone(b, &mut state, s, false);
         }
     }
-    match first {
-        Some(e) => Err(e),
-        None => Ok(()),
+    out
+}
+
+/// May dropping a value of type `t` call a `discard` of its own: is it, or
+/// does it own, a struct or enum with one, or what might be one? `seen`,
+/// the structs, enums and opaque types looked in already, as a type can
+/// hold itself.
+fn reaches_own_discard(b: &Builder, t: &Type, seen: &mut Vec<Type>) -> bool {
+    match t {
+        Type::Adt(symbol, ..) if b.cx.traits().own_discard(symbol) => true,
+        Type::Adt(symbol, ..) if crate::types::is_closure(symbol) => {
+            let c = &b.cx.traits().closures;
+            c.get(symbol).is_some_and(|c| {
+                c.fields_at(t)
+                    .iter()
+                    .any(|f| reaches_own_discard(b, f, seen))
+            })
+        }
+        Type::Adt(..) => {
+            let erased = t.erased();
+            if seen.contains(&erased) {
+                return false;
+            }
+            seen.push(erased);
+            crate::types::all_fields(b.adts(), t)
+                .iter()
+                .any(|f| reaches_own_discard(b, f, seen))
+        }
+        Type::Box(inner) => reaches_own_discard(b, inner, seen),
+        // An opaque type is the type it stands for, which is what's dropped:
+        // so whether that has one shows through, as whether it's `Discard`
+        // doesn't. Unknown yet, it might. One that holds itself is an error
+        // found later (`Checker::opaque_cycles`).
+        Type::Opaque(symbol, ..) => {
+            let d = &b.cx.traits().opaques[symbol];
+            let erased = t.erased();
+            if seen.contains(&erased) {
+                return false;
+            }
+            seen.push(erased);
+            d.hidden.is_none() || reaches_own_discard(b, &d.hidden_at(t), seen)
+        }
+        Type::Param(_) | Type::Proj(..) => true,
+        _ => false,
     }
 }
 
@@ -776,9 +897,19 @@ fn leftover(
         return None;
     }
     let t = b.place_ty(place);
-    if b.cx.is_discard(&t) {
+    // In its own `discard`, `self` is dropped part by part: that's what's
+    // running (lemma D3 of docs/20-destructors.md).
+    let own = b.cx.in_discard
+        && !b.closure
+        && place == &Place::local(Local(1))
+        && b.body.locals[1].name.as_deref() == Some("self");
+    if b.cx.is_discard(&t) && !own {
         return None;
     }
+    let consumed = match own {
+        true => Some(consumed.flatten()),
+        false => consumed,
+    };
     let partly = must.iter().any(|m| m.within(place) && m != place);
     // A closure's body says which of what it owns it didn't use up.
     let env = place.proj.is_empty() && b.body.locals[place.local.0].kind == LocalKind::Env;

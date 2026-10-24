@@ -62,6 +62,42 @@ impl Checker {
         Ok(())
     }
 
+    /// Checks an impl of `Discard` with a `discard` of its own. It may need
+    /// no more of the type's parameters than that they're `Discard`, as a
+    /// derived one does, so that proving a type `Discard` needs only more
+    /// of the same (see `derive`). And the type can't be `Copy`: a copy is
+    /// made and dropped where nothing says so, so dropping one must be
+    /// nothing (lemma D5 of docs/20-destructors.md).
+    fn written_discard(&self, def: &ImplDef) -> Result<(), Error> {
+        for p in &def.preds {
+            if p.trait_name != DISCARD || !matches!(p.ty, Type::Param(_)) {
+                return Err(Error::ty(
+                    def.span,
+                    format!(
+                        "an impl of `{DISCARD}` may only need its type parameters to be \
+                         `{DISCARD}`, not `{}` of `{}`: a derived one needs no more",
+                        p.trait_name, p.ty
+                    ),
+                ));
+            }
+        }
+        if self
+            .traits
+            .implements(&def.self_ty, COPY, &def.preds, &def.eqs)
+            .is_ok()
+        {
+            return Err(Error::ty(
+                def.span,
+                format!(
+                    "`{}` is `{COPY}`, so it can't have a `discard` of its own: it's copied \
+                     and dropped where nothing says so, so dropping one must be nothing",
+                    def.self_ty
+                ),
+            ));
+        }
+        Ok(())
+    }
+
     pub(in crate::check) fn check_impls(&mut self, prog: &Program) -> Result<(), Error> {
         self.builtin_supertraits(prog)?;
         for (k, d) in prog.impls.iter().enumerate().skip(self.from.impls) {
@@ -99,7 +135,10 @@ impl Checker {
                 }
             }
             self.assoc_bounds(&def, d)?;
-            if tr == COPY || tr == DISCARD {
+            if tr == DISCARD {
+                self.written_discard(&def)?;
+            }
+            if tr == COPY {
                 let Type::Adt(symbol, ..) = &def.self_ty else {
                     unreachable!("checked")
                 };

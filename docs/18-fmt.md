@@ -21,7 +21,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     s.put(&-42i64);
     s.write_char('!');
     let written = out.line(&s.as_str()); // expect: x = -42!
-    s.free();
     written
 }
 ```
@@ -65,7 +64,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
         _ => s.put(&n).into_ok(),
     }
     let written = out.line(&s.as_str()); // expect: none
-    s.free();
     written
 }
 ```

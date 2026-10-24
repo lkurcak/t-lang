@@ -21,9 +21,9 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     out.line(&l.len());                         // expect: 3
     out.line(&(*last(l.as_slice()).unwrap()));    // expect: 3
     out.line(&(*l.get(index(1)).unwrap()));       // expect: 2
-    l.free();
+    l.discard();
     let mut stdout = os.stdout;
     let w = stdout.put(&out.as_str());
-    out.free();
+    out.discard();
     w
 }

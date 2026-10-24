@@ -80,6 +80,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     s.free();
     let mut stdout = os.stdout;
     let w = stdout.put(&out.as_str());
-    out.free();
+    out.discard();
     w
 }

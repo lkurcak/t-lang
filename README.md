@@ -290,9 +290,13 @@ has to fit that:
   [docs/08-refinement-types.md](docs/08-refinement-types.md)). A struct's
   fields can have them too, which every value of it keeps (see
   [docs/08.1-field-refinements.md](docs/08.1-field-refinements.md)).
-- **Values must be used up.** One whose type isn't `#[derive(Discard)]`
-  can't be dropped or overwritten: a resource like a file descriptor can't
-  be forgotten. See [docs/06a.1-linear-types.md](docs/06a.1-linear-types.md).
+- **Values must be used up.** One whose type isn't `Discard` can't be
+  dropped or overwritten: a resource like a file descriptor can't be
+  forgotten. See [docs/06a.1-linear-types.md](docs/06a.1-linear-types.md).
+  A type that is says how it's thrown away, field by field with
+  `#[derive(Discard)]`, or with a `discard` of its own, as a list frees
+  its buffer, which can't fail. See
+  [docs/20-destructors.md](docs/20-destructors.md).
 - **The core library is written in T.** `Option`, `Result`, `Iterator` and
   the rest are checked like any program; all the checker takes on trust is
   its intrinsics, `swap`, `panic`, `checked_mul`, `least`, `greatest` and a
@@ -358,6 +362,7 @@ combine features in ways nobody planned for.
 | 17.1 ✅ | `Discard`, `Copy`, `Eq`, `Int`, `Fn`… are core's `#[intrinsic]` traits, in the prelude; `Box` is `alloc::boxed::Box`; `<` is `Ord`'s, for any ordered type | the checker knows items by symbol, never by name; operators as trait methods, with the machine's `<` on integers the only one the refinement logic reads | [docs/17.1-library-items.md](docs/17.1-library-items.md) |
 | 18 ✅ | `core::fmt`: `Write`, a sink of text, and `Display`, for integers, `bool`, `char`, strings and a program's own types; `w.put(&x)?`, `String::of(&x)` | effects bounded by an argument's: formatting does only what its sink does, so into a pure sink it's total; numbers in decimal proved not to panic, at every integer type; each sink's errors a type of its own | [docs/18-fmt.md](docs/18-fmt.md) |
 | 19 ✅ | `std`: `fn main(os: Os)`, `out.line(&x)?`, `stdin.read_line(&mut line)?`, `main` giving back `Result<(), E>`; the `print` built-ins are gone | capabilities: what a function can do to the world is what it's handed, values no code can forge or copy (uniqueness, as Clean's world), not an effect; errors as values meeting linear types | [docs/19-std-io.md](docs/19-std-io.md) |
+| 20 ✅ | destructors: `impl Discard for T { fn discard(self) { .. } }`, called wherever a value is dropped; `List` and `String` are `Discard`, so `?` works while one is alive; `x.discard()` | weakening as a map `A ⊸ 1`, inserted only where it's total; a drop as a use of what's borrowed (drop check); only a type's module may skip its destructor | [docs/20-destructors.md](docs/20-destructors.md) |
 | — | C backend | | when it's worth it |
 
 ## License

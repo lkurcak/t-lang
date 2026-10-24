@@ -5,7 +5,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut out = os.stdout;
     let s = String::from("a");
     let r = s.as_str();
-    s.free();
+    s.discard();
     out.line(&r)?;
     Result::Ok(())
 }

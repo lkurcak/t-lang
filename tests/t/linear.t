@@ -107,6 +107,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {panic, alloc} {
     stdout.line(&close(fd)); // expect: 12
     let mut out = os.stdout;
     let w = out.put(&stdout.as_str());
-    stdout.free();
+    stdout.discard();
     w
 }

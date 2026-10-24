@@ -5,6 +5,6 @@ use alloc::string::String;
 fn main() with alloc {
     let mut s = String::new();
     s.put(&1i64);
-    s.free();
+    s.discard();
 }
 // error: `String` has no method `put` in scope; trait `core::fmt::Write` has one: import it with `use core::fmt::Write;`

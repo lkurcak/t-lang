@@ -17,7 +17,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     let mut s = String::new();
     s.write_str("ok").unwrap();
     let w = out.line(&s.as_str()); // expect: ok
-    s.free();
+    s.discard();
     w
 }
 // warning: `unwrap` of a `Result` whose error type is `!`, which can't be an `Err`: it says it may panic, though it can't

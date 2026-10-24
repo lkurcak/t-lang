@@ -319,6 +319,7 @@ fn analyze(
     if let Err(e) = moves::moves(b).and_then(|()| moves::linear(b)) {
         errors.push(e);
     }
+    b.body.drop_uses = moves::drop_uses(b);
     // That a region of an opaque type's can't be one of the function's
     // lifetimes is often because of something else that's wrong, which is
     // what's worth saying, if there's anything.

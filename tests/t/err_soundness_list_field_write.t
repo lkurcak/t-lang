@@ -6,6 +6,6 @@ fn main() with {alloc, panic} {
     l.push(1);
     l.len = 5;
     let _v = *l.get(4).unwrap();
-    l.free();
+    l.discard();
 }
 // error: field `len` of `List` is private to `alloc::list`

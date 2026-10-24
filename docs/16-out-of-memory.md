@@ -34,11 +34,9 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut out = os.stdout;
     let l = upto(4);
     let last = *l.get(3).unwrap_or(&0);
-    l.free();
     out.line(&last)?; // expect: 3
     let s = greet("world");
     let written = out.line(&s.as_str()); // expect: hello, world!
-    s.free();
     written?;
     Result::Ok(())
 }

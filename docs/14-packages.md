@@ -89,9 +89,15 @@ core's came first:
 // `Discard` can't lead back to `Iterator`, and in core alone it can't.
 struct W<T> { t: T }
 
-impl<T: Iterator + Discard> Discard for W<T> {}
-// error: `Discard` can only be derived
+impl<T: Iterator + Discard> Discard for W<T> {
+    fn discard(self) {}
+}
+// error: an impl of `Discard` may only need its type parameters to be `Discard`
 ```
+
+(Since step 17 such an impl is an error of its own, and since step 20
+that's the error: an impl of `Discard` may say how a value is thrown
+away, but not need more than a derived one.)
 
 Proving that a type implements `Iterator` could then go on forever, as
 docs/07.1-impl-parameters.md explains for one package. Until now the

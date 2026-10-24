@@ -53,11 +53,11 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut stdout = os.stdout;
     let s = String::of(&Shape::Line(Point { x: 1, y: -2 }, Point { x: 30, y: 4 }));
     let w = stdout.line(&s.as_str()); // expect: line from (1, -2) to (30, 4)
-    s.free();
+    s.discard();
     w?;
     let d = String::of(&Shape::Dot(Point { x: 0, y: 0 }));
     let w = stdout.line(&d.as_str()); // expect: dot at (0, 0)
-    d.free();
+    d.discard();
     w?;
 
     let mut l = alloc::list::List::new();
@@ -67,7 +67,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut out = String::new();
     let Result::Ok(()) = join(l.as_slice(), ", ", &mut out);
     let w = stdout.line(&out.as_str()); // expect: 3, 1, 4
-    out.free();
-    l.free();
+    out.discard();
+    l.discard();
     w
 }

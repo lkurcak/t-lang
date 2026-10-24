@@ -89,7 +89,6 @@ impl Stdin {
             } else if b == 256 {
                 break;
             } else {
-                bytes.free();
                 return Result::Err(error(b));
             }
         }
@@ -101,13 +100,9 @@ impl Stdin {
         match String::from_utf8(bytes) {
             Result::Ok(s) => {
                 line.push_str(s.as_str());
-                s.free();
                 Result::Ok(any)
             }
-            Result::Err(b) => {
-                b.free();
-                Result::Err(Error::new(ErrorKind::InvalidData))
-            }
+            Result::Err(_) => Result::Err(Error::new(ErrorKind::InvalidData)),
         }
     }
 

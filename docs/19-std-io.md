@@ -14,20 +14,14 @@ given the world it can touch, as a value:
 
 ```rust
 use alloc::string::String;
-use std::io::{Error, Stdin, Stdout};
+use std::io::Error;
 use std::Os;
 
 fn main(os: Os) -> Result<(), Error> with alloc {
     let mut input = os.stdin;
     let mut out = os.stdout;
     let mut line = String::new();
-    let echoed = echo(&mut input, &mut out, &mut line);
-    line.free();
-    echoed
-}
-
-fn echo(input: &mut Stdin, out: &mut Stdout, line: &mut String) -> Result<(), Error> with alloc {
-    while input.read_line(line)? {
+    while input.read_line(&mut line)? {
         out.put(&"> ")?;
         out.line(&line.as_str())?;
     }
@@ -175,16 +169,19 @@ fn main(os: std::Os) {
 ## `?` meets linear values
 
 `?` returns early, and a value that isn't `Discard` can't be dropped on
-the way out (docs/15-try.md). So a function holding a `String` or a
-`List` can't use `?` while it does. Three ways around it:
+the way out (docs/15-try.md). In this step a `String` and a `List`
+weren't, so a function holding one couldn't use `?` while it did. There
+were three ways around it: work out what's to be written and free the
+value first; write, free, and only then pass on what writing gave
+(`let written = out.line(&s.as_str()); s.free(); written?;`); or the
+*bracket*, a function that owns the value and frees it, calling one that
+borrows it and does the `?`s. This isn't about I/O: every `Result` meets
+it, and moving the tests and docs to `Stdout` met it about seventy-five
+times.
 
-- **Work out, free, then write.** Take what's to be written out of the
-  linear value first.
-- **Write, free, then `?`.** Keep what writing gave, free, and pass it on
-  after: `let written = out.line(&s.as_str()); s.free(); written?;`.
-- **The bracket.** The function that owns the value frees it, and a
-  function it calls borrows it and does the `?`s, as `main` and `echo` do
-  above.
+Step 20 ended it for memory: a string and a list are `Discard` now, by a
+`discard` of their own, which frees them on every path out, the early
+ones of `?` too (docs/20-destructors.md):
 
 ```rust
 use alloc::string::String;
@@ -192,17 +189,14 @@ use alloc::string::String;
 fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut out = os.stdout;
     let s = String::from("café");
-    let n = s.len();
-    let written = out.line(&s.as_str()); // expect: café
-    s.free();
-    written?;
-    out.line(&n) // expect: 5
+    out.line(&s.as_str())?; // expect: café
+    out.line(&s.len())      // expect: 5
 }
 ```
 
-This isn't about I/O: every `Result` meets it. Moving the tests and docs
-to `Stdout` met it about seventy-five times. Destructors, a `defer`, or
-`try` blocks would each end it, and each is a step of its own.
+A value that's linear on purpose, as a file whose `close` can fail will
+be, still can't be dropped on the way out: for one of those, the bracket
+is still the way.
 
 ## Reading input
 
@@ -210,8 +204,8 @@ to `Stdout` met it about seventy-five times. Destructors, a `defer`, or
 what was there, without its line break, `\n` or `\r\n`, and gives
 `Ok(true)`; `Ok(false)` if there's no more input. The last line needn't
 end in a line break. Input that isn't UTF-8 is an error of kind
-`InvalidData`. One `String` is used for every line, and freed once, by
-whoever owns it.
+`InvalidData`. One `String` is used for every line, and freed once, when
+it's dropped.
 
 ## What the checker trusts
 
@@ -244,7 +238,7 @@ anything goes to stderr, so a prompt is seen before it's answered.
 | files, arguments, the environment, clocks | each a field of `Os`, or a value one gives; files linear, with `close` | — |
 | writing bytes, `std::io::Write` | text is all a program writes yet; bytes come with files | — |
 | buffering in the program | `t` buffers; a compiled program will want a `BufWriter` written in T | — |
-| a way for linear values to leave on `?` | destructors, `defer` or `try` blocks | — |
+| a way for linear values to leave on `?` | destructors, `defer` or `try` blocks | 20 ✅ (destructors, for what's `Discard`) |
 | an exit status other than 0 and 1 | an `ExitCode` for `main` to give back | — |
 
 ## Exercises
@@ -255,8 +249,9 @@ anything goes to stderr, so a prompt is seen before it's answered.
    caller have to have, and where did that come from?
 3. Why must `Os` be passed by value, and not as `&Os` (`fn main(os:
    &Os)` is an error)? What would a borrowed `Os` allow?
-4. Rewrite `echo` without the bracket, with `?` in `main`. Where does the
-   checker stop you, and why is it right?
+4. In the first program, put the line in a `struct Line { s: String }` of
+   your own, which isn't `Discard`. Where does the checker stop you, and
+   why is it right? Then make it work with a bracket.
 5. A global `static OUT: Stdout` would break lemma C1. Would a global
    holding a `fn(&mut Stdout)` break it too?
 

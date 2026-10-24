@@ -8,9 +8,9 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut c = String::from("ab");
     c.push('c');
     let w = show(&mut out, &a, &b, &c);
-    a.free();
-    b.free();
-    c.free();
+    a.discard();
+    b.discard();
+    c.discard();
     w
 }
 

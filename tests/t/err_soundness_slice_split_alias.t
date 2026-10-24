@@ -10,6 +10,6 @@ fn main() with {alloc, panic} {
     let halves = s.split_at_mut(1).unwrap();
     *s.get_mut(0).unwrap() = 5;
     *halves.head.get_mut(0).unwrap() = 6;
-    l.free();
+    l.discard();
 }
 // error: cannot borrow `*s` as mutable more than once at a time

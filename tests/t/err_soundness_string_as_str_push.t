@@ -7,6 +7,6 @@ fn main() with alloc {
     let r = s.as_str();
     s.push_str("bcdefgh");
     let _v = r;
-    s.free();
+    s.discard();
 }
 // error: cannot borrow `s` as mutable while `s` is borrowed

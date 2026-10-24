@@ -31,7 +31,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     let last = *l.as_slice().last().unwrap();
     let swapped = l.as_mut_slice().swap(0, 3);
     let first = *l.get(0).unwrap();
-    l.free();
     out.line(&sum)?;     // expect: 100
     out.line(&last)?;    // expect: 40
     out.line(&swapped)?; // expect: true
@@ -163,7 +162,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     *b = 0;
     let first = *l.get(0).unwrap();
     let second = *l.get(1).unwrap();
-    l.free();
     out.line(&first)?; // expect: 3
     out.line(&second)  // expect: 0
 }
@@ -209,7 +207,6 @@ fn main() with {alloc, panic} {
     let a = it.next().unwrap();
     let _v = *s.get(0).unwrap();
     *a = 2;
-    l.free();
 }
 // error: cannot borrow `*s` while `*s` is mutably borrowed
 ```
@@ -267,7 +264,6 @@ fn main() with alloc {
     let s = l.as_slice();
     l.push(2);
     let _v = s.len();
-    l.free();
 }
 // error: cannot borrow `l` as mutable while `l` is borrowed
 ```

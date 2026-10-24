@@ -34,9 +34,9 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     out.line(&s.split_at(5).is_none());      // expect: true
     out.line(&s.split_at(4).unwrap().tail.len()); // expect: 0
     out.line(&sum(s));                            // expect: 100
-    l.free();
+    l.discard();
     let mut stdout = os.stdout;
     let w = stdout.put(&out.as_str());
-    out.free();
+    out.discard();
     w
 }

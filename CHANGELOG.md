@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased
+
+Step 20: destructors. See [docs/20-destructors.md](docs/20-destructors.md).
+
+### Added
+
+- `Discard` has a method, `discard(self)`, called wherever a value is
+  dropped. A struct or enum may write its own, in an impl in its module,
+  needing only `Discard` of its parameters; not for a `Copy` type. It has
+  no effects, so it's called on every path, the early ones of `?` too.
+- `x.discard()` drops `x` now, for any `Discard` type.
+- `List<T>` is `Discard` when `T` is: dropping it drops its values and
+  frees its buffer. `String` is `Discard`. So a function holding one can
+  use `?`.
+- The drop check: dropping a value whose type may reach a `discard` of its
+  own uses it, so what it borrows must still be there.
+
+### Changed
+
+- Outside its module, a value whose type has a `discard` of its own can't
+  be taken apart, by a pattern or by moving a field out; in its module, a
+  by-value pattern uses it up, without calling `discard`.
+
+### Removed
+
+- `List::free` and `String::free`: a list or string is freed when it's
+  dropped, or by `x.discard()`. `List::free_with` stays, for values that
+  aren't `Discard`.
+
 ## 0.32.0 (2026-10-24)
 
 Step 19: std I/O. See [docs/19-std-io.md](docs/19-std-io.md).
