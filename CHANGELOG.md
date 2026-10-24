@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.31.0 (2026-10-24)
 
 Step 18: `core::fmt`. See [docs/18-fmt.md](docs/18-fmt.md).
 
