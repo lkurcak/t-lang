@@ -4,15 +4,17 @@
 use alloc::boxed::Box;
 use core::mem::swap;
 
-fn main() with alloc {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
+    let mut out = os.stdout;
     let long = Box::new(1i64);
     let mut a = &*long;
     {
         let short = Box::new(2);
         let mut b = &*short;
         swap(&mut a, &mut b);
-        print(*b);
+        out.line(&(*b))?;
     }
-    print(*a);
+    out.line(&(*a))?;
+    Result::Ok(())
 }
 // error: `short` doesn't live long enough

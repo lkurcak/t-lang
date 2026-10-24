@@ -10,7 +10,7 @@ fn close(fd: Fd) -> i64 {
 fn main() with panic {
     let fd = Fd { n: 1 };
     let z: i64 = 0;
-    print(1 / z);
-    print(close(fd));
+    let _v = 1 / z;
+    let _v = close(fd);
 }
 // error: division by zero

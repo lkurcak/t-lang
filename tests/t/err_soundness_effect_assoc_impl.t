@@ -14,8 +14,10 @@ impl Iterator for Down {
     }
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let mut d = Down { n: 3 };
-    print_bool(d.next().is_some());
+    out.line(&d.next().is_some())?;
+    Result::Ok(())
 }
 // error: `-` may panic, but `next` doesn't say `with panic`

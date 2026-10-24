@@ -44,18 +44,97 @@ fn shapes::area(s: shapes::Shape::<i64>) -> i64 with panic {
     }
 }
 
-fn main() with panic {
-    print(total());
-    print(shapes());
-    print_bool((main::P { y: true }).y);
+fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<i64>(&mut out, &total()),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<i64>(&mut out, &shapes()),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<bool>(&mut out, &(main::P { y: true }).y),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
     let q = { main::Q { n: 7i64 } };
-    print(q.n);
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<i64>(&mut out, &q.n),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
     {
         let main::P#2 { z } = main::P#2 { z: 9i64 };
-        print(z);
+        match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+            <std::io::Stdout>::line::<i64>(&mut out, &z),
+        ) {
+            core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+                {try},
+            ) => {try},
+            core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+                {try},
+            ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+                {try},
+            ),
+        };
     }
-    print(other());
-    print(outer());
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<i64>(&mut out, &other()),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<i64>(&mut out, &outer()),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
+    core::result::Result::<(), std::io::Error>::Ok(())
 }
 
 fn other() -> i64 { (other::P { y: 4i64 }).y }
@@ -73,4 +152,11 @@ fn outer::inner::value(s: outer::inner::Sign) -> i64 {
         outer::inner::Sign::Minus => -5i64,
         outer::inner::Sign::Plus => 5i64,
     }
+}
+
+fn <&str as core::fmt::Display>::fmt::<std::io::Stderr><'a>(
+    &self,
+    w: &mut std::io::Stderr,
+) -> core::result::Result::<(), std::io::Error> {
+    <std::io::Stderr as core::fmt::Write>::write_str(&mut *w, *self)
 }

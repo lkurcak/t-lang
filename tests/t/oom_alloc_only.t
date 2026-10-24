@@ -29,16 +29,20 @@ fn buffer() -> RawBuf<i64> with alloc {
     b
 }
 
-fn main() with alloc {
-    print(*boxed(7)); // expect: 7
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
+    let mut out = os.stdout;
+    out.line(&(*boxed(7)))?; // expect: 7
     let l = three();
-    print_bool(l.len() == 3); // expect: true
+    let three = l.len() == 3;
     l.free();
+    out.line(&three)?; // expect: true
     let s = hello();
-    print_str(s.as_str()); // expect: hello, wörld
+    let w = out.line(&s.as_str()); // expect: hello, wörld
     s.free();
+    w?;
     let b = buffer();
-    print_bool(b.cap() == 5); // expect: true
+    let five = b.cap() == 5;
     // SAFETY: nothing was written.
     unsafe { b.free() };
+    out.line(&five) // expect: true
 }

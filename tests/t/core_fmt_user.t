@@ -49,13 +49,16 @@ fn join<D: Display, W: Write>(xs: &[D], sep: &str, w: &mut W) -> Result<(), W::E
     Result::Ok(())
 }
 
-fn main() with alloc {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
+    let mut stdout = os.stdout;
     let s = String::of(&Shape::Line(Point { x: 1, y: -2 }, Point { x: 30, y: 4 }));
-    print_str(s.as_str()); // expect: line from (1, -2) to (30, 4)
+    let w = stdout.line(&s.as_str()); // expect: line from (1, -2) to (30, 4)
     s.free();
+    w?;
     let d = String::of(&Shape::Dot(Point { x: 0, y: 0 }));
-    print_str(d.as_str()); // expect: dot at (0, 0)
+    let w = stdout.line(&d.as_str()); // expect: dot at (0, 0)
     d.free();
+    w?;
 
     let mut l = alloc::list::List::new();
     l.push(3u16);
@@ -63,7 +66,8 @@ fn main() with alloc {
     l.push(4);
     let mut out = String::new();
     let Result::Ok(()) = join(l.as_slice(), ", ", &mut out);
-    print_str(out.as_str()); // expect: 3, 1, 4
+    let w = stdout.line(&out.as_str()); // expect: 3, 1, 4
     out.free();
     l.free();
+    w
 }

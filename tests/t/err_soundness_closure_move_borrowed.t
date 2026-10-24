@@ -7,11 +7,13 @@ fn take(b: B) -> i64 {
     x
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let mut b = B { x: 1 };
     let mut c = || b.x = 2;
     let y = take(b);
     c();
-    print(y);
+    out.line(&y)?;
+    Result::Ok(())
 }
 // error: cannot move out of `b` while `b` is mutably borrowed

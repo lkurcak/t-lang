@@ -15,9 +15,11 @@ fn small_inc(n: i64) -> i64 {
     }
 }
 
-fn main() {
-    print(div_or_zero(7, 0)); // expect: 0
-    print(div_or_zero(7, 2)); // expect: 3
-    print(small_inc(3)); // expect: 4
-    print(small_inc(30)); // expect: 0
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&div_or_zero(7, 0))?; // expect: 0
+    out.line(&div_or_zero(7, 2))?; // expect: 3
+    out.line(&small_inc(3))?; // expect: 4
+    out.line(&small_inc(30))?; // expect: 0
+    Result::Ok(())
 }

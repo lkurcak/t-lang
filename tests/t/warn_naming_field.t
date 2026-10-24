@@ -4,11 +4,13 @@
 #[derive(Discard)]
 struct P { xPos: i64, y: i64 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let xPos = 1;
     let p = P { xPos, y: 2 };
     let P { xPos, y } = p;
-    print(xPos + y + p.xPos);
+    out.line(&(xPos + y + p.xPos))?;
+    Result::Ok(())
 }
 // warning: field `xPos` should have a snake case name: `x_pos`
 // warning: variable `xPos` should have a snake case name: `x_pos`

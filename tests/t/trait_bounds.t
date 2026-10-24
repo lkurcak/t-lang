@@ -20,6 +20,8 @@ impl<T: Ord> Sorted<T> {
 
 fn width(s: Sorted<i64>) -> i64 with panic { s.hi - s.lo }
 
-fn main() with panic {
-    print(width(Sorted::of(9, 3)));  // expect: 6
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&width(Sorted::of(9, 3)))?;  // expect: 6
+    Result::Ok(())
 }

@@ -8,8 +8,10 @@ impl Iterator for Ones {
     fn next(&mut self) -> Option<i64> { Option::Some(1) }
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let mut o = Ones {};
-    print_bool(o.next().is_some());
+    out.line(&o.next().is_some())?;
+    Result::Ok(())
 }
 // error: this impl of `Iterator` for `Ones` is missing an associated effect: `e`

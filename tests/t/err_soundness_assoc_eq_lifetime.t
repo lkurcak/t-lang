@@ -10,12 +10,14 @@ impl<'b> Tr for W<'b> {
 
 fn launder<'a, T: Tr<Out = &'a i64> + Discard>(x: T) -> &'a i64 { x.out() }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let r: &i64;
     {
         let n = 5;
         r = launder(W { r: &n });
     }
-    print(*r);
+    out.line(&(*r))?;
+    Result::Ok(())
 }
 // error: `n` doesn't live long enough

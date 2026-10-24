@@ -1,5 +1,7 @@
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let r = 0..3;
-    print(r.start);
+    out.line(&r.start)?;
+    Result::Ok(())
 }
 // error: field `start` of `Range` is private

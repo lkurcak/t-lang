@@ -33,12 +33,14 @@ mod cells {
 
 fn five() -> i64 { 5 }
 
-fn main() with {alloc, panic} {
+fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+    let mut out = os.stdout;
     let _c = cells::cell(1i64);
     let t = cells::tag(3, five);
     let u = t;
-    print(cells::raw(t) + cells::raw(u)); // expect: 6
+    out.line(&(cells::raw(t) + cells::raw(u)))?; // expect: 6
     let _l = cells::later(five);
     let o = cells::Open { v: Box::new(2i64) };
-    print(*o.v);                           // expect: 2
+    out.line(&(*o.v))?;                           // expect: 2
+    Result::Ok(())
 }

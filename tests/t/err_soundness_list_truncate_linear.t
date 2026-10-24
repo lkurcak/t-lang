@@ -9,7 +9,7 @@ fn main() with {alloc, panic} {
     l.truncate(0);
     l.free_with(|fd: Fd| {
         let Fd { n } = fd;
-        print(n);
+        let _v = n;
     });
 }
 // error: `List<T>::truncate` needs its `T` to implement `Discard`, and `Fd` doesn't; add `#[derive(Discard)]` to `Fd`

@@ -81,25 +81,29 @@ fn add(a: i64, b: i64) -> i64 with panic {
 }
 
 // `return` with nothing after it returns `()`.
-fn print_positive(n: i64) {
+fn keep_positive(n: i64, kept: &mut i64) {
     if n <= 0 { return; }
-    print(n);
+    *kept = n;
 }
 
 fn apply(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }
 
-fn main() with panic {
-    print(show(login(true)));                       // expect: 1
-    print(show(login(false)));                      // expect: 0
-    print(or_minus_one(Option::Some(4)));           // expect: 40
-    print(or_minus_one(Option::None));              // expect: -1
-    print(first_square_above(10));                  // expect: 16
-    print(sum_odd_below(10));                       // expect: 25
-    print(pairs(4));                                // expect: 6
-    print(sign(-5) + sign(0) * 10 + sign(7) * 100); // expect: 99
-    print(add(2, 3));                               // expect: 5
-    print_positive(-1);
-    print_positive(8);                              // expect: 8
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut stdout = os.stdout;
+    stdout.line(&show(login(true)))?;                       // expect: 1
+    stdout.line(&show(login(false)))?;                      // expect: 0
+    stdout.line(&or_minus_one(Option::Some(4)))?;           // expect: 40
+    stdout.line(&or_minus_one(Option::None))?;              // expect: -1
+    stdout.line(&first_square_above(10))?;                  // expect: 16
+    stdout.line(&sum_odd_below(10))?;                       // expect: 25
+    stdout.line(&pairs(4))?;                                // expect: 6
+    stdout.line(&(sign(-5) + sign(0) * 10 + sign(7) * 100))?; // expect: 99
+    stdout.line(&add(2, 3))?;                               // expect: 5
+    let mut kept = 0;
+    keep_positive(-1, &mut kept);
+    stdout.line(&kept)?;                               // expect: 0
+    keep_positive(8, &mut kept);
+    stdout.line(&kept)?;                               // expect: 8
 
     // A `return` in a closure returns from the closure, whose result type
     // is worked out from it.
@@ -107,7 +111,7 @@ fn main() with panic {
         if x > 10 { return 10; }
         x
     };
-    print(apply(clamp, 50) + apply(clamp, 3));      // expect: 13
+    stdout.line(&(apply(clamp, 50) + apply(clamp, 3)))?;      // expect: 13
 
     // `if` and `else` can be a `!` and an `i64`.
     let mut i: i64 = 0;
@@ -116,5 +120,6 @@ fn main() with panic {
         if v == 4 { break v; }
         i += 1;
     };
-    print(found);                                   // expect: 4
+    stdout.line(&found)?;                                   // expect: 4
+    Result::Ok(())
 }

@@ -59,14 +59,16 @@ impl<F: FnOnce() -> i64> K<F> {
     fn call(self) -> i64 { (self.f)() }
 }
 
-fn main() with panic {
-    print_bool(S { p: 1i64 }.arg());                // expect: true
-    print(S { p: 2i64 }.bind());                    // expect: 2
-    print(S { p: 3i64 }.pick(S { p: 4 }));          // expect: 3
-    print(S { p: 4i64 }.recv());                    // expect: 5
-    print(Out { i: In { p: 6i64 } }.take());        // expect: 6
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&(S { p: 1i64 }.arg()))?;                // expect: true
+    out.line(&(S { p: 2i64 }.bind()))?;                    // expect: 2
+    out.line(&(S { p: 3i64 }.pick(S { p: 4 })))?;          // expect: 3
+    out.line(&(S { p: 4i64 }.recv()))?;                    // expect: 5
+    out.line(&(Out { i: In { p: 6i64 } }.take()))?;        // expect: 6
     let n = 7;
-    print(K { f: || n }.call());                 // expect: 7
+    out.line(&(K { f: || n }.call()))?;                 // expect: 7
     // A closure that only borrows is `Copy` too.
-    print_bool(S { p: || n }.arg());             // expect: true
+    out.line(&(S { p: || n }.arg()))?;             // expect: true
+    Result::Ok(())
 }

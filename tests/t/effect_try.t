@@ -8,7 +8,9 @@ fn both(a: i64, b: i64) -> Option<i64> {
     checked_add(x, y)
 }
 
-fn main() {
-    print(both(1, 2).unwrap_or(0)); // expect: 3
-    print(both(1, -2).unwrap_or(0)); // expect: 0
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&both(1, 2).unwrap_or(0))?; // expect: 3
+    out.line(&both(1, -2).unwrap_or(0))?; // expect: 0
+    Result::Ok(())
 }

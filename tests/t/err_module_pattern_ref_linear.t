@@ -14,10 +14,12 @@ mod fs {
     }
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let fd = fs::open(1);
     match &fd {
-        fs::Fd { id, .. } => print(id.n),
+        fs::Fd { id, .. } => out.line(&id.n)?,
     }
+    Result::Ok(())
 }
 // error: `fd` is never used up

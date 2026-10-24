@@ -12,23 +12,25 @@ fn exchange(a: &mut i64, b: &mut i64) {
     *b = t;
 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let mut x: i64 = 1;
     x = x + 1;
     x *= 10;
-    print(x);                   // expect: 20
+    out.line(&x)?;                   // expect: 20
     let mut c = Counter { count: 0, step: 3 };
     tick(&mut c);
     tick(&mut c);
     c.step = 1;
     tick(&mut c);
-    print(c.count);             // expect: 7
+    out.line(&c.count)?;             // expect: 7
     let mut a = 1;
     let mut b = 2;
     exchange(&mut a, &mut b);
-    print(a);                   // expect: 2
-    print(b);                   // expect: 1
+    out.line(&a)?;                   // expect: 2
+    out.line(&b)?;                   // expect: 1
     let r = &mut a;
     *r -= 5;
-    print(a);                   // expect: -3
+    out.line(&a)?;                   // expect: -3
+    Result::Ok(())
 }

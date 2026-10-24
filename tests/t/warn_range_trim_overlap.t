@@ -6,10 +6,12 @@ fn f(n: i64) -> i64 {
         _ => 3,
     }
 }
-fn main() {
-    print(f(15));
-    print(f(25));
-    print(f(30));
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&f(15))?;
+    out.line(&f(25))?;
+    out.line(&f(30))?;
+    Result::Ok(())
 }
 // warning: this range can be narrowed to `20..30`
 // expect: 1

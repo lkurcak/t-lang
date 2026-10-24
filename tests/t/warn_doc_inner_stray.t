@@ -5,9 +5,11 @@ mod shapes {
     //! Too late.
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     //! Not a module.
-    print(shapes::one()); // expect: 1
+    out.line(&shapes::one())?; // expect: 1
+    Result::Ok(())
 }
 // warning: unused doc comment: a `//!` one documents the module it's at the start of, so it goes before anything else in the module
 // warning: unused doc comment: a `//!` one documents the module it's at the start of, so it goes before anything else in the module

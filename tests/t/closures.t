@@ -21,37 +21,39 @@ fn pick(double: bool) -> fn(i64) -> i64 with panic {
     if double { |x| x * 2 } else { inc }
 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let k = 10;
-    print(apply(|x| x * k, 4));             // expect: 40
+    out.line(&apply(|x| x * k, 4))?;             // expect: 40
     let five = 5;
     let add5 = |x| x + five;
-    print(add5(1));                         // expect: 6
-    print(compose(add5, |x| x + 100, 0));   // expect: 105
+    out.line(&add5(1))?;                         // expect: 6
+    out.line(&compose(add5, |x| x + 100, 0))?;   // expect: 105
     // Functions work where closures do.
-    print(compose(inc, |x| x * 2, 3));      // expect: 8
-    print(pick(true)(pick(false)(4)));      // expect: 10
+    out.line(&compose(inc, |x| x * 2, 3))?;      // expect: 8
+    out.line(&pick(true)(pick(false)(4)))?;      // expect: 10
     // `p`'s type comes from `on_point`'s bound, so `p.x` works.
-    print(on_point(|p| p.x * p.y));         // expect: 12
+    out.line(&on_point(|p| p.x * p.y))?;         // expect: 12
     // No parameters, annotations, a block body.
     let one = || 1;
     let both = |a: i64, b| -> i64 { let s = a + b; s * s };
-    print(one() + both(1, 2));              // expect: 10
+    out.line(&(one() + both(1, 2)))?;              // expect: 10
     // A closure that borrows `n` sees the `n` it was made with, as the
     // `let` after makes a new one.
     let n: i64 = 1;
     let get = || n;
     let n = 2;
-    print(get() + n);                       // expect: 3
+    out.line(&(get() + n))?;                       // expect: 3
     // Closures in data, if they capture nothing.
     let fs = Fs { a: |x| x - 1, b: pick(true) };
-    print((fs.a)((fs.b)(3)));               // expect: 5
-    print(apply(fs.a, 1));                  // expect: 0
+    out.line(&(fs.a)((fs.b)(3)))?;               // expect: 5
+    out.line(&apply(fs.a, 1))?;                  // expect: 0
     // Immediately called.
-    print((|x| x + 1i64)(41));                 // expect: 42
+    out.line(&(|x| x + 1i64)(41))?;                 // expect: 42
     // Calling an argument with unknown type makes it a function.
     let twice = |f, x| f(f(x));
-    print(twice(inc, 0));                   // expect: 2
+    out.line(&twice(inc, 0))?;                   // expect: 2
+    Result::Ok(())
 }
 
 #[derive(Discard)]

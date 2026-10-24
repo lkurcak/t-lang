@@ -30,13 +30,17 @@ fn greet(name: &str) -> String with alloc {
     s
 }
 
-fn main() with alloc {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
+    let mut out = os.stdout;
     let l = upto(4);
-    print(*l.get(3).unwrap_or(&0)); // expect: 3
+    let last = *l.get(3).unwrap_or(&0);
     l.free();
+    out.line(&last)?; // expect: 3
     let s = greet("world");
-    print_str(s.as_str()); // expect: hello, world!
+    let written = out.line(&s.as_str()); // expect: hello, world!
     s.free();
+    written?;
+    Result::Ok(())
 }
 ```
 
@@ -109,12 +113,14 @@ abort anyway; it's just wrong.
 ```rust
 use alloc::raw::RawBuf;
 
-fn main() with alloc {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
+    let mut out = os.stdout;
     let mut b: RawBuf<i64> = RawBuf::new(2);
     b.grow(3);
-    print_bool(b.cap() == 5); // expect: true
+    let five = b.cap() == 5;
     // SAFETY: nothing was written.
     unsafe { b.free() };
+    out.line(&five) // expect: true
 }
 ```
 

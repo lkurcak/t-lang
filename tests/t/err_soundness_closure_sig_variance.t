@@ -4,12 +4,14 @@
 // free to vary apart from its fields', this would be a use after free.)
 fn get<F: Fn() -> &'static i64 + Discard>(f: F) -> &'static i64 { f() }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let s: &i64;
     {
         let n = 1;
         s = get(|| &n);
     }
-    print(*s);
+    out.line(&(*s))?;
+    Result::Ok(())
 }
 // error: `n` doesn't live long enough

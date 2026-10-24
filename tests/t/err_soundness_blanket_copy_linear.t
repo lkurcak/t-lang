@@ -9,7 +9,9 @@ impl<T: Copy> Tr for T {
     fn f(self) -> i64 { 1 }
 }
 
-fn main() {
-    print(Fd { n: 1 }.f());
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&(Fd { n: 1 }.f()))?;
+    Result::Ok(())
 }
 // error: `Fd` doesn't implement `Tr`, which method `f` is of; that needs `Fd: Copy`

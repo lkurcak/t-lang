@@ -21,6 +21,6 @@ fn f<T: Tr>(t: &T) -> i64 {
     1
 }
 
-fn main() { print(f(&A { n: 1 })); } // expect: 1
+fn main(os: std::Os) -> Result<(), std::io::Error> { let mut out = os.stdout; out.line(&f(&A { n: 1 }))?;  Result::Ok(()) } // expect: 1
 // warning: associated type `item` should have an upper camel case name
 // warning: unused variable `x`

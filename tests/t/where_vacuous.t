@@ -16,7 +16,9 @@ impl Tr for Fd {
     fn keep(self) -> Fd { self }
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let Fd { n } = Fd { n: 1 }.keep();
-    print(n); // expect: 1
+    out.line(&n)?; // expect: 1
+    Result::Ok(())
 }

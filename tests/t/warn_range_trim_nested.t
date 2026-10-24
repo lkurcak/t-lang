@@ -7,10 +7,12 @@ fn f(o: Opt) -> i64 {
         _ => 3,
     }
 }
-fn main() {
-    print(f(Opt::Some(5)));
-    print(f(Opt::Some(6)));
-    print(f(Opt::None));
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&f(Opt::Some(5)))?;
+    out.line(&f(Opt::Some(6)))?;
+    out.line(&f(Opt::None))?;
+    Result::Ok(())
 }
 // warning: this range can be narrowed to `6..10`
 // expect: 1

@@ -24,9 +24,11 @@ program: a generic function's body is part of its library's interface,
 since a copy of it is made for each type it's used at.
 
 ```rust
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let s = (0..10i64).filter(|x| *x % 2 == 0).fold(0, |a, x| a + x);
-    print(s); // expect: 20
+    out.line(&s)?; // expect: 20
+    Result::Ok(())
 }
 ```
 

@@ -12,34 +12,36 @@ fn second() -> i64 {
     helper()
 }
 
-fn main() {
-    print(helper()); // expect: 1
-    print(first());  // expect: 10
-    print(second()); // expect: 20
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&helper())?; // expect: 1
+    out.line(&first())?;  // expect: 10
+    out.line(&second())?; // expect: 20
     {
         // Shadows the top-level `helper` in all of this block, even before.
-        print(helper()); // expect: 30
+        out.line(&helper())?; // expect: 30
         fn helper() -> i64 { 30 }
         {
             fn helper() -> i64 { 40 }
-            print(helper()); // expect: 40
+            out.line(&helper())?; // expect: 40
         }
-        print(helper()); // expect: 30
+        out.line(&helper())?; // expect: 30
     }
     {
         fn helper() -> i64 { 50 }
-        print(helper()); // expect: 50
+        out.line(&helper())?; // expect: 50
     }
-    print(helper()); // expect: 1
+    out.line(&helper())?; // expect: 1
 
     // A local declared before the block is shadowed by the block's `fn`,
     // and one declared in the block shadows it.
     let helper: i64 = 60;
     {
-        print(helper()); // expect: 30
+        out.line(&helper())?; // expect: 30
         fn helper() -> i64 { 30 }
         let helper: i64 = 70;
-        print(helper); // expect: 70
+        out.line(&helper)?; // expect: 70
     }
-    print(helper); // expect: 60
+    out.line(&helper)?; // expect: 60
+    Result::Ok(())
 }

@@ -24,8 +24,10 @@ fn get(m: Maybe) -> i64 {
     }
 }
 
-fn main() {
-    print(get(Maybe::Real(1)));   // expect: 1
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&get(Maybe::Real(1)))?;   // expect: 1
+    Result::Ok(())
 }
 // Neither function can ever be called, and `Impossible` never constructed.
 // warning: function `absurd` is never used

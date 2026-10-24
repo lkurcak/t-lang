@@ -6,5 +6,5 @@ mod m {
     pub fn f() -> i64 { helper() }
 }
 
-fn main() { print(m::f()); }
+fn main(os: std::Os) -> Result<(), std::io::Error> { let mut out = os.stdout; out.line(&m::f())?;  Result::Ok(()) }
 // error: unknown variable `helper`

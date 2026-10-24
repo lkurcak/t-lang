@@ -10,9 +10,11 @@ fn close(fd: Fd) -> i64 {
 
 struct Pair { a: Fd, b: Fd }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let mut p = Pair { a: open(1), b: open(2) };
     p.a = open(3);
-    print(close(p.a) + close(p.b));
+    out.line(&(close(p.a) + close(p.b)))?;
+    Result::Ok(())
 }
 // error: this assignment would throw away the value `p.a` holds

@@ -3,8 +3,10 @@
 #[derive(Copy, Discard)]
 struct Span { lo: i64, hi: { h: i64 | h >= lo } }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let s = Span { hi: 1, lo: 5 };
-    print(s.hi);
+    out.line(&s.hi)?;
+    Result::Ok(())
 }
 // error: can't prove `h >= lo` for field `hi` of `Span`

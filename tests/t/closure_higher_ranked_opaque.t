@@ -9,14 +9,16 @@ fn at<'a>(f: fn(&'a i64) -> &'a i64, y: &'a i64) -> i64 {
     *f(y)
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let f = make(1);
     let a = 1;
     {
         let b = 2;
-        print(*f(&b)); // expect: 2
+        out.line(&(*f(&b)))?; // expect: 2
     }
-    print(*f(&a)); // expect: 1
+    out.line(&(*f(&a)))?; // expect: 1
     let id = |x: &i64| -> &i64 { x };
-    print(at(id, &a)); // expect: 1
+    out.line(&at(id, &a))?; // expect: 1
+    Result::Ok(())
 }

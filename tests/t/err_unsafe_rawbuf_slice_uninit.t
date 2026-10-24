@@ -7,7 +7,7 @@ fn main() with alloc {
     unsafe { b.write(0, 1) };
     // SAFETY: wrong: slot 1 holds nothing.
     let s = unsafe { b.slice(0, 2) };
-    print(s.len());
+    let _v = s.len();
     // SAFETY: slot 0 holds the 1; then every slot is uninitialised.
     unsafe {
         b.read(0);

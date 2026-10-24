@@ -5,9 +5,11 @@ and `src/check/expr.rs` (`Checker::lambda` and `Checker::check`), `src/interp.rs
 for nested functions `src/check/scope.rs` and `src/lift.rs`.
 
 ```rust
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let twice = |f, x| f(f(x));
-    print(twice(|x| x + 5, 0i64)); // expect: 10
+    out.line(&twice(|x| x + 5, 0i64))?; // expect: 10
+    Result::Ok(())
 }
 ```
 
@@ -46,12 +48,14 @@ it would at the top level; only its name is scoped, to the block
 (`tests/t/nested_fns.t`):
 
 ```rust
-fn main() with panic {
-    print(fact(5)); // expect: 120
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&fact(5))?; // expect: 120
 
     fn fact(n: i64) -> i64 with panic {
         if n == 0 { 1 } else { n * fact(n - 1) }
     }
+    Result::Ok(())
 }
 ```
 
@@ -72,7 +76,7 @@ fn main() {
     fn add_n(x: i64) -> i64 {
         x + n // error: can't capture `n` in a nested `fn`; use a closure
     }
-    print(add_n(1));
+    let _v = add_n(1);
 }
 ```
 
@@ -112,12 +116,14 @@ block, and it shadows any outer type of the same name
 that use it, inside the one function that needs them:
 
 ```rust
-fn main() with panic {
-    print(perimeter(Rect { w: 2, h: 3 })); // expect: 10
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&perimeter(Rect { w: 2, h: 3 }))?; // expect: 10
 
     #[derive(Discard)]
     struct Rect { w: i64, h: i64 }
     fn perimeter(r: Rect) -> i64 with panic { 2 * (r.w + r.h) }
+    Result::Ok(())
 }
 ```
 
@@ -130,13 +136,15 @@ Nothing outside the block can name a local type, but its values can still
 leave the block, since inference doesn't need the name:
 
 ```rust
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let p = {
         #[derive(Discard)]
         struct P { x: i64 }
         P { x: 1 }
     };
-    print(p.x); // expect: 1
+    out.line(&p.x)?; // expect: 1
+    Result::Ok(())
 }
 ```
 
@@ -254,8 +262,8 @@ struct P { x: i64, y: i64 }
 fn on_point(f: fn(P) -> i64) -> i64 { f(P { x: 3, y: 4 }) }
 
 fn main() {
-    print(on_point(|p| p.x)); // fine
-    let get = |p| p.x;        // error: the type of this must be known
+    let _v = on_point(|p| p.x); // fine
+    let get = |p| p.x;          // error: the type of this must be known
 }
 ```
 
@@ -304,8 +312,8 @@ And a variable has *one* type:
 ```rust,error
 fn main() {
     let id = |x| x;
-    print(id(1i64));      // id : fn(i64) -> i64 from here on
-    print_bool(id(true)); // error: expected `i64`, found `bool`
+    let _v = id(1i64); // id : fn(i64) -> i64 from here on
+    let _v = id(true); // error: expected `i64`, found `bool`
 }
 ```
 

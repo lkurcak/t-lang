@@ -13,7 +13,9 @@ fn f() -> i64 {
     10 / d
 }
 
-fn main() with panic {
-    print(f());
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&f())?;
+    Result::Ok(())
 }
 // error: `/` may panic, but `f` doesn't say `with panic`

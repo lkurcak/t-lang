@@ -9,9 +9,11 @@ fn close(fd: Fd) -> i64 {
     n
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let fd = open(1); // warning: unused variable `fd`: use it up, as its type, `Fd`, isn't `Discard`
     let n: i64 = 2; // warning: unused variable `n`
-    print(close(open(3)));
+    out.line(&close(open(3)))?;
+    Result::Ok(())
 }
 // error: `fd` is never used up

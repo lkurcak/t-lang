@@ -22,14 +22,16 @@ fn check_all<C: Check>(c: &C, a: &i64, b: &i64) -> bool {
     c.passes(a) && c.passes(b)
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let positive = Test { p: |x: &i64| *x > 0 };
     let a = 1;
-    print_bool(positive.passes(&a));                // expect: true
+    out.line(&positive.passes(&a))?;                // expect: true
     let low = 5;
     let above = Test { p: |x: &i64| *x > low };
     let b = 9;
-    print_bool(above.passes(&b));                   // expect: true
-    print_bool(check_all(&above, &a, &b));          // expect: false
-    print_bool(check_all(&positive, &a, &b));       // expect: true
+    out.line(&above.passes(&b))?;                   // expect: true
+    out.line(&check_all(&above, &a, &b))?;          // expect: false
+    out.line(&check_all(&positive, &a, &b))?;       // expect: true
+    Result::Ok(())
 }

@@ -17,27 +17,29 @@ fn take(b: B) -> i64 {
     x
 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut stdout = os.stdout;
     // Captures by reference: `k` is only read.
     let k = 10;
-    print(apply(|x| x * k, 4));             // expect: 40
+    stdout.line(&apply(|x| x * k, 4))?;             // expect: 40
     // Functions implement the `Fn` traits too.
-    print(apply(inc, 1));                   // expect: 2
+    stdout.line(&apply(inc, 1))?;                   // expect: 2
     // A closure that captures nothing is a function.
-    print(apply(|x| x - 1, 1));             // expect: 0
+    stdout.line(&apply(|x| x - 1, 1))?;             // expect: 0
     // Changing a captured variable borrows it mutably, for as long as the
     // closure is used.
     let mut n: i64 = 0;
     let c = twice(|| n = n + 1);
     let mut c = twice(c);
     c();
-    print(n);                               // expect: 5
+    stdout.line(&n)?;                               // expect: 5
     // Moving a captured value out makes the closure `FnOnce`.
     let b = B { x: 7 };
-    print(once(|| take(b)));                // expect: 7
+    stdout.line(&once(|| take(b)))?;                // expect: 7
     // `Fn` closures are `FnOnce` too.
-    print(once(|| k + 1));                  // expect: 11
+    stdout.line(&once(|| k + 1))?;                  // expect: 11
     // Lending a closure: `&F` is `Fn` when `F` is.
     let add = |x| x + k;
-    print(apply(&add, 1) + apply(&add, 2)); // expect: 23
+    stdout.line(&(apply(&add, 1) + apply(&add, 2)))?; // expect: 23
+    Result::Ok(())
 }

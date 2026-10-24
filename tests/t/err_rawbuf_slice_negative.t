@@ -6,7 +6,7 @@ fn main() with {alloc, panic} {
     let b: RawBuf<i64> = RawBuf::new(2);
     // SAFETY: wrong: there's no slot -1.
     unsafe {
-        print(b.slice(-1, 0).len());
+        let _v = b.slice(-1, 0).len();
         b.free();
     }
 }

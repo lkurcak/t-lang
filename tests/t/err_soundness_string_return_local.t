@@ -8,6 +8,6 @@ fn main() with {alloc, panic} {
     let s = String::from("a");
     let r = view(&s);
     s.free();
-    print_str(r);
+    let _v = r;
 }
 // error: lifetime may not live long enough: this needs the lifetime of `s` to outlive `'static`, and the signature doesn't say it does

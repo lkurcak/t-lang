@@ -13,7 +13,9 @@ fn f(mut p: P, c: bool) -> i64 {
     }
 }
 
-fn main() with panic {
-    print(f(P { x: 1 }, true));
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&f(P { x: 1 }, true))?;
+    Result::Ok(())
 }
 // error: `/` may panic, but `f` doesn't say `with panic`

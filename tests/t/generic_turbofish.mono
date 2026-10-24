@@ -42,26 +42,165 @@ fn is_some::<bool>(o: Option::<bool>) -> bool {
     }
 }
 
-fn main() {
-    print(id::<i64>(1i64));
-    print_bool(is_some::<i64>(Option::<i64>::None));
-    print_bool(is_some::<bool>(none::<bool>()));
-    print(count::<Pair<i64, bool>>(3i64));
-    print(apply::<i64>(id::<i64>, 4i64));
+fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
+    let mut out = os.stdout;
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<i64>(&mut out, &id::<i64>(1i64)),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<bool>(&mut out, &is_some::<i64>(Option::<i64>::None)),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<bool>(&mut out, &is_some::<bool>(none::<bool>())),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<i64>(&mut out, &count::<Pair<i64, bool>>(3i64)),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<i64>(&mut out, &apply::<i64>(id::<i64>, 4i64)),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
     let p = Pair::<i64, bool> { first: 5i64, second: true };
-    print(p.first);
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<i64>(&mut out, &p.first),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
     let users: Id::<Pair<i64, i64>> = Id::<Pair<i64, i64>> { n: 6i64 };
-    print(users.n);
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<i64>(&mut out, &users.n),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
     let things = Id::<bool> { n: 7i64 };
-    print(things.n);
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<i64>(&mut out, &things.n),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
     match Option::<i64>::Some(8i64) {
-        Option::<i64>::Some(n) => print(n),
+        Option::<i64>::Some(
+            n,
+        ) => match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+            <std::io::Stdout>::line::<i64>(&mut out, &n),
+        ) {
+            core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+                {try},
+            ) => {try},
+            core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+                {try},
+            ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+                {try},
+            ),
+        },
         Option::<i64>::None => {},
     }
     let Pair::<i64, bool> { first, .. } = p;
-    print(first);
-    print(second::<bool, i64>(true, 9i64));
-    print(unwrap(id::<Option<i64>>(Option::<i64>::Some(10i64))));
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<i64>(&mut out, &first),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<i64>(&mut out, &second::<bool, i64>(true, 9i64)),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<i64>(
+            &mut out,
+            &unwrap(id::<Option<i64>>(Option::<i64>::Some(10i64))),
+        ),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
+    core::result::Result::<(), std::io::Error>::Ok(())
 }
 
 fn unwrap(o: Option::<i64>) -> i64 {
@@ -69,4 +208,11 @@ fn unwrap(o: Option::<i64>) -> i64 {
         Option::<i64>::Some(n) => n,
         Option::<i64>::None => 0i64,
     }
+}
+
+fn <&str as core::fmt::Display>::fmt::<std::io::Stderr><'a>(
+    &self,
+    w: &mut std::io::Stderr,
+) -> core::result::Result::<(), std::io::Error> {
+    <std::io::Stderr as core::fmt::Write>::write_str(&mut *w, *self)
 }

@@ -18,7 +18,8 @@ fn total(s: &[i64]) -> i64 with panic {
     sum
 }
 
-fn main() with {alloc, panic} {
+fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+    let mut out = os.stdout;
     let mut l: List<i64> = List::new();
     for i in 1..5 {
         l.push(i);
@@ -26,11 +27,15 @@ fn main() with {alloc, panic} {
     for x in l.iter_mut() {
         *x = *x * 10;
     }
-    print(total(l.as_slice()));              // expect: 100
-    print(*l.as_slice().last().unwrap());    // expect: 40
-    print_bool(l.as_mut_slice().swap(0, 3)); // expect: true
-    print(*l.get(0).unwrap());               // expect: 40
+    let sum = total(l.as_slice());
+    let last = *l.as_slice().last().unwrap();
+    let swapped = l.as_mut_slice().swap(0, 3);
+    let first = *l.get(0).unwrap();
     l.free();
+    out.line(&sum)?;     // expect: 100
+    out.line(&last)?;    // expect: 40
+    out.line(&swapped)?; // expect: true
+    out.line(&first)     // expect: 40
 }
 ```
 
@@ -146,7 +151,8 @@ half, then `core::mem::swap`.
 ```rust
 use core::slice::SplitMut;
 
-fn main() with {alloc, panic} {
+fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+    let mut out = os.stdout;
     let mut l: alloc::list::List<i64> = alloc::list::List::new();
     l.push(1);
     l.push(2);
@@ -155,9 +161,11 @@ fn main() with {alloc, panic} {
     let b = tail.get_mut(0).unwrap();
     *a = *a + *b;
     *b = 0;
-    print(*l.get(0).unwrap()); // expect: 3
-    print(*l.get(1).unwrap()); // expect: 0
+    let first = *l.get(0).unwrap();
+    let second = *l.get(1).unwrap();
     l.free();
+    out.line(&first)?; // expect: 3
+    out.line(&second)  // expect: 0
 }
 ```
 
@@ -199,7 +207,7 @@ fn main() with {alloc, panic} {
     let s = l.as_mut_slice();
     let mut it = s.iter_mut();
     let a = it.next().unwrap();
-    print(*s.get(0).unwrap());
+    let _v = *s.get(0).unwrap();
     *a = 2;
     l.free();
 }
@@ -233,7 +241,7 @@ fn main() with alloc {
     unsafe { b.write(0, 1) };
     // SAFETY: wrong: slot 1 holds nothing.
     let s = unsafe { b.slice(0, 2) };
-    print(s.len());
+    let _v = s.len();
     // SAFETY: slot 0 holds the 1; then every slot is uninitialised.
     unsafe {
         b.read(0);
@@ -258,7 +266,7 @@ fn main() with alloc {
     l.push(1);
     let s = l.as_slice();
     l.push(2);
-    print(s.len());
+    let _v = s.len();
     l.free();
 }
 // error: cannot borrow `l` as mutable while `l` is borrowed

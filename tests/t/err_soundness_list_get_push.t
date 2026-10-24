@@ -7,7 +7,7 @@ fn main() with {alloc, panic} {
     l.push(1);
     let r = l.get(0);
     l.push(2);
-    print(*r.unwrap());
+    let _v = *r.unwrap();
     l.free();
 }
 // error: cannot borrow `l` as mutable while `l` is borrowed

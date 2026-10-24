@@ -13,8 +13,10 @@ impl<U, F: Fn(U) -> U> Go for W<F> {
 
 fn not_zero(x: i64) -> bool { x != 0 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let w = W { f: not_zero };
-    print(w.go());
+    out.line(&w.go())?;
+    Result::Ok(())
 }
 // error: `W<fn(i64) -> bool>` doesn't implement `Go`

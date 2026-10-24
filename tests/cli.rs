@@ -145,3 +145,73 @@ fn tree_sitter_installs_for_helix() {
     );
     assert!(!dir.join("parser").exists());
 }
+
+/// Runs the program `src`, as `t` does, with `input` for its stdin.
+fn run_with_input(name: &str, src: &str, input: &[u8]) -> Output {
+    use std::io::Write;
+    let dir = std::env::temp_dir().join(format!("t-cli-{name}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("main.t");
+    std::fs::write(&path, src).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_t"))
+        .arg(&path)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(input).unwrap();
+    let out = child.wait_with_output().unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+    out
+}
+
+/// What echoes its input, line by line, after a prompt.
+const ECHO: &str = "\
+use alloc::string::String;
+use std::io::{Error, Stdin, Stdout};
+
+fn echo(input: &mut Stdin, out: &mut Stdout, line: &mut String) -> Result<(), Error> with alloc {
+    out.put(&\"> \")?;
+    while input.read_line(line)? {
+        out.put(&line.len())?;
+        out.line(&line.as_str())?;
+        out.put(&\"> \")?;
+    }
+    out.line(&\"bye\")
+}
+
+fn main(os: std::Os) -> Result<(), Error> with alloc {
+    let mut input = os.stdin;
+    let mut out = os.stdout;
+    let mut line = String::new();
+    let echoed = echo(&mut input, &mut out, &mut line);
+    line.free();
+    echoed
+}
+";
+
+/// A program reads its input a line at a time, without the line break,
+/// `\n` or `\r\n`; the last line needn't have one.
+#[test]
+fn programs_read_lines_of_input() {
+    let out = run_with_input("lines", ECHO, "añ\r\nb\n\nlast".as_bytes());
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(stdout, "> 3añ\n> 1b\n> 0\n> 4last\n> bye\n");
+    assert!(out.stderr.is_empty());
+}
+
+/// Input that isn't UTF-8 is an error, which `main` gives back: it's
+/// written to stderr, after what was written before it, and the program
+/// fails.
+#[test]
+fn input_that_isnt_text_fails_the_program() {
+    let out = run_with_input("bytes", ECHO, b"ok\n\xFF\n");
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), "> 2ok\n> ");
+    assert_eq!(
+        String::from_utf8(out.stderr).unwrap(),
+        "error: stream did not contain valid UTF-8\n"
+    );
+}

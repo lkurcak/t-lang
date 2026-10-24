@@ -20,7 +20,8 @@ impl<T, U, F: Fn(&T) -> U> Get for W<F> {
 
 fn id(x: &i64) -> &i64 { x }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let f: fn(&i64) -> &i64 = id;
     let w = W { f };
     let r;
@@ -28,6 +29,7 @@ fn main() {
         let n = 5;
         r = w.get(&n);
     }
-    print(*r);
+    out.line(&(*r))?;
+    Result::Ok(())
 }
 // error: `W<fn(&i64) -> &i64>` doesn't implement `Get`, which method `get` is of

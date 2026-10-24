@@ -18,10 +18,12 @@ impl Iterator for Fds {
     }
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let kept = (Fds { left: 3 }).filter(|fd| fd.n > 0);
     for Fd { n } in kept {
-        print(n);
+        out.line(&n)?;
     }
+    Result::Ok(())
 }
 // error: `filter` needs its `Self::Item` to implement `Discard`, and `Fd` doesn't

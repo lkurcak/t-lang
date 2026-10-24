@@ -16,6 +16,8 @@ impl Store for Fixed {
 
 pub fn reserved() -> i64 with panic { 1 }
 
-fn main() with panic {
-    print(Fixed {}.twice() + reserved()); // expect: 2
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&(Fixed {}.twice() + reserved()))?; // expect: 2
+    Result::Ok(())
 }

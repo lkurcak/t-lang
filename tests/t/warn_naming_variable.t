@@ -12,12 +12,14 @@ fn side(s: Shape, Default: i64) -> i64 {
     }
 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let firstTry = side(Shape::Circle(2), 0);
     let x1 = side(Shape::Square(3), 0);
     let _ignoredValue = 4i64;
     let addTo = |baseValue: i64| baseValue + firstTry;
-    print(addTo(x1) + side(Shape::Empty, 5));
+    out.line(&(addTo(x1) + side(Shape::Empty, 5)))?;
+    Result::Ok(())
 }
 // warning: variable `Default` should have a snake case name: `default`
 // warning: variable `sideLen` should have a snake case name: `side_len`

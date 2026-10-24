@@ -31,11 +31,13 @@ use geometry::{Point, Shape, scale::twice as double};
 
 fn helper() -> i64 { 7 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let p = Point { x: 3, y: 4 };
-    print(geometry::len(Shape::Line(geometry::origin(), p))); // expect: 7
-    print(double(p).y);                                       // expect: 8
-    print(geometry::scale::back());                           // expect: 7
+    out.line(&geometry::len(Shape::Line(geometry::origin(), p)))?; // expect: 7
+    out.line(&double(p).y)?;                                       // expect: 8
+    out.line(&geometry::scale::back())?;                           // expect: 7
     let d = geometry::Shape::Dot(p);
-    print(geometry::len(d));                                  // expect: 0
+    out.line(&geometry::len(d))?;                                  // expect: 0
+    Result::Ok(())
 }

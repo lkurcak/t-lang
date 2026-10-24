@@ -9,7 +9,9 @@ fn f<T: Int>() -> T {
     }
 }
 
-fn main() {
-    print(f::<i8>());
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&(f::<i8>()))?;
+    Result::Ok(())
 }
 // error: `-` may panic, but `f` doesn't say `with panic`

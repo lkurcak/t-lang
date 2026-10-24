@@ -8,13 +8,15 @@ fn close(fd: Fd) -> i64 {
     n
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     loop {
         let fd = open(1);
         if 1i64 < 2 {
             break;
         }
-        print(close(fd));
+        out.line(&close(fd))?;
     }
+    Result::Ok(())
 }
 // error: `fd` is never used up

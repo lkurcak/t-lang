@@ -18,8 +18,10 @@ fn give_up(fd: Fd) -> i64 {
     close(fd) // warning: unreachable code
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     if 1i64 > 2 {
-        print(give_up(open(1)));
+        out.line(&give_up(open(1)))?;
     }
+    Result::Ok(())
 }

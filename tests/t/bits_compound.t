@@ -1,13 +1,15 @@
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let mut x: u8 = 0b1111_0000;
     x &= 0b1010_1010;
-    print(x);   // expect: 160
+    out.line(&x)?;   // expect: 160
     x |= 1;
-    print(x);   // expect: 161
+    out.line(&x)?;   // expect: 161
     x ^= 0xFF;
-    print(x);   // expect: 94
+    out.line(&x)?;   // expect: 94
     x >>= 2;
-    print(x);   // expect: 23
+    out.line(&x)?;   // expect: 23
     x <<= 3;
-    print(x);   // expect: 184
+    out.line(&x)?;   // expect: 184
+    Result::Ok(())
 }

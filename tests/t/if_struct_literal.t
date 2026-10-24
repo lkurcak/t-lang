@@ -4,10 +4,12 @@
 #[derive(Discard, Eq)]
 struct P { x: i64 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let x = true;
-    if x { print(1i64) }                          // expect: 1
+    if x { out.line(&1i64)? }                          // expect: 1
     let p = P { x: 3 };
-    if p == (P { x: 3 }) { print(2i64) }          // expect: 2
-    match (P { x: 4 }) { P { x } => print(x) } // expect: 4
+    if p == (P { x: 3 }) { out.line(&2i64)? }          // expect: 2
+    match (P { x: 4 }) { P { x } => out.line(&x)? } // expect: 4
+    Result::Ok(())
 }

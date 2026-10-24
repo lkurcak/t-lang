@@ -4,20 +4,132 @@ struct Holder { f: fn(i64) -> i64 with panic }
 #[derive(Discard)]
 struct One { n: i64 }
 
-fn main() with panic {
-    print(main::double(1i64));
-    print(main::fact(5i64));
-    print_bool(main::is_even(10i64));
-    print_bool(main::is_odd(10i64));
-    print(main::twice::<i64>(main::double, 3i64));
-    print_bool(main::twice::<bool>(|b| !b, true));
-    print(main::sum_to(4i64));
+fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<i64>(&mut out, &main::double(1i64)),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<i64>(&mut out, &main::fact(5i64)),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<bool>(&mut out, &main::is_even(10i64)),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<bool>(&mut out, &main::is_odd(10i64)),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<i64>(&mut out, &main::twice::<i64>(main::double, 3i64)),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<bool>(&mut out, &main::twice::<bool>(|b| !b, true)),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<i64>(&mut out, &main::sum_to(4i64)),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
     let k = 3i64;
     let add_k = |x: i64| { main::inc(x) + k };
-    print((&add_k)(1i64));
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<i64>(&mut out, &(&add_k)(1i64)),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
     let f = pick(true);
-    print(f(7i64));
-    print(top());
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<i64>(&mut out, &f(7i64)),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<i64>(&mut out, &top()),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
+    core::result::Result::<(), std::io::Error>::Ok(())
 }
 
 /// Doubles `x`.
@@ -63,3 +175,10 @@ fn double_it::double(x: i64) -> i64 with panic { x + x }
 fn top() -> i64 { top::one().n }
 
 fn top::one() -> One { One { n: 1i64 } }
+
+fn <&str as core::fmt::Display>::fmt::<std::io::Stderr><'a>(
+    &self,
+    w: &mut std::io::Stderr,
+) -> core::result::Result::<(), std::io::Error> {
+    <std::io::Stderr as core::fmt::Write>::write_str(&mut *w, *self)
+}

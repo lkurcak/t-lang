@@ -13,7 +13,8 @@ impl<'a> Tr for &'a i64 {
     fn out(self) -> &'a i64 { self }
 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut stdout = os.stdout;
     let long: i64 = 1;
     let r1 = Tr::out(&long);
     let r2;
@@ -21,6 +22,7 @@ fn main() with panic {
         let short: i64 = 2;
         r2 = Tr::out(&short);
     }
-    print(*r1 + *r2);
+    stdout.line(&(*r1 + *r2))?;
+    Result::Ok(())
 }
 // error: `short` doesn't live long enough

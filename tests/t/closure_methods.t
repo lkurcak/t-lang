@@ -25,11 +25,13 @@ struct Wrap<F> { f: F }
 impl<effect f, F: Fn(i64) -> i64 with f + Discard> Wrap<F> {
     fn run(&self, x: i64) -> i64 with f { (self.f)(x) }
 }
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let mut c = Counter { n: 1 };
-    print(c.bump_by(2)); // expect: 5
-    print(c.twice());    // expect: 10
+    out.line(&c.bump_by(2))?; // expect: 5
+    out.line(&c.twice())?;    // expect: 10
     let k = 7;
     let w = Wrap { f: |x| x + k };
-    print(w.run(1)); // expect: 8
+    out.line(&w.run(1))?; // expect: 8
+    Result::Ok(())
 }

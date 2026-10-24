@@ -15,17 +15,19 @@ fn either<'b, 'a: 'b>(c: bool, x: &'a i64, y: &'b i64) -> impl Fn() -> i64 with 
 
 fn bump(r: &mut i64) -> impl FnMut() with panic + Discard { move || *r += 1 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let n = 3;
     let r = reader(&n);
-    print(r());                     // expect: 3
+    out.line(&r())?;                     // expect: 3
     let m = 4;
-    print(both(&n, &m)());          // expect: 7
-    print(*pick(&n)());             // expect: 3
-    print(either(false, &n, &m)()); // expect: 4
+    out.line(&both(&n, &m)())?;          // expect: 7
+    out.line(&(*pick(&n)()))?;             // expect: 3
+    out.line(&either(false, &n, &m)())?; // expect: 4
     let mut k = 0;
     let mut b = bump(&mut k);
     b();
     b();
-    print(k);                       // expect: 2
+    out.line(&k)?;                       // expect: 2
+    Result::Ok(())
 }

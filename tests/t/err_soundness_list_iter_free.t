@@ -6,6 +6,6 @@ fn main() with {alloc, panic} {
     l.push(1);
     let mut it = l.iter();
     l.free();
-    print(*it.next().unwrap());
+    let _v = *it.next().unwrap();
 }
 // error: cannot move out of `l` while `l` is borrowed

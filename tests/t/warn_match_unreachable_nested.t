@@ -4,8 +4,10 @@ fn f(a: bool) -> i64 {
         true => 2,
     }
 }
-fn main() {
-    print(f(true));
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&f(true))?;
+    Result::Ok(())
 }
 // warning: unreachable pattern
 // expect: 1

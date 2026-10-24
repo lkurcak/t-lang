@@ -10,20 +10,22 @@ fn fnv(a: u8, b: u8) -> u32 {
     h
 }
 
-fn main() {
-    print(wrapping_add(250u8, 10));     // expect: 4
-    print(wrapping_add(100u8, 10));     // expect: 110
-    print(wrapping_add(127i8, 1));      // expect: -128
-    print(wrapping_add(-128i8, -1));    // expect: 127
-    print(wrapping_sub(3u8, 5));        // expect: 254
-    print(wrapping_sub(-128i8, 1));     // expect: 127
-    print(wrapping_sub(127i8, -1));     // expect: -128
-    print(wrapping_neg(1u8));           // expect: 255
-    print(wrapping_neg(0u8));           // expect: 0
-    print(wrapping_neg(-128i8));        // expect: -128
-    print(wrapping_neg(5i8));           // expect: -5
-    print(wrapping_mul(16u8, 17));      // expect: 16
-    print(wrapping_mul(-128i8, -1));    // expect: -128
-    print(wrapping_mul(100i8, 3));      // expect: 44
-    print(fnv(1, 2));                   // expect: 3983810698
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&wrapping_add(250u8, 10))?;     // expect: 4
+    out.line(&wrapping_add(100u8, 10))?;     // expect: 110
+    out.line(&wrapping_add(127i8, 1))?;      // expect: -128
+    out.line(&wrapping_add(-128i8, -1))?;    // expect: 127
+    out.line(&wrapping_sub(3u8, 5))?;        // expect: 254
+    out.line(&wrapping_sub(-128i8, 1))?;     // expect: 127
+    out.line(&wrapping_sub(127i8, -1))?;     // expect: -128
+    out.line(&wrapping_neg(1u8))?;           // expect: 255
+    out.line(&wrapping_neg(0u8))?;           // expect: 0
+    out.line(&wrapping_neg(-128i8))?;        // expect: -128
+    out.line(&wrapping_neg(5i8))?;           // expect: -5
+    out.line(&wrapping_mul(16u8, 17))?;      // expect: 16
+    out.line(&wrapping_mul(-128i8, -1))?;    // expect: -128
+    out.line(&wrapping_mul(100i8, 3))?;      // expect: 44
+    out.line(&fnv(1, 2))?;                   // expect: 3983810698
+    Result::Ok(())
 }

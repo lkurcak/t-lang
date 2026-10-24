@@ -20,8 +20,10 @@ fn in_closure<'a, T: Tr<Out = &'a i64> + Discard>(x: T) -> i64 {
     f(x)
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let n = 5;
-    print(*field(W { r: &n }));      // expect: 5
-    print(in_closure(W { r: &n }));  // expect: 5
+    out.line(&(*field(W { r: &n })))?;      // expect: 5
+    out.line(&in_closure(W { r: &n }))?;  // expect: 5
+    Result::Ok(())
 }

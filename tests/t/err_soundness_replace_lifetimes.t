@@ -3,14 +3,16 @@
 use alloc::boxed::Box;
 use core::mem::replace;
 
-fn main() with alloc {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
+    let mut out = os.stdout;
     let long = Box::new(1i64);
     let mut a = &*long;
     {
         let short = Box::new(2);
         let old = replace(&mut a, &*short);
-        print(*old);
+        out.line(&(*old))?;
     }
-    print(*a);
+    out.line(&(*a))?;
+    Result::Ok(())
 }
 // error: `short` doesn't live long enough

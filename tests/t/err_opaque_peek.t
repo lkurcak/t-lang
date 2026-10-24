@@ -9,5 +9,5 @@ impl Show for i64 {
 
 fn f() -> impl Show + Discard { 1i64 }
 
-fn main() { print(f() + 1); }
+fn main(os: std::Os) -> Result<(), std::io::Error> { let mut out = os.stdout; out.line(&(f() + 1))?;  Result::Ok(()) }
 // error: `+` works on integers, not on `impl Show + Discard`

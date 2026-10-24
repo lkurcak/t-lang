@@ -7,7 +7,7 @@ fn main() with {alloc, panic} {
     let mut l: List<u8> = List::new();
     l.push(0xFF);
     let s = String { bytes: l };
-    print_str(s.as_str());
+    let _v = s.as_str();
     s.free();
 }
 // error: field `bytes` of `String` is private to `alloc::string`

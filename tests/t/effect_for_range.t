@@ -15,7 +15,9 @@ fn count(n: i64) -> bool {
     false
 }
 
-fn main() with panic {
-    print(sum(4)); // expect: 6
-    print_bool(count(3)); // expect: true
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&sum(4))?; // expect: 6
+    out.line(&count(3))?; // expect: true
+    Result::Ok(())
 }

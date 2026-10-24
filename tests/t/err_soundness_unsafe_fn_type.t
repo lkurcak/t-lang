@@ -7,7 +7,7 @@ fn take(b: &mut RawBuf<i64>) -> i64 with unsafe { b.read(0) }
 fn main() with {alloc, panic} {
     let f: fn(&mut RawBuf<i64>) -> i64 = take;
     let mut b: RawBuf<i64> = RawBuf::new(1);
-    print(f(&mut b));
+    let _v = f(&mut b);
     // SAFETY: the slot is uninitialised.
     unsafe { b.free() };
 }

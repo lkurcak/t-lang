@@ -37,7 +37,9 @@ impl Iterator for X {
     fn next(&mut self) -> Option<V<W<X>>> { Option::None }
 }
 
-fn main() {
-    print((W { iter: X {} }).a());
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&(W { iter: X {} }).a())?;
+    Result::Ok(())
 }
 // error: proving that a type implements `Tr` could go on forever: this impl needs `I::Item: Tr2`

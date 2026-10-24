@@ -1,12 +1,14 @@
 // A `FnMut` closure can't hand out a `&mut` to what it captured: two calls
 // would give two `&mut x` at once.
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let mut x: i64 = 0;
     let mut c = || &mut x;
     let a = c();
     let b = c();
     *a = 1;
     *b = 2;
-    print(x);
+    out.line(&x)?;
+    Result::Ok(())
 }
 // error: this closure returns a reference to what it captured, which only lasts as long as the call

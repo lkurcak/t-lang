@@ -17,17 +17,19 @@ fn call<T: Copy>(x: T, k: fn(T) -> i64) -> i64 {
 }
 fn deref(r: &i64) -> i64 { *r }
 
-fn main() with alloc {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
+    let mut out = os.stdout;
     let b = Box::new(1i64);
     let get = || *b;
-    print(get());                   // expect: 1
+    out.line(&get())?;                   // expect: 1
     let n = 2;
     let r = &n;
     let get = || *r;
-    print(get());                   // expect: 2
+    out.line(&get())?;                   // expect: 2
     let w = W { x: &*b };
     let f = || *w.x;
-    print(f());                     // expect: 1
-    print(outer(deref, &n));        // expect: 2
-    print(call(&n, deref));         // expect: 2
+    out.line(&f())?;                     // expect: 1
+    out.line(&outer(deref, &n))?;        // expect: 2
+    out.line(&call(&n, deref))?;         // expect: 2
+    Result::Ok(())
 }

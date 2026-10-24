@@ -14,8 +14,10 @@ impl Tr for S {
     type Out = i64;
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let x: S::Out = 1;
-    print(x);
+    out.line(&x)?;
+    Result::Ok(())
 }
 // error: write `<S as Tr>::Out`

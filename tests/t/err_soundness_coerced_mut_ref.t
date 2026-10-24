@@ -5,7 +5,8 @@ use alloc::boxed::Box;
 
 fn id<'y>(r: &'y i64) -> &'y i64 { r }
 
-fn main() with alloc {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
+    let mut stdout = os.stdout;
     let out;
     let mut x: &i64;
     {
@@ -13,6 +14,7 @@ fn main() with alloc {
         x = &*n;
         out = id(&mut x);
     }
-    print(*out);
+    stdout.line(&(*out))?;
+    Result::Ok(())
 }
 // error: `n` doesn't live long enough

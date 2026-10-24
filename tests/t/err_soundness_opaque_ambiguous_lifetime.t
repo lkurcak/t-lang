@@ -6,9 +6,11 @@ fn either<'a, 'b>(c: bool, x: &'a i64, y: &'b i64) -> impl Fn() -> i64 + Discard
     move || *r
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let n = 1;
     let m = 2;
-    print(either(true, &n, &m)());
+    out.line(&either(true, &n, &m)())?;
+    Result::Ok(())
 }
 // error: borrows for a lifetime that isn't

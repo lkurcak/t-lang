@@ -18,14 +18,16 @@ fn lead(c: { v: u32 | v <= 0x10FFFF }) -> u8 {
 
 fn cont(c: u32, shift: u32) -> u8 { ((c >> shift) & 0x3F) as u8 | 0x80 }
 
-fn main() {
-    print(width(0x41));     // expect: 1
-    print(lead(0x41));      // expect: 65
-    print(width(0xE9));     // expect: 2
-    print(lead(0xE9));      // expect: 195
-    print(cont(0xE9, 0));   // expect: 169
-    print(lead(0x20AC));    // expect: 226
-    print(cont(0x20AC, 6)); // expect: 130
-    print(cont(0x20AC, 0)); // expect: 172
-    print(lead(0x1F600));   // expect: 240
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&width(0x41))?;     // expect: 1
+    out.line(&lead(0x41))?;      // expect: 65
+    out.line(&width(0xE9))?;     // expect: 2
+    out.line(&lead(0xE9))?;      // expect: 195
+    out.line(&cont(0xE9, 0))?;   // expect: 169
+    out.line(&lead(0x20AC))?;    // expect: 226
+    out.line(&cont(0x20AC, 6))?; // expect: 130
+    out.line(&cont(0x20AC, 0))?; // expect: 172
+    out.line(&lead(0x1F600))?;   // expect: 240
+    Result::Ok(())
 }

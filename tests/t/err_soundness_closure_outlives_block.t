@@ -3,11 +3,13 @@
 #[derive(Discard)]
 struct Holder<F> { f: F }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let h = {
         let n: i64 = 5;
         Holder { f: || n }
     };
-    print((h.f)());
+    out.line(&(h.f)())?;
+    Result::Ok(())
 }
 // error: `n` doesn't live long enough

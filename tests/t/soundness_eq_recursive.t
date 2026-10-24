@@ -19,11 +19,13 @@ struct P<A, B> { a: A, b: Box<B> }
 
 fn same<T: Eq + Discard>(x: T, y: T) -> bool { &&x == &&y }
 
-fn main() with alloc {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
+    let mut out = os.stdout;
     let a = List::Cons(Digit { n: 1 }, Box::new(List::Cons(Digit { n: 2 }, Box::new(List::Nil))));
     let b = List::Cons(Digit { n: 11 }, Box::new(List::Cons(Digit { n: 22 }, Box::new(List::Nil))));
-    print_bool(a == b); // expect: true
+    out.line(&(a == b))?; // expect: true
     let c = List::Cons(Digit { n: 11 }, Box::new(List::Nil));
-    print_bool(a == c); // expect: false
-    print_bool(same(P { a: 1i64, b: Box::new(Digit { n: 5 }) }, P { a: 1, b: Box::new(Digit { n: 15 }) })); // expect: true
+    out.line(&(a == c))?; // expect: false
+    out.line(&same(P { a: 1i64, b: Box::new(Digit { n: 5 }) }, P { a: 1, b: Box::new(Digit { n: 15 }) }))?; // expect: true
+    Result::Ok(())
 }

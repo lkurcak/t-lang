@@ -37,22 +37,24 @@ impl<T> Wrapper<T> {
 
 fn half(x: i64) -> i64 { x / 2 }
 
-fn main() with {alloc, panic} {
+fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+    let mut out = os.stdout;
     let mut c = Counter::new();
     c.add(1).add(2);
-    print(c.get());                       // expect: 3
+    out.line(&c.get())?;                       // expect: 3
     let r = &mut c;
     r.add(4);
     let rr = &r;
-    print(rr.get());                      // expect: 7
-    print(c.doubled());                   // expect: 14
+    out.line(&rr.get())?;                      // expect: 7
+    out.line(&c.doubled())?;                   // expect: 14
     let b = Box::new(Counter { n: 5 });
-    print(b.get());                       // expect: 5
-    print(c.into_inner());                // expect: 7
+    out.line(&b.get())?;                       // expect: 5
+    out.line(&c.into_inner())?;                // expect: 7
     let w = Wrapper { x: 10 };
-    print(*w.get());                      // expect: 10
-    print(*w.map(half).get());            // expect: 5
+    out.line(&(*w.get()))?;                      // expect: 10
+    out.line(&(*w.map(half).get()))?;            // expect: 5
     // A method as a function value.
     let g = Counter::get;
-    print(g(&Counter { n: 9 }));          // expect: 9
+    out.line(&g(&Counter { n: 9 }))?;          // expect: 9
+    Result::Ok(())
 }

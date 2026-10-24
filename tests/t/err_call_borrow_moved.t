@@ -3,8 +3,10 @@
 struct Stack { top: i64 }
 fn take(s: Stack) -> i64 { s.top }
 fn add(s: &Stack, n: i64) -> i64 with panic { s.top + n }
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let v = Stack { top: 1 };
-    print(add(&v, take(v)));
+    out.line(&add(&v, take(v)))?;
+    Result::Ok(())
 }
 // error: use of moved value `v`

@@ -14,10 +14,12 @@ fn get(x: i64) -> core::option::Option<i64> {
 
 fn twice(x: i64) -> core::option::Option<i64> with panic { core::option::Option::Some(get(x)? * 2) }
 
-fn main() with panic {
-    print(twice(5).unwrap_or(0)); // expect: 10
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&twice(5).unwrap_or(0))?; // expect: 10
     let _ = ControlFlow::Continue;
     let _ = ControlFlow::Break;
     let _ = Option::Some;
     let _ = Option::None;
+    Result::Ok(())
 }

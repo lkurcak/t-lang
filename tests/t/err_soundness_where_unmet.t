@@ -16,7 +16,9 @@ impl Iterator for Fds {
     }
 }
 
-fn main() {
-    print(Fds { left: 3 }.count());
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&(Fds { left: 3 }.count()))?;
+    Result::Ok(())
 }
 // error: `count` needs its `Self::Item` to implement `Discard`, and `Fd` doesn't

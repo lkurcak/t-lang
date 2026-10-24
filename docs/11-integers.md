@@ -15,14 +15,16 @@ fn mean(a: u8, b: u8) -> u8 {
     (sum / 2) as u8
 }
 
-fn main() {
-    print(mean(200, 255)); // expect: 227
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&mean(200, 255))?; // expect: 227
     let big: u64 = 18446744073709551615;
-    print(big); // expect: 18446744073709551615
+    out.line(&big)?; // expect: 18446744073709551615
     for i in 0..3u8 {
-        print(i); // expect: 0
-    }             // expect: 1
-                  // expect: 2
+        out.line(&i)?; // expect: 0
+    }                  // expect: 1
+    Result::Ok(())
+    // expect: 2
 }
 ```
 
@@ -80,7 +82,7 @@ program doesn't write (docs/03-inference.md), and nothing else:
 ```rust,error
 fn main() {
     let x = 5;
-    print_bool(x == 5);
+    let _v = x == 5;
 }
 // error: cannot infer the type of this integer
 ```
@@ -92,9 +94,11 @@ take back: a default can be added later without breaking any program that
 checks now, but not taken away. A suffix says which in place:
 
 ```rust
-fn main() {
-    print_bool(1i64 > 2); // expect: false
-    print(1000u32 * 3);   // expect: 3000
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&(1i64 > 2))?;    // expect: false
+    out.line(&(1000u32 * 3))?; // expect: 3000
+    Result::Ok(())
 }
 ```
 
@@ -124,9 +128,11 @@ fn byte(n: i64) -> Option<u8> {
     if n >= 0 && n < 256 { Option::Some(n as u8) } else { Option::None }
 }
 
-fn main() {
-    print(byte(255).unwrap_or(0)); // expect: 255
-    print(byte(256).unwrap_or(0)); // expect: 0
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&byte(255).unwrap_or(0))?; // expect: 255
+    out.line(&byte(256).unwrap_or(0))?; // expect: 0
+    Result::Ok(())
 }
 ```
 
@@ -151,9 +157,11 @@ fn index(i: u32) -> usize { i as usize }
 
 fn wide(n: usize) -> u64 { n as u64 }
 
-fn main() {
-    print(index(7)); // expect: 7
-    print(wide(8));  // expect: 8
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&index(7))?; // expect: 7
+    out.line(&wide(8))?;  // expect: 8
+    Result::Ok(())
 }
 ```
 
@@ -183,10 +191,12 @@ fn succ<T: Int>(x: T) -> T {
     if x < core::num::greatest::<T>() { x + 1 } else { x }
 }
 
-fn main() with panic {
-    print(double(100u8)); // expect: 200
-    print(double(-3i32)); // expect: -6
-    print(succ(255u8));   // expect: 255
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&double(100u8))?; // expect: 200
+    out.line(&double(-3i32))?; // expect: -6
+    out.line(&succ(255u8))?;   // expect: 255
+    Result::Ok(())
 }
 ```
 

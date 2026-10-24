@@ -7,6 +7,8 @@ fn first<'a, 'b>(s: &'a [&'b i64]) -> Option<&'a i64> {
     }
 }
 
-fn main() {
-    print_bool(first(core::slice::empty()).is_none()); // expect: true
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&first(core::slice::empty()).is_none())?; // expect: true
+    Result::Ok(())
 }

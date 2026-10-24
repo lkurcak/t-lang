@@ -14,9 +14,11 @@ mod fs {
     }
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let fd = fs::open(1);
     let f = move || fd.id;
-    print(f().n);
+    out.line(&f().n)?;
+    Result::Ok(())
 }
 // error: can't take `Fd` apart here

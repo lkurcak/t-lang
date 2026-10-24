@@ -7,7 +7,8 @@ use alloc::boxed::Box;
 
 fn inner<'y>(r: &&'y i64) -> &'y i64 { *r }
 
-fn main() with alloc {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
+    let mut stdout = os.stdout;
     let out;
     let mut b: Box<&i64>;
     {
@@ -15,6 +16,7 @@ fn main() with alloc {
         b = Box::new(&*n);
         out = inner(&mut b);
     }
-    print(*out);
+    stdout.line(&(*out))?;
+    Result::Ok(())
 }
 // error: `n` doesn't live long enough

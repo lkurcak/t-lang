@@ -18,10 +18,12 @@ impl<T: Discard, I: Iterator<Item = T>> Iterator for Skip1<I> {
     }
 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     for x in (Skip1 { iter: 0..4, skipped: false }).map(|x| x * 10i64) {
-        print(x);
+        out.line(&x)?;
     }
+    Result::Ok(())
     // expect: 10
     // expect: 20
     // expect: 30

@@ -3,7 +3,9 @@
 #[derive(Discard)]
 struct Box { x: i64 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let b = Box { x: 3 };
-    print(b.x); // expect: 3
+    out.line(&b.x)?; // expect: 3
+    Result::Ok(())
 }

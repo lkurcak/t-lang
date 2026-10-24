@@ -1,7 +1,9 @@
 // `print_str` prints one line per call; a string with a newline in it
 // prints two.
-fn main() {
-    print_str("one\ntwo"); // expect: one
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&"one\ntwo")?; // expect: one
     // expect: two
-    print_str(""); // expect: 
+    out.line(&"")?; // expect: 
+    Result::Ok(())
 }

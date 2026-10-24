@@ -13,8 +13,10 @@ mod lib {
 
 use lib::One;
 
-fn main() {
-    print(lib::one());        // expect: 1
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&lib::one())?;        // expect: 1
     let u = One { n: 5 };
-    print(u.n);               // expect: 5
+    out.line(&u.n)?;               // expect: 5
+    Result::Ok(())
 }

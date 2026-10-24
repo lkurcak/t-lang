@@ -14,8 +14,8 @@ fn longer<'a>(x: &'a Pair, y: &'a Pair) -> &'a Pair with panic {
 }
 
 // The result borrows from `x` only, so `y` can be anything.
-fn left<'a, 'b>(x: &'a i64, y: &'b i64) -> &'a i64 {
-    print(*y);
+fn left<'a, 'b>(x: &'a i64, y: &'b i64, seen: &mut i64) -> &'a i64 {
+    *seen = *y;
     x
 }
 
@@ -35,20 +35,24 @@ fn shorter<'a, 'b: 'a>(x: &'a i64, y: &'b i64) -> &'a i64 {
 // A reference to a reference: the inner one outlives the outer.
 fn deref<'a, 'b>(r: &'a &'b i64) -> &'b i64 { *r }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let p = Pair { a: 1, b: 2 };
     let q = Pair { a: 3, b: 4 };
-    print(*first(&p));                      // expect: 1
-    print(longer(&p, &q).b);                // expect: 4
+    out.line(&(*first(&p)))?;                      // expect: 1
+    out.line(&longer(&p, &q).b)?;                // expect: 4
     let n = 5;
     let mut r = &p.a;
+    let mut seen = 0;
     {
         let m = 6;
-        r = left(&n, &m);                   // expect: 6
+        r = left(&n, &m, &mut seen);
     }
-    print(*r);                              // expect: 5
-    print(get(View { pair: &q, which: true })); // expect: 3
-    print(*shorter(&n, &p.a));              // expect: 1
+    out.line(&seen)?;                            // expect: 6
+    out.line(&(*r))?;                              // expect: 5
+    out.line(&get(View { pair: &q, which: true }))?; // expect: 3
+    out.line(&(*shorter(&n, &p.a)))?;              // expect: 1
     let rn = &n;
-    print(*deref(&rn));                     // expect: 5
+    out.line(&(*deref(&rn)))?;                     // expect: 5
+    Result::Ok(())
 }

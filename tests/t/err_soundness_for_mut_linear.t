@@ -12,10 +12,12 @@ impl Iterator for Lines {
     }
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let mut lines = Lines { left: 2 };
     for n in &mut lines {
-        print(n);
+        out.line(&n)?;
     }
+    Result::Ok(())
 }
 // error: `lines` is never used up, and its type, `Lines`, isn't `Discard`

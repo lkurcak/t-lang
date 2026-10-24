@@ -6,5 +6,5 @@ fn f(o: Option<bool>) -> i64 {
         Option::None => 0,
     }
 }
-fn main() { print(f(Option::None)); }
+fn main(os: std::Os) -> Result<(), std::io::Error> { let mut out = os.stdout; out.line(&f(Option::None))?;  Result::Ok(()) }
 // error: non-exhaustive `match`: `Option::Some(false)` not covered

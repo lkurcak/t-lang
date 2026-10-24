@@ -28,9 +28,11 @@ fn width(x: i64) -> usize {
     c.n
 }
 
-fn main() {
-    print(width(0));                    // expect: 1
-    print(width(-5));                   // expect: 2
-    print(width(123456));               // expect: 6
-    print(width(-9223372036854775808)); // expect: 20
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&width(0))?;                    // expect: 1
+    out.line(&width(-5))?;                   // expect: 2
+    out.line(&width(123456))?;               // expect: 6
+    out.line(&width(-9223372036854775808))?; // expect: 20
+    Result::Ok(())
 }

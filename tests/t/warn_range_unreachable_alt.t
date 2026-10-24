@@ -4,9 +4,11 @@ fn f(n: i64) -> i64 {
         _ => 2,
     }
 }
-fn main() {
-    print(f(3));
-    print(f(10));
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&f(3))?;
+    out.line(&f(10))?;
+    Result::Ok(())
 }
 // warning: unreachable
 // expect: 1

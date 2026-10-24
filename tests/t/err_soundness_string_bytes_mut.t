@@ -8,7 +8,7 @@ fn main() with alloc {
         Option::Some(b) => *b = 0xFF,
         Option::None => {},
     }
-    print_str(s.as_str());
+    let _v = s.as_str();
     s.free();
 }
 // error: cannot borrow `*a temporary` as mutable: it's behind a `&` reference, `a temporary`, and only what's behind a `&mut` can be changed

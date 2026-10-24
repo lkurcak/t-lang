@@ -18,7 +18,7 @@ fn main() with panic {
     let inner = Fd { n: 9 };
     let p = P { a: Fd { n: 1 }, q: Q { r: &inner } };
     let P { a, q: Q { r: Fd { n } } } = p;
-    print(close(a) + *n);
-    print(close(inner));
+    let _v = close(a) + *n;
+    let _v = close(inner);
 }
 // error: cannot move out of `p` while `p.q.r.n` is borrowed

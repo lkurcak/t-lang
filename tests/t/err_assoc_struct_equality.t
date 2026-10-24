@@ -10,8 +10,10 @@ impl Tr for bool {
 #[derive(Discard)]
 struct S<T: Tr<Out = i64>> { x: T::Out }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let s: S<bool> = S { x: 1 };
-    print(s.x);
+    out.line(&s.x)?;
+    Result::Ok(())
 }
 // error: `<bool as Tr>::Out` is `bool`, but `S` needs it to be `i64`

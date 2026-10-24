@@ -14,7 +14,38 @@ fn flip::<bool, i64>(a: bool, b: i64, n: i64) -> i64 with panic {
     if n == 0i64 { 0i64 } else { 1i64 + flip::<i64, bool>(b, a, n - 1i64) }
 }
 
-fn main() with panic {
-    print(count::<bool>(true, 5i64));
-    print(flip::<i64, bool>(1i64, false, 4i64));
+fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<i64>(&mut out, &count::<bool>(true, 5i64)),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<i64>(&mut out, &flip::<i64, bool>(1i64, false, 4i64)),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
+    core::result::Result::<(), std::io::Error>::Ok(())
+}
+
+fn <&str as core::fmt::Display>::fmt::<std::io::Stderr><'a>(
+    &self,
+    w: &mut std::io::Stderr,
+) -> core::result::Result::<(), std::io::Error> {
+    <std::io::Stderr as core::fmt::Write>::write_str(&mut *w, *self)
 }

@@ -21,7 +21,9 @@ impl<T: Tr<Out = i64>> Show for W<T> {
     fn show(&self) -> i64 { 1 }
 }
 
-fn main() {
-    print((W { t: B { b: true } }).show());
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&(W { t: B { b: true } }).show())?;
+    Result::Ok(())
 }
 // error: `W<B>` doesn't implement `Show`

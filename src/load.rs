@@ -72,10 +72,21 @@ pub(crate) type Library = (
     &'static str,
 );
 
+/// The files of the std library, by their paths in `std/`.
+pub const STD_FILES: &[(&str, &str)] = &[
+    ("lib.t", include_str!("../std/lib.t")),
+    ("io.t", include_str!("../std/io.t")),
+    ("rt.t", include_str!("../std/rt.t")),
+];
+
+/// Where the std library's files seem to be.
+pub const STD_DIR: &str = "<std>";
+
 /// The libraries built into the compiler, in the order they're read.
-pub(crate) const LIBRARIES: [Library; 2] = [
+pub(crate) const LIBRARIES: [Library; 3] = [
     ("core", CORE_FILES, CORE_DIR),
     ("alloc", ALLOC_FILES, ALLOC_DIR),
+    ("std", STD_FILES, STD_DIR),
 ];
 
 /// Reads the file system.
@@ -260,10 +271,10 @@ fn add_library(
         public: Some(Span::new(start, start)),
         in_file: false,
     });
-    match name {
-        "core" => prog.core = Some(root),
-        _ => prog.alloc = Some(root),
+    if name == "core" {
+        prog.core = Some(root);
     }
+    prog.libraries.push(root);
     parse_file(prog, root, text, start)
 }
 
@@ -320,12 +331,12 @@ mod tests {
             Some((_, text)) => Ok(text.to_string()),
             None => crate::no_files(p),
         };
-        let main = "mod a;\nmod c { pub mod d; }\nfn main() -> i64 { a::f() }\n";
+        let main = "mod a;\nmod c { pub mod d; }\nfn main() { let _n = a::f(); }\n";
         let split = crate::check_files(Path::new("p/main.t"), main, &read);
         let inline = "mod a {\n    pub mod b { pub fn g() -> i64 { crate::c::d::h() } }\n    \
                       pub fn f() -> i64 { b::g() }\n}\n\
                       mod c { pub mod d { pub fn h() -> i64 { 42 } } }\n\
-                      fn main() -> i64 { a::f() }\n";
+                      fn main() { let _n = a::f(); }\n";
         let inline = crate::check_source(inline);
         let shown = |c: crate::Checked| {
             let mut items: Vec<String> = c

@@ -10,7 +10,9 @@ impl Tr for bool {
 
 fn mk<T: Tr>(x: T::Out) -> T::Out { x }
 
-fn main() {
-    print(mk(1i64));
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&mk(1i64))?;
+    Result::Ok(())
 }
 // error: cannot fully infer

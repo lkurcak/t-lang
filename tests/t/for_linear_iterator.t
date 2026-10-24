@@ -18,15 +18,23 @@ fn close(lines: Lines) -> i64 {
     left
 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let mut lines = Lines { left: 5 };
-    for n in &mut lines {
+    let w = show(&mut out, &mut lines);
+    let left = close(lines);
+    w?;
+    // expect: 4
+    // expect: 3
+    out.line(&left) // expect: 2
+}
+
+fn show(out: &mut std::io::Stdout, lines: &mut Lines) -> Result<(), std::io::Error> with panic {
+    for n in lines {
         if n == 2 {
             break;
         }
-        print(n);
+        out.line(&n)?;
     }
-    // expect: 4
-    // expect: 3
-    print(close(lines)); // expect: 2
+    Result::Ok(())
 }

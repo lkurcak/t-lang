@@ -17,23 +17,25 @@ fn f(x: &i64, y: Box<i64>) -> i64 with panic { *x + *y }
 
 fn g(x: &mut Box<i64>, n: i64) -> i64 with panic { **x + n }
 
-fn main() with {alloc, panic} {
+fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+    let mut out = os.stdout;
     let mut a = Box::new(1);
     let c = a;
-    print(f(&*{ a = Box::new(5); Box::new(7) }, a)); // expect: 12
-    print(*c);                                       // expect: 1
+    out.line(&f(&*{ a = Box::new(5); Box::new(7) }, a))?; // expect: 12
+    out.line(&(*c))?;                                       // expect: 1
 
     // The same through a method's receiver: `&*{ .. }` once it's lifted.
     let mut a = Box::new(1);
     let c = a;
-    print({ a = Box::new(5); Box::new(S { n: 7 }) }.get(a)); // expect: 12
-    print(*c);                                              // expect: 1
+    out.line(&{ a = Box::new(5); Box::new(S { n: 7 }) }.get(a))?; // expect: 12
+    out.line(&(*c))?;                                              // expect: 1
 
     // A place whose root is a variable is followed when the borrow is
     // taken, so after `r` is changed.
     let mut x = Box::new(1);
     let mut y = Box::new(2);
     let mut r = &mut x;
-    print(g(&mut *r, { r = &mut y; 10 })); // expect: 12
-    print(*x + *y);                        // expect: 3
+    out.line(&g(&mut *r, { r = &mut y; 10 }))?; // expect: 12
+    out.line(&(*x + *y))?;                        // expect: 3
+    Result::Ok(())
 }

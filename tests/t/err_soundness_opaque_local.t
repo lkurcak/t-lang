@@ -5,5 +5,5 @@ fn bad() -> impl Fn() -> i64 + Discard {
     || n
 }
 
-fn main() { print(bad()()); }
+fn main(os: std::Os) -> Result<(), std::io::Error> { let mut out = os.stdout; out.line(&bad()())?;  Result::Ok(()) }
 // error: `n` doesn't live long enough: it goes away when the function returns

@@ -39,10 +39,12 @@ where
     }
 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     for x in (Second { iter: Evens { iter: 0..10i64 } }) {
-        print(x);
+        out.line(&x)?;
     }
+    Result::Ok(())
     // expect: 2
     // expect: 6
 }

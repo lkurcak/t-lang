@@ -21,15 +21,17 @@ fn mix(a: { v: u32 | v <= 1000 }, b: { v: u32 | v <= 1000 }) -> { r: u32 | r <= 
 
 fn half(x: i32, n: u32) -> { r: i32 | r <= 0 || r <= x } { x >> n }
 
-fn main() {
-    print(low(0x1234));         // expect: 52
-    print(nibble(0xAB));        // expect: 176
-    print(high(0xBEEF));        // expect: 190
-    print(twice(100));          // expect: 200
-    print(top(0));              // expect: 255
-    print(neg_mask(-1));        // expect: 127
-    print(small(200));          // expect: 200
-    print(join(0xA, 0x5));      // expect: 165
-    print(mix(1000, 3));        // expect: 1003
-    print(half(-7, 1));         // expect: -4
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&low(0x1234))?;         // expect: 52
+    out.line(&nibble(0xAB))?;        // expect: 176
+    out.line(&high(0xBEEF))?;        // expect: 190
+    out.line(&twice(100))?;          // expect: 200
+    out.line(&top(0))?;              // expect: 255
+    out.line(&neg_mask(-1))?;        // expect: 127
+    out.line(&small(200))?;          // expect: 200
+    out.line(&join(0xA, 0x5))?;      // expect: 165
+    out.line(&mix(1000, 3))?;        // expect: 1003
+    out.line(&half(-7, 1))?;         // expect: -4
+    Result::Ok(())
 }

@@ -7,7 +7,7 @@ fn main() with {alloc, panic} {
     let mut b: RawBuf<i64> = RawBuf::new(1);
     // SAFETY: the closure isn't called here.
     let mut f = unsafe { |b: &mut RawBuf<i64>| b.read(0) };
-    print(f(&mut b));
+    let _v = f(&mut b);
     // SAFETY: the slot is uninitialised.
     unsafe { b.free() };
 }

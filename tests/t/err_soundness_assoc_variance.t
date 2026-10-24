@@ -18,7 +18,8 @@ struct H<T: Tr> { f: T::Out }
 
 fn shrink<'m, 's, 'l: 's>(h: H<W<'m, 'l>>) -> H<W<'m, 's>> { h }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let long = 1;
     let mut slot = &long;
     {
@@ -27,6 +28,7 @@ fn main() {
         let h = shrink(h);
         *h.f = &short;
     }
-    print(*slot);
+    out.line(&(*slot))?;
+    Result::Ok(())
 }
 // error: lifetime may not live long enough: this needs `'s` to outlive `'l`

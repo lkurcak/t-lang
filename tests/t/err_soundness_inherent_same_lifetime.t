@@ -14,7 +14,8 @@ impl<'a> P<'a, 'a> {
     }
 }
 
-fn main() with alloc {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
+    let mut out = os.stdout;
     let long = Box::new(1);
     let x;
     {
@@ -23,6 +24,7 @@ fn main() with alloc {
         p.flip();
         x = p.x;
     }
-    print(*x);
+    out.line(&(*x))?;
+    Result::Ok(())
 }
 // error: `short` doesn't live long enough

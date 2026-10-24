@@ -3,9 +3,11 @@
 use alloc::list::List;
 use alloc::raw::RawBuf;
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let l: List<i64> = List { buf: RawBuf::empty(), len: 3 };
-    print(*l.get(0).unwrap());
+    out.line(&(*l.get(0).unwrap()))?;
     l.free();
+    Result::Ok(())
 }
 // error: field `buf` of `List` is private to `alloc::list`

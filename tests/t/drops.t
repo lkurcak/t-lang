@@ -15,17 +15,18 @@ fn two(n: i64) -> Two with {alloc, panic} { Two { a: Box::new(n), b: Box::new(n 
 
 fn first(t: Two) -> i64 { *t.a }    // `t.b` is freed when `first` returns
 
-fn main() with {alloc, panic} {
+fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+    let mut stdout = os.stdout;
     // Temporaries are freed at the end of their statement.
-    print(*Box::new(1i64));                // expect: 1
+    stdout.line(&(*Box::new(1i64)))?;                // expect: 1
     Box::new(2i64);
-    print(*two(3).b);                   // expect: 4
-    print(first(two(5)));               // expect: 5
+    stdout.line(&(*two(3).b))?;                   // expect: 4
+    stdout.line(&first(two(5)))?;               // expect: 5
 
     // Boxes in boxes in enums.
     let nested = Option::Some(Box::new(Two { a: Box::new(6), b: Box::new(7) }));
     match nested {
-        Option::Some(t) => print(*t.b), // expect: 7
+        Option::Some(t) => stdout.line(&(*t.b))?, // expect: 7
         Option::None => {}
     }
 
@@ -33,11 +34,11 @@ fn main() with {alloc, panic} {
     let mut t = two(8);
     let a = t.a;
     t.a = Box::new(10);
-    print(*a + *t.a);                   // expect: 18
+    stdout.line(&(*a + *t.a))?;                   // expect: 18
 
     // Matching on a temporary moves out only what's bound.
     match two(11) {
-        Two { a, .. } => print(*a),     // expect: 11
+        Two { a, .. } => stdout.line(&(*a))?,     // expect: 11
     }
 
     // A new box each time round a loop, and an old one freed by assigning.
@@ -48,16 +49,17 @@ fn main() with {alloc, panic} {
         keep = fresh;
         i += 1;
     }
-    print(*keep);                       // expect: 4
+    stdout.line(&(*keep))?;                       // expect: 4
 
     // A reference to a box, then the box moved after the reference is done.
     let b = Box::new(12i64);
     let r = &b;
-    print(**r);                         // expect: 12
+    stdout.line(&(**r))?;                         // expect: 12
     let moved = b;
-    print(*moved);                      // expect: 12
+    stdout.line(&(*moved))?;                      // expect: 12
 
     // Kept alive by `let`: a reference to a temporary.
     let kept = &two(13);
-    print(*kept.a + *kept.b);           // expect: 27
+    stdout.line(&(*kept.a + *kept.b))?;           // expect: 27
+    Result::Ok(())
 }

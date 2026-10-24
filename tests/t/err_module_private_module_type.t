@@ -11,5 +11,5 @@ mod a {
 
 fn f(p: a::b::P) -> i64 { p.n }
 
-fn main() { print(a::n()); }
+fn main(os: std::Os) -> Result<(), std::io::Error> { let mut out = os.stdout; out.line(&a::n())?;  Result::Ok(()) }
 // error: module `b` is private to `a`

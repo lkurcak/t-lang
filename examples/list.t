@@ -25,14 +25,16 @@ fn double(l: &mut List) with panic {
     }
 }
 
-fn main() with {alloc, panic} {
+fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+    let mut out = os.stdout;
     let mut l = List::Nil;
     let mut i = 1;
     while i <= 4 {
         l = push(l, i);
         i += 1;
     }
-    print(sum(&l)); // expect: 10
+    out.line(&sum(&l))?; // expect: 10
     double(&mut l);
-    print(sum(&l)); // expect: 20
+    out.line(&sum(&l))?; // expect: 20
+    Result::Ok(())
 }

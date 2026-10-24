@@ -26,15 +26,17 @@ impl Span {
     }
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let mut s = Span { lo: 1, hi: 2 };
     s.shrink();
     s.shrink();
-    print(s.lo); // expect: 2
+    out.line(&s.lo)?; // expect: 2
     s.grow();
     s.widen();
-    print(s.lo); // expect: 1
-    print(s.hi); // expect: 3
+    out.line(&s.lo)?; // expect: 1
+    out.line(&s.hi)?; // expect: 3
     s.hi = s.lo;
-    print(s.hi); // expect: 1
+    out.line(&s.hi)?; // expect: 1
+    Result::Ok(())
 }

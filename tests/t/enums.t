@@ -15,11 +15,11 @@ fn area(s: Shape) -> i64 with panic {
     }
 }
 
-fn main() -> Shape with panic {
-    print(area(Shape::Circle(2)));      // expect: 12
-    print(area(Shape::Rect(3, 4)));     // expect: 12
-    print(area(Shape::Empty));          // expect: 0
-    print_bool(Shape::Rect(1, 2) == Shape::Rect(1, 2));  // expect: true
-    print_bool(Shape::Rect(1, 2) == Shape::Circle(1));   // expect: false
-    Shape::Rect(5, 6)                   // expect: Shape::Rect(5, 6)
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&area(Shape::Circle(2)))?;     // expect: 12
+    out.line(&area(Shape::Rect(3, 4)))?;    // expect: 12
+    out.line(&area(Shape::Empty))?;         // expect: 0
+    out.line(&(Shape::Rect(1, 2) == Shape::Rect(1, 2)))?;  // expect: true
+    out.line(&(Shape::Rect(1, 2) == Shape::Circle(1)))     // expect: false
 }

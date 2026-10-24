@@ -31,6 +31,12 @@ pub trait Write {
     /// Writes `x` as text: `x.fmt(self)`, with the sink first, so that
     /// `w.put(&x)?` reads in the order things go.
     fn put<D: Display>(&mut self, x: &D) -> Result<(), Self::Error> with Self::e { x.fmt(self) }
+
+    /// Writes `x` as text, then a line break.
+    fn line<D: Display>(&mut self, x: &D) -> Result<(), Self::Error> with Self::e {
+        x.fmt(self)?;
+        self.write_char('\n')
+    }
 }
 
 /// Writing through a mutable reference writes to what it points to.

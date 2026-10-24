@@ -1,6 +1,8 @@
 // A stack of ints on a `RawBuf`, which keeps the obligations of the
 // buffer's operations: slots `0..len` hold values, the rest don't.
 use alloc::raw::RawBuf;
+use alloc::string::String;
+use core::fmt::Write;
 
 struct Stack {
     buf: RawBuf<i64>,
@@ -52,27 +54,32 @@ fn bump_first(b: &mut RawBuf<i64>) with {panic, unsafe} {
 
 fn apply<effect e, F: FnOnce() -> i64 with e>(f: F) -> i64 with e { f() }
 
-fn main() with {alloc, panic} {
+fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+    let mut out = String::new();
     let mut s = Stack::new();
     let mut i = 0;
     while i < 10 {
         s.push(i * i);
         i += 1;
     }
-    print(*s.top().unwrap()); // expect: 81
-    print(s.pop().unwrap());  // expect: 81
-    print(s.pop().unwrap());  // expect: 64
-    print(s.len);             // expect: 8
+    out.line(&(*s.top().unwrap())); // expect: 81
+    out.line(&s.pop().unwrap());  // expect: 81
+    out.line(&s.pop().unwrap());  // expect: 64
+    out.line(&s.len);             // expect: 8
     // SAFETY: slot 0 holds the first value pushed.
     unsafe { bump_first(&mut s.buf) };
     // SAFETY: the closure reads slot 7, which holds a value, and `pop`
     // isn't called after it until `len` says slot 7 is free.
     let last = unsafe { apply(|| s.buf.read(7)) };
     s.len = 7;
-    print(last); // expect: 49
+    out.line(&last); // expect: 49
     while s.len > 1 {
         s.pop();
     }
-    print(s.pop().unwrap()); // expect: 1
+    out.line(&s.pop().unwrap()); // expect: 1
     s.free();
+    let mut stdout = os.stdout;
+    let w = stdout.put(&out.as_str());
+    out.free();
+    w
 }

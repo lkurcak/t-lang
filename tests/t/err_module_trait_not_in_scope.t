@@ -12,8 +12,10 @@ mod show {
 #[derive(Discard)]
 struct P { n: i64 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let p = P { n: 1 };
-    print(p.show());
+    out.line(&p.show())?;
+    Result::Ok(())
 }
 // error: `P` has no method `show` in scope; trait `show::Show` has one: import it with `use show::Show;`

@@ -6,7 +6,9 @@ fn f(x: i64) -> i64 with panic {
     minus_one(y + x)
 }
 
-fn main() with panic {
-    print(f(1));
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&f(1))?;
+    Result::Ok(())
 }
 // error: can't prove `v == -1` for argument `n` of `minus_one`

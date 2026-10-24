@@ -2,9 +2,11 @@
 // fix renames only one of them, and what uses it.
 fn addOne(x: i64) -> i64 with panic { x + 1 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     fn doIt() -> i64 with panic { addOne(1) }
-    print(doIt() + other());
+    out.line(&(doIt() + other()))?;
+    Result::Ok(())
 }
 
 fn other() -> i64 {

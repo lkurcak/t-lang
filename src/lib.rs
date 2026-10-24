@@ -2,7 +2,7 @@
 //! the program, as `load` reads them) → `check` (and `borrowck`, once each
 //! function's types are known) → `lift` → `mono` → `interp`.
 //!
-//! The libraries built into the compiler, core and alloc, are read and
+//! The libraries built into the compiler, core, alloc and std, are read and
 //! checked once, before any program (`check::libraries`), and each
 //! program's reading and checking goes on from there (see
 //! docs/14-packages.md).
@@ -109,21 +109,64 @@ pub struct RunResult {
     pub sources: Sources,
     /// Warnings from checking the program.
     pub warnings: Vec<Warning>,
-    /// Lines printed with `print`, including those before an error.
+    /// The lines the program wrote to its output, including those before
+    /// an error, when its streams were in memory: nothing for the
+    /// process's own.
     pub output: Vec<String>,
+    /// The lines it wrote to where errors go, the same way.
+    pub errors: Vec<String>,
     /// The value `main` returned, or the error that stopped the program.
     pub result: Result<Value, Error>,
 }
 
-/// Checks and then interprets a program of one file, as `check_source`.
+impl RunResult {
+    /// Did the program fail: stop with an error, or give back an `Err` from
+    /// `main`, which it reported?
+    pub fn failed(&self) -> bool {
+        match &self.result {
+            Ok(Value::Variant(_, variant, _)) => variant == "Err",
+            Ok(_) => false,
+            Err(_) => true,
+        }
+    }
+}
+
+/// Checks and then interprets a program of one file, as `check_source`,
+/// with no input.
 pub fn run_source(src: &str) -> RunResult {
-    run_files(Path::new("main.t"), src, Some(Vec::new()))
+    run_files(Path::new("main.t"), src, Some(Vec::new()), Some(Vec::new()))
 }
 
 /// Checks and then interprets the program that starts at `path`, whose
 /// text is `src`, reading the files of its modules from the file system,
-/// or from `files`, by their paths, if it's given.
-pub fn run_files(path: &Path, src: &str, files: Option<Vec<(PathBuf, String)>>) -> RunResult {
+/// or from `files`, by their paths, if it's given. Its streams are the
+/// process's, or if `input` is given, in memory: it reads `input`, and
+/// what it writes is in the result.
+pub fn run_files(
+    path: &Path,
+    src: &str,
+    files: Option<Vec<(PathBuf, String)>>,
+    input: Option<Vec<u8>>,
+) -> RunResult {
+    run(path, src, files, input, |_, _| {})
+}
+
+/// Checks the program that starts at `path`, whose text is `src`, reading
+/// the files of its modules from the file system, and then, if it checked,
+/// interprets it with the process's own streams, as `t` does. Before it
+/// runs, `checked` is given its files and warnings, to show them.
+pub fn run_process(path: &Path, src: &str, checked: fn(&Sources, &[Warning])) -> RunResult {
+    run(path, src, None, None, checked)
+}
+
+/// `run_files`, telling `checked` what checking found before it runs.
+fn run(
+    path: &Path,
+    src: &str,
+    files: Option<Vec<(PathBuf, String)>>,
+    input: Option<Vec<u8>>,
+    checked: fn(&Sources, &[Warning]),
+) -> RunResult {
     // The interpreter recurses several times per nested call, so give it a
     // big stack: enough to reach `MAX_CALL_DEPTH` even in debug builds, where
     // frames are huge. It's only reserved address space; untouched pages cost
@@ -146,26 +189,106 @@ pub fn run_files(path: &Path, src: &str, files: Option<Vec<(PathBuf, String)>>) 
                 result,
                 ..
             } = check_files(&path, &src, &read);
+            checked(&sources, &warnings);
             match result {
                 Err(e) => RunResult {
                     sources,
                     warnings,
                     output: Vec::new(),
+                    errors: Vec::new(),
                     result: Err(e),
                 },
-                Ok(program) => {
-                    let mut output = Vec::new();
-                    let result = interp::run(&program, &mut output);
-                    RunResult {
-                        sources,
-                        warnings,
-                        output,
-                        result,
+                Ok(program) => match input {
+                    None => {
+                        let mut term = Process::default();
+                        let result = interp::run(&program, &mut term);
+                        // Nowhere to say it if this fails: the program
+                        // found out from its last write, if it could.
+                        let _ = std::io::Write::flush(&mut term.out);
+                        RunResult {
+                            sources,
+                            warnings,
+                            output: Vec::new(),
+                            errors: Vec::new(),
+                            result,
+                        }
                     }
-                }
+                    Some(input) => {
+                        let mut term = interp::Captured {
+                            input: input.into(),
+                            ..interp::Captured::default()
+                        };
+                        let result = interp::run(&program, &mut term);
+                        RunResult {
+                            sources,
+                            warnings,
+                            output: lines(&term.out),
+                            errors: lines(&term.err),
+                            result,
+                        }
+                    }
+                },
             }
         })
         .expect("failed to spawn interpreter thread")
         .join()
         .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
+/// The lines of `bytes`, without their line breaks: the last needn't end in
+/// one. Bytes that aren't UTF-8 are shown as `\u{FFFD}`.
+fn lines(bytes: &[u8]) -> Vec<String> {
+    let text = String::from_utf8_lossy(bytes);
+    let text = text.strip_suffix('\n').unwrap_or(&text);
+    match text.is_empty() && bytes.is_empty() {
+        true => Vec::new(),
+        false => text.split('\n').map(str::to_string).collect(),
+    }
+}
+
+/// The process's own streams, for a program `t` runs. Output is buffered,
+/// and written out before each read of input, so that a prompt is seen
+/// before it's answered, and before anything is written where errors go.
+struct Process {
+    input: std::io::BufReader<std::io::Stdin>,
+    out: std::io::BufWriter<std::io::Stdout>,
+    err: std::io::Stderr,
+}
+
+impl Default for Process {
+    fn default() -> Process {
+        Process {
+            input: std::io::BufReader::new(std::io::stdin()),
+            out: std::io::BufWriter::new(std::io::stdout()),
+            err: std::io::stderr(),
+        }
+    }
+}
+
+impl interp::Terminal for Process {
+    fn read_byte(&mut self) -> std::io::Result<Option<u8>> {
+        use std::io::{Read, Write};
+        self.out.flush()?;
+        let mut b = [0];
+        loop {
+            match self.input.read(&mut b) {
+                Ok(0) => return Ok(None),
+                Ok(_) => return Ok(Some(b[0])),
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    fn write_byte(&mut self, err: bool, b: u8) -> std::io::Result<()> {
+        use std::io::Write;
+        match err {
+            false => self.out.write_all(&[b]),
+            // Whether the output can still be written or not, errors can.
+            true => {
+                let _ = self.out.flush();
+                self.err.write_all(&[b])
+            }
+        }
+    }
 }

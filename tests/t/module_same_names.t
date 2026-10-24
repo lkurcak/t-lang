@@ -19,13 +19,15 @@ mod main {
     pub fn helper() -> i64 { 10 }
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let p: a::Point = a::make();
     let q: b::Point = b::make();
-    print(p.v);              // expect: 1
-    print_bool(q.v);         // expect: true
-    print(helper());         // expect: 20
-    print(main::helper());   // expect: 10
+    out.line(&p.v)?;              // expect: 1
+    out.line(&q.v)?;         // expect: true
+    out.line(&helper())?;         // expect: 20
+    out.line(&main::helper())?;   // expect: 10
 
     fn helper() -> i64 { 20 }
+    Result::Ok(())
 }

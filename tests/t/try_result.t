@@ -14,19 +14,21 @@ fn check(x: i64) -> Result<(), bool> {
     Result::Ok(())
 }
 
-fn show(r: Result<i64, bool>) {
+fn show(out: &mut std::io::Stdout, r: Result<i64, bool>) -> Result<(), std::io::Error> {
     match r {
-        Result::Ok(v) => print(v),
-        Result::Err(b) => print_bool(b),
+        Result::Ok(v) => out.line(&v),
+        Result::Err(b) => out.line(&b),
     }
 }
 
-fn main() {
-    show(quarter(8)); // expect: 2
-    show(quarter(6)); // expect: true
-    show(quarter(-3)); // expect: false
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    show(&mut out, quarter(8))?; // expect: 2
+    show(&mut out, quarter(6))?; // expect: true
+    show(&mut out, quarter(-3))?; // expect: false
     match check(4) {
-        Result::Ok(()) => print_str("ok"), // expect: ok
-        Result::Err(_) => print_str("err"),
+        Result::Ok(()) => out.line(&"ok")?, // expect: ok
+        Result::Err(_) => out.line(&"err")?,
     }
+    Result::Ok(())
 }

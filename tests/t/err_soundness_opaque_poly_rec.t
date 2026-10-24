@@ -6,5 +6,5 @@ fn grow<T: Discard>(x: T, n: i64) -> i64 with panic {
     if n == 0 { 0 } else { grow(wrap(x), n - 1) }
 }
 
-fn main() with panic { print(grow(1i64, 3)); }
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic { let mut out = os.stdout; out.line(&grow(1i64, 3))?;  Result::Ok(()) }
 // error: polymorphic recursion

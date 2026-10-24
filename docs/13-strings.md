@@ -8,20 +8,22 @@ Code: the literals in `src/lexer.rs` (`quoted`), their types in
 `src/exhaust.rs`, and the library in `core/str.t` and `core/char.t`.
 
 ```rust
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let s = "añb€";
-    print(s.len()); // expect: 7
+    out.line(&s.len())?; // expect: 7
     for c in s.chars() {
-        print(c as u32);
+        out.line(&(c as u32))?;
     }
     // expect: 97
     // expect: 241
     // expect: 98
     // expect: 8364
     match s.get(1, 3) {
-        Option::Some(t) => print_str(t), // expect: ñ
+        Option::Some(t) => out.line(&t)?, // expect: ñ
         Option::None => {},
     }
+    Result::Ok(())
 }
 ```
 
@@ -59,7 +61,7 @@ fn main() {
     let b = b"a\xC3";
     // SAFETY: wrong: `\xC3` starts a character that never ends.
     let s = unsafe { core::str::from_utf8_unchecked(b) };
-    print(s.len());
+    let _v = s.len();
 }
 // error: unsafe code broke its obligation: `str::from_utf8_unchecked` of bytes that aren't UTF-8
 ```
@@ -68,15 +70,17 @@ The rest is written over those two. `from_utf8` checks the bytes and then
 makes the promise, in an `unsafe` block that's right because it checked:
 
 ```rust
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     match core::str::from_utf8(b"\xF0\x9F\x98\x80") {
-        Option::Some(s) => print_str(s), // expect: 😀
+        Option::Some(s) => out.line(&s)?, // expect: 😀
         Option::None => {},
     }
     match core::str::from_utf8(b"\xED\xA0\x80") {
-        Option::Some(_) => print_str("UTF-8"),
-        Option::None => print_str("not UTF-8"), // expect: not UTF-8
+        Option::Some(_) => out.line(&"UTF-8")?,
+        Option::None => out.line(&"not UTF-8")?, // expect: not UTF-8
     }
+    Result::Ok(())
 }
 ```
 
@@ -100,9 +104,11 @@ it isn't one of the type's.
 ```rust
 fn next(c: char) -> char with panic { (c as u32 + 1) as char }
 
-fn main() with panic {
-    print(next('a') as u32);        // expect: 98
-    print('\u{10FFFF}' as u32 + 1); // expect: 1114112
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&(next('a') as u32))?;        // expect: 98
+    out.line(&('\u{10FFFF}' as u32 + 1))?; // expect: 1114112
+    Result::Ok(())
 }
 ```
 
@@ -117,11 +123,13 @@ fn from_u32(n: u32) -> Option<char> {
     if n <= 0x10FFFF && (n < 0xD800 || n > 0xDFFF) { Option::Some(n as char) } else { Option::None }
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     match from_u32(0xDFFF) {
-        Option::Some(_) => print(1u8),
-        Option::None => print(0u8), // expect: 0
+        Option::Some(_) => out.line(&1u8)?,
+        Option::None => out.line(&0u8)?, // expect: 0
     }
+    Result::Ok(())
 }
 ```
 
@@ -143,8 +151,10 @@ fn kind(c: char) -> u8 {
     }
 }
 
-fn main() {
-    print(kind('7')); // expect: 2
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&kind('7'))?; // expect: 2
+    Result::Ok(())
 }
 ```
 
@@ -199,8 +209,8 @@ fn main() with panic {
 // error: runtime error: panicked: o has a value
 ```
 
-Until there's I/O (std), `print_str` prints a string, one line of output
-for each line in it.
+A program writes a string to its output with `out.line(&s)?`, through
+std's `Stdout` (since step 19, docs/19-std-io.md).
 
 ## Why it's sound
 
@@ -264,7 +274,7 @@ the invariant but the `unsafe` blocks, each of which says why it's kept.
 | `<` on strings and characters | `<` is for integers; `Ord` orders strings, and `as u32` characters | 17.1 |
 | `starts_with`, `find`, `split`, `trim`, `lines` | safe code over `as_bytes`, any time | — |
 | raw strings, `r"…"`, and `\` before a line break | nothing needs them yet | — |
-| `print_str` going away | std I/O | — |
+| `print_str` going away | std I/O | 19 |
 
 ## Exercises
 

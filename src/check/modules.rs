@@ -129,8 +129,9 @@ pub(crate) struct Modules {
     pub(crate) module_refs: Vec<(Span, usize)>,
     /// The core library's root module, and its prelude.
     pub(crate) core: Option<usize>,
-    /// The alloc library's root module.
-    pub(crate) alloc: Option<usize>,
+    /// The root modules of the libraries built into the compiler, as
+    /// `Program::libraries`.
+    pub(crate) libraries: Vec<usize>,
     pub(crate) prelude: Option<usize>,
     /// Warnings about what's rewritten here: empty ranges.
     pub(crate) warnings: Vec<Warning>,
@@ -215,9 +216,7 @@ impl Modules {
     /// from it, or else that after `crate::`.
     pub(crate) fn path_to_trait(&self, m: usize, symbol: &str) -> String {
         match m {
-            _ if symbol.starts_with("core::") || symbol.starts_with("alloc::") => {
-                symbol.to_string()
-            }
+            _ if is_library_symbol(symbol) => symbol.to_string(),
             ROOT => symbol.to_string(),
             _ => format!("crate::{symbol}"),
         }
@@ -247,12 +246,12 @@ impl Modules {
         }
     }
 
-    /// The path of the public struct or enum `name` of the core or alloc
-    /// library, if there's exactly one, in a public module of its own:
-    /// `alloc::boxed::Box` for `Box`.
+    /// The path of the public struct or enum `name` of a library built into
+    /// the compiler, if there's exactly one, declared where it is:
+    /// `alloc::boxed::Box` for `Box`, `std::Os` for `Os`.
     pub(crate) fn library_type(&self, name: &str) -> Option<String> {
         let found: Vec<&Module> = (self.mods.iter().enumerate())
-            .filter(|&(m, _)| Some(m) != self.core && Some(m) != self.alloc && self.in_library(m))
+            .filter(|&(m, _)| self.in_library(m))
             .map(|(_, module)| module)
             .filter(|module| {
                 module.types.get(name).is_some_and(|b| {
@@ -283,18 +282,13 @@ impl Modules {
     /// Is module `m` in a library built into the compiler, the core
     /// library or the alloc library?
     pub(crate) fn in_library(&self, m: usize) -> bool {
-        let root = Some(self.package_root(m));
-        root == self.core || root == self.alloc
+        self.libraries.contains(&self.package_root(m))
     }
 
     /// The root module of the library `name`, if it's one built in, as a
     /// path can start with: `core` or `alloc`.
     pub(crate) fn library(&self, name: &str) -> Option<usize> {
-        match name {
-            "core" => self.core,
-            "alloc" => self.alloc,
-            _ => None,
-        }
+        (self.libraries.iter().copied()).find(|&m| self.mods[m].path == name)
     }
 
     /// Is `inner` module `outer` or in it?
@@ -385,7 +379,7 @@ impl Resolver {
             });
         }
         r.m.core = prog.core;
-        r.m.alloc = prog.alloc;
+        r.m.libraries = prog.libraries.clone();
         r.declare(prog, from)?;
         r.imports(prog, from)?;
         if r.m.prelude.is_none() {
@@ -1028,7 +1022,7 @@ impl Rewrite<'_> {
                     false => format!(
                         "only `core`'s `Discard`, `Copy` and `Eq` can be derived, and `{written}` \
                          here is `{}`",
-                        match name.name.starts_with("core::") || name.name.starts_with("alloc::") {
+                        match is_library_symbol(&name.name) {
                             true => name.name.clone(),
                             false => format!("crate::{}", name.name),
                         }
@@ -1782,4 +1776,13 @@ fn children_mut(e: &mut Expr) -> Vec<&mut Expr> {
 fn signature(f: &FnDecl, inherent: bool) -> Option<String> {
     (inherent && f.public.is_some())
         .then(|| format!("`{}` is public, but its signature names", f.name.name))
+}
+
+/// Is `symbol` an item of a library built into the compiler: does it start
+/// with one's name, as `alloc::boxed::Box` does?
+pub(crate) fn is_library_symbol(symbol: &str) -> bool {
+    let first = symbol.split("::").next().unwrap_or_default();
+    crate::load::LIBRARIES
+        .iter()
+        .any(|(name, ..)| *name == first)
 }

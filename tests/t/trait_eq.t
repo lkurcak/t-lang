@@ -15,16 +15,18 @@ impl Eq for Money {
 #[derive(Discard, Eq)]
 struct Account { id: i64, balance: Money }
 
-fn main() {
-    print_bool(Money { cents: 101 } == Money { cents: 199 });   // expect: true
-    print_bool(Money { cents: 101 } != Money { cents: 201 });   // expect: true
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&(Money { cents: 101 } == Money { cents: 199 }))?;   // expect: true
+    out.line(&(Money { cents: 101 } != Money { cents: 201 }))?;   // expect: true
     let a = Account { id: 1, balance: Money { cents: 150 } };
     let b = Account { id: 1, balance: Money { cents: 120 } };
-    print_bool(a == b);                                         // expect: true
-    print_bool(Option::Some(Money { cents: 5 }) == Option::Some(Money { cents: 95 })); // expect: true
-    print_bool(Option::Some(1i64) == Option::None);                // expect: false
+    out.line(&(a == b))?;                                         // expect: true
+    out.line(&(Option::Some(Money { cents: 5 }) == Option::Some(Money { cents: 95 })))?; // expect: true
+    out.line(&(Option::Some(1i64) == Option::None))?;                // expect: false
     // `eq` is a method like any other.
-    print_bool(1i64.eq(&1i64));                                       // expect: true
-    print_bool(Eq::eq(&a, &b));                                 // expect: true
-    print_bool(a.balance.eq(&Money { cents: 300 }));            // expect: false
+    out.line(&1i64.eq(&1i64))?;                                       // expect: true
+    out.line(&Eq::eq(&a, &b))?;                                 // expect: true
+    out.line(&a.balance.eq(&Money { cents: 300 }))?;            // expect: false
+    Result::Ok(())
 }

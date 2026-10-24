@@ -18,15 +18,17 @@ fn dup<T: Copy>(x: T) -> Pair<T, T> { Pair { a: x, b: x } }
 
 fn unbox(b: Box<i64>) -> i64 { *b }
 
-fn main() with {panic, alloc} {
+fn main(os: std::Os) -> Result<(), std::io::Error> with {panic, alloc} {
+    let mut out = os.stdout;
     let p = dup(3i64);
-    print(p.a + p.b);                                // expect: 6
+    out.line(&(p.a + p.b))?;                                // expect: 6
     let c = Callback { f: unbox };
     let d = c;
-    print((c.f)(Box::new(1)) + (d.f)(Box::new(2)));  // expect: 3
+    out.line(&((c.f)(Box::new(1)) + (d.f)(Box::new(2))))?;  // expect: 3
     let t = Celsius { degrees: 20 };
     let u = t;
-    print(t.degrees + u.degrees);                    // expect: 40
+    out.line(&(t.degrees + u.degrees))?;                    // expect: 40
     let q = dup(Pair { a: true, b: 7i64 });
-    print(q.b.b);                                    // expect: 7
+    out.line(&q.b.b)?;                                    // expect: 7
+    Result::Ok(())
 }

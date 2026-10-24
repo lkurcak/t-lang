@@ -23,27 +23,29 @@ fn is_some<T: Discard>(o: Option<T>) -> bool {
     }
 }
 
-fn main() {
-    print(id::<i64>(1));                                // expect: 1
-    print_bool(is_some(Option::<i64>::None));           // expect: false
-    print_bool(is_some(none::<bool>()));                // expect: false
-    print(count::<Pair<i64, bool>>(3));                 // expect: 3
-    print(apply(id::<i64>, 4));                         // expect: 4
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&(id::<i64>(1)))?;                                // expect: 1
+    out.line(&is_some(Option::<i64>::None))?;           // expect: false
+    out.line(&is_some(none::<bool>()))?;                // expect: false
+    out.line(&(count::<Pair<i64, bool>>(3)))?;                 // expect: 3
+    out.line(&apply(id::<i64>, 4))?;                         // expect: 4
     let p = Pair::<i64, bool> { first: 5, second: true };
-    print(p.first);                                     // expect: 5
+    out.line(&p.first)?;                                     // expect: 5
     let users: Id<Pair<i64, i64>> = Id { n: 6 };
-    print(users.n);                                     // expect: 6
+    out.line(&users.n)?;                                     // expect: 6
     let things = Id::<bool> { n: 7 };
-    print(things.n);                                    // expect: 7
+    out.line(&things.n)?;                                    // expect: 7
     match Option::Some(8) {
-        Option::<i64>::Some(n) => print(n),             // expect: 8
+        Option::<i64>::Some(n) => out.line(&n)?,             // expect: 8
         Option::<i64>::None => {}
     }
     let Pair::<i64, bool> { first, .. } = p;
-    print(first);                                       // expect: 5
+    out.line(&first)?;                                       // expect: 5
     // `_` stands for a type to infer: write some type arguments, not all.
-    print(second::<bool, _>(true, 9i64));                  // expect: 9
-    print(unwrap(id::<Option<_>>(Option::Some(10))));   // expect: 10
+    out.line(&(second::<bool, _>(true, 9i64)))?;                  // expect: 9
+    out.line(&unwrap(id::<Option<_>>(Option::Some(10))))?;   // expect: 10
+    Result::Ok(())
 }
 
 fn unwrap(o: Option<i64>) -> i64 {

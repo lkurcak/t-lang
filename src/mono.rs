@@ -60,6 +60,9 @@ pub fn monomorphise(prog: &Program, info: &Info) -> Program {
     Mono::new(prog, info).run()
 }
 
+/// The std library's function that reports the error `main` gives back.
+const REPORT: &str = "std::rt::report";
+
 /// The name of the copy of `name` for type arguments `args`. It has the
 /// symbols of the types in them, which tell apart types of the same name,
 /// where `Type`'s `Display` shows the names as written.
@@ -172,6 +175,11 @@ impl<'p> Mono<'p> {
                 self.function(f, &Subst::default(), &Params::default(), None),
             );
         }
+        // The report of `main`'s error, which the interpreter calls.
+        let roots: Vec<String> = (self.info.main_error.clone())
+            .map(|e| self.named_copy(REPORT, vec![e.clone()], mangle(REPORT, &[e])))
+            .into_iter()
+            .collect();
         let mut types: HashMap<String, TypeDecl> = HashMap::new();
         for d in prog.types.iter().filter(|d| d.type_params().is_empty()) {
             types.insert(d.name().name.clone(), self.type_decl(d, &[]));
@@ -203,7 +211,7 @@ impl<'p> Mono<'p> {
         let mut out = Program {
             mods: prog.mods.clone(),
             core: None,
-            alloc: None,
+            libraries: Vec::new(),
             uses: Vec::new(),
             types: Vec::new(),
             traits: Vec::new(),
@@ -239,7 +247,7 @@ impl<'p> Mono<'p> {
         for copy in &self.copy_order {
             out.fns.extend(fns.remove(copy));
         }
-        self.without_unused_core(&mut out);
+        self.without_unused_core(&mut out, roots);
         out
     }
 
@@ -247,7 +255,8 @@ impl<'p> Mono<'p> {
     /// are made whether they're used or not, as they aren't generic, and
     /// aren't: they'd only be noise in what `t mono` prints. A copy of
     /// anything generic is only made where it's used.
-    fn without_unused_core(&self, out: &mut Program) {
+    /// Those named in `roots` are used, whether anything calls them or not.
+    fn without_unused_core(&self, out: &mut Program, roots: Vec<String>) {
         // Copies of the core library's generic types too, which its
         // functions' signatures may make, like `Option<i64>`.
         let lazy = |name: &str| {
@@ -255,11 +264,18 @@ impl<'p> Mono<'p> {
             // Only the built-in libraries give slices, strings and
             // characters methods, or implement traits for them.
             let builtin = ["<[", "<str", "<char"].iter().any(|p| name.starts_with(p));
+            // An inherent method of a library's type, `<alloc::string::String>::new`:
+            // not a trait's, whose `eq` `==` may call without naming it.
+            let inherent = (name.strip_prefix('<'))
+                .and_then(|rest| rest.split_once(">::"))
+                .filter(|(ty, _)| !ty.contains(" as "))
+                .map(|(ty, _)| ty.split("::<").next().unwrap_or(ty));
             builtin
                 || self.info.library_symbols.contains(name)
                 || self.info.library_symbols.contains(of)
+                || inherent.is_some_and(|ty| self.info.library_symbols.contains(ty))
         };
-        let mut used = HashSet::new();
+        let mut used: HashSet<String> = roots.into_iter().collect();
         let mut kept_types: Vec<bool> = out.types.iter().map(|d| !lazy(&d.name().name)).collect();
         let mut kept_fns: Vec<bool> = out.fns.iter().map(|f| !lazy(&f.name.name)).collect();
         let mut seen_types = vec![false; out.types.len()];

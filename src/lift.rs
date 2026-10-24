@@ -90,7 +90,7 @@ pub fn lift(prog: &Program, info: &Info) -> Program {
     Program {
         mods: prog.mods[..1].to_vec(),
         core: None,
-        alloc: None,
+        libraries: Vec::new(),
         uses: Vec::new(),
         types,
         traits: traits

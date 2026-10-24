@@ -16,8 +16,10 @@ impl<effect f, F: Fn(i64) -> i64 with f> Twice<F> {
     }
 }
 
-fn main() with panic {
-    print(apply(|| 1)); // expect: 1
-    print(pair(|x: i64| x * 2, 3)); // expect: 6
-    print(Twice { f: |x: i64| x / 1 }.run(5)); // expect: 5
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&apply(|| 1))?; // expect: 1
+    out.line(&pair(|x: i64| x * 2, 3))?; // expect: 6
+    out.line(&(Twice { f: |x: i64| x / 1 }.run(5)))?; // expect: 5
+    Result::Ok(())
 }

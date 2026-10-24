@@ -12,7 +12,9 @@ impl Iterator for Lines {
     }
 }
 
-fn main() {
-    print(Lines { left: 3 }.fold(0, |a, b| a + b));
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&(Lines { left: 3 }.fold(0, |a, b| a + b)))?;
+    Result::Ok(())
 }
 // error: `fold` needs its `Self` to implement `Discard`, and `Lines` doesn't

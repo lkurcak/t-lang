@@ -9,5 +9,5 @@ impl Show for i64 {
 
 fn f() -> impl Show { loop {} }
 
-fn main() { print(f().show()); }
+fn main(os: std::Os) -> Result<(), std::io::Error> { let mut out = os.stdout; out.line(&f().show())?;  Result::Ok(()) }
 // error: can't tell what type `f` returns

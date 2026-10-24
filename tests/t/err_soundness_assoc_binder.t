@@ -20,13 +20,15 @@ impl<A, B> Tr for fn(A) -> B {
 
 fn id(x: &i64) -> &i64 { x }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let r;
     {
         let n = 5;
         let f: fn(&i64) -> &i64 = id;
         r = Tr::call(f, &n);
     }
-    print(*r);
+    out.line(&(*r))?;
+    Result::Ok(())
 }
 // error: `A` is only inside a function type in `fn(A) -> B`

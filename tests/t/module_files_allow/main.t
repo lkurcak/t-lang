@@ -4,6 +4,8 @@
 mod quiet;
 mod loud;
 
-fn main() {
-    print(1i64);   // expect: 1
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&1i64)?;   // expect: 1
+    Result::Ok(())
 }

@@ -15,11 +15,13 @@ mod fs {
 
 enum Opt { Some(fs::Fd), None }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let o = Opt::Some(fs::open(1));
     match o {
-        Opt::Some(fs::Fd { .. }) => print(1i64),
-        Opt::None => print(0i64),
+        Opt::Some(fs::Fd { .. }) => out.line(&1i64)?,
+        Opt::None => out.line(&0i64)?,
     }
+    Result::Ok(())
 }
 // error: can't take `Fd` apart here

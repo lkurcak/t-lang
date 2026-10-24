@@ -6,9 +6,11 @@ fn f(c: C) -> i64 {
         C::G => 2,
     }
 }
-fn main() {
-    print(f(C::R));
-    print(f(C::G));
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&f(C::R))?;
+    out.line(&f(C::G))?;
+    Result::Ok(())
 }
 // warning: unreachable alternative
 // expect: 1

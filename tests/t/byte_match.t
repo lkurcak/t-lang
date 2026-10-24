@@ -6,9 +6,11 @@ fn digit(b: u8) -> Option<u8> {
     }
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     match digit(b'7') {
-        Option::Some(d) => print(d), // expect: 7
+        Option::Some(d) => out.line(&d)?, // expect: 7
         Option::None => {},
     }
+    Result::Ok(())
 }

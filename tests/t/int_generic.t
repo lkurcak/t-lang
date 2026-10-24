@@ -17,20 +17,22 @@ fn sum<T: Int>(from: T, to: T) -> T with panic {
     total
 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let b: u8 = 100;
-    print(double(b));           // expect: 200
+    out.line(&double(b))?;           // expect: 200
     let s: i32 = -3;
-    print(double(s));           // expect: -6
+    out.line(&double(s))?;           // expect: -6
     let full: u8 = 255;
-    print(inc(full).unwrap_or(0));      // expect: 0
-    print(inc(b).unwrap_or(0));         // expect: 101
-    print(succ(full));          // expect: 255
-    print(succ(s));             // expect: -2
+    out.line(&inc(full).unwrap_or(0))?;      // expect: 0
+    out.line(&inc(b).unwrap_or(0))?;         // expect: 101
+    out.line(&succ(full))?;          // expect: 255
+    out.line(&succ(s))?;             // expect: -2
     let lo: u16 = 1;
-    print(sum(lo, 5));          // expect: 10
-    print(core::num::least::<i8>());     // expect: -128
-    print(core::num::greatest::<u32>()); // expect: 4294967295
+    out.line(&sum(lo, 5))?;          // expect: 10
+    out.line(&(core::num::least::<i8>()))?;     // expect: -128
+    out.line(&(core::num::greatest::<u32>()))?; // expect: 4294967295
     let none: i64 = 0;
-    print(sum(none, 3));        // expect: 3
+    out.line(&sum(none, 3))?;        // expect: 3
+    Result::Ok(())
 }

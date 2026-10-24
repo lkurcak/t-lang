@@ -27,10 +27,12 @@ fn bump(l: &mut List) with panic {
     }
 }
 
-fn main() with {alloc, panic} {
+fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+    let mut out = os.stdout;
     let mut l = List::Cons(1, Box::new(List::Cons(2, Box::new(List::Nil))));
     bump(&mut l);
-    print(sum(&l)); // expect: 5
+    out.line(&sum(&l))?; // expect: 5
+    Result::Ok(())
 }
 ```
 
@@ -74,10 +76,12 @@ a `T` on the heap, so freeing the box frees the `T`:
 ```rust
 use alloc::boxed::Box;
 
-fn main() with alloc {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
+    let mut out = os.stdout;
     let b = Box::new(5i64); // allocates
-    print(*b);              // expect: 5
-}                           // `b` goes away: the box is freed
+    out.line(&*b)?;         // expect: 5
+    Result::Ok(())
+} // `b` goes away: the box is freed
 ```
 
 `Box::new` is the only way a T program allocates, and it's explicit:
@@ -94,8 +98,8 @@ use alloc::boxed::Box;
 fn main() with alloc {
     let b = Box::new(1i64);
     let c = b; // moved: `c` owns the box now
-    print(*c);
-    print(*b); // error: use of moved value `b`
+    let _v = *c;
+    let _v = *b; // error: use of moved value `b`
 }
 ```
 
@@ -117,10 +121,12 @@ enums that say so with `#[derive(Copy)]`, if all their fields are `Copy`:
 #[derive(Discard, Copy)]
 struct Point { x: i64, y: i64 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let p = Point { x: 1, y: 2 };
-    let q = p;        // copied
-    print(p.x + q.y); // expect: 3
+    let q = p;               // copied
+    out.line(&(p.x + q.y))?; // expect: 3
+    Result::Ok(())
 }
 ```
 
@@ -168,8 +174,10 @@ fn fib(n: i64) -> i64 with panic {
     a
 }
 
-fn main() with panic {
-    print(fib(10)); // expect: 55
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&fib(10))?; // expect: 55
+    Result::Ok(())
 }
 ```
 
@@ -188,7 +196,8 @@ would a moved-out variable. Only a whole variable can be declared this way:
 an assignment can't give `x` and `y` of `let P { x, y };` their values.
 
 ```rust
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let x: i64 = 1;
     let y = 2;
     let r;
@@ -197,7 +206,8 @@ fn main() {
     } else {
         r = &y;
     }
-    print(*r); // expect: 1
+    out.line(&*r)?; // expect: 1
+    Result::Ok(())
 }
 ```
 
@@ -231,7 +241,7 @@ fn main() {
     let mut x: i64 = 1;
     let r = &x;
     x = 2; // error: cannot assign to `x` while `x` is borrowed
-    print(*r);
+    let _v = *r;
 }
 ```
 
@@ -252,7 +262,7 @@ fn main() {
         let x = 1;
         r = &x;
     } // error: `x` doesn't live long enough
-    print(*r);
+    let _v = *r;
 }
 ```
 
@@ -276,10 +286,12 @@ fn longer<'a>(x: &'a i64, y: &'a i64) -> &'a i64 {
     if *x >= *y { x } else { y }
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let a = 1;
     let b = 2;
-    print(*longer(&a, &b)); // expect: 2
+    out.line(&*longer(&a, &b))?; // expect: 2
+    Result::Ok(())
 }
 ```
 
@@ -310,11 +322,13 @@ fn total(n: &Node) -> i64 with panic {
     }
 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let c = Node { value: 3, next: Option::None };
     let b = Node { value: 2, next: Option::Some(&c) };
     let a = Node { value: 1, next: Option::Some(&b) };
-    print(total(&a)); // expect: 6
+    out.line(&total(&a))?; // expect: 6
+    Result::Ok(())
 }
 ```
 
@@ -329,12 +343,14 @@ lasts as long as the reference is used, not to the end of the block it's
 in:
 
 ```rust
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let mut x: i64 = 1;
     let r = &x;
-    print(*r); // expect: 1
-    x = 2;     // fine: `r` isn't used after this
-    print(x);  // expect: 2
+    out.line(&*r)?; // expect: 1
+    x = 2;          // fine: `r` isn't used after this
+    out.line(&x)?;  // expect: 2
+    Result::Ok(())
 }
 ```
 
@@ -350,9 +366,9 @@ regions are sets of. Roughly:
 
 ```text
 let r = &x;      _3 = &'?7 _1        // a loan of _1, for region '?7
-print(*r);       _2 = copy _3
+f(*r);           _2 = copy _3
                  _4 = copy *_2
-                 _5 = call print(_4)
+                 _5 = call f(_4)
 x = 2;           _1 = 2              // a write to _1
 ```
 
@@ -373,7 +389,7 @@ constraint say what's in them (`borrowck/regions.rs`):
 
 Then the smallest regions that satisfy the constraints are found by growing
 them until nothing changes. In the program above, `r`'s region is the two
-points between `let r` and `print(*r)`, since `r` is dead after that.
+points between `let r` and `f(*r)`, since `r` is dead after that.
 
 Each `&` makes a *loan*, of a place, for a region. Then a forward dataflow
 analysis finds which loans are *in scope* at each point, those whose region
@@ -404,7 +420,7 @@ fn main() {
         let y = 2;
         assign(&mut r, &y);
     } // error: `y` doesn't live long enough
-    print(*r);
+    let _v = *r;
 }
 ```
 
@@ -456,9 +472,11 @@ monomorphisation doesn't mind, since lifetimes don't exist at run time.
 ```rust
 fn apply(f: fn(&i64) -> i64 with panic, x: &i64) -> i64 with panic { f(x) }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let n = 3;
-    print(apply(|r| *r + 1, &n)); // expect: 4
+    out.line(&apply(|r| *r + 1, &n))?; // expect: 4
+    Result::Ok(())
 }
 ```
 

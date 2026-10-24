@@ -9,11 +9,13 @@ fn close(f: Fd) -> i64 {
 
 struct P { a: Fd, b: Fd }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let p = P { a: Fd { n: 1 }, b: Fd { n: 2 } };
     let r = &p.b;
     let P { a, b } = p;
-    print(r.n);
-    print(close(a) + close(b));
+    out.line(&r.n)?;
+    out.line(&(close(a) + close(b)))?;
+    Result::Ok(())
 }
 // error: cannot move out of `p` while `p.b` is borrowed

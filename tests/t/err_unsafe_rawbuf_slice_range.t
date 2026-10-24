@@ -5,7 +5,7 @@ fn main() with alloc {
     let b: RawBuf<i64> = RawBuf::new(1);
     // SAFETY: wrong: there's no slot 1.
     let s = unsafe { b.slice(1, 2) };
-    print(s.len());
+    let _v = s.len();
     // SAFETY: every slot is uninitialised.
     unsafe { b.free() };
 }

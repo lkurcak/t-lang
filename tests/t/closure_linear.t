@@ -9,11 +9,13 @@ fn close(fd: Fd) -> i64 {
 
 fn later<F: FnOnce() -> i64>(f: F) -> i64 { f() }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let fd = Fd { n: 3 };
     let c = || close(fd);
-    print(later(c));                // expect: 3
+    out.line(&later(c))?;                // expect: 3
     let fd = Fd { n: 4 };
     let c = move || close(fd);
-    print(c());                     // expect: 4
+    out.line(&c())?;                     // expect: 4
+    Result::Ok(())
 }

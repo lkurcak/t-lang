@@ -4,7 +4,7 @@ use alloc::raw::RawBuf;
 fn main() with {alloc, unsafe} {
     let mut b: RawBuf<i64> = RawBuf::new(1);
     b.write(0, 1);
-    print(b.read(0));
+    let _v = b.read(0);
     b.free();
 }
 // error: `main` can't say `with unsafe`: nothing calls it to keep its obligations

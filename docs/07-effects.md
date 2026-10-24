@@ -17,11 +17,13 @@ fn mean(a: i64, b: i64) -> i64 with panic { (a + b) / 2 }
 
 fn twice<effect e, F: Fn(i64) -> i64 with e + Discard>(f: F, x: i64) -> i64 with e { f(f(x)) }
 
-fn main() with panic {
-    print(max(3, 4));                // expect: 4
-    print(mean(3, 5));               // expect: 4
-    print(twice(|x| max(x, 10), 1)); // expect: 10
-    print(twice(|x| x * 3, 1));      // expect: 9
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&max(3, 4))?;                // expect: 4
+    out.line(&mean(3, 5))?;               // expect: 4
+    out.line(&twice(|x| max(x, 10), 1))?; // expect: 10
+    out.line(&twice(|x| x * 3, 1))?;      // expect: 9
+    Result::Ok(())
 }
 ```
 
@@ -68,9 +70,11 @@ fn add(a: i64, b: i64) -> i64 with panic {
     }
 }
 
-fn main() with panic {
-    print(add(1, 2));                                             // expect: 3
-    print_bool(checked_add(9223372036854775807i64, 1).is_none()); // expect: true
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&add(1, 2))?;                                        // expect: 3
+    out.line(&checked_add(9223372036854775807i64, 1).is_none())?; // expect: true
+    Result::Ok(())
 }
 ```
 
@@ -97,7 +101,7 @@ error, with a fix that adds it:
 fn next(n: i64) -> i64 { n + 1 }
 
 fn main() {
-    print(next(1));
+    let _v = next(1);
 }
 // error: `+` may panic, but `next` doesn't say `with panic`
 ```
@@ -148,9 +152,11 @@ fn id(n: i64) -> i64 { n }
 
 fn apply(f: fn(i64) -> i64 with panic, x: i64) -> i64 with panic { f(x) }
 
-fn main() with panic {
-    print(apply(inc, 1)); // expect: 2
-    print(apply(id, 4));  // expect: 4
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&apply(inc, 1))?; // expect: 2
+    out.line(&apply(id, 4))?;  // expect: 4
+    Result::Ok(())
 }
 ```
 
@@ -188,9 +194,11 @@ impl Iterator for Down {
 
 fn first<I: Iterator<Item = i64> + Discard>(mut it: I) -> Option<i64> with I::e { it.next() }
 
-fn main() with panic {
-    print(first(Down { n: 3 }).unwrap()); // expect: 2
-    print(first(0..3).unwrap());          // expect: 0
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&first(Down { n: 3 }).unwrap())?; // expect: 2
+    out.line(&first(0..3).unwrap())?;          // expect: 0
+    Result::Ok(())
 }
 ```
 

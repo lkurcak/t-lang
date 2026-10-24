@@ -8,10 +8,12 @@ fn f(c: C) -> i64 {
         C::G | C::B => 3,
     }
 }
-fn main() {
-    print(f(C::R));
-    print(f(C::G));
-    print(f(C::B));
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&f(C::R))?;
+    out.line(&f(C::G))?;
+    out.line(&f(C::B))?;
+    Result::Ok(())
 }
 // warning: unreachable pattern
 // expect: 1

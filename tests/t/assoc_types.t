@@ -79,18 +79,20 @@ impl Sized2 for Ints {
 
 fn first_of<S: Sized2>(s: &S) -> S::Item { s.first() }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let i = Ints { x: 3, y: 4 };
-    print(i.first()); // expect: 3
+    out.line(&i.first())?; // expect: 3
     let p = i.first_twice();
-    print(p.a + p.b);                          // expect: 6
-    print_bool((Flags { on: true }).first());  // expect: true
-    print(ignore_first(&Flags { on: false })); // expect: 1
-    print(total(&i));                          // expect: 6
+    out.line(&(p.a + p.b))?;                          // expect: 6
+    out.line(&(Flags { on: true }).first())?;  // expect: true
+    out.line(&ignore_first(&Flags { on: false }))?; // expect: 1
+    out.line(&total(&i))?;                          // expect: 6
     let c = cache(Ints { x: 5, y: 6 });
-    print(c.item + c.from.y); // expect: 11
-    print(make_and_drop(&i)); // expect: 2
+    out.line(&(c.item + c.from.y))?; // expect: 11
+    out.line(&make_and_drop(&i))?; // expect: 2
     let x: <Ints as Make>::Out = i.make();
-    print(x.b);                     // expect: 4
-    print(first_of(&i) + i.size()); // expect: 5
+    out.line(&x.b)?;                     // expect: 4
+    out.line(&(first_of(&i) + i.size()))?; // expect: 5
+    Result::Ok(())
 }

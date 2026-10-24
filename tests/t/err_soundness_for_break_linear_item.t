@@ -21,7 +21,8 @@ impl Iterator for Fds {
     }
 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let mut total = 0;
     for fd in (Fds { left: 3 }) {
         if fd.n == 1 {
@@ -29,6 +30,7 @@ fn main() with panic {
         }
         total = total + close(fd);
     }
-    print(total);
+    out.line(&total)?;
+    Result::Ok(())
 }
 // error: `fd` is never used up

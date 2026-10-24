@@ -42,7 +42,9 @@ fn first<I: Iterator + Discard>(mut i: I) -> i64 with I::e where I::Item: Show +
     }
 }
 
-fn main() with panic {
-    print((W { iter: 0..4i64 }).total()); // expect: 6
-    print(first(5..7i64));                // expect: 5
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&(W { iter: 0..4i64 }).total())?; // expect: 6
+    out.line(&first(5..7i64))?;                // expect: 5
+    Result::Ok(())
 }

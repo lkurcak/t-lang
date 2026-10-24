@@ -7,9 +7,11 @@ fn f(o: Opt) -> i64 {
         Opt::None => 1,
     }
 }
-fn main() {
-    print(f(Opt::Some(7)));
-    print(f(Opt::None));
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&f(Opt::Some(7)))?;
+    out.line(&f(Opt::None))?;
+    Result::Ok(())
 }
 // warning: unreachable pattern
 // expect: 7

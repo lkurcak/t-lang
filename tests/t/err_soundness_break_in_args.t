@@ -8,10 +8,12 @@ fn close(f: Fd) -> i64 {
 
 fn two(a: Fd, b: i64) -> i64 with panic { close(a) + b }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let x = loop {
         two(Fd { n: 1 }, break 3i64);
     };
-    print(x);
+    out.line(&x)?;
+    Result::Ok(())
 }
 // error: this value is never used up, and its type, `Fd`, isn't `Discard`

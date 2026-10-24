@@ -60,11 +60,13 @@ fn hold<'r, T: Tr<Out: Discard> + 'r>(t: &T, r: &'r i64) -> i64 {
     *h.r
 }
 
-fn main() with panic {
-    print(shown(&W { t: A { n: 4 } })); // expect: 40
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&shown(&W { t: A { n: 4 } }))?; // expect: 40
     let c = count(A { n: 1 });
-    print(c.n + c.of.n);                               // expect: 3
-    print_bool(same(&A { n: 1 }, &A { n: 1 }));        // expect: true
-    print_bool(same(&B { b: true }, &B { b: false })); // expect: false
-    print(hold(&A { n: 1 }, &5));                      // expect: 5
+    out.line(&(c.n + c.of.n))?;                               // expect: 3
+    out.line(&same(&A { n: 1 }, &A { n: 1 }))?;        // expect: true
+    out.line(&same(&B { b: true }, &B { b: false }))?; // expect: false
+    out.line(&hold(&A { n: 1 }, &5))?;                      // expect: 5
+    Result::Ok(())
 }

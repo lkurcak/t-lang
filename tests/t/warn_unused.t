@@ -16,18 +16,20 @@ fn get(o: Opt) -> i64 {
     }
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let unused: i64 = 1;
     // Shorthand: the fix writes `P { x, y: _y }`, not `P { x, _y }`.
     let P { x, y } = P { x: 2, y: 3 };
-    print(x);
+    out.line(&x)?;
     // A shadowed variable that was never read.
     let z: i64 = 4;
     let z: i64 = 5;
-    print(z);
-    print(first(6, 7));
-    print(get(Opt::Some(8)));
-    print(get(Opt::None));
+    out.line(&z)?;
+    out.line(&first(6, 7))?;
+    out.line(&get(Opt::Some(8)))?;
+    out.line(&get(Opt::None))?;
+    Result::Ok(())
 }
 // warning: unused variable `b`
 // warning: unused variable `n`

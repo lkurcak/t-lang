@@ -16,7 +16,7 @@ fn main() with {alloc, panic} {
         let m = 2;
         put(l.as_mut_slice(), &m);
     }
-    print(**l.get(0).unwrap());
+    let _v = **l.get(0).unwrap();
     l.free();
 }
 // error: `m` doesn't live long enough

@@ -6,7 +6,7 @@ fn main() with alloc {
     let mut s = String::from("a");
     let r = s.as_str();
     s.push_str("bcdefgh");
-    print_str(r);
+    let _v = r;
     s.free();
 }
 // error: cannot borrow `s` as mutable while `s` is borrowed

@@ -19,21 +19,23 @@ fn fill<'a, T>(s: &mut Option<&'a T>, v: &'a T) { *s = Option::Some(v); }
 
 fn read<'a, T>(s: Slot<'a, T>) -> &'a T { s.r }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let x = 1;
     let y = 2;
     let p = Pair { a: &x, b: &y };
     let q = flip(p);
-    print(*q.a);                    // expect: 2
-    print(*largest(p.a, p.b));      // expect: 2
+    out.line(&(*q.a))?;                    // expect: 2
+    out.line(&(*largest(p.a, p.b)))?;      // expect: 2
     let mut s = Option::None;
     fill(&mut s, &y);
     match s {
-        Option::Some(r) => print(*r), // expect: 2
+        Option::Some(r) => out.line(&(*r))?, // expect: 2
         Option::None => {}
     }
-    print(*read(Slot { r: &x }));   // expect: 1
+    out.line(&(*read(Slot { r: &x })))?;   // expect: 1
     let pp = Pair { a: 1i64, b: true };
     let pq = pp;                    // `Pair<i64, bool>` is `Copy`
-    print(pp.a + pq.a);             // expect: 2
+    out.line(&(pp.a + pq.a))?;             // expect: 2
+    Result::Ok(())
 }

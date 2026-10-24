@@ -7,10 +7,12 @@ fn f(o: Opt) -> i64 {
         _ => 0,
     }
 }
-fn main() {
-    print(f(Opt::Some(1)));
-    print(f(Opt::Some(2)));
-    print(f(Opt::None));
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&f(Opt::Some(1)))?;
+    out.line(&f(Opt::Some(2)))?;
+    out.line(&f(Opt::None))?;
+    Result::Ok(())
 }
 // warning: unreachable alternative
 // expect: 1

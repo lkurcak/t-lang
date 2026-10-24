@@ -9,7 +9,7 @@ fn main() with alloc {
     // SAFETY: wrong: `second` needs slot 1 written.
     unsafe {
         b.write(0, 1);
-        print(second(&b));
+        let _v = second(&b);
         b.read(0);
         b.free();
     }

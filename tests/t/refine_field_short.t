@@ -9,10 +9,12 @@ impl Counter {
 
 fn per_step(c: &Counter, total: i64) -> i64 { total / c.step }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let mut c = Counter { n: 5, step: 2 };
     c.reset();
     c.n = c.step;
-    print(per_step(&c, 10)); // expect: 5
-    print(c.n); // expect: 2
+    out.line(&per_step(&c, 10))?; // expect: 5
+    out.line(&c.n)?; // expect: 2
+    Result::Ok(())
 }

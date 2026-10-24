@@ -3,8 +3,10 @@
 //! (`docs.rs`):
 //!
 //! - `// expect: <line>` — anywhere on a line, one per expected output line, in
-//!   order. The output is everything `print`ed, then `main`'s return value
-//!   unless it is `()`.
+//!   order: what the program writes to its `stdout`.
+//! - `// stderr: <line>` — the same, for what it writes to its `stderr`, as a
+//!   `main` that gives back `Err(e)` does.
+//! - `// stdin: <line>` — one per line of input the program reads, in order.
 //! - `// error: <text>` — the program must fail (to parse, to type-check, or at
 //!   runtime) with an error whose rendered message contains `<text>`, not
 //!   counting the lines of source it shows, which hold the comment. Any
@@ -28,7 +30,6 @@
 
 use std::path::{Path, PathBuf};
 use t_lang::RunResult;
-use t_lang::interp::Value;
 
 /// A program's files, its first first, by path.
 pub type Files = Vec<(PathBuf, String)>;
@@ -36,12 +37,17 @@ pub type Files = Vec<(PathBuf, String)>;
 /// Runs a program of the files `files`.
 pub fn run(files: &Files) -> RunResult {
     let (path, src) = &files[0];
-    t_lang::run_files(path, src, Some(files.clone()))
+    let texts: Vec<&str> = files.iter().map(|(_, src)| src.as_str()).collect();
+    let input = Expectations::of(&texts.join("\n")).input;
+    t_lang::run_files(path, src, Some(files.clone()), Some(input))
 }
 
 /// What the comments in a program say it should do.
 pub struct Expectations {
     pub output: Vec<String>,
+    pub errors: Vec<String>,
+    /// The input: each `// stdin:` line, and a line break after it.
+    pub input: Vec<u8>,
     pub error: Option<String>,
     pub warnings: Vec<String>,
 }
@@ -56,6 +62,17 @@ impl Expectations {
             output: src
                 .lines()
                 .filter_map(|l| directive(l, "// expect: "))
+                .collect(),
+            errors: src
+                .lines()
+                .filter_map(|l| directive(l, "// stderr: "))
+                .collect(),
+            // As written, but for the space after the `:`: an empty line is
+            // `// stdin:`.
+            input: src
+                .lines()
+                .filter_map(|l| l.find("// stdin:").map(|i| &l[i + "// stdin:".len()..]))
+                .flat_map(|l| l.strip_prefix(' ').unwrap_or(l).bytes().chain(*b"\n"))
                 .collect(),
             error: src.lines().find_map(|l| directive(l, "// error: ")),
             warnings: src
@@ -108,13 +125,9 @@ pub fn check_files(files: &Files) -> Result<(), String> {
     }
     check_fixes(files, &run)?;
 
-    let mut actual = run.output;
+    let actual = run.output;
     match (run.result, want.error) {
-        (Ok(value), None) => {
-            if value != Value::Unit {
-                actual.push(value.to_string());
-            }
-        }
+        (Ok(_), None) => {}
         (Ok(_), Some(want)) => {
             return Err(format!(
                 "expected an error containing {want:?}, but it ran fine"
@@ -134,6 +147,12 @@ pub fn check_files(files: &Files) -> Result<(), String> {
     }
     if actual != want.output {
         return Err(format!("expected output {:?}, got {actual:?}", want.output));
+    }
+    if run.errors != want.errors {
+        return Err(format!(
+            "expected errors {:?}, got {:?}",
+            want.errors, run.errors
+        ));
     }
     Ok(())
 }
@@ -247,6 +266,7 @@ pub fn files_of(root: &Path) -> Files {
 /// Do two runs print the same, and end the same way?
 pub fn same_behaviour(a: &RunResult, b: &RunResult) -> bool {
     a.output == b.output
+        && a.errors == b.errors
         && match (&a.result, &b.result) {
             (Ok(a), Ok(b)) => a == b,
             (Err(a), Err(b)) => a.message == b.message,

@@ -12,18 +12,20 @@ fn narrow(n: i64) -> u8 {
 
 fn wrong(n: i64) -> u8 with panic { n as u8 }
 
-fn main() with panic {
-    print(widen(200));          // expect: 200
-    print(to_usize(7));         // expect: 7
-    print(from_usize(8));       // expect: 8
-    print(narrow(255));         // expect: 255
-    print(narrow(256));         // expect: 0
-    print(narrow(-1));          // expect: 0
-    print(wrong(17));           // expect: 17
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&widen(200))?;          // expect: 200
+    out.line(&to_usize(7))?;         // expect: 7
+    out.line(&from_usize(8))?;       // expect: 8
+    out.line(&narrow(255))?;         // expect: 255
+    out.line(&narrow(256))?;         // expect: 0
+    out.line(&narrow(-1))?;          // expect: 0
+    out.line(&wrong(17))?;           // expect: 17
     let c: i8 = -1;
-    print(c as i64);            // expect: -1
+    out.line(&(c as i64))?;            // expect: -1
     // A name after `as`, so this is a comparison.
-    print_bool(c as i64 < 0);   // expect: true
-    print(wrong(300));
+    out.line(&(c as i64 < 0))?;   // expect: true
+    out.line(&wrong(300))?;
+    Result::Ok(())
 }
 // error: runtime error: `as` overflowed: 300 isn't a `u8`

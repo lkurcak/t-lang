@@ -4,6 +4,8 @@ fn count_down(n: { v: i64 | v >= 0 }) -> { r: i64 | r == 0 } {
     if n == 0 { 0 } else { count_down(n - 1) }
 }
 
-fn main() {
-    print(count_down(5)); // expect: 0
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&count_down(5))?; // expect: 0
+    Result::Ok(())
 }

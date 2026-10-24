@@ -24,14 +24,16 @@ fn pick(c: bool) -> impl Fn(i64) -> i64 with panic + Discard {
     if c { a } else { b }
 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let add5 = adder(5);
-    print(add5(1));                 // expect: 6
+    out.line(&add5(1))?;                 // expect: 6
     let mut c = counter();
-    print(c());                     // expect: 1
-    print(c());                     // expect: 2
+    out.line(&c())?;                     // expect: 1
+    out.line(&c())?;                     // expect: 2
     let h = compose(adder(1), adder(10));
-    print(h(0));                    // expect: 11
-    print(pick(false)(0));          // expect: 2
-    print(adder(2)(3));             // expect: 5
+    out.line(&h(0))?;                    // expect: 11
+    out.line(&pick(false)(0))?;          // expect: 2
+    out.line(&adder(2)(3))?;             // expect: 5
+    Result::Ok(())
 }

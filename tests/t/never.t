@@ -40,8 +40,10 @@ fn _spin() -> i64 {
     let _n: ! = loop {};
 }
 
-fn main() {
-    print(pick(true));                      // expect: 1
-    print(always_none(Option::None));       // expect: 0
-    print(returns_early());                 // expect: 5
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&pick(true))?;                      // expect: 1
+    out.line(&always_none(Option::None))?;       // expect: 0
+    out.line(&returns_early())?;                 // expect: 5
+    Result::Ok(())
 }

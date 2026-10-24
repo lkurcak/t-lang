@@ -42,7 +42,6 @@
 //! `f(Box::new(1), return 2)`, the box.
 
 use crate::ast::*;
-use crate::check::BUILTINS;
 use crate::error::{Error, Span};
 use crate::types::IntTy;
 use std::collections::{HashMap, HashSet};
@@ -66,7 +65,6 @@ pub enum Value {
     /// functions. Nested ones have been lifted to the top level by now,
     /// under their symbols (see `lift.rs`).
     Fn(String),
-    Builtin(&'static str),
     /// A closure: an anonymous function, plus the local variables it can see.
     Closure(Closure),
     /// A struct: its type's name, and its fields in declaration order.
@@ -144,7 +142,6 @@ impl fmt::Display for Value {
             Value::Char(c) => write!(f, "{c}"),
             Value::Unit => f.write_str("()"),
             Value::Fn(name) => write!(f, "<fn {}>", crate::check::source_name(name)),
-            Value::Builtin(name) => write!(f, "<fn {name}>"),
             Value::Closure(_) => f.write_str("<closure>"),
             Value::Ref(_) => f.write_str("<reference>"),
             Value::Box(_) => f.write_str("<box>"),
@@ -182,9 +179,9 @@ impl fmt::Display for Value {
     }
 }
 
-/// Runs `main`. Anything the program prints is appended to `out`, even if the
+/// Runs `main`, with `term` as its streams. Anything the program prints goes there, even if the
 /// program later fails.
-pub fn run(prog: &Program, out: &mut Vec<String>) -> Result<Value, Error> {
+pub fn run(prog: &Program, term: &mut dyn Terminal) -> Result<Value, Error> {
     let fns = prog.fns.iter().map(|f| (f.name.name.as_str(), f)).collect();
     let derived = |tr: &str| -> HashSet<&str> {
         let with = prog.types.iter().filter(|d| d.derive_of(tr).is_some());
@@ -227,9 +224,43 @@ pub fn run(prog: &Program, out: &mut Vec<String>) -> Result<Value, Error> {
         proved: &prog.proved,
         refined: HashMap::new(),
         params_refined: Vec::new(),
-        out,
+        term,
     };
-    let result = interp.call(Value::Fn("main".to_string()), Vec::new(), Span::new(0, 0))?;
+    // `main` takes nothing, or the one `std::Os` there is.
+    let args = match interp.fns["main"].params.len() {
+        0 => Vec::new(),
+        _ => vec![Value::Struct(
+            "std::Os".into(),
+            ["stdin", "stdout", "stderr"]
+                .into_iter()
+                .zip(["std::io::Stdin", "std::io::Stdout", "std::io::Stderr"])
+                .map(|(field, ty)| (field.to_string(), Value::Struct(ty.into(), Vec::new())))
+                .collect(),
+        )],
+    };
+    let result = interp.call(Value::Fn("main".to_string()), args, Span::new(0, 0))?;
+    // An error it gives back is reported, by the copy of `std::rt::report`
+    // monomorphisation made for it, with its own `Stderr`.
+    if let Value::Variant(ty, variant, fields) = &result
+        && ty.starts_with("core::result::Result::<")
+        && variant == "Err"
+    {
+        let report = (interp.fns.keys())
+            .find(|f| f.starts_with("std::rt::report::<"))
+            .unwrap_or_else(|| unsound("no `std::rt::report` for `main`'s error"))
+            .to_string();
+        let [e] = fields.as_slice() else {
+            unsound("an `Err` of one field")
+        };
+        let at = interp.memory.alloc(e.clone(), false);
+        let stderr = Value::Struct("std::io::Stderr".into(), Vec::new());
+        interp.call(
+            Value::Fn(report),
+            vec![Value::Ref(at.clone()), stderr],
+            Span::new(0, 0),
+        )?;
+        interp.memory.free(&at, false);
+    }
     interp.drop(result.clone());
     if interp.memory.on_heap > 0 {
         unsound(&format!(
@@ -453,7 +484,51 @@ struct Interp<'p, 'o> {
     /// The refinements of the parameters of the function about to be
     /// entered, by name, for `enter` to keep in `refined`.
     params_refined: Vec<(String, Refined)>,
-    out: &'o mut Vec<String>,
+    /// The operating system's streams, as the program's `std::Os` reaches
+    /// them.
+    term: &'o mut dyn Terminal,
+}
+
+/// The streams of the operating system, for the intrinsics of `std::io`'s
+/// `Stdin`, `Stdout` and `Stderr` (see docs/19-std-io.md): the process's
+/// own, for `t run`, or bytes in memory, for tests.
+pub trait Terminal {
+    /// The next byte of input, or `None` at its end.
+    fn read_byte(&mut self) -> std::io::Result<Option<u8>>;
+
+    /// Writes byte `b` to the output, or to where errors go if `err`.
+    fn write_byte(&mut self, err: bool, b: u8) -> std::io::Result<()>;
+}
+
+/// Streams in memory: input given ahead, and what's written kept.
+#[derive(Default)]
+pub struct Captured {
+    pub input: std::collections::VecDeque<u8>,
+    pub out: Vec<u8>,
+    pub err: Vec<u8>,
+}
+
+impl Terminal for Captured {
+    fn read_byte(&mut self) -> std::io::Result<Option<u8>> {
+        Ok(self.input.pop_front())
+    }
+
+    fn write_byte(&mut self, err: bool, b: u8) -> std::io::Result<()> {
+        match err {
+            true => self.err.push(b),
+            false => self.out.push(b),
+        }
+        Ok(())
+    }
+}
+
+/// What a stream's intrinsic gives back for `e`: 257 for a broken pipe,
+/// 258 for anything else, as `std::io::error` reads it.
+fn io_error(e: &std::io::Error) -> u32 {
+    match e.kind() {
+        std::io::ErrorKind::BrokenPipe => 257,
+        _ => 258,
+    }
 }
 
 /// A refinement to check at run time (see `check/refine.rs`): its binder,
@@ -565,10 +640,7 @@ impl Interp<'_, '_> {
         if self.fns.contains_key(name) {
             return Value::Fn(name.to_string());
         }
-        match BUILTINS.iter().find(|&&b| b == name) {
-            Some(&b) => Value::Builtin(b),
-            None => unsound(&format!("unbound variable `{name}`")),
-        }
+        unsound(&format!("unbound variable `{name}`"))
     }
 
     /// The value at `p`, moved out if `moves`, or else copied, as the
@@ -787,24 +859,6 @@ impl Interp<'_, '_> {
 
     fn call(&mut self, f: Value, args: Vec<Value>, span: Span) -> Result<Value, Error> {
         match f {
-            Value::Builtin("print") => {
-                let [arg] = <[Value; 1]>::try_from(args).unwrap_or_else(|_| unsound("print arity"));
-                self.out.push(int(arg).to_string());
-                Ok(Value::Unit)
-            }
-            Value::Builtin("print_str") => {
-                let [arg] =
-                    <[Value; 1]>::try_from(args).unwrap_or_else(|_| unsound("print_str arity"));
-                let text = self.text(&arg);
-                self.out.extend(text.split('\n').map(str::to_string));
-                Ok(Value::Unit)
-            }
-            Value::Builtin("print_bool") => {
-                let [arg] =
-                    <[Value; 1]>::try_from(args).unwrap_or_else(|_| unsound("print_bool arity"));
-                self.out.push(bool(arg).to_string());
-                Ok(Value::Unit)
-            }
             Value::Fn(name) if self.fns[name.as_str()].intrinsic.is_some() => {
                 let of = name.split("::<").next().unwrap_or_default().to_string();
                 self.intrinsic(&of, &name, args, span)
@@ -912,6 +966,9 @@ impl Interp<'_, '_> {
                 _ => unsound(&format!("unknown intrinsic `{name}`")),
             });
         }
+        if let Some(stream) = name.strip_prefix("<std::io::") {
+            return Ok(self.stream(stream, args));
+        }
         if name == "<alloc::raw::RawBuf" {
             let op = copy.rsplit("::").next().unwrap_or_default();
             return self.raw_buf(op, args, span);
@@ -963,6 +1020,27 @@ impl Interp<'_, '_> {
             }
             _ => unsound(&format!("unknown intrinsic `{name}`")),
         }
+    }
+
+    /// The intrinsic method of `std::io`'s stream, `stream` being its
+    /// copy's name after `<std::io::`, with arguments `args`.
+    fn stream(&mut self, stream: &str, args: Vec<Value>) -> Value {
+        let code = match (stream, args.as_slice()) {
+            ("Stdin>::read_byte", [_]) => match self.term.read_byte() {
+                Ok(Some(b)) => u32::from(b),
+                Ok(None) => 256,
+                Err(e) => io_error(&e),
+            },
+            ("Stdout>::write_byte" | "Stderr>::write_byte", [_, b]) => {
+                let b = u8::try_from(int(b.clone())).unwrap_or_else(|_| unsound("a byte"));
+                match self.term.write_byte(stream.starts_with("Stderr"), b) {
+                    Ok(()) => 0,
+                    Err(e) => io_error(&e),
+                }
+            }
+            _ => unsound(&format!("unknown intrinsic `<std::io::{stream}`")),
+        };
+        Value::Int(i128::from(code), IntTy::U32)
     }
 
     /// Where the literal of bytes `bytes` is: a slice of `u8`s, which a

@@ -13,7 +13,8 @@ dx*dx+dy*dy}
 
 
 
-fn main() with panic{print(dist(Point{x:0,y:0},Point{x:3,y:4})); // expect: 25
+fn main(os:std::Os)->Result<(),std::io::Error> with panic{let mut out=os.stdout;
+out.line(&dist(Point{x:0,y:0},Point{x:3,y:4})) // expect: 25
 }
 ```
 
@@ -28,8 +29,9 @@ fn dist(p: Point, q: Point) -> i64 with panic {
     dx * dx + dy * dy
 }
 
-fn main() with panic {
-    print(dist(Point { x: 0, y: 0 }, Point { x: 3, y: 4 })); // expect: 25
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&dist(Point { x: 0, y: 0 }, Point { x: 3, y: 4 })) // expect: 25
 }
 ```
 
@@ -126,7 +128,7 @@ group that doesn't fit breaks first, and the ones inside get the whole of
 their new lines to fit in:
 
 ```rust,fragment
-print(compute_something_long(
+show(compute_something_long(
     first_argument,
     second_argument,
     third_argument,
@@ -184,7 +186,7 @@ break:
   other arguments flat followed by the last argument broken. It picks the
   normal one if that fits flat, and otherwise the hugging one if its first
   line fits. A call whose only argument is a call does the same, which is
-  how the `print(compute_something_long(` above stays on one line.
+  how the `show(compute_something_long(` above stays on one line.
 
 ## Comments
 
@@ -204,12 +206,12 @@ comment can go, it asks for the comments up to that point in the source:
 - **Trailing:** after one of those, a comment on the same line with nothing
   but `,` or `;` in between, like `// expect: 25` above. It stays at the end
   of the line. So do comments lined up under it on the lines below, which is
-  how `tests/t/block_like_stmts.t` writes several expected lines for one
+  how `tests/t/traits.t` writes several expected lines for one
   statement:
 
   ```rust,fragment
-  print(h(true)); // expect: 1
-                  // expect: 2
+  p.show(&mut out)?; // expect: 1
+                     // expect: 2
   ```
 
 - **Dangling:** before the `}` or `)` that ends a block or list, the ones
@@ -252,8 +254,8 @@ Comments at the ends of consecutive lines are lined up, one space after the
 longest line:
 
 ```rust,fragment
-print(add5(1));                       // expect: 6
-print(compose(add5, |x| x + 100, 0)); // expect: 105
+out.line(&add5(1))?;                       // expect: 6
+out.line(&compose(add5, |x| x + 100, 0))?; // expect: 105
 ```
 
 T's tests are full of these, and a run of `// expect:` lines reads as a

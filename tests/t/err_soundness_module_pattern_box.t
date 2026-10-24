@@ -16,9 +16,11 @@ mod fs {
     }
 }
 
-fn main() with alloc {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
+    let mut out = os.stdout;
     let b = Box::new(fs::open(1));
     let fs::Fd { id, .. } = *b;
-    print(id.n);
+    out.line(&id.n)?;
+    Result::Ok(())
 }
 // error: can't take `Fd` apart here

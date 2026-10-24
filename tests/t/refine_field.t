@@ -20,11 +20,13 @@ impl Span {
 
 fn width(s: Span) -> { w: i64 | w >= 0 } { s.hi - s.lo }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let s = Span { lo: 3, hi: 10 };
-    print(s.len()); // expect: 7
-    print(width(s)); // expect: 7
+    out.line(&s.len())?; // expect: 7
+    out.line(&width(s))?; // expect: 7
     let t = Span::new(5, 2);
-    print(t.hi); // expect: 7
-    print(t.per(9)); // expect: 3
+    out.line(&t.hi)?; // expect: 7
+    out.line(&t.per(9))?; // expect: 3
+    Result::Ok(())
 }

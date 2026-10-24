@@ -68,14 +68,16 @@ fn first(l: &List) -> i64 {
     }
 }
 
-fn main() with {alloc, panic} {
+fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+    let mut out = os.stdout;
     let mut l = push(push(push(List::Nil, 1), 2), 3);
-    print(sum(&l));             // expect: 6
-    print(len(&l));             // expect: 3
+    out.line(&sum(&l))?;             // expect: 6
+    out.line(&len(&l))?;             // expect: 3
     bump(&mut l);
-    print(sum(&l));             // expect: 9
-    print(first(&l));           // expect: 4
+    out.line(&sum(&l))?;             // expect: 9
+    out.line(&first(&l))?;           // expect: 4
     let r = reverse(l);
-    print(first(&r));           // expect: 2
-    print(len(&r));             // expect: 3
+    out.line(&first(&r))?;           // expect: 2
+    out.line(&len(&r))?;             // expect: 3
+    Result::Ok(())
 }

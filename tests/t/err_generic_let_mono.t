@@ -1,9 +1,11 @@
 // Using a generic function as a value instantiates it once, so `f` has one
 // type: there's no let-generalisation.
 fn id<T>(x: T) -> T { x }
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let f = id;
-    print(f(1));
-    print_bool(f(true));
+    out.line(&f(1))?;
+    out.line(&f(true))?;
+    Result::Ok(())
 }
 // error: expected `{integer}`, found `bool`

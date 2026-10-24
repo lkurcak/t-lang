@@ -2,7 +2,6 @@
 fn get() -> Option<i64> { Option::None }
 
 fn main() {
-    let x = get()?;
-    print(x);
+    let _x = get()?;
 }
 // error: `?` returns early from `main`, but its result, `()`, doesn't implement `core::ops::Try`

@@ -4,8 +4,10 @@ struct Holder<F: Fn() -> i64> { f: F }
 
 fn call<F: Fn() -> i64>(h: &Holder<F>) -> i64 { (h.f)() }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let h = Holder { f: || panic("stop") };
-    print(call(&h));
+    out.line(&call(&h))?;
+    Result::Ok(())
 }
 // error: this closure may panic, but `Holder` needs calls of it to fit `fn() -> i64`, which can't panic

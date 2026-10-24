@@ -37,12 +37,14 @@ struct Holder { s: Stream }
 #[derive(Discard)]
 struct Quiet { next: Box<Quiet> }
 
-fn main() with alloc {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
+    let mut out = os.stdout;
     let l = List::Cons(1, Box::new(List::Nil));
     match l {
-        List::Nil => print(0i64),
-        List::Cons(x, _) => print(x), // expect: 1
+        List::Nil => out.line(&0i64)?,
+        List::Cons(x, _) => out.line(&x)?, // expect: 1
     }
+    Result::Ok(())
 }
 // warning: struct `Stream` has no values: each would hold another `Stream`, without end; it needs a way to stop, like a variant that doesn't hold one
 // warning: struct `Ping` has no values: each would hold another `Ping`, without end; it needs a way to stop, like a variant that doesn't hold one

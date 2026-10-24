@@ -5,7 +5,9 @@ fn bump(x: i64) -> i64 {
     y
 }
 
-fn main() with panic {
-    print(bump(9223372036854775807));
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&bump(9223372036854775807))?;
+    Result::Ok(())
 }
 // error: `+=` may panic, but `bump` doesn't say `with panic`

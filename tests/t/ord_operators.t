@@ -17,27 +17,37 @@ impl Ord for Version {
 
 fn least<T: Ord + Discard>(a: T, b: T) -> T { if b < a { b } else { a } }
 
-fn main() with alloc {
-    print_bool(false < true); // expect: true
-    print_bool('a' < 'b');    // expect: true
-    print_bool('é' > 'z');    // expect: true
-    print_bool("abc" < "abd"); // expect: true
-    print_bool("ab" >= "abc"); // expect: false
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
+    let mut out = os.stdout;
+    out.line(&(false < true))?; // expect: true
+    out.line(&('a' < 'b'))?;    // expect: true
+    out.line(&('é' > 'z'))?;    // expect: true
+    out.line(&("abc" < "abd"))?; // expect: true
+    out.line(&("ab" >= "abc"))?; // expect: false
     let s = String::from("pear");
     let t = String::from("apple");
-    print_bool(t < s); // expect: true
-    // Neither was moved.
-    print_str(s.as_str()); // expect: pear
-    print_str(t.as_str()); // expect: apple
+    let w = show(&mut out, &s, &t);
     s.free();
     t.free();
+    w?;
+    // expect: true
+    // expect: pear
+    // expect: apple
     let v1 = Version { major: 1, minor: 9 };
     let v2 = Version { major: 2, minor: 0 };
-    print_bool(v1 < v2);  // expect: true
-    print_bool(v2 <= v1); // expect: false
+    out.line(&(v1 < v2))?;  // expect: true
+    out.line(&(v2 <= v1))?; // expect: false
     let r1 = &v1;
     let r2 = &v2;
-    print_bool(r1 >= r2); // expect: false
-    print(least(v1, v2).minor); // expect: 9
-    print(least(5i64, 3)); // expect: 3
+    out.line(&(r1 >= r2))?; // expect: false
+    out.line(&least(v1, v2).minor)?; // expect: 9
+    out.line(&least(5i64, 3))?; // expect: 3
+    Result::Ok(())
+}
+
+fn show(out: &mut std::io::Stdout, s: &String, t: &String) -> Result<(), std::io::Error> {
+    out.line(&(t < s))?;
+    // Neither was moved.
+    out.line(&s.as_str())?;
+    out.line(&t.as_str())
 }

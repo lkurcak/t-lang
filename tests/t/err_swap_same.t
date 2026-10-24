@@ -2,9 +2,11 @@
 
 use core::mem::swap;
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let mut x: i64 = 1;
     swap(&mut x, &mut x);
-    print(x);
+    out.line(&x)?;
+    Result::Ok(())
 }
 // error: cannot borrow `x` as mutable more than once at a time

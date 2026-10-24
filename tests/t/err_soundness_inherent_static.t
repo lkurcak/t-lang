@@ -10,13 +10,15 @@ impl S<'static> {
     fn get(&self) -> &'static i64 { self.r }
 }
 
-fn main() with alloc {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
+    let mut out = os.stdout;
     let r;
     {
         let n = Box::new(5);
         let s = S { r: &*n };
         r = s.get();
     }
-    print(*r);
+    out.line(&(*r))?;
+    Result::Ok(())
 }
 // error: `n` doesn't live long enough

@@ -1,6 +1,8 @@
 // `==` on a type not known yet is checked once it is.
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let eq = |a, b| a == b;
-    print_bool(eq(main, main));
+    out.line(&eq(main, main))?;
+    Result::Ok(())
 }
 // error: cannot compare functions with `==`

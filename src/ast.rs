@@ -19,9 +19,10 @@ pub struct Program {
     /// it's loaded (see `load.rs`). It's a package of its own: a module
     /// tree beside the crate root's, whose items' symbols start `core::`.
     pub core: Option<usize>,
-    /// The root module of the alloc library, the same way, loaded after
-    /// the core library's: its items' symbols start `alloc::`.
-    pub alloc: Option<usize>,
+    /// The root modules of the libraries built into the compiler, the
+    /// core library's first, in the order they're loaded: each a package
+    /// the same way, whose items' symbols start with its name, `alloc::`.
+    pub libraries: Vec<usize>,
     /// The `use`s of every module, in order.
     pub uses: Vec<UseDecl>,
     pub types: Vec<TypeDecl>,
@@ -49,7 +50,7 @@ impl Program {
     /// Is module `m` the root of a library built into the compiler, a
     /// package of its own rather than a module of the crate root's?
     pub fn is_library_root(&self, m: usize) -> bool {
-        self.core == Some(m) || self.alloc == Some(m)
+        self.libraries.contains(&m)
     }
 }
 
@@ -814,8 +815,7 @@ impl Program {
     /// each library's in the order they're loaded, then the crate root's,
     /// which depends on them all.
     pub fn packages(&self) -> Vec<usize> {
-        let libraries = [self.core, self.alloc].into_iter().flatten();
-        libraries.chain([ROOT]).collect()
+        self.libraries.iter().copied().chain([ROOT]).collect()
     }
 
     /// Every method with a body: package by package (see `packages`),

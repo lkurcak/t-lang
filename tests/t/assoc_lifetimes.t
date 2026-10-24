@@ -41,16 +41,18 @@ fn g<'r, T: Tr<Out: Discard> + 'r>(x: T::Out, r: &'r i64) -> i64 { need(x, r) }
 // A reference to a projection: what it points to outlives it.
 fn hold<'r, T: Tr>(x: &'r T::Out) -> &'r T::Out { x }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut stdout = os.stdout;
     let long = 1;
     let r;
     {
         let short = 2;
         r = get(Pair { a: &short, b: &long });
-        print(*Tr::out(&short)); // expect: 2
+        stdout.line(&(*Tr::out(&short)))?; // expect: 2
     }
-    print(*r);                      // expect: 1
-    print(g::<&i64>(&long, &long)); // expect: 1
+    stdout.line(&(*r))?;                      // expect: 1
+    stdout.line(&(g::<&i64>(&long, &long)))?; // expect: 1
     let x = &long;
-    print(**hold::<&i64>(&x)); // expect: 1
+    stdout.line(&(**hold::<&i64>(&x)))?; // expect: 1
+    Result::Ok(())
 }

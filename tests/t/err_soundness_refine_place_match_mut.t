@@ -14,8 +14,10 @@ fn f(r: &mut P) -> i64 {
     }
 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let mut p = P { x: 1 };
-    print(f(&mut p));
+    out.line(&f(&mut p))?;
+    Result::Ok(())
 }
 // error: `/` may panic, but `f` doesn't say `with panic`

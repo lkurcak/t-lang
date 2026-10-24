@@ -1,4 +1,6 @@
-fn main() {
-    print_bool(true);       // expect: true
-    print_bool(1i64 > 2);      // expect: false
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&true)?;       // expect: true
+    out.line(&(1i64 > 2))?;      // expect: false
+    Result::Ok(())
 }

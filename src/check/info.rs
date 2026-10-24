@@ -78,6 +78,10 @@ pub struct Info {
     /// turns out to be. Then the program runs as it was checked, and means
     /// the same at every type, as it would if it ran once for them all.
     pub moves: HashSet<MoveSite>,
+    /// The error type of the `Result` `main` gives back, if it does: the
+    /// type monomorphisation makes `std::rt::report` for, which reports
+    /// it.
+    pub main_error: Option<Type>,
 }
 
 /// Where a value is used by value, which moves it or copies it, as

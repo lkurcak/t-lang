@@ -40,14 +40,16 @@ fn red(c: Color) -> bool {
     }
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let u = Used { a: helper() };
-    print(u.a);
-    print(apply(passed));
+    out.line(&u.a)?;
+    out.line(&apply(passed))?;
     let h = Holder { i: Inner::X };
     let Holder { i: Inner::X } = h;
-    print_bool(red(Color::Red));
+    out.line(&red(Color::Red))?;
     let f = read;
+    Result::Ok(())
 }
 // warning: struct `Unbuilt` is never constructed
 // warning: variant `Color::Green` is never constructed

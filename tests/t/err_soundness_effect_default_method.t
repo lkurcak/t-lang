@@ -17,8 +17,10 @@ impl Gen for Z {
     fn next(&mut self) -> i64 with panic { panic("stop") }
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let mut z = Z {};
-    print(z.two());
+    out.line(&z.two())?;
+    Result::Ok(())
 }
 // error: `next` may have the effects `Self::e`, but `two` doesn't say `with Self::e`

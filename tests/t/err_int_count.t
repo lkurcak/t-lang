@@ -1,8 +1,10 @@
 // `count` gives a `usize`, which is whatever the iterator counted.
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let r: core::ops::Range<i8> = -128..127;
-    print(r.count());   // expect: 255
+    out.line(&r.count())?;   // expect: 255
     let none: u8 = 5;
-    print(none - 6);
+    out.line(&(none - 6))?;
+    Result::Ok(())
 }
 // error: runtime error: integer overflow

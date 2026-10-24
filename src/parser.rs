@@ -137,7 +137,7 @@ pub fn parse(tokens: Vec<Token>) -> Result<Program, Error> {
             in_file: false,
         }],
         core: None,
-        alloc: None,
+        libraries: Vec::new(),
         uses: Vec::new(),
         types: Vec::new(),
         traits: Vec::new(),
@@ -488,7 +488,10 @@ impl Parser {
         let start = public.unwrap_or(self.span());
         self.expect(Tok::Mod)?;
         let name = self.binder()?;
-        if let Some(lib) = ["core", "alloc"].iter().find(|&&l| name.name == l) {
+        if let Some((lib, ..)) = crate::load::LIBRARIES
+            .iter()
+            .find(|(l, ..)| name.name == *l)
+        {
             return Err(Error::syntax(
                 name.span,
                 format!("a module can't be called `{lib}`: that's the name of the {lib} library"),

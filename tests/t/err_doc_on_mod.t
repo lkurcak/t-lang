@@ -5,7 +5,9 @@ mod shapes {
     pub fn one() -> i64 { 1 }
 }
 
-fn main() {
-    print(shapes::one());
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&shapes::one())?;
+    Result::Ok(())
 }
 // error: a module's doc comment goes inside it, as `//!` lines at the start

@@ -3,9 +3,11 @@
 // `Option<fn() with panic>`.
 fn nothing() {}
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let f: Option<fn()> = Option::Some(nothing);
     let g: Option<fn() with panic> = f;
-    print_bool(g.is_some());
+    out.line(&g.is_some())?;
+    Result::Ok(())
 }
 // error: expected `Option<fn() -> () with panic>`, found `Option<fn() -> ()>`

@@ -21,11 +21,13 @@ fn call<effect e, F: Fn(i64) -> i64 with e + Copy>(f: F) -> i64 with e {
     twice(0)
 }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let fs = same(make());
-    print(first(fs)(1));                // expect: 2
-    print(unpack(Fs { f: |x| x * 10, n: 0 })(2)); // expect: 20
-    print(n(3) + fs.n);                 // expect: 4
+    out.line(&first(fs)(1))?;                // expect: 2
+    out.line(&unpack(Fs { f: |x| x * 10, n: 0 })(2))?; // expect: 20
+    out.line(&(n(3) + fs.n))?;                 // expect: 4
     let k = 7;
-    print(call(|x| x + k));             // expect: 14
+    out.line(&call(|x| x + k))?;             // expect: 14
+    Result::Ok(())
 }

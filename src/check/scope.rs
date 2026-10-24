@@ -59,7 +59,6 @@ pub(super) enum Binding {
     /// The local at this index in `Checker::locals`.
     Local(usize),
     Fn(FnId),
-    Builtin(&'static str),
 }
 
 /// A symbol for a function called `name` nested in the one with symbol
@@ -197,7 +196,7 @@ pub(super) fn declared_in(symbol: &str) -> String {
 
 impl Checker {
     /// What `name` refers to here, if anything: the innermost local or
-    /// function by that name, or else one of its module's, or a built-in.
+    /// function by that name, or else one of its module's.
     pub(super) fn binding(&self, name: &str) -> Option<Binding> {
         let local = self.locals.iter().rposition(|l| l.name == name);
         let func = self.scopes.iter().rev().find_map(|s| {
@@ -211,10 +210,7 @@ impl Checker {
             (Some(i), Some((at, id))) if at > i => Some(Binding::Fn(id)),
             (Some(i), _) => Some(Binding::Local(i)),
             (None, Some((_, id))) => Some(Binding::Fn(id)),
-            (None, None) => super::BUILTINS
-                .iter()
-                .find(|&&b| b == name)
-                .map(|&b| Binding::Builtin(b)),
+            (None, None) => None,
         }
     }
 
@@ -315,6 +311,7 @@ pub(super) struct Outer {
     diverging: Vec<crate::types::Type>,
     effect_sites: Vec<super::effects::Site>,
     unwraps: Vec<(super::lints::Unwrap, crate::types::Type)>,
+    dropped: Vec<(Span, crate::types::Type)>,
     in_trait_impl: bool,
     withins: Vec<super::effects::Within>,
     unsafe_blocks: Vec<Span>,
@@ -351,6 +348,7 @@ impl Checker {
             diverging: std::mem::take(&mut self.diverging),
             effect_sites: std::mem::take(&mut self.effect_sites),
             unwraps: std::mem::take(&mut self.unwraps),
+            dropped: std::mem::take(&mut self.dropped),
             in_trait_impl: std::mem::take(&mut self.in_trait_impl),
             withins: std::mem::take(&mut self.withins),
             unsafe_blocks: std::mem::take(&mut self.unsafe_blocks),
@@ -377,6 +375,7 @@ impl Checker {
         self.diverging = outer.diverging;
         self.effect_sites = outer.effect_sites;
         self.unwraps = outer.unwraps;
+        self.dropped = outer.dropped;
         self.in_trait_impl = outer.in_trait_impl;
         self.withins = outer.withins;
         self.unsafe_blocks = outer.unsafe_blocks;

@@ -11,7 +11,7 @@ fn main() with alloc {
     }
     // SAFETY: slot 0 holds a reference.
     let r = unsafe { b.read(0) };
-    print(*r);
+    let _v = *r;
     // SAFETY: every slot is uninitialised.
     unsafe { b.free() };
 }

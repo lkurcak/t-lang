@@ -6,7 +6,9 @@ fn wrap<T>(x: T) -> T {
     x
 }
 
-fn main() {
-    print(wrap(1));
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&wrap(1))?;
+    Result::Ok(())
 }
 // error: can't use type parameter `T` of the enclosing function in a local `struct`; declare it on this one too, as in `struct Wrap<T>`

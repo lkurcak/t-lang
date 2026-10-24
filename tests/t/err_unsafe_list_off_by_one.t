@@ -16,17 +16,23 @@ impl Bad {
     }
 }
 
-fn main() with {alloc, panic} {
+fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+    let mut out = os.stdout;
     let mut b = Bad { buf: RawBuf::new(4), len: 0 };
     // SAFETY: slot 0 is uninitialised.
     unsafe { b.buf.write(0, 1) };
     b.len = 1;
-    print(*b.get(0).unwrap()); // expect: 1
-    print(*b.get(1).unwrap());
+    let w = show(&mut out, &b);
     // SAFETY: slot 0 holds the 1; then every slot is uninitialised.
     unsafe {
         b.buf.read(0);
         b.buf.free();
     }
+    w
+}
+
+fn show(out: &mut std::io::Stdout, b: &Bad) -> Result<(), std::io::Error> with panic {
+    out.line(b.get(0).unwrap())?; // expect: 1
+    out.line(b.get(1).unwrap())
 }
 // error: unsafe code broke its obligation: `RawBuf::slice` of slots 1..2, but slot 1 is uninitialised

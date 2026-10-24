@@ -8,8 +8,10 @@ fn close(fd: Fd) -> i64 {
     n
 }
 
-fn main() {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
     let f = |_fd: Fd| 1i64;
-    print(f(open(1)));
+    out.line(&f(open(1)))?;
+    Result::Ok(())
 }
 // error: `_fd` is never used up

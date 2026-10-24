@@ -17,12 +17,14 @@ impl<U, F: Fn() -> U> Get for Thunk<F> {
 
 fn twice<G: Get<Out = i64>>(g: &G) -> i64 with panic { g.get() + g.get() }
 
-fn main() with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
     let t = Thunk { f: || 21 };
-    print(twice(&t));                   // expect: 42
+    out.line(&twice(&t))?;                   // expect: 42
     let b = Thunk { f: || Option::Some(7i64) };
     match b.get() {
-        Option::Some(n) => print(n),    // expect: 7
+        Option::Some(n) => out.line(&n)?,    // expect: 7
         Option::None => {},
     }
+    Result::Ok(())
 }

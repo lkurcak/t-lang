@@ -1,21 +1,23 @@
 // Code after something that never finishes never runs. Like rustc, T warns
 // about the first statement of it in each block.
 
+fn note(_x: i64) {}
+
 fn after_return() -> i64 {
     return 1;
-    print(2i64);
+    note(2);
     3
 }
 
 fn after_both_branches(c: bool) {
     if c { return; } else { return; }
-    print(1i64);
+    note(1);
 }
 
 fn after_break() {
     while true {
         break;
-        print(1i64);
+        note(1);
     }
 }
 
@@ -38,13 +40,15 @@ fn allowed() -> i64 {
     2
 }
 
-fn main() {
-    print(after_return());          // expect: 1
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&after_return())?;          // expect: 1
     after_both_branches(true);
     after_break();
-    print(only_one_branch(false));  // expect: 2
-    print(*dead_borrow(&3, &4));    // expect: 3
-    print(allowed());               // expect: 1
+    out.line(&only_one_branch(false))?;  // expect: 2
+    out.line(&(*dead_borrow(&3, &4)))?;    // expect: 3
+    out.line(&allowed())?;               // expect: 1
+    Result::Ok(())
 }
 // warning: unreachable code: what comes before it never finishes, so this never runs
 // warning: unreachable code

@@ -18,9 +18,11 @@ impl Iterator for Ones {
 
 fn first<I: Iterator<Item = i64> + Discard>(mut it: I) -> Option<i64> with I::e { it.next() }
 
-fn main() with panic {
-    print(first(Ones { left: 1 }).unwrap()); // expect: 1
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&first(Ones { left: 1 }).unwrap())?; // expect: 1
     // A range's `next` can't panic, so neither can this call.
-    print_bool(first(0..3).is_some()); // expect: true
-    print((0..4).map(|x| x * 2i64).fold(0, |a, b| a + b)); // expect: 12
+    out.line(&first(0..3).is_some())?; // expect: true
+    out.line(&(0..4).map(|x| x * 2i64).fold(0, |a, b| a + b))?; // expect: 12
+    Result::Ok(())
 }

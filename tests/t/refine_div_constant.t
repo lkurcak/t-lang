@@ -10,8 +10,10 @@ fn half_neg(a: { v: i64 | v == -1 }) -> { r: i64 | r == 0 } { a / 2 }
 
 fn digit(n: u64) -> u8 { (n % 10) as u8 }
 
-fn main() {
-    print(mean(200, 255));  // expect: 227
-    print(half_neg(-1));    // expect: 0
-    print(digit(1234));     // expect: 4
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&mean(200, 255))?;  // expect: 227
+    out.line(&half_neg(-1))?;    // expect: 0
+    out.line(&digit(1234))?;     // expect: 4
+    Result::Ok(())
 }

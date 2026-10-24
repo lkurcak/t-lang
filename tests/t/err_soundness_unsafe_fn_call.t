@@ -8,7 +8,7 @@ fn main() with {alloc, panic} {
     let mut b: RawBuf<i64> = RawBuf::new(1);
     // SAFETY: slot 0 is uninitialised, and there is one.
     unsafe { b.write(0, 7) };
-    print(first(&b));
+    let _v = first(&b);
     // SAFETY: slot 0 holds the 7, and is the only slot.
     unsafe {
         b.read(0);

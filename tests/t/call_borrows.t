@@ -24,33 +24,35 @@ struct Holder { b: Box<Stack> }
 
 fn make() -> Stack { Stack { top: 0, size: 7 } }
 
-fn main() with {panic, alloc} {
+fn main(os: std::Os) -> Result<(), std::io::Error> with {panic, alloc} {
+    let mut stdout = os.stdout;
     let mut v = Stack { top: 0, size: 0 };
     v.push(v.len());
     v.push(v.len() + v.top);
-    print(v.top);            // expect: 1
-    print(v.len());          // expect: 2
+    stdout.line(&v.top)?;            // expect: 1
+    stdout.line(&v.len())?;          // expect: 2
     // Through a `&mut`, too.
     let r = &mut v;
     r.push(r.len() * 10);
-    print(v.top);            // expect: 20
+    stdout.line(&v.top)?;            // expect: 20
     // A `&mut` written as an argument waits too.
     push(&mut v, v.len());
-    print(v.top);            // expect: 3
+    stdout.line(&v.top)?;            // expect: 3
     // The arguments may even change what's borrowed.
     v.push({
         v.clear();
         v.size = 5;
         1
     });
-    print(v.len());          // expect: 6
+    stdout.line(&v.len())?;          // expect: 6
     // The box is borrowed after it's replaced, so it's the new one.
     let mut h = Holder { b: Box::new(Stack { top: 0, size: 0 }) };
     h.b.push({
         h.b = Box::new(Stack { top: 0, size: 10 });
         4
     });
-    print(h.b.size);         // expect: 11
+    stdout.line(&h.b.size)?;         // expect: 11
     // What isn't a place is worked out in order.
-    print(make().len());     // expect: 7
+    stdout.line(&make().len())?;     // expect: 7
+    Result::Ok(())
 }

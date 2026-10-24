@@ -33,9 +33,11 @@ impl Container for Flags {
 
 fn get<C: Container>(c: &C) -> C::Item { c.first() }
 
-fn main() {
-    print(get(&Ints { x: 1, y: 2 }));     // expect: 1
-    print_bool(get(&Flags { on: true })); // expect: true
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&get(&Ints { x: 1, y: 2 }))?; // expect: 1
+    out.line(&get(&Flags { on: true }))?;  // expect: true
+    Result::Ok(())
 }
 ```
 
@@ -117,9 +119,11 @@ fn ignore<M: Make<Out: Discard>>(m: &M) -> i64 with panic {
     0
 }
 
-fn main() with panic {
-    print(plus_one(&Two { n: 3 })); // expect: 7
-    print(ignore(&Two { n: 3 }));   // expect: 0
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    out.line(&plus_one(&Two { n: 3 }))?; // expect: 7
+    out.line(&ignore(&Two { n: 3 }))?;   // expect: 0
+    Result::Ok(())
 }
 ```
 
@@ -201,7 +205,7 @@ fn main() {
         let short = 2;
         r = get(Pair { a: &long, b: &short });
     }
-    print(*r);
+    let _v = *r;
 }
 // error: `short` doesn't live long enough
 ```
@@ -279,7 +283,7 @@ fn mk<T: Tr>(x: T::Out) -> T::Out { x }
 
 fn main() {
     let n: i64 = mk(1);
-    print(n);
+    let _v = n;
 }
 // error: cannot infer `T` for this use of `mk`
 ```

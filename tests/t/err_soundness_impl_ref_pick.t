@@ -13,13 +13,15 @@ impl<'a> Pick for &'a i64 {
 
 fn choose<T: Pick>(a: T, b: T) -> T { a.pick(b) }
 
-fn main() with alloc {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
+    let mut out = os.stdout;
     let long = Box::new(1i64);
     let r;
     {
         let short = Box::new(2);
         r = choose(&*long, &*short);
     }
-    print(*r);
+    out.line(&(*r))?;
+    Result::Ok(())
 }
 // error: `short` doesn't live long enough
