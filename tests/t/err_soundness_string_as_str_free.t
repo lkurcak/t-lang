@@ -1,7 +1,7 @@
 // Nor be freed.
 use alloc::string::String;
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let s = String::from("a");
     let r = s.as_str();
     s.free();

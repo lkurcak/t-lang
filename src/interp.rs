@@ -670,6 +670,14 @@ impl Interp<'_, '_> {
         self.panic(span, message)
     }
 
+    /// Running out of memory, which aborts as a panic does, but is part of
+    /// `alloc`, not `panic`: every function being run must say `alloc`
+    /// (see docs/16-out-of-memory.md).
+    fn out_of_memory(&mut self, span: Span, message: impl Into<String>) -> Error {
+        self.effect("alloc");
+        self.panic(span, message)
+    }
+
     /// Checks that every function being run says it may have effect
     /// `name`, as one that's happening. Closures are checked through the
     /// functions that call them, which have their effects.
@@ -922,6 +930,7 @@ impl Interp<'_, '_> {
             "core::slice::empty" | "core::slice::empty_mut" => {
                 Ok(Value::Ref(self.nowhere.slice(0, 0)))
             }
+            "alloc::raw::out_of_memory" => Err(self.out_of_memory(span, "out of memory")),
             // Aborts, saying why.
             "core::panic::panic" => {
                 let [why] = <[Value; 1]>::try_from(args).unwrap_or_else(|_| unsound("panic arity"));
@@ -1096,7 +1105,7 @@ impl Interp<'_, '_> {
                 let cap = int(arg());
                 self.effect("alloc");
                 if cap > MAX_SLOTS {
-                    return Err(self.panics(span, format!("out of memory for {cap} slots")));
+                    return Err(self.out_of_memory(span, format!("out of memory for {cap} slots")));
                 }
                 let slots = vec![Value::Moved; usize::try_from(cap).unwrap_or(0)];
                 Ok(Value::RawBuf(self.memory.alloc(Value::Slots(slots), true)))
@@ -1113,15 +1122,13 @@ impl Interp<'_, '_> {
             }
             "grow" => {
                 let this = arg();
-                let (q, new_cap) = (buf(self, &this), int(arg()));
-                let cap = slots(self, &q);
+                let (q, extra) = (buf(self, &this), int(arg()));
+                // Both are `usize`s, so their sum fits in an `i128`.
+                let new_cap = slots(self, &q) as i128 + extra;
                 self.effect("alloc");
-                if new_cap < cap as i128 {
-                    let message = format!("`grow` to {new_cap} slots, but it has {cap}");
-                    return Err(self.panics(span, message));
-                }
                 if new_cap > MAX_SLOTS {
-                    return Err(self.panics(span, format!("out of memory for {new_cap} slots")));
+                    let message = format!("out of memory for {new_cap} slots");
+                    return Err(self.out_of_memory(span, message));
                 }
                 // Somewhere new, so that what pointed into the old slots
                 // dangles.

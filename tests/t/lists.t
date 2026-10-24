@@ -3,7 +3,7 @@
 #[derive(Discard)]
 enum List { Nil, Cons(i64, Box<List>) }
 
-fn push(l: List, x: i64) -> List with {alloc, panic} { List::Cons(x, Box::new(l)) }
+fn push(l: List, x: i64) -> List with alloc { List::Cons(x, Box::new(l)) }
 
 // `l` is a reference, so `match` looks through it, and binds `x` and
 // `rest` by reference: `rest` is a `&Box<List>`, which is used as the
@@ -43,7 +43,7 @@ fn bump(l: &mut List) with panic {
 }
 
 // Reverses the list by moving each node over, freeing nothing.
-fn reverse(l: List) -> List with {alloc, panic} {
+fn reverse(l: List) -> List with alloc {
     let mut done = List::Nil;
     let mut todo = l;
     let mut more = true;

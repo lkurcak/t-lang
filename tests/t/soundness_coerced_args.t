@@ -5,7 +5,7 @@ fn first(a: &i64, _n: i64) -> i64 { *a }
 
 fn get(r: &i64) -> i64 { *r }
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let one = Box::new(1);
     let two = Box::new(2);
     let mut rb = &one;

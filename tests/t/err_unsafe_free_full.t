@@ -2,7 +2,7 @@
 // may be one that must be used up.
 use alloc::raw::RawBuf;
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let mut b: RawBuf<i64> = RawBuf::new(3);
     // SAFETY: wrong: slot 2 still holds a value at `free`.
     unsafe {

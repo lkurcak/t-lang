@@ -3,7 +3,7 @@
 // block that said it was kept.
 use alloc::raw::RawBuf;
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let mut b: RawBuf<i64> = RawBuf::new(2);
     // SAFETY: wrong: slot 1 was never written.
     unsafe {

@@ -4,7 +4,7 @@
 #[derive(Discard)]
 enum List { Nil, Cons(i64, Box<List>) }
 
-fn push(l: List, x: i64) -> List with {alloc, panic} { List::Cons(x, Box::new(l)) }
+fn push(l: List, x: i64) -> List with alloc { List::Cons(x, Box::new(l)) }
 
 fn sum(l: &List) -> i64 with panic {
     match l {

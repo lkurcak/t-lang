@@ -70,7 +70,7 @@ owner goes away, so does the value, and anything it owns. A `Box<T>` owns
 a `T` on the heap, so freeing the box frees the `T`:
 
 ```rust
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let b = Box::new(5i64); // allocates
     print(*b);              // expect: 5
 }                           // `b` goes away: the box is freed
@@ -85,7 +85,7 @@ using a value that isn't `Copy` *moves* it: the new place owns it, and the
 old one can't be used again until it gets a new value.
 
 ```rust,error
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let b = Box::new(1i64);
     let c = b; // moved: `c` owns the box now
     print(*c);
@@ -545,8 +545,8 @@ for as long as `r` (`err_borrow_temp.t`).
   the move check, which already knows what has no value. A pattern would
   need each of its variables assigned on its own (exercise 5).
 - **`Box` is built in, and allocation can't fail.** In step 7, allocating is
-  an effect, and running out of memory a panic that a function's type says
-  it may have.
+  an effect that a function's type says it may have, and since step 16
+  running out of memory is part of it (docs/16-out-of-memory.md).
 
 ## Deliberately missing (coming later)
 

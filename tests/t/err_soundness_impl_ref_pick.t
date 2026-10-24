@@ -10,7 +10,7 @@ impl<'a> Pick for &'a i64 {
 
 fn choose<T: Pick>(a: T, b: T) -> T { a.pick(b) }
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let long = Box::new(1i64);
     let r;
     {

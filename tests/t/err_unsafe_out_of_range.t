@@ -1,7 +1,7 @@
 // Slot `cap()` is one past the end.
 use alloc::raw::RawBuf;
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let mut b: RawBuf<i64> = RawBuf::new(2);
     // SAFETY: wrong: there are only slots 0 and 1.
     unsafe {

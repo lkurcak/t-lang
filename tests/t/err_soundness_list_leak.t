@@ -1,7 +1,7 @@
 // A list isn't `Discard`: dropping it would leak its buffer.
 use alloc::list::List;
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let mut l: List<i64> = List::new();
     l.push(1);
 }

@@ -19,7 +19,7 @@ fn early(c: bool) -> i64 with {alloc, panic} {
 }
 
 // The box is moved on the path that returns, and still there on the other.
-fn moved_then_return(c: bool) -> i64 with {alloc, panic} {
+fn moved_then_return(c: bool) -> i64 with alloc {
     let b = Box::new(3);
     if c {
         let n = consume(b);

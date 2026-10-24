@@ -4,7 +4,7 @@ use alloc::raw::RawBuf;
 
 fn second(b: &RawBuf<i64>) -> usize with unsafe { b.slice(1, 2).len() }
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let mut b: RawBuf<i64> = RawBuf::new(2);
     // SAFETY: wrong: `second` needs slot 1 written.
     unsafe {

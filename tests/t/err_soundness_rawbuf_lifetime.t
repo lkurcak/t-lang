@@ -2,7 +2,7 @@
 // to, even though its type has no fields saying so.
 use alloc::raw::RawBuf;
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let mut b: RawBuf<&i64> = RawBuf::new(1);
     {
         let n = 5;

@@ -13,7 +13,7 @@ mod fs {
     }
 }
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let b = Box::new(fs::open(1));
     let fs::Fd { id, .. } = *b;
     print(id.n);

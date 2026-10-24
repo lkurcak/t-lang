@@ -2,7 +2,7 @@
 // not UTF-8.
 use alloc::string::String;
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let s = String::from("a");
     match s.as_bytes().get_mut(0) {
         Option::Some(b) => *b = 0xFF,

@@ -2,7 +2,7 @@
 // `// SAFETY:` comment just before it says why.
 use alloc::raw::RawBuf;
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let b: RawBuf<i64> = RawBuf::new(1);
     unsafe { b.free() };
 }

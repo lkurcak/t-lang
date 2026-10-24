@@ -227,7 +227,7 @@ made, and the interpreter does check it:
 ```rust,error
 use alloc::raw::RawBuf;
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let mut b: RawBuf<i64> = RawBuf::new(2);
     // SAFETY: slot 0 is uninitialised.
     unsafe { b.write(0, 1) };
@@ -253,7 +253,7 @@ may move the values, can't run while it lives:
 ```rust,error
 use alloc::list::List;
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let mut l: List<i64> = List::new();
     l.push(1);
     let s = l.as_slice();

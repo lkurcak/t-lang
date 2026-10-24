@@ -528,8 +528,9 @@ impl Checker {
             }
             _ => return Err(generics::arity_error("`Box`", 1, targs.len(), e.span)),
         };
-        // It allocates, and aborts if memory has run out.
-        let effects = Type::effects([Type::Alloc, Type::Panic]);
+        // It allocates, and aborts if memory has run out, which is `alloc`
+        // too (see docs/16-out-of-memory.md).
+        let effects = Type::effects([Type::Alloc]);
         self.effect(e.span, "`Box::new`", effects);
         Ok(Type::Box(Box::new(t)))
     }

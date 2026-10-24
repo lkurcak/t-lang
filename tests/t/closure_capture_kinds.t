@@ -14,7 +14,7 @@ fn call<T: Copy>(x: T, k: fn(T) -> i64) -> i64 {
 }
 fn deref(r: &i64) -> i64 { *r }
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let b = Box::new(1i64);
     let get = || *b;
     print(get());                   // expect: 1

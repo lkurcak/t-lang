@@ -9,7 +9,7 @@ fn show(o: Option<char>) {
     }
 }
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let mut s = String::from("a€😀");
     show(s.pop());            // expect: 128512
     print_str(s.as_str());    // expect: a€

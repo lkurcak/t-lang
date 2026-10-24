@@ -1656,7 +1656,7 @@ fn hovers_the_core_library_but_goes_nowhere_in_it() {
 fn hovers_the_alloc_library_but_goes_nowhere_in_it() {
     let (child, mut c) = start();
     let uri = "file:///tmp/alloc.t";
-    let src = "use alloc::raw::RawBuf;\n\nfn main() with {alloc, panic} {\n    let b: RawBuf<i64> = RawBuf::new(1);\n    unsafe { b.free() };\n}\n";
+    let src = "use alloc::raw::RawBuf;\n\nfn main() with alloc {\n    let b: RawBuf<i64> = RawBuf::new(1);\n    unsafe { b.free() };\n}\n";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
             "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}

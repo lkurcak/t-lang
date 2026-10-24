@@ -8,13 +8,13 @@ struct Stack {
 }
 
 impl Stack {
-    fn new() -> Stack with {alloc, panic} {
+    fn new() -> Stack with alloc {
         Stack { buf: RawBuf::new(0), len: 0 }
     }
 
     fn push(&mut self, v: i64) with {alloc, panic} {
         if self.len == self.buf.cap() {
-            self.buf.grow(self.len * 2 + 1);
+            self.buf.grow(self.len + 1);
         }
         // SAFETY: `len < cap()`, and slot `len` is past those in use.
         unsafe { self.buf.write(self.len, v) };

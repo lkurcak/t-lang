@@ -3,7 +3,7 @@
 #[derive(Discard, Copy)]
 struct R<'a> { r: &'a i64 }
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let f;
     {
         let n = Box::new(5);

@@ -2,7 +2,7 @@
 // it, nor `read` take a value out from under it.
 use alloc::raw::RawBuf;
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let mut b: RawBuf<i64> = RawBuf::new(1);
     // SAFETY: slot 0 is uninitialised, then holds 5, which is read out
     // before the buffer is freed.

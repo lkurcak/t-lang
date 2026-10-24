@@ -1,7 +1,7 @@
 // What a `char` can do.
 use alloc::list::List;
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     match char::from_u32(0x41) {
         Option::Some(c) => print(c as u32), // expect: 65
         Option::None => {},

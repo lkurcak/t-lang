@@ -1,7 +1,7 @@
 // Strings compare by their characters, as `str`s do.
 use alloc::string::String;
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let a = String::from("abc");
     let b = String::from("abd");
     let mut c = String::from("ab");

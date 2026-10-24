@@ -1,5 +1,5 @@
 // Giving `b` a new value frees the old box, which `r` points into.
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let mut b = Box::new(1i64);
     let r = &*b;
     b = Box::new(2);

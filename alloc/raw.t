@@ -1,5 +1,13 @@
 // Raw memory: a buffer of slots for values, each there or not.
 
+/// Aborts the program, as allocating does when there's no memory left.
+/// It's for what can't go on for lack of memory without allocating: a
+/// list whose length can't count one more value, say. Running out of
+/// memory is part of `alloc`, not `panic`, which is for bugs (see
+/// docs/16-out-of-memory.md).
+#[intrinsic]
+pub fn out_of_memory() -> ! with alloc;
+
 /// A buffer on the heap of `cap()` slots for values of type `T`, each
 /// *initialised* (holding a value) or not. It's made with every slot
 /// uninitialised.
@@ -16,9 +24,10 @@
 pub struct RawBuf<T> {}
 
 impl<T> RawBuf<T> {
-    /// A buffer of `cap` uninitialised slots.
+    /// A buffer of `cap` uninitialised slots. Like everything that
+    /// allocates, it aborts if there isn't the memory for them.
     #[intrinsic]
-    pub fn new(cap: usize) -> RawBuf<T> with {alloc, panic};
+    pub fn new(cap: usize) -> RawBuf<T> with alloc;
 
     /// A buffer of no slots. It allocates nothing, so it can't fail, and
     /// `grow` gives it some.
@@ -29,11 +38,12 @@ impl<T> RawBuf<T> {
     #[intrinsic]
     pub fn cap(&self) -> usize;
 
-    /// Gives it `new_cap` slots, keeping what's in the first `cap()`. The
-    /// slots after them are uninitialised. It panics if `new_cap` is less
-    /// than `cap()`.
+    /// Gives it `extra` more slots, keeping what's in the first `cap()`.
+    /// The slots after them are uninitialised. More slots than a `usize`
+    /// can count are more memory than there is, so it aborts then, as it
+    /// does when there isn't the memory.
     #[intrinsic]
-    pub fn grow(&mut self, new_cap: usize) with {alloc, panic};
+    pub fn grow(&mut self, extra: usize) with alloc;
 
     /// Puts `v` in slot `i`.
     ///

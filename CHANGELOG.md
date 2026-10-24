@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+Step 16: running out of memory is `alloc`. See
+[docs/16-out-of-memory.md](docs/16-out-of-memory.md).
+
+### Changed
+
+- Running out of memory is part of the `alloc` effect, not `panic`, which
+  now means a bug. `Box::new`, `RawBuf::new`, `RawBuf::grow`,
+  `List::with_capacity`, `List::push`, `String::with_capacity`,
+  `String::from`, `String::push` and `String::push_str` say `with alloc`,
+  not `with {alloc, panic}`. A program that said `panic` only for them
+  gets an `unused_effects` warning, whose fix takes it out.
+- `RawBuf::grow` takes how many slots to add, not the new size, so it
+  can't shrink the buffer and doesn't panic. More slots than a `usize`
+  can count is running out of memory.
+- Closures' symbols, as `t mono` shows them, have other numbers.
+
+### Added
+
+- `alloc::raw::out_of_memory()`, which aborts as running out of memory
+  does, `with alloc`: for a collection that can't count one more value.
 ## 0.27.0 (2026-10-24)
 
 Step 15: `?`. See [docs/15-try.md](docs/15-try.md).

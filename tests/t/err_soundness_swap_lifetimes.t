@@ -3,7 +3,7 @@
 
 use core::mem::swap;
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let long = Box::new(1i64);
     let mut a = &*long;
     {

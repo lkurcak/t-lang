@@ -2,7 +2,7 @@
 // move its bytes, while the `&str` lives.
 use alloc::string::String;
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let mut s = String::from("a");
     let r = s.as_str();
     s.push_str("bcdefgh");

@@ -35,7 +35,7 @@ struct Holder { s: Stream }
 #[derive(Discard)]
 struct Quiet { next: Box<Quiet> }
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let l = List::Cons(1, Box::new(List::Nil));
     match l {
         List::Nil => print(0i64),

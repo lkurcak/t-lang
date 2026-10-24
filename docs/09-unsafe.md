@@ -61,7 +61,7 @@ a slice of it can't outlive it, nor a `grow` that moves the slots.
 ```rust,error
 use alloc::raw::RawBuf;
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let mut b: RawBuf<i64> = RawBuf::new(1);
     // SAFETY: slot 0 is uninitialised, then holds the 5.
     let s = unsafe {
@@ -85,8 +85,10 @@ used up, by `free`: its memory is never leaked, nor freed twice, and as
 included. Nor is it `Copy`. It's an *intrinsic* type: only its own methods
 make one or look inside, so there's no `RawBuf {}` literal or pattern, and
 its type parameter is covariant, as `Box<T>`'s is, though it has no fields
-to show that. `cap()` and `grow` are safe: `grow` panics if it would
-shrink the buffer, which is cheap to check, and so isn't an obligation.
+to show that. `cap()` and `grow` are safe: `grow(extra)` adds `extra`
+slots, so it can't shrink the buffer, and has no obligation. (Until step
+16, it took the new size, and panicked if that was smaller:
+docs/16-out-of-memory.md.)
 
 It's the only thing in the new `alloc` library: a package of its own, as
 `core` is (docs/06e-core.md), which uses `core`, and which nothing is in
@@ -174,7 +176,7 @@ first that's broken, blaming the innermost block running:
 ```rust,error
 use alloc::raw::RawBuf;
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let mut b: RawBuf<i64> = RawBuf::new(2);
     // SAFETY: wrong: slot 1 was never written.
     unsafe {
@@ -264,9 +266,10 @@ arguments', so a buffer of `&'a i64` can't outlive `'a`.
    wrong.
 4. Why would an `unsafe` block that took away an effect parameter's
    `unsafe` be unsound? Write the generic function and the caller.
-5. `grow` panics rather than having an obligation, and an index's lower
-   bound is a refinement. Find another of `RawBuf`'s obligations that
-   could be a check instead, and say what it would cost a `List`.
+5. `grow` takes how many slots to add rather than having an obligation,
+   and an index's lower bound is a refinement. Find another of `RawBuf`'s
+   obligations that could be a check instead, and say what it would cost
+   a `List`.
 
 ## Reading
 

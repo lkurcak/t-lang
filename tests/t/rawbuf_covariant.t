@@ -5,7 +5,7 @@ use alloc::raw::RawBuf;
 
 fn shorten<'a>(b: RawBuf<&'static i64>) -> RawBuf<&'a i64> { b }
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let n = 7;
     let mut b: RawBuf<&i64> = shorten(RawBuf::new(1));
     // SAFETY: slot 0 is uninitialised; then it holds `&n`, which is read

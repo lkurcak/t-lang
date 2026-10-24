@@ -1,8 +1,9 @@
 // Lists: dense, resizable arrays.
 
+use core::num::greatest;
 use core::slice::{Iter, IterMut};
 
-use crate::raw::RawBuf;
+use crate::raw::{RawBuf, out_of_memory};
 
 /// A list of `T`s, one after another in a buffer on the heap, which grows
 /// as values are pushed. `get` sees a value by its index, from `0` up to,
@@ -23,7 +24,7 @@ impl<T> List<T> {
     pub fn new() -> List<T> { List { buf: RawBuf::empty(), len: 0 } }
 
     /// An empty list with room for `cap` values before it grows.
-    pub fn with_capacity(cap: usize) -> List<T> with {alloc, panic} {
+    pub fn with_capacity(cap: usize) -> List<T> with alloc {
         List { buf: RawBuf::new(cap), len: 0 }
     }
 
@@ -38,14 +39,14 @@ impl<T> List<T> {
 
     /// Puts `v` at the end. When there's no room, it doubles the buffer
     /// first, which moves its values somewhere new.
-    pub fn push(&mut self, v: T) with {alloc, panic} {
+    pub fn push(&mut self, v: T) with alloc {
         let cap = self.buf.cap();
         if self.len == cap {
-            if cap == 0 {
-                self.buf.grow(4);
-            } else {
-                self.buf.grow(cap * 2);
-            }
+            self.buf.grow(if cap == 0 { 4 } else { cap });
+        }
+        // A list as long as a `usize` can count can't count one more value.
+        if self.len == greatest() {
+            out_of_memory();
         }
         // SAFETY: slot `len` is past those that hold values, so it holds
         // none, and it's less than `cap()`, which is more than `len` now.

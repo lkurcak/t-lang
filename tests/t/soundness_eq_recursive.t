@@ -17,7 +17,7 @@ struct P<A, B> { a: A, b: Box<B> }
 
 fn same<T: Eq + Discard>(x: T, y: T) -> bool { &&x == &&y }
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let a = List::Cons(Digit { n: 1 }, Box::new(List::Cons(Digit { n: 2 }, Box::new(List::Nil))));
     let b = List::Cons(Digit { n: 11 }, Box::new(List::Cons(Digit { n: 22 }, Box::new(List::Nil))));
     print_bool(a == b); // expect: true

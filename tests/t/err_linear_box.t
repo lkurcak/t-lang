@@ -8,7 +8,7 @@ fn close(fd: Fd) -> i64 {
     n
 }
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let _b = Box::new(open(1));
 }
 // error: `_b` is never used up, and its type, `Box<Fd>`, isn't `Discard`; to let it be thrown away, add `#[derive(Discard)]` to `Fd`

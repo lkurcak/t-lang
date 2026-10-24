@@ -5,7 +5,7 @@ use core::mem::swap;
 #[derive(Discard)]
 enum List { Cons(i64, Box<List>), Nil }
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let mut l = List::Cons(1, Box::new(List::Cons(2, Box::new(List::Nil))));
     match &mut l {
         List::Cons(_, t) => swap(&mut l, &mut **t),

@@ -1,7 +1,7 @@
 // A slice must be of slots that hold values.
 use alloc::raw::RawBuf;
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let mut b: RawBuf<i64> = RawBuf::new(2);
     // SAFETY: slot 0 is uninitialised.
     unsafe { b.write(0, 1) };

@@ -1,7 +1,7 @@
 #[derive(Discard)]
 struct Owner { a: Box<i64>, b: Box<i64> }
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let o = Owner { a: Box::new(1), b: Box::new(2) };
     let a = o.a;
     print(*a);

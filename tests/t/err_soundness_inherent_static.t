@@ -7,7 +7,7 @@ impl S<'static> {
     fn get(&self) -> &'static i64 { self.r }
 }
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let r;
     {
         let n = Box::new(5);

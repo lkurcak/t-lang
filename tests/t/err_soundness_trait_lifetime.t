@@ -11,7 +11,7 @@ impl<'a> Get for S<'a> {
     fn get(&self) -> &i64 { self.r }
 }
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let out;
     {
         let n = Box::new(3);

@@ -2,7 +2,7 @@
 // given back, by `free`.
 use alloc::raw::RawBuf;
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let _b: RawBuf<i64> = RawBuf::new(4);
 }
 // error: `_b` is never used up, and its type, `RawBuf<i64>`, isn't `Discard`

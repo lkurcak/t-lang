@@ -1,7 +1,7 @@
 // A slice must be of the buffer's slots: `hi <= cap()`, and `lo <= hi`.
 use alloc::raw::RawBuf;
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let b: RawBuf<i64> = RawBuf::new(1);
     // SAFETY: wrong: there's no slot 1.
     let s = unsafe { b.slice(1, 2) };

@@ -1,6 +1,6 @@
 // `continue` goes round again, to where the box was moved last time.
 fn consume(b: Box<i64>) -> i64 { *b }
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let b = Box::new(1);
     let mut i: i64 = 0;
     while i < 3 {

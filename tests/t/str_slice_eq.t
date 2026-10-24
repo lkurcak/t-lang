@@ -1,7 +1,7 @@
 // Slices compare value by value, when their values do.
 use alloc::list::List;
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let mut a: List<i64> = List::new();
     a.push(1);
     a.push(2);

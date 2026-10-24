@@ -2,7 +2,7 @@
 // `slice` borrows the buffer, and `grow` needs it `&mut`.
 use alloc::raw::RawBuf;
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let mut b: RawBuf<i64> = RawBuf::new(1);
     // SAFETY: slot 0 is uninitialised, then holds 5.
     let r = unsafe {

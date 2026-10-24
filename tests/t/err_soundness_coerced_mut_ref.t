@@ -2,7 +2,7 @@
 // points to, so it can't outlive that.
 fn id<'y>(r: &'y i64) -> &'y i64 { r }
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let out;
     let mut x: &i64;
     {

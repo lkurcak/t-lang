@@ -25,12 +25,12 @@ impl String {
     pub fn new() -> String { String { bytes: List::new() } }
 
     /// An empty string with room for `cap` bytes before it grows.
-    pub fn with_capacity(cap: usize) -> String with {alloc, panic} {
+    pub fn with_capacity(cap: usize) -> String with alloc {
         String { bytes: List::with_capacity(cap) }
     }
 
     /// A string of the characters of `s`.
-    pub fn from(s: &str) -> String with {alloc, panic} {
+    pub fn from(s: &str) -> String with alloc {
         let mut out = String::with_capacity(s.len());
         out.push_str(s);
         out
@@ -73,7 +73,7 @@ impl String {
     ///
     /// It pushes a zero byte for each byte `c` takes, and then writes `c`
     /// over them: zeros are UTF-8, so the invariant holds all along.
-    pub fn push(&mut self, c: char) with {alloc, panic} {
+    pub fn push(&mut self, c: char) with alloc {
         let at = self.bytes.len();
         let n = c.len_utf8();
         let mut i = 0usize;
@@ -91,7 +91,7 @@ impl String {
 
     /// Puts the characters of `s` at the end. Its bytes are UTF-8, so
     /// they're UTF-8 after the string's.
-    pub fn push_str(&mut self, s: &str) with {alloc, panic} {
+    pub fn push_str(&mut self, s: &str) with alloc {
         for b in s.as_bytes().iter() {
             self.bytes.push(*b);
         }

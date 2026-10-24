@@ -4,7 +4,7 @@ use alloc::raw::RawBuf;
 
 fn keep<'a>(b: &mut RawBuf<&'a i64>, r: &'a i64) with unsafe { b.write(0, r) }
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let mut b: RawBuf<&'static i64> = RawBuf::new(1);
     {
         let n = 5;

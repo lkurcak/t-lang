@@ -3,7 +3,7 @@
 use alloc::list::List;
 use alloc::string::String;
 
-fn bytes(b: &[u8]) -> List<u8> with {alloc, panic} {
+fn bytes(b: &[u8]) -> List<u8> with alloc {
     let mut l = List::new();
     for x in b.iter() {
         l.push(*x);
@@ -11,7 +11,7 @@ fn bytes(b: &[u8]) -> List<u8> with {alloc, panic} {
     l
 }
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     match String::from_utf8(bytes(b"caf\xC3\xA9")) {
         Result::Ok(s) => {
             print_str(s.as_str()); // expect: café

@@ -49,9 +49,10 @@ which do means reading every function they call.
   `%` by a literal other than `0` or `-1`, nor `1 + 2`.
 - **`panic("why")`**, from the core library, whose type is `fn(&str) -> !
   with panic`: it aborts, saying why (docs/13-strings.md).
-- **`Box::new`**, `with {alloc, panic}`: it allocates, and aborts if memory
-  has run out. A box that can fail without aborting, `Box::try_new`, comes
-  with the `alloc` library.
+- **`Box::new`**, `with alloc`: it allocates, and aborts if memory has run
+  out, which is part of `alloc`, not `panic`, since step 16
+  (docs/16-out-of-memory.md). A box that can fail without aborting,
+  `Box::try_new`, comes with fallible allocation.
 - **Calls**, which have what the callee's type says.
 
 `core::num` has arithmetic that can't panic: `checked_add`, `checked_sub`,
@@ -207,8 +208,8 @@ for, which is what coherence needs.
 
 > A function whose effects don't have `panic` never reaches a panic.
 
-Look at the stack when a panic happens, at an operator, `panic` or
-`Box::new`. The function running it has `panic` among its effects, as its
+Look at the stack when a panic happens, at an operator or `panic`. The
+function running it has `panic` among its effects, as its
 body's sites must be among them. Its caller called something whose
 effects have `panic`, at the effect arguments of that call: directly, or
 through a closure, whose effects are its body's and at most its bound's,
@@ -216,7 +217,8 @@ or a function value, whose type gains effects but never loses them, or a
 trait's method, whose impl has at most the trait's. So the caller has
 `panic` too, and so on down. The stack is finite, so that's an induction,
 and it says every function on it has `panic`: none that doesn't can be
-there. `alloc` is the same.
+there. `alloc` is the same, at each allocation, and at running out of
+memory (docs/16-out-of-memory.md).
 
 That it's induction on the stack, not on how long the program runs, is
 why recursion needs nothing more: assuming a recursive call has the
@@ -251,8 +253,10 @@ work out; that's for when there's a backend.
 - **Overflow is a panic, tracked**, rather than wrapping silently. That
   puts `with panic` on most arithmetic, which is honest: it can panic.
   Refinement types (step 8) will prove when it can't.
-- **Running out of memory is a panic**, so a function without `panic`
-  never aborts, but for the stack.
+- **Running out of memory was a panic**, so a function without `panic`
+  never aborted, but for the stack. Since step 16 it's part of `alloc`,
+  and `panic` means a bug: a function with neither never aborts, but for
+  the stack (docs/16-out-of-memory.md).
 - **Bounds are upper bounds, and effect parameters take their least
   solution**, so a call never has more effects than what it's given does.
 - **Lowercase means an effect parameter.** A type parameter named `t` is
@@ -266,7 +270,7 @@ work out; that's for when there's a backend.
 |---|---|---|
 | divergence as an effect, total functions | needs a termination checker | — |
 | `expect`, a message for `panic` | needs strings | 13 ✅ |
-| `Box::try_new` | fallible allocation belongs with `alloc` | `alloc` |
+| `Box::try_new` | fallible allocation belongs with `alloc` | — |
 | bounds on associated effects, `I: Iterator<e = {}>` | not needed yet | — |
 | effect arguments in turbofish, other than `_` | not needed yet | — |
 | subtyping of function types inside other types | coercion where a whole value is used does | — |

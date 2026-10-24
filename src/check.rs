@@ -124,6 +124,7 @@ pub const INTRINSICS: &[&str] = &[
     "alloc::raw::RawBuf::slice",
     "alloc::raw::RawBuf::slice_mut",
     "alloc::raw::RawBuf::free",
+    "alloc::raw::out_of_memory",
 ];
 
 /// The intrinsic structs, by symbol: types the alloc library declares

@@ -2,7 +2,7 @@
 // must be `mut`.
 fn get(r: &i64) -> i64 { *r }
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     let b = Box::new(1);
     print(get(&mut b));
 }
