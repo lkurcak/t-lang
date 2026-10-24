@@ -1,5 +1,7 @@
-// The Homebrew formula's test (lkurcak/homebrew-tap, Formula/t-lang.rb).
-// Keep the two in sync: if this stops compiling, so does `brew test`.
+// The Homebrew formula's test (lkurcak/homebrew-tap, Formula/t-lang.rb):
+// the formula installs this file and runs it, expecting `3628800`. So
+// changing what it prints breaks `brew test`; changing the language is
+// fine, as T's own tests keep this file working.
 
 fn fact(n: i64) -> i64 with panic {
     if n <= 1 { 1 } else { n * fact(n - 1) }
