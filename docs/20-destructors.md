@@ -322,6 +322,21 @@ fn main() {}
   `Copy` and `Drop` exclude each other by a rule of their own. Here
   `Discard` is weakening and its method is how: derived, it drops the
   parts; written, it's the type's.
+- **Not a second trait for "drops trivially".** Generic code only asks
+  whether a value may be dropped, never whether that runs code, and a
+  bound that said it doesn't would make adding a `discard` to a type a
+  breaking change: Rust's `T: Drop` bounds are a lint for that reason. The
+  checker knows which types reach a `discard` of their own, for the drop
+  check and for `Copy` (D5), without a trait. If one's ever needed, a
+  subtrait of `Discard` can be added without breaking anything. The split
+  that may matter later is another one: what may be skipped, as freeing
+  memory may, and what must run, as a lock's guard, once something like
+  `forget` or a reference-counted pointer could skip one.
+- **Still `Discard`, not `Drop`.** The trait is mostly in bounds, `T:
+  Discard`, "may be thrown away", which `Drop` would get backwards for a
+  reader who knows Rust, where everything may be dropped and `Drop` means
+  having a destructor. The event is a *drop*; the trait and its method are
+  what allow it, as a value of a `Copy` type is *copied*.
 - **By value, not `&mut self`.** Rust's `drop(&mut self)` leaves the
   fields to be dropped after, and can't move them out. `discard(self)` may
   take `self` apart, and give its parts to whoever should have them.
