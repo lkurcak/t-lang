@@ -1,6 +1,7 @@
 //! Strings that grow: text in UTF-8, owned, on the heap.
 
 use core::cmp::{Ord, Ordering};
+use core::fmt::{Display, Write};
 use core::str;
 
 use crate::list::List;
@@ -33,6 +34,13 @@ impl String {
     pub fn from(s: &str) -> String with alloc {
         let mut out = String::with_capacity(s.len());
         out.push_str(s);
+        out
+    }
+
+    /// `x` as text: what its `Display` writes.
+    pub fn of<D: Display>(x: &D) -> String with alloc {
+        let mut out = String::new();
+        out.put(x);
         out
     }
 
@@ -146,4 +154,28 @@ impl Eq for String {
 /// As their `str`s order.
 impl Ord for String {
     fn cmp(&self, other: &String) -> Ordering { self.as_str().cmp(other.as_str()) }
+}
+
+/// Its characters, as they are.
+impl Display for String {
+    fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e {
+        w.write_str(self.as_str())
+    }
+}
+
+/// Writing to a string puts the text at its end. It can't fail, so its
+/// `Error` is `!`, but it can run out of memory, as `push` can.
+impl Write for String {
+    type Error = !;
+    effect e = alloc;
+
+    fn write_str(&mut self, s: &str) -> Result<(), !> with alloc {
+        self.push_str(s);
+        Result::Ok(())
+    }
+
+    fn write_char(&mut self, c: char) -> Result<(), !> with alloc {
+        self.push(c);
+        Result::Ok(())
+    }
 }

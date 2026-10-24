@@ -5,7 +5,7 @@ use super::methods::split;
 use super::{Hidden, each_proj, fields, hide_projections, shown_projections};
 use crate::ast::*;
 use crate::check::generics;
-use crate::check::{Checker, plural};
+use crate::check::{BOX, Checker, plural};
 use crate::error::{Edit, Error, Fix, Span};
 use crate::traits::{COPY, DISCARD};
 use crate::traits::{ImplDef, MethodDef, Pred, overlap};
@@ -331,8 +331,9 @@ impl Checker {
 
     /// The orphan rule (lemma C2 of docs/06e-core.md): an impl of trait `tr`
     /// for `self_ty`, `d`, must be in the package of the trait, or of the
-    /// type's head, its outermost constructor. Built-in traits and types
-    /// are the core library's. So a library's impls are all there are for
+    /// type's head, its outermost constructor. Built-in types are the core
+    /// library's, but for a box, which is alloc's, where `Box` is declared.
+    /// So a library's impls are all there are for
     /// its own traits and types, whatever program it's in, and no program
     /// (nor the other library) can add one that overlaps them, or give a
     /// different one to another program: coherence holds for each package
@@ -355,10 +356,14 @@ impl Checker {
             .map_or(core, |t| m.package_root(t.module));
         // A type not declared anywhere is a closure's, which is its
         // function's package's.
+        let declared = |symbol: &str, or| {
+            (self.types.iter())
+                .find(|t| t.symbol == symbol)
+                .map_or(or, |t| m.package_root(t.module))
+        };
         let head_package = match self_ty {
-            Type::Adt(symbol, ..) => (self.types.iter())
-                .find(|t| t.symbol == *symbol)
-                .map_or(package, |t| m.package_root(t.module)),
+            Type::Adt(symbol, ..) => declared(symbol, package),
+            Type::Box(_) => declared(BOX, core),
             _ => core,
         };
         if trait_package == package || head_package == package {

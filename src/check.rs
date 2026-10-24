@@ -545,6 +545,10 @@ pub(crate) struct Checker {
     /// What has effects in the body being checked, the function's or a
     /// closure's (see `effects`).
     effect_sites: Vec<effects::Site>,
+    /// Calls of `Result`'s methods for an `Err`, with the error type, to
+    /// see once it's solved whether there can be one (see
+    /// `lints::unwrap_infallible`).
+    unwraps: Vec<(lints::Unwrap, Type)>,
     /// What must hold of effect sets once the function's variables are
     /// solved.
     withins: Vec<effects::Within>,
@@ -668,6 +672,7 @@ impl Checker {
             opaque_at: HashMap::new(),
             sig_owner: Default::default(),
             effect_sites: Vec::new(),
+            unwraps: Vec::new(),
             withins: Vec::new(),
             unsafe_blocks: Vec::new(),
             unsafe_uses: Vec::new(),
@@ -1063,6 +1068,11 @@ impl Checker {
         self.check(&f.body, &ret)?;
         self.end_scope(scope);
         self.solve_all(vars, f)?;
+        for (call, err) in std::mem::take(&mut self.unwraps) {
+            if self.solved(&err) == Type::Never {
+                self.warnings.push(lints::unwrap_infallible(&call));
+            }
+        }
         self.body_effects(f, &sig.effects)?;
         for (s, var) in &hidden {
             let t = self.solution(var);

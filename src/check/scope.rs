@@ -314,6 +314,7 @@ pub(super) struct Outer {
     diverges: Option<Span>,
     diverging: Vec<crate::types::Type>,
     effect_sites: Vec<super::effects::Site>,
+    unwraps: Vec<(super::lints::Unwrap, crate::types::Type)>,
     in_trait_impl: bool,
     withins: Vec<super::effects::Within>,
     unsafe_blocks: Vec<Span>,
@@ -349,6 +350,7 @@ impl Checker {
             diverges: self.diverges.take(),
             diverging: std::mem::take(&mut self.diverging),
             effect_sites: std::mem::take(&mut self.effect_sites),
+            unwraps: std::mem::take(&mut self.unwraps),
             in_trait_impl: std::mem::take(&mut self.in_trait_impl),
             withins: std::mem::take(&mut self.withins),
             unsafe_blocks: std::mem::take(&mut self.unsafe_blocks),
@@ -374,6 +376,7 @@ impl Checker {
         self.diverges = outer.diverges;
         self.diverging = outer.diverging;
         self.effect_sites = outer.effect_sites;
+        self.unwraps = outer.unwraps;
         self.in_trait_impl = outer.in_trait_impl;
         self.withins = outer.withins;
         self.unsafe_blocks = outer.unsafe_blocks;

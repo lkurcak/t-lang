@@ -9,6 +9,7 @@
 
 pub mod char;
 pub mod cmp;
+pub mod fmt;
 pub mod iter;
 pub mod mem;
 pub mod num;

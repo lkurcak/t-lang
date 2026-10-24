@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased
+
+Step 18: `core::fmt`. See [docs/18-fmt.md](docs/18-fmt.md).
+
+### Added
+
+- `core::fmt::Write`, a sink of text: `write_str`, `write_char`, and
+  `put(&x)`, which writes anything `Display`. Each sink says how writing
+  to it fails, `type Error`, and what it does, `effect e`.
+- `core::fmt::Display`, whose `fmt` does only what the sink does: for
+  the integer types, in decimal, `bool`, `char`, `str`, `&str`, and
+  references to what has it; in alloc, `String` and `Box`.
+- `String` is a sink (`type Error = !`, `effect e = alloc`), and
+  `String::of(&x)` makes a string of anything `Display`.
+- `Result<T, !>::into_ok`: what's in a result that can't be an `Err`,
+  with no `panic`.
+- Warning `unwrap_infallible`: `unwrap`, `expect`, `unwrap_or` or
+  `unwrap_or_else` of a `Result` whose error type is `!`. The fix is
+  `into_ok()`.
+
+### Fixed
+
+- A box is alloc's, for the orphan rule: alloc can implement core's
+  traits for `Box`, and a program can't, as for any other of alloc's
+  types. Before, a box counted as core's.
+- An effect a trait impl's method can't have no longer suggests saying
+  it, which its trait wouldn't allow; a note says why instead.
+
+### Changed
+
+- Closures' symbols, as `t mono` shows them, have other numbers.
+
 ## 0.30.0 (2026-10-24)
 
 Step 17.1: built-ins are library items. See

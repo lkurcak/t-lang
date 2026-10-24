@@ -121,3 +121,14 @@ impl<T, E: Discard> Result<T, E> {
         }
     }
 }
+
+impl<T> Result<T, !> {
+    /// What's in it, which is an `Ok`, as nothing is a `!`: so, unlike
+    /// `unwrap`, it can't panic. What a sink that can't fail gives, such as
+    /// a `String`, is one (see `core::fmt`).
+    pub fn into_ok(self) -> T {
+        match self {
+            Result::Ok(x) => x,
+        }
+    }
+}

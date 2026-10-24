@@ -2,7 +2,7 @@
 //! working out its type (`synth`), with blocks and loops.
 
 use super::info::{Instance, Resolved};
-use super::lints::{narrowable, unreachable_alt, unreachable_code, unused_label};
+use super::lints::{Unwrap, narrowable, unreachable_alt, unreachable_code, unused_label};
 use super::scope::{FnScope, to_closure};
 use super::typed::Res;
 use super::{Checker, ITERATOR, effects, generics, modules, plural, source_name, traits, unify};
@@ -1216,6 +1216,17 @@ impl Checker {
             autoref,
         };
         self.info.methods.insert(name.id, resolved);
+        if let Type::Adt(symbol, _, args) = &base
+            && symbol == "core::result::Result"
+            && found.of_trait.is_none()
+            && Unwrap::METHODS.contains(&name.name.as_str())
+        {
+            let call = Unwrap {
+                method: name.name.clone(),
+                span: Span::new(name.span.start, e.span.end),
+            };
+            self.unwraps.push((call, args[1].clone()));
+        }
         if let Some(pred) = found.of_trait {
             self.oblige(pred, name.span, traits::Why::Method(name.name.clone()))?;
         }
