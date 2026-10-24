@@ -20,7 +20,7 @@ fn main(os: Os) -> Result<(), Error> with alloc {
     let Os { stdin: mut input, stdout: mut out, .. } = os;
     let mut line = String::new();
     let echoed = echo(&mut input, &mut out, &mut line);
-    line.free();
+    line.discard();
     out.line(&echoed?)
 }
 // stdin: hello

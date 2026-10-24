@@ -169,25 +169,19 @@ fn run_with_input(name: &str, src: &str, input: &[u8]) -> Output {
 /// What echoes its input, line by line, after a prompt.
 const ECHO: &str = "\
 use alloc::string::String;
-use std::io::{Error, Stdin, Stdout};
-
-fn echo(input: &mut Stdin, out: &mut Stdout, line: &mut String) -> Result<(), Error> with alloc {
-    out.put(&\"> \")?;
-    while input.read_line(line)? {
-        out.put(&line.len())?;
-        out.line(&line.as_str())?;
-        out.put(&\"> \")?;
-    }
-    out.line(&\"bye\")
-}
+use std::io::Error;
 
 fn main(os: std::Os) -> Result<(), Error> with alloc {
     let mut input = os.stdin;
     let mut out = os.stdout;
     let mut line = String::new();
-    let echoed = echo(&mut input, &mut out, &mut line);
-    line.free();
-    echoed
+    out.put(&\"> \")?;
+    while input.read_line(&mut line)? {
+        out.put(&line.len())?;
+        out.line(&line.as_str())?;
+        out.put(&\"> \")?;
+    }
+    out.line(&\"bye\")
 }
 ";
 

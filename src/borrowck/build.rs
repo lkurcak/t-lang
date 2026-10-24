@@ -129,6 +129,7 @@ impl<'a> Builder<'a> {
                 changed_by_closures: Vec::new(),
                 unique_by_closures: Vec::new(),
                 heads: Vec::new(),
+                drop_uses: Default::default(),
             },
             regions,
             loans: Vec::new(),
@@ -1371,8 +1372,14 @@ impl Builder<'_> {
         }
     }
 
+    /// Is the value at `place` used up by a pattern that takes it apart? If
+    /// it's owned, and it isn't `Discard`, or has a `discard` of its own,
+    /// which taking it apart skips: in its module, that's how a value is
+    /// ended another way, and elsewhere it's an error (`moves::abstraction`).
     fn consumes_at(&self, place: &Place) -> bool {
-        !super::moves::owned(self, place).1 && !self.cx.is_discard(&self.place_ty(place))
+        let t = self.place_ty(place);
+        let own = matches!(&t, Type::Adt(s, ..) if self.cx.traits().own_discard(s));
+        !super::moves::owned(self, place).1 && (own || !self.cx.is_discard(&t))
     }
 
     /// Does pattern `p`, matching the value at `place`, use up anything?

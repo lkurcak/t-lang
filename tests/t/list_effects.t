@@ -30,7 +30,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     l.push(6);
     stdout.line(&first(&l).unwrap()); // expect: 5
     stdout.line(&drain(&mut l));      // expect: 2
-    l.free();
+    l.discard();
 
     // An empty buffer has no slots, and grows as any other.
     let mut b: RawBuf<i64> = RawBuf::empty();
@@ -45,6 +45,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     }
     let mut out = os.stdout;
     let w = out.put(&stdout.as_str());
-    stdout.free();
+    stdout.discard();
     w
 }

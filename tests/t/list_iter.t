@@ -26,10 +26,10 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     out.line(&(*it.next().unwrap())); // expect: 2
     let e: List<i64> = List::new();
     out.line(&e.iter().next().is_none()); // expect: true
-    e.free();
-    l.free();
+    e.discard();
+    l.discard();
     let mut stdout = os.stdout;
     let w = stdout.put(&out.as_str());
-    out.free();
+    out.discard();
     w
 }

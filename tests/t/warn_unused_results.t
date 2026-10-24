@@ -8,6 +8,6 @@ fn main(os: std::Os) with alloc {
     out.line(&1i64); // expect: 1
     let mut s = String::new();
     s.put(&2i64);
-    s.free();
+    s.discard();
 }
 // warning: this `Result` is thrown away, and any error in it unseen

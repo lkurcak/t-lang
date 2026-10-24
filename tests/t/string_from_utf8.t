@@ -18,17 +18,17 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
             let w = out.line(&s.as_str()); // expect: café
             let l = s.into_bytes();
             let n = l.len();
-            l.free();
+            l.discard();
             w?;
             out.line(&n)?; // expect: 5
         },
-        Result::Err(l) => l.free(),
+        Result::Err(l) => l.discard(),
     }
     match String::from_utf8(bytes(b"caf\xC3")) {
-        Result::Ok(s) => s.free(),
+        Result::Ok(s) => s.discard(),
         Result::Err(l) => {
             let n = l.len();
-            l.free();
+            l.discard();
             out.line(&"not UTF-8")?; // expect: not UTF-8
             out.line(&n)?; // expect: 4
         },

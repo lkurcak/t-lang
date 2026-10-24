@@ -45,6 +45,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {panic, alloc} {
     out.line(&(*n));            // expect: 6
     let mut stdout = os.stdout;
     let w = stdout.put(&out.as_str());
-    out.free();
+    out.discard();
     w
 }

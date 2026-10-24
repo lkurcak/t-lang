@@ -9,8 +9,9 @@ use crate::raw::{RawBuf, out_of_memory};
 /// as values are pushed. `get` sees a value by its index, from `0` up to,
 /// not including, `len()`, and `as_slice` sees them all, as a slice.
 ///
-/// It isn't `Discard`, as its buffer isn't: it's used up by `free`, or by
-/// `free_with` when its values aren't `Discard` either.
+/// It's `Discard` if its values are: dropping it drops each of them, front
+/// to back, and frees its buffer. One of values that aren't is used up by
+/// `free_with`.
 ///
 /// # Invariant
 ///
@@ -110,10 +111,12 @@ impl<T> List<T> {
     }
 }
 
-impl<T: Discard> List<T> {
-    /// Throws its values away, and gives the buffer back.
-    pub fn free(self) { self.free_with(|_x| {}) }
+/// Drops its values, front to back, and gives the buffer back.
+impl<T: Discard> Discard for List<T> {
+    fn discard(self) { self.free_with(|_x| {}) }
+}
 
+impl<T: Discard> List<T> {
     /// Throws away the values from index `n` on, if there are any, so it
     /// holds at most `n`. It's `pop` until then, so safe code.
     pub fn truncate(&mut self, n: usize) {

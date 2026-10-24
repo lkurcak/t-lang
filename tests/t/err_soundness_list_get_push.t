@@ -8,6 +8,6 @@ fn main() with {alloc, panic} {
     let r = l.get(0);
     l.push(2);
     let _v = *r.unwrap();
-    l.free();
+    l.discard();
 }
 // error: cannot borrow `l` as mutable while `l` is borrowed

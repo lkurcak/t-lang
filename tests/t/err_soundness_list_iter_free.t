@@ -5,7 +5,7 @@ fn main() with {alloc, panic} {
     let mut l: List<i64> = List::new();
     l.push(1);
     let mut it = l.iter();
-    l.free();
+    l.discard();
     let _v = *it.next().unwrap();
 }
 // error: cannot move out of `l` while `l` is borrowed

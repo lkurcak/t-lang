@@ -10,8 +10,7 @@ use crate::list::List;
 /// grows as characters and strings are pushed. `as_str` sees them as a
 /// `&str`.
 ///
-/// It isn't `Discard`, as its list isn't: it's used up by `free`, or by
-/// `into_bytes`.
+/// It's `Discard`: dropping it frees its list.
 ///
 /// # Invariant
 ///
@@ -19,6 +18,7 @@ use crate::list::List;
 /// `as_str`, counts on it, and every method keeps it, though they're safe
 /// code: so the block is right only if they are. Its field is private, so
 /// nothing else can break it.
+#[derive(Discard)]
 pub struct String { bytes: List<u8> }
 
 impl String {
@@ -141,9 +141,6 @@ impl String {
 
     /// Throws its characters away, keeping the buffer for more.
     pub fn clear(&mut self) { self.bytes.clear() }
-
-    /// Gives its buffer back.
-    pub fn free(self) { self.bytes.free() }
 }
 
 /// The same characters.

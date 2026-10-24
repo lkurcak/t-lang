@@ -24,7 +24,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     buf.push(0);
     buf.push(0);
     let w = encode(&mut out, &mut buf);
-    buf.free();
+    buf.discard();
     w
 }
 

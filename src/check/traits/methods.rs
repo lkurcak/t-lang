@@ -6,7 +6,7 @@ use crate::ast::*;
 use crate::check::Checker;
 use crate::check::generics;
 use crate::error::{Edit, Error, Fix, Span};
-use crate::traits::EQ;
+use crate::traits::{DISCARD, EQ};
 use crate::traits::{Pred, eq_subject, overlap};
 use crate::types::{Subst, Type};
 use std::collections::HashMap;
@@ -108,6 +108,9 @@ impl Checker {
                     .collect();
                 if builtin_eq(&ty) {
                     out.push(EQ.into());
+                }
+                if builtin_discard(&ty) {
+                    out.push(DISCARD.into());
                 }
                 // What an opaque type's bounds say it implements.
                 if let Type::Opaque(symbol, ..) = &ty {
@@ -548,6 +551,17 @@ fn could_match_in(
 }
 
 /// Does `t` implement `Eq` by a built-in impl, whatever it holds?
+/// Could `t` be `Discard` by a built-in rule: a type of the language's, or
+/// a closure? Then `x.discard()` is `Discard`'s, which a bound proves.
+fn builtin_discard(t: &Type) -> bool {
+    match t {
+        Type::Adt(symbol, ..) => crate::types::is_closure(symbol),
+        Type::Int(_) | Type::Bool | Type::Char | Type::Unit | Type::Never => true,
+        Type::Fn(_) | Type::Ref(..) | Type::Box(_) => true,
+        _ => false,
+    }
+}
+
 fn builtin_eq(t: &Type) -> bool {
     matches!(
         t,

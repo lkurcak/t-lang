@@ -25,9 +25,9 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     let mut e = l.as_slice().iter();
     e.next();
     out.line(&e.count()); // expect: 3
-    l.free();
+    l.discard();
     let mut stdout = os.stdout;
     let w = stdout.put(&out.as_str());
-    out.free();
+    out.discard();
     w
 }

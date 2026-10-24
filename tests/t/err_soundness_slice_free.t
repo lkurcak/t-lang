@@ -6,7 +6,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut l: List<i64> = List::new();
     l.push(1);
     let s = l.as_slice();
-    l.free();
+    l.discard();
     out.line(&s.len())?;
     Result::Ok(())
 }

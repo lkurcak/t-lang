@@ -39,7 +39,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     out.line(&(l.capacity() == cap)); // expect: true
     l.push(7);
     show(&mut out, &l); // expect: 7
-    l.free();
+    l.discard();
 
     // `swap` needs no `Discard`.
     let mut b: List<Box<i64>> = List::new();
@@ -47,9 +47,9 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     b.push(Box::new(2));
     b.swap(0, 1);
     out.line(&(**b.get(0).unwrap())); // expect: 2
-    b.free();
+    b.discard();
     let mut stdout = os.stdout;
     let w = stdout.put(&out.as_str());
-    out.free();
+    out.discard();
     w
 }

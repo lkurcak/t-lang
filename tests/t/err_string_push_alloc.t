@@ -8,6 +8,6 @@ fn add(s: &mut String) {
 fn main() with {alloc, panic} {
     let mut s = String::new();
     add(&mut s);
-    s.free();
+    s.discard();
 }
 // error: `push` may allocate, but `add` doesn't say `with alloc`

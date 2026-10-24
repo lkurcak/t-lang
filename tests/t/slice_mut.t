@@ -38,9 +38,9 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     // expect: 4
     // expect: 4
     // expect: 7
-    l.free();
+    l.discard();
     let mut stdout = os.stdout;
     let w = stdout.put(&out.as_str());
-    out.free();
+    out.discard();
     w
 }

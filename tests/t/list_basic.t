@@ -25,7 +25,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     out.line(&l.pop().unwrap());             // expect: 81
     out.line(&l.pop().unwrap());             // expect: 64
     out.line(&l.len());                      // expect: 8
-    l.free();
+    l.discard();
 
     let mut m: List<Box<i64>> = List::with_capacity(2);
     out.line(&m.capacity()); // expect: 2
@@ -35,10 +35,10 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     out.line(&(*m.pop().unwrap())); // expect: 3
     let mut e: List<i64> = List::new();
     out.line(&e.pop().is_none()); // expect: true
-    e.free();
-    m.free();
+    e.discard();
+    m.discard();
     let mut stdout = os.stdout;
     let w = stdout.put(&out.as_str());
-    out.free();
+    out.discard();
     w
 }

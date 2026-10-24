@@ -11,8 +11,8 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let shorter = a.as_slice() == b.as_slice();
     b.push(2);
     let same = a.as_slice() == b.as_slice();
-    a.free();
-    b.free();
+    a.discard();
+    b.discard();
     out.line(&shorter)?; // expect: false
     out.line(&same) // expect: true
 }

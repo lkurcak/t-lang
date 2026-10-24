@@ -8,7 +8,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut line = String::from("old");
     let more = input.read_line(&mut line);
     let empty = line.is_empty();
-    line.free();
+    line.discard();
     out.line(&more?)?; // expect: false
     out.line(&empty)   // expect: true
 }

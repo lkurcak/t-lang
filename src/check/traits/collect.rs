@@ -421,10 +421,42 @@ impl Checker {
                         ),
                     ));
                 }
+                // A `discard` of its own: its module's to write, as only its
+                // module may take its values apart, skipping it (lemma D4
+                // of docs/20-destructors.md). With none, it says no more
+                // than deriving it.
+                (Some(tr), Type::Adt(symbol, ..)) if tr == DISCARD && !d.methods.is_empty() => {
+                    let def = self.types.iter().find(|t| t.symbol == *symbol);
+                    if let Some(def) = def
+                        && def.module != d.module
+                    {
+                        return Err(Error::ty(
+                            header,
+                            format!(
+                                "`{self_ty}`'s `discard` must be written in {}, where it's \
+                                 declared: only there may its values be taken apart",
+                                self.modules.describe(def.module)
+                            ),
+                        ));
+                    }
+                }
+                (Some(tr), t @ Type::Adt(..)) if tr == DISCARD => {
+                    let e = Error::ty(
+                        header,
+                        format!(
+                            "an impl of `{tr}` gives a `discard` of its own; for one that drops \
+                             each field, derive it, with `#[derive({tr})]`"
+                        ),
+                    );
+                    return Err(match self.derive_fix(prog, d, tr, t) {
+                        Some(fix) => e.with_fix(fix),
+                        None => e,
+                    });
+                }
                 // Only derived, so whether a type is one follows from its
-                // fields alone: a proof of either needs only more of the
-                // same, never another trait (see `derive`).
-                (Some(tr), t) if tr == DISCARD || tr == COPY => {
+                // fields alone: a proof of it needs only more of the same,
+                // never another trait (see `derive`).
+                (Some(tr), t) if tr == COPY => {
                     let e = Error::ty(
                         header,
                         format!(

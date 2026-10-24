@@ -3,7 +3,7 @@ use alloc::list::List;
 
 fn main() {
     let l: List<i64> = List::new();
-    l.free();
-    l.free();
+    l.discard();
+    l.discard();
 }
 // error: use of moved value `l`

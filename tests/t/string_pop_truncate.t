@@ -35,9 +35,9 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     s.clear();
     out.line(&s.len());                  // expect: 0
     out.line(&(s.capacity() == cap)); // expect: true
-    s.free();
+    s.discard();
     let mut stdout = os.stdout;
     let w = stdout.put(&out.as_str());
-    out.free();
+    out.discard();
     w
 }

@@ -48,6 +48,10 @@ pub(crate) struct Body {
     /// The first block of each loop, which the end of its body and each
     /// `continue` go back to. It comes before every block of the body.
     pub(crate) heads: Vec<Bb>,
+    /// The points of the `Dead`s and `Assign`s that drop a value which may
+    /// still be there, and whose type may reach a `discard` of its own:
+    /// there, the drop uses the value (see `moves::drop_uses`).
+    pub(crate) drop_uses: std::collections::HashSet<Point>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

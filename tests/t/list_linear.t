@@ -32,12 +32,12 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     ll.push(List::new());
     ll.free_with(|x: List<i64>| {
         out.line(&x.len());
-        x.free()
+        x.discard()
     });
     // expect: 1
     // expect: 0
     let mut stdout = os.stdout;
     let w = stdout.put(&out.as_str());
-    out.free();
+    out.discard();
     w
 }

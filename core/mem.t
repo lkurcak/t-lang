@@ -9,10 +9,17 @@
 ///
 /// The integers, `bool`, `char`, `str`, references, functions and slices
 /// of `Discard` values have it, and boxes of them. A struct or enum has it
-/// if it says so, with `#[derive(Discard)]`, and only then: it can't be
-/// implemented by hand.
+/// if it says so: with `#[derive(Discard)]`, dropping it drops each field;
+/// with an impl, it says how itself, in its `discard`, as a list frees its
+/// buffer (see docs/20-destructors.md).
 #[intrinsic]
-pub trait Discard {}
+pub trait Discard {
+    /// Throws `self` away. Wherever a value is dropped, its type's
+    /// `discard` is what's called: it's total, so it can be called on
+    /// every path, the early ones of `?` too. Called by name, it drops
+    /// `self` now, rather than at the end of its scope.
+    fn discard(self);
+}
 
 /// Says a type's values are copied, rather than moved: using one leaves
 /// it where it was. It needs `Discard`, as a copy that can't be thrown

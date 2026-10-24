@@ -34,11 +34,11 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     out.line(&(*boxed(7)))?; // expect: 7
     let l = three();
     let three = l.len() == 3;
-    l.free();
+    l.discard();
     out.line(&three)?; // expect: true
     let s = hello();
     let w = out.line(&s.as_str()); // expect: hello, wörld
-    s.free();
+    s.discard();
     w?;
     let b = buffer();
     let five = b.cap() == 5;

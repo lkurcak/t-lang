@@ -30,7 +30,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     l.push(4);
     out.line(&count(l.as_slice()));            // expect: 3
     out.line(&biggest(l.as_slice()).unwrap()); // expect: 9
-    l.free();
+    l.discard();
     let mut t: List<Token> = List::new();
     t.push(Token { n: 1 });
     t.push(Token { n: 2 });
@@ -44,6 +44,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     out.line(&freed); // expect: 12
     let mut stdout = os.stdout;
     let w = stdout.put(&out.as_str());
-    out.free();
+    out.discard();
     w
 }

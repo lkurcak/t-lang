@@ -27,8 +27,8 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let s = String::from("pear");
     let t = String::from("apple");
     let w = show(&mut out, &s, &t);
-    s.free();
-    t.free();
+    s.discard();
+    t.discard();
     w?;
     // expect: true
     // expect: pear

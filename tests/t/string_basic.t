@@ -21,19 +21,19 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
         n = n + 1;
     }
     out.line(&n); // expect: 7
-    s.free();
+    s.discard();
 
     let t = String::from("héllo");
     out.line(&t.len());        // expect: 6
     out.line(&t.as_str()); // expect: héllo
-    t.free();
+    t.discard();
 
     let e = String::with_capacity(8);
     out.line(&(e.capacity() >= 8)); // expect: true
     out.line(&e.len());                // expect: 0
-    e.free();
+    e.discard();
     let mut stdout = os.stdout;
     let w = stdout.put(&out.as_str());
-    out.free();
+    out.discard();
     w
 }
