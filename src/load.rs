@@ -72,10 +72,21 @@ pub(crate) type Library = (
     &'static str,
 );
 
+/// The files of the std library, by their paths in `std/`.
+pub const STD_FILES: &[(&str, &str)] = &[
+    ("lib.t", include_str!("../std/lib.t")),
+    ("io.t", include_str!("../std/io.t")),
+    ("rt.t", include_str!("../std/rt.t")),
+];
+
+/// Where the std library's files seem to be.
+pub const STD_DIR: &str = "<std>";
+
 /// The libraries built into the compiler, in the order they're read.
-pub(crate) const LIBRARIES: [Library; 2] = [
+pub(crate) const LIBRARIES: [Library; 3] = [
     ("core", CORE_FILES, CORE_DIR),
     ("alloc", ALLOC_FILES, ALLOC_DIR),
+    ("std", STD_FILES, STD_DIR),
 ];
 
 /// Reads the file system.
@@ -260,10 +271,10 @@ fn add_library(
         public: Some(Span::new(start, start)),
         in_file: false,
     });
-    match name {
-        "core" => prog.core = Some(root),
-        _ => prog.alloc = Some(root),
+    if name == "core" {
+        prog.core = Some(root);
     }
+    prog.libraries.push(root);
     parse_file(prog, root, text, start)
 }
 

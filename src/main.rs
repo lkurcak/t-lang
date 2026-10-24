@@ -1,6 +1,5 @@
 use std::process::ExitCode;
 use t_lang::error::Warning;
-use t_lang::interp::Value;
 
 const USAGE: &str = "usage: t [run|check|mono] <file.t>\n       t fmt [--check] <file.t>...\n       t lsp\n       t tree-sitter [--helix] <dir>";
 
@@ -110,19 +109,15 @@ fn main() -> ExitCode {
         };
     }
 
-    let run = t_lang::run_files(path, &src, None);
-    for w in Warning::render_all_in(&run.warnings, &run.sources) {
-        eprintln!("{w}\n");
-    }
-    for line in &run.output {
-        println!("{line}");
-    }
-    match run.result {
-        Ok(Value::Unit) => ExitCode::SUCCESS,
-        Ok(value) => {
-            println!("{value}");
-            ExitCode::SUCCESS
+    let run = t_lang::run_process(path, &src, |sources, warnings| {
+        for w in Warning::render_all_in(warnings, sources) {
+            eprintln!("{w}\n");
         }
+    });
+    match &run.result {
+        // `main` gave back an error, and reported it.
+        Ok(_) if run.failed() => ExitCode::FAILURE,
+        Ok(_) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("{}", e.render_in(&run.sources));
             ExitCode::FAILURE

@@ -126,12 +126,21 @@ pub const INTRINSICS: &[&str] = &[
     "alloc::raw::RawBuf::slice_mut",
     "alloc::raw::RawBuf::free",
     "alloc::raw::out_of_memory",
+    "std::io::Stdin::read_byte",
+    "std::io::Stdout::write_byte",
+    "std::io::Stderr::write_byte",
 ];
 
 /// The intrinsic structs, by symbol: types the alloc library declares
 /// with no fields, which only the compiler makes and looks inside, by the
 /// intrinsic methods of their impls.
-pub const INTRINSIC_TYPES: &[&str] = &[BOX, "alloc::raw::RawBuf"];
+pub const INTRINSIC_TYPES: &[&str] = &[
+    BOX,
+    "alloc::raw::RawBuf",
+    "std::io::Stdin",
+    "std::io::Stdout",
+    "std::io::Stderr",
+];
 
 /// The symbol of the alloc library's `Box`, which is `Type::Box`.
 pub const BOX: &str = "alloc::boxed::Box";
@@ -146,8 +155,8 @@ pub(crate) const ITERATOR: &str = "core::iter::Iterator";
 pub(super) fn not_library(at: Span) -> Error {
     Error::ty(
         at,
-        "only `core` and `alloc` can declare an intrinsic: what it does is what the checker \
-         trusts",
+        "only `core`, `alloc` and `std` can declare an intrinsic: what it does is what the \
+         checker trusts",
     )
 }
 
@@ -285,7 +294,8 @@ fn import_fix(prog: &Program, modules: &modules::Modules, e: &mut Error) {
     ));
 }
 
-/// Checks that there's a `main`, and that it takes nothing.
+/// Checks that there's a `main`, and that it takes at most one parameter,
+/// which `Checker::main_signature` checks is the `std::Os`.
 fn check_main(prog: &Program) -> Result<(), Error> {
     match prog
         .fns
@@ -297,9 +307,10 @@ fn check_main(prog: &Program) -> Result<(), Error> {
             let at = Span::new(start, start);
             Err(Error::ty(at, "program has no `main` function"))
         }
-        Some(main) if !main.params.is_empty() => {
-            Err(Error::ty(main.name.span, "`main` must not take parameters"))
-        }
+        Some(main) if main.params.len() > 1 => Err(Error::ty(
+            main.params[1].name.span,
+            "`main` takes nothing, or the `std::Os`, as `fn main(os: Os)`",
+        )),
         // Its obligations would be its caller's to keep, and nothing calls
         // it: they'd be kept by no one.
         Some(main)
@@ -608,7 +619,74 @@ pub(super) struct Literal {
     ty: Type,
 }
 
+/// The symbol of the std library's `Os`, which `main` can take.
+pub(crate) const OS: &str = "std::Os";
+
+/// The symbol of the core library's `Display`, which the error `main` gives
+/// back must implement, to be reported.
+pub(crate) const DISPLAY: &str = "core::fmt::Display";
+
+/// The symbol of the core library's `Result`.
+pub(crate) const RESULT: &str = "core::result::Result";
+
 impl Checker {
+    /// Checks what `main`, `f`, of type `sig`, takes and gives back. It
+    /// takes nothing, or the `std::Os`, which the program starts with: so
+    /// every stream the program can use descends from that one value (see
+    /// docs/19-std-io.md). It gives back `()`, or a `Result<(), E>` whose
+    /// error is reported, so it's `Display`, and then thrown away, so it's
+    /// `Discard`.
+    /// Gives back the error type, if it's a `Result`.
+    fn main_signature(
+        &self,
+        f: &FnDecl,
+        sig: &crate::types::FnType,
+    ) -> Result<Option<Type>, Error> {
+        if let ([p], [t]) = (f.params.as_slice(), sig.params.as_slice())
+            && !matches!(t, Type::Adt(symbol, ..) if symbol == OS)
+        {
+            return Err(Error::ty(
+                p.ty.span,
+                format!("`main` takes nothing, or the `std::Os`, as `fn main(os: Os)`, not `{t}`"),
+            ));
+        }
+        let error = match &*sig.ret {
+            Type::Unit => return Ok(None),
+            Type::Adt(symbol, _, args) if symbol == RESULT && args[0] == Type::Unit => &args[1],
+            t => {
+                return Err(Error::ty(
+                    f.ret.span,
+                    format!(
+                        "`main` gives back `()`, or a `Result<(), E>` whose error is reported, \
+                         not `{t}`"
+                    ),
+                ));
+            }
+        };
+        let display = self
+            .traits
+            .implements(error, DISPLAY, &self.env, &self.adts.proj.local);
+        if display.is_err() {
+            return Err(Error::ty(
+                f.ret.span,
+                format!(
+                    "the error `main` gives back is written out, so it must be `Display`, and a \
+                     `{error}` isn't"
+                ),
+            ));
+        }
+        if !self.is_discard(error) {
+            return Err(Error::ty(
+                f.ret.span,
+                format!(
+                    "the error `main` gives back is thrown away once it's written out, so it \
+                     must be `Discard`, and a `{error}` isn't"
+                ),
+            ));
+        }
+        Ok(Some(error.clone()))
+    }
+
     /// An id for a node the checker makes up (see `NodeId`).
     fn fresh_id(&mut self) -> NodeId {
         self.next_id += 1;
@@ -840,23 +918,13 @@ impl Checker {
                 }
                 None => self.fn_scheme(f)?,
             };
-            // What `main` returns is shown, and then thrown away: nothing
-            // can use it up.
             if parent.is_none()
                 && method.is_none()
                 && f.module == ROOT
                 && f.name.name == "main"
                 && let Type::Fn(sig) = &scheme.ty
-                && !self.is_discard(&sig.ret)
             {
-                return Err(Error::ty(
-                    f.ret.span,
-                    format!(
-                        "`main` can't return a `{}`, which isn't `Discard`: what it returns is \
-                         thrown away at the end, as nothing can use it up",
-                        sig.ret
-                    ),
-                ));
+                self.info.main_error = self.main_signature(f, sig)?;
             }
             let name = &f.name.name;
             let symbol = self.fn_symbols[i].clone();

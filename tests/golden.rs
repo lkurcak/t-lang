@@ -81,7 +81,11 @@ fn golden() {
         let files = expect::files_of(path);
         let all: String = files.iter().map(|(_, src)| src.as_str()).collect();
         let want = Expectations::of(&all);
-        if want.output.is_empty() && want.error.is_none() && want.warnings.is_empty() {
+        if want.output.is_empty()
+            && want.errors.is_empty()
+            && want.error.is_none()
+            && want.warnings.is_empty()
+        {
             return Some(format!(
                 "{name}: has no `// expect:`, `// error:` or `// warning:` lines"
             ));
