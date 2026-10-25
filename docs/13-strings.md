@@ -269,7 +269,7 @@ the invariant but the `unsafe` blocks, each of which says why it's kept.
 |---|---|---|
 | `String`, an owned, growing string | a `List<u8>` that keeps the promise; alloc | 13.1 |
 | `Box<str>`, `Box<[T]>` | values whose size is known only as the program runs, owned | — |
-| `s[i]`, `&s[1..3]` | indexing, with proofs about lengths (measures) | — |
+| `s[i]`, `&s[1..3]` | indexing, with proofs about lengths (measures): `s.as_bytes()[i]` is 21 ✅; a range of a string, `&s[1..3]`, needs proofs of where characters start | — |
 | string patterns, `"a" => ..` | they'd compare with `==`, which a pattern can't call yet | — |
 | `<` on strings and characters | `<` is for integers; `Ord` orders strings, and `as u32` characters | 17.1 |
 | `starts_with`, `find`, `split`, `trim`, `lines` | safe code over `as_bytes`, any time | — |

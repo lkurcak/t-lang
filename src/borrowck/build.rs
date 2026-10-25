@@ -388,7 +388,7 @@ impl<'a> Builder<'a> {
         let span = e.span;
         match &e.kind {
             ExprKind::Move(_) => unreachable!("written by lift"),
-            ExprKind::For(_) | ExprKind::Range(..) | ExprKind::Try(..) => {
+            ExprKind::For(_) | ExprKind::Range(..) | ExprKind::Try(..) | ExprKind::Index(..) => {
                 unreachable!("rewritten when paths are resolved")
             }
             // A string literal's region is a new variable, constrained by
@@ -594,7 +594,14 @@ impl<'a> Builder<'a> {
             }
             // The value first, then the place, as in the interpreter.
             ExprKind::Assign(op, place, value) => {
-                let (v, vt) = self.operand(value);
+                let (mut v, vt) = self.operand(value);
+                // The value comes first, so it's read before a call in the
+                // place, as `index_mut` in `s[0] = s[1]`, borrows anything.
+                if calls_in(place) && matches!(v, Operand::Copy(_)) {
+                    let tmp = self.temp(vt.clone(), value.span);
+                    self.assign(&Place::local(tmp), Rvalue::Use(v), &vt, value.span, false);
+                    v = Operand::Move(Place::local(tmp));
+                }
                 let p = self.place(place);
                 match op {
                     Some(op) => {
@@ -1444,4 +1451,14 @@ fn field_index(adts: &Adts, t: &Type, name: &str) -> usize {
     let fields = struct_fields(adts, t).expect("a struct");
     let i = fields.iter().position(|(f, _)| f == name);
     i.expect("the checker found the field")
+}
+
+/// Does place expression `e` call something on the way to where it is, as
+/// `*s.index_mut(i)`, which `s[i]` is?
+fn calls_in(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Call(..) | ExprKind::MethodCall(..) => true,
+        ExprKind::Field(x, _) | ExprKind::Unary(UnOp::Deref, x) | ExprKind::Move(x) => calls_in(x),
+        _ => false,
+    }
 }

@@ -1170,6 +1170,29 @@ impl Rewrite<'_> {
                 e.kind = self.for_loop(*f, e.span);
                 return Ok(());
             }
+            ExprKind::Index(x, i, ..) => {
+                self.expr(x)?;
+                self.expr(i)?;
+                let ExprKind::Index(x, i, brackets, written) =
+                    std::mem::replace(&mut e.kind, ExprKind::Unit)
+                else {
+                    unreachable!("matched above");
+                };
+                // `*x.index(i)`, the method named where the `[` is, by no
+                // text of its own.
+                let method = Ident {
+                    name: (if written { "index_mut" } else { "index" }).into(),
+                    span: Span::new(brackets.start, brackets.start),
+                    id: self.id(),
+                };
+                let call = Expr {
+                    kind: ExprKind::MethodCall(x, method, Vec::new(), vec![*i]),
+                    span: e.span,
+                    id: self.id(),
+                };
+                e.kind = ExprKind::Unary(UnOp::Deref, Box::new(call));
+                return Ok(());
+            }
             ExprKind::Try(x, _) => {
                 self.expr(x)?;
                 let ExprKind::Try(x, q) = std::mem::replace(&mut e.kind, ExprKind::Unit) else {
@@ -1741,7 +1764,8 @@ fn children_mut(e: &mut Expr) -> Vec<&mut Expr> {
         ExprKind::Binary(_, l, r)
         | ExprKind::Assign(_, l, r)
         | ExprKind::While(_, l, r)
-        | ExprKind::Range(l, r) => {
+        | ExprKind::Range(l, r)
+        | ExprKind::Index(l, r, ..) => {
             vec![&mut **l, &mut **r]
         }
         ExprKind::For(f) => vec![&mut f.iter, &mut f.body],

@@ -59,20 +59,22 @@ impl String {
         bytes
     }
 
-    /// Its characters, as a `str`.
-    pub fn as_str(&self) -> &str {
+    /// Its characters, as a `str`, of as many bytes as it has.
+    pub fn as_str(&self) -> { s: &str | s.len() == self.len() } {
         // SAFETY: its bytes are UTF-8, by the invariant.
         unsafe { str::from_utf8_unchecked(self.bytes.as_slice()) }
     }
 
     /// Its bytes, its UTF-8.
-    pub fn as_bytes(&self) -> &[u8] { self.bytes.as_slice() }
+    pub fn as_bytes(&self) -> { b: &[u8] | b.len() == self.len() } { self.bytes.as_slice() }
 
-    /// How many bytes it has: not how many characters.
+    /// How many bytes it has: not how many characters. It's a measure.
+    #[measure]
     pub fn len(&self) -> usize { self.bytes.len() }
 
     /// Has it none?
-    pub fn is_empty(&self) -> bool { self.bytes.is_empty() }
+    #[measure]
+    pub fn is_empty(&self) -> bool { self.len() == 0 }
 
     /// How many bytes it has room for before it grows.
     pub fn capacity(&self) -> usize { self.bytes.capacity() }

@@ -223,6 +223,7 @@ impl<'p> Mono<'p> {
             stray_docs: Vec::new(),
             next_id: self.next_id,
             proved: prog.proved.clone(),
+            measures: prog.measures.clone(),
         };
         for d in &prog.types {
             let name = &d.name().name;
@@ -377,6 +378,7 @@ impl<'p> Mono<'p> {
             effects: cx.written_effects(&cx.resolved_effects(f.effects.as_ref()), f.span),
             body: cx.expr(&f.body),
             intrinsic: f.intrinsic,
+            measure: f.measure,
         }
     }
 
@@ -974,7 +976,7 @@ impl Cx<'_, '_, '_> {
 
     fn expr(&mut self, e: &Expr) -> Expr {
         let kind = match &e.kind {
-            ExprKind::For(_) | ExprKind::Range(..) | ExprKind::Try(..) => {
+            ExprKind::For(_) | ExprKind::Range(..) | ExprKind::Try(..) | ExprKind::Index(..) => {
                 unreachable!("rewritten when paths are resolved")
             }
             ExprKind::Int(n, _) => {

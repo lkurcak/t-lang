@@ -109,6 +109,9 @@ pub const INTRINSICS: &[&str] = &[
     "str::as_bytes",
     "core::slice::empty_mut",
     "[T]::len",
+    "str::len",
+    "[T]::index",
+    "[T]::index_mut",
     "[T]::get",
     "[T]::get_mut",
     "[T]::split_at",
@@ -518,6 +521,9 @@ pub(crate) struct Checker {
     /// The function whose signature is being worked out, by symbol and
     /// name: what owns the opaque types in it.
     sig_owner: (String, String),
+    /// The type of the impl whose method's signature is being checked, if
+    /// it's one: what `Self` is in it.
+    sig_self: Option<Type>,
     /// What has effects in the body being checked, the function's or a
     /// closure's (see `effects`).
     effect_sites: Vec<effects::Site>,
@@ -557,6 +563,22 @@ pub(crate) struct Checker {
     refined_lets: HashMap<NodeId, refine::Refinement>,
     /// What each name in a refinement's predicate is, by node.
     pred_names: HashMap<NodeId, refine::PredName>,
+    /// The measures, by symbol (see docs/21-measures.md).
+    measures: HashMap<String, refine::Measure>,
+    /// The measure each `x.m()` in a refinement's predicate is, by node,
+    /// with how many `*`s it's through.
+    pred_measures: HashMap<NodeId, (String, usize)>,
+    /// What the refinement being checked is of, if it's checked more than
+    /// once, so it can't name what's behind a `&mut`, which can change in
+    /// between: "a result", say.
+    pred_again: Option<&'static str>,
+    /// The refinements to check once every impl is collected.
+    pending_refined: Vec<refine::Pending>,
+    /// The function whose refinement is being checked, which uses the
+    /// measures it names; `None` for a struct's.
+    pred_owner: Option<FnId>,
+    /// The measures structs' refinements name, which aren't dead code.
+    kept_measures: Vec<FnId>,
     /// The integer literals of the function being checked, in expressions
     /// and patterns, each to be checked to fit in its type once that's
     /// known (`Checker::literals`).
@@ -722,6 +744,7 @@ impl Checker {
             goals: Vec::new(),
             opaque_at: HashMap::new(),
             sig_owner: Default::default(),
+            sig_self: None,
             effect_sites: Vec::new(),
             unwraps: Vec::new(),
             dropped: Vec::new(),
@@ -736,6 +759,12 @@ impl Checker {
             refined_lets: HashMap::new(),
             field_refined: HashMap::new(),
             pred_names: HashMap::new(),
+            measures: HashMap::new(),
+            pred_measures: HashMap::new(),
+            pred_again: None,
+            pending_refined: Vec::new(),
+            pred_owner: None,
+            kept_measures: Vec::new(),
             literals: Vec::new(),
             nots: Vec::new(),
             modules: modules::Modules::default(),
@@ -796,6 +825,7 @@ impl Checker {
         self.projections_known(prog);
         self.derive(prog)?;
         self.signatures(prog, &fns)?;
+        self.pending_refinements()?;
         self.check_impls(prog)?;
         self.info.traits = self.traits.clone();
         self.bodies(prog)?;
@@ -1024,8 +1054,13 @@ impl Checker {
     /// type. The methods' too. Nested functions are checked with the
     /// bodies they're in.
     fn bodies(&mut self, prog: &Program) -> Result<(), Error> {
-        let fns = prog.all_fns().into_iter().enumerate();
-        for (i, (f, parent, method)) in fns.skip(self.from.all_fns) {
+        // Measures first, so that what each is, its body's terms, is known
+        // where another body uses it.
+        let mut fns: Vec<_> = (prog.all_fns().into_iter().enumerate())
+            .skip(self.from.all_fns)
+            .collect();
+        fns.sort_by_key(|(_, (f, ..))| f.measure.is_none());
+        for (i, (f, parent, method)) in fns {
             // What an intrinsic does isn't written in T.
             if f.intrinsic.is_some() || parent.is_some() {
                 continue;
@@ -1089,6 +1124,10 @@ impl Checker {
             self.note_binds(std::slice::from_ref(&local), false);
             self.bind(&local);
             self.locals.push(local);
+        }
+        // A parameter a refinement names is used: by what it says.
+        for i in self.named_params(&self.fns[id.0].symbol) {
+            self.locals[scope + i].used = true;
         }
         let ret = (*sig.ret).clone();
         self.mention(&ret);

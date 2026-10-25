@@ -222,6 +222,7 @@ pub fn run(prog: &Program, term: &mut dyn Terminal) -> Result<Value, Error> {
         frames: Vec::new(),
         unsafe_blocks: Vec::new(),
         proved: &prog.proved,
+        measures: &prog.measures,
         refined: HashMap::new(),
         params_refined: Vec::new(),
         term,
@@ -483,6 +484,8 @@ struct Interp<'p, 'o> {
     unsafe_blocks: Vec<(Span, usize)>,
     /// The operators the checker proved can't panic, by node.
     proved: &'p HashSet<NodeId>,
+    /// What the checker found of measures, for refinements that use them.
+    measures: &'p crate::ast::Measures,
     /// The refinement of each refined variable, by its slot and the
     /// slot's generation: what each assignment to it must keep.
     refined: HashMap<(usize, u64), Refined>,
@@ -543,19 +546,86 @@ struct Refined {
     binder: String,
     pred: Expr,
     env: Vec<(String, Value)>,
+    /// What each measure the predicate calls of a name other than its
+    /// binder gives, by node: found when it's made, as the predicate is
+    /// about then, and what's behind a reference may change after.
+    measured: HashMap<NodeId, PredValue>,
 }
 
-/// What a predicate evaluates to: integers are the mathematical ones.
+/// What a predicate evaluates to: integers are the mathematical ones. A
+/// value that's neither is only ever what a measure is of.
+#[derive(Clone)]
 enum PredValue {
     Int(i128),
     Bool(bool),
+    Val(Value),
+}
+
+impl PredValue {
+    fn int(self) -> i128 {
+        match self {
+            PredValue::Int(n) => n,
+            _ => unsound("a refinement's `bool` used as an integer"),
+        }
+    }
+
+    fn boolean(self) -> bool {
+        match self {
+            PredValue::Bool(b) => b,
+            _ => unsound("a refinement's integer used as a `bool`"),
+        }
+    }
+
+    fn of(v: &Value) -> PredValue {
+        match v {
+            Value::Int(n, _) => PredValue::Int(*n),
+            Value::Bool(b) => PredValue::Bool(*b),
+            v => PredValue::Val(v.clone()),
+        }
+    }
+
+    fn val(self) -> Value {
+        match self {
+            PredValue::Val(v) => v,
+            _ => unsound("a measure of an integer or a `bool`"),
+        }
+    }
+}
+
+/// `a op b` in a predicate, of integers in ℤ.
+fn pred_op(op: BinOp, a: PredValue, b: PredValue) -> PredValue {
+    match (op, a, b) {
+        (BinOp::And, a, b) => PredValue::Bool(a.boolean() && b.boolean()),
+        (BinOp::Or, a, b) => PredValue::Bool(a.boolean() || b.boolean()),
+        (BinOp::Eq, PredValue::Bool(a), PredValue::Bool(b)) => PredValue::Bool(a == b),
+        (BinOp::Ne, PredValue::Bool(a), PredValue::Bool(b)) => PredValue::Bool(a != b),
+        (op, a, b) => {
+            let (a, b) = (a.int(), b.int());
+            let arith = |n: Option<i128>| match n {
+                Some(n) => PredValue::Int(n),
+                None => unsound("a refinement's arithmetic out of range"),
+            };
+            match op {
+                BinOp::Add => arith(a.checked_add(b)),
+                BinOp::Sub => arith(a.checked_sub(b)),
+                BinOp::Mul => arith(a.checked_mul(b)),
+                BinOp::Eq => PredValue::Bool(a == b),
+                BinOp::Ne => PredValue::Bool(a != b),
+                BinOp::Lt => PredValue::Bool(a < b),
+                BinOp::Le => PredValue::Bool(a <= b),
+                BinOp::Gt => PredValue::Bool(a > b),
+                BinOp::Ge => PredValue::Bool(a >= b),
+                _ => unsound(&format!("`{op}` in a refinement")),
+            }
+        }
+    }
 }
 
 impl Refined {
     /// Stops the program, as the checker is wrong, unless it holds of `v`,
     /// which is `what`.
-    fn check(&self, v: &Value, what: &str) {
-        if let PredValue::Bool(false) = self.eval(&self.pred, v) {
+    fn check(&self, i: &Interp, v: &Value, what: &str) {
+        if let PredValue::Bool(false) = self.eval(i, &self.pred, v) {
             unsound(&format!(
                 "{what} is `{v}`, which doesn't have its refinement `{}`",
                 crate::pretty::expr_text(&self.pred)
@@ -563,60 +633,34 @@ impl Refined {
         }
     }
 
-    fn eval(&self, e: &Expr, v: &Value) -> PredValue {
-        let int = |p: PredValue| match p {
-            PredValue::Int(n) => n,
-            PredValue::Bool(_) => unsound("a refinement's `bool` used as an integer"),
-        };
-        let boolean = |p: PredValue| match p {
-            PredValue::Bool(b) => b,
-            PredValue::Int(_) => unsound("a refinement's integer used as a `bool`"),
-        };
-        let value = |v: &Value| match v {
-            Value::Int(n, _) => PredValue::Int(*n),
-            Value::Bool(b) => PredValue::Bool(*b),
-            other => unsound(&format!("a refinement of `{other}`")),
-        };
+    fn eval(&self, i: &Interp, e: &Expr, v: &Value) -> PredValue {
         match &e.kind {
             ExprKind::Int(n, _) => PredValue::Int(i128::from(*n)),
             ExprKind::Bool(b) => PredValue::Bool(*b),
-            ExprKind::Var(name, _) if *name == self.binder => value(v),
+            ExprKind::Var(name, _) if *name == self.binder => PredValue::of(v),
             ExprKind::Var(name, _) => match self.env.iter().find(|(n, _)| n == name) {
-                Some((_, v)) => value(v),
+                Some((_, v)) => PredValue::of(v),
                 None => unsound(&format!("a refinement naming `{name}`, which isn't there")),
             },
-            ExprKind::Unary(UnOp::Neg, x) => PredValue::Int(-int(self.eval(x, v))),
-            ExprKind::Unary(UnOp::Not, x) => PredValue::Bool(!boolean(self.eval(x, v))),
-            ExprKind::Binary(op, l, r) => {
-                let (a, b) = (self.eval(l, v), self.eval(r, v));
-                match (op, a, b) {
-                    (BinOp::And, a, b) => PredValue::Bool(boolean(a) && boolean(b)),
-                    (BinOp::Or, a, b) => PredValue::Bool(boolean(a) || boolean(b)),
-                    (BinOp::Eq, PredValue::Bool(a), PredValue::Bool(b)) => PredValue::Bool(a == b),
-                    (BinOp::Ne, PredValue::Bool(a), PredValue::Bool(b)) => PredValue::Bool(a != b),
-                    (op, a, b) => {
-                        let (a, b) = (int(a), int(b));
-                        let arith = |n: Option<i128>| match n {
-                            Some(n) => PredValue::Int(n),
-                            None => unsound("a refinement's arithmetic out of range"),
-                        };
-                        match op {
-                            BinOp::Add => arith(a.checked_add(b)),
-                            BinOp::Sub => arith(a.checked_sub(b)),
-                            BinOp::Mul => arith(a.checked_mul(b)),
-                            BinOp::Eq => PredValue::Bool(a == b),
-                            BinOp::Ne => PredValue::Bool(a != b),
-                            BinOp::Lt => PredValue::Bool(a < b),
-                            BinOp::Le => PredValue::Bool(a <= b),
-                            BinOp::Gt => PredValue::Bool(a > b),
-                            BinOp::Ge => PredValue::Bool(a >= b),
-                            _ => unsound(&format!("`{op}` in a refinement")),
-                        }
-                    }
-                }
-            }
+            ExprKind::Unary(UnOp::Neg, x) => PredValue::Int(-self.eval(i, x, v).int()),
+            ExprKind::Unary(UnOp::Not, x) => PredValue::Bool(!self.eval(i, x, v).boolean()),
+            ExprKind::Binary(op, l, r) => pred_op(*op, self.eval(i, l, v), self.eval(i, r, v)),
+            ExprKind::MethodCall(x, ..) => match self.measured.get(&e.id) {
+                Some(m) => m.clone(),
+                None => i.measure_call(e.id, self.eval(i, x, v).val()),
+            },
             _ => unsound("a refinement outside the logic"),
         }
+    }
+}
+
+/// Each measure call in predicate `e`, by node, with its receiver.
+fn each_measure_call<'e>(e: &'e Expr, out: &mut Vec<(NodeId, &'e Expr)>) {
+    if let ExprKind::MethodCall(x, ..) = &e.kind {
+        out.push((e.id, x));
+    }
+    for c in e.children() {
+        each_measure_call(c, out);
     }
 }
 
@@ -634,6 +678,120 @@ fn pred_names<'e>(e: &'e Expr, binder: &str, out: &mut Vec<&'e str>) {
 }
 
 impl Interp<'_, '_> {
+    /// The refinement `{ binder | pred }`, whose other names have the
+    /// values `env`: what the measures it calls of them give is found now.
+    fn refined(&self, binder: &str, pred: &Expr, env: Vec<(String, Value)>) -> Refined {
+        let mut r = Refined {
+            binder: binder.to_string(),
+            pred: pred.clone(),
+            env,
+            measured: HashMap::new(),
+        };
+        let mut calls = Vec::new();
+        each_measure_call(pred, &mut calls);
+        for (node, x) in calls {
+            if let ExprKind::Var(name, _) = &x.kind
+                && *name != r.binder
+            {
+                let recv = r.eval(self, x, &Value::Unit).val();
+                let m = self.measure_call(node, recv);
+                r.measured.insert(node, m);
+            }
+        }
+        r
+    }
+
+    /// What the measure call at `node`, in a predicate or a measure's body,
+    /// gives of receiver `recv`, through the `*`s the checker found.
+    fn measure_call(&self, node: NodeId, recv: Value) -> PredValue {
+        let Some((symbol, derefs, by)) = self.measures.calls.get(&node) else {
+            unsound("a measure the checker didn't find")
+        };
+        let peel = match by {
+            Some(_) if *derefs > 0 => derefs - 1,
+            _ => *derefs,
+        };
+        let this = (0..peel).fold(recv, |v, _| self.pred_deref(v));
+        self.measure(symbol, this)
+    }
+
+    /// What a reference or box `v` points to, if it's one, but a slice's
+    /// or a string's, whose measures are of it; or else `v`.
+    fn pred_deref(&self, v: Value) -> Value {
+        match &v {
+            Value::Ref(p) | Value::Box(p) if p.range.is_none() => self.memory.get(p).clone(),
+            _ => v,
+        }
+    }
+
+    /// What measure `symbol` gives of `this`, its `&self`, or what that
+    /// points to: its body's value, or an intrinsic's.
+    fn measure(&self, symbol: &str, this: Value) -> PredValue {
+        match self.measures.bodies.get(symbol) {
+            Some(Some(body)) => {
+                let term = match &body.kind {
+                    ExprKind::Block(_, Some(tail)) => &**tail,
+                    _ => body,
+                };
+                self.measure_term(term, &this)
+            }
+            Some(None) => match (symbol, &this) {
+                (
+                    "<[T]>::len" | "<str>::len",
+                    Value::Ref(Ptr {
+                        range: Some((_, len)),
+                        ..
+                    }),
+                ) => PredValue::Int(*len as i128),
+                ("alloc::raw::RawBuf::cap", this) => match self.pred_deref(this.clone()) {
+                    Value::RawBuf(q) => match self.memory.get(&q) {
+                        Value::Slots(slots) => PredValue::Int(slots.len() as i128),
+                        other => unsound(&format!("a `RawBuf` of `{other}`")),
+                    },
+                    other => unsound(&format!("`cap` of `{other}`")),
+                },
+                (_, this) => unsound(&format!("intrinsic measure `{symbol}` of `{this}`")),
+            },
+            None => unsound(&format!("`{symbol}` isn't a measure")),
+        }
+    }
+
+    /// The value of term `e` of a measure's body, whose `self` is `this`.
+    fn measure_term(&self, e: &Expr, this: &Value) -> PredValue {
+        match &e.kind {
+            ExprKind::Int(n, _) => PredValue::Int(i128::from(*n)),
+            ExprKind::Bool(b) => PredValue::Bool(*b),
+            ExprKind::Var(..) => PredValue::Val(this.clone()),
+            ExprKind::Field(x, name) => {
+                let mut v = self.measure_term(x, this).val();
+                while let Value::Ref(p) | Value::Box(p) = &v
+                    && p.range.is_none()
+                {
+                    v = self.pred_deref(v);
+                }
+                match &v {
+                    Value::Struct(_, fields) => {
+                        match fields.iter().find(|(n, _)| *n == name.name) {
+                            Some((_, f)) => PredValue::of(f),
+                            None => unsound(&format!("no field `{}` in `{v}`", name.name)),
+                        }
+                    }
+                    _ => unsound(&format!("field `{}` of `{v}`", name.name)),
+                }
+            }
+            ExprKind::MethodCall(x, ..) => {
+                let recv = self.measure_term(x, this).val();
+                self.measure_call(e.id, recv)
+            }
+            ExprKind::Unary(UnOp::Neg, x) => PredValue::Int(-self.measure_term(x, this).int()),
+            ExprKind::Unary(UnOp::Not, x) => PredValue::Bool(!self.measure_term(x, this).boolean()),
+            ExprKind::Binary(op, l, r) => {
+                pred_op(*op, self.measure_term(l, this), self.measure_term(r, this))
+            }
+            _ => unsound("a measure's body outside the logic"),
+        }
+    }
+
     /// The slot of local variable `name`, if it's one.
     fn local(&self, name: &str) -> Option<Ptr> {
         let local = self.locals.iter().rev().find(|(n, ..)| n == name);
@@ -914,10 +1072,6 @@ impl Interp<'_, '_> {
 
     fn call(&mut self, f: Value, args: Vec<Value>, span: Span) -> Result<Value, Error> {
         match f {
-            Value::Fn(name) if self.fns[name.as_str()].intrinsic.is_some() => {
-                let of = name.split("::<").next().unwrap_or_default().to_string();
-                self.intrinsic(&of, &name, args, span)
-            }
             Value::Fn(name) => {
                 let decl = self.fns[name.as_str()];
                 // What a refinement names of the parameters: their values
@@ -926,33 +1080,42 @@ impl Interp<'_, '_> {
                     .params
                     .iter()
                     .zip(&args)
-                    .filter(|(_, v)| matches!(v, Value::Int(..) | Value::Bool(_)))
                     .map(|(p, v)| (p.name.name.clone(), v.clone()))
                     .collect();
-                let refinement = |t: &TypeExpr| {
-                    t.refinement().map(|(v, pred)| Refined {
-                        binder: v.name.clone(),
-                        pred: pred.clone(),
-                        env: env.clone(),
-                    })
+                let refinement = |i: &Self, t: &TypeExpr| {
+                    t.refinement()
+                        .map(|(v, pred)| i.refined(&v.name, pred, env.clone()))
                 };
+                let intrinsic = decl.intrinsic.is_some();
                 for (p, v) in decl.params.iter().zip(&args) {
-                    if let Some(r) = refinement(&p.ty) {
+                    if let Some(r) = refinement(self, &p.ty) {
                         r.check(
+                            self,
                             v,
                             &format!("argument `{}` of `{}`", p.name.name, decl.name.name),
                         );
-                        self.params_refined.push((p.name.name.clone(), r));
+                        if !intrinsic {
+                            self.params_refined.push((p.name.name.clone(), r));
+                        }
                     }
                 }
-                let ret = refinement(&decl.ret);
-                // A call gets a fresh environment: just the parameters.
-                let params = decl.params.iter().map(|p| p.name.name.clone());
-                self.frames.push(name);
-                let result = self.enter(Vec::new(), params.zip(args).collect(), &decl.body, span);
-                self.frames.pop();
+                let ret = refinement(self, &decl.ret);
+                // What an intrinsic gives is trusted, and so checked: its
+                // refinement too.
+                let result = if intrinsic {
+                    let of = name.split("::<").next().unwrap_or_default().to_string();
+                    self.intrinsic(&of, &name, args, span)
+                } else {
+                    // A call gets a fresh environment: just the parameters.
+                    let params = decl.params.iter().map(|p| p.name.name.clone());
+                    self.frames.push(name);
+                    let result =
+                        self.enter(Vec::new(), params.zip(args).collect(), &decl.body, span);
+                    self.frames.pop();
+                    result
+                };
                 if let (Ok(v), Some(r)) = (&result, ret) {
-                    r.check(v, &format!("the result of `{}`", decl.name.name));
+                    r.check(self, v, &format!("the result of `{}`", decl.name.name));
                 }
                 result
             }
@@ -1034,6 +1197,9 @@ impl Interp<'_, '_> {
         if name == "str::as_bytes" || name == "<str>::as_bytes" {
             let [s] = <[Value; 1]>::try_from(args).unwrap_or_else(|_| unsound("arity"));
             return Ok(s);
+        }
+        if name == "str::len" || name == "<str>::len" {
+            return Ok(self.slice("len", copy, args));
         }
         if name.starts_with("<[") {
             let op = copy.rsplit("::").next().unwrap_or_default();
@@ -1184,6 +1350,17 @@ impl Interp<'_, '_> {
         };
         let made = match op {
             "len" => return usize_of(len),
+            // Its refinement says `i < len()`, so it's the checker's bug
+            // if it isn't.
+            "index" | "index_mut" => {
+                let Some(i) = index(args.next(), len).filter(|i| *i < len) else {
+                    unsound(&format!("`{op}` out of range of a slice of {len}"))
+                };
+                return Value::Ref(Ptr {
+                    range: None,
+                    ..p.field(lo + i)
+                });
+            }
             "get" | "get_mut" => {
                 let i = index(args.next(), len).filter(|i| *i < len);
                 i.map(|i| {
@@ -1548,7 +1725,7 @@ impl Interp<'_, '_> {
 
     fn eval(&mut self, e: &Expr) -> Result<Value, Flow> {
         Ok(match &e.kind {
-            ExprKind::For(_) | ExprKind::Range(..) | ExprKind::Try(..) => {
+            ExprKind::For(_) | ExprKind::Range(..) | ExprKind::Try(..) | ExprKind::Index(..) => {
                 unreachable!("rewritten when paths are resolved")
             }
             ExprKind::Int(n, t) => {
@@ -1718,7 +1895,7 @@ impl Interp<'_, '_> {
                 if p.path.is_empty()
                     && let Some(r) = self.refined.get(&(p.slot, p.generation))
                 {
-                    r.check(&v, "a refined variable assigned");
+                    r.check(self, &v, "a refined variable assigned");
                 }
                 let old = std::mem::replace(self.memory.get_mut(&p), v);
                 self.drop(old)?;
@@ -1851,13 +2028,9 @@ impl Interp<'_, '_> {
                 (n.to_string(), self.memory.get(&p).clone())
             })
             .collect();
-        let r = Refined {
-            binder: v.name.clone(),
-            pred: pred.clone(),
-            env,
-        };
+        let r = self.refined(&v.name, pred, env);
         let p = self.local(name).expect("just bound");
-        r.check(self.memory.get(&p), &format!("`{name}`"));
+        r.check(self, self.memory.get(&p), &format!("`{name}`"));
         self.refined.insert((p.slot, p.generation), r);
     }
 
@@ -1932,12 +2105,9 @@ impl Interp<'_, '_> {
         };
         for (j, f) in decl.fields.iter().enumerate() {
             if let Some((binder, pred)) = f.ty.refinement() {
-                let r = Refined {
-                    binder: binder.name.clone(),
-                    pred: pred.clone(),
-                    env: fields[..j].to_vec(),
-                };
+                let r = self.refined(&binder.name, pred, fields[..j].to_vec());
                 r.check(
+                    self,
                     &fields[j].1,
                     &format!("field `{}` of a `{name}` {what}", f.name.name),
                 );

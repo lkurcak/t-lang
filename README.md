@@ -289,7 +289,10 @@ has to fit that:
   | d > 0 }`, can't panic (see
   [docs/08-refinement-types.md](docs/08-refinement-types.md)). A struct's
   fields can have them too, which every value of it keeps (see
-  [docs/08.1-field-refinements.md](docs/08.1-field-refinements.md)).
+  [docs/08.1-field-refinements.md](docs/08.1-field-refinements.md)). And
+  they can name *measures*, methods like `len()`, so `s[i]` is proved in
+  range and can't panic either (see
+  [docs/21-measures.md](docs/21-measures.md)).
 - **Values must be used up.** One whose type isn't `Discard` can't be
   dropped or overwritten: a resource like a file descriptor can't be
   forgotten. See [docs/06a.1-linear-types.md](docs/06a.1-linear-types.md).
@@ -299,8 +302,8 @@ has to fit that:
   [docs/20-destructors.md](docs/20-destructors.md).
 - **The core library is written in T.** `Option`, `Result`, `Iterator` and
   the rest are checked like any program; all the checker takes on trust is
-  its intrinsics, `swap`, `panic`, `checked_mul`, `least`, `greatest` and a
-  slice's few, and the arithmetic operators. See
+  its intrinsics, `swap`, `panic`, `checked_mul`, `least`, `greatest`, a
+  slice's few and a string's length, and the arithmetic operators. See
   [docs/06e-core.md](docs/06e-core.md).
 - **Integers say how big they are.** `i8` to `i64`, `u8` to `u64`, `isize`
   and `usize`, and no `int`: an operator gives the number it does in ℤ, or
@@ -363,6 +366,7 @@ combine features in ways nobody planned for.
 | 18 ✅ | `core::fmt`: `Write`, a sink of text, and `Display`, for integers, `bool`, `char`, strings and a program's own types; `w.put(&x)?`, `String::of(&x)` | effects bounded by an argument's: formatting does only what its sink does, so into a pure sink it's total; numbers in decimal proved not to panic, at every integer type; each sink's errors a type of its own | [docs/18-fmt.md](docs/18-fmt.md) |
 | 19 ✅ | `std`: `fn main(os: Os)`, `out.line(&x)?`, `stdin.read_line(&mut line)?`, `main` giving back `Result<(), E>`; the `print` built-ins are gone | capabilities: what a function can do to the world is what it's handed, values no code can forge or copy (uniqueness, as Clean's world), not an effect; errors as values meeting linear types | [docs/19-std-io.md](docs/19-std-io.md) |
 | 20 ✅ | destructors: `impl Discard for T { fn discard(self) { .. } }`, called wherever a value is dropped; `List` and `String` are `Discard`, so `?` works while one is alive; `x.discard()` | weakening as a map `A ⊸ 1`, inserted only where it's total; a drop as a use of what's borrowed (drop check); only a type's module may skip its destructor | [docs/20-destructors.md](docs/20-destructors.md) |
+| 21 ✅ | measures: `#[measure] fn len(&self) -> usize`, named in refinements, `i: { i: usize \| i < s.len() }`; refinements of any type; `s[i]`, `l[i] = v`, proved in range | measures as functions of a value, uninterpreted outside their module (abstract functions); equality with uninterpreted functions by object identity; a `&mut`'s place forgotten where it's lent, as the borrow checker says no one reads it meanwhile | [docs/21-measures.md](docs/21-measures.md) |
 | — | C backend | | when it's worth it |
 
 ## License

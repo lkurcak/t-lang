@@ -142,7 +142,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
 | Missing | Why it's missing | Step |
 |---|---|---|
 | fallible allocation, `Box::try_new`, `List::try_push` | needs an allocator design, and a `Result` for each | — |
-| `List` proving `len < cap()` itself | needs measures, `cap()` in a fact | — |
+| `List` proving `len < cap()` itself | needs measures (21 ✅), and `len <= cap()` as an invariant kept across `&mut` borrows of the buffer | — |
 | catching running out of memory | would need effect handlers, as catching a panic would | — |
 
 ## Exercises

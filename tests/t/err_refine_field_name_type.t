@@ -2,4 +2,4 @@
 struct Tagged<T> { t: T, n: { v: i64 | v == t } }
 
 fn main() {}
-// error: a refinement can only name integers and `bool`s, and `t` is a `T`
+// error: a refinement can only name `t`, of type `T`, by its measures: `t.m()`, where `m` is a `#[measure]`

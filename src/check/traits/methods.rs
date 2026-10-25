@@ -23,6 +23,23 @@ impl Checker {
         self.lookup_method(ty, None, name, targs, "value")
     }
 
+    /// The symbol of the method `name` of the one inherent impl that could
+    /// be for `ty`, if there's one: for a refinement's `x.len()`, which can
+    /// only call a measure, which is one (see `refine::find_measure`).
+    pub(in crate::check) fn inherent_named(&self, ty: &Type, name: &str) -> Option<String> {
+        let ty = self.solved(ty);
+        let mut found = self
+            .traits
+            .impls
+            .iter()
+            .filter(|d| d.trait_name.is_none() && could_match(&d.self_ty, &ty, &d.params))
+            .filter_map(|d| d.methods.iter().find(|(n, _)| n == name));
+        match (found.next(), found.next()) {
+            (Some((_, symbol)), None) => Some(symbol.clone()),
+            _ => None,
+        }
+    }
+
     /// The method `name` of type `ty`, or of trait `tr` at `Self` = `ty`.
     ///
     /// An inherent method comes first: one in an `impl` of the type itself.

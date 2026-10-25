@@ -29,13 +29,17 @@ impl<T> List<T> {
         List { buf: RawBuf::new(cap), len: 0 }
     }
 
-    /// How many values it holds.
+    /// How many values it holds. It's a measure, so refinements can say
+    /// it: `l[i]` needs `i < l.len()`.
+    #[measure]
     pub fn len(&self) -> usize { self.len }
 
     /// Does it hold none?
-    pub fn is_empty(&self) -> bool { self.len == 0 }
+    #[measure]
+    pub fn is_empty(&self) -> bool { self.len() == 0 }
 
     /// How many values it has room for before it grows.
+    #[measure]
     pub fn capacity(&self) -> usize { self.buf.cap() }
 
     /// Puts `v` at the end. When there's no room, it doubles the buffer
@@ -66,17 +70,30 @@ impl<T> List<T> {
         Option::Some(unsafe { self.buf.read(self.len) })
     }
 
-    /// Its values, as a slice.
-    pub fn as_slice(&self) -> &[T] {
+    /// Its values, as a slice, as many as it holds.
+    pub fn as_slice(&self) -> { s: &[T] | s.len() == self.len() } {
         // SAFETY: slots `0..len` hold values, and `len <= cap()`.
         unsafe { self.buf.slice(0, self.len) }
     }
 
-    /// Its values, as a slice to change.
-    pub fn as_mut_slice(&mut self) -> &mut [T] {
+    /// Its values, as a slice to change, as many as it holds.
+    pub fn as_mut_slice(&mut self) -> { s: &mut [T] | s.len() == self.len() } {
         // SAFETY: slots `0..len` hold values, and `len <= cap()`. Nothing
         // done through the slice can take one out.
         unsafe { self.buf.slice_mut(0, self.len) }
+    }
+
+    /// The value at `i`, which is less than `len()`, so there's one: `l[i]`
+    /// is `*l.index(i)`.
+    pub fn index(&self, i: { i: usize | i < self.len() }) -> &T { &self.as_slice()[i] }
+
+    /// The value at `i`, which is less than `len()`, to change: `l[i] = v`
+    /// is `*l.index_mut(i) = v`.
+    pub fn index_mut(&mut self, i: { i: usize | i < self.len() }) -> &mut T {
+        // SAFETY: slots `0..len` hold values, and `len <= cap()`. Nothing
+        // done through the slice can take one out.
+        let s = unsafe { self.buf.slice_mut(0, self.len) };
+        &mut s[i]
     }
 
     /// The value at `i`, or `None` if there's none: if `i` isn't less than

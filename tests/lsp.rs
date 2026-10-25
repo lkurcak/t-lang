@@ -591,6 +591,35 @@ fn formats_and_hovers_bitwise_operators() {
     stop(child, c);
 }
 
+/// A measure named in a refinement is a use of it: hover shows it, and
+/// go to definition finds it.
+#[test]
+fn hovers_and_finds_measures_in_refinements() {
+    let (child, mut c) = start();
+    let uri = "file:///tmp/measure.t";
+    let src = "#[derive(Discard)]\nstruct W { n: usize }\nimpl W {\n    #[measure]\n    fn len(&self) -> usize { self.n }\n}\nfn at(w: &W, i: { i: usize | i < w.len() }) -> usize { i }\nfn main() {\n    let w = W { n: 2 };\n    let _x = at(&w, 1);\n}\n";
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
+        }}),
+    );
+    assert_eq!(c.diagnostics(), Vec::<Value>::new());
+    let at = |line: u32, character: u32| json!({"textDocument": {"uri": uri}, "position": {"line": line, "character": character}});
+    c.send(json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": at(6, 36)}));
+    let hover = c.response(2)["result"].clone();
+    assert_eq!(
+        hover["contents"]["value"], "```t\nfn len: fn(&W) -> usize\n```",
+        "{hover}"
+    );
+    c.send(json!({"jsonrpc": "2.0", "id": 3, "method": "textDocument/definition", "params": at(6, 36)}));
+    let def = c.response(3)["result"].clone();
+    assert_eq!(
+        def["range"],
+        json!({"start": {"line": 4, "character": 7}, "end": {"line": 4, "character": 10}})
+    );
+    stop(child, c);
+}
+
 /// Hover and go to definition find the function a name refers to, when
 /// nested functions share a name with each other and with a top-level one.
 #[test]

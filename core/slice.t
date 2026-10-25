@@ -13,12 +13,26 @@ use crate::option::Option;
 /// `split_at_mut` gives two slices that share no values. The rest is safe
 /// code over them.
 impl<T> [T] {
-    /// How many values it has.
+    /// How many values it has. It's a measure, so refinements can say it:
+    /// `i: { i: usize | i < s.len() }`. It's of the reference, which knows
+    /// it, so nothing written through a `&mut [T]` changes it.
     #[intrinsic]
+    #[measure]
     pub fn len(&self) -> usize;
 
     /// Has it none?
+    #[measure]
     pub fn is_empty(&self) -> bool { self.len() == 0 }
+
+    /// The value at `i`, which is less than `len()`, so there's one: `s[i]`
+    /// is `*s.index(i)`.
+    #[intrinsic]
+    pub fn index(&self, i: { i: usize | i < self.len() }) -> &T;
+
+    /// The value at `i`, which is less than `len()`, to change: `s[i] = v`
+    /// is `*s.index_mut(i) = v`.
+    #[intrinsic]
+    pub fn index_mut(&mut self, i: { i: usize | i < self.len() }) -> &mut T;
 
     /// The value at `i`, or `None` if there's none: if `i` isn't less than
     /// `len()`.

@@ -1,7 +1,7 @@
-// There's no indexing syntax yet: `get` gives the value at an index, or
-// `None` if there's none.
+// `s[i]` needs `i < s.len()` proved, and nothing says how long `empty()`'s
+// slice is: `get` gives the value at an index, or `None` if there's none.
 fn main() {
     let s: &[i64] = core::slice::empty();
-    let x = s[0];
+    let _x = s[0];
 }
-// error: there's no indexing with `[..]` yet; use `.get(..)`, which gives an `Option`
+// error: can't prove `i < self.len()` for argument `i` of `index`

@@ -18,6 +18,8 @@ pub struct Info {
     /// The operators proved not to panic, by node (see `check/refine.rs`),
     /// which the interpreter checks.
     pub proved: std::collections::HashSet<NodeId>,
+    /// The measures, for the interpreter (see `ast::Measures`).
+    pub measures: crate::ast::Measures,
     /// The type of each integer literal, by node, which in a generic
     /// function can be a type parameter, for monomorphisation to write.
     pub literals: HashMap<NodeId, Type>,
@@ -768,7 +770,7 @@ fn names(params: &[Ident]) -> crate::types::Params {
 fn each_annotation(e: &Expr, f: &mut impl FnMut(&TypeExpr)) {
     match &e.kind {
         ExprKind::Move(_) => unreachable!("written by lift"),
-        ExprKind::For(_) | ExprKind::Range(..) | ExprKind::Try(..) => {
+        ExprKind::For(_) | ExprKind::Range(..) | ExprKind::Try(..) | ExprKind::Index(..) => {
             unreachable!("rewritten when paths are resolved")
         }
         ExprKind::Int(..)

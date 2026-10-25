@@ -62,7 +62,7 @@ use super::typed::Res;
 use crate::ast::*;
 use crate::error::{Error, Span};
 use crate::traits::{INT, SIGNED, UNSIGNED};
-use crate::types::{IntTy, Region, Type, all_fields, struct_fields};
+use crate::types::{IntTy, Type, all_fields, struct_fields};
 use logic::{Formula, Kind, Lin, Var};
 use std::collections::{HashMap, HashSet};
 
@@ -142,6 +142,47 @@ impl RefinedFields {
     }
 }
 
+/// A measure: a method of `&self` marked `#[measure]`, which a predicate
+/// can call (see docs/21-measures.md). What it gives depends on the value
+/// alone, and it always gives something: so it's a function of the value,
+/// in the logic as in the program.
+#[derive(Debug, Clone)]
+pub(super) struct Measure {
+    name: String,
+    /// What it gives: an integer type or `bool`.
+    ret: Type,
+    /// The module it's in, where it's its body; elsewhere it's only what's
+    /// been learned of it.
+    module: usize,
+    /// Its body, a term of the logic over `self`'s fields and measures, or
+    /// `None` for an intrinsic.
+    body: Option<Expr>,
+    /// Is it of a slice or a string, so of the reference to one?
+    unsized_self: bool,
+    /// The measures its body uses, once it's been checked.
+    uses: Vec<String>,
+    /// Does its body read a field? If not, it's only other measures, so
+    /// it can be its body anywhere, without seeing what its module hides.
+    reads_fields: bool,
+}
+
+/// A signature's or a struct's refinements, to be checked once every
+/// impl is collected, as a predicate may call a measure of any.
+#[derive(Debug, Clone)]
+pub(super) enum Pending {
+    Sig {
+        f: Box<FnDecl>,
+        params: Vec<Type>,
+        ret: Type,
+        allowed: bool,
+        owner: (String, String),
+    },
+    Fields {
+        s: Box<StructDecl>,
+        symbol: String,
+    },
+}
+
 /// What a name in a predicate is.
 #[derive(Debug, Clone, Copy)]
 pub(super) enum PredName {
@@ -170,6 +211,85 @@ impl Checker {
     /// keeps them. `allowed` is false in a trait's methods and an impl's
     /// for a trait, which can't have any.
     pub(super) fn refined_signature(
+        &mut self,
+        f: &FnDecl,
+        params: &[Type],
+        ret: &Type,
+        allowed: bool,
+    ) -> Result<(), Error> {
+        // `Self` is the impl's type, in an impl's method.
+        let (params, ret) = match &self.sig_self {
+            Some(t) => {
+                let s = crate::types::Subst::new(&["Self".to_string()], std::slice::from_ref(t));
+                (params.iter().map(|p| s.apply(p)).collect(), s.apply(ret))
+            }
+            None => (params.to_vec(), ret.clone()),
+        };
+        let (params, ret) = (&params[..], &ret);
+        if f.measure.is_some() {
+            self.measure_signature(f, params, ret)?;
+        }
+        let written = f.params.iter().map(|p| &p.ty).chain([&f.ret]);
+        if written.clone().all(|t| t.refinement().is_none()) {
+            return Ok(());
+        }
+        // Its predicates may call measures of impls not collected yet, so
+        // they're checked once all are.
+        self.pending_refined.push(Pending::Sig {
+            f: Box::new(f.clone()),
+            params: params.to_vec(),
+            ret: ret.clone(),
+            allowed,
+            owner: self.sig_owner.clone(),
+        });
+        Ok(())
+    }
+
+    /// The parameters of function `symbol` its refinements name, by index.
+    pub(super) fn named_params(&self, symbol: &str) -> Vec<usize> {
+        let mut out = Vec::new();
+        let Some(sig) = self.refined.get(symbol) else {
+            return out;
+        };
+        for r in sig.params.iter().chain([&sig.ret]).flatten() {
+            each_expr(&r.pred, &mut |e| {
+                if let Some(PredName::Param(j)) = self.pred_names.get(&e.id) {
+                    out.push(*j);
+                }
+            });
+        }
+        out
+    }
+
+    /// Checks the refinements whose checks waited for every impl to be
+    /// collected (see `Pending`).
+    pub(super) fn pending_refinements(&mut self) -> Result<(), Error> {
+        for p in std::mem::take(&mut self.pending_refined) {
+            match p {
+                Pending::Sig {
+                    f,
+                    params,
+                    ret,
+                    allowed,
+                    owner,
+                } => {
+                    let id = self.fns.iter().position(|d| d.symbol == owner.0);
+                    self.pred_owner = id.map(super::scope::FnId);
+                    self.sig_owner = owner;
+                    self.module = f.module;
+                    self.sig_refinements(&f, &params, &ret, allowed)?;
+                }
+                Pending::Fields { s, symbol } => {
+                    self.pred_owner = None;
+                    self.module = s.module;
+                    self.fields_now(&s, &symbol)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn sig_refinements(
         &mut self,
         f: &FnDecl,
         params: &[Type],
@@ -207,8 +327,10 @@ impl Checker {
                         ),
                     })
             };
-            let r = self.refinement(&p.ty, &params[i], &scope)?;
-            sig.params.push(r);
+            self.pred_again = p.mutable.map(|_| "a `mut` parameter");
+            let r = self.refinement(&p.ty, &params[i], &scope);
+            self.pred_again = None;
+            sig.params.push(r?);
         }
         let scope = |name: &str| {
             f.params
@@ -221,6 +343,8 @@ impl Checker {
                     }
                 })
         };
+        // What a result's refinement names is what the parameters were at
+        // the call, so what's behind a `&mut` too.
         sig.ret = self.refinement(&f.ret, ret, &scope)?;
         let symbol = self.sig_owner.0.clone();
         self.refined.insert(symbol, sig);
@@ -234,6 +358,14 @@ impl Checker {
         if s.fields.iter().all(|f| f.ty.refinement().is_none()) {
             return Ok(());
         }
+        self.pending_refined.push(Pending::Fields {
+            s: Box::new(s.clone()),
+            symbol: symbol.to_string(),
+        });
+        Ok(())
+    }
+
+    fn fields_now(&mut self, s: &StructDecl, symbol: &str) -> Result<(), Error> {
         let ty = Type::Adt(symbol.to_string(), Vec::new(), Vec::new());
         let types: Vec<Type> = match self.adts.get(symbol).map(|d| &d.kind) {
             Some(crate::types::AdtKind::Struct(fields)) => {
@@ -277,7 +409,10 @@ impl Checker {
                     Named::Value(types[j].clone(), PredName::Field(j), s.fields[j].name.span)
                 })
             };
-            let r = self.refinement(&f.ty, &types[i], &scope)?;
+            self.pred_again = Some("a field");
+            let r = self.refinement(&f.ty, &types[i], &scope);
+            self.pred_again = None;
+            let r = r?;
             let mut named = Vec::new();
             if let Some(r) = &r {
                 each_expr(&r.pred, &mut |e| {
@@ -331,7 +466,13 @@ impl Checker {
                     false => Named::Value(l.1.clone(), PredName::Local(l.3), l.4),
                 })
         };
-        let r = self.refinement(ann, t, &scope)?.expect("refined");
+        if let PatternKind::Bind(_, true) = pat.kind {
+            self.pred_again = Some("a `mut` variable");
+        }
+        self.pred_owner = self.current;
+        let r = self.refinement(ann, t, &scope);
+        self.pred_again = None;
+        let r = r?.expect("refined");
         // What it names, it uses.
         let named: HashSet<NodeId> = (self.pred_names.values())
             .filter_map(|n| match n {
@@ -362,12 +503,6 @@ impl Checker {
             return Ok(None);
         };
         let base = self.solved(base);
-        if !matches!(base, Type::Int(_) | Type::Bool) {
-            return Err(Error::ty(
-                t.unrefined().span,
-                format!("only integer types and `bool` can be refined, not `{base}`"),
-            ));
-        }
         let kind = super::NoteKind::Var(binder.name.clone());
         self.note(binder.span, kind, Some(base.clone()), Some(binder.span));
         let scope = |name: &str| match name == binder.name {
@@ -409,12 +544,12 @@ impl Checker {
                         _ if self.int_var(&t) => Sort::Int,
                         Type::Int(_) => Sort::Int,
                         Type::Bool => Sort::Bool,
-                        _ => {
+                        t => {
                             return Err(Error::ty(
                                 e.span,
                                 format!(
-                                    "a refinement can only name integers and `bool`s, and \
-                                     `{name}` is a `{t}`"
+                                    "a refinement can only name `{name}`, of type `{t}`, by its \
+                                     measures: `{name}.m()`, where `m` is a `#[measure]`"
                                 ),
                             ));
                         }
@@ -490,11 +625,292 @@ impl Checker {
                     Ok(Sort::Bool)
                 }
             },
+            ExprKind::MethodCall(x, m, targs, args) if targs.is_empty() && args.is_empty() => {
+                let ExprKind::Var(name, targs) = &x.kind else {
+                    return Err(Error::ty(
+                        x.span,
+                        "a refinement can only call a measure of a name: `s.len()`",
+                    ));
+                };
+                let ty = match scope(name) {
+                    Some(Named::Value(t, what, def)) if targs.is_empty() => {
+                        self.pred_names.insert(x.id, what);
+                        let kind = match what {
+                            PredName::Field(_) => super::NoteKind::Field(name.clone()),
+                            _ => super::NoteKind::Var(name.clone()),
+                        };
+                        self.note(x.span, kind, Some(self.solved(&t)), Some(def));
+                        t
+                    }
+                    // A name that isn't a value: the error it is alone.
+                    _ => {
+                        self.pred_type(x, scope)?;
+                        unreachable!("a name that isn't a value is an error")
+                    }
+                };
+                let (symbol, derefs, through_mut) = self.find_measure(&ty, m)?;
+                if through_mut && let Some(what) = self.pred_again {
+                    return Err(Error::ty(
+                        x.span,
+                        format!(
+                            "the refinement of {what} can't name a measure of what's behind \
+                             `&mut` `{name}`, which can change"
+                        ),
+                    ));
+                }
+                let ret = self.measures[&symbol].ret.clone();
+                if let Some(i) = self.fns.iter().position(|f| f.symbol == symbol) {
+                    let (ty, def) = (self.fns[i].scheme.ty.clone(), self.fns[i].name.span);
+                    let kind = super::NoteKind::Fn(m.name.clone());
+                    self.note(m.span, kind, Some(ty), Some(def));
+                    // What names it uses it, or else the struct does.
+                    match self.pred_owner {
+                        Some(owner) => {
+                            self.uses[owner.0].fns.insert(super::scope::FnId(i));
+                        }
+                        None => self.kept_measures.push(super::scope::FnId(i)),
+                    }
+                }
+                let call = (symbol.clone(), derefs, Some(false));
+                self.info.measures.calls.insert(e.id, call);
+                self.pred_measures.insert(e.id, (symbol, derefs));
+                Ok(match ret {
+                    Type::Bool => Sort::Bool,
+                    _ => Sort::Int,
+                })
+            }
             _ => Err(Error::ty(
                 e.span,
-                "a refinement can only use literals, names, `+`, `-`, `*` by a constant, \
-                 comparisons, `&&`, `||` and `!`",
+                "a refinement can only use literals, names, measures, `+`, `-`, `*` by a \
+                 constant, comparisons, `&&`, `||` and `!`",
             )),
+        }
+    }
+
+    /// The measure `m` of a value of type `ty`, or of what it points to,
+    /// through however many `&`s, `&mut`s and boxes: its symbol, how many
+    /// `*`s it's through, and whether one of them is a `&mut`'s, so that
+    /// what it's of may change. A slice's or a string's measure is of the
+    /// reference to it, which says how long it is, so the last `*` before
+    /// one doesn't count: what's written through a `&mut [T]` can't change
+    /// that.
+    fn find_measure(&self, ty: &Type, m: &Ident) -> Result<(String, usize, bool), Error> {
+        let mut t = self.solved(ty);
+        let mut muts: Vec<bool> = Vec::new();
+        loop {
+            if let Some(symbol) = self.inherent_named(&t, &m.name) {
+                let Some(measure) = self.measures.get(&symbol) else {
+                    break;
+                };
+                let counted = match measure.unsized_self {
+                    true => &muts[..muts.len().saturating_sub(1)],
+                    false => &muts[..],
+                };
+                let through_mut = counted.iter().any(|m| *m);
+                let fn_def = self.fns.iter().find(|f| f.symbol == symbol);
+                if let Some(f) = fn_def
+                    && !f.public
+                    && !self.modules.within(self.module, f.module)
+                {
+                    return Err(Error::ty(
+                        m.span,
+                        format!(
+                            "measure `{}` of `{t}` is private to {}",
+                            m.name,
+                            self.modules.describe(f.module)
+                        ),
+                    ));
+                }
+                return Ok((symbol, muts.len(), through_mut));
+            }
+            t = match t {
+                Type::Ref(_, mutable, inner) => {
+                    muts.push(mutable);
+                    self.solved(&inner)
+                }
+                Type::Box(inner) => {
+                    muts.push(false);
+                    self.solved(&inner)
+                }
+                _ => break,
+            };
+        }
+        Err(Error::ty(
+            m.span,
+            format!(
+                "`{}` isn't a measure: a refinement can only call methods marked `#[measure]`",
+                m.name
+            ),
+        ))
+    }
+
+    /// Checks the signature of measure `f`, whose parameters and result
+    /// have types `params` and `ret`, and keeps it.
+    fn measure_signature(&mut self, f: &FnDecl, params: &[Type], ret: &Type) -> Result<(), Error> {
+        let of = match (f.receiver(), params) {
+            (Some(_), [Type::Ref(_, false, of)]) => self.solved(of),
+            _ => {
+                return Err(Error::ty(f.parens, "a measure takes only `&self`"));
+            }
+        };
+        if !f.generics.is_empty() {
+            return Err(Error::ty(
+                f.name.span,
+                "a measure has no type parameters of its own",
+            ));
+        }
+        if let Some(e) = &f.effects {
+            return Err(Error::ty(
+                e.span,
+                "a measure can't have effects: what it gives is all it does",
+            ));
+        }
+        let ret = self.solved(ret);
+        if !matches!(ret, Type::Int(_) | Type::Bool) {
+            return Err(Error::ty(
+                f.ret.span,
+                format!("a measure gives an integer or a `bool`, not `{ret}`"),
+            ));
+        }
+        let body = f.intrinsic.is_none().then(|| f.body.clone());
+        let symbol = self.sig_owner.0.clone();
+        self.info.measures.bodies.insert(symbol, body);
+        let measure = Measure {
+            name: f.name.name.clone(),
+            ret,
+            module: f.module,
+            body: f.intrinsic.is_none().then(|| f.body.clone()),
+            unsized_self: matches!(of, Type::Slice(_) | Type::Str),
+            uses: Vec::new(),
+            reads_fields: true,
+        };
+        self.measures.insert(self.sig_owner.0.clone(), measure);
+        Ok(())
+    }
+
+    /// Checks the body of measure `symbol`, `body`, is a term of the logic:
+    /// `self`'s fields, measures, literals and what a predicate can do with
+    /// them; and that it isn't defined by itself, through other measures.
+    pub(super) fn measure_body(&mut self, symbol: &str, body: &Expr) -> Result<(), Error> {
+        let mut uses = Vec::new();
+        let term = match &body.kind {
+            ExprKind::Block(stmts, Some(tail)) if stmts.is_empty() => &**tail,
+            _ => body,
+        };
+        self.measure_term(term, false, &mut uses)?;
+        uses.dedup();
+        let mut reads_fields = false;
+        each_expr(term, &mut |e| {
+            reads_fields |= matches!(e.kind, ExprKind::Field(..))
+        });
+        let m = self.measures.get_mut(symbol).expect("a measure");
+        m.uses = uses;
+        m.reads_fields = reads_fields;
+        // Measures are checked one at a time, so a cycle is found once the
+        // last of it is.
+        let mut path = vec![symbol.to_string()];
+        if let Some(through) = self.measure_cycle(symbol, &mut path) {
+            let name = |s: &str| self.measures[s].name.clone();
+            return Err(Error::ty(
+                body.span,
+                format!(
+                    "measure `{}` is defined by itself, through `{}`",
+                    name(symbol),
+                    name(&through)
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    /// A measure on the way from the last of `path` back to `start`, if
+    /// there's a way.
+    fn measure_cycle(&self, start: &str, path: &mut Vec<String>) -> Option<String> {
+        let last = path.last().expect("not empty").clone();
+        for u in &self.measures[&last].uses {
+            if u == start {
+                return Some(path.get(1).unwrap_or(&last).clone());
+            }
+            if path.contains(u) {
+                continue;
+            }
+            path.push(u.clone());
+            if let Some(t) = self.measure_cycle(start, path) {
+                return Some(t);
+            }
+            path.pop();
+        }
+        None
+    }
+
+    /// Checks `e`, in a measure's body, is a term of the logic, keeping
+    /// the measures it uses in `uses`. Only a `receiver` may be other than
+    /// an integer or a `bool`: `self`, or a field of it, whose measure
+    /// it's of.
+    fn measure_term(
+        &mut self,
+        e: &Expr,
+        receiver: bool,
+        uses: &mut Vec<String>,
+    ) -> Result<(), Error> {
+        let bad = || {
+            Error::ty(
+                e.span,
+                "a measure's body can only use `self`'s fields, measures, literals, `+`, `-`, `*` \
+                 by a constant, comparisons, `&&`, `||` and `!`",
+            )
+        };
+        let ty = self.typed.exprs.get(&e.id).map(|t| self.solved(t));
+        let scalar = matches!(ty, Some(Type::Int(_) | Type::Bool));
+        if !receiver && !scalar {
+            return Err(bad());
+        }
+        match &e.kind {
+            ExprKind::Int(..) | ExprKind::Bool(_) => Ok(()),
+            ExprKind::Var(name, _) if name == "self" && receiver => Ok(()),
+            ExprKind::Field(x, _) => self.measure_term(x, true, uses),
+            ExprKind::MethodCall(x, m, targs, args) if targs.is_empty() && args.is_empty() => {
+                let symbol = match self.typed.methods.get(&e.id) {
+                    Some((Res::Fn(s, _), ..)) if self.measures.contains_key(s) => s.clone(),
+                    _ => {
+                        return Err(Error::ty(
+                            m.span,
+                            format!(
+                                "`{}` isn't a measure: a refinement can only call methods marked \
+                                 `#[measure]`",
+                                m.name
+                            ),
+                        ));
+                    }
+                };
+                let (_, derefs, by) = self.typed.methods[&e.id].clone();
+                self.info
+                    .measures
+                    .calls
+                    .insert(e.id, (symbol.clone(), derefs, by));
+                uses.push(symbol);
+                self.measure_term(x, true, uses)
+            }
+            ExprKind::Unary(UnOp::Neg | UnOp::Not, x) => self.measure_term(x, false, uses),
+            ExprKind::Binary(op, l, r) => {
+                if matches!(
+                    op,
+                    BinOp::Div
+                        | BinOp::Rem
+                        | BinOp::BitAnd
+                        | BinOp::BitOr
+                        | BinOp::BitXor
+                        | BinOp::Shl
+                        | BinOp::Shr
+                ) || (*op == BinOp::Mul && !constant(l) && !constant(r))
+                    || self.is_ord_call(e.id)
+                {
+                    return Err(bad());
+                }
+                self.measure_term(l, false, uses)?;
+                self.measure_term(r, false, uses)
+            }
+            _ => Err(bad()),
         }
     }
 
@@ -504,6 +920,9 @@ impl Checker {
         let id = self.current.expect("in a function");
         let symbol = self.fns[id.0].symbol.clone();
         let sig = self.refined.get(&symbol).cloned();
+        if self.measures.contains_key(&symbol) {
+            self.measure_body(&symbol, &f.body)?;
+        }
         let mut w = Walk {
             cx: self,
             kinds: Vec::new(),
@@ -511,13 +930,18 @@ impl Checker {
             laws: Vec::new(),
             reachable: true,
             cur: HashMap::new(),
+            objs: HashMap::new(),
+            next_obj: 0,
+            measured: HashMap::new(),
+            module: self.fns[id.0].module,
             invariants: HashMap::new(),
             unstable: HashSet::new(),
-            short: HashMap::new(),
+            lent: HashMap::new(),
             alias: HashMap::new(),
             declared: Vec::new(),
             proved: HashSet::new(),
             params: f.params.iter().map(|p| p.name.id).collect(),
+            entry: Vec::new(),
             ret: None,
             closures: 0,
             loops: Vec::new(),
@@ -531,6 +955,13 @@ impl Checker {
                 w.invariants.insert(p.name.id, (r, p.name.name.clone()));
             }
             w.bind(p.name.id, None);
+        }
+        // What the parameters are at the call, which a result's refinement
+        // is about: what's behind a `&mut` too, which may change after.
+        for p in &f.params {
+            let v = w.read_place(&Place::local(p.name.id));
+            let v = w.settled(v, ENTRY_DEPTH);
+            w.entry.push(v);
         }
         if let Some(sig) = &sig
             && let Some(r) = &sig.ret
@@ -585,14 +1016,32 @@ fn constant(e: &Expr) -> bool {
 }
 
 /// What an expression is, to the logic: an `i64`, as a linear sum, a
-/// `bool`, as a formula, a struct, as its fields' values, or anything else,
-/// of which nothing is known.
+/// `bool`, as a formula, a struct, as its fields' values, a reference or a
+/// box, as what it points to, or anything else, of which nothing is known.
+/// But for those, each value is an *object*, which says which value it
+/// is, so what a measure gives of it (`Walk::measured`).
 #[derive(Debug, Clone)]
 enum Val {
     Int(Lin),
     Bool(Formula),
-    Struct(Vec<Val>),
+    Struct(Obj, Vec<Val>),
+    Ref(Obj, Pointee),
+    Obj(Obj),
     Other,
+}
+
+/// Which value a value that isn't an integer or a `bool` is, by number.
+/// Each stands for one value, which never changes: a place that may have
+/// changed is another object.
+type Obj = u32;
+
+/// What a reference or a box points to: a place, which is read when it's
+/// needed, a value, or what isn't known.
+#[derive(Debug, Clone)]
+enum Pointee {
+    Place(Place),
+    Val(Box<Val>),
+    Unknown,
 }
 
 /// Where a value is, a *place*: a local variable, and the fields and `*`s
@@ -646,18 +1095,11 @@ impl Place {
     }
 }
 
-/// What an argument passes (see `Walk::passed`).
-struct Passed {
-    borrowed: Option<Place>,
-    ty: Type,
-    /// Is it passed as a `&`, whatever its type?
-    shared: bool,
-}
-
 /// The state to run each branch from.
 struct Snap {
     facts: usize,
     cur: HashMap<Place, Var>,
+    objs: HashMap<Place, Obj>,
     reachable: bool,
     declared: usize,
 }
@@ -667,6 +1109,7 @@ struct Snap {
 struct Outcome {
     facts: Vec<Formula>,
     cur: HashMap<Place, Var>,
+    objs: HashMap<Place, Obj>,
     reachable: bool,
     val: Val,
 }
@@ -691,14 +1134,27 @@ struct Walk<'c> {
     /// here. One that isn't in it is a value nothing's known of yet, but
     /// its refinements.
     cur: HashMap<Place, Var>,
+    /// Which object the value at each place that isn't an integer or a
+    /// `bool` is here, as `cur` does for those.
+    objs: HashMap<Place, Obj>,
+    /// How many objects there are.
+    next_obj: Obj,
+    /// What each measure gives of each object, once it's been asked: by
+    /// the object and the measure's symbol. An object is one value, so a
+    /// measure of it is one value too.
+    measured: HashMap<(Obj, String), Val>,
+    /// The module of the function walked, where its measures are their
+    /// bodies.
+    module: usize,
     /// The refinement of each refined local, with its name.
     invariants: HashMap<NodeId, (Refinement, String)>,
     /// The places that may change other than by assignment, with all
     /// that's in them.
     unstable: HashSet<Place>,
-    /// The places each call borrows `&mut` only while it runs, by the
-    /// call's node: what's known of them is forgotten when it returns.
-    short: HashMap<NodeId, Vec<Place>>,
+    /// The places each expression lends `&mut`, by its node: a call, a
+    /// `&mut`, or a `&mut` used whole. What's known of them is forgotten
+    /// once it's evaluated.
+    lent: HashMap<NodeId, Vec<Place>>,
     /// What each local bound to a `&` of a place points to: `*r` is that
     /// place, which can't change while `r` can be used.
     alias: HashMap<NodeId, Place>,
@@ -708,6 +1164,8 @@ struct Walk<'c> {
     proved: HashSet<NodeId>,
     /// The ids of the function's parameters.
     params: Vec<NodeId>,
+    /// Their values at the call (see `Walk::settled`).
+    entry: Vec<Val>,
     /// The refinement of the function's result, with its name.
     ret: Option<(Refinement, String)>,
     /// How many closures deep this is.
@@ -727,6 +1185,10 @@ struct Walk<'c> {
     /// on whichever path first needs them.
     laws: Vec<Formula>,
 }
+
+/// How many references deep what a function's parameters point to is kept
+/// as it is at the call.
+const ENTRY_DEPTH: usize = 4;
 
 /// How a predicate's names other than its binder get their values: those
 /// of the function being walked, a call's arguments, or the fields of a
@@ -879,12 +1341,144 @@ impl Walk<'_> {
                         })
                         .collect();
                     self.assume_fields(t, &vals);
-                    Val::Struct(vals)
+                    Val::Struct(self.new_obj(), vals)
                 }
-                None => Val::Other,
+                None => Val::Obj(self.new_obj()),
             },
+            Type::Ref(..) | Type::Box(_) => Val::Ref(self.new_obj(), Pointee::Unknown),
+            t if has_obj(t) => Val::Obj(self.new_obj()),
             _ => Val::Other,
         }
+    }
+
+    fn new_obj(&mut self) -> Obj {
+        self.next_obj += 1;
+        self.next_obj - 1
+    }
+
+    /// The object the value at place `p` is: the one it was, if it can't
+    /// have changed since, or a new one.
+    /// Gives too whether it's a new one.
+    fn obj_at(&mut self, p: &Place) -> (Obj, bool) {
+        let stable = !self.is_unstable(p);
+        if stable && let Some(&o) = self.objs.get(p) {
+            return (o, false);
+        }
+        let o = self.new_obj();
+        if stable {
+            self.objs.insert(p.clone(), o);
+        }
+        (o, true)
+    }
+
+    /// What a reference or box `v` points to, if that's known.
+    fn pointee(&mut self, v: Val) -> Val {
+        match v {
+            Val::Ref(_, Pointee::Place(q)) => self.read_place(&q),
+            Val::Ref(_, Pointee::Val(v)) => *v,
+            _ => Val::Other,
+        }
+    }
+
+    /// The receiver `v` is, after `derefs` `*`s, and then a `&` or `&mut`
+    /// if `by` says so: a reborrow of what a reference points to is that
+    /// reference, the same object.
+    fn autoref(&mut self, mut v: Val, derefs: usize, by: Option<bool>) -> Val {
+        let peel = match by {
+            Some(_) if derefs > 0 => derefs - 1,
+            _ => derefs,
+        };
+        for _ in 0..peel {
+            v = self.pointee(v);
+        }
+        match by {
+            Some(_) if derefs == 0 => Val::Ref(self.new_obj(), Pointee::Val(Box::new(v))),
+            _ => v,
+        }
+    }
+
+    /// What measure `symbol` gives of the value `recv`, its `&self`, points
+    /// to. In its module, a struct's is its body, of the struct's fields;
+    /// elsewhere, and of anything else, it's a variable of the logic, the
+    /// same each time it's asked of the same object. A slice's or a
+    /// string's is of the reference, which says how long what it points to
+    /// is.
+    fn measure(&mut self, symbol: &str, recv: Val) -> Val {
+        let m = self.cx.measures[symbol].clone();
+        if let Some(body) = &m.body
+            && (m.module == self.module || !m.reads_fields)
+        {
+            let term = match &body.kind {
+                ExprKind::Block(_, Some(tail)) => &**tail,
+                _ => body,
+            };
+            if let Some(v) = self.measure_term(term, &recv) {
+                return v;
+            }
+        }
+        let of = match (&recv, m.unsized_self) {
+            (Val::Ref(o, _), true) => Some(*o),
+            (_, true) => None,
+            (_, false) => {
+                let target = self.pointee(recv.clone());
+                match target {
+                    Val::Struct(o, _) | Val::Ref(o, _) | Val::Obj(o) => Some(o),
+                    _ => None,
+                }
+            }
+        };
+        let Some(o) = of else {
+            return self.unknown(&m.ret);
+        };
+        if let Some(v) = self.measured.get(&(o, symbol.to_string())) {
+            return v.clone();
+        }
+        let v = self.unknown(&m.ret);
+        self.measured.insert((o, symbol.to_string()), v.clone());
+        v
+    }
+
+    /// The value of term `e` of a measure's body, whose `self` is `this`,
+    /// if the logic can say it.
+    fn measure_term(&mut self, e: &Expr, this: &Val) -> Option<Val> {
+        Some(match &e.kind {
+            ExprKind::Int(n, _) => Val::Int(Lin::constant(i128::from(*n))),
+            ExprKind::Bool(b) => Val::Bool(if *b { Formula::True } else { Formula::False }),
+            ExprKind::Var(..) => this.clone(),
+            ExprKind::Field(x, _) => {
+                let (derefs, i) = *self.cx.typed.fields.get(&e.id)?;
+                let mut v = self.measure_term(x, this)?;
+                for _ in 0..derefs {
+                    v = self.pointee(v);
+                }
+                match v {
+                    Val::Struct(_, mut vals) if i < vals.len() => vals.swap_remove(i),
+                    _ => return None,
+                }
+            }
+            ExprKind::MethodCall(x, ..) => {
+                let (Res::Fn(symbol, _), derefs, by) = self.cx.typed.methods.get(&e.id)?.clone()
+                else {
+                    return None;
+                };
+                let v = self.measure_term(x, this)?;
+                let recv = self.autoref(v, derefs, by);
+                self.measure(&symbol, recv)
+            }
+            ExprKind::Unary(UnOp::Neg, x) => match self.measure_term(x, this)? {
+                Val::Int(a) => Val::Int(a.scale(-1)?),
+                _ => return None,
+            },
+            ExprKind::Unary(UnOp::Not, x) => match self.measure_term(x, this)? {
+                Val::Bool(f) => Val::Bool(f.not()),
+                _ => return None,
+            },
+            ExprKind::Binary(op, l, r) => {
+                let (a, b) = (self.measure_term(l, this)?, self.measure_term(r, this)?);
+                binary(*op, a, b)?
+            }
+            _ => return None,
+        })
     }
 
     /// The refinements of the fields of `t`, if it's a struct that has any.
@@ -1014,12 +1608,16 @@ impl Walk<'_> {
         any
     }
 
-    /// Finds the places in `e` that may change other than by assignment:
-    /// those borrowed `&mut`, by `&mut`, a method's `&mut self` or a
-    /// pattern; what a `&mut` used whole points to, as whatever it's given
-    /// to can write through it; and the locals a closure captures that are
-    /// `mut` or hold a `&mut`. `projected` says `e` is only looked inside
-    /// of, by a field, a `*`, a `&` or an assignment.
+    /// Finds the places in `e` that may change other than by assignment.
+    /// Those lent `&mut`, by `&mut` or to a call, and what a `&mut` used
+    /// whole points to, as whatever it's given to can write through it,
+    /// change only where they're lent and while the borrow lives, which
+    /// the borrow checker says no one else can read them: so what's known
+    /// of them is forgotten there (`Walk::lent`). Those borrowed `&mut` by a
+    /// pattern, and the locals a closure captures that are `mut` or hold a
+    /// `&mut`, may change any time, as far as anything here knows.
+    /// `projected` says `e` is only looked inside of, by a field, a `*`, a
+    /// `&` or an assignment.
     fn unstable_in(&mut self, e: &Expr, projected: bool) {
         if !projected
             && let Type::Ref(_, true, _) = self.ty_of(e)
@@ -1027,12 +1625,12 @@ impl Walk<'_> {
             && self.cx.typed.coerced.get(&e.id).is_none_or(|c| c.1)
         {
             let p = p.then(Proj::Deref);
-            self.unstable.insert(p);
+            self.lent.entry(e.id).or_default().push(p);
         }
         match &e.kind {
             ExprKind::Unary(UnOp::RefMut, x) => {
                 if let Some(p) = self.place_of(x) {
-                    self.unstable.insert(p);
+                    self.lent.entry(e.id).or_default().push(p);
                 }
                 self.unstable_in(x, true);
             }
@@ -1044,12 +1642,11 @@ impl Walk<'_> {
                 self.unstable_in(value, false);
             }
             ExprKind::Call(callee, args) => {
-                let named = self.fn_named(callee).is_some();
-                let passed: Vec<Passed> = args.iter().map(|a| self.passed(a)).collect();
-                self.borrows(e, named, &passed);
+                let passed: Vec<Option<Place>> = args.iter().map(|a| self.passed(a)).collect();
+                self.borrows(e, &passed);
                 self.unstable_in(callee, false);
                 for (a, p) in args.iter().zip(&passed) {
-                    match (&a.kind, &p.borrowed) {
+                    match (&a.kind, p) {
                         (ExprKind::Unary(UnOp::RefMut, x), Some(_)) => self.unstable_in(x, true),
                         (_, Some(_)) => self.unstable_in(a, true),
                         (_, None) => self.unstable_in(a, false),
@@ -1057,18 +1654,16 @@ impl Walk<'_> {
                 }
             }
             ExprKind::MethodCall(x, _, _, args) => {
-                let (named, receiver) = match self.cx.typed.methods.get(&e.id) {
-                    Some((res, derefs, by)) => {
-                        (matches!(res, Res::Fn(..)), self.receiver(x, *derefs, *by))
-                    }
-                    None => (false, self.passed(x)),
+                let receiver = match self.cx.typed.methods.get(&e.id) {
+                    Some((_, derefs, by)) => self.receiver(x, *derefs, *by),
+                    None => self.passed(x),
                 };
                 let mut passed = vec![receiver];
                 passed.extend(args.iter().map(|a| self.passed(a)));
-                self.borrows(e, named, &passed);
+                self.borrows(e, &passed);
                 self.unstable_in(x, true);
                 for (a, p) in args.iter().zip(&passed[1..]) {
-                    match (&a.kind, &p.borrowed) {
+                    match (&a.kind, p) {
                         (ExprKind::Unary(UnOp::RefMut, x), Some(_)) => self.unstable_in(x, true),
                         (_, Some(_)) => self.unstable_in(a, true),
                         (_, None) => self.unstable_in(a, false),
@@ -1127,27 +1722,21 @@ impl Walk<'_> {
         }
     }
 
-    /// What argument `a` passes: the place it lends `&mut`, if it does,
-    /// by `&mut` or by passing on a `&mut` it is, and the type it's passed
-    /// as.
-    fn passed(&self, a: &Expr) -> Passed {
+    /// The place argument `a` lends `&mut`, if it does, by `&mut` or by
+    /// passing on a `&mut` it is.
+    fn passed(&self, a: &Expr) -> Option<Place> {
         let ty = self.ty_of(a);
         let shared = self.cx.typed.coerced.get(&a.id).is_some_and(|c| !c.1);
-        let borrowed = match (&a.kind, &ty) {
+        match (&a.kind, &ty) {
             (ExprKind::Unary(UnOp::RefMut, x), _) => self.place_of(x),
             (_, Type::Ref(_, true, _)) if !shared => self.place_of(a).map(|p| p.then(Proj::Deref)),
             _ => None,
-        };
-        Passed {
-            borrowed,
-            ty,
-            shared,
         }
     }
 
-    /// What receiver `x` passes, got through `derefs` `*`s and then maybe
-    /// a `&` or `&mut` (`by`).
-    fn receiver(&self, x: &Expr, derefs: usize, by: Option<bool>) -> Passed {
+    /// The place receiver `x` lends `&mut`, if it does, got through
+    /// `derefs` `*`s and then maybe a `&` or `&mut` (`by`).
+    fn receiver(&self, x: &Expr, derefs: usize, by: Option<bool>) -> Option<Place> {
         let mut ty = self.ty_of(x);
         for _ in 0..derefs {
             if let Type::Ref(_, _, inner) | Type::Box(inner) = ty {
@@ -1158,71 +1747,25 @@ impl Walk<'_> {
         for _ in 0..derefs {
             place = place.map(|p| p.then(Proj::Deref));
         }
-        let borrowed = match by {
+        match by {
             Some(true) => place,
             Some(false) => None,
             None => match ty {
                 Type::Ref(_, true, _) => place.map(|p| p.then(Proj::Deref)),
                 _ => None,
             },
-        };
-        let ty = match by {
-            Some(m) => Type::Ref(Region::Erased, m, Box::new(ty)),
-            None => ty,
-        };
-        Passed {
-            borrowed,
-            ty,
-            shared: by == Some(false),
         }
     }
 
-    /// The places call `e` lends `&mut`, as `passed` says, which `named`
-    /// says calls a function by name. They're lent only while it runs if
-    /// nothing can keep a reference after it: its result can't hold one,
-    /// nor what its other arguments can write to, nor what's lent; and
-    /// a function by name, unlike a closure, keeps nothing between calls.
-    /// Then what's known of them is forgotten when it returns; or else they
-    /// may change any time, as far as anything knows.
-    fn borrows(&mut self, e: &Expr, named: bool, passed: &[Passed]) {
-        let lent: Vec<Place> = passed.iter().filter_map(|p| p.borrowed.clone()).collect();
-        if lent.is_empty() {
-            return;
-        }
-        let seen = &mut HashSet::new();
-        let short = named
-            && !self.can_hold(&self.ty_of(e), seen)
-            && passed.iter().all(|p| match &p.borrowed {
-                Some(q) => !self.can_hold(&self.place_ty(q), seen),
-                None if p.shared => true,
-                None => match &p.ty {
-                    Type::Ref(_, false, _) => true,
-                    Type::Ref(_, true, inner) => !self.can_hold(&self.cx.solved(inner), seen),
-                    t => !self.can_hold(t, seen),
-                },
-            });
-        if short {
-            self.short.insert(e.id, lent);
-        } else {
-            self.unstable.extend(lent);
-        }
-    }
-
-    /// Can a value of type `t` hold a reference, or might it?
-    fn can_hold(&self, t: &Type, seen: &mut HashSet<Type>) -> bool {
-        match t {
-            Type::Int(_) | Type::Bool | Type::Unit | Type::Never | Type::Fn(_) => false,
-            Type::Ref(..) => true,
-            Type::Box(inner) => self.can_hold(&self.cx.solved(inner), seen),
-            Type::Adt(..) => {
-                if !seen.insert(t.clone()) {
-                    return false;
-                }
-                all_fields(&self.cx.adts, t)
-                    .iter()
-                    .any(|f| self.can_hold(&self.cx.solved(f), seen))
-            }
-            _ => true,
+    /// The places call `e` lends `&mut`, as `passed` says: what's known of
+    /// them is forgotten when it returns. Whatever it does with them then,
+    /// or after, if it keeps a reference, nothing reads them until the
+    /// borrow ends, as the borrow checker says, and then they're values
+    /// nothing's known of.
+    fn borrows(&mut self, e: &Expr, passed: &[Option<Place>]) {
+        let lent: Vec<Place> = passed.iter().flatten().cloned().collect();
+        if !lent.is_empty() {
+            self.lent.entry(e.id).or_default().extend(lent);
         }
     }
 
@@ -1251,12 +1794,28 @@ impl Walk<'_> {
         match t {
             Type::Bool => self.leaf(p, &t),
             _ if self.is_scalar(&t) => self.leaf(p, &t),
-            Type::Adt(..) => match self.fields_of(p, &t) {
-                Some(vals) => Val::Struct(vals),
-                None => Val::Other,
-            },
+            Type::Adt(..) | Type::Ref(..) | Type::Box(_) => self.read_obj(p, &t),
+            t if has_obj(&t) => self.read_obj(p, &t),
             _ => Val::Other,
         }
+    }
+
+    /// The value at place `p`, of type `t`, which has an object: a new one
+    /// of a refined variable has its refinement.
+    fn read_obj(&mut self, p: &Place, t: &Type) -> Val {
+        let (o, new) = self.obj_at(p);
+        let v = match t {
+            Type::Adt(..) => match self.fields_of(p, t) {
+                Some(vals) => Val::Struct(o, vals),
+                None => Val::Obj(o),
+            },
+            Type::Ref(..) | Type::Box(_) => Val::Ref(o, Pointee::Place(self.deref(p.clone()))),
+            _ => Val::Obj(o),
+        };
+        if new && p.path.is_empty() {
+            self.assume_invariant(p.root, &v);
+        }
+        v
     }
 
     /// The values of the fields of the struct at `q`, of type `t`: each
@@ -1317,8 +1876,12 @@ impl Walk<'_> {
     }
 
     /// Forgets what's known of what's at `p`, and in it: it has a new value.
+    /// What it's in changes with it, up to a `*`: a reference is the same
+    /// one whatever's written through it.
     fn kill(&mut self, p: &Place) {
         self.cur.retain(|q, _| !q.within(p));
+        let around = |q: &Place| p.within(q) && !p.path[q.path.len()..].contains(&Proj::Deref);
+        self.objs.retain(|q, _| !q.within(p) && !around(q));
     }
 
     /// Place `p` has a new value, `val` if it's known.
@@ -1333,15 +1896,34 @@ impl Walk<'_> {
     /// the logic, equal to its part of `val`, which has its local's
     /// refinement, if it has one.
     fn set(&mut self, p: &Place, t: &Type, val: Option<Val>) {
+        let stable = !self.is_unstable(p);
         let kind = match t {
             Type::Adt(..) => {
-                if let (Some(Val::Struct(vals)), Some(fields)) =
-                    (val, struct_fields(&self.cx.adts, t))
+                if let (Some(Val::Struct(o, vals)), Some(fields)) =
+                    (&val, struct_fields(&self.cx.adts, t))
                 {
-                    for (j, (v, (_, ft))) in vals.into_iter().zip(fields).enumerate() {
-                        let ft = self.cx.solved(&ft);
-                        self.set(&p.then(Proj::Field(j)), &ft, Some(v));
+                    if stable {
+                        self.objs.insert(p.clone(), *o);
                     }
+                    for (j, (v, (_, ft))) in vals.iter().zip(fields).enumerate() {
+                        let ft = self.cx.solved(&ft);
+                        self.set(&p.then(Proj::Field(j)), &ft, Some(v.clone()));
+                    }
+                }
+                if let (Some(Val::Obj(o)), true) = (&val, stable) {
+                    self.objs.insert(p.clone(), *o);
+                }
+                if let (Some(v), true) = (&val, p.path.is_empty()) {
+                    self.assume_invariant(p.root, v);
+                }
+                return;
+            }
+            _ if !self.is_scalar(t) && *t != Type::Bool => {
+                if let (Some(Val::Ref(o, _) | Val::Obj(o)), true) = (&val, stable) {
+                    self.objs.insert(p.clone(), *o);
+                }
+                if let (Some(v), true) = (&val, p.path.is_empty()) {
+                    self.assume_invariant(p.root, v);
                 }
                 return;
             }
@@ -1416,17 +1998,15 @@ impl Walk<'_> {
             ExprKind::Unary(UnOp::Not, x) => Val::Bool(boolean(self.term(x, binder, env)?)?.not()),
             ExprKind::Binary(op, l, r) => {
                 let (a, b) = (self.term(l, binder, env)?, self.term(r, binder, env)?);
-                match (op, a, b) {
-                    (BinOp::Add, Val::Int(a), Val::Int(b)) => Val::Int(a.add(&b)?),
-                    (BinOp::Sub, Val::Int(a), Val::Int(b)) => Val::Int(a.sub(&b)?),
-                    (BinOp::Mul, Val::Int(a), Val::Int(b)) => Val::Int(times(&a, &b)?),
-                    (op, Val::Int(a), Val::Int(b)) => Val::Bool(compare(*op, &a, &b)?),
-                    (BinOp::Eq, Val::Bool(a), Val::Bool(b)) => Val::Bool(Formula::iff(a, b)),
-                    (BinOp::Ne, Val::Bool(a), Val::Bool(b)) => Val::Bool(Formula::iff(a, b).not()),
-                    (BinOp::And, Val::Bool(a), Val::Bool(b)) => Val::Bool(Formula::and([a, b])),
-                    (BinOp::Or, Val::Bool(a), Val::Bool(b)) => Val::Bool(Formula::or([a, b])),
-                    _ => return None,
-                }
+                binary(*op, a, b)?
+            }
+            // A measure of what's named, through the `*`s the checker
+            // found: the `&self` it's given is the last reference.
+            ExprKind::MethodCall(x, ..) => {
+                let (symbol, derefs) = self.cx.pred_measures.get(&e.id)?.clone();
+                let v = self.term(x, binder, env)?;
+                let recv = self.autoref(v, derefs, Some(false));
+                self.measure(&symbol, recv)
             }
             _ => return None,
         })
@@ -1490,9 +2070,31 @@ impl Walk<'_> {
             return Ok(());
         }
         if let Some((r, name)) = self.ret.clone() {
-            self.need(&r, &v, Env::Here, span, format!("the result of `{name}`"))?;
+            let entry = self.entry.clone();
+            let what = format!("the result of `{name}`");
+            self.need(&r, &v, Env::Call(&entry), span, what)?;
         }
         Ok(())
+    }
+
+    /// `v`, with what each reference in it points to read now, `depth`
+    /// references deep, rather than when it's needed.
+    fn settled(&mut self, v: Val, depth: usize) -> Val {
+        match v {
+            Val::Ref(o, Pointee::Place(q)) if depth > 0 => {
+                let to = self.read_place(&q);
+                let to = self.settled(to, depth - 1);
+                Val::Ref(o, Pointee::Val(Box::new(to)))
+            }
+            Val::Struct(o, vals) if depth > 0 => {
+                let vals = vals
+                    .into_iter()
+                    .map(|v| self.settled(v, depth - 1))
+                    .collect();
+                Val::Struct(o, vals)
+            }
+            v => v,
+        }
     }
 
     /// The state to run each branch from.
@@ -1500,6 +2102,7 @@ impl Walk<'_> {
         Snap {
             facts: self.facts.len(),
             cur: self.cur.clone(),
+            objs: self.objs.clone(),
             reachable: self.reachable,
             declared: self.declared.len(),
         }
@@ -1509,6 +2112,7 @@ impl Walk<'_> {
     fn restore(&mut self, start: &Snap) {
         self.facts.truncate(start.facts);
         self.cur = start.cur.clone();
+        self.objs = start.objs.clone();
         self.reachable = start.reachable;
         self.declared.truncate(start.declared);
     }
@@ -1528,6 +2132,7 @@ impl Walk<'_> {
         Ok(Outcome {
             facts: self.facts.split_off(start.facts),
             cur: std::mem::take(&mut self.cur),
+            objs: std::mem::take(&mut self.objs),
             reachable: self.reachable,
             val,
         })
@@ -1551,8 +2156,16 @@ impl Walk<'_> {
             self.facts.extend(o.facts);
             self.cur = o.cur;
             self.cur.retain(|p, _| in_scope.contains(&p.root));
+            self.objs = o.objs;
+            self.objs.retain(|p, _| in_scope.contains(&p.root));
             return o.val;
         }
+        // A place is the same object after, if every branch left it so;
+        // else it's one nothing's known of.
+        let mut objs = reached[0].objs.clone();
+        objs.retain(|p, o| {
+            in_scope.contains(&p.root) && reached.iter().all(|r| r.objs.get(p) == Some(o))
+        });
         let mut places: Vec<&Place> = (reached.iter())
             .flat_map(|o| o.cur.keys())
             .filter(|p| in_scope.contains(&p.root))
@@ -1590,12 +2203,13 @@ impl Walk<'_> {
         }
         self.fact(Formula::or(cases));
         self.cur = cur;
+        self.objs = objs;
         result
     }
 
-    /// Call `e` has returned: what it was lent `&mut` may have changed.
+    /// `e` has been evaluated: what it lent `&mut` may have changed.
     fn returned(&mut self, e: &Expr) {
-        for p in self.short.get(&e.id).cloned().into_iter().flatten() {
+        for p in self.lent.get(&e.id).cloned().into_iter().flatten() {
             self.kill(&p);
         }
     }
@@ -1607,7 +2221,7 @@ impl Walk<'_> {
         {
             out.push(p);
         }
-        out.extend(self.short.get(&e.id).into_iter().flatten().cloned());
+        out.extend(self.lent.get(&e.id).into_iter().flatten().cloned());
         for c in e.children() {
             self.assigned(c, out);
         }
@@ -1769,6 +2383,13 @@ impl Walk<'_> {
         if ty == Type::Never {
             self.reachable = false;
         }
+        // A measure is what it measures.
+        if let Some(s) = symbol
+            && self.cx.measures.contains_key(s)
+            && let Some(recv) = vals.first()
+        {
+            return Ok(self.measure(s, recv.clone()));
+        }
         let result = self.unknown(&ty);
         // What the two intrinsics that say how big an integer type is give.
         if let (Some(f @ ("core::num::least" | "core::num::greatest")), Val::Int(v)) =
@@ -1840,6 +2461,12 @@ impl Walk<'_> {
     }
 
     fn expr(&mut self, e: &Expr) -> Result<Val, Error> {
+        let v = self.expr_here(e)?;
+        self.returned(e);
+        Ok(v)
+    }
+
+    fn expr_here(&mut self, e: &Expr) -> Result<Val, Error> {
         match &e.kind {
             ExprKind::Int(n, _) => Ok(Val::Int(Lin::constant(i128::from(*n)))),
             ExprKind::Char(c) => Ok(Val::Int(Lin::constant(i128::from(u32::from(*c))))),
@@ -1908,19 +2535,41 @@ impl Walk<'_> {
             ExprKind::Unary(UnOp::Deref, x) => match self.place_of(e) {
                 Some(p) => Ok(self.read_place(&p)),
                 None => {
-                    self.expr(x)?;
-                    let ty = self.ty_of(e);
-                    Ok(self.unknown(&ty))
+                    let v = self.expr(x)?;
+                    Ok(match self.pointee(v) {
+                        Val::Other => {
+                            let ty = self.ty_of(e);
+                            self.unknown(&ty)
+                        }
+                        v => v,
+                    })
                 }
             },
+            // A reference to a place, or to a value. One to what a
+            // reference points to is that reference again, the same
+            // object: what a slice's length is, say.
             ExprKind::Unary(op, x) => {
                 if *op == UnOp::RefMut {
                     self.no_mut_borrow(x, e.span)?;
                 }
-                if self.place_of(x).is_none() {
-                    self.expr(x)?;
+                match self.place_of(x) {
+                    Some(p) => {
+                        if p.path.last() == Some(&Proj::Deref) {
+                            let outer = Place {
+                                root: p.root,
+                                path: p.path[..p.path.len() - 1].to_vec(),
+                            };
+                            if let Type::Ref(..) = self.place_ty(&outer) {
+                                return Ok(self.read_place(&outer));
+                            }
+                        }
+                        Ok(Val::Ref(self.new_obj(), Pointee::Place(p)))
+                    }
+                    None => {
+                        let v = self.expr(x)?;
+                        Ok(Val::Ref(self.new_obj(), Pointee::Val(Box::new(v))))
+                    }
                 }
-                Ok(Val::Other)
             }
             ExprKind::Binary(op @ (BinOp::And | BinOp::Or), l, r) => {
                 let c = self.cond(l)?;
@@ -1966,9 +2615,7 @@ impl Walk<'_> {
                     .map(|a| self.expr(a))
                     .collect::<Result<Vec<_>, _>>()?;
                 let args: Vec<&Expr> = args.iter().collect();
-                let v = self.call(e, symbol.as_deref(), &args, vals);
-                self.returned(e);
-                v
+                self.call(e, symbol.as_deref(), &args, vals)
             }
             ExprKind::MethodCall(x, _, _, args) => {
                 let method = self.cx.typed.methods.get(&e.id);
@@ -1979,14 +2626,19 @@ impl Walk<'_> {
                     Some((Res::Fn(s, _), ..)) => Some(s.clone()),
                     _ => None,
                 };
-                let mut vals = vec![self.expr(x)?];
+                let recv = match method.cloned() {
+                    Some((_, derefs, by)) => {
+                        let v = self.expr(x)?;
+                        self.autoref(v, derefs, by)
+                    }
+                    None => self.expr(x)?,
+                };
+                let mut vals = vec![recv];
                 for a in args {
                     vals.push(self.expr(a)?);
                 }
                 let all: Vec<&Expr> = std::iter::once(&**x).chain(args).collect();
-                let v = self.call(e, symbol.as_deref(), &all, vals);
-                self.returned(e);
-                v
+                self.call(e, symbol.as_deref(), &all, vals)
             }
             ExprKind::Variant(_, _, _, args, parens) => {
                 let symbol = self.fn_named(e).map(str::to_string);
@@ -2106,9 +2758,9 @@ impl Walk<'_> {
                                     }
                                 }
                                 let vals = match v {
-                                    Val::Struct(vals) if derefs == 0 => vals,
+                                    Val::Struct(_, vals) if derefs == 0 => vals,
                                     _ => match self.unknown(&t) {
-                                        Val::Struct(vals) => vals,
+                                        Val::Struct(_, vals) => vals,
                                         _ => Vec::new(),
                                     },
                                 };
@@ -2240,15 +2892,18 @@ impl Walk<'_> {
                         }
                     }
                 }
-                Ok(Val::Struct(vals))
+                Ok(Val::Struct(self.new_obj(), vals))
             }
             ExprKind::Field(x, _) => {
                 if let Some(p) = self.place_of(e) {
                     return Ok(self.read_place(&p));
                 }
-                let v = self.expr(x)?;
+                let mut v = self.expr(x)?;
                 let (derefs, i) = self.cx.typed.fields[&e.id];
-                if let (0, Val::Struct(mut vals)) = (derefs, v)
+                for _ in 0..derefs {
+                    v = self.pointee(v);
+                }
+                if let Val::Struct(_, mut vals) = v
                     && i < vals.len()
                 {
                     return Ok(vals.swap_remove(i));
@@ -2260,7 +2915,7 @@ impl Walk<'_> {
                     }
                 }
                 match self.unknown(&t) {
-                    Val::Struct(mut vals) if i < vals.len() => Ok(vals.swap_remove(i)),
+                    Val::Struct(_, mut vals) if i < vals.len() => Ok(vals.swap_remove(i)),
                     _ => {
                         let ty = self.ty_of(e);
                         Ok(self.unknown(&ty))
@@ -2268,7 +2923,7 @@ impl Walk<'_> {
                 }
             }
             ExprKind::Move(x) => self.expr(x),
-            ExprKind::For(_) | ExprKind::Range(..) | ExprKind::Try(..) => {
+            ExprKind::For(_) | ExprKind::Range(..) | ExprKind::Try(..) | ExprKind::Index(..) => {
                 unreachable!("rewritten when paths are resolved")
             }
         }
@@ -2330,13 +2985,13 @@ impl Walk<'_> {
                 };
                 let names = struct_fields(&self.cx.adts, &t).unwrap_or_default();
                 let vals = match (s, &place) {
-                    (Some(Val::Struct(vals)), _) => vals,
+                    (Some(Val::Struct(_, vals)), _) => vals,
                     (_, Some(p)) => match self.read_place(p) {
-                        Val::Struct(vals) => vals,
+                        Val::Struct(_, vals) => vals,
                         _ => Vec::new(),
                     },
                     _ => match self.unknown(&t) {
-                        Val::Struct(vals) => vals,
+                        Val::Struct(_, vals) => vals,
                         _ => Vec::new(),
                     },
                 };
@@ -2402,12 +3057,36 @@ impl Walk<'_> {
     }
 }
 
+/// `a op b` in the logic, if it's in it.
+fn binary(op: BinOp, a: Val, b: Val) -> Option<Val> {
+    Some(match (op, a, b) {
+        (BinOp::Add, Val::Int(a), Val::Int(b)) => Val::Int(a.add(&b)?),
+        (BinOp::Sub, Val::Int(a), Val::Int(b)) => Val::Int(a.sub(&b)?),
+        (BinOp::Mul, Val::Int(a), Val::Int(b)) => Val::Int(times(&a, &b)?),
+        (op, Val::Int(a), Val::Int(b)) => Val::Bool(compare(op, &a, &b)?),
+        (BinOp::Eq, Val::Bool(a), Val::Bool(b)) => Val::Bool(Formula::iff(a, b)),
+        (BinOp::Ne, Val::Bool(a), Val::Bool(b)) => Val::Bool(Formula::iff(a, b).not()),
+        (BinOp::And, Val::Bool(a), Val::Bool(b)) => Val::Bool(Formula::and([a, b])),
+        (BinOp::Or, Val::Bool(a), Val::Bool(b)) => Val::Bool(Formula::or([a, b])),
+        _ => return None,
+    })
+}
+
+/// Does a value of type `t` have an object (see `Val`): is it anything
+/// but an integer, a `bool`, `()` or a function?
+fn has_obj(t: &Type) -> bool {
+    !matches!(
+        t,
+        Type::Int(_) | Type::Bool | Type::Char | Type::Unit | Type::Never | Type::Fn(_)
+    )
+}
+
 /// That `a` and `b` are equal, as far as the logic can say.
 fn equal(a: &Val, b: &Val) -> Vec<Formula> {
     match (a, b) {
         (Val::Int(a), Val::Int(b)) => Formula::eq(a, b).into_iter().collect(),
         (Val::Bool(a), Val::Bool(b)) => vec![Formula::iff(a.clone(), b.clone())],
-        (Val::Struct(a), Val::Struct(b)) => {
+        (Val::Struct(_, a), Val::Struct(_, b)) => {
             a.iter().zip(b).flat_map(|(a, b)| equal(a, b)).collect()
         }
         _ => Vec::new(),

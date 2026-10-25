@@ -257,7 +257,7 @@ arguments', so a buffer of `&'a i64` can't outlive `'a`.
 | destructors, `Discard` with a `fn discard(self)` | a drop would be a call nobody wrote | 20 ✅ |
 | raw pointers, byte buffers, casts | need an aliasing model, and layouts | — |
 | failing allocation, `RawBuf::try_new` | needs `Result` from an intrinsic | — |
-| an index's upper bound as a refinement, `i < self.cap()` | measures: refinements that name what a method returns | — |
+| an index's upper bound as a refinement, `i < self.cap()` | measures (21 ✅), and `List`'s `len <= cap()` as an invariant, which callers would have to prove it from | — |
 | checking initialisation, as ATS's views do | linear capabilities for each slot: research | — |
 
 ## Exercises

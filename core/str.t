@@ -15,14 +15,18 @@ use crate::slice::Split;
 /// `from_utf8_unchecked`, whose caller promises it. A string literal is
 /// UTF-8 too, as the source is. The rest is safe code over them.
 impl str {
-    /// Its bytes, its UTF-8.
+    /// Its bytes, its UTF-8: as many as it has.
     #[intrinsic]
-    pub fn as_bytes(&self) -> &[u8];
+    pub fn as_bytes(&self) -> { b: &[u8] | b.len() == self.len() };
 
-    /// How many bytes it has: not how many characters.
-    pub fn len(&self) -> usize { self.as_bytes().len() }
+    /// How many bytes it has: not how many characters. It's a measure, of
+    /// the reference, as a slice's is.
+    #[intrinsic]
+    #[measure]
+    pub fn len(&self) -> usize;
 
     /// Has it none?
+    #[measure]
     pub fn is_empty(&self) -> bool { self.len() == 0 }
 
     /// Does a character start at byte `i`, or is `i` its end? Then it can
@@ -94,7 +98,7 @@ pub fn from_utf8(b: &[u8]) -> Option<&str> {
 ///
 /// They're UTF-8.
 #[intrinsic]
-pub fn from_utf8_unchecked(b: &[u8]) -> &str with unsafe;
+pub fn from_utf8_unchecked(b: &[u8]) -> { s: &str | s.len() == b.len() } with unsafe;
 
 /// What `split_at` gives: the string before the index it's given, and
 /// from it on.
@@ -132,16 +136,8 @@ impl Ord for str {
         let m = b.len();
         let mut i = 0usize;
         while i < n && i < m {
-            match a.get(i) {
-                Option::Some(x) => match b.get(i) {
-                    Option::Some(y) => {
-                        if *x != *y {
-                            return x.cmp(y);
-                        }
-                    },
-                    Option::None => {},
-                },
-                Option::None => {},
+            if a[i] != b[i] {
+                return a[i].cmp(&b[i]);
             }
             i = i + 1;
         }
@@ -173,10 +169,7 @@ fn decode(b: &[u8], at: usize) -> Option<Decoded> {
     if at >= n {
         return Option::None;
     }
-    let x = match b.get(at) {
-        Option::Some(x) => *x as u32,
-        Option::None => return Option::None,
-    };
+    let x = b[at] as u32;
     if x < 0x80 {
         return Option::Some(Decoded { c: x as char, next: at + 1 });
     }
@@ -229,11 +222,8 @@ fn decode(b: &[u8], at: usize) -> Option<Decoded> {
 struct Six { bits: { c: u32 | c <= 0x3F } }
 
 /// The six bits of byte `i` of `b`, if it's a continuation byte.
-fn continuation(b: &[u8], i: usize) -> Option<Six> {
-    let y = match b.get(i) {
-        Option::Some(y) => *y,
-        Option::None => return Option::None,
-    };
+fn continuation(b: &[u8], i: { i: usize | i < b.len() }) -> Option<Six> {
+    let y = b[i];
     if y < 0x80 || y > 0xBF {
         return Option::None;
     }

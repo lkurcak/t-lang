@@ -78,6 +78,15 @@ pub fn target<'i>(
             "`{m}` is a module, and modules can't be renamed yet"
         ));
     }
+    let indexes = |name: &str| name == "index" || name == "index_mut";
+    if let NoteKind::Fn(name) = &note.kind
+        && indexes(name)
+        && (prog.impls.iter())
+            .flat_map(|d| &d.methods)
+            .any(|f| f.name.span == def)
+    {
+        return Err(format!("`{name}` can't be renamed: it's what `x[i]` calls"));
+    }
     if matches!(&note.kind, NoteKind::Var(n) if n == "self") {
         return Err("`self` can't be renamed: it's what a method's receiver is called".into());
     }

@@ -582,7 +582,11 @@ impl Printer<'_> {
         let mut body = self.trailing(open + 1);
         for (i, item) in methods.iter().enumerate() {
             let (doc, allows, span) = match item {
-                BodyItem::Fn(f, _) => (f.doc.as_ref(), &f.allows[..], f.span),
+                BodyItem::Fn(f, _) => (
+                    f.doc.as_ref(),
+                    &f.allows[..],
+                    Span::new(fn_start(f), f.span.end),
+                ),
                 BodyItem::Decl(a) => (a.doc.as_ref(), &[][..], a.span),
                 BodyItem::Def(a) => (a.doc.as_ref(), &[][..], a.span),
                 BodyItem::EffectDecl(a) => (a.doc.as_ref(), &[][..], a.span),
@@ -849,10 +853,18 @@ impl Printer<'_> {
     /// A function, up to its body.
     fn signature(&mut self, f: &FnDecl) -> Doc {
         let mut doc = self.lead(f.doc.as_ref(), &f.allows, fn_start(f));
-        if let Some(at) = f.intrinsic {
-            let after = f.public.map_or(f.span.start, |p| p.start);
-            doc = doc + "#[intrinsic]" + self.trailing(at.end) + Doc::HardLine;
-            doc = doc + self.element(after, true);
+        // `#[intrinsic]` and `#[measure]`, in the order written.
+        let mut attrs: Vec<(Span, &str)> =
+            [(f.intrinsic, "#[intrinsic]"), (f.measure, "#[measure]")]
+                .into_iter()
+                .filter_map(|(at, t)| Some((at?, t)))
+                .collect();
+        attrs.sort_by_key(|(at, _)| at.start);
+        let after = f.public.map_or(f.span.start, |p| p.start);
+        for (i, (at, t)) in attrs.iter().enumerate() {
+            let next = attrs.get(i + 1).map_or(after, |(n, _)| n.start);
+            doc = doc + *t + self.trailing(at.end) + Doc::HardLine;
+            doc = doc + self.element(next, true);
         }
         let doc = doc + public(f.public);
         let generics = self.generics(f.name.span.end, &f.generics);
@@ -868,6 +880,12 @@ impl Printer<'_> {
         );
         let ret = match f.ret.kind {
             TypeExprKind::Unit => Doc::nil(),
+            // A refinement stays on one line, so the parameters break
+            // first, rather than its predicate.
+            TypeExprKind::Refined(..) => {
+                let ty = self.ty(&f.ret);
+                text(" -> ") + crate::doc::flat(&ty).unwrap_or(ty)
+            }
             _ => text(" -> ") + self.ty(&f.ret),
         };
         doc + "fn " + &f.name.name + generics + params + ret
@@ -962,6 +980,9 @@ impl Printer<'_> {
             }
             ExprKind::Field(x, field) => self.receiver(x, ctx) + "." + &field.name,
             ExprKind::Try(x, _) => self.receiver(x, ctx) + "?",
+            ExprKind::Index(x, i, ..) => {
+                self.receiver(x, ctx) + "[" + self.expr(i, 0, Ctx::default()) + "]"
+            }
             ExprKind::MethodCall(x, method, targs, args) => {
                 let end = targs.last().map_or(method.span.end, |t| t.span.end);
                 self.receiver(x, ctx)
@@ -1562,7 +1583,8 @@ fn lead_start_span(f: &FnDecl) -> Span {
 /// `pub`, if it has one.
 fn fn_start(f: &FnDecl) -> usize {
     let start = f.public.map_or(f.span.start, |p| p.start);
-    f.intrinsic.map_or(start, |i| i.start.min(start))
+    let start = f.intrinsic.map_or(start, |i| i.start.min(start));
+    f.measure.map_or(start, |i| i.start.min(start))
 }
 
 /// `pub ` if `public` says where one is.
