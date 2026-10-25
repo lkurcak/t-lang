@@ -302,8 +302,8 @@ has to fit that:
   [docs/20-destructors.md](docs/20-destructors.md).
 - **The core library is written in T.** `Option`, `Result`, `Iterator` and
   the rest are checked like any program; all the checker takes on trust is
-  its intrinsics, `swap`, `panic`, `checked_mul`, `least`, `greatest` and a
-  slice's few, and the arithmetic operators. See
+  its intrinsics, `swap`, `panic`, `checked_mul`, `least`, `greatest`, a
+  slice's few and a string's length, and the arithmetic operators. See
   [docs/06e-core.md](docs/06e-core.md).
 - **Integers say how big they are.** `i8` to `i64`, `u8` to `u64`, `isize`
   and `usize`, and no `int`: an operator gives the number it does in ℤ, or
