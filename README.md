@@ -292,7 +292,8 @@ has to fit that:
   [docs/08.1-field-refinements.md](docs/08.1-field-refinements.md)). And
   they can name *measures*, methods like `len()`, so `s[i]` is proved in
   range and can't panic either (see
-  [docs/21-measures.md](docs/21-measures.md)).
+  [docs/21-measures.md](docs/21-measures.md)), for arrays too, `[T; N]`,
+  whose length is in their type (see [docs/22-arrays.md](docs/22-arrays.md)).
 - **Values must be used up.** One whose type isn't `Discard` can't be
   dropped or overwritten: a resource like a file descriptor can't be
   forgotten. See [docs/06a.1-linear-types.md](docs/06a.1-linear-types.md).
@@ -367,6 +368,7 @@ combine features in ways nobody planned for.
 | 19 ✅ | `std`: `fn main(os: Os)`, `out.line(&x)?`, `stdin.read_line(&mut line)?`, `main` giving back `Result<(), E>`; the `print` built-ins are gone | capabilities: what a function can do to the world is what it's handed, values no code can forge or copy (uniqueness, as Clean's world), not an effect; errors as values meeting linear types | [docs/19-std-io.md](docs/19-std-io.md) |
 | 20 ✅ | destructors: `impl Discard for T { fn discard(self) { .. } }`, called wherever a value is dropped; `List` and `String` are `Discard`, so `?` works while one is alive; `x.discard()` | weakening as a map `A ⊸ 1`, inserted only where it's total; a drop as a use of what's borrowed (drop check); only a type's module may skip its destructor | [docs/20-destructors.md](docs/20-destructors.md) |
 | 21 ✅ | measures: `#[measure] fn len(&self) -> usize`, named in refinements, `i: { i: usize \| i < s.len() }`; refinements of any type; `s[i]`, `l[i] = v`, proved in range | measures as functions of a value, uninterpreted outside their module (abstract functions); equality with uninterpreted functions by object identity; a `&mut`'s place forgotten where it's lent, as the borrow checker says no one reads it meanwhile | [docs/21-measures.md](docs/21-measures.md) |
+| 22 ✅ | arrays: `[T; N]`, inline; `[a, b, c]`, `[v; n]`, `let [a, b] = arr;`, `a[i]` proved from `N`; `const N: usize` parameters on functions, structs and impls, a `usize` in bodies and refinements; `core::array::from_fn` | type-level naturals as a kind of type parameter, equal only syntactically, so unification stays first-order; a value's length from its type, a constant of the logic or one variable per const parameter | [docs/22-arrays.md](docs/22-arrays.md) |
 | — | C backend | | when it's worth it |
 
 ## License

@@ -1118,6 +1118,10 @@ pub(crate) fn eq_subject(t: &Type) -> &Type {
 ///   by value. `overlap` agrees, so `impl<T> Tr for &T` and `impl Tr for
 ///   &[i64]` don't overlap, and the checker and monomorphisation find the
 ///   same one.
+/// - A const parameter only ever meets a length, a `Type::Nat` or another
+///   const parameter, as kinds keep types and lengths apart
+///   (`generics::len`), and lengths are equal only syntactically: so
+///   matching `[T; N]` decides `N` as matching decides `T`.
 pub fn matches(pat: &Type, t: &Type, params: &[String], found: &mut HashMap<String, Type>) -> bool {
     match pat {
         // A parameter never stands for a slice or `str` (see `Type::Slice`).

@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased
+
+Step 22: arrays. See [docs/22-arrays.md](docs/22-arrays.md).
+
+### Added
+
+- Arrays, `[T; N]`: exactly `N` values of type `T`, inline, a value of
+  their own. `[a, b, c]` lists them; `[v; n]` is `n` copies of a `Copy`
+  `v`; `let [a, b] = arr;` and `match` take one apart, by an array
+  pattern of exactly its length, moving its values out.
+- Const parameters, `const N: usize`, on functions, structs, enums and
+  impls: a length the caller picks, worked out from the arguments or
+  written as a literal, `Ring<i64, 8>`, `zeros::<3>()`. In the body and in
+  refinements it's a `usize`.
+- `core::array`: `len` (a measure, `N`), `is_empty`, `index` and
+  `index_mut` (so `a[i]` is proved in range), `get`, `get_mut`,
+  `as_slice`, `as_mut_slice`, `iter`, `iter_mut`, and `from_fn`, which
+  makes each value from its index.
+- An array is `Discard`, `Copy` or `Eq` exactly when its values are, and
+  drops them front to back.
+- The `non_upper_case_globals` lint, for const parameters: `N`, `CAP`.
+
+### Changed
+
+- Moving out of what a call's reference points to, as `s[i]` of a value
+  that isn't `Copy`, says "this value" rather than "`*a temporary`".
+
 ## 0.34.0 (2026-10-25)
 
 Step 21: measures. See [docs/21-measures.md](docs/21-measures.md).

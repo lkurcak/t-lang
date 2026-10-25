@@ -75,7 +75,7 @@
 ; Keywords
 
 "fn" @keyword.function
-["trait" "impl" "for" "mod" "use" "where" "with" "effect" "unsafe"] @keyword
+["trait" "impl" "for" "mod" "use" "where" "with" "effect" "const" "unsafe"] @keyword
 (effect) @type.builtin
 (visibility_modifier) @keyword.storage.modifier
 "let" @keyword
