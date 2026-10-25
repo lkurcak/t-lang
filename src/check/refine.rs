@@ -273,11 +273,14 @@ impl Checker {
                     allowed,
                     owner,
                 } => {
+                    let id = self.fns.iter().position(|d| d.symbol == owner.0);
+                    self.pred_owner = id.map(super::scope::FnId);
                     self.sig_owner = owner;
                     self.module = f.module;
                     self.sig_refinements(&f, &params, &ret, allowed)?;
                 }
                 Pending::Fields { s, symbol } => {
+                    self.pred_owner = None;
                     self.module = s.module;
                     self.fields_now(&s, &symbol)?;
                 }
@@ -466,6 +469,7 @@ impl Checker {
         if let PatternKind::Bind(_, true) = pat.kind {
             self.pred_again = Some("a `mut` variable");
         }
+        self.pred_owner = self.current;
         let r = self.refinement(ann, t, &scope);
         self.pred_again = None;
         let r = r?.expect("refined");
@@ -655,14 +659,17 @@ impl Checker {
                     ));
                 }
                 let ret = self.measures[&symbol].ret.clone();
-                if let Some(f) = self.fns.iter().find(|f| f.symbol == symbol) {
-                    let (ty, def) = (f.scheme.ty.clone(), f.name.span);
-                    self.note(
-                        m.span,
-                        super::NoteKind::Fn(m.name.clone()),
-                        Some(ty),
-                        Some(def),
-                    );
+                if let Some(i) = self.fns.iter().position(|f| f.symbol == symbol) {
+                    let (ty, def) = (self.fns[i].scheme.ty.clone(), self.fns[i].name.span);
+                    let kind = super::NoteKind::Fn(m.name.clone());
+                    self.note(m.span, kind, Some(ty), Some(def));
+                    // What names it uses it, or else the struct does.
+                    match self.pred_owner {
+                        Some(owner) => {
+                            self.uses[owner.0].fns.insert(super::scope::FnId(i));
+                        }
+                        None => self.kept_measures.push(super::scope::FnId(i)),
+                    }
                 }
                 let call = (symbol.clone(), derefs, Some(false));
                 self.info.measures.calls.insert(e.id, call);

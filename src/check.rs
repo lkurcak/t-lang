@@ -574,6 +574,11 @@ pub(crate) struct Checker {
     pred_again: Option<&'static str>,
     /// The refinements to check once every impl is collected.
     pending_refined: Vec<refine::Pending>,
+    /// The function whose refinement is being checked, which uses the
+    /// measures it names; `None` for a struct's.
+    pred_owner: Option<FnId>,
+    /// The measures structs' refinements name, which aren't dead code.
+    kept_measures: Vec<FnId>,
     /// The integer literals of the function being checked, in expressions
     /// and patterns, each to be checked to fit in its type once that's
     /// known (`Checker::literals`).
@@ -758,6 +763,8 @@ impl Checker {
             pred_measures: HashMap::new(),
             pred_again: None,
             pending_refined: Vec::new(),
+            pred_owner: None,
+            kept_measures: Vec::new(),
             literals: Vec::new(),
             nots: Vec::new(),
             modules: modules::Modules::default(),

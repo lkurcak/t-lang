@@ -136,16 +136,8 @@ impl Ord for str {
         let m = b.len();
         let mut i = 0usize;
         while i < n && i < m {
-            match a.get(i) {
-                Option::Some(x) => match b.get(i) {
-                    Option::Some(y) => {
-                        if *x != *y {
-                            return x.cmp(y);
-                        }
-                    },
-                    Option::None => {},
-                },
-                Option::None => {},
+            if a[i] != b[i] {
+                return a[i].cmp(&b[i]);
             }
             i = i + 1;
         }
@@ -177,10 +169,7 @@ fn decode(b: &[u8], at: usize) -> Option<Decoded> {
     if at >= n {
         return Option::None;
     }
-    let x = match b.get(at) {
-        Option::Some(x) => *x as u32,
-        Option::None => return Option::None,
-    };
+    let x = b[at] as u32;
     if x < 0x80 {
         return Option::Some(Decoded { c: x as char, next: at + 1 });
     }
@@ -233,11 +222,8 @@ fn decode(b: &[u8], at: usize) -> Option<Decoded> {
 struct Six { bits: { c: u32 | c <= 0x3F } }
 
 /// The six bits of byte `i` of `b`, if it's a continuation byte.
-fn continuation(b: &[u8], i: usize) -> Option<Six> {
-    let y = match b.get(i) {
-        Option::Some(y) => *y,
-        Option::None => return Option::None,
-    };
+fn continuation(b: &[u8], i: { i: usize | i < b.len() }) -> Option<Six> {
+    let y = b[i];
     if y < 0x80 || y > 0xBF {
         return Option::None;
     }

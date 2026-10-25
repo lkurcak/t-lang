@@ -1,6 +1,6 @@
-fn adder(n: i64) -> {closure#75138} { move |x| x + n }
+fn adder(n: i64) -> {closure#74688} { move |x| x + n }
 
-fn counter() -> {closure#75237} {
+fn counter() -> {closure#74787} {
     let mut n = 0i64;
     move || {
         n += 1i64;
@@ -8,12 +8,12 @@ fn counter() -> {closure#75237} {
     }
 }
 
-fn compose::<{panic}, {closure#75138}, {closure#75138}>(
-    f: {closure#75138},
-    g: {closure#75138},
-) -> {closure#75445}::<{panic}, {closure#75138}, {closure#75138}> { move |x| (&g)((&f)(x)) }
+fn compose::<{panic}, {closure#74688}, {closure#74688}>(
+    f: {closure#74688},
+    g: {closure#74688},
+) -> {closure#74995}::<{panic}, {closure#74688}, {closure#74688}> { move |x| (&g)((&f)(x)) }
 
-fn pick(c: bool) -> {closure#75138} {
+fn pick(c: bool) -> {closure#74688} {
     let a = adder(1i64);
     let b = adder(2i64);
     if c { a } else { b }
@@ -59,7 +59,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
             {try},
         ),
     };
-    let h = compose::<{panic}, {closure#75138}, {closure#75138}>(adder(1i64), adder(10i64));
+    let h = compose::<{panic}, {closure#74688}, {closure#74688}>(adder(1i64), adder(10i64));
     match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
         <std::io::Stdout>::line::<i64>(&mut out, &(&h)(0i64)),
     ) {

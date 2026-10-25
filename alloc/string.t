@@ -74,7 +74,7 @@ impl String {
 
     /// Has it none?
     #[measure]
-    pub fn is_empty(&self) -> bool { self.bytes.is_empty() }
+    pub fn is_empty(&self) -> bool { self.len() == 0 }
 
     /// How many bytes it has room for before it grows.
     pub fn capacity(&self) -> usize { self.bytes.capacity() }

@@ -278,7 +278,7 @@ the checker proved, which must not panic. Either failing stops it with
 | refinements inside other types, `Option<{ v: i64 \| v > 0 }>` | needs subtyping inside type constructors, and refinements on type parameters | — |
 | refined trait methods | an impl's must ask no more and promise no less | — |
 | `&mut` to a refined value | writes through it must keep the refinement | — |
-| functions in predicates (`r.start() <= r.end()`) | needs pure functions, *measures* | — |
+| functions in predicates (`r.start() <= r.end()`) | needs pure functions, *measures* | 21 ✅ |
 | inferring loop invariants | Liquid types' fixed point | — |
 | `/`, `%` by a constant in predicates | Presburger arithmetic, a complete procedure | — |
 | indexing that can't panic | there are no arrays yet | `alloc` |

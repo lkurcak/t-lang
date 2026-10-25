@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased
+
+Step 21: measures. See [docs/21-measures.md](docs/21-measures.md).
+
+### Added
+
+- Measures: a method marked `#[measure]`, of `&self` only, giving an
+  integer or a `bool`, with no effects, whose body is a term of the logic
+  (`self`'s fields, other measures, literals and arithmetic) or which is
+  an intrinsic. A refinement can call one: `i: { i: usize | i < s.len() }`.
+  In its module it's its body; elsewhere, unless its body reads no
+  fields, it's only what's been learned of it.
+- Refinements of any type, which say something of it through its
+  measures: `{ s: &[T] | s.len() > 0 }`.
+- `x[i]` is `*x.index(i)`, and `*x.index_mut(i)` where it's assigned or
+  borrowed `&mut`. `[T]::index` and `index_mut` take `i < self.len()`, so
+  they can't panic; `List` has them too.
+- Measures in the libraries: `len` and `is_empty` of slices, strings,
+  `List` and `String`, `List::capacity`, `RawBuf::cap`. `as_slice`,
+  `as_mut_slice`, `as_str`, `as_bytes`, `RawBuf::slice` and
+  `from_utf8_unchecked` say how long what they give is.
+- The interpreter checks the refinements of intrinsics, and measures in
+  any refinement.
+
+### Changed
+
+- A place lent `&mut` is forgotten where it's lent, not treated as
+  changing anywhere in the body when the borrow could outlive a call.
+- A result's refinement can name what's behind a `&mut` parameter, and
+  means it as it was at the call.
+- `RawBuf::slice` and `slice_mut` take `hi >= lo`.
+- What's assigned is read before a call in the place assigned to, as
+  `index_mut` in `s[0] = s[1]`, borrows anything.
+- A parameter a refinement names isn't an unused variable.
+- `t fmt` keeps a refined result on one line, breaking the parameters
+  first, and keeps the blank line before a method with an attribute.
+
 ## 0.33.0 (2026-10-24)
 
 Step 20: destructors. See [docs/20-destructors.md](docs/20-destructors.md).

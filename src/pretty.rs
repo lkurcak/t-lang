@@ -582,7 +582,11 @@ impl Printer<'_> {
         let mut body = self.trailing(open + 1);
         for (i, item) in methods.iter().enumerate() {
             let (doc, allows, span) = match item {
-                BodyItem::Fn(f, _) => (f.doc.as_ref(), &f.allows[..], f.span),
+                BodyItem::Fn(f, _) => (
+                    f.doc.as_ref(),
+                    &f.allows[..],
+                    Span::new(fn_start(f), f.span.end),
+                ),
                 BodyItem::Decl(a) => (a.doc.as_ref(), &[][..], a.span),
                 BodyItem::Def(a) => (a.doc.as_ref(), &[][..], a.span),
                 BodyItem::EffectDecl(a) => (a.doc.as_ref(), &[][..], a.span),

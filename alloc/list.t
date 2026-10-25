@@ -36,7 +36,7 @@ impl<T> List<T> {
 
     /// Does it hold none?
     #[measure]
-    pub fn is_empty(&self) -> bool { self.len == 0 }
+    pub fn is_empty(&self) -> bool { self.len() == 0 }
 
     /// How many values it has room for before it grows.
     #[measure]

@@ -388,6 +388,7 @@ impl Checker {
         });
         let mut live = vec![false; self.fns.len()];
         let mut todo = vec![FnId(main.expect("checked that there's a `main`"))];
+        todo.extend(self.kept_measures.iter().copied());
         for (i, (.., method)) in fns.iter().enumerate() {
             let inherent =
                 matches!(method, Some(MethodOf::Impl(k)) if prog.impls[*k].trait_name.is_none());

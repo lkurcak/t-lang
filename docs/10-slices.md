@@ -288,11 +288,11 @@ Rust's `s[i]` panics when `i` is out of range. The principled `s[i]` is
 one the checker proves in range, `0 <= i < len(s)`, as it proves
 arithmetic total (docs/08-refinement-types.md), so it needs no check and
 can't fail. That needs refinements that can name `len(s)`, a *measure*,
-which T doesn't have yet. A slice is where a measure is easiest: its
+which T didn't have yet. A slice is where a measure is easiest: its
 length never changes, unlike a list's, so `len(s)` of a variable `s`
 stays true for as long as `s` does. Until then, `get` returns an
 `Option`, and a program that knows better says so with `unwrap`, in its
-type.
+type. Step 21 (docs/21-measures.md) adds measures, and `s[i]` with them.
 
 ## Why it's sound
 
@@ -353,7 +353,7 @@ checks as the program runs.
 
 | Missing | Why it's missing | Step |
 |---|---|---|
-| `s[i]` | it should be proved in range, with no panic: refinements that name `len(s)` (measures) | — |
+| `s[i]` | it should be proved in range, with no panic: refinements that name `len(s)` (measures) | 21 ✅ |
 | ranges, `s.slice(lo, hi)`, `&s[lo..hi]` | `split_at` twice does it; a method of its own when it's wanted | — |
 | `==` on slices | element by element, through `Eq` of `T`: a built-in impl to write | 13 ✅ |
 | `str` | a slice of bytes that are UTF-8 | 13 ✅ |
