@@ -105,6 +105,7 @@ pub fn lift(prog: &Program, info: &Info) -> Program {
         stray_docs: prog.stray_docs.clone(),
         next_id: cx.next_id.get(),
         proved: info.proved.clone(),
+        measures: info.measures.clone(),
     }
 }
 
@@ -160,6 +161,7 @@ impl<'p> Cx<'p> {
             effects: f.effects.as_ref().map(|e| self.effects(e)),
             body,
             intrinsic: f.intrinsic,
+            measure: f.measure,
         };
         (decl, nested)
     }
@@ -298,7 +300,7 @@ impl<'p> Cx<'p> {
     /// order. Local types are taken out too: `lift` has them already.
     fn expr(&self, e: &'p Expr, nested: &mut Vec<&'p FnDecl>) -> Expr {
         let kind = match &e.kind {
-            ExprKind::For(_) | ExprKind::Range(..) | ExprKind::Try(..) => {
+            ExprKind::For(_) | ExprKind::Range(..) | ExprKind::Try(..) | ExprKind::Index(..) => {
                 unreachable!("rewritten when paths are resolved")
             }
             ExprKind::Move(_) => unreachable!("written here"),

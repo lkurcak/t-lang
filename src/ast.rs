@@ -38,6 +38,21 @@ pub struct Program {
     /// `check/refine.rs`): empty until it has, and kept by `lift` and
     /// `mono` for the interpreter, which checks it.
     pub proved: std::collections::HashSet<NodeId>,
+    /// The measures, kept the same way, for the interpreter to check
+    /// refinements that use them.
+    pub measures: Measures,
+}
+
+/// What the checker found of measures (see docs/21-measures.md), for the
+/// interpreter: what each use of one in a predicate, or in a measure's
+/// body, calls, and what each is.
+#[derive(Debug, Clone, Default)]
+pub struct Measures {
+    /// By the node of the call: the measure's symbol, how many `*`s its
+    /// receiver goes through, and then the `&` or `&mut`, if there's one.
+    pub calls: std::collections::HashMap<NodeId, (String, usize, Option<bool>)>,
+    /// By symbol: its body, or `None` for an intrinsic.
+    pub bodies: std::collections::HashMap<String, Option<Expr>>,
 }
 
 impl Program {
@@ -589,6 +604,9 @@ pub struct FnDecl {
     /// Where its `#[intrinsic]` is, if it's one: a function `core` declares
     /// with no body, which the compiler provides. Its body here is empty.
     pub intrinsic: Option<Span>,
+    /// Where its `#[measure]` is, if it's one: a method of `&self` the
+    /// refinement logic can name (see docs/21-measures.md).
+    pub measure: Option<Span>,
 }
 
 impl FnDecl {
@@ -952,9 +970,10 @@ impl Expr {
                 .chain(arms.iter().map(|a| &a.body))
                 .collect(),
             ExprKind::Lambda(l) => vec![&l.body],
-            ExprKind::Assign(_, l, r) | ExprKind::While(_, l, r) | ExprKind::Range(l, r) => {
-                vec![l, r]
-            }
+            ExprKind::Assign(_, l, r)
+            | ExprKind::While(_, l, r)
+            | ExprKind::Range(l, r)
+            | ExprKind::Index(l, r, ..) => vec![l, r],
             ExprKind::For(f) => vec![&f.iter, &f.body],
             ExprKind::Try(e, _) => vec![e],
         }
@@ -1181,6 +1200,11 @@ pub enum ExprKind {
     /// `a..b`. Only until paths are resolved, which rewrites it as a call
     /// of `core::ops::Range::new`.
     Range(Box<Expr>, Box<Expr>),
+    /// `x[i]`, with the span of the `[..]`. Only until paths are resolved,
+    /// which rewrites it as `*x.index(i)`, or `*x.index_mut(i)` where the
+    /// `bool` says it's written to: as what's assigned, or what's
+    /// borrowed `&mut`, or inside of that (see `check/modules.rs`).
+    Index(Box<Expr>, Box<Expr>, Span, bool),
     /// `e?`, with the span of the `?`. Only until paths are resolved,
     /// which rewrites it as the `match` it means (see `check/modules.rs`).
     Try(Box<Expr>, Span),
@@ -1379,7 +1403,10 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
             go(&l.body, bound);
             bound.truncate(scope);
         }
-        ExprKind::Assign(_, l, r) | ExprKind::While(_, l, r) | ExprKind::Range(l, r) => {
+        ExprKind::Assign(_, l, r)
+        | ExprKind::While(_, l, r)
+        | ExprKind::Range(l, r)
+        | ExprKind::Index(l, r, ..) => {
             go(l, bound);
             go(r, bound);
         }

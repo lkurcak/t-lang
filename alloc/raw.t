@@ -34,8 +34,9 @@ impl<T> RawBuf<T> {
     #[intrinsic]
     pub fn empty() -> RawBuf<T>;
 
-    /// How many slots it has.
+    /// How many slots it has. It's a measure, so refinements can say it.
     #[intrinsic]
+    #[measure]
     pub fn cap(&self) -> usize;
 
     /// Gives it `extra` more slots, keeping what's in the first `cap()`.
@@ -68,7 +69,8 @@ impl<T> RawBuf<T> {
     /// `lo <= hi <= cap()`, and slots `lo..hi` are initialised. The slice
     /// borrows the buffer, so they stay so while it lives.
     #[intrinsic]
-    pub fn slice(&self, lo: usize, hi: usize) -> &[T] with unsafe;
+    pub fn slice(&self, lo: usize, hi: { h: usize | h >= lo }) -> { s: &[T] | s.len() == hi - lo }
+    with unsafe;
 
     /// The values in slots `lo` up to, not including, `hi`, as a slice to
     /// change.
@@ -79,7 +81,11 @@ impl<T> RawBuf<T> {
     /// borrows the buffer, so they stay so while it lives: nothing it does
     /// can take a value out.
     #[intrinsic]
-    pub fn slice_mut(&mut self, lo: usize, hi: usize) -> &mut [T] with unsafe;
+    pub fn slice_mut(
+        &mut self,
+        lo: usize,
+        hi: { h: usize | h >= lo },
+    ) -> { s: &mut [T] | s.len() == hi - lo } with unsafe;
 
     /// Gives its memory back.
     ///

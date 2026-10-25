@@ -261,7 +261,10 @@ impl Checker {
         let opaques = this.is_none();
         self.env = preds.iter().cloned().chain(this).collect();
         self.adts.proj.local = eqs.clone();
-        let (param_tys, ret, effects, lts) = self.signature(f, &with_self, &lifetimes, opaques)?;
+        self.sig_self = self_ty.cloned();
+        let signature = self.signature(f, &with_self, &lifetimes, opaques);
+        self.sig_self = None;
+        let (param_tys, ret, effects, lts) = signature?;
         let mut ty = Type::func_with(param_tys, ret, effects);
         if let Some(s) = self_ty {
             let s = Subst::new(&["Self".to_string()], std::slice::from_ref(s));

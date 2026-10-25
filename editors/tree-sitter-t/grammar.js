@@ -146,8 +146,8 @@ module.exports = grammar({
     // Items
 
     // `#[allow(dead_code)]` before an item, field or variant,
-    // `#[derive(Copy)]` before a struct or enum, or `#[intrinsic]` before a
-    // function of the core library's. As in Rust's grammar, it's a sibling
+    // `#[derive(Copy)]` before a struct or enum, `#[intrinsic]` before a
+    // function of the core library's, or `#[measure]` before a method. As in Rust's grammar, it's a sibling
     // of what it's on rather than part of it.
     attribute_item: $ => seq(
       '#',
@@ -554,6 +554,7 @@ module.exports = grammar({
       $.call_expression,
       $.method_call_expression,
       $.field_expression,
+      $.index_expression,
       $.try_expression,
       $.parenthesized_expression,
       $.struct_expression,
@@ -683,6 +684,14 @@ module.exports = grammar({
       field('value', $._expression),
       '.',
       field('field', $._field_identifier),
+    )),
+
+    // `s[i]`: binds as tightly as a call
+    index_expression: $ => prec(PREC.call, seq(
+      field('value', $._expression),
+      '[',
+      field('index', $._expression),
+      ']',
     )),
 
     // `f(x)?`: binds as tightly as a call

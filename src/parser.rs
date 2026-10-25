@@ -15,6 +15,8 @@
 //!          | "#" "[" "derive" "(" (derived ("," derived)* ","?)? ")" "]"
 //!          | "#" "[" "intrinsic" "]"               -- on a `fn`, a fieldless `struct` or an
 //!                                                     inherent impl's method, in a library
+//!          | "#" "[" "measure" "]"                 -- on a `fn`: one the refinement logic
+//!                                                     can name (docs/21-measures.md)
 //! derived  = IDENT ("where" IDENT ":" bound ("+" bound)* ("," IDENT ":" bound ("+" bound)*)*)?
 //! fn_decl  = "fn" IDENT generics? "(" (param ("," param)* ","?)? ")" ("->" type)? where?
 //!            (block | ";")                          -- `;` only for an intrinsic
@@ -146,6 +148,7 @@ pub fn parse(tokens: Vec<Token>) -> Result<Program, Error> {
         stray_docs: Vec::new(),
         next_id: 1,
         proved: Default::default(),
+        measures: Default::default(),
     };
     parse_into(tokens, &mut prog, ROOT)?;
     Ok(prog)
@@ -293,6 +296,7 @@ impl Parser {
         let mut allows = Vec::new();
         let mut derives = Vec::new();
         let mut intrinsic = None;
+        let mut measure = None;
         while *self.peek() == Tok::Hash {
             let start = self.bump().span;
             self.expect(Tok::LBracket)?;
@@ -303,14 +307,19 @@ impl Parser {
                     intrinsic = Some(start.to(self.expect(Tok::RBracket)?));
                     continue;
                 }
+                Tok::Ident(name) if name == "measure" => {
+                    self.bump();
+                    measure = Some(start.to(self.expect(Tok::RBracket)?));
+                    continue;
+                }
                 Tok::Ident(name) => {
                     let message = format!(
-                        "unknown attribute `{name}`; the only ones are `allow`, `derive` and \
-                         `intrinsic`"
+                        "unknown attribute `{name}`; the only ones are `allow`, `derive`, \
+                         `intrinsic` and `measure`"
                     );
                     return Err(Error::syntax(self.span(), message));
                 }
-                _ => return Err(self.unexpected("`allow`, `derive` or `intrinsic`")),
+                _ => return Err(self.unexpected("`allow`, `derive`, `intrinsic` or `measure`")),
             };
             self.bump();
             self.expect(Tok::LParen)?;
@@ -343,6 +352,7 @@ impl Parser {
             allows,
             derives,
             intrinsic,
+            measure,
         })
     }
 
@@ -426,8 +436,8 @@ impl Parser {
             let head = self.head()?;
             let public = (*self.peek() == Tok::Pub).then(|| self.bump().span);
             let head = match self.peek() {
-                Tok::Fn | Tok::Struct | Tok::Trait => head,
-                _ => head.no_intrinsic()?,
+                Tok::Fn | Tok::Struct | Tok::Trait => head.no_measure(NOT_METHOD)?,
+                _ => head.no_intrinsic()?.no_measure(NOT_METHOD)?,
             };
             match self.peek() {
                 Tok::Struct => {
@@ -824,6 +834,7 @@ impl Parser {
             effects,
             body,
             intrinsic,
+            measure: head.measure,
         };
         Ok((f, provided))
     }
@@ -942,7 +953,7 @@ impl Parser {
         let mut effects = Vec::new();
         let mut methods = Vec::new();
         while *self.peek() != Tok::RBrace {
-            let head = self.head()?.no_derives()?.no_intrinsic()?;
+            let head = (self.head()?.no_derives()?.no_intrinsic()?).no_measure(TRAIT_MEASURE)?;
             self.no_pub("a trait's methods are public wherever the trait is")?;
             match self.peek() {
                 Tok::Type => assoc.push(self.assoc_decl(head)?),
@@ -1154,7 +1165,7 @@ impl Parser {
             let head = self.head()?.no_derives()?;
             let head = match trait_name {
                 None => head,
-                Some(_) => head.no_intrinsic()?,
+                Some(_) => head.no_intrinsic()?.no_measure(TRAIT_MEASURE)?,
             };
             let public = match trait_name {
                 Some(_) => {
@@ -1671,7 +1682,7 @@ impl Parser {
                 return Err(Error::syntax(self.span(), what));
             }
             if matches!(self.peek(), Tok::Fn | Tok::Struct | Tok::Enum | Tok::Hash) {
-                let head = self.head()?.no_intrinsic()?;
+                let head = self.head()?.no_intrinsic()?.no_measure(NOT_METHOD)?;
                 let stmt = match self.peek() {
                     Tok::Fn => Stmt::Fn(Box::new(self.fn_decl(head.no_derives()?)?)),
                     Tok::Struct => Stmt::Type(Box::new(TypeDecl::Struct(self.struct_decl(head)?))),
@@ -1785,6 +1796,8 @@ impl Parser {
         self.bump();
         let rhs = self.expr()?;
         let span = lhs.span.to(rhs.span);
+        let mut lhs = lhs;
+        written(&mut lhs);
         Ok(Expr {
             kind: ExprKind::Assign(op, Box::new(lhs), Box::new(rhs)),
             span,
@@ -1947,7 +1960,10 @@ impl Parser {
         if op == UnOp::Ref {
             return self.borrow(start);
         }
-        let operand = self.unary()?;
+        let mut operand = self.unary()?;
+        if op == UnOp::RefMut {
+            written(&mut operand);
+        }
         let span = start.to(operand.span);
         Ok(Expr {
             kind: ExprKind::Unary(op, Box::new(operand)),
@@ -1962,7 +1978,10 @@ impl Parser {
             true => UnOp::RefMut,
             false => UnOp::Ref,
         };
-        let operand = self.unary()?;
+        let mut operand = self.unary()?;
+        if op == UnOp::RefMut {
+            written(&mut operand);
+        }
         let span = start.to(operand.span);
         Ok(Expr {
             kind: ExprKind::Unary(op, Box::new(operand)),
@@ -1975,12 +1994,16 @@ impl Parser {
         let mut e = self.primary()?;
         loop {
             if *self.peek() == Tok::LBracket {
-                return Err(Error::syntax(
-                    self.span(),
-                    "there's no indexing with `[..]` yet; use `.get(..)`, which gives an `Option`",
-                ));
-            }
-            if self.eat(&Tok::LParen) {
+                let open = self.bump().span;
+                let i = self.expr()?;
+                let close = self.expect(Tok::RBracket)?;
+                let span = e.span.to(close);
+                e = Expr {
+                    kind: ExprKind::Index(Box::new(e), Box::new(i), open.to(close), false),
+                    span,
+                    id: self.id(),
+                };
+            } else if self.eat(&Tok::LParen) {
                 let (args, end) = self.args()?;
                 let span = e.span.to(end);
                 e = Expr {
@@ -2665,12 +2688,19 @@ fn binop(tok: &Tok) -> Option<(BinOp, u8)> {
 /// arguments and where they end, if it has any.
 type Segment = (Ident, Vec<TypeExpr>, Option<Span>);
 
+/// Why a `#[measure]` can't be where it is.
+const NOT_METHOD: &str = "only a method of `&self` can be a measure";
+const TRAIT_MEASURE: &str =
+    "a trait's method can't be a measure: each impl's body would have to be the same";
+
 struct Head {
     doc: Option<DocComment>,
     allows: Vec<Allow>,
     derives: Vec<Derive>,
     /// Where its `#[intrinsic]` is, if it has one: only a function's can.
     intrinsic: Option<Span>,
+    /// Where its `#[measure]` is, if it has one: only a function's can.
+    measure: Option<Span>,
 }
 
 impl Head {
@@ -2703,6 +2733,15 @@ impl Head {
         }
     }
 
+    /// This head, for something that isn't a function, so can't have a
+    /// `#[measure]`.
+    fn no_measure(self, why: &str) -> Result<Head, Error> {
+        match self.measure {
+            Some(at) => Err(Error::syntax(at, why)),
+            None => Ok(self),
+        }
+    }
+
     /// This head, for something that isn't a struct or enum, so can't
     /// have a `#[derive(..)]`.
     fn no_derives(self) -> Result<Head, Error> {
@@ -2713,6 +2752,19 @@ impl Head {
             )),
             None => Ok(self),
         }
+    }
+}
+
+/// Marks each `x[i]` place `e` is, or is inside of, through fields and
+/// `*`s, as written to: it's `index_mut`'s, not `index`'s.
+fn written(e: &mut Expr) {
+    match &mut e.kind {
+        ExprKind::Index(x, _, _, w) => {
+            *w = true;
+            written(x);
+        }
+        ExprKind::Field(x, _) | ExprKind::Unary(UnOp::Deref, x) => written(x),
+        _ => {}
     }
 }
 
