@@ -41,6 +41,9 @@ pub struct Info {
     /// unique in the program, unlike the one it's written with (see
     /// `check/scope.rs` and `check/names.rs`).
     pub symbols: HashMap<NodeId, String>,
+    /// Each use of a const parameter as a value, by node, with its name:
+    /// monomorphisation writes the length it is.
+    pub consts: HashMap<NodeId, String>,
     /// Where each struct and enum is declared, by symbol: the span of its
     /// name.
     pub types: HashMap<String, Span>,
@@ -188,6 +191,7 @@ pub enum NoteKind {
     Enum(String),
     TypeParam(String),
     EffectParam(String),
+    ConstParam(String),
     /// By its path: `alloc::list`.
     Module(String),
     Field(String),
@@ -240,6 +244,7 @@ impl Note {
             NoteKind::Enum(_) => format!("enum {ty}"),
             NoteKind::TypeParam(name) => format!("type parameter {name}"),
             NoteKind::EffectParam(name) => format!("effect parameter {name}"),
+            NoteKind::ConstParam(name) => format!("const {name}: usize"),
             NoteKind::Module(path) => format!("mod {path}"),
             NoteKind::Field(name) => format!("field {name}: {ty}"),
             NoteKind::Variant(e, v) => format!("{e}{args}::{v}: {ty}"),
@@ -679,9 +684,10 @@ impl Checker {
 
     fn param_notes(&mut self, g: &Generics) {
         for p in &g.types {
-            let kind = match g.is_effect(p) {
-                true => NoteKind::EffectParam(p.name.clone()),
-                false => NoteKind::TypeParam(p.name.clone()),
+            let kind = match (g.is_effect(p), g.is_const(p)) {
+                (true, _) => NoteKind::EffectParam(p.name.clone()),
+                (_, true) => NoteKind::ConstParam(p.name.clone()),
+                _ => NoteKind::TypeParam(p.name.clone()),
             };
             self.note(p.span, kind, None, Some(p.span));
         }
@@ -731,6 +737,16 @@ impl Checker {
             TypeExprKind::Ref(_, _, inner) | TypeExprKind::Slice(inner) => {
                 self.type_expr_notes(inner, params)
             }
+            TypeExprKind::Array(inner, n) => {
+                self.type_expr_notes(inner, params);
+                if let TypeExprKind::Named(name, _) = &n.kind
+                    && let Some(p) = params.iter().find(|p| p.name == *name)
+                {
+                    let kind = NoteKind::ConstParam(name.clone());
+                    self.note(n.span, kind, None, Some(p.span));
+                }
+            }
+            TypeExprKind::Nat(_) => {}
             // Its traits are noted where they're resolved.
             TypeExprKind::Impl(bounds) => {
                 for b in bounds {
@@ -781,6 +797,11 @@ fn each_annotation(e: &Expr, f: &mut impl FnMut(&TypeExpr)) {
         | ExprKind::Unit
         | ExprKind::Continue(_) => {}
         ExprKind::Var(_, targs) => targs.iter().for_each(&mut *f),
+        ExprKind::Array(items) => items.iter().for_each(|x| each_annotation(x, f)),
+        ExprKind::Repeat(v, n) => {
+            each_annotation(v, f);
+            each_annotation(n, f);
+        }
         ExprKind::As(x, t) => {
             each_annotation(x, f);
             f(t);
@@ -867,7 +888,9 @@ fn pattern_annotations(p: &Pattern, f: &mut impl FnMut(&TypeExpr)) {
             targs.iter().for_each(&mut *f);
             fields.iter().for_each(|fp| pattern_annotations(&fp.pat, f));
         }
-        PatternKind::Or(alts) => alts.iter().for_each(|p| pattern_annotations(p, f)),
+        PatternKind::Or(alts) | PatternKind::Array(alts) => {
+            alts.iter().for_each(|p| pattern_annotations(p, f))
+        }
         PatternKind::Wild
         | PatternKind::Bind(..)
         | PatternKind::Int(..)

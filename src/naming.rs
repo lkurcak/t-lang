@@ -21,6 +21,7 @@ use crate::source::Sources;
 enum Case {
     Camel,
     Snake,
+    Upper,
 }
 
 /// A name declared in the program, with what it is, in words.
@@ -40,6 +41,7 @@ pub fn warnings(sources: &Sources, prog: &Program, info: Option<&Info>) -> Vec<W
             let want = match d.case {
                 Case::Camel => camel(d.name),
                 Case::Snake => snake(d.name),
+                Case::Upper => snake(d.name).to_uppercase(),
             };
             if want == d.name {
                 return None;
@@ -51,6 +53,7 @@ pub fn warnings(sources: &Sources, prog: &Program, info: Option<&Info>) -> Vec<W
             let (lint, case) = match d.case {
                 Case::Camel => (Lint::NonCamelCaseTypes, "an upper camel case"),
                 Case::Snake => (Lint::NonSnakeCase, "a snake case"),
+                Case::Upper => (Lint::NonUpperCaseGlobals, "an upper case"),
             };
             // Unless it's a keyword, say, it's worth suggesting even if it
             // clashes with something.
@@ -223,10 +226,16 @@ fn ident<'a>(id: &'a Ident, what: &'static str, case: Case) -> Decl<'a> {
 }
 
 fn params<'a>(g: &'a Generics, out: &mut Vec<Decl<'a>>) {
-    out.extend(g.types.iter().map(|p| match g.is_effect(p) {
-        true => ident(p, "effect parameter", Case::Snake),
-        false => ident(p, "type parameter", Case::Camel),
-    }));
+    out.extend(
+        g.types
+            .iter()
+            .map(|p| match (g.is_effect(p), g.is_const(p)) {
+                (true, _) => ident(p, "effect parameter", Case::Snake),
+                // A constant, as a global would be.
+                (_, true) => ident(p, "const parameter", Case::Upper),
+                _ => ident(p, "type parameter", Case::Camel),
+            }),
+    );
 }
 
 /// Adds the variables `e` binds, in `let`s, closures and `match` arms, to
@@ -266,7 +275,9 @@ fn bindings<'a>(p: &'a Pattern, out: &mut Vec<Decl<'a>>) {
         }),
         // Each alternative binds the same variables.
         PatternKind::Or(alts) => alts.iter().take(1).for_each(|p| bindings(p, out)),
-        PatternKind::Variant(_, _, _, pats) => pats.iter().for_each(|p| bindings(p, out)),
+        PatternKind::Variant(_, _, _, pats) | PatternKind::Array(pats) => {
+            pats.iter().for_each(|p| bindings(p, out))
+        }
         PatternKind::Struct(_, _, fields, _) => fields.iter().for_each(|f| bindings(&f.pat, out)),
         PatternKind::Wild
         | PatternKind::Int(..)

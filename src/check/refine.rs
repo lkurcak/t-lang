@@ -101,6 +101,9 @@ pub(super) struct RefinedSig {
     name: String,
     /// Its parameters' names.
     names: Vec<String>,
+    /// Its type parameters, and its impl's, in order, as its type arguments
+    /// are: what its const parameters are at a call.
+    type_params: Vec<String>,
     params: Vec<Option<Refinement>>,
     ret: Option<Refinement>,
 }
@@ -159,6 +162,8 @@ pub(super) struct Measure {
     body: Option<Expr>,
     /// Is it of a slice or a string, so of the reference to one?
     unsized_self: bool,
+    /// Is it an array's intrinsic, its length?
+    of_array: bool,
     /// The measures its body uses, once it's been checked.
     uses: Vec<String>,
     /// Does its body read a field? If not, it's only other measures, so
@@ -176,6 +181,8 @@ pub(super) enum Pending {
         ret: Type,
         allowed: bool,
         owner: (String, String),
+        /// Its const parameters, and its impl's, as declared.
+        consts: Vec<Ident>,
     },
     Fields {
         s: Box<StructDecl>,
@@ -184,7 +191,7 @@ pub(super) enum Pending {
 }
 
 /// What a name in a predicate is.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(super) enum PredName {
     /// The refinement's own, the value refined.
     Binder,
@@ -194,6 +201,9 @@ pub(super) enum PredName {
     Param(usize),
     /// A local variable, by id.
     Local(NodeId),
+    /// A const parameter of the function, or of the struct, in a field's
+    /// refinement, by name.
+    Const(String),
 }
 
 /// What a name a predicate is checked in names: a value, of this type,
@@ -235,12 +245,21 @@ impl Checker {
         }
         // Its predicates may call measures of impls not collected yet, so
         // they're checked once all are.
+        let mut consts = self.const_decls.clone();
+        consts.extend(
+            f.generics
+                .types
+                .iter()
+                .filter(|p| f.generics.is_const(p))
+                .cloned(),
+        );
         self.pending_refined.push(Pending::Sig {
             f: Box::new(f.clone()),
             params: params.to_vec(),
             ret: ret.clone(),
             allowed,
             owner: self.sig_owner.clone(),
+            consts,
         });
         Ok(())
     }
@@ -272,12 +291,13 @@ impl Checker {
                     ret,
                     allowed,
                     owner,
+                    consts,
                 } => {
                     let id = self.fns.iter().position(|d| d.symbol == owner.0);
                     self.pred_owner = id.map(super::scope::FnId);
                     self.sig_owner = owner;
                     self.module = f.module;
-                    self.sig_refinements(&f, &params, &ret, allowed)?;
+                    self.sig_refinements(&f, &params, &ret, allowed, &consts)?;
                 }
                 Pending::Fields { s, symbol } => {
                     self.pred_owner = None;
@@ -295,6 +315,7 @@ impl Checker {
         params: &[Type],
         ret: &Type,
         allowed: bool,
+        consts: &[Ident],
     ) -> Result<(), Error> {
         let written = f.params.iter().map(|p| &p.ty).chain([&f.ret]);
         let Some(first) = written.clone().find(|t| t.refinement().is_some()) else {
@@ -307,9 +328,14 @@ impl Checker {
                  more than the trait's, and promise no less",
             ));
         }
+        let type_params = match self.pred_owner {
+            Some(id) => self.fns[id.0].scheme.params.to_vec(),
+            None => Vec::new(),
+        };
         let mut sig = RefinedSig {
             name: f.name.name.clone(),
             names: f.params.iter().map(|p| p.name.name.clone()).collect(),
+            type_params,
             params: Vec::new(),
             ret: None,
         };
@@ -326,6 +352,7 @@ impl Checker {
                             f.params[j].name.span,
                         ),
                     })
+                    .or_else(|| const_named(consts, name))
             };
             self.pred_again = p.mutable.map(|_| "a `mut` parameter");
             let r = self.refinement(&p.ty, &params[i], &scope);
@@ -342,6 +369,7 @@ impl Checker {
                         Named::Value(params[j].clone(), PredName::Param(j), f.params[j].name.span)
                     }
                 })
+                .or_else(|| const_named(consts, name))
         };
         // What a result's refinement names is what the parameters were at
         // the call, so what's behind a `&mut` too.
@@ -379,10 +407,16 @@ impl Checker {
             refs: Vec::new(),
             named: Vec::new(),
         };
+        let consts: Vec<Ident> = (s.generics.types.iter())
+            .filter(|p| s.generics.is_const(p))
+            .cloned()
+            .collect();
         for (i, f) in s.fields.iter().enumerate() {
             let public = |j: usize| s.fields[j].public.is_some();
             let scope = |name: &str| {
-                let j = s.fields.iter().position(|g| g.name.name == name)?;
+                let Some(j) = s.fields.iter().position(|g| g.name.name == name) else {
+                    return const_named(&consts, name);
+                };
                 let is = |p: bool| if p { "is" } else { "isn't" };
                 let (binder, _) = f.ty.refinement()?;
                 Some(if j == i {
@@ -554,9 +588,13 @@ impl Checker {
                             ));
                         }
                     };
-                    self.pred_names.insert(e.id, what);
+                    if let PredName::Const(c) = &what {
+                        self.info.consts.insert(e.id, c.clone());
+                    }
+                    self.pred_names.insert(e.id, what.clone());
                     let kind = match what {
                         PredName::Field(_) => super::NoteKind::Field(name.clone()),
+                        PredName::Const(_) => super::NoteKind::ConstParam(name.clone()),
                         _ => super::NoteKind::Var(name.clone()),
                     };
                     self.note(e.span, kind, Some(self.solved(&t)), Some(def));
@@ -634,9 +672,10 @@ impl Checker {
                 };
                 let ty = match scope(name) {
                     Some(Named::Value(t, what, def)) if targs.is_empty() => {
-                        self.pred_names.insert(x.id, what);
+                        self.pred_names.insert(x.id, what.clone());
                         let kind = match what {
                             PredName::Field(_) => super::NoteKind::Field(name.clone()),
+                            PredName::Const(_) => super::NoteKind::ConstParam(name.clone()),
                             _ => super::NoteKind::Var(name.clone()),
                         };
                         self.note(x.span, kind, Some(self.solved(&t)), Some(def));
@@ -781,6 +820,7 @@ impl Checker {
             module: f.module,
             body: f.intrinsic.is_none().then(|| f.body.clone()),
             unsized_self: matches!(of, Type::Slice(_) | Type::Str),
+            of_array: matches!(of, Type::Array(..)) && f.intrinsic.is_some(),
             uses: Vec::new(),
             reads_fields: true,
         };
@@ -947,6 +987,7 @@ impl Checker {
             loops: Vec::new(),
             size: None,
             bounds: HashMap::new(),
+            consts: HashMap::new(),
         };
         w.unstable_in(&f.body, false);
         let mut ret = None;
@@ -980,6 +1021,14 @@ impl Checker {
     }
 }
 
+/// What `name` names in a predicate, if it's one of the const parameters
+/// `consts`: a `usize`, the same all through the function or value.
+fn const_named(consts: &[Ident], name: &str) -> Option<Named> {
+    let p = consts.iter().rev().find(|p| p.name == name)?;
+    let ty = Type::Int(crate::types::IntTy::Usize);
+    Some(Named::Value(ty, PredName::Const(name.to_string()), p.span))
+}
+
 /// Calls `f` with `e` and everything in it.
 fn each_expr(e: &Expr, f: &mut impl FnMut(&Expr)) {
     f(e);
@@ -992,7 +1041,7 @@ fn each_expr(e: &Expr, f: &mut impl FnMut(&Expr)) {
 fn each_bind(pat: &Pattern, f: &mut impl FnMut(&Pattern)) {
     match &pat.kind {
         PatternKind::Bind(..) => f(pat),
-        PatternKind::Variant(_, _, _, pats) | PatternKind::Or(pats) => {
+        PatternKind::Variant(_, _, _, pats) | PatternKind::Or(pats) | PatternKind::Array(pats) => {
             pats.iter().for_each(|p| each_bind(p, f))
         }
         PatternKind::Struct(_, _, fields, _) => fields.iter().for_each(|fp| each_bind(&fp.pat, f)),
@@ -1025,6 +1074,9 @@ enum Val {
     Int(Lin),
     Bool(Formula),
     Struct(Obj, Vec<Val>),
+    /// An array, known by its length, which its type says: what its
+    /// values are isn't followed.
+    Array(Lin),
     Ref(Obj, Pointee),
     Obj(Obj),
     Other,
@@ -1180,6 +1232,9 @@ struct Walk<'c> {
     /// or, of a `T: Signed`, the least is -1 minus the greatest, and of a
     /// `T: Unsigned`, 0.
     bounds: HashMap<String, (Lin, Lin)>,
+    /// The value of each const parameter of the function, once there's one:
+    /// a `usize` the caller picks, the same all through.
+    consts: HashMap<String, Val>,
     /// What's true everywhere in the function, of the variables of
     /// `size` and `bounds`, which no path forgets, as those are made once,
     /// on whichever path first needs them.
@@ -1196,8 +1251,13 @@ const ENTRY_DEPTH: usize = 4;
 #[derive(Clone, Copy)]
 enum Env<'a> {
     Here,
-    Call(&'a [Val]),
-    Fields(&'a [Val]),
+    /// At a call, with the arguments' values, and what the callee's type
+    /// parameters are there, for its const parameters. One that isn't
+    /// among them is the function's own.
+    Call(&'a [Val], &'a [(String, Type)]),
+    /// Of a struct's value, with its fields' values, and its type
+    /// parameters' arguments.
+    Fields(&'a [Val], &'a [(String, Type)]),
 }
 
 impl Walk<'_> {
@@ -1345,6 +1405,16 @@ impl Walk<'_> {
                 }
                 None => Val::Obj(self.new_obj()),
             },
+            // What its type says of an array, its length, holds behind any
+            // reference to it: nothing can change it.
+            Type::Array(_, n) => match self.length(n) {
+                Val::Int(l) => Val::Array(l),
+                _ => Val::Obj(self.new_obj()),
+            },
+            Type::Ref(_, _, inner) | Type::Box(inner) if matches!(**inner, Type::Array(..)) => {
+                let a = self.unknown(inner);
+                Val::Ref(self.new_obj(), Pointee::Val(Box::new(a)))
+            }
             Type::Ref(..) | Type::Box(_) => Val::Ref(self.new_obj(), Pointee::Unknown),
             t if has_obj(t) => Val::Obj(self.new_obj()),
             _ => Val::Other,
@@ -1415,6 +1485,12 @@ impl Walk<'_> {
             if let Some(v) = self.measure_term(term, &recv) {
                 return v;
             }
+        }
+        // An array's is its length.
+        if m.of_array
+            && let Val::Array(l) = self.pointee(recv.clone())
+        {
+            return Val::Int(l);
         }
         let of = match (&recv, m.unsized_self) {
             (Val::Ref(o, _), true) => Some(*o),
@@ -1497,7 +1573,7 @@ impl Walk<'_> {
         };
         for (j, r) in fields.refs.iter().enumerate() {
             if let Some(r) = r
-                && let Some(f) = self.pred(r, &vals[j], Env::Fields(vals))
+                && let Some(f) = self.pred(r, &vals[j], Env::Fields(vals, &self.adt_args(t)))
             {
                 self.fact(f);
             }
@@ -1810,6 +1886,11 @@ impl Walk<'_> {
                 None => Val::Obj(o),
             },
             Type::Ref(..) | Type::Box(_) => Val::Ref(o, Pointee::Place(self.deref(p.clone()))),
+            // Its length is its type's, whatever's been done to it.
+            Type::Array(_, n) => match self.length(n) {
+                Val::Int(l) => Val::Array(l),
+                _ => Val::Obj(o),
+            },
             _ => Val::Obj(o),
         };
         if new && p.path.is_empty() {
@@ -1985,14 +2066,21 @@ impl Walk<'_> {
             ExprKind::Bool(b) => Val::Bool(if *b { Formula::True } else { Formula::False }),
             ExprKind::Var(..) => match (self.cx.pred_names.get(&e.id)?, env) {
                 (PredName::Binder, _) => binder.clone(),
-                (PredName::Param(i), Env::Call(args)) => args.get(*i)?.clone(),
+                (PredName::Param(i), Env::Call(args, _)) => args.get(*i)?.clone(),
                 (PredName::Param(i), Env::Here) => {
                     let id = *self.params.get(*i)?;
                     self.read_place(&Place::local(id))
                 }
                 (PredName::Local(id), _) => self.read_place(&Place::local(*id)),
-                (PredName::Field(j), Env::Fields(vals)) => vals.get(*j)?.clone(),
-                (PredName::Param(_), Env::Fields(_)) | (PredName::Field(_), _) => return None,
+                (PredName::Field(j), Env::Fields(vals, _)) => vals.get(*j)?.clone(),
+                (PredName::Param(_), Env::Fields(..)) | (PredName::Field(_), _) => return None,
+                (PredName::Const(name), Env::Call(_, args) | Env::Fields(_, args)) => {
+                    match args.iter().find(|(p, _)| p == name) {
+                        Some((_, t)) => self.length(&t.clone()),
+                        None => self.length(&Type::Param(name.clone())),
+                    }
+                }
+                (PredName::Const(name), Env::Here) => self.length(&Type::Param(name.clone())),
             },
             ExprKind::Unary(UnOp::Neg, x) => Val::Int(int(self.term(x, binder, env)?)?.scale(-1)?),
             ExprKind::Unary(UnOp::Not, x) => Val::Bool(boolean(self.term(x, binder, env)?)?.not()),
@@ -2059,7 +2147,8 @@ impl Walk<'_> {
             {
                 what += &format!(", which names `{}`", fields.names[i]);
             }
-            self.need(r, &vals[j], Env::Fields(vals), span, what)?;
+            let args = self.adt_args(t);
+            self.need(r, &vals[j], Env::Fields(vals, &args), span, what)?;
         }
         Ok(())
     }
@@ -2072,7 +2161,7 @@ impl Walk<'_> {
         if let Some((r, name)) = self.ret.clone() {
             let entry = self.entry.clone();
             let what = format!("the result of `{name}`");
-            self.need(&r, &v, Env::Call(&entry), span, what)?;
+            self.need(&r, &v, Env::Call(&entry, &[]), span, what)?;
         }
         Ok(())
     }
@@ -2334,6 +2423,48 @@ impl Walk<'_> {
     }
 
     /// What function `callee` names, if it names one: its symbol.
+    /// The type arguments of the function call `e` calls, solved.
+    fn call_targs(&self, e: &Expr) -> Vec<Type> {
+        let res = match &e.kind {
+            ExprKind::MethodCall(..) => self.cx.typed.methods.get(&e.id).map(|m| &m.0),
+            ExprKind::Call(callee, _) => self.cx.typed.vars.get(&callee.id),
+            _ => self.cx.typed.vars.get(&e.id),
+        };
+        match res {
+            Some(Res::Fn(_, targs)) => targs.iter().map(|t| self.cx.solved(t)).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// The value of length `n`: a `Nat`'s number, or a const parameter's
+    /// variable, one for the whole function, as the caller picks it once.
+    fn length(&mut self, n: &Type) -> Val {
+        let usize = Type::Int(crate::types::IntTy::Usize);
+        match n {
+            Type::Nat(k) => Val::Int(Lin::constant(i128::from(*k))),
+            Type::Param(name) => {
+                if let Some(v) = self.consts.get(name) {
+                    return v.clone();
+                }
+                let v = self.unknown(&usize);
+                self.consts.insert(name.clone(), v.clone());
+                v
+            }
+            _ => self.unknown(&usize),
+        }
+    }
+
+    /// What struct type `t`'s type parameters are, by name.
+    fn adt_args(&self, t: &Type) -> Vec<(String, Type)> {
+        match t {
+            Type::Adt(symbol, _, args) => match self.cx.adts.get(symbol) {
+                Some(d) => d.params.iter().cloned().zip(args.iter().cloned()).collect(),
+                None => Vec::new(),
+            },
+            _ => Vec::new(),
+        }
+    }
+
     fn fn_named(&self, callee: &Expr) -> Option<&str> {
         match self.cx.typed.vars.get(&callee.id) {
             Some(Res::Fn(symbol, _)) => Some(symbol),
@@ -2372,11 +2503,20 @@ impl Walk<'_> {
     ) -> Result<Val, Error> {
         let ty = self.ty_of(e);
         let sig = symbol.and_then(|s| self.cx.refined.get(s)).cloned();
+        let targs: Vec<(String, Type)> = match &sig {
+            Some(sig) => sig
+                .type_params
+                .iter()
+                .cloned()
+                .zip(self.call_targs(e))
+                .collect(),
+            None => Vec::new(),
+        };
         if let Some(sig) = &sig {
             for (i, r) in sig.params.iter().enumerate() {
                 if let (Some(r), Some(arg)) = (r, args.get(i)) {
                     let what = format!("argument `{}` of `{}`", sig.names[i], sig.name);
-                    self.need(r, &vals[i], Env::Call(&vals), arg.span, what)?;
+                    self.need(r, &vals[i], Env::Call(&vals, &targs), arg.span, what)?;
                 }
             }
         }
@@ -2400,7 +2540,7 @@ impl Walk<'_> {
             self.fact(f);
         }
         if let Some(r) = sig.as_ref().and_then(|s| s.ret.as_ref())
-            && let Some(f) = self.pred(r, &result, Env::Call(&vals))
+            && let Some(f) = self.pred(r, &result, Env::Call(&vals, &targs))
         {
             self.fact(f);
         }
@@ -2478,8 +2618,20 @@ impl Walk<'_> {
                     self.as_value(symbol, e.span)?;
                     Ok(Val::Other)
                 }
+                Some(Res::Const(name)) => Ok(self.length(&Type::Param(name.clone()))),
                 _ => Ok(Val::Other),
             },
+            ExprKind::Array(items) => {
+                for item in items {
+                    self.expr(item)?;
+                }
+                Ok(Val::Array(Lin::constant(items.len() as i128)))
+            }
+            ExprKind::Repeat(v, _) => {
+                self.expr(v)?;
+                let ty = self.ty_of(e);
+                Ok(self.unknown(&ty))
+            }
             ExprKind::Unary(UnOp::Neg, x) => {
                 let v = self.expr(x)?;
                 let ty = self.ty_of(e);
@@ -2888,7 +3040,8 @@ impl Walk<'_> {
                     for (j, r) in fields.refs.iter().enumerate() {
                         if let Some(r) = r {
                             let what = format!("field `{}` of `{}`", fields.names[j], fields.name);
-                            self.need(r, &vals[j], Env::Fields(&vals), spans[j], what)?;
+                            let args = self.adt_args(&ty);
+                            self.need(r, &vals[j], Env::Fields(&vals, &args), spans[j], what)?;
                         }
                     }
                 }
@@ -3002,7 +3155,8 @@ impl Walk<'_> {
                     self.bind_pattern(&f.pat, val, at, i.map(|i| (&t, i)))?;
                 }
             }
-            PatternKind::Variant(_, _, _, pats) => {
+            // What an array's values are isn't followed.
+            PatternKind::Variant(_, _, _, pats) | PatternKind::Array(pats) => {
                 for p in pats {
                     self.bind_pattern(p, None, None, None)?;
                 }

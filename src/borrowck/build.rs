@@ -655,6 +655,29 @@ impl<'a> Builder<'a> {
                 }
                 self.assign(dest, Rvalue::Aggregate(ops), &t, span, false);
             }
+            ExprKind::Array(items) => {
+                let t = self.ty(e);
+                let Type::Array(elem, _) = &t else {
+                    unreachable!("an array literal makes an array")
+                };
+                let mut ops = Vec::new();
+                for a in items {
+                    let (o, ot) = self.operand(a);
+                    self.regions.subtype(self.info, &ot, elem, a.span);
+                    ops.push(o);
+                }
+                self.assign(dest, Rvalue::Aggregate(ops), &t, span, false);
+            }
+            // `[v; n]` copies `v`, which is `Copy`; `n` is a constant.
+            ExprKind::Repeat(v, _) => {
+                let t = self.ty(e);
+                let Type::Array(elem, _) = &t else {
+                    unreachable!("a repeat makes an array")
+                };
+                let (o, ot) = self.operand(v);
+                self.regions.subtype(self.info, &ot, elem, v.span);
+                self.assign(dest, Rvalue::Aggregate(vec![o]), &t, span, false);
+            }
             ExprKind::Match(scrutinee, arms) => self.match_into(scrutinee, arms, dest, span),
             // A closure that captures is a struct of what it captures: a
             // reference to each variable, borrowed here for as long as the
@@ -905,6 +928,7 @@ impl<'a> Builder<'a> {
             ExprKind::Var(_, _) => {
                 let t = match &self.cx.typed().vars[&e.id] {
                     Res::Fn(symbol, targs) => self.fn_value(symbol, targs, e.span),
+                    Res::Const(_) => Type::Int(crate::types::IntTy::Usize),
                     Res::Local(_) => unreachable!("a place"),
                 };
                 (Operand::Const, t)
@@ -1249,6 +1273,11 @@ impl<'a> Builder<'a> {
                     self.inspect(&fp.pat, &place.project(Proj::Field(j)));
                 }
             }
+            PatternKind::Array(pats) => {
+                for (j, q) in pats.iter().enumerate() {
+                    self.inspect(q, &place.project(Proj::Field(j)));
+                }
+            }
             PatternKind::Or(alts) => alts.iter().for_each(|a| self.inspect(a, &place)),
             PatternKind::Wild | PatternKind::Bind(..) => {}
         }
@@ -1260,7 +1289,9 @@ impl<'a> Builder<'a> {
             PatternKind::Bind(..) => {
                 self.declare_var(p, None);
             }
-            PatternKind::Variant(_, _, _, pats) => pats.iter().for_each(|q| self.declare(q)),
+            PatternKind::Variant(_, _, _, pats) | PatternKind::Array(pats) => {
+                pats.iter().for_each(|q| self.declare(q))
+            }
             PatternKind::Struct(_, _, fields, _) => {
                 fields.iter().for_each(|f| self.declare(&f.pat))
             }
@@ -1342,6 +1373,12 @@ impl<'a> Builder<'a> {
                 }
                 self.consume(&place, None, p);
             }
+            PatternKind::Array(pats) => {
+                for (j, q) in pats.iter().enumerate() {
+                    self.bind(q, &place.project(Proj::Field(j)));
+                }
+                self.consume(&place, None, p);
+            }
             // Whichever alternative matched binds the variables, and uses up
             // what it takes apart.
             PatternKind::Or(alts)
@@ -1413,6 +1450,11 @@ impl Builder<'_> {
                         self.consumes(&fp.pat, &place.project(Proj::Field(j)))
                     })
             }
+            PatternKind::Array(pats) => {
+                self.consumes_at(&place)
+                    || (pats.iter().enumerate())
+                        .any(|(j, q)| self.consumes(q, &place.project(Proj::Field(j))))
+            }
             PatternKind::Or(alts) => alts.iter().any(|a| self.consumes(a, &place)),
             _ => false,
         }
@@ -1428,6 +1470,9 @@ fn has_binds(p: &Pattern) -> bool {
 pub(crate) fn project(adts: &Adts, t: &Type, p: Proj) -> Type {
     match (p, t) {
         (Proj::Deref, Type::Ref(_, _, inner) | Type::Box(inner)) => (**inner).clone(),
+        // An array's values are its fields, in order, in a pattern: one of
+        // a known length (`Type::Nat`), which only a pattern takes apart.
+        (Proj::Field(_), Type::Array(elem, _)) => (**elem).clone(),
         (Proj::Field(i), t) => struct_fields(adts, t).expect("a struct")[i].1.clone(),
         (Proj::Variant(v, i), t) => variant_fields(adts, t, v)[i].clone(),
         (p, t) => unreachable!("{p:?} of `{t}`"),

@@ -116,6 +116,10 @@ pub const INTRINSICS: &[&str] = &[
     "[T]::get_mut",
     "[T]::split_at",
     "[T]::split_at_mut",
+    "[T; N]::len",
+    "[T; N]::as_slice",
+    "[T; N]::as_mut_slice",
+    "core::array::from_fn",
     "alloc::raw::RawBuf::new",
     "alloc::raw::RawBuf::empty",
     "alloc::raw::RawBuf::cap",
@@ -149,6 +153,11 @@ pub(crate) use modules::FOR_ITERATOR;
 
 /// The symbol of the core library's `Iterator`, which a `for` loop uses.
 pub(crate) const ITERATOR: &str = "core::iter::Iterator";
+
+/// The const parameters `g` declares.
+fn consts(g: &Generics) -> Vec<Ident> {
+    g.types.iter().filter(|p| g.is_const(p)).cloned().collect()
+}
 
 /// That only the built-in libraries can declare an intrinsic, written at
 /// `at`.
@@ -387,7 +396,7 @@ pub(crate) struct Checker {
     adts: Adts,
     /// How many lifetime and type arguments each struct and enum takes, by
     /// symbol.
-    arities: HashMap<String, (usize, usize)>,
+    arities: HashMap<String, (usize, Vec<bool>)>,
     /// Every struct and enum, top-level and local, in the order of
     /// `Program::all_types`.
     types: Vec<TypeDef>,
@@ -412,6 +421,9 @@ pub(crate) struct Checker {
     current: Option<FnId>,
     /// The type parameters of the function being checked.
     type_params: crate::types::Params,
+    /// Its const parameters, and its impl's, as declared: what a use of
+    /// one as a value refers to.
+    const_decls: Vec<Ident>,
     /// Its lifetime parameters, elided ones too.
     lifetimes: Vec<String>,
     /// What the borrow checker needs to know about each body.
@@ -708,6 +720,7 @@ impl Checker {
             scopes: Vec::new(),
             current: None,
             type_params: Params::default(),
+            const_decls: Vec::new(),
             lifetimes: Vec::new(),
             next_id: 0,
             typed: Typed::default(),
@@ -888,6 +901,7 @@ impl Checker {
                     Some(MethodOf::Impl(k)) => match &self.traits.impls[self.impl_ids[k]].self_ty {
                         Type::Adt(symbol, ..) => format!("{symbol}::{}", f.name.name),
                         Type::Slice(_) => format!("[T]::{}", f.name.name),
+                        Type::Array(..) => format!("[T; N]::{}", f.name.name),
                         t => format!("{t}::{}", f.name.name),
                     },
                     _ => self.fn_symbols[i].clone(),
@@ -900,6 +914,10 @@ impl Checker {
                 }
             }
             self.sig_owner = (self.fn_symbols[i].clone(), f.name.name.clone());
+            self.const_decls = match method {
+                Some(MethodOf::Impl(k)) => consts(&prog.impls[k].generics),
+                _ => Vec::new(),
+            };
             let scheme = match method {
                 Some(MethodOf::Impl(k)) => {
                     let d = self.traits.impls[self.impl_ids[k]].clone();
@@ -1081,6 +1099,10 @@ impl Checker {
                     if self.traits.impls[self.impl_ids[k]].trait_name.as_deref()
                         == Some(crate::traits::DISCARD)
             );
+            self.const_decls = match method {
+                Some(MethodOf::Impl(k)) => consts(&prog.impls[k].generics),
+                _ => Vec::new(),
+            };
             let notes = self.info.notes.len();
             let result = self.body(f, FnId(i));
             self.finish_notes(notes);
@@ -1103,6 +1125,7 @@ impl Checker {
         // Inside the body its type parameters are in scope, and opaque:
         // `Type::Param` is equal only to itself. Its bounds hold.
         self.type_params = scheme.params.clone();
+        self.const_decls.extend(consts(&f.generics));
         self.lifetimes = scheme.lifetimes.clone();
         self.env = scheme.preds.clone();
         self.adts.proj.local = scheme.eqs.clone();
@@ -1367,8 +1390,8 @@ impl Checker {
         }
         match self.type_names.get(&t.id)? {
             Scoped::Adt(symbol) => {
-                let (lts, arity) = *self.arities.get(symbol)?;
-                Some(TypeName::Adt(symbol.clone(), lts, arity))
+                let (lts, lengths) = self.arities.get(symbol)?.clone();
+                Some(TypeName::Adt(symbol.clone(), lts, lengths))
             }
             Scoped::OuterParam(keyword, item) => Some(TypeName::OuterParam(keyword, item.clone())),
         }

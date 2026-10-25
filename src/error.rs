@@ -223,6 +223,8 @@ pub enum Lint {
     /// A function, parameter, variable or field whose name isn't in
     /// `snake_case`.
     NonSnakeCase,
+    /// A const parameter whose name isn't in `UPPER_CASE`.
+    NonUpperCaseGlobals,
     /// A name in `#[allow(..)]` that isn't a lint's.
     UnknownLints,
     /// A variable declared `mut` that's never changed.
@@ -266,6 +268,7 @@ impl Lint {
             Lint::UnusedDocComments => "unused_doc_comments",
             Lint::NonCamelCaseTypes => "non_camel_case_types",
             Lint::NonSnakeCase => "non_snake_case",
+            Lint::NonUpperCaseGlobals => "non_upper_case_globals",
             Lint::UnknownLints => "unknown_lints",
             Lint::UnusedMut => "unused_mut",
             Lint::InfiniteTypes => "infinite_types",
@@ -281,7 +284,7 @@ impl Lint {
         }
     }
 
-    pub const ALL: [Lint; 20] = [
+    pub const ALL: [Lint; 21] = [
         Lint::UnreachablePatterns,
         Lint::OverlappingRanges,
         Lint::MergeableRanges,
@@ -290,6 +293,7 @@ impl Lint {
         Lint::UnusedDocComments,
         Lint::NonCamelCaseTypes,
         Lint::NonSnakeCase,
+        Lint::NonUpperCaseGlobals,
         Lint::UnknownLints,
         Lint::UnusedMut,
         Lint::InfiniteTypes,

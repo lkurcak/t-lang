@@ -750,6 +750,22 @@ impl Parser {
         Ok((items, end))
     }
 
+    /// `comma_list`, but leaving `close` for the caller to take.
+    fn comma_list_open<T>(
+        &mut self,
+        close: Tok,
+        mut item: impl FnMut(&mut Self) -> Result<T, Error>,
+    ) -> Result<Vec<T>, Error> {
+        let mut items = Vec::new();
+        while *self.peek() != close {
+            items.push(item(self)?);
+            if !self.eat(&Tok::Comma) {
+                break;
+            }
+        }
+        Ok(items)
+    }
+
     fn fn_decl(&mut self, head: Head) -> Result<FnDecl, Error> {
         if *self.peek() != Tok::Fn {
             return Err(self.unexpected("`fn`, `struct`, `enum`, `trait` or `impl`"));
@@ -1221,6 +1237,15 @@ impl Parser {
                     g.lifetimes.push(l.clone());
                     l
                 }
+                Tok::Const => {
+                    p.bump();
+                    let t = p.ident()?;
+                    p.expect(Tok::Colon)?;
+                    let ty = p.ty()?;
+                    g.consts.push((t.id, ty));
+                    g.types.push(t);
+                    return Ok(());
+                }
                 Tok::Effect => {
                     p.bump();
                     let t = p.ident()?;
@@ -1561,17 +1586,27 @@ impl Parser {
                     id: self.id(),
                 })
             }
-            // `[T]`, a slice.
+            // `[T]`, a slice, or `[T; N]`, an array.
             Tok::LBracket => {
                 self.bump();
                 let inner = self.ty()?;
+                let kind = match self.eat(&Tok::Semi) {
+                    true => TypeExprKind::Array(Box::new(inner), Box::new(self.ty()?)),
+                    false => TypeExprKind::Slice(Box::new(inner)),
+                };
                 let end = self.expect(Tok::RBracket)?;
                 Ok(TypeExpr {
-                    kind: TypeExprKind::Slice(Box::new(inner)),
+                    kind,
                     span: start.to(end),
                     id: self.id(),
                 })
             }
+            // `3`, a length.
+            Tok::Int(n, None) => Ok(TypeExpr {
+                kind: TypeExprKind::Nat(n),
+                span: self.bump().span,
+                id: self.id(),
+            }),
             // `{ v: i64 | v > 0 }`
             Tok::LBrace => {
                 self.bump();
@@ -2094,6 +2129,7 @@ impl Parser {
                     id: self.id(),
                 });
             }
+            Tok::LBracket => return self.array(),
             Tok::LBrace => return self.block(),
             Tok::Unsafe => return self.unsafe_block(),
             Tok::If => return self.if_expr(),
@@ -2107,6 +2143,33 @@ impl Parser {
         Ok(Expr {
             kind,
             span,
+            id: self.id(),
+        })
+    }
+
+    /// `[a, b, c]` or `[v; n]`.
+    fn array(&mut self) -> Result<Expr, Error> {
+        let start = self.expect(Tok::LBracket)?;
+        let kind = self.structs(true, |p| {
+            if *p.peek() != Tok::RBracket {
+                let first = p.expr()?;
+                if p.eat(&Tok::Semi) {
+                    let n = p.expr()?;
+                    return Ok(ExprKind::Repeat(Box::new(first), Box::new(n)));
+                }
+                if p.eat(&Tok::Comma) {
+                    let mut rest = p.comma_list_open(Tok::RBracket, Self::expr)?;
+                    rest.insert(0, first);
+                    return Ok(ExprKind::Array(rest));
+                }
+                return Ok(ExprKind::Array(vec![first]));
+            }
+            Ok(ExprKind::Array(Vec::new()))
+        })?;
+        let end = self.expect(Tok::RBracket)?;
+        Ok(Expr {
+            kind,
+            span: start.to(end),
             id: self.id(),
         })
     }
@@ -2462,6 +2525,15 @@ impl Parser {
                 let end = self.expect(Tok::RParen)?;
                 return Ok(Pattern {
                     kind: PatternKind::Unit,
+                    span: start.to(end),
+                    id: self.id(),
+                });
+            }
+            Tok::LBracket => {
+                self.bump();
+                let (pats, end) = self.comma_list(Tok::RBracket, Self::pattern)?;
+                return Ok(Pattern {
+                    kind: PatternKind::Array(pats),
                     span: start.to(end),
                     id: self.id(),
                 });

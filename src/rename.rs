@@ -310,6 +310,7 @@ fn name(kind: &NoteKind) -> &str {
         | NoteKind::Enum(n)
         | NoteKind::TypeParam(n)
         | NoteKind::EffectParam(n)
+        | NoteKind::ConstParam(n)
         | NoteKind::Module(n)
         | NoteKind::Field(n)
         | NoteKind::Variant(_, n) => n,
@@ -326,6 +327,7 @@ fn what(kind: &NoteKind) -> &'static str {
         NoteKind::Enum(_) => "enum",
         NoteKind::TypeParam(_) => "type parameter",
         NoteKind::EffectParam(_) => "effect parameter",
+        NoteKind::ConstParam(_) => "const parameter",
         NoteKind::Module(_) => "module",
         NoteKind::Field(_) => "field",
         NoteKind::Variant(..) => "variant",
@@ -378,7 +380,7 @@ fn shorthand_pats(p: &Pattern, out: &mut HashSet<Span>) {
                 shorthand_pats(&f.pat, out);
             }
         }
-        PatternKind::Variant(_, _, _, pats) | PatternKind::Or(pats) => {
+        PatternKind::Variant(_, _, _, pats) | PatternKind::Or(pats) | PatternKind::Array(pats) => {
             pats.iter().for_each(|p| shorthand_pats(p, out));
         }
         PatternKind::Wild

@@ -190,6 +190,7 @@ fn huggable(args: &[Expr]) -> bool {
     match &last.kind {
         ExprKind::If(..) | ExprKind::Match(..) | ExprKind::Block(..) | ExprKind::Unsafe(..) => true,
         ExprKind::StructLit(_, _, inits) => !inits.is_empty(),
+        ExprKind::Array(items) => !items.is_empty(),
         ExprKind::Lambda(l) => matches!(l.body.kind, ExprKind::Block(..)),
         // `f(g(..))`, but not `f(x, g(..))`, which would hide `x` at the end
         // of the line.
@@ -234,6 +235,7 @@ struct Delims(&'static str, &'static str, bool);
 const PARENS: Delims = Delims("(", ")", false);
 const ANGLES: Delims = Delims("<", ">", false);
 const BRACES: Delims = Delims("{", "}", true);
+const BRACKETS: Delims = Delims("[", "]", false);
 const PIPES: Delims = Delims("|", "|", false);
 
 impl Printer<'_> {
@@ -638,6 +640,9 @@ impl Printer<'_> {
         let params: Vec<&Ident> = g.lifetimes.iter().chain(&g.types).collect();
         // Each with the end of its bounds, if it has any.
         let end = |p: &Ident| {
+            if let Some((_, t)) = g.consts.iter().find(|(id, _)| *id == p.id) {
+                return t.span.end;
+            }
             let bounds = g.bounds_of(&p.name);
             bounds.last().map_or(p.span.end, |b| b.span.end)
         };
@@ -649,9 +654,10 @@ impl Printer<'_> {
             |p| (p.span.start, end(p)),
             None,
             |pp, p| {
-                let mut out = match g.is_effect(p) {
-                    true => text("effect ") + text(&p.name),
-                    false => text(&p.name),
+                let mut out = match g.consts.iter().find(|(id, _)| *id == p.id) {
+                    Some((_, t)) => text("const ") + text(&p.name) + ": " + pp.ty(t),
+                    None if g.is_effect(p) => text("effect ") + text(&p.name),
+                    None => text(&p.name),
                 };
                 for (i, b) in g.bounds_of(&p.name).into_iter().enumerate() {
                     out = out + if i == 0 { ": " } else { " + " } + pp.bound(b);
@@ -1066,6 +1072,21 @@ impl Printer<'_> {
                     true => head + self.args(variant.span.end, args),
                 }
             }
+            ExprKind::Array(items) => self.list(
+                BRACKETS,
+                e.span.end - 1,
+                items,
+                |a| (a.span.start, a.span.end),
+                None,
+                |p, a| p.expr(a, 0, Ctx::default()),
+            ),
+            ExprKind::Repeat(v, n) => group(
+                text("[")
+                    + self.expr(v, 0, Ctx::default())
+                    + "; "
+                    + self.expr(n, 0, Ctx::default())
+                    + "]",
+            ),
             ExprKind::Match(scrutinee, arms) => {
                 let head = text("match ") + self.head(scrutinee);
                 let close = e.span.end - 1;
@@ -1415,6 +1436,8 @@ impl Printer<'_> {
                 text(head) + self.ty(inner)
             }
             TypeExprKind::Slice(inner) => text("[") + self.ty(inner) + "]",
+            TypeExprKind::Array(inner, n) => text("[") + self.ty(inner) + "; " + self.ty(n) + "]",
+            TypeExprKind::Nat(n) => self.spelled(t.span, n.to_string()),
             TypeExprKind::Proj(inner, Some(tr), name) => {
                 text("<") + self.ty(inner) + " as " + &tr.name + ">::" + &name.name
             }
@@ -1492,6 +1515,14 @@ impl Printer<'_> {
                 );
                 text(&ty.name) + self.turbofish(targs) + " " + fields
             }
+            PatternKind::Array(pats) => self.list(
+                BRACKETS,
+                p.span.end - 1,
+                pats,
+                |a| (a.span.start, a.span.end),
+                None,
+                |p, a| p.pattern(a),
+            ),
             // Not indented when it breaks, so that in a `match` the body
             // stands out from the alternatives.
             PatternKind::Or(alts) => {

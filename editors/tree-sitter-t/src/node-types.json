@@ -4,6 +4,10 @@
     "named": true,
     "subtypes": [
       {
+        "type": "array_expression",
+        "named": true
+      },
+      {
         "type": "assignment_expression",
         "named": true
       },
@@ -154,6 +158,10 @@
     "named": true,
     "subtypes": [
       {
+        "type": "array_pattern",
+        "named": true
+      },
+      {
         "type": "boolean_literal",
         "named": true
       },
@@ -199,6 +207,10 @@
     "type": "_type",
     "named": true,
     "subtypes": [
+      {
+        "type": "array_type",
+        "named": true
+      },
       {
         "type": "function_type",
         "named": true
@@ -258,6 +270,87 @@
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "array_expression",
+    "named": true,
+    "fields": {
+      "length": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "_expression",
+            "named": true
+          }
+        ]
+      },
+      "value": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "_expression",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "_expression",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "array_pattern",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "_pattern",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "array_type",
+    "named": true,
+    "fields": {
+      "element": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "_type",
+            "named": true
+          }
+        ]
+      },
+      "length": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "integer_literal",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
@@ -845,6 +938,32 @@
         "types": [
           {
             "type": "_expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "const_parameter",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "type": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "_type",
             "named": true
           }
         ]
@@ -2963,6 +3082,10 @@
           "named": true
         },
         {
+          "type": "integer_literal",
+          "named": true
+        },
+        {
           "type": "lifetime",
           "named": true
         }
@@ -2977,6 +3100,10 @@
       "multiple": true,
       "required": false,
       "types": [
+        {
+          "type": "const_parameter",
+          "named": true
+        },
         {
           "type": "constrained_type_parameter",
           "named": true
@@ -3591,6 +3718,10 @@
   {
     "type": "char_literal",
     "named": true
+  },
+  {
+    "type": "const",
+    "named": false
   },
   {
     "type": "continue",

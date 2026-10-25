@@ -390,7 +390,7 @@ impl Checker {
                         ));
                     }
                 }
-                (None, Type::Slice(_) | Type::Str | Type::Char)
+                (None, Type::Slice(_) | Type::Array(..) | Type::Str | Type::Char)
                     if self.modules.in_library(d.module) => {}
                 (None, t) => {
                     return Err(Error::ty(
@@ -907,11 +907,15 @@ fn mentions_self(t: &TypeExpr) -> Option<Span> {
         | TypeExprKind::Slice(inner)
         | TypeExprKind::Proj(inner, ..)
         | TypeExprKind::Refined(_, inner, _) => mentions_self(inner),
+        TypeExprKind::Array(inner, n) => mentions_self(inner).or_else(|| mentions_self(n)),
         TypeExprKind::Impl(bounds) => bounds
             .iter()
             .flat_map(BoundItem::types)
             .find_map(mentions_self),
-        TypeExprKind::Unit | TypeExprKind::Never | TypeExprKind::Lifetime(_) => None,
+        TypeExprKind::Unit
+        | TypeExprKind::Never
+        | TypeExprKind::Lifetime(_)
+        | TypeExprKind::Nat(_) => None,
     }
 }
 
@@ -974,9 +978,13 @@ fn proj_in(t: &TypeExpr) -> Option<Span> {
         }
         TypeExprKind::Ref(_, _, inner)
         | TypeExprKind::Slice(inner)
+        | TypeExprKind::Array(inner, _)
         | TypeExprKind::Refined(_, inner, _) => proj_in(inner),
         TypeExprKind::Impl(bounds) => bounds.iter().flat_map(BoundItem::types).find_map(proj_in),
-        TypeExprKind::Unit | TypeExprKind::Never | TypeExprKind::Lifetime(_) => None,
+        TypeExprKind::Unit
+        | TypeExprKind::Never
+        | TypeExprKind::Lifetime(_)
+        | TypeExprKind::Nat(_) => None,
     }
 }
 

@@ -57,12 +57,17 @@ pub(crate) fn behind_references(b: &Builder) -> Result<(), Error> {
                     && owned(b, p).1
                 {
                     let t = b.place_ty(p);
+                    // What a reference a call gave points to, as `s[i]` is
+                    // `*s.index(i)`, has no name of its own.
+                    let what = match b.body.locals[p.local.0].name {
+                        None if p.proj.first() == Some(&Proj::Deref) => "this value".to_string(),
+                        _ => format!("`{}`", describe(b, p)),
+                    };
                     return Err(Error::ty(
                         s.span,
                         format!(
-                            "cannot move out of `{}`, which is behind a reference: a `{t}` \
-                             isn't `Copy`, and the reference doesn't own it",
-                            describe(b, p)
+                            "cannot move out of {what}, which is behind a reference: a `{t}` \
+                             isn't `Copy`, and the reference doesn't own it"
                         ),
                     ));
                 }
@@ -920,6 +925,12 @@ fn leftover(
     };
     let parts: Vec<Place> = match &t {
         Type::Box(_) => vec![place.project(Proj::Deref)],
+        Type::Array(_, n) => match **n {
+            Type::Nat(k) => (0..k as usize)
+                .map(|i| place.project(Proj::Field(i)))
+                .collect(),
+            _ => return Some(place.clone()),
+        },
         Type::Adt(..) => match struct_fields(b.adts(), &t) {
             Some(fields) => (0..fields.len())
                 .map(|i| place.project(Proj::Field(i)))

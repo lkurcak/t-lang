@@ -306,12 +306,25 @@ module.exports = grammar({
     // or after `impl`.
     type_parameters: $ => seq(
       '<',
-      commaSep(choice($.lifetime_parameter, $.constrained_type_parameter, $.effect_parameter)),
+      commaSep(choice(
+        $.lifetime_parameter,
+        $.constrained_type_parameter,
+        $.effect_parameter,
+        $.const_parameter,
+      )),
       '>',
     ),
 
     // `effect e`: it stands for any effects, so it has no bounds.
     effect_parameter: $ => seq('effect', field('name', alias($.identifier, $.effect))),
+
+    // `const N: usize`: it stands for a length.
+    const_parameter: $ => seq(
+      'const',
+      field('name', $.identifier),
+      ':',
+      field('type', $._type),
+    ),
 
     lifetime_parameter: $ => seq(
       field('name', $.lifetime),
@@ -399,6 +412,7 @@ module.exports = grammar({
       $.function_type,
       $.reference_type,
       $.slice_type,
+      $.array_type,
       $.never_type,
       $.qualified_type,
       $.projection_type,
@@ -409,6 +423,15 @@ module.exports = grammar({
     // `[T]`, a slice: only right after `&` or `&mut`, which the checker
     // says.
     slice_type: $ => seq('[', field('element', $._type), ']'),
+
+    // `[T; N]`, an array, whose length is a literal or a const parameter.
+    array_type: $ => seq(
+      '[',
+      field('element', $._type),
+      ';',
+      field('length', choice($.integer_literal, $.identifier)),
+      ']',
+    ),
 
     // `{ v: i64 | v > 0 }`: the values of a type a predicate holds of.
     refinement_type: $ => seq(
@@ -473,7 +496,7 @@ module.exports = grammar({
       field('type_arguments', $.type_arguments),
     ),
 
-    type_arguments: $ => seq('<', commaSep1(choice($.lifetime, $._type)), '>'),
+    type_arguments: $ => seq('<', commaSep1(choice($.lifetime, $._type, $.integer_literal)), '>'),
 
     // `::<i64, bool>`: type arguments written out where a type can't go
     // straight after a name, since `<` would read as less-than.
@@ -559,6 +582,7 @@ module.exports = grammar({
       $.parenthesized_expression,
       $.struct_expression,
       $.variant_expression,
+      $.array_expression,
       $.closure_expression,
       $.return_expression,
       $.break_expression,
@@ -687,6 +711,16 @@ module.exports = grammar({
     )),
 
     // `s[i]`: binds as tightly as a call
+    // `[a, b, c]`, or `[v; n]`: `n` copies of `v`.
+    array_expression: $ => seq(
+      '[',
+      optional(choice(
+        seq(field('value', $._expression), ';', field('length', $._expression)),
+        commaSep1($._expression),
+      )),
+      ']',
+    ),
+
     index_expression: $ => prec(PREC.call, seq(
       field('value', $._expression),
       '[',
@@ -836,6 +870,7 @@ module.exports = grammar({
       $.unit_pattern,
       $.variant_pattern,
       $.struct_pattern,
+      $.array_pattern,
       $.or_pattern,
     ),
 
@@ -865,6 +900,8 @@ module.exports = grammar({
       field('variant', $.identifier),
       optional(seq('(', commaSep($._pattern), ')')),
     ),
+
+    array_pattern: $ => seq('[', commaSep($._pattern), ']'),
 
     struct_pattern: $ => seq(
       field('type', $._path_type),

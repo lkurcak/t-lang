@@ -399,6 +399,59 @@ impl Checker {
             //   Γ ⊢ () : ()
             ExprKind::Unit => Ok(Type::Unit),
 
+            //   Γ ⊢ eᵢ : τ  (i = 1..k)
+            //  --------------------------- (T-Array)
+            //   Γ ⊢ [e₁, .., eₖ] : [τ; k]
+            //
+            // As many values as it lists: its length is in its type, so no
+            // value of the type has another (lemma A1 of docs/22-arrays.md).
+            ExprKind::Array(items) => {
+                let elem = self.fresh(
+                    e.span,
+                    "the type of this array's values".into(),
+                    "say what it is, as in `let a: [i64; 0] = [];`".into(),
+                );
+                for item in items {
+                    self.check(item, &elem)?;
+                }
+                let n = Type::Nat(items.len() as u64);
+                Ok(Type::Array(Box::new(elem), Box::new(n)))
+            }
+
+            //   Γ ⊢ v : τ   τ: Copy   n a literal or const parameter
+            //  ------------------------------------------------------ (T-Repeat)
+            //                  Γ ⊢ [v; n] : [τ; n]
+            //
+            // `n` copies of `v`, so it must be `Copy`; for `n` = 0, `v` is
+            // dropped, which `Copy` allows too, as `Copy: Discard`. `n` is
+            // known before the program runs, so it can be the array's length.
+            ExprKind::Repeat(v, n) => {
+                let len = match &n.kind {
+                    ExprKind::Int(k, None | Some(crate::types::IntTy::Usize)) => Type::Nat(*k),
+                    ExprKind::Var(name, targs)
+                        if targs.is_empty()
+                            && self.binding(name).is_none()
+                            && self.type_params.is_const(name) =>
+                    {
+                        Type::Param(name.clone())
+                    }
+                    _ => {
+                        return Err(Error::ty(
+                            n.span,
+                            "an array's length must be an integer literal or a const parameter",
+                        ));
+                    }
+                };
+                self.check(n, &Type::Int(crate::types::IntTy::Usize))?;
+                let t = self.synth(v)?;
+                let copy = Pred {
+                    ty: t.clone(),
+                    trait_name: crate::traits::COPY.to_string(),
+                };
+                self.oblige(copy, v.span, traits::Why::Repeat)?;
+                Ok(Type::Array(Box::new(t), Box::new(len)))
+            }
+
             //   (x : T) ∈ Γ
             //  ------------- (T-Var)
             //   Γ ⊢ x : T
@@ -557,10 +610,17 @@ impl Checker {
                     return Err(not_place());
                 }
                 let t = self.synth(place)?;
-                if let ExprKind::Var(..) = place.kind
-                    && !matches!(self.typed.vars.get(&place.id), Some(Res::Local(_)))
-                {
-                    return Err(not_place());
+                if let ExprKind::Var(name, _) = &place.kind {
+                    match self.typed.vars.get(&place.id) {
+                        Some(Res::Local(_)) => {}
+                        Some(Res::Const(_)) => {
+                            return Err(Error::ty(
+                                place.span,
+                                format!("cannot assign to `{name}`, a const parameter"),
+                            ));
+                        }
+                        _ => return Err(not_place()),
+                    }
                 }
                 match op {
                     None => {

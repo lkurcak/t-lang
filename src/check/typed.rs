@@ -64,6 +64,9 @@ pub(crate) enum Res {
     Local(NodeId),
     /// A function, by symbol, with its type arguments.
     Fn(String, Vec<Type>),
+    /// A const parameter of the function, by name: a `usize` the caller
+    /// picks, the same for the whole call.
+    Const(String),
 }
 
 /// A local variable.

@@ -296,6 +296,7 @@ fn only_called(e: &Expr, name: &str) -> bool {
 pub(super) struct Outer {
     current: Option<FnId>,
     type_params: crate::types::Params,
+    const_decls: Vec<crate::ast::Ident>,
     lifetimes: Vec<String>,
     barrier: usize,
     env: Vec<crate::traits::Pred>,
@@ -333,6 +334,7 @@ impl Checker {
         let outer = Outer {
             current: self.current,
             type_params: std::mem::take(&mut self.type_params),
+            const_decls: std::mem::take(&mut self.const_decls),
             lifetimes: std::mem::take(&mut self.lifetimes),
             barrier: std::mem::replace(&mut self.barrier, barrier),
             env: std::mem::take(&mut self.env),
@@ -360,6 +362,7 @@ impl Checker {
         let result = self.body(f, id);
         self.current = outer.current;
         self.type_params = outer.type_params;
+        self.const_decls = outer.const_decls;
         self.lifetimes = outer.lifetimes;
         self.barrier = outer.barrier;
         self.env = outer.env;

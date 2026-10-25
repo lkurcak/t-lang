@@ -433,11 +433,17 @@ impl Cx<'_> {
                 AdtKind::Struct(_) => vec![Ctor::Struct],
                 AdtKind::Enum(variants) => (0..variants.len()).map(Ctor::Variant).collect(),
             }),
+            // An array of a known length is like a struct with that many
+            // fields; one of a length a const parameter says has no
+            // pattern but `_` and variables.
+            Type::Array(_, n) if matches!(**n, Type::Nat(_)) => Some(vec![Ctor::Struct]),
+            Type::Array(..) => None,
             // Nothing is known about a type parameter's values: it could be
             // anything.
             // Nor about an opaque type's, outside the function that picks it.
             Type::Fn(..)
             | Type::Param(_)
+            | Type::Nat(_)
             | Type::Proj(..)
             | Type::Opaque(..)
             | Type::Var(_)
@@ -512,6 +518,10 @@ impl Cx<'_> {
         let ty = peel(ty);
         match c {
             Ctor::Bool(_) | Ctor::Unit | Ctor::Int(..) => Vec::new(),
+            Ctor::Struct if let Type::Array(elem, n) = ty => match **n {
+                Type::Nat(k) => vec![(**elem).clone(); k as usize],
+                _ => unreachable!("array pattern on `{ty}`"),
+            },
             Ctor::Struct => struct_fields(self.adts, ty)
                 .unwrap_or_else(|| unreachable!("struct pattern on `{ty}`"))
                 .into_iter()
@@ -546,6 +556,7 @@ impl Cx<'_> {
                 show_range(lo, hi, true, Lit::Char)
             }
             (Ctor::Int(lo, hi), _) => show_range(Some(*lo), Some(*hi), true, Lit::Int),
+            (Ctor::Struct, Type::Array(..)) => format!("[{}]", args.join(", ")),
             (Ctor::Struct, Type::Adt(symbol, ..)) => {
                 let name = crate::check::source_name(symbol);
                 let fields = struct_fields(self.adts, ty).expect("a struct");

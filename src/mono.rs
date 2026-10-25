@@ -107,7 +107,7 @@ enum Target {
 struct Mono<'p> {
     prog: &'p Program,
     info: &'p Info,
-    arities: HashMap<String, (usize, usize)>,
+    arities: HashMap<String, (usize, Vec<bool>)>,
     fns: HashMap<&'p str, Decl<'p>>,
     types: HashMap<&'p str, &'p TypeDecl>,
     /// Every copy of a generic function so far, by name, and their names in
@@ -146,7 +146,7 @@ impl<'p> Mono<'p> {
                 .types
                 .iter()
                 .map(|d| {
-                    let arity = (d.generics().lifetimes.len(), d.type_params().len());
+                    let arity = (d.generics().lifetimes.len(), d.generics().lengths());
                     (d.name().name.clone(), arity)
                 })
                 .collect(),
@@ -476,12 +476,13 @@ impl<'p> Mono<'p> {
     }
 }
 
-/// The type and effect parameters `g` declares.
+/// The type, effect and const parameters `g` declares.
 fn names(g: &Generics) -> Params {
     Params::new(
         g.types.iter().map(|p| p.name.clone()).collect(),
         g.effect_names(),
     )
+    .with_consts(g.const_names())
 }
 
 /// Every function of `prog`, which checked with `info` and was lifted, by
@@ -541,6 +542,7 @@ fn lifetimes_only(g: &Generics) -> Generics {
         lifetimes: g.lifetimes.clone(),
         types: Vec::new(),
         effects: Vec::new(),
+        consts: Vec::new(),
         bounds: g
             .bounds
             .iter()
@@ -568,7 +570,7 @@ impl Cx<'_, '_, '_> {
         // A refinement is kept, for the interpreter to check.
         if let TypeExprKind::Refined(v, base, pred) = &t.kind {
             return TypeExpr {
-                kind: TypeExprKind::Refined(v.clone(), Box::new(self.ty(base)), pred.clone()),
+                kind: TypeExprKind::Refined(v.clone(), Box::new(self.ty(base)), self.pred(pred)),
                 span: t.span,
                 id: t.id,
             };
@@ -578,6 +580,25 @@ impl Cx<'_, '_, '_> {
             id: t.id,
             ..self.written(&resolved, t.span)
         }
+    }
+
+    /// Predicate `e` of a refinement, as it is in the copy: with the length
+    /// each const parameter it names is.
+    fn pred(&self, e: &Expr) -> Box<Expr> {
+        fn go(cx: &Cx, e: &mut Expr) {
+            if let Some(name) = cx.m.info.consts.get(&e.id) {
+                if let Type::Nat(n) = cx.subst(&Type::Param(name.clone())) {
+                    e.kind = ExprKind::Int(n, Some(crate::types::IntTy::Usize));
+                }
+                return;
+            }
+            for c in check::modules::children_mut(e) {
+                go(cx, c);
+            }
+        }
+        let mut e = e.clone();
+        go(self, &mut e);
+        Box::new(e)
     }
 
     /// A type written in the original, as it is in the copy.
@@ -621,7 +642,7 @@ impl Cx<'_, '_, '_> {
                 true => None,
                 false => arities
                     .get(name)
-                    .map(|&(l, n)| check::TypeName::Adt(name.to_string(), l, n)),
+                    .map(|(l, n)| check::TypeName::Adt(name.to_string(), *l, n.clone())),
             }
         };
         let projections = &self.m.info.projections;
@@ -753,6 +774,11 @@ impl Cx<'_, '_, '_> {
                 TypeExprKind::Named(crate::check::BOX.into(), vec![self.written(inner, span)])
             }
             Type::Slice(inner) => TypeExprKind::Slice(Box::new(self.written(inner, span))),
+            Type::Array(inner, n) => TypeExprKind::Array(
+                Box::new(self.written(inner, span)),
+                Box::new(self.written(n, span)),
+            ),
+            Type::Nat(n) => TypeExprKind::Nat(*n),
             Type::Param(_) | Type::Var(_) | Type::Proj(..) | Type::Opaque(..) => {
                 unreachable!("`{t}` left after monomorphising")
             }
@@ -994,6 +1020,13 @@ impl Cx<'_, '_, '_> {
             | ExprKind::Continue(_) => e.kind.clone(),
             // Type arguments written in the source are in `info.instances`
             // like the inferred ones, and the copy's name says them.
+            // A const parameter, as a value: the length it is in the copy.
+            ExprKind::Var(..) if let Some(name) = self.m.info.consts.get(&e.id) => {
+                match self.subst(&Type::Param(name.clone())) {
+                    Type::Nat(n) => ExprKind::Int(n, Some(crate::types::IntTy::Usize)),
+                    t => unreachable!("const parameter `{name}` as `{t}`"),
+                }
+            }
             ExprKind::Var(name, _) => match self.m.info.instances.get(&e.id).cloned() {
                 Some(Instance::Fn(f, args)) => {
                     let args = args.iter().map(|a| self.subst(a).erased()).collect();
@@ -1090,6 +1123,10 @@ impl Cx<'_, '_, '_> {
                 args.iter().map(|a| self.expr(a)).collect(),
                 *parens,
             ),
+            ExprKind::Array(items) => ExprKind::Array(items.iter().map(|a| self.expr(a)).collect()),
+            ExprKind::Repeat(v, n) => {
+                ExprKind::Repeat(Box::new(self.expr(v)), Box::new(self.expr(n)))
+            }
             ExprKind::Match(scrutinee, arms) => ExprKind::Match(
                 Box::new(self.expr(scrutinee)),
                 arms.iter()
@@ -1161,6 +1198,9 @@ impl Cx<'_, '_, '_> {
             PatternKind::Or(alts) => {
                 PatternKind::Or(alts.iter().map(|a| self.pattern(a)).collect())
             }
+            PatternKind::Array(pats) => {
+                PatternKind::Array(pats.iter().map(|a| self.pattern(a)).collect())
+            }
             PatternKind::Move(p) => PatternKind::Move(Box::new(self.pattern(p))),
             kind => kind.clone(),
         };
@@ -1221,10 +1261,15 @@ mod used {
             TypeExprKind::Proj(inner, ..) | TypeExprKind::Refined(_, inner, _) => {
                 in_type(inner, out)
             }
+            TypeExprKind::Array(inner, n) => {
+                in_type(inner, out);
+                in_type(n, out);
+            }
             TypeExprKind::Impl(_)
             | TypeExprKind::Unit
             | TypeExprKind::Never
-            | TypeExprKind::Lifetime(_) => {}
+            | TypeExprKind::Lifetime(_)
+            | TypeExprKind::Nat(_) => {}
         }
     }
 
@@ -1238,7 +1283,9 @@ mod used {
                 out.insert(ty.name.clone());
                 fields.iter().for_each(|f| in_pattern(&f.pat, out));
             }
-            PatternKind::Or(alts) => alts.iter().for_each(|p| in_pattern(p, out)),
+            PatternKind::Or(alts) | PatternKind::Array(alts) => {
+                alts.iter().for_each(|p| in_pattern(p, out))
+            }
             _ => {}
         }
     }

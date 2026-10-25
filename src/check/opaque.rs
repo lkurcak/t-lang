@@ -194,8 +194,10 @@ pub(super) fn opaques_in<'t>(t: &'t TypeExpr, out: &mut Vec<&'t TypeExpr>) {
         TypeExprKind::Named(_, args) => args.iter().for_each(|a| opaques_in(a, out)),
         TypeExprKind::Ref(_, _, inner)
         | TypeExprKind::Slice(inner)
+        | TypeExprKind::Array(inner, _)
         | TypeExprKind::Refined(_, inner, _) => opaques_in(inner, out),
         TypeExprKind::Fn(..)
+        | TypeExprKind::Nat(_)
         | TypeExprKind::Proj(..)
         | TypeExprKind::Unit
         | TypeExprKind::Never
