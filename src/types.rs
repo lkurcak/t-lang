@@ -58,6 +58,16 @@ pub enum Type {
     /// what a type parameter stands for, so generic code never has one by
     /// value either (`Checker::sized`).
     Slice(Box<Type>),
+    /// `[T; N]`: an *array*, exactly `N` values of type `T`, one after
+    /// another, inline: unlike a slice, a value of its own (see
+    /// docs/22-arrays.md). The length is a type of a kind of its own, as
+    /// effects are: a `Nat`, a const parameter (`Param`) or a variable.
+    Array(Box<Type>, Box<Type>),
+    /// `3`, as a length: a type-level natural number, the length of an
+    /// array or a type argument for a const parameter. Never the type of a
+    /// value. Lengths are equal only when they're the same `Nat` or the
+    /// same parameter: there's no arithmetic on them.
+    Nat(u64),
     /// `str`: a *string*, bytes that are UTF-8, how many known only as the
     /// program runs. Like a slice, it's only ever what a reference points
     /// to, and only a shared one, `&'a str`: changing its bytes could make
@@ -480,7 +490,9 @@ impl Type {
             Type::Ref(_, _, t) | Type::Box(t) | Type::Slice(t) | Type::Proj(t, ..) => {
                 (&[], Some(t), None)
             }
+            Type::Array(t, n) => (&[], Some(&**t), Some(&**n)),
             Type::Int(_)
+            | Type::Nat(_)
             | Type::Bool
             | Type::Char
             | Type::Str
@@ -535,8 +547,10 @@ impl Type {
             Type::Ref(r, m, t) => Type::Ref(r.clone(), *m, Box::new(f(t))),
             Type::Box(t) => Type::Box(Box::new(f(t))),
             Type::Slice(t) => Type::Slice(Box::new(f(t))),
+            Type::Array(t, n) => Type::Array(Box::new(f(t)), Box::new(f(n))),
             Type::Proj(t, tr, name) => Type::Proj(Box::new(f(t)), tr.clone(), name.clone()),
             Type::Int(_)
+            | Type::Nat(_)
             | Type::Bool
             | Type::Char
             | Type::Str
@@ -561,7 +575,9 @@ impl Type {
             (Type::Adt(a, _, xs), Type::Adt(b, _, ys))
             | (Type::Opaque(a, _, xs), Type::Opaque(b, _, ys)) => a == b && xs.len() == ys.len(),
             (Type::Ref(_, m, _), Type::Ref(_, n, _)) => m == n,
-            (Type::Box(_), Type::Box(_)) | (Type::Slice(_), Type::Slice(_)) => true,
+            (Type::Box(_), Type::Box(_))
+            | (Type::Slice(_), Type::Slice(_))
+            | (Type::Array(..), Type::Array(..)) => true,
             (Type::Proj(_, a, x), Type::Proj(_, b, y)) => a == b && x == y,
             (Type::Var(_), _) | (_, Type::Var(_)) => false,
             // Sets aren't equal element by element (see `unify`).
@@ -714,6 +730,7 @@ impl Type {
             Type::Ref(_, m, t) => format!("&{}{}", if *m { "mut " } else { "" }, t.symbols()),
             Type::Box(t) => format!("Box<{}>", t.symbols()),
             Type::Slice(t) => format!("[{}]", t.symbols()),
+            Type::Array(t, n) => format!("[{}; {}]", t.symbols(), n.symbols()),
             Type::Proj(t, tr, name) => format!("<{} as {tr}>::{name}", t.symbols()),
             Type::Opaque(name, _, args) => {
                 let args: Vec<String> = args.iter().map(Type::symbols).collect();
@@ -880,6 +897,8 @@ impl fmt::Display for Type {
             }
             Type::Box(t) => write!(f, "Box<{t}>"),
             Type::Slice(t) => write!(f, "[{t}]"),
+            Type::Array(t, n) => write!(f, "[{t}; {n}]"),
+            Type::Nat(n) => write!(f, "{n}"),
             // `T::Item` is what's written, and says enough in a message.
             Type::Proj(t, _, name) if matches!(**t, Type::Param(_)) => write!(f, "{t}::{name}"),
             Type::Proj(t, tr, name) => write!(f, "<{t} as {tr}>::{name}"),
@@ -901,13 +920,26 @@ pub struct Params {
     names: Vec<String>,
     /// Which of `names` are effect parameters.
     effects: Vec<String>,
+    /// Which of `names` are const parameters, standing for a length.
+    consts: Vec<String>,
 }
 
 impl Params {
     /// Type parameters `names`, of which `effects` are effect parameters.
     pub fn new(names: Vec<String>, effects: Vec<String>) -> Params {
         debug_assert!(effects.iter().all(|e| names.contains(e)));
-        Params { names, effects }
+        Params {
+            names,
+            effects,
+            consts: Vec::new(),
+        }
+    }
+
+    /// These, of which `consts` are const parameters too.
+    pub fn with_consts(mut self, consts: Vec<String>) -> Params {
+        debug_assert!(consts.iter().all(|c| self.names.contains(c)));
+        self.consts = consts;
+        self
     }
 
     /// Only type parameters.
@@ -920,9 +952,14 @@ impl Params {
         self.effects.iter().any(|e| e == name)
     }
 
+    /// Is `name` one of them, and a const parameter?
+    pub fn is_const(&self, name: &str) -> bool {
+        self.consts.iter().any(|c| c == name)
+    }
+
     /// Is `name` one of them, and a type parameter?
     pub fn is_type(&self, name: &str) -> bool {
-        self.names.iter().any(|n| n == name) && !self.is_effect(name)
+        self.names.iter().any(|n| n == name) && !self.is_effect(name) && !self.is_const(name)
     }
 
     /// These, then `more`.
@@ -930,6 +967,7 @@ impl Params {
         let mut p = self.clone();
         p.names.extend(more.names.iter().cloned());
         p.effects.extend(more.effects.iter().cloned());
+        p.consts.extend(more.consts.iter().cloned());
         p
     }
 
@@ -954,19 +992,20 @@ impl Params {
         Params {
             names: self.names.iter().filter(keep).cloned().collect(),
             effects: self.effects.iter().filter(keep).cloned().collect(),
+            consts: self.consts.iter().filter(keep).cloned().collect(),
         }
     }
 
     /// Those from the `n`th on.
     pub fn skip(&self, n: usize) -> Params {
         let names = self.names[n..].to_vec();
-        let effects = self
-            .effects
-            .iter()
-            .filter(|e| names.contains(e))
-            .cloned()
-            .collect();
-        Params { names, effects }
+        let of = |kind: &[String]| kind.iter().filter(|e| names.contains(e)).cloned().collect();
+        let (effects, consts) = (of(&self.effects), of(&self.consts));
+        Params {
+            names,
+            effects,
+            consts,
+        }
     }
 
     /// Parameter `name` as a type argument: `Type::Param`, or, for an

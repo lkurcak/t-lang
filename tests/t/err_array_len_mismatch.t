@@ -2,4 +2,4 @@
 fn main() {
     let _a: [i64; 3] = [1, 2];
 }
-// error: expected `[i64; 3]`, found `[{integer}; 2]`
+// error: expected `[i64; 3]`, found `[i64; 2]`

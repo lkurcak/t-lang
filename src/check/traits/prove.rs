@@ -170,6 +170,10 @@ impl Checker {
                 fix(&bad)
             ),
             Why::Call => format!("`{ty}` can't be called{needs}"),
+            Why::Repeat => format!(
+                "`[v; n]` copies `v`, but `{ty}` isn't `{tr}`{needs}{}",
+                fix(&bad)
+            ),
             Why::Integer => format!(
                 "`{ty}` doesn't implement `{tr}`, so it isn't an integer type, which this needs{}",
                 fix(&bad)
@@ -290,6 +294,8 @@ pub(in crate::check) enum Why {
     /// What `.0`, a function or closure, returns, which a `?` in it
     /// returns early as.
     TryReturn(String),
+    /// What's copied by `[v; n]`.
+    Repeat,
 }
 
 /// An obligation the checker has to prove once the types in it are known.

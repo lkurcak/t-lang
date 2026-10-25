@@ -203,7 +203,9 @@ fn vary(
             vary(inner, v.then(inner_v), d, variances, out);
         }
         // A slice holds its `T`s, as a box does.
-        Type::Box(inner) | Type::Slice(inner) => vary(inner, v, d, variances, out),
+        Type::Box(inner) | Type::Slice(inner) | Type::Array(inner, _) => {
+            vary(inner, v, d, variances, out)
+        }
         Type::Fn(sig) => {
             for p in &sig.params {
                 vary(p, v.then(Variance::Contra), d, variances, out);
@@ -242,6 +244,7 @@ fn vary(
             }
         }
         Type::Int(_)
+        | Type::Nat(_)
         | Type::Char
         | Type::Str
         | Type::Bool
@@ -275,7 +278,9 @@ fn wf_into(t: &Type, adts: &Adts, outlives: &HashMap<String, Vec<Bound>>, out: &
             type_outlives(inner, r, out);
             wf_into(inner, adts, outlives, out);
         }
-        Type::Box(inner) | Type::Slice(inner) => wf_into(inner, adts, outlives, out),
+        Type::Box(inner) | Type::Slice(inner) | Type::Array(inner, _) => {
+            wf_into(inner, adts, outlives, out)
+        }
         Type::Adt(name, regions, args) => {
             let d = &adts[name];
             let s = Subst::new(&d.params, args).with_regions(&d.lifetimes, regions);
@@ -309,6 +314,7 @@ fn wf_into(t: &Type, adts: &Adts, outlives: &HashMap<String, Vec<Bound>>, out: &
         | Type::Panic
         | Type::Unsafe
         | Type::Int(_)
+        | Type::Nat(_)
         | Type::Char
         | Type::Str
         | Type::Bool
@@ -353,7 +359,10 @@ pub(crate) fn type_outlives(t: &Type, r: &Region, out: &mut Vec<Bound>) {
             push(out, Bound::Proj(t.clone(), r.clone()))
         }
         Type::Proj(inner, ..) => type_outlives(inner, r, out),
-        Type::Box(inner) | Type::Slice(inner) => type_outlives(inner, r, out),
+        // A length holds no references.
+        Type::Box(inner) | Type::Slice(inner) | Type::Array(inner, _) => {
+            type_outlives(inner, r, out)
+        }
         // Nor do effects, as an argument of a closure's type.
         Type::Fn(_)
         | Type::Effects(_)
@@ -361,6 +370,7 @@ pub(crate) fn type_outlives(t: &Type, r: &Region, out: &mut Vec<Bound>) {
         | Type::Panic
         | Type::Unsafe
         | Type::Int(_)
+        | Type::Nat(_)
         | Type::Char
         | Type::Str
         | Type::Bool
@@ -606,9 +616,9 @@ impl Regions {
                 let inner = if *m { Variance::Inv } else { Variance::Co };
                 self.relate(adts, ta, tb, v.then(inner), span);
             }
-            (Type::Box(ta), Type::Box(tb)) | (Type::Slice(ta), Type::Slice(tb)) => {
-                self.relate(adts, ta, tb, v, span)
-            }
+            (Type::Box(ta), Type::Box(tb))
+            | (Type::Slice(ta), Type::Slice(tb))
+            | (Type::Array(ta, _), Type::Array(tb, _)) => self.relate(adts, ta, tb, v, span),
             (Type::Fn(f), Type::Fn(g)) => match v {
                 Variance::Co => self.relate_fns(adts, f, g, span),
                 Variance::Contra => self.relate_fns(adts, g, f, span),
@@ -642,6 +652,7 @@ impl Regions {
             | (Type::Char, Type::Char)
             | (Type::Str, Type::Str)
             | (Type::Unit, Type::Unit)
+            | (Type::Nat(_), Type::Nat(_))
             | (Type::Never, _)
             | (_, Type::Never) => {}
             (Type::Param(p), Type::Param(q)) if p == q => {}

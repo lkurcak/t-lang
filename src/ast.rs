@@ -351,6 +351,10 @@ pub struct Generics {
     /// Which of `types` are effect parameters, by id: those declared with
     /// `effect`. The keyword says the kind, never the case of the name.
     pub effects: Vec<NodeId>,
+    /// Which of `types` are const parameters, by id, each with the type
+    /// written after its `:`: those declared `const N: usize`, which stand
+    /// for a length, a `Type::Nat`.
+    pub consts: Vec<(NodeId, TypeExpr)>,
     /// `'b: 'a` and `T: Show + 'a`, in the order written, each with what's
     /// before its `:` and the lifetimes and traits after it. Lifetimes start
     /// with a `'`, and traits don't.
@@ -373,6 +377,25 @@ impl Generics {
     /// Is `p`, one of `types`, an effect parameter?
     pub fn is_effect(&self, p: &Ident) -> bool {
         self.effects.contains(&p.id)
+    }
+
+    /// Is `p`, one of `types`, a const parameter?
+    pub fn is_const(&self, p: &Ident) -> bool {
+        self.consts.iter().any(|(id, _)| *id == p.id)
+    }
+
+    /// For each of `types`, is it a const parameter?
+    pub fn lengths(&self) -> Vec<bool> {
+        self.types.iter().map(|p| self.is_const(p)).collect()
+    }
+
+    /// The names of the const parameters.
+    pub fn const_names(&self) -> Vec<String> {
+        self.types
+            .iter()
+            .filter(|p| self.is_const(p))
+            .map(|p| p.name.clone())
+            .collect()
     }
 
     /// The names of the effect parameters.
@@ -965,7 +988,8 @@ impl Expr {
                 .chain(tail.as_deref())
                 .collect(),
             ExprKind::StructLit(_, _, inits) => inits.iter().map(|i| &i.value).collect(),
-            ExprKind::Variant(_, _, _, args, ..) => args.iter().collect(),
+            ExprKind::Variant(_, _, _, args, ..) | ExprKind::Array(args) => args.iter().collect(),
+            ExprKind::Repeat(v, n) => vec![v, n],
             ExprKind::Match(scrutinee, arms) => std::iter::once(&**scrutinee)
                 .chain(arms.iter().map(|a| &a.body))
                 .collect(),
@@ -1043,6 +1067,12 @@ pub enum TypeExprKind {
     /// `[T]`, a slice: only right after `&` or `&mut` (see
     /// docs/10-slices.md).
     Slice(Box<TypeExpr>),
+    /// `[T; N]`, an array: exactly `N` values of type `T`, where the length
+    /// `N` is a `Nat` or a const parameter's name (see docs/22-arrays.md).
+    Array(Box<TypeExpr>, Box<TypeExpr>),
+    /// `3`, as a length: in an array type, or as a type argument for a
+    /// const parameter, `Ring<i64, 3>`.
+    Nat(u64),
     /// `'a`, as a lifetime argument: the `'a` of `Holder<'a, i64>`. Lifetime
     /// arguments come before type arguments, and can only be there.
     Lifetime(String),
@@ -1107,6 +1137,8 @@ impl fmt::Display for TypeExpr {
                 write!(f, "{t}")
             }
             TypeExprKind::Slice(t) => write!(f, "[{t}]"),
+            TypeExprKind::Array(t, n) => write!(f, "[{t}; {n}]"),
+            TypeExprKind::Nat(n) => write!(f, "{n}"),
             TypeExprKind::Lifetime(name) => f.write_str(name),
             TypeExprKind::Never => f.write_str("!"),
             TypeExprKind::Proj(t, Some(tr), name) => {
@@ -1165,6 +1197,11 @@ pub enum ExprKind {
     MethodCall(Box<Expr>, Ident, Vec<TypeExpr>, Vec<Expr>),
     /// `if c { .. } else { .. }`; the `else` is optional.
     If(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
+    /// `[a, b, c]`: an array of these values, in order.
+    Array(Vec<Expr>),
+    /// `[v; n]`: an array of `n` copies of `v`, where `n` is an integer
+    /// literal or a const parameter, which the checker makes sure of.
+    Repeat(Box<Expr>, Box<Expr>),
     /// `{ stmt; stmt; tail }`; without a tail the block's value is `()`.
     Block(Vec<Stmt>, Option<Box<Expr>>),
     /// `unsafe { .. }`, of a `Block`: it keeps the obligations of the
@@ -1387,7 +1424,13 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
             bound.truncate(scope);
         }
         ExprKind::StructLit(_, _, inits) => inits.iter().for_each(|i| go(&i.value, bound)),
-        ExprKind::Variant(_, _, _, args, ..) => args.iter().for_each(|a| go(a, bound)),
+        ExprKind::Variant(_, _, _, args, ..) | ExprKind::Array(args) => {
+            args.iter().for_each(|a| go(a, bound))
+        }
+        ExprKind::Repeat(v, n) => {
+            go(v, bound);
+            go(n, bound);
+        }
         ExprKind::Match(scrutinee, arms) => {
             go(scrutinee, bound);
             for arm in arms {
@@ -1425,7 +1468,7 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
 fn pattern_binds(p: &Pattern, out: &mut Vec<String>) {
     match &p.kind {
         PatternKind::Bind(name, _) => out.push(name.clone()),
-        PatternKind::Variant(_, _, _, pats) | PatternKind::Or(pats) => {
+        PatternKind::Variant(_, _, _, pats) | PatternKind::Or(pats) | PatternKind::Array(pats) => {
             pats.iter().for_each(|p| pattern_binds(p, out));
         }
         PatternKind::Move(p) => pattern_binds(p, out),
@@ -1575,6 +1618,9 @@ pub enum PatternKind {
     /// `Point { x, y: 0 }`, or `Point { x, .. }` to ignore the other fields
     /// (the `bool`).
     Struct(Ident, Vec<TypeExpr>, Vec<FieldPat>, bool),
+    /// `[a, b, c]`: matches an array of exactly as many values, each
+    /// matched by the pattern in its place.
+    Array(Vec<Pattern>),
     /// `Shape::Circle(r) | Shape::Rect(r, _)`: matches if any alternative
     /// does. Every alternative must bind the same variables, at the same types.
     Or(Vec<Pattern>),

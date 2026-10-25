@@ -526,7 +526,8 @@ impl Traits {
         };
         // The built-in impls. Plain values may be thrown away, and so may
         // references, whatever they point to: dropping one doesn't drop
-        // that. A box holds what it points to, so it may be if that may.
+        // that. A box holds what it points to, so it may be if that may,
+        // and an array its values.
         match (tr, ty) {
             (
                 DISCARD,
@@ -555,6 +556,9 @@ impl Traits {
             // each index.
             (EQ, Type::Str) => return Ok(Source::Builtin),
             (EQ, Type::Slice(inner)) => return all(&[inner]),
+            // An array is its values: it may be thrown away, copied or
+            // compared if they may.
+            (DISCARD | COPY | EQ, Type::Array(inner, _)) => return all(&[inner]),
             (INT, Type::Int(_)) => return Ok(Source::Builtin),
             (SIGNED, Type::Int(t)) if t.signed() => return Ok(Source::Builtin),
             (UNSIGNED, Type::Int(t)) if !t.signed() => return Ok(Source::Builtin),

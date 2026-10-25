@@ -247,6 +247,10 @@ impl<'p> Cx<'p> {
                 TypeExprKind::Ref(lifetime.clone(), *mutable, Box::new(self.ty(inner)))
             }
             TypeExprKind::Slice(inner) => TypeExprKind::Slice(Box::new(self.ty(inner))),
+            TypeExprKind::Array(inner, n) => {
+                TypeExprKind::Array(Box::new(self.ty(inner)), Box::new(self.ty(n)))
+            }
+            TypeExprKind::Nat(_) => t.kind.clone(),
             TypeExprKind::Proj(inner, tr, name) => {
                 TypeExprKind::Proj(Box::new(self.ty(inner)), tr.clone(), name.clone())
             }
@@ -500,6 +504,13 @@ impl<'p> Cx<'p> {
                 args.iter().map(|a| self.expr(a, nested)).collect(),
                 *parens,
             ),
+            ExprKind::Array(items) => {
+                ExprKind::Array(items.iter().map(|a| self.expr(a, nested)).collect())
+            }
+            ExprKind::Repeat(v, n) => ExprKind::Repeat(
+                Box::new(self.expr(v, nested)),
+                Box::new(self.expr(n, nested)),
+            ),
             ExprKind::Match(scrutinee, arms) => ExprKind::Match(
                 Box::new(self.expr(scrutinee, nested)),
                 arms.iter()
@@ -615,6 +626,9 @@ impl<'p> Cx<'p> {
             ),
             PatternKind::Or(alts) => {
                 PatternKind::Or(alts.iter().map(|a| self.pattern(a)).collect())
+            }
+            PatternKind::Array(pats) => {
+                PatternKind::Array(pats.iter().map(|a| self.pattern(a)).collect())
             }
             PatternKind::Move(_) => unreachable!("written here"),
             kind => kind.clone(),

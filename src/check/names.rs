@@ -345,7 +345,14 @@ impl Walk<'_> {
                 self.name(name, t.id);
                 args.iter().for_each(|a| self.ty(a));
             }
-            TypeExprKind::Unit | TypeExprKind::Never | TypeExprKind::Lifetime(_) => {}
+            TypeExprKind::Unit
+            | TypeExprKind::Never
+            | TypeExprKind::Lifetime(_)
+            | TypeExprKind::Nat(_) => {}
+            TypeExprKind::Array(inner, n) => {
+                self.ty(inner);
+                self.ty(n);
+            }
             TypeExprKind::Fn(params, ret, effects) => {
                 params.iter().for_each(|p| self.ty(p));
                 self.ty(ret);
@@ -425,7 +432,9 @@ impl Walk<'_> {
                 targs.iter().for_each(|t| self.ty(t));
                 fields.iter().for_each(|f| self.pattern(&f.pat));
             }
-            PatternKind::Or(alts) => alts.iter().for_each(|p| self.pattern(p)),
+            PatternKind::Or(alts) | PatternKind::Array(alts) => {
+                alts.iter().for_each(|p| self.pattern(p))
+            }
             PatternKind::Wild
             | PatternKind::Bind(..)
             | PatternKind::Int(..)

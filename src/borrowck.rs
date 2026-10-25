@@ -890,6 +890,7 @@ fn describe(b: &Builder, place: &Place) -> String {
             // `(*r).x` is written `r.x`.
             Proj::Deref if matches!(proj.get(i + 1), Some(Proj::Field(_))) => {}
             Proj::Deref => out = format!("*{out}"),
+            Proj::Field(f) if matches!(t, Type::Array(..)) => out = format!("{out}[{f}]"),
             Proj::Field(f) => {
                 let fields = crate::types::struct_fields(b.adts(), &t).unwrap_or_default();
                 let name = fields.get(*f).map_or(f.to_string(), |(n, _)| n.clone());

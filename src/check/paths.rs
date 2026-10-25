@@ -35,6 +35,21 @@ impl Checker {
             false => self.binding(name),
         };
         let (scheme, def, symbol) = match binding {
+            // A const parameter, a value too: of type `usize`, read-only.
+            None if self.type_params.is_const(name) && !name.contains("::") => {
+                if !targs.is_empty() {
+                    return Err(Error::ty(
+                        span,
+                        format!("`{name}` is a const parameter, which takes no type arguments"),
+                    ));
+                }
+                let ty = Type::Int(crate::types::IntTy::Usize);
+                let def = self.const_decls.iter().rev().find(|p| p.name == name);
+                let kind = NoteKind::ConstParam(name.to_string());
+                self.note(at, kind, Some(ty.clone()), def.map(|p| p.span));
+                self.info.consts.insert(id, name.to_string());
+                return Ok(Some((ty, Res::Const(name.to_string()))));
+            }
             None => return Ok(None),
             Some(Binding::Local(i)) => {
                 if i < self.barrier {
@@ -145,6 +160,21 @@ impl Checker {
                              write `_` for it"
                         ),
                     ));
+                }
+                false if params.is_const(p) => match &t.kind {
+                    TypeExprKind::Nat(n) => Type::Nat(*n),
+                    TypeExprKind::Named(n, a) if n == "_" && a.is_empty() => self.fresh(
+                        t.span,
+                        format!("`{p}` for this use of `{name}`"),
+                        "write it out instead".into(),
+                    ),
+                    TypeExprKind::Named(n, a) if a.is_empty() && self.type_params.is_const(n) => {
+                        Type::Param(n.clone())
+                    }
+                    _ => return Err(generics::length_arg(name, t.span)),
+                },
+                false if matches!(t.kind, TypeExprKind::Nat(_)) => {
+                    return Err(generics::type_arg_not_length(name, t.span));
                 }
                 false => self.type_arg(t)?,
             });

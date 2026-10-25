@@ -3,8 +3,10 @@
 // value in the body and in refinements.
 fn sum<const N: usize>(a: &[i64; N]) -> i64 {
     let mut s: i64 = 0;
-    for i in 0..N {
+    let mut i: usize = 0;
+    while i < N {
         s = core::num::wrapping_add(s, a[i]);
+        i = i + 1;
     }
     s
 }
@@ -14,6 +16,7 @@ fn at<const N: usize>(a: &[i64; N], i: { i: usize | i < N }) -> i64 { a[i] }
 fn zeros<const N: usize>() -> [i64; N] { [0; N] }
 
 /// The last `N` values pushed.
+#[derive(Discard)]
 struct Ring<T, const N: usize> { buf: [T; N], head: { h: usize | h < N } }
 
 impl<T: Copy, const N: usize> Ring<T, N> {

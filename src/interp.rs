@@ -78,7 +78,10 @@ pub enum Value {
     /// A `RawBuf`: where its slots are, on the heap, as a `Slots`.
     RawBuf(Ptr),
     /// The slots of a `RawBuf`, each a value, or `Moved` if it's
-    /// uninitialised. Only ever on the heap, where a `RawBuf` points.
+    /// uninitialised, on the heap, where a `RawBuf` points. Or an array's
+    /// values, `[T; N]`, wherever the array is, exactly `N` of them (lemma
+    /// A1 of docs/22-arrays.md), each `Moved` once a pattern has moved it
+    /// out.
     Slots(Vec<Value>),
     /// What's left in a place whose value was moved out.
     Moved,
@@ -743,6 +746,10 @@ impl Interp<'_, '_> {
                         ..
                     }),
                 ) => PredValue::Int(*len as i128),
+                ("<[T; N]>::len", this) => match self.pred_deref(this.clone()) {
+                    Value::Slots(values) => PredValue::Int(values.len() as i128),
+                    other => unsound(&format!("`len` of `{other}`, which isn't an array")),
+                },
                 ("alloc::raw::RawBuf::cap", this) => match self.pred_deref(this.clone()) {
                     Value::RawBuf(q) => match self.memory.get(&q) {
                         Value::Slots(slots) => PredValue::Int(slots.len() as i128),
@@ -846,6 +853,7 @@ impl Interp<'_, '_> {
             Value::Struct(_, fields) => fields.iter().any(|(_, v)| self.taken_apart(v)),
             Value::Variant(_, _, fields) => fields.iter().any(|v| self.taken_apart(v)),
             Value::Closure(c) => c.env.iter().any(|(_, v)| self.taken_apart(v)),
+            Value::Slots(values) => values.iter().any(|v| self.taken_apart(v)),
             _ => false,
         }
     }
@@ -897,6 +905,8 @@ impl Interp<'_, '_> {
             Value::Struct(_, fields) => fields.into_iter().map(|(_, v)| v).collect(),
             Value::Variant(_, _, fields) => fields,
             Value::Closure(c) => c.env.into_iter().map(|(_, v)| v).collect(),
+            // An array's values, front to back.
+            Value::Slots(values) => values,
             _ => Vec::new(),
         };
         self.drop_all(parts)
@@ -1211,6 +1221,38 @@ impl Interp<'_, '_> {
                 Ok(Value::Ref(self.nowhere.slice(0, 0)))
             }
             "alloc::raw::out_of_memory" => Err(self.out_of_memory(span, "out of memory")),
+            // `f(0)`, `f(1)`, .., each made in place, as many as the copy's
+            // array type says.
+            "core::array::from_fn" => {
+                let [f] = <[Value; 1]>::try_from(args).unwrap_or_else(|_| unsound("arity"));
+                let n = match &self.fns[copy].ret.kind {
+                    TypeExprKind::Array(_, n) => match n.kind {
+                        TypeExprKind::Nat(n) => n as usize,
+                        _ => unsound("`from_fn` of an array of no length"),
+                    },
+                    _ => unsound("`from_fn` makes an array"),
+                };
+                let at = self.memory.alloc(f, false);
+                let mut values = Vec::new();
+                let mut result = Ok(());
+                for i in 0..n {
+                    match self.call(Value::Ref(at.clone()), vec![usize_of(i)], span) {
+                        Ok(v) => values.push(v),
+                        Err(e) => {
+                            result = Err(e);
+                            break;
+                        }
+                    }
+                }
+                let left = self.memory.free(&at, false);
+                let dropped = self.drop(left);
+                if result.is_err() {
+                    let _ = self.drop_all(values.drain(..));
+                }
+                result?;
+                dropped?;
+                Ok(Value::Slots(values))
+            }
             // Aborts, saying why.
             "core::panic::panic" => {
                 let [why] = <[Value; 1]>::try_from(args).unwrap_or_else(|_| unsound("panic arity"));
@@ -1319,6 +1361,18 @@ impl Interp<'_, '_> {
     fn slice(&mut self, op: &str, copy: &str, args: Vec<Value>) -> Value {
         let mut args = args.into_iter();
         let this = args.next().unwrap_or_else(|| unsound("slice arity"));
+        // An array's: a reference to its values, all of them.
+        if let Value::Ref(p @ Ptr { range: None, .. }) = &this {
+            let Value::Slots(values) = self.memory.get(p) else {
+                unsound(&format!("`{op}` of `{this}`, which isn't an array"))
+            };
+            let len = values.len();
+            return match op {
+                "len" => usize_of(len),
+                "as_slice" | "as_mut_slice" => Value::Ref(p.slice(0, len)),
+                _ => unsound(&format!("unknown intrinsic `[T; N]::{op}`")),
+            };
+        }
         let Value::Ref(
             p @ Ptr {
                 range: Some((lo, len)),
@@ -1930,6 +1984,15 @@ impl Interp<'_, '_> {
                 let args = self.eval_all(args)?;
                 Value::Variant(ty.name.clone(), variant.name.clone(), args)
             }
+            ExprKind::Array(items) => Value::Slots(self.eval_all(items)?),
+            // `n` copies of `v`, which is `Copy`; monomorphisation wrote the
+            // length `n` is.
+            ExprKind::Repeat(v, n) => {
+                let v = self.eval(v)?;
+                let n = usize::try_from(int(self.eval(n)?))
+                    .unwrap_or_else(|_| unsound("an array's length out of range"));
+                Value::Slots(vec![v; n])
+            }
             ExprKind::Match(scrutinee, arms) => self.match_expr(scrutinee, arms)?,
             // Only the locals the body uses: its free variables that aren't
             // functions. They're `Copy`, so they're copied.
@@ -2169,6 +2232,12 @@ impl Interp<'_, '_> {
                         .all(|(i, p)| self.matches(p, &v.field(i)))
             }
             (PatternKind::Or(alts), _) => alts.iter().any(|alt| self.matches(alt, &v)),
+            (PatternKind::Array(pats), Value::Slots(values)) => {
+                if pats.len() != values.len() {
+                    unsound("an array pattern of another length");
+                }
+                (pats.iter().enumerate()).all(|(i, p)| self.matches(p, &v.field(i)))
+            }
             (PatternKind::Struct(_, _, field_pats, _), Value::Struct(_, fields)) => {
                 field_pats.iter().all(|fp| {
                     match fields.iter().position(|(f, _)| *f == fp.name.name) {
@@ -2223,6 +2292,12 @@ impl Interp<'_, '_> {
                     let i = fields.iter().position(|(f, _)| *f == fp.name.name);
                     let i = i.unwrap_or_else(|| unsound("no such field"));
                     self.bind(&fp.pat, &v.field(i), by_ref)?;
+                }
+                self.consume(&v, by_ref, moves)?;
+            }
+            PatternKind::Array(pats) => {
+                for (i, p) in pats.iter().enumerate() {
+                    self.bind(p, &v.field(i), by_ref)?;
                 }
                 self.consume(&v, by_ref, moves)?;
             }
@@ -2308,10 +2383,12 @@ impl Interp<'_, '_> {
             (Value::Variant(s, v, xs), Value::Variant(_, w, _)) => {
                 (s.clone(), (v == w).then_some(xs.len()))
             }
+            // Arrays of a type, so of a length: value by value.
+            (Value::Slots(xs), Value::Slots(_)) => (String::new(), Some(xs.len())),
             (Value::Moved, _) | (_, Value::Moved) => unsound("comparing a moved value"),
             (a, b) => return Ok(a == b),
         };
-        if let Some(f) = self.user_eq(&ty) {
+        if let Some(f) = self.user_eq(&ty).filter(|_| !ty.is_empty()) {
             return self.call_eq(f, p, q, span);
         }
         let Some(n) = fields else {

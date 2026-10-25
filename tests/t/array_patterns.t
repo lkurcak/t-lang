@@ -15,14 +15,16 @@ fn first_true(a: [bool; 2]) -> i64 {
     }
 }
 
-fn main(os: std::Os) -> Result<(), std::io::Error> {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     let fds = [Fd { n: 3 }, Fd { n: 4 }];
     let [a, b] = fds;
-    out.line(&close(b))?;               // expect: 4
-    out.line(&close(a))?;               // expect: 3
+    let y = close(b);
+    let x = close(a);
+    out.line(&y)?;                      // expect: 4
+    out.line(&x)?;                      // expect: 3
     out.line(&first_true([false, true]))?; // expect: 1
-    let [x, y, z] = [1, 2, 3];
+    let [x, y, z] = [1i64, 2, 3];
     out.line(&(x + y + z))?;            // expect: 6
     Result::Ok(())
 }

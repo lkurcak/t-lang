@@ -292,6 +292,26 @@ impl Checker {
                 }
                 Pat::Ctor(Ctor::Struct, args)
             }
+            // An array of exactly as many values as there are patterns: a
+            // length that's a const parameter isn't one (lemma A6 of
+            // docs/22-arrays.md).
+            PatternKind::Array(pats) => {
+                let k = pats.len();
+                let elem = self.fresh(
+                    p.span,
+                    "the type of this array's values".into(),
+                    "say what it is".into(),
+                );
+                let found = Type::Array(Box::new(elem.clone()), Box::new(Type::Nat(k as u64)));
+                self.unify_or(&found, ty, p.span, |_, ty| {
+                    format!("this pattern is for an array of {k}, but the value is `{ty}`")
+                })?;
+                let mut args = Vec::new();
+                for q in pats {
+                    args.push(self.pattern(q, &elem, by_ref, binds)?);
+                }
+                Pat::Ctor(Ctor::Struct, args)
+            }
         })
     }
 

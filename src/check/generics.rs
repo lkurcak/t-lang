@@ -30,8 +30,9 @@ pub(super) fn arity_error(what: &str, arity: usize, given: usize, span: Span) ->
 /// it's written in, or `i64` or `bool`.
 pub(crate) enum TypeName {
     /// A struct or enum, by its symbol (see `check/names.rs`), with how
-    /// many lifetime and type arguments it takes.
-    Adt(String, usize, usize),
+    /// many lifetime arguments it takes, and for each type argument
+    /// whether it's a length, for a const parameter.
+    Adt(String, usize, Vec<bool>),
     /// A type parameter of a function that what it's written in is nested
     /// in, which it can't use. With the keyword and name of what it's
     /// written in: `("fn", "helper")`.
@@ -280,6 +281,14 @@ fn resolve_in(
             Ok(Type::Ref(region, *mutable, Box::new(inner)))
         }
         TypeExprKind::Slice(_) => Err(unsized_slice(t.span, t)),
+        TypeExprKind::Array(elem, n) => {
+            let elem = go(elem, lifetimes, binder)?;
+            if let Some(u) = elem.unsized_part() {
+                return Err(unsized_slice(t.span, u));
+            }
+            Ok(Type::Array(Box::new(elem), Box::new(len(n, params)?)))
+        }
+        TypeExprKind::Nat(n) => Err(Error::ty(t.span, format!("`{n}` is a length, not a type"))),
         TypeExprKind::Named(name, args) => {
             // Lifetime arguments come first.
             let lts = args
@@ -296,10 +305,10 @@ fn resolve_in(
                     "lifetime arguments must come before type arguments",
                 ));
             }
-            let (ty, lt_arity, arity) = match names(name, t) {
+            let (ty, lt_arity, lengths) = match names(name, t) {
                 // The alloc library's `Box`, which the checker knows.
                 Some(TypeName::Adt(symbol, ..)) if symbol == super::BOX => {
-                    (Type::Box(Box::new(Type::Unit)), 0, 1)
+                    (Type::Box(Box::new(Type::Unit)), 0, vec![false])
                 }
                 Some(TypeName::Adt(symbol, l, n)) => {
                     (Type::Adt(symbol, Vec::new(), Vec::new()), l, n)
@@ -322,13 +331,22 @@ fn resolve_in(
                         format!("`{name}` is an effect parameter, not a type"),
                     ));
                 }
-                None if params.contains(name) => (Type::Param(name.clone()), 0, 0),
-                None if let Some(t) = crate::types::IntTy::named(name) => (Type::Int(t), 0, 0),
-                None if name == "bool" => (Type::Bool, 0, 0),
-                None if name == "char" => (Type::Char, 0, 0),
+                None if params.is_const(name) => {
+                    return Err(Error::ty(
+                        t.span,
+                        format!("`{name}` is a const parameter, not a type"),
+                    ));
+                }
+                None if params.contains(name) => (Type::Param(name.clone()), 0, Vec::new()),
+                None if let Some(t) = crate::types::IntTy::named(name) => {
+                    (Type::Int(t), 0, Vec::new())
+                }
+                None if name == "bool" => (Type::Bool, 0, Vec::new()),
+                None if name == "char" => (Type::Char, 0, Vec::new()),
                 None if name == "str" => return Err(unsized_slice(t.span, "str")),
                 None => return Err(Error::ty(t.span, format!("unknown type `{name}`"))),
             };
+            let arity = lengths.len();
             if args.len() != arity {
                 let what = match ty {
                     Type::Param(_) => format!("type parameter `{name}`"),
@@ -359,10 +377,27 @@ fn resolve_in(
                     return Err(Error::ty(t.span, message));
                 }
             };
-            let args = args
-                .iter()
-                .map(|a| go(a, lifetimes, binder.as_deref_mut()))
-                .collect::<Result<Vec<_>, _>>()?;
+            let mut resolved = Vec::new();
+            for (a, &length) in args.iter().zip(&lengths) {
+                let lengthy = |a: &TypeExpr| match &a.kind {
+                    TypeExprKind::Nat(_) => true,
+                    TypeExprKind::Named(n, args) => args.is_empty() && params.is_const(n),
+                    _ => false,
+                };
+                resolved.push(match length {
+                    true if !lengthy(a)
+                        && !matches!(&a.kind, TypeExprKind::Named(n, _) if n.starts_with('?')) =>
+                    {
+                        return Err(length_arg(name, a.span));
+                    }
+                    true => len(a, params)?,
+                    false if matches!(a.kind, TypeExprKind::Nat(_)) => {
+                        return Err(type_arg_not_length(name, a.span));
+                    }
+                    false => go(a, lifetimes, binder.as_deref_mut())?,
+                });
+            }
+            let args = resolved;
             Ok(match ty {
                 Type::Adt(symbol, ..) => Type::Adt(symbol, regions, args),
                 Type::Box(_) => Type::Box(Box::new(args.into_iter().next().expect("one"))),
@@ -464,6 +499,52 @@ pub(crate) fn resolve_effects(
     Ok(Type::effects(items))
 }
 
+/// That the argument at `span` for a const parameter of `name` isn't a
+/// length.
+pub(super) fn length_arg(name: &str, span: Span) -> Error {
+    Error::ty(
+        span,
+        format!("this argument of `{name}` is a length, not a type"),
+    )
+}
+
+/// That the argument at `span` for a type parameter of `name` is a length.
+pub(super) fn type_arg_not_length(name: &str, span: Span) -> Error {
+    Error::ty(
+        span,
+        format!("this argument of `{name}` is a type, not a length"),
+    )
+}
+
+/// A length as written: in an array type, `[T; N]`, or as the type
+/// argument for a const parameter. An integer literal, or the name of a
+/// const parameter in `params`, or `_` for one to infer, which
+/// `name_holes` has named.
+fn len(t: &TypeExpr, params: &Params) -> Result<Type, Error> {
+    match &t.kind {
+        TypeExprKind::Nat(n) => Ok(Type::Nat(*n)),
+        TypeExprKind::Named(name, args) if args.is_empty() && params.is_const(name) => {
+            Ok(Type::Param(name.clone()))
+        }
+        TypeExprKind::Named(name, args) if args.is_empty() && name.starts_with('?') => {
+            Ok(Type::Param(name.clone()))
+        }
+        TypeExprKind::Named(name, args) if args.is_empty() && params.is_type(name) => {
+            Err(Error::ty(
+                t.span,
+                format!(
+                    "`{name}` is a type parameter, not a const; declare it as `const {name}: \
+                     usize`"
+                ),
+            ))
+        }
+        _ => Err(Error::ty(
+            t.span,
+            "an array's length must be an integer literal or a const parameter",
+        )),
+    }
+}
+
 /// `t`, with each `_` in it renamed to a type parameter no program can
 /// name (`?0`, `?1`, ..), which are added to `holes` with where they were.
 pub(super) fn name_holes(t: &TypeExpr, holes: &mut Vec<(String, Span)>) -> TypeExpr {
@@ -487,6 +568,11 @@ pub(super) fn name_holes(t: &TypeExpr, holes: &mut Vec<(String, Span)>) -> TypeE
             TypeExprKind::Ref(l.clone(), *m, Box::new(name_holes(inner, holes)))
         }
         TypeExprKind::Slice(inner) => TypeExprKind::Slice(Box::new(name_holes(inner, holes))),
+        TypeExprKind::Array(inner, n) => TypeExprKind::Array(
+            Box::new(name_holes(inner, holes)),
+            Box::new(name_holes(n, holes)),
+        ),
+        TypeExprKind::Nat(_) => t.kind.clone(),
         TypeExprKind::Proj(inner, tr, name) => {
             TypeExprKind::Proj(Box::new(name_holes(inner, holes)), tr.clone(), name.clone())
         }
@@ -541,7 +627,20 @@ pub(super) fn declare(g: &Generics) -> Result<Params, Error> {
         }
         names.push(p.name.clone());
     }
-    Ok(Params::new(names, g.effect_names()))
+    for (id, ty) in &g.consts {
+        let p = g
+            .types
+            .iter()
+            .find(|p| p.id == *id)
+            .expect("one of the parameters");
+        if !matches!(&ty.kind, TypeExprKind::Named(n, a) if n == "usize" && a.is_empty()) {
+            return Err(Error::ty(ty.span, "a const parameter must be a `usize`"));
+        }
+        if p.name == "_" {
+            return Err(Error::ty(p.span, "a const parameter needs a name"));
+        }
+    }
+    Ok(Params::new(names, g.effect_names()).with_consts(g.const_names()))
 }
 
 /// Checks the lifetime parameters declared by a function, struct or enum,

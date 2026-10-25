@@ -1124,6 +1124,11 @@ impl Rewrite<'_> {
                 }
             }
             TypeExprKind::Ref(_, _, inner) | TypeExprKind::Slice(inner) => self.ty(inner)?,
+            TypeExprKind::Array(inner, n) => {
+                self.ty(inner)?;
+                self.ty(n)?;
+            }
+            TypeExprKind::Nat(_) => {}
             TypeExprKind::Proj(..) => {
                 // `a::Point`, read as a projection, if `a` is a module.
                 if let Some(path) = plain_path(t)
@@ -1624,7 +1629,7 @@ impl Rewrite<'_> {
                     self.pattern(&mut f.pat)?;
                 }
             }
-            PatternKind::Or(alts) => {
+            PatternKind::Or(alts) | PatternKind::Array(alts) => {
                 for p in alts {
                     self.pattern(p)?;
                 }
@@ -1744,7 +1749,7 @@ fn plain_path(t: &TypeExpr) -> Option<Ident> {
 
 /// The expressions directly in `e`, to change, as `Expr::children` gives
 /// them.
-fn children_mut(e: &mut Expr) -> Vec<&mut Expr> {
+pub(crate) fn children_mut(e: &mut Expr) -> Vec<&mut Expr> {
     match &mut e.kind {
         ExprKind::Move(_) => unreachable!("written by lift"),
         ExprKind::Int(..)
@@ -1787,7 +1792,8 @@ fn children_mut(e: &mut Expr) -> Vec<&mut Expr> {
             .chain(tail.as_deref_mut())
             .collect(),
         ExprKind::StructLit(_, _, inits) => inits.iter_mut().map(|i| &mut i.value).collect(),
-        ExprKind::Variant(_, _, _, args, ..) => args.iter_mut().collect(),
+        ExprKind::Variant(_, _, _, args, ..) | ExprKind::Array(args) => args.iter_mut().collect(),
+        ExprKind::Repeat(v, n) => vec![&mut **v, &mut **n],
         ExprKind::Match(scrutinee, arms) => std::iter::once(&mut **scrutinee)
             .chain(arms.iter_mut().map(|a| &mut a.body))
             .collect(),

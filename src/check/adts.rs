@@ -61,7 +61,7 @@ impl Checker {
                     return Err(Error::ty(name.span, message));
                 }
             }
-            let arity = (d.generics().lifetimes.len(), d.type_params().len());
+            let arity = (d.generics().lifetimes.len(), d.generics().lengths());
             self.arities.insert(def.symbol.clone(), arity);
         }
 

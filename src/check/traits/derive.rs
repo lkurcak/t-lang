@@ -283,6 +283,8 @@ impl Checker {
                 return self.needs(inner, tr, params, out);
             }
             Type::Box(inner) if tr == DISCARD => return self.needs(inner, tr, params, out),
+            // An array is its values, for all three.
+            Type::Array(inner, _) => return self.needs(inner, tr, params, out),
             Type::Adt(..) => {}
             t => {
                 return self

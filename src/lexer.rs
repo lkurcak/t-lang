@@ -49,6 +49,7 @@ pub enum Tok {
     Where,
     With,
     Effect,
+    Const,
     /// `'a`: a lifetime, with its `'`.
     Lifetime(String),
     // punctuation
@@ -150,6 +151,7 @@ impl Tok {
             Tok::Where => "where",
             Tok::With => "with",
             Tok::Effect => "effect",
+            Tok::Const => "const",
             Tok::LParen => "(",
             Tok::RParen => ")",
             Tok::LBrace => "{",
@@ -624,6 +626,7 @@ pub fn lex_with_comments(src: &str) -> Result<(Vec<Token>, Vec<Comment>), Error>
                 "where" => Tok::Where,
                 "with" => Tok::With,
                 "effect" => Tok::Effect,
+                "const" => Tok::Const,
                 name => Tok::Ident(name.to_string()),
             }
         } else if c == b'\'' {

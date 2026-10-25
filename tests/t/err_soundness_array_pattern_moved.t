@@ -6,4 +6,4 @@ fn main() with alloc {
     let [_x, _y] = a;
     let _z = a;
 }
-// error: use of moved value `a`
+// error: use of partly moved value `a`: `a[0]` was moved out of it

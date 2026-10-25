@@ -11,7 +11,7 @@ fn total(s: &[i64]) -> i64 {
 #[derive(Copy, Discard)]
 struct Rgb { c: [u8; 3] }
 
-fn main(os: std::Os) -> Result<(), std::io::Error> {
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     let mut a = [1, 2, 3, 4];
     a[0] = 10;
@@ -19,7 +19,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&a[0])?;               // expect: 10
     out.line(&a[3])?;               // expect: 34
     out.line(&a.len())?;            // expect: 4
-    out.line(&total(a.as_slice()))?; // expect: 46
+    out.line(&total(a.as_slice()))?; // expect: 49
     let b = a;
     a[1] = 0;
     out.line(&b[1])?;               // expect: 2

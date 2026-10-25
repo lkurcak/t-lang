@@ -5,4 +5,4 @@ fn main() {
     let a = [1, 2, 3];
     total(&a);
 }
-// error: expected `&[i64]`, found `&[{integer}; 3]`
+// error: expected `[i64]`, found `[{integer}; 3]`

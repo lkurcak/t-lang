@@ -1,7 +1,7 @@
 // `[v; n]` makes `n` copies of `v`, so `v` must be `Copy`.
 use alloc::list::List;
 
-fn main() with alloc {
+fn main() {
     let l: List<i64> = List::new();
     let _a = [l; 2];
 }
