@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.34.0 (2026-10-25)
 
 Step 21: measures. See [docs/21-measures.md](docs/21-measures.md).
 
