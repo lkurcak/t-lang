@@ -3,8 +3,7 @@
 fn f(a: &[i64], b: &[i64], c: bool) -> i64 {
     let mut s = a;
     if a.len() > 1 {
-        if c {
-        } else {
+        if c {} else {
             s = b;
         }
         return s[1];
