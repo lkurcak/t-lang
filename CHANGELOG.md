@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.35.0 (2026-10-25)
 
 Step 22: arrays. See [docs/22-arrays.md](docs/22-arrays.md).
 
