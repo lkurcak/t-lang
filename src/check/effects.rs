@@ -1,8 +1,11 @@
 //! Effects: what a call may do besides give its result (see
-//! docs/07-effects.md). Each function says its effects in its signature,
+//! docs/07-effects.md). A function says its effects in its signature,
 //! `with panic`, and its body may only have those: each operator, call and
 //! allocation in it is a *site* with effects of its own, which must be
-//! among them. A closure's effects are worked out from its body instead,
+//! among them. One that isn't exported and says no `with` has its sites'
+//! instead, inferred with those it may call back (see `check/infer.rs`):
+//! until they're known its effects are a placeholder, and what a
+//! placeholder is in waits for them (`Deferred`). A closure's effects are worked out from its body instead,
 //! as a variable that must hold at least those of the sites in it.
 //!
 //! Effect sets are types of a kind of their own (`Type::Effects`), so a

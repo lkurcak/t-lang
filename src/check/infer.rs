@@ -39,6 +39,10 @@ use crate::error::{Error, Span};
 use crate::types::{Subst, Type};
 use std::collections::{HashMap, HashSet};
 
+/// More effects than any function's inferred ones can have, but by
+/// calling itself at bigger and bigger types (see `solve_group`).
+const MOST_EFFECTS: usize = 256;
+
 /// Does `f`, a method of `method` if it's one, have the effects its body
 /// has, rather than those it says? If it isn't exported, says no `with`,
 /// and its effects are its own: not a trait's method, whose effects its
@@ -322,8 +326,24 @@ impl Checker {
                             callee,
                         },
                     );
-                    solution.get_mut(symbol).expect("a member").push(e.clone());
+                    let have = solution.get_mut(symbol).expect("a member");
+                    have.push(e.clone());
                     changed = true;
+                    // Only a call of itself at bigger types, round the
+                    // group, which isn't allowed (docs/04-generics.md, checked
+                    // once all bodies are), makes them grow without end: end
+                    // that here, as nothing else would.
+                    if have.len() > MOST_EFFECTS {
+                        let name = &self.fns[f.0].name;
+                        return Err(Error::ty(
+                            name.span,
+                            format!(
+                                "the effects of `{}` grow without end: it's called at bigger \
+                                 and bigger types by the functions it calls; say them with `with`",
+                                name.name
+                            ),
+                        ));
+                    }
                 }
             }
             if !changed {

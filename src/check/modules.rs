@@ -11,10 +11,14 @@
 //! module `main` and a function `main`.
 //!
 //! An item is visible in the module it's declared in and in the modules
-//! in that, and, if it's `pub`, wherever its module is. A path is resolved
+//! in that; if it's `pub`, anywhere in its package; and if it's `export`,
+//! in other packages too (see docs/24-visibility.md). A path is resolved
 //! segment by segment, each of which must be visible where the path is
 //! written. A `use` binds a name like an item declared there, private
-//! unless it's `pub use`, and can't make public what isn't.
+//! unless it's `pub use` or `export use`, and can't make more of what it
+//! names than it is. What's exported must be reachable from its package's
+//! root through what's exported alone (`exports_reachable`), so a
+//! package's interface is what its root says.
 //!
 //! Resolving is a function of the program, not of the order of anything
 //! (lemma M1 of the docs): with no glob imports, a name in a module is one
