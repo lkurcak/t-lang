@@ -5,4 +5,4 @@ use alloc::arena::Arena;
 fn shorten<'a>(a: &'a Arena<&'static str>) -> &'a Arena<&'a str> { a }
 
 fn main() {}
-// error: lifetime
+// error: lifetime may not live long enough
