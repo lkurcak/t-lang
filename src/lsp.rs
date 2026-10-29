@@ -5,10 +5,10 @@
 //! A file is checked as part of its program: the one of the nearest
 //! `main.t` above it that has it as a module's file, or else the file
 //! alone (see `load.rs`), with what the editor has for open files and
-//! what's on disk for the others. On every open/change it re-checks the
-//! whole program (it's tiny and fast) and reports every warning and the
-//! first error, each in its file. Asked for anything else, it checks the
-//! program again and answers from what the checker found out
+//! what's on disk for the others. It shares semantic analysis between
+//! requests until an input changes, then re-checks the whole program and
+//! reports every warning and the first error, each in its file. Requests
+//! are answered from what the checker found out
 //! (`check::Info`): the fixes of the diagnostics in range as code actions,
 //! the type and doc comment of what's under the cursor on hover, where
 //! that's defined and where its type is, every place it's named (as
@@ -26,8 +26,8 @@ use crate::source::{File as SourceFile, Sources};
 use crate::types::{Type, comma_list};
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, Response};
 use lsp_types::notification::{
-    DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, Notification as _,
-    PublishDiagnostics,
+    DidChangeTextDocument, DidChangeWatchedFiles, DidCloseTextDocument, DidOpenTextDocument,
+    DidSaveTextDocument, Notification as _, PublishDiagnostics,
 };
 use lsp_types::request::{
     CodeActionRequest, DocumentHighlightRequest, DocumentSymbolRequest, Formatting, GotoDefinition,
@@ -47,8 +47,10 @@ use lsp_types::{
     ServerCapabilities, SymbolKind, TextDocumentPositionParams, TextDocumentSyncCapability,
     TextDocumentSyncKind, TextEdit, TypeDefinitionProviderCapability, Uri, WorkspaceEdit,
 };
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -81,9 +83,7 @@ pub fn run() -> Result<()> {
     conn.initialize(serde_json::to_value(capabilities)?)?;
 
     let mut docs = Docs::default();
-    // The files each program last had diagnostics published for, by the
-    // path of its first file, to clear those of a file no longer in it.
-    let mut published: HashMap<PathBuf, Vec<Uri>> = HashMap::new();
+    let mut published = HashMap::new();
     // A message the server can't make sense of, such as one with a URI
     // that isn't one, gets an error, if it's a request, and is otherwise
     // skipped: it mustn't stop the server, and with it the editor's help
@@ -94,6 +94,9 @@ pub fn run() -> Result<()> {
                 if conn.handle_shutdown(&req)? {
                     break;
                 }
+                // Poll dependencies too: clients need not watch files on
+                // disk for a request to see their current contents.
+                refresh_diagnostics(&conn, &docs, &mut published)?;
                 let id = req.id.clone();
                 let response = respond(req, &docs).unwrap_or_else(|e| {
                     Response::new_err(id, ErrorCode::InvalidParams as i32, e.to_string())
@@ -121,86 +124,203 @@ fn notify(
     conn: &Connection,
     n: Notification,
     docs: &mut Docs,
-    published: &mut HashMap<PathBuf, Vec<Uri>>,
+    published: &mut HashMap<PathBuf, Rc<Analysis>>,
 ) -> Result<()> {
     match n.method.as_str() {
         DidOpenTextDocument::METHOD => {
             let p: DidOpenTextDocumentParams = serde_json::from_value(n.params)?;
             let doc = p.text_document;
-            docs.open(&doc.uri, doc.text);
-            publish_all(conn, docs, (doc.uri, doc.version), published)?;
+            docs.open(&doc.uri, doc.version, doc.text);
+            refresh_diagnostics(conn, docs, published)?;
         }
         DidChangeTextDocument::METHOD => {
             let p: DidChangeTextDocumentParams = serde_json::from_value(n.params)?;
             // With FULL sync, the last change holds the whole new text.
             if let Some(change) = p.content_changes.into_iter().last() {
                 let doc = p.text_document;
-                docs.open(&doc.uri, change.text);
-                publish_all(conn, docs, (doc.uri, doc.version), published)?;
+                docs.open(&doc.uri, doc.version, change.text);
+                refresh_diagnostics(conn, docs, published)?;
             }
         }
         DidCloseTextDocument::METHOD => {
             let p: DidCloseTextDocumentParams = serde_json::from_value(n.params)?;
-            close_document(conn, docs, p.text_document.uri, published)?;
+            let uri = p.text_document.uri;
+            docs.files.remove(&uri_path(&uri));
+            publish(conn, uri, None, Vec::new())?;
+            refresh_diagnostics(conn, docs, published)?;
+        }
+        DidChangeWatchedFiles::METHOD | DidSaveTextDocument::METHOD => {
+            refresh_diagnostics(conn, docs, published)?;
         }
         _ => {}
     }
     Ok(())
 }
 
-/// Every open file, by path: its URI, as the editor wrote it, and its
-/// text. By path, as editors write the same file's URI differently on
+/// Every open file, by path: its URI, version and text. By path, as
+/// editors write the same file's URI differently on
 /// Windows, `file:///c%3A/..` or `file:///C:/..`, and the server must
 /// answer with the one the editor knows the file by.
 #[derive(Default)]
-struct Docs(HashMap<PathBuf, (Uri, String)>);
+struct Docs {
+    files: HashMap<PathBuf, Document>,
+    cache: RefCell<Cache>,
+}
+
+struct Document {
+    uri: Uri,
+    version: i32,
+    text: Rc<String>,
+}
+
+#[derive(Default)]
+struct Cache {
+    /// Analyses shared by every open document in the same program.
+    programs: HashMap<PathBuf, Rc<Analysis>>,
+    /// Root discovery also depends on absent or non-owning `main.t`s.
+    roots: HashMap<PathBuf, (PathBuf, Snapshot)>,
+}
+
+type Snapshot = HashMap<PathBuf, Input>;
+
+/// Everything a read depends on, including failures and file identity:
+/// retargeting a symlink can change whether loading detects a cycle.
+#[derive(Clone, PartialEq, Eq)]
+struct Input {
+    text: std::result::Result<Rc<String>, (std::io::ErrorKind, String)>,
+    document: Option<(Uri, i32)>,
+    canonical: Option<PathBuf>,
+}
+
+/// Reads each input once while discovering and checking a snapshot.
+struct Inputs<'a> {
+    docs: &'a Docs,
+    seen: RefCell<Snapshot>,
+    reads: RefCell<HashSet<PathBuf>>,
+}
+
+impl Inputs<'_> {
+    fn input(&self, path: &Path) -> Input {
+        let mut seen = self.seen.borrow_mut();
+        seen.entry(path.to_owned())
+            .or_insert_with(|| self.docs.input(path))
+            .clone()
+    }
+
+    fn read(&self, path: &Path) -> std::io::Result<String> {
+        self.reads.borrow_mut().insert(path.to_owned());
+        self.input(path)
+            .text
+            .map(|text| (*text).clone())
+            .map_err(|(kind, message)| std::io::Error::new(kind, message))
+    }
+
+    fn matches(&self, snapshot: &Snapshot) -> bool {
+        snapshot
+            .iter()
+            .all(|(path, input)| self.input(path) == *input)
+    }
+
+    /// Validation may have inspected obsolete dependencies. Only actual
+    /// reads belong in the new discovery or analysis snapshot.
+    fn take_snapshot(&self) -> Snapshot {
+        let seen = self.seen.borrow();
+        self.reads
+            .borrow_mut()
+            .drain()
+            .map(|path| {
+                let input = seen[&path].clone();
+                (path, input)
+            })
+            .collect()
+    }
+}
 
 impl Docs {
     /// The editor has the file at `uri` open, with `text`.
-    fn open(&mut self, uri: &Uri, text: String) {
-        self.0.insert(uri_path(uri), (uri.clone(), text));
+    fn open(&mut self, uri: &Uri, version: i32, text: String) {
+        self.files.insert(
+            uri_path(uri),
+            Document {
+                uri: uri.clone(),
+                version,
+                text: Rc::new(text),
+            },
+        );
     }
 
     /// The text of the open file at `uri`.
     fn text(&self, uri: &Uri) -> Option<&String> {
-        self.0.get(&uri_path(uri)).map(|(_, text)| text)
+        self.files.get(&uri_path(uri)).map(|doc| doc.text.as_ref())
     }
 
     /// The URI of the file at `path`: the editor's, if it's open.
     fn uri(&self, path: &Path) -> Uri {
-        match self.0.get(path) {
-            Some((uri, _)) => uri.clone(),
+        match self.files.get(path) {
+            Some(doc) => doc.uri.clone(),
             None => path_uri(path),
         }
     }
 
-    /// Reads a file: what the editor has, if it's open, or else what's on
-    /// disk.
-    fn read(&self, path: &Path) -> std::io::Result<String> {
-        match self.0.get(path) {
-            Some((_, text)) => Ok(text.clone()),
-            None => crate::load::read_file(path),
+    fn input(&self, path: &Path) -> Input {
+        let (text, document) = match self.files.get(path) {
+            Some(doc) => (Ok(doc.text.clone()), Some((doc.uri.clone(), doc.version))),
+            None => (
+                crate::load::read_file(path)
+                    .map(Rc::new)
+                    .map_err(|e| (e.kind(), e.to_string())),
+                None,
+            ),
+        };
+        Input {
+            text,
+            document,
+            canonical: std::fs::canonicalize(path).ok(),
         }
     }
 
     /// The program the open file at `uri` is in, checked. That's the one
     /// of the nearest `main.t` above it that has it as a module's file, or
     /// else the file alone (see `load.rs`).
-    fn analyse(&self, uri: &Uri) -> Option<Analysis> {
-        let src = self.text(uri)?;
+    fn analyse(&self, uri: &Uri) -> Option<Rc<Analysis>> {
+        self.text(uri)?;
         let path = uri_path(uri);
-        let read = |p: &Path| self.read(p);
+        let inputs = Inputs {
+            docs: self,
+            seen: RefCell::default(),
+            reads: RefCell::default(),
+        };
+        let mut cache = self.cache.borrow_mut();
+        if let Some((root, discovery)) = cache.roots.get(&path)
+            && inputs.matches(discovery)
+            && let Some(a) = cache.programs.get(root)
+            && inputs.matches(&a.inputs)
+        {
+            return Some(a.clone());
+        }
+        let read = |p: &Path| inputs.read(p);
         let mut dirs = path.parent().into_iter().flat_map(Path::ancestors);
         let root = dirs.find_map(|dir| {
             let main = dir.join("main.t");
+            let text = inputs.read(&main).ok()?;
             if main == path {
-                return Some((main, src.clone()));
+                return Some(main);
             }
-            let text = self.read(&main).ok()?;
             let (sources, _) = crate::load::load(&main, &text, &read);
-            sources.file(&path).map(|_| (main, text))
+            sources.file(&path).map(|_| main)
         });
-        let (root, text) = root.unwrap_or_else(|| (path, src.clone()));
+        let root = root.unwrap_or_else(|| path.clone());
+        // The standalone fallback's text is an input as well.
+        inputs.read(&root).ok()?;
+        cache
+            .roots
+            .insert(path, (root.clone(), inputs.take_snapshot()));
+        if let Some(a) = cache.programs.get(&root)
+            && inputs.matches(&a.inputs)
+        {
+            return Some(a.clone());
+        }
+        let text = inputs.read(&root).ok()?;
         let checked = crate::check_files(&root, &text, &read);
         let uris = checked
             .sources
@@ -208,23 +328,25 @@ impl Docs {
             .iter()
             .map(|f| self.uri(&f.path))
             .collect();
-        Some(Analysis {
-            root,
-            text,
+        let a = Rc::new(Analysis {
+            root: root.clone(),
             checked,
             uris,
-        })
+            inputs: inputs.take_snapshot(),
+        });
+        cache.programs.insert(root, a.clone());
+        Some(a)
     }
 }
 
 /// What checking the program an open file is in found.
 struct Analysis {
-    /// The program's first file, and its text.
+    /// The program's first file.
     root: PathBuf,
-    text: String,
     checked: crate::Checked,
     /// The URI of each of its files, in the order of its sources.
     uris: Vec<Uri>,
+    inputs: Snapshot,
 }
 
 impl Analysis {
@@ -400,11 +522,11 @@ fn respond(req: Request, docs: &Docs) -> Result<Response> {
             let Some(a) = docs.analyse(uri) else {
                 return Ok(Response::new_ok(req.id, ()));
             };
-            let target = renaming(docs, &a).and_then(|(sources, prog, info)| {
+            let target = renaming(&a).and_then(|(sources, prog, info)| {
                 let offset = a
                     .offset(uri, at.position)
                     .ok_or("this file isn't in the program")?;
-                let note = crate::rename::target(&sources, &prog, &info, offset)?;
+                let note = crate::rename::target(sources, prog, info, offset)?;
                 a.range_in(uri, note.span)
                     .ok_or_else(|| "it's in another file".to_string())
             });
@@ -420,13 +542,13 @@ fn respond(req: Request, docs: &Docs) -> Result<Response> {
             let Some(a) = docs.analyse(uri) else {
                 return Ok(Response::new_ok(req.id, ()));
             };
-            let edits = renaming(docs, &a).and_then(|(sources, prog, info)| {
+            let edits = renaming(&a).and_then(|(sources, prog, info)| {
                 let offset = a
                     .offset(uri, at.position)
                     .ok_or("this file isn't in the program")?;
-                let note = crate::rename::target(&sources, &prog, &info, offset)?;
+                let note = crate::rename::target(sources, prog, info, offset)?;
                 let def = note.def.expect("a target is defined somewhere");
-                crate::rename::rename(&sources, &prog, &info, def, &p.new_name)
+                crate::rename::rename(sources, prog, info, def, &p.new_name)
             });
             Ok(match edits {
                 Ok(edits) => Response::new_ok(req.id, a.workspace_edit(&edits)),
@@ -488,9 +610,17 @@ fn respond(req: Request, docs: &Docs) -> Result<Response> {
     }
 }
 
-/// The program `a` is about, parsed and checked for renaming in it.
-fn renaming(docs: &Docs, a: &Analysis) -> std::result::Result<(Sources, Program, Info), String> {
-    crate::rename::checked(&a.root, &a.text, &|p: &Path| docs.read(p))
+/// Renaming uses the same checked AST as the other semantic requests.
+/// The proposed edits are still checked separately by `rename::rename`.
+fn renaming(a: &Analysis) -> std::result::Result<(&Sources, &Program, &Info), String> {
+    let program = a.checked.result.as_ref().map_err(|e| {
+        let kind = match e.phase {
+            Phase::Syntax => "syntax",
+            _ => "type",
+        };
+        format!("the program has a {kind} error; fix it first")
+    })?;
+    Ok((a.sources(), program.program(), program.info()))
 }
 
 /// The file of the `mod m;` whose name is at `offset`, if there's one.
@@ -518,96 +648,85 @@ fn publish(
     Ok(())
 }
 
-/// Publishes the diagnostics of every file of the program the open file at
-/// `uri` is in: its `version` has just changed. A file that was in the
-/// program and no longer is has its diagnostics cleared.
-fn publish_all(
+/// Reconcile every open file's current program before clearing diagnostics.
+/// An edit can detach an open module or attach a previously standalone one;
+/// publishing one root at a time would clear another program's diagnostics.
+fn refresh_diagnostics(
     conn: &Connection,
     docs: &Docs,
-    (uri, version): (Uri, i32),
-    published: &mut HashMap<PathBuf, Vec<Uri>>,
+    published: &mut HashMap<PathBuf, Rc<Analysis>>,
 ) -> Result<()> {
-    let Some(a) = docs.analyse(&uri) else {
+    let mut current = HashMap::new();
+    let mut paths: Vec<_> = docs.files.keys().collect();
+    paths.sort();
+    for path in paths {
+        if let Some(a) = docs.analyse(&docs.files[path].uri) {
+            current.insert(a.root.clone(), a);
+        }
+    }
+    if current.len() == published.len()
+        && current
+            .iter()
+            .all(|(root, a)| published.get(root).is_some_and(|old| Rc::ptr_eq(old, a)))
+    {
         return Ok(());
-    };
-    publish_analysis(conn, docs, &a, Some((&uri, version)), published)
-}
-
-/// Closing an overlay restores the file on disk. Reanalyse the remaining
-/// open files of its programs: restoring a root can also detach modules,
-/// which then belong to programs of their own. Clear old diagnostics that
-/// no refreshed program owns, including when its last open file closes.
-fn close_document(
-    conn: &Connection,
-    docs: &mut Docs,
-    uri: Uri,
-    published: &mut HashMap<PathBuf, Vec<Uri>>,
-) -> Result<()> {
-    let path = uri_path(&uri);
-    docs.0.remove(&path);
-    publish(conn, uri.clone(), None, Vec::new())?;
-    let roots: Vec<_> = published
-        .iter()
-        .filter(|(_, files)| files.iter().any(|file| uri_path(file) == path))
-        .map(|(root, _)| root.clone())
+    }
+    let before: HashMap<_, _> = published
+        .values()
+        .flat_map(|a| {
+            a.sources()
+                .program_files()
+                .iter()
+                .map(|f| (f.path.clone(), a.location(f.span()).uri))
+        })
         .collect();
-    let before: Vec<_> = roots
-        .iter()
-        .flat_map(|root| published.get(root).cloned().unwrap_or_default())
-        .collect();
-    let mut live = HashSet::new();
-    let mut refreshed = HashSet::new();
-    for file in &before {
-        if docs.text(file).is_none() || live.contains(&uri_path(file)) {
-            continue;
-        }
-        if let Some(a) = docs.analyse(file) {
-            live.extend(a.uris.iter().map(uri_path));
-            refreshed.insert(a.root.clone());
-            publish_analysis(conn, docs, &a, None, published)?;
+    let mut affected = HashSet::new();
+    for (root, a) in &current {
+        if !published.get(root).is_some_and(|old| Rc::ptr_eq(old, a)) {
+            affected.extend(a.sources().program_files().iter().map(|f| f.path.clone()));
+            if let Some(old) = published.get(root) {
+                affected.extend(old.sources().program_files().iter().map(|f| f.path.clone()));
+            }
         }
     }
-    for root in roots {
-        if !refreshed.contains(&root) {
-            published.remove(&root);
+    for (root, old) in published.iter() {
+        if !current.contains_key(root) {
+            affected.extend(old.sources().program_files().iter().map(|f| f.path.clone()));
         }
     }
-    let mut cleared = HashSet::new();
-    for old in before {
-        let old_path = uri_path(&old);
-        if old_path != path && !live.contains(&old_path) && cleared.insert(old_path) {
-            publish(conn, old, None, Vec::new())?;
+    let mut affected: Vec<_> = affected.into_iter().collect();
+    affected.sort();
+    let mut programs: Vec<_> = current.values().collect();
+    programs.sort_by_key(|a| &a.root);
+    for path in affected {
+        let uri = docs.uri(&path);
+        let mut live = false;
+        let mut diagnostics = Vec::new();
+        // Two open roots can load the same module file. Publish all its
+        // diagnostics together, including those from an unchanged root.
+        for a in &programs {
+            if a.sources().file(&path).is_some() {
+                live = true;
+                for (d, _) in diagnose(a, &uri) {
+                    if !diagnostics.contains(&d) {
+                        diagnostics.push(d);
+                    }
+                }
+            }
+        }
+        let doc = docs.files.get(&path);
+        if live {
+            if !diagnostics.is_empty() || doc.is_some() || before.contains_key(&path) {
+                publish(conn, uri, doc.map(|doc| doc.version), diagnostics)?;
+            }
+        } else if let Some(old_uri) = before.get(&path) {
+            publish(conn, old_uri.clone(), None, Vec::new())?;
         }
     }
-    Ok(())
-}
-
-fn publish_analysis(
-    conn: &Connection,
-    docs: &Docs,
-    a: &Analysis,
-    changed: Option<(&Uri, i32)>,
-    published: &mut HashMap<PathBuf, Vec<Uri>>,
-) -> Result<()> {
-    let before = published.get(&a.root).cloned().unwrap_or_default();
-    for file in &a.uris {
-        let diags: Vec<Diagnostic> = diagnose(a, file).into_iter().map(|(d, _)| d).collect();
-        // A file neither open nor with anything to say, now or before,
-        // needs nothing published.
-        if diags.is_empty() && docs.text(file).is_none() && !before.contains(file) {
-            continue;
-        }
-        let version = changed
-            .filter(|(uri, _)| *uri == file)
-            .map(|(_, version)| version);
-        publish(conn, file.clone(), version, diags)?;
-    }
-    let before = published.insert(a.root.clone(), a.uris.clone());
-    for old in before.into_iter().flatten() {
-        if !a.uris.contains(&old) {
-            publish(conn, old, None, Vec::new())?;
-        }
-    }
+    let mut cache = docs.cache.borrow_mut();
+    cache.roots.retain(|path, _| docs.files.contains_key(path));
+    cache.programs.retain(|root, _| current.contains_key(root));
+    *published = current;
     Ok(())
 }
 
@@ -1086,6 +1205,97 @@ fn offset(src: &str, pos: Position) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn semantic_requests_share_analysis_until_an_input_changes() {
+        let dir = std::env::temp_dir().join(format!("t-lsp-snapshot-{}", std::process::id()));
+        let main = path_uri(&dir.join("main.t"));
+        let util = path_uri(&dir.join("util.t"));
+        let src = "mod util;\nfn main() {\n    fn nested() -> i64 { 1 }\n    let _n: i64 = util::id(nested());\n}\n";
+        let helper = "pub fn id<T: Copy>(x: T) -> T { x }\n";
+        let mut docs = Docs::default();
+        docs.open(&main, 1, src.into());
+        docs.open(&util, 1, helper.into());
+        let a = docs.analyse(&util).unwrap();
+        let checked = a.checked.result.as_ref().unwrap();
+        // Analysis retains generics and nesting: no executable lowering.
+        assert!(checked.program().fns.iter().any(|f| !f.generics.is_empty()));
+        assert!(
+            !checked
+                .program()
+                .fns
+                .iter()
+                .any(|f| f.name.name == "nested")
+        );
+        assert!(Rc::ptr_eq(&a, &docs.analyse(&main).unwrap()));
+
+        for (method, extra) in [
+            (
+                HoverRequest::METHOD,
+                serde_json::json!({"position": {"line": 3, "character": 24}}),
+            ),
+            (
+                References::METHOD,
+                serde_json::json!({"position": {"line": 3, "character": 24}, "context": {"includeDeclaration": true}}),
+            ),
+            (
+                InlayHintRequest::METHOD,
+                serde_json::json!({"range": {"start": {"line": 0, "character": 0}, "end": {"line": 5, "character": 0}}}),
+            ),
+            (
+                PrepareRenameRequest::METHOD,
+                serde_json::json!({"position": {"line": 3, "character": 24}}),
+            ),
+        ] {
+            let mut params = extra;
+            params["textDocument"] = serde_json::json!({"uri": main});
+            let response = respond(Request::new(1.into(), method.into(), params), &docs).unwrap();
+            assert!(response.response_result.is_ok(), "{response:?}");
+            assert!(Rc::ptr_eq(&a, &docs.analyse(&main).unwrap()));
+        }
+
+        // Opening an unrelated overlay doesn't invalidate this program.
+        docs.open(&path_uri(&dir.join("other.t")), 1, "fn main() {}".into());
+        assert!(Rc::ptr_eq(&a, &docs.analyse(&main).unwrap()));
+        // Versions are part of a snapshot, even if the text is unchanged.
+        docs.open(&util, 2, helper.into());
+        let b = docs.analyse(&main).unwrap();
+        assert!(!Rc::ptr_eq(&a, &b));
+        assert!(Rc::ptr_eq(&b, &docs.analyse(&util).unwrap()));
+
+        docs.open(&util, 3, "pub fn id(_x: i64) -> bool { true }\n".into());
+        let failed = docs.analyse(&main).unwrap();
+        assert!(failed.checked.result.is_err());
+        assert!(!Rc::ptr_eq(&b, &failed));
+        assert!(Rc::ptr_eq(&failed, &docs.analyse(&util).unwrap()));
+
+        // Removed modules must leave both the program's snapshot and its
+        // root-discovery inputs, even if validation read them first.
+        docs.open(&main, 2, "fn main() {}\n".into());
+        let detached = docs.analyse(&main).unwrap();
+        assert!(detached.checked.result.is_ok());
+        docs.open(&util, 4, helper.into());
+        assert!(Rc::ptr_eq(&detached, &docs.analyse(&main).unwrap()));
+    }
+
+    #[test]
+    fn missing_inputs_and_closed_overlays_invalidate_failed_analysis() {
+        let dir = std::env::temp_dir().join(format!("t-lsp-missing-{}", std::process::id()));
+        let main = path_uri(&dir.join("main.t"));
+        let util = path_uri(&dir.join("util.t"));
+        let mut docs = Docs::default();
+        docs.open(&main, 1, "mod util;\nfn main() { util::f(); }\n".into());
+        let missing = docs.analyse(&main).unwrap();
+        assert!(missing.checked.result.is_err());
+        assert!(Rc::ptr_eq(&missing, &docs.analyse(&main).unwrap()));
+        docs.open(&util, 1, "pub fn f() {}\n".into());
+        let restored = docs.analyse(&main).unwrap();
+        assert!(restored.checked.result.is_ok());
+        docs.files.remove(&uri_path(&util));
+        let closed = docs.analyse(&main).unwrap();
+        assert!(closed.checked.result.is_err());
+        assert!(!Rc::ptr_eq(&restored, &closed));
+    }
 
     #[test]
     fn position_counts_utf16_units() {

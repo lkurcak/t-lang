@@ -90,7 +90,9 @@ pub fn run_checked(files: &Files) -> Result<t_lang::ast::Program, t_lang::error:
         Some((_, src)) => Ok(src.clone()),
         None => t_lang::no_files(p),
     };
-    t_lang::check_files(path, src, &read).result
+    t_lang::check_files(path, src, &read)
+        .result
+        .map(|p| p.lower().into_program())
 }
 
 /// Runs `src`, named `name` in messages, and checks that it does what its

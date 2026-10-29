@@ -344,6 +344,7 @@ mod tests {
             let mut items: Vec<String> = c
                 .result
                 .unwrap()
+                .lower()
                 .to_string()
                 .split_terminator("\n\n")
                 .map(str::trim)

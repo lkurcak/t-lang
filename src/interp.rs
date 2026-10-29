@@ -188,7 +188,8 @@ impl fmt::Display for Value {
 
 /// Runs `main`, with `term` as its streams. Anything the program prints goes there, even if the
 /// program later fails.
-pub fn run(prog: &Program, term: &mut dyn Terminal) -> Result<Value, Error> {
+pub fn run(program: &crate::mono::Executable, term: &mut dyn Terminal) -> Result<Value, Error> {
+    let prog = program.program();
     let fns = prog.fns.iter().map(|f| (f.name.name.as_str(), f)).collect();
     let derived = |tr: &str| -> HashSet<&str> {
         let with = prog.types.iter().filter(|d| d.derive_of(tr).is_some());

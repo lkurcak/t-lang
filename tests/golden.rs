@@ -142,7 +142,7 @@ fn mono() {
         let src = fs::read_to_string(&path).unwrap();
         let checked = t_lang::check_files(&path, &src, &t_lang::load::read_file);
         let actual = match checked.result {
-            Ok(program) => without_std(program).to_string(),
+            Ok(program) => without_std(program.lower().into_program()).to_string(),
             Err(e) => {
                 failures.push(format!("{name}: {}", e.render_in(&checked.sources)));
                 continue;
@@ -259,7 +259,7 @@ fn round_trip(path: &Path) -> Option<String> {
         return None;
     }
     let reprinted = match t_lang::check_source(&printed).result {
-        Ok(p) => p.to_string(),
+        Ok(p) => p.lower().to_string(),
         Err(e) => return Some(format!("{name}: {}", e.render(&name, &printed))),
     };
     if reprinted != printed {

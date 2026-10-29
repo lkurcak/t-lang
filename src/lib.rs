@@ -35,21 +35,47 @@ use error::{Error, Warning};
 use interp::Value;
 use source::Sources;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+/// Semantic analysis, including type, effect, refinement and borrow checking.
+/// A successful analysis has not been lifted or monomorphised.
 pub struct Checked {
     /// The program's files, as far as they were read.
     pub sources: Sources,
     /// Warnings found, including those before an error.
     pub warnings: Vec<Warning>,
     /// What the checker learned about the program, as far as it got.
-    pub info: check::Info,
-    /// The checked program, lifted (so with no nested functions left) and
-    /// monomorphised (so with no generics left), or the first error.
-    pub result: Result<ast::Program, Error>,
+    pub info: Arc<check::Info>,
+    /// The checked program before executable lowering, or the first error.
+    pub result: Result<CheckedProgram, Error>,
 }
 
-/// Lexes, parses, type-checks, lifts and monomorphises a program of one
-/// file, `main.t`, which has no `mod m;` files to read.
+/// A program that passed semantic checking, paired with its semantic
+/// information. Only analysis can construct one; later passes borrow it.
+#[derive(Debug)]
+pub struct CheckedProgram {
+    program: ast::Program,
+    info: Arc<check::Info>,
+}
+
+impl CheckedProgram {
+    /// The checked AST, with nested functions and generics still present.
+    pub fn program(&self) -> &ast::Program {
+        &self.program
+    }
+
+    pub fn info(&self) -> &check::Info {
+        &self.info
+    }
+
+    /// Lifts and monomorphises this program for execution or `t mono`.
+    pub fn lower(&self) -> mono::Executable {
+        mono::monomorphise(lift::lift(self))
+    }
+}
+
+/// Analyses a program of one file, `main.t`, which has no `mod m;` files
+/// to read. Lower a successful result explicitly to execute it.
 pub fn check_source(src: &str) -> Checked {
     check_files(Path::new("main.t"), src, &no_files)
 }
@@ -60,9 +86,8 @@ pub fn no_files(path: &Path) -> std::io::Result<String> {
     Err(std::io::Error::new(std::io::ErrorKind::NotFound, message))
 }
 
-/// Lexes, parses, type-checks, lifts and monomorphises the program that
-/// starts at `path`, whose text is `src`, reading the files of its modules
-/// with `read` (see `load.rs`).
+/// Analyses the program that starts at `path`, whose text is `src`, reading
+/// the files of its modules with `read` (see `load.rs`).
 pub fn check_files(path: &Path, src: &str, read: load::Read) -> Checked {
     let mut warnings = Vec::new();
     let (sources, program) = load::load(path, src, read);
@@ -72,7 +97,7 @@ pub fn check_files(path: &Path, src: &str, read: load::Read) -> Checked {
             return Checked {
                 sources,
                 warnings,
-                info: check::Info::default(),
+                info: Arc::default(),
                 result: Err(e),
             };
         }
@@ -86,7 +111,7 @@ pub fn check_files(path: &Path, src: &str, read: load::Read) -> Checked {
     // The core library's are its own business: what a program doesn't
     // use of it isn't dead, for one.
     warnings.retain(|w| !sources.in_library(w.span.start));
-    let mut result = result.map(|()| mono::monomorphise(&lift::lift(&program, &info), &info));
+    let mut result = result;
     // Messages name the prelude's traits as programs do.
     let shorten = |t: &str| info.traits.shorten(t);
     for w in &mut warnings {
@@ -95,6 +120,11 @@ pub fn check_files(path: &Path, src: &str, read: load::Read) -> Checked {
     if let Err(e) = &mut result {
         e.map_text(&shorten);
     }
+    let info = Arc::new(info);
+    let result = result.map(|()| CheckedProgram {
+        program,
+        info: info.clone(),
+    });
     Checked {
         sources,
         warnings,
@@ -190,7 +220,7 @@ fn run(
                 ..
             } = check_files(&path, &src, &read);
             checked(&sources, &warnings);
-            match result {
+            match result.map(|program| program.lower()) {
                 Err(e) => RunResult {
                     sources,
                     warnings,
@@ -209,6 +239,7 @@ fn run(
                         let result = result.and_then(|value| {
                             flushed.map(|()| value).map_err(|e| {
                                 let main = program
+                                    .program()
                                     .fns
                                     .iter()
                                     .find(|f| f.name.name == "main")
