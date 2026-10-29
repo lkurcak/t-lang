@@ -176,6 +176,75 @@ fn failed_proofs_explain_conditions_and_lost_facts() {
 }
 
 #[test]
+fn loop_proof_failures_link_to_the_loop_and_the_operation_that_may_change_it() {
+    for (source, operation, cause, header) in [
+        (
+            include_str!("t/err_soundness_refine_place_loop.t"),
+            "p.x = 0",
+            "assignment",
+            "while ",
+        ),
+        (
+            include_str!("t/err_soundness_refine_place_short_loop.t"),
+            "zero(&mut p)",
+            "mutable lending",
+            "while ",
+        ),
+        (
+            include_str!("t/err_soundness_measure_loop.t"),
+            "s = core::slice::empty()",
+            "assignment",
+            "while ",
+        ),
+        (
+            include_str!("t/err_refine_loop_for_diagnostic.t"),
+            "d = 0",
+            "assignment",
+            "for ",
+        ),
+    ] {
+        let (child, mut c) = start();
+        let (doc, diagnostics) = Doc::open(&mut c, "file:///tmp/loop-proof.t", source);
+        let errors: Vec<_> = diagnostics.iter().filter(|d| d["severity"] == 1).collect();
+        assert_eq!(errors.len(), 1, "{diagnostics:?}");
+        let d = errors[0];
+        assert!(
+            d["message"]
+                .as_str()
+                .unwrap()
+                .contains("required condition:"),
+            "{d}"
+        );
+        let related = d["relatedInformation"].as_array().unwrap();
+        assert_eq!(related.len(), 2, "{d}");
+        let change = related
+            .iter()
+            .find(|note| {
+                note["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("in this loop may change")
+            })
+            .unwrap();
+        assert!(change["message"].as_str().unwrap().contains(cause), "{d}");
+        assert_eq!(change["location"]["uri"], doc.uri);
+        assert_eq!(change["location"]["range"]["start"], doc.at(operation, 0));
+        let loop_note = related
+            .iter()
+            .find(|note| {
+                note["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("not assumed for every iteration")
+            })
+            .unwrap();
+        assert_eq!(loop_note["location"]["uri"], doc.uri);
+        assert_eq!(loop_note["location"]["range"]["start"], doc.at(header, 0));
+        stop(child, c);
+    }
+}
+
+#[test]
 fn reports_and_clears_diagnostics() {
     let (child, mut c) = start();
     let uri = "file:///tmp/test.t";

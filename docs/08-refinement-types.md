@@ -238,6 +238,14 @@ the condition says which upper bound is missing, such as `i < s.len()`.
 When available, a source note points to the assignment or mutable lending
 that invalidated facts about a place's previous value.
 
+For a place a loop may change, the notes point to both the loop and the
+assignment or mutable lending in its condition or body. This can be an
+operation later in the body than the failed proof: a fact from before the
+loop need not hold on the next iteration. The notes describe a possible
+change, not evidence that the operation already ran. Conditions established
+by the loop's test and written refinements used as loop invariants remain
+available to proofs.
+
 The explanation distinguishes an ordinary unproved condition from
 unsupported linear reasoning, checked arithmetic overflow in the solver,
 and its limits of 512 cases or 400 constraints per case. None is evidence

@@ -31,6 +31,24 @@ pub(super) struct Invalidation {
     place: Place,
     span: Span,
     cause: &'static str,
+    /// A possible change collected before walking the loop, rather than
+    /// an operation already evaluated on the current path.
+    loop_span: Option<Span>,
+}
+
+impl Invalidation {
+    pub(super) fn new(place: Place, span: Span, cause: &'static str) -> Self {
+        Self {
+            place,
+            span,
+            cause,
+            loop_span: None,
+        }
+    }
+
+    pub(super) fn place(&self) -> &Place {
+        &self.place
+    }
 }
 
 impl Checker {
@@ -58,17 +76,23 @@ impl Checker {
 
 impl Walk<'_> {
     pub(super) fn invalidate(&mut self, place: &Place, span: Span, cause: &'static str) {
+        self.record_invalidation(Invalidation::new(place.clone(), span, cause));
+    }
+
+    pub(super) fn invalidate_loop(&mut self, change: &Invalidation, loop_span: Span) {
+        let mut event = change.clone();
+        event.loop_span = Some(loop_span);
+        self.record_invalidation(event);
+    }
+
+    fn record_invalidation(&mut self, event: Invalidation) {
         if self
             .cur
             .keys()
             .chain(self.objs.keys())
-            .any(|p| p.within(place) || place.within(p))
+            .any(|p| p.within(&event.place) || event.place.within(p))
         {
-            self.invalidated.push(Invalidation {
-                place: place.clone(),
-                span,
-                cause,
-            });
+            self.invalidated.push(event);
         }
     }
 
@@ -245,6 +269,8 @@ impl Walk<'_> {
         }
         let mut invalidated = Vec::new();
         let mut seen = HashSet::new();
+        let mut loops = HashSet::new();
+        let mut selected = 0;
         for event in self.invalidated.iter().rev() {
             if !seen.insert(&event.place) {
                 continue;
@@ -255,14 +281,29 @@ impl Walk<'_> {
                 .any(|p| p.within(&event.place) || event.place.within(p))
                 && let Some(name) = self.place_name(&event.place)
             {
-                invalidated.push((
-                    event.span,
-                    format!(
-                        "{} invalidated facts about the previous value of `{name}`",
-                        event.cause
-                    ),
-                ));
-                if invalidated.len() == 2 {
+                if let Some(span) = event.loop_span {
+                    invalidated.push((
+                        event.span,
+                        format!("{} in this loop may change `{name}`", event.cause),
+                    ));
+                    if loops.insert(span) {
+                        invalidated.push((
+                            span,
+                            "facts from before this loop are not assumed for every iteration"
+                                .into(),
+                        ));
+                    }
+                } else {
+                    invalidated.push((
+                        event.span,
+                        format!(
+                            "{} invalidated facts about the previous value of `{name}`",
+                            event.cause
+                        ),
+                    ));
+                }
+                selected += 1;
+                if selected == 2 {
                     break;
                 }
             }

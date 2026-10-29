@@ -2390,24 +2390,32 @@ impl Walk<'_> {
         }
     }
 
-    /// The places assigned anywhere in `e`, or lent `&mut` to a call.
-    fn assigned(&self, e: &Expr, out: &mut Vec<Place>) {
+    /// The places assigned anywhere in `e`, or lent `&mut` to a call,
+    /// together with the source operations that may change them.
+    fn assigned(&self, e: &Expr, out: &mut Vec<Invalidation>) {
         if let ExprKind::Assign(_, place, _) = &e.kind
             && let Some(p) = self.place_of(place)
         {
-            out.push(p);
+            out.push(Invalidation::new(p, e.span, "assignment"));
         }
-        out.extend(self.lent.get(&e.id).into_iter().flatten().cloned());
+        out.extend(
+            self.lent
+                .get(&e.id)
+                .into_iter()
+                .flatten()
+                .map(|p| Invalidation::new(p.clone(), e.span, "mutable lending")),
+        );
         for c in e.children() {
             self.assigned(c, out);
         }
     }
 
-    /// Each place in `places` has a value nothing's known of but its
-    /// refinements.
-    fn forget(&mut self, places: &[Place]) {
-        for p in places {
-            self.kill(p);
+    /// Each place the loop may change has a value nothing's known of but
+    /// its refinements. Keep why its entry facts cannot be assumed.
+    fn forget(&mut self, changes: &[Invalidation], loop_span: Span) {
+        for change in changes {
+            self.invalidate_loop(change, loop_span);
+            self.kill(change.place());
         }
     }
 
@@ -3092,7 +3100,7 @@ impl Walk<'_> {
             ExprKind::While(label, c, body) => {
                 let mut changed = Vec::new();
                 self.assigned(e, &mut changed);
-                self.forget(&changed);
+                self.forget(&changed, e.span);
                 let c = self.cond(c)?;
                 let start = self.snapshot();
                 self.loops.push(Loop {
@@ -3105,7 +3113,7 @@ impl Walk<'_> {
                 body?;
                 self.restore(&start);
                 if broke {
-                    self.forget(&changed);
+                    self.forget(&changed, e.span);
                 } else {
                     self.fact(c.not());
                 }
@@ -3114,7 +3122,7 @@ impl Walk<'_> {
             ExprKind::Loop(label, body) => {
                 let mut changed = Vec::new();
                 self.assigned(e, &mut changed);
-                self.forget(&changed);
+                self.forget(&changed, e.span);
                 let start = self.snapshot();
                 self.loops.push(Loop {
                     label: label.as_ref().map(|l| l.name.name.clone()),
@@ -3125,7 +3133,7 @@ impl Walk<'_> {
                 body?;
                 self.restore(&start);
                 self.reachable = start.reachable && broke;
-                self.forget(&changed);
+                self.forget(&changed, e.span);
                 let ty = self.ty_of(e);
                 Ok(self.unknown(&ty))
             }
