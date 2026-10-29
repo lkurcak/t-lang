@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.38.0 (2026-10-30)
 
 Step 25: type aliases. See [docs/25-type-aliases.md](docs/25-type-aliases.md).
 
@@ -17,6 +17,38 @@ Step 25: type aliases. See [docs/25-type-aliases.md](docs/25-type-aliases.md).
 - Editors: hover shows what an alias stands for at each use; go to
   definition, rename and document symbols know aliases; tree-sitter
   parses `type` items.
+- Refinement errors explain themselves: a failed proof, or a `panic`
+  that couldn't be removed, says the condition needed and the facts known
+  there, with notes at the assignment, mutable lending or loop that made
+  an earlier fact be forgotten. In the LSP too.
+- `docs/reference.md`: a language reference, by topic rather than by
+  step.
+- Generated tests: parser, editor recovery and formatter properties;
+  solver answers against finite models; and programs checked against
+  their computed output.
+
+### Changed
+
+- The LSP reuses a program's analysis across requests while its files
+  are unchanged, and recovers document symbols around syntax errors.
+- The library separates checking from lowering: `check_source` and
+  `check_files` return a checked program, which is lowered to run it.
+- The README and `examples/hello.t` start from a minimal greeting; the
+  old example is `examples/features.t`.
+- CI checks pull request titles are conventional commits.
+
+### Fixed
+
+- Nested closures returning a borrow panicked in the borrow checker.
+- A failed final flush of stdout was ignored, so output could be lost
+  with a successful exit; it's now a runtime error at `main`.
+- The refinement solver panicked (or wrapped, in release builds) on a
+  coefficient of `i128::MIN`; such a proof is now left unproved.
+- `t fmt` could panic on a file ending in `/// NodeId(`, and its safety
+  check took different string literals that looked like node ids as
+  equal.
+- Closing an unsaved file in an editor left errors it caused in other
+  files.
 
 ## 0.37.0 (2026-10-29)
 
