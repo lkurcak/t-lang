@@ -202,9 +202,20 @@ fn run(
                     None => {
                         let mut term = Process::default();
                         let result = interp::run(&program, &mut term);
-                        // Nowhere to say it if this fails: the program
-                        // found out from its last write, if it could.
-                        let _ = std::io::Write::flush(&mut term.out);
+                        // A write may have reached only the buffer. Flush
+                        // even after an error, keeping that error if there
+                        // was one, and otherwise report a failed flush.
+                        let flushed = std::io::Write::flush(&mut term.out);
+                        let result = result.and_then(|value| {
+                            flushed.map(|()| value).map_err(|e| {
+                                let main = program
+                                    .fns
+                                    .iter()
+                                    .find(|f| f.name.name == "main")
+                                    .expect("a checked program has a main function");
+                                Error::runtime(main.name.span, format!("cannot flush stdout: {e}"))
+                            })
+                        });
                         RunResult {
                             sources,
                             warnings,

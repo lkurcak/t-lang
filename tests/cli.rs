@@ -209,3 +209,34 @@ fn input_that_isnt_text_fails_the_program() {
         "error: stream did not contain valid UTF-8\n"
     );
 }
+
+/// A small write succeeds into the interpreter's buffer, then fails when
+/// the buffer is flushed. The command must still report that failure.
+#[cfg(unix)]
+#[test]
+fn buffered_output_errors_fail_the_command() {
+    use std::os::fd::OwnedFd;
+    use std::os::unix::net::UnixStream;
+
+    for (file, message) in [
+        ("examples/brew.t", "runtime error: cannot flush stdout:"),
+        (
+            "tests/t/panic_message.t",
+            "runtime error: panicked: the end",
+        ),
+    ] {
+        let (writer, reader) = UnixStream::pair().unwrap();
+        drop(reader);
+        let writer: OwnedFd = writer.into();
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(file);
+        let out = Command::new(env!("CARGO_BIN_EXE_t"))
+            .arg(path)
+            .stdout(std::process::Stdio::from(writer))
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1), "{out:?}");
+        let stderr = String::from_utf8(out.stderr).unwrap();
+        assert!(stderr.contains(message), "{stderr}");
+        assert!(stderr.contains(&format!("{file}:")), "{stderr}");
+    }
+}
