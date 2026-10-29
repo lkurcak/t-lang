@@ -130,6 +130,9 @@ pub const INTRINSICS: &[&str] = &[
     "alloc::raw::RawBuf::slice_mut",
     "alloc::raw::RawBuf::free",
     "alloc::raw::out_of_memory",
+    "alloc::arena::Arena::new",
+    "alloc::arena::Arena::alloc",
+    "alloc::arena::Arena::len",
     "std::io::Stdin::read_byte",
     "std::io::Stdout::write_byte",
     "std::io::Stderr::write_byte",
@@ -141,10 +144,15 @@ pub const INTRINSICS: &[&str] = &[
 pub const INTRINSIC_TYPES: &[&str] = &[
     BOX,
     "alloc::raw::RawBuf",
+    ARENA,
     "std::io::Stdin",
     "std::io::Stdout",
     "std::io::Stderr",
 ];
+
+/// The symbol of the alloc library's `Arena`, the one intrinsic type
+/// that's invariant in its parameter (lemma R3 of docs/23-arenas.md).
+pub const ARENA: &str = "alloc::arena::Arena";
 
 /// The symbol of the alloc library's `Box`, which is `Type::Box`.
 pub const BOX: &str = "alloc::boxed::Box";
