@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.37.0 (2026-10-29)
 
 Step 24: visibility and effect inference. See
 [docs/24-visibility.md](docs/24-visibility.md).
