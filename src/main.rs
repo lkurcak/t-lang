@@ -98,7 +98,7 @@ fn main() -> ExitCode {
                 // The program with every generic function and type replaced
                 // by its copies, as the interpreter runs it.
                 if cmd == "mono" {
-                    print!("{program}");
+                    print!("{}", program.lower());
                 }
                 ExitCode::SUCCESS
             }

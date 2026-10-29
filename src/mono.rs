@@ -49,15 +49,33 @@ use crate::types::{Params, Region, Subst, Type};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-/// `prog`, which must have checked with `info` and then been lifted,
-/// without generics.
+/// A lifted, monomorphised program, ready for the interpreter.
+pub struct Executable(Program);
+
+impl Executable {
+    pub fn program(&self) -> &Program {
+        &self.0
+    }
+
+    pub fn into_program(self) -> Program {
+        self.0
+    }
+}
+
+impl std::fmt::Display for Executable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+/// `prog`, which has been checked and lifted, without generics.
 ///
 /// Nothing a copy does can be wrong where the generic function wasn't: the
 /// checker checked it for every type its type parameters could be, and
 /// what a copy does depends on its types only through the impls the bounds
 /// said there were.
-pub fn monomorphise(prog: &Program, info: &Info) -> Program {
-    Mono::new(prog, info).run()
+pub fn monomorphise(prog: crate::lift::Lifted<'_>) -> Executable {
+    Executable(Mono::new(&prog.program, prog.info).run())
 }
 
 /// The std library's function that reports the error `main` gives back.

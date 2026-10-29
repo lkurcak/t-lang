@@ -89,10 +89,16 @@ per type it's used at) → `interp` (tree-walking interpreter, which checks
 memory as it goes). A real backend (emitting C) comes once the type system
 has enough in it to be worth compiling.
 
+`t check` stops after semantic checking, including effects, refinements and
+borrows. Running a program and `t mono` then lower it for execution. The
+[analysis API and LSP snapshots](docs/analysis.md) keep those phases separate.
+
 ## Editor support
 
 `t lsp` is a Language Server Protocol server over stdio. It reports errors and
 warnings as you type, and offers their fixes as quick fixes (code actions).
+Semantic requests share the program's analysis until an open document or a
+disk dependency changes; closing an unsaved file restores its disk contents.
 Hovering shows types, and the doc comment of a function, struct, enum,
 field or variant: a `///` comment just before it, written in Markdown.
 Go to definition works for variables, functions, types, fields,

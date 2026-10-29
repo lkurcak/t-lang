@@ -2237,3 +2237,299 @@ fn hovers_strings_and_characters() {
 
     stop(child, c);
 }
+
+#[test]
+fn disk_dependencies_refresh_on_requests_and_file_notifications() {
+    let dir = std::env::temp_dir().join(format!("t-lsp-disk-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = "mod util;\nmod consumer;\nfn main() { consumer::run(); }\n";
+    std::fs::write(dir.join("main.t"), main).unwrap();
+    let helper = "pub fn helper() -> i64 { 1 }\n";
+    std::fs::write(dir.join("util.t"), helper).unwrap();
+    std::fs::write(
+        dir.join("consumer.t"),
+        "pub fn run() { let _x: i64 = crate::util::helper(); }\n",
+    )
+    .unwrap();
+    let main_uri = file_uri(&dir.join("main.t"));
+    let util_uri = file_uri(&dir.join("util.t"));
+    let consumer_uri = file_uri(&dir.join("consumer.t"));
+    let (child, mut c) = start();
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": main_uri, "languageId": "t", "version": 1, "text": main}
+        }}),
+    );
+    assert!(diagnostics_for(&mut c, &main_uri).is_empty());
+    let request = |id| {
+        json!({"jsonrpc": "2.0", "id": id, "method": "textDocument/hover", "params": {
+            "textDocument": {"uri": main_uri}, "position": {"line": 2, "character": 24}
+        }})
+    };
+    // An unrelated disk edit neither rechecks nor republishes this program.
+    std::fs::write(dir.join("unrelated.t"), "fn main() {}\n").unwrap();
+    c.send(request(2));
+    assert!(c.diagnostics_before_response(2).is_empty());
+
+    // A closed dependency's edit is observed without a client notification.
+    // Equal-length text also rules out using file size as a freshness check.
+    let changed = "pub fn helper()-> bool{true}\n";
+    assert_eq!(changed.len(), helper.len());
+    let modified = std::fs::metadata(dir.join("util.t"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    std::fs::write(dir.join("util.t"), changed).unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(dir.join("util.t"))
+        .unwrap()
+        .set_times(std::fs::FileTimes::new().set_modified(modified))
+        .unwrap();
+    c.send(request(3));
+    let diags = c.diagnostics_before_response(3);
+    assert!(
+        diags[&consumer_uri]["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| {
+                d["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("expected `i64`, found `bool`")
+            }),
+        "{diags:?}"
+    );
+
+    // A notification can refresh diagnostics without a semantic request.
+    std::fs::write(dir.join("util.t"), helper).unwrap();
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "workspace/didChangeWatchedFiles", "params": {
+            "changes": [{"uri": util_uri, "type": 2}]
+        }}),
+    );
+    assert!(diagnostics_for(&mut c, &consumer_uri).is_empty());
+    c.send(request(4));
+    c.response(4);
+
+    // Removing a module reports its load error and clears diagnostics for
+    // files that loading can no longer reach. Restoring it invalidates the
+    // failed snapshot, including the read of the missing file.
+    std::fs::remove_file(dir.join("util.t")).unwrap();
+    c.send(request(5));
+    let diags = c.diagnostics_before_response(5);
+    assert!(
+        diags[&main_uri]["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| { d["message"].as_str().unwrap().contains("can't read") }),
+        "{diags:?}"
+    );
+    assert_eq!(diags[&consumer_uri]["diagnostics"], json!([]));
+    std::fs::write(dir.join("util.t"), helper).unwrap();
+    c.send(request(6));
+    let diags = c.diagnostics_before_response(6);
+    assert_eq!(diags[&main_uri]["diagnostics"], json!([]));
+    stop(child, c);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn editing_a_root_detaches_and_reattaches_open_modules() {
+    let dir = std::env::temp_dir().join(format!("t-lsp-membership-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = "mod util;\nfn main() { let _n: i64 = util::helper(); }\n";
+    let util = "pub fn helper() -> bool { true }\n";
+    std::fs::write(dir.join("main.t"), main).unwrap();
+    std::fs::write(dir.join("util.t"), util).unwrap();
+    let main_uri = file_uri(&dir.join("main.t"));
+    let util_uri = file_uri(&dir.join("util.t"));
+    let (child, mut c) = start();
+    for (uri, text) in [(&main_uri, main), (&util_uri, util)] {
+        c.send(
+            json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+                "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": text}
+            }}),
+        );
+        assert!(!diagnostics_for(&mut c, &main_uri).is_empty());
+    }
+    for (version, text, attached) in [(2, "fn main() {}\n", false), (3, main, true)] {
+        c.send(json!({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
+            "textDocument": {"uri": main_uri, "version": version}, "contentChanges": [{"text": text}]
+        }}));
+        c.send(
+            json!({"jsonrpc": "2.0", "id": version, "method": "textDocument/hover", "params": {
+                "textDocument": {"uri": util_uri}, "position": {"line": 0, "character": 8}
+            }}),
+        );
+        let diags = c.diagnostics_before_response(version);
+        let util_diags = diags[&util_uri]["diagnostics"].as_array().unwrap();
+        if attached {
+            assert!(util_diags.is_empty(), "{diags:?}");
+            assert!(
+                !diags[&main_uri]["diagnostics"]
+                    .as_array()
+                    .unwrap()
+                    .is_empty()
+            );
+        } else {
+            assert_eq!(diags[&main_uri]["diagnostics"], json!([]));
+            assert!(
+                util_diags.iter().any(|d| d["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("program has no `main`")),
+                "{diags:?}"
+            );
+        }
+    }
+    stop(child, c);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn a_new_nearer_root_changes_an_open_modules_program() {
+    let dir = std::env::temp_dir().join(format!("t-lsp-nearer-root-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("nested")).unwrap();
+    let outer =
+        "mod nested { pub mod util; }\nfn main() { let _n: i64 = nested::util::helper(); }\n";
+    let util = "pub fn helper() -> i64 { 1 }\n";
+    std::fs::write(dir.join("main.t"), outer).unwrap();
+    std::fs::write(dir.join("nested/util.t"), util).unwrap();
+    let outer_uri = file_uri(&dir.join("main.t"));
+    let nearer_uri = file_uri(&dir.join("nested/main.t"));
+    let util_uri = file_uri(&dir.join("nested/util.t"));
+    let (child, mut c) = start();
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": util_uri, "languageId": "t", "version": 1, "text": util}
+        }}),
+    );
+    assert!(diagnostics_for(&mut c, &util_uri).is_empty());
+    std::fs::write(
+        dir.join("nested/main.t"),
+        "mod util;\nfn main() { let _b: bool = util::helper(); }\n",
+    )
+    .unwrap();
+    c.send(
+        json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": {
+            "textDocument": {"uri": util_uri}, "position": {"line": 0, "character": 8}
+        }}),
+    );
+    let diags = c.diagnostics_before_response(2);
+    assert!(
+        diags[&nearer_uri]["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| {
+                d["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("expected `bool`, found `i64`")
+            }),
+        "{diags:?}"
+    );
+    assert_eq!(diags[&outer_uri]["diagnostics"], json!([]));
+    stop(child, c);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn check_run_and_lsp_agree_on_semantic_acceptance() {
+    let dir = std::env::temp_dir().join(format!("t-lsp-acceptance-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("main.t");
+    let uri = file_uri(&path);
+    let cases = [
+        (
+            "fn id<T: Copy>(x: T) -> T { x }\nfn main() { let _n = id(42i64); }",
+            true,
+        ),
+        (include_str!("t/err_arg_type.t"), false),
+        (include_str!("t/err_effect_unwrap.t"), false),
+        (include_str!("t/err_refine_arg.t"), false),
+        (include_str!("t/err_borrow_assign.t"), false),
+    ];
+    let (child, mut c) = start();
+    for (index, (src, accepted)) in cases.into_iter().enumerate() {
+        std::fs::write(&path, src).unwrap();
+        for command in ["check", "run"] {
+            let output = Command::new(env!("CARGO_BIN_EXE_t"))
+                .arg(command)
+                .arg(&path)
+                .output()
+                .unwrap();
+            assert_eq!(
+                output.status.success(),
+                accepted,
+                "{command}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        c.send(json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": uri, "languageId": "t", "version": index as i32, "text": src}
+        }}));
+        let diags = diagnostics_for(&mut c, &uri);
+        assert_eq!(
+            !diags.iter().any(|d| d["severity"] == 1),
+            accepted,
+            "{diags:?}"
+        );
+    }
+    stop(child, c);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn refreshing_one_root_preserves_another_roots_diagnostics_in_shared_files() {
+    let dir = std::env::temp_dir().join(format!("t-lsp-shared-file-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("nested")).unwrap();
+    let outer = "mod nested { pub mod util; }\npub fn value() -> i64 { 1 }\nfn main() { let _ = nested::util::helper(); }\n";
+    let inner =
+        "mod util;\npub fn value() -> bool { true }\nfn main() { let _ = util::helper(); }\n";
+    let util = "pub fn helper() -> i64 { crate::value() }\n";
+    std::fs::write(dir.join("main.t"), outer).unwrap();
+    std::fs::write(dir.join("nested/main.t"), inner).unwrap();
+    std::fs::write(dir.join("nested/util.t"), util).unwrap();
+    let outer_uri = file_uri(&dir.join("main.t"));
+    let inner_uri = file_uri(&dir.join("nested/main.t"));
+    let util_uri = file_uri(&dir.join("nested/util.t"));
+    let (child, mut c) = start();
+    for (uri, text) in [(&outer_uri, outer), (&inner_uri, inner)] {
+        c.send(
+            json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+                "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": text}
+            }}),
+        );
+    }
+    assert!(!diagnostics_for(&mut c, &util_uri).is_empty());
+    // Only the outer root changes. Its successful analysis must not clear
+    // the error the unchanged inner root still finds in the shared file.
+    c.send(json!({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
+        "textDocument": {"uri": outer_uri, "version": 2}, "contentChanges": [{"text": format!("{outer}\n")}]
+    }}));
+    c.send(
+        json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": {
+            "textDocument": {"uri": inner_uri}, "position": {"line": 0, "character": 5}
+        }}),
+    );
+    let diags = c.diagnostics_before_response(2);
+    assert!(
+        diags[&util_uri]["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| {
+                d["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("expected `i64`, found `bool`")
+            }),
+        "{diags:?}"
+    );
+    stop(child, c);
+    std::fs::remove_dir_all(dir).unwrap();
+}

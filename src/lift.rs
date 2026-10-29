@@ -31,11 +31,26 @@ use crate::traits::FnKind;
 use std::cell::Cell;
 use std::sync::Arc;
 
-/// `prog`, which must have checked with `info`, with no nested functions or
-/// local types. Each function nested in another comes right after it, in
+/// A checked program with no nested functions or local types, paired with
+/// its semantic information for monomorphisation.
+pub struct Lifted<'a> {
+    pub(crate) program: Program,
+    pub(crate) info: &'a Info,
+}
+
+/// `checked` with no nested functions or local types.
+/// Each function nested in another comes right after it, in
 /// order, and the local types come after the top-level ones, in the order of
 /// `Program::all_types`.
-pub fn lift(prog: &Program, info: &Info) -> Program {
+pub fn lift(checked: &crate::CheckedProgram) -> Lifted<'_> {
+    let (prog, info) = (checked.program(), checked.info());
+    Lifted {
+        program: lift_program(prog, info),
+        info,
+    }
+}
+
+fn lift_program(prog: &Program, info: &Info) -> Program {
     let cx = Cx {
         info,
         next_id: Cell::new(prog.next_id),
