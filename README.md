@@ -7,38 +7,15 @@ type-theory concept at a time, mainly to learn what those concepts are and why
 they matter.
 
 ```rust
-enum Shape { Circle(i64), Rect(i64, i64), Empty }
-
-/// The area of `s`, with π rounded down to 3.
-fn area(s: Shape) -> i64 with panic {
-    match s {
-        Shape::Circle(r) => 3 * r * r,
-        Shape::Rect(w, h) => w * h,
-        Shape::Empty => 0,
-    }
-}
-
-fn fact(n: i64) -> i64 with panic {
-    if n <= 1 { 1 } else { n * fact(n - 1) }
-}
-
-fn twice<effect e, F: Fn(i64) -> i64 with e + Discard>(f: F, x: i64) -> i64 with e { f(f(x)) }
-
-fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
-    let n = 5;
-    out.line(&fact(10))?;                                      // expect: 3628800
-    out.line(&twice(fact, 3))?;                                // expect: 720
-    out.line(&twice(|x| x + n, 0))?;                           // expect: 10
-    out.line(&twice(square, 3))?;                              // expect: 81
-    out.line(&area(Shape::Rect(3, 4)))?;                       // expect: 12
-    out.line(&(area(Shape::Circle(2)) + area(Shape::Empty)))?; // expect: 12
-
-    // A nested `fn`: only `main` can see it.
-    fn square(x: i64) -> i64 with panic { x * x }
-    Result::Ok(())
+    out.line(&"Hello, T!") // expect: Hello, T!
 }
 ```
+
+[examples/features.t](examples/features.t) shows enums, pattern matching,
+generics and closures; [examples/list.t](examples/list.t) shows ownership
+and borrowing.
 
 ## Install
 
@@ -267,10 +244,10 @@ has to fit that:
 
 - **Every value has a size known at compile time.** Generics are
   monomorphized, so there's no boxing and no type information at run time.
-- **Nothing allocates behind your back.** `Box::new(x)` is the only thing
-  that touches the heap, and the box is freed when its owner goes away,
-  which the borrow checker works out at compile time: no garbage collector,
-  no reference counting. `Box` is the alloc library's,
+- **Allocation is an effect.** `Box::new(x)` and the allocating operations
+  of `List`, `String` and `Arena` say `with alloc`. Ownership and
+  destructors free their memory: no garbage collector, no reference
+  counting. `Box` is the alloc library's,
   `alloc::boxed::Box`, as in Rust's split between `core`, `alloc` and
   `std`. See
   [docs/05-ownership.md](docs/05-ownership.md). An arena,
@@ -284,9 +261,12 @@ has to fit that:
   (see [docs/06c.1-opaque-types.md](docs/06c.1-opaque-types.md)).
 - **Errors are values, not exceptions.** There's no unwinding. A panic
   aborts, and a function's type says if it may: `fn mean(a: i64, b: i64) ->
-  i64 with panic`. One that doesn't say so can't, nor can a `main` that
-  doesn't, nor anything it calls; allocating is in types the same way,
-  `with alloc`. See [docs/07-effects.md](docs/07-effects.md). Arithmetic
+  i64 with panic`. Allocating is recorded the same way, `with alloc`.
+  Non-exported functions, including `main`, infer their effects when no
+  `with` is written; `with {}` explicitly promises none. Exported
+  functions and trait methods have only the effects their signatures say.
+  See [docs/07-effects.md](docs/07-effects.md) and
+  [docs/24-visibility.md](docs/24-visibility.md). Arithmetic
   the checker proves can't overflow, from refinement types like `{ d: i64
   | d > 0 }`, can't panic (see
   [docs/08-refinement-types.md](docs/08-refinement-types.md)). A struct's
