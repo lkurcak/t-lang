@@ -74,7 +74,11 @@ impl Client {
 
 /// Starts `t lsp` and initializes it.
 fn start() -> (std::process::Child, Client) {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_t"))
+    start_command(Command::new(env!("CARGO_BIN_EXE_t")))
+}
+
+fn start_command(mut command: Command) -> (std::process::Child, Client) {
+    let mut child = command
         .arg("lsp")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -682,8 +686,7 @@ fn main() with alloc {
         );
         c.response(id)["result"].clone()
     };
-    // Core's `Eq`, in the prelude, with its doc. (Their files are built
-    // into the compiler, so there's nowhere to go to.)
+    // Core's `Eq`, in the prelude, with its doc.
     let eq = ask(&mut c, "textDocument/hover", "Eq>");
     let eq = eq["contents"]["value"].as_str().unwrap().to_string();
     assert!(eq.starts_with("```t\ntrait Eq\n```"), "{eq}");
@@ -963,15 +966,15 @@ fn top(x: i64) -> P { P { x } }
 }
 
 /// A file open in `t lsp`, for asking about places in it.
-struct Doc {
-    uri: &'static str,
-    src: &'static str,
+struct Doc<'a> {
+    uri: &'a str,
+    src: &'a str,
     id: i64,
 }
 
-impl Doc {
+impl<'a> Doc<'a> {
     /// Opens `src` and checks it has the diagnostics `want` (by message).
-    fn open(c: &mut Client, uri: &'static str, src: &'static str) -> (Doc, Vec<Value>) {
+    fn open(c: &mut Client, uri: &'a str, src: &'a str) -> (Self, Vec<Value>) {
         c.send(
             json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
                 "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
@@ -2233,11 +2236,306 @@ fn closing_an_unsaved_root_can_detach_an_open_module() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// The core library's items have hovers, with their doc comments, but no
-/// definition to go to: its files are built into the compiler. A `for` loop
+/// A navigation target must be an ordinary readable file containing the
+/// exact embedded bytes, with a UTF-16 range over the requested declaration.
+/// Empty declaration/name means the start of a module's file.
+fn library_location(
+    location: &Value,
+    library: &str,
+    file: &str,
+    declaration: &str,
+    name: &str,
+) -> std::path::PathBuf {
+    let files = match library {
+        "core" => t_lang::load::CORE_FILES,
+        "alloc" => t_lang::load::ALLOC_FILES,
+        "std" => t_lang::load::STD_FILES,
+        _ => panic!("unknown library {library}"),
+    };
+    let embedded = files.iter().find(|(f, _)| *f == file).unwrap().1;
+    let uri = location["uri"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{location}"));
+    assert!(uri.starts_with("file:///"), "{location}");
+    let uri: lsp_types::Uri = uri.parse().unwrap();
+    let decoded = uri.path().as_estr().decode().into_string().unwrap();
+    let path = if cfg!(windows) {
+        decoded.trim_start_matches('/')
+    } else {
+        &decoded
+    };
+    let path = std::path::PathBuf::from(path);
+    assert!(
+        path.ends_with(std::path::Path::new(library).join(file)),
+        "{location}"
+    );
+    assert!(!path.starts_with(env!("CARGO_MANIFEST_DIR")), "{location}");
+    assert_eq!(std::fs::read(&path).unwrap(), embedded.as_bytes());
+    assert!(std::fs::metadata(&path).unwrap().permissions().readonly());
+    let start = embedded.find(declaration).unwrap() + declaration.rfind(name).unwrap();
+    let end = start + name.len();
+    let position = |at: usize| {
+        let before = &embedded[..at];
+        json!({
+            "line": before.matches('\n').count(),
+            "character": before.rsplit('\n').next().unwrap().encode_utf16().count()
+        })
+    };
+    assert_eq!(
+        location["range"],
+        json!({"start": position(start), "end": position(end)})
+    );
+    path
+}
+
+#[test]
+fn navigates_library_functions_methods_types_and_imports() {
+    let (child, mut c) = start();
+    let src = "\
+use core::mem::replace as exchange;
+use core::mem;
+use alloc::list::List;
+use alloc::list;
+use std::io::{Error, ErrorKind};
+use std::io;
+use std::Os;
+#[derive(Discard)] struct Point { x: i64 }
+fn main() with alloc {
+    let mut value = 1;
+    let _old = exchange(&mut value, 2);
+    let mut items: List<Option<Point>> = List::new();
+    items.push(Option::Some(Point { x: value }));
+    let _ = items.pop();
+    let error = Error::new(ErrorKind::Other);
+    let _ = error.kind();
+}
+";
+    let (mut d, diagnostics) = Doc::open(&mut c, "file:///tmp/library-navigation.t", src);
+    assert!(
+        diagnostics.iter().all(|d| d["severity"] != 1),
+        "{diagnostics:?}"
+    );
+    for (needle, nth, library, file, declaration, name) in [
+        ("replace as", 0, "core", "mem.t", "fn replace", "replace"),
+        ("exchange(", 0, "core", "mem.t", "fn replace", "replace"),
+        ("mem;", 0, "core", "mem.t", "", ""),
+        ("Option<", 0, "core", "option.t", "enum Option", "Option"),
+        (
+            "Some(",
+            0,
+            "core",
+            "option.t",
+            "enum Option<T> { None, Some",
+            "Some",
+        ),
+        ("List;", 0, "alloc", "list.t", "struct List", "List"),
+        ("List<", 0, "alloc", "list.t", "struct List", "List"),
+        ("list;", 0, "alloc", "list.t", "", ""),
+        ("push(", 0, "alloc", "list.t", "fn push", "push"),
+        ("Error,", 0, "std", "io.t", "struct Error", "Error"),
+        (
+            "ErrorKind::Other",
+            0,
+            "std",
+            "io.t",
+            "enum ErrorKind",
+            "ErrorKind",
+        ),
+        ("io;", 0, "std", "io.t", "", ""),
+        ("kind()", 0, "std", "io.t", "fn kind", "kind"),
+        ("Os;", 0, "std", "lib.t", "struct Os", "Os"),
+        ("core::mem::", 0, "core", "lib.t", "", ""),
+        ("alloc::list::", 0, "alloc", "lib.t", "", ""),
+        ("std::io::", 0, "std", "lib.t", "", ""),
+    ] {
+        let response = d.ask(&mut c, "textDocument/definition", needle, nth, json!({}));
+        library_location(&response["result"], library, file, declaration, name);
+    }
+
+    // Type definition includes library and program types together, in order.
+    let response = d.ask(
+        &mut c,
+        "textDocument/typeDefinition",
+        "items:",
+        0,
+        json!({}),
+    );
+    let defs = response["result"].as_array().unwrap();
+    assert_eq!(defs.len(), 3, "{response}");
+    library_location(&defs[0], "alloc", "list.t", "struct List", "List");
+    library_location(&defs[1], "core", "option.t", "enum Option", "Option");
+    assert_eq!(defs[2]["uri"], d.uri);
+    assert_eq!(defs[2]["range"], d.range("Point", 0));
+    let response = d.ask(
+        &mut c,
+        "textDocument/typeDefinition",
+        "error =",
+        0,
+        json!({}),
+    );
+    let defs = response["result"].as_array().unwrap();
+    assert_eq!(defs.len(), 1, "{response}");
+    library_location(&defs[0], "std", "io.t", "struct Error", "Error");
+
+    // Navigation does not make library declarations renameable from a program.
+    for needle in ["exchange(", "List;", "kind()"] {
+        for method in ["textDocument/prepareRename", "textDocument/rename"] {
+            let response = d.ask(&mut c, method, needle, 0, json!({"newName": "changed"}));
+            assert!(
+                response["error"]["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("can't be changed"),
+                "{response}"
+            );
+        }
+    }
+    // Program references continue to exclude library declarations.
+    assert_eq!(d.references(&mut c, "exchange(", 0, true).len(), 2);
+    stop(child, c);
+}
+
+#[test]
+fn browses_open_library_sources_without_editing_them() {
+    let (child, mut c) = start();
+    let (mut program, diagnostics) = Doc::open(
+        &mut c,
+        "file:///tmp/browse-library.t",
+        "use alloc::list::List;\nfn main() { let _ = List::<i64>::new(); }\n",
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    let target = program.ask(&mut c, "textDocument/definition", "List;", 0, json!({}));
+    let path = library_location(&target["result"], "alloc", "list.t", "struct List", "List");
+    let uri = target["result"]["uri"].as_str().unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    let (mut d, diagnostics) = Doc::open(&mut c, uri, &text);
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    let r = d.ask(&mut c, "textDocument/definition", "RawBuf,", 0, json!({}));
+    library_location(&r["result"], "alloc", "raw.t", "struct RawBuf", "RawBuf");
+    let r = d.ask(&mut c, "textDocument/definition", "empty()", 0, json!({}));
+    library_location(&r["result"], "alloc", "raw.t", "fn empty", "empty");
+    let r = d.ask(&mut c, "textDocument/definition", "len }", 0, json!({}));
+    assert_eq!(r["result"]["uri"], uri, "{r}");
+    let start = d.at("len: usize", 0);
+    assert_eq!(
+        r["result"]["range"],
+        json!({
+            "start": start,
+            "end": {"line": start["line"], "character": start["character"].as_u64().unwrap() + 3}
+        })
+    );
+    let r = d.ask(&mut c, "textDocument/hover", "RawBuf,", 0, json!({}));
+    assert!(
+        r["result"]["contents"]["value"]
+            .as_str()
+            .unwrap()
+            .contains("RawBuf"),
+        "{r}"
+    );
+    let r = d.ask(&mut c, "textDocument/typeDefinition", "buf:", 0, json!({}));
+    library_location(&r["result"][0], "alloc", "raw.t", "struct RawBuf", "RawBuf");
+    for method in ["textDocument/prepareRename", "textDocument/rename"] {
+        let r = d.ask(
+            &mut c,
+            method,
+            "len: usize",
+            0,
+            json!({"newName": "length"}),
+        );
+        assert!(
+            r["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("can't be changed"),
+            "{r}"
+        );
+    }
+    let r = d.ask(
+        &mut c,
+        "textDocument/formatting",
+        "List",
+        0,
+        json!({"options": {"tabSize": 4, "insertSpaces": true}}),
+    );
+    assert_eq!(r["result"], Value::Null);
+    let r = d.ask(
+        &mut c,
+        "textDocument/codeAction",
+        "List",
+        0,
+        json!({
+            "range": {"start": {"line": 0, "character": 0}, "end": {"line": 1000, "character": 0}},
+            "context": {"diagnostics": []}
+        }),
+    );
+    assert_eq!(r["result"], json!([]));
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
+            "textDocument": {"uri": uri, "version": 2}, "contentChanges": [{"text": "fn broken("}]
+        }}),
+    );
+    assert!(c.diagnostics().is_empty());
+    let r = d.ask(&mut c, "textDocument/definition", "RawBuf,", 0, json!({}));
+    library_location(&r["result"], "alloc", "raw.t", "struct RawBuf", "RawBuf");
+    assert_eq!(std::fs::read_to_string(path).unwrap(), text);
+    stop(child, c);
+}
+
+#[test]
+fn installed_binary_navigates_its_embedded_sources_outside_the_checkout() {
+    let dir = std::env::temp_dir().join(format!("t-lsp-installed-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("temporary sources")).unwrap();
+    // A nearby library checkout must never override the embedded version.
+    std::fs::create_dir_all(dir.join("core")).unwrap();
+    std::fs::write(dir.join("core/option.t"), "wrong library version\r\n").unwrap();
+    let binary = dir.join(format!("installed t{}", std::env::consts::EXE_SUFFIX));
+    std::fs::copy(env!("CARGO_BIN_EXE_t"), &binary).unwrap();
+    let mut command = Command::new(binary);
+    command.current_dir(&dir);
+    for key in ["TMPDIR", "TMP", "TEMP"] {
+        command.env(key, dir.join("temporary sources"));
+    }
+    let (child, mut c) = start_command(command);
+    let (mut d, diagnostics) = Doc::open(
+        &mut c,
+        "file:///tmp/installed-navigation.t",
+        "fn main() { let _o: Option<i64> = Option::Some(1); }\n",
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    let r = d.ask(&mut c, "textDocument/definition", "Option", 0, json!({}));
+    let path = library_location(&r["result"], "core", "option.t", "enum Option", "Option");
+    assert!(path.starts_with(dir.join("temporary sources")), "{path:?}");
+    assert!(r["result"]["uri"].as_str().unwrap().contains("%20"));
+    stop(child, c);
+    assert!(
+        std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("enum Option")
+    );
+    // Windows requires clearing the read-only bit before removing test files.
+    #[cfg(windows)]
+    fn writable_tree(dir: &std::path::Path) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                writable_tree(&path);
+            } else {
+                let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+                permissions.set_readonly(false);
+                std::fs::set_permissions(path, permissions).unwrap();
+            }
+        }
+    }
+    #[cfg(windows)]
+    writable_tree(&dir);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// The core library's items have hovers with their doc comments and
+/// definitions in the embedded source. A `for` loop
 /// hovers like the variables it binds, and nothing of what it means.
 #[test]
-fn hovers_the_core_library_but_goes_nowhere_in_it() {
+fn hovers_and_navigates_the_core_library() {
     let (child, mut c) = start();
     let uri = "file:///tmp/core.t";
     let src = "fn main() {\n    let o = Option::Some(1);\n    for i in 0..3i64 {\n        print(o.unwrap_or(i));\n    }\n}\nfn print<T: Int>(_x: T) {}\n";
@@ -2259,7 +2557,13 @@ fn hovers_the_core_library_but_goes_nowhere_in_it() {
     );
 
     c.send(json!({"jsonrpc": "2.0", "id": 3, "method": "textDocument/definition", "params": at(3, 17)}));
-    assert_eq!(c.response(3)["result"], Value::Null);
+    library_location(
+        &c.response(3)["result"],
+        "core",
+        "option.t",
+        "fn unwrap_or(",
+        "unwrap_or",
+    );
 
     // The loop's variable, and nothing on `for` or `in`.
     c.send(json!({"jsonrpc": "2.0", "id": 4, "method": "textDocument/hover", "params": at(2, 8)}));
@@ -2276,11 +2580,11 @@ fn hovers_the_core_library_but_goes_nowhere_in_it() {
     stop(child, c);
 }
 
-/// The alloc library's items hover as the core library's do, and go
-/// nowhere either; `unsafe` blocks hover as nothing, and their warnings
+/// The alloc library's items hover and navigate as the core library's do;
+/// `unsafe` blocks hover as nothing, and their warnings
 /// are diagnostics.
 #[test]
-fn hovers_the_alloc_library_but_goes_nowhere_in_it() {
+fn hovers_and_navigates_the_alloc_library() {
     let (child, mut c) = start();
     let uri = "file:///tmp/alloc.t";
     let src = "use alloc::raw::RawBuf;\n\nfn main() with alloc {\n    let b: RawBuf<i64> = RawBuf::new(1);\n    unsafe { b.free() };\n}\n";
@@ -2302,7 +2606,13 @@ fn hovers_the_alloc_library_but_goes_nowhere_in_it() {
     assert!(hover.contains("Gives its memory back."), "{hover}");
 
     c.send(json!({"jsonrpc": "2.0", "id": 3, "method": "textDocument/definition", "params": at(4, 16)}));
-    assert_eq!(c.response(3)["result"], Value::Null);
+    library_location(
+        &c.response(3)["result"],
+        "alloc",
+        "raw.t",
+        "fn free",
+        "free",
+    );
 
     c.send(json!({"jsonrpc": "2.0", "id": 4, "method": "textDocument/hover", "params": at(4, 6)}));
     assert_eq!(c.response(4)["result"], Value::Null);
