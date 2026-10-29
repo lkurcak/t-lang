@@ -867,7 +867,7 @@ impl Checker {
         }
         let unused = self.modules.imports[self.leaves_from..]
             .iter()
-            .filter(|i| !i.public && !i.used.get());
+            .filter(|i| i.level == Level::Module && !i.used.get());
         self.warnings.extend(unused.map(lints::unused_import));
         // Needs there to be no polymorphic recursion, to end.
         self.infinite_types(prog);
@@ -972,7 +972,7 @@ impl Checker {
                 parent,
                 body: f.body.span,
                 module: f.module,
-                public: f.public.is_some(),
+                level: f.vis.level(),
             });
         }
         self.uses.resize_with(fns.len(), Uses::default);
@@ -1216,21 +1216,24 @@ impl Checker {
 
     /// What every struct and enum is made of, by symbol.
     /// Checks that `field` of the struct with symbol `symbol` can be seen
-    /// here: that it's `pub`, or this is in the struct's module.
+    /// here, as its `pub` or `export` says.
     fn field_visible(&self, symbol: &str, field: &Ident) -> Result<(), Error> {
         let Some(def) = self.types.iter().find(|d| d.symbol == symbol) else {
             return Ok(());
         };
-        if !def.private.contains(&field.name) || self.modules.within(self.module, def.module) {
+        let Some(&(_, level)) = def.fields.iter().find(|(name, _)| *name == field.name) else {
+            return Ok(());
+        };
+        if self.modules.visible(def.module, level, self.module) {
             return Ok(());
         }
         Err(Error::ty(
             field.span,
             format!(
-                "field `{}` of `{}` is private to {}",
+                "field `{}` of `{}` {}",
                 field.name,
                 source_name(symbol),
-                self.modules.describe(def.module)
+                self.modules.hidden_by(def.module, level)
             ),
         ))
     }
@@ -1259,8 +1262,7 @@ impl Checker {
     pub(crate) fn is_abstract(&self, symbol: &str) -> bool {
         self.types.iter().any(|d| {
             d.symbol == symbol
-                && !d.private.is_empty()
-                && !self.modules.within(self.module, d.module)
+                && (d.fields.iter()).any(|&(_, l)| !self.modules.visible(d.module, l, self.module))
         })
     }
 

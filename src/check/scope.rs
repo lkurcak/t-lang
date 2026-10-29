@@ -40,9 +40,9 @@ pub(super) struct FnDef {
     pub(super) parent: Option<FnId>,
     /// Where its body is, for finding which function a use is in.
     pub(super) body: Span,
-    /// The module it's in, and whether it's `pub` there.
+    /// The module it's in, and how far it's seen from there.
     pub(super) module: usize,
-    pub(super) public: bool,
+    pub(super) level: Level,
 }
 
 /// The functions a block declares, which are in scope in all of it. Locals

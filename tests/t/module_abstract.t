@@ -25,7 +25,7 @@ mod fs {
     #[derive(Discard)]
     pub struct Token { pub n: Box<i64>, secret: i64 }
 
-    pub fn token(n: i64) -> Token with {alloc, panic} { Token { n: Box::new(n), secret: 0 } }
+    pub fn token(n: i64) -> Token with alloc { Token { n: Box::new(n), secret: 0 } }
 }
 
 fn keep(fd: &fs::Fd) -> i64 with panic { fd.id + fd.raw() }

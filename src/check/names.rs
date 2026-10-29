@@ -30,9 +30,9 @@ pub(super) struct TypeDef {
     pub(super) block: usize,
     /// The module it's in, or that the function it's local to is in.
     pub(super) module: usize,
-    /// Its fields that aren't `pub`: none for an enum, whose variants are
-    /// public wherever it is.
-    pub(super) private: Vec<String>,
+    /// Its fields, and how far each is seen: none for an enum, whose
+    /// variants are seen wherever it is.
+    pub(super) fields: Vec<(String, crate::ast::Level)>,
     /// Where its `#[intrinsic]` is, if it's an intrinsic struct: one only
     /// the compiler makes and takes apart.
     pub(super) intrinsic: Option<crate::error::Span>,
@@ -241,12 +241,9 @@ impl Walk<'_> {
             self.taken.insert(symbol.clone());
             self.names.insert(name.id, Scoped::Adt(symbol.clone()));
             level.push((name.name.clone(), symbol.clone()));
-            let private = match d {
-                TypeDecl::Struct(s) => s
-                    .fields
-                    .iter()
-                    .filter(|f| f.public.is_none())
-                    .map(|f| f.name.name.clone())
+            let fields = match d {
+                TypeDecl::Struct(s) => (s.fields.iter())
+                    .map(|f| (f.name.name.clone(), f.vis.level()))
                     .collect(),
                 TypeDecl::Enum(_) => Vec::new(),
             };
@@ -259,7 +256,7 @@ impl Walk<'_> {
                 parent,
                 block,
                 module: d.module(),
-                private,
+                fields,
                 intrinsic,
             };
             self.defs.insert(name.id, def);

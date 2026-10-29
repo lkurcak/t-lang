@@ -616,8 +616,8 @@ impl Checker {
             }
             None => {
                 let span = match decl {
-                    TypeDecl::Struct(s) => s.public.unwrap_or(s.span),
-                    TypeDecl::Enum(e) => e.public.unwrap_or(e.span),
+                    TypeDecl::Struct(s) => s.vis.span().unwrap_or(s.span),
+                    TypeDecl::Enum(e) => e.vis.span().unwrap_or(e.span),
                 };
                 Edit::insert(span.start, format!("#[derive({tr})]\n"))
             }

@@ -13,7 +13,7 @@
 /// with an impl, it says how itself, in its `discard`, as a list frees its
 /// buffer (see docs/20-destructors.md).
 #[intrinsic]
-pub trait Discard {
+export trait Discard {
     /// Throws `self` away. Wherever a value is dropped, its type's
     /// `discard` is what's called: it's total, so it can be called on
     /// every path, the early ones of `?` too. Called by name, it drops
@@ -29,16 +29,16 @@ pub trait Discard {
 /// A struct or enum has it if it says so, with `#[derive(Copy)]`, and only
 /// then.
 #[intrinsic]
-pub trait Copy: Discard {}
+export trait Copy: Discard {}
 
 /// Exchanges the values `a` and `b` point to. Nothing is made, and nothing
 /// thrown away, so it works for any type, `Discard` or not.
 #[intrinsic]
-pub fn swap<T>(a: &mut T, b: &mut T);
+export fn swap<T>(a: &mut T, b: &mut T);
 
 /// Puts `src` where `dest` points and gives back what was there: how to
 /// change what's behind a `&mut` whose type isn't `Discard`.
-pub fn replace<T>(dest: &mut T, mut src: T) -> T {
+export fn replace<T>(dest: &mut T, mut src: T) -> T {
     swap(dest, &mut src);
     src
 }

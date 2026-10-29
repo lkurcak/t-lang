@@ -17,19 +17,19 @@
 /// it's `Discard` if `T` is. It's never `Copy`.
 #[derive(Discard where T: Discard)]
 #[intrinsic]
-pub struct Arena<T> {}
+export struct Arena<T> {}
 
 impl<T> Arena<T> {
     /// An empty arena. It allocates nothing until something's put in.
     #[intrinsic]
-    pub fn new() -> Arena<T>;
+    export fn new() -> Arena<T>;
 
     /// Moves `v` into the arena, and gives a reference to it there. Like
     /// everything that allocates, it aborts if there isn't the memory.
     #[intrinsic]
-    pub fn alloc(&self, v: T) -> &mut T with alloc;
+    export fn alloc(&self, v: T) -> &mut T with alloc;
 
     /// How many values have been put in.
     #[intrinsic]
-    pub fn len(&self) -> usize;
+    export fn len(&self) -> usize;
 }

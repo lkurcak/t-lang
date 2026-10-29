@@ -8,17 +8,17 @@
 //! The items `prelude` brings in are in scope in every module, unless a
 //! module declares or imports something by the same name.
 
-pub mod array;
-pub mod char;
-pub mod cmp;
-pub mod fmt;
-pub mod iter;
-pub mod mem;
-pub mod num;
-pub mod ops;
-pub mod option;
-pub mod panic;
-pub mod prelude;
-pub mod result;
-pub mod slice;
-pub mod str;
+export mod array;
+export mod char;
+export mod cmp;
+export mod fmt;
+export mod iter;
+export mod mem;
+export mod num;
+export mod ops;
+export mod option;
+export mod panic;
+export mod prelude;
+export mod result;
+export mod slice;
+export mod str;

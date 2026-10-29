@@ -17,21 +17,21 @@ use crate::slice::Split;
 impl str {
     /// Its bytes, its UTF-8: as many as it has.
     #[intrinsic]
-    pub fn as_bytes(&self) -> { b: &[u8] | b.len() == self.len() };
+    export fn as_bytes(&self) -> { b: &[u8] | b.len() == self.len() };
 
     /// How many bytes it has: not how many characters. It's a measure, of
     /// the reference, as a slice's is.
     #[intrinsic]
     #[measure]
-    pub fn len(&self) -> usize;
+    export fn len(&self) -> usize;
 
     /// Has it none?
     #[measure]
-    pub fn is_empty(&self) -> bool { self.len() == 0 }
+    export fn is_empty(&self) -> bool { self.len() == 0 }
 
     /// Does a character start at byte `i`, or is `i` its end? Then it can
     /// be cut there.
-    pub fn is_char_boundary(&self, i: usize) -> bool {
+    export fn is_char_boundary(&self, i: usize) -> bool {
         match self.as_bytes().get(i) {
             Option::Some(b) => !is_continuation(*b),
             Option::None => i == self.len(),
@@ -40,7 +40,7 @@ impl str {
 
     /// The bytes before `mid` and those from it on, or `None` if no
     /// character starts at `mid` and it isn't the end.
-    pub fn split_at<'a>(&'a self, mid: usize) -> Option<StrSplit<'a>> {
+    export fn split_at<'a>(&'a self, mid: usize) -> Option<StrSplit<'a>> {
         if !self.is_char_boundary(mid) {
             return Option::None;
         }
@@ -60,7 +60,7 @@ impl str {
 
     /// Bytes `lo` up to, not including, `hi`, or `None` if they aren't
     /// where characters start, or the end, or `lo` is past `hi`.
-    pub fn get<'a>(&'a self, lo: usize, hi: usize) -> Option<&'a str> {
+    export fn get<'a>(&'a self, lo: usize, hi: usize) -> Option<&'a str> {
         if lo > hi {
             return Option::None;
         }
@@ -75,11 +75,11 @@ impl str {
     }
 
     /// Its characters, front to back.
-    pub fn chars(&self) -> Chars { Chars { bytes: self.as_bytes(), at: 0 } }
+    export fn chars(&self) -> Chars { Chars { bytes: self.as_bytes(), at: 0 } }
 }
 
 /// Bytes `b`, as a string, if they're UTF-8, or `None`.
-pub fn from_utf8(b: &[u8]) -> Option<&str> {
+export fn from_utf8(b: &[u8]) -> Option<&str> {
     let n = b.len();
     let mut at = 0usize;
     while at < n {
@@ -98,16 +98,16 @@ pub fn from_utf8(b: &[u8]) -> Option<&str> {
 ///
 /// They're UTF-8.
 #[intrinsic]
-pub fn from_utf8_unchecked(b: &[u8]) -> { s: &str | s.len() == b.len() } with unsafe;
+export fn from_utf8_unchecked(b: &[u8]) -> { s: &str | s.len() == b.len() } with unsafe;
 
 /// What `split_at` gives: the string before the index it's given, and
 /// from it on.
 #[derive(Copy, Discard)]
-pub struct StrSplit<'a> { pub head: &'a str, pub tail: &'a str }
+export struct StrSplit<'a> { export head: &'a str, export tail: &'a str }
 
 /// What `chars` gives: each character of `bytes` from `at` on.
 #[derive(Discard)]
-pub struct Chars<'a> { bytes: &'a [u8], at: usize }
+export struct Chars<'a> { bytes: &'a [u8], at: usize }
 
 /// Safe code over `decode`. A `str`'s bytes are UTF-8, so it stops only
 /// at their end; were they not, it would stop at the first that isn't.

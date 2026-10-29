@@ -23,29 +23,29 @@ use crate::option::Option;
 /// sealed: no impl can add to it, so code over a `T: Int` may count on
 /// what all ten have in common.
 #[intrinsic]
-pub trait Int: Copy + Eq + Ord {}
+export trait Int: Copy + Eq + Ord {}
 
 /// Says an integer type is signed: its least value is -1 minus its
 /// greatest (see docs/12-bits.md). Sealed too.
 #[intrinsic]
-pub trait Signed: Int {}
+export trait Signed: Int {}
 
 /// Says an integer type is unsigned: its least value is 0. Sealed too.
 #[intrinsic]
-pub trait Unsigned: Int {}
+export trait Unsigned: Int {}
 
 /// The least value of integer type `T`: `least::<i8>()` is -128, and
 /// `least::<u8>()` is 0. The checker knows it is.
 #[intrinsic]
-pub fn least<T: Int>() -> T;
+export fn least<T: Int>() -> T;
 
 /// The greatest value of integer type `T`: `greatest::<u8>()` is 255.
 /// The checker knows it is.
 #[intrinsic]
-pub fn greatest<T: Int>() -> T;
+export fn greatest<T: Int>() -> T;
 
 /// `a + b`, or `None` if it doesn't fit in a `T`.
-pub fn checked_add<T: Int>(a: T, b: T) -> Option<T> {
+export fn checked_add<T: Int>(a: T, b: T) -> Option<T> {
     if b > 0 {
         if a <= greatest::<T>() - b { Option::Some(a + b) } else { Option::None }
     } else if a >= least::<T>() - b {
@@ -56,7 +56,7 @@ pub fn checked_add<T: Int>(a: T, b: T) -> Option<T> {
 }
 
 /// `a - b`, or `None` if it doesn't fit in a `T`.
-pub fn checked_sub<T: Int>(a: T, b: T) -> Option<T> {
+export fn checked_sub<T: Int>(a: T, b: T) -> Option<T> {
     if b < 0 {
         if a <= greatest::<T>() + b { Option::Some(a - b) } else { Option::None }
     } else if a >= least::<T>() + b {
@@ -68,13 +68,13 @@ pub fn checked_sub<T: Int>(a: T, b: T) -> Option<T> {
 
 /// `a * b`, or `None` if it doesn't fit in a `T`.
 #[intrinsic]
-pub fn checked_mul<T: Int>(a: T, b: T) -> Option<T>;
+export fn checked_mul<T: Int>(a: T, b: T) -> Option<T>;
 
 /// `a / b`, rounded towards zero, or `None` if `b` is zero or the result
 /// doesn't fit in a `T`, as the least `i8` divided by -1 doesn't. That's
 /// `b < 0 && b + 1 == 0` here, as -1 isn't a literal of every integer
 /// type.
-pub fn checked_div<T: Int>(a: T, b: T) -> Option<T> {
+export fn checked_div<T: Int>(a: T, b: T) -> Option<T> {
     if b == 0 || (b < 0 && b + 1 == 0 && a == least::<T>()) {
         Option::None
     } else {
@@ -83,7 +83,7 @@ pub fn checked_div<T: Int>(a: T, b: T) -> Option<T> {
 }
 
 /// `a % b`, which has the sign of `a`, or `None` where `checked_div` is.
-pub fn checked_rem<T: Int>(a: T, b: T) -> Option<T> {
+export fn checked_rem<T: Int>(a: T, b: T) -> Option<T> {
     if b == 0 || (b < 0 && b + 1 == 0 && a == least::<T>()) {
         Option::None
     } else {
@@ -93,7 +93,7 @@ pub fn checked_rem<T: Int>(a: T, b: T) -> Option<T> {
 
 /// `-a`, or `None` if it doesn't fit in a `T`: for the least value of a
 /// signed type, and for all but 0 of an unsigned one.
-pub fn checked_neg<T: Int>(a: T) -> Option<T> {
+export fn checked_neg<T: Int>(a: T) -> Option<T> {
     if a > 0 {
         if a + least::<T>() <= 0 { Option::Some(-a) } else { Option::None }
     } else if a + greatest::<T>() >= 0 {
@@ -105,7 +105,7 @@ pub fn checked_neg<T: Int>(a: T) -> Option<T> {
 
 /// `a + b`, modulo 2^w for a `T` that's `w` bits wide: past the greatest
 /// value, it goes on from the least. `wrapping_add(255u8, 1)` is 0.
-pub fn wrapping_add<T: Int>(a: T, b: T) -> T {
+export fn wrapping_add<T: Int>(a: T, b: T) -> T {
     if b > 0 {
         if a <= greatest::<T>() - b {
             a + b
@@ -123,7 +123,7 @@ pub fn wrapping_add<T: Int>(a: T, b: T) -> T {
 
 /// `-a`, modulo 2^w: `wrapping_neg(1u8)` is 255, and the least value of a
 /// signed type is its own negation.
-pub fn wrapping_neg<T: Int>(a: T) -> T {
+export fn wrapping_neg<T: Int>(a: T) -> T {
     if a > 0 {
         if a + least::<T>() <= 0 {
             -a
@@ -141,24 +141,24 @@ pub fn wrapping_neg<T: Int>(a: T) -> T {
 }
 
 /// `a - b`, modulo 2^w: `wrapping_sub(0u8, 1)` is 255.
-pub fn wrapping_sub<T: Int>(a: T, b: T) -> T { wrapping_add(a, wrapping_neg(b)) }
+export fn wrapping_sub<T: Int>(a: T, b: T) -> T { wrapping_add(a, wrapping_neg(b)) }
 
 /// `a * b`, modulo 2^w.
 #[intrinsic]
-pub fn wrapping_mul<T: Int>(a: T, b: T) -> T;
+export fn wrapping_mul<T: Int>(a: T, b: T) -> T;
 
 /// How far `x` is from 0: it panics at the least value, whose distance is
 /// one more than the greatest.
-pub fn abs<T: Signed>(x: T) -> T with panic {
+export fn abs<T: Signed>(x: T) -> T with panic {
     if x < 0 { -x } else { x }
 }
 
 /// How far `x` is from 0, or `None` at the least value.
-pub fn checked_abs<T: Signed>(x: T) -> Option<T> {
+export fn checked_abs<T: Signed>(x: T) -> Option<T> {
     if x < 0 { checked_neg(x) } else { Option::Some(x) }
 }
 
 /// How far `x` is from 0, modulo 2^w: the least value is its own.
-pub fn wrapping_abs<T: Signed>(x: T) -> T {
+export fn wrapping_abs<T: Signed>(x: T) -> T {
     if x < 0 { wrapping_neg(x) } else { x }
 }

@@ -19,33 +19,33 @@ use crate::list::List;
 /// code: so the block is right only if they are. Its field is private, so
 /// nothing else can break it.
 #[derive(Discard)]
-pub struct String { bytes: List<u8> }
+export struct String { bytes: List<u8> }
 
 impl String {
     /// An empty string. It allocates nothing until something's pushed.
-    pub fn new() -> String { String { bytes: List::new() } }
+    export fn new() -> String { String { bytes: List::new() } }
 
     /// An empty string with room for `cap` bytes before it grows.
-    pub fn with_capacity(cap: usize) -> String with alloc {
+    export fn with_capacity(cap: usize) -> String with alloc {
         String { bytes: List::with_capacity(cap) }
     }
 
     /// A string of the characters of `s`.
-    pub fn from(s: &str) -> String with alloc {
+    export fn from(s: &str) -> String with alloc {
         let mut out = String::with_capacity(s.len());
         out.push_str(s);
         out
     }
 
     /// `x` as text: what its `Display` writes.
-    pub fn of<D: Display>(x: &D) -> String with alloc {
+    export fn of<D: Display>(x: &D) -> String with alloc {
         let mut out = String::new();
         out.put(x);
         out
     }
 
     /// Bytes `b`, as a string, if they're UTF-8, or else `b` back.
-    pub fn from_utf8(b: List<u8>) -> Result<String, List<u8>> {
+    export fn from_utf8(b: List<u8>) -> Result<String, List<u8>> {
         if str::from_utf8(b.as_slice()).is_some() {
             Result::Ok(String { bytes: b })
         } else {
@@ -54,36 +54,36 @@ impl String {
     }
 
     /// Its bytes, as a list, which uses it up.
-    pub fn into_bytes(self) -> List<u8> {
+    export fn into_bytes(self) -> List<u8> {
         let String { bytes } = self;
         bytes
     }
 
     /// Its characters, as a `str`, of as many bytes as it has.
-    pub fn as_str(&self) -> { s: &str | s.len() == self.len() } {
+    export fn as_str(&self) -> { s: &str | s.len() == self.len() } {
         // SAFETY: its bytes are UTF-8, by the invariant.
         unsafe { str::from_utf8_unchecked(self.bytes.as_slice()) }
     }
 
     /// Its bytes, its UTF-8.
-    pub fn as_bytes(&self) -> { b: &[u8] | b.len() == self.len() } { self.bytes.as_slice() }
+    export fn as_bytes(&self) -> { b: &[u8] | b.len() == self.len() } { self.bytes.as_slice() }
 
     /// How many bytes it has: not how many characters. It's a measure.
     #[measure]
-    pub fn len(&self) -> usize { self.bytes.len() }
+    export fn len(&self) -> usize { self.bytes.len() }
 
     /// Has it none?
     #[measure]
-    pub fn is_empty(&self) -> bool { self.len() == 0 }
+    export fn is_empty(&self) -> bool { self.len() == 0 }
 
     /// How many bytes it has room for before it grows.
-    pub fn capacity(&self) -> usize { self.bytes.capacity() }
+    export fn capacity(&self) -> usize { self.bytes.capacity() }
 
     /// Puts `c` at the end.
     ///
     /// It pushes a zero byte for each byte `c` takes, and then writes `c`
     /// over them: zeros are UTF-8, so the invariant holds all along.
-    pub fn push(&mut self, c: char) with alloc {
+    export fn push(&mut self, c: char) with alloc {
         let at = self.bytes.len();
         let n = c.len_utf8();
         let mut i = 0usize;
@@ -101,14 +101,14 @@ impl String {
 
     /// Puts the characters of `s` at the end. Its bytes are UTF-8, so
     /// they're UTF-8 after the string's.
-    pub fn push_str(&mut self, s: &str) with alloc {
+    export fn push_str(&mut self, s: &str) with alloc {
         for b in s.as_bytes().iter() {
             self.bytes.push(*b);
         }
     }
 
     /// Takes the last character out, or `None` if it's empty.
-    pub fn pop(&mut self) -> Option<char> {
+    export fn pop(&mut self) -> Option<char> {
         let n = self.bytes.len();
         if n == 0 {
             return Option::None;
@@ -129,7 +129,7 @@ impl String {
     /// Throws away the bytes from index `n` on, if there are any, so it
     /// holds at most `n`, and says `true`; or, if no character starts at
     /// `n`, leaves it as it is, and says `false`.
-    pub fn truncate(&mut self, n: usize) -> bool {
+    export fn truncate(&mut self, n: usize) -> bool {
         if n >= self.bytes.len() {
             return true;
         }
@@ -142,7 +142,7 @@ impl String {
     }
 
     /// Throws its characters away, keeping the buffer for more.
-    pub fn clear(&mut self) { self.bytes.clear() }
+    export fn clear(&mut self) { self.bytes.clear() }
 }
 
 /// The same characters.

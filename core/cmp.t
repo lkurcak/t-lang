@@ -8,14 +8,14 @@
 /// impl of its own. Functions don't, and can't: whether two do the same
 /// for every argument can't be decided.
 #[intrinsic]
-pub trait Eq {
+export trait Eq {
     /// Is `self` equal to `other`?
     fn eq(&self, other: &Self) -> bool;
 }
 
 /// How one value compares with another.
 #[derive(Discard, Copy, Eq)]
-pub enum Ordering { Less, Equal, Greater }
+export enum Ordering { Less, Equal, Greater }
 
 /// A total order: any two values compare, one way. `a < b` is
 /// `a.lt(&b)`, and `<=`, `>` and `>=` alike, but for the integers, whose
@@ -26,7 +26,7 @@ pub enum Ordering { Less, Equal, Greater }
 /// `b` and `b` than `c`, then `a` is less than `c`. Nothing checks this, and
 /// nothing relies on it to be sound: an impl that breaks it only gives
 /// wrong answers.
-pub trait Ord: Eq {
+export trait Ord: Eq {
     /// How `self` compares with `other`.
     fn cmp(&self, other: &Self) -> Ordering;
 

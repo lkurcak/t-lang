@@ -375,6 +375,8 @@ impl Checker {
     /// There's no fix: removing one dead function can break another that
     /// calls it.
     ///
+    /// What's exported is live: other packages may use it.
+    ///
     /// The methods of impls of traits, and the defaults of traits, are
     /// taken to be live: which ones a call of a trait's method runs depends
     /// on types, which may be decided far away. An inherent method is dead
@@ -389,10 +391,12 @@ impl Checker {
         let mut live = vec![false; self.fns.len()];
         let mut todo = vec![FnId(main.expect("checked that there's a `main`"))];
         todo.extend(self.kept_measures.iter().copied());
-        for (i, (.., method)) in fns.iter().enumerate() {
+        for (i, (f, parent, method)) in fns.iter().enumerate() {
             let inherent =
                 matches!(method, Some(MethodOf::Impl(k)) if prog.impls[*k].trait_name.is_none());
-            if method.is_some() && !inherent {
+            // What's exported is other packages' to use.
+            let exported = f.vis.is_export() && parent.is_none();
+            if (method.is_some() && !inherent) || exported {
                 todo.push(FnId(i));
             }
         }
@@ -444,7 +448,7 @@ impl Checker {
         let types = prog.all_types().into_iter().zip(&self.types);
         for ((d, _), def) in types.skip(self.from.all_types) {
             let in_live = def.parent.is_none_or(|p| live[p.0]);
-            if on_purpose(d.name()) || !in_live {
+            if on_purpose(d.name()) || !in_live || d.vis().is_export() {
                 continue;
             }
             let symbol = &def.symbol;

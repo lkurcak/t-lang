@@ -12,7 +12,7 @@ use core::fmt::{Display, Write};
 /// it holds is, and `Eq` if that is, comparing what they hold. It's never
 /// `Copy`: a copy would be a second owner.
 #[intrinsic]
-pub struct Box<T> {}
+export struct Box<T> {}
 
 /// What it holds.
 impl<T: Display> Display for Box<T> {

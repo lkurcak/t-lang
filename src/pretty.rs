@@ -431,11 +431,11 @@ impl Printer<'_> {
             let start = match item {
                 Item::Type(d) => {
                     let start = type_lead_start(d, self.before(pos));
-                    d.public().map_or(start, |p| start.min(p.start))
+                    d.vis().span().map_or(start, |p| start.min(p.start))
                 }
                 Item::Fn(f) => lead_start(f.doc.as_ref(), &f.allows, fn_start(f)),
                 Item::Trait(t) => {
-                    let start = t.public.map_or(t.span.start, |p| p.start);
+                    let start = t.vis.span().map_or(t.span.start, |p| p.start);
                     let start = t.intrinsic.map_or(start, |i| i.start.min(start));
                     lead_start(t.doc.as_ref(), &t.allows, start)
                 }
@@ -474,7 +474,7 @@ impl Printer<'_> {
                     Item::Mod(i, m) => {
                         let body = nest(Doc::HardLine + self.plain_items(program, i));
                         self.lead(None, &m.allows, m.span.start)
-                            + public(m.public)
+                            + vis(m.vis)
                             + "mod "
                             + &m.name.name
                             + " {"
@@ -493,9 +493,9 @@ impl Printer<'_> {
         // Its doc comment is `//!` lines in it, first.
         let lead = self.lead(None, &m.allows, m.span.start);
         if m.in_file {
-            return lead + public(m.public) + "mod " + &m.name.name + ";";
+            return lead + vis(m.vis) + "mod " + &m.name.name + ";";
         }
-        let head = lead + public(m.public) + "mod " + &m.name.name + " ";
+        let head = lead + vis(m.vis) + "mod " + &m.name.name + " ";
         let open = self.find(m.name.span.end, &Tok::LBrace);
         let close = m.span.end - 1;
         let (items, mut empty) = self.items(program, i);
@@ -525,7 +525,7 @@ impl Printer<'_> {
             Item::Trait(t) => self.trait_decl(t),
             Item::Impl(d) => self.impl_decl(d),
             Item::Fn(f) => self.fn_decl(f),
-            Item::Use(u) => public(u.public) + "use " + use_tree(&u.tree) + ";",
+            Item::Use(u) => vis(u.vis) + "use " + use_tree(&u.tree) + ";",
             Item::Mod(..) => unreachable!("printed by `items` or `plain_items`"),
         }
     }
@@ -547,7 +547,7 @@ impl Printer<'_> {
         items.extend(t.effects.iter().map(BodyItem::EffectDecl));
         items.extend(t.methods.iter().map(|m| BodyItem::Fn(&m.decl, m.provided)));
         let body = self.methods(open, t.span.end - 1, items);
-        doc + public(t.public) + "trait " + &t.name.name + supers + " " + body
+        doc + vis(t.vis) + "trait " + &t.name.name + supers + " " + body
     }
 
     /// `impl<T: Show> Show for Option<T> { .. }` or `impl Point { .. }`
@@ -729,7 +729,7 @@ impl Printer<'_> {
             t.hold_docs(name.span.start, close);
         }
         let head = doc
-            + public(d.public())
+            + vis(d.vis())
             + keyword
             + &name.name
             + self.generics(name.span.end, d.generics())
@@ -740,14 +740,14 @@ impl Printer<'_> {
                 close,
                 &s.fields,
                 |f| {
-                    let name = f.public.unwrap_or(f.name.span).start;
+                    let name = f.vis.span().unwrap_or(f.name.span).start;
                     let start = lead_start(f.doc.as_ref(), &f.allows, name);
                     (start, f.ty.span.end)
                 },
                 None,
                 |p, f| {
-                    let name = f.public.unwrap_or(f.name.span).start;
-                    p.lead(f.doc.as_ref(), &f.allows, name) + public(f.public) + p.param(f)
+                    let name = f.vis.span().unwrap_or(f.name.span).start;
+                    p.lead(f.doc.as_ref(), &f.allows, name) + vis(f.vis) + p.param(f)
                 },
             ),
             TypeDecl::Enum(e) => {
@@ -866,13 +866,13 @@ impl Printer<'_> {
                 .filter_map(|(at, t)| Some((at?, t)))
                 .collect();
         attrs.sort_by_key(|(at, _)| at.start);
-        let after = f.public.map_or(f.span.start, |p| p.start);
+        let after = f.vis.span().map_or(f.span.start, |p| p.start);
         for (i, (at, t)) in attrs.iter().enumerate() {
             let next = attrs.get(i + 1).map_or(after, |(n, _)| n.start);
             doc = doc + *t + self.trailing(at.end) + Doc::HardLine;
             doc = doc + self.element(next, true);
         }
-        let doc = doc + public(f.public);
+        let doc = doc + vis(f.vis);
         let generics = self.generics(f.name.span.end, &f.generics);
         let open = self.find(f.name.span.end, &Tok::LParen);
         let close = self.close(open, f.params.last().map(|p| p.ty.span.end), &Tok::RParen);
@@ -1624,16 +1624,16 @@ fn lead_start_span(f: &FnDecl) -> Span {
 /// Where function `f` starts without its doc comment and attributes: at its
 /// `pub`, if it has one.
 fn fn_start(f: &FnDecl) -> usize {
-    let start = f.public.map_or(f.span.start, |p| p.start);
+    let start = f.vis.span().map_or(f.span.start, |p| p.start);
     let start = f.intrinsic.map_or(start, |i| i.start.min(start));
     f.measure.map_or(start, |i| i.start.min(start))
 }
 
-/// `pub ` if `public` says where one is.
-fn public(public: Option<Span>) -> Doc {
-    match public {
-        Some(_) => text("pub "),
-        None => Doc::nil(),
+/// `pub ` or `export `, as `v` is.
+fn vis(v: Vis) -> Doc {
+    match v {
+        Vis::Private => Doc::nil(),
+        v => text(v.keyword()),
     }
 }
 

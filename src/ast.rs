@@ -158,6 +158,64 @@ pub struct Allow {
 /// The crate root's index in `Program::mods`.
 pub const ROOT: usize = 0;
 
+/// How far an item can be seen (see docs/24-visibility.md): with no
+/// keyword, in its module and the modules in it; `pub`, in its package;
+/// `export`, in every package that uses its package too, as part of the
+/// package's interface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Vis {
+    #[default]
+    Private,
+    /// `pub`, written there.
+    Pub(Span),
+    /// `export`, written there.
+    Export(Span),
+}
+
+/// How far a `Vis` reaches, in order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Level {
+    Module,
+    Package,
+    Export,
+}
+
+impl Vis {
+    pub fn level(self) -> Level {
+        match self {
+            Vis::Private => Level::Module,
+            Vis::Pub(_) => Level::Package,
+            Vis::Export(_) => Level::Export,
+        }
+    }
+
+    /// Where its keyword is, if it has one.
+    pub fn span(self) -> Option<Span> {
+        match self {
+            Vis::Private => None,
+            Vis::Pub(at) | Vis::Export(at) => Some(at),
+        }
+    }
+
+    /// Is it seen outside its module: `pub` or `export`?
+    pub fn is_public(self) -> bool {
+        self != Vis::Private
+    }
+
+    pub fn is_export(self) -> bool {
+        matches!(self, Vis::Export(_))
+    }
+
+    /// Its keyword, with a space after it, or nothing.
+    pub fn keyword(self) -> &'static str {
+        match self {
+            Vis::Private => "",
+            Vis::Pub(_) => "pub ",
+            Vis::Export(_) => "export ",
+        }
+    }
+}
+
 /// `mod geometry { .. }`: a module, a namespace of its own for the items in
 /// it. Those items are in the flat lists of `Program`, each saying which
 /// module it's in, as is each `mod` in it.
@@ -172,8 +230,7 @@ pub struct ModDecl {
     pub name: Ident,
     /// The module it's in: `None` only for the crate root.
     pub parent: Option<usize>,
-    /// Where the `pub` is, if it's public.
-    pub public: Option<Span>,
+    pub vis: Vis,
     /// Is it `mod name;`, in a file of its own? Its items are in that file
     /// (see `load.rs`).
     pub in_file: bool,
@@ -187,7 +244,7 @@ pub struct UseDecl {
     pub span: Span,
     /// The module it's in.
     pub module: usize,
-    pub public: Option<Span>,
+    pub vis: Vis,
     pub tree: UseTree,
 }
 
@@ -282,11 +339,10 @@ impl TypeDecl {
         }
     }
 
-    /// Where its `pub` is, if it's public.
-    pub fn public(&self) -> Option<Span> {
+    pub fn vis(&self) -> Vis {
         match self {
-            TypeDecl::Struct(s) => s.public,
-            TypeDecl::Enum(e) => e.public,
+            TypeDecl::Struct(s) => s.vis,
+            TypeDecl::Enum(e) => e.vis,
         }
     }
 
@@ -554,7 +610,7 @@ pub struct StructDecl {
     pub span: Span,
     /// The module it's in.
     pub module: usize,
-    pub public: Option<Span>,
+    pub vis: Vis,
     pub name: Ident,
     /// Its lifetime parameters, type parameters and bounds.
     pub generics: Generics,
@@ -575,7 +631,7 @@ pub struct EnumDecl {
     /// From the `enum` to the `}`, without the doc comment or attributes.
     pub span: Span,
     pub module: usize,
-    pub public: Option<Span>,
+    pub vis: Vis,
     pub name: Ident,
     pub generics: Generics,
     pub derives: Vec<Derive>,
@@ -610,9 +666,9 @@ pub struct FnDecl {
     pub span: Span,
     /// The module it's in, or the one the function it's nested in is in.
     pub module: usize,
-    /// Where its `pub` is, if it's public: only one in a module, or in an
-    /// inherent impl, can be.
-    pub public: Option<Span>,
+    /// Only one in a module, or in an inherent impl, can be other than
+    /// private.
+    pub vis: Vis,
     pub name: Ident,
     /// `<'a, T>` in `fn id<'a, T>(x: &'a T) -> &'a T`.
     pub generics: Generics,
@@ -651,7 +707,7 @@ pub struct TraitDecl {
     /// From the `trait` to the `}`.
     pub span: Span,
     pub module: usize,
-    pub public: Option<Span>,
+    pub vis: Vis,
     pub name: Ident,
     /// `Eq` in `trait Ord: Eq`: traits a type must implement to implement
     /// this one, its *supertraits*.
@@ -1030,8 +1086,8 @@ pub struct Param {
     /// `mut name: type`, with where the `mut` is: only a function parameter
     /// can be `mut`.
     pub mutable: Option<Span>,
-    /// `pub name: type`: only a struct field can be public.
-    pub public: Option<Span>,
+    /// `pub name: type`: only a struct field can be other than private.
+    pub vis: Vis,
     pub name: Ident,
     pub ty: TypeExpr,
 }

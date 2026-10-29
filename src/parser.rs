@@ -4,12 +4,13 @@
 //!
 //! ```text
 //! program  = item*
-//! item     = head "pub"? (fn_decl | struct | enum | trait | mod | use) | head impl
+//! item     = head vis? (fn_decl | struct | enum | trait | mod | use) | head impl
 //! mod      = "mod" IDENT ("{" item* "}" | ";")           -- `;`: in a file of its own
 //! use      = "use" tree ";"
 //! tree     = path ("as" IDENT)? | path "::" "{" (tree ("," tree)* ","?)? "}"
 //! path     = seg ("::" IDENT)*                       -- `a::b::C`
 //! seg      = IDENT | "crate" | "super" | "self"
+//! vis      = "pub" | "export"
 //! head     = attr*
 //! attr     = "#" "[" "allow" "(" (IDENT ("," IDENT)* ","?)? ")" "]"
 //!          | "#" "[" "derive" "(" (derived ("," derived)* ","?)? ")" "]"
@@ -28,11 +29,11 @@
 //!          | path "(" (type ("," type)*)? ")" ("->" type)?  -- `Fn(i64) -> i64`
 //! param    = "mut"? IDENT ":" type
 //! trait    = "trait" IDENT (":" path ("+" path)*)? "{" (head method)* "}"
-//! impl     = "impl" generics? (path "for")? type "{" (head "pub"? method)* "}"
+//! impl     = "impl" generics? (path "for")? type "{" (head vis? method)* "}"
 //! method   = "fn" IDENT generics? "(" ((receiver | param) ("," param)* ","?)? ")"
 //!            ("->" type)? where? (block | ";")       -- `;` only in a trait
 //! receiver = "mut"? "self" | "&" LIFETIME? "mut"? "self"
-//! struct   = "struct" IDENT generics? "{" (head "pub"? param ("," head "pub"? param)* ","?)? "}"
+//! struct   = "struct" IDENT generics? "{" (head vis? param ("," head vis? param)* ","?)? "}"
 //! enum     = "enum" IDENT generics? "{" (head variant ("," head variant)* ","?)? "}"
 //! variant  = IDENT ("(" type ("," type)* ","? ")")?
 //! type     = path ("<" targ ("," targ)* ","? ">")? | "(" ")"
@@ -135,7 +136,7 @@ pub fn parse(tokens: Vec<Token>) -> Result<Program, Error> {
                 id: NodeId(0),
             },
             parent: None,
-            public: None,
+            vis: Vis::Private,
             in_file: false,
         }],
         core: None,
@@ -434,7 +435,7 @@ impl Parser {
                 return Err(self.unexpected(&close.describe()));
             }
             let head = self.head()?;
-            let public = (*self.peek() == Tok::Pub).then(|| self.bump().span);
+            let vis = self.vis();
             let head = match self.peek() {
                 Tok::Fn | Tok::Struct | Tok::Trait => head.no_measure(NOT_METHOD)?,
                 _ => head.no_intrinsic()?.no_measure(NOT_METHOD)?,
@@ -442,42 +443,45 @@ impl Parser {
             match self.peek() {
                 Tok::Struct => {
                     let mut d = self.struct_decl(head)?;
-                    d.public = public;
+                    d.vis = vis;
                     prog.types.push(TypeDecl::Struct(d));
                 }
                 Tok::Enum => {
                     let mut d = self.enum_decl(head)?;
-                    d.public = public;
+                    d.vis = vis;
                     prog.types.push(TypeDecl::Enum(d));
                 }
                 Tok::Trait => {
                     let mut d = self.trait_decl(head.no_derives()?)?;
-                    d.public = public;
+                    d.vis = vis;
                     prog.traits.push(d);
                 }
                 Tok::Impl => {
-                    if let Some(at) = public {
+                    if let Some(at) = vis.span() {
+                        let word = vis.keyword().trim();
                         return Err(Error::syntax(
                             at,
-                            "an `impl` can't be `pub`: a trait impl is wherever the trait and \
-                             type are, and an inherent impl's methods each say if they are",
+                            format!(
+                                "an `impl` can't be `{word}`: a trait impl is wherever the trait \
+                                 and type are, and an inherent impl's methods each say if they are"
+                            ),
                         )
                         .with_fix(Fix::new(
-                            "remove the `pub`",
+                            format!("remove the `{word}`"),
                             vec![Edit::delete(Span::new(at.start, self.span().start))],
                         )));
                     }
                     prog.impls.push(self.impl_decl(head.no_derives()?)?);
                 }
-                Tok::Mod => self.mod_decl(prog, head.no_derives()?, public)?,
+                Tok::Mod => self.mod_decl(prog, head.no_derives()?, vis)?,
                 Tok::Use => {
                     head.no_derives()?.no_allows_on("a `use`")?;
-                    let d = self.use_decl(public)?;
+                    let d = self.use_decl(vis)?;
                     prog.uses.push(d);
                 }
                 _ => {
                     let mut f = self.fn_decl(head.no_derives()?)?;
-                    f.public = public;
+                    f.vis = vis;
                     prog.fns.push(f);
                 }
             }
@@ -488,14 +492,10 @@ impl Parser {
         Ok(())
     }
 
-    /// `mod name { .. }` or `mod name;`, after its head and `pub`, if it has one.
-    fn mod_decl(
-        &mut self,
-        prog: &mut Program,
-        head: Head,
-        public: Option<Span>,
-    ) -> Result<(), Error> {
-        let start = public.unwrap_or(self.span());
+    /// `mod name { .. }` or `mod name;`, after its head and `pub` or
+    /// `export`, if it has one.
+    fn mod_decl(&mut self, prog: &mut Program, head: Head, vis: Vis) -> Result<(), Error> {
+        let start = vis.span().unwrap_or(self.span());
         self.expect(Tok::Mod)?;
         let name = self.binder()?;
         if let Some((lib, ..)) = crate::load::LIBRARIES
@@ -541,7 +541,7 @@ impl Parser {
             span: start,
             name,
             parent: Some(self.module),
-            public,
+            vis,
             in_file,
         };
         if in_file {
@@ -562,16 +562,17 @@ impl Parser {
         Ok(())
     }
 
-    /// `use a::b;`, `use a::b as c;` or `use a::{b, c};`, after its `pub`.
-    fn use_decl(&mut self, public: Option<Span>) -> Result<UseDecl, Error> {
-        let start = public.unwrap_or(self.span());
+    /// `use a::b;`, `use a::b as c;` or `use a::{b, c};`, after its `pub`
+    /// or `export`.
+    fn use_decl(&mut self, vis: Vis) -> Result<UseDecl, Error> {
+        let start = vis.span().unwrap_or(self.span());
         self.expect(Tok::Use)?;
         let tree = self.use_tree()?;
         let end = self.expect(Tok::Semi)?;
         Ok(UseDecl {
             span: start.to(end),
             module: self.module,
-            public,
+            vis,
             tree,
         })
     }
@@ -659,16 +660,28 @@ impl Parser {
         }
     }
 
-    /// Checks there's no `pub` next, where nothing can be: `why`.
-    fn no_pub(&mut self, why: &str) -> Result<(), Error> {
-        if *self.peek() != Tok::Pub {
-            return Ok(());
+    /// `pub` or `export`, if one is next.
+    fn vis(&mut self) -> Vis {
+        match self.peek() {
+            Tok::Pub => Vis::Pub(self.bump().span),
+            Tok::Export => Vis::Export(self.bump().span),
+            _ => Vis::Private,
         }
+    }
+
+    /// Checks there's no `pub` or `export` next, where nothing can be:
+    /// `why`.
+    fn no_pub(&mut self, why: &str) -> Result<(), Error> {
+        let word = match self.peek() {
+            Tok::Pub => "pub",
+            Tok::Export => "export",
+            _ => return Ok(()),
+        };
         let at = self.span();
         let next = self.toks[self.pos + 1].span;
         Err(
-            Error::syntax(at, format!("this can't be `pub`: {why}")).with_fix(Fix::new(
-                "remove the `pub`",
+            Error::syntax(at, format!("this can't be `{word}`: {why}")).with_fix(Fix::new(
+                format!("remove the `{word}`"),
                 vec![Edit::delete(Span::new(at.start, next.start))],
             )),
         )
@@ -841,7 +854,7 @@ impl Parser {
             allows: head.allows,
             span: start.to(body.span),
             module: self.module,
-            public: None,
+            vis: Vis::Private,
             name,
             generics,
             params,
@@ -941,7 +954,7 @@ impl Parser {
             doc: None,
             allows: Vec::new(),
             mutable,
-            public: None,
+            vis: Vis::Private,
             name,
             ty,
         })
@@ -988,7 +1001,7 @@ impl Parser {
             intrinsic: head.intrinsic,
             span: start.to(end),
             module: self.module,
-            public: None,
+            vis: Vis::Private,
             name,
             supers,
             assoc,
@@ -1183,19 +1196,19 @@ impl Parser {
                 None => head,
                 Some(_) => head.no_intrinsic()?.no_measure(TRAIT_MEASURE)?,
             };
-            let public = match trait_name {
+            let vis = match trait_name {
                 Some(_) => {
                     self.no_pub("a trait impl's methods are public wherever the trait is")?;
-                    None
+                    Vis::Private
                 }
-                None => (*self.peek() == Tok::Pub).then(|| self.bump().span),
+                None => self.vis(),
             };
             match self.peek() {
                 Tok::Type => assoc.push(self.assoc_def(head)?),
                 Tok::Effect => effects.push(self.effect_def(head)?),
                 Tok::Fn => {
                     let mut f = self.function(head, true, false)?.0;
-                    f.public = public;
+                    f.vis = vis;
                     methods.push(f);
                 }
                 _ => return Err(self.unexpected("`fn`, `type`, `effect` or `}`")),
@@ -1377,7 +1390,7 @@ impl Parser {
             doc: None,
             allows: Vec::new(),
             mutable,
-            public: None,
+            vis: Vis::Private,
             name,
             ty,
         })
@@ -1390,7 +1403,7 @@ impl Parser {
         self.expect(Tok::LBrace)?;
         let (fields, end) = self.comma_list(Tok::RBrace, |p| {
             let Head { doc, allows, .. } = p.head()?.no_derives()?;
-            let public = (*p.peek() == Tok::Pub).then(|| p.bump().span);
+            let vis = p.vis();
             if *p.peek() == Tok::Mut {
                 return Err(Error::syntax(
                     p.span(),
@@ -1401,7 +1414,7 @@ impl Parser {
             Ok(Param {
                 doc,
                 allows,
-                public,
+                vis,
                 ..p.param()?
             })
         })?;
@@ -1416,7 +1429,7 @@ impl Parser {
             allows: head.allows,
             span: start.to(end),
             module: self.module,
-            public: None,
+            vis: Vis::Private,
             name,
             generics,
             derives: head.derives,
@@ -1453,7 +1466,7 @@ impl Parser {
             allows: head.allows,
             span: start.to(end),
             module: self.module,
-            public: None,
+            vis: Vis::Private,
             name,
             generics,
             derives: head.derives,
@@ -1705,14 +1718,15 @@ impl Parser {
                     ),
                 ));
             }
-            if matches!(self.peek(), Tok::Mod | Tok::Use | Tok::Pub) {
+            if matches!(self.peek(), Tok::Mod | Tok::Use | Tok::Pub | Tok::Export) {
                 let what = match self.peek() {
                     Tok::Mod => {
                         "a `mod` can't be in a function: a module's items are only in \
                                  modules"
                     }
                     Tok::Use => "a `use` can't be in a function, only in a module",
-                    _ => "what's in a function can't be `pub`: only it can see it",
+                    Tok::Pub => "what's in a function can't be `pub`: only it can see it",
+                    _ => "what's in a function can't be `export`: only it can see it",
                 };
                 return Err(Error::syntax(self.span(), what));
             }

@@ -279,14 +279,14 @@ impl Checker {
             .expect("a method");
         self.uses().fns.insert(crate::check::scope::FnId(id));
         let f = &self.fns[id];
-        if !f.public && !self.modules.within(self.module, f.module) {
+        if !self.modules.visible(f.module, f.level, self.module) {
             return Err(Error::ty(
                 name.span,
                 format!(
-                    "method `{}` of `{}` is private to {}",
+                    "method `{}` of `{}` {}",
                     name.name,
                     d.self_ty,
-                    self.modules.describe(f.module)
+                    self.modules.hidden_by(f.module, f.level)
                 ),
             ));
         }

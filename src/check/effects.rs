@@ -420,16 +420,17 @@ impl Checker {
         }
         // Each effect it says that nothing in it has. One that's an
         // associated effect with none, as `Self::e` may be, says nothing.
-        // Only where nothing outside can count on it: not a `pub`
-        // function, which may say an effect to keep the right to have it
-        // later, nor a trait's method, default or impl, which is public
-        // wherever the trait is, and says what its impls may do.
+        // Only where nothing outside the package can count on it: not an
+        // exported function, which may say an effect to keep the right to
+        // have it later, nor a trait's method, default or impl, which is
+        // seen wherever the trait is, and says what its impls may do.
+        // Code in the package that counts on it is checked with it.
         let Some(written) = &f.effects else {
             return Ok(());
         };
         let default = self.self_ty.is_none() && self.type_params.iter().any(|p| p == "Self");
         let of_trait = default || self.in_trait_impl;
-        if f.public.is_some() || of_trait {
+        if f.vis.is_export() || of_trait {
             return Ok(());
         }
         let resolved: Vec<Type> = written
