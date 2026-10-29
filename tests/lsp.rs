@@ -45,6 +45,22 @@ impl Client {
         }
     }
 
+    /// Collects the latest diagnostics for each file until a following
+    /// request is answered. A missing publication is a failure, not a hang.
+    fn diagnostics_before_response(&mut self, id: i64) -> std::collections::HashMap<String, Value> {
+        let mut out = std::collections::HashMap::new();
+        loop {
+            let msg = self.recv();
+            if msg["id"] == id {
+                return out;
+            }
+            if msg["method"] == "textDocument/publishDiagnostics" {
+                let params = &msg["params"];
+                out.insert(params["uri"].as_str().unwrap().to_string(), params.clone());
+            }
+        }
+    }
+
     /// Skips anything else until the next `publishDiagnostics` notification.
     fn diagnostics(&mut self) -> Vec<Value> {
         loop {
@@ -1792,6 +1808,135 @@ fn files_of_modules_are_checked_with_their_program() {
         "{r}"
     );
 
+    stop(child, c);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn closing_unsaved_files_refreshes_the_programs_diagnostics() {
+    let dir = std::env::temp_dir().join(format!("t-lsp-close-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = "mod util;\nmod consumer;\nfn main() { consumer::run(); }\n";
+    std::fs::write(dir.join("main.t"), main).unwrap();
+    std::fs::write(dir.join("util.t"), "pub fn helper() -> i64 { 1 }\n").unwrap();
+    // This file stays closed, but errors induced by an open overlay
+    // must be cleared here too when its on-disk dependency is restored.
+    std::fs::write(
+        dir.join("consumer.t"),
+        "pub fn run() { let _x: i64 = crate::util::helper(); }\n",
+    )
+    .unwrap();
+    let main_uri = file_uri(&dir.join("main.t"));
+    let util_uri = file_uri(&dir.join("util.t"));
+    let consumer_uri = file_uri(&dir.join("consumer.t"));
+    let (child, mut c) = start();
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": main_uri, "languageId": "t", "version": 1, "text": main}
+        }}),
+    );
+    assert!(diagnostics_for(&mut c, &main_uri).is_empty());
+
+    for close_main in [false, true] {
+        c.send(
+            json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+                "textDocument": {"uri": util_uri, "languageId": "t", "version": 1,
+                    "text": "pub fn helper() -> bool { true }\n"}
+            }}),
+        );
+        let diags = diagnostics_for(&mut c, &consumer_uri);
+        assert!(
+            diags.iter().any(|d| d["message"]
+                .as_str()
+                .unwrap()
+                .contains("expected `i64`, found `bool`")),
+            "{diags:?}"
+        );
+        if close_main {
+            c.send(
+                json!({"jsonrpc": "2.0", "method": "textDocument/didClose", "params": {
+                    "textDocument": {"uri": main_uri}
+                }}),
+            );
+        }
+        c.send(
+            json!({"jsonrpc": "2.0", "method": "textDocument/didClose", "params": {
+                "textDocument": {"uri": util_uri}
+            }}),
+        );
+        c.send(
+            json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/documentSymbol", "params": {
+                "textDocument": {"uri": main_uri}
+            }}),
+        );
+        let diags = c.diagnostics_before_response(2);
+        assert_eq!(
+            diags.get(&main_uri).map(|p| &p["diagnostics"]),
+            Some(&json!([])),
+            "{diags:?}"
+        );
+        assert_eq!(
+            diags.get(&util_uri).map(|p| &p["diagnostics"]),
+            Some(&json!([])),
+            "{diags:?}"
+        );
+        assert_eq!(
+            diags.get(&consumer_uri).map(|p| &p["diagnostics"]),
+            Some(&json!([])),
+            "{diags:?}"
+        );
+    }
+    stop(child, c);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn closing_an_unsaved_root_can_detach_an_open_module() {
+    let dir = std::env::temp_dir().join(format!("t-lsp-close-root-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("main.t"), "fn main() {}\n").unwrap();
+    std::fs::write(dir.join("util.t"), "pub fn helper() -> bool { true }\n").unwrap();
+    let main_uri = file_uri(&dir.join("main.t"));
+    let util_uri = file_uri(&dir.join("util.t"));
+    let (child, mut c) = start();
+    for (uri, text) in [
+        (
+            &main_uri,
+            "mod util;\nfn main() { let _x: i64 = util::helper(); }\n",
+        ),
+        (&util_uri, "pub fn helper() -> bool { true }\n"),
+    ] {
+        c.send(
+            json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+                "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": text}
+            }}),
+        );
+        assert!(!diagnostics_for(&mut c, &main_uri).is_empty());
+    }
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didClose", "params": {
+            "textDocument": {"uri": main_uri}
+        }}),
+    );
+    c.send(
+        json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/documentSymbol", "params": {
+            "textDocument": {"uri": util_uri}
+        }}),
+    );
+    let diags = c.diagnostics_before_response(2);
+    assert_eq!(
+        diags.get(&main_uri).map(|p| &p["diagnostics"]),
+        Some(&json!([])),
+        "{diags:?}"
+    );
+    let util = &diags[&util_uri]["diagnostics"];
+    assert!(
+        util.as_array().unwrap().iter().any(|d| d["message"]
+            .as_str()
+            .unwrap()
+            .contains("program has no `main`")),
+        "{util}"
+    );
     stop(child, c);
     std::fs::remove_dir_all(&dir).unwrap();
 }
