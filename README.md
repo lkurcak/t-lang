@@ -214,6 +214,19 @@ comments, and recovery around incomplete items. Inputs are capped at 8 KiB.
 Failures print the seed/case and exact source to reproduce; no external
 fuzz runner or new dependencies are needed.
 
+`cargo test --lib check::refine::logic::generated_tests` checks solver
+soundness against exhaustive evaluation over 50 assignments for each of
+512 generated questions, with two fixed seeds and both small and large
+coefficients. Reversed assumptions and atoms at `i128` limits exercise
+conservative failure too; an unproved true condition is allowed.
+`cargo test --test generated_semantics` checks integer boundary guards,
+all 24 declaration orders of programs combining mutation, borrowing,
+closures, refinements, and early returns, and paired valid/invalid closure
+lifetime cases. Accepted programs run and match independently calculated
+output; invalid programs must fail during type checking. These tests also
+run in the normal suite, cap source inputs at 4 KiB, and report the exact
+question or program on failure.
+
 Each `tests/t/*.t` file is a program with its expectations in comments:
 
 ```rust,fragment

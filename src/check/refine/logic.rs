@@ -43,6 +43,9 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+#[cfg(test)]
+mod generated_tests;
+
 /// A variable of the logic, by number (see `Kind`).
 pub(crate) type Var = u32;
 
