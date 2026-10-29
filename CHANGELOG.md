@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.36.0 (2026-10-29)
 
 Step 23: arenas. See [docs/23-arenas.md](docs/23-arenas.md).
 

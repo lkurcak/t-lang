@@ -1,6 +1,6 @@
 [package]
 name = "t-lang"
-version = "0.35.0"
+version = "0.36.0"
 edition = "2024"
 rust-version = "1.99"
 description = "T: like C, but a different letter. A small no-GC language built one type-theory concept at a time."
