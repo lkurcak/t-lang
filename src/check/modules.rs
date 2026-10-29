@@ -1167,6 +1167,18 @@ impl Rewrite<'_> {
                 }
                 &mut e.derives
             }
+            TypeDecl::Alias(a) => {
+                self.generics(&mut a.generics)?;
+                // Whoever can name it can name what it stands for.
+                if interface.is_some() {
+                    let what = format!("`{}`", a.name.name);
+                    self.interface = interface_of(d_vis, &what, "what it stands for names");
+                }
+                self.ty(&mut a.ty)?;
+                self.interface = None;
+                self.params.truncate(self.params.len() - n);
+                return Ok(());
+            }
         };
         // Each derived trait by its symbol: only core's three can be.
         for name in derives.iter_mut().flat_map(|d| &mut d.names) {

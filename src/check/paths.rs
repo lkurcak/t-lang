@@ -221,11 +221,25 @@ impl Checker {
                 name.span,
                 format!("`{}` is an enum, not a struct", name.name),
             )),
-            None => Err(Error::ty(
-                name.span,
-                format!("unknown type `{}`", name.name),
-            )),
+            None => Err(self
+                .alias_as_value(name)
+                .unwrap_or_else(|| Error::ty(name.span, format!("unknown type `{}`", name.name)))),
         }
+    }
+
+    /// That `name`, written where a struct or enum must be, in a literal,
+    /// pattern or path, is a type alias, if it is: an alias is only for
+    /// types (D1 of docs/25-type-aliases.md).
+    fn alias_as_value(&self, name: &Ident) -> Option<Error> {
+        let def = self.aliases.get(self.adt_symbol(name.id)?)?;
+        Some(Error::ty(
+            name.span,
+            format!(
+                "`{}` is a type alias, so it can only be used as a type; here, write what it \
+                 stands for: `{}`",
+                name.name, def.body
+            ),
+        ))
     }
 
     /// `name<A1, .., Ak>`, for struct or enum `name`, which must be one,
@@ -288,7 +302,11 @@ impl Checker {
                     format!("`{}` is a struct, not an enum", ty.name),
                 ));
             }
-            None => return Err(Error::ty(ty.span, format!("unknown type `{}`", ty.name))),
+            None => {
+                return Err(self
+                    .alias_as_value(ty)
+                    .unwrap_or_else(|| Error::ty(ty.span, format!("unknown type `{}`", ty.name))));
+            }
         };
         let Some(i) = variants.iter().position(|(v, _)| *v == variant.name) else {
             return Err(Error::ty(

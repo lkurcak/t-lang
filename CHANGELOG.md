@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+Step 25: type aliases. See [docs/25-type-aliases.md](docs/25-type-aliases.md).
+
+### Added
+
+- Type aliases: `type Nodes<'a> = Arena<Expr<'a>>;`, at the top of a
+  module or in a block, with lifetime, type and const parameters. A use
+  means what the alias stands for, with its names resolved where it's
+  declared. An alias can't contain itself, names every lifetime in it,
+  uses every parameter, has no bounds, and is seen no further than what
+  it stands for. It's for types only: a struct literal, pattern or path
+  names the struct or enum, which the error says.
+- `dead_code` warns of a type alias nothing names.
+- Editors: hover shows what an alias stands for at each use; go to
+  definition, rename and document symbols know aliases; tree-sitter
+  parses `type` items.
+
 ## 0.37.0 (2026-10-29)
 
 Step 24: visibility and effect inference. See

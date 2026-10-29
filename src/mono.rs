@@ -126,6 +126,9 @@ struct Mono<'p> {
     prog: &'p Program,
     info: &'p Info,
     arities: HashMap<String, (usize, Vec<bool>)>,
+    /// What each type alias stands for, by symbol: a use of one is a use
+    /// of that.
+    aliases: HashMap<String, std::sync::Arc<check::AliasDef>>,
     fns: HashMap<&'p str, Decl<'p>>,
     types: HashMap<&'p str, &'p TypeDecl>,
     /// Every copy of a generic function so far, by name, and their names in
@@ -163,9 +166,20 @@ impl<'p> Mono<'p> {
             arities: prog
                 .types
                 .iter()
+                .filter(|d| !matches!(d, TypeDecl::Alias(_)))
                 .map(|d| {
                     let arity = (d.generics().lifetimes.len(), d.generics().lengths());
                     (d.name().name.clone(), arity)
+                })
+                .collect(),
+            aliases: prog
+                .types
+                .iter()
+                .filter_map(|d| match d {
+                    TypeDecl::Alias(a) => {
+                        Some((a.name.name.clone(), Arc::new(check::AliasDef::new(a))))
+                    }
+                    _ => None,
                 })
                 .collect(),
             fns: decls(prog, info),
@@ -202,7 +216,11 @@ impl<'p> Mono<'p> {
             .into_iter()
             .collect();
         let mut types: HashMap<String, TypeDecl> = HashMap::new();
-        for d in prog.types.iter().filter(|d| d.type_params().is_empty()) {
+        let adts = prog
+            .types
+            .iter()
+            .filter(|d| !matches!(d, TypeDecl::Alias(_)));
+        for d in adts.filter(|d| d.type_params().is_empty()) {
             types.insert(d.name().name.clone(), self.type_decl(d, &[]));
         }
         loop {
@@ -497,6 +515,7 @@ impl<'p> Mono<'p> {
                     })
                     .collect(),
             }),
+            TypeDecl::Alias(_) => unreachable!("an alias stands for a type, and isn't one"),
         }
     }
 }
@@ -655,7 +674,7 @@ impl Cx<'_, '_, '_> {
         ) -> Result<Type, crate::error::Error>,
     ) -> Type {
         // Everything is at the top level by now, named by its symbol.
-        let arities = &self.m.arities;
+        let (arities, aliases) = (&self.m.arities, &self.m.aliases);
         let opaques = &self.m.info.opaques;
         let names = |name: &str, t: &TypeExpr| {
             if let Some(symbol) = opaques.get(&t.id) {
@@ -665,6 +684,9 @@ impl Cx<'_, '_, '_> {
             }
             match self.params.iter().any(|p| p == name) {
                 true => None,
+                false if let Some(def) = aliases.get(name) => {
+                    Some(check::TypeName::Alias(def.clone()))
+                }
                 false => arities
                     .get(name)
                     .map(|(l, n)| check::TypeName::Adt(name.to_string(), *l, n.clone())),
@@ -734,6 +756,7 @@ impl Cx<'_, '_, '_> {
         let written: Vec<&TypeExpr> = match d {
             TypeDecl::Struct(st) => st.fields.iter().map(|f| &f.ty).collect(),
             TypeDecl::Enum(e) => e.variants.iter().flat_map(|v| &v.fields).collect(),
+            TypeDecl::Alias(_) => unreachable!("an alias stands for a type, and isn't one"),
         };
         written.into_iter().map(|f| cx.resolved(f)).collect()
     }
@@ -1260,6 +1283,7 @@ mod used {
                 .iter()
                 .flat_map(|v| &v.fields)
                 .for_each(|t| in_type(t, out)),
+            TypeDecl::Alias(a) => in_type(&a.ty, out),
         }
     }
 

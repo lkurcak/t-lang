@@ -294,11 +294,13 @@ impl UseTree {
     }
 }
 
-/// `struct Point { x: i64, y: i64 }` or `enum Shape { Circle(i64), Empty }`.
+/// `struct Point { x: i64, y: i64 }` or `enum Shape { Circle(i64), Empty }`,
+/// or `type Meters = i64;`, a type alias.
 #[derive(Debug, Clone)]
 pub enum TypeDecl {
     Struct(StructDecl),
     Enum(EnumDecl),
+    Alias(AliasDecl),
 }
 
 impl TypeDecl {
@@ -306,6 +308,7 @@ impl TypeDecl {
         match self {
             TypeDecl::Struct(s) => &s.name,
             TypeDecl::Enum(e) => &e.name,
+            TypeDecl::Alias(a) => &a.name,
         }
     }
 
@@ -313,6 +316,7 @@ impl TypeDecl {
         match self {
             TypeDecl::Struct(s) => s.doc.as_ref(),
             TypeDecl::Enum(e) => e.doc.as_ref(),
+            TypeDecl::Alias(a) => a.doc.as_ref(),
         }
     }
 
@@ -320,6 +324,7 @@ impl TypeDecl {
         match self {
             TypeDecl::Struct(s) => &s.allows,
             TypeDecl::Enum(e) => &e.allows,
+            TypeDecl::Alias(a) => &a.allows,
         }
     }
 
@@ -328,6 +333,7 @@ impl TypeDecl {
         match self {
             TypeDecl::Struct(s) => s.module,
             TypeDecl::Enum(e) => e.module,
+            TypeDecl::Alias(a) => a.module,
         }
     }
 
@@ -336,6 +342,7 @@ impl TypeDecl {
         match self {
             TypeDecl::Struct(s) => TypeDecl::Struct(StructDecl { module: ROOT, ..s }),
             TypeDecl::Enum(e) => TypeDecl::Enum(EnumDecl { module: ROOT, ..e }),
+            TypeDecl::Alias(a) => TypeDecl::Alias(AliasDecl { module: ROOT, ..a }),
         }
     }
 
@@ -343,14 +350,17 @@ impl TypeDecl {
         match self {
             TypeDecl::Struct(s) => s.vis,
             TypeDecl::Enum(e) => e.vis,
+            TypeDecl::Alias(a) => a.vis,
         }
     }
 
-    /// From the `struct` or `enum` to the `}`.
+    /// From the `struct` or `enum` to the `}`, or from the `type` to the
+    /// `;`.
     pub fn span(&self) -> Span {
         match self {
             TypeDecl::Struct(s) => s.span,
             TypeDecl::Enum(e) => e.span,
+            TypeDecl::Alias(a) => a.span,
         }
     }
 
@@ -358,6 +368,7 @@ impl TypeDecl {
         match self {
             TypeDecl::Struct(s) => &s.generics,
             TypeDecl::Enum(e) => &e.generics,
+            TypeDecl::Alias(a) => &a.generics,
         }
     }
 
@@ -369,6 +380,7 @@ impl TypeDecl {
         match self {
             TypeDecl::Struct(s) => &s.derives,
             TypeDecl::Enum(e) => &e.derives,
+            TypeDecl::Alias(_) => &[],
         }
     }
 
@@ -622,6 +634,24 @@ pub struct StructDecl {
     /// looks inside, by the intrinsic methods of its impl (see
     /// `check::INTRINSICS`).
     pub intrinsic: Option<Span>,
+}
+
+/// `type Nodes<'a> = Arena<Expr<'a>>;`: another name for a type. Wherever
+/// it's written, it means what it stands for, with its parameters replaced
+/// by the arguments written there (see docs/25-type-aliases.md).
+#[derive(Debug, Clone)]
+pub struct AliasDecl {
+    pub doc: Option<DocComment>,
+    pub allows: Vec<Allow>,
+    /// From the `type` to the `;`.
+    pub span: Span,
+    pub module: usize,
+    pub vis: Vis,
+    pub name: Ident,
+    /// Its lifetime, type and const parameters, which have no bounds.
+    pub generics: Generics,
+    /// What it stands for.
+    pub ty: TypeExpr,
 }
 
 #[derive(Debug, Clone)]
@@ -1151,6 +1181,37 @@ pub enum TypeExprKind {
 }
 
 impl TypeExpr {
+    /// Calls `f` with every named type in it, itself included, at any
+    /// depth: `Option<Meters>` and `Meters`.
+    pub fn each_named(&self, f: &mut impl FnMut(&TypeExpr)) {
+        match &self.kind {
+            TypeExprKind::Named(_, args) => {
+                f(self);
+                args.iter().for_each(|a| a.each_named(f));
+            }
+            TypeExprKind::Unit
+            | TypeExprKind::Never
+            | TypeExprKind::Lifetime(_)
+            | TypeExprKind::Nat(_) => {}
+            TypeExprKind::Fn(params, ret, effects) => {
+                params.iter().for_each(|p| p.each_named(f));
+                ret.each_named(f);
+                (effects.iter().flat_map(EffectSet::types)).for_each(|t| t.each_named(f));
+            }
+            TypeExprKind::Ref(_, _, inner)
+            | TypeExprKind::Slice(inner)
+            | TypeExprKind::Proj(inner, ..)
+            | TypeExprKind::Refined(_, inner, _) => inner.each_named(f),
+            TypeExprKind::Array(inner, n) => {
+                inner.each_named(f);
+                n.each_named(f);
+            }
+            TypeExprKind::Impl(bounds) => {
+                (bounds.iter().flat_map(BoundItem::types)).for_each(|t| t.each_named(f));
+            }
+        }
+    }
+
     /// What it refines, if it's a refinement type, or else itself.
     pub fn unrefined(&self) -> &TypeExpr {
         match &self.kind {

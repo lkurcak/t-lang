@@ -707,8 +707,20 @@ impl Printer<'_> {
         let keyword = match d {
             TypeDecl::Struct(_) => "struct ",
             TypeDecl::Enum(_) => "enum ",
+            TypeDecl::Alias(_) => "type ",
         };
         let name = d.name();
+        if let TypeDecl::Alias(a) = d {
+            let doc = self.lead_derives(d.doc(), d.allows(), &[], self.before(name.span.start));
+            return doc
+                + vis(d.vis())
+                + keyword
+                + &name.name
+                + self.generics(name.span.end, d.generics())
+                + " = "
+                + self.ty(&a.ty)
+                + ";";
+        }
         let mut doc = self.lead_derives(
             d.doc(),
             d.allows(),
@@ -778,6 +790,7 @@ impl Printer<'_> {
                     },
                 )
             }
+            TypeDecl::Alias(_) => unreachable!("returned above"),
         };
         head + body
     }

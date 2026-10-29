@@ -696,6 +696,10 @@
           "named": true
         },
         {
+          "type": "type_item",
+          "named": true
+        },
+        {
           "type": "use_declaration",
           "named": true
         }
@@ -2129,6 +2133,10 @@
           "named": true
         },
         {
+          "type": "type_item",
+          "named": true
+        },
+        {
           "type": "use_declaration",
           "named": true
         }
@@ -2756,6 +2764,10 @@
           "named": true
         },
         {
+          "type": "type_item",
+          "named": true
+        },
+        {
           "type": "use_declaration",
           "named": true
         }
@@ -3087,6 +3099,52 @@
         },
         {
           "type": "lifetime",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "type_item",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type_identifier",
+            "named": true
+          }
+        ]
+      },
+      "type": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "_type",
+            "named": true
+          }
+        ]
+      },
+      "type_parameters": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "type_parameters",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "visibility_modifier",
           "named": true
         }
       ]

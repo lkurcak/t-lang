@@ -1026,6 +1026,11 @@ fn type_symbol(src: &str, d: &TypeDecl) -> DocumentSymbol {
             });
             ("enum", SymbolKind::ENUM, variants.collect())
         }
+        TypeDecl::Alias(a) => {
+            let detail = format!("type {ty} = {}", a.ty);
+            let kind = SymbolKind::TYPE_PARAMETER;
+            return symbol(src, label(d.name()), detail, kind, d.span(), Vec::new());
+        }
     };
     let detail = format!("{keyword} {ty}");
     symbol(src, label(d.name()), detail, kind, d.span(), children)

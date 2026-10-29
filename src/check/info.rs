@@ -205,6 +205,8 @@ pub enum NoteKind {
     Field(String),
     /// Enum, variant.
     Variant(String, String),
+    /// A type alias, whose type is what it stands for.
+    Alias(String),
 }
 
 /// A note for a name written as a path, `a::b::f` at `span`, is for its
@@ -215,7 +217,8 @@ fn last_segment(span: Span, kind: NoteKind) -> (Span, NoteKind) {
     let (NoteKind::Fn(name)
     | NoteKind::Trait(name)
     | NoteKind::Struct(name)
-    | NoteKind::Enum(name)) = &kind
+    | NoteKind::Enum(name)
+    | NoteKind::Alias(name)) = &kind
     else {
         return (span, kind);
     };
@@ -231,6 +234,7 @@ fn last_segment(span: Span, kind: NoteKind) -> (Span, NoteKind) {
         NoteKind::Fn(_) => NoteKind::Fn(last),
         NoteKind::Trait(_) => NoteKind::Trait(last),
         NoteKind::Struct(_) => NoteKind::Struct(last),
+        NoteKind::Alias(_) => NoteKind::Alias(last),
         _ => NoteKind::Enum(last),
     };
     (span, kind)
@@ -256,6 +260,7 @@ impl Note {
             NoteKind::Module(path) => format!("mod {path}"),
             NoteKind::Field(name) => format!("field {name}: {ty}"),
             NoteKind::Variant(e, v) => format!("{e}{args}::{v}: {ty}"),
+            NoteKind::Alias(name) => format!("type {name} = {ty}"),
         }
     }
 
@@ -319,6 +324,7 @@ impl Defs {
             match d {
                 TypeDecl::Struct(s) => s.fields.iter().for_each(|f| doc(&f.name, f.doc.as_ref())),
                 TypeDecl::Enum(e) => e.variants.iter().for_each(|v| doc(&v.name, v.doc.as_ref())),
+                TypeDecl::Alias(_) => {}
             }
         }
         for ((d, _), def) in all.iter().zip(types) {
@@ -337,6 +343,7 @@ impl Defs {
                         defs.variants.entry(key).or_insert(v.name.span);
                     }
                 }
+                TypeDecl::Alias(_) => {}
             }
         }
     }
@@ -490,12 +497,19 @@ impl Checker {
                     params.iter().map(|p| Type::Param(p.name.clone())).collect(),
                 ),
             };
-            let kind = match d {
-                TypeDecl::Struct(_) => NoteKind::Struct(name.clone()),
-                TypeDecl::Enum(_) => NoteKind::Enum(name.clone()),
+            let (kind, ty) = match d {
+                TypeDecl::Struct(_) => (NoteKind::Struct(name.clone()), Some(generic.clone())),
+                TypeDecl::Enum(_) => (NoteKind::Enum(name.clone()), Some(generic.clone())),
+                TypeDecl::Alias(_) => {
+                    let ty = self
+                        .aliases
+                        .get(symbol)
+                        .and_then(|a| self.alias_body(a).ok());
+                    (NoteKind::Alias(name.clone()), ty)
+                }
             };
             let span = d.name().span;
-            self.note(span, kind, Some(generic.clone()), Some(span));
+            self.note(span, kind, ty, Some(span));
             self.param_notes(d.generics());
             self.bound_notes(d.generics(), params);
             // `where T: Discard` in a `#[derive(..)]`.
@@ -537,6 +551,7 @@ impl Checker {
                         }
                     }
                 }
+                TypeDecl::Alias(a) => self.type_expr_notes(&a.ty, params),
             }
         }
         // What each `use` names.
@@ -558,10 +573,17 @@ impl Checker {
                     Item::Type(k) => {
                         let d = &prog.types[k];
                         let symbol = &self.types[k].symbol;
-                        let ty = self.adts.get(symbol).map(|def| def.generic(symbol));
+                        let mut ty = self.adts.get(symbol).map(|def| def.generic(symbol));
                         let kind = match d {
                             TypeDecl::Struct(_) => NoteKind::Struct(d.name().name.clone()),
                             TypeDecl::Enum(_) => NoteKind::Enum(d.name().name.clone()),
+                            TypeDecl::Alias(_) => {
+                                ty = self
+                                    .aliases
+                                    .get(symbol)
+                                    .and_then(|a| self.alias_body(a).ok());
+                                NoteKind::Alias(d.name().name.clone())
+                            }
                         };
                         (kind, ty, d.name().span)
                     }
@@ -721,6 +743,7 @@ impl Checker {
                 if let Some(symbol) = self.adt_symbol(t.id) {
                     let def = self.defs.types.get(symbol).copied();
                     let kind = match self.adts.get(symbol).map(|d| &d.kind) {
+                        _ if self.aliases.contains_key(symbol) => NoteKind::Alias(name.clone()),
                         Some(crate::types::AdtKind::Enum(_)) => NoteKind::Enum(name.clone()),
                         _ => NoteKind::Struct(name.clone()),
                     };

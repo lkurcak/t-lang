@@ -166,6 +166,7 @@ fn decls(prog: &Program) -> Vec<Decl<'_>> {
                         .map(|v| ident(&v.name, "variant", Case::Camel)),
                 );
             }
+            TypeDecl::Alias(_) => {}
         }
     }
     for t in &prog.traits {

@@ -521,6 +521,11 @@ impl Parser {
                 d.vis = vis;
                 prog.types.push(TypeDecl::Enum(d));
             }
+            Tok::Type => {
+                let mut d = self.alias_decl(head.no_derives()?)?;
+                d.vis = vis;
+                prog.types.push(TypeDecl::Alias(d));
+            }
             Tok::Trait => {
                 let mut d = self.trait_decl(head.no_derives()?)?;
                 d.vis = vis;
@@ -570,7 +575,14 @@ impl Parser {
         loop {
             let item = matches!(
                 self.peek(),
-                Tok::Fn | Tok::Struct | Tok::Enum | Tok::Trait | Tok::Impl | Tok::Mod | Tok::Use
+                Tok::Fn
+                    | Tok::Struct
+                    | Tok::Enum
+                    | Tok::Type
+                    | Tok::Trait
+                    | Tok::Impl
+                    | Tok::Mod
+                    | Tok::Use
             );
             let prefix = matches!(self.peek(), Tok::Hash | Tok::Pub | Tok::Export);
             if braces == 0 && brackets == 0 {
@@ -899,7 +911,7 @@ impl Parser {
 
     fn fn_decl(&mut self, head: Head) -> Result<FnDecl, Error> {
         if *self.peek() != Tok::Fn {
-            return Err(self.unexpected("`fn`, `struct`, `enum`, `trait` or `impl`"));
+            return Err(self.unexpected("`fn`, `struct`, `enum`, `type`, `trait` or `impl`"));
         }
         Ok(self.function(head, false, false)?.0)
     }
@@ -1556,6 +1568,37 @@ impl Parser {
         })
     }
 
+    /// `type Name<'a, T> = Type;`, whose parameters have no bounds: what it
+    /// stands for is checked where it's used, as if written there.
+    fn alias_decl(&mut self, head: Head) -> Result<AliasDecl, Error> {
+        let start = self.expect(Tok::Type)?;
+        let name = self.ident()?;
+        let generics = self.generics()?;
+        if let Some((_, b)) = generics.bounds.first() {
+            let at = b
+                .first()
+                .map_or(generics.span.unwrap_or(name.span), |b| b.span);
+            return Err(Error::syntax(
+                at,
+                "a type alias's parameters can't have bounds; what it stands for is checked \
+                 where it's used",
+            ));
+        }
+        self.expect(Tok::Eq)?;
+        let ty = self.ty()?;
+        let end = self.expect(Tok::Semi)?;
+        Ok(AliasDecl {
+            doc: head.doc,
+            allows: head.allows,
+            span: start.to(end),
+            module: self.module,
+            vis: Vis::Private,
+            name,
+            generics,
+            ty,
+        })
+    }
+
     fn enum_decl(&mut self, head: Head) -> Result<EnumDecl, Error> {
         let start = self.expect(Tok::Enum)?;
         let name = self.ident()?;
@@ -1848,14 +1891,23 @@ impl Parser {
                 };
                 return Err(Error::syntax(self.span(), what));
             }
-            if matches!(self.peek(), Tok::Fn | Tok::Struct | Tok::Enum | Tok::Hash) {
+            if matches!(
+                self.peek(),
+                Tok::Fn | Tok::Struct | Tok::Enum | Tok::Type | Tok::Hash
+            ) {
                 let head = self.head()?.no_intrinsic()?.no_measure(NOT_METHOD)?;
                 let stmt = match self.peek() {
                     Tok::Fn => Stmt::Fn(Box::new(self.fn_decl(head.no_derives()?)?)),
                     Tok::Struct => Stmt::Type(Box::new(TypeDecl::Struct(self.struct_decl(head)?))),
                     Tok::Enum => Stmt::Type(Box::new(TypeDecl::Enum(self.enum_decl(head)?))),
+                    Tok::Type => {
+                        let d = self.alias_decl(head.no_derives()?)?;
+                        Stmt::Type(Box::new(TypeDecl::Alias(d)))
+                    }
                     _ => {
-                        return Err(self.unexpected("`fn`, `struct` or `enum` after an attribute"));
+                        return Err(
+                            self.unexpected("`fn`, `struct`, `enum` or `type` after an attribute")
+                        );
                     }
                 };
                 stmts.push(stmt);

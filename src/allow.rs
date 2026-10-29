@@ -59,6 +59,7 @@ fn allowed<'p>(prog: &'p Program, sources: &Sources) -> Vec<(Span, &'p [Allow])>
                 );
             }
             TypeDecl::Enum(e) => out.extend(e.variants.iter().map(|v| (v.span, &v.allows[..]))),
+            TypeDecl::Alias(_) => {}
         }
     }
     out.retain(|(_, allows)| !allows.is_empty());

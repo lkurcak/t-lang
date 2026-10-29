@@ -79,6 +79,7 @@ module.exports = grammar({
       $.function_signature_item,
       $.struct_item,
       $.enum_item,
+      $.type_item,
       $.trait_item,
       $.impl_item,
       $.mod_item,
@@ -382,6 +383,17 @@ module.exports = grammar({
       field('type', $._type),
     ),
 
+    // `type Nodes<'a> = Arena<Expr<'a>>;`, a type alias.
+    type_item: $ => seq(
+      optional($.visibility_modifier),
+      'type',
+      field('name', $._type_identifier),
+      optional(field('type_parameters', $.type_parameters)),
+      '=',
+      field('type', $._type),
+      ';',
+    ),
+
     enum_item: $ => seq(
       optional($.visibility_modifier),
       'enum',
@@ -519,8 +531,8 @@ module.exports = grammar({
 
     block: $ => seq('{', repeat($._statement), optional($._expression), '}'),
 
-    // A `fn`, `struct` or `enum` in a block is local to it: an item like
-    // any other.
+    // A `fn`, `struct`, `enum` or `type` in a block is local to it: an
+    // item like any other.
     _statement: $ => choice(
       $.let_declaration,
       $.expression_statement,
