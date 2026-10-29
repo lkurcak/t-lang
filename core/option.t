@@ -57,9 +57,10 @@ impl<T> Option<T> {
 
     /// `f` of what's in it, if anything, which may itself be `None`. On
     /// `None`, `f` is thrown away uncalled.
-    pub fn and_then<U, effect e, F: FnOnce(T) -> Option<U> with e + Discard>(self, f: F) -> Option<
-        U,
-    > with e {
+    pub fn and_then<U, effect e, F: FnOnce(T) -> Option<U> with e + Discard>(
+        self,
+        f: F,
+    ) -> Option<U> with e {
         match self {
             Option::Some(x) => f(x),
             Option::None => Option::None,

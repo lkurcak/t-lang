@@ -101,7 +101,7 @@ impl Stdin {
             Result::Ok(s) => {
                 line.push_str(s.as_str());
                 Result::Ok(any)
-            }
+            },
             Result::Err(_) => Result::Err(Error::new(ErrorKind::InvalidData)),
         }
     }
