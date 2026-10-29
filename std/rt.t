@@ -9,7 +9,7 @@ use crate::io::Stderr;
 /// when `main` gives back `Err(e)`, before the program stops with a
 /// status that says it failed. If writing fails, there's nowhere left to
 /// say so.
-export fn report<E: Display>(e: &E, mut err: Stderr) {
+pub fn report<E: Display>(e: &E, mut err: Stderr) {
     let _ = err.put(&"error: ");
     let _ = err.line(e);
 }

@@ -11,7 +11,7 @@
 //! Nothing here is in the prelude: a program says what it uses.
 
 export mod io;
-export mod rt;
+pub mod rt;
 
 use crate::io::{Stderr, Stdin, Stdout};
 
