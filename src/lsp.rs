@@ -47,7 +47,7 @@ use lsp_types::{
     ServerCapabilities, SymbolKind, TextDocumentPositionParams, TextDocumentSyncCapability,
     TextDocumentSyncKind, TextEdit, TypeDefinitionProviderCapability, Uri, WorkspaceEdit,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -141,8 +141,7 @@ fn notify(
         }
         DidCloseTextDocument::METHOD => {
             let p: DidCloseTextDocumentParams = serde_json::from_value(n.params)?;
-            docs.0.remove(&uri_path(&p.text_document.uri));
-            publish(conn, p.text_document.uri, None, Vec::new())?;
+            close_document(conn, docs, p.text_document.uri, published)?;
         }
         _ => {}
     }
@@ -531,15 +530,76 @@ fn publish_all(
     let Some(a) = docs.analyse(&uri) else {
         return Ok(());
     };
+    publish_analysis(conn, docs, &a, Some((&uri, version)), published)
+}
+
+/// Closing an overlay restores the file on disk. Reanalyse the remaining
+/// open files of its programs: restoring a root can also detach modules,
+/// which then belong to programs of their own. Clear old diagnostics that
+/// no refreshed program owns, including when its last open file closes.
+fn close_document(
+    conn: &Connection,
+    docs: &mut Docs,
+    uri: Uri,
+    published: &mut HashMap<PathBuf, Vec<Uri>>,
+) -> Result<()> {
+    let path = uri_path(&uri);
+    docs.0.remove(&path);
+    publish(conn, uri.clone(), None, Vec::new())?;
+    let roots: Vec<_> = published
+        .iter()
+        .filter(|(_, files)| files.iter().any(|file| uri_path(file) == path))
+        .map(|(root, _)| root.clone())
+        .collect();
+    let before: Vec<_> = roots
+        .iter()
+        .flat_map(|root| published.get(root).cloned().unwrap_or_default())
+        .collect();
+    let mut live = HashSet::new();
+    let mut refreshed = HashSet::new();
+    for file in &before {
+        if docs.text(file).is_none() || live.contains(&uri_path(file)) {
+            continue;
+        }
+        if let Some(a) = docs.analyse(file) {
+            live.extend(a.uris.iter().map(uri_path));
+            refreshed.insert(a.root.clone());
+            publish_analysis(conn, docs, &a, None, published)?;
+        }
+    }
+    for root in roots {
+        if !refreshed.contains(&root) {
+            published.remove(&root);
+        }
+    }
+    let mut cleared = HashSet::new();
+    for old in before {
+        let old_path = uri_path(&old);
+        if old_path != path && !live.contains(&old_path) && cleared.insert(old_path) {
+            publish(conn, old, None, Vec::new())?;
+        }
+    }
+    Ok(())
+}
+
+fn publish_analysis(
+    conn: &Connection,
+    docs: &Docs,
+    a: &Analysis,
+    changed: Option<(&Uri, i32)>,
+    published: &mut HashMap<PathBuf, Vec<Uri>>,
+) -> Result<()> {
     let before = published.get(&a.root).cloned().unwrap_or_default();
     for file in &a.uris {
-        let diags: Vec<Diagnostic> = diagnose(&a, file).into_iter().map(|(d, _)| d).collect();
+        let diags: Vec<Diagnostic> = diagnose(a, file).into_iter().map(|(d, _)| d).collect();
         // A file neither open nor with anything to say, now or before,
         // needs nothing published.
         if diags.is_empty() && docs.text(file).is_none() && !before.contains(file) {
             continue;
         }
-        let version = (*file == uri).then_some(version);
+        let version = changed
+            .filter(|(uri, _)| *uri == file)
+            .map(|(_, version)| version);
         publish(conn, file.clone(), version, diags)?;
     }
     let before = published.insert(a.root.clone(), a.uris.clone());
