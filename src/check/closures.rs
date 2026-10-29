@@ -225,7 +225,10 @@ impl Checker {
         let ret = match decided {
             true => ret,
             false => self.solved(&ret).map_regions(&mut |r| match r {
-                Region::Erased => next(),
+                // A nested closure's result is still undecided here.
+                // Infer this closure's own result lifetime from its body
+                // too, rather than retaining the nested placeholder.
+                Region::Erased | Region::Result(..) => next(),
                 Region::Named(n) if bound.contains(n) || n.starts_with("'_") => next(),
                 r => r.clone(),
             }),
