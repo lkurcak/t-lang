@@ -12,6 +12,20 @@ use std::process::Command;
 use t_lang::fmt::{FmtError, format};
 use t_lang::lexer::{Tok, Token};
 
+#[test]
+fn rejects_malformed_items_between_valid_declarations() {
+    for bad in [
+        "fn broken(x:) {}",
+        "fn broken() { let x = ; }",
+        "struct Broken { x: }",
+        "#[unknown] fn broken() {}",
+        "mod broken { fn nested() {}",
+    ] {
+        let src = format!("fn before() {{}}\n{bad}\nfn main() {{}}\n");
+        assert!(matches!(format(&src), Err(FmtError::Syntax(_))), "{src}");
+    }
+}
+
 /// Every `*.t` file in `dir`, in order.
 fn programs(dir: &str) -> Vec<PathBuf> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(dir);

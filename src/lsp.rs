@@ -7,14 +7,16 @@
 //! alone (see `load.rs`), with what the editor has for open files and
 //! what's on disk for the others. It shares semantic analysis between
 //! requests until an input changes, then re-checks the whole program and
-//! reports every warning and the first error, each in its file. Requests
+//! reports every warning and the first semantic error, each in its file.
+//! Syntax errors recover at module item boundaries for diagnostics and the
+//! outline only; semantic analysis still requires a strict parse. Requests
 //! are answered from what the checker found out
 //! (`check::Info`): the fixes of the diagnostics in range as code actions,
 //! the type and doc comment of what's under the cursor on hover, where
 //! that's defined and where its type is, every place it's named (as
 //! references and highlights), and inferred types and type arguments as
 //! inlay hints. It renames as `rename.rs` does. The outline of a file comes
-//! from parsing it alone, so it's there even when the file doesn't check.
+//! from parsing it alone, retaining complete declarations around syntax errors.
 //! It formats a file like `t fmt`, ignoring the editor's formatting
 //! options: there's one style. It never runs the program.
 
@@ -322,6 +324,24 @@ impl Docs {
         }
         let text = inputs.read(&root).ok()?;
         let checked = crate::check_files(&root, &text, &read);
+        // Recover only the file that strict loading rejected. Tokens keep
+        // their program offsets, including those in notes and quick fixes.
+        // Loading errors and lexical errors retain the original diagnostic.
+        let syntax_errors = match &checked.result {
+            Err(e) if e.phase == Phase::Syntax => {
+                let file = checked.sources.file_at(e.span.start);
+                crate::lexer::lex(checked.sources.src(file))
+                    .map(|mut tokens| {
+                        for token in &mut tokens {
+                            token.span.start += file.start;
+                            token.span.end += file.start;
+                        }
+                        crate::parser::parse_for_editor(tokens).errors
+                    })
+                    .unwrap_or_default()
+            }
+            _ => Vec::new(),
+        };
         let uris = checked
             .sources
             .files()
@@ -331,6 +351,7 @@ impl Docs {
         let a = Rc::new(Analysis {
             root: root.clone(),
             checked,
+            syntax_errors,
             uris,
             inputs: inputs.take_snapshot(),
         });
@@ -344,6 +365,8 @@ struct Analysis {
     /// The program's first file.
     root: PathBuf,
     checked: crate::Checked,
+    /// Syntax diagnostics from editor recovery, never a checked program.
+    syntax_errors: Vec<Error>,
     /// The URI of each of its files, in the order of its sources.
     uris: Vec<Uri>,
     inputs: Snapshot,
@@ -558,8 +581,11 @@ fn respond(req: Request, docs: &Docs) -> Result<Response> {
         DocumentSymbolRequest::METHOD => {
             let p: DocumentSymbolParams = serde_json::from_value(req.params)?;
             let outline = docs.text(&p.text_document.uri).and_then(|src| {
-                let prog = crate::lexer::lex(src).and_then(crate::parser::parse).ok()?;
-                Some(DocumentSymbolResponse::Nested(outline(src, &prog)))
+                let parsed = crate::parser::parse_for_editor(crate::lexer::lex(src).ok()?);
+                Some(DocumentSymbolResponse::Nested(outline(
+                    src,
+                    &parsed.program,
+                )))
             });
             Ok(Response::new_ok(req.id, outline))
         }
@@ -739,10 +765,14 @@ fn diagnose(a: &Analysis, uri: &Uri) -> Vec<(Diagnostic, Vec<Fix>)> {
         .iter()
         .filter_map(|w| Some((warning_diagnostic(a, uri, w)?, w.fixes.clone())))
         .collect();
-    if let Err(e) = &a.checked.result
-        && let Some(d) = error_diagnostic(a, uri, e)
-    {
-        out.push((d, e.fixes.clone()));
+    let errors: &[_] = match &a.checked.result {
+        Err(e) if a.syntax_errors.is_empty() => std::slice::from_ref(e),
+        _ => &a.syntax_errors,
+    };
+    for e in errors {
+        if let Some(d) = error_diagnostic(a, uri, e) {
+            out.push((d, e.fixes.clone()));
+        }
     }
     out
 }

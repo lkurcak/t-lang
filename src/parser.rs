@@ -124,8 +124,38 @@ use std::sync::Arc;
 /// items yet, `in_file`: `load.rs` reads its file and parses that into it
 /// with `parse_into`.
 pub fn parse(tokens: Vec<Token>) -> Result<Program, Error> {
+    let mut prog = empty_program(&tokens);
+    parse_into(tokens, &mut prog, ROOT)?;
+    Ok(prog)
+}
+
+/// A partial parse for editor features only. It must not enter checking or
+/// executable lowering: a missing item can change what the program means.
+pub(crate) struct EditorParse {
+    pub program: Program,
+    pub errors: Vec<Error>,
+}
+
+/// Keeps complete items around syntax errors, without inventing AST nodes.
+/// Lexing remains strict; callers handle lexical errors separately.
+pub(crate) fn parse_for_editor(tokens: Vec<Token>) -> EditorParse {
+    let mut program = empty_program(&tokens);
+    let mut p = Parser::new(tokens, ROOT, program.next_id);
+    p.errors = Some(Vec::new());
+    if let Err(e) = p.items(&mut program, Tok::Eof) {
+        p.errors.as_mut().unwrap().push(e);
+    }
+    program.next_id = p.next_id;
+    program.stray_docs.extend(p.stray_docs());
+    EditorParse {
+        program,
+        errors: p.errors.unwrap(),
+    }
+}
+
+fn empty_program(tokens: &[Token]) -> Program {
     let end = tokens.last().map_or(0, |t| t.span.end);
-    let mut prog = Program {
+    Program {
         mods: vec![ModDecl {
             doc: None,
             allows: Vec::new(),
@@ -150,25 +180,12 @@ pub fn parse(tokens: Vec<Token>) -> Result<Program, Error> {
         next_id: 1,
         proved: Default::default(),
         measures: Default::default(),
-    };
-    parse_into(tokens, &mut prog, ROOT)?;
-    Ok(prog)
+    }
 }
 
 /// Parses a file's items into `module` of `prog`.
 pub fn parse_into(tokens: Vec<Token>, prog: &mut Program, module: usize) -> Result<(), Error> {
-    let (docs, toks): (Vec<Token>, Vec<Token>) = tokens
-        .into_iter()
-        .partition(|t| matches!(t.tok, Tok::Doc(_) | Tok::InnerDoc(_)));
-    let mut p = Parser {
-        toks,
-        attached: vec![false; docs.len()],
-        docs,
-        pos: 0,
-        no_struct: false,
-        module,
-        next_id: prog.next_id,
-    };
+    let mut p = Parser::new(tokens, module, prog.next_id);
     p.items(prog, Tok::Eof)?;
     prog.next_id = p.next_id;
     prog.stray_docs.extend(p.stray_docs());
@@ -190,9 +207,27 @@ struct Parser {
     module: usize,
     /// The id the next node gets: `Program::next_id`, while parsing.
     next_id: u32,
+    /// Only editor parsing recovers; the compiler and formatter fail fast.
+    errors: Option<Vec<Error>>,
 }
 
 impl Parser {
+    fn new(tokens: Vec<Token>, module: usize, next_id: u32) -> Self {
+        let (docs, toks): (Vec<Token>, Vec<Token>) = tokens
+            .into_iter()
+            .partition(|t| matches!(t.tok, Tok::Doc(_) | Tok::InnerDoc(_)));
+        Self {
+            toks,
+            attached: vec![false; docs.len()],
+            docs,
+            pos: 0,
+            no_struct: false,
+            module,
+            next_id,
+            errors: None,
+        }
+    }
+
     /// An id for a new node (see `NodeId`).
     fn id(&mut self) -> NodeId {
         self.next_id += 1;
@@ -434,62 +469,144 @@ impl Parser {
             if *self.peek() == Tok::Eof {
                 return Err(self.unexpected(&close.describe()));
             }
-            let head = self.head()?;
-            let vis = self.vis();
-            let head = match self.peek() {
-                Tok::Fn | Tok::Struct | Tok::Trait => head.no_measure(NOT_METHOD)?,
-                _ => head.no_intrinsic()?.no_measure(NOT_METHOD)?,
-            };
-            match self.peek() {
-                Tok::Struct => {
-                    let mut d = self.struct_decl(head)?;
-                    d.vis = vis;
-                    prog.types.push(TypeDecl::Struct(d));
-                }
-                Tok::Enum => {
-                    let mut d = self.enum_decl(head)?;
-                    d.vis = vis;
-                    prog.types.push(TypeDecl::Enum(d));
-                }
-                Tok::Trait => {
-                    let mut d = self.trait_decl(head.no_derives()?)?;
-                    d.vis = vis;
-                    prog.traits.push(d);
-                }
-                Tok::Impl => {
-                    if let Some(at) = vis.span() {
-                        let word = vis.keyword().trim();
-                        return Err(Error::syntax(
-                            at,
-                            format!(
-                                "an `impl` can't be `{word}`: a trait impl is wherever the trait \
-                                 and type are, and an inherent impl's methods each say if they are"
-                            ),
-                        )
-                        .with_fix(Fix::new(
-                            format!("remove the `{word}`"),
-                            vec![Edit::delete(Span::new(at.start, self.span().start))],
-                        )));
-                    }
-                    prog.impls.push(self.impl_decl(head.no_derives()?)?);
-                }
-                Tok::Mod => self.mod_decl(prog, head.no_derives()?, vis)?,
-                Tok::Use => {
-                    head.no_derives()?.no_allows_on("a `use`")?;
-                    let d = self.use_decl(vis)?;
-                    prog.uses.push(d);
-                }
-                _ => {
-                    let mut f = self.fn_decl(head.no_derives()?)?;
-                    f.vis = vis;
-                    prog.fns.push(f);
-                }
+            let start = self.pos;
+            // An inline module can add children before it fails. Roll all
+            // of them back together, so no item has a dangling module index.
+            let counts = self.errors.as_ref().map(|_| {
+                [
+                    prog.mods.len(),
+                    prog.uses.len(),
+                    prog.types.len(),
+                    prog.traits.len(),
+                    prog.impls.len(),
+                    prog.fns.len(),
+                ]
+            });
+            if let Err(e) = self.item(prog) {
+                let Some(errors) = &mut self.errors else {
+                    return Err(e);
+                };
+                errors.push(e);
+                let [mods, uses, types, traits, impls, fns] = counts.unwrap();
+                prog.mods.truncate(mods);
+                prog.uses.truncate(uses);
+                prog.types.truncate(types);
+                prog.traits.truncate(traits);
+                prog.impls.truncate(impls);
+                prog.fns.truncate(fns);
+                self.recover_item(start, &close);
             }
         }
         if close != Tok::Eof {
             self.bump();
         }
         Ok(())
+    }
+
+    fn item(&mut self, prog: &mut Program) -> Result<(), Error> {
+        let head = self.head()?;
+        let vis = self.vis();
+        let head = match self.peek() {
+            Tok::Fn | Tok::Struct | Tok::Trait => head.no_measure(NOT_METHOD)?,
+            _ => head.no_intrinsic()?.no_measure(NOT_METHOD)?,
+        };
+        match self.peek() {
+            Tok::Struct => {
+                let mut d = self.struct_decl(head)?;
+                d.vis = vis;
+                prog.types.push(TypeDecl::Struct(d));
+            }
+            Tok::Enum => {
+                let mut d = self.enum_decl(head)?;
+                d.vis = vis;
+                prog.types.push(TypeDecl::Enum(d));
+            }
+            Tok::Trait => {
+                let mut d = self.trait_decl(head.no_derives()?)?;
+                d.vis = vis;
+                prog.traits.push(d);
+            }
+            Tok::Impl => {
+                if let Some(at) = vis.span() {
+                    let word = vis.keyword().trim();
+                    return Err(Error::syntax(
+                        at,
+                        format!(
+                            "an `impl` can't be `{word}`: a trait impl is wherever the trait \
+                             and type are, and an inherent impl's methods each say if they are"
+                        ),
+                    )
+                    .with_fix(Fix::new(
+                        format!("remove the `{word}`"),
+                        vec![Edit::delete(Span::new(at.start, self.span().start))],
+                    )));
+                }
+                prog.impls.push(self.impl_decl(head.no_derives()?)?);
+            }
+            Tok::Mod => self.mod_decl(prog, head.no_derives()?, vis)?,
+            Tok::Use => {
+                head.no_derives()?.no_allows_on("a `use`")?;
+                let d = self.use_decl(vis)?;
+                prog.uses.push(d);
+            }
+            _ => {
+                let mut f = self.fn_decl(head.no_derives()?)?;
+                f.vis = vis;
+                prog.fns.push(f);
+            }
+        }
+        Ok(())
+    }
+
+    /// Skip the failed item, including its body and any local declarations.
+    /// Replay its consumed tokens to recover brace depth. Parentheses may
+    /// be incomplete, so a following item can still start after a bad header.
+    fn recover_item(&mut self, start: usize, close: &Tok) {
+        let failed_at = self.pos;
+        self.pos = start;
+        let mut braces = 0usize;
+        let mut brackets = 0usize;
+        let mut head = matches!(self.peek(), Tok::Hash | Tok::Pub | Tok::Export);
+        loop {
+            let item = matches!(
+                self.peek(),
+                Tok::Fn | Tok::Struct | Tok::Enum | Tok::Trait | Tok::Impl | Tok::Mod | Tok::Use
+            );
+            let prefix = matches!(self.peek(), Tok::Hash | Tok::Pub | Tok::Export);
+            if braces == 0 && brackets == 0 {
+                if head && item {
+                    // Attributes and visibility belong to this failed item.
+                    head = false;
+                } else if self.pos > start
+                    && self.pos >= failed_at
+                    && !head
+                    && (item || prefix)
+                    && !matches!((self.peek(), self.peek2()), (Tok::Fn, Tok::LParen))
+                {
+                    return;
+                }
+            }
+            match self.peek() {
+                Tok::Eof => return,
+                Tok::RBrace if braces == 0 && *close == Tok::RBrace => return,
+                Tok::LBrace => braces += 1,
+                Tok::RBrace if braces > 0 => {
+                    braces -= 1;
+                    if braces == 0 && self.pos >= failed_at {
+                        self.bump();
+                        return;
+                    }
+                }
+                Tok::LBracket => brackets += 1,
+                Tok::RBracket => brackets = brackets.saturating_sub(1),
+                Tok::Semi if braces == 0 && brackets == 0 => {
+                    self.bump();
+                    return;
+                }
+                _ => {}
+            }
+            self.bump();
+        }
     }
 
     /// `mod name { .. }` or `mod name;`, after its head and `pub` or
@@ -556,8 +673,9 @@ impl Parser {
         let index = prog.mods.len();
         prog.mods.push(decl);
         let outer = std::mem::replace(&mut self.module, index);
-        self.items(prog, Tok::RBrace)?;
+        let result = self.items(prog, Tok::RBrace);
         self.module = outer;
+        result?;
         prog.mods[index].span = start.to(self.toks[self.pos - 1].span);
         Ok(())
     }
@@ -2881,5 +2999,102 @@ fn no_targs(segs: &[Segment]) -> Result<(), Error> {
             "type arguments can only go after the type or function they're for",
         )),
         None => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer::lex;
+
+    #[test]
+    fn editor_keeps_items_around_errors() {
+        for bad in [
+            "fn broken( -> i64 {}",
+            "fn broken( fn(i64)) {}",
+            "fn broken() { let x = ; fn local() {} struct Local {} }",
+            "struct Broken { x: }",
+            "enum Broken { A(, bool) }",
+            "trait Broken { fn missing( ; }",
+            "impl Before { fn missing( ; }",
+            "use missing::;",
+            "#[unknown] fn broken() {}",
+            "#[unknown] pub fn broken() {}",
+            "#[unknown] #[allow(dead_code)] pub fn broken() {}",
+            "#[derive(Copy)] fn broken() {}",
+            "pub impl Before {}",
+            "unexpected tokens;",
+            "}",
+        ] {
+            let src = format!(
+                "struct Before {{}}\n{bad}\n/// Kept.\n#[allow(dead_code)] pub fn after() {{}}"
+            );
+            let tokens = lex(&src).unwrap();
+            let strict = parse(tokens.clone()).unwrap_err();
+            let parsed = parse_for_editor(tokens);
+            assert!(!parsed.errors.is_empty(), "{bad}");
+            assert_eq!(parsed.errors[0].span, strict.span, "{bad}");
+            assert_eq!(parsed.errors[0].message, strict.message, "{bad}");
+            assert_eq!(parsed.program.types.len(), 1, "{bad}");
+            assert_eq!(parsed.program.types[0].name().name, "Before", "{bad}");
+            assert_eq!(parsed.program.fns.len(), 1, "{bad}");
+            let after = &parsed.program.fns[0];
+            assert_eq!(after.name.name, "after", "{bad}");
+            assert_eq!(after.module, ROOT, "{bad}");
+            assert_eq!(after.doc.as_ref().unwrap().markdown(), "Kept.", "{bad}");
+            assert!(parsed.program.traits.is_empty(), "{bad}");
+            assert!(parsed.program.impls.is_empty(), "{bad}");
+            assert!(parsed.program.uses.is_empty(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn editor_recovers_inside_modules_and_reports_each_item() {
+        let src = "mod m { fn before() {} fn broken(x:) {} struct S {} use x::; fn after() {} } fn main() {}";
+        let parsed = parse_for_editor(lex(src).unwrap());
+        assert_eq!(parsed.errors.len(), 2);
+        assert_eq!(parsed.program.mods.len(), 2);
+        assert_eq!(
+            parsed.program.mods[1].span.end,
+            src.find(" fn main").unwrap()
+        );
+        let fns: Vec<_> = parsed
+            .program
+            .fns
+            .iter()
+            .map(|f| (f.name.name.as_str(), f.module))
+            .collect();
+        assert_eq!(fns, [("before", 1), ("after", 1), ("main", ROOT)]);
+        assert_eq!(parsed.program.types[0].module(), 1);
+    }
+
+    #[test]
+    fn editor_discards_unclosed_modules_without_orphaning_children() {
+        let src = "fn before() {} mod unfinished { fn child() {} mod nested { struct S {} }";
+        let parsed = parse_for_editor(lex(src).unwrap());
+        assert_eq!(parsed.errors.len(), 1);
+        assert_eq!(parsed.errors[0].span, Span::new(src.len(), src.len()));
+        assert_eq!(parsed.program.mods.len(), 1);
+        assert!(parsed.program.types.is_empty());
+        assert_eq!(parsed.program.fns.len(), 1);
+        assert_eq!(parsed.program.fns[0].name.name, "before");
+    }
+
+    #[test]
+    fn editor_accepts_valid_input_and_terminates_at_truncated_input() {
+        let src = "//! Docs.\nmod m { pub struct S {} } fn main() { fn local() {} }";
+        let tokens = lex(src).unwrap();
+        let strict = parse(tokens.clone()).unwrap();
+        let parsed = parse_for_editor(tokens);
+        assert!(parsed.errors.is_empty());
+        assert_eq!(
+            crate::fmt::shape(&strict),
+            crate::fmt::shape(&parsed.program)
+        );
+
+        for src in ["", "fn", "#[", "pub", "struct S {", "mod m { fn", ";;}"] {
+            let parsed = parse_for_editor(lex(src).unwrap());
+            assert_eq!(parsed.errors.is_empty(), src.is_empty(), "{src}");
+        }
     }
 }
