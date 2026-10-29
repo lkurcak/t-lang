@@ -77,6 +77,9 @@ pub enum Value {
     Box(Ptr),
     /// A `RawBuf`: where its slots are, on the heap, as a `Slots`.
     RawBuf(Ptr),
+    /// An `Arena`: where its values are, on the heap, as a `Slots` of a
+    /// `Box` for each, in the order they were put in.
+    Arena(Ptr),
     /// The slots of a `RawBuf`, each a value, or `Moved` if it's
     /// uninitialised, on the heap, where a `RawBuf` points. Or an array's
     /// values, `[T; N]`, wherever the array is, exactly `N` of them (lemma
@@ -149,6 +152,7 @@ impl fmt::Display for Value {
             Value::Ref(_) => f.write_str("<reference>"),
             Value::Box(_) => f.write_str("<box>"),
             Value::RawBuf(_) => f.write_str("<buffer>"),
+            Value::Arena(_) => f.write_str("<arena>"),
             Value::Slots(_) => f.write_str("<slots>"),
             Value::Moved => f.write_str("<moved>"),
             Value::Struct(name, fields) if fields.is_empty() => {
@@ -836,7 +840,7 @@ impl Interp<'_, '_> {
     /// business.
     fn copyable(&self, v: &Value) -> bool {
         match v {
-            Value::Box(_) | Value::RawBuf(_) => false,
+            Value::Box(_) | Value::RawBuf(_) | Value::Arena(_) => false,
             Value::Struct(ty, _) | Value::Variant(ty, ..) => self.copy.contains(ty.as_str()),
             // A closure is `Copy` if what it holds is.
             Value::Closure(c) => c.env.iter().all(|(_, v)| self.copyable(v)),
@@ -902,6 +906,8 @@ impl Interp<'_, '_> {
     fn drop_parts(&mut self, v: Value) -> Result<(), Error> {
         let parts: Vec<Value> = match v {
             Value::Box(p) => vec![self.memory.free(&p, true)],
+            // Its values' boxes, first put in first.
+            Value::Arena(p) => vec![self.memory.free(&p, true)],
             Value::Struct(_, fields) => fields.into_iter().map(|(_, v)| v).collect(),
             Value::Variant(_, _, fields) => fields,
             Value::Closure(c) => c.env.into_iter().map(|(_, v)| v).collect(),
@@ -1199,6 +1205,10 @@ impl Interp<'_, '_> {
         if let Some(stream) = name.strip_prefix("<std::io::") {
             return Ok(self.stream(stream, args));
         }
+        if name == "<alloc::arena::Arena" {
+            let op = copy.rsplit("::").next().unwrap_or_default();
+            return Ok(self.arena(op, args));
+        }
         if name == "<alloc::raw::RawBuf" {
             let op = copy.rsplit("::").next().unwrap_or_default();
             return self.raw_buf(op, args, span);
@@ -1436,6 +1446,48 @@ impl Interp<'_, '_> {
         match made {
             Some(v) => Value::Variant(option, "Some".into(), vec![v]),
             None => Value::Variant(option, "None".into(), Vec::new()),
+        }
+    }
+
+    /// Runs `Arena`'s intrinsic method `op` on `args`. Each value put in
+    /// gets a heap slot of its own, which nothing frees before the arena
+    /// is dropped, so a reference `alloc` hands out stays good until then
+    /// (lemmas R1 and R2 of docs/23-arenas.md), and dangles after, which
+    /// the generations of slots catch.
+    fn arena(&mut self, op: &str, args: Vec<Value>) -> Value {
+        // Where the boxes of the arena that `self`, a `&Arena`, points to are.
+        let boxes = |this: &Interp, v: &Value| -> Ptr {
+            let Value::Ref(p) = v else {
+                unsound(&format!("`Arena::{op}` of `{v}`"))
+            };
+            match this.memory.get(p) {
+                Value::Arena(q) => q.clone(),
+                other => unsound(&format!("`Arena::{op}` of `{other}`")),
+            }
+        };
+        let mut args = args.into_iter();
+        let mut arg = || args.next().unwrap_or_else(|| unsound("`Arena` arity"));
+        match op {
+            "new" => Value::Arena(self.memory.alloc(Value::Slots(Vec::new()), true)),
+            "alloc" => {
+                let q = boxes(self, &arg());
+                let v = arg();
+                self.effect("alloc");
+                let p = self.memory.alloc(v, true);
+                match self.memory.get_mut(&q) {
+                    Value::Slots(values) => values.push(Value::Box(p.clone())),
+                    other => unsound(&format!("an `Arena` of `{other}`")),
+                }
+                Value::Ref(p)
+            }
+            "len" => {
+                let q = boxes(self, &arg());
+                match self.memory.get(&q) {
+                    Value::Slots(values) => usize_of(values.len()),
+                    other => unsound(&format!("an `Arena` of `{other}`")),
+                }
+            }
+            _ => unsound(&format!("unknown intrinsic `Arena::{op}`")),
         }
     }
 

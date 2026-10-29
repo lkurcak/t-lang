@@ -114,10 +114,16 @@ impl AdtInfo {
                 }
                 // An intrinsic type has no fields to say how it holds its
                 // parameters. `RawBuf<T>` owns its `T`s, as a `Box<T>`
-                // does, so it's covariant in it.
+                // does, so it's covariant in it. `Arena<T>` is invariant:
+                // its `alloc` puts a `T` in through a `&` (lemma R3 of
+                // docs/23-arenas.md), as a `Cell` would.
                 if crate::check::INTRINSIC_TYPES.contains(&n.as_str()) {
-                    let co = vec![Variance::Co; d.lifetimes.len() + d.params.len()];
-                    changed |= variances.insert((*n).clone(), co.clone()) != Some(co);
+                    let fixed = match n.as_str() == crate::check::ARENA {
+                        true => Variance::Inv,
+                        false => Variance::Co,
+                    };
+                    let all = vec![fixed; d.lifetimes.len() + d.params.len()];
+                    changed |= variances.insert((*n).clone(), all.clone()) != Some(all);
                     continue;
                 }
                 let mut v = variances[*n].clone();

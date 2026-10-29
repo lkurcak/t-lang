@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+Step 23: arenas. See [docs/23-arenas.md](docs/23-arenas.md).
+
+### Added
+
+- `alloc::arena::Arena<T>`: values on the heap that live as long as the
+  arena and are dropped with it, first put in first. `a.alloc(v)` moves
+  `v` in and gives a `&mut` to it, from a `&a`, so many at once, and
+  values in an arena can point to each other. It's `Discard` if `T` is,
+  and invariant in `T`.
+
+### Fixed
+
+- The drop check now looks into an intrinsic type's arguments: dropping
+  one reaches a `discard` of what it holds.
+
 ## 0.35.0 (2026-10-25)
 
 Step 22: arrays. See [docs/22-arrays.md](docs/22-arrays.md).

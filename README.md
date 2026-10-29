@@ -273,7 +273,9 @@ has to fit that:
   no reference counting. `Box` is the alloc library's,
   `alloc::boxed::Box`, as in Rust's split between `core`, `alloc` and
   `std`. See
-  [docs/05-ownership.md](docs/05-ownership.md).
+  [docs/05-ownership.md](docs/05-ownership.md). An arena,
+  `alloc::arena::Arena`, holds many values that are freed together and
+  can point to each other (see [docs/23-arenas.md](docs/23-arenas.md)).
 - **Closures are values of their own types**, structs of what they borrow
   or own, called through the `Fn` traits, like Rust's: no closure needs the
   heap. The borrow checker sees what each borrows. See
@@ -369,6 +371,7 @@ combine features in ways nobody planned for.
 | 20 ✅ | destructors: `impl Discard for T { fn discard(self) { .. } }`, called wherever a value is dropped; `List` and `String` are `Discard`, so `?` works while one is alive; `x.discard()` | weakening as a map `A ⊸ 1`, inserted only where it's total; a drop as a use of what's borrowed (drop check); only a type's module may skip its destructor | [docs/20-destructors.md](docs/20-destructors.md) |
 | 21 ✅ | measures: `#[measure] fn len(&self) -> usize`, named in refinements, `i: { i: usize \| i < s.len() }`; refinements of any type; `s[i]`, `l[i] = v`, proved in range | measures as functions of a value, uninterpreted outside their module (abstract functions); equality with uninterpreted functions by object identity; a `&mut`'s place forgotten where it's lent, as the borrow checker says no one reads it meanwhile | [docs/21-measures.md](docs/21-measures.md) |
 | 22 ✅ | arrays: `[T; N]`, inline; `[a, b, c]`, `[v; n]`, `let [a, b] = arr;`, `a[i]` proved from `N`; `const N: usize` parameters on functions, structs and impls, a `usize` in bodies and refinements; `core::array::from_fn` | type-level naturals as a kind of type parameter, equal only syntactically, so unification stays first-order; a value's length from its type, a constant of the logic or one variable per const parameter | [docs/22-arrays.md](docs/22-arrays.md) |
+| 23 ✅ | arenas: `alloc::arena::Arena<T>`, `a.alloc(v)` handing out `&mut T`s that live as long as the arena, so its values can point to each other; dropped all at once; a design note on allocators as values | region-based memory, the regions being lifetimes; fresh `&mut`s from a `&`, so invariance as a `Cell`'s; the drop check looking into an intrinsic type's arguments, Rust's `#[may_dangle]` decided by what a `discard` can reach | [docs/23-arenas.md](docs/23-arenas.md) |
 | — | C backend | | when it's worth it |
 
 ## License
