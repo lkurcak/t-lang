@@ -289,6 +289,14 @@ formatting the output again changes nothing. A formatter that isn't
 idempotent would make `--check` fail on files it had just formatted. And
 `examples/` must already be formatted, so CI fails if they aren't.
 
+The comparison describes the AST's fields directly (`src/fmt/shape.rs`),
+ignoring source spans and node numbers. Its matches list every field and
+variant, so adding syntax requires updating the comparison too. Strings
+and doc comments are compared as text: `"NodeId(a)"` and `"NodeId(b)"`
+are different, even though both look like the compiler's metadata. A
+generic parameter's kind is kept by which parameter its marker names,
+independently of that parameter's node number.
+
 ## What was hard
 
 - **Comments.** They aren't in the AST, and a program printed from an AST
