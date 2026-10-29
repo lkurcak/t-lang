@@ -14,7 +14,7 @@ fn sum(n: &Node) -> i64 with panic {
             Option::Some(m) => {
                 total = total + m.v;
                 at = m.next;
-            }
+            },
             Option::None => return total,
         }
     }
