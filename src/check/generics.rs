@@ -7,6 +7,7 @@ use crate::ast::*;
 use crate::error::{Error, Span};
 use crate::types::{FnType, Params, Region, Type};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// "1 type argument", "2 type arguments".
 fn type_args(n: usize) -> String {
@@ -41,6 +42,102 @@ pub(crate) enum TypeName {
     /// symbol, with the function's lifetime and type parameters, which
     /// are its arguments there.
     Opaque(String, Vec<String>, Params),
+    /// A type alias, which a use of means what it stands for.
+    Alias(Arc<AliasDef>),
+    /// A parameter of a type alias, in what it stands for, as resolved for
+    /// a use of it: the argument written for it there, resolved.
+    Arg(Type),
+}
+
+/// What a type alias stands for, and what of it a use must give.
+#[derive(Debug)]
+pub(crate) struct AliasDef {
+    /// Its name, for messages.
+    pub(crate) name: String,
+    pub(crate) lifetimes: Vec<String>,
+    /// Its type and const parameters, in order.
+    pub(crate) params: Vec<String>,
+    /// For each of `params`, whether it's a const parameter.
+    pub(crate) lengths: Vec<bool>,
+    /// What it stands for, as written. Its names are looked up by their
+    /// nodes, so they mean what they do where the alias is declared.
+    pub(crate) body: TypeExpr,
+}
+
+impl AliasDef {
+    pub(crate) fn new(d: &AliasDecl) -> AliasDef {
+        AliasDef {
+            name: d.name.name.clone(),
+            lifetimes: d
+                .generics
+                .lifetimes
+                .iter()
+                .map(|l| l.name.clone())
+                .collect(),
+            params: d.generics.types.iter().map(|p| p.name.clone()).collect(),
+            lengths: d.generics.lengths(),
+            body: d.ty.clone(),
+        }
+    }
+
+    /// Its parameters, as in scope in what it stands for.
+    pub(crate) fn params(&self) -> Params {
+        let consts = (self.params.iter().zip(&self.lengths))
+            .filter(|(_, l)| **l)
+            .map(|(p, _)| p.clone())
+            .collect();
+        Params::new(self.params.clone(), Vec::new()).with_consts(consts)
+    }
+
+    /// What a use of it with `regions` and `args` means: what it stands
+    /// for, with each parameter replaced by its argument. That's resolved
+    /// as if written at the use, but with its names meaning what they do
+    /// at the alias (lemma A1 of docs/25-type-aliases.md).
+    fn expand(
+        &self,
+        regions: &[Region],
+        args: &[Type],
+        names: &dyn Fn(&str, &TypeExpr) -> Option<TypeName>,
+        proj: &ProjNames,
+    ) -> Result<Type, Error> {
+        let names = |n: &str, t: &TypeExpr| match &t.kind {
+            TypeExprKind::Named(_, a) if a.is_empty() => {
+                match self.params.iter().position(|p| p == n) {
+                    Some(i) => Some(TypeName::Arg(args[i].clone())),
+                    None => names(n, t),
+                }
+            }
+            _ => names(n, t),
+        };
+        // Which trait a projection without one is of depends on the bounds
+        // where it's written, so it isn't one thing at every use.
+        let proj = |s: Type, tr: Option<&Ident>, name: &Ident, t: &TypeExpr, k: Kind| match tr {
+            Some(_) => proj(s, tr, name, t, k),
+            None => Err(bare_projection(t.span)),
+        };
+        let mut lts = Lifetimes::Alias {
+            name: &self.name,
+            declared: &self.lifetimes,
+            args: Some(regions),
+        };
+        resolve_in(
+            &self.body,
+            &names,
+            &proj,
+            &Params::new(Vec::new(), Vec::new()),
+            &mut lts,
+            None,
+        )
+    }
+}
+
+/// That a projection in what a type alias stands for, at `span`, doesn't
+/// name its trait.
+pub(crate) fn bare_projection(span: Span) -> Error {
+    Error::ty(
+        span,
+        "in a type alias, a projection names its trait, as in `<I as Trait>::Item`",
+    )
 }
 
 /// What the lifetimes written in a type mean, which depends on where it's
@@ -75,6 +172,13 @@ pub(crate) enum Lifetimes<'a> {
     /// In what an impl says an associated type is, or an equality bound
     /// does, where none can be left out either.
     Assoc { declared: &'a [String] },
+    /// In what type alias `name` stands for, where none can be left out.
+    /// Resolved for a use, `args` are the regions its lifetimes are there.
+    Alias {
+        name: &'a str,
+        declared: &'a [String],
+        args: Option<&'a [Region]>,
+    },
     /// Anywhere, as written: in what monomorphisation made, and where types
     /// are only being shown.
     Any,
@@ -90,20 +194,28 @@ impl Lifetimes<'_> {
             | Lifetimes::Body { declared }
             | Lifetimes::ClosureParams { declared, .. }
             | Lifetimes::Fields { declared }
-            | Lifetimes::Assoc { declared } => *declared,
+            | Lifetimes::Assoc { declared }
+            | Lifetimes::Alias { declared, .. } => *declared,
             Lifetimes::Any => &[],
         };
         match l {
             Some("'static") => return Ok(Region::Static),
             Some(name) if name != "'_" => {
-                if matches!(self, Lifetimes::Any) || declared.iter().any(|d| d == name) {
-                    return Ok(Region::Named(name.to_string()));
+                let i = declared.iter().position(|d| d == name);
+                match (&*self, i) {
+                    (Lifetimes::Alias { args: Some(r), .. }, Some(i)) => return Ok(r[i].clone()),
+                    (Lifetimes::Any, _) | (_, Some(_)) => {
+                        return Ok(Region::Named(name.to_string()));
+                    }
+                    _ => {}
                 }
+                let example = match self {
+                    Lifetimes::Alias { name: alias, .. } => format!("type {alias}<{name}>"),
+                    _ => format!("fn f<{name}>"),
+                };
                 return Err(Error::ty(
                     span,
-                    format!(
-                        "use of undeclared lifetime `{name}`; declare it, as in `fn f<{name}>`"
-                    ),
+                    format!("use of undeclared lifetime `{name}`; declare it, as in `{example}`"),
                 ));
             }
             _ => {}
@@ -144,6 +256,11 @@ impl Lifetimes<'_> {
                 "missing lifetime: a reference here needs one, a lifetime of the type the impl \
                  is for, as in `impl<'a> Tr for &'a i64 { type Out = &'a i64; }`, or \
                  `'static`",
+            )),
+            Lifetimes::Alias { .. } => Err(Error::ty(
+                span,
+                "a type alias names each lifetime in what it stands for, as in \
+                 `type R<'a> = &'a i64`",
             )),
         }
     }
@@ -249,6 +366,18 @@ fn resolve_in(
     let go = |t: &TypeExpr, lifetimes: &mut Lifetimes, binder: Option<&mut Binder>| {
         resolve_in(t, names, proj, params, lifetimes, binder)
     };
+    // A length: in what an alias stands for, maybe one of its arguments.
+    let arg = |t: &TypeExpr| match &t.kind {
+        TypeExprKind::Named(n, a) if a.is_empty() => match names(n, t) {
+            Some(TypeName::Arg(ty)) => Some(ty),
+            _ => None,
+        },
+        _ => None,
+    };
+    let len = |t: &TypeExpr| match arg(t) {
+        Some(ty) => Ok(ty),
+        None => len(t, params),
+    };
     match &t.kind {
         TypeExprKind::Proj(inner, tr, name) => {
             let inner = go(inner, lifetimes, binder)?;
@@ -286,7 +415,7 @@ fn resolve_in(
             if let Some(u) = elem.unsized_part() {
                 return Err(unsized_slice(t.span, u));
             }
-            Ok(Type::Array(Box::new(elem), Box::new(len(n, params)?)))
+            Ok(Type::Array(Box::new(elem), Box::new(len(n)?)))
         }
         TypeExprKind::Nat(n) => Err(Error::ty(t.span, format!("`{n}` is a length, not a type"))),
         TypeExprKind::Named(name, args) => {
@@ -305,7 +434,14 @@ fn resolve_in(
                     "lifetime arguments must come before type arguments",
                 ));
             }
+            let mut alias = None;
             let (ty, lt_arity, lengths) = match names(name, t) {
+                Some(TypeName::Arg(ty)) => return Ok(ty),
+                Some(TypeName::Alias(def)) => {
+                    let arity = (def.lifetimes.len(), def.lengths.clone());
+                    alias = Some(def);
+                    (Type::Unit, arity.0, arity.1)
+                }
                 // The alloc library's `Box`, which the checker knows.
                 Some(TypeName::Adt(symbol, ..)) if symbol == super::BOX => {
                     (Type::Box(Box::new(Type::Unit)), 0, vec![false])
@@ -381,7 +517,9 @@ fn resolve_in(
             for (a, &length) in args.iter().zip(&lengths) {
                 let lengthy = |a: &TypeExpr| match &a.kind {
                     TypeExprKind::Nat(_) => true,
-                    TypeExprKind::Named(n, args) => args.is_empty() && params.is_const(n),
+                    TypeExprKind::Named(n, args) => {
+                        args.is_empty() && (params.is_const(n) || arg(a).is_some())
+                    }
                     _ => false,
                 };
                 resolved.push(match length {
@@ -390,7 +528,7 @@ fn resolve_in(
                     {
                         return Err(length_arg(name, a.span));
                     }
-                    true => len(a, params)?,
+                    true => len(a)?,
                     false if matches!(a.kind, TypeExprKind::Nat(_)) => {
                         return Err(type_arg_not_length(name, a.span));
                     }
@@ -398,6 +536,9 @@ fn resolve_in(
                 });
             }
             let args = resolved;
+            if let Some(def) = alias {
+                return def.expand(&regions, &args, names, proj);
+            }
             Ok(match ty {
                 Type::Adt(symbol, ..) => Type::Adt(symbol, regions, args),
                 Type::Box(_) => Type::Box(Box::new(args.into_iter().next().expect("one"))),

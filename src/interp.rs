@@ -200,7 +200,7 @@ pub fn run(program: &crate::mono::Executable, term: &mut dyn Terminal) -> Result
         .iter()
         .filter_map(|t| match t {
             TypeDecl::Struct(s) => Some((s.name.name.as_str(), s)),
-            TypeDecl::Enum(_) => None,
+            TypeDecl::Enum(_) | TypeDecl::Alias(_) => None,
         })
         .collect();
     let enums = prog
@@ -208,7 +208,7 @@ pub fn run(program: &crate::mono::Executable, term: &mut dyn Terminal) -> Result
         .iter()
         .filter_map(|t| match t {
             TypeDecl::Enum(e) => Some((e.name.name.as_str(), e)),
-            TypeDecl::Struct(_) => None,
+            TypeDecl::Struct(_) | TypeDecl::Alias(_) => None,
         })
         .collect();
     let mut memory = Memory::default();

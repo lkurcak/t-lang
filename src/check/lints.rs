@@ -9,7 +9,7 @@
 //! what's changed. `#[allow(..)]` turns any of them off (`allow.rs`).
 
 use super::scope::FnId;
-use super::{Checker, Local, adt_names};
+use super::{Checker, Local, Scoped, adt_names};
 use crate::ast::*;
 use crate::error::{Edit, Fix, Lint, Span, Warning};
 use crate::exhaust;
@@ -445,6 +445,13 @@ impl Checker {
                 self.warnings.push(dead(f.name.span, message));
             }
         }
+        // An alias is gone once resolved, so it's used if it's named at all.
+        let named: HashSet<&String> = (self.type_names.values())
+            .filter_map(|s| match s {
+                Scoped::Adt(symbol) if self.aliases.contains_key(symbol) => Some(symbol),
+                _ => None,
+            })
+            .collect();
         let types = prog.all_types().into_iter().zip(&self.types);
         for ((d, _), def) in types.skip(self.from.all_types) {
             let in_live = def.parent.is_none_or(|p| live[p.0]);
@@ -457,6 +464,12 @@ impl Checker {
                     if !used.structs.contains(symbol) {
                         let message = format!("struct `{}` is never constructed", s.name.name);
                         self.warnings.push(dead(s.name.span, message));
+                    }
+                }
+                TypeDecl::Alias(a) => {
+                    if !named.contains(symbol) {
+                        let message = format!("type alias `{}` is never used", a.name.name);
+                        self.warnings.push(dead(a.name.span, message));
                     }
                 }
                 TypeDecl::Enum(e) if !used.types.contains(symbol) => {
@@ -494,6 +507,9 @@ impl Checker {
     pub(super) fn infinite_types(&mut self, prog: &Program) {
         let types = prog.all_types().into_iter().zip(&self.types);
         for ((d, _), def) in types.skip(self.from.all_types) {
+            if let TypeDecl::Alias(_) = d {
+                continue;
+            }
             let symbol = &def.symbol;
             let generic = self.adts[symbol].generic(symbol);
             if d.name().name.starts_with('_')
@@ -505,6 +521,7 @@ impl Checker {
             let (kind, name, variants) = match d {
                 TypeDecl::Struct(s) => ("struct", &s.name, &[][..]),
                 TypeDecl::Enum(e) => ("enum", &e.name, &e.variants[..]),
+                TypeDecl::Alias(_) => unreachable!("skipped above"),
             };
             let spans: Vec<Span> = std::iter::once(name.span)
                 .chain(variants.iter().map(|v| v.name.span))

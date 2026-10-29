@@ -9,4 +9,4 @@ struct Point { x: bool }
 fn main() {
     let _p: m::P = Point { x: true };
 }
-// error: expected `m::Point`, found `Point`; these are two different types called `Point`, one declared in `m` and one at the top level
+// error: expected `Point`, found `Point`; these are two different types called `Point`, one declared at the top level and one in `m`

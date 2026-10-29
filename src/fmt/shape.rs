@@ -119,6 +119,7 @@ structs! {
     Where { span, bounds };
     StructDecl { doc, allows, span, module, vis, name, generics, derives, fields, intrinsic };
     EnumDecl { doc, allows, span, module, vis, name, generics, derives, variants };
+    AliasDecl { doc, allows, span, module, vis, name, generics, ty };
     Variant { doc, allows, span, name, fields };
     FnDecl { doc, allows, span, module, vis, name, generics, params, parens, ret,
         effects, body, intrinsic, measure };
@@ -164,7 +165,7 @@ macro_rules! enums {
 enums! {
     Vis { Private, Pub(span), Export(span) };
     UseKind { Name(alias), Group(trees) };
-    TypeDecl { Struct(decl), Enum(decl) };
+    TypeDecl { Struct(decl), Enum(decl), Alias(decl) };
     AssocBoundKind { Eq(ty), Bounds(bounds) };
     EffectKind { Named(name), Proj(ty, tr, name) };
     TypeExprKind {

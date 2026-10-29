@@ -216,6 +216,16 @@ impl<'p> Cx<'p> {
                     })
                     .collect(),
             }),
+            TypeDecl::Alias(a) => TypeDecl::Alias(AliasDecl {
+                doc: a.doc.clone(),
+                allows: a.allows.clone(),
+                span: a.span,
+                module: a.module,
+                vis: a.vis,
+                name: self.ident(&a.name),
+                generics: self.generics(&a.generics),
+                ty: self.ty(&a.ty),
+            }),
         }
     }
 

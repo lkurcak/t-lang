@@ -71,7 +71,9 @@ mod unify;
 
 pub(crate) use closures::is_result_lifetime;
 pub(crate) use expr::{first_use, result_span};
-pub(crate) use generics::{Kind, Lifetimes, ProjNames, TypeName, resolve, resolve_effects};
+pub(crate) use generics::{
+    AliasDef, Kind, Lifetimes, ProjNames, TypeName, resolve, resolve_effects,
+};
 pub use info::{Info, Instance, MoveSite, Note, NoteKind};
 pub use scope::source_name;
 
@@ -406,6 +408,8 @@ pub(crate) struct Checker {
     /// How many lifetime and type arguments each struct and enum takes, by
     /// symbol.
     arities: HashMap<String, (usize, Vec<bool>)>,
+    /// What each type alias stands for, by symbol.
+    aliases: HashMap<String, std::sync::Arc<AliasDef>>,
     /// Every struct and enum, top-level and local, in the order of
     /// `Program::all_types`.
     types: Vec<TypeDef>,
@@ -731,6 +735,7 @@ impl Checker {
         Checker {
             adts: Adts::new(),
             arities: HashMap::new(),
+            aliases: HashMap::new(),
             defs: Defs::default(),
             types: Vec::new(),
             type_names: HashMap::new(),
@@ -862,6 +867,7 @@ impl Checker {
         self.trait_names(prog)?;
         self.collect_adts(prog)?;
         self.collect_traits(prog)?;
+        self.check_aliases(prog)?;
         let fns = prog.all_fns();
         let own = fns.iter().enumerate().skip(self.from.all_fns);
         for (i, (f, ..)) in own.filter(|(_, (.., m))| m.is_some()) {
@@ -1474,6 +1480,9 @@ impl Checker {
             return Some(TypeName::Opaque(symbol.clone(), lifetimes, params));
         }
         match self.type_names.get(&t.id)? {
+            Scoped::Adt(symbol) if let Some(def) = self.aliases.get(symbol) => {
+                Some(TypeName::Alias(def.clone()))
+            }
             Scoped::Adt(symbol) => {
                 let (lts, lengths) = self.arities.get(symbol)?.clone();
                 Some(TypeName::Adt(symbol.clone(), lts, lengths))

@@ -19,7 +19,7 @@ use super::scope::{FnId, symbol};
 use crate::ast::*;
 use std::collections::{HashMap, HashSet};
 
-/// A struct or enum's definition, besides what it's made of.
+/// A struct, enum or type alias's definition, besides what it's made of.
 #[derive(Clone)]
 pub(super) struct TypeDef {
     pub(super) symbol: String,
@@ -245,11 +245,11 @@ impl Walk<'_> {
                 TypeDecl::Struct(s) => (s.fields.iter())
                     .map(|f| (f.name.name.clone(), f.vis.level()))
                     .collect(),
-                TypeDecl::Enum(_) => Vec::new(),
+                TypeDecl::Enum(_) | TypeDecl::Alias(_) => Vec::new(),
             };
             let intrinsic = match d {
                 TypeDecl::Struct(s) => s.intrinsic,
-                TypeDecl::Enum(_) => None,
+                TypeDecl::Enum(_) | TypeDecl::Alias(_) => None,
             };
             let def = TypeDef {
                 symbol,
@@ -317,6 +317,10 @@ impl Walk<'_> {
                 for t in e.variants.iter().flat_map(|v| &v.fields) {
                     self.ty(t);
                 }
+            }
+            TypeDecl::Alias(a) => {
+                self.enter("type", &a.name, &a.generics.types);
+                self.ty(&a.ty);
             }
         }
         self.bounds(d.generics());

@@ -2,11 +2,11 @@
 // alias is used, for the type it's used with.
 type ItemOf<I> = <I as Iterator>::Item;
 
-fn first<I: Iterator>(mut it: I) -> Option<ItemOf<I>> with I::e {
+fn first<I: Iterator + Discard>(mut it: I) -> Option<ItemOf<I>> with I::e {
     it.next()
 }
 
-fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let r = core::ops::Range::new(4i64, 9);
     let n: ItemOf<core::ops::Range<i64>> = match first(r) {

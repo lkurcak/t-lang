@@ -75,7 +75,7 @@ impl Checker {
                 TypeDecl::Struct(s) => {
                     s.vis.is_export() && s.fields.iter().any(|f| !f.vis.is_export())
                 }
-                TypeDecl::Enum(_) => false,
+                TypeDecl::Enum(_) | TypeDecl::Alias(_) => false,
             };
             let w = d.derive_where(tr);
             if w.is_none() && !boundary {

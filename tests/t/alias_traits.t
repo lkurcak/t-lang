@@ -2,6 +2,7 @@
 // that, and a bound on it is checked of that.
 use core::fmt::{Display, Write};
 
+#[derive(Discard)]
 struct Celsius { t: i64 }
 type Temp = Celsius;
 

@@ -2,11 +2,13 @@
 // `Point`, wherever it's used. Its uses go through `use` and paths like
 // any type's.
 mod m {
+    #[derive(Discard)]
     pub struct Point { pub x: i64 }
     pub type P = Point;
     pub fn origin() -> P { Point { x: 0 } }
 }
 
+#[derive(Discard)]
 struct Point { x: bool }
 
 use m::P;

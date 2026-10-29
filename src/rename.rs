@@ -313,7 +313,8 @@ fn name(kind: &NoteKind) -> &str {
         | NoteKind::ConstParam(n)
         | NoteKind::Module(n)
         | NoteKind::Field(n)
-        | NoteKind::Variant(_, n) => n,
+        | NoteKind::Variant(_, n)
+        | NoteKind::Alias(n) => n,
     }
 }
 
@@ -331,6 +332,7 @@ fn what(kind: &NoteKind) -> &'static str {
         NoteKind::Module(_) => "module",
         NoteKind::Field(_) => "field",
         NoteKind::Variant(..) => "variant",
+        NoteKind::Alias(_) => "type alias",
     }
 }
 

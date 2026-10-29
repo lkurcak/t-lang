@@ -1,7 +1,9 @@
 // An alias can take lifetime parameters. Left out where it's used, they're
 // elided, as a struct's are.
 use alloc::arena::Arena;
+use core::fmt::Write;
 
+#[derive(Discard)]
 enum Expr<'a> { Num(i64), Add(&'a Expr<'a>, &'a Expr<'a>) }
 type Nodes<'a> = Arena<Expr<'a>>;
 type Ref<'a, T> = &'a T;
@@ -20,25 +22,25 @@ fn build<'a>(nodes: &'a Nodes<'a>) -> &'a Expr<'a> with alloc {
     nodes.alloc(Expr::Add(one, two))
 }
 
-// Elided: the one lifetime of the parameters.
-fn longer(a: Ref<str>, b: Ref<str>) -> Ref<'static, str> {
-    match a.len() > b.len() {
-        true => "a",
-        false => "b",
+fn label(n: Ref<i64>) -> Forever {
+    match *n > 0 {
+        true => "positive",
+        false => "not",
     }
 }
 
+// Elided: the one lifetime of the parameters.
 fn pick(a: Ref<i64>) -> Ref<i64> { a }
 
-fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let nodes: Nodes = Arena::new();
     out.line(&eval(build(&nodes)))?; // expect: 3
     let s: Forever = "hi";
     out.write_str(s)?;
     out.line(&0i64)?; // expect: hi0
-    out.write_str(longer("abc", "de"))?;
-    out.line(&0i64)?; // expect: a0
+    out.write_str(label(&3))?;
+    out.line(&0i64)?; // expect: positive0
     let n = 7i64;
     out.line(pick(&n))?; // expect: 7
     Result::Ok(())
