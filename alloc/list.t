@@ -18,33 +18,33 @@ use crate::raw::{RawBuf, out_of_memory};
 /// Slots `0..len` of `buf` hold values, and the rest don't, so `len <=
 /// buf.cap()`. Every `unsafe` block here counts on it, and every method
 /// keeps it. Its fields are private, so nothing else can break it.
-pub struct List<T> { buf: RawBuf<T>, len: usize }
+export struct List<T> { buf: RawBuf<T>, len: usize }
 
 impl<T> List<T> {
     /// An empty list. It allocates nothing until something's pushed.
-    pub fn new() -> List<T> { List { buf: RawBuf::empty(), len: 0 } }
+    export fn new() -> List<T> { List { buf: RawBuf::empty(), len: 0 } }
 
     /// An empty list with room for `cap` values before it grows.
-    pub fn with_capacity(cap: usize) -> List<T> with alloc {
+    export fn with_capacity(cap: usize) -> List<T> with alloc {
         List { buf: RawBuf::new(cap), len: 0 }
     }
 
     /// How many values it holds. It's a measure, so refinements can say
     /// it: `l[i]` needs `i < l.len()`.
     #[measure]
-    pub fn len(&self) -> usize { self.len }
+    export fn len(&self) -> usize { self.len }
 
     /// Does it hold none?
     #[measure]
-    pub fn is_empty(&self) -> bool { self.len() == 0 }
+    export fn is_empty(&self) -> bool { self.len() == 0 }
 
     /// How many values it has room for before it grows.
     #[measure]
-    pub fn capacity(&self) -> usize { self.buf.cap() }
+    export fn capacity(&self) -> usize { self.buf.cap() }
 
     /// Puts `v` at the end. When there's no room, it doubles the buffer
     /// first, which moves its values somewhere new.
-    pub fn push(&mut self, v: T) with alloc {
+    export fn push(&mut self, v: T) with alloc {
         let cap = self.buf.cap();
         if self.len == cap {
             self.buf.grow(if cap == 0 { 4 } else { cap });
@@ -60,7 +60,7 @@ impl<T> List<T> {
     }
 
     /// Takes the last value out, or `None` if it's empty.
-    pub fn pop(&mut self) -> Option<T> {
+    export fn pop(&mut self) -> Option<T> {
         if self.len == 0 {
             return Option::None;
         }
@@ -71,13 +71,13 @@ impl<T> List<T> {
     }
 
     /// Its values, as a slice, as many as it holds.
-    pub fn as_slice(&self) -> { s: &[T] | s.len() == self.len() } {
+    export fn as_slice(&self) -> { s: &[T] | s.len() == self.len() } {
         // SAFETY: slots `0..len` hold values, and `len <= cap()`.
         unsafe { self.buf.slice(0, self.len) }
     }
 
     /// Its values, as a slice to change, as many as it holds.
-    pub fn as_mut_slice(&mut self) -> { s: &mut [T] | s.len() == self.len() } {
+    export fn as_mut_slice(&mut self) -> { s: &mut [T] | s.len() == self.len() } {
         // SAFETY: slots `0..len` hold values, and `len <= cap()`. Nothing
         // done through the slice can take one out.
         unsafe { self.buf.slice_mut(0, self.len) }
@@ -85,11 +85,11 @@ impl<T> List<T> {
 
     /// The value at `i`, which is less than `len()`, so there's one: `l[i]`
     /// is `*l.index(i)`.
-    pub fn index(&self, i: { i: usize | i < self.len() }) -> &T { &self.as_slice()[i] }
+    export fn index(&self, i: { i: usize | i < self.len() }) -> &T { &self.as_slice()[i] }
 
     /// The value at `i`, which is less than `len()`, to change: `l[i] = v`
     /// is `*l.index_mut(i) = v`.
-    pub fn index_mut(&mut self, i: { i: usize | i < self.len() }) -> &mut T {
+    export fn index_mut(&mut self, i: { i: usize | i < self.len() }) -> &mut T {
         // SAFETY: slots `0..len` hold values, and `len <= cap()`. Nothing
         // done through the slice can take one out.
         let s = unsafe { self.buf.slice_mut(0, self.len) };
@@ -98,23 +98,23 @@ impl<T> List<T> {
 
     /// The value at `i`, or `None` if there's none: if `i` isn't less than
     /// `len()`.
-    pub fn get(&self, i: usize) -> Option<&T> { self.as_slice().get(i) }
+    export fn get(&self, i: usize) -> Option<&T> { self.as_slice().get(i) }
 
     /// The value at `i`, to change, or `None` if there's none.
-    pub fn get_mut(&mut self, i: usize) -> Option<&mut T> { self.as_mut_slice().get_mut(i) }
+    export fn get_mut(&mut self, i: usize) -> Option<&mut T> { self.as_mut_slice().get_mut(i) }
 
     /// Its values, by reference, front to back.
-    pub fn iter(&self) -> Iter<T> { self.as_slice().iter() }
+    export fn iter(&self) -> Iter<T> { self.as_slice().iter() }
 
     /// Its values, to change, front to back.
-    pub fn iter_mut(&mut self) -> IterMut<T> { self.as_mut_slice().iter_mut() }
+    export fn iter_mut(&mut self) -> IterMut<T> { self.as_mut_slice().iter_mut() }
 
     /// Swaps the values at `i` and `j`, if there are values there, and
     /// says whether it did.
-    pub fn swap(&mut self, i: usize, j: usize) -> bool { self.as_mut_slice().swap(i, j) }
+    export fn swap(&mut self, i: usize, j: usize) -> bool { self.as_mut_slice().swap(i, j) }
 
     /// Gives each value, front to back, to `f`, and then the buffer back.
-    pub fn free_with<effect e, F: FnMut(T) with e + Discard>(mut self, mut f: F) with e {
+    export fn free_with<effect e, F: FnMut(T) with e + Discard>(mut self, mut f: F) with e {
         let mut i: usize = 0;
         while i < self.len {
             // SAFETY: slots `i..len` still hold values, and slot `i` is
@@ -136,12 +136,12 @@ impl<T: Discard> Discard for List<T> {
 impl<T: Discard> List<T> {
     /// Throws away the values from index `n` on, if there are any, so it
     /// holds at most `n`. It's `pop` until then, so safe code.
-    pub fn truncate(&mut self, n: usize) {
+    export fn truncate(&mut self, n: usize) {
         while self.len > n {
             self.pop();
         }
     }
 
     /// Throws all its values away, keeping the buffer for more.
-    pub fn clear(&mut self) { self.truncate(0) }
+    export fn clear(&mut self) { self.truncate(0) }
 }

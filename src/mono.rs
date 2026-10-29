@@ -354,7 +354,7 @@ impl<'p> Mono<'p> {
             allows: f.allows.clone(),
             span: f.span,
             module: ROOT,
-            public: f.public,
+            vis: f.vis,
             name: Ident {
                 name: name.unwrap_or(&f.name.name).to_string(),
                 span: f.name.span,
@@ -368,14 +368,21 @@ impl<'p> Mono<'p> {
                     doc: None,
                     allows: Vec::new(),
                     mutable: p.mutable,
-                    public: None,
+                    vis: Vis::Private,
                     name: p.name.clone(),
                     ty: cx.ty(&p.ty),
                 })
                 .collect(),
             parens: f.parens,
             ret: cx.ty(&f.ret),
-            effects: cx.written_effects(&cx.resolved_effects(f.effects.as_ref()), f.span),
+            effects: {
+                // What's inferred, if it doesn't say (see `check/infer.rs`).
+                let effects = match (&f.effects, cx.m.info.inferred.get(&f.name.name)) {
+                    (None, Some(t)) => cx.subst(t),
+                    (e, _) => cx.resolved_effects(e.as_ref()),
+                };
+                cx.written_effects(&effects, f.span)
+            },
             body: cx.expr(&f.body),
             intrinsic: f.intrinsic,
             measure: f.measure,
@@ -433,7 +440,7 @@ impl<'p> Mono<'p> {
                 allows: st.allows.clone(),
                 span: st.span,
                 module: ROOT,
-                public: st.public,
+                vis: st.vis,
                 name,
                 generics: lifetimes_only(&st.generics),
                 derives,
@@ -444,7 +451,7 @@ impl<'p> Mono<'p> {
                         doc: f.doc.clone(),
                         allows: f.allows.clone(),
                         mutable: None,
-                        public: f.public,
+                        vis: f.vis,
                         name: f.name.clone(),
                         ty: cx.ty(&f.ty),
                     })
@@ -456,7 +463,7 @@ impl<'p> Mono<'p> {
                 allows: e.allows.clone(),
                 span: e.span,
                 module: ROOT,
-                public: e.public,
+                vis: e.vis,
                 name,
                 generics: lifetimes_only(&e.generics),
                 derives,
@@ -782,7 +789,7 @@ impl Cx<'_, '_, '_> {
             Type::Param(_) | Type::Var(_) | Type::Proj(..) | Type::Opaque(..) => {
                 unreachable!("`{t}` left after monomorphising")
             }
-            Type::Effects(_) | Type::Alloc | Type::Panic | Type::Unsafe => {
+            Type::Effects(_) | Type::Alloc | Type::Panic | Type::Unsafe | Type::Inferred(..) => {
                 unreachable!("effects `{t}` written as a type")
             }
         };
@@ -802,6 +809,7 @@ impl Cx<'_, '_, '_> {
             .map(|e| {
                 let name = match e {
                     Type::Alloc | Type::Panic | Type::Unsafe => e.to_string(),
+                    // An `Inferred` too: none is left once checking is done.
                     e => unreachable!("effect `{e}` left after monomorphising"),
                 };
                 let id = self.m.id();

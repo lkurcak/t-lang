@@ -3,7 +3,7 @@
 #[derive(Copy, Discard)]
 struct P { x: i64 }
 
-fn f(r: &mut P) -> i64 {
+fn f(r: &mut P) -> i64 with {} {
     if r.x > 0 {
         let r2: &mut P = r;
         r2.x = 0;

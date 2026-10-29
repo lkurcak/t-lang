@@ -2,7 +2,7 @@
 #[derive(Copy, Discard)]
 struct P { x: i64 }
 
-fn f(mut p: P, q: P) -> i64 {
+fn f(mut p: P, q: P) -> i64 with {} {
     if p.x > 0 {
         p = q;
         10 / p.x

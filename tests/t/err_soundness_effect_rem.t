@@ -1,5 +1,5 @@
 // `%` by zero panics, as `/` does.
-fn rem(a: i64, b: i64) -> i64 { a % b }
+fn rem(a: i64, b: i64) -> i64 with {} { a % b }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;

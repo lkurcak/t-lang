@@ -1,5 +1,5 @@
 // `+=` overflows as `+` does, so it may panic too. (Step 7 missed it.)
-fn bump(x: i64) -> i64 {
+fn bump(x: i64) -> i64 with {} {
     let mut y = x;
     y += 1;
     y

@@ -3455,6 +3455,11 @@
     }
   },
   {
+    "type": "visibility_modifier",
+    "named": true,
+    "fields": {}
+  },
+  {
     "type": "where_clause",
     "named": true,
     "fields": {},
@@ -3753,6 +3758,10 @@
     "named": false
   },
   {
+    "type": "export",
+    "named": false
+  },
+  {
     "type": "false",
     "named": false
   },
@@ -3827,6 +3836,10 @@
     "named": true
   },
   {
+    "type": "pub",
+    "named": false
+  },
+  {
     "type": "return",
     "named": false
   },
@@ -3873,10 +3886,6 @@
   {
     "type": "use",
     "named": false
-  },
-  {
-    "type": "visibility_modifier",
-    "named": true
   },
   {
     "type": "where",

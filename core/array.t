@@ -16,50 +16,51 @@ impl<T, const N: usize> [T; N] {
     /// it: `i: { i: usize | i < a.len() }`.
     #[intrinsic]
     #[measure]
-    pub fn len(&self) -> usize;
+    export fn len(&self) -> usize;
 
     /// Has it none?
     #[measure]
-    pub fn is_empty(&self) -> bool { self.len() == 0 }
+    export fn is_empty(&self) -> bool { self.len() == 0 }
 
     /// All its values, as a slice.
     #[intrinsic]
-    pub fn as_slice(&self) -> { s: &[T] | s.len() == self.len() };
+    export fn as_slice(&self) -> { s: &[T] | s.len() == self.len() };
 
     /// All its values, as a slice to change them through.
     #[intrinsic]
-    pub fn as_mut_slice(&mut self) -> { s: &mut [T] | s.len() == self.len() };
+    export fn as_mut_slice(&mut self) -> { s: &mut [T] | s.len() == self.len() };
 
     /// The value at `i`, which is less than `len()`, so there's one: `a[i]`
     /// is `*a.index(i)`.
-    pub fn index(&self, i: { i: usize | i < self.len() }) -> &T {
+    export fn index(&self, i: { i: usize | i < self.len() }) -> &T {
         let s = self.as_slice();
         &s[i]
     }
 
     /// The value at `i`, which is less than `len()`, to change: `a[i] = v`
     /// is `*a.index_mut(i) = v`.
-    pub fn index_mut(&mut self, i: { i: usize | i < self.len() }) -> &mut T {
+    export fn index_mut(&mut self, i: { i: usize | i < self.len() }) -> &mut T {
         let s = self.as_mut_slice();
         &mut s[i]
     }
 
     /// The value at `i`, or `None` if there's none: if `i` isn't less than
     /// `len()`.
-    pub fn get(&self, i: usize) -> Option<&T> { self.as_slice().get(i) }
+    export fn get(&self, i: usize) -> Option<&T> { self.as_slice().get(i) }
 
     /// The value at `i`, to change, or `None` if there's none.
-    pub fn get_mut(&mut self, i: usize) -> Option<&mut T> { self.as_mut_slice().get_mut(i) }
+    export fn get_mut(&mut self, i: usize) -> Option<&mut T> { self.as_mut_slice().get_mut(i) }
 
     /// Its values, by reference, front to back.
-    pub fn iter(&self) -> Iter<T> { self.as_slice().iter() }
+    export fn iter(&self) -> Iter<T> { self.as_slice().iter() }
 
     /// Its values, to change, front to back.
-    pub fn iter_mut(&mut self) -> IterMut<T> { self.as_mut_slice().iter_mut() }
+    export fn iter_mut(&mut self) -> IterMut<T> { self.as_mut_slice().iter_mut() }
 }
 
 /// An array whose value at each index `i` is `f(i)`, made front to back:
 /// so its values needn't be `Copy`. It does what `f` does.
 #[intrinsic]
-pub fn from_fn<T, const N: usize, effect e, F: FnMut(usize) -> T with e + Discard>(f: F) -> [T; N]
-with e;
+export fn from_fn<T, const N: usize, effect e, F: FnMut(usize) -> T with e + Discard>(
+    f: F,
+) -> [T; N] with e;

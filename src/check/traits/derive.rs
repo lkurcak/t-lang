@@ -32,10 +32,13 @@ impl Checker {
     /// A derived `Copy` needs the type to be `Discard` too, as `trait Copy:
     /// Discard`, and it's never assumed: it says so with a fix.
     ///
-    /// What a public struct with private fields derives says what it needs
-    /// in a `where`, or needs nothing, if it has none (lemma M5 of
-    /// docs/06d-modules.md): those bounds are part of its interface, which
-    /// its private fields mustn't change. Whatever the fields need must
+    /// What an exported struct with fields that aren't derives says what
+    /// it needs in a `where`, or needs nothing, if it has none (lemma M5 of
+    /// docs/06d-modules.md, at the package's boundary since
+    /// docs/24-visibility.md): those bounds are part of its package's
+    /// interface, which fields other packages can't see mustn't change.
+    /// Inside the package, what's computed is used: code there that counts
+    /// on it is checked again with any change. Whatever the fields need must
     /// follow from what's written, which may say more, to leave room.
     pub(in crate::check) fn derive(&mut self, prog: &Program) -> Result<(), Error> {
         let decls = prog.all_types();
@@ -70,7 +73,7 @@ impl Checker {
             let (d, _) = decls[i];
             let boundary = match d {
                 TypeDecl::Struct(s) => {
-                    s.public.is_some() && s.fields.iter().any(|f| f.public.is_none())
+                    s.vis.is_export() && s.fields.iter().any(|f| !f.vis.is_export())
                 }
                 TypeDecl::Enum(_) => false,
             };
@@ -212,9 +215,9 @@ impl Checker {
                 None => Error::ty(
                     span,
                     format!(
-                        "`{name}` is public with private fields, so its `{tr}` must say what it \
-                         needs: `where {}`; what its private fields need can't be part of its \
-                         interface",
+                        "`{name}` is exported with fields that aren't, so its `{tr}` must say \
+                         what it needs: `where {}`; what those fields need can't be part of its \
+                         package's interface",
                         bounds.join(", ")
                     ),
                 )

@@ -166,7 +166,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
 ```
 
 ```rust,error
-fn f(n: u64) -> usize { n as usize }
+fn f(n: u64) -> usize with {} { n as usize }
 // error: `as` may panic, but `f` doesn't say `with panic`
 ```
 
@@ -216,7 +216,7 @@ whichever type it is.
 What isn't common isn't known:
 
 ```rust,error
-fn abs<T: Int>(x: T) -> T {
+fn abs<T: Int>(x: T) -> T with {} {
     if x < 0 { 0 - x } else { x }
 }
 // error: `-` may panic, but `abs` doesn't say `with panic`

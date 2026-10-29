@@ -5,7 +5,7 @@ struct P { x: i64 }
 
 fn field(p: &mut P) -> &mut i64 { &mut p.x }
 
-fn f(mut p: P) -> i64 {
+fn f(mut p: P) -> i64 with {} {
     if p.x > 0 {
         let r = field(&mut p);
         *r = 0;

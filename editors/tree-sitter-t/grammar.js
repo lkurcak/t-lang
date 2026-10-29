@@ -85,7 +85,7 @@ module.exports = grammar({
       $.use_declaration,
     ),
 
-    visibility_modifier: _ => 'pub',
+    visibility_modifier: _ => choice('pub', 'export'),
 
     // `mod geometry { .. }`, or `mod geometry;` in a file of its own
     mod_item: $ => seq(

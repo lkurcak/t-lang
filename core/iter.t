@@ -3,7 +3,7 @@
 use crate::option::Option;
 
 /// What gives values one at a time, as a `for` loop takes them.
-pub trait Iterator {
+export trait Iterator {
     /// What it gives.
     type Item;
 
@@ -59,7 +59,7 @@ impl<'a, I: Iterator> Iterator for &'a mut I {
 
 /// What `Iterator::map` gives: `f` of what `iter` does.
 #[derive(Discard where I: Discard, F: Discard)]
-pub struct Map<I, F> { iter: I, f: F }
+export struct Map<I, F> { iter: I, f: F }
 
 /// Its values are `U`s, what `f` gives, which `F`'s bound decides.
 impl<U, effect fx, I: Iterator, F: FnMut(I::Item) -> U with fx> Iterator for Map<I, F> {
@@ -77,7 +77,7 @@ impl<U, effect fx, I: Iterator, F: FnMut(I::Item) -> U with fx> Iterator for Map
 /// What `Iterator::filter` gives: the values of `iter` that `p` says `true`
 /// of.
 #[derive(Discard where I: Discard, P: Discard)]
-pub struct Filter<I, P> { iter: I, p: P }
+export struct Filter<I, P> { iter: I, p: P }
 
 /// `next` throws away what `p` doesn't keep, so those must be `Discard`.
 impl<effect px, I: Iterator, P: FnMut(&I::Item) -> bool with px> Iterator for Filter<I, P>

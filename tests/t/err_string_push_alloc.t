@@ -1,7 +1,7 @@
 // Pushing may allocate.
 use alloc::string::String;
 
-fn add(s: &mut String) {
+fn add(s: &mut String) with {} {
     s.push('a');
 }
 

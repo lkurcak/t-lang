@@ -1,7 +1,7 @@
 // Putting a value in an arena allocates.
 use alloc::arena::Arena;
 
-fn put(a: &Arena<i64>) {
+fn put(a: &Arena<i64>) with {} {
     let _ = a.alloc(1);
 }
 

@@ -3,4 +3,4 @@
 pub struct Span { lo: i64, pub hi: { h: i64 | h >= lo } }
 
 fn main() {}
-// error: the refinement of `hi`, which is `pub`, can't name `lo`, which isn't: a field's refinement can only name fields as visible as it
+// error: the refinement of `hi`, which is `pub`, can't name `lo`, which is private: a field's refinement can only name fields exactly as visible as it

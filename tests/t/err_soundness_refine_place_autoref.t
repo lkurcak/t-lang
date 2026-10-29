@@ -7,7 +7,7 @@ impl P {
     fn clear(&mut self) { self.x = 0; }
 }
 
-fn f(mut p: P) -> i64 {
+fn f(mut p: P) -> i64 with {} {
     if p.x > 0 {
         p.clear();
         10 / p.x

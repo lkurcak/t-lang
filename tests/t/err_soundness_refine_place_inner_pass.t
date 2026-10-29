@@ -7,7 +7,7 @@ struct P { x: i64 }
 
 fn zero(p: &mut P) { p.x = 0; }
 
-fn f(w: W) -> i64 {
+fn f(w: W) -> i64 with {} {
     if w.r.x > 0 {
         zero(w.r);
         10 / w.r.x

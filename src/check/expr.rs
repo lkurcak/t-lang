@@ -124,7 +124,8 @@ impl Checker {
                 want: ws.clone(),
             };
             let (ge, we) = (self.solved(&g.effects), self.solved(&w.effects));
-            let open = |t: &Type| unify::has_vars(t);
+            // Or with effects being inferred, which wait for them.
+            let open = |t: &Type| unify::has_vars(t) || super::infer::has_placeholder(t);
             if !open(&ge) && !open(&we) && !crate::traits::subset(&ge, &we) {
                 return Err(Error::ty(
                     result_span(e),
@@ -1088,9 +1089,13 @@ impl Checker {
             ExprKind::Var(name, _) => format!("`{name}`"),
             _ => "this call".to_string(),
         };
+        let callee = match self.typed.vars.get(&f.id) {
+            Some(super::typed::Res::Fn(symbol, _)) => Some(symbol.clone()),
+            _ => None,
+        };
         let (params, ret) = match self.shallow(&ft) {
             Type::Fn(sig) => {
-                self.effect(e.span, what, *sig.effects);
+                self.call_effect(e.span, what, *sig.effects, callee);
                 (sig.params, *sig.ret)
             }
             t @ Type::Var(_) if self.int_var(&t) => {
@@ -1263,7 +1268,13 @@ impl Checker {
         }
         let ret = (*sig.ret).clone();
         let params = params.to_vec();
-        self.effect(e.span, format!("`{}`", name.name), (*sig.effects).clone());
+        let what = format!("`{}`", name.name);
+        self.call_effect(
+            e.span,
+            what,
+            (*sig.effects).clone(),
+            Some(found.symbol.clone()),
+        );
         self.resolved(name, &found, targs.is_empty());
         for (arg, param) in args.iter().zip(&params) {
             self.check(arg, param)?;

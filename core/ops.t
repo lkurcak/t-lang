@@ -5,34 +5,34 @@
 /// Functions and closures have it, and nothing else can (see
 /// docs/06c-closures.md).
 #[intrinsic]
-pub trait FnOnce {}
+export trait FnOnce {}
 
 /// What can be called, borrowing it mutably, so as often as wanted.
 #[intrinsic]
-pub trait FnMut: FnOnce {}
+export trait FnMut: FnOnce {}
 
 /// What can be called, borrowing it, so as often as wanted, and from
 /// anywhere it's shared.
 #[intrinsic]
-pub trait Fn: FnMut {}
+export trait Fn: FnMut {}
 
 /// `start..end`: from `start` up to, not including, `end`. It's empty if
 /// `start` isn't before `end`. Its fields are private, so only `a..b` and
 /// `Range::new` make one.
 #[derive(Discard where T: Discard, Eq where T: Eq)]
-pub struct Range<T> { start: T, end: T }
+export struct Range<T> { start: T, end: T }
 
 impl<T> Range<T> {
     /// `start..end`.
-    pub fn new(start: T, end: T) -> Range<T> { Range { start, end } }
+    export fn new(start: T, end: T) -> Range<T> { Range { start, end } }
 }
 
 impl<T: Copy> Range<T> {
     /// Where it starts: where an iterator over it is up to.
-    pub fn start(&self) -> T { self.start }
+    export fn start(&self) -> T { self.start }
 
     /// Where it ends, not included.
-    pub fn end(&self) -> T { self.end }
+    export fn end(&self) -> T { self.end }
 }
 
 /// Counts up, and can't panic: it adds one only to what's less than the
@@ -55,7 +55,7 @@ impl<T: Int> Iterator for Range<T> {
 
 /// Whether to go on, with a `C`, or stop early, with a `B`.
 #[derive(Discard where B: Discard, C: Discard, Copy where B: Copy, C: Copy, Eq where B: Eq, C: Eq)]
-pub enum ControlFlow<B, C> { Continue(C), Break(B) }
+export enum ControlFlow<B, C> { Continue(C), Break(B) }
 
 /// What `?` works on: a value that either goes on, as an `Output`, or
 /// stops the function early, as a `Residual`, from which a value of the
@@ -70,7 +70,7 @@ pub enum ControlFlow<B, C> { Continue(C), Break(B) }
 ///
 /// so `?` returns early only into a type with the same `Residual`. Neither
 /// method has effects, so neither has a `?`.
-pub trait Try {
+export trait Try {
     type Output;
     type Residual;
 

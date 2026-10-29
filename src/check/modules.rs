@@ -11,10 +11,14 @@
 //! module `main` and a function `main`.
 //!
 //! An item is visible in the module it's declared in and in the modules
-//! in that, and, if it's `pub`, wherever its module is. A path is resolved
+//! in that; if it's `pub`, anywhere in its package; and if it's `export`,
+//! in other packages too (see docs/24-visibility.md). A path is resolved
 //! segment by segment, each of which must be visible where the path is
 //! written. A `use` binds a name like an item declared there, private
-//! unless it's `pub use`, and can't make public what isn't.
+//! unless it's `pub use` or `export use`, and can't make more of what it
+//! names than it is. What's exported must be reachable from its package's
+//! root through what's exported alone (`exports_reachable`), so a
+//! package's interface is what its root says.
 //!
 //! Resolving is a function of the program, not of the order of anything
 //! (lemma M1 of the docs): with no glob imports, a name in a module is one
@@ -49,7 +53,7 @@
 //! `Rewrite::for_loop`).
 
 use crate::ast::*;
-use crate::error::{Error, Lint, Span, Warning};
+use crate::error::{Edit, Error, Fix, Lint, Span, Warning};
 use crate::traits::{COPY, DISCARD, EQ};
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
@@ -74,8 +78,8 @@ pub(crate) struct Binding {
     pub(crate) item: Item,
     /// The module it's declared or imported in.
     pub(crate) module: usize,
-    /// Is it `pub` there?
-    pub(crate) public: bool,
+    /// How far it's seen from there.
+    pub(crate) level: Level,
     /// The `use` it's from, by its index in `Modules::imports`, if it is.
     pub(crate) import: Option<usize>,
 }
@@ -99,8 +103,9 @@ pub(crate) struct Import {
     /// The whole `use`, for a fix that removes it, if it brings in only
     /// this.
     pub(crate) alone: Option<Span>,
-    /// Is it a `pub use`, which other modules may use?
-    pub(crate) public: bool,
+    /// How far it's seen: a `pub use` or `export use` is for other
+    /// modules to use.
+    pub(crate) level: Level,
     pub(crate) used: Cell<bool>,
 }
 
@@ -135,8 +140,8 @@ pub(crate) struct Modules {
     pub(crate) prelude: Option<usize>,
     /// Warnings about what's rewritten here: empty ranges.
     pub(crate) warnings: Vec<Warning>,
-    /// Where each item is declared, and whether it's `pub` there.
-    decls: HashMap<Item, (usize, bool)>,
+    /// Where each item is declared, and how far it's seen from there.
+    decls: HashMap<Item, (usize, Level)>,
     /// Each name each `use` brings in, and how far resolving it has got:
     /// a later package's paths can go through an earlier one's `pub use`.
     leaves: Vec<Leaf>,
@@ -237,7 +242,7 @@ impl Modules {
                 module
                     .values
                     .get(name)
-                    .is_some_and(|b| b.public && b.import.is_none())
+                    .is_some_and(|b| b.level == Level::Export && b.import.is_none())
             })
             .collect();
         match found[..] {
@@ -255,7 +260,9 @@ impl Modules {
             .map(|(_, module)| module)
             .filter(|module| {
                 module.types.get(name).is_some_and(|b| {
-                    b.public && b.import.is_none() && matches!(b.item, Item::Type(_))
+                    b.level == Level::Export
+                        && b.import.is_none()
+                        && matches!(b.item, Item::Type(_))
                 })
             })
             .collect();
@@ -304,9 +311,31 @@ impl Modules {
     }
 
     /// Can code in module `from` see something declared in module
-    /// `module`, `pub` (`public`) or not?
-    pub(crate) fn visible(&self, module: usize, public: bool, from: usize) -> bool {
-        public || self.within(from, module)
+    /// `module`, which is seen as far as `level`?
+    pub(crate) fn visible(&self, module: usize, level: Level, from: usize) -> bool {
+        match level {
+            Level::Module => self.within(from, module),
+            Level::Package => self.package_root(from) == self.package_root(module),
+            Level::Export => true,
+        }
+    }
+
+    /// Why something declared in `module`, seen as far as `level`, can't be
+    /// seen somewhere, for messages: "is private to `a::b`", "isn't
+    /// exported by `core`".
+    pub(crate) fn hidden_by(&self, module: usize, level: Level) -> String {
+        match level {
+            Level::Module => format!("is private to {}", self.describe(module)),
+            _ => format!("isn't exported by {}", self.describe_package(module)),
+        }
+    }
+
+    /// The package module `m` is in, for messages: "`core`", "the crate".
+    pub(crate) fn describe_package(&self, m: usize) -> String {
+        match self.package_root(m) {
+            ROOT => "the crate".into(),
+            root => format!("`{}`", self.mods[root].path),
+        }
     }
 
     /// `m` for messages: "`a::b`", or "the crate root".
@@ -421,7 +450,87 @@ impl Resolver {
         for (t, symbol) in prog.traits[from.traits..].iter_mut().zip(symbols) {
             t.name.name = symbol;
         }
-        Ok(())
+        r.exports_reachable(prog, from)
+    }
+
+    /// Checks that each item of the package that's exported can be named
+    /// by other packages: that some path from its package's root reaches
+    /// it through exported modules and `export use`s alone. So what a
+    /// package exports is what's reachable that way, which is what its
+    /// root says, and nothing exported is hidden where only its own
+    /// modules see it (see docs/24-visibility.md).
+    fn exports_reachable(&self, prog: &Program, from: Counts) -> Result<(), Error> {
+        let mut items: Vec<(Item, usize, &Ident, &str)> = Vec::new();
+        for (i, m) in prog.mods.iter().enumerate().skip(from.mods.max(1)) {
+            if m.vis.is_export() && !prog.is_library_root(i) {
+                let parent = m.parent.expect("not a root");
+                items.push((Item::Mod(i), parent, &m.name, "module "));
+            }
+        }
+        for (k, d) in prog.types.iter().enumerate().skip(from.types) {
+            if d.vis().is_export() {
+                items.push((Item::Type(k), d.module(), d.name(), ""));
+            }
+        }
+        for (k, t) in prog.traits.iter().enumerate().skip(from.traits) {
+            if t.vis.is_export() {
+                items.push((Item::Trait(k), t.module, &t.name, "trait "));
+            }
+        }
+        let fns = prog.all_fns().into_iter().enumerate().skip(from.all_fns);
+        for (i, (f, parent, method)) in fns {
+            if f.vis.is_export() && parent.is_none() && method.is_none() {
+                items.push((Item::Fn(i), f.module, &f.name, ""));
+            }
+        }
+        items.sort_by_key(|(_, _, name, _)| name.span.start);
+        let mut reached: HashSet<Item> = HashSet::new();
+        let mut done: HashSet<usize> = HashSet::new();
+        for &(_, module, ..) in &items {
+            let mut todo = vec![self.m.package_root(module)];
+            while let Some(m) = todo.pop() {
+                if !done.insert(m) {
+                    continue;
+                }
+                let table = self.m.mods[m]
+                    .types
+                    .values()
+                    .chain(self.m.mods[m].values.values());
+                for b in table.filter(|b| b.level == Level::Export) {
+                    reached.insert(b.item);
+                    if let Item::Mod(inner) = b.item {
+                        todo.push(inner);
+                    }
+                }
+            }
+        }
+        let Some(&(_, module, name, what)) =
+            items.iter().find(|(item, ..)| !reached.contains(item))
+        else {
+            return Ok(());
+        };
+        // The outermost module on the way that isn't exported.
+        let mut hidden = module;
+        let mut m = Some(module);
+        while let Some(i) = m {
+            if self.m.mods[i].parent.is_some() && !prog.mods[i].vis.is_export() {
+                hidden = i;
+            }
+            m = self.m.mods[i].parent;
+        }
+        let hidden = self.m.mods[hidden]
+            .path
+            .rsplit("::")
+            .next()
+            .unwrap_or_default();
+        Err(Error::ty(
+            name.span,
+            format!(
+                "{what}`{}` is exported, but other packages can't name it: module `{hidden}` isn't \
+                 exported, and no `export use` names it",
+                name.name
+            ),
+        ))
     }
 }
 
@@ -431,7 +540,7 @@ struct Leaf {
     module: usize,
     path: Vec<Ident>,
     name: Ident,
-    public: Option<Span>,
+    vis: Vis,
     decl: Span,
 }
 
@@ -451,39 +560,42 @@ struct Resolver {
 impl Resolver {
     /// Puts each item in its module's namespace.
     fn declare(&mut self, prog: &Program, from: Counts) -> Result<(), Error> {
-        let mut items: Vec<(usize, &Ident, bool, Item, Ns)> = Vec::new();
+        let mut items: Vec<(usize, &Ident, Level, Item, Ns)> = Vec::new();
         for (i, m) in prog.mods.iter().enumerate().skip(from.mods.max(1)) {
             // A library isn't a module of the crate root's.
             if prog.is_library_root(i) {
                 continue;
             }
             let parent = m.parent.expect("not the crate root");
-            items.push((parent, &m.name, m.public.is_some(), Item::Mod(i), Ns::Types));
+            items.push((parent, &m.name, m.vis.level(), Item::Mod(i), Ns::Types));
         }
         for (k, d) in prog.types.iter().enumerate().skip(from.types) {
-            let public = d.public().is_some();
-            items.push((d.module(), d.name(), public, Item::Type(k), Ns::Types));
+            items.push((
+                d.module(),
+                d.name(),
+                d.vis().level(),
+                Item::Type(k),
+                Ns::Types,
+            ));
         }
         for (k, t) in prog.traits.iter().enumerate().skip(from.traits) {
-            let public = t.public.is_some();
-            items.push((t.module, &t.name, public, Item::Trait(k), Ns::Types));
+            items.push((t.module, &t.name, t.vis.level(), Item::Trait(k), Ns::Types));
         }
         let fns = prog.all_fns().into_iter().enumerate().skip(from.all_fns);
         for (i, (f, ..)) in
             fns.filter(|(_, (_, parent, method))| parent.is_none() && method.is_none())
         {
-            let public = f.public.is_some();
-            items.push((f.module, &f.name, public, Item::Fn(i), Ns::Values));
+            items.push((f.module, &f.name, f.vis.level(), Item::Fn(i), Ns::Values));
         }
         items.sort_by_key(|(_, name, ..)| name.span.start);
-        for &(module, _, public, item, _) in &items {
-            self.m.decls.insert(item, (module, public));
+        for &(module, _, level, item, _) in &items {
+            self.m.decls.insert(item, (module, level));
         }
-        for (module, name, public, item, ns) in items {
+        for (module, name, level, item, ns) in items {
             let binding = Binding {
                 item,
                 module,
-                public,
+                level,
                 import: None,
             };
             let table = match ns {
@@ -507,7 +619,7 @@ impl Resolver {
                     module: u.module,
                     path: path.into_iter().cloned().collect(),
                     name: name.clone(),
-                    public: u.public,
+                    vis: u.vis,
                     decl: u.span,
                 });
             }
@@ -521,7 +633,7 @@ impl Resolver {
             self.m.imports.push(Import {
                 name: leaf.name.clone(),
                 alone: alone.then_some(leaf.decl),
-                public: leaf.public.is_some(),
+                level: leaf.vis.level(),
                 used: Cell::new(false),
             });
             let State::Done(types, values) = &self.m.states[i] else {
@@ -537,7 +649,7 @@ impl Resolver {
                 let binding = Binding {
                     item: target.item,
                     module: leaf.module,
-                    public: leaf.public.is_some(),
+                    level: leaf.vis.level(),
                     import: Some(i),
                 };
                 let module = &mut self.m.mods[leaf.module];
@@ -609,7 +721,7 @@ impl Resolver {
         let values = self.lookup(module, &last.name, Ns::Values)?;
         let seen = |b: &Option<Binding>| {
             b.as_ref()
-                .is_some_and(|b| self.m.visible(b.module, b.public, from))
+                .is_some_and(|b| self.m.visible(b.module, b.level, from))
         };
         let (types, values) = match (seen(&types), seen(&values)) {
             (true, true) => (types, values),
@@ -622,15 +734,27 @@ impl Resolver {
                 return Err(private(&self.m, &last.name, b, last.span));
             }
         };
-        let leaf = &self.m.leaves[i];
-        if leaf.public.is_some() && [&types, &values].into_iter().flatten().any(|b| !b.public) {
-            return Err(Error::ty(
-                last.span,
-                format!(
+        let level = self.m.leaves[i].vis.level();
+        let below = [&types, &values]
+            .into_iter()
+            .flatten()
+            .find(|b| b.level < level);
+        if let Some(b) = below {
+            let message = match (level, b.level) {
+                (Level::Export, Level::Package) => format!(
+                    "`{}` isn't exported, so `export use` can't export it",
+                    last.name
+                ),
+                (Level::Export, _) => format!(
+                    "`{}` is private, so `export use` can't export it",
+                    last.name
+                ),
+                _ => format!(
                     "`{}` is private, so `pub use` can't make it public",
                     last.name
                 ),
-            ));
+            };
+            return Err(Error::ty(last.span, message));
         }
         self.m.states[i] = State::Done(types.clone(), values.clone());
         Ok((types, values))
@@ -657,11 +781,11 @@ impl Resolver {
                 Ns::Values => values,
             };
             if let Some(t) = target {
-                let public = self.m.leaves[i].public.is_some();
+                let level = self.m.leaves[i].vis.level();
                 return Ok(Some(Binding {
                     item: t.item,
                     module: m,
-                    public,
+                    level,
                     import: Some(i),
                 }));
             }
@@ -710,7 +834,7 @@ impl Resolver {
                             _ => no_item(&self.m, m, seg),
                         });
                     };
-                    if i > 0 && !self.m.visible(b.module, b.public, from) {
+                    if i > 0 && !self.m.visible(b.module, b.level, from) {
                         return Err(private(&self.m, name, &b, seg.span));
                     }
                     match b.item {
@@ -762,10 +886,26 @@ fn private(mods: &Modules, name: &str, b: &Binding, at: Span) -> Error {
         Item::Mod(_) => format!("module `{name}`"),
         _ => format!("`{name}`"),
     };
+    Error::ty(at, format!("{what} {}", mods.hidden_by(b.module, b.level)))
+}
+
+/// The error for `export` at `at` on `member`, a field or method of type
+/// `of`, which isn't exported: a member is seen no further than its type.
+fn not_exported_member(kind: &str, member: &Ident, of: &Ident, at: Span) -> Error {
     Error::ty(
         at,
-        format!("{what} is private to {}", mods.describe(b.module)),
+        format!(
+            "{kind} `{}` can't be exported: `{}` isn't",
+            member.name, of.name
+        ),
     )
+    .with_fix(Fix::new(
+        "make it `pub`",
+        vec![Edit {
+            span: at,
+            text: "pub".into(),
+        }],
+    ))
 }
 
 /// Rewrites a program's paths, as the module docs say.
@@ -778,9 +918,10 @@ struct Rewrite<'r> {
     /// The type parameters in scope, innermost last: a name among them
     /// isn't a module.
     params: Vec<String>,
-    /// While in the interface of a public item, what to say of a private
-    /// type or trait in it: "`f` is public, but its signature names".
-    interface: Option<String>,
+    /// While in the interface of a `pub` or `export` item, what to say of a
+    /// type or trait in it that isn't seen as far: "`f` is public, but its
+    /// signature names", and how far it's seen.
+    interface: Option<(String, Level)>,
     /// `Program::next_id`, while the program is being rewritten: the nodes
     /// made here take ids from it.
     next_id: u32,
@@ -801,9 +942,7 @@ impl Rewrite<'_> {
         for t in &mut prog.traits[from.traits..] {
             self.module = t.module;
             self.params.push("Self".into());
-            let interface = t
-                .public
-                .map(|_| format!("trait `{}` is public, but it names", t.name.name));
+            let interface = interface_of(t.vis, &format!("trait `{}`", t.name.name), "it names");
             self.interface = interface.clone();
             for s in &mut t.supers {
                 self.trait_ref(s)?;
@@ -833,6 +972,28 @@ impl Rewrite<'_> {
             for a in &mut d.assoc {
                 self.ty(&mut a.ty)?;
             }
+            if d.trait_name.is_none()
+                && let Some(at) = d.methods.iter().find_map(|f| match f.vis {
+                    Vis::Export(at) => Some((at, &f.name)),
+                    _ => None,
+                })
+                && let TypeExprKind::Named(ty, _) = &d.self_ty.kind
+            {
+                let item = match self.r.m.paths.get(&d.self_ty.id) {
+                    Some(&item) => Some(item),
+                    None => self.r.m.get(self.module, ty, Ns::Types).map(|b| b.item),
+                };
+                if let Some(item @ Item::Type(_)) = item
+                    && self.r.m.decls[&item].1 != Level::Export
+                {
+                    let ty = Ident {
+                        name: ty.rsplit("::").next().unwrap_or(ty).to_string(),
+                        span: d.self_ty.span,
+                        id: d.self_ty.id,
+                    };
+                    return Err(not_exported_member("method", at.1, &ty, at.0));
+                }
+            }
             for f in &mut d.methods {
                 let interface = signature(f, d.trait_name.is_none());
                 self.function(f, interface)?;
@@ -858,7 +1019,7 @@ impl Rewrite<'_> {
             Some(b) => b.clone(),
             None => return Err(no_item(&self.r.m, m, last)),
         };
-        if !self.r.m.visible(b.module, b.public, from) {
+        if !self.r.m.visible(b.module, b.level, from) {
             return Err(private(&self.r.m, &last.name, &b, name.span));
         }
         Ok(b)
@@ -894,25 +1055,23 @@ impl Rewrite<'_> {
     }
 
     /// Checks that `item`, written as `name` at `at`, can be in the
-    /// interface being walked, if it's a public item's: that it's public
-    /// too (lemma M5 of the docs). Otherwise code that can use the item
-    /// couldn't write down what it takes or gives.
+    /// interface being walked, if it's a `pub` or `export` item's: that
+    /// it's seen as far (lemma M5 of docs/06d-modules.md). Otherwise code
+    /// that can use the item couldn't write down what it takes or gives.
     fn exposed(&self, item: Item, name: &str, at: Span) -> Result<(), Error> {
-        let Some(interface) = &self.interface else {
+        let Some((interface, want)) = &self.interface else {
             return Ok(());
         };
-        let (module, public) = self.r.m.decls[&item];
-        if public {
+        let (module, level) = self.r.m.decls[&item];
+        if level >= *want {
             return Ok(());
         }
         let name = name.rsplit("::").next().unwrap_or(name);
-        Err(Error::ty(
-            at,
-            format!(
-                "{interface} `{name}`, which is private to {}",
-                self.r.m.describe(module)
-            ),
-        ))
+        let why = match level {
+            Level::Module => format!("which is private to {}", self.r.m.describe(module)),
+            _ => "which isn't exported".to_string(),
+        };
+        Err(Error::ty(at, format!("{interface} `{name}`, {why}")))
     }
 
     /// A reference to a trait, which from here on names it by its symbol.
@@ -975,20 +1134,27 @@ impl Rewrite<'_> {
         let n = d.type_params().len();
         self.params
             .extend(d.type_params().iter().map(|p| p.name.clone()));
-        let public = d.public().is_some() && self.interface.is_none();
-        let interface = public.then(|| format!("`{}` is public, but it names", d.name().name));
+        let d_vis = d.vis();
+        let interface = match self.interface {
+            None => interface_of(d_vis, &format!("`{}`", d.name().name), "it names"),
+            Some(_) => None,
+        };
         self.interface = interface.clone();
         let derives = match d {
             TypeDecl::Struct(s) => {
                 self.generics(&mut s.generics)?;
                 for f in &mut s.fields {
-                    self.interface = match public && f.public.is_some() {
-                        true => Some(format!(
-                            "field `{}` is public, but its type names",
-                            f.name.name
-                        )),
-                        false => None,
+                    if let (Vis::Export(at), false) = (f.vis, d_vis.is_export()) {
+                        return Err(not_exported_member("field", &f.name, &s.name, at));
+                    }
+                    // A field is seen no further than its struct.
+                    let vis = match interface {
+                        Some(_) if f.vis.level() > d_vis.level() => d_vis,
+                        Some(_) => f.vis,
+                        None => Vis::Private,
                     };
+                    let field = format!("field `{}`", f.name.name);
+                    self.interface = interface_of(vis, &field, "its type names");
                     self.ty(&mut f.ty)?;
                 }
                 self.interface = interface;
@@ -1077,9 +1243,13 @@ impl Rewrite<'_> {
         Ok(())
     }
 
-    /// Function `f`, whose signature is part of a public item's interface
-    /// if `interface` says what to say of a private type in it.
-    fn function(&mut self, f: &mut FnDecl, interface: Option<String>) -> Result<(), Error> {
+    /// Function `f`, whose signature is part of an interface if
+    /// `interface` says what to say of a type in it that isn't seen as far.
+    fn function(
+        &mut self,
+        f: &mut FnDecl,
+        interface: Option<(String, Level)>,
+    ) -> Result<(), Error> {
         let n = f.generics.types.len();
         self.params
             .extend(f.generics.types.iter().map(|p| p.name.clone()));
@@ -1801,11 +1971,26 @@ pub(crate) fn children_mut(e: &mut Expr) -> Vec<&mut Expr> {
     }
 }
 
-/// What to say of a private type in the signature of `f`, if that's part of
-/// a public interface: if it's `pub`, and, for a method, `inherent`.
-fn signature(f: &FnDecl, inherent: bool) -> Option<String> {
-    (inherent && f.public.is_some())
-        .then(|| format!("`{}` is public, but its signature names", f.name.name))
+/// What to say of a type in the signature of `f` that isn't seen as far as
+/// `f`, if that's part of an interface: if it's `pub` or `export`, and, for
+/// a method, `inherent`.
+fn signature(f: &FnDecl, inherent: bool) -> Option<(String, Level)> {
+    let what = format!("`{}`", f.name.name);
+    inherent
+        .then(|| interface_of(f.vis, &what, "its signature names"))
+        .flatten()
+}
+
+/// The interface of `what`, which is seen as `vis` says, if it's `pub` or
+/// `export`: what to say of a type in it that isn't seen as far, "`f` is
+/// exported, but its signature names", and how far it must be seen.
+fn interface_of(vis: Vis, what: &str, names: &str) -> Option<(String, Level)> {
+    let is = match vis {
+        Vis::Private => return None,
+        Vis::Pub(_) => "public",
+        Vis::Export(_) => "exported",
+    };
+    Some((format!("{what} is {is}, but {names}"), vis.level()))
 }
 
 /// Is `symbol` an item of a library built into the compiler: does it start

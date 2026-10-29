@@ -95,10 +95,15 @@ or a set, `with {alloc, panic}`. Without a `with`, there are none. Every
 function says its own, as it says its types: they're never worked out
 from its body, so changing a body can't quietly change what its callers
 can count on. A body with an effect its signature doesn't have is an
-error, with a fix that adds it:
+error, with a fix that adds it.
+
+Since step 24 (docs/24-visibility.md), that holds of what's exported, the
+interface of a package: a function that isn't exported and doesn't say
+`with` has the effects its body has, as its callers are all in its
+package, checked with it. `with {}` says there are none, as below:
 
 ```rust,error
-fn next(n: i64) -> i64 { n + 1 }
+fn next(n: i64) -> i64 with {} { n + 1 }
 
 fn main() {
     let _v = next(1);
@@ -108,8 +113,9 @@ fn main() {
 
 Saying an effect a function can't have is a warning (`unused_effects`),
 whose fix takes it out, but only where nothing outside can be counting on
-it. A `pub` function may say `with panic` to keep the right to panic
-later, without breaking its callers when it does. A trait's method says
+it. An exported function (a `pub` one, until step 24) may say `with
+panic` to keep the right to panic later, without breaking its callers
+when it does. A trait's method says
 what its impls may do, and an impl's method is public wherever the trait
 is.
 

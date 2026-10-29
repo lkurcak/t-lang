@@ -1,6 +1,6 @@
-// An effect said but not had is a warning only where nothing outside can
-// count on it: a `pub` function may say one to keep the right to have it
-// later, and a trait's method says what its impls may do.
+// An effect said but not had is a warning only where nothing outside the
+// package can count on it: an exported function may say one to keep the
+// right to have it later, and a trait's method says what its impls may do.
 pub trait Store {
     fn get(&self) -> i64 with panic;
 
@@ -14,7 +14,7 @@ impl Store for Fixed {
     fn get(&self) -> i64 with panic { 1 }
 }
 
-pub fn reserved() -> i64 with panic { 1 }
+export fn reserved() -> i64 with panic { 1 }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;

@@ -1,34 +1,34 @@
-// A public struct with a private field writes what its derives need, so
-// changing the private field can't change what callers may do. Saying more
-// than the fields need is allowed.
+// An exported struct with a field that isn't writes what its derives need,
+// so changing the field can't change what other packages may do. Saying
+// more than the fields need is allowed.
 
 use alloc::boxed::Box;
 
-mod cells {
+export mod cells {
     use alloc::boxed::Box;
 
     #[derive(Discard where T: Discard)]
-    pub struct Cell<T> { v: Box<T> }
+    export struct Cell<T> { v: Box<T> }
 
-    pub fn cell<T>(v: T) -> Cell<T> with {alloc, panic} { Cell { v: Box::new(v) } }
+    export fn cell<T>(v: T) -> Cell<T> with alloc { Cell { v: Box::new(v) } }
 
     // Needs nothing of `T`, and says so by writing nothing.
     #[derive(Copy, Discard)]
-    pub struct Tag<T> { raw: i64, of: fn() -> T }
+    export struct Tag<T> { raw: i64, of: fn() -> T }
 
-    pub fn tag<T>(raw: i64, of: fn() -> T) -> Tag<T> { Tag { raw, of } }
+    export fn tag<T>(raw: i64, of: fn() -> T) -> Tag<T> { Tag { raw, of } }
 
-    pub fn raw<T>(t: Tag<T>) -> i64 { t.raw }
+    export fn raw<T>(t: Tag<T>) -> i64 { t.raw }
 
     // Stronger than needed: room to hold a `T` later.
     #[derive(Discard where T: Discard)]
-    pub struct Later<T> { of: fn() -> T }
+    export struct Later<T> { of: fn() -> T }
 
-    pub fn later<T>(of: fn() -> T) -> Later<T> { Later { of } }
+    export fn later<T>(of: fn() -> T) -> Later<T> { Later { of } }
 
-    // All fields public: the bounds are worked out from them, as before.
+    // All fields exported: the bounds are worked out from them, as before.
     #[derive(Discard)]
-    pub struct Open<T> { pub v: Box<T> }
+    export struct Open<T> { export v: Box<T> }
 }
 
 fn five() -> i64 { 5 }

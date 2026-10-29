@@ -12,8 +12,8 @@
 //!
 //! Nothing here is in the prelude: a program says what it uses.
 
-pub mod arena;
-pub mod boxed;
-pub mod list;
-pub mod raw;
-pub mod string;
+export mod arena;
+export mod boxed;
+export mod list;
+export mod raw;
+export mod string;

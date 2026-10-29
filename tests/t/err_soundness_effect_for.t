@@ -1,5 +1,5 @@
 // A `for` loop calls `next`, and so has its effects.
-fn count<I: Iterator<Item = i64> + Discard>(it: I) -> bool {
+fn count<I: Iterator<Item = i64> + Discard>(it: I) -> bool with {} {
     for _x in it {
         return true;
     }

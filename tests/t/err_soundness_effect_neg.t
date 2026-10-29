@@ -1,5 +1,5 @@
 // `-n` overflows at the smallest `i64`, which has no positive partner.
-fn neg(n: i64) -> i64 { -n }
+fn neg(n: i64) -> i64 with {} { -n }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;

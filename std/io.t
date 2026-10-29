@@ -15,21 +15,21 @@ use alloc::string::String;
 /// Where a program's input comes from.
 #[derive(Discard)]
 #[intrinsic]
-pub struct Stdin {}
+export struct Stdin {}
 
 /// Where a program's output goes.
 #[derive(Discard)]
 #[intrinsic]
-pub struct Stdout {}
+export struct Stdout {}
 
 /// Where a program says what went wrong.
 #[derive(Discard)]
 #[intrinsic]
-pub struct Stderr {}
+export struct Stderr {}
 
 /// What kind of failure an `Error` is.
 #[derive(Discard, Copy, Eq)]
-pub enum ErrorKind {
+export enum ErrorKind {
     /// What's at the other end went away: a pipe's reader, say.
     BrokenPipe,
     /// What was read isn't what was asked for: text that isn't UTF-8.
@@ -40,14 +40,14 @@ pub enum ErrorKind {
 
 /// Why reading or writing failed.
 #[derive(Discard)]
-pub struct Error { kind: ErrorKind }
+export struct Error { kind: ErrorKind }
 
 impl Error {
     /// An error of kind `kind`.
-    pub fn new(kind: ErrorKind) -> Error { Error { kind } }
+    export fn new(kind: ErrorKind) -> Error { Error { kind } }
 
     /// What kind it is.
-    pub fn kind(&self) -> ErrorKind { self.kind }
+    export fn kind(&self) -> ErrorKind { self.kind }
 }
 
 /// What went wrong, for people to read.
@@ -74,7 +74,7 @@ impl Stdin {
     ///
     /// Input that isn't UTF-8 is an error of kind `InvalidData`; the line
     /// is read, and `line` is left empty.
-    pub fn read_line(&mut self, line: &mut String) -> Result<bool, Error> with alloc {
+    export fn read_line(&mut self, line: &mut String) -> Result<bool, Error> with alloc {
         line.clear();
         let mut bytes = List::new();
         let mut any = false;
@@ -115,10 +115,10 @@ impl Stdin {
 impl Stdout {
     /// Writes `x` as text: what `Write::put` does, without needing `Write`
     /// in scope.
-    pub fn put<D: Display>(&mut self, x: &D) -> Result<(), Error> { x.fmt(self) }
+    export fn put<D: Display>(&mut self, x: &D) -> Result<(), Error> { x.fmt(self) }
 
     /// Writes `x` as text, then a line break.
-    pub fn line<D: Display>(&mut self, x: &D) -> Result<(), Error> {
+    export fn line<D: Display>(&mut self, x: &D) -> Result<(), Error> {
         x.fmt(self)?;
         self.write_char('\n')
     }
@@ -131,10 +131,10 @@ impl Stdout {
 impl Stderr {
     /// Writes `x` as text: what `Write::put` does, without needing `Write`
     /// in scope.
-    pub fn put<D: Display>(&mut self, x: &D) -> Result<(), Error> { x.fmt(self) }
+    export fn put<D: Display>(&mut self, x: &D) -> Result<(), Error> { x.fmt(self) }
 
     /// Writes `x` as text, then a line break.
-    pub fn line<D: Display>(&mut self, x: &D) -> Result<(), Error> {
+    export fn line<D: Display>(&mut self, x: &D) -> Result<(), Error> {
         x.fmt(self)?;
         self.write_char('\n')
     }

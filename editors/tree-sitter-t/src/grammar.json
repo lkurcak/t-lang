@@ -57,8 +57,17 @@
       ]
     },
     "visibility_modifier": {
-      "type": "STRING",
-      "value": "pub"
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "pub"
+        },
+        {
+          "type": "STRING",
+          "value": "export"
+        }
+      ]
     },
     "mod_item": {
       "type": "SEQ",

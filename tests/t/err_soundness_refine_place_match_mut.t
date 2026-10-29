@@ -3,7 +3,7 @@
 #[derive(Copy, Discard)]
 struct P { x: i64 }
 
-fn f(r: &mut P) -> i64 {
+fn f(r: &mut P) -> i64 with {} {
     if r.x > 0 {
         match r {
             P { x } => *x = 0,

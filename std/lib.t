@@ -10,7 +10,7 @@
 //!
 //! Nothing here is in the prelude: a program says what it uses.
 
-pub mod io;
+export mod io;
 pub mod rt;
 
 use crate::io::{Stderr, Stdin, Stdout};
@@ -19,11 +19,11 @@ use crate::io::{Stderr, Stdin, Stdout};
 /// streams, for now. `fn main(os: Os)` is given the only one there is,
 /// and passes on what each part of the program needs.
 #[derive(Discard)]
-pub struct Os {
+export struct Os {
     /// Where input comes from: the terminal, or a file or pipe instead.
-    pub stdin: Stdin,
+    export stdin: Stdin,
     /// Where output goes.
-    pub stdout: Stdout,
+    export stdout: Stdout,
     /// Where errors go, so they're seen even when the output isn't.
-    pub stderr: Stderr,
+    export stderr: Stderr,
 }

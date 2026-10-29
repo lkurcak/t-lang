@@ -18,36 +18,36 @@ impl<T> [T] {
     /// it, so nothing written through a `&mut [T]` changes it.
     #[intrinsic]
     #[measure]
-    pub fn len(&self) -> usize;
+    export fn len(&self) -> usize;
 
     /// Has it none?
     #[measure]
-    pub fn is_empty(&self) -> bool { self.len() == 0 }
+    export fn is_empty(&self) -> bool { self.len() == 0 }
 
     /// The value at `i`, which is less than `len()`, so there's one: `s[i]`
     /// is `*s.index(i)`.
     #[intrinsic]
-    pub fn index(&self, i: { i: usize | i < self.len() }) -> &T;
+    export fn index(&self, i: { i: usize | i < self.len() }) -> &T;
 
     /// The value at `i`, which is less than `len()`, to change: `s[i] = v`
     /// is `*s.index_mut(i) = v`.
     #[intrinsic]
-    pub fn index_mut(&mut self, i: { i: usize | i < self.len() }) -> &mut T;
+    export fn index_mut(&mut self, i: { i: usize | i < self.len() }) -> &mut T;
 
     /// The value at `i`, or `None` if there's none: if `i` isn't less than
     /// `len()`.
     #[intrinsic]
-    pub fn get(&self, i: usize) -> Option<&T>;
+    export fn get(&self, i: usize) -> Option<&T>;
 
     /// The value at `i`, to change, or `None` if there's none.
     #[intrinsic]
-    pub fn get_mut(&mut self, i: usize) -> Option<&mut T>;
+    export fn get_mut(&mut self, i: usize) -> Option<&mut T>;
 
     /// The first value, or `None` if it's empty.
-    pub fn first(&self) -> Option<&T> { self.get(0) }
+    export fn first(&self) -> Option<&T> { self.get(0) }
 
     /// The last value, or `None` if it's empty.
-    pub fn last(&self) -> Option<&T> {
+    export fn last(&self) -> Option<&T> {
         let n = self.len();
         if n == 0 { Option::None } else { self.get(n - 1) }
     }
@@ -55,17 +55,17 @@ impl<T> [T] {
     /// The values before index `mid` and those from it on, or `None` if
     /// `mid` is more than `len()`.
     #[intrinsic]
-    pub fn split_at<'a>(&'a self, mid: usize) -> Option<Split<'a, T>>;
+    export fn split_at<'a>(&'a self, mid: usize) -> Option<Split<'a, T>>;
 
     /// The values before index `mid` and those from it on, each to change,
     /// or `None` if `mid` is more than `len()`. They share no values, so
     /// both can be changed at once.
     #[intrinsic]
-    pub fn split_at_mut<'a>(&'a mut self, mid: usize) -> Option<SplitMut<'a, T>>;
+    export fn split_at_mut<'a>(&'a mut self, mid: usize) -> Option<SplitMut<'a, T>>;
 
     /// Swaps the values at `i` and `j`, if there are values there, and says
     /// whether it did. It's `split_at_mut` between them, so safe code.
-    pub fn swap(&mut self, i: usize, j: usize) -> bool {
+    export fn swap(&mut self, i: usize, j: usize) -> bool {
         if i >= self.len() || j >= self.len() {
             return false;
         }
@@ -90,34 +90,34 @@ impl<T> [T] {
     }
 
     /// Its values, by reference, front to back.
-    pub fn iter(&self) -> Iter<T> { Iter { rest: self } }
+    export fn iter(&self) -> Iter<T> { Iter { rest: self } }
 
     /// Its values, to change, front to back.
-    pub fn iter_mut(&mut self) -> IterMut<T> { IterMut { rest: self } }
+    export fn iter_mut(&mut self) -> IterMut<T> { IterMut { rest: self } }
 }
 
 /// A slice with no values, of any lifetime: it points at nothing.
 #[intrinsic]
-pub fn empty<'a, T>() -> &'a [T];
+export fn empty<'a, T>() -> &'a [T];
 
 /// A slice with no values, to change, of any lifetime: it points at
 /// nothing, so nothing else can see what it does.
 #[intrinsic]
-pub fn empty_mut<'a, T>() -> &'a mut [T];
+export fn empty_mut<'a, T>() -> &'a mut [T];
 
 /// What `split_at` gives: the values before the index it's given, and
 /// those from it on.
 #[derive(Copy, Discard)]
-pub struct Split<'a, T> { pub head: &'a [T], pub tail: &'a [T] }
+export struct Split<'a, T> { export head: &'a [T], export tail: &'a [T] }
 
 /// What `split_at_mut` gives: the values before the index it's given, and
 /// those from it on, each to change.
 #[derive(Discard)]
-pub struct SplitMut<'a, T> { pub head: &'a mut [T], pub tail: &'a mut [T] }
+export struct SplitMut<'a, T> { export head: &'a mut [T], export tail: &'a mut [T] }
 
 /// What `iter` gives: a reference to each value of `rest`, front to back.
 #[derive(Discard)]
-pub struct Iter<'a, T> { rest: &'a [T] }
+export struct Iter<'a, T> { rest: &'a [T] }
 
 /// Safe code over `split_at`: each value is the head of what's left.
 impl<'a, T> Iterator for Iter<'a, T> {
@@ -139,7 +139,7 @@ impl<'a, T> Iterator for Iter<'a, T> {
 /// What `iter_mut` gives: a reference to change each value of `rest`,
 /// front to back.
 #[derive(Discard)]
-pub struct IterMut<'a, T> { rest: &'a mut [T] }
+export struct IterMut<'a, T> { rest: &'a mut [T] }
 
 /// Safe code over `split_at_mut`: it takes what's left out of the
 /// iterator, leaving an empty slice, and keeps the tail. So each value it

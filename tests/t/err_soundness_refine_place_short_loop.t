@@ -5,7 +5,7 @@ struct P { x: i64 }
 
 fn zero(p: &mut P) { p.x = 0; }
 
-fn f(mut p: P) -> i64 {
+fn f(mut p: P) -> i64 with {} {
     let mut n = 0;
     if p.x > 0 {
         while n < 2 {

@@ -58,7 +58,10 @@ pub fn run() -> Result<()> {
         // FULL: the editor sends the whole file on every change, not diffs.
         text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
         code_action_provider: Some(CodeActionProviderCapability::Options(CodeActionOptions {
-            code_action_kinds: Some(vec![CodeActionKind::QUICKFIX]),
+            code_action_kinds: Some(vec![
+                CodeActionKind::QUICKFIX,
+                CodeActionKind::REFACTOR_REWRITE,
+            ]),
             ..Default::default()
         })),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
@@ -586,6 +589,21 @@ fn code_actions(a: &Analysis, uri: &Uri, range: Range) -> Vec<CodeActionOrComman
                 ..Default::default()
             }));
         }
+    }
+    // Writing what's inferred of a function's effects, on its name.
+    for (span, fix) in &a.info().inferred_fixes {
+        let Some(at) = a.range_in(uri, *span) else {
+            continue;
+        };
+        if at.start > range.end || range.start > at.end {
+            continue;
+        }
+        actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+            edit: Some(a.workspace_edit(&fix.edits)),
+            title: fix.title.clone(),
+            kind: Some(CodeActionKind::REFACTOR_REWRITE),
+            ..Default::default()
+        }));
     }
     actions
 }

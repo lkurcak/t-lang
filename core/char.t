@@ -10,7 +10,7 @@ use crate::str;
 /// proved there is.
 impl char {
     /// The character numbered `n`, or `None` if there's none.
-    pub fn from_u32(n: u32) -> Option<char> {
+    export fn from_u32(n: u32) -> Option<char> {
         if n <= 0x10FFFF && (n < 0xD800 || n > 0xDFFF) {
             Option::Some(n as char)
         } else {
@@ -19,14 +19,14 @@ impl char {
     }
 
     /// How many bytes it takes in UTF-8: 1 to 4.
-    pub fn len_utf8(self) -> usize {
+    export fn len_utf8(self) -> usize {
         let n = self as u32;
         if n < 0x80 { 1 } else if n < 0x800 { 2 } else if n < 0x10000 { 3 } else { 4 }
     }
 
     /// Writes it, in UTF-8, at the start of `out`, and gives what it
     /// wrote, or `None` if `out` is too short for it.
-    pub fn encode_utf8(self, out: &mut [u8]) -> Option<&str> {
+    export fn encode_utf8(self, out: &mut [u8]) -> Option<&str> {
         let n = self as u32;
         let bytes: &mut [u8] = match out.split_at_mut(self.len_utf8()) {
             Option::Some(split) => split.head,
@@ -51,15 +51,15 @@ impl char {
     }
 
     /// Is it ASCII: is its number below 128?
-    pub fn is_ascii(self) -> bool { self as u32 < 0x80 }
+    export fn is_ascii(self) -> bool { self as u32 < 0x80 }
 
     /// Is it `A` to `Z` or `a` to `z`?
-    pub fn is_ascii_alphabetic(self) -> bool {
+    export fn is_ascii_alphabetic(self) -> bool {
         self.is_ascii_uppercase() || self.is_ascii_lowercase()
     }
 
     /// Is it `A` to `Z`?
-    pub fn is_ascii_uppercase(self) -> bool {
+    export fn is_ascii_uppercase(self) -> bool {
         match self {
             'A'..='Z' => true,
             _ => false,
@@ -67,7 +67,7 @@ impl char {
     }
 
     /// Is it `a` to `z`?
-    pub fn is_ascii_lowercase(self) -> bool {
+    export fn is_ascii_lowercase(self) -> bool {
         match self {
             'a'..='z' => true,
             _ => false,
@@ -75,7 +75,7 @@ impl char {
     }
 
     /// Is it `0` to `9`?
-    pub fn is_ascii_digit(self) -> bool {
+    export fn is_ascii_digit(self) -> bool {
         match self {
             '0'..='9' => true,
             _ => false,
@@ -83,7 +83,7 @@ impl char {
     }
 
     /// Is it a space, a tab, a line feed, a form feed or a carriage return?
-    pub fn is_ascii_whitespace(self) -> bool {
+    export fn is_ascii_whitespace(self) -> bool {
         match self {
             ' ' | '\t' | '\n' | '\u{C}' | '\r' => true,
             _ => false,

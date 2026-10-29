@@ -179,7 +179,7 @@ right that it can't: `x * x` for `0 <= x < 100` can't overflow, but
 that's not linear.
 
 ```rust,error
-fn square(x: { v: i64 | v >= 0 && v < 100 }) -> i64 { x * x }
+fn square(x: { v: i64 | v >= 0 && v < 100 }) -> i64 with {} { x * x }
 // error: `*` may panic, but `square` doesn't say `with panic`
 ```
 

@@ -1,5 +1,5 @@
 // The closure changes `d`, when it's called.
-fn f() -> i64 {
+fn f() -> i64 with {} {
     let mut d = 1;
     let mut c = || d = 0;
     c();

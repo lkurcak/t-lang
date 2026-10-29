@@ -2,7 +2,7 @@
 #[derive(Copy, Discard)]
 struct P { x: i64 }
 
-fn f(mut p: P, c: bool) -> i64 {
+fn f(mut p: P, c: bool) -> i64 with {} {
     if p.x > 0 {
         if c {
             p.x = 0;

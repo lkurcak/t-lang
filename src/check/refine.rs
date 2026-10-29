@@ -412,12 +412,16 @@ impl Checker {
             .cloned()
             .collect();
         for (i, f) in s.fields.iter().enumerate() {
-            let public = |j: usize| s.fields[j].public.is_some();
+            let level = |j: usize| s.fields[j].vis.level();
             let scope = |name: &str| {
                 let Some(j) = s.fields.iter().position(|g| g.name.name == name) else {
                     return const_named(&consts, name);
                 };
-                let is = |p: bool| if p { "is" } else { "isn't" };
+                let is = |l: Level| match l {
+                    Level::Module => "is private",
+                    Level::Package => "is `pub`",
+                    Level::Export => "is exported",
+                };
                 let (binder, _) = f.ty.refinement()?;
                 Some(if j == i {
                     Named::Not(format!(
@@ -431,13 +435,13 @@ impl Checker {
                          comes after `{}`",
                         f.name.name
                     ))
-                } else if public(j) != public(i) {
+                } else if level(j) != level(i) {
                     Named::Not(format!(
-                        "the refinement of `{}`, which {} `pub`, can't name `{name}`, which {}: a \
-                         field's refinement can only name fields as visible as it",
+                        "the refinement of `{}`, which {}, can't name `{name}`, which {}: a \
+                         field's refinement can only name fields exactly as visible as it",
                         f.name.name,
-                        is(public(i)),
-                        is(public(j)),
+                        is(level(i)),
+                        is(level(j)),
                     ))
                 } else {
                     Named::Value(types[j].clone(), PredName::Field(j), s.fields[j].name.span)
@@ -748,15 +752,14 @@ impl Checker {
                 let through_mut = counted.iter().any(|m| *m);
                 let fn_def = self.fns.iter().find(|f| f.symbol == symbol);
                 if let Some(f) = fn_def
-                    && !f.public
-                    && !self.modules.within(self.module, f.module)
+                    && !self.modules.visible(f.module, f.level, self.module)
                 {
                     return Err(Error::ty(
                         m.span,
                         format!(
-                            "measure `{}` of `{t}` is private to {}",
+                            "measure `{}` of `{t}` {}",
                             m.name,
-                            self.modules.describe(f.module)
+                            self.modules.hidden_by(f.module, f.level)
                         ),
                     ));
                 }

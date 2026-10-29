@@ -3,7 +3,7 @@ trait Op {
     fn op(&self, n: i64) -> i64 with panic;
 }
 
-fn twice<T: Op>(t: &T, n: i64) -> i64 { t.op(t.op(n)) }
+fn twice<T: Op>(t: &T, n: i64) -> i64 with {} { t.op(t.op(n)) }
 
 #[derive(Discard)]
 struct Inc {}

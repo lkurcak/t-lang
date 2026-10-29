@@ -5,7 +5,7 @@ struct P { x: i64 }
 
 fn zero(p: &mut P) { p.x = 0; }
 
-fn f(mut p: P, c: bool) -> i64 {
+fn f(mut p: P, c: bool) -> i64 with {} {
     if p.x > 0 {
         if c {
             zero(&mut p);

@@ -1,8 +1,11 @@
 //! Effects: what a call may do besides give its result (see
-//! docs/07-effects.md). Each function says its effects in its signature,
+//! docs/07-effects.md). A function says its effects in its signature,
 //! `with panic`, and its body may only have those: each operator, call and
 //! allocation in it is a *site* with effects of its own, which must be
-//! among them. A closure's effects are worked out from its body instead,
+//! among them. One that isn't exported and says no `with` has its sites'
+//! instead, inferred with those it may call back (see `check/infer.rs`):
+//! until they're known its effects are a placeholder, and what a
+//! placeholder is in waits for them (`Deferred`). A closure's effects are worked out from its body instead,
 //! as a variable that must hold at least those of the sites in it.
 //!
 //! Effect sets are types of a kind of their own (`Type::Effects`), so a
@@ -31,6 +34,8 @@
 //! says (`Within`, `traits::fits`, `Checker::impl_effects`).
 
 use super::Checker;
+use super::infer::has_placeholder;
+use super::scope::FnId;
 use crate::ast::*;
 use crate::error::{Edit, Error, Fix, Lint, Span, Warning};
 use crate::types::{Type, effects_text};
@@ -49,6 +54,9 @@ pub(super) struct Site {
     /// The innermost `unsafe` block it's in, if it's in one, in its body:
     /// that keeps its obligations, so it doesn't have the effect `unsafe`.
     pub unsafe_block: Option<Span>,
+    /// The function it calls, by symbol, if it's a call of one by name: to
+    /// say why it has an effect, if it's inferred (`why_inferred`).
+    pub callee: Option<String>,
 }
 
 /// `sub ⊆ sup`, of two effect sets, which must hold once the function's
@@ -77,12 +85,41 @@ pub(super) enum Why {
     Same,
     /// A function of type `got` used as a `want`, which may have more.
     Coerce { got: Type, want: Type },
+    /// A site `what` in the body of function `name`, which says its
+    /// effects, which the site's must be among.
+    Site { what: String, name: String },
+}
+
+/// A `Within` that had a placeholder for a function's inferred effects in
+/// it at the end of the function it's from, kept until they're known
+/// (see `check/infer.rs`): what it says, with that function's variables
+/// solved, and what to say if it doesn't hold, of what and where.
+#[derive(Debug, Clone)]
+pub(super) struct Deferred {
+    pub sub: Type,
+    pub sup: Type,
+    pub why: Why,
+    pub subject: String,
+    pub span: Span,
 }
 
 impl Checker {
     /// Records that what's at `span`, described as `what`, has `effects`,
     /// in the body being checked.
     pub(super) fn effect(&mut self, span: Span, what: impl Into<String>, effects: Type) {
+        self.call_effect(span, what, effects, None);
+    }
+
+    /// Records that a call at `span`, described as `what`, of function
+    /// `callee` if it's one named, has `effects`, in the body being
+    /// checked.
+    pub(super) fn call_effect(
+        &mut self,
+        span: Span,
+        what: impl Into<String>,
+        effects: Type,
+        callee: Option<String>,
+    ) {
         if effects.is_no_effects() {
             return;
         }
@@ -92,6 +129,7 @@ impl Checker {
             effects,
             node: None,
             unsafe_block: None,
+            callee,
         });
     }
 
@@ -104,6 +142,7 @@ impl Checker {
             effects: Type::effects([Type::Panic]),
             node: Some(e.id),
             unsafe_block: None,
+            callee: None,
         });
     }
 
@@ -303,47 +342,82 @@ impl Checker {
             if w.discharged {
                 sub = without_unsafe(&sub);
             }
-            if crate::traits::subset(&sub, &sup) {
-                continue;
-            }
-            let missing = Type::effects(
-                sub.effect_items()
-                    .iter()
-                    .filter(|e| !sup.effect_items().contains(e))
-                    .cloned(),
-            );
-            let does = does(&missing);
             let subject = match self.owner(&w.sub) {
                 Some(_) => "this closure".to_string(),
                 None => "this function".to_string(),
-            };
-            let message = match &w.why {
-                Why::Closure(what) => format!("{what} {does}, but this closure can't"),
-                Why::Bound { who, sig } => {
-                    let sig = self.solved(sig);
-                    let cant = cant(&missing);
-                    format!(
-                        "{subject} {does}, but `{who}` needs calls of it to fit `{sig}`, which {cant}"
-                    )
-                }
-                Why::Coerce { got, want } => format!(
-                    "expected `{}`, found `{}`",
-                    self.solved(want),
-                    self.solved(got)
-                ),
-                Why::Same => format!(
-                    "expected the effects `{}`, found `{}`",
-                    effects_text(&sup),
-                    effects_text(&sub)
-                ),
             };
             let span = match (&w.why, self.owner(&w.sub)) {
                 (Why::Bound { .. }, Some(at)) => at,
                 _ => w.span,
             };
-            return Err(Error::ty(span, message));
+            let why = match w.why {
+                Why::Bound { who, sig } => Why::Bound {
+                    who,
+                    sig: self.solved(&sig),
+                },
+                Why::Coerce { got, want } => Why::Coerce {
+                    got: self.solved(&got),
+                    want: self.solved(&want),
+                },
+                why => why,
+            };
+            let d = Deferred {
+                sub,
+                sup,
+                why,
+                subject,
+                span,
+            };
+            // A function's effects that are inferred, and not known yet,
+            // wait for them.
+            if has_placeholder(&d.sub) || has_placeholder(&d.sup) {
+                self.deferred.push(d);
+                continue;
+            }
+            self.check_deferred(&d)?;
         }
         Ok(())
+    }
+
+    /// Checks that `d` holds, by now: that its `sub` is within its `sup`,
+    /// or else says why it must be.
+    pub(super) fn check_deferred(&self, d: &Deferred) -> Result<(), Error> {
+        let (sub, sup) = (&d.sub, &d.sup);
+        let missing = Type::effects(
+            sub.effect_items()
+                .iter()
+                .filter(|e| !sup.effect_items().contains(e))
+                .cloned(),
+        );
+        if missing.is_no_effects() {
+            return Ok(());
+        }
+        let does = does(&missing);
+        let subject = &d.subject;
+        let shown = |t: &Type| self.with_inferred(t);
+        let message = match &d.why {
+            Why::Closure(what) => format!("{what} {does}, but this closure can't"),
+            Why::Bound { who, sig } => {
+                let sig = shown(sig);
+                let cant = cant(&missing);
+                format!(
+                    "{subject} {does}, but `{who}` needs calls of it to fit `{sig}`, which {cant}"
+                )
+            }
+            Why::Coerce { got, want } => {
+                format!("expected `{}`, found `{}`", shown(want), shown(got))
+            }
+            Why::Same => format!(
+                "expected the effects `{}`, found `{}`",
+                effects_text(sup),
+                effects_text(sub)
+            ),
+            Why::Site { what, name } => format!(
+                "{what} {does}, but `{name}` doesn't say `with {}`",
+                effects_text(&missing)
+            ),
+        };
+        Err(Error::ty(d.span, message))
     }
 
     /// Where the closure is whose effects `t` is, if it's a closure's.
@@ -359,11 +433,30 @@ impl Checker {
     pub(super) fn body_effects(&mut self, f: &FnDecl, declared: &Type) -> Result<(), Error> {
         self.unused_unsafe();
         let sites = std::mem::take(&mut self.effect_sites);
+        let id = self.current.expect("in a function");
+        if self.inferring.contains(&id.0) {
+            return self.inferred_sites(id, sites);
+        }
         let mut used: Vec<Type> = Vec::new();
         for s in &sites {
             let mut effects = self.solved(&s.effects);
             if s.unsafe_block.is_some() {
                 effects = without_unsafe(&effects);
+            }
+            // What's in it of a function whose effects are being inferred
+            // waits for them.
+            if has_placeholder(&effects) {
+                self.deferred.push(Deferred {
+                    sub: effects,
+                    sup: declared.clone(),
+                    why: Why::Site {
+                        what: s.what.clone(),
+                        name: f.name.name.clone(),
+                    },
+                    subject: String::new(),
+                    span: s.span,
+                });
+                continue;
             }
             let missing: Vec<Type> = effects
                 .effect_items()
@@ -416,20 +509,29 @@ impl Checker {
                     text: format!(" with {}", written_with(f, &all)),
                 }],
             );
-            return Err(Error::ty(s.span, message).with_fix(fix));
+            let mut err = Error::ty(s.span, message).with_fix(fix);
+            // Why what it calls has it, if that's inferred, as it's
+            // nowhere written.
+            if let Some(callee) = &s.callee {
+                for (at, note) in self.why_inferred(callee, first) {
+                    err = err.with_note(at, note);
+                }
+            }
+            return Err(err);
         }
         // Each effect it says that nothing in it has. One that's an
         // associated effect with none, as `Self::e` may be, says nothing.
-        // Only where nothing outside can count on it: not a `pub`
-        // function, which may say an effect to keep the right to have it
-        // later, nor a trait's method, default or impl, which is public
-        // wherever the trait is, and says what its impls may do.
+        // Only where nothing outside the package can count on it: not an
+        // exported function, which may say an effect to keep the right to
+        // have it later, nor a trait's method, default or impl, which is
+        // seen wherever the trait is, and says what its impls may do.
+        // Code in the package that counts on it is checked with it.
         let Some(written) = &f.effects else {
             return Ok(());
         };
         let default = self.self_ty.is_none() && self.type_params.iter().any(|p| p == "Self");
         let of_trait = default || self.in_trait_impl;
-        if f.public.is_some() || of_trait {
+        if f.vis.is_export() || of_trait {
             return Ok(());
         }
         let resolved: Vec<Type> = written
@@ -486,6 +588,22 @@ impl Checker {
                 fixes: vec![fix],
             });
         }
+        Ok(())
+    }
+
+    /// Keeps the sites of the body of the function `id`, whose effects are
+    /// inferred, for when they're worked out with those of its group
+    /// (`solve_group`), with its variables solved.
+    fn inferred_sites(&mut self, id: FnId, sites: Vec<Site>) -> Result<(), Error> {
+        let mut kept = Vec::new();
+        for mut s in sites {
+            s.effects = self.solved(&s.effects);
+            if s.unsafe_block.is_some() {
+                s.effects = without_unsafe(&s.effects);
+            }
+            kept.push(s);
+        }
+        self.infer_sites.insert(id.0, kept);
         Ok(())
     }
 
@@ -546,6 +664,19 @@ fn effects_span(f: &FnDecl) -> Span {
     let start = f.ret.span.end;
     let end = f.effects.as_ref().map_or(start, |e| e.span.end);
     Span::new(start, end)
+}
+
+/// The fix that writes `effects`, inferred, as `f`'s: `with {}` if there
+/// are none, which then says so.
+pub(super) fn inferred_fix(f: &FnDecl, effects: &Type) -> Fix {
+    let text = written_with(f, effects);
+    Fix::new(
+        format!("write its effects: `with {text}`"),
+        vec![Edit {
+            span: effects_span(f),
+            text: format!(" with {text}"),
+        }],
+    )
 }
 
 /// Where `f`'s effects are, or would be, written, and each that's written.

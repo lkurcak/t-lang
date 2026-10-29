@@ -20,7 +20,7 @@
 //! `<core>/a/b.t`. The alloc library is the same, read next, from `alloc/`
 //! (see docs/09-unsafe.md).
 
-use crate::ast::{Ident, ModDecl, Program, ROOT};
+use crate::ast::{Ident, ModDecl, Program, ROOT, Vis};
 use crate::error::{Error, Span};
 use crate::lexer;
 use crate::parser;
@@ -270,7 +270,7 @@ fn add_library(
             id,
         },
         parent: Some(ROOT),
-        public: Some(Span::new(start, start)),
+        vis: Vis::Export(Span::new(start, start)),
         in_file: false,
     });
     if name == "core" {

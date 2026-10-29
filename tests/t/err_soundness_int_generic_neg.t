@@ -1,6 +1,6 @@
 // An absolute value that's right for unsigned types and wrong for signed
 // ones: `0 - x` of the least `i8` doesn't fit.
-fn abs<T: Int>(x: T) -> T {
+fn abs<T: Int>(x: T) -> T with {} {
     if x < 0 { 0 - x } else { x }
 }
 

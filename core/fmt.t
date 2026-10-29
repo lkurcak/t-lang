@@ -15,7 +15,7 @@ use crate::result::Result;
 /// gives `Ok`, or an `Error` if the sink can't take it, and does what `e`
 /// says. A sink that can't fail says `type Error = !;`, and then what it
 /// gives can be dropped.
-pub trait Write {
+export trait Write {
     /// What writing gives when the sink can't take what's written.
     type Error;
 
@@ -51,7 +51,7 @@ impl<'a, W: Write> Write for &'a mut W {
 
 /// What can be written as text, for people to read: an integer in
 /// decimal, a `bool` as `true` or `false`, a string as its characters.
-pub trait Display {
+export trait Display {
     /// Writes it into `w`. It does only what `w` does, and gives what `w`
     /// gives: so it can't panic, or allocate, unless `w` can.
     fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e;

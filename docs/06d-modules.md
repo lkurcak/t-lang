@@ -269,19 +269,24 @@ A derive works out what it needs from the fields: `#[derive(Discard)]` on a
 struct holding a `Box<T>` needs `T: Discard`. If the field is private, that
 lets it decide part of the public interface, and changing the field could
 break code outside. So a public struct with private fields says in each
-derive what it needs, and the checker checks that it's enough:
+derive what it needs, and the checker checks that it's enough.
+
+Since step 24 (docs/24-visibility.md) the boundary this is about is the
+package's, not the module's: code in the package that counts on what a
+derive needs is checked again whenever the fields change, so only an
+exported struct with fields that aren't exported writes it:
 
 ```rust
-mod cells {
+export mod cells {
     use alloc::boxed::Box;
 
     #[derive(Discard where T: Discard)]
-    pub struct Cell<T> { v: Box<T> }
+    export struct Cell<T> { v: Box<T> }
 
-    pub fn cell<T>(v: T) -> Cell<T> with {alloc, panic} { Cell { v: Box::new(v) } }
+    export fn cell<T>(v: T) -> Cell<T> with alloc { Cell { v: Box::new(v) } }
 }
 
-fn main() with {alloc, panic} {
+fn main() with alloc {
     // A `Cell<i64>` is `Discard`, so it can be thrown away.
     let _c = cells::cell(5i64);
 }
@@ -292,15 +297,15 @@ than it gives now, to have room to change. Writing nothing promises the
 derive needs nothing, and is an error if it does, with a fix:
 
 ```rust,error
-mod cells {
+export mod cells {
     use alloc::boxed::Box;
 
     #[derive(Discard)]
-    pub struct Cell<T> { v: Box<T> }
+    export struct Cell<T> { v: Box<T> }
 }
 
 fn main() {}
-// error: `Cell` is public with private fields, so its `Discard` must say what it needs: `where T: Discard`
+// error: `Cell` is exported with fields that aren't, so its `Discard` must say what it needs: `where T: Discard`
 ```
 
 A struct whose fields are all public keeps working its bounds out, as
