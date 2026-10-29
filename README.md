@@ -17,6 +17,10 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
 generics and closures; [examples/list.t](examples/list.t) shows ownership
 and borrowing.
 
+The [language reference](docs/reference.md) brings together the current
+rules for types, inference, ownership, effects, visibility, and refinements.
+The [numbered design notes](#roadmap) explain how those rules developed.
+
 ## Install
 
 ```sh
