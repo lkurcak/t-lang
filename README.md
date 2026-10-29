@@ -115,9 +115,10 @@ with something, is refused with what it would clash with, and comments
 are left alone. The outline (document symbols) lists the functions,
 structs and enums, with the fields and variants of each type and the
 nested functions and local types of each function under them; it comes
-from the parse alone, so it's there while the file has a type error. Inlay
-hints show inferred types and type arguments. It formats files as `t fmt`
-does (see below).
+from the parse alone, keeping complete declarations around malformed items
+while reporting their syntax errors. Formatting and semantic analysis still
+require valid syntax. Inlay hints show inferred types and type arguments.
+It formats files as `t fmt` does (see below).
 
 Names are written as in Rust: structs, enums, variants and type
 parameters in `UpperCamelCase`, and functions, parameters, variables and

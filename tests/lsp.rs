@@ -1616,6 +1616,170 @@ enum Option<T> {
     stop(child, c);
 }
 
+#[test]
+fn outlines_recover_around_syntax_errors_without_enabling_semantic_edits() {
+    let (child, mut c) = start();
+    let src = "\
+fn before() {}
+fn broken(x:) {}
+struct Middle {}
+fn bad_body() { let x = ; fn hidden() {} }
+mod nested {
+    fn kept() {}
+    struct Broken { value: }
+    enum End { Value }
+}
+pub impl Middle {}
+fn main() {}
+";
+    let (mut d, diags) = Doc::open(&mut c, "file:///tmp/outline_syntax.t", src);
+    let lines: Vec<_> = diags
+        .iter()
+        .map(|diag| {
+            assert_eq!(diag["severity"], 1);
+            assert!(
+                diag["message"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("syntax error:")
+            );
+            diag["range"]["start"]["line"].as_u64().unwrap()
+        })
+        .collect();
+    assert_eq!(lines, [1, 3, 6, 9], "{diags:?}");
+
+    fn names(symbols: &Value) -> Vec<Value> {
+        symbols
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| json!([s["name"], names(&s["children"])]))
+            .collect()
+    }
+    let response = d.ask(&mut c, "textDocument/documentSymbol", "main", 0, json!({}));
+    let symbols = &response["result"];
+    assert_eq!(
+        names(symbols),
+        vec![
+            json!(["before", []]),
+            json!(["Middle", []]),
+            json!(["nested", [["kept", []], ["End", [["Value", []]]]]]),
+            json!(["main", []]),
+        ]
+    );
+    assert_eq!(symbols[1]["selectionRange"], d.range("Middle", 0));
+    assert_eq!(symbols[3]["selectionRange"], d.range("main", 0));
+    assert_eq!(
+        symbols[2]["range"]["end"],
+        json!({"line": 8, "character": 1})
+    );
+    // A later syntax error retains its own quick fix and source range.
+    let response = d.ask(
+        &mut c,
+        "textDocument/codeAction",
+        "pub",
+        0,
+        json!({"range": d.range("pub", 0), "context": {"diagnostics": []}}),
+    );
+    let actions = response["result"].as_array().unwrap();
+    assert_eq!(actions.len(), 1, "{response}");
+    assert_eq!(actions[0]["title"], "remove the `pub`");
+    assert_eq!(actions[0]["diagnostics"][0], diags[3]);
+
+    let response = d.ask(
+        &mut c,
+        "textDocument/formatting",
+        "main",
+        0,
+        json!({"options": {"tabSize": 4, "insertSpaces": true}}),
+    );
+    assert!(response.get("error").is_none(), "{response}");
+    assert_eq!(response["result"], Value::Null);
+    let response = d.ask(&mut c, "textDocument/hover", "Middle", 0, json!({}));
+    assert_eq!(response["result"], Value::Null);
+    let response = d.ask(
+        &mut c,
+        "textDocument/rename",
+        "Middle",
+        0,
+        json!({"newName": "Renamed"}),
+    );
+    assert!(response.get("error").is_some(), "{response}");
+
+    // An edit must replace both the partial outline and all diagnostics.
+    let fixed = "fn main() {}\n";
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
+            "textDocument": {"uri": d.uri, "version": 2},
+            "contentChanges": [{"text": fixed}]
+        }}),
+    );
+    assert!(c.diagnostics().is_empty());
+    let response = d.ask(&mut c, "textDocument/documentSymbol", "main", 0, json!({}));
+    assert_eq!(names(&response["result"]), vec![json!(["main", []])]);
+    assert_eq!(
+        response["result"][0]["selectionRange"]["start"],
+        json!({"line": 0, "character": 3})
+    );
+    stop(child, c);
+}
+
+#[test]
+fn recovered_syntax_diagnostics_and_fixes_stay_in_the_module_file() {
+    let (child, mut c) = start();
+    let dir = std::env::temp_dir().join(format!("t-lsp-syntax-{}", std::process::id()));
+    let main_uri = file_uri(&dir.join("main.t"));
+    let module_uri = file_uri(&dir.join("helper.t"));
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": module_uri, "languageId": "t", "version": 1,
+                "text": "fn before() {}\nfn broken(x:) {}\npub impl Before {}\nfn after() {}\n"}
+        }}),
+    );
+    c.diagnostics();
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": main_uri, "languageId": "t", "version": 1,
+                "text": "mod helper;\nfn main() {}\n"}
+        }}),
+    );
+    c.send(
+        json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/documentSymbol", "params": {
+            "textDocument": {"uri": module_uri}
+        }}),
+    );
+    let diags = c.diagnostics_before_response(2);
+    assert_eq!(diags[&main_uri]["diagnostics"], json!([]));
+    let module_diags = diags[&module_uri]["diagnostics"].as_array().unwrap();
+    assert_eq!(module_diags.len(), 2, "{diags:?}");
+    assert_eq!(
+        module_diags[0]["range"]["start"],
+        json!({"line": 1, "character": 12})
+    );
+    assert_eq!(
+        module_diags[1]["range"]["start"],
+        json!({"line": 2, "character": 0})
+    );
+    c.send(
+        json!({"jsonrpc": "2.0", "id": 3, "method": "textDocument/codeAction", "params": {
+            "textDocument": {"uri": module_uri},
+            "range": {"start": {"line": 2, "character": 0}, "end": {"line": 2, "character": 3}},
+            "context": {"diagnostics": []}
+        }}),
+    );
+    let response = c.response(3);
+    let edits = &response["result"][0]["edit"]["changes"];
+    assert_eq!(edits.as_object().unwrap().len(), 1, "{response}");
+    assert_eq!(
+        edits[&module_uri][0],
+        json!({
+            "range": {"start": {"line": 2, "character": 0}, "end": {"line": 2, "character": 4}},
+            "newText": ""
+        })
+    );
+    stop(child, c);
+}
+
 /// Hover, go to definition, rename and the outline know traits, impls and
 /// methods. A method of an impl of a trait is renamed with the trait's.
 #[test]
