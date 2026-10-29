@@ -2752,3 +2752,33 @@ fn main() {
 
     stop(child, c);
 }
+
+/// Renaming an alias renames its uses, through a path and a `use` too, and
+/// nothing named the same that it stands for.
+#[test]
+fn renames_type_aliases() {
+    let (child, mut c) = start();
+    let src = "\
+mod m {
+    pub type Num = i64;
+}
+use m::Num;
+fn twice(n: Num) -> m::Num { n * 2 }
+fn main() {
+    print(twice(2));
+}
+\nfn print<T: Int>(_x: T) {}\n";
+    let (mut d, diags) = Doc::open(&mut c, "file:///tmp/alias.t", src);
+    assert_eq!(diags, Vec::<Value>::new());
+    assert_eq!(
+        d.rename(&mut c, "Num", 0, "Count").unwrap(),
+        src.replace("Num", "Count")
+    );
+    assert_eq!(
+        d.references(&mut c, "Num", 2, true).len(),
+        4,
+        "the declaration, the `use`, and both uses"
+    );
+
+    stop(child, c);
+}
