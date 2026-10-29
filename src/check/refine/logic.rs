@@ -454,7 +454,7 @@ fn impossible(atoms: &[Formula], kinds: &[Kind]) -> Option<bool> {
 /// `e == 0` divided through by the gcd of its coefficients, or `None`
 /// inside if that leaves a fraction: no integers make it true.
 fn tighten_eq(e: Lin) -> Option<Option<Lin>> {
-    let g = e.terms.iter().fold(0, |g, &(_, c)| gcd(g, c));
+    let g = e.terms.iter().try_fold(0, |g, &(_, c)| gcd(g, c))?;
     if g <= 1 {
         return Some(Some(e));
     }
@@ -469,23 +469,25 @@ fn tighten_eq(e: Lin) -> Option<Option<Lin>> {
 
 /// `l <= 0` divided through by the gcd of its coefficients, with the
 /// constant rounded up, as integers allow: `2x - 3 <= 0` is `x - 1 <= 0`.
-fn tighten(l: Lin) -> Lin {
-    let g = l.terms.iter().fold(0, |g, &(_, c)| gcd(g, c));
+fn tighten(l: Lin) -> Option<Lin> {
+    let g = l.terms.iter().try_fold(0, |g, &(_, c)| gcd(g, c))?;
     if g <= 1 {
-        return l;
+        return Some(l);
     }
-    Lin {
+    Some(Lin {
         terms: l.terms.iter().map(|&(v, c)| (v, c / g)).collect(),
         k: l.k.div_euclid(g) + i128::from(l.k.rem_euclid(g) != 0),
-    }
+    })
 }
 
-fn gcd(a: i128, b: i128) -> i128 {
-    let (mut a, mut b) = (a.abs(), b.abs());
+fn gcd(a: i128, b: i128) -> Option<i128> {
+    // A coefficient can be i128::MIN even though its magnitude doesn't
+    // fit. Give up like every other arithmetic limit, in all build modes.
+    let (mut a, mut b) = (a.checked_abs()?, b.checked_abs()?);
     while b != 0 {
         (a, b) = (b, a % b);
     }
-    a
+    Some(a)
 }
 
 /// Fourier–Motzkin on `les`, each `l <= 0`: `Some(true)` if it derives a
@@ -494,17 +496,17 @@ fn eliminate(les: Vec<Lin>) -> Option<bool> {
     // Of constraints with the same variables and coefficients, only the
     // strongest matters: the one with the greatest constant.
     let mut set: HashMap<Vec<(Var, i128)>, i128> = HashMap::new();
-    let add = |set: &mut HashMap<Vec<(Var, i128)>, i128>, l: Lin| -> bool {
-        let l = tighten(l);
+    let add = |set: &mut HashMap<Vec<(Var, i128)>, i128>, l: Lin| -> Option<bool> {
+        let l = tighten(l)?;
         if l.terms.is_empty() {
-            return l.k > 0;
+            return Some(l.k > 0);
         }
         let e = set.entry(l.terms).or_insert(l.k);
         *e = (*e).max(l.k);
-        false
+        Some(false)
     };
     for l in les {
-        if add(&mut set, l) {
+        if add(&mut set, l)? {
             return Some(true);
         }
     }
@@ -538,9 +540,9 @@ fn eliminate(les: Vec<Lin>) -> Option<bool> {
         for u in &uppers {
             for l in &lowers {
                 // a·v + .. <= 0 and -b·v + .. <= 0 give b·(..) + a·(..) <= 0.
-                let (a, b) = (u.coeff(v), -l.coeff(v));
+                let (a, b) = (u.coeff(v), l.coeff(v).checked_neg()?);
                 let combined = u.scale(b)?.add(&l.scale(a)?)?;
-                if add(&mut set, combined) {
+                if add(&mut set, combined)? {
                     return Some(true);
                 }
             }
@@ -593,6 +595,18 @@ mod tests {
         assert!(!valid(&[], &g, &ints()));
         let f = Formula::lt(&x(), &y()).unwrap();
         assert!(valid(&[f], &g, &ints()));
+    }
+
+    #[test]
+    fn extreme_coefficients_do_not_prove_false_goals() {
+        let goal = Formula::eq(&x(), &c(1)).unwrap();
+        for coefficient in [i128::MIN, i128::MIN + 1, i128::MAX] {
+            let term = x().scale(coefficient).unwrap();
+            for fact in [Formula::Le(term.clone()), Formula::Eq(term)] {
+                // x = 0 satisfies each fact and falsifies the goal.
+                assert!(!valid(&[fact], &goal, &ints()));
+            }
+        }
     }
 
     #[test]
