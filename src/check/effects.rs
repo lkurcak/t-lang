@@ -417,7 +417,16 @@ impl Checker {
                 effects_text(&missing)
             ),
         };
-        Err(Error::ty(d.span, message))
+        let error = Error::ty(d.span, message);
+        Err(if missing.effect_items().contains(&Type::Panic) {
+            if d.subject == "this closure" {
+                self.explain_closure_proof(error)
+            } else {
+                self.explain_proof(error)
+            }
+        } else {
+            error
+        })
     }
 
     /// Where the closure is whose effects `t` is, if it's a closure's.
@@ -500,7 +509,12 @@ impl Checker {
                      method says it may",
                     f.name.name
                 );
-                return Err(Error::ty(s.span, message).with_note(f.name.span, note));
+                let error = Error::ty(s.span, message).with_note(f.name.span, note);
+                return Err(if *first == Type::Panic {
+                    self.explain_proof(error)
+                } else {
+                    error
+                });
             }
             let fix = Fix::new(
                 format!("say `with {}`", effects_text(&all)),
@@ -517,7 +531,11 @@ impl Checker {
                     err = err.with_note(at, note);
                 }
             }
-            return Err(err);
+            return Err(if *first == Type::Panic {
+                self.explain_proof(err)
+            } else {
+                err
+            });
         }
         // Each effect it says that nothing in it has. One that's an
         // associated effect with none, as `Self::e` may be, says nothing.

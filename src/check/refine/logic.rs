@@ -17,13 +17,13 @@
 //! give isn't linear: the logic knows only some facts of it
 //! (`refine::bitwise`).
 //!
-//! `valid(facts, goal)` says whether the goal follows from the facts. It
+//! `valid(facts, goal)` proves that the goal follows from the facts. It
 //! asks the opposite question, whether the facts and the goal's negation
-//! can all hold at once, and answers yes unless it finds that they can't,
-//! so a "no" from it is never wrong but a "yes" may be (it's *sound* but
-//! *incomplete*): it only ever proves true things, but not every true
-//! thing. That's what it needs to be trusted for, and the only part of it
-//! that is: a weaker procedure rejects more programs, never accepts a
+//! can all hold at once. Only refuting every case establishes the goal;
+//! otherwise it preserves why the proof failed. Failure does not refute
+//! the goal. The procedure is *sound* but *incomplete*: it only ever proves
+//! true things, but not every true thing. That's what it needs to be
+//! trusted for: a weaker procedure rejects more programs, never accepts a
 //! wrong one.
 //!
 //! It splits the question into cases, one for each way the `||`s can go
@@ -45,6 +45,37 @@ use std::collections::{BTreeMap, HashMap};
 
 /// A variable of the logic, by number (see `Kind`).
 pub(crate) type Var = u32;
+
+/// Why a proof was not established. None of these is a counterexample:
+/// even `Unproved` can be a true goal this incomplete procedure misses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Failure {
+    Unproved,
+    Unsupported,
+    ArithmeticLimit,
+    CaseLimit,
+    ConstraintLimit,
+}
+
+impl Failure {
+    pub(crate) fn explanation(self) -> &'static str {
+        match self {
+            Self::Unproved => {
+                "the current proof procedure could not establish this condition from the available facts; this does not show that it is false"
+            }
+            Self::Unsupported => {
+                "the condition could not be represented by the supported linear reasoning"
+            }
+            Self::ArithmeticLimit => {
+                "the proof exceeded the solver's checked integer arithmetic range"
+            }
+            Self::CaseLimit => "the proof exceeded the solver's limit of 512 cases",
+            Self::ConstraintLimit => {
+                "the proof exceeded the solver's limit of 400 constraints per case"
+            }
+        }
+    }
+}
 
 /// What values a variable stands for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,6 +117,13 @@ impl Lin {
     /// Its value, if it has no variables.
     pub(crate) fn as_constant(&self) -> Option<i128> {
         self.terms.is_empty().then_some(self.k)
+    }
+
+    pub(crate) fn as_var(&self) -> Option<Var> {
+        match self.terms.as_slice() {
+            [(v, 1)] if self.k == 0 => Some(*v),
+            _ => None,
+        }
     }
 
     pub(crate) fn vars(&self) -> impl Iterator<Item = Var> + '_ {
@@ -247,13 +285,124 @@ impl Formula {
         ])
     }
 
-    fn vars(&self, out: &mut Vec<Var>) {
+    pub(crate) fn vars(&self, out: &mut Vec<Var>) {
         match self {
             Formula::True | Formula::False => {}
             Formula::Le(l) | Formula::Eq(l) => out.extend(l.vars()),
             Formula::Not(f) => f.vars(out),
             Formula::And(fs) | Formula::Or(fs) => fs.iter().for_each(|f| f.vars(out)),
         }
+    }
+
+    /// A source-level condition, if all its values can be named here.
+    /// Formatting uses magnitudes, so even i128::MIN needs no negation.
+    pub(crate) fn text(&self, name: &impl Fn(Var) -> Option<String>) -> Option<String> {
+        self.text_bounded(name, &mut 80)
+    }
+
+    fn text_bounded(
+        &self,
+        name: &impl Fn(Var) -> Option<String>,
+        budget: &mut usize,
+    ) -> Option<String> {
+        *budget = budget.checked_sub(1)?;
+        Some(match self {
+            Self::True => "true".into(),
+            Self::False => "false".into(),
+            Self::Le(l) | Self::Eq(l) => {
+                *budget = budget.checked_sub(l.terms.len())?;
+                if let Some(k) = l.as_constant() {
+                    return Some(
+                        (if matches!(self, Self::Le(_)) {
+                            k <= 0
+                        } else {
+                            k == 0
+                        })
+                        .to_string(),
+                    );
+                }
+                let strict = matches!(self, Self::Le(_)) && l.k == 1;
+                let (mut left, mut right) = (Vec::new(), Vec::new());
+                for &(v, c) in &l.terms {
+                    let n = name(v)?;
+                    let term = match c.unsigned_abs() {
+                        1 => n,
+                        c => format!("{c} * {n}"),
+                    };
+                    if c > 0 {
+                        left.push(term)
+                    } else {
+                        right.push(term)
+                    }
+                }
+                if l.k != 0 && !strict {
+                    if left.is_empty() && !right.is_empty() {
+                        left.push(l.k.to_string())
+                    } else if l.k > 0 {
+                        right.push(format!("-{}", l.k))
+                    } else {
+                        right.push(l.k.unsigned_abs().to_string())
+                    }
+                }
+                let side = |xs: Vec<String>| {
+                    if xs.is_empty() {
+                        "0".into()
+                    } else {
+                        xs.join(" + ").replace(" + -", " - ")
+                    }
+                };
+                let op = if strict {
+                    "<"
+                } else if matches!(self, Self::Le(_)) {
+                    "<="
+                } else {
+                    "=="
+                };
+                format!("{} {op} {}", side(left), side(right))
+            }
+            Self::Not(f) => {
+                let text = f.text_bounded(name, budget)?;
+                if text == "true" {
+                    return Some("false".into());
+                }
+                if text == "false" {
+                    return Some("true".into());
+                }
+                match &**f {
+                    Self::Eq(_) => text.replace(" == ", " != "),
+                    Self::Le(l) if l.k == 1 => text.replace(" < ", " >= "),
+                    Self::Le(_) => text.replace(" <= ", " > "),
+                    _ => format!("!({text})"),
+                }
+            }
+            Self::And(fs) | Self::Or(fs) => {
+                let and = matches!(self, Self::And(_));
+                let (identity, stop) = if and {
+                    ("true", "false")
+                } else {
+                    ("false", "true")
+                };
+                let mut parts = Vec::new();
+                for f in fs {
+                    let text = f.text_bounded(name, budget)?;
+                    if text == stop {
+                        return Some(text);
+                    }
+                    if text != identity {
+                        parts.push(if matches!(f, Self::And(_) | Self::Or(_)) {
+                            format!("({text})")
+                        } else {
+                            text
+                        });
+                    }
+                }
+                if parts.is_empty() {
+                    identity.into()
+                } else {
+                    parts.join(if and { " && " } else { " || " })
+                }
+            }
+        })
     }
 
     /// The same statement with negations only on atoms, and those turned
@@ -291,9 +440,24 @@ const MAX_CASES: usize = 512;
 /// eliminated.
 const MAX_CONSTRAINTS: usize = 400;
 
-/// Whether `goal` follows from `facts`, where variable `v` is of kind
-/// `kinds[v]`. Never true unless it does; may be false when it does.
-pub(crate) fn valid(facts: &[Formula], goal: &Formula, kinds: &[Kind]) -> bool {
+/// Proves `goal` from `facts`, where variable `v` is of kind `kinds[v]`.
+/// Only `Ok(())` establishes it; an error never establishes its negation.
+pub(crate) fn valid(facts: &[Formula], goal: &Formula, kinds: &[Kind]) -> Result<(), Failure> {
+    let mut parts: Vec<Formula> = relevant(facts, goal).into_iter().cloned().collect();
+    parts.push(goal.clone().not());
+    let whole = Formula::and(parts)
+        .nnf(false)
+        .ok_or(Failure::ArithmeticLimit)?;
+    let mut cases = 0;
+    match refuted(&mut vec![whole], &mut Vec::new(), kinds, &mut cases)? {
+        true => Ok(()),
+        false => Err(Failure::Unproved),
+    }
+}
+
+/// Facts connected to the goal by shared variables, in their original
+/// order. Used both by the proof and its explanation.
+pub(crate) fn relevant<'a>(facts: &'a [Formula], goal: &Formula) -> Vec<&'a Formula> {
     // Only the facts that share variables with the goal, or with facts that
     // do, and so on, can matter: the rest can be made true on their own.
     // A fact with no variables at all, `false` on a path that can't be
@@ -326,35 +490,29 @@ pub(crate) fn valid(facts: &[Formula], goal: &Formula, kinds: &[Kind]) -> bool {
             break;
         }
     }
-    let mut parts: Vec<Formula> = facts
+    facts
         .iter()
         .zip(&taken)
         .filter(|&(_, &t)| t)
-        .map(|(f, _)| f.clone())
-        .collect();
-    parts.push(goal.clone().not());
-    let Some(whole) = Formula::and(parts).nnf(false) else {
-        return false;
-    };
-    let mut cases = 0;
-    refuted(&mut vec![whole], &mut Vec::new(), kinds, &mut cases).unwrap_or(false)
+        .map(|(f, _)| f)
+        .collect()
 }
 
-/// Whether every case of `todo` with `atoms` is impossible: `Some(true)`
-/// if it found that each is, `Some(false)` if one may not be, `None` if
+/// Whether every case of `todo` with `atoms` is impossible: `Ok(true)`
+/// if it found that each is, `Ok(false)` if one may not be, an error if
 /// it gave up. `todo` is in negation normal form.
 fn refuted(
     todo: &mut Vec<Formula>,
     atoms: &mut Vec<Formula>,
     kinds: &[Kind],
     cases: &mut usize,
-) -> Option<bool> {
+) -> Result<bool, Failure> {
     // Atoms and `&&` first, so a case is as narrow as can be before it's
     // split.
     while let Some(i) = todo.iter().position(|f| !matches!(f, Formula::Or(_))) {
         match todo.swap_remove(i) {
             Formula::True => {}
-            Formula::False => return Some(true),
+            Formula::False => return Ok(true),
             Formula::And(fs) => todo.extend(fs),
             atom => atoms.push(atom),
         }
@@ -362,29 +520,29 @@ fn refuted(
     let Some(Formula::Or(alts)) = todo.pop() else {
         *cases += 1;
         if *cases > MAX_CASES {
-            return None;
+            return Err(Failure::CaseLimit);
         }
         return impossible(atoms, kinds);
     };
     // If the atoms so far can't all hold, neither can any case of them.
-    if impossible(atoms, kinds) == Some(true) {
-        return Some(true);
+    if impossible(atoms, kinds) == Ok(true) {
+        return Ok(true);
     }
     for alt in alts {
         let mut todo = todo.clone();
         todo.push(alt);
         let mut atoms = atoms.clone();
         if !refuted(&mut todo, &mut atoms, kinds, cases)? {
-            return Some(false);
+            return Ok(false);
         }
     }
-    Some(true)
+    Ok(true)
 }
 
 /// Whether the conjunction of `atoms` (each `Le` or `Eq`) has no integer
-/// solution, as far as Fourier–Motzkin with rounding can tell: `None` if
-/// it gave up.
-fn impossible(atoms: &[Formula], kinds: &[Kind]) -> Option<bool> {
+/// solution, as far as Fourier–Motzkin with rounding can tell, preserving
+/// why it gave up.
+fn impossible(atoms: &[Formula], kinds: &[Kind]) -> Result<bool, Failure> {
     let mut les: Vec<Lin> = Vec::new();
     let mut eqs: Vec<Lin> = Vec::new();
     for a in atoms {
@@ -415,18 +573,18 @@ fn impossible(atoms: &[Formula], kinds: &[Kind]) -> Option<bool> {
             Kind::Bound(lo, hi) => (Lin::constant(*lo), Lin::constant(*hi)),
         };
         // lo - v <= 0 and v - hi <= 0
-        les.push(lo.sub(&Lin::var(v))?);
-        les.push(Lin::var(v).sub(&hi)?);
+        les.push(lo.sub(&Lin::var(v)).ok_or(Failure::ArithmeticLimit)?);
+        les.push(Lin::var(v).sub(&hi).ok_or(Failure::ArithmeticLimit)?);
     }
     // Equations: one with a variable of coefficient ±1 says what that
     // variable is, everywhere. Others become two inequalities.
     while let Some(e) = eqs.pop() {
-        let Some(e) = tighten_eq(e)? else {
-            return Some(true);
+        let Some(e) = tighten_eq(e).ok_or(Failure::ArithmeticLimit)? else {
+            return Ok(true);
         };
         if let Some(k) = e.as_constant() {
             if k != 0 {
-                return Some(true);
+                return Ok(true);
             }
             continue;
         }
@@ -437,14 +595,14 @@ fn impossible(atoms: &[Formula], kinds: &[Kind]) -> Option<bool> {
                     terms: e.terms.iter().copied().filter(|&(w, _)| w != v).collect(),
                     k: e.k,
                 };
-                let by = rest.scale(-c)?;
+                let by = rest.scale(-c).ok_or(Failure::ArithmeticLimit)?;
                 for l in les.iter_mut().chain(eqs.iter_mut()) {
-                    *l = l.substitute(v, &by)?;
+                    *l = l.substitute(v, &by).ok_or(Failure::ArithmeticLimit)?;
                 }
             }
             None => {
                 les.push(e.clone());
-                les.push(e.scale(-1)?);
+                les.push(e.scale(-1).ok_or(Failure::ArithmeticLimit)?);
             }
         }
     }
@@ -490,9 +648,9 @@ fn gcd(a: i128, b: i128) -> Option<i128> {
     Some(a)
 }
 
-/// Fourier–Motzkin on `les`, each `l <= 0`: `Some(true)` if it derives a
+/// Fourier–Motzkin on `les`, each `l <= 0`: `Ok(true)` if it derives a
 /// false constant.
-fn eliminate(les: Vec<Lin>) -> Option<bool> {
+fn eliminate(les: Vec<Lin>) -> Result<bool, Failure> {
     // Of constraints with the same variables and coefficients, only the
     // strongest matters: the one with the greatest constant.
     let mut set: HashMap<Vec<(Var, i128)>, i128> = HashMap::new();
@@ -506,8 +664,8 @@ fn eliminate(les: Vec<Lin>) -> Option<bool> {
         Some(false)
     };
     for l in les {
-        if add(&mut set, l)? {
-            return Some(true);
+        if add(&mut set, l).ok_or(Failure::ArithmeticLimit)? {
+            return Ok(true);
         }
     }
     loop {
@@ -523,7 +681,7 @@ fn eliminate(les: Vec<Lin>) -> Option<bool> {
             .iter()
             .min_by_key(|&(_, &(p, n))| (p * n) as isize - (p + n) as isize)
         else {
-            return Some(false);
+            return Ok(false);
         };
         let (mut uppers, mut lowers, mut rest) = (Vec::new(), Vec::new(), HashMap::new());
         for (terms, k) in set.drain() {
@@ -540,15 +698,21 @@ fn eliminate(les: Vec<Lin>) -> Option<bool> {
         for u in &uppers {
             for l in &lowers {
                 // a·v + .. <= 0 and -b·v + .. <= 0 give b·(..) + a·(..) <= 0.
-                let (a, b) = (u.coeff(v), l.coeff(v).checked_neg()?);
-                let combined = u.scale(b)?.add(&l.scale(a)?)?;
-                if add(&mut set, combined)? {
-                    return Some(true);
+                let (a, b) = (
+                    u.coeff(v),
+                    l.coeff(v).checked_neg().ok_or(Failure::ArithmeticLimit)?,
+                );
+                let combined = u
+                    .scale(b)
+                    .and_then(|u| u.add(&l.scale(a)?))
+                    .ok_or(Failure::ArithmeticLimit)?;
+                if add(&mut set, combined).ok_or(Failure::ArithmeticLimit)? {
+                    return Ok(true);
                 }
             }
         }
         if set.len() > MAX_CONSTRAINTS {
-            return None;
+            return Err(Failure::ConstraintLimit);
         }
     }
 }
@@ -582,19 +746,85 @@ mod tests {
         // x > 0 ⇒ x != 0
         let f = Formula::lt(&c(0), &x()).unwrap();
         let g = Formula::eq(&x(), &c(0)).unwrap().not();
-        assert!(valid(std::slice::from_ref(&f), &g, &ints()));
+        assert_eq!(valid(std::slice::from_ref(&f), &g, &ints()), Ok(()));
         // x > 0 ⇏ x > 1
         let g = Formula::lt(&c(1), &x()).unwrap();
-        assert!(!valid(&[f], &g, &ints()));
+        assert_eq!(valid(&[f], &g, &ints()), Err(Failure::Unproved));
+    }
+
+    #[test]
+    fn arithmetic_limit_is_not_an_unproved_goal() {
+        let goal = Formula::eq(&x(), &c(1)).unwrap();
+        let fact = Formula::Le(x().scale(i128::MIN).unwrap());
+        assert_eq!(
+            valid(&[fact], &goal, &ints()),
+            Err(Failure::ArithmeticLimit)
+        );
+        // Negation normalisation can overflow before elimination starts.
+        let goal = Formula::Le(x().plus(i128::MIN).unwrap());
+        assert_eq!(valid(&[], &goal, &ints()), Err(Failure::ArithmeticLimit));
+    }
+
+    #[test]
+    fn case_limit_preserves_the_acceptance_boundary() {
+        let fact = Formula::eq(&x(), &c(0)).unwrap();
+        let goal = Formula::eq(&x(), &c(1)).unwrap().not();
+        assert_eq!(
+            valid(
+                &[Formula::or(vec![fact.clone(); MAX_CASES])],
+                &goal,
+                &ints()
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            valid(&[Formula::or(vec![fact; MAX_CASES + 1])], &goal, &ints()),
+            Err(Failure::CaseLimit)
+        );
+    }
+
+    #[test]
+    fn constraint_limit_is_reported_through_valid() {
+        let mut facts = Vec::new();
+        for a in 0..31 {
+            for b in a + 1..31 {
+                facts.push(Formula::Le(Lin::var(a).add(&Lin::var(b)).unwrap()));
+            }
+        }
+        assert_eq!(
+            valid(&facts, &Formula::Le(x()), &vec![i64(); 31]),
+            Err(Failure::ConstraintLimit)
+        );
+    }
+
+    #[test]
+    fn readable_conditions_include_extreme_coefficients() {
+        let names = |v| {
+            Some(if v == 0 {
+                "index".into()
+            } else {
+                "items.len()".into()
+            })
+        };
+        assert_eq!(
+            Formula::lt(&x(), &y()).unwrap().text(&names).unwrap(),
+            "index < items.len()"
+        );
+        assert_eq!(
+            Formula::Le(x().scale(i128::MIN).unwrap())
+                .text(&names)
+                .unwrap(),
+            "0 <= 170141183460469231731687303715884105728 * index"
+        );
     }
 
     #[test]
     fn machine_range() {
         // x + 1 <= MAX doesn't follow from nothing, but from x < y.
         let g = Formula::le(&x().plus(1).unwrap(), &c(i64::MAX as i128)).unwrap();
-        assert!(!valid(&[], &g, &ints()));
+        assert!(valid(&[], &g, &ints()).is_err());
         let f = Formula::lt(&x(), &y()).unwrap();
-        assert!(valid(&[f], &g, &ints()));
+        assert_eq!(valid(&[f], &g, &ints()), Ok(()));
     }
 
     #[test]
@@ -604,7 +834,7 @@ mod tests {
             let term = x().scale(coefficient).unwrap();
             for fact in [Formula::Le(term.clone()), Formula::Eq(term)] {
                 // x = 0 satisfies each fact and falsifies the goal.
-                assert!(!valid(&[fact], &goal, &ints()));
+                assert!(valid(&[fact], &goal, &ints()).is_err());
             }
         }
     }
@@ -619,11 +849,11 @@ mod tests {
         // x < 2^32 - 1 ⇒ x + 1 <= y, but x < 2^32 ⇏ x + 1 <= y.
         let g = Formula::le(&x().plus(1).unwrap(), &y()).unwrap();
         let f = Formula::lt(&x(), &c((1 << 32) - 1)).unwrap();
-        assert!(valid(&[f], &g, kinds));
+        assert_eq!(valid(&[f], &g, kinds), Ok(()));
         let f = Formula::lt(&x(), &c(1 << 32)).unwrap();
-        assert!(!valid(&[f], &g, kinds));
+        assert!(valid(&[f], &g, kinds).is_err());
         // And nothing says x + 1 fits, without a fact.
-        assert!(!valid(&[], &g, kinds));
+        assert!(valid(&[], &g, kinds).is_err());
     }
 
     #[test]
@@ -631,11 +861,11 @@ mod tests {
         // 2x == 1 has no integer solution, so anything about x follows.
         let anything = Formula::eq(&x(), &c(5)).unwrap();
         let f = Formula::eq(&x().scale(2).unwrap(), &c(1)).unwrap();
-        assert!(valid(&[f], &anything, &ints()));
+        assert_eq!(valid(&[f], &anything, &ints()), Ok(()));
         // 1 <= 2x <= 1 neither, which only rounding sees.
         let lo = Formula::le(&c(1), &x().scale(2).unwrap()).unwrap();
         let hi = Formula::le(&x().scale(2).unwrap(), &c(1)).unwrap();
-        assert!(valid(&[lo, hi], &anything, &ints()));
+        assert_eq!(valid(&[lo, hi], &anything, &ints()), Ok(()));
     }
 
     #[test]
@@ -646,9 +876,9 @@ mod tests {
             Formula::eq(&x(), &c(2)).unwrap(),
         ]);
         let g = Formula::eq(&x(), &c(1)).unwrap().not();
-        assert!(valid(std::slice::from_ref(&f), &g, &ints()));
+        assert_eq!(valid(std::slice::from_ref(&f), &g, &ints()), Ok(()));
         let g = Formula::eq(&x(), &c(2)).unwrap().not();
-        assert!(!valid(&[f], &g, &ints()));
+        assert!(valid(&[f], &g, &ints()).is_err());
     }
 
     #[test]
@@ -657,7 +887,7 @@ mod tests {
         // b ⇔ y > 0, b ⇒ y != 0
         let f = Formula::iff(Formula::holds(0), Formula::lt(&c(0), &y()).unwrap());
         let g = Formula::eq(&y(), &c(0)).unwrap().not();
-        assert!(valid(&[f.clone(), Formula::holds(0)], &g, kinds));
-        assert!(!valid(&[f], &g, kinds));
+        assert_eq!(valid(&[f.clone(), Formula::holds(0)], &g, kinds), Ok(()));
+        assert!(valid(&[f], &g, kinds).is_err());
     }
 }

@@ -548,6 +548,8 @@ pub(crate) struct Checker {
     /// What has effects in the body being checked, the function's or a
     /// closure's (see `effects`).
     effect_sites: Vec<effects::Site>,
+    /// Why an operator could not be proved total, at its effect site.
+    proof_failures: HashMap<Span, refine::ProofFailure>,
     /// Calls of `Result`'s methods for an `Err`, with the error type, to
     /// see once it's solved whether there can be one (see
     /// `lints::unwrap_infallible`).
@@ -783,6 +785,7 @@ impl Checker {
             sig_owner: Default::default(),
             sig_self: None,
             effect_sites: Vec::new(),
+            proof_failures: HashMap::new(),
             unwraps: Vec::new(),
             dropped: Vec::new(),
             withins: Vec::new(),

@@ -92,6 +92,17 @@ impl Error {
         self
     }
 
+    /// Explanations at the error itself share its source snippet.
+    fn inline_notes(&self) -> Option<String> {
+        let notes: Vec<_> = self
+            .notes
+            .iter()
+            .filter(|(span, _)| *span == self.span)
+            .map(|(_, note)| note.as_str())
+            .collect();
+        (!notes.is_empty()).then(|| notes.join("\n"))
+    }
+
     /// Renders the error rustc-style, with the offending line underlined,
     /// in whichever of the program's files it's in.
     pub fn render_in(&self, sources: &Sources) -> String {
@@ -102,11 +113,11 @@ impl Error {
             span,
             &self.message,
             &self.fixes,
-            None,
+            self.inline_notes(),
             &path,
             src,
         ));
-        for (span, note) in &self.notes {
+        for (span, note) in self.notes.iter().filter(|(span, _)| *span != self.span) {
             let (path, src, span) = in_file(sources, *span);
             out.push('\n');
             out.push_str(&render("note", span, note, &[], None, &path, src));
@@ -129,11 +140,11 @@ impl Error {
             self.span,
             &self.message,
             &self.fixes,
-            None,
+            self.inline_notes(),
             path,
             src,
         );
-        for (span, note) in &self.notes {
+        for (span, note) in self.notes.iter().filter(|(span, _)| *span != self.span) {
             out.push('\n');
             out.push_str(&render("note", *span, note, &[], None, path, src));
         }
@@ -417,7 +428,9 @@ fn render(
         out.push_str(&format!("\n{gutter} = help: {}", fix.title));
     }
     if let Some(note) = note {
-        out.push_str(&format!("\n{gutter} = note: {note}"));
+        for line in note.lines() {
+            out.push_str(&format!("\n{gutter} = note: {line}"));
+        }
     }
     out
 }
