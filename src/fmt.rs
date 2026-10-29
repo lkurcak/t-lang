@@ -1,7 +1,9 @@
 //! `t fmt`: prints a program in the one T style, keeping its comments and
 //! single blank lines. There are no options. See docs/fmt.md.
 
-use crate::ast::{DocComment, Program};
+mod shape;
+
+use crate::ast::Program;
 use crate::error::Error;
 use crate::lexer::{self, Comment, Tok, Token};
 use crate::parser;
@@ -65,42 +67,14 @@ fn comment_texts<'s>(src: &'s str, comments: &[Comment]) -> Vec<&'s str> {
 }
 
 /// The program with its spans and node ids left out, to compare two
-/// programs by. `Debug` is derived for every AST type, so this shows every
-/// other field. A span prints as `Span { start: 1, end: 2 }` and an id as
-/// `NodeId(3)`, which nothing else can: names print in quotes.
+/// parsed programs by. Describes the AST's fields directly, preserving
+/// text even when it looks like a span or node id.
 ///
 /// Doc comments that document nothing are compared line by line: which
 /// lines they are matters, not how they're grouped into runs, which moving
 /// them to the end of a struct can change.
 pub fn shape(program: &Program) -> String {
-    let mut program = program.clone();
-    program.stray_docs = std::mem::take(&mut program.stray_docs)
-        .into_iter()
-        .flat_map(|d| {
-            let inner = d.inner;
-            d.lines.into_iter().map(move |l| DocComment {
-                lines: vec![l],
-                inner,
-            })
-        })
-        .collect();
-    program.next_id = 0;
-    let debug = format!("{program:?}");
-    let debug = strip(&debug, "Span { ", '}');
-    strip(&debug, "NodeId(", ')')
-}
-
-/// `debug` without each run of it from `open` to the next `close`.
-fn strip(debug: &str, open: &str, close: char) -> String {
-    let mut out = String::with_capacity(debug.len());
-    let mut rest = debug;
-    while let Some(i) = rest.find(open) {
-        out.push_str(&rest[..i]);
-        let end = rest[i..].find(close).expect("it ends") + i;
-        rest = &rest[end + 1..];
-    }
-    out.push_str(rest);
-    out
+    shape::of(program)
 }
 
 impl FmtError {
@@ -248,5 +222,44 @@ mod tests {
         let c = parse("fn main() { f(1, 3) }");
         assert_eq!(shape(&a), shape(&b));
         assert_ne!(shape(&a), shape(&c));
+    }
+
+    #[test]
+    fn shape_keeps_literal_and_doc_text() {
+        let parse = |src: &str| parser::parse(lexer::lex(src).unwrap()).unwrap();
+        for (a, b) in [
+            ("NodeId(a)", "NodeId(b)"),
+            ("Span { a }", "Span { b }"),
+            ("\\\"NodeId(a)", "\\\"NodeId(b)"),
+        ] {
+            assert_ne!(
+                shape(&parse(&format!("fn main() {{ let _s = {a:?}; }}"))),
+                shape(&parse(&format!("fn main() {{ let _s = {b:?}; }}"))),
+            );
+            for prefix in ["///", "//!"] {
+                assert_ne!(
+                    shape(&parse(&format!("{prefix} {a}\nfn main() {{}}"))),
+                    shape(&parse(&format!("{prefix} {b}\nfn main() {{}}"))),
+                );
+            }
+            assert_ne!(
+                shape(&parse(&format!("fn main() {{}}\n/// {a}"))),
+                shape(&parse(&format!("fn main() {{}}\n/// {b}"))),
+            );
+        }
+    }
+
+    #[test]
+    fn shape_keeps_parameter_kinds() {
+        let parse = |src| parser::parse(lexer::lex(src).unwrap()).unwrap();
+        for (a, b) in [
+            ("fn f<effect E, T>() {}", "fn f<E, effect T>() {}"),
+            (
+                "fn f<const N: usize, T>() {}",
+                "fn f<N, const T: usize>() {}",
+            ),
+        ] {
+            assert_ne!(shape(&parse(a)), shape(&parse(b)));
+        }
     }
 }

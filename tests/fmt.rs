@@ -378,6 +378,22 @@ fn doc_comments_are_part_of_the_program() {
 }
 
 #[test]
+fn metadata_like_text_formats_without_being_interpreted() {
+    for text in [
+        "NodeId(",
+        "NodeId(a)",
+        "Span { ",
+        "Span { a }",
+        "\\\"NodeId(",
+    ] {
+        let src = format!("/// {text}\nfn main(){{let _s={text:?};}}\n/// {text}\n");
+        let once = fmt(&src);
+        assert!(once.contains(&format!("let _s = {text:?};")), "{once}");
+        assert_eq!(fmt(&once), once);
+    }
+}
+
+#[test]
 fn comments_inside_lists_break_them() {
     let src = "fn main() { f(1, // one\n 2); g(\n// lone\n) }\n";
     assert_eq!(

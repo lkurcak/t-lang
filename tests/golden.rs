@@ -302,7 +302,7 @@ fn node_ids_are_unique() {
 }
 
 /// Reads the nodes off `debug`, a program's derived `Debug`, which shows
-/// every field (as `fmt::shape` reads spans off it): each `id: NodeId(n)`,
+/// every field: each `id: NodeId(n)`,
 /// with the struct it's in and that struct's span, if it has one before
 /// its id. How many there are, or two different ones with one id.
 fn node_ids(debug: &str, next_id: u32) -> Result<usize, String> {
