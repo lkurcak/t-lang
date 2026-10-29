@@ -1,9 +1,10 @@
 //! `t fmt`. Every program in `tests/t/` and `examples/`, and the built-in
-//! libraries' files in `core/` and `alloc/`, must format to the same program
-//! (`fmt::format` checks that itself, and fails otherwise), and formatting
-//! must be idempotent: formatting the output again changes nothing.
-//! `examples/`, `core/` and `alloc/` must be formatted already; test programs may
-//! keep their own layouts, since some of them test the parser on odd ones.
+//! libraries' files in `core/`, `alloc/` and `std/`, must format to the
+//! same program (`fmt::format` checks that itself, and fails otherwise),
+//! and formatting must be idempotent: formatting the output again changes
+//! nothing. `examples/`, `core/`, `alloc/` and `std/` must be formatted
+//! already; test programs may keep their own layouts, since some of them
+//! test the parser on odd ones.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -33,6 +34,7 @@ fn formatting_keeps_the_program_and_is_idempotent() {
         .chain(programs("examples"))
         .chain(programs("core"))
         .chain(programs("alloc"))
+        .chain(programs("std"))
     {
         let name = path.display().to_string();
         let src = fs::read_to_string(&path).unwrap();
@@ -74,6 +76,7 @@ fn layout_does_not_depend_on_the_input() {
         .chain(programs("examples"))
         .chain(programs("core"))
         .chain(programs("alloc"))
+        .chain(programs("std"))
     {
         let name = path.display().to_string();
         let src = fs::read_to_string(&path).unwrap();
@@ -113,6 +116,7 @@ fn examples_are_formatted() {
         .into_iter()
         .chain(programs("core"))
         .chain(programs("alloc"))
+        .chain(programs("std"))
     {
         let name = path.display().to_string();
         let src = fs::read_to_string(&path).unwrap();
@@ -409,6 +413,27 @@ fn keeps_single_blank_lines() {
     assert_eq!(
         fmt(src),
         "fn f() {}\nfn g() {}\n\nfn main() {\n    f();\n\n    g();\n    // c\n\n    f()\n}\n"
+    );
+}
+
+#[test]
+fn parameters_break_before_the_return_type() {
+    // Not `-> Result<` with its arguments on lines of their own: the
+    // parameters go one to a line, and the return type after the `)`.
+    let src = "\
+fn parse<'a>(line: &'a str, nodes: &'a [Node<'a>], more: &'a [Node<'a>]) -> Result<Line<'a>, Error<'a>> {
+    go(line)
+}
+";
+    assert_eq!(
+        fmt(src),
+        "\
+fn parse<'a>(
+    line: &'a str,
+    nodes: &'a [Node<'a>],
+    more: &'a [Node<'a>],
+) -> Result<Line<'a>, Error<'a>> { go(line) }
+"
     );
 }
 

@@ -894,7 +894,18 @@ impl Printer<'_> {
             }
             _ => text(" -> ") + self.ty(&f.ret),
         };
-        doc + "fn " + &f.name.name + generics + params + ret
+        // The return type goes in the parameters' group, so that they stay
+        // on one line only if it fits after them too. Otherwise they break,
+        // one to a line, and it breaks only if it doesn't fit after the `)`
+        // either: not `-> Result<` with its arguments on lines of their own.
+        let head = match params {
+            Doc::Group { doc, hard } => Doc::Group {
+                doc: Box::new(*doc + ret),
+                hard,
+            },
+            params => params + ret,
+        };
+        doc + "fn " + &f.name.name + generics + head
     }
 
     /// `with panic`, `with {alloc, e}`, or `{}` after `effect e =`. One

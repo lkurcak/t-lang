@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- `t fmt` breaks a function's parameters, one to a line, before its return
+  type: no more `-> Result<` with the type's arguments on lines of their
+  own.
+- `std/` is checked to be formatted, as `core/` and `alloc/` are.
+
 ## 0.36.0 (2026-10-29)
 
 Step 23: arenas. See [docs/23-arenas.md](docs/23-arenas.md).
