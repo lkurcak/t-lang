@@ -873,6 +873,22 @@ impl Checker {
         self.info.traits = self.traits.clone();
         self.bodies(prog)?;
         self.zonk_inferred();
+        // What an editor can offer to write, of the program's.
+        if root == ROOT {
+            for (i, (f, _, method)) in prog
+                .all_fns()
+                .into_iter()
+                .enumerate()
+                .skip(self.from.all_fns)
+            {
+                if infer::infers(prog, f, method)
+                    && let Some(t) = self.inferred.get(&self.fns[i].symbol)
+                {
+                    let fix = effects::inferred_fix(f, t);
+                    self.info.inferred_fixes.push((f.name.span, fix));
+                }
+            }
+        }
         // What each closure is is known once the body it's in is, and so
         // what each opaque type stands for.
         self.info.traits.closures = self.traits.closures.clone();

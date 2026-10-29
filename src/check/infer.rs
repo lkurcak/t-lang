@@ -330,20 +330,25 @@ impl Checker {
                 break;
             }
         }
-        // What's never inferred, nor one of a function not done.
+        // What's never inferred: whichever of the group has it first.
         for f in &self.waiting {
-            let symbol = &self.fns[f.0].symbol;
-            if solution[symbol].contains(&Type::Unsafe) {
-                let w = &witness[&(symbol.clone(), Type::Unsafe)];
-                return Err(Error::ty(
-                    w.span,
-                    format!(
-                        "{} is unsafe, but it isn't in an `unsafe` block, and `{}` doesn't say \
-                         `with unsafe`",
-                        w.what, self.fns[f.0].name.name
-                    ),
-                ));
+            let def = &self.fns[f.0];
+            if !solution[&def.symbol].contains(&Type::Unsafe) {
+                continue;
             }
+            let w = &witness[&(def.symbol.clone(), Type::Unsafe)];
+            let name = &def.name.name;
+            let message = format!(
+                "{} is unsafe, but it isn't in an `unsafe` block, and `{name}` doesn't say `with \
+                 unsafe`",
+                w.what
+            );
+            let note = format!(
+                "`{name}`'s effects are inferred, as it doesn't say `with` and isn't exported, \
+                 but never `unsafe`: that its callers keep obligations is a promise only its \
+                 signature can make"
+            );
+            return Err(Error::ty(w.span, message).with_note(def.name.span, note));
         }
         for (symbol, items) in &solution {
             let def = self

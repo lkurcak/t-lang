@@ -76,7 +76,7 @@ fn start() -> (std::process::Child, Client) {
     assert_eq!(caps["textDocumentSync"], 1, "{init}");
     assert_eq!(
         caps["codeActionProvider"]["codeActionKinds"],
-        json!(["quickfix"]),
+        json!(["quickfix", "refactor.rewrite"]),
         "{init}"
     );
     assert_eq!(caps["documentFormattingProvider"], true, "{init}");
@@ -400,6 +400,52 @@ fn main() {
     assert_eq!(hover(&mut c, "E {", 0), "```t\nenum E\n```");
     assert_eq!(hover(&mut c, "main", 0), "```t\nfn main: fn() -> ()\n```");
 
+    stop(child, c);
+}
+
+/// A function whose effects are inferred shows them in hovers, and an
+/// editor can write them into its signature.
+#[test]
+fn hovers_show_and_write_inferred_effects() {
+    let (child, mut c) = start();
+    let uri = "file:///tmp/inferred.t";
+    let src = "fn next(n: i64) -> i64 { n + 1 }\nfn main() {\n    let _x = next(4);\n}\n";
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
+        }}),
+    );
+    assert_eq!(c.diagnostics(), Vec::<Value>::new());
+    let cursor = json!({"line": 0, "character": 4});
+    c.send(
+        json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": {
+            "textDocument": {"uri": uri}, "position": cursor
+        }}),
+    );
+    let hover = c.response(2)["result"]["contents"]["value"].clone();
+    assert_eq!(
+        hover, "```t\nfn next: fn(i64) -> i64 with panic\n```",
+        "{hover}"
+    );
+    c.send(
+        json!({"jsonrpc": "2.0", "id": 3, "method": "textDocument/codeAction", "params": {
+            "textDocument": {"uri": uri},
+            "range": {"start": cursor, "end": cursor},
+            "context": {"diagnostics": []}
+        }}),
+    );
+    let actions = c.response(3)["result"].clone();
+    assert_eq!(actions.as_array().unwrap().len(), 1, "{actions}");
+    let action = &actions[0];
+    assert_eq!(action["title"], "write its effects: `with panic`");
+    assert_eq!(action["kind"], "refactor.rewrite");
+    assert_eq!(
+        action["edit"]["changes"][uri],
+        json!([{
+            "range": {"start": {"line": 0, "character": 22}, "end": {"line": 0, "character": 22}},
+            "newText": " with panic"
+        }])
+    );
     stop(child, c);
 }
 

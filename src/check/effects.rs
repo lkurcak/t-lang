@@ -432,7 +432,7 @@ impl Checker {
         let sites = std::mem::take(&mut self.effect_sites);
         let id = self.current.expect("in a function");
         if self.inferring.contains(&id.0) {
-            return self.inferred_sites(f, id, sites);
+            return self.inferred_sites(id, sites);
         }
         let mut used: Vec<Type> = Vec::new();
         for s in &sites {
@@ -588,32 +588,16 @@ impl Checker {
         Ok(())
     }
 
-    /// Keeps the sites of the body of `f`, whose effects are inferred, for
-    /// when they're worked out with those of its group (`solve_group`),
-    /// with its variables solved: none of them is `unsafe`, which is never
-    /// inferred.
-    fn inferred_sites(&mut self, f: &FnDecl, id: FnId, sites: Vec<Site>) -> Result<(), Error> {
+    /// Keeps the sites of the body of the function `id`, whose effects are
+    /// inferred, for when they're worked out with those of its group
+    /// (`solve_group`), with its variables solved.
+    fn inferred_sites(&mut self, id: FnId, sites: Vec<Site>) -> Result<(), Error> {
         let mut kept = Vec::new();
         for mut s in sites {
-            let mut effects = self.solved(&s.effects);
+            s.effects = self.solved(&s.effects);
             if s.unsafe_block.is_some() {
-                effects = without_unsafe(&effects);
+                s.effects = without_unsafe(&s.effects);
             }
-            if effects.effect_items().contains(&Type::Unsafe) {
-                let message = format!(
-                    "{} is unsafe, but it isn't in an `unsafe` block, and `{}` doesn't say \
-                     `with unsafe`",
-                    s.what, f.name.name,
-                );
-                let note = format!(
-                    "`{}`'s effects are inferred, as it doesn't say `with` and isn't \
-                     exported, but never `unsafe`: that its callers keep obligations is a \
-                     promise only its signature can make",
-                    f.name.name
-                );
-                return Err(Error::ty(s.span, message).with_note(f.name.span, note));
-            }
-            s.effects = effects;
             kept.push(s);
         }
         self.infer_sites.insert(id.0, kept);
@@ -677,6 +661,19 @@ fn effects_span(f: &FnDecl) -> Span {
     let start = f.ret.span.end;
     let end = f.effects.as_ref().map_or(start, |e| e.span.end);
     Span::new(start, end)
+}
+
+/// The fix that writes `effects`, inferred, as `f`'s: `with {}` if there
+/// are none, which then says so.
+pub(super) fn inferred_fix(f: &FnDecl, effects: &Type) -> Fix {
+    let text = written_with(f, effects);
+    Fix::new(
+        format!("write its effects: `with {text}`"),
+        vec![Edit {
+            span: effects_span(f),
+            text: format!(" with {text}"),
+        }],
+    )
 }
 
 /// Where `f`'s effects are, or would be, written, and each that's written.

@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+Step 24: visibility and effect inference. See
+[docs/24-visibility.md](docs/24-visibility.md).
+
+### Added
+
+- `export`: what other packages may use, the package's interface. Every
+  exported item must be reachable from the package's root through
+  exported modules and `export use`s; what an exported item's signature
+  names must be exported too.
+- Effect inference: a function, inherent method or nested function that
+  isn't exported and says no `with` has the effects its body has, `main`
+  too. A recursive group gets the least effects that hold for all of it.
+  An error at an exported function says, in notes, why what it calls has
+  the effect. `unsafe` is never inferred.
+- `with {}` says a function has no effects, where they'd be inferred.
+
+### Changed
+
+- `pub` is seen in its package only. The libraries `export` what they
+  had `pub`, but for `std::rt`, which only the runtime uses.
+- Written derive bounds are needed only for an exported struct with
+  fields that aren't, rather than for a `pub` one with private fields.
+- `unused_effects` warns of a `pub` function too: only an exported one
+  may say an effect it doesn't have, to keep the right to have it later.
+- A field's refinement can name only fields exactly as visible as it,
+  of the three levels.
+- Exported items are never dead code.
+- Bodies are checked callees first, so the first error reported may be
+  in a function after the one it used to be in.
+
 ### Fixed
 
 - `t fmt` breaks a function's parameters, one to a line, before its return
