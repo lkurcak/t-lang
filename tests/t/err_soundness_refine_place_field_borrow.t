@@ -4,7 +4,7 @@ struct P { x: i64 }
 
 fn zero(r: &mut i64) { *r = 0; }
 
-fn f(mut p: P) -> i64 {
+fn f(mut p: P) -> i64 with {} {
     if p.x > 0 {
         zero(&mut p.x);
         10 / p.x

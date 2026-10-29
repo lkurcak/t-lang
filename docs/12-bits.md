@@ -114,7 +114,7 @@ result doesn't fit, unless that's proved not to happen. It never drops bits
 silently, as `as` never truncates. To drop them, mask first:
 
 ```rust,error
-fn high_nibble(x: u8) -> u8 { x << 4 }
+fn high_nibble(x: u8) -> u8 with {} { x << 4 }
 // error: `<<` may panic, but `high_nibble` doesn't say `with panic`
 ```
 
@@ -238,7 +238,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
 it's the greatest value of an unsigned one, and `+ 1` doesn't fit.
 
 ```rust,error
-fn zero<T: Int>() -> T { !0 + 1 }
+fn zero<T: Int>() -> T with {} { !0 + 1 }
 // error: `+` may panic, but `zero` doesn't say `with panic`
 ```
 

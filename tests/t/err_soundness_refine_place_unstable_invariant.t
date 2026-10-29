@@ -5,7 +5,7 @@ struct Span { lo: i64, hi: { h: i64 | h >= lo } }
 
 fn shift(s: &mut Span) { *s = Span { lo: 0, hi: 0 }; }
 
-fn f(mut s: Span) -> i64 {
+fn f(mut s: Span) -> i64 with {} {
     if s.lo > 0 {
         shift(&mut s);
         10 / s.hi

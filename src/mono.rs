@@ -375,7 +375,14 @@ impl<'p> Mono<'p> {
                 .collect(),
             parens: f.parens,
             ret: cx.ty(&f.ret),
-            effects: cx.written_effects(&cx.resolved_effects(f.effects.as_ref()), f.span),
+            effects: {
+                // What's inferred, if it doesn't say (see `check/infer.rs`).
+                let effects = match (&f.effects, cx.m.info.inferred.get(&f.name.name)) {
+                    (None, Some(t)) => cx.subst(t),
+                    (e, _) => cx.resolved_effects(e.as_ref()),
+                };
+                cx.written_effects(&effects, f.span)
+            },
             body: cx.expr(&f.body),
             intrinsic: f.intrinsic,
             measure: f.measure,
@@ -782,7 +789,7 @@ impl Cx<'_, '_, '_> {
             Type::Param(_) | Type::Var(_) | Type::Proj(..) | Type::Opaque(..) => {
                 unreachable!("`{t}` left after monomorphising")
             }
-            Type::Effects(_) | Type::Alloc | Type::Panic | Type::Unsafe => {
+            Type::Effects(_) | Type::Alloc | Type::Panic | Type::Unsafe | Type::Inferred(..) => {
                 unreachable!("effects `{t}` written as a type")
             }
         };
@@ -802,6 +809,7 @@ impl Cx<'_, '_, '_> {
             .map(|e| {
                 let name = match e {
                     Type::Alloc | Type::Panic | Type::Unsafe => e.to_string(),
+                    // An `Inferred` too: none is left once checking is done.
                     e => unreachable!("effect `{e}` left after monomorphising"),
                 };
                 let id = self.m.id();

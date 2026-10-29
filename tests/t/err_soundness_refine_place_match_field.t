@@ -6,7 +6,7 @@ struct W<'a> { r: &'a mut P }
 #[derive(Copy, Discard)]
 struct P { x: i64 }
 
-fn f(w: W) -> i64 {
+fn f(w: W) -> i64 with {} {
     if w.r.x > 0 {
         match w {
             W { r: P { x } } => *x = 0,

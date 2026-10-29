@@ -259,7 +259,8 @@ fn vary(
         | Type::Var(_)
         | Type::Alloc
         | Type::Panic
-        | Type::Unsafe => {}
+        | Type::Unsafe
+        | Type::Inferred(..) => {}
     }
 }
 
@@ -319,6 +320,7 @@ fn wf_into(t: &Type, adts: &Adts, outlives: &HashMap<String, Vec<Bound>>, out: &
         | Type::Alloc
         | Type::Panic
         | Type::Unsafe
+        | Type::Inferred(..)
         | Type::Int(_)
         | Type::Nat(_)
         | Type::Char
@@ -375,6 +377,7 @@ pub(crate) fn type_outlives(t: &Type, r: &Region, out: &mut Vec<Bound>) {
         | Type::Alloc
         | Type::Panic
         | Type::Unsafe
+        | Type::Inferred(..)
         | Type::Int(_)
         | Type::Nat(_)
         | Type::Char

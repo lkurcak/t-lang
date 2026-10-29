@@ -387,10 +387,12 @@ impl Checker {
                 return Ok(());
             }
         }
+        // A function's effects being inferred are unknown too, until its
+        // group's are (see `check/infer.rs`).
         let open = |t: &Type| {
             t.effect_items()
                 .iter()
-                .any(|e| matches!(e, Type::Var(_)) || self.unknown_proj(e))
+                .any(|e| matches!(e, Type::Var(_) | Type::Inferred(..)) || self.unknown_proj(e))
         };
         if open(&a) || open(&b) {
             let why = super::effects::Why::Same;

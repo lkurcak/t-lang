@@ -107,6 +107,14 @@ pub enum Type {
     /// which the checker doesn't check (see docs/09-unsafe.md). Only an
     /// `unsafe` block takes it away.
     Unsafe,
+    /// In an `Effects`: the effects inferred for the function with symbol
+    /// `.0`, at type arguments `.1` for its type parameters, effect
+    /// parameters among them (see docs/24-visibility.md). A function that
+    /// isn't exported and doesn't say `with` has these, until its body and
+    /// those of the functions it's in a recursive group with are checked,
+    /// which says what they are. No program can write one, and none is
+    /// left once its package is checked.
+    Inferred(String, Vec<Type>),
 }
 
 /// A *region*, or *lifetime*: the stretch of the program during which a
@@ -484,9 +492,10 @@ impl Type {
     pub fn parts(&self) -> impl Iterator<Item = &Type> {
         let (params, ret, effects): (&[Type], Option<&Type>, Option<&Type>) = match self {
             Type::Fn(f) => (&f.params, Some(&f.ret), Some(&f.effects)),
-            Type::Adt(_, _, args) | Type::Opaque(_, _, args) | Type::Effects(args) => {
-                (args, None, None)
-            }
+            Type::Adt(_, _, args)
+            | Type::Opaque(_, _, args)
+            | Type::Effects(args)
+            | Type::Inferred(_, args) => (args, None, None),
             Type::Ref(_, _, t) | Type::Box(t) | Type::Slice(t) | Type::Proj(t, ..) => {
                 (&[], Some(t), None)
             }
@@ -543,6 +552,9 @@ impl Type {
             }
             Type::Opaque(name, regions, args) => {
                 Type::Opaque(name.clone(), regions.clone(), args.iter().map(f).collect())
+            }
+            Type::Inferred(name, args) => {
+                Type::Inferred(name.clone(), args.iter().map(f).collect())
             }
             Type::Ref(r, m, t) => Type::Ref(r.clone(), *m, Box::new(f(t))),
             Type::Box(t) => Type::Box(Box::new(f(t))),
@@ -856,7 +868,7 @@ impl fmt::Display for Type {
                 write!(f, "fn({}) -> {}", comma_list(&sig.params), sig.ret)?;
                 let known = Type::Effects(
                     (sig.effects.effect_items().iter())
-                        .filter(|e| !matches!(e, Type::Var(_)))
+                        .filter(|e| !matches!(e, Type::Var(_) | Type::Inferred(..)))
                         .cloned()
                         .collect(),
                 );
@@ -866,6 +878,9 @@ impl fmt::Display for Type {
                 }
             }
             Type::Effects(items) => write!(f, "{{{}}}", comma_list(items)),
+            // What it is isn't known yet, where this is shown: only in a
+            // set of its own, as a function type shows only what's known.
+            Type::Inferred(name, _) => write!(f, "{}'s effects", source_name(name)),
             Type::Alloc => f.write_str("alloc"),
             Type::Panic => f.write_str("panic"),
             Type::Unsafe => f.write_str("unsafe"),

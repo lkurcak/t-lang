@@ -5,7 +5,7 @@ struct P { x: i64 }
 
 fn make() -> P { P { x: 0 } }
 
-fn f() -> i64 { 10 / make().x }
+fn f() -> i64 with {} { 10 / make().x }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;

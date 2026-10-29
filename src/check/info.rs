@@ -87,6 +87,10 @@ pub struct Info {
     /// type monomorphisation makes `std::rt::report` for, which reports
     /// it.
     pub main_error: Option<Type>,
+    /// The effects inferred for each function that doesn't say them, by
+    /// symbol, at its own type parameters (see `check/infer.rs`): what
+    /// monomorphising gives its copies.
+    pub inferred: HashMap<String, Type>,
 }
 
 /// Where a value is used by value, which moves it or copies it, as

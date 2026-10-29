@@ -5,7 +5,7 @@ struct P { x: i64 }
 impl P {
     fn clear(&mut self) { self.x = 0; }
 
-    fn f(&mut self) -> i64 {
+    fn f(&mut self) -> i64 with {} {
         if self.x > 0 {
             self.clear();
             10 / self.x

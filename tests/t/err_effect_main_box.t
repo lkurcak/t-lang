@@ -2,7 +2,7 @@
 
 use alloc::boxed::Box;
 
-fn main(os: std::Os) -> Result<(), std::io::Error> {
+fn main(os: std::Os) -> Result<(), std::io::Error> with {} {
     let mut out = os.stdout;
     let b = Box::new(1i64);
     out.line(&(*b))?;

@@ -1,5 +1,5 @@
 // `-x` overflows at the least `i64`, so it needs `x` to be greater.
-fn neg(x: { v: i64 | v <= 0 }) -> i64 { -x }
+fn neg(x: { v: i64 | v <= 0 }) -> i64 with {} { -x }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;

@@ -54,6 +54,7 @@ mod closures;
 mod effects;
 mod expr;
 mod generics;
+mod infer;
 mod info;
 mod ints;
 mod lints;
@@ -606,6 +607,21 @@ pub(crate) struct Checker {
     /// The type of what each `!` of the function works on, with where it
     /// is, of those not known when it was checked (`Checker::nots`).
     nots: Vec<(Type, Span)>,
+    /// The functions whose effects are being inferred, by `FnId`, whose
+    /// group's bodies aren't all checked yet (see `check/infer.rs`).
+    inferring: HashSet<usize>,
+    /// The sites of the body of each of them that's checked, kept for
+    /// working out its effects with its group's.
+    infer_sites: HashMap<usize, Vec<effects::Site>>,
+    /// The functions of groups whose effects wait for another's.
+    waiting: Vec<FnId>,
+    /// What waits for effects being inferred to be known.
+    deferred: Vec<effects::Deferred>,
+    /// The effects inferred for each function, by symbol, at its own
+    /// parameters.
+    inferred: HashMap<String, Type>,
+    /// Why each inferred function has each of its effects.
+    witnesses: HashMap<(String, Type), infer::Witness>,
 }
 
 /// A projection `proj`, `<T as Tr>::Item`, whose type `T` isn't known yet,
@@ -788,6 +804,12 @@ impl Checker {
             kept_measures: Vec::new(),
             literals: Vec::new(),
             nots: Vec::new(),
+            inferring: HashSet::new(),
+            infer_sites: HashMap::new(),
+            waiting: Vec::new(),
+            deferred: Vec::new(),
+            inferred: HashMap::new(),
+            witnesses: HashMap::new(),
             modules: modules::Modules::default(),
             module: ROOT,
         }
@@ -850,6 +872,7 @@ impl Checker {
         self.check_impls(prog)?;
         self.info.traits = self.traits.clone();
         self.bodies(prog)?;
+        self.zonk_inferred();
         // What each closure is is known once the body it's in is, and so
         // what each opaque type stands for.
         self.info.traits.closures = self.traits.closures.clone();
@@ -949,6 +972,16 @@ impl Checker {
                 }
                 None => self.fn_scheme(f)?,
             };
+            // Effects it doesn't say are its body's, which are inferred
+            // with it.
+            let mut scheme = scheme;
+            if infer::infers(prog, f, method) {
+                let effects = self.placeholder(&self.fn_symbols[i], &scheme.params);
+                if let Type::Fn(sig) = &mut scheme.ty {
+                    *sig.effects = effects;
+                }
+                self.inferring.insert(i);
+            }
             if parent.is_none()
                 && method.is_none()
                 && f.module == ROOT
@@ -1081,15 +1114,38 @@ impl Checker {
     /// bodies they're in.
     fn bodies(&mut self, prog: &Program) -> Result<(), Error> {
         // Measures first, so that what each is, its body's terms, is known
-        // where another body uses it.
-        let mut fns: Vec<_> = (prog.all_fns().into_iter().enumerate())
-            .skip(self.from.all_fns)
-            .collect();
-        fns.sort_by_key(|(_, (f, ..))| f.measure.is_none());
-        for (i, (f, parent, method)) in fns {
+        // where another body uses it. Then callees first, a group at a
+        // time, so that what's inferred of a function's effects is known
+        // where it's called (see `check/infer.rs`).
+        let all = prog.all_fns();
+        let roots: Vec<usize> = (0..all.len()).map(|i| infer::root(&all, i)).collect();
+        for group in infer::body_groups(prog, &all, self.from.all_fns) {
+            for &i in &group {
+                self.fn_body(prog, all[i], i)?;
+            }
+            let members = (self.from.all_fns..all.len())
+                .filter(|&j| group.contains(&roots[j]) && self.inferring.contains(&j))
+                .map(FnId)
+                .collect();
+            self.solve_group(members, false)?;
+        }
+        self.solve_group(Vec::new(), true)?;
+        self.inferring.clear();
+        Ok(())
+    }
+
+    /// Checks the body of function `i` of `Program::all_fns`, `f`, with
+    /// the ones nested in it.
+    fn fn_body(
+        &mut self,
+        prog: &Program,
+        (f, parent, method): (&FnDecl, Option<usize>, Option<MethodOf>),
+        i: usize,
+    ) -> Result<(), Error> {
+        {
             // What an intrinsic does isn't written in T.
             if f.intrinsic.is_some() || parent.is_some() {
-                continue;
+                return Ok(());
             }
             self.self_ty = match method {
                 Some(MethodOf::Impl(k)) => {

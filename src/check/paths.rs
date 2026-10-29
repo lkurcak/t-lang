@@ -505,7 +505,13 @@ impl Checker {
                 false => self.check(arg, param)?,
             }
         }
-        self.effect(e.span, format!("`{}`", name.name), (*sig.effects).clone());
+        let what = format!("`{}`", name.name);
+        self.call_effect(
+            e.span,
+            what,
+            (*sig.effects).clone(),
+            Some(found.symbol.clone()),
+        );
         oblige(self)?;
         Ok((*sig.ret).clone())
     }

@@ -1,6 +1,7 @@
 // An inherent impl's bounds are needed where its methods are called.
 struct Fd { n: i64 }
 
+#[derive(Discard)]
 struct W<T> { x: T }
 
 impl<T: Discard> W<T> {
