@@ -204,6 +204,16 @@ vim.api.nvim_create_autocmd("FileType", {
 
 ## Tests
 
+`cargo test --lib parser::generated_tests` runs bounded generated tests for
+strict parsing, editor recovery, and formatting; they also run with the
+normal test suite. Two fixed seeds generate 64 programs at expression depth
+at most three. They mutate 16 delimiter positions per program, truncate
+four programs at every UTF-8 character boundary, and build 512 short
+fragment sequences. Literal and nested-module matrices cover Unicode, escapes,
+comments, and recovery around incomplete items. Inputs are capped at 8 KiB.
+Failures print the seed/case and exact source to reproduce; no external
+fuzz runner or new dependencies are needed.
+
 Each `tests/t/*.t` file is a program with its expectations in comments:
 
 ```rust,fragment
