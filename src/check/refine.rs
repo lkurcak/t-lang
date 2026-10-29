@@ -55,6 +55,7 @@
 //! a value can't have refined parameters, nor a trait's method, so every
 //! call that skips a check is of a function with nothing to check.
 
+mod diagnostics;
 mod logic;
 
 use super::Checker;
@@ -63,7 +64,9 @@ use crate::ast::*;
 use crate::error::{Error, Span};
 use crate::traits::{INT, SIGNED, UNSIGNED};
 use crate::types::{IntTy, Type, all_fields, struct_fields};
-use logic::{Formula, Kind, Lin, Var};
+use diagnostics::Invalidation;
+pub(super) use diagnostics::ProofFailure;
+use logic::{Failure, Formula, Kind, Lin, Var};
 use std::collections::{HashMap, HashSet};
 
 /// The predicate of a refinement, whose names are in `Checker::pred_names`.
@@ -991,6 +994,8 @@ impl Checker {
             size: None,
             bounds: HashMap::new(),
             consts: HashMap::new(),
+            failures: HashMap::new(),
+            invalidated: Vec::new(),
         };
         w.unstable_in(&f.body, false);
         let mut ret = None;
@@ -1016,6 +1021,24 @@ impl Checker {
         let v = w.expr(&f.body)?;
         w.result(v, super::expr::result_span(&f.body))?;
         let proved = std::mem::take(&mut w.proved);
+        let failures = std::mem::take(&mut w.failures);
+        for (node, failure) in failures {
+            let span = self
+                .effect_sites
+                .iter()
+                .filter(|s| s.node == Some(node))
+                .map(|s| s.span)
+                .chain(
+                    self.withins
+                        .iter()
+                        .filter(|s| s.node == Some(node))
+                        .map(|s| s.span),
+                )
+                .next();
+            if let Some(span) = span {
+                self.proof_failures.insert(span, failure);
+            }
+        }
         let keep = |node: Option<NodeId>| node.is_none_or(|n| !proved.contains(&n));
         self.effect_sites.retain(|s| keep(s.node));
         self.withins.retain(|w| keep(w.node));
@@ -1157,6 +1180,7 @@ struct Snap {
     objs: HashMap<Place, Obj>,
     reachable: bool,
     declared: usize,
+    invalidated: Vec<Invalidation>,
 }
 
 /// How a path through a branch ended: what it learned, what each place
@@ -1167,6 +1191,7 @@ struct Outcome {
     objs: HashMap<Place, Obj>,
     reachable: bool,
     val: Val,
+    invalidated: Vec<Invalidation>,
 }
 
 /// A loop around what's being walked: its label, and whether a `break`
@@ -1242,6 +1267,10 @@ struct Walk<'c> {
     /// `size` and `bounds`, which no path forgets, as those are made once,
     /// on whichever path first needs them.
     laws: Vec<Formula>,
+    /// Explanations saved at the point each operator's proof failed.
+    failures: HashMap<NodeId, ProofFailure>,
+    /// Source events that changed a place's value along this path.
+    invalidated: Vec<Invalidation>,
 }
 
 /// How many references deep what a function's parameters point to is kept
@@ -1663,18 +1692,18 @@ impl Walk<'_> {
 
     /// Does `goal` follow from what's known? Anything does where nothing
     /// gets to.
-    fn proves(&self, goal: Option<Formula>) -> bool {
+    fn proves(&self, goal: Option<&Formula>) -> Result<(), Failure> {
         if !self.reachable {
-            return true;
+            return Ok(());
         }
         let Some(g) = goal else {
-            return false;
+            return Err(Failure::Unsupported);
         };
         if self.laws.is_empty() {
-            return logic::valid(&self.facts, &g, &self.kinds);
+            return logic::valid(&self.facts, g, &self.kinds);
         }
         let all: Vec<Formula> = self.facts.iter().chain(&self.laws).cloned().collect();
-        logic::valid(&all, &g, &self.kinds)
+        logic::valid(&all, g, &self.kinds)
     }
 
     /// Does pattern `pat` bind anything by `&mut`?
@@ -1969,7 +1998,10 @@ impl Walk<'_> {
     }
 
     /// Place `p` has a new value, `val` if it's known.
-    fn write(&mut self, p: &Place, val: Option<Val>) {
+    fn write(&mut self, p: &Place, val: Option<Val>, at: Option<Span>) {
+        if let Some(span) = at {
+            self.invalidate(p, span, "assignment");
+        }
         self.kill(p);
         let t = self.place_ty(p);
         self.set(p, &t, val);
@@ -2034,7 +2066,7 @@ impl Walk<'_> {
     /// Local `id` is bound, to `val` if it's known.
     fn bind(&mut self, id: NodeId, val: Option<Val>) {
         self.declared.push(id);
-        self.write(&Place::local(id), val);
+        self.write(&Place::local(id), val, None);
     }
 
     fn assume_invariant(&mut self, id: NodeId, val: &Val) {
@@ -2048,35 +2080,48 @@ impl Walk<'_> {
     /// Refinement `r`'s predicate, of `val`, with its other names' values
     /// from `env`, if it can be said in the logic.
     fn pred(&mut self, r: &Refinement, val: &Val, env: Env) -> Option<Formula> {
+        self.predicate(r, val, env).ok()
+    }
+
+    fn predicate(&mut self, r: &Refinement, val: &Val, env: Env) -> Result<Formula, Failure> {
         match self.term(&r.pred, val, env)? {
-            Val::Bool(f) => Some(f),
-            _ => None,
+            Val::Bool(f) => Ok(f),
+            _ => Err(Failure::Unsupported),
         }
     }
 
-    fn term(&mut self, e: &Expr, binder: &Val, env: Env) -> Option<Val> {
+    fn term(&mut self, e: &Expr, binder: &Val, env: Env) -> Result<Val, Failure> {
         let int = |v: Val| match v {
-            Val::Int(l) => Some(l),
-            _ => None,
+            Val::Int(l) => Ok(l),
+            _ => Err(Failure::Unsupported),
         };
         let boolean = |v: Val| match v {
-            Val::Bool(f) => Some(f),
-            _ => None,
+            Val::Bool(f) => Ok(f),
+            _ => Err(Failure::Unsupported),
         };
-        Some(match &e.kind {
+        Ok(match &e.kind {
             ExprKind::Int(n, _) => Val::Int(Lin::constant(i128::from(*n))),
             ExprKind::Char(c) => Val::Int(Lin::constant(i128::from(u32::from(*c)))),
             ExprKind::Bool(b) => Val::Bool(if *b { Formula::True } else { Formula::False }),
-            ExprKind::Var(..) => match (self.cx.pred_names.get(&e.id)?, env) {
+            ExprKind::Var(..) => match (
+                self.cx.pred_names.get(&e.id).ok_or(Failure::Unsupported)?,
+                env,
+            ) {
                 (PredName::Binder, _) => binder.clone(),
-                (PredName::Param(i), Env::Call(args, _)) => args.get(*i)?.clone(),
+                (PredName::Param(i), Env::Call(args, _)) => {
+                    args.get(*i).ok_or(Failure::Unsupported)?.clone()
+                }
                 (PredName::Param(i), Env::Here) => {
-                    let id = *self.params.get(*i)?;
+                    let id = *self.params.get(*i).ok_or(Failure::Unsupported)?;
                     self.read_place(&Place::local(id))
                 }
                 (PredName::Local(id), _) => self.read_place(&Place::local(*id)),
-                (PredName::Field(j), Env::Fields(vals, _)) => vals.get(*j)?.clone(),
-                (PredName::Param(_), Env::Fields(..)) | (PredName::Field(_), _) => return None,
+                (PredName::Field(j), Env::Fields(vals, _)) => {
+                    vals.get(*j).ok_or(Failure::Unsupported)?.clone()
+                }
+                (PredName::Param(_), Env::Fields(..)) | (PredName::Field(_), _) => {
+                    return Err(Failure::Unsupported);
+                }
                 (PredName::Const(name), Env::Call(_, args) | Env::Fields(_, args)) => {
                     match args.iter().find(|(p, _)| p == name) {
                         Some((_, t)) => self.length(&t.clone()),
@@ -2085,21 +2130,41 @@ impl Walk<'_> {
                 }
                 (PredName::Const(name), Env::Here) => self.length(&Type::Param(name.clone())),
             },
-            ExprKind::Unary(UnOp::Neg, x) => Val::Int(int(self.term(x, binder, env)?)?.scale(-1)?),
+            ExprKind::Unary(UnOp::Neg, x) => Val::Int(
+                int(self.term(x, binder, env)?)?
+                    .scale(-1)
+                    .ok_or(Failure::ArithmeticLimit)?,
+            ),
             ExprKind::Unary(UnOp::Not, x) => Val::Bool(boolean(self.term(x, binder, env)?)?.not()),
             ExprKind::Binary(op, l, r) => {
                 let (a, b) = (self.term(l, binder, env)?, self.term(r, binder, env)?);
-                binary(*op, a, b)?
+                let reason = match (&a, &b) {
+                    (Val::Int(a), Val::Int(b))
+                        if *op == BinOp::Mul
+                            && a.as_constant().is_none()
+                            && b.as_constant().is_none() =>
+                    {
+                        Failure::Unsupported
+                    }
+                    (Val::Int(_), Val::Int(_)) => Failure::ArithmeticLimit,
+                    _ => Failure::Unsupported,
+                };
+                binary(*op, a, b).ok_or(reason)?
             }
             // A measure of what's named, through the `*`s the checker
             // found: the `&self` it's given is the last reference.
             ExprKind::MethodCall(x, ..) => {
-                let (symbol, derefs) = self.cx.pred_measures.get(&e.id)?.clone();
+                let (symbol, derefs) = self
+                    .cx
+                    .pred_measures
+                    .get(&e.id)
+                    .ok_or(Failure::Unsupported)?
+                    .clone();
                 let v = self.term(x, binder, env)?;
                 let recv = self.autoref(v, derefs, Some(false));
                 self.measure(&symbol, recv)
             }
-            _ => return None,
+            _ => return Err(Failure::Unsupported),
         })
     }
 
@@ -2113,14 +2178,23 @@ impl Walk<'_> {
         span: Span,
         what: String,
     ) -> Result<(), Error> {
-        let goal = self.pred(r, val, env);
-        if self.proves(goal) {
+        let goal = self.predicate(r, val, env);
+        let outcome = if !self.reachable {
+            Ok(())
+        } else {
+            match &goal {
+                Ok(g) => self.proves(Some(g)),
+                Err(reason) => Err(*reason),
+            }
+        };
+        let Err(reason) = outcome else {
             return Ok(());
-        }
-        Err(Error::ty(
+        };
+        let failure = self.proof_failure(reason, goal.as_ref().ok(), Some(val), &r.text());
+        Err(failure.attach(Error::ty(
             span,
             format!("can't prove `{}` for {what}", r.text()),
-        ))
+        )))
     }
 
     /// Fails at `span` unless the fields `vals` of a value of struct `t`
@@ -2197,6 +2271,7 @@ impl Walk<'_> {
             objs: self.objs.clone(),
             reachable: self.reachable,
             declared: self.declared.len(),
+            invalidated: self.invalidated.clone(),
         }
     }
 
@@ -2207,6 +2282,7 @@ impl Walk<'_> {
         self.objs = start.objs.clone();
         self.reachable = start.reachable;
         self.declared.truncate(start.declared);
+        self.invalidated = start.invalidated.clone();
     }
 
     /// Runs `go` from `start`, assuming `assume`, and gives how it ended.
@@ -2227,6 +2303,7 @@ impl Walk<'_> {
             objs: std::mem::take(&mut self.objs),
             reachable: self.reachable,
             val,
+            invalidated: self.invalidated.clone(),
         })
     }
 
@@ -2250,6 +2327,7 @@ impl Walk<'_> {
             self.cur.retain(|p, _| in_scope.contains(&p.root));
             self.objs = o.objs;
             self.objs.retain(|p, _| in_scope.contains(&p.root));
+            self.invalidated = o.invalidated;
             return o.val;
         }
         // A place is the same object after, if every branch left it so;
@@ -2284,6 +2362,11 @@ impl Walk<'_> {
         let result = self.unknown(ty);
         let mut cases = Vec::new();
         for (i, o) in reached.into_iter().enumerate() {
+            for event in o.invalidated {
+                if !self.invalidated.contains(&event) {
+                    self.invalidated.push(event);
+                }
+            }
             let mut parts = o.facts;
             parts.extend(equal(&result, &o.val));
             for (n, vars) in &new {
@@ -2302,6 +2385,7 @@ impl Walk<'_> {
     /// `e` has been evaluated: what it lent `&mut` may have changed.
     fn returned(&mut self, e: &Expr) {
         for p in self.lent.get(&e.id).cloned().into_iter().flatten() {
+            self.invalidate(&p, e.span, "mutable lending");
             self.kill(&p);
         }
     }
@@ -2335,6 +2419,14 @@ impl Walk<'_> {
             return self.bits(site, op, l, r, ty);
         }
         let (Val::Int(a), Val::Int(b), Some((min, max))) = (l, r, self.range(ty)) else {
+            if self.reachable {
+                self.operator_proof(
+                    site,
+                    None,
+                    Failure::Unsupported,
+                    &format!("`{op}` must be safe for `{ty}`"),
+                );
+            }
             return self.unknown(ty);
         };
         let in_range = |l: &Lin| Some(Formula::and([Formula::le(&min, l)?, Formula::le(l, &max)?]));
@@ -2367,9 +2459,18 @@ impl Walk<'_> {
                 (None, goal)
             }
         };
-        if self.proves(goal) {
-            self.proved.insert(site);
-        }
+        let missing = if op == BinOp::Mul && a.as_constant().is_none() && b.as_constant().is_none()
+        {
+            Failure::Unsupported
+        } else {
+            Failure::ArithmeticLimit
+        };
+        let condition = if matches!(op, BinOp::Div | BinOp::Rem) {
+            format!("the divisor must be nonzero and `{op}` must not overflow `{ty}`")
+        } else {
+            format!("the result of `{op}` must fit in `{ty}`")
+        };
+        self.operator_proof(site, goal, missing, &condition);
         match value {
             Some(v) => Val::Int(v),
             None => {
@@ -2401,12 +2502,31 @@ impl Walk<'_> {
                 .filter(|k| (0..=MAX_SHIFT).contains(k))
                 .and_then(|k| a.scale(1 << k));
             let Some(v) = shifted else {
+                if self.reachable {
+                    let reason = if b
+                        .as_constant()
+                        .is_some_and(|k| (0..=MAX_SHIFT).contains(&k))
+                    {
+                        Failure::ArithmeticLimit
+                    } else {
+                        Failure::Unsupported
+                    };
+                    self.operator_proof(
+                        site,
+                        None,
+                        reason,
+                        "the shifted value must fit in its integer type",
+                    );
+                }
                 return self.unknown(ty);
             };
             let goal = self.fits(&v, ty);
-            if self.proves(goal) {
-                self.proved.insert(site);
-            }
+            self.operator_proof(
+                site,
+                goal,
+                Failure::ArithmeticLimit,
+                &format!("the shifted value must fit in `{ty}`"),
+            );
             return Val::Int(v);
         }
         let result = self.unknown(ty);
@@ -2642,12 +2762,23 @@ impl Walk<'_> {
                     Val::Int(a) => a.scale(-1),
                     _ => None,
                 }) else {
+                    if self.reachable {
+                        self.operator_proof(
+                            e.id,
+                            None,
+                            Failure::ArithmeticLimit,
+                            &format!("the negated value must fit in `{ty}`"),
+                        );
+                    }
                     return Ok(self.unknown(&ty));
                 };
                 let goal = self.fits(&neg, &ty);
-                if self.proves(goal) {
-                    self.proved.insert(e.id);
-                }
+                self.operator_proof(
+                    e.id,
+                    goal,
+                    Failure::ArithmeticLimit,
+                    &format!("the negated value must fit in `{ty}`"),
+                );
                 Ok(Val::Int(neg))
             }
             // The same number, if it fits. A character's is a scalar
@@ -2667,9 +2798,12 @@ impl Walk<'_> {
                     Type::Char => Self::scalar(&a),
                     _ => self.fits(&a, &ty),
                 };
-                if self.proves(goal) {
-                    self.proved.insert(e.id);
-                }
+                self.operator_proof(
+                    e.id,
+                    goal,
+                    Failure::ArithmeticLimit,
+                    &format!("the converted value must fit in `{ty}`"),
+                );
                 Ok(Val::Int(a))
             }
             // Of an integer, the least plus the greatest minus it: each bit
@@ -2892,7 +3026,7 @@ impl Walk<'_> {
                             let what = format!("`{name}`");
                             self.need(&r, &new, Env::Here, value.span, what)?;
                         }
-                        self.write(&Place::local(id), Some(new));
+                        self.write(&Place::local(id), Some(new), Some(e.span));
                     }
                     (ExprKind::Field(base, _), _) => {
                         let (derefs, i) = self.cx.typed.fields[&place.id];
@@ -2934,7 +3068,7 @@ impl Walk<'_> {
                             self.need_fields(&t, &vals, Some(i), value.span)?;
                         }
                         if let Some(p) = &target {
-                            self.write(p, Some(new));
+                            self.write(p, Some(new), Some(e.span));
                         }
                     }
                     _ => {
@@ -2949,7 +3083,7 @@ impl Walk<'_> {
                             }
                         };
                         if let Some(p) = &target {
-                            self.write(p, Some(new));
+                            self.write(p, Some(new), Some(e.span));
                         }
                     }
                 }

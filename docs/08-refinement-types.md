@@ -231,6 +231,20 @@ later (with the Omega test, which is complete) can only accept more.
 Every step is bounded, with checked `i128` arithmetic, and going past a
 bound is a "don't know": the answer depends only on the question.
 
+A failed refinement check, or an arithmetic operation whose `panic` is
+not allowed, explains the required condition and the relevant facts it
+can name at that point, including integer type bounds. For an index,
+the condition says which upper bound is missing, such as `i < s.len()`.
+When available, a source note points to the assignment or mutable lending
+that invalidated facts about a place's previous value.
+
+The explanation distinguishes an ordinary unproved condition from
+unsupported linear reasoning, checked arithmetic overflow in the solver,
+and its limits of 512 cases or 400 constraints per case. None is evidence
+that the condition is false. Only an established proof satisfies a
+refinement or removes `panic`; the interpreter keeps checking those
+promises at run time.
+
 ## Why it's sound
 
 > Whenever a variable with a refinement gets a value, the refinement is

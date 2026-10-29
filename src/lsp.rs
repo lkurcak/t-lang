@@ -915,9 +915,16 @@ fn error_diagnostic(a: &Analysis, uri: &Uri, e: &Error) -> Option<Diagnostic> {
         Phase::Type => "type error",
         Phase::Runtime => "runtime error",
     };
+    // Same-site explanations belong in the hover text too; clients often
+    // display related information only as a list of other locations.
+    let mut message = format!("{phase}: {}", e.message);
+    for (_, note) in e.notes.iter().filter(|(span, _)| *span == e.span) {
+        message.push_str(&format!("\n{note}"));
+    }
     let related = e
         .notes
         .iter()
+        .filter(|(span, _)| *span != e.span)
         .map(|(span, note)| DiagnosticRelatedInformation {
             location: a.location(*span),
             message: note.clone(),
@@ -927,7 +934,7 @@ fn error_diagnostic(a: &Analysis, uri: &Uri, e: &Error) -> Option<Diagnostic> {
         range: a.range_in(uri, e.span)?,
         severity: Some(DiagnosticSeverity::ERROR),
         source: Some("t".to_string()),
-        message: format!("{phase}: {}", e.message),
+        message,
         related_information: (!related.is_empty()).then_some(related),
         ..Default::default()
     })

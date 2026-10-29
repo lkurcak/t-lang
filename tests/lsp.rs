@@ -117,6 +117,65 @@ fn stop(mut child: std::process::Child, mut c: Client) {
 }
 
 #[test]
+fn failed_proofs_explain_conditions_and_lost_facts() {
+    let uri = "file:///tmp/refinement-diagnostic.t";
+    for (src, condition, known, invalidation) in [
+        (
+            "fn inc(n: i64) -> i64 with {} { n + 1 }\nfn main() { let _ = inc(0); }",
+            "n <= 9223372036854775806",
+            "n <= 9223372036854775807",
+            None,
+        ),
+        (
+            "fn at(s: &[i64], i: usize) -> i64 { s[i] }\nfn main() { let a: [i64; 1] = [1]; let _ = at(a.as_slice(), 0); }",
+            "required condition: i < s.len()",
+            "0 <= i",
+            None,
+        ),
+        (
+            include_str!("t/err_soundness_measure_pop.t"),
+            "required condition: 0 < l.len()",
+            "0 <= l.len()",
+            Some(9),
+        ),
+        (
+            include_str!("t/err_refine_solver_coefficient_min.t"),
+            "required condition: 0 <= x",
+            "solver's checked integer arithmetic range",
+            None,
+        ),
+    ] {
+        let (child, mut c) = start();
+        c.send(
+            json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+                "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
+            }}),
+        );
+        let diagnostics = c.diagnostics();
+        let errors: Vec<_> = diagnostics.iter().filter(|d| d["severity"] == 1).collect();
+        assert_eq!(errors.len(), 1, "{diagnostics:?}");
+        let d = errors[0];
+        let message = d["message"].as_str().unwrap();
+        assert!(message.contains(condition), "{d}");
+        assert!(message.contains(known), "{d}");
+        if let Some(line) = invalidation {
+            let related = d["relatedInformation"].as_array().unwrap();
+            assert_eq!(related.len(), 1, "{d}");
+            assert_eq!(related[0]["location"]["uri"], uri);
+            assert_eq!(related[0]["location"]["range"]["start"]["line"], line);
+            assert!(
+                related[0]["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("mutable lending invalidated"),
+                "{d}"
+            );
+        }
+        stop(child, c);
+    }
+}
+
+#[test]
 fn reports_and_clears_diagnostics() {
     let (child, mut c) = start();
     let uri = "file:///tmp/test.t";
