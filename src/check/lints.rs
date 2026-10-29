@@ -445,9 +445,14 @@ impl Checker {
                 self.warnings.push(dead(f.name.span, message));
             }
         }
-        // An alias is gone once resolved, so it's used if it's named at all.
-        let named: HashSet<&String> = (self.type_names.values())
-            .filter_map(|s| match s {
+        // An alias is gone once resolved, so it's used if it's named at all,
+        // anywhere but where it's declared.
+        let declared: HashSet<NodeId> = (prog.all_types().iter())
+            .map(|(d, _)| d.name().id)
+            .collect();
+        let named: HashSet<&String> = (self.type_names.iter())
+            .filter(|(id, _)| !declared.contains(id))
+            .filter_map(|(_, s)| match s {
                 Scoped::Adt(symbol) if self.aliases.contains_key(symbol) => Some(symbol),
                 _ => None,
             })

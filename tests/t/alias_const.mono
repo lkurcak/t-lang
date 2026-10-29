@@ -1,0 +1,126 @@
+/// A value that may be missing: `Some(x)`, or `None`.
+#[derive(Discard, Copy, Eq)]
+export enum core::option::Option::<&u8> { None, Some(&u8) }
+
+/// A value that may be missing: `Some(x)`, or `None`.
+#[derive(Discard, Copy)]
+export enum core::option::Option::<core::slice::Split<u8>> { None, Some(core::slice::Split::<u8>) }
+
+/// What `split_at` gives: the values before the index it's given, and
+/// those from it on.
+#[derive(Discard, Copy)]
+export struct core::slice::Split::<u8><'a> { export head: &'a [u8], export tail: &'a [u8] }
+
+/// What `iter` gives: a reference to each value of `rest`, front to back.
+#[derive(Discard)]
+export struct core::slice::Iter::<u8><'a> { rest: &'a [u8] }
+
+fn total::<3>(b: &[u8; 3]) -> u64 with panic {
+    let mut sum = 0u64;
+    {
+        let mut {for} = <[u8; 3]>::iter(&*b);
+        loop {
+            match <core::slice::Iter::<u8> as core::iter::Iterator>::next(&mut {for}) {
+                core::option::Option::<&u8>::Some(x) => {
+                    sum = sum + *x as u64;
+                },
+                core::option::Option::<&u8>::None => break,
+            }
+        }
+    }
+    sum
+}
+
+fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    let b: [u8; 3] = [1u8, 2u8, 3u8];
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<u64>(&mut out, &total::<3>(&b)),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
+    let t: [bool; 2] = [true, false];
+    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
+        <std::io::Stdout>::line::<bool>(&mut out, &*<[bool; 2]>::index(&t, 0usize)),
+    ) {
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
+            {try},
+        ) => {try},
+        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
+            {try},
+        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
+            {try},
+        ),
+    };
+    core::result::Result::<(), std::io::Error>::Ok(())
+}
+
+/// The value at `i`, which is less than `len()`, so there's one: `a[i]`
+/// is `*a.index(i)`.
+export fn <[bool; 2]>::index(&self, i: { i: usize | i < self.len() }) -> &bool {
+    let s = <[bool; 2]>::as_slice(&*self);
+    &*<[bool]>::index(&*s, i)
+}
+
+/// Its values, by reference, front to back.
+export fn <[u8]>::iter(&self) -> core::slice::Iter::<u8> { core::slice::Iter::<u8> { rest: self } }
+
+fn <core::slice::Iter::<u8> as core::iter::Iterator>::next<'a>(
+    &mut self,
+) -> core::option::Option::<&u8> {
+    let rest: &'a [u8] = self.rest;
+    match <[u8]>::split_at(&*rest, 1usize) {
+        core::option::Option::<core::slice::Split<u8>>::Some(
+            core::slice::Split::<u8> { head, tail },
+        ) => {
+            self.rest = tail;
+            <[u8]>::get(&*head, 0usize)
+        },
+        core::option::Option::<core::slice::Split<u8>>::None => core::option::Option::<&u8>::None,
+    }
+}
+
+/// The values before index `mid` and those from it on, or `None` if
+/// `mid` is more than `len()`.
+#[intrinsic]
+export fn <[u8]>::split_at<'a>(
+    &'a self,
+    mid: usize,
+) -> core::option::Option::<core::slice::Split<u8>>;
+
+/// The value at `i`, or `None` if there's none: if `i` isn't less than
+/// `len()`.
+#[intrinsic]
+export fn <[u8]>::get(&self, i: usize) -> core::option::Option::<&u8>;
+
+fn <&str as core::fmt::Display>::fmt::<std::io::Stderr><'a>(
+    &self,
+    w: &mut std::io::Stderr,
+) -> core::result::Result::<(), std::io::Error> {
+    <std::io::Stderr as core::fmt::Write>::write_str(&mut *w, *self)
+}
+
+/// All its values, as a slice.
+#[intrinsic]
+export fn <[bool; 2]>::as_slice(&self) -> { s: &[bool] | s.len() == self.len() };
+
+/// The value at `i`, which is less than `len()`, so there's one: `s[i]`
+/// is `*s.index(i)`.
+#[intrinsic]
+export fn <[bool]>::index(&self, i: { i: usize | i < self.len() }) -> &bool;
+
+/// Its values, by reference, front to back.
+export fn <[u8; 3]>::iter(&self) -> core::slice::Iter::<u8> {
+    <[u8]>::iter(&*<[u8; 3]>::as_slice(&*self))
+}
+
+/// All its values, as a slice.
+#[intrinsic]
+export fn <[u8; 3]>::as_slice(&self) -> { s: &[u8] | s.len() == self.len() };

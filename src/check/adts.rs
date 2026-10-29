@@ -42,7 +42,16 @@ impl Checker {
                 let what = match d {
                     TypeDecl::Struct(_) => "a struct",
                     TypeDecl::Enum(_) => "an enum",
-                    TypeDecl::Alias(_) => "a type alias",
+                    TypeDecl::Alias(_) => {
+                        return Err(Error::ty(
+                            e.span,
+                            format!(
+                                "a type alias can't have effect parameters, as `{}` would be: \
+                                 it takes lifetime, type and const parameters",
+                                e.name
+                            ),
+                        ));
+                    }
                 };
                 return Err(Error::ty(
                     e.span,

@@ -2697,3 +2697,58 @@ fn refreshing_one_root_preserves_another_roots_diagnostics_in_shared_files() {
     stop(child, c);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn hovers_and_finds_type_aliases() {
+    let (child, mut c) = start();
+    let uri = "file:///tmp/alias.t";
+    let src = "\
+/// A distance.
+type Meters = i64;
+type Pair<T> = Option<T>;
+fn walk(m: Meters) -> Pair<Meters> { Option::Some(m) }
+fn main() {
+    let _p: Pair<bool> = Option::None;
+    let _w = walk(3);
+}
+";
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
+        }}),
+    );
+    assert_eq!(c.diagnostics(), Vec::<Value>::new());
+    let at = |needle: &str, nth: usize| {
+        let offset = src.match_indices(needle).nth(nth).unwrap().0;
+        let line = src[..offset].matches('\n').count();
+        let character = offset - src[..offset].rfind('\n').map_or(0, |i| i + 1);
+        json!({"line": line, "character": character})
+    };
+    let mut id = 1;
+    let mut ask = |c: &mut Client, method: &str, needle: &str, nth: usize| {
+        id += 1;
+        c.send(
+            json!({"jsonrpc": "2.0", "id": id, "method": method, "params": {
+                "textDocument": {"uri": uri}, "position": at(needle, nth)
+            }}),
+        );
+        c.response(id)["result"].clone()
+    };
+
+    // Where it's declared, with its doc comment, and where it's used: what
+    // it stands for there.
+    let hover = ask(&mut c, "textDocument/hover", "Meters", 0);
+    assert_eq!(
+        hover["contents"]["value"], "```t\ntype Meters = i64\n```\n\n---\n\nA distance.",
+        "{hover}"
+    );
+    let hover = ask(&mut c, "textDocument/hover", "Pair", 2);
+    assert_eq!(
+        hover["contents"]["value"], "```t\ntype Pair = Option<bool>\n```",
+        "{hover}"
+    );
+    let def = ask(&mut c, "textDocument/definition", "Meters", 1);
+    assert_eq!(def["range"]["start"], at("Meters", 0), "{def}");
+
+    stop(child, c);
+}
