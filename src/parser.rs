@@ -3003,6 +3003,9 @@ fn no_targs(segs: &[Segment]) -> Result<(), Error> {
 }
 
 #[cfg(test)]
+mod generated_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::lexer::lex;
