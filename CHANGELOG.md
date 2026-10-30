@@ -25,6 +25,11 @@ Step 26: packages. See [docs/26-packages.md](docs/26-packages.md).
 - Editors: a file of a library is checked with the nearest `lib.t` above
   it, as one of a program is with its `main.t`; going to a dependency's
   item opens its file; an error in a `t.toml` is shown there.
+- Editors: go to definition and type definition open the embedded `core`,
+  `alloc` and `std` sources through ordinary file URIs, including when the
+  compiler is installed without a checkout. Each server exports exact,
+  read-only source copies; navigation and hovers work within them, while
+  rename, formatting and code actions remain limited to program sources.
 
 ### Changed
 
@@ -37,11 +42,6 @@ Step 25: type aliases. See [docs/25-type-aliases.md](docs/25-type-aliases.md).
 
 ### Added
 
-- Editors: go to definition and type definition open the embedded `core`,
-  `alloc` and `std` sources through ordinary file URIs, including when the
-  compiler is installed without a checkout. Each server exports exact,
-  read-only source copies; navigation and hovers work within them, while
-  rename, formatting and code actions remain limited to program sources.
 - Type aliases: `type Nodes<'a> = Arena<Expr<'a>>;`, at the top of a
   module or in a block, with lifetime, type and const parameters. A use
   means what the alias stands for, with its names resolved where it's
