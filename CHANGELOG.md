@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.39.0 (2026-10-30)
 
 Step 26: packages. See [docs/26-packages.md](docs/26-packages.md).
 
