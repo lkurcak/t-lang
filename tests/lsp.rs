@@ -2107,6 +2107,59 @@ fn files_of_modules_are_checked_with_their_program() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// A program's packages are checked with it: going to a dependency's item
+/// goes to its file, which is checked as a library of its own when it's
+/// opened, with no `main`; what's wrong in a `t.toml` is said there.
+#[test]
+fn packages_are_checked_with_their_program() {
+    let dir = std::env::temp_dir().join(format!("t-lsp-packages-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("app")).unwrap();
+    std::fs::create_dir_all(dir.join("count")).unwrap();
+    std::fs::create_dir_all(dir.join("broken")).unwrap();
+    let main = "fn main() {\n    let _n = count::one();\n}\n";
+    std::fs::write(dir.join("app/main.t"), main).unwrap();
+    let toml = "[dependencies]\ncount = { path = \"../count\" }\n";
+    std::fs::write(dir.join("app/t.toml"), toml).unwrap();
+    let lib = "export fn one() -> i64 { 1 }\n";
+    std::fs::write(dir.join("count/lib.t"), lib).unwrap();
+    std::fs::write(dir.join("broken/main.t"), "fn main() {}\n").unwrap();
+    let toml = "[dependencies]\ncount = { path = \"../count\", version = \"1\" }\n";
+    std::fs::write(dir.join("broken/t.toml"), toml).unwrap();
+    let main_uri = file_uri(&dir.join("app/main.t"));
+    let lib_uri = file_uri(&dir.join("count/lib.t"));
+    let broken_uri = file_uri(&dir.join("broken/main.t"));
+    let toml_uri = file_uri(&dir.join("broken/t.toml"));
+
+    let (child, mut c) = start();
+    let open = |c: &mut Client, uri: &str, text: &str| {
+        c.send(
+            json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+                "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": text}
+            }}),
+        );
+    };
+    open(&mut c, &main_uri, main);
+    assert_eq!(diagnostics_for(&mut c, &main_uri), Vec::<Value>::new());
+    let at = json!({"textDocument": {"uri": main_uri}, "position": {"line": 1, "character": 20}});
+    c.send(json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/definition", "params": at}));
+    let def = c.response(2);
+    assert_eq!(def["result"]["uri"], lib_uri, "{def}");
+    open(&mut c, &lib_uri, lib);
+    assert_eq!(diagnostics_for(&mut c, &lib_uri), Vec::<Value>::new());
+    open(&mut c, &broken_uri, "fn main() {}\n");
+    let diags = diagnostics_for(&mut c, &toml_uri);
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    assert_eq!(
+        diags[0]["range"]["start"],
+        json!({"line": 1, "character": 29}),
+        "{diags:?}"
+    );
+
+    stop(child, c);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 fn closing_unsaved_files_refreshes_the_programs_diagnostics() {
     let dir = std::env::temp_dir().join(format!("t-lsp-close-{}", std::process::id()));

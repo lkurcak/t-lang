@@ -694,7 +694,10 @@ impl Loader<'_> {
         let path = normal(path);
         let top = normal(&self.top);
         let shown = path.strip_prefix(&top).unwrap_or(&path);
-        shown.to_string_lossy().replace('\\', "/")
+        match shown.as_os_str().is_empty() {
+            true => ".".to_string(),
+            false => shown.to_string_lossy().replace('\\', "/"),
+        }
     }
 }
 

@@ -463,3 +463,53 @@ fn renames_in(path: &Path) -> (Vec<String>, usize) {
     }
     (failures, renamed)
 }
+
+/// A package checks the same on its own as it does in any program that
+/// depends on it (lemma P2 of docs/26-packages.md): each dependency of
+/// each program in `tests/t` checks alone, unless the program's error is
+/// in it, and then alone it has the same one.
+#[test]
+fn dependencies_check_as_they_do_alone() {
+    use t_lang::source::Kind;
+    let mut failures = Vec::new();
+    let mut checked = 0;
+    for path in programs() {
+        let files = expect::files_of(&path);
+        if !files.iter().any(|(p, _)| p.ends_with("t.toml")) {
+            continue;
+        }
+        let read = |p: &Path| match files.iter().find(|(f, _)| f == p) {
+            Some((_, src)) => Ok(src.clone()),
+            None => t_lang::no_files(p),
+        };
+        let program = t_lang::check_files(&path, &files[0].1, &read);
+        let sources = &program.sources;
+        let firsts = (sources.files().iter())
+            .filter(|f| f.kind == Kind::Dependency && f.path.ends_with("lib.t"))
+            .filter(|f| f.declared.is_none());
+        for first in firsts {
+            checked += 1;
+            let alone = t_lang::check_files(&first.path, sources.src(first), &read);
+            let at = |c: &t_lang::Checked| {
+                (c.result.as_ref().err()).map(|e| {
+                    (
+                        c.sources.file_at(e.span.start).path.clone(),
+                        e.message.clone(),
+                    )
+                })
+            };
+            let (theirs, mine) = (at(&program), at(&alone));
+            let dir = first.path.parent().unwrap();
+            let in_it = theirs.as_ref().filter(|(p, _)| p.starts_with(dir));
+            if in_it.cloned() != mine {
+                failures.push(format!(
+                    "{}: {} gives {mine:?} alone, but {theirs:?} in the program",
+                    name(&path),
+                    first.path.display()
+                ));
+            }
+        }
+    }
+    assert!(checked >= 10, "only {checked} dependencies");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}

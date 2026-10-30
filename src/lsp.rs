@@ -359,14 +359,20 @@ impl Docs {
         }
         let read = |p: &Path| inputs.read(p);
         let mut dirs = path.parent().into_iter().flat_map(Path::ancestors);
+        // A program starts in `main.t`, a library in `lib.t`.
         let root = dirs.find_map(|dir| {
-            let main = dir.join("main.t");
-            let text = inputs.read(&main).ok()?;
-            if main == path {
-                return Some(main);
-            }
-            let (sources, _) = crate::load::load(&main, &text, &read);
-            sources.file(&path).map(|_| main)
+            ["main.t", "lib.t"].into_iter().find_map(|first| {
+                let first = dir.join(first);
+                let text = inputs.read(&first).ok()?;
+                if first == path {
+                    return Some(first);
+                }
+                let (sources, _) = crate::load::load(&first, &text, &read);
+                // Its own file, not a dependency's, which is the
+                // dependency's own to check.
+                let file = sources.file(&path)?;
+                (file.kind == crate::source::Kind::Program).then_some(first)
+            })
         });
         let root = root.unwrap_or_else(|| path.clone());
         // The standalone fallback's text is an input as well.
@@ -385,7 +391,11 @@ impl Docs {
         // their program offsets, including those in notes and quick fixes.
         // Loading errors and lexical errors retain the original diagnostic.
         let syntax_errors = match &checked.result {
-            Err(e) if e.phase == Phase::Syntax => {
+            // Not a `t.toml`'s, which isn't T.
+            Err(e)
+                if e.phase == Phase::Syntax
+                    && !checked.sources.file_at(e.span.start).is_manifest() =>
+            {
                 let file = checked.sources.file_at(e.span.start);
                 crate::lexer::lex(checked.sources.src(file))
                     .map(|mut tokens| {
@@ -764,27 +774,31 @@ fn refresh_diagnostics(
     {
         return Ok(());
     }
+    // A program's own files, its `t.toml`s and its dependencies', which can
+    // be what's wrong with it: not the libraries', which aren't on disk.
+    let on_disk = |a: &Rc<Analysis>| {
+        let files = a.sources().files().iter().filter(|f| !f.is_library());
+        files.map(|f| f.path.clone()).collect::<Vec<_>>()
+    };
     let before: HashMap<_, _> = published
         .values()
         .flat_map(|a| {
-            a.sources()
-                .program_files()
-                .iter()
-                .map(|f| (f.path.clone(), a.location(f.span()).uri))
+            let files = a.sources().files().iter().filter(|f| !f.is_library());
+            files.map(|f| (f.path.clone(), a.location(f.span()).uri))
         })
         .collect();
     let mut affected = HashSet::new();
     for (root, a) in &current {
         if !published.get(root).is_some_and(|old| Rc::ptr_eq(old, a)) {
-            affected.extend(a.sources().program_files().iter().map(|f| f.path.clone()));
+            affected.extend(on_disk(a));
             if let Some(old) = published.get(root) {
-                affected.extend(old.sources().program_files().iter().map(|f| f.path.clone()));
+                affected.extend(on_disk(old));
             }
         }
     }
     for (root, old) in published.iter() {
         if !current.contains_key(root) {
-            affected.extend(old.sources().program_files().iter().map(|f| f.path.clone()));
+            affected.extend(on_disk(old));
         }
     }
     let mut affected: Vec<_> = affected.into_iter().collect();

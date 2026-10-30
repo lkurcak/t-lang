@@ -77,6 +77,24 @@ fn reads_the_files_of_modules() {
     );
 }
 
+/// A program reads the packages its `t.toml` names; a library, which
+/// starts in `lib.t`, checks on its own, but has no `main` to run.
+#[test]
+fn reads_packages_and_checks_libraries() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/t");
+    let out = t(&[&format!("{dir}/pkg_basic/main.t")]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), "2\n2\n2\n");
+
+    let lib = format!("{dir}/pkg_basic/counter/lib.t");
+    let out = t(&["check", &lib]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let out = t(&[&lib]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.contains("has no `main` to run"), "{stderr}");
+}
+
 /// `t tree-sitter <dir>` installs the parser and queries as Neovim looks for
 /// them, replacing what's there.
 #[test]
