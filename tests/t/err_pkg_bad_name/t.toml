@@ -1,0 +1,2 @@
+[dependencies]
+"my-lib" = { path = "mine" }

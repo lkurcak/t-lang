@@ -17,13 +17,14 @@ use std::path::{Path, PathBuf};
 use t_lang::check::NoteKind;
 
 /// The first file of every program in `tests/t`, in order: `tests/t/*.t`
-/// and `tests/t/*/main.t`.
+/// and `tests/t/*/main.t`, or `tests/t/*/lib.t` for a library alone.
 fn programs() -> Vec<PathBuf> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/t");
     let mut paths: Vec<_> = fs::read_dir(&dir)
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .filter_map(|p| match p.is_dir() {
+            true if !p.join("main.t").exists() => Some(p.join("lib.t")),
             true => Some(p.join("main.t")),
             false => p.extension().is_some_and(|ext| ext == "t").then_some(p),
         })
@@ -66,7 +67,10 @@ fn on_all_cores<R: Send>(paths: &[PathBuf], f: impl Fn(&Path) -> R + Sync) -> Ve
 
 /// What a test is called: its file's name, or its directory's.
 fn name(path: &Path) -> String {
-    let path = match path.file_name().is_some_and(|n| n == "main.t") {
+    let path = match path
+        .file_name()
+        .is_some_and(|n| n == "main.t" || n == "lib.t")
+    {
         true => path.parent().unwrap(),
         false => path,
     };
@@ -406,7 +410,7 @@ fn renames_in(path: &Path) -> (Vec<String>, usize) {
     let mut defs: Vec<_> = info
         .notes
         .iter()
-        .filter(|n| n.def == Some(n.span) && !sources.in_library(n.span.start))
+        .filter(|n| n.def == Some(n.span) && !sources.in_others(n.span.start))
         .collect();
     defs.sort_by_key(|n| n.span.start);
     defs.dedup_by_key(|n| n.span);
@@ -432,7 +436,11 @@ fn renames_in(path: &Path) -> (Vec<String>, usize) {
         };
         renamed += 1;
         let paths = sources.program_files().iter().map(|f| f.path.clone());
-        let after: expect::Files = paths.zip(sources.edited(&edits)).collect();
+        let mut after: expect::Files = paths.zip(sources.edited(&edits)).collect();
+        // Its `t.toml` and dependencies, which a rename leaves as they are.
+        let others = (sources.files().iter())
+            .filter(|f| !f.is_library() && f.kind != t_lang::source::Kind::Program);
+        after.extend(others.map(|f| (f.path.clone(), sources.src(f).to_string())));
         // Printed values and messages show the names of functions,
         // types, fields and variants.
         let shown = |run: t_lang::RunResult, renamed: bool| {

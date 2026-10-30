@@ -106,6 +106,7 @@ fn lift_program(prog: &Program, info: &Info) -> Program {
         mods: prog.mods[..1].to_vec(),
         core: None,
         libraries: Vec::new(),
+        packages: Vec::new(),
         uses: Vec::new(),
         types,
         traits: traits

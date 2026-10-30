@@ -227,11 +227,30 @@ pub fn libraries() -> &'static Libraries {
 /// `check/modules.rs` says.
 ///
 /// Its libraries are `libraries()`'s, as `load` reads them, so only the
-/// crate root's package is checked here, against what checking them left.
+/// program's packages are checked here, against what checking them left:
+/// those it depends on, each against those before it, which are those it
+/// depends on (see `load.rs`), then the crate root's.
 pub fn check(prog: &mut Program, warnings: &mut Vec<Warning>) -> (Info, Result<(), Error>) {
     let libraries = libraries();
     let mut cx = libraries.cx.lock().expect("never poisoned").clone();
-    let mut result = cx.package(prog, ROOT, libraries.prog.counts());
+    let packages = match prog.packages.is_empty() {
+        // A program put together by hand, not by `load`.
+        true => vec![(ROOT, libraries.prog.counts())],
+        false => prog.packages.iter().map(|p| (p.root, p.from)).collect(),
+    };
+    let mut result = Ok(());
+    for (i, &(root, from)) in packages.iter().enumerate() {
+        // Each package is read before those after it are, but checked as
+        // if they weren't yet: its passes are over what's after `from`.
+        let rest = packages.get(i + 1).map(|&(_, to)| prog.split_off(to));
+        result = cx.package(prog, root, from);
+        if let Some(rest) = rest {
+            prog.append(rest);
+        }
+        if result.is_err() {
+            break;
+        }
+    }
     if let Err(e) = &mut result {
         import_fix(prog, &cx.modules, e);
     }
@@ -240,7 +259,7 @@ pub fn check(prog: &mut Program, warnings: &mut Vec<Warning>) -> (Info, Result<(
     let lib_fns = cx.fns.iter().map(|f| (&f.symbol, f.module));
     cx.info.library_symbols = lib_types
         .chain(lib_fns)
-        .filter(|&(_, m)| cx.modules.in_library(m))
+        .filter(|&(_, m)| cx.modules.in_library(m) || cx.modules.in_dependency(m))
         .map(|(s, _)| s.clone())
         .collect();
     cx.info.projections = cx.proj_traits.take();
@@ -908,7 +927,9 @@ impl Checker {
         // A library has no `main`, and nothing in it is dead that a program
         // could use.
         if root == ROOT {
-            check_main(prog)?;
+            if !prog.is_library() {
+                check_main(prog)?;
+            }
             // What's dead depends on the whole program, so only once it all
             // checks.
             self.dead_code(prog);

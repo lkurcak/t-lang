@@ -37,6 +37,21 @@ pub type Files = Vec<(PathBuf, String)>;
 /// Runs a program of the files `files`.
 pub fn run(files: &Files) -> RunResult {
     let (path, src) = &files[0];
+    // A library has nothing to run: what checking it says is all.
+    if path.file_name().is_some_and(|n| n == "lib.t") {
+        let read = |p: &Path| match files.iter().find(|(f, _)| f == p) {
+            Some((_, text)) => Ok(text.clone()),
+            None => t_lang::no_files(p),
+        };
+        let checked = t_lang::check_files(path, src, &read);
+        return RunResult {
+            sources: checked.sources,
+            warnings: checked.warnings,
+            output: Vec::new(),
+            errors: Vec::new(),
+            result: checked.result.map(|_| t_lang::interp::Value::Unit),
+        };
+    }
     let texts: Vec<&str> = files.iter().map(|(_, src)| src.as_str()).collect();
     let input = Expectations::of(&texts.join("\n")).input;
     t_lang::run_files(path, src, Some(files.clone()), Some(input))
@@ -105,11 +120,12 @@ pub fn check(name: &str, src: &str) -> Result<(), String> {
 /// say.
 pub fn check_files(files: &Files) -> Result<(), String> {
     let run = run(files);
-    let sources = &run.sources;
-    let texts: Vec<&str> = sources
-        .program_files()
-        .iter()
-        .map(|f| sources.src(f))
+    // The expectations of every file, its dependencies' too, but not of
+    // its manifests, which aren't T: not what was read, as reading them
+    // can be what fails.
+    let texts: Vec<&str> = (files.iter())
+        .filter(|(p, _)| p.file_name().is_none_or(|n| n != "t.toml"))
+        .map(|(_, src)| src.as_str())
         .collect();
     let want = Expectations::of(&texts.join("\n"));
     let warnings = t_lang::error::Warning::render_all_in(&run.warnings, &run.sources);
@@ -244,7 +260,10 @@ fn check_fixes(files: &Files, run: &RunResult) -> Result<(), String> {
 /// in its directory and the directories in it, if it's `main.t`.
 pub fn files_of(root: &Path) -> Files {
     let mut files = vec![(root.to_path_buf(), std::fs::read_to_string(root).unwrap())];
-    if root.file_name().is_some_and(|n| n == "main.t") {
+    if root
+        .file_name()
+        .is_some_and(|n| n == "main.t" || n == "lib.t")
+    {
         let mut dirs = vec![root.parent().unwrap().to_path_buf()];
         while let Some(dir) = dirs.pop() {
             let mut entries: Vec<PathBuf> = std::fs::read_dir(&dir)
@@ -255,7 +274,10 @@ pub fn files_of(root: &Path) -> Files {
             for p in entries {
                 if p.is_dir() {
                     dirs.push(p);
-                } else if p.extension().is_some_and(|e| e == "t") && p != root {
+                } else if (p.extension().is_some_and(|e| e == "t")
+                    || p.file_name().is_some_and(|n| n == "t.toml"))
+                    && p != root
+                {
                     let src = std::fs::read_to_string(&p).unwrap();
                     files.push((p, src));
                 }

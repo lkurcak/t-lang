@@ -31,8 +31,9 @@ pub fn checked(path: &Path, src: &str, read: Read) -> Result<(Sources, Program, 
     }
 }
 
-/// The program `sources` are, with their texts replaced by `texts`, in the
-/// same order, parsed again.
+/// The program `sources` are, with its own files' texts replaced by
+/// `texts`, in the same order, parsed again, with its `t.toml` and its
+/// dependencies as they were.
 fn reparsed(
     sources: &Sources,
     texts: &[String],
@@ -40,7 +41,14 @@ fn reparsed(
     let files = sources.program_files();
     let read = |path: &Path| match files.iter().position(|f| f.path == path) {
         Some(i) => Ok(texts[i].clone()),
-        None => crate::no_files(path),
+        None => match sources
+            .files()
+            .iter()
+            .find(|f| f.path == path && !f.is_library())
+        {
+            Some(f) => Ok(sources.src(f).to_string()),
+            None => crate::no_files(path),
+        },
     };
     load::load(&files[0].path, &texts[0], &read)
 }
@@ -70,6 +78,12 @@ pub fn target<'i>(
     if sources.in_library(def.start) || sources.in_library(offset) {
         return Err(format!(
             "`{}` is a built-in library's, which can't be changed",
+            word_at(sources.text(), def.start)
+        ));
+    }
+    if sources.in_others(def.start) || sources.in_others(offset) {
+        return Err(format!(
+            "`{}` is a package's this one depends on: rename it there",
             word_at(sources.text(), def.start)
         ));
     }

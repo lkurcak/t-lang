@@ -249,6 +249,7 @@ impl Describe for Program {
             mods,
             core,
             libraries,
+            packages: _,
             uses,
             types,
             traits,
@@ -259,7 +260,8 @@ impl Describe for Program {
             proved: _,
             measures: _,
         } = self;
-        // A parsed program has no analysis results. The next node number
+        // A parsed program has no analysis results, nor packages, which
+        // loading finds. The next node number
         // isn't syntax either. Stray docs are compared line by line:
         // formatting can regroup them while keeping each unattached.
         let stray_docs: Vec<_> = stray_docs

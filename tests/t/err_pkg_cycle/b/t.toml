@@ -1,0 +1,2 @@
+[dependencies]
+a = { path = "../a" }

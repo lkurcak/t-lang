@@ -1,5 +1,6 @@
 //! The files of a program: its first, and one for each `mod m;` (see
-//! `load.rs`). They're laid end to end in one text, a newline between each
+//! `load.rs`), after those of the libraries and of the packages it depends
+//! on, and the `t.toml`s that say which those are. They're laid end to end in one text, a newline between each
 //! two, so a `Span` is still a range in one text: every phase works on it as
 //! on a single file, and only messages and editors ask which file an offset
 //! is in. No span crosses from one file into another, since no token does.
@@ -26,6 +27,21 @@ pub struct File {
     pub module: usize,
     /// The name in the `mod m;` it's the file of: none for the first.
     pub declared: Option<Span>,
+    pub kind: Kind,
+}
+
+/// Whose a file is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    /// A library's built into the compiler, such as the core library's.
+    Library,
+    /// A package's the program depends on (see docs/26-packages.md).
+    Dependency,
+    /// A `t.toml`, the program's or a dependency's: not T, and it holds no
+    /// module, so its `module` is the crate root's.
+    Manifest,
+    /// The program's own.
+    Program,
 }
 
 impl File {
@@ -36,7 +52,12 @@ impl File {
     /// Is it one of a library's built into the compiler, such as the core
     /// library's, rather than the program's own?
     pub fn is_library(&self) -> bool {
-        (crate::load::LIBRARIES.iter()).any(|(.., dir)| self.path.starts_with(dir))
+        self.kind == Kind::Library
+    }
+
+    /// Is it a `t.toml`?
+    pub fn is_manifest(&self) -> bool {
+        self.kind == Kind::Manifest
     }
 }
 
@@ -44,7 +65,7 @@ impl Sources {
     /// A program of one file.
     pub fn single(path: impl Into<PathBuf>, src: &str) -> Sources {
         let mut sources = Sources::default();
-        sources.add(path.into(), src, crate::ast::ROOT, None);
+        sources.add(path.into(), src, crate::ast::ROOT, None, Kind::Program);
         sources
     }
 
@@ -56,6 +77,7 @@ impl Sources {
         src: &str,
         module: usize,
         declared: Option<Span>,
+        kind: Kind,
     ) -> usize {
         if !self.files.is_empty() {
             self.text.push('\n');
@@ -68,6 +90,7 @@ impl Sources {
             len: src.len(),
             module,
             declared,
+            kind,
         });
         start
     }
@@ -78,15 +101,17 @@ impl Sources {
     }
 
     /// Every file, in the order they're in the text: the libraries' first
-    /// (see `load.rs`), then the program's.
+    /// (see `load.rs`), then the program's `t.toml`, those of the packages
+    /// it depends on, and then its own.
     pub fn files(&self) -> &[File] {
         &self.files
     }
 
-    /// The program's own files, its first first: not the libraries'.
+    /// The program's own files, its first first: not the libraries' or
+    /// its dependencies', which are all before them, nor its `t.toml`.
     pub fn program_files(&self) -> &[File] {
-        let libraries = self.files.iter().take_while(|f| f.is_library()).count();
-        &self.files[libraries..]
+        let others = self.files.iter().rposition(|f| f.kind != Kind::Program);
+        &self.files[others.map_or(0, |i| i + 1)..]
     }
 
     /// The program's first file, where it starts.
@@ -104,6 +129,12 @@ impl Sources {
     /// compiler?
     pub fn in_library(&self, offset: usize) -> bool {
         self.file_at(offset).is_library()
+    }
+
+    /// Is `offset` in a file that isn't the program's own: a library's, a
+    /// dependency's or a `t.toml`?
+    pub fn in_others(&self, offset: usize) -> bool {
+        self.file_at(offset).kind != Kind::Program
     }
 
     /// The file at `path`, if it's one of these.
@@ -162,7 +193,7 @@ mod tests {
     #[test]
     fn a_file_ends_before_the_next_starts() {
         let mut sources = Sources::single("main.t", "mod a;");
-        let start = sources.add("a.t".into(), "fn f() {}", 1, None);
+        let start = sources.add("a.t".into(), "fn f() {}", 1, None, Kind::Program);
         let end = Span::new(6, 6);
         assert_eq!(sources.file_at(6).path, Path::new("main.t"));
         assert_eq!(sources.local(end).1, end);

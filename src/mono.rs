@@ -251,6 +251,7 @@ impl<'p> Mono<'p> {
             mods: prog.mods.clone(),
             core: None,
             libraries: Vec::new(),
+            packages: Vec::new(),
             uses: Vec::new(),
             types: Vec::new(),
             traits: Vec::new(),
