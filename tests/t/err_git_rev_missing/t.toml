@@ -1,0 +1,2 @@
+[dependencies]
+g = { git = "https://example.com/g" }

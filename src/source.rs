@@ -12,6 +12,10 @@ use std::path::{Path, PathBuf};
 pub struct Sources {
     text: String,
     files: Vec<File>,
+    /// Directories whose files are shown by another name: a package's
+    /// checkout from git by `<name@rev>`, not where the cache is (see
+    /// docs/27-git-dependencies.md).
+    labels: Vec<(PathBuf, String)>,
 }
 
 #[derive(Debug, Clone)]
@@ -154,6 +158,23 @@ impl Sources {
         (file, Span::new(span.start - file.start, end - file.start))
     }
 
+    /// Shows the files in `dir` as in `label` instead, in messages.
+    pub(crate) fn label(&mut self, dir: PathBuf, label: String) {
+        self.labels.push((dir, label));
+    }
+
+    /// Where `file` is, for messages: its path, or the label of the
+    /// directory it's in.
+    pub fn shown(&self, file: &File) -> String {
+        for (dir, label) in &self.labels {
+            if let Ok(rest) = file.path.strip_prefix(dir) {
+                let rest = rest.to_string_lossy().replace('\\', "/");
+                return format!("{label}/{rest}");
+            }
+        }
+        file.path.display().to_string()
+    }
+
     /// The line `offset` is on, for messages: `3`, or `3 of a/b.t` if it
     /// isn't in the program's first file.
     pub fn line(&self, offset: usize) -> String {
@@ -161,7 +182,7 @@ impl Sources {
         let line = self.src(file)[..at.start].matches('\n').count() + 1;
         match file.start == self.first().start {
             true => line.to_string(),
-            false => format!("{line} of {}", file.path.display()),
+            false => format!("{line} of {}", self.shown(file)),
         }
     }
 

@@ -3145,3 +3145,67 @@ fn main() {
 
     stop(child, c);
 }
+
+/// A package from git is fetched for the editor as for `t check`, and
+/// going to one of its items goes to its checkout.
+#[test]
+fn packages_from_git_are_fetched_and_navigated() {
+    let dir = std::env::temp_dir().join(format!("t-lsp-git-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let repo = dir.join("count");
+    std::fs::create_dir_all(&repo).unwrap();
+    std::fs::write(repo.join("lib.t"), "export fn one() -> i64 { 1 }\n").unwrap();
+    let git = |args: &[&str]| {
+        let out = Command::new("git")
+            .current_dir(&repo)
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(["-c", "commit.gpgsign=false"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    };
+    git(&["init", "-q"]);
+    git(&["add", "-A"]);
+    git(&["commit", "-q", "-m", "one"]);
+    let rev = git(&["rev-parse", "HEAD"]);
+    std::fs::create_dir_all(dir.join("app")).unwrap();
+    let main = "fn main() {\n    let _n = count::one();\n}\n";
+    std::fs::write(dir.join("app/main.t"), main).unwrap();
+    let path = repo.display().to_string().replace('\\', "/");
+    let url = match path.starts_with('/') {
+        true => format!("file://{path}"),
+        false => format!("file:///{path}"),
+    };
+    let toml = format!("[dependencies]\ncount = {{ git = \"{url}\", rev = \"{rev}\" }}\n");
+    std::fs::write(dir.join("app/t.toml"), toml).unwrap();
+    let main_uri = file_uri(&dir.join("app/main.t"));
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_t"));
+    let cache = dir.join("cache");
+    command.env("T_LANG_CACHE", &cache);
+    let (child, mut c) = start_command(command);
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": main_uri, "languageId": "t", "version": 1, "text": main}
+        }}),
+    );
+    assert_eq!(diagnostics_for(&mut c, &main_uri), Vec::<Value>::new());
+    let at = json!({"textDocument": {"uri": main_uri}, "position": {"line": 1, "character": 20}});
+    c.send(json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/definition", "params": at}));
+    let def = c.response(2);
+    let uri = def["result"]["uri"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    assert!(uri.starts_with(&file_uri(&cache.join("git"))), "{def}");
+    assert!(uri.ends_with(&format!("/{rev}/lib.t")), "{def}");
+
+    stop(child, c);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
