@@ -1,0 +1,2 @@
+[dependencies]
+shapes = { path = "shapes" }

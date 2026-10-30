@@ -1,16 +1,47 @@
 # Changelog
 
+## Unreleased
+
+Step 26: packages. See [docs/26-packages.md](docs/26-packages.md).
+
+### Added
+
+- Packages: a `t.toml` beside a package's first file lists the packages it
+  depends on, `[dependencies] counter = { path = "../counter" }`, and
+  nothing else yet. A dependency is a directory whose first file is
+  `lib.t`; the name its dependent gives it starts paths in every module,
+  as `core` does, and its exported items are what's seen. A package is
+  read once per program, whoever depends on it, and has one name there.
+  What a package depends on isn't its dependents' to see; `export use`
+  passes it on. Packages can't depend on each other, and, for now, those
+  of one program must form a chain, each depending on the one before
+  (two that don't know each other could each keep the rules that span
+  packages and break them together).
+- Libraries: `t check lib.t` checks a package on its own, with no
+  `main`; what it exports is what's live, for dead code. Running one says
+  there's nothing to run.
+- A dependency's warnings aren't its dependents': its own check shows
+  them. Its errors are, in its files.
+- Editors: a file of a library is checked with the nearest `lib.t` above
+  it, as one of a program is with its `main.t`; going to a dependency's
+  item opens its file; an error in a `t.toml` is shown there.
+- Editors: go to definition and type definition open the embedded `core`,
+  `alloc` and `std` sources through ordinary file URIs, including when the
+  compiler is installed without a checkout. Each server exports exact,
+  read-only source copies; navigation and hovers work within them, while
+  rename, formatting and code actions remain limited to program sources.
+
+### Changed
+
+- A module in a file of its own can't be called `lib`, as it can't be
+  called `main`.
+
 ## 0.38.0 (2026-10-30)
 
 Step 25: type aliases. See [docs/25-type-aliases.md](docs/25-type-aliases.md).
 
 ### Added
 
-- Editors: go to definition and type definition open the embedded `core`,
-  `alloc` and `std` sources through ordinary file URIs, including when the
-  compiler is installed without a checkout. Each server exports exact,
-  read-only source copies; navigation and hovers work within them, while
-  rename, formatting and code actions remain limited to program sources.
 - Type aliases: `type Nodes<'a> = Arena<Expr<'a>>;`, at the top of a
   module or in a block, with lifetime, type and const parameters. A use
   means what the alias stands for, with its names resolved where it's

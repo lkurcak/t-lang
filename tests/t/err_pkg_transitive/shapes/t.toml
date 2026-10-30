@@ -1,0 +1,2 @@
+[dependencies]
+geometry = { path = "../geometry" }

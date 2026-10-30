@@ -73,7 +73,8 @@ pub struct Info {
     /// it stands for.
     pub opaques: HashMap<NodeId, String>,
     /// The symbols of the built-in libraries' functions, structs and enums,
-    /// which monomorphisation keeps only if the program uses them.
+    /// and the dependencies', which monomorphisation keeps only if the
+    /// program uses them.
     pub library_symbols: HashSet<String>,
     /// Where the borrow checker moved a value rather than copying it, and
     /// each pattern that moves out of what it matches, for `lift` to write
@@ -601,7 +602,7 @@ impl Checker {
         }
         // Modules where they're declared, and at the start of paths.
         for (i, m) in prog.mods.iter().enumerate().skip(from.mods) {
-            if m.parent.is_some() && !prog.is_library_root(i) {
+            if m.parent.is_some() && !prog.is_package_root(i) {
                 let kind = NoteKind::Module(self.modules.full_path(i));
                 self.note(m.name.span, kind, None, Some(m.name.span));
             }
@@ -799,7 +800,7 @@ fn unwritten(span: Span, kind: &NoteKind) -> bool {
 /// package's root, which has none.
 pub(super) fn module_def(prog: &Program, m: usize) -> Span {
     let d = &prog.mods[m];
-    match d.parent.is_none() || prog.is_library_root(m) {
+    match d.parent.is_none() || prog.is_package_root(m) {
         false => d.name.span,
         true => Span::new(d.span.start, d.span.start),
     }

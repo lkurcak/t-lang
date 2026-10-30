@@ -383,13 +383,14 @@ impl Checker {
     /// if nothing live calls it.
     pub(super) fn dead_code(&mut self, prog: &Program) {
         // Everything reachable from `main`, by following which function
-        // names which. Functions that only call each other aren't.
+        // names which. Functions that only call each other aren't. A
+        // library has no `main`: what it exports is what's live.
         let fns = prog.all_fns();
         let main = fns.iter().position(|(f, parent, method)| {
             parent.is_none() && method.is_none() && f.module == ROOT && f.name.name == "main"
         });
         let mut live = vec![false; self.fns.len()];
-        let mut todo = vec![FnId(main.expect("checked that there's a `main`"))];
+        let mut todo: Vec<FnId> = main.map(FnId).into_iter().collect();
         todo.extend(self.kept_measures.iter().copied());
         for (i, (f, parent, method)) in fns.iter().enumerate() {
             let inherent =

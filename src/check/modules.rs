@@ -137,6 +137,10 @@ pub(crate) struct Modules {
     /// The root modules of the libraries built into the compiler, as
     /// `Program::libraries`.
     pub(crate) libraries: Vec<usize>,
+    /// The packages each of the program's packages depends on, by the
+    /// root module of each, as `Program::packages` has them: by name, the
+    /// first segment of a path in it.
+    pub(crate) deps: HashMap<usize, Vec<(String, usize)>>,
     pub(crate) prelude: Option<usize>,
     /// Warnings about what's rewritten here: empty ranges.
     pub(crate) warnings: Vec<Warning>,
@@ -298,6 +302,16 @@ impl Modules {
         (self.libraries.iter().copied()).find(|&m| self.mods[m].path == name)
     }
 
+    /// The root module of the package called `name` where module `from`
+    /// is, as a path there can start with: a library built in, or one its
+    /// package's `t.toml` names. Not one of those's: what a package
+    /// depends on is its own business.
+    pub(crate) fn package_named(&self, from: usize, name: &str) -> Option<usize> {
+        let deps = self.deps.get(&self.package_root(from));
+        let dep = deps.and_then(|d| d.iter().find(|(n, _)| n == name));
+        self.library(name).or(dep.map(|&(_, m)| m))
+    }
+
     /// Is `inner` module `outer` or in it?
     pub(crate) fn within(&self, inner: usize, outer: usize) -> bool {
         let mut m = Some(inner);
@@ -330,6 +344,12 @@ impl Modules {
         }
     }
 
+    /// Is module `m` in a package the program depends on?
+    pub(crate) fn in_dependency(&self, m: usize) -> bool {
+        let root = self.package_root(m);
+        root != ROOT && !self.libraries.contains(&root)
+    }
+
     /// The package module `m` is in, for messages: "`core`", "the crate".
     pub(crate) fn describe_package(&self, m: usize) -> String {
         match self.package_root(m) {
@@ -349,8 +369,8 @@ impl Modules {
     /// Module `m`'s path as code would write it from anywhere: `crate`,
     /// `crate::a::b`, `core`, `alloc::list`.
     pub(crate) fn full_path(&self, m: usize) -> String {
-        // A library's start with its name already.
-        match (self.in_library(m), self.mods[m].path.as_str()) {
+        // A library's start with its name already, as a dependency's do.
+        match (self.package_root(m) != ROOT, self.mods[m].path.as_str()) {
             (true, path) => path.to_string(),
             (false, "") => "crate".to_string(),
             (false, path) => format!("crate::{path}"),
@@ -396,7 +416,7 @@ impl Resolver {
             };
             debug_assert_eq!(i, r.m.mods.len());
             // A library's root is a package's: no module is around it.
-            let parent = match prog.is_library_root(i) {
+            let parent = match prog.is_package_root(i) {
                 true => None,
                 false => m.parent,
             };
@@ -409,6 +429,9 @@ impl Resolver {
         }
         r.m.core = prog.core;
         r.m.libraries = prog.libraries.clone();
+        r.m.deps = (prog.packages.iter())
+            .map(|p| (p.root, p.deps.clone()))
+            .collect();
         r.declare(prog, from)?;
         r.imports(prog, from)?;
         if r.m.prelude.is_none() {
@@ -462,7 +485,7 @@ impl Resolver {
     fn exports_reachable(&self, prog: &Program, from: Counts) -> Result<(), Error> {
         let mut items: Vec<(Item, usize, &Ident, &str)> = Vec::new();
         for (i, m) in prog.mods.iter().enumerate().skip(from.mods.max(1)) {
-            if m.vis.is_export() && !prog.is_library_root(i) {
+            if m.vis.is_export() && !prog.is_package_root(i) {
                 let parent = m.parent.expect("not a root");
                 items.push((Item::Mod(i), parent, &m.name, "module "));
             }
@@ -563,10 +586,22 @@ impl Resolver {
         let mut items: Vec<(usize, &Ident, Level, Item, Ns)> = Vec::new();
         for (i, m) in prog.mods.iter().enumerate().skip(from.mods.max(1)) {
             // A library isn't a module of the crate root's.
-            if prog.is_library_root(i) {
+            if prog.is_package_root(i) {
                 continue;
             }
             let parent = m.parent.expect("not the crate root");
+            // As a library's name can't be a module's (see `parser.rs`).
+            let deps = self.m.deps.get(&self.m.package_root(parent));
+            if deps.is_some_and(|d| d.iter().any(|(n, _)| *n == m.name.name)) {
+                return Err(Error::syntax(
+                    m.name.span,
+                    format!(
+                        "a module can't be called `{}`: that's the name of a package this one \
+                         depends on",
+                        m.name.name
+                    ),
+                ));
+            }
             items.push((parent, &m.name, m.vis.level(), Item::Mod(i), Ns::Types));
         }
         for (k, d) in prog.types.iter().enumerate().skip(from.types) {
@@ -822,7 +857,7 @@ impl Resolver {
                     let found = self.lookup(m, name, Ns::Types)?;
                     if found.is_none()
                         && i == 0
-                        && let Some(library) = self.m.library(name)
+                        && let Some(library) = self.m.package_named(from, name)
                     {
                         m = library;
                         self.m.module_refs.push((seg.span, m));
@@ -1037,7 +1072,7 @@ impl Rewrite<'_> {
             return Ok(true);
         }
         let Some(b) = self.r.m.get(self.module, first, Ns::Types) else {
-            if self.r.m.library(first).is_none() {
+            if self.r.m.package_named(self.module, first).is_none() {
                 return Ok(false);
             }
             return match segs.len() {

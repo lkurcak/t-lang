@@ -23,6 +23,12 @@ pub struct Program {
     /// core library's first, in the order they're loaded: each a package
     /// the same way, whose items' symbols start with its name, `alloc::`.
     pub libraries: Vec<usize>,
+    /// The packages of the program's own, from the `t.toml`s (see
+    /// docs/26-packages.md): those it depends on, in the order they're
+    /// checked, each after those it depends on, and then the crate root's
+    /// last. Each is a package the same way as a library, whose items'
+    /// symbols start with the name its dependents give it.
+    pub packages: Vec<Package>,
     /// The `use`s of every module, in order.
     pub uses: Vec<UseDecl>,
     pub types: Vec<TypeDecl>,
@@ -62,11 +68,74 @@ impl Program {
         NodeId(self.next_id - 1)
     }
 
-    /// Is module `m` the root of a library built into the compiler, a
-    /// package of its own rather than a module of the crate root's?
-    pub fn is_library_root(&self, m: usize) -> bool {
-        self.libraries.contains(&m)
+    /// Is module `m` the root of a package of its own, a library built
+    /// into the compiler or one the program depends on, rather than a
+    /// module of the crate root's?
+    pub fn is_package_root(&self, m: usize) -> bool {
+        m != ROOT && (self.libraries.contains(&m) || self.packages.iter().any(|p| p.root == m))
     }
+
+    /// Takes out the items after `at`, those of the packages after one,
+    /// so it can be checked as if they weren't read yet, as each package's
+    /// are after those before it in every list (see `Counts`); `append`
+    /// puts them back.
+    pub fn split_off(&mut self, at: Counts) -> Rest {
+        Rest {
+            mods: self.mods.split_off(at.mods),
+            uses: self.uses.split_off(at.uses),
+            types: self.types.split_off(at.types),
+            traits: self.traits.split_off(at.traits),
+            impls: self.impls.split_off(at.impls),
+            fns: self.fns.split_off(at.fns),
+            stray_docs: self.stray_docs.split_off(at.stray_docs),
+        }
+    }
+
+    /// Puts back what `split_off` took out.
+    pub fn append(&mut self, mut rest: Rest) {
+        self.mods.append(&mut rest.mods);
+        self.uses.append(&mut rest.uses);
+        self.types.append(&mut rest.types);
+        self.traits.append(&mut rest.traits);
+        self.impls.append(&mut rest.impls);
+        self.fns.append(&mut rest.fns);
+        self.stray_docs.append(&mut rest.stray_docs);
+    }
+
+    /// Is the program a library, which starts in `lib.t` and has no
+    /// `main`?
+    pub fn is_library(&self) -> bool {
+        self.packages.last().is_some_and(|p| p.library)
+    }
+}
+
+/// The items of the packages after one, taken out of a program while it's
+/// checked (see `Program::split_off`).
+#[derive(Debug)]
+pub struct Rest {
+    mods: Vec<ModDecl>,
+    uses: Vec<UseDecl>,
+    types: Vec<TypeDecl>,
+    traits: Vec<TraitDecl>,
+    impls: Vec<ImplDecl>,
+    fns: Vec<FnDecl>,
+    stray_docs: Vec<DocComment>,
+}
+
+/// A package of the program's own: its first file's module, and what it
+/// depends on.
+#[derive(Debug, Clone)]
+pub struct Package {
+    /// Its root module: the crate root, for the one the program starts in.
+    pub root: usize,
+    /// How many items there were before its own (see `Counts`).
+    pub from: Counts,
+    /// The packages it depends on, each by the name its `t.toml` gives it,
+    /// and their root modules: what a path in it can start with, beside
+    /// the built-in libraries' names.
+    pub deps: Vec<(String, usize)>,
+    /// Does it start in `lib.t`, as a library, rather than in `main.t`?
+    pub library: bool,
 }
 
 /// How many of each kind of item a program has, in its lists and in
@@ -914,7 +983,7 @@ impl Program {
     /// or a library's (see `load.rs`).
     pub fn package_of(&self, mut m: usize) -> usize {
         while let Some(parent) = self.mods[m].parent
-            && !self.is_library_root(m)
+            && !self.is_package_root(m)
         {
             m = parent;
         }
@@ -939,16 +1008,22 @@ impl Program {
     }
 
     /// The packages, by their root modules, in the order they're checked:
-    /// each library's in the order they're loaded, then the crate root's,
-    /// which depends on them all.
-    pub fn packages(&self) -> Vec<usize> {
-        self.libraries.iter().copied().chain([ROOT]).collect()
+    /// each library's in the order they're loaded, then those the program
+    /// depends on, then the crate root's, which depends on them all.
+    pub fn package_roots(&self) -> Vec<usize> {
+        let deps = self.packages.iter().map(|p| p.root).filter(|&m| m != ROOT);
+        self.libraries
+            .iter()
+            .copied()
+            .chain(deps)
+            .chain([ROOT])
+            .collect()
     }
 
-    /// Every method with a body: package by package (see `packages`),
+    /// Every method with a body: package by package (see `package_roots`),
     /// those of each impl in order, then the defaults of each trait.
     pub fn methods(&self) -> Vec<(&FnDecl, MethodOf)> {
-        self.packages()
+        self.package_roots()
             .into_iter()
             .flat_map(|p| self.methods_of(p))
             .collect()
@@ -977,7 +1052,7 @@ impl Program {
     }
 
     /// Every function, nested ones too, package by package (see
-    /// `packages`), so that each package's are a part of the list that
+    /// `package_roots`), so that each package's are a part of the list that
     /// ends where the next's starts: of each, the top-level ones in order,
     /// then the methods (as `methods` gives them), then the ones nested in
     /// those, and so on. Each comes with the index in this list of the
@@ -985,7 +1060,7 @@ impl Program {
     /// it's a method of, if it is one.
     pub fn all_fns(&self) -> Vec<(&FnDecl, Option<usize>, Option<MethodOf>)> {
         let mut out: Vec<(&FnDecl, Option<usize>, Option<MethodOf>)> = Vec::new();
-        for p in self.packages() {
+        for p in self.package_roots() {
             let mut i = out.len();
             let fns = self.fns.iter().filter(|f| self.package_of(f.module) == p);
             out.extend(fns.map(|f| (f, None, None)));
@@ -1002,14 +1077,14 @@ impl Program {
     }
 
     /// Every struct and enum, local ones too, package by package (see
-    /// `packages`): of each, the top-level ones in order, then the ones
+    /// `package_roots`): of each, the top-level ones in order, then the ones
     /// declared in each of its functions in `all_fns`, in that order. Each
     /// comes with the index in `all_fns` of the function it's in, if it's
     /// local.
     pub fn all_types(&self) -> Vec<(&TypeDecl, Option<usize>)> {
         let fns = self.all_fns();
         let mut out: Vec<(&TypeDecl, Option<usize>)> = Vec::new();
-        for p in self.packages() {
+        for p in self.package_roots() {
             let types = self
                 .types
                 .iter()

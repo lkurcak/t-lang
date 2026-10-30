@@ -171,6 +171,7 @@ fn empty_program(tokens: &[Token]) -> Program {
         }],
         core: None,
         libraries: Vec::new(),
+        packages: Vec::new(),
         uses: Vec::new(),
         types: Vec::new(),
         traits: Vec::new(),

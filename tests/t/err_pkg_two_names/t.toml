@@ -1,0 +1,3 @@
+[dependencies]
+geo = { path = "geometry" }
+shapes = { path = "shapes" }

@@ -1,0 +1,2 @@
+[dependencies]
+broken = { path = "broken" }

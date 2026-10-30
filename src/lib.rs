@@ -108,9 +108,10 @@ pub fn check_files(path: &Path, src: &str, read: load::Read) -> Checked {
     warnings.extend(naming::warnings(&sources, &program, checked));
     warnings.extend(safety::warnings(&sources, &program));
     allow::apply(&program, &sources, &mut warnings);
-    // The core library's are its own business: what a program doesn't
-    // use of it isn't dead, for one.
-    warnings.retain(|w| !sources.in_library(w.span.start));
+    // The libraries' are their own business: what a program doesn't use
+    // of one isn't dead, for one. So are the dependencies', which checking
+    // each on its own shows.
+    warnings.retain(|w| !sources.in_others(w.span.start));
     let mut result = result;
     // Messages name the prelude's traits as programs do.
     let shorten = |t: &str| info.traits.shorten(t);
@@ -220,6 +221,17 @@ fn run(
                 ..
             } = check_files(&path, &src, &read);
             checked(&sources, &warnings);
+            let result = result.and_then(|program| match program.program().is_library() {
+                true => {
+                    let start = sources.first().start;
+                    Err(Error::ty(
+                        error::Span::new(start, start),
+                        "this is a library, which starts in `lib.t` and has no `main` to run; \
+                         `t check` checks it",
+                    ))
+                }
+                false => Ok(program),
+            });
             match result.map(|program| program.lower()) {
                 Err(e) => RunResult {
                     sources,
