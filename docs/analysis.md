@@ -40,6 +40,22 @@ Every open document's program is resolved before stale diagnostics are
 cleared, so detaching or attaching a module cannot erase its new program's
 diagnostics. Cached programs with no open documents are released.
 
+Library navigation uses read-only copies of the binary's embedded T sources
+in a private temporary directory per LSP server. The compiler keeps its
+`<core>`, `<alloc>` and `<std>` source identities and spans; only the editor
+URIs map to the copies. No paths or text from a compiler checkout are used,
+and no wrappers or newline conversions change offsets. Definition and
+type-definition results include these files; workspace edits and program
+references exclude them.
+
+Opening a library copy does not discover a program root or add disk inputs
+to a program snapshot. All library buffers share a separate cached analysis
+of an empty valid program, which reuses the already checked libraries.
+Their text comes from the binary even if an editor sends an altered overlay.
+Library buffers publish no diagnostics, offer no formatting or code actions,
+and do not invalidate program analyses. The copies remain readable after the
+server stops until the system temporary directory is cleared.
+
 ## Repeated-request measurement
 
 Build both revisions with the same profile, then run

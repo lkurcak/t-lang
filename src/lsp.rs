@@ -54,9 +54,13 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+mod library;
+use library::LibrarySources;
+
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 pub fn run() -> Result<()> {
+    let mut docs = Docs::new()?;
     let (conn, io_threads) = Connection::stdio();
     let capabilities = ServerCapabilities {
         // FULL: the editor sends the whole file on every change, not diffs.
@@ -84,7 +88,6 @@ pub fn run() -> Result<()> {
     };
     conn.initialize(serde_json::to_value(capabilities)?)?;
 
-    let mut docs = Docs::default();
     let mut published = HashMap::new();
     // A message the server can't make sense of, such as one with a URI
     // that isn't one, gets an error, if it's a request, and is otherwise
@@ -133,6 +136,9 @@ fn notify(
             let p: DidOpenTextDocumentParams = serde_json::from_value(n.params)?;
             let doc = p.text_document;
             docs.open(&doc.uri, doc.version, doc.text);
+            if docs.is_library(&doc.uri) {
+                publish(conn, doc.uri, Some(doc.version), Vec::new())?;
+            }
             refresh_diagnostics(conn, docs, published)?;
         }
         DidChangeTextDocument::METHOD => {
@@ -141,6 +147,9 @@ fn notify(
             if let Some(change) = p.content_changes.into_iter().last() {
                 let doc = p.text_document;
                 docs.open(&doc.uri, doc.version, change.text);
+                if docs.is_library(&doc.uri) {
+                    publish(conn, doc.uri, Some(doc.version), Vec::new())?;
+                }
                 refresh_diagnostics(conn, docs, published)?;
             }
         }
@@ -163,10 +172,10 @@ fn notify(
 /// editors write the same file's URI differently on
 /// Windows, `file:///c%3A/..` or `file:///C:/..`, and the server must
 /// answer with the one the editor knows the file by.
-#[derive(Default)]
 struct Docs {
     files: HashMap<PathBuf, Document>,
     cache: RefCell<Cache>,
+    libraries: LibrarySources,
 }
 
 struct Document {
@@ -181,6 +190,9 @@ struct Cache {
     programs: HashMap<PathBuf, Rc<Analysis>>,
     /// Root discovery also depends on absent or non-owning `main.t`s.
     roots: HashMap<PathBuf, (PathBuf, Snapshot)>,
+    /// Library buffers use a valid empty program's library information,
+    /// independent of any user's program, errors or open-file changes.
+    libraries: Option<Rc<Analysis>>,
 }
 
 type Snapshot = HashMap<PathBuf, Input>;
@@ -239,10 +251,26 @@ impl Inputs<'_> {
 }
 
 impl Docs {
+    fn new() -> std::io::Result<Self> {
+        Ok(Self {
+            files: HashMap::new(),
+            cache: RefCell::default(),
+            libraries: LibrarySources::new()?,
+        })
+    }
+
+    fn is_library(&self, uri: &Uri) -> bool {
+        self.libraries.source(&uri_path(uri)).is_some()
+    }
+
     /// The editor has the file at `uri` open, with `text`.
     fn open(&mut self, uri: &Uri, version: i32, text: String) {
+        let path = uri_path(uri);
+        // Library copies are for browsing. Neither editor overlays nor disk
+        // changes can replace the sources this compiler actually checked.
+        let text = self.libraries.source(&path).map_or(text, str::to_owned);
         self.files.insert(
-            uri_path(uri),
+            path,
             Document {
                 uri: uri.clone(),
                 version,
@@ -258,6 +286,12 @@ impl Docs {
 
     /// The URI of the file at `path`: the editor's, if it's open.
     fn uri(&self, path: &Path) -> Uri {
+        if let Some(path) = self.libraries.path(path) {
+            return self
+                .files
+                .get(&path)
+                .map_or_else(|| path_uri(&path), |doc| doc.uri.clone());
+        }
         match self.files.get(path) {
             Some(doc) => doc.uri.clone(),
             None => path_uri(path),
@@ -286,6 +320,29 @@ impl Docs {
     /// else the file alone (see `load.rs`).
     fn analyse(&self, uri: &Uri) -> Option<Rc<Analysis>> {
         self.text(uri)?;
+        if self.is_library(uri) {
+            let mut cache = self.cache.borrow_mut();
+            return Some(
+                cache
+                    .libraries
+                    .get_or_insert_with(|| {
+                        let checked = crate::check_source("fn main() {}\n");
+                        Rc::new(Analysis {
+                            root: checked.sources.first().path.clone(),
+                            uris: checked
+                                .sources
+                                .files()
+                                .iter()
+                                .map(|f| self.uri(&f.path))
+                                .collect(),
+                            checked,
+                            syntax_errors: Vec::new(),
+                            inputs: Snapshot::new(),
+                        })
+                    })
+                    .clone(),
+            );
+        }
         let path = uri_path(uri);
         let inputs = Inputs {
             docs: self,
@@ -383,7 +440,12 @@ impl Analysis {
 
     /// The file at `uri`, if it's one of the program's.
     fn file(&self, uri: &Uri) -> Option<&SourceFile> {
-        let i = self.uris.iter().position(|u| u == uri)?;
+        let i = self.uris.iter().position(|u| u == uri).or_else(|| {
+            // A library analysis outlives opening further buffers, whose
+            // clients may spell the same file URI differently on Windows.
+            let path = uri_path(uri);
+            self.uris.iter().position(|u| uri_path(u) == path)
+        })?;
         Some(&self.sources().files()[i])
     }
 
@@ -405,8 +467,8 @@ impl Analysis {
         Location::new(uri, lsp_range(self.sources().src(file), local))
     }
 
-    /// Where `span` is, unless it's in the core library, whose files are
-    /// built into the compiler, and so aren't anywhere an editor can open.
+    /// Where `span` is, if it belongs to the user's program. Editing and
+    /// program references must not include the embedded library copies.
     fn program_location(&self, span: Span) -> Option<Location> {
         (!self.sources().in_library(span.start)).then(|| self.location(span))
     }
@@ -414,7 +476,7 @@ impl Analysis {
     /// The range `span` is in the file at `uri`, if it's in that file.
     fn range_in(&self, uri: &Uri, span: Span) -> Option<Range> {
         let location = self.location(span);
-        (location.uri == *uri).then_some(location.range)
+        (location.uri == *uri || uri_path(&location.uri) == uri_path(uri)).then_some(location.range)
     }
 
     /// `edits` as an LSP workspace edit, each in its own file.
@@ -424,7 +486,9 @@ impl Analysis {
         #[allow(clippy::mutable_key_type)]
         let mut changes: HashMap<Uri, Vec<TextEdit>> = HashMap::new();
         for e in edits {
-            let location = self.location(e.span);
+            let Some(location) = self.program_location(e.span) else {
+                continue;
+            };
             let edit = TextEdit::new(location.range, e.text.clone());
             changes.entry(location.uri).or_default().push(edit);
         }
@@ -479,9 +543,9 @@ fn respond(req: Request, docs: &Docs) -> Result<Response> {
                     // A module in a file of its own goes to its file.
                     Some(note) if matches!(note.kind, NoteKind::Module(_)) => {
                         let def = note.def?;
-                        file_of_mod(&a, def.start).or_else(|| a.program_location(def))?
+                        file_of_mod(&a, def.start).unwrap_or_else(|| a.location(def))
                     }
-                    Some(note) => a.program_location(note.def?)?,
+                    Some(note) => a.location(note.def?),
                     // The name of a `mod m;` goes to its file.
                     None => file_of_mod(&a, offset)?,
                 };
@@ -495,10 +559,7 @@ fn respond(req: Request, docs: &Docs) -> Result<Response> {
             let uri = &at.text_document.uri;
             let defs = docs.analyse(uri).and_then(|a| {
                 let spans = type_definitions(a.info(), a.offset(uri, at.position)?);
-                let locations: Vec<Location> = spans
-                    .into_iter()
-                    .filter_map(|s| a.program_location(s))
-                    .collect();
+                let locations: Vec<Location> = spans.into_iter().map(|s| a.location(s)).collect();
                 (!locations.is_empty()).then_some(GotoDefinitionResponse::Array(locations))
             });
             Ok(Response::new_ok(req.id, defs))
@@ -600,6 +661,9 @@ fn respond(req: Request, docs: &Docs) -> Result<Response> {
         }
         Formatting::METHOD => {
             let p: DocumentFormattingParams = serde_json::from_value(req.params)?;
+            if docs.is_library(&p.text_document.uri) {
+                return Ok(Response::new_ok(req.id, ()));
+            }
             let Some(src) = docs.text(&p.text_document.uri) else {
                 return Ok(Response::new_ok(req.id, ()));
             };
@@ -686,6 +750,9 @@ fn refresh_diagnostics(
     let mut paths: Vec<_> = docs.files.keys().collect();
     paths.sort();
     for path in paths {
+        if docs.libraries.source(path).is_some() {
+            continue;
+        }
         if let Some(a) = docs.analyse(&docs.files[path].uri) {
             current.insert(a.root.clone(), a);
         }
@@ -780,6 +847,9 @@ fn diagnose(a: &Analysis, uri: &Uri) -> Vec<(Diagnostic, Vec<Fix>)> {
 /// A quick fix for each fix of each diagnostic in the file at `uri` that
 /// touches `range`.
 fn code_actions(a: &Analysis, uri: &Uri, range: Range) -> Vec<CodeActionOrCommand> {
+    if a.file(uri).is_some_and(SourceFile::is_library) {
+        return Vec::new();
+    }
     let mut actions = Vec::new();
     for (diag, fixes) in diagnose(a, uri) {
         if diag.range.start > range.end || range.start > diag.range.end {
@@ -1242,13 +1312,59 @@ mod tests {
     use super::*;
 
     #[test]
+    fn library_copies_preserve_every_embedded_byte_and_have_separate_identities() {
+        let a = LibrarySources::new().unwrap();
+        let b = LibrarySources::new().unwrap();
+        for (name, files, dir) in crate::load::LIBRARIES {
+            for (file, text) in files {
+                let source = Path::new(dir).join(file);
+                let path = a.path(&source).unwrap();
+                assert!(path.ends_with(Path::new(name).join(file)));
+                assert_eq!(std::fs::read(&path).unwrap(), text.as_bytes());
+                assert!(std::fs::metadata(&path).unwrap().permissions().readonly());
+                assert_eq!(a.source(&path), Some(*text));
+                assert_ne!(b.path(&source).unwrap(), path);
+                assert_eq!(b.source(&path), None);
+            }
+        }
+        assert_eq!(a.path(Path::new("core/option.t")), None);
+        assert_eq!(a.path(Path::new("<core>/unknown.t")), None);
+    }
+
+    #[test]
+    fn library_buffers_share_analysis_without_invalidating_program_snapshots() {
+        let mut docs = Docs::new().unwrap();
+        let main = path_uri(&std::env::temp_dir().join("t-library-cache-main.t"));
+        docs.open(&main, 1, "fn main() {}\n".into());
+        let program = docs.analyse(&main).unwrap();
+        let uri = docs.uri(Path::new("<core>/option.t"));
+        docs.open(&uri, 1, "fn broken(".into());
+        let library = docs.analyse(&uri).unwrap();
+        assert!(library.checked.result.is_ok());
+        let file = library.file(&uri).unwrap();
+        assert!(file.is_library());
+        assert_eq!(docs.text(&uri).unwrap(), library.sources().src(file));
+        assert!(Rc::ptr_eq(&program, &docs.analyse(&main).unwrap()));
+        let alloc = docs.uri(Path::new("<alloc>/list.t"));
+        docs.open(&alloc, 1, String::new());
+        assert!(Rc::ptr_eq(&library, &docs.analyse(&alloc).unwrap()));
+        docs.open(&main, 2, "fn main( {".into());
+        assert!(docs.analyse(&main).unwrap().checked.result.is_err());
+        docs.open(&uri, 2, String::new());
+        assert!(Rc::ptr_eq(&library, &docs.analyse(&uri).unwrap()));
+        // Even a proposed quick fix must never edit library sources.
+        let edits = [crate::error::Edit::insert(file.start, "changed")];
+        assert!(library.workspace_edit(&edits).changes.unwrap().is_empty());
+    }
+
+    #[test]
     fn semantic_requests_share_analysis_until_an_input_changes() {
         let dir = std::env::temp_dir().join(format!("t-lsp-snapshot-{}", std::process::id()));
         let main = path_uri(&dir.join("main.t"));
         let util = path_uri(&dir.join("util.t"));
         let src = "mod util;\nfn main() {\n    fn nested() -> i64 { 1 }\n    let _n: i64 = util::id(nested());\n}\n";
         let helper = "pub fn id<T: Copy>(x: T) -> T { x }\n";
-        let mut docs = Docs::default();
+        let mut docs = Docs::new().unwrap();
         docs.open(&main, 1, src.into());
         docs.open(&util, 1, helper.into());
         let a = docs.analyse(&util).unwrap();
@@ -1318,7 +1434,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("t-lsp-missing-{}", std::process::id()));
         let main = path_uri(&dir.join("main.t"));
         let util = path_uri(&dir.join("util.t"));
-        let mut docs = Docs::default();
+        let mut docs = Docs::new().unwrap();
         docs.open(&main, 1, "mod util;\nfn main() { util::f(); }\n".into());
         let missing = docs.analyse(&main).unwrap();
         assert!(missing.checked.result.is_err());

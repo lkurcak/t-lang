@@ -124,6 +124,22 @@ while reporting their syntax errors. Formatting and semantic analysis still
 require valid syntax. Inlay hints show inferred types and type arguments.
 It formats files as `t fmt` does (see below).
 
+Definition and type-definition navigation also open the embedded `core`,
+`alloc` and `std` sources, including library methods, types and imports.
+Module imports open the module's file. At startup, `t lsp` writes read-only
+copies of its embedded sources to a private directory under the system's
+temporary directory and returns ordinary `file:` URIs, so no editor extension
+or compiler checkout is required. These are the exact sources built into the
+running binary, with their original bytes and source positions. Each server
+session gets its own directory, including for different builds of the same
+compiler version. The copies remain after shutdown until the temporary
+directory is cleared, so existing links and buffers can still be read.
+
+Opened library files support further navigation, hovers and outlines using
+the embedded sources. They are for browsing: rename, formatting and code
+actions do not edit them, and editor changes to them do not affect analysis.
+Find references remains scoped to the program's own files.
+
 Names are written as in Rust: structs, enums, variants and type
 parameters in `UpperCamelCase`, and functions, parameters, variables and
 fields in `snake_case`, with an acronym as one word (`HttpServer`), and

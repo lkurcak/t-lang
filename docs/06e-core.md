@@ -496,8 +496,9 @@ Monomorphisation makes a copy of a generic item only where it's used, and
 keeps the library's non-generic ones, like `Ordering`, only if the program
 uses them. So `t mono` shows what a program uses of the library and
 nothing else. In an editor, hovering over a library item shows its doc
-comment. There's no file to go to, so going to its definition goes
-nowhere, and it can't be renamed.
+comment. Going to its definition opens a read-only copy of the source
+embedded in the running compiler, and it can't be renamed. See
+[editor support](../README.md#editor-support) for navigation into the libraries.
 
 ## Design decisions worth noticing
 
