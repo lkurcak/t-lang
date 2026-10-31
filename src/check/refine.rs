@@ -45,10 +45,23 @@
 //! closure too, must keep (`Walk::unstable_in`). A `&` can't change what it
 //! points to, as nothing in T can be changed through one, so `*r` for a
 //! `let r = &p;` is `p` (`Walk::alias`). A refined variable can't be
-//! borrowed `&mut` at all, nor a field a refinement is about, so the
-//! refinements of a struct's fields hold of every value of it, wherever it
-//! is: every way of making or changing one checks them, and anything else,
-//! generic code included, only moves whole values. A refinement's predicate
+//! borrowed `&mut` at all, nor a field a refinement is about, or a place in
+//! one (through fields and boxes), but straight to a call-scoped parameter
+//! (`call_scoped`), after which the struct's refinements about it are
+//! proved again (`Walk::post`); so the refinements of a struct's fields
+//! hold of every value of it whenever it can be read: every way of making
+//! or changing one checks them, a call lent one of its fields runs while
+//! nothing can read it (and nothing unwinds), and anything else, generic
+//! code included, only moves whole values.
+//!
+//! Postconditions (`ensures`, a result's refinement) are proved by the
+//! callee at each return, of what's behind its call-scoped `&mut`s then,
+//! and learned by the caller of the places it lent, once they're forgotten
+//! (`Walk::post`): nothing made from such a parameter outlives the call, so
+//! what's behind it at return is what's there when the caller next reads
+//! it. An intrinsic's may be about a `&mut` whose borrow outlives the call,
+//! its value when that ends (a prophecy, trusted), which is also when the
+//! caller next reads the place. A refinement's predicate
 //! names only what can't change. What a call returns has its function's
 //! refinement by induction on how deep the calls go, as for effects: a call
 //! that never returns gives nothing to count on. And what's called through
@@ -294,7 +307,13 @@ impl Checker {
         let Some(sig) = self.refined.get(symbol) else {
             return out;
         };
-        for r in sig.params.iter().chain([&sig.ret]).flatten() {
+        for r in sig
+            .params
+            .iter()
+            .chain([&sig.ret])
+            .flatten()
+            .chain(&sig.ensures)
+        {
             each_expr(&r.pred, &mut |e| {
                 if let Some(PredName::Param(j)) = self.pred_names.get(&e.id) {
                     out.push(*j);

@@ -12,7 +12,9 @@ impl Inner {
 #[derive(Discard)]
 struct S { a: Box<Inner>, n: { n: usize | n <= a.m() } }
 
-fn zero(r: &mut usize) { *r = 0; }
+fn zero(r: &mut usize) {
+    *r = 0;
+}
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut out = os.stdout;

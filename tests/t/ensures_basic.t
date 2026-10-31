@@ -16,6 +16,11 @@ impl Counter {
         self.n = self.n + 1;
     }
 
+    /// Leaves it at most `limit`, which only `ensures` names: that's a use.
+    fn clear(&mut self, limit: usize) ensures self.get() <= limit {
+        self.n = 0;
+    }
+
     /// Leaves it as it was.
     fn look(&mut self) -> usize ensures self.get() == old(self.get()) { self.n }
 }
@@ -29,5 +34,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     c.bump(5);
     c.look();
     out.line(&below(c.get()))?; // expect: 2
+    c.clear(1);
+    out.line(&below(c.get()))?; // expect: 0
     Result::Ok(())
 }

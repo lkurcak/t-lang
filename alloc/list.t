@@ -22,10 +22,10 @@ export struct List<T> { buf: RawBuf<T>, len: { n: usize | n <= buf.cap() } }
 
 impl<T> List<T> {
     /// An empty list. It allocates nothing until something's pushed.
-    export fn new() -> List<T> { List { buf: RawBuf::empty(), len: 0 } }
+    export fn new() -> { l: List<T> | l.len() == 0 } { List { buf: RawBuf::empty(), len: 0 } }
 
     /// An empty list with room for `cap` values before it grows.
-    export fn with_capacity(cap: usize) -> List<T> with alloc {
+    export fn with_capacity(cap: usize) -> { l: List<T> | l.len() == 0 } with alloc {
         List { buf: RawBuf::new(cap), len: 0 }
     }
 

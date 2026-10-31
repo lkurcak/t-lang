@@ -24,6 +24,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     s.a.b = 7;
     s.a.grow();
     out.line(&s.a.b)?; // expect: 8
-    out.line(&s.n)?; // expect: 5
+    out.line(&s.n)?;   // expect: 5
     Result::Ok(())
 }
