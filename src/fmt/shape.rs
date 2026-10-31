@@ -138,6 +138,7 @@ structs! {
     Expr { kind, span, id };
     ForLoop { label, pat, in_span, iter, body };
     Label { name, head };
+    LetCond { let_span, pat, expr };
     Lambda { id, moves, params, ret, body, captures, modes };
     LambdaParam { mutable, name, ty };
     FieldInit { name, value };
@@ -176,10 +177,12 @@ enums! {
     ExprKind {
         Int(n, ty), Bool(b), Char(c), Str(s), ByteStr(bytes), Unit, Var(name, args),
         Unary(op, expr), As(expr, ty), Binary(op, left, right), Call(callee, args),
-        MethodCall(receiver, name, types, args), If(cond, then, otherwise), Array(elems),
+        MethodCall(receiver, name, types, args), If(cond, then, otherwise),
+        IfLet(cond, then, otherwise), Array(elems),
         Repeat(value, len), Block(stmts, tail), Unsafe(block), StructLit(name, types, fields),
         Field(expr, name), Variant(ty, types, name, args, called), Match(expr, arms), Lambda(lambda),
-        Assign(op, place, value), While(label, cond, body), Loop(label, body), For(loop_),
+        Assign(op, place, value), While(label, cond, body), WhileLet(label, cond, body),
+        Loop(label, body), For(loop_),
         Range(start, end), Index(expr, index, span, mutable), Try(expr, span), Return(expr),
         Break(label, expr), Continue(label), Move(expr),
     };
@@ -197,12 +200,14 @@ impl Describe for Stmt {
                 pat,
                 ty,
                 init,
+                els,
                 span,
             } => f
                 .debug_struct("Let")
                 .field("pat", &Shape(pat))
                 .field("ty", &Shape(ty))
                 .field("init", &Shape(init))
+                .field("els", &Shape(els))
                 .field("span", &Shape(span))
                 .finish(),
             Self::Expr(expr) => f.debug_tuple("Expr").field(&Shape(expr)).finish(),

@@ -164,13 +164,38 @@ fn block_like(e: &Expr) -> bool {
     matches!(
         e.kind,
         ExprKind::If(..)
+            | ExprKind::IfLet(..)
             | ExprKind::Match(..)
             | ExprKind::While(..)
+            | ExprKind::WhileLet(..)
             | ExprKind::Loop(..)
             | ExprKind::For(..)
             | ExprKind::Block(..)
             | ExprKind::Unsafe(..)
     )
+}
+
+/// Does `e` end in a `}` when printed? Then it needs parentheses before
+/// the `else` of a `let .. else`, which would otherwise be read as an
+/// `if`'s.
+fn ends_in_brace(e: &Expr) -> bool {
+    match &e.kind {
+        _ if block_like(e) => true,
+        ExprKind::StructLit(..) => true,
+        ExprKind::Lambda(l) => ends_in_brace(&l.body),
+        ExprKind::Binary(_, _, r) | ExprKind::Assign(_, _, r) | ExprKind::Range(_, r) => {
+            ends_in_brace(r)
+        }
+        ExprKind::Unary(_, x) => ends_in_brace(x),
+        ExprKind::Return(Some(x)) | ExprKind::Break(_, Some(x)) => ends_in_brace(x),
+        _ => false,
+    }
+}
+
+/// Is `e` an `&&` or `||`, which needs parentheses as what an `if let`,
+/// `while let` or `let .. else` matches?
+fn chain_like(e: &Expr) -> bool {
+    matches!(e.kind, ExprKind::Binary(BinOp::And | BinOp::Or, ..))
 }
 
 /// `'a: ` before a loop, if it has a label.
@@ -188,7 +213,11 @@ fn huggable(args: &[Expr]) -> bool {
         return false;
     };
     match &last.kind {
-        ExprKind::If(..) | ExprKind::Match(..) | ExprKind::Block(..) | ExprKind::Unsafe(..) => true,
+        ExprKind::If(..)
+        | ExprKind::IfLet(..)
+        | ExprKind::Match(..)
+        | ExprKind::Block(..)
+        | ExprKind::Unsafe(..) => true,
         ExprKind::StructLit(_, _, inits) => !inits.is_empty(),
         ExprKind::Array(items) => !items.is_empty(),
         ExprKind::Lambda(l) => matches!(l.body.kind, ExprKind::Block(..)),
@@ -1021,10 +1050,13 @@ impl Printer<'_> {
                     + self.turbofish(targs)
                     + self.args(end, args)
             }
-            ExprKind::If(..) => self.if_chain(e),
+            ExprKind::If(..) | ExprKind::IfLet(..) => self.if_chain(e),
             ExprKind::While(label, c, body) => {
                 group(label_doc(label) + "while " + self.head(c) + self.block_or_expr(body))
             }
+            ExprKind::WhileLet(label, c, body) => group(
+                label_doc(label) + "while " + self.let_cond(c) + self.block_or_expr(body),
+            ),
             ExprKind::Loop(label, body) => {
                 group(label_doc(label) + "loop " + self.block_or_expr(body))
             }
@@ -1230,8 +1262,10 @@ impl Printer<'_> {
             | ExprKind::Block(..)
             | ExprKind::Unsafe(..)
             | ExprKind::If(..)
+            | ExprKind::IfLet(..)
             | ExprKind::Match(..)
             | ExprKind::While(..)
+            | ExprKind::WhileLet(..)
             | ExprKind::Loop(..)
             | ExprKind::For(..) => UNARY + 1,
             _ => UNARY,
@@ -1277,11 +1311,15 @@ impl Printer<'_> {
         let mut doc = Doc::nil();
         let mut e = e;
         loop {
-            let ExprKind::If(c, then, els) = &e.kind else {
-                doc = doc + self.block_or_expr(e);
-                break;
+            let (head, then, els) = match &e.kind {
+                ExprKind::If(c, then, els) => (self.head(c), then, els),
+                ExprKind::IfLet(c, then, els) => (self.let_cond(c), then, els),
+                _ => {
+                    doc = doc + self.block_or_expr(e);
+                    break;
+                }
             };
-            doc = doc + "if " + self.head(c);
+            doc = doc + "if " + head;
             doc = doc + self.block_or_expr(then);
             match els {
                 None => break,
@@ -1317,6 +1355,16 @@ impl Printer<'_> {
         }
     }
 
+    /// `let pat = e ` after an `if` or `while`, with the space before the
+    /// `{`. An `&&` or `||` there has to be in parentheses.
+    fn let_cond(&mut self, c: &LetCond) -> Doc {
+        let head = match chain_like(&c.expr) {
+            true => text("(") + self.expr_inner(&c.expr, Ctx::default()) + ") ",
+            false => self.head(&c.expr),
+        };
+        text("let ") + self.pattern(&c.pat) + " = " + head
+    }
+
     /// The block of an `if` or `else`, ungrouped so that the `if` decides
     /// for all its blocks at once.
     fn block_or_expr(&mut self, e: &Expr) -> Doc {
@@ -1341,8 +1389,11 @@ impl Printer<'_> {
         let mut body = self.trailing(span.start + 1);
         for (i, stmt) in stmts.iter().enumerate() {
             let (start, end) = match stmt {
-                Stmt::Let { pat, ty, init, .. } => {
+                Stmt::Let {
+                    pat, ty, init, els, ..
+                } => {
                     let end = match (init, ty) {
+                        _ if els.is_some() => els.as_ref().expect("there").span.end,
                         (Some(init), _) => init.span.end,
                         (None, Some(t)) => t.span.end,
                         (None, None) => pat.span.end,
@@ -1362,15 +1413,26 @@ impl Printer<'_> {
             };
             body = body + line.clone() + self.element(start, i == 0);
             let doc = match stmt {
-                Stmt::Let { pat, ty, init, .. } => {
+                Stmt::Let {
+                    pat, ty, init, els, ..
+                } => {
                     let ty = match ty {
                         Some(t) => text(": ") + self.ty(t),
                         None => Doc::nil(),
                     };
                     let head = text("let ") + self.pattern(pat) + ty;
-                    match init {
-                        Some(init) => head + " = " + self.expr(init, 0, Ctx::default()) + ";",
-                        None => head + ";",
+                    match (init, els) {
+                        (Some(init), Some(els)) => {
+                            let init = match ends_in_brace(init) || chain_like(init) {
+                                true => text("(") + self.expr_inner(init, Ctx::default()) + ")",
+                                false => self.expr(init, 0, Ctx::default()),
+                            };
+                            group(head + " = " + init + " else " + self.block_or_expr(els)) + ";"
+                        }
+                        (Some(init), None) => {
+                            head + " = " + self.expr(init, 0, Ctx::default()) + ";"
+                        }
+                        (None, _) => head + ";",
                     }
                 }
                 Stmt::Expr(e) => self.statement(e) + ";",

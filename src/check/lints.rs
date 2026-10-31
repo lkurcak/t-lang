@@ -8,6 +8,7 @@
 //! renamed source, and `unused_mut` is the borrow checker's, which knows
 //! what's changed. `#[allow(..)]` turns any of them off (`allow.rs`).
 
+use super::modules::ElseOf;
 use super::scope::FnId;
 use super::{Checker, Local, Scoped, adt_names};
 use crate::ast::*;
@@ -166,6 +167,22 @@ pub(super) fn unreachable_arm(arms: &[Arm], i: usize) -> Warning {
             .map(|d| Fix::new("remove the unreachable arm", vec![Edit::delete(d)]))
             .into_iter()
             .collect(),
+    }
+}
+
+/// The pattern at `span` of an `if let`, `while let` or `let .. else`
+/// (`of`) always matches, so what it does if it doesn't never happens.
+pub(super) fn irrefutable_let(span: Span, of: ElseOf) -> Warning {
+    let message = match of {
+        ElseOf::IfLet(_) => "so this `if let` always runs its block: use `let`",
+        ElseOf::WhileLet => "so this `while let` only ends by a `break`: use `loop` and `let`",
+        ElseOf::LetElse => "so the `else` never runs: use `let`",
+    };
+    Warning {
+        lint: Lint::UnreachablePatterns,
+        span,
+        message: format!("this pattern always matches, {message}"),
+        fixes: Vec::new(),
     }
 }
 

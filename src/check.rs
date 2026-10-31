@@ -1374,6 +1374,13 @@ impl Checker {
         self.modules.tries.contains(&span)
     }
 
+    /// Is `span` where the `else` arm of what an `if let`, `while let` or
+    /// `let .. else` means is, and if so, of which (see
+    /// `modules::Rewrite::if_let`)?
+    pub(crate) fn else_of(&self, span: Span) -> Option<modules::ElseOf> {
+        self.modules.elses.get(&span).copied()
+    }
+
     /// What a `return` here returns from, for messages: the innermost
     /// closure, or else the function.
     pub(crate) fn returning_from(&self) -> String {

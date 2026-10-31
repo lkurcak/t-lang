@@ -1832,7 +1832,12 @@ impl Interp<'_, '_> {
 
     fn eval(&mut self, e: &Expr) -> Result<Value, Flow> {
         Ok(match &e.kind {
-            ExprKind::For(_) | ExprKind::Range(..) | ExprKind::Try(..) | ExprKind::Index(..) => {
+            ExprKind::For(_)
+            | ExprKind::IfLet(..)
+            | ExprKind::WhileLet(..)
+            | ExprKind::Range(..)
+            | ExprKind::Try(..)
+            | ExprKind::Index(..) => {
                 unreachable!("rewritten when paths are resolved")
             }
             ExprKind::Int(n, t) => {

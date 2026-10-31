@@ -388,7 +388,12 @@ impl<'a> Builder<'a> {
         let span = e.span;
         match &e.kind {
             ExprKind::Move(_) => unreachable!("written by lift"),
-            ExprKind::For(_) | ExprKind::Range(..) | ExprKind::Try(..) | ExprKind::Index(..) => {
+            ExprKind::For(_)
+            | ExprKind::IfLet(..)
+            | ExprKind::WhileLet(..)
+            | ExprKind::Range(..)
+            | ExprKind::Try(..)
+            | ExprKind::Index(..) => {
                 unreachable!("rewritten when paths are resolved")
             }
             // A string literal's region is a new variable, constrained by

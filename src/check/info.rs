@@ -818,7 +818,12 @@ fn names(params: &[Ident]) -> crate::types::Params {
 fn each_annotation(e: &Expr, f: &mut impl FnMut(&TypeExpr)) {
     match &e.kind {
         ExprKind::Move(_) => unreachable!("written by lift"),
-        ExprKind::For(_) | ExprKind::Range(..) | ExprKind::Try(..) | ExprKind::Index(..) => {
+        ExprKind::For(_)
+            | ExprKind::IfLet(..)
+            | ExprKind::WhileLet(..)
+            | ExprKind::Range(..)
+            | ExprKind::Try(..)
+            | ExprKind::Index(..) => {
             unreachable!("rewritten when paths are resolved")
         }
         ExprKind::Int(..)
