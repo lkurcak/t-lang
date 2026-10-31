@@ -309,16 +309,11 @@ impl Checker {
     }
 
     /// The uses by which `site`, a struct or enum type or an associated
-    /// type, needs what's in type `t`: the impls its projections with a
-    /// head are worked out by, which are associated types of `assoc`, and
-    /// the dictionaries of what the structs and enums in it need of their
-    /// type arguments.
-    pub(in crate::check) fn type_uses<'a>(
-        &self,
-        site: &mut Site<'a, '_>,
-        assoc: &'a [(usize, String, String)],
-        t: &Type,
-    ) {
+    /// type, needs what's in type `t`: the dictionaries of the impls its
+    /// projections with a head are worked out by, from which their
+    /// associated types are reached, and of what the structs and enums in
+    /// it need of their type arguments.
+    pub(in crate::check) fn type_uses<'a>(&self, site: &mut Site<'a, '_>, t: &Type) {
         crate::check::each_adt(t, &mut |name, args| {
             if let Some(def) = self.adts.get(name) {
                 let s = Subst::new(&def.params, args);
@@ -328,15 +323,6 @@ impl Checker {
             }
         });
         each_proj(t, &mut |s, tr| {
-            if headless(s) {
-                return;
-            }
-            if let Some(name) = super::impls::proj_name(t, s, tr)
-                && let Some((k, args)) = self.traits.select(s, Some(tr), &[])
-                && let Some((_, _, node)) = assoc.iter().find(|(j, n, _)| *j == k && *n == name)
-            {
-                site.push(node, args, None);
-            }
             self.proof_uses(site, s, tr);
         });
     }

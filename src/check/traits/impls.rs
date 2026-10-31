@@ -219,7 +219,7 @@ impl Checker {
                         span: at,
                     });
                 });
-                self.type_uses(&mut Site::new(&ix, a, at, &mut uses), &nodes, &f);
+                self.type_uses(&mut Site::new(&ix, a, at, &mut uses), &f);
             }
         }
         for (k, n, node) in &nodes {
@@ -234,7 +234,7 @@ impl Checker {
                     span: d.span,
                 });
             });
-            self.type_uses(&mut Site::new(&ix, node, d.span, &mut uses), &nodes, t);
+            self.type_uses(&mut Site::new(&ix, node, d.span, &mut uses), t);
         }
         uses.extend(self.dict_uses(&ix, &nodes, true));
         uses.sort_by_key(|u| u.span.start);
@@ -717,14 +717,5 @@ fn rigid_on_type(t: &Type) -> Option<Type> {
     match t {
         Type::Proj(s, ..) if !matches!(**s, Type::Param(_) | Type::Proj(..)) => Some(t.clone()),
         t => t.parts().find_map(rigid_on_type),
-    }
-}
-
-/// The name of the associated type of the projection in `t` on `s` of
-/// trait `tr`.
-pub(super) fn proj_name(t: &Type, s: &Type, tr: &str) -> Option<String> {
-    match t {
-        Type::Proj(x, y, name) if **x == *s && y == tr => Some(name.clone()),
-        t => t.parts().find_map(|p| proj_name(p, s, tr)),
     }
 }
