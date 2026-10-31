@@ -3,9 +3,7 @@
 #[derive(Copy, Discard)]
 struct Span { lo: i64, hi: { h: i64 | h >= lo } }
 
-fn set(s: &mut Span, h: i64) {
-    s.hi = h;
-}
+fn set(s: &mut Span, h: i64) { s.hi = h; }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;

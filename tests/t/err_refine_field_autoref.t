@@ -4,9 +4,7 @@ trait Clear {
 }
 
 impl Clear for i64 {
-    fn clear(&mut self) {
-        *self = 0;
-    }
+    fn clear(&mut self) { *self = 0; }
 }
 
 #[derive(Copy, Discard)]
