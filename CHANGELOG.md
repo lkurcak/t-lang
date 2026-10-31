@@ -21,7 +21,7 @@ Step 29: closed and sealed traits. See
 
 ### Changed
 
-- An impl's bound on what isn't a type parameter of its type, like
+- A trait impl's bound on what isn't a type parameter of its type, like
   `where I::Item: B` or one on a parameter a bound decides, can only be
   of a closed trait: `Discard`, `Copy`, `Fn`, `FnMut`, `FnOnce`, `Int`,
   `Signed` or `Unsigned`. Of another, make the item type a parameter of

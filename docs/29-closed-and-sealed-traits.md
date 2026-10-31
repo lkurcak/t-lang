@@ -136,7 +136,9 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
 ```
 
 A `where` clause on a function is never a problem: it's only ever assumed
-in the function, and proved by its callers, never searched for.
+in the function, and proved by its callers, never searched for. Nor is
+one on an inherent impl, `impl<I: Iterator> W<I> where I::Item: Show`,
+whose bounds are proved where its methods are called.
 
 ## Packages that don't know each other
 

@@ -30,7 +30,12 @@ impl Checker {
     /// and two that don't know each other can't break it together, as they
     /// could a rule about a graph of every package's traits.
     pub(super) fn closed_bounds(&self) -> Result<(), Error> {
-        for d in &self.traits.impls[self.impls_from..] {
+        // An inherent impl's bounds are proved where its methods are
+        // called, never in a search for a trait's impl: they can't loop.
+        for d in self.traits.impls[self.impls_from..]
+            .iter()
+            .filter(|d| d.trait_name.is_some())
+        {
             let part = |t: &Type| matches!(t, Type::Param(p) if mentions(&d.self_ty, p));
             let open = |p: &&crate::traits::Pred| {
                 !part(&p.ty) && !crate::traits::CLOSED_TRAITS.contains(&p.trait_name.as_str())
