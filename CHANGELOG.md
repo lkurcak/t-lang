@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.44.0 (2026-10-31)
 
 Step 31: tests. See [docs/31-tests.md](docs/31-tests.md).
 
