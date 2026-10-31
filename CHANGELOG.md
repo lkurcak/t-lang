@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.43.0 (2026-10-31)
 
 Step 30: postconditions, and invariants across `&mut`. See
 [docs/30-postconditions.md](docs/30-postconditions.md).
