@@ -1,5 +1,5 @@
-// A result's refinement can name what's behind a `&mut` parameter: it's
-// about what that was at the call. `as_mut_slice` says how long the slice
+// A result's refinement can name what's behind a `&mut` parameter as it
+// was at the call, with `old(..)`. `as_mut_slice` says how long the slice
 // is: as long as the list was, which a slice to change can't change.
 use alloc::list::List;
 

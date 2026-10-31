@@ -1,5 +1,5 @@
-// A result's refinement is about the arguments as they were at the call:
-// `r` is how long the list was, not how long it is after `pop`.
+// `old(..)` in a result's refinement is the arguments as they were at the
+// call: `r` is how long the list was, not how long it is after `pop`.
 use alloc::list::List;
 
 fn shrink(l: &mut List<i64>) -> { r: usize | r == old(l.len()) } {
