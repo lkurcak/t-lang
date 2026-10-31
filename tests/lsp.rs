@@ -2488,13 +2488,7 @@ fn browses_open_library_sources_without_editing_them() {
     let r = d.ask(&mut c, "textDocument/typeDefinition", "buf:", 0, json!({}));
     library_location(&r["result"][0], "alloc", "raw.t", "struct RawBuf", "RawBuf");
     for method in ["textDocument/prepareRename", "textDocument/rename"] {
-        let r = d.ask(
-            &mut c,
-            method,
-            "len: { n",
-            0,
-            json!({"newName": "length"}),
-        );
+        let r = d.ask(&mut c, method, "len: { n", 0, json!({"newName": "length"}));
         assert!(
             r["error"]["message"]
                 .as_str()

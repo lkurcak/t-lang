@@ -2921,7 +2921,7 @@ impl Walk<'_> {
         // refinements: what's known of its other fields, which the call
         // can't change, proves them again after.
         for p in scoped.iter().flatten() {
-            if let Some((q, _)) = p.field_of() {
+            for (q, _) in self.constrained_around(p) {
                 let t = self.place_ty(&q);
                 self.fields_of(&q, &t);
             }
@@ -2973,23 +2973,8 @@ impl Walk<'_> {
             }
         }
         for p in post.scoped.iter().flatten() {
-            let Some((q, i)) = p.field_of() else {
-                continue;
-            };
-            let t = self.place_ty(&q);
-            if self
-                .refined_fields(&t)
-                .and_then(|f| f.constrained(i))
-                .is_none()
-            {
-                continue;
-            }
-            self.proving_fields = true;
-            let vals = self.fields_of(&q, &t);
-            self.proving_fields = false;
-            if let Some(vals) = vals {
-                self.need_fields(&t, &vals, Some(i), e.span)?;
-                self.assume_fields(&t, &vals);
+            for (q, i) in self.constrained_around(p) {
+                self.prove_fields(&q, i, e.span)?;
             }
         }
         Ok(())
@@ -3028,19 +3013,117 @@ impl Walk<'_> {
 
     /// If `x` is a field a refinement is about, why it can't be borrowed
     /// `&mut`.
+    ///
+    /// Or a place in such a field, through fields and boxes: a write to it
+    /// changes the field. Not through a reference: what's behind one isn't
+    /// part of the value, and no refinement can name what's behind a
+    /// `&mut`, nor anything write through a `&`.
     fn constrained_field(&self, x: &Expr) -> Option<String> {
-        let ExprKind::Field(base, _) = &x.unmoved().kind else {
-            return None;
-        };
-        let (derefs, i) = *self.cx.typed.fields.get(&x.id)?;
-        let mut t = self.ty_of(base);
-        for _ in 0..derefs {
-            t = match t {
-                Type::Ref(_, _, inner) | Type::Box(inner) => self.cx.solved(&inner),
+        let outer = x.unmoved();
+        let mut x = outer;
+        loop {
+            match &x.kind {
+                ExprKind::Field(base, _) => {
+                    let (derefs, i) = *self.cx.typed.fields.get(&x.id)?;
+                    let mut t = self.ty_of(base);
+                    let mut through_ref = false;
+                    for _ in 0..derefs {
+                        t = match t {
+                            Type::Box(inner) => self.cx.solved(&inner),
+                            Type::Ref(_, _, inner) => {
+                                through_ref = true;
+                                self.cx.solved(&inner)
+                            }
+                            _ => return None,
+                        };
+                    }
+                    if let Some(why) = self.refined_fields(&t).and_then(|f| f.constrained(i)) {
+                        return Some(match std::ptr::eq(x, outer) {
+                            true => why,
+                            false => format!("it's in `{}`: {why}", crate::pretty::expr_text(x)),
+                        });
+                    }
+                    if through_ref {
+                        return None;
+                    }
+                    x = base.unmoved();
+                }
+                ExprKind::Unary(UnOp::Deref, inner)
+                    if matches!(self.ty_of(inner), Type::Box(_)) =>
+                {
+                    x = inner.unmoved();
+                }
                 _ => return None,
-            };
+            }
         }
-        self.refined_fields(&t)?.constrained(i)
+    }
+
+    /// The fields that place `p` is, or is in, that a refinement is
+    /// about, innermost first, each as its struct's place and its index:
+    /// through fields and boxes, not references (see `constrained_field`).
+    fn constrained_around(&self, p: &Place) -> Vec<(Place, usize)> {
+        let mut out = Vec::new();
+        for k in (1..=p.path.len()).rev() {
+            let q = Place {
+                root: p.root,
+                path: p.path[..k - 1].to_vec(),
+            };
+            match p.path[k - 1] {
+                Proj::Field(i) => {
+                    let t = self.place_ty(&q);
+                    if self
+                        .refined_fields(&t)
+                        .and_then(|f| f.constrained(i))
+                        .is_some()
+                    {
+                        out.push((q, i));
+                    }
+                }
+                Proj::Deref => {
+                    if !matches!(self.place_ty(&q), Type::Box(_)) {
+                        break;
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Before a write to place `p`: what's known of the structs around it
+    /// whose refinements are about the fields it's in (but the one it's a
+    /// field of, which an assignment proves itself), while they're whole.
+    fn around_before(&mut self, p: &Place) {
+        for (q, i) in self.constrained_around(p) {
+            if q.then(Proj::Field(i)) != *p {
+                let t = self.place_ty(&q);
+                self.fields_of(&q, &t);
+            }
+        }
+    }
+
+    /// After a write to place `p`: those structs' refinements, proved again.
+    fn around_after(&mut self, p: &Place, span: Span) -> Result<(), Error> {
+        for (q, i) in self.constrained_around(p) {
+            if q.then(Proj::Field(i)) != *p {
+                self.prove_fields(&q, i, span)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The refinements of the struct at `q` about its field `i` hold, as
+    /// it is now, after what's in that field changed: proved of its
+    /// fields' values, without assuming them, and then known.
+    fn prove_fields(&mut self, q: &Place, i: usize, span: Span) -> Result<(), Error> {
+        let t = self.place_ty(q);
+        self.proving_fields = true;
+        let vals = self.fields_of(q, &t);
+        self.proving_fields = false;
+        if let Some(vals) = vals {
+            self.need_fields(&t, &vals, Some(i), span)?;
+            self.assume_fields(&t, &vals);
+        }
+        Ok(())
     }
 
     /// The condition `c` as a formula, and what it is if it isn't a `bool`.
@@ -3421,7 +3504,9 @@ impl Walk<'_> {
                             self.need_fields(&t, &vals, Some(i), value.span)?;
                         }
                         if let Some(p) = &target {
+                            self.around_before(p);
                             self.write(p, Some(new), Some(e.span));
+                            self.around_after(p, value.span)?;
                         }
                     }
                     _ => {
@@ -3436,7 +3521,9 @@ impl Walk<'_> {
                             }
                         };
                         if let Some(p) = &target {
+                            self.around_before(p);
                             self.write(p, Some(new), Some(e.span));
+                            self.around_after(p, value.span)?;
                         }
                     }
                 }
