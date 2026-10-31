@@ -1052,7 +1052,12 @@ impl Cx<'_, '_, '_> {
 
     fn expr(&mut self, e: &Expr) -> Expr {
         let kind = match &e.kind {
-            ExprKind::For(_) | ExprKind::Range(..) | ExprKind::Try(..) | ExprKind::Index(..) => {
+            ExprKind::For(_)
+            | ExprKind::IfLet(..)
+            | ExprKind::WhileLet(..)
+            | ExprKind::Range(..)
+            | ExprKind::Try(..)
+            | ExprKind::Index(..) => {
                 unreachable!("rewritten when paths are resolved")
             }
             ExprKind::Int(n, _) => {
@@ -1139,11 +1144,13 @@ impl Cx<'_, '_, '_> {
                             ty,
                             init,
                             span,
+                            ..
                         } => Stmt::Let {
                             span: *span,
+                            els: None,
                             pat: self.pattern(pat),
                             ty: ty.as_ref().map(|t| Box::new(self.ty(t))),
-                            init: init.as_ref().map(|e| self.expr(e)),
+                            init: init.as_ref().map(|e| Box::new(self.expr(e))),
                         },
                         Stmt::Expr(e) => Stmt::Expr(self.expr(e)),
                         Stmt::BlockLike(e) => Stmt::BlockLike(self.expr(e)),

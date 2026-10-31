@@ -790,3 +790,65 @@ fn f() {
 "
     );
 }
+
+#[test]
+fn prints_if_let_like_if_and_let_else_like_let() {
+    let src = "fn f() { if let Option::Some(x) = o { x } else if let Option::Some(y) = p { y } else { 0 }; 'a: while let Option::Some(x) = it.next() { g(x); } let Option::Some(x) = o else { return 0 }; let Result::Ok(v) = r else { log(1); return 0; }; }\n";
+    assert_eq!(
+        fmt(src),
+        "\
+fn f() {
+    if let Option::Some(x) = o { x } else if let Option::Some(y) = p { y } else { 0 };
+    'a: while let Option::Some(x) = it.next() {
+        g(x);
+    }
+    let Option::Some(x) = o else { return 0 };
+    let Result::Ok(v) = r else {
+        log(1);
+        return 0;
+    };
+}
+"
+    );
+}
+
+#[test]
+fn keeps_the_parentheses_a_let_needs() {
+    // An `&&` would start a chain, and a `}` before `else` would end an `if`.
+    let src = "fn f() { if let true = (a && b) { 1 } else { 2 }; while let true = (a || b) {} let true = (a && b) else { return }; let Option::Some(x) = (if c { o } else { p }) else { return }; let P { x } = (P { x: 1 }) else { return }; let Option::Some(x) = (match o { q => q }) else { return }; }\n";
+    assert_eq!(
+        fmt(src),
+        "\
+fn f() {
+    if let true = (a && b) { 1 } else { 2 };
+    while let true = (a || b) {}
+    let true = (a && b) else { return };
+    let Option::Some(x) = (if c { o } else { p }) else { return };
+    let P { x } = (P { x: 1 }) else { return };
+    let Option::Some(x) = (match o {
+        q => q,
+    }) else {
+        return
+    };
+}
+"
+    );
+}
+
+#[test]
+fn breaks_a_long_let_else() {
+    let src = "fn f() { let Option::Some(something_long) = a_function_with_a_long_name(and_an_argument, and_another) else { return Result::Err(an_error) }; }\n";
+    assert_eq!(
+        fmt(src),
+        "\
+fn f() {
+    let Option::Some(something_long) = a_function_with_a_long_name(
+        and_an_argument,
+        and_another,
+    ) else {
+        return Result::Err(an_error)
+    };
+}
+"
+    );
+}

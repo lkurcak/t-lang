@@ -256,7 +256,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
 | Missing | Why it's missing | Step |
 |---|---|---|
 | converting the error, `From` | needs traits with type parameters | — |
-| `let p = e else { .. };`, `if let` | each needs rules of its own, as there are no tuples to rewrite them with; `?` covers most of what they'd be for | — |
+| `let p = e else { .. };`, `if let` | each needs rules of its own, as there are no tuples to rewrite them with; `?` covers most of what they'd be for | 28 ✅ ([docs](28-if-let.md)) |
 | `try { .. }` blocks | a `?` in one would stop the block, not the function: a labelled block to `break` out of, which T doesn't have (docs/05.1) | — |
 | `?` in `main` | `main` returns `()`: it would need an exit status, so an operating system | — |
 

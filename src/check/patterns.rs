@@ -1,7 +1,8 @@
 //! `match` and patterns: the types of what each pattern binds, and which
 //! arms can never match or are missing (see docs/02-adts.md).
 
-use super::lints::{mergeable, narrowable, unreachable_alt, unreachable_arm};
+use super::lints::{irrefutable_let, mergeable, narrowable, unreachable_alt, unreachable_arm};
+use super::modules::ElseOf;
 use super::{Checker, Local, plural, result_span};
 use crate::ast::*;
 use crate::error::{Error, Span};
@@ -26,6 +27,15 @@ impl Checker {
         arms: &[Arm],
         want: Option<&Type>,
     ) -> Result<Type, Error> {
+        // What an `if let`, `while let` or `let .. else` means, if it is:
+        // its second arm is made up (`modules::Rewrite::if_let`).
+        let made = arms.get(1).and_then(|a| self.else_of(a.pat.span));
+        // With no `else`, the `if let` is a `()`, whatever's wanted, as an
+        // `if`'s is.
+        let want = match made {
+            Some(ElseOf::IfLet(false)) => None,
+            _ => want,
+        };
         let t = self.synth(scrutinee)?;
         let mut pats = Vec::new();
         let mut binds = Vec::new();
@@ -41,6 +51,7 @@ impl Checker {
         let written: Vec<Pattern> = arms.iter().map(|a| a.pat.clone()).collect();
         for r in exhaust::redundant(&self.adts, &t, &pats) {
             self.warnings.push(match r {
+                Redundant::Arm(1) if let Some(of) = made => irrefutable_let(arms[0].pat.span, of),
                 Redundant::Arm(i) => unreachable_arm(arms, i),
                 Redundant::Alt(span) => unreachable_alt(span, &written),
                 Redundant::Trim(span, lo, hi) => narrowable(span, lo, hi, &written),
@@ -70,8 +81,14 @@ impl Checker {
                 (Some(r), None) => {
                     let r = r.clone();
                     let u = self.synth(&arm.body)?;
-                    let joined = self.join(&r, &u, result_span(&arm.body), |r, u| {
-                        format!("`match` arms have different types: `{r}` and `{u}`")
+                    let joined = self.join(&r, &u, result_span(&arm.body), |r, u| match made {
+                        Some(ElseOf::IfLet(false)) => {
+                            format!("`if let` without `else` must have type `()`, found `{r}`")
+                        }
+                        Some(ElseOf::IfLet(true)) => {
+                            format!("`if let` and `else` have different types: `{r}` and `{u}`")
+                        }
+                        _ => format!("`match` arms have different types: `{r}` and `{u}`"),
                     })?;
                     result = Some(joined);
                 }

@@ -246,7 +246,11 @@ pub(super) fn to_closure(f: &FnDecl, stmts: &[Stmt], k: usize, tail: Option<&Exp
             Stmt::Fn(g) => j == k || !g.body.mentions(name),
             Stmt::Type(_) => true,
             Stmt::Let { init: None, .. } => true,
-            Stmt::Let { init: Some(e), .. } | Stmt::Expr(e) | Stmt::BlockLike(e) => match j < k {
+            Stmt::Let { init: Some(e), .. } => match j < k {
+                true => !e.mentions(name),
+                false => only_called(e, name),
+            },
+            Stmt::Expr(e) | Stmt::BlockLike(e) => match j < k {
                 true => !e.mentions(name),
                 false => only_called(e, name),
             },

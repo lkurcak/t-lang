@@ -1087,13 +1087,25 @@ fn dropped(
                 LocalKind::Temp => "part of the value it matches".to_string(),
                 _ => format!("`{what}`"),
             };
-            Error::ty(
-                span,
-                format!(
-                    "this pattern throws away {part}, and {isnt}; bind it to a variable instead, \
-                     and use that up"
+            match b.cx.else_of(span) {
+                // The `else` of an `if let` (`modules::Rewrite::if_let`).
+                Some(of) => Error::ty(
+                    span,
+                    format!(
+                        "if the pattern of this {} doesn't match, it throws away {part}, and \
+                         {isnt}; match it with a `match` instead, binding it in an arm, and use \
+                         that up",
+                        of.what()
+                    ),
                 ),
-            )
+                None => Error::ty(
+                    span,
+                    format!(
+                        "this pattern throws away {part}, and {isnt}; bind it to a variable \
+                         instead, and use that up"
+                    ),
+                ),
+            }
         }
     };
     Err(e)

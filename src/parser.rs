@@ -1976,15 +1976,56 @@ impl Parser {
             None
         };
         let init = match self.eat(&Tok::Eq) {
-            true => Some(self.expr()?),
+            true => Some(Box::new(self.expr()?)),
             false => None,
+        };
+        let els = match (&init, *self.peek() == Tok::Else) {
+            (Some(init), true) => {
+                if self.toks[self.pos - 1].tok == Tok::RBrace {
+                    return Err(Error::syntax(
+                        self.span(),
+                        "what's before the `else` of a `let .. else` can't end in `}`: put it \
+                         in parentheses",
+                    ));
+                }
+                no_chain(init, "a `let .. else`")?;
+                if let Some(ty) = &ty {
+                    return Err(Error::syntax(
+                        ty.span,
+                        "a `let .. else` can't have a type: give the pattern's type arguments \
+                         instead, as in `Option::<i64>::Some(x)`",
+                    ));
+                }
+                self.bump();
+                if *self.peek() != Tok::LBrace {
+                    return Err(self.unexpected("`{` after `else`"));
+                }
+                Some(Box::new(self.block()?))
+            }
+            _ => None,
         };
         let end = self.expect(Tok::Semi)?;
         Ok(Stmt::Let {
             pat,
             ty: ty.map(Box::new),
             init,
+            els,
             span: start.to(end),
+        })
+    }
+
+    /// `let pat = e`, after the `if` or `while` of an `if let` or `while
+    /// let` (`what`).
+    fn let_cond(&mut self, what: &str) -> Result<LetCond, Error> {
+        let let_span = self.expect(Tok::Let)?;
+        let pat = self.pattern()?;
+        self.expect(Tok::Eq)?;
+        let expr = self.structs(false, Self::expr)?;
+        no_chain(&expr, what)?;
+        Ok(LetCond {
+            let_span,
+            pat,
+            expr,
         })
     }
 
@@ -2361,7 +2402,10 @@ impl Parser {
 
     fn if_expr(&mut self) -> Result<Expr, Error> {
         let start = self.expect(Tok::If)?;
-        let cond = self.structs(false, Self::expr)?;
+        let cond = match self.peek() {
+            Tok::Let => Err(self.let_cond("an `if let`")?),
+            _ => Ok(self.structs(false, Self::expr)?),
+        };
         let then = self.block()?;
         let els = if self.eat(&Tok::Else) {
             Some(Box::new(if *self.peek() == Tok::If {
@@ -2373,8 +2417,12 @@ impl Parser {
             None
         };
         let span = start.to(els.as_ref().map_or(then.span, |e| e.span));
+        let kind = match cond {
+            Ok(c) => ExprKind::If(Box::new(c), Box::new(then), els),
+            Err(c) => ExprKind::IfLet(Box::new(c), Box::new(then), els),
+        };
         Ok(Expr {
-            kind: ExprKind::If(Box::new(cond), Box::new(then), els),
+            kind,
             span,
             id: self.id(),
         })
@@ -2413,6 +2461,16 @@ impl Parser {
             });
         }
         let (cond, body) = match self.peek() {
+            Tok::While if *self.peek2() == Tok::Let => {
+                self.bump();
+                let c = self.let_cond("a `while let`")?;
+                let body = self.block()?;
+                return Ok(Expr {
+                    span: start.to(body.span),
+                    kind: ExprKind::WhileLet(label, Box::new(c), Box::new(body)),
+                    id: self.id(),
+                });
+            }
             Tok::While => {
                 self.bump();
                 (Some(self.structs(false, Self::expr)?), self.block()?)
@@ -2876,6 +2934,24 @@ impl Lit {
 }
 
 /// Can an expression start with `tok`?
+/// Checks that `e`, what an `if let`, `while let` or `let .. else` (`what`)
+/// matches, isn't an `&&` or `||` but in parentheses: chains of `let`s and
+/// conditions may mean that one day.
+fn no_chain(e: &Expr, what: &str) -> Result<(), Error> {
+    if let ExprKind::Binary(op @ (BinOp::And | BinOp::Or), l, _) = &e.kind
+        && l.span.start == e.span.start
+    {
+        return Err(Error::syntax(
+            e.span,
+            format!(
+                "`{op}` can't come at the top of what {what} matches (yet): put it in \
+                 parentheses, or use an `if` inside"
+            ),
+        ));
+    }
+    Ok(())
+}
+
 fn starts_expr(tok: &Tok) -> bool {
     matches!(
         tok,

@@ -2488,6 +2488,11 @@ impl Walk<'_> {
                     && let Some(f) = divided(op, &a, k, q)
                 {
                     self.fact(f);
+                } else if let Val::Int(q) = &result
+                    && op == BinOp::Rem
+                    && let Some(f) = remainder(&a, &b, q)
+                {
+                    self.fact(f);
                 }
                 result
             }
@@ -3221,7 +3226,12 @@ impl Walk<'_> {
                 }
             }
             ExprKind::Move(x) => self.expr(x),
-            ExprKind::For(_) | ExprKind::Range(..) | ExprKind::Try(..) | ExprKind::Index(..) => {
+            ExprKind::For(_)
+            | ExprKind::IfLet(..)
+            | ExprKind::WhileLet(..)
+            | ExprKind::Range(..)
+            | ExprKind::Try(..)
+            | ExprKind::Index(..) => {
                 unreachable!("rewritten when paths are resolved")
             }
         }
@@ -3540,6 +3550,35 @@ fn divided(op: BinOp, a: &Lin, k: i128, q: &Lin) -> Option<Formula> {
         Formula::or([pos.not(), when_pos]),
         Formula::or([neg.not(), when_neg]),
     ]))
+}
+
+/// What the logic knows of `q = a % b`, by any `b`, which is linear in
+/// all three (lemma L4 of step 28): rounding towards zero, the remainder
+/// is less than `b` from 0, no further from 0 than `a`, and 0 or of `a`'s
+/// sign. These hold of the integers, and so of every integer type, as `%`
+/// gives the integers' remainder whenever it doesn't fail: it's less than
+/// `b` from 0, so it fits whatever `b` does, and the one case that fails,
+/// the least value by -1, is proved not to happen before this is known
+/// (and its remainder, 0, would satisfy it anyway). Nothing for `b = 0`,
+/// which fails. `None` if a number gets too big.
+fn remainder(a: &Lin, b: &Lin, q: &Lin) -> Option<Formula> {
+    let zero = Lin::constant(0);
+    let le = Formula::le;
+    let (a_pos, a_neg) = (le(&zero, a)?, le(a, &zero)?);
+    // Less than `|b|` from 0, at `lo..=hi`, one way or the other of it.
+    let cases = [
+        (Formula::lt(&zero, b)?, b.scale(-1)?.plus(1)?, b.plus(-1)?),
+        (Formula::lt(b, &zero)?, b.plus(1)?, b.scale(-1)?.plus(-1)?),
+    ];
+    let mut parts = Vec::new();
+    for (sign, lo, hi) in cases {
+        let when = |p: Formula, c: [Formula; 3]| {
+            Formula::or([Formula::and([sign.clone(), p]).not(), Formula::and(c)])
+        };
+        parts.push(when(a_pos.clone(), [le(&zero, q)?, le(q, &hi)?, le(q, a)?]));
+        parts.push(when(a_neg.clone(), [le(&lo, q)?, le(q, &zero)?, le(a, q)?]));
+    }
+    Some(Formula::and(parts))
 }
 
 /// That `pat` matches `s`, if that can be said: `None` for a pattern of a

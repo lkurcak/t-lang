@@ -96,6 +96,26 @@ pub(crate) struct Module {
     pub(crate) values: HashMap<String, Binding>,
 }
 
+/// Which `let` an `else` arm made up by `Rewrite::if_let` is for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ElseOf {
+    /// An `if let`, and whether it has an `else` written.
+    IfLet(bool),
+    WhileLet,
+    LetElse,
+}
+
+impl ElseOf {
+    /// What it is, for messages: "`if let`".
+    pub(crate) fn what(self) -> &'static str {
+        match self {
+            ElseOf::IfLet(_) => "`if let`",
+            ElseOf::WhileLet => "`while let`",
+            ElseOf::LetElse => "`let .. else`",
+        }
+    }
+}
+
 /// A name a `use` brings in, and whether anything uses it.
 #[derive(Clone, Debug)]
 pub(crate) struct Import {
@@ -121,6 +141,13 @@ pub(crate) struct Modules {
     /// (`Rewrite::try_expr`), for saying what's wrong with them in terms of
     /// the `?`.
     pub(crate) tries: HashSet<Span>,
+    /// The `else` arm of the `match` each `if let`, `while let` and `let ..
+    /// else` means, by where its pattern is, the `let` (`Rewrite::if_let`):
+    /// for saying what's wrong with it in terms of what was written.
+    pub(crate) elses: HashMap<Span, ElseOf>,
+    /// The pattern, `_`, of the `let _: ! = ..` each `let .. else` puts its
+    /// `else` in, for saying what's wrong if it can finish.
+    pub(crate) must_leave: HashSet<NodeId>,
     pub(crate) imports: Vec<Import>,
     /// The symbol of each trait, by its index in `Program::traits`.
     pub(crate) trait_symbols: Vec<String>,
@@ -458,6 +485,19 @@ impl Resolver {
             .collect();
         r.m.trait_symbols.extend(symbols.iter().cloned());
         let all = r.m.trait_symbols.clone();
+        let variants = prog
+            .types
+            .iter()
+            .map(|d| match d {
+                TypeDecl::Enum(d) => Some(
+                    d.variants
+                        .iter()
+                        .map(|v| (v.name.name.clone(), v.fields.len()))
+                        .collect(),
+                ),
+                TypeDecl::Struct(_) | TypeDecl::Alias(_) => None,
+            })
+            .collect();
         let mut w = Rewrite {
             r,
             symbols: &all,
@@ -465,6 +505,7 @@ impl Resolver {
             params: Vec::new(),
             interface: None,
             next_id: prog.next_id,
+            variants,
         };
         let rewritten = w.program(prog, from);
         // What's rewritten stays rewritten, ids and all, even past an error.
@@ -960,6 +1001,9 @@ struct Rewrite<'r> {
     /// `Program::next_id`, while the program is being rewritten: the nodes
     /// made here take ids from it.
     next_id: u32,
+    /// The variants of each enum, by its index in `Program::types`, by name
+    /// and how many fields each has; `None` for a struct or alias.
+    variants: Vec<Option<Vec<(String, usize)>>>,
 }
 
 impl Rewrite<'_> {
@@ -1380,12 +1424,43 @@ impl Rewrite<'_> {
     }
 
     fn expr(&mut self, e: &mut Expr) -> Result<(), Error> {
+        if let ExprKind::Block(stmts, tail) = &mut e.kind
+            && let Some(i) = stmts
+                .iter()
+                .position(|s| matches!(s, Stmt::Let { els: Some(_), .. }))
+        {
+            self.let_else(stmts, tail, i, e.span);
+        }
         match &mut e.kind {
+            ExprKind::IfLet(..) => {
+                let ExprKind::IfLet(c, then, els) = std::mem::replace(&mut e.kind, ExprKind::Unit)
+                else {
+                    unreachable!("matched above");
+                };
+                let of = ElseOf::IfLet(els.is_some());
+                let els = els.map(|e| *e).unwrap_or_else(|| Expr {
+                    kind: ExprKind::Unit,
+                    span: Span::new(then.span.end, then.span.end),
+                    id: self.id(),
+                });
+                e.kind = self.if_let(*c, *then, els, of);
+                return self.expr(e);
+            }
+            ExprKind::WhileLet(label, _, body) => {
+                no_break_value(body, "`while let`", label.as_ref().map(|l| &l.name.name), 0)?;
+                let ExprKind::WhileLet(label, c, body) =
+                    std::mem::replace(&mut e.kind, ExprKind::Unit)
+                else {
+                    unreachable!("matched above");
+                };
+                e.kind = self.while_let(label, *c, *body, e.span);
+                return self.expr(e);
+            }
             ExprKind::For(f) => {
                 self.pattern(&mut f.pat)?;
                 self.expr(&mut f.iter)?;
                 self.expr(&mut f.body)?;
-                no_break_value(&f.body, f.label.as_ref().map(|l| &l.name.name), 0)?;
+                no_break_value(&f.body, "`for`", f.label.as_ref().map(|l| &l.name.name), 0)?;
                 let ExprKind::For(f) = std::mem::replace(&mut e.kind, ExprKind::Unit) else {
                     unreachable!("matched above");
                 };
@@ -1623,7 +1698,8 @@ impl Rewrite<'_> {
                 id: self.id(),
             },
             ty: None,
-            init: Some(f.iter),
+            init: Some(Box::new(f.iter)),
+            els: None,
             span: at(k, iter_span.end),
         };
         let borrow = Expr {
@@ -1825,6 +1901,297 @@ impl Rewrite<'_> {
         ExprKind::Match(Box::new(branch), vec![go_on, stop])
     }
 
+    /// What `if let pat = x { then } else { els }` means (lemma L1 of
+    /// step 28), and `while let` and `let .. else` too, as `of` says:
+    ///
+    /// ```text
+    /// match x {
+    ///     pat => then,
+    ///     other => els,
+    /// }
+    /// ```
+    ///
+    /// where `other` matches what `pat` doesn't (`Rewrite::else_pattern`).
+    /// Nothing about them needs a rule of its own. The made-up pattern is
+    /// where the `let` is, which is where errors about it are, in terms of
+    /// what was written (`Modules::elses`).
+    fn if_let(&mut self, c: LetCond, then: Expr, els: Expr, of: ElseOf) -> ExprKind {
+        let at = c.let_span;
+        self.r.m.elses.entry(at).or_insert(of);
+        let other = self.else_pattern(&c.pat, at);
+        ExprKind::Match(
+            Box::new(c.expr),
+            vec![
+                Arm {
+                    pat: c.pat,
+                    body: then,
+                },
+                Arm {
+                    pat: other,
+                    body: els,
+                },
+            ],
+        )
+    }
+
+    /// What `'a: while let pat = x { body }`, at `span`, means:
+    ///
+    /// ```text
+    /// 'a: loop {
+    ///     match x {
+    ///         pat => body,
+    ///         other => break,
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// with `other` as in `Rewrite::if_let`. Its body can't `break` with a
+    /// value, as a `while`'s can't, which the caller checks.
+    fn while_let(&mut self, label: Option<Label>, c: LetCond, body: Expr, span: Span) -> ExprKind {
+        let at = Span::new(c.let_span.start, c.let_span.start);
+        let stop = Expr {
+            kind: ExprKind::Break(None, None),
+            span: at,
+            id: self.id(),
+        };
+        let step = Expr {
+            kind: self.if_let(c, body, stop, ElseOf::WhileLet),
+            span,
+            id: self.id(),
+        };
+        let body = Expr {
+            kind: ExprKind::Block(vec![Stmt::BlockLike(step)], None),
+            span,
+            id: self.id(),
+        };
+        ExprKind::Loop(label, Box::new(body))
+    }
+
+    /// Rewrites the `let .. else` that's statement `i` of a block, at
+    /// `span`, with the rest of the block, as what they mean (lemma L2 of
+    /// step 28):
+    ///
+    /// ```text
+    /// { before; let pat = x else { els }; after }
+    /// ```
+    ///
+    /// is
+    ///
+    /// ```text
+    /// {
+    ///     before;
+    ///     match x {
+    ///         pat => { after },
+    ///         other => { let _: ! = { els }; },
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// So what `pat` binds is there in `after` and not in `els`, and `els`
+    /// can't finish, as it's a `!`. The functions and types declared in
+    /// `after` stay in the outer block, all of which they're in scope in;
+    /// they can't use the locals around them, so where in it they are
+    /// makes no difference to them.
+    fn let_else(
+        &mut self,
+        stmts: &mut Vec<Stmt>,
+        tail: &mut Option<Box<Expr>>,
+        i: usize,
+        span: Span,
+    ) {
+        let rest = stmts.split_off(i + 1);
+        let Some(Stmt::Let {
+            pat,
+            init: Some(init),
+            els: Some(els),
+            span: at,
+            ..
+        }) = stmts.pop()
+        else {
+            unreachable!("a `let .. else`, which the parser gives a value");
+        };
+        let (items, after): (Vec<Stmt>, Vec<Stmt>) = rest
+            .into_iter()
+            .partition(|s| matches!(s, Stmt::Fn(_) | Stmt::Type(_)));
+        stmts.extend(items);
+        let let_span = Span::new(at.start, at.start + 3);
+        self.r.m.elses.insert(let_span, ElseOf::LetElse);
+        let after = Expr {
+            kind: ExprKind::Block(after, tail.take()),
+            span: Span::new(at.end, span.end),
+            id: self.id(),
+        };
+        let never = Pattern {
+            kind: PatternKind::Wild,
+            span: Span::new(els.span.start, els.span.start),
+            id: self.id(),
+        };
+        self.r.m.must_leave.insert(never.id);
+        let leave = Stmt::Let {
+            pat: never,
+            ty: Some(Box::new(TypeExpr {
+                kind: TypeExprKind::Never,
+                span: Span::new(els.span.start, els.span.start),
+                id: self.id(),
+            })),
+            span: els.span,
+            init: Some(els),
+            els: None,
+        };
+        let els = Expr {
+            kind: ExprKind::Block(vec![leave], None),
+            span: Span::new(at.end, at.end),
+            id: self.id(),
+        };
+        let c = LetCond {
+            let_span,
+            pat,
+            expr: *init,
+        };
+        *tail = Some(Box::new(Expr {
+            kind: ExprKind::IfLet(Box::new(c), Box::new(after), Some(Box::new(els))),
+            span: Span::new(at.start, span.end),
+            id: self.id(),
+        }));
+    }
+
+    /// A pattern that matches what `p` doesn't, and takes it apart as far
+    /// as `p` looks at it (lemma L3 of step 28): the variants of its enum
+    /// that `p` doesn't match whatever is in them, with a `_` for each
+    /// field, its struct with `..`, or an array of `_`. So it uses up what
+    /// it matches, as any pattern of a struct or variant does, and throws
+    /// away only what's in it, which no code can name, so that must be
+    /// `Discard`. A `_` where it can't tell which enum `p` is of, by its
+    /// name at the level of the module (a local type's, or an alias's):
+    /// that leaves a linear value unused, which is an error, so it only
+    /// rejects more. Matching all `p` doesn't is all it's for: if it's
+    /// wrong, the `match` isn't exhaustive, which is an error too.
+    ///
+    /// Its alternatives all have one span, the `let`'s, which is how the
+    /// exhaustiveness checker tells them apart: so one that's never
+    /// reached, as `Some(_)` after `Some(0..=255)` of a `u8`, isn't
+    /// reported, only all of them, as the arm, when `p` always matches.
+    fn else_pattern(&mut self, p: &Pattern, at: Span) -> Pattern {
+        let empty = Span::new(at.start, at.start);
+        let alts: Vec<&Pattern> = match &p.kind {
+            PatternKind::Or(alts) => alts.iter().collect(),
+            _ => vec![p],
+        };
+        let mut kind = PatternKind::Wild;
+        match &alts[0].kind {
+            PatternKind::Variant(ty, ..)
+                if alts.iter().all(
+                    |a| matches!(&a.kind, PatternKind::Variant(t, ..) if t.name == ty.name),
+                ) =>
+            {
+                if let Some(variants) = self.variants_of(ty) {
+                    let missed: Vec<(String, usize)> = variants
+                        .into_iter()
+                        .filter(|(name, _)| {
+                            !alts.iter().any(|a| match &a.kind {
+                                PatternKind::Variant(_, _, v, pats) => {
+                                    v.name == *name && !pats.iter().any(|p| self.refutable(p))
+                                }
+                                _ => false,
+                            })
+                        })
+                        .collect();
+                    let mut made: Vec<Pattern> = Vec::new();
+                    for (name, n) in missed {
+                        let fields = (0..n).map(|_| self.wild(at)).collect();
+                        let kind = PatternKind::Variant(
+                            Ident {
+                                name: ty.name.clone(),
+                                span: empty,
+                                id: self.id(),
+                            },
+                            Vec::new(),
+                            Ident {
+                                name,
+                                span: empty,
+                                id: self.id(),
+                            },
+                            fields,
+                        );
+                        made.push(Pattern {
+                            kind,
+                            span: at,
+                            id: self.id(),
+                        });
+                    }
+                    kind = match made.len() {
+                        0 => PatternKind::Wild,
+                        1 => made.pop().expect("one").kind,
+                        _ => PatternKind::Or(made),
+                    };
+                }
+            }
+            PatternKind::Struct(ty, ..) if alts.len() == 1 && self.refutable(p) => {
+                kind = PatternKind::Struct(
+                    Ident {
+                        name: ty.name.clone(),
+                        span: empty,
+                        id: self.id(),
+                    },
+                    Vec::new(),
+                    Vec::new(),
+                    true,
+                );
+            }
+            PatternKind::Array(pats) if alts.len() == 1 && self.refutable(p) => {
+                kind = PatternKind::Array(pats.iter().map(|_| self.wild(at)).collect());
+            }
+            _ => {}
+        }
+        Pattern {
+            kind,
+            span: at,
+            id: self.id(),
+        }
+    }
+
+    fn wild(&mut self, at: Span) -> Pattern {
+        Pattern {
+            kind: PatternKind::Wild,
+            span: at,
+            id: self.id(),
+        }
+    }
+
+    /// The variants of the enum `ty` names, as far as the module can tell:
+    /// not a local type's, nor an alias's.
+    fn variants_of(&mut self, ty: &Ident) -> Option<Vec<(String, usize)>> {
+        let k = if ty.name.contains("::") {
+            match self.path(ty, Ns::Types).ok()?.item {
+                Item::Type(k) => k,
+                _ => return None,
+            }
+        } else if self.params.contains(&ty.name) {
+            return None;
+        } else {
+            self.r.m.type_named(self.module, &ty.name)?
+        };
+        self.variants.get(k)?.clone()
+    }
+
+    /// Can `p` fail to match, as far as its shape says? Where it can't
+    /// tell, yes: then the `else` an `if let` with it means has an arm that
+    /// may never match, which only adds what it throws away.
+    fn refutable(&mut self, p: &Pattern) -> bool {
+        match &p.kind {
+            PatternKind::Wild | PatternKind::Bind(..) | PatternKind::Unit => false,
+            PatternKind::Int(..) | PatternKind::Range(..) | PatternKind::Bool(_) => true,
+            PatternKind::Variant(ty, _, _, pats) => {
+                self.variants_of(ty).is_none_or(|vs| vs.len() != 1)
+                    || pats.iter().any(|p| self.refutable(p))
+            }
+            PatternKind::Struct(_, _, fields, _) => fields.iter().any(|f| self.refutable(&f.pat)),
+            PatternKind::Array(pats) => pats.iter().any(|p| self.refutable(p)),
+            PatternKind::Or(alts) => alts.iter().all(|p| self.refutable(p)),
+            PatternKind::Move(_) => unreachable!("written by lift"),
+        }
+    }
+
     fn pattern(&mut self, p: &mut Pattern) -> Result<(), Error> {
         match &mut p.kind {
             PatternKind::Move(_) => unreachable!("written by lift"),
@@ -1870,11 +2237,11 @@ pub(crate) const FOR_ITERATOR: &str = "{for}";
 /// program can write (see `Rewrite::try_expr`).
 pub(crate) const TRY_VALUE: &str = "{try}";
 
-/// Checks that no `break` in `e`, the body of a `for` labelled `label`, if
-/// it is, gives that loop a value: a `for` can end without a `break`, so it
-/// can only be `()`. `depth` is how many loops in it `e` is, which an
-/// unlabelled `break` would be for instead.
-fn no_break_value(e: &Expr, label: Option<&String>, depth: usize) -> Result<(), Error> {
+/// Checks that no `break` in `e`, the body of a `for` or `while let`
+/// (`what`) labelled `label`, if it is, gives that loop a value: it can end
+/// without a `break`, so it can only be `()`. `depth` is how many loops in
+/// it `e` is, which an unlabelled `break` would be for instead.
+fn no_break_value(e: &Expr, what: &str, label: Option<&String>, depth: usize) -> Result<(), Error> {
     match &e.kind {
         ExprKind::Break(l, Some(_)) => {
             let ours = match l {
@@ -1884,23 +2251,25 @@ fn no_break_value(e: &Expr, label: Option<&String>, depth: usize) -> Result<(), 
             if ours {
                 return Err(Error::ty(
                     e.span,
-                    "a `break` with a value only works in a `loop`: a `for` loop can end \
-                     without a `break`",
+                    format!(
+                        "a `break` with a value only works in a `loop`: a {what} loop can end \
+                         without a `break`, and then it has no value to give"
+                    ),
                 ));
             }
         }
         // A closure's body is a function of its own.
         ExprKind::Lambda(_) => return Ok(()),
-        ExprKind::Loop(..) | ExprKind::While(..) | ExprKind::For(_) => {
+        ExprKind::Loop(..) | ExprKind::While(..) | ExprKind::WhileLet(..) | ExprKind::For(_) => {
             for c in e.children() {
-                no_break_value(c, label, depth + 1)?;
+                no_break_value(c, what, label, depth + 1)?;
             }
             return Ok(());
         }
         _ => {}
     }
     for c in e.children() {
-        no_break_value(c, label, depth)?;
+        no_break_value(c, what, label, depth)?;
     }
     Ok(())
 }
@@ -1991,6 +2360,11 @@ pub(crate) fn children_mut(e: &mut Expr) -> Vec<&mut Expr> {
             vec![&mut **l, &mut **r]
         }
         ExprKind::For(f) => vec![&mut f.iter, &mut f.body],
+        ExprKind::IfLet(c, then, els) => [&mut c.expr, &mut **then]
+            .into_iter()
+            .chain(els.as_deref_mut())
+            .collect(),
+        ExprKind::WhileLet(_, c, body) => vec![&mut c.expr, &mut **body],
         ExprKind::Try(e, _) => vec![e],
         ExprKind::Call(f, args) | ExprKind::MethodCall(f, _, _, args) => {
             std::iter::once(&mut **f).chain(args.iter_mut()).collect()
@@ -2001,10 +2375,14 @@ pub(crate) fn children_mut(e: &mut Expr) -> Vec<&mut Expr> {
             .collect(),
         ExprKind::Block(stmts, tail) => stmts
             .iter_mut()
-            .filter_map(|s| match s {
-                Stmt::Let { init, .. } => init.as_mut(),
-                Stmt::Expr(e) | Stmt::BlockLike(e) => Some(e),
-                Stmt::Fn(_) | Stmt::Type(_) => None,
+            .flat_map(|s| match s {
+                Stmt::Let { init, els, .. } => init
+                    .as_deref_mut()
+                    .into_iter()
+                    .chain(els.as_deref_mut())
+                    .collect(),
+                Stmt::Expr(e) | Stmt::BlockLike(e) => vec![e],
+                Stmt::Fn(_) | Stmt::Type(_) => Vec::new(),
             })
             .chain(tail.as_deref_mut())
             .collect(),

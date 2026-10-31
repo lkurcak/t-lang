@@ -34,6 +34,26 @@ and `match` arms must agree on their result type. A `match` must cover
 every possible value. `return`, `break`, `continue`, and calls that never
 return have type `!`, which can occur wherever a value is expected.
 
+`if let p = e { .. } else { .. }` runs its block when the pattern matches,
+and `while let p = e { .. }` loops while it does. `let p = e else { .. };`
+binds the pattern for the rest of the block; its `else` must leave the
+block with `return`, `break`, `continue`, or a call that never returns.
+Each means the `match` it abbreviates, whose other arm takes apart the
+variants the pattern misses, so a value the `else` cannot name must be
+`Discard`. See [`if let`](28-if-let.md).
+
+```rust
+fn first(s: &str) -> Option<char> {
+    let Option::Some(c) = s.chars().next() else { return Option::None };
+    if let 'a'..='z' = c { Option::Some(c) } else { Option::None }
+}
+
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&first("tea").is_some()) // expect: true
+}
+```
+
 | Type | Meaning |
 |---|---|
 | `i8`, `i16`, `i32`, `i64` | Signed integers of the stated width |

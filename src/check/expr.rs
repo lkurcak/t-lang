@@ -352,7 +352,12 @@ impl Checker {
     fn synth_inner(&mut self, e: &Expr) -> Result<Type, Error> {
         match &e.kind {
             ExprKind::Move(_) => unreachable!("written by lift"),
-            ExprKind::For(_) | ExprKind::Range(..) | ExprKind::Try(..) | ExprKind::Index(..) => {
+            ExprKind::For(_)
+            | ExprKind::IfLet(..)
+            | ExprKind::WhileLet(..)
+            | ExprKind::Range(..)
+            | ExprKind::Try(..)
+            | ExprKind::Index(..) => {
                 unreachable!("rewritten when paths are resolved")
             }
             //   τ an integer type          ------------------- (T-True/False)
@@ -1510,8 +1515,21 @@ impl Checker {
                             let t = self.resolve(ann.unrefined())?;
                             self.let_refinement(pat, ann, &t, init.is_some())?;
                             self.mention(&t);
-                            if let Some(init) = init {
-                                self.check(init, &t)?;
+                            match init {
+                                // The `else` of a `let .. else`, which must
+                                // be a `!` (`modules::Rewrite::let_else`).
+                                Some(init) if self.modules.must_leave.contains(&pat.id) => {
+                                    let u = self.synth(init)?;
+                                    self.fits(&u, &t, result_span(init), |u, _| {
+                                        format!(
+                                            "the `else` of a `let .. else` must not finish, but \
+                                             this one can, as a `{u}`: end it with `return`, \
+                                             `break`, `continue` or a call that returns `!`"
+                                        )
+                                    })?;
+                                }
+                                Some(init) => self.check(init, &t)?,
+                                None => {}
                             }
                             t
                         }

@@ -1139,12 +1139,18 @@ impl Expr {
                 std::iter::once(&**f).chain(args).collect()
             }
             ExprKind::If(c, then, els) => [&**c, then].into_iter().chain(els.as_deref()).collect(),
+            ExprKind::IfLet(c, then, els) => {
+                [&c.expr, then].into_iter().chain(els.as_deref()).collect()
+            }
+            ExprKind::WhileLet(_, c, body) => vec![&c.expr, body],
             ExprKind::Block(stmts, tail) => stmts
                 .iter()
-                .filter_map(|s| match s {
-                    Stmt::Let { init, .. } => init.as_ref(),
-                    Stmt::Expr(e) | Stmt::BlockLike(e) => Some(e),
-                    Stmt::Fn(_) | Stmt::Type(_) => None,
+                .flat_map(|s| match s {
+                    Stmt::Let { init, els, .. } => {
+                        init.as_deref().into_iter().chain(els.as_deref()).collect()
+                    }
+                    Stmt::Expr(e) | Stmt::BlockLike(e) => vec![e],
+                    Stmt::Fn(_) | Stmt::Type(_) => Vec::new(),
                 })
                 .chain(tail.as_deref())
                 .collect(),
@@ -1389,6 +1395,10 @@ pub enum ExprKind {
     MethodCall(Box<Expr>, Ident, Vec<TypeExpr>, Vec<Expr>),
     /// `if c { .. } else { .. }`; the `else` is optional.
     If(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
+    /// `if let pat = e { .. } else { .. }`; the `else` is optional. Only
+    /// until paths are resolved, which rewrites it as the `match` it means
+    /// (see `check/modules.rs`).
+    IfLet(Box<LetCond>, Box<Expr>, Option<Box<Expr>>),
     /// `[a, b, c]`: an array of these values, in order.
     Array(Vec<Expr>),
     /// `[v; n]`: an array of `n` copies of `v`, where `n` is an integer
@@ -1421,6 +1431,10 @@ pub enum ExprKind {
     Assign(Option<BinOp>, Box<Expr>, Box<Expr>),
     /// `while c { .. }`, or `'a: while c { .. }` with a label.
     While(Option<Label>, Box<Expr>, Box<Expr>),
+    /// `while let pat = e { .. }`, maybe with a label. Only until paths
+    /// are resolved, which rewrites it as the `loop` it means (see
+    /// `check/modules.rs`).
+    WhileLet(Option<Label>, Box<LetCond>, Box<Expr>),
     /// `loop { .. }`: runs its body again and again, until a `break`.
     Loop(Option<Label>, Box<Expr>),
     /// `for p in it { .. }`. Only until paths are resolved, which rewrites
@@ -1453,6 +1467,15 @@ pub enum ExprKind {
     /// `Copy` moves, whatever type it turns out to be (see
     /// `Info::moves`). A place used by value without one is copied.
     Move(Box<Expr>),
+}
+
+/// `let pat = expr`, what an `if let` or `while let` matches.
+#[derive(Debug, Clone)]
+pub struct LetCond {
+    /// Where the `let` is.
+    pub let_span: Span,
+    pub pat: Pattern,
+    pub expr: Expr,
 }
 
 /// `for pat in iter { body }`, or with a label.
@@ -1589,6 +1612,21 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
             go(then, bound);
             els.iter().for_each(|e| go(e, bound));
         }
+        ExprKind::IfLet(c, then, els) => {
+            go(&c.expr, bound);
+            let scope = bound.len();
+            pattern_binds(&c.pat, bound);
+            go(then, bound);
+            bound.truncate(scope);
+            els.iter().for_each(|e| go(e, bound));
+        }
+        ExprKind::WhileLet(_, c, body) => {
+            go(&c.expr, bound);
+            let scope = bound.len();
+            pattern_binds(&c.pat, bound);
+            go(body, bound);
+            bound.truncate(scope);
+        }
         ExprKind::Block(stmts, tail) => {
             let scope = bound.len();
             // A nested `fn`'s name is in scope in the whole block, and its
@@ -1597,8 +1635,11 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
             bound.extend(fns.map(|f| f.name.name.clone()));
             for stmt in stmts {
                 match stmt {
-                    Stmt::Let { pat, ty, init, .. } => {
+                    Stmt::Let {
+                        pat, ty, init, els, ..
+                    } => {
                         init.iter().for_each(|e| go(e, bound));
+                        els.iter().for_each(|e| go(e, bound));
                         // What a refinement names is read when it's
                         // checked, at run time by the interpreter.
                         if let Some((v, pred)) = ty.as_ref().and_then(|t| t.refinement()) {
@@ -1698,14 +1739,21 @@ pub struct Arm {
 #[derive(Debug, Clone)]
 pub enum Stmt {
     /// `let pat: ty = init;`. The pattern must be irrefutable: `let x = ..`,
-    /// `let Point { x, y } = ..`, but not `let Shape::Empty = ..`.
+    /// `let Point { x, y } = ..`, but not `let Shape::Empty = ..`, unless
+    /// it has an `else`.
     Let {
         pat: Pattern,
         /// Boxed, since it's rare and would make every `Stmt` bigger.
         ty: Option<Box<TypeExpr>>,
         /// `None` for `let x;`, a variable given its value later, which
-        /// only a variable can be.
-        init: Option<Expr>,
+        /// only a variable can be. Boxed, so a `Let` isn't much bigger than
+        /// the other statements.
+        init: Option<Box<Expr>>,
+        /// `let pat = init else { .. };`: the block that runs if `pat`
+        /// doesn't match, which must leave the block the `let` is in. Only
+        /// until paths are resolved, which rewrites the `let` and the rest
+        /// of its block as the `match` they mean (see `check/modules.rs`).
+        els: Option<Box<Expr>>,
         /// From the `let` to the `;`.
         span: Span,
     },
