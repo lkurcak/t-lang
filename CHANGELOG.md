@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.41.0 (2026-10-31)
 
 Step 28: `if let`, `let .. else` and `%`. See
 [docs/28-if-let.md](docs/28-if-let.md).
