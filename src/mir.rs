@@ -22,6 +22,14 @@ use crate::traits::FnKind;
 use crate::types::Type;
 use std::fmt;
 
+/// Whose body a MIR body is: a function's, by symbol, or a closure's, by
+/// its lambda's node.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) enum Key {
+    Fn(String),
+    Closure(NodeId),
+}
+
 /// A local, by its index in `Body::locals`. `RETURN` holds what the body
 /// returns; the parameters come next.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -41,6 +49,7 @@ pub(crate) struct Point {
     pub(crate) index: usize,
 }
 
+#[derive(Clone)]
 pub(crate) struct Body {
     pub(crate) locals: Vec<LocalDecl>,
     pub(crate) blocks: Vec<Block>,
@@ -107,6 +116,7 @@ pub(crate) struct EnvVar {
     pub(crate) mutable: bool,
 }
 
+#[derive(Clone)]
 pub(crate) struct LocalDecl {
     /// With its regions numbered (see `regions.rs`).
     pub(crate) ty: Type,
@@ -127,17 +137,19 @@ pub(crate) struct LocalDecl {
     pub(crate) deferred: bool,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct Block {
     pub(crate) stmts: Vec<Statement>,
     pub(crate) term: Option<Term>,
 }
 
+#[derive(Clone)]
 pub(crate) struct Statement {
     pub(crate) kind: StmtKind,
     pub(crate) span: Span,
 }
 
+#[derive(Clone)]
 pub(crate) enum StmtKind {
     /// Writes the value of the rvalue to the place. `declare` says it's a
     /// variable getting its first value, where it's declared, which it can
@@ -164,6 +176,7 @@ pub(crate) enum StmtKind {
     Refine(Local, usize),
 }
 
+#[derive(Clone)]
 pub(crate) enum Term {
     Goto(Bb),
     /// To the first block if the operand is `true`, else the second.
@@ -237,6 +250,7 @@ impl Place {
     }
 }
 
+#[derive(Clone)]
 pub(crate) enum Rvalue {
     Use(Operand),
     /// `&'r place` or `&'r mut place`, with region variable `'r`.
@@ -248,16 +262,16 @@ pub(crate) enum Rvalue {
     /// `Copy`s, whatever their types. So do `<` and the like, which on
     /// what isn't an integer call `Ord`'s method, by reference.
     Binary(BinOp, Operand, Operand, NodeId),
-    /// `x as T`, to the type of the place it's written to: the same
-    /// number, or the character it's the scalar value of.
-    Cast(Operand, NodeId),
-    /// A struct, variant, box, array or closure, from its parts.
-    Aggregate(Agg, Vec<Operand>),
+    /// `x as T`, to type `T`: the same number, or the character it's the
+    /// scalar value of.
+    Cast(Operand, Type, NodeId),
+    /// A struct, variant, box, array or closure, of the type, from its
+    /// parts.
+    Aggregate(Agg, Type, Vec<Operand>),
     Call(Operand, Vec<Operand>),
 }
 
-/// What an `Rvalue::Aggregate` makes: of the type of the place it's
-/// written to.
+/// What an `Rvalue::Aggregate` makes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Agg {
     /// A struct, its fields in declaration order.
@@ -277,10 +291,10 @@ pub(crate) enum Agg {
 impl Rvalue {
     pub(crate) fn operands(&self) -> Vec<&Operand> {
         match self {
-            Rvalue::Use(o) | Rvalue::Unary(_, o, _) | Rvalue::Cast(o, _) => vec![o],
+            Rvalue::Use(o) | Rvalue::Unary(_, o, _) | Rvalue::Cast(o, ..) => vec![o],
             Rvalue::Ref(..) => Vec::new(),
             Rvalue::Binary(_, a, b, _) => vec![a, b],
-            Rvalue::Aggregate(_, os) => os.iter().collect(),
+            Rvalue::Aggregate(_, _, os) => os.iter().collect(),
             Rvalue::Call(f, args) => std::iter::once(f).chain(args).collect(),
         }
     }
@@ -330,6 +344,30 @@ impl Operand {
 }
 
 impl Body {
+    /// The body as it runs: with the types' regions erased, which matter
+    /// only to the borrow checker.
+    pub(crate) fn erased(&self) -> Body {
+        Body {
+            locals: (self.locals.iter())
+                .map(|l| LocalDecl {
+                    ty: l.ty.erased(),
+                    name: l.name.clone(),
+                    mut_span: l.mut_span,
+                    ..*l
+                })
+                .collect(),
+            blocks: self.blocks.clone(),
+            params: self.params,
+            env: self.env.clone(),
+            changed_by_closures: Vec::new(),
+            unique_by_closures: Vec::new(),
+            heads: self.heads.clone(),
+            drop_uses: Default::default(),
+            refinements: self.refinements.clone(),
+            unsafe_blocks: self.unsafe_blocks.clone(),
+        }
+    }
+
     /// Every point, in order: each block's statements and terminator.
     pub(crate) fn points(&self) -> impl Iterator<Item = Point> + '_ {
         self.blocks.iter().enumerate().flat_map(|(b, block)| {
@@ -427,8 +465,14 @@ fn show_rvalue(r: &Rvalue) -> String {
         Rvalue::Ref(v, m, p) => format!("&'{v} {}{p:?}", if *m { "mut " } else { "" }),
         Rvalue::Unary(op, o, _) => format!("{op}{o:?}"),
         Rvalue::Binary(op, a, b, _) => format!("{a:?} {op} {b:?}"),
-        Rvalue::Cast(o, _) => format!("{o:?} as _"),
-        Rvalue::Aggregate(k, os) => format!("{k:?}{os:?}"),
+        Rvalue::Cast(o, t, _) => format!("{o:?} as {t}"),
+        Rvalue::Aggregate(k, t, os) => format!("{k:?}<{t}>{os:?}"),
         Rvalue::Call(c, args) => format!("call {c:?}{args:?}"),
+    }
+}
+
+impl fmt::Debug for Body {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Display::fmt(self, f)
     }
 }

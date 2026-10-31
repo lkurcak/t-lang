@@ -442,7 +442,8 @@ impl<'a> Builder<'a> {
             ExprKind::As(x, _) => {
                 let (o, _) = self.operand(x);
                 let t = self.ty(e);
-                self.assign(dest, Rvalue::Cast(o, e.id), &t, span, false);
+                let value = Rvalue::Cast(o, t.erased(), e.id);
+                self.assign(dest, value, &t, span, false);
             }
             ExprKind::Binary(op @ (BinOp::And | BinOp::Or), l, r) => {
                 self.expr_into(l, dest);
@@ -653,7 +654,13 @@ impl<'a> Builder<'a> {
                     ops[i] = Some(o);
                 }
                 let ops = ops.into_iter().map(|o| o.expect("every field")).collect();
-                self.assign(dest, Rvalue::Aggregate(Agg::Struct, ops), &t, span, false);
+                self.assign(
+                    dest,
+                    Rvalue::Aggregate(Agg::Struct, t.erased(), ops),
+                    &t,
+                    span,
+                    false,
+                );
             }
             // `Box::new(x)`: the one expression of a box type that names
             // one, as no struct or enum is one.
@@ -664,7 +671,13 @@ impl<'a> Builder<'a> {
                 };
                 let (o, ot) = self.operand(&args[0]);
                 self.regions.subtype(self.info, &ot, inner, args[0].span);
-                self.assign(dest, Rvalue::Aggregate(Agg::Box, vec![o]), &t, span, false);
+                self.assign(
+                    dest,
+                    Rvalue::Aggregate(Agg::Box, t.erased(), vec![o]),
+                    &t,
+                    span,
+                    false,
+                );
             }
             ExprKind::Variant(_, _, variant, args, ..) => {
                 let t = self.ty(e);
@@ -679,7 +692,7 @@ impl<'a> Builder<'a> {
                 }
                 self.assign(
                     dest,
-                    Rvalue::Aggregate(Agg::Variant(i), ops),
+                    Rvalue::Aggregate(Agg::Variant(i), t.erased(), ops),
                     &t,
                     span,
                     false,
@@ -696,7 +709,13 @@ impl<'a> Builder<'a> {
                     self.regions.subtype(self.info, &ot, elem, a.span);
                     ops.push(o);
                 }
-                self.assign(dest, Rvalue::Aggregate(Agg::Array, ops), &t, span, false);
+                self.assign(
+                    dest,
+                    Rvalue::Aggregate(Agg::Array, t.erased(), ops),
+                    &t,
+                    span,
+                    false,
+                );
             }
             // `[v; n]` copies `v`, which is `Copy`; `n` is a constant.
             ExprKind::Repeat(v, _) => {
@@ -708,7 +727,7 @@ impl<'a> Builder<'a> {
                 self.regions.subtype(self.info, &ot, elem, v.span);
                 self.assign(
                     dest,
-                    Rvalue::Aggregate(Agg::Repeat, vec![o]),
+                    Rvalue::Aggregate(Agg::Repeat, t.erased(), vec![o]),
                     &t,
                     span,
                     false,
@@ -751,7 +770,7 @@ impl<'a> Builder<'a> {
                     ty: t.clone(),
                     span,
                 });
-                let value = Rvalue::Aggregate(Agg::Closure(l.id), ops);
+                let value = Rvalue::Aggregate(Agg::Closure(l.id), t.erased(), ops);
                 self.assign(dest, value, &t, span, false);
             }
         }

@@ -84,6 +84,10 @@ pub struct Info {
     /// turns out to be. Then the program runs as it was checked, and means
     /// the same at every type, as it would if it ran once for them all.
     pub moves: HashSet<MoveSite>,
+    /// The MIR of every function and closure, the libraries' too, as the
+    /// borrow checker built and checked it, at the function's own types,
+    /// regions erased: what monomorphisation copies, and what runs.
+    pub(crate) mir: HashMap<crate::mir::Key, std::sync::Arc<crate::mir::Body>>,
     /// The error type of the `Result` `main` gives back, if it does: the
     /// type monomorphisation makes `std::rt::report` for, which reports
     /// it.

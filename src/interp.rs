@@ -43,10 +43,10 @@
 
 use crate::ast::*;
 use crate::error::{Error, Span};
+use crate::mono::{GLUE_DISCARD, GLUE_EQ};
 use crate::types::IntTy;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::sync::Arc;
 
 /// Deep enough for any reasonable recursion, shallow enough to stop runaway
 /// recursion with an error instead of crashing the interpreter itself.
@@ -122,22 +122,52 @@ impl Ptr {
     }
 }
 
-/// What `|x| x + n` evaluates to: its code, and what it captured, its
-/// *environment*: for each variable, a reference to it, or its value,
-/// moved or copied in, as `Lambda::modes` says (see
-/// docs/06c-closures.md). Like a struct's fields, as that's what it is.
-#[derive(Debug, Clone)]
+/// What `|x| x + n` evaluates to: its code, the name of its body's copy
+/// (see `mono::closure_copy`), and what it captured, its *environment*:
+/// for each variable, a reference to it, or its value, moved or copied in,
+/// as `Lambda::modes` says (see docs/06c-closures.md). Like a struct's
+/// fields, as that's what it is.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Closure {
-    pub code: Arc<Lambda>,
+    pub code: String,
     pub env: Vec<(String, Value)>,
 }
 
-/// The same closure: made by the same expression, in equal environments. T
-/// programs can't compare functions; this is for tests.
-impl PartialEq for Closure {
-    fn eq(&self, other: &Closure) -> bool {
-        Arc::ptr_eq(&self.code, &other.code) && self.env == other.env
-    }
+/// How the body of a closure takes the closure: `Some(Some(m))` by
+/// reference, `&mut` if `m`, as it's `Fn` or `FnMut`; `Some(None)` by
+/// value, as it's `FnOnce`; `None` not at all, as it captures nothing.
+fn env_by(body: &crate::mir::Body) -> Option<Option<bool>> {
+    let env = body
+        .locals
+        .get(1)
+        .filter(|l| l.kind == crate::mir::LocalKind::Env)?;
+    Some(match &env.ty {
+        crate::types::Type::Ref(_, m, _) => Some(*m),
+        _ => None,
+    })
+}
+
+/// The copy of a function that closure `code` is in.
+fn closure_root(code: &str) -> &str {
+    code.split("::{closure#").next().unwrap_or(code)
+}
+
+/// A function or closure being run: its body, the copy of the function
+/// it's in, the function's name if it's a function's, and the slot of
+/// each of its locals that has one.
+struct Frame<'p> {
+    body: &'p crate::mir::Body,
+    root: &'p str,
+    f: Option<&'p str>,
+    slots: Vec<Option<Ptr>>,
+}
+
+/// Where a function or closure being run is: the `unsafe` blocks of its
+/// body, the statement it's at, and the function's name, if it's one.
+struct Site<'p> {
+    unsafe_blocks: &'p [Span],
+    span: Span,
+    f: Option<&'p str>,
 }
 
 impl fmt::Display for Value {
@@ -203,7 +233,11 @@ pub struct Ended {
 /// and, for `main`, the `Os`. An error it gives back is reported, and
 /// after it, everything must have been freed. Tests don't share anything:
 /// each run starts from nothing (docs/31-tests.md, T2).
-pub fn run_entry(program: &crate::mono::Executable, entry: &str, term: &mut dyn Terminal) -> Ended {
+pub fn run_entry<'p>(
+    program: &'p crate::mono::Executable,
+    entry: &str,
+    term: &mut dyn Terminal,
+) -> Ended {
     let prog = program.program();
     let fns = prog.fns.iter().map(|f| (f.name.name.as_str(), f)).collect();
     let derived = |tr: &str| -> HashSet<&str> {
@@ -241,16 +275,14 @@ pub fn run_entry(program: &crate::mono::Executable, entry: &str, term: &mut dyn 
         message: String::new(),
         panicked: false,
         calls: Vec::new(),
-        locals: Vec::new(),
         memory,
-        temps: Vec::new(),
         depth: 0,
         frames: Vec::new(),
-        unsafe_blocks: Vec::new(),
+        sites: Vec::new(),
         proved: &prog.proved,
         measures: &prog.measures,
         refined: HashMap::new(),
-        params_refined: Vec::new(),
+        exe: program,
         term,
     };
     let result = interp.entry(program, entry);
@@ -260,7 +292,7 @@ pub fn run_entry(program: &crate::mono::Executable, entry: &str, term: &mut dyn 
     }
 }
 
-impl Interp<'_, '_> {
+impl<'p> Interp<'p, '_> {
     /// `run_entry`'s work.
     fn entry(&mut self, program: &crate::mono::Executable, entry: &str) -> Result<Value, Error> {
         // `main` takes nothing, or the one `std::Os` there is.
@@ -305,22 +337,6 @@ impl Interp<'_, '_> {
             ));
         }
         Ok(result)
-    }
-}
-
-/// Why evaluating an expression didn't finish with a value: an error, or a
-/// jump to somewhere outside it, with the value it takes there, and for
-/// `break` and `continue`, the label of the loop it's for, if it says.
-enum Flow {
-    Error(Error),
-    Return(Value),
-    Break(Option<String>, Value),
-    Continue(Option<String>),
-}
-
-impl From<Error> for Flow {
-    fn from(e: Error) -> Flow {
-        Flow::Error(e)
     }
 }
 
@@ -507,24 +523,14 @@ struct Interp<'p, 'o> {
     /// Where each call being run was called, outermost first: a panic's
     /// `Error::trace`.
     calls: Vec<Span>,
-    /// The variables in scope, innermost last, each with its slot. A
-    /// temporary that a `let` keeps alive (`let r = &f();`) is one with no
-    /// name.
-    /// Whether each owns its slot: not a variable a closure captured, in
-    /// its body, which is where the closure says (see `call_closure`).
-    locals: Vec<(String, Ptr, bool)>,
     memory: Memory,
-    /// The temporaries made in each statement being run, innermost last,
-    /// to free when it's done.
-    temps: Vec<Vec<Ptr>>,
     depth: usize,
     /// The functions being run, outermost first, by name: whose effects
     /// each panic and allocation must be among (see `effect`).
     frames: Vec<String>,
-    /// The `unsafe` blocks being run, innermost last, each with how many
-    /// functions were being run when it started: those called since must
-    /// say `with unsafe` (see `unsafe_op`).
-    unsafe_blocks: Vec<(Span, usize)>,
+    /// Where each function and closure being run is, innermost last (see
+    /// `unsafe_op`).
+    sites: Vec<Site<'p>>,
     /// The operators the checker proved can't panic, by node.
     proved: &'p HashSet<NodeId>,
     /// What the checker found of measures, for refinements that use them.
@@ -532,9 +538,8 @@ struct Interp<'p, 'o> {
     /// The refinement of each refined variable, by its slot and the
     /// slot's generation: what each assignment to it must keep.
     refined: HashMap<(usize, u64), Refined>,
-    /// The refinements of the parameters of the function about to be
-    /// entered, by name, for `enter` to keep in `refined`.
-    params_refined: Vec<(String, Refined)>,
+    /// What runs: the MIR of each copy of a function and closure.
+    exe: &'p crate::mono::Executable,
     /// The operating system's streams, as the program's `std::Os` reaches
     /// them.
     term: &'o mut dyn Terminal,
@@ -715,20 +720,7 @@ fn each_measure_call<'e>(e: &'e Expr, post: bool, out: &mut Vec<(NodeId, &'e Exp
     }
 }
 
-/// The names in predicate `e` other than `binder`.
-fn pred_names<'e>(e: &'e Expr, binder: &str, out: &mut Vec<&'e str>) {
-    if let ExprKind::Var(name, _) = &e.kind
-        && name != binder
-        && !out.contains(&name.as_str())
-    {
-        out.push(name);
-    }
-    for c in e.children() {
-        pred_names(c, binder, out);
-    }
-}
-
-impl Interp<'_, '_> {
+impl<'p> Interp<'p, '_> {
     /// The refinement `{ binder | pred }`, whose other names have the
     /// values `env`: what the measures it calls of them give is found now.
     fn refined(&self, binder: &str, pred: &Expr, env: Vec<(String, Value)>) -> Refined {
@@ -857,20 +849,6 @@ impl Interp<'_, '_> {
             }
             _ => unsound("a measure's body outside the logic"),
         }
-    }
-
-    /// The slot of local variable `name`, if it's one.
-    fn local(&self, name: &str) -> Option<Ptr> {
-        let local = self.locals.iter().rev().find(|(n, ..)| n == name);
-        local.map(|(_, p, _)| p.clone())
-    }
-
-    /// The function `name` names, which isn't a local.
-    fn function(&self, name: &str) -> Value {
-        if self.fns.contains_key(name) {
-            return Value::Fn(name.to_string());
-        }
-        unsound(&format!("unbound variable `{name}`"))
     }
 
     /// The value at `p`, moved out if `moves`, or else copied, as the
@@ -1041,112 +1019,23 @@ impl Interp<'_, '_> {
         }
     }
 
-    /// Drops the variables from `scope` on, the last declared first, and
-    /// frees their slots.
-    ///
-    /// In a type's own `discard`, `self` is dropped part by part, as the
-    /// borrow checker has it (lemma D3 of docs/20-destructors.md): its
-    /// `discard` is what's running.
-    fn end_scope(&mut self, scope: usize) -> Result<(), Error> {
-        let discarding = self.frames.last().is_some_and(|f| is_discard_fn(f));
-        let mut result = Ok(());
-        while self.locals.len() > scope {
-            let (name, p, owned) = self.locals.pop().expect("a local");
-            if !owned {
-                continue;
-            }
-            let v = self.memory.free(&p, false);
-            let r = match discarding && self.locals.is_empty() && name == "self" {
-                true => self.drop_parts(v),
-                false => self.drop(v),
-            };
-            if result.is_ok() {
-                result = r;
-            }
-        }
-        result
-    }
-
-    /// Runs `f` as a statement: the temporaries it makes are dropped, in
-    /// reverse, when it's done.
-    fn statement<T>(&mut self, f: impl FnOnce(&mut Self) -> Result<T, Flow>) -> Result<T, Flow> {
-        self.temps.push(Vec::new());
-        let result = f(self);
-        let temps: Vec<Value> = (self.temps.pop().expect("pushed").into_iter().rev())
-            .map(|p| self.memory.free(&p, false))
-            .collect();
-        let dropped = self.drop_all(temps);
-        let v = result?;
-        dropped?;
-        Ok(v)
-    }
-
-    /// A new temporary holding `v`, dropped at the end of the statement.
-    fn temp(&mut self, v: Value) -> Ptr {
-        let p = self.memory.alloc(v, false);
-        match self.temps.last_mut() {
-            Some(temps) => temps.push(p.clone()),
-            None => unsound("a temporary outside any statement"),
-        }
-        p
-    }
-
-    /// Where the value of place expression `e` is: where its root is,
-    /// then its path (see `root`).
-    fn place(&mut self, e: &Expr) -> Result<Ptr, Flow> {
-        let base = self.base(root(e))?;
-        Ok(self.path(e, &base))
-    }
-
-    /// Where the value of `root`, the root of a place expression, is: a
-    /// variable's slot, or else a new temporary, holding its value.
-    fn base(&mut self, root: &Expr) -> Result<Ptr, Flow> {
-        if let ExprKind::Var(name, _) = &root.kind {
-            if let Some(p) = self.local(name) {
-                return Ok(p);
-            }
-            let f = self.function(name);
-            return Ok(self.temp(f));
-        }
-        let v = self.eval(root)?;
-        Ok(self.temp(v))
-    }
-
-    /// Where the value of place expression `e` is, given `base`, where its
-    /// root is: following its fields and `*`s, which does nothing but read
-    /// memory, so can't fail, nor jump anywhere.
-    fn path(&self, e: &Expr, base: &Ptr) -> Ptr {
-        match &e.kind {
-            // Through any references and boxes to the struct.
-            ExprKind::Field(x, field) => {
-                let mut p = self.path(x, base);
-                loop {
-                    match self.memory.get(&p) {
-                        Value::Ref(q) | Value::Box(q) => p = q.clone(),
-                        v @ Value::Struct(_, fields) => {
-                            self.check_fields(v, "read");
-                            let i = fields.iter().position(|(f, _)| *f == field.name);
-                            let i =
-                                i.unwrap_or_else(|| unsound(&format!("no field `{}`", field.name)));
-                            return p.field(i);
-                        }
-                        other => unsound(&format!("field access on `{other}`")),
-                    }
-                }
-            }
-            ExprKind::Unary(UnOp::Deref, x) => {
-                let p = self.path(x, base);
-                match self.memory.get(&p) {
-                    Value::Ref(q) | Value::Box(q) => q.clone(),
-                    other => unsound(&format!("`*` on `{other}`")),
-                }
-            }
-            _ => base.clone(),
-        }
-    }
-
     fn call(&mut self, f: Value, args: Vec<Value>, span: Span) -> Result<Value, Error> {
         match f {
+            // `==` of what a built-in or derived `Eq` compares, as a
+            // function: on what its two references point to.
+            Value::Fn(name) if name == GLUE_EQ => match args.as_slice() {
+                [Value::Ref(p), Value::Ref(q)] => {
+                    let (p, q) = (p.clone(), q.clone());
+                    Ok(Value::Bool(self.equal(&p, &q, span)?))
+                }
+                _ => unsound("`eq` of what aren't two references"),
+            },
+            // Dropping, part by part, as a function.
+            Value::Fn(name) if name == GLUE_DISCARD => {
+                let [v] = <[Value; 1]>::try_from(args).unwrap_or_else(|_| unsound("arity"));
+                self.drop(v)?;
+                Ok(Value::Unit)
+            }
             Value::Fn(name) => {
                 let decl = self.fns[name.as_str()];
                 // What a refinement names of the parameters: their values
@@ -1168,30 +1057,29 @@ impl Interp<'_, '_> {
                 let ensures: Vec<Refined> = (decl.ensures.iter())
                     .map(|e| self.refined_at("", e, env.clone(), true))
                     .collect();
-                let intrinsic = decl.intrinsic.is_some();
+                let mut refined = Vec::new();
                 for (p, v) in decl.params.iter().zip(&args) {
-                    if let Some(r) = refinement(self, &p.ty) {
+                    let r = refinement(self, &p.ty);
+                    if let Some(r) = &r {
                         r.check(
                             self,
                             v,
                             &format!("argument `{}` of `{}`", p.name.name, decl.name.name),
                         );
-                        if !intrinsic {
-                            self.params_refined.push((p.name.name.clone(), r));
-                        }
                     }
+                    refined.push(r);
                 }
                 // What an intrinsic gives is trusted, and so checked: its
                 // refinement too.
-                let result = if intrinsic {
+                let result = if decl.intrinsic.is_some() {
                     let of = name.split("::<").next().unwrap_or_default().to_string();
                     self.intrinsic(&of, &name, args, span)
                 } else {
-                    // A call gets a fresh environment: just the parameters.
-                    let params = decl.params.iter().map(|p| p.name.name.clone());
-                    self.frames.push(name);
-                    let result =
-                        self.enter(Vec::new(), params.zip(args).collect(), &decl.body, span);
+                    let exe = self.exe;
+                    let (name, body) = (exe.body_named(&name))
+                        .unwrap_or_else(|| unsound(&format!("`{name}` has no body")));
+                    self.frames.push(name.to_string());
+                    let result = self.run(body, name, Some(name), args, refined, span);
                     self.frames.pop();
                     result
                 };
@@ -1207,15 +1095,29 @@ impl Interp<'_, '_> {
                 result
             }
             // A closure called by value is the call's to use up, and what's
-            // left of it is dropped when it returns.
+            // left of it is dropped when it returns. One whose body takes it
+            // by reference gets one to it, here.
             Value::Closure(c) => {
-                let at = self.memory.alloc(Value::Closure(c), false);
-                let result = self.call_closure(&at, args, span);
-                let left = self.memory.free(&at, false);
-                let dropped = self.drop(left);
-                let v = result?;
-                dropped?;
-                Ok(v)
+                let exe = self.exe;
+                let (code, body) = (exe.body_named(&c.code))
+                    .unwrap_or_else(|| unsound(&format!("closure `{}` has no body", c.code)));
+                match env_by(body) {
+                    Some(None) => {
+                        let root = closure_root(code);
+                        let mut all = vec![Value::Closure(c.clone())];
+                        all.extend(args);
+                        self.run(body, root, None, all, Vec::new(), span)
+                    }
+                    _ => {
+                        let at = self.memory.alloc(Value::Closure(c), false);
+                        let result = self.call_closure(&at, args, span);
+                        let left = self.memory.free(&at, false);
+                        let dropped = self.drop(left);
+                        let v = result?;
+                        dropped?;
+                        Ok(v)
+                    }
+                }
             }
             // Through a reference, what it points to is called, in place.
             Value::Ref(p) => match self.memory.get(&p).clone() {
@@ -1226,6 +1128,429 @@ impl Interp<'_, '_> {
         }
     }
 
+    /// Calls the closure at `at`, in place: its body gets a reference to it,
+    /// as it's `Fn` or `FnMut`, or nothing, if it captures nothing.
+    fn call_closure(&mut self, at: &Ptr, args: Vec<Value>, span: Span) -> Result<Value, Error> {
+        let Value::Closure(c) = self.memory.get(at).clone() else {
+            unreachable!("a closure")
+        };
+        let exe = self.exe;
+        let (code, body) = (exe.body_named(&c.code))
+            .unwrap_or_else(|| unsound(&format!("closure `{}` has no body", c.code)));
+        let all = match env_by(body) {
+            Some(Some(_)) => std::iter::once(Value::Ref(at.clone()))
+                .chain(args)
+                .collect(),
+            Some(None) => unsound("a closure that's `FnOnce` called through a reference"),
+            None => args,
+        };
+        self.run(body, closure_root(code), None, all, Vec::new(), span)
+    }
+
+    /// Runs MIR `body`, of function `f` or else of a closure, both in the
+    /// copy of a function `root`, with its parameters `args`, the first
+    /// the closure if it's a closure's that captures, those with
+    /// refinements having them, called at `span`. Each local's slot is made
+    /// when it's first given a value, and freed when it goes out of scope
+    /// (`StmtKind::Dead`), which drops what's in it.
+    fn run(
+        &mut self,
+        body: &'p crate::mir::Body,
+        root: &'p str,
+        f: Option<&'p str>,
+        args: Vec<Value>,
+        refined: Vec<Option<Refined>>,
+        span: Span,
+    ) -> Result<Value, Error> {
+        self.calls.push(span);
+        let result = self.run_body(body, root, f, args, refined, span);
+        self.calls.pop();
+        result
+    }
+
+    /// `run`, once the call is on `calls`.
+    fn run_body(
+        &mut self,
+        body: &'p crate::mir::Body,
+        root: &'p str,
+        f: Option<&'p str>,
+        args: Vec<Value>,
+        refined: Vec<Option<Refined>>,
+        span: Span,
+    ) -> Result<Value, Error> {
+        use crate::mir::{Bb, StmtKind, Term};
+        if self.depth >= MAX_CALL_DEPTH {
+            return Err(self.panic(
+                span,
+                format!("stack overflow (more than {MAX_CALL_DEPTH} nested calls)"),
+            ));
+        }
+        if args.len() != body.params {
+            unsound("a call with the wrong number of arguments");
+        }
+        let mut fr = Frame {
+            body,
+            root,
+            f,
+            slots: vec![None; body.locals.len()],
+        };
+        // A function's parameters come after its closure, if it's a
+        // closure's.
+        let skip = args.len() - refined.len().min(args.len());
+        for (i, v) in args.into_iter().enumerate() {
+            let p = self.memory.alloc(v, false);
+            if let Some(Some(r)) = i.checked_sub(skip).and_then(|j| refined.get(j)) {
+                self.refined.insert((p.slot, p.generation), r.clone());
+            }
+            fr.slots[i + 1] = Some(p);
+        }
+        self.sites.push(Site {
+            unsafe_blocks: &body.unsafe_blocks,
+            span,
+            f,
+        });
+        self.depth += 1;
+        let mut b = Bb(0);
+        let result = 'run: loop {
+            let block = &body.blocks[b.0];
+            for s in &block.stmts {
+                self.sites.last_mut().expect("pushed").span = s.span;
+                let done = match &s.kind {
+                    StmtKind::Assign { place, value, .. } => {
+                        match self.rvalue(&mut fr, value, s.span) {
+                            Ok(v) => self.write(&mut fr, place, v),
+                            Err(e) => Err(e),
+                        }
+                    }
+                    StmtKind::Inspect(_) => Ok(()),
+                    StmtKind::Dead(l) => self.dead(&mut fr, l.0),
+                    StmtKind::Consume(place, _) => {
+                        let p = self.ptr(&fr, place);
+                        let old = std::mem::replace(self.memory.get_mut(&p), Value::Moved);
+                        self.drop_parts(old)
+                    }
+                    StmtKind::Refine(l, r) => {
+                        self.refine(&fr, *l, &body.refinements[*r]);
+                        Ok(())
+                    }
+                };
+                if let Err(e) = done {
+                    break 'run Err(e);
+                }
+            }
+            match block.term.as_ref() {
+                Some(Term::Goto(t)) => b = *t,
+                Some(Term::Branch(o, t, e)) => {
+                    b = match bool(self.operand(&fr, o)) {
+                        true => *t,
+                        false => *e,
+                    }
+                }
+                Some(Term::Match(place, pats, targets)) => {
+                    let p = self.ptr(&fr, place);
+                    let Some(i) = pats.iter().position(|pat| self.matches(pat, &p)) else {
+                        unsound(&format!("no `match` arm fits `{}`", self.memory.get(&p)));
+                    };
+                    b = targets[i];
+                }
+                Some(Term::Return) => {
+                    let v = match fr.slots[0].take() {
+                        Some(p) => self.memory.free(&p, false),
+                        None => unsound("a function returning with no value"),
+                    };
+                    if fr.slots.iter().any(Option::is_some) {
+                        unsound("a local outlived the function it's in");
+                    }
+                    break Ok(v);
+                }
+                Some(Term::Unreachable) => unsound("control got where it can't"),
+                None => unsound("a block with no end"),
+            }
+        };
+        self.depth -= 1;
+        self.sites.pop();
+        result
+    }
+
+    /// Where the value at `place` is, in frame `fr`: following its
+    /// fields and `*`s, which does nothing but read memory.
+    fn ptr(&self, fr: &Frame, place: &crate::mir::Place) -> Ptr {
+        use crate::mir::Proj;
+        let Some(mut p) = fr.slots[place.local.0].clone() else {
+            unsound("use of a local with no value")
+        };
+        for proj in &place.proj {
+            p = match (proj, self.memory.get(&p)) {
+                (Proj::Deref, Value::Ref(q) | Value::Box(q)) => q.clone(),
+                (Proj::Deref, other) => unsound(&format!("`*` on `{other}`")),
+                (Proj::Field(i), v @ Value::Struct(..)) => {
+                    self.check_fields(v, "read");
+                    p.field(*i)
+                }
+                (Proj::Field(i), Value::Closure(_) | Value::Slots(_)) => p.field(*i),
+                (Proj::Variant(_, i), Value::Variant(..)) => p.field(*i),
+                (_, Value::Moved) => unsound("use of a value that was moved"),
+                (proj, other) => unsound(&format!("{proj:?} of `{other}`")),
+            };
+        }
+        p
+    }
+
+    /// What operand `o` gives, in frame `fr`: moved out of its place, or
+    /// copied, as the borrow checker decided.
+    fn operand(&mut self, fr: &Frame, o: &crate::mir::Operand) -> Value {
+        use crate::mir::{Const, Operand};
+        match o {
+            Operand::Copy(p) => {
+                let p = self.ptr(fr, p);
+                self.read(&p, false)
+            }
+            Operand::Move(p) => {
+                let p = self.ptr(fr, p);
+                self.read(&p, true)
+            }
+            Operand::Const(c) => match c {
+                Const::Int(n, crate::types::Type::Int(t)) => int_of(*n, *t),
+                Const::Int(_, t) => unsound(&format!("an integer of type `{t}`")),
+                Const::Bool(b) => Value::Bool(*b),
+                Const::Char(c) => Value::Char(*c),
+                Const::Unit => Value::Unit,
+                Const::Str(s) => Value::Ref(self.literal(s.as_bytes())),
+                Const::Bytes(b) => Value::Ref(self.literal(b)),
+                Const::Fn(name, _) => Value::Fn(name.clone()),
+                Const::Param(_) => unsound("a const parameter left after monomorphising"),
+                Const::Receiver(_) => unsound("a call's receiver as a value"),
+            },
+        }
+    }
+
+    /// What `value` gives, in frame `fr`, at `span`.
+    fn rvalue(
+        &mut self,
+        fr: &mut Frame,
+        value: &crate::mir::Rvalue,
+        span: Span,
+    ) -> Result<Value, Error> {
+        use crate::mir::{Agg, Const, Operand, Rvalue};
+        use crate::types::Type;
+        Ok(match value {
+            Rvalue::Use(o) => self.operand(fr, o),
+            Rvalue::Ref(_, _, p) => Value::Ref(self.ptr(fr, p)),
+            Rvalue::Unary(op, o, id) => {
+                let v = self.operand(fr, o);
+                match op {
+                    UnOp::Neg => {
+                        let zero = match v {
+                            Value::Int(_, t) => Value::Int(0, t),
+                            ref other => unsound(&format!("`-` of `{other}`")),
+                        };
+                        self.arith(BinOp::Sub, zero, v, *id, span)?
+                    }
+                    // Each bit flipped: the least plus the greatest, minus
+                    // it, which is in its type, so never panics.
+                    _ => match v {
+                        Value::Int(n, t) => {
+                            let (lo, hi) = t.range_64();
+                            int_of(lo + hi - n, t)
+                        }
+                        v => Value::Bool(!bool(v)),
+                    },
+                }
+            }
+            // `==` looks at its operands where they are, and moves neither.
+            Rvalue::Binary(op @ (BinOp::Eq | BinOp::Ne), l, r, _) => {
+                let (Operand::Copy(l), Operand::Copy(r)) = (l, r) else {
+                    unsound("`==` of what isn't a place")
+                };
+                let (l, r) = (self.ptr(fr, l), self.ptr(fr, r));
+                let same = self.equal(&l, &r, span)?;
+                Value::Bool(same == (*op == BinOp::Eq))
+            }
+            Rvalue::Binary(op, l, r, id) => {
+                let l = self.operand(fr, l);
+                let r = self.operand(fr, r);
+                self.arith(*op, l, r, *id, span)?
+            }
+            Rvalue::Cast(o, t, id) => {
+                let n = match self.operand(fr, o) {
+                    Value::Char(c) => i128::from(u32::from(c)),
+                    v => int(v),
+                };
+                match t {
+                    // A character's scalar value; a number as a character,
+                    // if it's one.
+                    Type::Char => match u32::try_from(n).ok().and_then(char::from_u32) {
+                        Some(c) => Value::Char(c),
+                        None => {
+                            self.not_proved(*id);
+                            let message = format!("`{n}` isn't a character");
+                            return Err(self.panics(span, message));
+                        }
+                    },
+                    // The same number, if it fits.
+                    Type::Int(t) => {
+                        let (lo, hi) = t.range_64();
+                        if !(lo..=hi).contains(&n) {
+                            self.not_proved(*id);
+                            let message = format!("`as` overflowed: {n} isn't {}", t.a());
+                            return Err(self.panics(span, message));
+                        }
+                        Value::Int(n, *t)
+                    }
+                    t => unsound(&format!("`as` to `{t}`")),
+                }
+            }
+            Rvalue::Aggregate(k, t, os) => {
+                let values: Vec<Value> = os.iter().map(|o| self.operand(fr, o)).collect();
+                match (k, t) {
+                    (Agg::Struct, Type::Adt(name, _, args)) => {
+                        let name = crate::mono::mangle(name, args);
+                        let decl = self.structs[name.as_str()];
+                        let fields = (decl.fields.iter())
+                            .zip(values)
+                            .map(|(f, v)| (f.name.name.clone(), v))
+                            .collect();
+                        let v = Value::Struct(name, fields);
+                        self.check_fields(&v, "made");
+                        v
+                    }
+                    (Agg::Variant(i), Type::Adt(name, _, args)) => {
+                        let name = crate::mono::mangle(name, args);
+                        let variant = self.enums[name.as_str()].variants[*i].name.name.clone();
+                        Value::Variant(name, variant, values)
+                    }
+                    (Agg::Box, _) => {
+                        let [v] = <[Value; 1]>::try_from(values)
+                            .unwrap_or_else(|_| unsound("a box of one value"));
+                        self.effect("alloc");
+                        Value::Box(self.memory.alloc(v, true))
+                    }
+                    (Agg::Array, _) => Value::Slots(values),
+                    // `n` copies of `v`, which is `Copy`.
+                    (Agg::Repeat, Type::Array(_, n)) => {
+                        let [v] = <[Value; 1]>::try_from(values)
+                            .unwrap_or_else(|_| unsound("a repeat of one value"));
+                        let Type::Nat(n) = **n else {
+                            unsound("an array of no length")
+                        };
+                        Value::Slots(vec![v; n as usize])
+                    }
+                    // What it captured, by the names its body knows them by.
+                    (Agg::Closure(id), _) => {
+                        let code = crate::mono::closure_copy(fr.root, *id);
+                        let exe = self.exe;
+                        let body = (exe.body(&code))
+                            .unwrap_or_else(|| unsound(&format!("closure `{code}` has no body")));
+                        let env = (body.env.iter().map(|v| v.name.clone()))
+                            .zip(values)
+                            .collect();
+                        Value::Closure(Closure { code, env })
+                    }
+                    (k, t) => unsound(&format!("{k:?} of type `{t}`")),
+                }
+            }
+            Rvalue::Call(f, args) => {
+                let mut args: Vec<Value> = args.iter().map(|o| self.operand(fr, o)).collect();
+                let f = match f {
+                    Operand::Const(Const::Receiver(_)) => {
+                        if args.is_empty() {
+                            unsound("a call of a receiver with none");
+                        }
+                        args.remove(0)
+                    }
+                    f => self.operand(fr, f),
+                };
+                self.call(f, args, span)?
+            }
+        })
+    }
+
+    /// Writes `v` to `place`, in frame `fr`: what was there is dropped. A
+    /// local with no slot yet gets one.
+    fn write(&mut self, fr: &mut Frame, place: &crate::mir::Place, v: Value) -> Result<(), Error> {
+        if place.proj.is_empty() && fr.slots[place.local.0].is_none() {
+            fr.slots[place.local.0] = Some(self.memory.alloc(v, false));
+            return Ok(());
+        }
+        let p = self.ptr(fr, place);
+        if p.path.is_empty()
+            && let Some(r) = self.refined.get(&(p.slot, p.generation))
+        {
+            r.check(self, &v, "a refined variable assigned");
+        }
+        let old = std::mem::replace(self.memory.get_mut(&p), v);
+        self.drop(old)?;
+        if !p.path.is_empty() {
+            let mut outer = p.clone();
+            outer.path.pop();
+            self.check_fields(self.memory.get(&outer), "assigned to");
+        }
+        Ok(())
+    }
+
+    /// Local `l` of frame `fr` goes out of scope: what's in its slot is
+    /// dropped, and the slot freed.
+    ///
+    /// In a type's own `discard`, `self` is dropped part by part, as the
+    /// borrow checker has it (lemma D3 of docs/20-destructors.md): its
+    /// `discard` is what's running.
+    fn dead(&mut self, fr: &mut Frame, l: usize) -> Result<(), Error> {
+        let Some(p) = fr.slots[l].take() else {
+            return Ok(());
+        };
+        let v = self.memory.free(&p, false);
+        match fr.f.is_some_and(is_discard_fn) && l == 1 {
+            true => self.drop_parts(v),
+            false => self.drop(v),
+        }
+    }
+
+    /// Checks that local `l` of frame `fr`, just given its value, has
+    /// refinement `r`, and keeps it, for what's assigned to it.
+    fn refine(&mut self, fr: &Frame, l: crate::mir::Local, r: &crate::mir::Refinement) {
+        let env = (r.env.iter())
+            .map(|(n, place)| {
+                let p = self.ptr(fr, place);
+                (n.clone(), self.memory.get(&p).clone())
+            })
+            .collect();
+        let refined = self.refined(&r.binder, &r.pred, env);
+        let p = self.ptr(fr, &crate::mir::Place::local(l));
+        let name = fr.body.locals[l.0].name.as_deref().unwrap_or("_");
+        refined.check(self, self.memory.get(&p), &format!("`{name}`"));
+        self.refined.insert((p.slot, p.generation), refined);
+    }
+
+    /// Does the value at `v` match `pat`?
+    fn matches(&self, pat: &crate::mir::Pat, v: &Ptr) -> bool {
+        use crate::mir::Pat;
+        let in_range = |lo: &Option<i128>, hi: &Option<i128>, m: i128| {
+            lo.is_none_or(|lo| lo <= m) && hi.is_none_or(|hi| m <= hi)
+        };
+        match (pat, self.memory.get(v)) {
+            (Pat::Any, _) => true,
+            (Pat::Deref(pat), Value::Ref(q)) => self.matches(pat, q),
+            (Pat::Range(lo, hi), Value::Int(m, _)) => in_range(lo, hi, *m),
+            (Pat::Range(lo, hi), Value::Char(c)) => in_range(lo, hi, i128::from(u32::from(*c))),
+            (Pat::Bool(b), Value::Bool(c)) => b == c,
+            (Pat::Variant(i, pats), Value::Variant(ty, name, _)) => {
+                self.enums[ty.as_str()].variants[*i].name.name == *name
+                    && (pats.iter().enumerate()).all(|(j, p)| self.matches(p, &v.field(j)))
+            }
+            (Pat::Struct(fields), Value::Struct(..)) => {
+                fields.iter().all(|(j, p)| self.matches(p, &v.field(*j)))
+            }
+            (Pat::Array(pats), Value::Slots(values)) => {
+                if pats.len() != values.len() {
+                    unsound("an array pattern of another length");
+                }
+                (pats.iter().enumerate()).all(|(j, p)| self.matches(p, &v.field(j)))
+            }
+            (Pat::Or(alts), _) => alts.iter().any(|alt| self.matches(alt, v)),
+            (_, Value::Moved) => unsound("matching a value that was moved"),
+            (pat, v) => unsound(&format!("pattern {pat:?} can't apply to `{v}`")),
+        }
+    }
     /// Runs intrinsic `name` (see `check::INTRINSICS`), whose copy is
     /// `copy`, on `args`, called at `span`.
     fn intrinsic(
@@ -1747,15 +2072,18 @@ impl Interp<'_, '_> {
     }
 
     /// The innermost `unsafe` block being run, at an unsafe operation:
-    /// there must be one, and every function called since it started must
-    /// say `with unsafe`, or the checker let through what it shouldn't
+    /// there must be one, around where the function or closure calling it
+    /// is, or where one that called it is, and every function on the way
+    /// must say `with unsafe`, or the checker let through what it shouldn't
     /// have (see docs/09-unsafe.md).
     fn unsafe_op(&self) -> Span {
-        let Some(&(block, depth)) = self.unsafe_blocks.last() else {
-            unsound("an unsafe operation with no `unsafe` block around it")
-        };
-        for f in &self.frames[depth..] {
-            let says = self.fns[f.as_str()]
+        for site in self.sites.iter().rev() {
+            let inside = |b: &&Span| b.start <= site.span.start && site.span.end <= b.end;
+            if let Some(block) = site.unsafe_blocks.iter().find(inside) {
+                return *block;
+            }
+            let Some(f) = site.f else { continue };
+            let says = self.fns[f]
                 .effects
                 .iter()
                 .flat_map(|e| &e.items)
@@ -1766,7 +2094,7 @@ impl Interp<'_, '_> {
                 ));
             }
         }
-        block
+        unsound("an unsafe operation with no `unsafe` block around it")
     }
 
     /// The error of an unsafe operation at `span` whose obligation is
@@ -1779,562 +2107,6 @@ impl Interp<'_, '_> {
                 block,
                 "in this `unsafe` block, which says its obligations are kept",
             )
-    }
-
-    /// Calls the closure at `at`. In its body, each variable it captured is
-    /// where the closure says: what the reference it holds points to, if it
-    /// captured it by reference, or else its own field.
-    fn call_closure(&mut self, at: &Ptr, args: Vec<Value>, span: Span) -> Result<Value, Error> {
-        let Value::Closure(c) = self.memory.get(at).clone() else {
-            unreachable!("a closure")
-        };
-        let mut captured = Vec::new();
-        for (i, (name, mode, _)) in c.code.modes.iter().enumerate() {
-            let p = match mode {
-                Capture::Value => at.field(i),
-                Capture::Ref | Capture::Mut | Capture::Unique => {
-                    match self.memory.get(&at.field(i)) {
-                        Value::Ref(p) => p.clone(),
-                        other => unsound(&format!("a closure holding `{other}` for a reference")),
-                    }
-                }
-            };
-            captured.push((name.clone(), p));
-        }
-        let params = c.code.params.iter().map(|p| p.name.name.clone());
-        self.enter(captured, params.zip(args).collect(), &c.code.body, span)
-    }
-
-    /// Evaluates a function body with `locals` as its environment, each in
-    /// a new slot, freed at the end, and in a closure's, what it captured,
-    /// `captured`, where it is. The caller's locals are saved and restored
-    /// afterwards.
-    fn enter(
-        &mut self,
-        captured: Vec<(String, Ptr)>,
-        locals: Vec<(String, Value)>,
-        body: &Expr,
-        span: Span,
-    ) -> Result<Value, Error> {
-        self.calls.push(span);
-        let result = self.enter_body(captured, locals, body, span);
-        self.calls.pop();
-        result
-    }
-
-    /// `enter`, once the call is on `calls`.
-    fn enter_body(
-        &mut self,
-        captured: Vec<(String, Ptr)>,
-        locals: Vec<(String, Value)>,
-        body: &Expr,
-        span: Span,
-    ) -> Result<Value, Error> {
-        if self.depth >= MAX_CALL_DEPTH {
-            return Err(self.panic(
-                span,
-                format!("stack overflow (more than {MAX_CALL_DEPTH} nested calls)"),
-            ));
-        }
-        let captured = captured.into_iter().map(|(name, p)| (name, p, false));
-        let locals = captured
-            .chain(
-                locals
-                    .into_iter()
-                    .map(|(name, v)| (name, self.memory.alloc(v, false), true)),
-            )
-            .collect();
-        let saved = std::mem::replace(&mut self.locals, locals);
-        for (name, r) in std::mem::take(&mut self.params_refined) {
-            let p = self.local(&name).expect("a parameter");
-            self.refined.insert((p.slot, p.generation), r);
-        }
-        let saved_temps = std::mem::take(&mut self.temps);
-        self.depth += 1;
-        let result = self.statement(|i| i.eval(body));
-        self.depth -= 1;
-        let ended = self.end_scope(0);
-        self.locals = saved;
-        self.temps = saved_temps;
-        let result = match (result, ended) {
-            (Ok(_) | Err(Flow::Return(_)), Err(e)) => Err(Flow::Error(e)),
-            (result, _) => result,
-        };
-        match result {
-            Ok(v) | Err(Flow::Return(v)) => Ok(v),
-            Err(Flow::Error(e)) => Err(e),
-            Err(Flow::Break(..) | Flow::Continue(_)) => {
-                unsound("a `break` or `continue` out of a function")
-            }
-        }
-    }
-
-    /// Evaluates `es` in order. If one doesn't finish, what the ones before
-    /// it gave is dropped.
-    fn eval_all<'e>(&mut self, es: impl IntoIterator<Item = &'e Expr>) -> Result<Vec<Value>, Flow> {
-        let mut values = Vec::new();
-        for e in es {
-            match self.eval(e) {
-                Ok(v) => values.push(v),
-                Err(flow) => {
-                    self.drop_all(values.into_iter().rev())?;
-                    return Err(flow);
-                }
-            }
-        }
-        Ok(values)
-    }
-
-    /// A call's arguments, in order, but for borrows, `&e` or `&mut e`,
-    /// which are taken after the rest, as the borrow checker says
-    /// (`Builder::call_into`). Only the borrow waits, and following the
-    /// place's path: its root is worked out in order, as working it out
-    /// may do things. `&*make()` calls `make` where it's written.
-    fn arguments<'e>(
-        &mut self,
-        args: impl IntoIterator<Item = &'e Expr>,
-    ) -> Result<Vec<Value>, Flow> {
-        let args: Vec<&Expr> = args.into_iter().collect();
-        // Each argument's value, or for a borrow, where its place's root is.
-        let mut firsts: Vec<Result<Value, Ptr>> = Vec::new();
-        for &a in &args {
-            let first = match &a.kind {
-                ExprKind::Unary(UnOp::Ref | UnOp::RefMut, x) => self.base(root(x)).map(Err),
-                _ => self.eval(a).map(Ok),
-            };
-            match first {
-                Ok(first) => firsts.push(first),
-                Err(flow) => {
-                    self.drop_all(firsts.into_iter().rev().filter_map(Result::ok))?;
-                    return Err(flow);
-                }
-            }
-        }
-        let borrow = |i: &Self, a: &Expr, base: Ptr| match &a.kind {
-            ExprKind::Unary(_, x) => Value::Ref(i.path(x, &base)),
-            _ => unreachable!("a borrow"),
-        };
-        Ok(args
-            .iter()
-            .zip(firsts)
-            .map(|(a, first)| first.unwrap_or_else(|base| borrow(self, a, base)))
-            .collect())
-    }
-
-    /// Runs the body of a loop again and again, until a `break`, whose
-    /// value it returns, or for a `while`, until its condition `c` is false.
-    ///
-    /// A `break` or `continue` with another loop's label goes on out, to
-    /// that loop.
-    fn repeat(
-        &mut self,
-        label: &Option<Label>,
-        c: Option<&Expr>,
-        body: &Expr,
-    ) -> Result<Value, Flow> {
-        let ours = |l: &Option<String>| match (l, label) {
-            (None, _) => true,
-            (Some(l), Some(label)) => *l == label.name.name,
-            (Some(_), None) => false,
-        };
-        loop {
-            if let Some(c) = c
-                && !bool(self.statement(|i| i.eval(c))?)
-            {
-                return Ok(Value::Unit);
-            }
-            match self.eval(body) {
-                Ok(v) => self.drop(v)?,
-                Err(Flow::Break(l, v)) if ours(&l) => return Ok(v),
-                Err(Flow::Continue(l)) if ours(&l) => {}
-                Err(flow) => return Err(flow),
-            }
-        }
-    }
-
-    fn eval(&mut self, e: &Expr) -> Result<Value, Flow> {
-        Ok(match &e.kind {
-            ExprKind::For(_)
-            | ExprKind::IfLet(..)
-            | ExprKind::WhileLet(..)
-            | ExprKind::Range(..)
-            | ExprKind::Try(..)
-            | ExprKind::Index(..) => {
-                unreachable!("rewritten when paths are resolved")
-            }
-            ExprKind::Int(n, t) => {
-                let t = t.unwrap_or_else(|| unsound("a literal of no type"));
-                int_of(i128::from(*n), t)
-            }
-            // `-` of a literal is a literal: `-128` is an `i8`, though `128`
-            // isn't.
-            ExprKind::Unary(UnOp::Neg, x) if let ExprKind::Int(n, t) = x.kind => {
-                let t = t.unwrap_or_else(|| unsound("a literal of no type"));
-                int_of(-i128::from(n), t)
-            }
-            ExprKind::Char(c) => Value::Char(*c),
-            ExprKind::Str(s) => Value::Ref(self.literal(s.as_bytes())),
-            ExprKind::ByteStr(b) => Value::Ref(self.literal(b)),
-            // A character's scalar value; a number as a character, if it's
-            // one.
-            ExprKind::As(x, t) if matches!(&t.kind, TypeExprKind::Named(n, _) if n == "char") => {
-                let n = match self.eval(x)? {
-                    Value::Char(c) => i128::from(u32::from(c)),
-                    v => int(v),
-                };
-                match u32::try_from(n).ok().and_then(char::from_u32) {
-                    Some(c) => Value::Char(c),
-                    None => {
-                        self.not_proved(e.id);
-                        let message = format!("`{n}` isn't a character");
-                        return Err(self.panics(e.span, message).into());
-                    }
-                }
-            }
-            // The same number, if it fits.
-            ExprKind::As(x, t) => {
-                let n = match self.eval(x)? {
-                    Value::Char(c) => i128::from(u32::from(c)),
-                    v => int(v),
-                };
-                let t = int_ty(t);
-                let (lo, hi) = t.range_64();
-                if !(lo..=hi).contains(&n) {
-                    self.not_proved(e.id);
-                    let message = format!("`as` overflowed: {n} isn't {}", t.a());
-                    return Err(self.panics(e.span, message).into());
-                }
-                Value::Int(n, t)
-            }
-            ExprKind::Bool(b) => Value::Bool(*b),
-            ExprKind::Unit => Value::Unit,
-            ExprKind::Var(name, _) => match self.local(name) {
-                Some(p) => self.read(&p, false),
-                None => self.function(name),
-            },
-            ExprKind::Field(..) | ExprKind::Unary(UnOp::Deref, _) => {
-                let p = self.place(e)?;
-                self.read(&p, false)
-            }
-            ExprKind::Move(x) => {
-                let p = self.place(x)?;
-                self.read(&p, true)
-            }
-            ExprKind::Unary(UnOp::Ref | UnOp::RefMut, x) => Value::Ref(self.place(x)?),
-
-            ExprKind::Unary(op, x) => {
-                let v = self.eval(x)?;
-                match op {
-                    UnOp::Neg => {
-                        let zero = match v {
-                            Value::Int(_, t) => Value::Int(0, t),
-                            ref other => unsound(&format!("`-` of `{other}`")),
-                        };
-                        self.arith(BinOp::Sub, zero, v, e)?
-                    }
-                    // Each bit flipped: the least plus the greatest, minus
-                    // it, which is in its type, so never panics.
-                    _ => match v {
-                        Value::Int(n, t) => {
-                            let (lo, hi) = t.range_64();
-                            int_of(lo + hi - n, t)
-                        }
-                        v => Value::Bool(!bool(v)),
-                    },
-                }
-            }
-
-            // `&&` and `||` short-circuit: the right side only runs if needed.
-            ExprKind::Binary(BinOp::And, l, r) => {
-                Value::Bool(bool(self.eval(l)?) && bool(self.eval(r)?))
-            }
-            ExprKind::Binary(BinOp::Or, l, r) => {
-                Value::Bool(bool(self.eval(l)?) || bool(self.eval(r)?))
-            }
-
-            // `==` looks at its operands where they are, and moves neither.
-            ExprKind::Binary(op @ (BinOp::Eq | BinOp::Ne), l, r) => {
-                let l = self.place(l)?;
-                let r = self.place(r)?;
-                let same = self.equal(&l, &r, e.span)?;
-                Value::Bool(same == (*op == BinOp::Eq))
-            }
-
-            ExprKind::Binary(op, l, r) => {
-                let l = self.eval(l)?;
-                let r = self.eval(r)?;
-                self.arith(*op, l, r, e)?
-            }
-
-            // A function value owns nothing, so there's nothing to drop if
-            // an argument doesn't finish.
-            //
-            // A closure's `&f` or `&mut f`, as `lift` writes a call of one
-            // that's `Fn` or `FnMut`, is taken after the arguments, as any
-            // borrow passed is.
-            ExprKind::Call(f, args) => {
-                let mut all = self.arguments(std::iter::once(&**f).chain(args))?;
-                let f = all.remove(0);
-                self.call(f, all, e.span)?
-            }
-
-            ExprKind::If(c, then, els) => {
-                if bool(self.statement(|i| i.eval(c))?) {
-                    self.eval(then)?
-                } else if let Some(els) = els {
-                    self.eval(els)?
-                } else {
-                    Value::Unit
-                }
-            }
-
-            ExprKind::While(label, c, body) => self.repeat(label, Some(c), body)?,
-            ExprKind::Loop(label, body) => self.repeat(label, None, body)?,
-            ExprKind::Return(value) => {
-                let v = match value {
-                    Some(v) => self.eval(v)?,
-                    None => Value::Unit,
-                };
-                return Err(Flow::Return(v));
-            }
-            ExprKind::Break(label, value) => {
-                let v = match value {
-                    Some(v) => self.eval(v)?,
-                    None => Value::Unit,
-                };
-                return Err(Flow::Break(label.as_ref().map(|l| l.name.clone()), v));
-            }
-            ExprKind::Continue(label) => {
-                return Err(Flow::Continue(label.as_ref().map(|l| l.name.clone())));
-            }
-
-            // The value first, then the place, as in Rust. What was there
-            // is dropped.
-            ExprKind::Assign(op, place, value) => {
-                let v = self.eval(value)?;
-                let p = match self.place(place) {
-                    Ok(p) => p,
-                    Err(flow) => {
-                        self.drop(v)?;
-                        return Err(flow);
-                    }
-                };
-                let v = match op {
-                    Some(op) => {
-                        let old = self.memory.get(&p).clone();
-                        self.arith(*op, old, v, e)?
-                    }
-                    None => v,
-                };
-                if p.path.is_empty()
-                    && let Some(r) = self.refined.get(&(p.slot, p.generation))
-                {
-                    r.check(self, &v, "a refined variable assigned");
-                }
-                let old = std::mem::replace(self.memory.get_mut(&p), v);
-                self.drop(old)?;
-                if !p.path.is_empty() {
-                    let mut outer = p.clone();
-                    outer.path.pop();
-                    self.check_fields(self.memory.get(&outer), "assigned to");
-                }
-                Value::Unit
-            }
-
-            ExprKind::Block(stmts, tail) => self.block(stmts, tail.as_deref())?,
-            ExprKind::Unsafe(block) => {
-                self.unsafe_blocks.push((e.span, self.frames.len()));
-                let v = self.eval(block);
-                self.unsafe_blocks.pop();
-                v?
-            }
-
-            // These live in their own functions to keep `eval`'s stack frame
-            // small: in debug builds every temporary in this `match` gets its
-            // own slot, and deep recursion multiplies the frame size.
-            ExprKind::StructLit(name, _, inits) => self.struct_lit(name, inits)?,
-            ExprKind::MethodCall(..) => unreachable!("lifting makes method calls plain calls"),
-            // Named by its symbol, as lifting names everything.
-            ExprKind::Variant(ty, _, _, args, ..) if ty.name == crate::check::BOX => {
-                let v = self.eval(&args[0])?;
-                self.effect("alloc");
-                Value::Box(self.memory.alloc(v, true))
-            }
-            ExprKind::Variant(ty, _, variant, args, ..) => {
-                let args = self.eval_all(args)?;
-                Value::Variant(ty.name.clone(), variant.name.clone(), args)
-            }
-            ExprKind::Array(items) => Value::Slots(self.eval_all(items)?),
-            // `n` copies of `v`, which is `Copy`; monomorphisation wrote the
-            // length `n` is.
-            ExprKind::Repeat(v, n) => {
-                let v = self.eval(v)?;
-                let n = usize::try_from(int(self.eval(n)?))
-                    .unwrap_or_else(|_| unsound("an array's length out of range"));
-                Value::Slots(vec![v; n])
-            }
-            ExprKind::Match(scrutinee, arms) => self.match_expr(scrutinee, arms)?,
-            // Only the locals the body uses: its free variables that aren't
-            // functions. They're `Copy`, so they're copied.
-            ExprKind::Lambda(code) => {
-                let mut env = Vec::new();
-                for (name, mode, moves) in &code.modes {
-                    let p = self
-                        .local(name)
-                        .unwrap_or_else(|| unsound("capturing a non-variable"));
-                    let v = match mode {
-                        Capture::Value => self.read(&p, *moves),
-                        Capture::Ref | Capture::Mut | Capture::Unique => Value::Ref(p),
-                    };
-                    env.push((name.clone(), v));
-                }
-                Value::Closure(Closure {
-                    env,
-                    code: code.clone(),
-                })
-            }
-        })
-    }
-
-    /// A block: each statement's temporaries are dropped at its end, and
-    /// the block's variables at the block's end, after the value of its
-    /// tail is worked out, and the tail's temporaries dropped.
-    fn block(&mut self, stmts: &[Stmt], tail: Option<&Expr>) -> Result<Value, Flow> {
-        let scope = self.locals.len();
-        let result = self.block_inner(stmts, tail);
-        let ended = self.end_scope(scope);
-        let v = result?;
-        ended?;
-        Ok(v)
-    }
-
-    fn block_inner(&mut self, stmts: &[Stmt], tail: Option<&Expr>) -> Result<Value, Flow> {
-        for stmt in stmts {
-            match stmt {
-                Stmt::Let {
-                    pat,
-                    ty,
-                    init: Some(init),
-                    ..
-                } => {
-                    self.let_stmt(pat, init)?;
-                    if let Some((v, pred)) = ty.as_ref().and_then(|t| t.refinement()) {
-                        self.refine_let(pat, v, pred);
-                    }
-                }
-                // No value yet: as if it had been moved out of.
-                Stmt::Let {
-                    pat, init: None, ..
-                } => {
-                    let PatternKind::Bind(name, _) = &pat.kind else {
-                        unsound("`let` with no value of a pattern");
-                    };
-                    let slot = self.memory.alloc(Value::Moved, false);
-                    self.locals.push((name.clone(), slot, true));
-                }
-                Stmt::Expr(e) | Stmt::BlockLike(e) => {
-                    self.statement(|i| {
-                        let v = i.eval(e)?;
-                        i.drop(v)?;
-                        Ok(())
-                    })?;
-                }
-                Stmt::Fn(_) | Stmt::Type(_) => {
-                    unreachable!("nested functions and types are lifted first")
-                }
-            }
-        }
-        match tail {
-            Some(tail) => self.statement(|i| i.eval(tail)),
-            None => Ok(Value::Unit),
-        }
-    }
-
-    /// Checks that the variable `pat` has just been given has refinement
-    /// `{ v: .. | pred }`, and keeps it for what's assigned to it.
-    fn refine_let(&mut self, pat: &Pattern, v: &Ident, pred: &Expr) {
-        let pat = match &pat.kind {
-            PatternKind::Move(p) => p,
-            _ => pat,
-        };
-        let PatternKind::Bind(name, _) = &pat.kind else {
-            unsound("a refined `let` of a pattern");
-        };
-        let mut names = Vec::new();
-        pred_names(pred, &v.name, &mut names);
-        let env = names
-            .into_iter()
-            .map(|n| {
-                let p = self
-                    .local(n)
-                    .unwrap_or_else(|| unsound(&format!("`{n}` isn't there")));
-                (n.to_string(), self.memory.get(&p).clone())
-            })
-            .collect();
-        let r = self.refined(&v.name, pred, env);
-        let p = self.local(name).expect("just bound");
-        r.check(self, self.memory.get(&p), &format!("`{name}`"));
-        self.refined.insert((p.slot, p.generation), r);
-    }
-
-    /// `let pat = init;`. If `init` is `&e` of a value that isn't a place,
-    /// the temporary holding it lives as long as a variable would, to the
-    /// end of the block, as in Rust: `let r = &make();` is fine.
-    fn let_stmt(&mut self, pat: &Pattern, init: &Expr) -> Result<(), Flow> {
-        if let ExprKind::Unary(UnOp::Ref | UnOp::RefMut, x) = &init.kind
-            && !x.is_place()
-        {
-            let v = self.statement(|i| i.eval(x))?;
-            let p = self.memory.alloc(v, false);
-            self.locals.push((String::new(), p.clone(), true));
-            let r = self.memory.alloc(Value::Ref(p), false);
-            self.temps.push(vec![r.clone()]);
-            self.bind(pat, &r, false)?;
-            let temps = self.temps.pop().expect("pushed");
-            for p in temps {
-                self.memory.free(&p, false);
-            }
-            return Ok(());
-        }
-        self.statement(|i| {
-            // The value, moved or copied as `init` says, into the variable,
-            // as the borrow checker has it.
-            if let PatternKind::Bind(name, _) = &pat.kind {
-                let v = i.eval(init)?;
-                let slot = i.memory.alloc(v, false);
-                i.locals.push((name.clone(), slot, true));
-                return Ok(());
-            }
-            let p = i.place(init)?;
-            if !i.matches(pat, &p) {
-                unsound("a `let` pattern didn't match");
-            }
-            i.bind(pat, &p, false)?;
-            Ok(())
-        })
-    }
-
-    fn struct_lit(&mut self, name: &Ident, inits: &[FieldInit]) -> Result<Value, Flow> {
-        let decl = self.structs[name.name.as_str()];
-        // Evaluate in the order written, store in the order declared.
-        let values = self.eval_all(inits.iter().map(|i| &i.value))?;
-        let mut values: Vec<(&str, Option<Value>)> = inits
-            .iter()
-            .map(|i| i.name.name.as_str())
-            .zip(values.into_iter().map(Some))
-            .collect();
-        let fields = decl
-            .fields
-            .iter()
-            .map(|f| {
-                let i = values.iter().position(|(n, _)| *n == f.name.name);
-                let i = i.unwrap_or_else(|| unsound("missing struct field"));
-                (f.name.name.clone(), values[i].1.take().expect("each once"))
-            })
-            .collect();
-        let v = Value::Struct(name.name.clone(), fields);
-        self.check_fields(&v, "made");
-        Ok(v)
     }
 
     /// Stops the program, as the checker is wrong, unless struct value
@@ -2356,171 +2128,6 @@ impl Interp<'_, '_> {
                 );
             }
         }
-    }
-
-    /// Picks the first arm whose pattern matches, without moving anything,
-    /// then binds its variables, moving or borrowing from the scrutinee.
-    /// The scrutinee is looked at where it is, if it's a place.
-    fn match_expr(&mut self, scrutinee: &Expr, arms: &[Arm]) -> Result<Value, Flow> {
-        self.statement(|i| {
-            let p = i.place(scrutinee)?;
-            let Some(arm) = arms.iter().find(|arm| i.matches(&arm.pat, &p)) else {
-                unsound(&format!("no `match` arm fits `{}`", i.memory.get(&p)));
-            };
-            let scope = i.locals.len();
-            i.bind(&arm.pat, &p, false)?;
-            let result = i.eval(&arm.body);
-            let ended = i.end_scope(scope);
-            let v = result?;
-            ended?;
-            Ok(v)
-        })
-    }
-
-    /// Does `p` match the value at `v`? Patterns that look inside a value
-    /// look through references to it, as the checker's do.
-    fn matches(&self, p: &Pattern, v: &Ptr) -> bool {
-        if let PatternKind::Move(p) = &p.kind {
-            return self.matches(p, v);
-        }
-        let mut v = v.clone();
-        let looks_inside = !matches!(
-            p.kind,
-            PatternKind::Wild | PatternKind::Bind(..) | PatternKind::Or(_)
-        );
-        while let (true, Value::Ref(q)) = (looks_inside, self.memory.get(&v)) {
-            v = q.clone();
-        }
-        match (&p.kind, self.memory.get(&v)) {
-            (PatternKind::Wild | PatternKind::Bind(..), _) => true,
-            (PatternKind::Int(n, _), Value::Int(m, _)) => n == m,
-            (PatternKind::Range(lo, hi, ..), Value::Int(m, _)) => {
-                lo.is_none_or(|lo| lo <= *m) && hi.is_none_or(|hi| *m <= hi)
-            }
-            (PatternKind::Int(n, _), Value::Char(c)) => *n == i128::from(u32::from(*c)),
-            (PatternKind::Range(lo, hi, ..), Value::Char(c)) => {
-                let m = i128::from(u32::from(*c));
-                lo.is_none_or(|lo| lo <= m) && hi.is_none_or(|hi| m <= hi)
-            }
-            (PatternKind::Bool(b), Value::Bool(c)) => b == c,
-            (PatternKind::Unit, Value::Unit) => true,
-            (PatternKind::Variant(_, _, variant, pats), Value::Variant(_, name, _)) => {
-                variant.name == *name
-                    && pats
-                        .iter()
-                        .enumerate()
-                        .all(|(i, p)| self.matches(p, &v.field(i)))
-            }
-            (PatternKind::Or(alts), _) => alts.iter().any(|alt| self.matches(alt, &v)),
-            (PatternKind::Array(pats), Value::Slots(values)) => {
-                if pats.len() != values.len() {
-                    unsound("an array pattern of another length");
-                }
-                (pats.iter().enumerate()).all(|(i, p)| self.matches(p, &v.field(i)))
-            }
-            (PatternKind::Struct(_, _, field_pats, _), Value::Struct(_, fields)) => {
-                field_pats.iter().all(|fp| {
-                    match fields.iter().position(|(f, _)| *f == fp.name.name) {
-                        Some(i) => self.matches(&fp.pat, &v.field(i)),
-                        None => unsound(&format!("no field `{}`", fp.name.name)),
-                    }
-                })
-            }
-            (_, v) => unsound(&format!("pattern can't apply to `{v}`")),
-        }
-    }
-
-    /// Binds the variables of `p`, which matches the value at `v`: each to
-    /// what it matches, moved out if the pattern says so, or else copied,
-    /// or a reference to it if `by_ref` or the pattern looked through a
-    /// reference to get there.
-    fn bind(&mut self, p: &Pattern, v: &Ptr, mut by_ref: bool) -> Result<(), Error> {
-        let (p, moves) = match &p.kind {
-            PatternKind::Move(p) => (&**p, true),
-            _ => (p, false),
-        };
-        let mut v = v.clone();
-        let looks_inside = !matches!(
-            p.kind,
-            PatternKind::Wild | PatternKind::Bind(..) | PatternKind::Or(_)
-        );
-        while let (true, Value::Ref(q)) = (looks_inside, self.memory.get(&v)) {
-            v = q.clone();
-            by_ref = true;
-        }
-        match &p.kind {
-            PatternKind::Bind(name, _) => {
-                let value = match (by_ref, moves) {
-                    (true, true) => unsound("a move out from behind a reference"),
-                    (true, false) => Value::Ref(v),
-                    (false, _) => self.read(&v, moves),
-                };
-                let slot = self.memory.alloc(value, false);
-                self.locals.push((name.clone(), slot, true));
-            }
-            PatternKind::Variant(_, _, _, pats) => {
-                for (i, p) in pats.iter().enumerate() {
-                    self.bind(p, &v.field(i), by_ref)?;
-                }
-                self.consume(&v, by_ref, moves)?;
-            }
-            PatternKind::Struct(_, _, field_pats, _) => {
-                for fp in field_pats {
-                    let Value::Struct(_, fields) = self.memory.get(&v) else {
-                        unsound("struct pattern on something else");
-                    };
-                    let i = fields.iter().position(|(f, _)| *f == fp.name.name);
-                    let i = i.unwrap_or_else(|| unsound("no such field"));
-                    self.bind(&fp.pat, &v.field(i), by_ref)?;
-                }
-                self.consume(&v, by_ref, moves)?;
-            }
-            PatternKind::Array(pats) => {
-                for (i, p) in pats.iter().enumerate() {
-                    self.bind(p, &v.field(i), by_ref)?;
-                }
-                self.consume(&v, by_ref, moves)?;
-            }
-            PatternKind::Or(alts) => {
-                let alt = alts.iter().find(|alt| self.matches(alt, &v));
-                let alt = alt.unwrap_or_else(|| unsound("no alternative matches"));
-                self.bind(alt, &v, by_ref)?;
-            }
-            PatternKind::Move(_) => unsound("a pattern moving twice"),
-            PatternKind::Wild
-            | PatternKind::Int(..)
-            | PatternKind::Range(..)
-            | PatternKind::Bool(_)
-            | PatternKind::Unit => {}
-        }
-        Ok(())
-    }
-
-    /// Uses up the value at `v`, which a pattern has just taken apart, if
-    /// it `moves`, as the borrow checker's `Consume` does where it does
-    /// (see `Builder::consume`): what the pattern's variables didn't move
-    /// out of it is dropped, and nothing's left there. If it doesn't, the
-    /// value must be `Discard`, if it's owned: the checker leaves only
-    /// what it knew to be, which a type parameter is only if every type it
-    /// can be is.
-    fn consume(&mut self, v: &Ptr, by_ref: bool, moves: bool) -> Result<(), Error> {
-        match (by_ref, moves, self.memory.get(v)) {
-            (true, true, _) => unsound("using up what's behind a reference"),
-            (false, true, _) => {
-                let old = std::mem::replace(self.memory.get_mut(v), Value::Moved);
-                return self.drop_parts(old);
-            }
-            (false, false, Value::Struct(ty, _) | Value::Variant(ty, ..))
-                if !self.discard.contains(ty.as_str()) =>
-            {
-                unsound(&format!(
-                    "a `{}`, which isn't `Discard`, taken apart and not used up",
-                    crate::check::source_name(ty)
-                ));
-            }
-            _ => {}
-        }
-        Ok(())
     }
 
     /// `==` on the values at `p` and `q`, at `span`. References and boxes
@@ -2608,8 +2215,14 @@ impl Interp<'_, '_> {
 
     /// `l op r`, for the operator `e`: in ℤ, as long as the result fits in
     /// their type.
-    fn arith(&mut self, op: BinOp, l: Value, r: Value, e: &Expr) -> Result<Value, Error> {
-        let span = e.span;
+    fn arith(
+        &mut self,
+        op: BinOp,
+        l: Value,
+        r: Value,
+        id: NodeId,
+        span: Span,
+    ) -> Result<Value, Error> {
         let (Value::Int(l, t), Value::Int(r, u)) = (&l, &r) else {
             unsound(&format!("`{op}` of `{l}` and `{r}`"))
         };
@@ -2640,7 +2253,7 @@ impl Interp<'_, '_> {
             BinOp::Gt => return Ok(Value::Bool(l > r)),
             BinOp::Ge => return Ok(Value::Bool(l >= r)),
             BinOp::Div | BinOp::Rem if r == 0 => {
-                self.not_proved(e.id);
+                self.not_proved(id);
                 return Err(self.panics(span, "division by zero"));
             }
             BinOp::Add => l.checked_add(r),
@@ -2656,24 +2269,9 @@ impl Interp<'_, '_> {
         match n.filter(|n| (lo..=hi).contains(n)) {
             Some(n) => Ok(Value::Int(n, t)),
             None => {
-                self.not_proved(e.id);
+                self.not_proved(id);
                 Err(self.panics(span, "integer overflow"))
             }
         }
-    }
-}
-
-/// The root of place expression `e`: what its path of fields and `*`s
-/// starts from, `v` in `(*v.f).g`. Any expression is a place expression,
-/// its own root if it isn't a field or a `*`.
-///
-/// The borrow checker sees a place the same way (`Builder::place`), and the
-/// two must agree on when each part of it is worked out: the root where
-/// it's written, the path when the place is used. Only a borrow passed to a
-/// call (`arguments`) tells those apart.
-fn root(e: &Expr) -> &Expr {
-    match &e.kind {
-        ExprKind::Field(x, _) | ExprKind::Unary(UnOp::Deref, x) => root(x),
-        _ => e,
     }
 }
