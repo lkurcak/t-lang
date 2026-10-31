@@ -244,6 +244,7 @@ fn run(
                     None => {
                         let mut term = Process::default();
                         let result = interp::run(&program, &mut term);
+                        let result = result.map_err(|e| e.blamed_caller(&sources));
                         // A write may have reached only the buffer. Flush
                         // even after an error, keeping that error if there
                         // was one, and otherwise report a failed flush.
@@ -273,6 +274,7 @@ fn run(
                             ..interp::Captured::default()
                         };
                         let result = interp::run(&program, &mut term);
+                        let result = result.map_err(|e| e.blamed_caller(&sources));
                         RunResult {
                             sources,
                             warnings,
@@ -284,6 +286,106 @@ fn run(
                 },
             }
         })
+        .expect("failed to spawn interpreter thread")
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
+/// What `t test` found: the program's files and warnings, as for a run,
+/// and how each of its tests went, in order, or the error that kept them
+/// from running.
+pub struct TestRun {
+    pub sources: Sources,
+    pub warnings: Vec<Warning>,
+    pub result: Result<Vec<TestOutcome>, Error>,
+}
+
+/// How one test went.
+pub struct TestOutcome {
+    /// Its name: its module's path, then the function's.
+    pub name: String,
+    /// Why it failed, or nothing if it passed.
+    pub failure: Option<Error>,
+}
+
+impl TestRun {
+    /// Did a test fail, or did the tests not run?
+    pub fn failed(&self) -> bool {
+        match &self.result {
+            Ok(tests) => tests.iter().any(|t| t.failure.is_some()),
+            Err(_) => true,
+        }
+    }
+}
+
+/// Checks the program that starts at `path`, whose text is `src`, reading
+/// its files with `read`, and runs each of its own tests whose name has
+/// `filter` in it, in order, each as a program of its own: from nothing,
+/// with no input, and with nothing shared (see docs/31-tests.md).
+pub fn test_files(path: &Path, src: &str, read: load::Read, filter: Option<&str>) -> TestRun {
+    let Checked {
+        sources,
+        warnings,
+        info,
+        result,
+    } = check_files(path, src, read);
+    let program = match result {
+        Ok(program) => program.lower(),
+        Err(e) => {
+            return TestRun {
+                sources,
+                warnings,
+                result: Err(e),
+            };
+        }
+    };
+    let program = Arc::new(program);
+    let tests = (info.tests.iter()).filter(|t| filter.is_none_or(|f| t.symbol.contains(f)));
+    let outcomes = tests
+        .map(|test| {
+            let (program, symbol) = (program.clone(), test.symbol.clone());
+            let ended = on_big_stack(move || {
+                let mut term = interp::Captured::default();
+                let ended = interp::run_entry(&program, &symbol, &mut term);
+                (ended, lines(&term.err))
+            });
+            let (ended, errors) = ended;
+            let failure = match (ended.result, test.panics) {
+                (Err(_), true) if ended.panicked => None,
+                (Err(e), _) => Some(e.blamed_caller(&sources)),
+                (Ok(Value::Variant(_, variant, _)), _) if variant == "Err" => {
+                    let why = errors.join("\n");
+                    let why = why.strip_prefix("error: ").unwrap_or(&why);
+                    Some(Error::runtime(test.span, format!("gave back an error: {why}")))
+                }
+                (Ok(_), true) => Some(Error::runtime(
+                    test.span,
+                    "didn't panic, which this test passes only by doing",
+                )),
+                (Ok(_), false) => None,
+            };
+            TestOutcome {
+                name: test.symbol.clone(),
+                failure,
+            }
+        })
+        .collect();
+    TestRun {
+        sources,
+        warnings,
+        result: Ok(outcomes),
+    }
+}
+
+/// `f`'s result, worked out on a thread of its own with a big stack: the
+/// interpreter recurses several times per nested call, so give it enough
+/// to reach `MAX_CALL_DEPTH` even in debug builds, where frames are huge.
+/// It's only reserved address space; untouched pages cost nothing.
+fn on_big_stack<R: Send + 'static>(f: impl FnOnce() -> R + Send + 'static) -> R {
+    const STACK_SIZE: usize = 1024 * 1024 * 1024;
+    std::thread::Builder::new()
+        .stack_size(STACK_SIZE)
+        .spawn(f)
         .expect("failed to spawn interpreter thread")
         .join()
         .unwrap_or_else(|panic| std::panic::resume_unwind(panic))

@@ -412,9 +412,10 @@ impl Checker {
         for (i, (f, parent, method)) in fns.iter().enumerate() {
             let inherent =
                 matches!(method, Some(MethodOf::Impl(k)) if prog.impls[*k].trait_name.is_none());
-            // What's exported is other packages' to use.
+            // What's exported is other packages' to use, and a test is
+            // `t test`'s to run.
             let exported = f.vis.is_export() && parent.is_none();
-            if (method.is_some() && !inherent) || exported {
+            if (method.is_some() && !inherent) || exported || f.test.is_some() {
                 todo.push(FnId(i));
             }
         }

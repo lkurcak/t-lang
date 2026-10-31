@@ -2,4 +2,4 @@
 fn helper() {}
 
 fn main() {}
-// error: unknown attribute `inline`; the only ones are `allow`, `derive`, `intrinsic` and `measure`
+// error: unknown attribute `inline`; the only ones are `allow`, `derive`, `intrinsic`, `measure` and `test`

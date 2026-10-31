@@ -178,6 +178,7 @@ impl<'p> Cx<'p> {
             body,
             intrinsic: f.intrinsic,
             measure: f.measure,
+            test: f.test,
             ensures: f.ensures.clone(),
         };
         (decl, nested)

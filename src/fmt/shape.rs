@@ -122,7 +122,8 @@ structs! {
     AliasDecl { doc, allows, span, module, vis, name, generics, ty };
     Variant { doc, allows, span, name, fields };
     FnDecl { doc, allows, span, module, vis, name, generics, params, parens, ret,
-        effects, body, intrinsic, measure, ensures };
+        effects, body, intrinsic, measure, ensures, test };
+    Test { span, panics };
     TraitDecl { doc, allows, intrinsic, sealed, span, module, vis, name, supers, assoc, effects, methods };
     AssocDecl { doc, span, name, bounds };
     AssocDef { doc, span, name, ty };

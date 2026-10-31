@@ -790,6 +790,18 @@ pub struct FnDecl {
     /// mean their values at return and `old(..)` at the call (see
     /// docs/30-postconditions.md).
     pub ensures: Vec<Expr>,
+    /// Its `#[test]`, if it's a test: a function `t test` runs as a
+    /// program of its own (see docs/31-tests.md).
+    pub test: Option<Test>,
+}
+
+/// `#[test]` on a function, or `#[test(panics)]` on one that passes only
+/// by panicking.
+#[derive(Debug, Clone, Copy)]
+pub struct Test {
+    /// From the `#` to the `]`.
+    pub span: Span,
+    pub panics: bool,
 }
 
 impl FnDecl {

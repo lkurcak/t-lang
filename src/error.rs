@@ -46,6 +46,11 @@ pub struct Error {
     /// Other places that explain it, each with what happens there: "`x`
     /// is borrowed here".
     pub notes: Vec<(Span, String)>,
+    /// For a panic, the calls it happened in: where each was called,
+    /// outermost first. What's shown is the innermost outside of the
+    /// built-in libraries, as nothing in those is the program's to fix
+    /// (`Error::blamed_caller`).
+    pub trace: Vec<Span>,
 }
 
 impl Error {
@@ -58,6 +63,19 @@ impl Error {
         for fix in &mut self.fixes {
             fix.map(f);
         }
+    }
+
+    /// It, at the innermost call of its `trace` outside of the built-in
+    /// libraries, if it happened inside one: a panic in `assert_eq` or
+    /// `unwrap` is shown where they were called, as `#[track_caller]`
+    /// would in Rust, for every function of core, alloc and std.
+    pub fn blamed_caller(mut self, sources: &crate::source::Sources) -> Error {
+        if sources.in_library(self.span.start)
+            && let Some(&at) = (self.trace.iter().rev()).find(|s| !sources.in_library(s.start))
+        {
+            self.span = at;
+        }
+        self
     }
 
     pub fn syntax(span: Span, message: impl Into<String>) -> Error {
@@ -79,6 +97,7 @@ impl Error {
             message: message.into(),
             fixes: Vec::new(),
             notes: Vec::new(),
+            trace: Vec::new(),
         }
     }
 

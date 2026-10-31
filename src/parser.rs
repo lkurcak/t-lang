@@ -18,6 +18,8 @@
 //!                                                     inherent impl's method, in a library
 //!          | "#" "[" "measure" "]"                 -- on a `fn`: one the refinement logic
 //!                                                     can name (docs/21-measures.md)
+//!          | "#" "[" "test" ("(" "panics" ")")? "]" -- on a module's `fn`: one `t test`
+//!                                                     runs (docs/31-tests.md)
 //! derived  = IDENT ("where" IDENT ":" bound ("+" bound)* ("," IDENT ":" bound ("+" bound)*)*)?
 //! fn_decl  = "fn" IDENT generics? "(" (param ("," param)* ","?)? ")" ("->" type)? where?
 //!            (block | ";")                          -- `;` only for an intrinsic
@@ -334,6 +336,7 @@ impl Parser {
         let mut derives = Vec::new();
         let mut intrinsic = None;
         let mut measure = None;
+        let mut test = None;
         while *self.peek() == Tok::Hash {
             let start = self.bump().span;
             self.expect(Tok::LBracket)?;
@@ -349,14 +352,40 @@ impl Parser {
                     measure = Some(start.to(self.expect(Tok::RBracket)?));
                     continue;
                 }
+                Tok::Ident(name) if name == "test" => {
+                    self.bump();
+                    let panics = self.eat(&Tok::LParen);
+                    if panics {
+                        match self.peek() {
+                            Tok::Ident(name) if name == "panics" => {
+                                self.bump();
+                            }
+                            _ => {
+                                return Err(Error::syntax(
+                                    self.span(),
+                                    "a test can only say `panics`: `#[test(panics)]` passes \
+                                     only if it panics",
+                                ));
+                            }
+                        }
+                        self.expect(Tok::RParen)?;
+                    }
+                    let span = start.to(self.expect(Tok::RBracket)?);
+                    test = Some(Test { span, panics });
+                    continue;
+                }
                 Tok::Ident(name) => {
                     let message = format!(
                         "unknown attribute `{name}`; the only ones are `allow`, `derive`, \
-                         `intrinsic` and `measure`"
+                         `intrinsic`, `measure` and `test`"
                     );
                     return Err(Error::syntax(self.span(), message));
                 }
-                _ => return Err(self.unexpected("`allow`, `derive`, `intrinsic` or `measure`")),
+                _ => {
+                    return Err(
+                        self.unexpected("`allow`, `derive`, `intrinsic`, `measure` or `test`")
+                    );
+                }
             };
             self.bump();
             self.expect(Tok::LParen)?;
@@ -390,6 +419,7 @@ impl Parser {
             derives,
             intrinsic,
             measure,
+            test,
         })
     }
 
@@ -523,8 +553,9 @@ impl Parser {
             _ => None,
         };
         let head = match self.peek() {
-            Tok::Fn | Tok::Struct | Tok::Trait => head.no_measure(NOT_METHOD)?,
-            _ => head.no_intrinsic()?.no_measure(NOT_METHOD)?,
+            Tok::Fn => head.no_measure(NOT_METHOD)?,
+            Tok::Struct | Tok::Trait => head.no_measure(NOT_METHOD)?.no_test()?,
+            _ => head.no_intrinsic()?.no_measure(NOT_METHOD)?.no_test()?,
         };
         match self.peek() {
             Tok::Struct => {
@@ -573,6 +604,20 @@ impl Parser {
             }
             _ => {
                 let mut f = self.fn_decl(head.no_derives()?)?;
+                if let (Some(_), Some(at)) = (f.test, vis.span()) {
+                    let word = vis.keyword().trim();
+                    return Err(Error::syntax(
+                        at,
+                        format!(
+                            "a test can't be `{word}`: `t test` runs it, and nothing else needs \
+                             to see it"
+                        ),
+                    )
+                    .with_fix(Fix::new(
+                        format!("remove the `{word}`"),
+                        vec![Edit::delete(Span::new(at.start, f.span.start))],
+                    )));
+                }
                 f.vis = vis;
                 prog.fns.push(f);
             }
@@ -1027,6 +1072,7 @@ impl Parser {
             intrinsic,
             measure: head.measure,
             ensures,
+            test: head.test,
         };
         Ok((f, provided))
     }
@@ -1148,6 +1194,7 @@ impl Parser {
         let mut methods = Vec::new();
         while *self.peek() != Tok::RBrace {
             let head = (self.head()?.no_derives()?.no_intrinsic()?).no_measure(TRAIT_MEASURE)?;
+            let head = head.no_test()?;
             self.no_pub("a trait's methods are public wherever the trait is")?;
             match self.peek() {
                 Tok::Type => assoc.push(self.assoc_decl(head)?),
@@ -1357,7 +1404,7 @@ impl Parser {
         let mut effects = Vec::new();
         let mut methods = Vec::new();
         while *self.peek() != Tok::RBrace {
-            let head = self.head()?.no_derives()?;
+            let head = self.head()?.no_derives()?.no_test()?;
             let head = match trait_name {
                 None => head,
                 Some(_) => head.no_intrinsic()?.no_measure(TRAIT_MEASURE)?,
@@ -1568,7 +1615,7 @@ impl Parser {
         let generics = self.generics()?;
         self.expect(Tok::LBrace)?;
         let (fields, end) = self.comma_list(Tok::RBrace, |p| {
-            let Head { doc, allows, .. } = p.head()?.no_derives()?;
+            let Head { doc, allows, .. } = p.head()?.no_derives()?.no_test()?;
             let vis = p.vis();
             if *p.peek() == Tok::Mut {
                 return Err(Error::syntax(
@@ -1641,7 +1688,7 @@ impl Parser {
         let generics = self.generics()?;
         self.expect(Tok::LBrace)?;
         let (variants, end) = self.comma_list(Tok::RBrace, |p| {
-            let Head { doc, allows, .. } = p.head()?.no_derives()?;
+            let Head { doc, allows, .. } = p.head()?.no_derives()?.no_test()?;
             p.no_pub("an enum's variants are public wherever it is")?;
             let name = p.ident()?;
             let (fields, span) = if p.eat(&Tok::LParen) {
@@ -1931,7 +1978,11 @@ impl Parser {
                 self.peek(),
                 Tok::Fn | Tok::Struct | Tok::Enum | Tok::Type | Tok::Hash
             ) {
-                let head = self.head()?.no_intrinsic()?.no_measure(NOT_METHOD)?;
+                let head = self
+                    .head()?
+                    .no_intrinsic()?
+                    .no_measure(NOT_METHOD)?
+                    .no_test()?;
                 let stmt = match self.peek() {
                     Tok::Fn => Stmt::Fn(Box::new(self.fn_decl(head.no_derives()?)?)),
                     Tok::Struct => Stmt::Type(Box::new(TypeDecl::Struct(self.struct_decl(head)?))),
@@ -3069,6 +3120,8 @@ struct Head {
     intrinsic: Option<Span>,
     /// Where its `#[measure]` is, if it has one: only a function's can.
     measure: Option<Span>,
+    /// Its `#[test]`, if it has one: only a module's function's can.
+    test: Option<Test>,
 }
 
 impl Head {
@@ -3106,6 +3159,20 @@ impl Head {
     fn no_measure(self, why: &str) -> Result<Head, Error> {
         match self.measure {
             Some(at) => Err(Error::syntax(at, why)),
+            None => Ok(self),
+        }
+    }
+
+    /// This head, for something that isn't a function of a module's, so
+    /// can't have a `#[test]`: a test is run as a program of its own, as
+    /// `main` is, and nothing could give a method its `self`.
+    fn no_test(self) -> Result<Head, Error> {
+        match self.test {
+            Some(t) => Err(Error::syntax(
+                t.span,
+                "`#[test]` can only be on a function of a module, not a method or a function \
+                 inside another",
+            )),
             None => Ok(self),
         }
     }

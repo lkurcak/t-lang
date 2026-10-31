@@ -931,11 +931,16 @@ impl Printer<'_> {
     /// A function, up to its body.
     fn signature(&mut self, f: &FnDecl) -> Doc {
         let mut doc = self.lead(f.doc.as_ref(), &f.allows, fn_start(f));
-        // `#[intrinsic]` and `#[measure]`, in the order written.
+        // `#[intrinsic]`, `#[measure]` and `#[test]`, in the order written.
+        let test = f.test.map(|t| match t.panics {
+            true => (t.span, "#[test(panics)]"),
+            false => (t.span, "#[test]"),
+        });
         let mut attrs: Vec<(Span, &str)> =
             [(f.intrinsic, "#[intrinsic]"), (f.measure, "#[measure]")]
                 .into_iter()
                 .filter_map(|(at, t)| Some((at?, t)))
+                .chain(test)
                 .collect();
         attrs.sort_by_key(|(at, _)| at.start);
         let after = f.vis.span().map_or(f.span.start, |p| p.start);
@@ -1731,7 +1736,8 @@ fn lead_start_span(f: &FnDecl) -> Span {
 fn fn_start(f: &FnDecl) -> usize {
     let start = f.vis.span().map_or(f.span.start, |p| p.start);
     let start = f.intrinsic.map_or(start, |i| i.start.min(start));
-    f.measure.map_or(start, |i| i.start.min(start))
+    let start = f.measure.map_or(start, |i| i.start.min(start));
+    f.test.map_or(start, |t| t.span.start.min(start))
 }
 
 /// `pub ` or `export `, as `v` is.

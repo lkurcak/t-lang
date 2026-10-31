@@ -74,7 +74,7 @@ pub(crate) use expr::{first_use, result_span};
 pub(crate) use generics::{
     AliasDef, Kind, Lifetimes, ProjNames, TypeName, resolve, resolve_effects,
 };
-pub use info::{Info, Instance, MoveSite, Note, NoteKind};
+pub use info::{Info, Instance, MoveSite, Note, NoteKind, Test};
 pub use scope::source_name;
 
 use crate::ast::*;
@@ -102,6 +102,10 @@ use unify::Var;
 pub const INTRINSICS: &[&str] = &[
     "core::mem::swap",
     "core::panic::panic",
+    "core::panic::Message::new",
+    "core::panic::Message::push_str",
+    "core::panic::Message::push_char",
+    "core::panic::Message::abort",
     "core::num::checked_mul",
     "core::num::wrapping_mul",
     "core::num::wrap",
@@ -145,6 +149,7 @@ pub const INTRINSICS: &[&str] = &[
 /// with no fields, which only the compiler makes and looks inside, by the
 /// intrinsic methods of their impls.
 pub const INTRINSIC_TYPES: &[&str] = &[
+    "core::panic::Message",
     BOX,
     "alloc::raw::RawBuf",
     ARENA,
@@ -334,6 +339,17 @@ fn check_main(prog: &Program) -> Result<(), Error> {
         }
         Some(_) => Ok(()),
     }
+}
+
+/// A `#[test]` function, as checking its signature found it.
+#[derive(Debug, Clone)]
+struct TestFn {
+    fn_id: FnId,
+    symbol: String,
+    /// Its name, where it's declared.
+    span: Span,
+    panics: bool,
+    error: Option<Type>,
 }
 
 /// A variable in the local context Γ.
@@ -641,6 +657,10 @@ pub(crate) struct Checker {
     /// The functions whose effects are being inferred, by `FnId`, whose
     /// group's bodies aren't all checked yet (see `check/infer.rs`).
     inferring: HashSet<usize>,
+    /// Every package's tests so far, and where the one being checked's
+    /// start.
+    tests: Vec<TestFn>,
+    tests_from: usize,
     /// The sites of the body of each of them that's checked, kept for
     /// working out its effects with its group's.
     infer_sites: HashMap<usize, Vec<effects::Site>>,
@@ -712,6 +732,19 @@ impl Checker {
                 format!("`main` takes nothing, or the `std::Os`, as `fn main(os: Os)`, not `{t}`"),
             ));
         }
+        self.entry_result(f, sig, "`main`")
+    }
+
+    /// Checks what `f`, of type `sig`, gives back, as a program's start:
+    /// `main`, or a test, `what`. It gives back `()`, or a `Result<(), E>`
+    /// whose error is reported, so it's `Display`, and then thrown away,
+    /// so it's `Discard`. Gives back the error type, if it's a `Result`.
+    fn entry_result(
+        &self,
+        f: &FnDecl,
+        sig: &crate::types::FnType,
+        what: &str,
+    ) -> Result<Option<Type>, Error> {
         let error = match &*sig.ret {
             Type::Unit => return Ok(None),
             Type::Adt(symbol, _, args) if symbol == RESULT && args[0] == Type::Unit => &args[1],
@@ -719,7 +752,7 @@ impl Checker {
                 return Err(Error::ty(
                     f.ret.span,
                     format!(
-                        "`main` gives back `()`, or a `Result<(), E>` whose error is reported, \
+                        "{what} gives back `()`, or a `Result<(), E>` whose error is reported, \
                          not `{t}`"
                     ),
                 ));
@@ -732,7 +765,7 @@ impl Checker {
             return Err(Error::ty(
                 f.ret.span,
                 format!(
-                    "the error `main` gives back is written out, so it must be `Display`, and a \
+                    "the error {what} gives back is written out, so it must be `Display`, and a \
                      `{error}` isn't"
                 ),
             ));
@@ -741,12 +774,80 @@ impl Checker {
             return Err(Error::ty(
                 f.ret.span,
                 format!(
-                    "the error `main` gives back is thrown away once it's written out, so it \
+                    "the error {what} gives back is thrown away once it's written out, so it \
                      must be `Discard`, and a `{error}` isn't"
                 ),
             ));
         }
         Ok(Some(error.clone()))
+    }
+
+    /// Checks test `f`, of type `sig`: it's run as a program of its own,
+    /// as `main` is, so it's what `main` can be, but for the `Os`: tests
+    /// can't do I/O, so what they do is all in what they give back
+    /// (docs/31-tests.md, T2). Gives back its error type, if it gives a
+    /// `Result`.
+    fn test_signature(
+        &self,
+        f: &FnDecl,
+        sig: &crate::types::FnType,
+    ) -> Result<Option<Type>, Error> {
+        if let Some(p) = f.params.first() {
+            return Err(Error::ty(
+                p.name.span,
+                "a test takes nothing: it's run as a program of its own, and nothing could give \
+                 it what it takes",
+            ));
+        }
+        let g = &f.generics;
+        if let Some(p) = g.lifetimes.first().or(g.types.first()) {
+            return Err(Error::ty(
+                p.span,
+                "a test has no generic parameters: it's run as it is, and nothing could say what \
+                 they are",
+            ));
+        }
+        let unsafe_effect = (f.effects.iter().flat_map(|e| &e.items))
+            .find(|e| matches!(&e.kind, EffectKind::Named(n) if n.name == "unsafe"));
+        if let Some(e) = unsafe_effect {
+            return Err(Error::ty(
+                e.span,
+                "a test can't say `with unsafe`: nothing calls it to keep its obligations",
+            ));
+        }
+        self.entry_result(f, sig, "a test")
+    }
+
+    /// Checks that each test of the package just checked can pass, now
+    /// that its effects are known: one that passes only by panicking must
+    /// be able to (docs/31-tests.md, T3). The program's own are what `t
+    /// test` runs.
+    fn tests_known(&mut self, root: usize) -> Result<(), Error> {
+        for t in &self.tests[self.tests_from..] {
+            let Type::Fn(sig) = &self.fns[t.fn_id.0].scheme.ty else {
+                continue;
+            };
+            let effects = self.with_inferred(&sig.effects);
+            if t.panics && !effects.effect_items().contains(&Type::Panic) {
+                return Err(Error::ty(
+                    t.span,
+                    "this test passes only if it panics, and it can't: nothing it does has the \
+                     effect `panic`",
+                ));
+            }
+        }
+        if root == ROOT {
+            self.info.tests = (self.tests[self.tests_from..].iter())
+                .map(|t| info::Test {
+                    symbol: t.symbol.clone(),
+                    span: t.span,
+                    panics: t.panics,
+                    error: t.error.clone(),
+                })
+                .collect();
+        }
+        self.tests_from = self.tests.len();
+        Ok(())
     }
 
     /// An id for a node the checker makes up (see `NodeId`).
@@ -840,6 +941,8 @@ impl Checker {
             literals: Vec::new(),
             nots: Vec::new(),
             inferring: HashSet::new(),
+            tests: Vec::new(),
+            tests_from: 0,
             infer_sites: HashMap::new(),
             waiting: Vec::new(),
             deferred: Vec::new(),
@@ -909,6 +1012,7 @@ impl Checker {
         self.info.traits = self.traits.clone();
         self.bodies(prog)?;
         self.zonk_inferred();
+        self.tests_known(root)?;
         // What an editor can offer to write, of the program's.
         if root == ROOT {
             for (i, (f, _, method)) in prog
@@ -1043,6 +1147,18 @@ impl Checker {
                 && let Type::Fn(sig) = &scheme.ty
             {
                 self.info.main_error = self.main_signature(f, sig)?;
+            }
+            if let Some(test) = f.test
+                && let Type::Fn(sig) = &scheme.ty
+            {
+                let error = self.test_signature(f, sig)?;
+                self.tests.push(TestFn {
+                    fn_id: FnId(i),
+                    symbol: self.fn_symbols[i].clone(),
+                    span: f.name.span,
+                    panics: test.panics,
+                    error,
+                });
             }
             let symbol = self.fn_symbols[i].clone();
             self.receivers.push(f.receiver().is_some());
