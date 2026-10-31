@@ -189,6 +189,21 @@ impl fmt::Display for Value {
 /// Runs `main`, with `term` as its streams. Anything the program prints goes there, even if the
 /// program later fails.
 pub fn run(program: &crate::mono::Executable, term: &mut dyn Terminal) -> Result<Value, Error> {
+    run_entry(program, "main", term).result
+}
+
+/// How running an entry ended: its value or error, and whether it
+/// aborted by a panic (not by running out of memory, or of stack).
+pub struct Ended {
+    pub result: Result<Value, Error>,
+    pub panicked: bool,
+}
+
+/// Runs `entry`, `main` or a test, as the program: with its own memory,
+/// and, for `main`, the `Os`. An error it gives back is reported, and
+/// after it, everything must have been freed. Tests don't share anything:
+/// each run starts from nothing (docs/31-tests.md, T2).
+pub fn run_entry(program: &crate::mono::Executable, entry: &str, term: &mut dyn Terminal) -> Ended {
     let prog = program.program();
     let fns = prog.fns.iter().map(|f| (f.name.name.as_str(), f)).collect();
     let derived = |tr: &str| -> HashSet<&str> {
@@ -223,6 +238,9 @@ pub fn run(program: &crate::mono::Executable, term: &mut dyn Terminal) -> Result
         copy: derived("Copy"),
         discard: derived("Discard"),
         aborting: false,
+        message: String::new(),
+        panicked: false,
+        calls: Vec::new(),
         locals: Vec::new(),
         memory,
         temps: Vec::new(),
@@ -235,49 +253,59 @@ pub fn run(program: &crate::mono::Executable, term: &mut dyn Terminal) -> Result
         params_refined: Vec::new(),
         term,
     };
-    // `main` takes nothing, or the one `std::Os` there is.
-    let args = match interp.fns["main"].params.len() {
-        0 => Vec::new(),
-        _ => vec![Value::Struct(
-            "std::Os".into(),
-            ["stdin", "stdout", "stderr"]
-                .into_iter()
-                .zip(["std::io::Stdin", "std::io::Stdout", "std::io::Stderr"])
-                .map(|(field, ty)| (field.to_string(), Value::Struct(ty.into(), Vec::new())))
-                .collect(),
-        )],
-    };
-    let result = interp.call(Value::Fn("main".to_string()), args, Span::new(0, 0))?;
-    // An error it gives back is reported, by the copy of `std::rt::report`
-    // monomorphisation made for it, with its own `Stderr`.
-    if let Value::Variant(ty, variant, fields) = &result
-        && ty.starts_with("core::result::Result::<")
-        && variant == "Err"
-    {
-        let report = (interp.fns.keys())
-            .find(|f| f.starts_with("std::rt::report::<"))
-            .unwrap_or_else(|| unsound("no `std::rt::report` for `main`'s error"))
-            .to_string();
-        let [e] = fields.as_slice() else {
-            unsound("an `Err` of one field")
+    let result = interp.entry(program, entry);
+    Ended {
+        result,
+        panicked: interp.panicked,
+    }
+}
+
+impl Interp<'_, '_> {
+    /// `run_entry`'s work.
+    fn entry(&mut self, program: &crate::mono::Executable, entry: &str) -> Result<Value, Error> {
+        // `main` takes nothing, or the one `std::Os` there is.
+        let args = match self.fns[entry].params.len() {
+            0 => Vec::new(),
+            _ => vec![Value::Struct(
+                "std::Os".into(),
+                ["stdin", "stdout", "stderr"]
+                    .into_iter()
+                    .zip(["std::io::Stdin", "std::io::Stdout", "std::io::Stderr"])
+                    .map(|(field, ty)| (field.to_string(), Value::Struct(ty.into(), Vec::new())))
+                    .collect(),
+            )],
         };
-        let at = interp.memory.alloc(e.clone(), false);
-        let stderr = Value::Struct("std::io::Stderr".into(), Vec::new());
-        interp.call(
-            Value::Fn(report),
-            vec![Value::Ref(at.clone()), stderr],
-            Span::new(0, 0),
-        )?;
-        interp.memory.free(&at, false);
+        let result = self.call(Value::Fn(entry.to_string()), args, Span::new(0, 0))?;
+        // An error it gives back is reported, by the copy of `std::rt::report`
+        // monomorphisation made for it, with its own `Stderr`.
+        if let Value::Variant(ty, variant, fields) = &result
+            && ty.starts_with("core::result::Result::<")
+            && variant == "Err"
+        {
+            let report = (program.report(entry))
+                .unwrap_or_else(|| unsound("no `std::rt::report` for the entry's error"))
+                .to_string();
+            let [e] = fields.as_slice() else {
+                unsound("an `Err` of one field")
+            };
+            let at = self.memory.alloc(e.clone(), false);
+            let stderr = Value::Struct("std::io::Stderr".into(), Vec::new());
+            self.call(
+                Value::Fn(report),
+                vec![Value::Ref(at.clone()), stderr],
+                Span::new(0, 0),
+            )?;
+            self.memory.free(&at, false);
+        }
+        self.drop(result.clone())?;
+        if self.memory.on_heap > 0 {
+            unsound(&format!(
+                "memory leak: {} boxes or buffers were never freed",
+                self.memory.on_heap
+            ));
+        }
+        Ok(result)
     }
-    interp.drop(result.clone())?;
-    if interp.memory.on_heap > 0 {
-        unsound(&format!(
-            "memory leak: {} boxes or buffers were never freed",
-            interp.memory.on_heap
-        ));
-    }
-    Ok(result)
 }
 
 /// Why evaluating an expression didn't finish with a value: an error, or a
@@ -472,6 +500,13 @@ struct Interp<'p, 'o> {
     /// Is a run-time error on its way out? Then what's dropped isn't
     /// checked for leaks: a panic aborts.
     aborting: bool,
+    /// The message `core::panic::panic_with` is writing.
+    message: String,
+    /// Whether the program aborted by a panic.
+    panicked: bool,
+    /// Where each call being run was called, outermost first: a panic's
+    /// `Error::trace`.
+    calls: Vec<Span>,
     /// The variables in scope, innermost last, each with its slot. A
     /// temporary that a `let` keeps alive (`let r = &f();`) is one with no
     /// name.
@@ -965,7 +1000,9 @@ impl Interp<'_, '_> {
     /// nothing is dropped for real.
     fn panic(&mut self, span: Span, message: impl Into<String>) -> Error {
         self.aborting = true;
-        Error::runtime(span, message)
+        let mut e = Error::runtime(span, message);
+        e.trace = self.calls.clone();
+        e
     }
 
     /// A panic, which every function being run must say it may have: if
@@ -974,6 +1011,7 @@ impl Interp<'_, '_> {
     /// says.
     fn panics(&mut self, span: Span, message: impl Into<String>) -> Error {
         self.effect("panic");
+        self.panicked = true;
         self.panic(span, message)
     }
 
@@ -1244,6 +1282,9 @@ impl Interp<'_, '_> {
                 _ => unsound(&format!("unknown intrinsic `{name}`")),
             });
         }
+        if let Some(op) = name.strip_prefix("<core::panic::Message>::") {
+            return self.message(op, args, span);
+        }
         if let Some(stream) = name.strip_prefix("<std::io::") {
             return Ok(self.stream(stream, args));
         }
@@ -1336,6 +1377,32 @@ impl Interp<'_, '_> {
                 Ok(Value::Unit)
             }
             _ => unsound(&format!("unknown intrinsic `{name}`")),
+        }
+    }
+
+    /// The intrinsic method `op` of `core::panic::Message`, the message
+    /// `panic_with` writes, with arguments `args`. There's only ever one
+    /// being written: `fmt` into it can't panic, so can't start another.
+    fn message(&mut self, op: &str, args: Vec<Value>, span: Span) -> Result<Value, Error> {
+        match (op, args.as_slice()) {
+            ("new", []) => {
+                self.message.clear();
+                Ok(Value::Struct("core::panic::Message".into(), Vec::new()))
+            }
+            ("push_str", [_, s]) => {
+                let s = self.text(s);
+                self.message.push_str(&s);
+                Ok(Value::Unit)
+            }
+            ("push_char", [_, Value::Char(c)]) => {
+                self.message.push(*c);
+                Ok(Value::Unit)
+            }
+            ("abort", [_]) => {
+                let why = std::mem::take(&mut self.message);
+                Err(self.panics(span, format!("panicked: {why}")))
+            }
+            _ => unsound(&format!("unknown intrinsic `<core::panic::Message>::{op}`")),
         }
     }
 
@@ -1743,6 +1810,20 @@ impl Interp<'_, '_> {
     /// `captured`, where it is. The caller's locals are saved and restored
     /// afterwards.
     fn enter(
+        &mut self,
+        captured: Vec<(String, Ptr)>,
+        locals: Vec<(String, Value)>,
+        body: &Expr,
+        span: Span,
+    ) -> Result<Value, Error> {
+        self.calls.push(span);
+        let result = self.enter_body(captured, locals, body, span);
+        self.calls.pop();
+        result
+    }
+
+    /// `enter`, once the call is on `calls`.
+    fn enter_body(
         &mut self,
         captured: Vec<(String, Ptr)>,
         locals: Vec<(String, Value)>,

@@ -88,6 +88,9 @@ pub struct Info {
     /// type monomorphisation makes `std::rt::report` for, which reports
     /// it.
     pub main_error: Option<Type>,
+    /// The program's own tests, in order: what `t test` runs, each as a
+    /// program of its own (see docs/31-tests.md).
+    pub tests: Vec<Test>,
     /// The effects inferred for each function that doesn't say them, by
     /// symbol, at its own type parameters (see `check/infer.rs`): what
     /// monomorphising gives its copies.
@@ -935,4 +938,18 @@ fn pattern_annotations(p: &Pattern, f: &mut impl FnMut(&TypeExpr)) {
         | PatternKind::Bool(_)
         | PatternKind::Unit => {}
     }
+}
+
+/// A `#[test]` function of the program's own.
+#[derive(Debug, Clone)]
+pub struct Test {
+    /// The function's symbol: its name, after its module's path.
+    pub symbol: String,
+    /// Its name, where it's declared.
+    pub span: crate::error::Span,
+    /// Whether it passes only by panicking, `#[test(panics)]`.
+    pub panics: bool,
+    /// The error type of the `Result` it gives back, if it does, which
+    /// monomorphisation makes `std::rt::report` for.
+    pub error: Option<Type>,
 }

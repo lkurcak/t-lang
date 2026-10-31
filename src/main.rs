@@ -1,19 +1,24 @@
 use std::process::ExitCode;
 use t_lang::error::Warning;
 
-const USAGE: &str = "usage: t [run|check|mono] <file.t>\n       t fmt [--check] <file.t>...\n       t lsp\n       t tree-sitter [--helix] <dir>";
+const USAGE: &str = "usage: t [run|check|mono] <file.t>\n       t test <file.t> [filter]\n       t fmt [--check] <file.t>...\n       t lsp\n       t tree-sitter [--helix] <dir>";
 
 const HELP: &str = "\
 T: like C, but a different letter.
 
 usage: t [run|check|mono] <file.t>
+       t test <file.t> [filter]
        t fmt [--check] <file.t>...
        t lsp
        t tree-sitter [--helix] <dir>
 
   t <file.t>          type-check and run
   t check <file.t>    type-check only
+  t test <file.t>     type-check, and run each `#[test]` of the program or
+                      library, each as a program of its own (with a filter:
+                      only those whose name has it in it)
   t mono <file.t>     print the program after monomorphisation
+  --deny-warnings     with `check` or `test`: fail if there are warnings
   t fmt <file.t>...   format the files in place (--check: just print a diff)
   t lsp               language server, over stdio
   t tree-sitter <dir> install T's tree-sitter parser and highlight queries
@@ -71,6 +76,27 @@ fn main() -> ExitCode {
     {
         return fmt(rest);
     }
+    // `--deny-warnings`, wherever it is after `check` or `test`.
+    let deny = matches!(args.first().map(String::as_str), Some("check" | "test"))
+        && args.iter().any(|a| a == "--deny-warnings");
+    let args: Vec<String> = args
+        .into_iter()
+        .filter(|a| !deny || a != "--deny-warnings")
+        .collect();
+    if let [cmd, rest @ ..] = args.as_slice()
+        && cmd == "test"
+    {
+        return match rest {
+            [path] if !path.starts_with('-') => test(path, None, deny),
+            [path, filter] if !path.starts_with('-') && !filter.starts_with('-') => {
+                test(path, Some(filter), deny)
+            }
+            _ => {
+                eprintln!("{USAGE}");
+                ExitCode::from(2)
+            }
+        };
+    }
     let (cmd, path) = match args.as_slice() {
         [cmd, path] if matches!(cmd.as_str(), "run" | "check" | "mono") => (cmd.as_str(), path),
         [path] if !path.starts_with('-') => ("run", path),
@@ -94,6 +120,10 @@ fn main() -> ExitCode {
             eprintln!("{w}\n");
         }
         return match checked.result {
+            Ok(_) if deny && !checked.warnings.is_empty() => {
+                eprintln!("{}", denied(checked.warnings.len()));
+                ExitCode::FAILURE
+            }
             Ok(program) => {
                 // The program with every generic function and type replaced
                 // by its copies, as the interpreter runs it.
@@ -122,6 +152,64 @@ fn main() -> ExitCode {
             eprintln!("{}", e.render_in(&run.sources));
             ExitCode::FAILURE
         }
+    }
+}
+
+/// What `--deny-warnings` says when there were `n` warnings.
+fn denied(n: usize) -> String {
+    match n {
+        1 => "error: there was a warning, and `--deny-warnings` says that fails".to_string(),
+        n => format!("error: there were {n} warnings, and `--deny-warnings` says that fails"),
+    }
+}
+
+/// `t test <file> [filter]` checks the program or library at `path`, then
+/// runs its tests, those whose name has `filter` in it if it's given, and
+/// says how each went: a line each as it goes, then why each that failed
+/// did, then how many passed and failed. It fails if any failed, if the
+/// program doesn't check, or, if `deny`, if there were warnings.
+fn test(path: &str, filter: Option<&str>, deny: bool) -> ExitCode {
+    let src = match std::fs::read_to_string(path) {
+        Ok(src) => src,
+        Err(e) => {
+            eprintln!("error: cannot read `{path}`: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    let run = t_lang::test_files(
+        std::path::Path::new(path),
+        &src,
+        &t_lang::load::read_file,
+        filter,
+    );
+    for w in Warning::render_all_in(&run.warnings, &run.sources) {
+        eprintln!("{w}\n");
+    }
+    let tests = match &run.result {
+        Ok(tests) => tests,
+        Err(e) => {
+            eprintln!("{}", e.render_in(&run.sources));
+            return ExitCode::FAILURE;
+        }
+    };
+    for t in tests {
+        let how = if t.failure.is_some() { "FAILED" } else { "ok" };
+        println!("test {} ... {how}", t.name);
+    }
+    let failed: Vec<_> = tests.iter().filter(|t| t.failure.is_some()).collect();
+    for t in &failed {
+        let e = t.failure.as_ref().expect("a failure");
+        println!("\n--- {}\n{}", t.name, e.render_in(&run.sources));
+    }
+    let passed = tests.len() - failed.len();
+    println!("\n{passed} passed; {} failed", failed.len());
+    if deny && !run.warnings.is_empty() {
+        eprintln!("{}", denied(run.warnings.len()));
+        return ExitCode::FAILURE;
+    }
+    match failed.is_empty() {
+        true => ExitCode::SUCCESS,
+        false => ExitCode::FAILURE,
     }
 }
 

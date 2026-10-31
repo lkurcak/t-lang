@@ -40,7 +40,8 @@ carries; see [Syntax highlighting](#syntax-highlighting).)
 
 ```sh
 t examples/hello.t          # type-check and run
-t check examples/hello.t    # type-check only
+t check examples/hello.t    # type-check only (--deny-warnings: fail on a warning)
+t test examples/hello.t     # type-check, then run each #[test] (see docs/31-tests.md)
 t mono examples/hello.t     # print the program after monomorphisation
 t fmt examples/hello.t      # format the file in place (--check: just print a diff)
 t lsp                       # language server (see below)
@@ -258,7 +259,9 @@ out.line(&(1 + 2))?; // expect: 3
 ```
 
 `// expect:` lines are what it writes to its output, `// stderr:` lines
-what it writes where errors go, and `// stdin:` lines its input.
+what it writes where errors go, and `// stdin:` lines its input. With
+`// test: name ... ok` or `// test: name ... FAILED: text` lines, one per
+test, its `#[test]`s are run too, as `t test` runs them.
 
 Every warning must be expected, and applying the warnings' fixes must not
 change what the program does. A program of several files is a directory,
@@ -409,6 +412,7 @@ combine features in ways nobody planned for.
 | 28 ✅ | `if let`, `else if let`, `while let` and `let .. else`, whose `else` must leave the block; facts about `%` by any divisor: `h % n < n` for `n > 0` | desugaring as the whole semantics: each is the `match` it means, its left-out arm the variants the pattern misses, taken apart so linear values are used up; "must leave" as the type `!`; truncated remainder's bounds, linear and true at every width | [docs/28-if-let.md](docs/28-if-let.md) |
 | 29 ✅ | closed and sealed traits: an impl's bound on what isn't part of its type only of `Discard`, `Copy`, `Fn*` or the integer traits; `sealed trait`, implemented only by its package; one `impl<T: Int>` beside others; `core::num::wrap`; packages that don't know each other in one program | locality: every rule decided by a package and its dependencies, so adding a dependency never breaks a program; Paterson conditions extended by proof-closed traits; polymorphic recursion over dictionaries, edges from where a proof picks an impl; negative reasoning from a closed world, one unification deep | [docs/29-closed-and-sealed-traits.md](docs/29-closed-and-sealed-traits.md) |
 | 30 ✅ | postconditions: `ensures`, `old(..)`, on what a call leaves behind a `&mut` that can't outlive it; a field a refinement is about lent to such a call, its refinement proved again after; `List`'s `len <= cap()` as a refinement, `push` without its overflow check; `RawBuf`'s bounds as refinements | call-scoped borrows read off lifetimes; invariants broken only while no one can look (no unwinding); prophecies (RustHorn) for intrinsics; why writing through a `&` needs invariance (`Cell`) | [docs/30-postconditions.md](docs/30-postconditions.md) |
+| 31 ✅ | tests: `#[test]` functions, each run by `t test` as a program of its own, with no `Os`; `#[test(panics)]`; `assert`, `assert_eq`, `assert_ne` in the prelude, through `panic_with` and a sink that can't fail or allocate; a panic in the built-in libraries shown at the caller; `--deny-warnings` | a test as a program: isolation from no I/O and no globals, not from catching panics; one meaning, no `cfg`; caller location without `#[track_caller]` | [docs/31-tests.md](docs/31-tests.md) |
 | — | C backend | | when it's worth it |
 
 ## License

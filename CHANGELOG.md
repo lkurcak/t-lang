@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased
+
+Step 31: tests. See [docs/31-tests.md](docs/31-tests.md).
+
+### Added
+
+- `#[test]` on a function of a module, and `t test <file.t> [filter]`,
+  which checks the program or library and runs each of its own tests, in
+  order, as a program of its own: from nothing, with no input or output.
+  A test takes nothing, has no generic parameters, isn't `pub` or
+  `export`, can't say `with unsafe`, and gives back `()` or a `Result<(),
+  E>`, as `main` does. It passes unless it panics, runs out of memory or
+  stack, or gives back an `Err`.
+- `#[test(panics)]`: passes only by panicking. One whose effects have no
+  `panic` is an error.
+- `assert`, `assert_eq` and `assert_ne`, in the prelude; the last two say
+  both values by their `Display`. `core::panic::panic_with(&why)` panics
+  saying any `Display`, written into a sink that can't fail or allocate.
+- `--deny-warnings` after `t check` or `t test`: any warning fails.
+- Tests are live code: what only tests use isn't dead.
+
+### Changed
+
+- A panic inside core, alloc or std, such as `unwrap`'s, is shown at the
+  innermost call outside them, under `t` as under `t test`.
+- `unknown attribute` names `test` among the attributes there are.
+
 ## 0.43.0 (2026-10-31)
 
 Step 30: postconditions, and invariants across `&mut`. See

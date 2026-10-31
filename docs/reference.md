@@ -424,7 +424,16 @@ success value or returns early from the current function or closure.
 The enclosing result must implement `Try` with the same residual type;
 there is no automatic conversion between different error types.
 Every early exit must also satisfy ownership rules. A panic aborts
-without unwinding.
+without unwinding. `assert(ok)`, `assert_eq(&a, &b)` and `assert_ne(&a,
+&b)` panic unless what they check holds; the last two say both values by
+their `Display`. A panic inside core, alloc or std is reported at the
+innermost call outside them.
+
+A `#[test]` function takes nothing and gives back `()` or `Result<(), E>`,
+as `main` may; `t test` runs each as a program of its own, which passes
+unless it panics, aborts or gives back `Err`. `#[test(panics)]` passes only
+if it panics. Tests are checked by every command, and are never run by
+`t` (see [31-tests.md](31-tests.md)).
 
 I/O requires a stream passed as a value, usually from `main`'s `std::Os`.
 It has no separate effect: stream methods report failures as `Result`s.

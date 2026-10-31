@@ -50,21 +50,32 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 /// A lifted, monomorphised program, ready for the interpreter.
-pub struct Executable(Program);
+pub struct Executable {
+    program: Program,
+    /// For `main` and each test that gives back a `Result`, by symbol,
+    /// the copy of `std::rt::report` that reports its error.
+    reports: HashMap<String, String>,
+}
 
 impl Executable {
     pub fn program(&self) -> &Program {
-        &self.0
+        &self.program
     }
 
     pub fn into_program(self) -> Program {
-        self.0
+        self.program
+    }
+
+    /// The copy of `std::rt::report` for the error that `entry`, `main`
+    /// or a test, gives back, if it gives back a `Result`.
+    pub fn report(&self, entry: &str) -> Option<&str> {
+        self.reports.get(entry).map(String::as_str)
     }
 }
 
 impl std::fmt::Display for Executable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
+        self.program.fmt(f)
     }
 }
 
@@ -75,7 +86,12 @@ impl std::fmt::Display for Executable {
 /// what a copy does depends on its types only through the impls the bounds
 /// said there were.
 pub fn monomorphise(prog: crate::lift::Lifted<'_>) -> Executable {
-    Executable(Mono::new(&prog.program, prog.info).run())
+    let mut mono = Mono::new(&prog.program, prog.info);
+    let program = mono.run();
+    Executable {
+        program,
+        reports: mono.reports,
+    }
 }
 
 /// The std library's function that reports the error `main` gives back.
@@ -150,6 +166,8 @@ struct Mono<'p> {
     /// take ids from it. A copy of one that was keeps its id, so the copies
     /// of a generic function share theirs.
     next_id: u32,
+    /// The report of each entry's error, by entry (`Executable::report`).
+    reports: HashMap<String, String>,
 }
 
 impl<'p> Mono<'p> {
@@ -196,6 +214,7 @@ impl<'p> Mono<'p> {
             compared: HashSet::new(),
             proj: Projections::new(&info.traits),
             next_id: prog.next_id,
+            reports: HashMap::new(),
         }
     }
 
@@ -210,11 +229,21 @@ impl<'p> Mono<'p> {
                 self.function(f, &Subst::default(), &Params::default(), None),
             );
         }
-        // The report of `main`'s error, which the interpreter calls.
-        let roots: Vec<String> = (self.info.main_error.clone())
-            .map(|e| self.named_copy(REPORT, vec![e.clone()], mangle(REPORT, &[e])))
+        // The report of `main`'s error, and each test's, which the
+        // interpreter calls.
+        let entries = (self.info.main_error.clone())
+            .map(|e| ("main".to_string(), e))
             .into_iter()
-            .collect();
+            .chain(
+                (self.info.tests.iter()).filter_map(|t| Some((t.symbol.clone(), t.error.clone()?))),
+            );
+        let entries: Vec<(String, Type)> = entries.collect();
+        let mut roots = Vec::new();
+        for (entry, e) in entries {
+            let report = self.named_copy(REPORT, vec![e.clone()], mangle(REPORT, &[e]));
+            self.reports.insert(entry, report.clone());
+            roots.push(report);
+        }
         let mut types: HashMap<String, TypeDecl> = HashMap::new();
         let adts = prog
             .types
@@ -423,6 +452,7 @@ impl<'p> Mono<'p> {
             body: cx.expr(&f.body),
             intrinsic: f.intrinsic,
             measure: f.measure,
+            test: f.test,
             ensures: f.ensures.iter().map(|e| *cx.pred(e)).collect(),
         }
     }

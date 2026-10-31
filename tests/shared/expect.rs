@@ -14,6 +14,11 @@
 //! - `// warning: <text>` — one per warning, in order, each contained in the
 //!   rendered warning, not counting its lines of source. A warning without
 //!   one is a failure.
+//! - `// test: <name> ... ok` or `// test: <name> ... FAILED: <text>` — one
+//!   per test `t test` runs, in order: it passed, or it failed with a
+//!   failure whose rendering contains `<text>`, not counting its lines of
+//!   source, and on one line, each run of spaces and line breaks a space.
+//!   With these, the program's tests are run too, after the program.
 //!
 //! Fixes are checked too. Applying warnings' fixes one after another must
 //! leave a program that does exactly the same thing, and run out of fixes
@@ -65,6 +70,7 @@ pub struct Expectations {
     pub input: Vec<u8>,
     pub error: Option<String>,
     pub warnings: Vec<String>,
+    pub tests: Vec<String>,
 }
 
 impl Expectations {
@@ -93,6 +99,10 @@ impl Expectations {
             warnings: src
                 .lines()
                 .filter_map(|l| directive(l, "// warning: "))
+                .collect(),
+            tests: src
+                .lines()
+                .filter_map(|l| directive(l, "// test: "))
                 .collect(),
         }
     }
@@ -172,7 +182,55 @@ pub fn check_files(files: &Files) -> Result<(), String> {
             want.errors, run.errors
         ));
     }
+    if !want.tests.is_empty() {
+        check_tests(files, &want.tests)?;
+    }
     Ok(())
+}
+
+/// Runs the tests of the program of `files`, as `t test` does, and checks
+/// that each says what `want` says of it.
+fn check_tests(files: &Files, want: &[String]) -> Result<(), String> {
+    let (path, src) = &files[0];
+    let read = |p: &Path| match files.iter().find(|(f, _)| f == p) {
+        Some((_, text)) => Ok(text.clone()),
+        None => t_lang::no_files(p),
+    };
+    let run = t_lang::test_files(path, src, &read, None);
+    let tests = match &run.result {
+        Ok(tests) => tests,
+        Err(e) => return Err(format!("tests didn't run\n{}", e.render_in(&run.sources))),
+    };
+    // Each failure on one line, with each run of spaces and line breaks
+    // one space, as a `// test:` is.
+    let said: Vec<(String, Option<String>)> = (tests.iter())
+        .map(|t| {
+            let failure = t.failure.as_ref().map(|e| {
+                let failure = without_source(&e.render_in(&run.sources));
+                failure.split_whitespace().collect::<Vec<_>>().join(" ")
+            });
+            (t.name.clone(), failure)
+        })
+        .collect();
+    let says = |(name, failure): &(String, Option<String>), want: &String| match failure {
+        None => *want == format!("{name} ... ok"),
+        Some(failure) => want
+            .strip_prefix(&format!("{name} ... FAILED"))
+            .is_some_and(|w| {
+                w.is_empty() || w.strip_prefix(": ").is_some_and(|w| failure.contains(w))
+            }),
+    };
+    let matches = said.len() == want.len() && said.iter().zip(want).all(|(s, w)| says(s, w));
+    let said: Vec<String> = (said.into_iter())
+        .map(|(name, failure)| match failure {
+            None => format!("{name} ... ok"),
+            Some(f) => format!("{name} ... FAILED: {f}"),
+        })
+        .collect();
+    match matches {
+        true => Ok(()),
+        false => Err(format!("expected tests {want:?}, got\n{}", said.join("\n"))),
+    }
 }
 
 /// The files of `run`'s program with `fix` made, and those it didn't read

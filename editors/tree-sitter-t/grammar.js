@@ -150,8 +150,9 @@ module.exports = grammar({
 
     // `#[allow(dead_code)]` before an item, field or variant,
     // `#[derive(Copy)]` before a struct or enum, `#[intrinsic]` before a
-    // function of the core library's, or `#[measure]` before a method. As in Rust's grammar, it's a sibling
-    // of what it's on rather than part of it.
+    // function of the core library's, `#[measure]` before a method, or
+    // `#[test]` or `#[test(panics)]` before a function. As in Rust's
+    // grammar, it's a sibling of what it's on rather than part of it.
     attribute_item: $ => seq(
       '#',
       '[',

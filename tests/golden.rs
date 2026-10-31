@@ -89,9 +89,10 @@ fn golden() {
             && want.errors.is_empty()
             && want.error.is_none()
             && want.warnings.is_empty()
+            && want.tests.is_empty()
         {
             return Some(format!(
-                "{name}: has no `// expect:`, `// error:` or `// warning:` lines"
+                "{name}: has no `// expect:`, `// error:`, `// warning:` or `// test:` lines"
             ));
         }
         let failure = expect::check_files(&files).err()?;
