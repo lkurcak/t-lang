@@ -203,11 +203,13 @@ fn digits<T: Int, W: Write>(m: T, w: &mut W) -> Result<(), W::Error> with W::e {
   is at most 9, which fits in every type, and `d` is 0 to 9: `d as u32`
   fits, and `0x30 + d` is a character, `0` to `9`.
 
-There are ten impls, `impl Display for i8` and so on, each a line calling
-`decimal`, because one impl for every `T: Int` would overlap those for
-`bool` and `char`: the overlap check looks at impls' headers, not their
-bounds, so it doesn't know `bool` isn't an integer type, though `Int` is
-sealed (that's sealed traits' disjointness, not in T yet).
+There were ten impls, `impl Display for i8` and so on, each a line calling
+`decimal`, because one impl for every `T: Int` would have overlapped those
+for `bool` and `char`: the overlap check looked at impls' headers, not
+their bounds, so it didn't know `bool` isn't an integer type. Since step
+29, `Int` is a `sealed` trait, whose impls are all there will ever be, and
+the overlap check uses that: one `impl<T: Int> Display for T` does it (see
+docs/29-closed-and-sealed-traits.md).
 
 ## Errors are the sink's
 
@@ -297,9 +299,8 @@ can't be `str`.
 3. In `digits`, replace `if r < 0 { -r } else { r }` with `-r` when `m <
    0`, tested before the recursion. Why doesn't it check? (The checker
    says, of a `T`, that a literal must be between 0 and 127.)
-4. Write `impl<T: Int> Display for T` in place of the ten impls, in
-   `core/fmt.t`. What does the checker say, and what would it need to
-   know to accept it?
+4. Take `sealed` off `Int` in `core/num.t`. What does the checker say of
+   `impl<T: Int> Display for T`, and why must it?
 5. A `Bounded` sink takes at most `n` bytes and fails with how many were
    wanted (`tests/t/core_fmt_fallible_sink.t`). Writing `1234` into one
    with room for 2 writes `12`, then fails. Is that what you'd want of a

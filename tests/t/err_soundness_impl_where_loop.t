@@ -17,10 +17,7 @@ struct W<I> { iter: I }
 #[derive(Discard where T: Discard)]
 struct V<T> { t: T }
 
-impl<I: Iterator> Tr for W<I>
-where
-    I::Item: Tr2,
-{
+impl<I: Iterator> Tr for W<I> where I::Item: Tr2 {
     fn a(&self) -> i64 { 1 }
 }
 

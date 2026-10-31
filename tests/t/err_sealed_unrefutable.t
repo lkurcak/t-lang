@@ -2,7 +2,6 @@
 // then any type might implement it, and nothing is ruled out. Only what
 // no impl's type can be is (see docs/29-closed-and-sealed-traits.md).
 trait Open {}
-
 sealed trait Small {}
 
 impl<T: Open> Small for T {}

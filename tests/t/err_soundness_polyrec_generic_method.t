@@ -27,6 +27,6 @@ impl Tr2 for X {
 }
 
 fn main() {
-    Y2 { x: X {} }.one(0u8);
+    (Y2 { x: X {} }).one(0u8);
 }
 // error: polymorphic recursion: this call of `two` on a type parameter passes it `Wrap<K>` for `one`'s `K`

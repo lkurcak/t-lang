@@ -12,7 +12,9 @@ impl<T: Int> Hash for T {
 }
 
 impl Hash for bool {
-    fn hash(&self) -> u64 { if *self { 1 } else { 0 } }
+    fn hash(&self) -> u64 {
+        if *self { 1 } else { 0 }
+    }
 }
 
 impl<'a> Hash for &'a str {

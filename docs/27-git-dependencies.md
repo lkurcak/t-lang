@@ -192,8 +192,8 @@ git can depend on others from git, which are fetched in turn.
    same package checked out by hand beside its sibling could? What would
    it take to allow it soundly?
 4. Allow two versions of one package in a program, each with its own
-   name. What does the chain rule of step 26 say about them, and is that
-   the right answer?
+   name. What did the chain rule of step 26 say about them, before step 29
+   dropped it, and what does the orphan rule say now?
 5. A SHA-1 collision would make one `rev` two sets of files. Which of the
    lemmas above would fail, and what would a program notice?
 

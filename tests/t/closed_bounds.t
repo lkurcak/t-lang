@@ -18,7 +18,7 @@ impl<I: Iterator> Count for Positives<I> where I::Item: Int {
         let mut n = 0;
         loop {
             match self.iter.next() {
-                Option::Some(x) => if x > 0 { n = n + 1; },
+                Option::Some(x) => n = n + if x > 0 { 1 } else { 0 },
                 Option::None => return n,
             }
         }
@@ -39,6 +39,6 @@ impl<U: Copy, I: Iterator<Item = U>> Sign for Wrap<I> where U: Signed {
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     out.line(&(Positives { iter: -3..4i32 }).positives())?; // expect: 3
-    out.line(&(Wrap { first: 0..1i8 }).negative())?;         // expect: false
+    out.line(&(Wrap { first: 0..1i8 }).negative())?;        // expect: false
     Result::Ok(())
 }

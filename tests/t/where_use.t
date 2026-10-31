@@ -51,6 +51,6 @@ fn zero() -> i64 { 0 }
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     out.line(&(W { iter: 0..4i64, item: zero }).total())?; // expect: 6
-    out.line(&first(5..7i64))?;                // expect: 5
+    out.line(&first(5..7i64))?;                            // expect: 5
     Result::Ok(())
 }

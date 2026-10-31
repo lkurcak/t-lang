@@ -323,7 +323,7 @@ program runs.
 |---|---|---|
 | byte literals, `b'a'` | they need character escapes, which come with strings | 13 ✅ |
 | `count_ones`, `leading_zeros`, `rotate_left`, `swap_bytes` | writable in T, with a loop and shifts; intrinsics if they need to be fast | — |
-| a truncating conversion `wrap::<u8>(x)` | a mask and `as` do it; generic code may need one | — |
+| a truncating conversion `wrap::<u8>(x)` | a mask and `as` do it; generic code may need one | 29 ✅ (`wrap::<T, U>`) |
 | bitwise operators in refinements | the logic is linear: a predicate couldn't say what `&` is | — |
 | `Wrapping<T>`, `Saturating<T>` | need operator overloading | — |
 

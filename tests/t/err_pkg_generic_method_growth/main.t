@@ -9,5 +9,5 @@
 use q::Tr1;
 
 fn main() {
-    r1::Y2 { x: r2::X {} }.one(0u8);
+    (r1::Y2 { x: r2::X {} }).one(0u8);
 }

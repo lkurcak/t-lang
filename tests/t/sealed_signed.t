@@ -7,7 +7,9 @@ trait Sign {
 }
 
 impl<T: Signed> Sign for T {
-    fn sign(&self) -> i64 { if *self < 0 { -1 } else { 1 } }
+    fn sign(&self) -> i64 {
+        if *self < 0 { -1 } else { 1 }
+    }
 }
 
 impl Sign for u8 {

@@ -38,9 +38,9 @@ fn describe<T: Describe>(x: &T) -> i64 with panic { x.describe() }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
-    out.line(&describe(&5u8))?;                   // expect: 1
-    out.line(&describe(&'a'))?;                   // expect: 2
-    out.line(&describe(&Option::Some(true)))?;    // expect: 11
-    out.line(&describe(&&Option::Some(&'b')))?;   // expect: 52
+    out.line(&describe(&5u8))?;                 // expect: 1
+    out.line(&describe(&'a'))?;                 // expect: 2
+    out.line(&describe(&Option::Some(true)))?;  // expect: 11
+    out.line(&describe(&&Option::Some(&'b')))?; // expect: 52
     Result::Ok(())
 }
