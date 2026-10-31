@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased
+
+Step 32: one MIR, checked and run. See [docs/32-mir.md](docs/32-mir.md).
+
+### Changed
+
+- Programs run on the MIR the borrow checker built and checked, copied
+  for each list of type arguments, instead of on the AST: what runs is
+  what was checked, the order things happen in and where each value goes
+  away included. Programs behave as before.
+- `t mono` prints each function's signature and then its MIR: its locals
+  and basic blocks, with `move`, `copy`, `dead` (a local going out of
+  scope) and the like; the closures made in a function come after it.
+  Copies are named with their function types' effects as inferred.
+- The interpreter checks the lowering too: a function returning with a
+  local still alive, or a pattern leaving a value it took apart that
+  isn't `Discard` at the type it turned out to be, is a bug it reports.
+
+### Fixed
+
+- A `let` whose refinement names a variable it shadows, `let x: { v: i64
+  | v > x } = 7;`, was checked against itself as it ran, and reported as a
+  soundness bug; the `x` it names is the one before it.
+
+### Removed
+
+- The AST interpreter, and `lift`'s rewriting of bodies (`ExprKind::Move`,
+  `PatternKind::Move`, `Info::moves`): lifting is of declarations only.
+
 ## 0.44.0 (2026-10-31)
 
 Step 31: tests. See [docs/31-tests.md](docs/31-tests.md).

@@ -38,6 +38,13 @@
 //! a trait's method: the checker only let callers rely on its bounds, which
 //! that type implements, by the impls it'll find here.
 //!
+//! What a function does is its MIR (`mir.rs`), which the borrow checker
+//! built and checked at the function's own types, and kept: each copy is a
+//! copy of that, with the copy's types, and calls of what's generic naming
+//! the copies they call (`Cx::body`). A closure's MIR is copied with the
+//! function it's in. Nothing about control flow changes, so what the
+//! borrow checker proved of the generic body holds of every copy.
+//!
 //! The interpreter runs what comes out of here, and `t mono` prints it.
 
 use crate::ast::*;

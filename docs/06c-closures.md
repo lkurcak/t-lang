@@ -213,7 +213,8 @@ reference to its receiver.
 `lift` writes each call of what isn't a function as a call through a
 borrow, as the borrow checker sees it: `inc()` for an `FnMut` `inc` is
 `(&mut inc)()`, which, now that `&mut F` is `FnMut`, is a T program too
-(`t mono` shows it). The interpreter keeps a closure as its code and its
+(`t mono` showed it; since step 32 it's the MIR's call of its receiver,
+`(move _3)()` with `_3 = &mut _1`, docs/32-mir.md). The interpreter keeps a closure as its code and its
 fields, and in its body, binds each captured variable to where it is: the
 variable a field points to, or the field (`Interp::call_closure`). So
 reading a dangling one would be caught as any dangling reference is.

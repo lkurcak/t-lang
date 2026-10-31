@@ -116,6 +116,7 @@ fn shapes::area(s: shapes::Shape::<i64>) -> i64 with panic {
     }
     bb1: {
         _2 = copy (_1 as #0).0;
+        kept _1;
         _4 = 3_i64;
         _3 = move _4 * copy _2;
         _0 = move _3 * copy _2;
@@ -125,12 +126,14 @@ fn shapes::area(s: shapes::Shape::<i64>) -> i64 with panic {
     bb2: {
         _5 = copy (_1 as #1).0;
         _6 = copy (_1 as #1).1;
+        kept _1;
         _0 = copy _5 * copy _6;
         dead _6;
         dead _5;
         goto bb4;
     }
     bb3: {
+        kept _1;
         _0 = 0_i64;
         goto bb4;
     }
@@ -235,12 +238,14 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
     }
     bb1: {
         _11 = copy (_6 as #0).0;
+        kept _6;
         _5 = copy _11;
         dead _11;
         goto bb3;
     }
     bb2: {
         _12 = move (_6 as #1).0;
+        kept _6;
         _13 = move _12;
         _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _13);
         dead _12;
@@ -274,12 +279,14 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
     }
     bb5: {
         _20 = copy (_15 as #0).0;
+        kept _15;
         _14 = copy _20;
         dead _20;
         goto bb7;
     }
     bb6: {
         _21 = move (_15 as #1).0;
+        kept _15;
         _22 = move _21;
         _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _22);
         dead _21;
@@ -314,12 +321,14 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
     }
     bb9: {
         _30 = copy (_24 as #0).0;
+        kept _24;
         _23 = copy _30;
         dead _30;
         goto bb11;
     }
     bb10: {
         _31 = move (_24 as #1).0;
+        kept _24;
         _32 = move _31;
         _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _32);
         dead _31;
@@ -359,12 +368,14 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
     }
     bb13: {
         _41 = copy (_37 as #0).0;
+        kept _37;
         _36 = copy _41;
         dead _41;
         goto bb15;
     }
     bb14: {
         _42 = move (_37 as #1).0;
+        kept _37;
         _43 = move _42;
         _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _43);
         dead _42;
@@ -389,6 +400,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         _46 = 9_i64;
         _45 = main::P#2 { z: move _46 };
         _47 = copy _45.0;
+        kept _45;
         dead _46;
         dead _45;
         _51 = &mut _2;
@@ -401,12 +413,14 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
     }
     bb17: {
         _53 = copy (_49 as #0).0;
+        kept _49;
         _48 = copy _53;
         dead _53;
         goto bb19;
     }
     bb18: {
         _54 = move (_49 as #1).0;
+        kept _49;
         _55 = move _54;
         _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _55);
         dead _54;
@@ -444,12 +458,14 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
     }
     bb21: {
         _62 = copy (_57 as #0).0;
+        kept _57;
         _56 = copy _62;
         dead _62;
         goto bb23;
     }
     bb22: {
         _63 = move (_57 as #1).0;
+        kept _57;
         _64 = move _63;
         _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _64);
         dead _63;
@@ -484,12 +500,14 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
     }
     bb25: {
         _71 = copy (_66 as #0).0;
+        kept _66;
         _65 = copy _71;
         dead _71;
         goto bb27;
     }
     bb26: {
         _72 = move (_66 as #1).0;
+        kept _66;
         _73 = move _72;
         _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _73);
         dead _72;
@@ -583,10 +601,12 @@ fn outer::inner::value(s: outer::inner::Sign) -> i64 {
         match _1 { #0 => bb1, #1 => bb2 };
     }
     bb1: {
+        kept _1;
         _0 = -5_i64;
         goto bb3;
     }
     bb2: {
+        kept _1;
         _0 = 5_i64;
         goto bb3;
     }

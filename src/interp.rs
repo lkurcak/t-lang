@@ -1,45 +1,48 @@
-//! A tree-walking interpreter. It gives the language its meaning (its
-//! *dynamic semantics*) so we can check that the type system is right before
-//! there's a real backend.
+//! The interpreter. It gives the language its meaning (its *dynamic
+//! semantics*) so we can check that the type system is right, and it's
+//! what a backend has to agree with.
+//!
+//! It runs MIR (`mir.rs`): the borrow checker builds each function's from
+//! its checked body and checks it, monomorphisation copies it for each
+//! list of type arguments, and this runs the copies, a basic block at a
+//! time. So what runs is what the borrow checker checked, the order things
+//! happen in and where each value goes away included (docs/32-mir.md).
 //!
 //! Look at how often this file calls `unsound(..)`: every place where a value
 //! could have the "wrong shape", like adding a bool, calling an int, an `if`
-//! on a number, or a `match` where no arm fits. The type checker promises those places are unreachable for
-//! every program it accepts. That promise is the *type soundness* theorem
-//! ("well-typed programs don't go wrong"), and those calls are where you'd see
-//! it fail if the checker had a bug.
+//! on a number, or a `match` where no arm fits. The type checker promises
+//! those places are unreachable for every program it accepts. That promise
+//! is the *type soundness* theorem ("well-typed programs don't go wrong"),
+//! and those calls are where you'd see it fail if the checker had a bug.
 //!
 //! Since step 5 it also keeps memory the way a compiled program would, so
-//! that the borrow checker's promises can fail here too. Every variable and
-//! temporary lives in a *slot*, freed when it goes out of scope; a box's
-//! value lives in a slot on the *heap*, freed when the box is dropped. A
-//! reference is the address of a slot and the path to a field in it, so
-//! following one to a slot that was freed is a *dangling reference*. Moving
-//! a value that owns a box out of a place leaves `Value::Moved` behind, so
-//! using it again is a *use after move*, and freeing the box twice a
-//! *double free*. And at the end, the heap must be empty: anything left is
-//! a *leak*. The borrow checker promises none of those happen
-//! (docs/05-ownership.md).
+//! that the borrow checker's promises can fail here too. Every local lives
+//! in a *slot*, made when it's first given a value and freed when it goes
+//! out of scope (`StmtKind::Dead`); a box's value lives in a slot on the
+//! *heap*, freed when the box is dropped. A reference is the address of a
+//! slot and the path to a field in it, so following one to a slot that was
+//! freed is a *dangling reference*. Moving a value out of a place leaves
+//! `Value::Moved` behind, so using it again is a *use after move*, and
+//! freeing a box twice a *double free*. A function that returns with a
+//! local still in a slot is a bug in the lowering, and at the end, the heap
+//! must be empty: anything left is a *leak*. The borrow checker promises
+//! none of those happen (docs/05-ownership.md).
 //!
 //! Since step 6a.1 it keeps linear values the same way. What moves and
 //! what's copied, and which patterns use up what they take apart, is what
-//! the borrow checker decided, by the types it knew, as `lift` wrote it
-//! out (`ExprKind::Move`, `PatternKind::Move`): in generic code, a value of
-//! a type parameter that isn't known to be `Copy` moves, even where it's an
-//! `i64`, so that a body means the same at every type. The types
-//! monomorphisation made, which say which are `Copy` and which `Discard`,
-//! only check those decisions: a copy of a value whose type isn't `Copy`,
-//! or a value taken apart by value and not used up whose type isn't
-//! `Discard`, is a checker bug. Throwing away whole a value that isn't
-//! `Discard`, rather than using it up, is a leak too
+//! the borrow checker decided, by the types it knew: in generic code, a
+//! value of a type parameter that isn't known to be `Copy` moves, even
+//! where it's an `i64`, so that a body means the same at every type. The
+//! types monomorphisation made, which say which are `Copy` and which
+//! `Discard`, only check those decisions: a copy of a value whose type isn't
+//! `Copy`, or a value taken apart by value and not used up whose type isn't
+//! `Discard` (`StmtKind::Kept`), is a checker bug. Throwing away whole a
+//! value that isn't `Discard`, rather than using it up, is a leak too
 //! (docs/06a.1-linear-types.md). Except on the way out of a run-time error:
 //! that's a panic, which aborts, so nothing is really dropped.
 //!
-//! `return`, `break` and `continue` unwind: each is a `Flow` that runs back
-//! up through the expressions it's in, ending their statements and scopes
-//! on the way, to the call or loop it goes to. What those expressions had
-//! worked out so far is dropped, as a compiled program would: in
-//! `f(Box::new(1), return 2)`, the box.
+//! Drops are still worked out as it runs: going out of scope drops what's
+//! in a slot, whatever's left of it, and an assignment what it replaces.
 
 use crate::ast::*;
 use crate::error::{Error, Span};
@@ -1227,6 +1230,21 @@ impl<'p> Interp<'p, '_> {
                     }
                     StmtKind::Refine(l, r) => {
                         self.refine(&fr, *l, &body.refinements[*r]);
+                        Ok(())
+                    }
+                    // The checker leaves only what it knew to be `Discard`,
+                    // which a type parameter is only if every type it can
+                    // be is.
+                    StmtKind::Kept(place) => {
+                        let p = self.ptr(&fr, place);
+                        if let Value::Struct(ty, _) | Value::Variant(ty, ..) = self.memory.get(&p)
+                            && !self.discard.contains(ty.as_str())
+                        {
+                            unsound(&format!(
+                                "a `{}`, which isn't `Discard`, taken apart and not used up",
+                                crate::check::source_name(ty)
+                            ));
+                        }
                         Ok(())
                     }
                 };

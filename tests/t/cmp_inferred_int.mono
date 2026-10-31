@@ -51,12 +51,14 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
     }
     bb1: {
         _15 = copy (_8 as #0).0;
+        kept _8;
         _7 = copy _15;
         dead _15;
         goto bb3;
     }
     bb2: {
         _16 = move (_8 as #1).0;
+        kept _8;
         _17 = move _16;
         _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _17);
         dead _16;
@@ -97,12 +99,14 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
     }
     bb5: {
         _26 = copy (_19 as #0).0;
+        kept _19;
         _18 = copy _26;
         dead _26;
         goto bb7;
     }
     bb6: {
         _27 = move (_19 as #1).0;
+        kept _19;
         _28 = move _27;
         _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _28);
         dead _27;

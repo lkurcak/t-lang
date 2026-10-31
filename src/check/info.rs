@@ -50,7 +50,7 @@ pub struct Info {
     /// The references the checker made into others, by the expression:
     /// `r` used as a `&T` when it's a `&Box<T>`, a `&&T` or a
     /// `&mut T`, with how many more `*`s it takes to get to the `T`, and
-    /// whether the result is `&mut`. `lift` writes them out: `&**r`.
+    /// whether the result is `&mut`. The MIR writes them out: `&**r`.
     pub coercions: HashMap<NodeId, (usize, bool)>,
     /// Every trait and impl, for monomorphisation to find impls by.
     pub traits: crate::traits::Traits,

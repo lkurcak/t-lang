@@ -250,12 +250,14 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
     }
     bb1: {
         _16 = copy (_9 as #0).0;
+        kept _9;
         _8 = copy _16;
         dead _16;
         goto bb3;
     }
     bb2: {
         _17 = move (_9 as #1).0;
+        kept _9;
         _18 = move _17;
         _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _18);
         dead _17;
@@ -298,12 +300,14 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
     }
     bb5: {
         _28 = copy (_22 as #0).0;
+        kept _22;
         _21 = copy _28;
         dead _28;
         goto bb7;
     }
     bb6: {
         _29 = move (_22 as #1).0;
+        kept _22;
         _30 = move _29;
         _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _30);
         dead _29;
@@ -342,12 +346,14 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
     }
     bb9: {
         _38 = copy (_32 as #0).0;
+        kept _32;
         _31 = copy _38;
         dead _38;
         goto bb11;
     }
     bb10: {
         _39 = move (_32 as #1).0;
+        kept _32;
         _40 = move _39;
         _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _40);
         dead _39;
@@ -398,12 +404,14 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
     }
     bb13: {
         _55 = copy (_48 as #0).0;
+        kept _48;
         _47 = copy _55;
         dead _55;
         goto bb15;
     }
     bb14: {
         _56 = move (_48 as #1).0;
+        kept _48;
         _57 = move _56;
         _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _57);
         dead _56;
@@ -448,12 +456,14 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
     }
     bb17: {
         _68 = copy (_59 as #0).0;
+        kept _59;
         _58 = copy _68;
         dead _68;
         goto bb19;
     }
     bb18: {
         _69 = move (_59 as #1).0;
+        kept _59;
         _70 = move _69;
         _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _70);
         dead _69;
@@ -502,12 +512,14 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
     }
     bb21: {
         _81 = copy (_72 as #0).0;
+        kept _72;
         _71 = copy _81;
         dead _81;
         goto bb23;
     }
     bb22: {
         _82 = move (_72 as #1).0;
+        kept _72;
         _83 = move _82;
         _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _83);
         dead _82;

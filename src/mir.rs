@@ -174,6 +174,11 @@ pub(crate) enum StmtKind {
     /// `.1` of `Body::refinements`, and keep it whenever it's assigned to.
     /// Only the interpreter looks: it's what the refinement checker proved.
     Refine(Local, usize),
+    /// A pattern has taken apart the value at the place, by value, and
+    /// left it there, not used up, as the borrow checker knew its type to
+    /// be `Discard`. Only the interpreter looks: it checks that it is, at
+    /// the type it turned out to be.
+    Kept(Place),
 }
 
 #[derive(Clone)]
@@ -442,6 +447,7 @@ impl fmt::Display for Body {
                     StmtKind::Dead(l) => writeln!(f, "    dead _{}", l.0)?,
                     StmtKind::Consume(p, v) => writeln!(f, "    consume {p:?} {v:?}")?,
                     StmtKind::Refine(l, r) => writeln!(f, "    refine _{} {r}", l.0)?,
+                    StmtKind::Kept(p) => writeln!(f, "    kept {p:?}")?,
                 }
             }
             match &block.term {
@@ -514,6 +520,7 @@ impl Body {
                     StmtKind::Inspect(p) => format!("inspect {}", show_place(p)),
                     StmtKind::Dead(l) => format!("dead _{}", l.0),
                     StmtKind::Consume(p, _) => format!("consume {}", show_place(p)),
+                    StmtKind::Kept(p) => format!("kept {}", show_place(p)),
                     StmtKind::Refine(l, r) => {
                         let r = &self.refinements[*r];
                         let pred = crate::pretty::expr_text(&r.pred);

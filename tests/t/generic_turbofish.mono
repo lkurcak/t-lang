@@ -99,10 +99,12 @@ fn is_some::<i64>(o: Option::<i64>) -> bool {
         match _1 { #0(_) => bb1, #1 => bb2 };
     }
     bb1: {
+        kept _1;
         _0 = true;
         goto bb3;
     }
     bb2: {
+        kept _1;
         _0 = false;
         goto bb3;
     }
@@ -121,10 +123,12 @@ fn is_some::<bool>(o: Option::<bool>) -> bool {
         match _1 { #0(_) => bb1, #1 => bb2 };
     }
     bb1: {
+        kept _1;
         _0 = true;
         goto bb3;
     }
     bb2: {
+        kept _1;
         _0 = false;
         goto bb3;
     }
@@ -286,12 +290,14 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
     }
     bb1: {
         _12 = copy (_6 as #0).0;
+        kept _6;
         _5 = copy _12;
         dead _12;
         goto bb3;
     }
     bb2: {
         _13 = move (_6 as #1).0;
+        kept _6;
         _14 = move _13;
         _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _14);
         dead _13;
@@ -328,12 +334,14 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
     }
     bb5: {
         _22 = copy (_16 as #0).0;
+        kept _16;
         _15 = copy _22;
         dead _22;
         goto bb7;
     }
     bb6: {
         _23 = move (_16 as #1).0;
+        kept _16;
         _24 = move _23;
         _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _24);
         dead _23;
@@ -370,12 +378,14 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
     }
     bb9: {
         _32 = copy (_26 as #0).0;
+        kept _26;
         _25 = copy _32;
         dead _32;
         goto bb11;
     }
     bb10: {
         _33 = move (_26 as #1).0;
+        kept _26;
         _34 = move _33;
         _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _34);
         dead _33;
@@ -412,12 +422,14 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
     }
     bb13: {
         _42 = copy (_36 as #0).0;
+        kept _36;
         _35 = copy _42;
         dead _42;
         goto bb15;
     }
     bb14: {
         _43 = move (_36 as #1).0;
+        kept _36;
         _44 = move _43;
         _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _44);
         dead _43;
@@ -454,12 +466,14 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
     }
     bb17: {
         _52 = copy (_46 as #0).0;
+        kept _46;
         _45 = copy _52;
         dead _52;
         goto bb19;
     }
     bb18: {
         _53 = move (_46 as #1).0;
+        kept _46;
         _54 = move _53;
         _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _54);
         dead _53;
@@ -501,12 +515,14 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
     }
     bb21: {
         _64 = copy (_60 as #0).0;
+        kept _60;
         _59 = copy _64;
         dead _64;
         goto bb23;
     }
     bb22: {
         _65 = move (_60 as #1).0;
+        kept _60;
         _66 = move _65;
         _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _66);
         dead _65;
@@ -543,12 +559,14 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
     }
     bb25: {
         _75 = copy (_71 as #0).0;
+        kept _71;
         _70 = copy _75;
         dead _75;
         goto bb27;
     }
     bb26: {
         _76 = move (_71 as #1).0;
+        kept _71;
         _77 = move _76;
         _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _77);
         dead _76;
@@ -586,12 +604,14 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
     }
     bb29: {
         _86 = copy (_82 as #0).0;
+        kept _82;
         _81 = copy _86;
         dead _86;
         goto bb31;
     }
     bb30: {
         _87 = move (_82 as #1).0;
+        kept _82;
         _88 = move _87;
         _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _88);
         dead _87;
@@ -623,6 +643,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
     }
     bb33: {
         _92 = copy (_90 as #0).0;
+        kept _90;
         _95 = &mut _2;
         _96 = &_92;
         _94 = <std::io::Stdout>::line::<i64>(move _95, move _96);
@@ -632,6 +653,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
         match _93 { #0(_) => bb36, #1(_) => bb37 };
     }
     bb34: {
+        kept _90;
         _89 = ();
         goto bb35;
     }
@@ -640,6 +662,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
         dead _90;
         dead _89;
         _100 = copy _55.0;
+        kept _55;
         _104 = &mut _2;
         _105 = &_100;
         _103 = <std::io::Stdout>::line::<i64>(move _104, move _105);
@@ -650,12 +673,14 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
     }
     bb36: {
         _97 = copy (_93 as #0).0;
+        kept _93;
         _89 = copy _97;
         dead _97;
         goto bb38;
     }
     bb37: {
         _98 = move (_93 as #1).0;
+        kept _93;
         _99 = move _98;
         _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _99);
         dead _98;
@@ -686,12 +711,14 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
     }
     bb40: {
         _106 = copy (_102 as #0).0;
+        kept _102;
         _101 = copy _106;
         dead _106;
         goto bb42;
     }
     bb41: {
         _107 = move (_102 as #1).0;
+        kept _102;
         _108 = move _107;
         _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _108);
         dead _107;
@@ -729,12 +756,14 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
     }
     bb44: {
         _117 = copy (_110 as #0).0;
+        kept _110;
         _109 = copy _117;
         dead _117;
         goto bb46;
     }
     bb45: {
         _118 = move (_110 as #1).0;
+        kept _110;
         _119 = move _118;
         _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _119);
         dead _118;
@@ -779,12 +808,14 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
     }
     bb48: {
         _129 = copy (_121 as #0).0;
+        kept _121;
         _120 = copy _129;
         dead _129;
         goto bb50;
     }
     bb49: {
         _130 = move (_121 as #1).0;
+        kept _121;
         _131 = move _130;
         _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _131);
         dead _130;
@@ -841,11 +872,13 @@ fn unwrap(o: Option::<i64>) -> i64 {
     }
     bb1: {
         _2 = copy (_1 as #0).0;
+        kept _1;
         _0 = copy _2;
         dead _2;
         goto bb3;
     }
     bb2: {
+        kept _1;
         _0 = 0_i64;
         goto bb3;
     }

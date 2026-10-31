@@ -63,6 +63,7 @@ fn total::<3>(b: &[u8; 3]) -> u64 with panic {
     }
     bb3: {
         _13 = copy (_11 as #1).0;
+        kept _11;
         _16 = copy (*_13) as u64;
         _15 = copy _2 + move _16;
         _2 = move _15;
@@ -75,6 +76,7 @@ fn total::<3>(b: &[u8; 3]) -> u64 with panic {
         goto bb5;
     }
     bb4: {
+        kept _11;
         _8 = ();
         dead _12;
         dead _11;
@@ -156,12 +158,14 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
     }
     bb1: {
         _17 = copy (_11 as #0).0;
+        kept _11;
         _10 = copy _17;
         dead _17;
         goto bb3;
     }
     bb2: {
         _18 = move (_11 as #1).0;
+        kept _11;
         _19 = move _18;
         _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _19);
         dead _18;
@@ -207,12 +211,14 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
     }
     bb5: {
         _32 = copy (_25 as #0).0;
+        kept _25;
         _24 = copy _32;
         dead _32;
         goto bb7;
     }
     bb6: {
         _33 = move (_25 as #1).0;
+        kept _25;
         _34 = move _33;
         _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _34);
         dead _33;
@@ -321,6 +327,8 @@ fn <core::slice::Iter::<u8> as core::iter::Iterator>::next<'a>(
     bb1: {
         _7 = copy (_4 as #1).0.0;
         _8 = copy (_4 as #1).0.1;
+        kept (_4 as #1).0;
+        kept _4;
         (*_1).0 = copy _8;
         _9 = ();
         dead _9;
@@ -334,6 +342,7 @@ fn <core::slice::Iter::<u8> as core::iter::Iterator>::next<'a>(
         goto bb3;
     }
     bb2: {
+        kept _4;
         _0 = core::option::Option::<&u8>::None;
         goto bb3;
     }

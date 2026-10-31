@@ -510,7 +510,7 @@ fn step(b: &Builder, state: &mut MovedAt, s: &Statement, point: Point) -> Result
             state.retain(|m, _| !m.within(&p));
             state.insert(p, here);
         }
-        StmtKind::Refine(..) => {}
+        StmtKind::Refine(..) | StmtKind::Kept(_) => {}
     }
     Ok(())
 }
@@ -657,12 +657,13 @@ enum Dropped {
 /// Checks that every value that isn't `Discard` is used up on every path
 /// that goes on: never dropped while some part of it may still hold one.
 ///
-/// Invariant: MIR drops a value exactly where the interpreter does, at
-/// `Dead` (a scope's or statement's end, or a jump out of them), at an
-/// `Assign` (what the place held), and at a `Consume` (what the pattern
-/// didn't move out); and moves exactly where it does. The interpreter
-/// checks each drop for a leak (`Interp::drop`), so a program this lets
-/// through that throws away a linear value fails there. Where the value's
+/// Invariant: a value is dropped only at a `Dead` (a scope's or
+/// statement's end, or a jump out of them), at an `Assign` (what the place
+/// held), and at a `Consume` (what the pattern didn't move out), as the
+/// interpreter runs this MIR (`Interp::dead`, `Interp::write`); and moved
+/// only by a `Move` operand. The interpreter checks each drop for a leak
+/// (`Interp::drop`), so a program this lets through that throws away a
+/// linear value fails there. Where the value's
 /// type has a `discard` of its own, the interpreter calls it at that drop,
 /// unless the value's been taken apart, as here; `drop_uses` makes such a
 /// drop a use of the value.
@@ -889,7 +890,7 @@ fn gone(b: &Builder, state: &mut Gone, s: &Statement, check: bool) -> Result<(),
             }
             away(state, Place::local(*l));
         }
-        StmtKind::Inspect(_) | StmtKind::Refine(..) => {}
+        StmtKind::Inspect(_) | StmtKind::Refine(..) | StmtKind::Kept(_) => {}
     }
     Ok(())
 }

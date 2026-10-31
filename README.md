@@ -88,11 +88,12 @@ an error. The lints are `unused_variables`, `unused_mut`, `dead_code`,
 `empty_ranges`, `unused_effects` and `unknown_lints`.
 
 Pipeline: `lexer` → `parser` → `check` (type checker, then `borrowck`, the
-borrow checker) → `lift` (nested functions and types moved to the top
-level) → `mono` (monomorphisation: a copy of each generic function and type
-per type it's used at) → `interp` (tree-walking interpreter, which checks
-memory as it goes). A real backend (emitting C) comes once the type system
-has enough in it to be worth compiling.
+borrow checker, which lowers each body to MIR, checks it, and keeps it) →
+`lift` (nested functions and types moved to the top level) → `mono`
+(monomorphisation: a copy of each generic function's MIR and of each type
+per type it's used at) → `interp` (an interpreter of that MIR, which checks
+memory as it goes). So what runs is what the borrow checker checked
+(docs/32-mir.md). A C backend translating the MIR comes next.
 
 `t check` stops after semantic checking, including effects, refinements and
 borrows. Running a program and `t mono` then lower it for execution. The
@@ -413,7 +414,9 @@ combine features in ways nobody planned for.
 | 29 ✅ | closed and sealed traits: an impl's bound on what isn't part of its type only of `Discard`, `Copy`, `Fn*` or the integer traits; `sealed trait`, implemented only by its package; one `impl<T: Int>` beside others; `core::num::wrap`; packages that don't know each other in one program | locality: every rule decided by a package and its dependencies, so adding a dependency never breaks a program; Paterson conditions extended by proof-closed traits; polymorphic recursion over dictionaries, edges from where a proof picks an impl; negative reasoning from a closed world, one unification deep | [docs/29-closed-and-sealed-traits.md](docs/29-closed-and-sealed-traits.md) |
 | 30 ✅ | postconditions: `ensures`, `old(..)`, on what a call leaves behind a `&mut` that can't outlive it; a field a refinement is about lent to such a call, its refinement proved again after; `List`'s `len <= cap()` as a refinement, `push` without its overflow check; `RawBuf`'s bounds as refinements | call-scoped borrows read off lifetimes; invariants broken only while no one can look (no unwinding); prophecies (RustHorn) for intrinsics; why writing through a `&` needs invariance (`Cell`) | [docs/30-postconditions.md](docs/30-postconditions.md) |
 | 31 ✅ | tests: `#[test]` functions, each run by `t test` as a program of its own, with no `Os`; `#[test(panics)]`; `assert`, `assert_eq`, `assert_ne` in the prelude, through `panic_with` and a sink that can't fail or allocate; a panic in the built-in libraries shown at the caller; `--deny-warnings` | a test as a program: isolation from no I/O and no globals, not from catching panics; one meaning, no `cfg`; caller location without `#[track_caller]` | [docs/31-tests.md](docs/31-tests.md) |
-| — | C backend | | when it's worth it |
+| 32 ✅ | one MIR: the borrow checker's MIR gets what running needs (constants, operators' nodes, aggregates, match patterns, refinements, `unsafe` spans) and is kept; mono copies MIR; the interpreter runs it; the AST interpreter and `lift`'s body rewriting gone; `t mono` prints MIR | borrow checking the code that runs, not a second lowering that must agree; monomorphisation changes no control flow; generic meaning wins by construction | [docs/32-mir.md](docs/32-mir.md) |
+| 32.1 | drop elaboration: static drops, drop flags, drop and `==` glue as MIR | | next |
+| 33 | C backend: `t build`, differential tests against the interpreter | | |
 
 ## License
 

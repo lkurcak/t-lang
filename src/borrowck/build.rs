@@ -7,12 +7,16 @@
 //!
 //! Every expression is lowered to *write its value into a place*
 //! (`expr_into`), or to *be* a place (`place`), or an operand (`operand`).
-//! Each statement's temporaries go out of scope at its end, as in the
-//! interpreter: the two have to agree on when memory goes away, or the
-//! borrow checker would be checking a different program than the one that
-//! runs. That goes for `return`, `break` and `continue` too: each ends the
-//! statements and scopes it leaves, innermost first, as the interpreter
-//! does as it unwinds to where they go.
+//! Each statement's temporaries go out of scope at its end. `return`,
+//! `break` and `continue` end the statements and scopes they leave,
+//! innermost first, on their way to where they go.
+//!
+//! What's built here is also what runs (see `mir.rs`): once checked, the
+//! body is kept, monomorphisation copies it, and the interpreter runs the
+//! copies. So the order things happen in, and when memory goes away, is
+//! decided here and only here. What running needs and checking doesn't,
+//! constants' values, operators' nodes, which arm a `match` takes, rides
+//! along where the analyses ignore it.
 
 use super::regions::{AdtInfo, Regions};
 use crate::ast::*;
@@ -613,7 +617,7 @@ impl<'a> Builder<'a> {
                 self.unwind(scopes, temps, span);
                 self.diverge(Term::Goto(head));
             }
-            // The value first, then the place, as in the interpreter.
+            // The value first, then the place, as in Rust.
             ExprKind::Assign(op, place, value) => {
                 let (mut v, vt) = self.operand(value);
                 // The value comes first, so it's read before a call in the
@@ -788,13 +792,10 @@ impl<'a> Builder<'a> {
     /// is only following fields and `*`s, so when it's done can't be
     /// seen, except by the borrow checker, which then sees no clash.
     ///
-    /// That's what the interpreter does, from the program `lift` writes
-    /// (`Interp::arguments`), and the two must agree, or this would check
-    /// another program than the one that runs. So a borrow the checker
-    /// made, by a coercion, waits too: `lift` writes `r` used as a `&T`
-    /// when it's a `&Box<T>` as `&**r`, a borrow of place `**r`, and `&mut
-    /// b` used as a `&T` as `&**(&mut b)`, which borrows `b` and then
-    /// reborrows through that, as here.
+    /// And as this is what runs, that's when the program does it. A
+    /// borrow the checker made, by a coercion, waits too: `r` used as a
+    /// `&T` when it's a `&Box<T>` is a borrow of place `**r`, and `&mut b`
+    /// used as a `&T` borrows `b` and then reborrows through that.
     ///
     /// `ft` has its projections worked out already, with the regions this
     /// call has (`instantiate`): `T::Out` at `T = Pair<'?1, '?2>` is the
@@ -1569,14 +1570,17 @@ impl Builder<'_> {
     /// taken apart by pattern `p`, if it's owned and isn't
     /// `Discard`. Matching it through a reference only looks at it.
     ///
-    /// The interpreter does the same where this says (`Interp::consume`),
-    /// by the type known here, not the one the value has when it runs: in
+    /// By the type known here, not the one the value has when it runs: in
     /// generic code, a `W<T>` that the checker can't show is `Discard` is
     /// used up here even where it turns out to be, so that it's dropped at
-    /// the same point at every type, as a destructor would see.
+    /// the same point at every type, as a destructor would see. One left
+    /// there, as its type is `Discard`, is marked `Kept`, for the
+    /// interpreter to check it is at the type it turns out to be.
     fn consume(&mut self, place: &Place, variant: Option<usize>, p: &Pattern) {
         if self.consumes_at(place) {
             self.push(StmtKind::Consume(place.clone(), variant), p.span);
+        } else if !super::moves::owned(self, place).1 {
+            self.push(StmtKind::Kept(place.clone()), p.span);
         }
     }
 
