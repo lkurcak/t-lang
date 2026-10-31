@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.45.0 (2026-11-01)
 
 Step 32: one MIR, checked and run. See [docs/32-mir.md](docs/32-mir.md).
 
