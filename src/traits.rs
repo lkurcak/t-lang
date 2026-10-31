@@ -1224,12 +1224,14 @@ pub fn refuted(impls: &[ImplDef], ty: &Type, tr: &str) -> bool {
         .iter()
         .filter(|d| d.trait_name.as_deref() == Some(tr))
         .any(|d| {
+            // Renamed apart from `ty`'s, which may be primed already, by
+            // coherence: no written name has a `~`.
             let renamed: Vec<Type> = (d.params.iter())
-                .map(|p| Type::Param(format!("{p}'")))
+                .map(|p| Type::Param(format!("{p}~")))
                 .collect();
             let header = Subst::new(&d.params, &renamed).apply(&d.self_ty);
             let mut params = vars.clone();
-            params.extend(d.params.iter().map(|p| format!("{p}'")));
+            params.extend(d.params.iter().map(|p| format!("{p}~")));
             overlap(&header, ty, &params)
         })
 }
