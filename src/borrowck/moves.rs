@@ -12,9 +12,9 @@
 
 use super::build::{Builder, project};
 use super::describe;
-use super::mir::*;
 use crate::ast::Capture;
 use crate::error::{Edit, Error, Fix, Span};
+use crate::mir::*;
 use crate::traits::DISCARD;
 use crate::types::{Type, struct_fields, variant_fields};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -466,7 +466,7 @@ fn step(b: &Builder, state: &mut MovedAt, s: &Statement, point: Point) -> Result
                         state.retain(|m, _| !m.within(&p));
                         state.insert(p, here);
                     }
-                    Operand::Const => {}
+                    Operand::Const(_) => {}
                 }
             }
             if let Rvalue::Ref(_, _, p) = value {
@@ -510,6 +510,7 @@ fn step(b: &Builder, state: &mut MovedAt, s: &Statement, point: Point) -> Result
             state.retain(|m, _| !m.within(&p));
             state.insert(p, here);
         }
+        StmtKind::Refine(..) => {}
     }
     Ok(())
 }
@@ -888,7 +889,7 @@ fn gone(b: &Builder, state: &mut Gone, s: &Statement, check: bool) -> Result<(),
             }
             away(state, Place::local(*l));
         }
-        StmtKind::Inspect(_) => {}
+        StmtKind::Inspect(_) | StmtKind::Refine(..) => {}
     }
     Ok(())
 }

@@ -28,17 +28,17 @@
 
 mod build;
 mod loans;
-mod mir;
+
 mod moves;
 mod regions;
 
 use crate::ast::*;
 use crate::check::{Checker, is_result_lifetime, result_span};
 use crate::error::{Edit, Error, Fix, Lint, Span, Warning};
+use crate::mir::{EnvVar, LocalKind, Place, Proj};
 use crate::traits::FnKind;
 use crate::types::{FnType, Region, Scheme, Type};
 use build::{Builder, ClosureUse};
-use mir::{EnvVar, LocalKind, Place, Proj};
 use regions::{AdtInfo, Regions, wf_bounds};
 use std::collections::{HashMap, HashSet};
 

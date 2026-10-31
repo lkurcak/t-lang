@@ -20,6 +20,7 @@ pub mod lexer;
 pub mod lift;
 pub mod load;
 pub mod lsp;
+pub(crate) mod mir;
 pub mod mono;
 mod naming;
 pub mod parser;

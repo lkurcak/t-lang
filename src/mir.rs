@@ -6,9 +6,19 @@
 //! in, including which branch runs and where each variable and temporary
 //! goes away, is spelled out. That's what makes questions like "is `x`
 //! still borrowed here?" answerable: here is a point in the graph.
+//!
+//! It's also what runs. The borrow checker builds it from each function's
+//! checked body (`borrowck/build.rs`), at the function's own generic types;
+//! monomorphisation makes a copy of it for each list of type arguments
+//! (`mono.rs`), and the interpreter runs those (`interp.rs`). So what the
+//! borrow checker checks is the program that runs, not another lowering of
+//! the same source that had better agree with it. What only running needs,
+//! like the values of constants and the node of each operator whose panic
+//! the checker ruled out, rides along where the borrow checker ignores it.
 
-use crate::ast::{BinOp, UnOp};
+use crate::ast::{BinOp, Expr, NodeId, UnOp};
 use crate::error::Span;
+use crate::traits::FnKind;
 use crate::types::Type;
 use std::fmt;
 
@@ -52,6 +62,21 @@ pub(crate) struct Body {
     /// still be there, and whose type may reach a `discard` of its own:
     /// there, the drop uses the value (see `moves::drop_uses`).
     pub(crate) drop_uses: std::collections::HashSet<Point>,
+    /// The refinements its `let`s give their variables, which
+    /// `StmtKind::Refine` checks as it runs.
+    pub(crate) refinements: Vec<Refinement>,
+    /// Where its `unsafe` blocks are: an unsafe operation called from
+    /// inside one is in it.
+    pub(crate) unsafe_blocks: Vec<Span>,
+}
+
+/// A refinement a `let` gives its variable, `{ binder: T | pred }`, and
+/// for each other variable named in `pred`, where it is there.
+#[derive(Clone)]
+pub(crate) struct Refinement {
+    pub(crate) binder: String,
+    pub(crate) pred: Expr,
+    pub(crate) env: Vec<(String, Place)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,16 +158,46 @@ pub(crate) enum StmtKind {
     /// by value. What the pattern's variables didn't move out of it is
     /// dropped, and then nothing's there. (See `moves::linear`.)
     Consume(Place, Option<usize>),
+    /// The local has just been given a value that must have refinement
+    /// `.1` of `Body::refinements`, and keep it whenever it's assigned to.
+    /// Only the interpreter looks: it's what the refinement checker proved.
+    Refine(Local, usize),
 }
 
 pub(crate) enum Term {
     Goto(Bb),
     /// To the first block if the operand is `true`, else the second.
     Branch(Operand, Bb, Bb),
-    /// To one of the blocks, say a `match`'s arms: which one isn't worked
-    /// out here, as the patterns' tests are `Inspect`s that came before.
-    Switch(Vec<Bb>),
+    /// To the block of the first of the patterns the value at the place
+    /// matches: a `match`'s arms, or which alternative of an or-pattern
+    /// binds its variables. The checker made sure one does. What the
+    /// patterns test, the `Inspect`s before read, for the borrow checker.
+    Match(Place, Vec<Pat>, Vec<Bb>),
     Return,
+    /// Control never gets here: after a call of a function that returns
+    /// `!`.
+    Unreachable,
+}
+
+/// What a pattern tests of a value, by index rather than by name: all
+/// running needs. Integer patterns match characters too, by their scalar
+/// values.
+#[derive(Debug, Clone)]
+pub(crate) enum Pat {
+    /// Anything, as `_` and a variable do.
+    Any,
+    /// A number in `lo..=hi`, either end maybe open.
+    Range(Option<i128>, Option<i128>),
+    Bool(bool),
+    /// Variant `.0` of an enum, with patterns for its fields.
+    Variant(usize, Vec<Pat>),
+    /// Patterns for some of a struct's fields, by index.
+    Struct(Vec<(usize, Pat)>),
+    /// Patterns for each of an array's values.
+    Array(Vec<Pat>),
+    Or(Vec<Pat>),
+    /// What the reference there points to matches (match ergonomics).
+    Deref(Box<Pat>),
 }
 
 /// Somewhere a value is: a local, and then fields and `*`s.
@@ -186,22 +241,46 @@ pub(crate) enum Rvalue {
     Use(Operand),
     /// `&'r place` or `&'r mut place`, with region variable `'r`.
     Ref(usize, bool, Place),
-    Unary(UnOp, Operand),
+    /// With the operator's node: whether the checker proved it can't
+    /// panic is `Info::proved`'s, by node.
+    Unary(UnOp, Operand, NodeId),
     /// `==` and `!=` read their operands without using them up: those are
-    /// `Copy`s, whatever their types.
-    Binary(BinOp, Operand, Operand),
-    /// A struct, variant, box or closure, from its parts.
-    Aggregate(Vec<Operand>),
+    /// `Copy`s, whatever their types. So do `<` and the like, which on
+    /// what isn't an integer call `Ord`'s method, by reference.
+    Binary(BinOp, Operand, Operand, NodeId),
+    /// `x as T`, to the type of the place it's written to: the same
+    /// number, or the character it's the scalar value of.
+    Cast(Operand, NodeId),
+    /// A struct, variant, box, array or closure, from its parts.
+    Aggregate(Agg, Vec<Operand>),
     Call(Operand, Vec<Operand>),
+}
+
+/// What an `Rvalue::Aggregate` makes: of the type of the place it's
+/// written to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Agg {
+    /// A struct, its fields in declaration order.
+    Struct,
+    /// Variant `.0` of an enum.
+    Variant(usize),
+    /// `Box::new(x)`.
+    Box,
+    /// `[a, b, c]`.
+    Array,
+    /// `[v; n]`, of the length the type says.
+    Repeat,
+    /// The closure made by the lambda with this node, of what it captures.
+    Closure(NodeId),
 }
 
 impl Rvalue {
     pub(crate) fn operands(&self) -> Vec<&Operand> {
         match self {
-            Rvalue::Use(o) | Rvalue::Unary(_, o) => vec![o],
+            Rvalue::Use(o) | Rvalue::Unary(_, o, _) | Rvalue::Cast(o, _) => vec![o],
             Rvalue::Ref(..) => Vec::new(),
-            Rvalue::Binary(_, a, b) => vec![a, b],
-            Rvalue::Aggregate(os) => os.iter().collect(),
+            Rvalue::Binary(_, a, b, _) => vec![a, b],
+            Rvalue::Aggregate(_, os) => os.iter().collect(),
             Rvalue::Call(f, args) => std::iter::once(f).chain(args).collect(),
         }
     }
@@ -214,14 +293,38 @@ pub(crate) enum Operand {
     /// Takes the value out of the place, which has nothing in it after.
     Move(Place),
     /// A value that doesn't come from a place: a literal, or a function.
-    Const,
+    Const(Const),
+}
+
+/// A value that doesn't come from a place.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Const {
+    /// An integer, of its type: an integer type, or in generic code,
+    /// maybe one that's a type parameter's.
+    Int(i128, Type),
+    Bool(bool),
+    Char(char),
+    Unit,
+    /// A string literal, a `&str`.
+    Str(String),
+    /// A byte string literal.
+    Bytes(Vec<u8>),
+    /// A function, by symbol, at type arguments. A method of a trait, at
+    /// `Self` first, is the impl's, once monomorphisation knows `Self`.
+    Fn(String, Vec<Type>),
+    /// The value of a const parameter of the function: a `usize`.
+    Param(String),
+    /// What's called is the call's first argument, its receiver: a
+    /// closure, or what a bound says can be called, by `&` for `Fn`, `&mut`
+    /// for `FnMut`, or by value for `FnOnce`.
+    Receiver(FnKind),
 }
 
 impl Operand {
     pub(crate) fn place(&self) -> Option<&Place> {
         match self {
             Operand::Copy(p) | Operand::Move(p) => Some(p),
-            Operand::Const => None,
+            Operand::Const(_) => None,
         }
     }
 }
@@ -242,8 +345,8 @@ impl Body {
         match &self.blocks[b.0].term {
             Some(Term::Goto(t)) => vec![*t],
             Some(Term::Branch(_, t, f)) => vec![*t, *f],
-            Some(Term::Switch(ts)) => ts.clone(),
-            Some(Term::Return) | None => Vec::new(),
+            Some(Term::Match(_, _, ts)) => ts.clone(),
+            Some(Term::Return | Term::Unreachable) | None => Vec::new(),
         }
     }
 
@@ -300,6 +403,7 @@ impl fmt::Display for Body {
                     StmtKind::Inspect(p) => writeln!(f, "    inspect {p:?}")?,
                     StmtKind::Dead(l) => writeln!(f, "    dead _{}", l.0)?,
                     StmtKind::Consume(p, v) => writeln!(f, "    consume {p:?} {v:?}")?,
+                    StmtKind::Refine(l, r) => writeln!(f, "    refine _{} {r}", l.0)?,
                 }
             }
             match &block.term {
@@ -307,8 +411,9 @@ impl fmt::Display for Body {
                 Some(Term::Branch(o, t, e)) => {
                     writeln!(f, "    if {o:?} bb{} else bb{}", t.0, e.0)?
                 }
-                Some(Term::Switch(ts)) => writeln!(f, "    switch {ts:?}")?,
+                Some(Term::Match(p, pats, ts)) => writeln!(f, "    match {p:?} {pats:?} {ts:?}")?,
                 Some(Term::Return) => writeln!(f, "    return")?,
+                Some(Term::Unreachable) => writeln!(f, "    unreachable")?,
                 None => writeln!(f, "    <none>")?,
             }
         }
@@ -320,9 +425,10 @@ fn show_rvalue(r: &Rvalue) -> String {
     match r {
         Rvalue::Use(o) => format!("{o:?}"),
         Rvalue::Ref(v, m, p) => format!("&'{v} {}{p:?}", if *m { "mut " } else { "" }),
-        Rvalue::Unary(op, o) => format!("{op}{o:?}"),
-        Rvalue::Binary(op, a, b) => format!("{a:?} {op} {b:?}"),
-        Rvalue::Aggregate(os) => format!("aggregate{os:?}"),
+        Rvalue::Unary(op, o, _) => format!("{op}{o:?}"),
+        Rvalue::Binary(op, a, b, _) => format!("{a:?} {op} {b:?}"),
+        Rvalue::Cast(o, _) => format!("{o:?} as _"),
+        Rvalue::Aggregate(k, os) => format!("{k:?}{os:?}"),
         Rvalue::Call(c, args) => format!("call {c:?}{args:?}"),
     }
 }
