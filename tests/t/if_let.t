@@ -42,5 +42,11 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     if let Option::Some(k) = o {
         out.line(&k)?; // expect: 5
     }
+    // Every `u8` matches, so only `None` goes to the `else`: the `Some(_)`
+    // it also tries is never reached, which isn't the program's to fix.
+    let b = Option::Some(7u8);
+    if let Option::Some(0..=255) = b {
+        out.line(&1i64)?; // expect: 1
+    }
     Result::Ok(())
 }

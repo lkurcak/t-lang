@@ -52,6 +52,14 @@ fn known(o: Option<i64>) -> Result<i64, i64> {
     Result::Ok(d)
 }
 
+// A function declared after a `let .. else` is in scope in all of its
+// block, the `else` too.
+fn with_helper(o: Option<i64>) -> i64 {
+    let Option::Some(x) = o else { return helper() };
+    fn helper() -> i64 { -5 }
+    x + helper()
+}
+
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&sum_digits("1a2b3.4"))?; // expect: 6
@@ -63,5 +71,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&parse("7").unwrap_or(-1))?; // expect: 7
     out.line(&parse("").unwrap_or(-1))?; // expect: -1
     out.line(&parse("x").unwrap_or(-2))?; // expect: -2
+    out.line(&with_helper(Option::None))?; // expect: -5
+    out.line(&with_helper(Option::Some(6)))?; // expect: 1
     Result::Ok(())
 }

@@ -1447,7 +1447,7 @@ impl Rewrite<'_> {
                 return self.expr(e);
             }
             ExprKind::WhileLet(label, _, body) => {
-                no_break_value(body, label.as_ref().map(|l| &l.name.name), 0)?;
+                no_break_value(body, "`while let`", label.as_ref().map(|l| &l.name.name), 0)?;
                 let ExprKind::WhileLet(label, c, body) =
                     std::mem::replace(&mut e.kind, ExprKind::Unit)
                 else {
@@ -1460,7 +1460,7 @@ impl Rewrite<'_> {
                 self.pattern(&mut f.pat)?;
                 self.expr(&mut f.iter)?;
                 self.expr(&mut f.body)?;
-                no_break_value(&f.body, f.label.as_ref().map(|l| &l.name.name), 0)?;
+                no_break_value(&f.body, "`for`", f.label.as_ref().map(|l| &l.name.name), 0)?;
                 let ExprKind::For(f) = std::mem::replace(&mut e.kind, ExprKind::Unit) else {
                     unreachable!("matched above");
                 };
@@ -1698,7 +1698,7 @@ impl Rewrite<'_> {
                 id: self.id(),
             },
             ty: None,
-            init: Some(f.iter),
+            init: Some(Box::new(f.iter)),
             els: None,
             span: at(k, iter_span.end),
         };
@@ -1992,7 +1992,13 @@ impl Rewrite<'_> {
     /// `after` stay in the outer block, whose whole of which they're in
     /// scope in; they can't use the locals around them, so that's all the
     /// same to them.
-    fn let_else(&mut self, stmts: &mut Vec<Stmt>, tail: &mut Option<Box<Expr>>, i: usize, span: Span) {
+    fn let_else(
+        &mut self,
+        stmts: &mut Vec<Stmt>,
+        tail: &mut Option<Box<Expr>>,
+        i: usize,
+        span: Span,
+    ) {
         let rest = stmts.split_off(i + 1);
         let Some(Stmt::Let {
             pat,
@@ -2029,7 +2035,7 @@ impl Rewrite<'_> {
                 id: self.id(),
             })),
             span: els.span,
-            init: Some(*els),
+            init: Some(els),
             els: None,
         };
         let els = Expr {
@@ -2040,7 +2046,7 @@ impl Rewrite<'_> {
         let c = LetCond {
             let_span,
             pat,
-            expr: init,
+            expr: *init,
         };
         *tail = Some(Box::new(Expr {
             kind: ExprKind::IfLet(Box::new(c), Box::new(after), Some(Box::new(els))),
@@ -2060,6 +2066,11 @@ impl Rewrite<'_> {
     /// that leaves a linear value unused, which is an error, so it only
     /// rejects more. Matching all `p` doesn't is all it's for: if it's
     /// wrong, the `match` isn't exhaustive, which is an error too.
+    ///
+    /// Its alternatives all have one span, the `let`'s, which is how the
+    /// exhaustiveness checker tells them apart: so one that's never
+    /// reached, as `Some(_)` after `Some(0..=255)` of a `u8`, isn't
+    /// reported, only all of them, as the arm, when `p` always matches.
     fn else_pattern(&mut self, p: &Pattern, at: Span) -> Pattern {
         let empty = Span::new(at.start, at.start);
         let alts: Vec<&Pattern> = match &p.kind {
@@ -2069,9 +2080,9 @@ impl Rewrite<'_> {
         let mut kind = PatternKind::Wild;
         match &alts[0].kind {
             PatternKind::Variant(ty, ..)
-                if alts.iter().all(|a| {
-                    matches!(&a.kind, PatternKind::Variant(t, ..) if t.name == ty.name)
-                }) =>
+                if alts.iter().all(
+                    |a| matches!(&a.kind, PatternKind::Variant(t, ..) if t.name == ty.name),
+                ) =>
             {
                 if let Some(variants) = self.variants_of(ty) {
                     let missed: Vec<(String, usize)> = variants
@@ -2226,11 +2237,11 @@ pub(crate) const FOR_ITERATOR: &str = "{for}";
 /// program can write (see `Rewrite::try_expr`).
 pub(crate) const TRY_VALUE: &str = "{try}";
 
-/// Checks that no `break` in `e`, the body of a `for` labelled `label`, if
-/// it is, gives that loop a value: a `for` can end without a `break`, so it
-/// can only be `()`. `depth` is how many loops in it `e` is, which an
-/// unlabelled `break` would be for instead.
-fn no_break_value(e: &Expr, label: Option<&String>, depth: usize) -> Result<(), Error> {
+/// Checks that no `break` in `e`, the body of a `for` or `while let`
+/// (`what`) labelled `label`, if it is, gives that loop a value: it can end
+/// without a `break`, so it can only be `()`. `depth` is how many loops in
+/// it `e` is, which an unlabelled `break` would be for instead.
+fn no_break_value(e: &Expr, what: &str, label: Option<&String>, depth: usize) -> Result<(), Error> {
     match &e.kind {
         ExprKind::Break(l, Some(_)) => {
             let ours = match l {
@@ -2240,23 +2251,25 @@ fn no_break_value(e: &Expr, label: Option<&String>, depth: usize) -> Result<(), 
             if ours {
                 return Err(Error::ty(
                     e.span,
-                    "a `break` with a value only works in a `loop`: a `for` loop can end \
-                     without a `break`",
+                    format!(
+                        "a `break` with a value only works in a `loop`: a {what} loop can end \
+                         without a `break`, and then it has no value to give"
+                    ),
                 ));
             }
         }
         // A closure's body is a function of its own.
         ExprKind::Lambda(_) => return Ok(()),
-        ExprKind::Loop(..) | ExprKind::While(..) | ExprKind::For(_) => {
+        ExprKind::Loop(..) | ExprKind::While(..) | ExprKind::WhileLet(..) | ExprKind::For(_) => {
             for c in e.children() {
-                no_break_value(c, label, depth + 1)?;
+                no_break_value(c, what, label, depth + 1)?;
             }
             return Ok(());
         }
         _ => {}
     }
     for c in e.children() {
-        no_break_value(c, label, depth)?;
+        no_break_value(c, what, label, depth)?;
     }
     Ok(())
 }
@@ -2363,7 +2376,11 @@ pub(crate) fn children_mut(e: &mut Expr) -> Vec<&mut Expr> {
         ExprKind::Block(stmts, tail) => stmts
             .iter_mut()
             .flat_map(|s| match s {
-                Stmt::Let { init, els, .. } => init.iter_mut().chain(els.as_deref_mut()).collect(),
+                Stmt::Let { init, els, .. } => init
+                    .as_deref_mut()
+                    .into_iter()
+                    .chain(els.as_deref_mut())
+                    .collect(),
                 Stmt::Expr(e) | Stmt::BlockLike(e) => vec![e],
                 Stmt::Fn(_) | Stmt::Type(_) => Vec::new(),
             })

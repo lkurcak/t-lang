@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased
+
+Step 28: `if let`, `let .. else` and `%`. See
+[docs/28-if-let.md](docs/28-if-let.md).
+
+### Added
+
+- `if let p = e { .. } else { .. }`, `else if let`, and `'a: while let p =
+  e { .. }`.
+- `let p = e else { .. };`: what `p` binds is there for the rest of the
+  block; the `else` must not finish (`return`, `break`, `continue`, or a
+  call returning `!`).
+- Each is rewritten as the `match` it means. The arm left out matches the
+  variants the pattern misses, with `_` fields, so a linear value is used
+  up in the `else`: `if let Option::Some(fd) = o` works for a linear `fd`,
+  and what the `else` can't name must be `Discard`.
+- A pattern that always matches gets an `unreachable_patterns` warning
+  ("this pattern always matches, so the `else` never runs: use `let`").
+- The checker knows what `a % b` gives for any `b`, not only a constant:
+  less than `|b|` from 0, no further from 0 than `a`, and of `a`'s sign. So
+  `h % n < n` is proved for `n > 0`.
+- `t fmt`, tree-sitter (`let_condition`, a `let_declaration`'s
+  `alternative`) and the editor support the new forms.
+
+### Changed
+
+- An `&&` or `||` at the top of what an `if let`, `while let` or `let ..
+  else` matches is a syntax error, kept for let chains; what's before a
+  `let .. else`'s `else` can't end in `}`; a `let .. else` can't have a
+  type.
+- A `break` with a value in a `for` now says "a `for` loop can end without
+  a `break`, and then it has no value to give", as a `while` does.
+
 ## 0.40.0 (2026-10-31)
 
 Step 27: git dependencies. See

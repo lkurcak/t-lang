@@ -1976,7 +1976,7 @@ impl Parser {
             None
         };
         let init = match self.eat(&Tok::Eq) {
-            true => Some(self.expr()?),
+            true => Some(Box::new(self.expr()?)),
             false => None,
         };
         let els = match (&init, *self.peek() == Tok::Else) {

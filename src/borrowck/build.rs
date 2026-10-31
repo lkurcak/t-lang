@@ -1136,7 +1136,9 @@ impl<'a> Builder<'a> {
                 break;
             }
             match stmt {
-                Stmt::Let { pat, ty, init, .. } => self.let_stmt(pat, ty.as_deref(), init.as_ref()),
+                Stmt::Let { pat, ty, init, .. } => {
+                    self.let_stmt(pat, ty.as_deref(), init.as_deref())
+                }
                 Stmt::Expr(e) | Stmt::BlockLike(e) => {
                     self.temps.push(Vec::new());
                     let t = self.ty(e);

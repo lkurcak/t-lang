@@ -3209,3 +3209,68 @@ fn packages_from_git_are_fetched_and_navigated() {
     stop(child, c);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// What `if let`, `while let` and `let .. else` bind hovers, goes to its
+/// definition and renames like any variable; and the `let`, where the
+/// `else` they mean is made up, has nothing to show or rename.
+#[test]
+fn hovers_and_renames_through_if_let_and_let_else() {
+    let (child, mut c) = start();
+    let src = "\
+enum Shape { Circle(i64), Rect(i64, i64) }
+fn area(s: Option<Shape>) -> i64 {
+    let Option::Some(shape) = s else { return 0 };
+    if let Shape::Circle(r) = shape { r * r } else { 1 }
+}
+fn count(mut it: core::ops::Range<i64>) -> i64 {
+    let mut n = 0;
+    while let Option::Some(k) = it.next() {
+        n = n + k;
+    }
+    n
+}
+fn main() {
+    let _a = area(Option::Some(Shape::Circle(2)));
+    let _b = count(0..3);
+    let _c = area(Option::Some(Shape::Rect(1, 2)));
+}
+";
+    let (mut d, diags) = Doc::open(&mut c, "file:///tmp/iflet.t", src);
+    assert_eq!(diags, Vec::<Value>::new());
+    let hover = d.ask(&mut c, "textDocument/hover", "shape", 1, json!({}));
+    assert_eq!(
+        hover["result"]["contents"]["value"], "```t\nshape: Shape\n```",
+        "{hover}"
+    );
+    let hover = d.ask(&mut c, "textDocument/hover", "r * r", 0, json!({}));
+    assert_eq!(
+        hover["result"]["contents"]["value"], "```t\nr: i64\n```",
+        "{hover}"
+    );
+    let def = d.ask(&mut c, "textDocument/definition", "k;", 0, json!({}));
+    assert_eq!(def["result"]["range"], d.range("k", 0), "{def}");
+    // The made-up `else` arms name `Option` and `Shape` where the `let` is,
+    // as no text of their own.
+    for nth in 0..3 {
+        let hover = d.ask(&mut c, "textDocument/hover", "let", nth, json!({}));
+        assert_eq!(hover["result"], Value::Null, "{hover}");
+    }
+    assert_eq!(
+        d.references(&mut c, "Circle", 0, true),
+        vec![
+            d.range("Circle", 0),
+            d.range("Circle", 1),
+            d.range("Circle", 2)
+        ]
+    );
+    assert_eq!(
+        d.rename(&mut c, "shape", 0, "sh").unwrap(),
+        src.replace("Some(shape)", "Some(sh)")
+            .replace("= shape {", "= sh {")
+    );
+    assert_eq!(
+        d.rename(&mut c, "Rect", 0, "Square").unwrap(),
+        src.replace("Rect", "Square")
+    );
+    stop(child, c);
+}

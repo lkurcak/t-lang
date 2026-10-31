@@ -52,9 +52,6 @@ impl Checker {
         for r in exhaust::redundant(&self.adts, &t, &pats) {
             self.warnings.push(match r {
                 Redundant::Arm(1) if let Some(of) = made => irrefutable_let(arms[0].pat.span, of),
-                // Of the variants `else` matches, which may be more than it
-                // needs.
-                Redundant::Alt(span) if self.else_of(span).is_some() => continue,
                 Redundant::Arm(i) => unreachable_arm(arms, i),
                 Redundant::Alt(span) => unreachable_alt(span, &written),
                 Redundant::Trim(span, lo, hi) => narrowable(span, lo, hi, &written),

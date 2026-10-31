@@ -1054,9 +1054,9 @@ impl Printer<'_> {
             ExprKind::While(label, c, body) => {
                 group(label_doc(label) + "while " + self.head(c) + self.block_or_expr(body))
             }
-            ExprKind::WhileLet(label, c, body) => group(
-                label_doc(label) + "while " + self.let_cond(c) + self.block_or_expr(body),
-            ),
+            ExprKind::WhileLet(label, c, body) => {
+                group(label_doc(label) + "while " + self.let_cond(c) + self.block_or_expr(body))
+            }
             ExprKind::Loop(label, body) => {
                 group(label_doc(label) + "loop " + self.block_or_expr(body))
             }

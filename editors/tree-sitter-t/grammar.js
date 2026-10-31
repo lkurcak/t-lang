@@ -545,6 +545,7 @@ module.exports = grammar({
       field('pattern', $._pattern),
       optional(seq(':', field('type', $._type))),
       optional(seq('=', field('value', $._expression))),
+      optional(seq('else', field('alternative', $.block))),
       ';',
     ),
 
@@ -804,17 +805,25 @@ module.exports = grammar({
 
     if_expression: $ => prec.right(seq(
       'if',
-      field('condition', $._expression),
+      field('condition', choice($._expression, $.let_condition)),
       field('consequence', $.block),
       optional(field('alternative', $.else_clause)),
     )),
 
     else_clause: $ => seq('else', choice($.block, $.if_expression)),
 
+    // `let pat = e`, what an `if let` or `while let` matches.
+    let_condition: $ => seq(
+      'let',
+      field('pattern', $._pattern),
+      '=',
+      field('value', $._expression),
+    ),
+
     while_expression: $ => seq(
       optional(seq(field('label', $.lifetime), ':')),
       'while',
-      field('condition', $._expression),
+      field('condition', choice($._expression, $.let_condition)),
       field('body', $.block),
     ),
 

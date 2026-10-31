@@ -1146,7 +1146,9 @@ impl Expr {
             ExprKind::Block(stmts, tail) => stmts
                 .iter()
                 .flat_map(|s| match s {
-                    Stmt::Let { init, els, .. } => init.iter().chain(els.as_deref()).collect(),
+                    Stmt::Let { init, els, .. } => {
+                        init.as_deref().into_iter().chain(els.as_deref()).collect()
+                    }
                     Stmt::Expr(e) | Stmt::BlockLike(e) => vec![e],
                     Stmt::Fn(_) | Stmt::Type(_) => Vec::new(),
                 })
@@ -1744,8 +1746,9 @@ pub enum Stmt {
         /// Boxed, since it's rare and would make every `Stmt` bigger.
         ty: Option<Box<TypeExpr>>,
         /// `None` for `let x;`, a variable given its value later, which
-        /// only a variable can be.
-        init: Option<Expr>,
+        /// only a variable can be. Boxed, so a `Let` isn't much bigger than
+        /// the other statements.
+        init: Option<Box<Expr>>,
         /// `let pat = init else { .. };`: the block that runs if `pat`
         /// doesn't match, which must leave the block the `let` is in. Only
         /// until paths are resolved, which rewrites the `let` and the rest

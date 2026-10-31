@@ -1150,7 +1150,7 @@ impl Cx<'_, '_, '_> {
                             els: None,
                             pat: self.pattern(pat),
                             ty: ty.as_ref().map(|t| Box::new(self.ty(t))),
-                            init: init.as_ref().map(|e| self.expr(e)),
+                            init: init.as_ref().map(|e| Box::new(self.expr(e))),
                         },
                         Stmt::Expr(e) => Stmt::Expr(self.expr(e)),
                         Stmt::BlockLike(e) => Stmt::BlockLike(self.expr(e)),
