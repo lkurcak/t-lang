@@ -1,7 +1,6 @@
 //! Checking impls against their traits: signatures, associated types,
 //! the orphan rule, and that no two impls overlap (*coherence*).
 
-use super::dicts::Site;
 use super::fields;
 use crate::ast::*;
 use crate::check::generics;
@@ -10,7 +9,6 @@ use crate::error::{Edit, Error, Fix, Span};
 use crate::traits::{COPY, DISCARD};
 use crate::traits::{ImplDef, MethodDef, Pred, refuted, unified, unifier};
 use crate::types::{Bound, Region, Scheme, Subst, Type};
-use std::collections::HashMap;
 
 impl Checker {
     /// Pass 4, once every impl and method signature is known: the rules
@@ -183,78 +181,17 @@ impl Checker {
     /// method call gets to an impl's method (`dispatch`), and which uses
     /// the types and projections in what it says.
     fn assoc_regular(&self) -> Result<(), Error> {
-        // A name for each associated type of each impl.
-        let nodes: Vec<(usize, String, String)> = self
-            .traits
-            .impls
-            .iter()
-            .enumerate()
-            .flat_map(|(k, d)| {
-                let tr = d.trait_name.clone().unwrap_or_default();
-                d.assoc
-                    .iter()
-                    .map(move |(n, _)| (k, n.clone(), format!("<{} as {tr}>::{n}", d.self_ty)))
-            })
-            .collect();
+        let nodes = self.assoc_nodes();
         if nodes.is_empty() {
             return Ok(());
         }
-        let dicts = super::dict_names(&self.traits.impls);
+        let (dicts, type_dicts) = super::dict_names(&self.traits.impls);
         let derived_eq = vec![None; self.traits.impls.len()];
-        let ix = self.index(&dicts, &derived_eq);
-        let mut uses: Vec<generics::Use> = Vec::new();
-        let mut names: Vec<&String> = self.adts.keys().collect();
-        names.sort();
-        for a in &names {
-            let def = &self.adts[*a];
-            // Its name, where it's declared.
-            let at = self.defs.types.get(*a).copied().unwrap_or(Span::new(0, 0));
-            for (_, f) in fields(&def.kind) {
-                crate::check::each_adt(&f, &mut |to, args| {
-                    uses.push(generics::Use {
-                        from: a,
-                        to: self.adt_key(to),
-                        args: args.to_vec(),
-                        via: None,
-                        span: at,
-                    });
-                });
-                self.type_uses(&mut Site::new(&ix, a, at, &mut uses), &f);
-            }
-        }
-        for (k, n, node) in &nodes {
-            let d = &self.traits.impls[*k];
-            let (_, t) = d.assoc.iter().find(|(m, _)| m == n).expect("it");
-            crate::check::each_adt(t, &mut |to, args| {
-                uses.push(generics::Use {
-                    from: node,
-                    to: self.adt_key(to),
-                    args: args.to_vec(),
-                    via: None,
-                    span: d.span,
-                });
-            });
-            self.type_uses(&mut Site::new(&ix, node, d.span, &mut uses), t);
-        }
-        uses.extend(self.dict_uses(&ix, &nodes, true));
+        let ix = self.index((&dicts, &type_dicts), &derived_eq);
+        let mut uses = self.type_graph(&ix, &nodes);
         uses.sort_by_key(|u| u.span.start);
-        let mut params: HashMap<&str, &[String]> = self
-            .adts
-            .iter()
-            .map(|(name, def)| (name.as_str(), def.params.as_slice()))
-            .collect();
-        for (k, _, node) in &nodes {
-            params.insert(node, self.traits.impls[*k].params.as_slice());
-        }
-        for (d, name) in self.traits.impls.iter().zip(&dicts) {
-            params.insert(name, d.params.as_slice());
-        }
+        let params = self.graph_params(&ix, &nodes);
         generics::polymorphic_recursion(&uses, &params, &|s| self.current(s))
-    }
-
-    /// The name a struct or enum's symbol is a node by, in `assoc_regular`.
-    fn adt_key<'a>(&'a self, symbol: &str) -> &'a str {
-        self.adts.get_key_value(symbol).expect("a type").0
     }
 
     /// What impl `def` (written as `d`) says its trait's associated types

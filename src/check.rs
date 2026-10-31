@@ -1614,10 +1614,10 @@ impl Checker {
                 eq.then(|| format!("<{} as Eq>::eq", d.self_ty.symbols()))
             })
             .collect();
-        let dicts = traits::dict_names(&self.traits.impls);
-        let ix = self.index(&dicts, &derived_eq);
-        let eq = traits::trait_method_symbol(EQ, "eq");
-        let eq = ix.method_symbol(&eq);
+        let (dicts, type_dicts) = traits::dict_names(&self.traits.impls);
+        let ix = self.index((&dicts, &type_dicts), &derived_eq);
+        let nodes = self.assoc_nodes();
+        let eq = ix.method_symbol(&traits::trait_method_symbol(EQ, "eq"));
         let mut uses = Vec::new();
         for (k, d) in self.traits.impls.iter().enumerate() {
             let (Some(from), Type::Adt(symbol, ..)) = (&derived_eq[k], &d.self_ty) else {
@@ -1636,14 +1636,30 @@ impl Checker {
                 .iter()
                 .filter(|f| f.body.start <= span.start && span.end <= f.body.end)
                 .min_by_key(|f| f.body.end - f.body.start);
-            if let Instance::Fn(to, args) = instance
-                && let Some(from) = from
-            {
+            let Some(from) = from else { continue };
+            let mut site = traits::Site::types(&ix, &from.symbol, *span, &mut uses);
+            match instance {
+                Instance::Fn(_, args) => {
+                    for t in args {
+                        self.mention_uses(&mut site, t);
+                    }
+                }
+                Instance::Adt(name, args) => {
+                    let t = Type::Adt(name.clone(), Vec::new(), args.clone());
+                    self.mention_uses(&mut site, &t);
+                }
+            }
+            if let Instance::Fn(to, args) = instance {
                 self.call_uses(&ix, (&from.symbol, *span), to, args, &mut uses);
             }
         }
+        // Each function's copies mention the types in its signature.
+        for f in &self.fns {
+            let mut site = traits::Site::types(&ix, &f.symbol, f.name.span, &mut uses);
+            self.mention_uses(&mut site, &f.scheme.ty);
+        }
         // What an opaque type's hidden type implements was proved in its
-        // function, which picked the impls.
+        // function, which picked the impls; and its copies mention it.
         for (symbol, o) in &self.traits.opaques {
             let (Some(hidden), Some(from)) = (&o.hidden, ix.fn_symbol(&o.owner)) else {
                 continue;
@@ -1654,25 +1670,18 @@ impl Checker {
                 let t = replace(&p.ty, &generic, hidden);
                 self.proof_uses(&mut site, &t, &p.trait_name);
             }
+            self.mention_uses(
+                &mut traits::Site::types(&ix, from, o.span, &mut uses),
+                hidden,
+            );
         }
-        uses.extend(self.dict_uses(&ix, &[], false));
+        uses.extend(self.dict_uses(&ix, &nodes, false));
         uses.extend(self.unknown_uses(&ix));
+        uses.extend(self.type_graph(&ix, &nodes));
+        uses.extend(self.discard_uses());
         // In source order, so the first one is reported.
         uses.sort_by_key(|u| u.span.start);
-        let mut params: HashMap<&str, &[String]> = self
-            .fns
-            .iter()
-            .map(|f| (f.symbol.as_str(), f.scheme.params.as_slice()))
-            .collect();
-        for (d, eq) in self.traits.impls.iter().zip(&derived_eq) {
-            if let Some(eq) = eq {
-                params.insert(eq, d.params.as_slice());
-            }
-        }
-        for (d, name) in self.traits.impls.iter().zip(&dicts) {
-            params.insert(name, d.params.as_slice());
-        }
-        params.insert(traits::UNKNOWN, traits::UNKNOWN_PARAMS);
+        let params = self.graph_params(&ix, &nodes);
         generics::polymorphic_recursion(&uses, &params, &|s| self.current(s))
     }
 

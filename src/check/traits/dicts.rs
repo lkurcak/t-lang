@@ -25,7 +25,7 @@
 //! so what a package's check finds depends on it and its dependencies
 //! alone, and adding a dependency to a program can't make it fail.
 
-use super::each_proj;
+use super::{each_proj, fields, mentions};
 use crate::check::Checker;
 use crate::check::generics::Use;
 use crate::error::Span;
@@ -44,8 +44,15 @@ const UNKNOWN_PARAM: &str = "";
 /// `UNKNOWN`'s type parameters, for `generics::polymorphic_recursion`.
 pub(in crate::check) const UNKNOWN_PARAMS: &[String] = &[String::new()];
 
-/// The node of each impl, its dictionary, by index in `traits.impls`.
-pub(in crate::check) fn dict_names(impls: &[ImplDef]) -> Vec<String> {
+/// The nodes of each impl, its dictionaries, by index in `traits.impls`:
+/// for what code may call, and for what copies of types need.
+pub(in crate::check) fn dict_names(impls: &[ImplDef]) -> (Vec<String>, Vec<String>) {
+    let calls = call_dict_names(impls);
+    let types = calls.iter().map(|n| format!("{n} (types)")).collect();
+    (calls, types)
+}
+
+fn call_dict_names(impls: &[ImplDef]) -> Vec<String> {
     let mut seen = HashSet::new();
     (impls.iter().enumerate())
         .map(|(k, d)| {
@@ -61,7 +68,12 @@ pub(in crate::check) fn dict_names(impls: &[ImplDef]) -> Vec<String> {
 
 /// What the uses need to know of the program, indexed once.
 pub(in crate::check) struct Index<'a> {
+    /// Each impl's dictionary, for what code may call: its methods.
     pub(in crate::check) dicts: &'a [String],
+    /// Each impl's dictionary for what a copy of a type needs: only its
+    /// associated types, as copying a type copies no method but a written
+    /// `discard` (`Checker::discard_uses`).
+    pub(in crate::check) type_dicts: &'a [String],
     /// Each trait's method by symbol: the trait and its method.
     methods: HashMap<&'a str, (&'a str, &'a crate::traits::MethodDef)>,
     /// Each function's type scheme, by symbol.
@@ -88,7 +100,7 @@ impl<'a> Index<'a> {
 impl Checker {
     pub(in crate::check) fn index<'a>(
         &'a self,
-        dicts: &'a [String],
+        (dicts, type_dicts): (&'a [String], &'a [String]),
         derived_eq: &'a [Option<String>],
     ) -> Index<'a> {
         let methods = (self.traits.traits.iter())
@@ -103,6 +115,7 @@ impl Checker {
             .collect();
         Index {
             dicts,
+            type_dicts,
             methods,
             schemes,
             derived_eq,
@@ -143,7 +156,11 @@ impl Checker {
         let Some((k, args)) = self.traits.select(&ty, Some(tr), &[]) else {
             return;
         };
-        site.push(&site.ix.dicts[k], args.clone(), None);
+        let dicts = match site.types {
+            true => site.ix.type_dicts,
+            false => site.ix.dicts,
+        };
+        site.push(&dicts[k], args.clone(), None);
         let d = &self.traits.impls[k];
         let s = Subst::new(&d.params, &args);
         for p in &d.preds {
@@ -227,12 +244,13 @@ impl Checker {
         }
     }
 
-    /// The uses of each impl's dictionary: each of its methods, its derived
-    /// `eq`, or the trait's default where it has none, at the impl's own
-    /// type parameters; or, for the graph of types (`types`), each of its
-    /// associated types, named in `assoc`. And the dictionaries its own
-    /// proofs pick, of its trait's supertraits and of what its associated
-    /// types must implement, which code that has the dictionary may use.
+    /// The uses of each impl's dictionary: each of its associated types,
+    /// named in `assoc`, at the impl's own type parameters, and, but for a
+    /// type's dictionary (`types`), each of its methods, its derived `eq`,
+    /// or the trait's default where it has none. And the dictionaries its
+    /// own proofs pick, of its trait's supertraits and of what its
+    /// associated types must implement, which code that has the dictionary
+    /// may use.
     pub(in crate::check) fn dict_uses<'a>(
         &'a self,
         ix: &Index<'a>,
@@ -242,14 +260,16 @@ impl Checker {
         let mut out = Vec::new();
         for (k, d) in self.traits.impls.iter().enumerate() {
             let Some(tr) = &d.trait_name else { continue };
-            let mut site = Site::new(ix, &ix.dicts[k], d.span, &mut out);
+            let mut site = match types {
+                true => Site::types(ix, &ix.type_dicts[k], d.span, &mut out),
+                false => Site::new(ix, &ix.dicts[k], d.span, &mut out),
+            };
             let own: Vec<Type> = d.params.iter().map(|p| Type::Param(p.clone())).collect();
             let def = &self.traits.traits[tr];
-            if types {
-                for (_, _, node) in assoc.iter().filter(|(j, ..)| *j == k) {
-                    site.push(node, own.clone(), None);
-                }
-            } else {
+            for (_, _, node) in assoc.iter().filter(|(j, ..)| *j == k) {
+                site.push(node, own.clone(), None);
+            }
+            if !types {
                 for m in &def.methods {
                     let written = d.methods.iter().find(|(n, _)| *n == m.name);
                     match (written, &ix.derived_eq[k]) {
@@ -328,11 +348,142 @@ impl Checker {
     }
 }
 
+impl Checker {
+    /// A node for each associated type of each impl: the impl, the name,
+    /// and the node's name.
+    pub(in crate::check) fn assoc_nodes(&self) -> Vec<(usize, String, String)> {
+        (self.traits.impls.iter().enumerate())
+            .flat_map(|(k, d)| {
+                let tr = d.trait_name.clone().unwrap_or_default();
+                (d.assoc.iter())
+                    .map(move |(n, _)| (k, n.clone(), format!("<{} as {tr}>::{n}", d.self_ty)))
+            })
+            .collect()
+    }
+
+    /// The uses of the graph of types: each struct or enum uses what its
+    /// fields mention, each associated type what it says, and each type
+    /// dictionary its associated types.
+    pub(in crate::check) fn type_graph<'a>(
+        &'a self,
+        ix: &Index<'a>,
+        nodes: &'a [(usize, String, String)],
+    ) -> Vec<Use<'a>> {
+        let mut uses = Vec::new();
+        let mut names: Vec<&String> = self.adts.keys().collect();
+        names.sort();
+        for a in names {
+            let def = &self.adts[a];
+            // Its name, where it's declared.
+            let at = self.defs.types.get(a).copied().unwrap_or(Span::new(0, 0));
+            for (_, f) in fields(&def.kind) {
+                self.mention_uses(&mut Site::types(ix, a, at, &mut uses), &f);
+            }
+        }
+        for (k, n, node) in nodes {
+            let d = &self.traits.impls[*k];
+            let (_, t) = d.assoc.iter().find(|(m, _)| m == n).expect("it");
+            self.mention_uses(&mut Site::types(ix, node, d.span, &mut uses), t);
+        }
+        uses.extend(self.dict_uses(ix, nodes, true));
+        uses
+    }
+
+    /// The uses by which `site` mentions type `t`: each struct and enum in
+    /// it, which monomorphisation copies, and what `type_uses` says.
+    pub(in crate::check) fn mention_uses<'a>(&'a self, site: &mut Site<'a, '_>, t: &Type) {
+        crate::check::each_adt(t, &mut |name, args| {
+            if let Some((to, _)) = self.adts.get_key_value(name) {
+                site.push(to, args.to_vec(), None);
+            }
+        });
+        self.type_uses(site, t);
+    }
+
+    /// The uses of each struct or enum with a `discard` of its own, which
+    /// monomorphisation makes with each copy of the type, as it's called
+    /// wherever a value of it is dropped, which nothing names. Each of the
+    /// impl's type parameters is the type's parameter it's in: a part of
+    /// it, so no bigger.
+    pub(in crate::check) fn discard_uses<'a>(&'a self) -> Vec<Use<'a>> {
+        let mut out = Vec::new();
+        for d in &self.traits.impls {
+            let (Some(DISCARD), false, Type::Adt(name, ..)) =
+                (d.trait_name.as_deref(), d.derived, &d.self_ty)
+            else {
+                continue;
+            };
+            let (Some((from, def)), Some((_, discard))) =
+                (self.adts.get_key_value(name), d.methods.first())
+            else {
+                continue;
+            };
+            let generic = def.generic(name);
+            let renamed: Vec<Type> = (d.params.iter())
+                .map(|p| Type::Param(format!("{p}'")))
+                .collect();
+            let header = Subst::new(&d.params, &renamed).apply(&d.self_ty);
+            let mut vars: Vec<String> = def.params.iter().cloned().collect();
+            vars.extend(d.params.iter().map(|p| format!("{p}'")));
+            let Some(mgu) = crate::traits::unifier(&generic, &header, &vars) else {
+                continue;
+            };
+            let args = (d.params.iter())
+                .map(|p| {
+                    let p = format!("{p}'");
+                    let within = def.params.iter().find(|q| {
+                        let t = crate::traits::unified(&Type::Param((*q).clone()), &mgu);
+                        mentions(&t, &p)
+                    });
+                    within.map_or(Type::Unit, |q| Type::Param(q.clone()))
+                })
+                .collect();
+            if let Some(to) = self.fns.iter().find(|f| f.symbol == *discard) {
+                out.push(Use {
+                    from,
+                    to: &to.symbol,
+                    args,
+                    via: None,
+                    span: d.span,
+                });
+            }
+        }
+        out
+    }
+
+    /// The type parameters of every node of the graph.
+    pub(in crate::check) fn graph_params<'a>(
+        &'a self,
+        ix: &Index<'a>,
+        nodes: &'a [(usize, String, String)],
+    ) -> HashMap<&'a str, &'a [String]> {
+        let mut params: HashMap<&str, &[String]> = (self.fns.iter())
+            .map(|f| (f.symbol.as_str(), f.scheme.params.as_slice()))
+            .collect();
+        params.extend((self.adts.iter()).map(|(name, def)| (name.as_str(), def.params.as_slice())));
+        for (k, d) in self.traits.impls.iter().enumerate() {
+            params.insert(&ix.dicts[k], d.params.as_slice());
+            params.insert(&ix.type_dicts[k], d.params.as_slice());
+            if let Some(eq) = &ix.derived_eq[k] {
+                params.insert(eq, d.params.as_slice());
+            }
+        }
+        for (k, _, node) in nodes {
+            params.insert(node, self.traits.impls[*k].params.as_slice());
+        }
+        params.insert(UNKNOWN, UNKNOWN_PARAMS);
+        params
+    }
+}
+
 /// Where uses are from: what, where, and those found so far.
 pub(in crate::check) struct Site<'a, 'o> {
     ix: &'o Index<'a>,
     from: &'a str,
     span: Span,
+    /// Is it a struct or enum type, or an associated type, or the
+    /// mention of one, whose proofs pick type dictionaries?
+    types: bool,
     /// What's been proved here, to prove it once.
     seen: HashSet<(Type, String)>,
     out: &'o mut Vec<Use<'a>>,
@@ -349,8 +500,24 @@ impl<'a, 'o> Site<'a, 'o> {
             ix,
             from,
             span,
+            types: false,
             seen: HashSet::new(),
             out,
+        }
+    }
+
+    /// A site of a type's: of a struct or enum, an associated type, or a
+    /// function's mention of a type, whose proofs pick what copies of the
+    /// type need.
+    pub(in crate::check) fn types(
+        ix: &'o Index<'a>,
+        from: &'a str,
+        span: Span,
+        out: &'o mut Vec<Use<'a>>,
+    ) -> Site<'a, 'o> {
+        Site {
+            types: true,
+            ..Site::new(ix, from, span, out)
         }
     }
 
