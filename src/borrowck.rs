@@ -28,23 +28,29 @@
 
 mod build;
 mod loans;
-mod mir;
+
 mod moves;
 mod regions;
 
 use crate::ast::*;
 use crate::check::{Checker, is_result_lifetime, result_span};
 use crate::error::{Edit, Error, Fix, Lint, Span, Warning};
+use crate::mir::{EnvVar, LocalKind, Place, Proj};
 use crate::traits::FnKind;
 use crate::types::{FnType, Region, Scheme, Type};
 use build::{Builder, ClosureUse};
-use mir::{EnvVar, LocalKind, Place, Proj};
 use regions::{AdtInfo, Regions, wf_bounds};
 use std::collections::{HashMap, HashSet};
 
 /// Checks function `f`, whose type is `scheme`, and returns the warnings
 /// about it.
-pub(crate) fn check(cx: &Checker, f: &FnDecl, scheme: &Scheme) -> Result<Vec<Warning>, Error> {
+/// Its MIR, once checked, is kept, by `symbol`, for running (`Checker::mir`).
+pub(crate) fn check(
+    cx: &Checker,
+    f: &FnDecl,
+    symbol: &str,
+    scheme: &Scheme,
+) -> Result<Vec<Warning>, Error> {
     let info = AdtInfo::new(cx.adts());
     let Type::Fn(sig) = &scheme.ty else {
         unreachable!("a function has a function type")
@@ -94,6 +100,10 @@ pub(crate) fn check(cx: &Checker, f: &FnDecl, scheme: &Scheme) -> Result<Vec<War
     b.lower(&f.body);
     let names = Names::of(f, sig);
     let (warnings, _) = analyze(&mut b, &names, false)?;
+    let key = crate::mir::Key::Fn(symbol.to_string());
+    cx.mir
+        .borrow_mut()
+        .insert(key, std::sync::Arc::new(b.body.erased()));
     Ok(warnings)
 }
 
@@ -716,6 +726,10 @@ fn closure_body(
     b.lower(&c.lambda.body);
     if later == 0 {
         let (warnings, reqs) = analyze(&mut b, &names, true)?;
+        let key = crate::mir::Key::Closure(c.lambda.id);
+        cx.mir
+            .borrow_mut()
+            .insert(key, std::sync::Arc::new(b.body.erased()));
         return Ok(Outcome::Checked(warnings, reqs));
     }
     closures_in(&mut b);

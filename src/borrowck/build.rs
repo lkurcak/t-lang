@@ -7,19 +7,23 @@
 //!
 //! Every expression is lowered to *write its value into a place*
 //! (`expr_into`), or to *be* a place (`place`), or an operand (`operand`).
-//! Each statement's temporaries go out of scope at its end, as in the
-//! interpreter: the two have to agree on when memory goes away, or the
-//! borrow checker would be checking a different program than the one that
-//! runs. That goes for `return`, `break` and `continue` too: each ends the
-//! statements and scopes it leaves, innermost first, as the interpreter
-//! does as it unwinds to where they go.
+//! Each statement's temporaries go out of scope at its end. `return`,
+//! `break` and `continue` end the statements and scopes they leave,
+//! innermost first, on their way to where they go.
+//!
+//! What's built here is also what runs (see `mir.rs`): once checked, the
+//! body is kept, monomorphisation copies it, and the interpreter runs the
+//! copies. So the order things happen in, and when memory goes away, is
+//! decided here and only here. What running needs and checking doesn't,
+//! constants' values, operators' nodes, which arm a `match` takes, rides
+//! along where the analyses ignore it.
 
-use super::mir::*;
 use super::regions::{AdtInfo, Regions};
 use crate::ast::*;
 use crate::check::typed::Res;
-use crate::check::{Checker, MoveSite, first_use};
+use crate::check::{Checker, first_use};
 use crate::error::Span;
+use crate::mir::*;
 use crate::traits::FN_ONCE;
 use crate::traits::{FnKind, SIG};
 use crate::types::{AdtKind, Adts, Region, Scheme, Subst, Type, struct_fields, variant_fields};
@@ -130,6 +134,8 @@ impl<'a> Builder<'a> {
                 unique_by_closures: Vec::new(),
                 heads: Vec::new(),
                 drop_uses: Default::default(),
+                refinements: Vec::new(),
+                unsafe_blocks: Vec::new(),
             },
             regions,
             loans: Vec::new(),
@@ -387,7 +393,6 @@ impl<'a> Builder<'a> {
         }
         let span = e.span;
         match &e.kind {
-            ExprKind::Move(_) => unreachable!("written by lift"),
             ExprKind::For(_)
             | ExprKind::IfLet(..)
             | ExprKind::WhileLet(..)
@@ -406,7 +411,15 @@ impl<'a> Builder<'a> {
             | ExprKind::ByteStr(_)
             | ExprKind::Unit => {
                 let t = self.ty(e);
-                self.assign(dest, Rvalue::Use(Operand::Const), &t, span, false);
+                let c = self.literal(e);
+                self.assign(dest, Rvalue::Use(Operand::Const(c)), &t, span, false);
+            }
+            // `-` of a literal is a literal: `-128` is an `i8`, though `128`
+            // isn't.
+            ExprKind::Unary(UnOp::Neg, x) if let ExprKind::Int(n, _) = x.kind => {
+                let t = self.ty(e);
+                let c = Const::Int(-i128::from(n), self.erased_ty(x));
+                self.assign(dest, Rvalue::Use(Operand::Const(c)), &t, span, false);
             }
             ExprKind::Var(..) | ExprKind::Field(..) | ExprKind::Unary(UnOp::Deref, _) => {
                 let (o, t) = self.operand(e);
@@ -426,13 +439,14 @@ impl<'a> Builder<'a> {
             ExprKind::Unary(op, x) => {
                 let (o, _) = self.operand(x);
                 let t = self.ty(e);
-                self.assign(dest, Rvalue::Unary(*op, o), &t, span, false);
+                self.assign(dest, Rvalue::Unary(*op, o, e.id), &t, span, false);
             }
             // An integer, which is `Copy`, as the same number.
             ExprKind::As(x, _) => {
                 let (o, _) = self.operand(x);
                 let t = self.ty(e);
-                self.assign(dest, Rvalue::Use(o), &t, span, false);
+                let value = Rvalue::Cast(o, t.erased(), e.id);
+                self.assign(dest, value, &t, span, false);
             }
             ExprKind::Binary(op @ (BinOp::And | BinOp::Or), l, r) => {
                 self.expr_into(l, dest);
@@ -455,14 +469,14 @@ impl<'a> Builder<'a> {
             ) => {
                 let l = self.place(l);
                 let r = self.place(r);
-                let value = Rvalue::Binary(*op, Operand::Copy(l), Operand::Copy(r));
+                let value = Rvalue::Binary(*op, Operand::Copy(l), Operand::Copy(r), e.id);
                 self.assign(dest, value, &Type::Bool, span, false);
             }
             ExprKind::Binary(op, l, r) => {
                 let (l, _) = self.operand(l);
                 let (r, _) = self.operand(r);
                 let t = self.ty(e);
-                self.assign(dest, Rvalue::Binary(*op, l, r), &t, span, false);
+                self.assign(dest, Rvalue::Binary(*op, l, r, e.id), &t, span, false);
             }
             // A call of a closure, or of what a bound says can be called:
             // with it for a receiver, as a method's, borrowed for `Fn` and
@@ -483,7 +497,7 @@ impl<'a> Builder<'a> {
                 };
                 let (receiver, recv_ty) = match kind {
                     FnKind::FnOnce => {
-                        let (o, ot) = self.use_place(recv, callee.span, MoveSite::Receiver(e.id));
+                        let (o, ot) = self.use_place(recv, callee.span);
                         (Arg::Value(o, ot.clone(), callee.span), ot)
                     }
                     kind => {
@@ -495,7 +509,7 @@ impl<'a> Builder<'a> {
                 };
                 sig.params.insert(0, recv_ty);
                 self.call_into(
-                    Operand::Const,
+                    Operand::Const(Const::Receiver(kind)),
                     Type::Fn(sig),
                     Some(receiver),
                     args,
@@ -523,20 +537,22 @@ impl<'a> Builder<'a> {
                 let receiver = match autoref {
                     Some(m) => Arg::Borrow(recv, m, None, x.span),
                     None => {
-                        let (o, t) = self.use_place(recv, x.span, MoveSite::Receiver(e.id));
+                        let (o, t) = self.use_place(recv, x.span);
                         Arg::Value(o, t, x.span)
                     }
                 };
-                self.call_into(Operand::Const, ft, Some(receiver), args, dest, span);
+                let f = Operand::Const(self.fn_const(&symbol, &targs));
+                self.call_into(f, ft, Some(receiver), args, dest, span);
             }
             // A path to a method: the method, as a function, maybe called.
             ExprKind::Variant(_, _, _, args, parens)
                 if let Some(Res::Fn(symbol, targs)) = self.cx.typed().vars.get(&e.id) =>
             {
                 let ft = self.fn_value(symbol, targs, span);
+                let f = Operand::Const(self.fn_const(symbol, targs));
                 match parens {
-                    true => self.call_into(Operand::Const, ft, None, args, dest, span),
-                    false => self.assign(dest, Rvalue::Use(Operand::Const), &ft, span, false),
+                    true => self.call_into(f, ft, None, args, dest, span),
+                    false => self.assign(dest, Rvalue::Use(f), &ft, span, false),
                 }
             }
             ExprKind::If(c, then, els) => {
@@ -550,7 +566,7 @@ impl<'a> Builder<'a> {
                 match els {
                     Some(els) => self.expr_into(els, dest),
                     None => {
-                        let unit = Rvalue::Use(Operand::Const);
+                        let unit = Rvalue::Use(Operand::Const(Const::Unit));
                         self.assign(dest, unit, &Type::Unit, span, false);
                     }
                 }
@@ -559,7 +575,7 @@ impl<'a> Builder<'a> {
             }
             ExprKind::While(label, c, body) => {
                 self.loop_into(label, Some(c), body, None);
-                let unit = Rvalue::Use(Operand::Const);
+                let unit = Rvalue::Use(Operand::Const(Const::Unit));
                 self.assign(dest, unit, &Type::Unit, span, false);
             }
             ExprKind::Loop(label, body) => self.loop_into(label, None, body, Some(dest)),
@@ -569,9 +585,13 @@ impl<'a> Builder<'a> {
                 let ret = Place::local(RETURN);
                 match value {
                     Some(v) => self.expr_into(v, &ret),
-                    None => {
-                        self.assign(&ret, Rvalue::Use(Operand::Const), &Type::Unit, span, false)
-                    }
+                    None => self.assign(
+                        &ret,
+                        Rvalue::Use(Operand::Const(Const::Unit)),
+                        &Type::Unit,
+                        span,
+                        false,
+                    ),
                 }
                 self.unwind(0, 0, span);
                 self.diverge(Term::Return);
@@ -583,7 +603,7 @@ impl<'a> Builder<'a> {
                     match value {
                         Some(v) => self.expr_into(v, &dest),
                         None => {
-                            let unit = Rvalue::Use(Operand::Const);
+                            let unit = Rvalue::Use(Operand::Const(Const::Unit));
                             self.assign(&dest, unit, &Type::Unit, span, false);
                         }
                     }
@@ -597,7 +617,7 @@ impl<'a> Builder<'a> {
                 self.unwind(scopes, temps, span);
                 self.diverge(Term::Goto(head));
             }
-            // The value first, then the place, as in the interpreter.
+            // The value first, then the place, as in Rust.
             ExprKind::Assign(op, place, value) => {
                 let (mut v, vt) = self.operand(value);
                 // The value comes first, so it's read before a call in the
@@ -610,16 +630,19 @@ impl<'a> Builder<'a> {
                 let p = self.place(place);
                 match op {
                     Some(op) => {
-                        let value = Rvalue::Binary(*op, Operand::Copy(p.clone()), v);
+                        let value = Rvalue::Binary(*op, Operand::Copy(p.clone()), v, e.id);
                         self.assign(&p, value, &vt, span, false);
                     }
                     None => self.assign(&p, Rvalue::Use(v), &vt, span, false),
                 }
-                let unit = Rvalue::Use(Operand::Const);
+                let unit = Rvalue::Use(Operand::Const(Const::Unit));
                 self.assign(dest, unit, &Type::Unit, span, false);
             }
             ExprKind::Block(stmts, tail) => self.block(stmts, tail.as_deref(), dest, span),
-            ExprKind::Unsafe(block) => self.expr_into_uncoerced(block, dest),
+            ExprKind::Unsafe(block) => {
+                self.body.unsafe_blocks.push(span);
+                self.expr_into_uncoerced(block, dest)
+            }
             ExprKind::StructLit(_, _, inits) => {
                 let t = self.ty(e);
                 self.regions.well_formed(self.adts(), self.info, &t, span);
@@ -634,7 +657,13 @@ impl<'a> Builder<'a> {
                     ops[i] = Some(o);
                 }
                 let ops = ops.into_iter().map(|o| o.expect("every field")).collect();
-                self.assign(dest, Rvalue::Aggregate(ops), &t, span, false);
+                self.assign(
+                    dest,
+                    Rvalue::Aggregate(Agg::Struct, t.erased(), ops),
+                    &t,
+                    span,
+                    false,
+                );
             }
             // `Box::new(x)`: the one expression of a box type that names
             // one, as no struct or enum is one.
@@ -645,7 +674,13 @@ impl<'a> Builder<'a> {
                 };
                 let (o, ot) = self.operand(&args[0]);
                 self.regions.subtype(self.info, &ot, inner, args[0].span);
-                self.assign(dest, Rvalue::Aggregate(vec![o]), &t, span, false);
+                self.assign(
+                    dest,
+                    Rvalue::Aggregate(Agg::Box, t.erased(), vec![o]),
+                    &t,
+                    span,
+                    false,
+                );
             }
             ExprKind::Variant(_, _, variant, args, ..) => {
                 let t = self.ty(e);
@@ -658,7 +693,13 @@ impl<'a> Builder<'a> {
                     self.regions.subtype(self.info, &ot, f, a.span);
                     ops.push(o);
                 }
-                self.assign(dest, Rvalue::Aggregate(ops), &t, span, false);
+                self.assign(
+                    dest,
+                    Rvalue::Aggregate(Agg::Variant(i), t.erased(), ops),
+                    &t,
+                    span,
+                    false,
+                );
             }
             ExprKind::Array(items) => {
                 let t = self.ty(e);
@@ -671,7 +712,13 @@ impl<'a> Builder<'a> {
                     self.regions.subtype(self.info, &ot, elem, a.span);
                     ops.push(o);
                 }
-                self.assign(dest, Rvalue::Aggregate(ops), &t, span, false);
+                self.assign(
+                    dest,
+                    Rvalue::Aggregate(Agg::Array, t.erased(), ops),
+                    &t,
+                    span,
+                    false,
+                );
             }
             // `[v; n]` copies `v`, which is `Copy`; `n` is a constant.
             ExprKind::Repeat(v, _) => {
@@ -681,7 +728,13 @@ impl<'a> Builder<'a> {
                 };
                 let (o, ot) = self.operand(v);
                 self.regions.subtype(self.info, &ot, elem, v.span);
-                self.assign(dest, Rvalue::Aggregate(vec![o]), &t, span, false);
+                self.assign(
+                    dest,
+                    Rvalue::Aggregate(Agg::Repeat, t.erased(), vec![o]),
+                    &t,
+                    span,
+                    false,
+                );
             }
             ExprKind::Match(scrutinee, arms) => self.match_into(scrutinee, arms, dest, span),
             // A closure that captures is a struct of what it captures: a
@@ -697,7 +750,7 @@ impl<'a> Builder<'a> {
                     let name = &self.cx.typed().binds[id].name;
                     let at = first_use(&l.body, name).unwrap_or(l.body.span);
                     let (o, ot) = match mode {
-                        Capture::Value => self.use_place(place, at, MoveSite::Capture(l.id, i)),
+                        Capture::Value => self.use_place(place, at),
                         Capture::Ref | Capture::Mut | Capture::Unique => {
                             let m = *mode != Capture::Ref;
                             match mode {
@@ -720,7 +773,8 @@ impl<'a> Builder<'a> {
                     ty: t.clone(),
                     span,
                 });
-                self.assign(dest, Rvalue::Aggregate(ops), &t, span, false);
+                let value = Rvalue::Aggregate(Agg::Closure(l.id), t.erased(), ops);
+                self.assign(dest, value, &t, span, false);
             }
         }
     }
@@ -738,13 +792,10 @@ impl<'a> Builder<'a> {
     /// is only following fields and `*`s, so when it's done can't be
     /// seen, except by the borrow checker, which then sees no clash.
     ///
-    /// That's what the interpreter does, from the program `lift` writes
-    /// (`Interp::arguments`), and the two must agree, or this would check
-    /// another program than the one that runs. So a borrow the checker
-    /// made, by a coercion, waits too: `lift` writes `r` used as a `&T`
-    /// when it's a `&Box<T>` as `&**r`, a borrow of place `**r`, and `&mut
-    /// b` used as a `&T` as `&**(&mut b)`, which borrows `b` and then
-    /// reborrows through that, as here.
+    /// And as this is what runs, that's when the program does it. A
+    /// borrow the checker made, by a coercion, waits too: `r` used as a
+    /// `&T` when it's a `&Box<T>` is a borrow of place `**r`, and `&mut b`
+    /// used as a `&T` borrows `b` and then reborrows through that.
     ///
     /// `ft` has its projections worked out already, with the regions this
     /// call has (`instantiate`): `T::Out` at `T = Pair<'?1, '?2>` is the
@@ -812,7 +863,7 @@ impl<'a> Builder<'a> {
         self.assign(dest, Rvalue::Call(f, ops), &ret, span, false);
         // A function that returns a `!` never does.
         if ret == Type::Never {
-            self.diverge(Term::Switch(Vec::new()));
+            self.diverge(Term::Unreachable);
         }
     }
 
@@ -926,17 +977,23 @@ impl<'a> Builder<'a> {
             let p = self.place(e);
             return match coerced {
                 Some((derefs, m)) => self.reborrow(&p, derefs, m, e.span),
-                None => self.use_place(p, e.span, MoveSite::Expr(e.id)),
+                None => self.use_place(p, e.span),
             };
         }
         let (o, t) = match &e.kind {
             ExprKind::Var(_, _) => {
-                let t = match &self.cx.typed().vars[&e.id] {
-                    Res::Fn(symbol, targs) => self.fn_value(symbol, targs, e.span),
-                    Res::Const(_) => Type::Int(crate::types::IntTy::Usize),
+                let (c, t) = match &self.cx.typed().vars[&e.id] {
+                    Res::Fn(symbol, targs) => (
+                        self.fn_const(symbol, targs),
+                        self.fn_value(symbol, targs, e.span),
+                    ),
+                    Res::Const(name) => (
+                        Const::Param(name.clone()),
+                        Type::Int(crate::types::IntTy::Usize),
+                    ),
                     Res::Local(_) => unreachable!("a place"),
                 };
-                (Operand::Const, t)
+                (Operand::Const(c), t)
             }
             _ => {
                 let t = self.ty(e);
@@ -952,16 +1009,17 @@ impl<'a> Builder<'a> {
     }
 
     /// Place `p`, used as a value at `span`: copied, or a `&mut` reborrowed,
-    /// or else moved out of, which the program then does where it runs,
-    /// `site` (see `Info::moves`).
-    fn use_place(&mut self, p: Place, span: Span, site: MoveSite) -> (Operand, Type) {
+    /// or else moved out of, by the type it has here: in generic code, a
+    /// value of a type parameter that isn't known to be `Copy` moves,
+    /// whatever type it turns out to be, so that the body means the same at
+    /// every type, as monomorphisation copies this MIR.
+    fn use_place(&mut self, p: Place, span: Span) -> (Operand, Type) {
         match self.place_ty(&p) {
             Type::Ref(_, true, _) => self.reborrow(&p, 0, true, span),
             t if self.cx.is_copy(&t) => (Operand::Copy(p), t),
             // Moved into a temporary of its own, so that where it's moved is
             // this expression.
             t => {
-                self.cx.moves.borrow_mut().insert(site);
                 let tmp = self.temp(t.clone(), span);
                 let value = Rvalue::Use(Operand::Move(p));
                 self.assign(&Place::local(tmp), value, &t, span, false);
@@ -991,6 +1049,34 @@ impl<'a> Builder<'a> {
     fn fn_value(&mut self, symbol: &str, targs: &[Type], span: Span) -> Type {
         let scheme = self.cx.scheme(symbol);
         self.instantiate(scheme, targs, span)
+    }
+
+    /// Function `symbol` at type arguments `targs`, as a value.
+    fn fn_const(&self, symbol: &str, targs: &[Type]) -> Const {
+        let targs = targs.iter().map(|t| self.cx.solution(t).erased()).collect();
+        Const::Fn(symbol.to_string(), targs)
+    }
+
+    /// The type of expression `e`, as the checker found it, regions erased:
+    /// for running, which doesn't care for them.
+    fn erased_ty(&self, e: &Expr) -> Type {
+        let t = self.cx.typed().exprs.get(&e.id);
+        (self.cx)
+            .solution(t.expect("the checker saw every expression"))
+            .erased()
+    }
+
+    /// The value of literal `e`.
+    fn literal(&self, e: &Expr) -> Const {
+        match &e.kind {
+            ExprKind::Int(n, _) => Const::Int(i128::from(*n), self.erased_ty(e)),
+            ExprKind::Bool(b) => Const::Bool(*b),
+            ExprKind::Char(c) => Const::Char(*c),
+            ExprKind::Str(s) => Const::Str(s.clone()),
+            ExprKind::ByteStr(b) => Const::Bytes(b.clone()),
+            ExprKind::Unit => Const::Unit,
+            _ => unreachable!("a literal"),
+        }
     }
 
     /// Function type `scheme` at type arguments `targs`, as `fn_value`
@@ -1090,6 +1176,22 @@ impl<'a> Builder<'a> {
         self.vars.get(&id).copied()
     }
 
+    /// Where the variable in scope named `name` is, if there's one.
+    fn named(&self, name: &str) -> Option<Place> {
+        let locals = self.scopes.iter().rev().flat_map(|s| s.locals.iter().rev());
+        let local = locals
+            .copied()
+            .find(|l| self.body.locals[l.0].name.as_deref() == Some(name));
+        if let Some(l) = local {
+            return Some(Place::local(l));
+        }
+        let typed = self.cx.typed();
+        let captured = self.captured.iter();
+        (captured.into_iter())
+            .find(|(id, _)| typed.binds[*id].name == name)
+            .map(|(_, p)| p.clone())
+    }
+
     /// Where variable `id` is: its local, or in a closure's body, if it
     /// captured it, where in the closure.
     fn var_place(&self, id: NodeId) -> Place {
@@ -1157,7 +1259,7 @@ impl<'a> Builder<'a> {
                 self.end_temps(tail.span);
             }
             None => {
-                let unit = Rvalue::Use(Operand::Const);
+                let unit = Rvalue::Use(Operand::Const(Const::Unit));
                 self.assign(dest, unit, &Type::Unit, span, false);
             }
         }
@@ -1202,6 +1304,20 @@ impl<'a> Builder<'a> {
         self.temps.push(Vec::new());
         match &pat.kind {
             PatternKind::Bind(..) => {
+                // What the refinement names is what's in scope before the
+                // variable is.
+                let refinement = ann.and_then(|t| t.refinement()).map(|(v, pred)| {
+                    let mut names = Vec::new();
+                    pred_names(pred, &v.name, &mut names);
+                    let env = (names.into_iter())
+                        .filter_map(|n| Some((n.to_string(), self.named(n)?)))
+                        .collect();
+                    Refinement {
+                        binder: v.name.clone(),
+                        pred: pred.clone(),
+                        env,
+                    }
+                });
                 let l = self.declare_var(pat, ann);
                 let t = self.ty(init);
                 let tmp = self.temp(t.clone(), init.span);
@@ -1211,6 +1327,11 @@ impl<'a> Builder<'a> {
                     false => Operand::Move(Place::local(tmp)),
                 };
                 self.assign(&Place::local(l), Rvalue::Use(value), &t, pat.span, true);
+                if let Some(r) = refinement {
+                    self.body.refinements.push(r);
+                    let r = self.body.refinements.len() - 1;
+                    self.push(StmtKind::Refine(l, r), pat.span);
+                }
             }
             _ => {
                 let p = self.place(init);
@@ -1232,7 +1353,8 @@ impl<'a> Builder<'a> {
         }
         let blocks: Vec<Bb> = arms.iter().map(|_| self.new_block()).collect();
         let join = self.new_block();
-        self.terminate(Term::Switch(blocks.clone()));
+        let pats = arms.iter().map(|arm| self.pat(&arm.pat, &p)).collect();
+        self.terminate(Term::Match(p.clone(), pats, blocks.clone()));
         for (arm, b) in arms.iter().zip(blocks) {
             self.block = b;
             self.push_scope();
@@ -1260,7 +1382,6 @@ impl<'a> Builder<'a> {
             place = place.project(Proj::Deref);
         }
         match &p.kind {
-            PatternKind::Move(_) => unreachable!("written by lift"),
             PatternKind::Int(..)
             | PatternKind::Range(..)
             | PatternKind::Bool(_)
@@ -1288,6 +1409,46 @@ impl<'a> Builder<'a> {
             PatternKind::Or(alts) => alts.iter().for_each(|a| self.inspect(a, &place)),
             PatternKind::Wild | PatternKind::Bind(..) => {}
         }
+    }
+
+    /// What pattern `p` tests of the value at `place`, for running it.
+    fn pat(&self, p: &Pattern, place: &Place) -> Pat {
+        let mut place = place.clone();
+        let peels = self.peels(p);
+        for _ in 0..peels {
+            place = place.project(Proj::Deref);
+        }
+        let pat = match &p.kind {
+            PatternKind::Wild | PatternKind::Bind(..) | PatternKind::Unit => Pat::Any,
+            PatternKind::Int(n, _) => Pat::Range(Some(*n), Some(*n)),
+            PatternKind::Range(lo, hi, ..) => Pat::Range(*lo, *hi),
+            PatternKind::Bool(b) => Pat::Bool(*b),
+            PatternKind::Variant(_, _, v, pats) => {
+                let t = self.place_ty(&place);
+                let i = variant_index(self.adts(), &t, &v.name);
+                let fields = (pats.iter().enumerate())
+                    .map(|(j, q)| self.pat(q, &place.project(Proj::Variant(i, j))))
+                    .collect();
+                Pat::Variant(i, fields)
+            }
+            PatternKind::Struct(_, _, fields, _) => {
+                let t = self.place_ty(&place);
+                let fields = (fields.iter())
+                    .map(|fp| {
+                        let j = field_index(self.adts(), &t, &fp.name.name);
+                        (j, self.pat(&fp.pat, &place.project(Proj::Field(j))))
+                    })
+                    .collect();
+                Pat::Struct(fields)
+            }
+            PatternKind::Array(pats) => Pat::Array(
+                (pats.iter().enumerate())
+                    .map(|(j, q)| self.pat(q, &place.project(Proj::Field(j))))
+                    .collect(),
+            ),
+            PatternKind::Or(alts) => Pat::Or(alts.iter().map(|a| self.pat(a, &place)).collect()),
+        };
+        (0..peels).fold(pat, |pat, _| Pat::Deref(Box::new(pat)))
     }
 
     /// Declares the variables `p` binds, in the innermost scope.
@@ -1351,10 +1512,7 @@ impl<'a> Builder<'a> {
                         let t = self.place_ty(&place);
                         let o = match self.cx.is_copy(&t) {
                             true => Operand::Copy(place),
-                            false => {
-                                self.cx.moves.borrow_mut().insert(MoveSite::Pattern(p.id));
-                                Operand::Move(place)
-                            }
+                            false => Operand::Move(place),
                         };
                         self.assign(&dest, Rvalue::Use(o), &t, p.span, true);
                     }
@@ -1393,7 +1551,8 @@ impl<'a> Builder<'a> {
             {
                 let blocks: Vec<Bb> = alts.iter().map(|_| self.new_block()).collect();
                 let join = self.new_block();
-                self.terminate(Term::Switch(blocks.clone()));
+                let pats = alts.iter().map(|alt| self.pat(alt, &place)).collect();
+                self.terminate(Term::Match(place.clone(), pats, blocks.clone()));
                 for (alt, b) in alts.iter().zip(blocks) {
                     self.block = b;
                     self.bind(alt, &place);
@@ -1411,15 +1570,17 @@ impl Builder<'_> {
     /// taken apart by pattern `p`, if it's owned and isn't
     /// `Discard`. Matching it through a reference only looks at it.
     ///
-    /// The interpreter does the same where this says (`Interp::consume`),
-    /// by the type known here, not the one the value has when it runs: in
+    /// By the type known here, not the one the value has when it runs: in
     /// generic code, a `W<T>` that the checker can't show is `Discard` is
     /// used up here even where it turns out to be, so that it's dropped at
-    /// the same point at every type, as a destructor would see.
+    /// the same point at every type, as a destructor would see. One left
+    /// there, as its type is `Discard`, is marked `Kept`, for the
+    /// interpreter to check it is at the type it turns out to be.
     fn consume(&mut self, place: &Place, variant: Option<usize>, p: &Pattern) {
         if self.consumes_at(place) {
-            self.cx.moves.borrow_mut().insert(MoveSite::Pattern(p.id));
             self.push(StmtKind::Consume(place.clone(), variant), p.span);
+        } else if !super::moves::owned(self, place).1 {
+            self.push(StmtKind::Kept(place.clone()), p.span);
         }
     }
 
@@ -1468,6 +1629,19 @@ impl Builder<'_> {
     }
 }
 
+/// The names in predicate `e` other than `binder`, each once.
+fn pred_names<'e>(e: &'e Expr, binder: &str, out: &mut Vec<&'e str>) {
+    if let ExprKind::Var(name, _) = &e.kind
+        && name != binder
+        && !out.contains(&name.as_str())
+    {
+        out.push(name);
+    }
+    for c in e.children() {
+        pred_names(c, binder, out);
+    }
+}
+
 /// Does `p` bind any variables?
 fn has_binds(p: &Pattern) -> bool {
     !p.binds().is_empty()
@@ -1510,7 +1684,7 @@ fn field_index(adts: &Adts, t: &Type, name: &str) -> usize {
 fn calls_in(e: &Expr) -> bool {
     match &e.kind {
         ExprKind::Call(..) | ExprKind::MethodCall(..) => true,
-        ExprKind::Field(x, _) | ExprKind::Unary(UnOp::Deref, x) | ExprKind::Move(x) => calls_in(x),
+        ExprKind::Field(x, _) | ExprKind::Unary(UnOp::Deref, x) => calls_in(x),
         _ => false,
     }
 }

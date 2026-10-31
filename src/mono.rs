@@ -38,6 +38,13 @@
 //! a trait's method: the checker only let callers rely on its bounds, which
 //! that type implements, by the impls it'll find here.
 //!
+//! What a function does is its MIR (`mir.rs`), which the borrow checker
+//! built and checked at the function's own types, and kept: each copy is a
+//! copy of that, with the copy's types, and calls of what's generic naming
+//! the copies they call (`Cx::body`). A closure's MIR is copied with the
+//! function it's in. Nothing about control flow changes, so what the
+//! borrow checker proved of the generic body holds of every copy.
+//!
 //! The interpreter runs what comes out of here, and `t mono` prints it.
 
 use crate::ast::*;
@@ -52,6 +59,9 @@ use std::sync::Arc;
 /// A lifted, monomorphised program, ready for the interpreter.
 pub struct Executable {
     program: Program,
+    /// The MIR of each function's copy that has a body, and each
+    /// closure's, by name (see `Mono::bodies`).
+    bodies: HashMap<String, crate::mir::Body>,
     /// For `main` and each test that gives back a `Result`, by symbol,
     /// the copy of `std::rt::report` that reports its error.
     reports: HashMap<String, String>,
@@ -66,6 +76,17 @@ impl Executable {
         self.program
     }
 
+    /// The MIR body of copy `name`, of a function or a closure.
+    pub(crate) fn body(&self, name: &str) -> Option<&crate::mir::Body> {
+        self.bodies.get(name)
+    }
+
+    /// The same, with its name, as long as the body lives.
+    pub(crate) fn body_named(&self, name: &str) -> Option<(&str, &crate::mir::Body)> {
+        let (name, b) = self.bodies.get_key_value(name)?;
+        Some((name.as_str(), b))
+    }
+
     /// The copy of `std::rt::report` for the error that `entry`, `main`
     /// or a test, gives back, if it gives back a `Result`.
     pub fn report(&self, entry: &str) -> Option<&str> {
@@ -73,9 +94,68 @@ impl Executable {
     }
 }
 
+/// What `t mono` prints: the structs and enums made, then each function,
+/// its MIR for a body, and after it the closures made in it.
 impl std::fmt::Display for Executable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.program.fmt(f)
+        f.write_str(&self.render_only(&|_| true))
+    }
+}
+
+impl Executable {
+    /// What `t mono` prints of the structs, enums and functions whose names
+    /// `keep` says.
+    pub fn render_only(&self, keep: &dyn Fn(&str) -> bool) -> String {
+        use std::fmt::Write;
+        let mut f = String::new();
+        let types = Program {
+            fns: Vec::new(),
+            types: (self.program.types.iter())
+                .filter(|d| keep(&d.name().name))
+                .cloned()
+                .collect(),
+            ..self.program.clone()
+        };
+        let types = types.to_string();
+        f.push_str(&types);
+        let mut first = types.trim().is_empty();
+        let f = &mut f;
+        for d in self.program.fns.iter().filter(|d| keep(&d.name.name)) {
+            if !std::mem::take(&mut first) {
+                f.push('\n');
+            }
+            let name = &d.name.name;
+            let Some(body) = self.bodies.get(name) else {
+                let _ = writeln!(f, "{}", crate::pretty::fn_text(d).trim_end());
+                continue;
+            };
+            let head = crate::pretty::fn_head(d);
+            let _ = write!(f, "{head}{{\n{}}}\n", body.render("    ", self));
+            let mut closures: Vec<(&String, &crate::mir::Body)> = (self.bodies.iter())
+                .filter(|(c, _)| c.starts_with(&format!("{name}::{{closure#")))
+                .collect();
+            closures.sort_by_key(|(c, _)| c.as_str());
+            for (c, b) in closures {
+                let _ = write!(f, "\nclosure {c} {{\n{}}}\n", b.render("    ", self));
+            }
+        }
+        std::mem::take(f)
+    }
+}
+
+impl crate::mir::Names for Executable {
+    fn field(&self, ty: &str, i: usize) -> Option<String> {
+        self.program.types.iter().find_map(|d| match d {
+            TypeDecl::Struct(s) if s.name.name == ty => Some(s.fields.get(i)?.name.name.clone()),
+            _ => None,
+        })
+    }
+
+    fn variant(&self, ty: &str, i: usize) -> Option<String> {
+        self.program.types.iter().find_map(|d| match d {
+            TypeDecl::Enum(e) if e.name.name == ty => Some(e.variants.get(i)?.name.name.clone()),
+            _ => None,
+        })
     }
 }
 
@@ -90,8 +170,24 @@ pub fn monomorphise(prog: crate::lift::Lifted<'_>) -> Executable {
     let program = mono.run();
     Executable {
         program,
+        bodies: mono.bodies,
         reports: mono.reports,
     }
+}
+
+/// What a function value of a built-in or derived `Eq`'s `eq` is called, at
+/// the type as its one type argument: `==` on what its two references
+/// point to.
+pub(crate) const GLUE_EQ: &str = "{eq}";
+
+/// What a function value of a built-in or derived `Discard`'s `discard` is
+/// called, at the type: dropping its argument, part by part.
+pub(crate) const GLUE_DISCARD: &str = "{discard}";
+
+/// The name of the copy of the closure made by the lambda with node `id`,
+/// in the copy of a function `root`.
+pub(crate) fn closure_copy(root: &str, id: NodeId) -> String {
+    format!("{root}::{{closure#{}}}", id.0)
 }
 
 /// The std library's function that reports the error `main` gives back.
@@ -100,7 +196,7 @@ const REPORT: &str = "std::rt::report";
 /// The name of the copy of `name` for type arguments `args`. It has the
 /// symbols of the types in them, which tell apart types of the same name,
 /// where `Type`'s `Display` shows the names as written.
-fn mangle(name: &str, args: &[Type]) -> String {
+pub(crate) fn mangle(name: &str, args: &[Type]) -> String {
     match args {
         [] => name.to_string(),
         args => {
@@ -168,6 +264,11 @@ struct Mono<'p> {
     next_id: u32,
     /// The report of each entry's error, by entry (`Executable::report`).
     reports: HashMap<String, String>,
+    /// The MIR body of each copy of a function, by its name, and of each
+    /// closure, named after the copy of the function it's in, as
+    /// `{copy}::{closure#7}`, by its lambda's node: what it does depends on
+    /// that copy's type arguments.
+    bodies: HashMap<String, crate::mir::Body>,
 }
 
 impl<'p> Mono<'p> {
@@ -215,6 +316,7 @@ impl<'p> Mono<'p> {
             proj: Projections::new(&info.traits),
             next_id: prog.next_id,
             reports: HashMap::new(),
+            bodies: HashMap::new(),
         }
     }
 
@@ -367,6 +469,13 @@ impl<'p> Mono<'p> {
                     seen_fns[i] = true;
                     changed = true;
                     used::in_fn(f, &mut used);
+                    let name = &f.name.name;
+                    let closures = format!("{name}::{{closure#");
+                    for (b, body) in &self.bodies {
+                        if b == name || b.starts_with(&closures) {
+                            used::in_body(body, &mut used);
+                        }
+                    }
                 }
             }
             if !changed {
@@ -415,6 +524,13 @@ impl<'p> Mono<'p> {
         let mut params = params.clone();
         params.push_type("Self".into());
         let mut cx = Cx { m: self, s, params };
+        let copy = name.unwrap_or(&f.name.name).to_string();
+        if f.intrinsic.is_none()
+            && let Some(b) = cx.m.info.mir.get(&crate::mir::Key::Fn(f.name.name.clone()))
+        {
+            let b = cx.body(b, &copy);
+            cx.m.bodies.insert(copy.clone(), b);
+        }
         FnDecl {
             doc: f.doc.clone(),
             allows: f.allows.clone(),
@@ -449,7 +565,12 @@ impl<'p> Mono<'p> {
                 };
                 cx.written_effects(&effects, f.span)
             },
-            body: cx.expr(&f.body),
+            // What it does is its MIR (`Mono::bodies`).
+            body: Expr {
+                kind: ExprKind::Block(Vec::new(), None),
+                span: f.body.span,
+                id: f.body.id,
+            },
             intrinsic: f.intrinsic,
             measure: f.measure,
             test: f.test,
@@ -744,6 +865,25 @@ impl Cx<'_, '_, '_> {
         self.m.proj.reveal(&self.s.apply(t))
     }
 
+    /// `t`, of the original, as it is in the copy, as `subst` says, and
+    /// with the effects inferred for each function whose effects a
+    /// function type in it is: a function item's type says them so.
+    fn subst_inferred(&self, t: &Type) -> Type {
+        self.inferred(&self.subst(t))
+    }
+
+    /// `t` with each function's inferred effects in it what they are.
+    fn inferred(&self, t: &Type) -> Type {
+        match t {
+            Type::Inferred(name, args) => {
+                let d = &self.m.fns[name.as_str()];
+                let effects = &self.m.info.inferred[name];
+                self.inferred(&Subst::new(&d.params, args).apply(effects))
+            }
+            t => t.map(|p| self.inferred(p)),
+        }
+    }
+
     /// Makes the copies of every impl's `eq` that `==` on values of type
     /// `t` may call: the one of `t`'s impl of `Eq`, if it has
     /// one of its own, or else those of the types of its fields, if it's
@@ -904,34 +1044,6 @@ impl Cx<'_, '_, '_> {
         })
     }
 
-    /// The use of something generic at `span`, if that's what's there, as
-    /// the name of its copy.
-    fn instance(&mut self, id: NodeId) -> Option<String> {
-        let instance = self.m.info.instances.get(&id)?.clone();
-        Some(match instance {
-            // A copy doesn't depend on lifetimes, so they're left out.
-            Instance::Fn(name, args) => {
-                let args = args.iter().map(|a| self.subst(a).erased()).collect();
-                match self.target(&name, args) {
-                    Target::Fn(of, args, copy) => self.m.named_copy(&of, args, copy),
-                    Target::Eq(_) => unreachable!("`eq` of a built-in `Eq` is `==`"),
-                    Target::Discard(_) => {
-                        unreachable!("`discard` of a built-in `Discard` is a drop")
-                    }
-                }
-            }
-            Instance::Adt(name, args) => {
-                let args: Vec<Type> = args.iter().map(|a| self.subst(a).erased()).collect();
-                // Its fields' types may need copies of their own.
-                self.written(
-                    &Type::Adt(name.clone(), Vec::new(), args.clone()),
-                    Span::new(0, 0),
-                );
-                self.m.type_copy(&name, args)
-            }
-        })
-    }
-
     /// What function `name`, at type arguments `args` with no type
     /// parameters left in them, is: itself, unless it's a trait's method,
     /// which is the method of the impl for its `Self`. Named for its copy.
@@ -1018,284 +1130,203 @@ impl Cx<'_, '_, '_> {
         }
     }
 
-    /// `|a: &T, b: &T| *a == *b`, at `span`: the `eq` of a built-in or
-    /// derived `Eq` of `T`, as a function.
-    fn eq_fn(&mut self, t: &Type, span: Span) -> ExprKind {
-        let r = Type::Ref(Region::Erased, false, Box::new(t.clone()));
-        let node = |kind: ExprKind, m: &mut Mono| Expr {
-            kind,
-            span,
-            id: m.id(),
-        };
-        let deref = |name: &str, m: &mut Mono| {
-            let var = node(ExprKind::Var(name.into(), Vec::new()), m);
-            node(ExprKind::Unary(UnOp::Deref, Box::new(var)), m)
-        };
-        let (a, b) = (deref("a", self.m), deref("b", self.m));
-        let body = node(
-            ExprKind::Binary(BinOp::Eq, Box::new(a), Box::new(b)),
-            self.m,
-        );
-        let params = ["a", "b"]
-            .map(|name| LambdaParam {
-                mutable: None,
-                name: Ident {
-                    name: name.into(),
-                    span,
-                    id: self.m.id(),
-                },
-                ty: Some(self.written(&r, span)),
-            })
-            .into();
-        let id = self.m.id();
-        ExprKind::Lambda(Arc::new(Lambda::new(id, params, None, body)))
+    /// The copy of MIR body `b`, of the function whose copy is `root` or of
+    /// a closure in it: with the copy's types, and calls of what's generic
+    /// or of a trait's method naming the copies they call. A closure made
+    /// in it gets its copy too.
+    fn body(&mut self, b: &crate::mir::Body, root: &str) -> crate::mir::Body {
+        use crate::mir::{Agg, Block, Local, LocalDecl, LocalKind, Operand, Place, Rvalue};
+        use crate::mir::{Statement, StmtKind};
+        let mut out = b.clone();
+        for l in &mut out.locals {
+            l.ty = self.subst_inferred(&l.ty).erased();
+            self.copies_in(&l.ty.clone());
+        }
+        let mut blocks = Vec::new();
+        for block in &b.blocks {
+            let mut stmts = Vec::new();
+            for s in &block.stmts {
+                let StmtKind::Assign {
+                    place,
+                    value,
+                    declare,
+                } = &s.kind
+                else {
+                    stmts.push(s.clone());
+                    continue;
+                };
+                let value = match value {
+                    // `l < r` of what isn't an integer is `Ord`'s method, of
+                    // `&l` and `&r`, in temporaries of their own.
+                    Rvalue::Binary(_, Operand::Copy(l), Operand::Copy(r), id)
+                        if self.m.info.ord_calls.contains(id) =>
+                    {
+                        let Some(Instance::Fn(symbol, args)) =
+                            self.m.info.instances.get(id).cloned()
+                        else {
+                            unreachable!("a comparison calls an `Ord` method")
+                        };
+                        let args: Vec<Type> = args
+                            .iter()
+                            .map(|a| self.subst_inferred(a).erased())
+                            .collect();
+                        let r_ty = Type::Ref(Region::Erased, false, Box::new(args[0].clone()));
+                        let mut temps = Vec::new();
+                        for p in [l, r] {
+                            out.locals.push(LocalDecl {
+                                ty: r_ty.clone(),
+                                kind: LocalKind::Temp,
+                                mutable: true,
+                                name: None,
+                                span: s.span,
+                                mut_span: None,
+                                by_ref: None,
+                                deferred: false,
+                            });
+                            let t = Local(out.locals.len() - 1);
+                            let kind = StmtKind::Assign {
+                                place: Place::local(t),
+                                value: Rvalue::Ref(0, false, p.clone()),
+                                declare: false,
+                            };
+                            stmts.push(Statement { kind, span: s.span });
+                            temps.push(t);
+                        }
+                        let f = self.fn_const(&symbol, args);
+                        let call = Rvalue::Call(
+                            Operand::Const(f),
+                            temps
+                                .iter()
+                                .map(|t| Operand::Move(Place::local(*t)))
+                                .collect(),
+                        );
+                        let kind = StmtKind::Assign {
+                            place: place.clone(),
+                            value: call,
+                            declare: *declare,
+                        };
+                        stmts.push(Statement { kind, span: s.span });
+                        for t in temps.into_iter().rev() {
+                            let kind = StmtKind::Dead(t);
+                            stmts.push(Statement { kind, span: s.span });
+                        }
+                        continue;
+                    }
+                    Rvalue::Binary(op @ (BinOp::Eq | BinOp::Ne), l, r, id) => {
+                        if let Some(Instance::Fn(_, args)) = self.m.info.instances.get(id).cloned()
+                        {
+                            self.need_eq(&self.subst(&args[0]));
+                        }
+                        Rvalue::Binary(*op, self.operand(l), self.operand(r), *id)
+                    }
+                    Rvalue::Binary(op, l, r, id) => {
+                        Rvalue::Binary(*op, self.operand(l), self.operand(r), *id)
+                    }
+                    Rvalue::Use(o) => Rvalue::Use(self.operand(o)),
+                    Rvalue::Ref(..) => value.clone(),
+                    Rvalue::Unary(op, o, id) => Rvalue::Unary(*op, self.operand(o), *id),
+                    Rvalue::Cast(o, t, id) => {
+                        Rvalue::Cast(self.operand(o), self.subst_inferred(t).erased(), *id)
+                    }
+                    Rvalue::Aggregate(k, t, os) => {
+                        if let Agg::Closure(id) = k {
+                            self.closure(*id, root);
+                        }
+                        let t = self.subst_inferred(t).erased();
+                        self.copies_in(&t);
+                        let os = os.iter().map(|o| self.operand(o)).collect();
+                        Rvalue::Aggregate(*k, t, os)
+                    }
+                    Rvalue::Call(f, args) => Rvalue::Call(
+                        self.operand(f),
+                        args.iter().map(|o| self.operand(o)).collect(),
+                    ),
+                };
+                let kind = StmtKind::Assign {
+                    place: place.clone(),
+                    value,
+                    declare: *declare,
+                };
+                stmts.push(Statement { kind, span: s.span });
+            }
+            blocks.push(Block {
+                stmts,
+                term: block.term.clone(),
+            });
+        }
+        out.blocks = blocks;
+        for r in &mut out.refinements {
+            r.pred = *self.pred(&r.pred);
+        }
+        out
     }
 
-    /// `|x: T| {}`, at `span`: the `discard` of a built-in or derived
-    /// `Discard` of `T`, as a function, which drops `x`, part by part.
-    fn discard_fn(&mut self, t: &Type, span: Span) -> ExprKind {
-        let body = Expr {
-            kind: ExprKind::Block(Vec::new(), None),
-            span,
-            id: self.m.id(),
-        };
-        let params = vec![LambdaParam {
-            mutable: None,
-            name: Ident {
-                name: "x".into(),
-                span,
-                id: self.m.id(),
-            },
-            ty: Some(self.written(t, span)),
-        }];
-        let id = self.m.id();
-        ExprKind::Lambda(Arc::new(Lambda::new(id, params, None, body)))
-    }
-
-    /// `id`, renamed to its copy if it names something generic.
-    fn ident(&mut self, id: &Ident) -> Ident {
-        Ident {
-            name: self.instance(id.id).unwrap_or_else(|| id.name.clone()),
-            span: id.span,
-            id: id.id,
+    /// Makes the copies of the structs and enums in `t`, which has no type
+    /// parameters left in it.
+    fn copies_in(&mut self, t: &Type) {
+        if let Type::Adt(name, _, args) = t
+            && !crate::types::is_closure(name)
+        {
+            self.m
+                .type_copy(name, args.iter().map(Type::erased).collect());
+        }
+        for p in t.parts() {
+            self.copies_in(p);
         }
     }
 
-    fn expr(&mut self, e: &Expr) -> Expr {
-        let kind = match &e.kind {
-            ExprKind::For(_)
-            | ExprKind::IfLet(..)
-            | ExprKind::WhileLet(..)
-            | ExprKind::Range(..)
-            | ExprKind::Try(..)
-            | ExprKind::Index(..) => {
-                unreachable!("rewritten when paths are resolved")
-            }
-            ExprKind::Int(n, _) => {
-                let t = self.m.info.literals.get(&e.id).map(|t| self.subst(t));
-                match t {
-                    Some(Type::Int(t)) => ExprKind::Int(*n, Some(t)),
-                    _ => unreachable!("an integer literal of type {t:?}"),
-                }
-            }
-            ExprKind::Bool(_)
-            | ExprKind::Char(_)
-            | ExprKind::Str(_)
-            | ExprKind::ByteStr(_)
-            | ExprKind::Unit
-            | ExprKind::Continue(_) => e.kind.clone(),
-            // Type arguments written in the source are in `info.instances`
-            // like the inferred ones, and the copy's name says them.
-            // A const parameter, as a value: the length it is in the copy.
-            ExprKind::Var(..) if let Some(name) = self.m.info.consts.get(&e.id) => {
-                match self.subst(&Type::Param(name.clone())) {
-                    Type::Nat(n) => ExprKind::Int(n, Some(crate::types::IntTy::Usize)),
-                    t => unreachable!("const parameter `{name}` as `{t}`"),
-                }
-            }
-            ExprKind::Var(name, _) => match self.m.info.instances.get(&e.id).cloned() {
-                Some(Instance::Fn(f, args)) => {
-                    let args = args.iter().map(|a| self.subst(a).erased()).collect();
-                    match self.target(&f, args) {
-                        Target::Fn(of, args, copy) => {
-                            let name = self.m.named_copy(&of, args, copy);
-                            ExprKind::Var(name, Vec::new())
-                        }
-                        Target::Eq(t) => {
-                            self.need_eq(&t);
-                            self.eq_fn(&t, e.span)
-                        }
-                        Target::Discard(t) => self.discard_fn(&t, e.span),
-                    }
-                }
-                // A method that isn't generic still needs its copy made.
-                None if self
-                    .m
-                    .fns
-                    .get(name.as_str())
-                    .is_some_and(|d| d.self_ty.is_some()) =>
-                {
-                    match self.target(name, Vec::new()) {
-                        Target::Fn(of, args, copy) => {
-                            let name = self.m.named_copy(&of, args, copy);
-                            ExprKind::Var(name, Vec::new())
-                        }
-                        Target::Eq(_) | Target::Discard(_) => unreachable!("an inherent method"),
-                    }
-                }
-                _ => ExprKind::Var(
-                    self.instance(e.id).unwrap_or_else(|| name.clone()),
-                    Vec::new(),
-                ),
-            },
-            ExprKind::Unary(op, x) => ExprKind::Unary(*op, Box::new(self.expr(x))),
-            ExprKind::As(x, t) => ExprKind::As(Box::new(self.expr(x)), Box::new(self.ty(t))),
-            ExprKind::Binary(op, l, r) => {
-                if let Some(Instance::Fn(_, args)) = self.m.info.instances.get(&e.id).cloned() {
-                    self.need_eq(&self.subst(&args[0]));
-                }
-                ExprKind::Binary(*op, Box::new(self.expr(l)), Box::new(self.expr(r)))
-            }
-            ExprKind::Call(f, args) => ExprKind::Call(
-                Box::new(self.expr(f)),
-                args.iter().map(|a| self.expr(a)).collect(),
-            ),
-            ExprKind::MethodCall(..) => unreachable!("lifting makes method calls plain calls"),
-            ExprKind::If(c, then, els) => ExprKind::If(
-                Box::new(self.expr(c)),
-                Box::new(self.expr(then)),
-                els.as_ref().map(|e| Box::new(self.expr(e))),
-            ),
-            ExprKind::Block(stmts, tail) => ExprKind::Block(
-                stmts
+    /// Makes the copy of the closure made by the lambda with node `id`, in
+    /// the copy of a function `root`, if it isn't made yet.
+    fn closure(&mut self, id: NodeId, root: &str) {
+        let name = closure_copy(root, id);
+        if self.m.bodies.contains_key(&name) {
+            return;
+        }
+        let b = self.m.info.mir[&crate::mir::Key::Closure(id)].clone();
+        let b = self.body(&b, root);
+        self.m.bodies.insert(name, b);
+    }
+
+    /// Operand `o`, in the copy.
+    fn operand(&mut self, o: &crate::mir::Operand) -> crate::mir::Operand {
+        use crate::mir::{Const, Operand};
+        match o {
+            Operand::Const(Const::Fn(symbol, args)) => {
+                let args = args
                     .iter()
-                    .map(|s| match s {
-                        Stmt::Let {
-                            pat,
-                            ty,
-                            init,
-                            span,
-                            ..
-                        } => Stmt::Let {
-                            span: *span,
-                            els: None,
-                            pat: self.pattern(pat),
-                            ty: ty.as_ref().map(|t| Box::new(self.ty(t))),
-                            init: init.as_ref().map(|e| Box::new(self.expr(e))),
-                        },
-                        Stmt::Expr(e) => Stmt::Expr(self.expr(e)),
-                        Stmt::BlockLike(e) => Stmt::BlockLike(self.expr(e)),
-                        Stmt::Fn(_) | Stmt::Type(_) => {
-                            unreachable!("nested functions and types are lifted first")
-                        }
-                    })
-                    .collect(),
-                tail.as_ref().map(|t| Box::new(self.expr(t))),
-            ),
-            ExprKind::StructLit(name, _, inits) => ExprKind::StructLit(
-                self.ident(name),
-                Vec::new(),
-                inits
-                    .iter()
-                    .map(|i| FieldInit {
-                        name: i.name.clone(),
-                        value: self.expr(&i.value),
-                    })
-                    .collect(),
-            ),
-            ExprKind::Field(x, field) => ExprKind::Field(Box::new(self.expr(x)), field.clone()),
-            ExprKind::Variant(ty, _, variant, args, parens) => ExprKind::Variant(
-                self.ident(ty),
-                Vec::new(),
-                variant.clone(),
-                args.iter().map(|a| self.expr(a)).collect(),
-                *parens,
-            ),
-            ExprKind::Array(items) => ExprKind::Array(items.iter().map(|a| self.expr(a)).collect()),
-            ExprKind::Repeat(v, n) => {
-                ExprKind::Repeat(Box::new(self.expr(v)), Box::new(self.expr(n)))
-            }
-            ExprKind::Match(scrutinee, arms) => ExprKind::Match(
-                Box::new(self.expr(scrutinee)),
-                arms.iter()
-                    .map(|a| Arm {
-                        pat: self.pattern(&a.pat),
-                        body: self.expr(&a.body),
-                    })
-                    .collect(),
-            ),
-            ExprKind::Lambda(l) => {
-                let params = l
-                    .params
-                    .iter()
-                    .map(|p| LambdaParam {
-                        mutable: p.mutable,
-                        name: p.name.clone(),
-                        ty: p.ty.as_ref().map(|t| self.ty(t)),
-                    })
+                    .map(|a| self.subst_inferred(a).erased())
                     .collect();
-                let ret = l.ret.as_ref().map(|t| self.ty(t));
-                let mut lambda = Lambda::new(l.id, params, ret, self.expr(&l.body));
-                lambda.moves = l.moves;
-                lambda.modes = l.modes.clone();
-                ExprKind::Lambda(Arc::new(lambda))
+                Operand::Const(self.fn_const(symbol, args))
             }
-            ExprKind::Assign(op, place, value) => {
-                ExprKind::Assign(*op, Box::new(self.expr(place)), Box::new(self.expr(value)))
-            }
-            ExprKind::While(label, c, body) => ExprKind::While(
-                label.clone(),
-                Box::new(self.expr(c)),
-                Box::new(self.expr(body)),
-            ),
-            ExprKind::Loop(label, body) => ExprKind::Loop(label.clone(), Box::new(self.expr(body))),
-            ExprKind::Unsafe(block) => ExprKind::Unsafe(Box::new(self.expr(block))),
-            ExprKind::Move(x) => ExprKind::Move(Box::new(self.expr(x))),
-            ExprKind::Return(x) => ExprKind::Return(x.as_ref().map(|x| Box::new(self.expr(x)))),
-            ExprKind::Break(label, x) => {
-                ExprKind::Break(label.clone(), x.as_ref().map(|x| Box::new(self.expr(x))))
-            }
-        };
-        Expr {
-            kind,
-            span: e.span,
-            id: e.id,
+            Operand::Const(Const::Int(n, t)) => Operand::Const(Const::Int(*n, self.subst(t))),
+            Operand::Const(Const::Param(name)) => match self.subst(&Type::Param(name.clone())) {
+                Type::Nat(n) => Operand::Const(Const::Int(
+                    i128::from(n),
+                    Type::Int(crate::types::IntTy::Usize),
+                )),
+                t => unreachable!("const parameter `{name}` as `{t}`"),
+            },
+            o => o.clone(),
         }
     }
 
-    fn pattern(&mut self, p: &Pattern) -> Pattern {
-        let kind = match &p.kind {
-            PatternKind::Variant(ty, _, variant, args) => PatternKind::Variant(
-                self.ident(ty),
-                Vec::new(),
-                variant.clone(),
-                args.iter().map(|a| self.pattern(a)).collect(),
-            ),
-            PatternKind::Struct(name, _, fields, rest) => PatternKind::Struct(
-                self.ident(name),
-                Vec::new(),
-                fields
-                    .iter()
-                    .map(|f| FieldPat {
-                        name: f.name.clone(),
-                        pat: self.pattern(&f.pat),
-                    })
-                    .collect(),
-                *rest,
-            ),
-            PatternKind::Or(alts) => {
-                PatternKind::Or(alts.iter().map(|a| self.pattern(a)).collect())
+    /// Function `symbol` at type arguments `args`, which have no type
+    /// parameters left in them, as a value: its copy, or the impl's method,
+    /// for a trait's (see `target`), or what a built-in `eq` or `discard`
+    /// is (`GLUE_EQ`, `GLUE_DISCARD`).
+    fn fn_const(&mut self, symbol: &str, args: Vec<Type>) -> crate::mir::Const {
+        use crate::mir::Const;
+        let method = self.m.fns.get(symbol).is_some_and(|d| d.self_ty.is_some());
+        if args.is_empty() && !method {
+            return Const::Fn(symbol.to_string(), Vec::new());
+        }
+        match self.target(symbol, args) {
+            Target::Fn(of, args, copy) => Const::Fn(self.m.named_copy(&of, args, copy), Vec::new()),
+            Target::Eq(t) => {
+                self.need_eq(&t);
+                Const::Fn(GLUE_EQ.to_string(), vec![t])
             }
-            PatternKind::Array(pats) => {
-                PatternKind::Array(pats.iter().map(|a| self.pattern(a)).collect())
-            }
-            PatternKind::Move(p) => PatternKind::Move(Box::new(self.pattern(p))),
-            kind => kind.clone(),
-        };
-        Pattern {
-            kind,
-            span: p.span,
-            id: p.id,
+            Target::Discard(t) => Const::Fn(GLUE_DISCARD.to_string(), vec![t]),
         }
     }
 }
@@ -1326,10 +1357,42 @@ mod used {
         }
     }
 
+    /// What MIR body `b` uses: the functions it names, and the structs
+    /// and enums of its types.
+    pub(super) fn in_body(b: &crate::mir::Body, out: &mut HashSet<String>) {
+        use crate::mir::{Const, Operand, Rvalue, StmtKind};
+        for l in &b.locals {
+            in_ty(&l.ty, out);
+        }
+        for s in b.blocks.iter().flat_map(|b| &b.stmts) {
+            let StmtKind::Assign { value, .. } = &s.kind else {
+                continue;
+            };
+            if let Rvalue::Aggregate(_, t, _) | Rvalue::Cast(_, t, _) = value {
+                in_ty(t, out);
+            }
+            for o in value.operands() {
+                if let Operand::Const(Const::Fn(name, args)) = o {
+                    out.insert(name.clone());
+                    args.iter().for_each(|t| in_ty(t, out));
+                }
+            }
+        }
+    }
+
+    /// The structs and enums of `t`, by the names of their copies.
+    fn in_ty(t: &crate::types::Type, out: &mut HashSet<String>) {
+        if let crate::types::Type::Adt(name, _, args) = t {
+            out.insert(super::mangle(name, args));
+        }
+        for p in t.parts() {
+            in_ty(p, out);
+        }
+    }
+
     pub(super) fn in_fn(f: &FnDecl, out: &mut HashSet<String>) {
         f.params.iter().for_each(|p| in_type(&p.ty, out));
         in_type(&f.ret, out);
-        in_expr(&f.body, out);
     }
 
     fn in_type(t: &TypeExpr, out: &mut HashSet<String>) {
@@ -1360,51 +1423,5 @@ mod used {
             | TypeExprKind::Lifetime(_)
             | TypeExprKind::Nat(_) => {}
         }
-    }
-
-    fn in_pattern(p: &Pattern, out: &mut HashSet<String>) {
-        match &p.kind {
-            PatternKind::Variant(ty, _, _, pats) => {
-                out.insert(ty.name.clone());
-                pats.iter().for_each(|p| in_pattern(p, out));
-            }
-            PatternKind::Struct(ty, _, fields, _) => {
-                out.insert(ty.name.clone());
-                fields.iter().for_each(|f| in_pattern(&f.pat, out));
-            }
-            PatternKind::Or(alts) | PatternKind::Array(alts) => {
-                alts.iter().for_each(|p| in_pattern(p, out))
-            }
-            _ => {}
-        }
-    }
-
-    fn in_expr(e: &Expr, out: &mut HashSet<String>) {
-        match &e.kind {
-            ExprKind::Var(name, _) => {
-                out.insert(name.clone());
-            }
-            ExprKind::StructLit(ty, ..) | ExprKind::Variant(ty, ..) => {
-                out.insert(ty.name.clone());
-            }
-            ExprKind::Match(_, arms) => arms.iter().for_each(|a| in_pattern(&a.pat, out)),
-            ExprKind::Block(stmts, _) => {
-                for s in stmts {
-                    if let Stmt::Let { pat, ty, .. } = s {
-                        in_pattern(pat, out);
-                        ty.iter().for_each(|t| in_type(t, out));
-                    }
-                }
-            }
-            ExprKind::Lambda(l) => {
-                l.params
-                    .iter()
-                    .flat_map(|p| &p.ty)
-                    .for_each(|t| in_type(t, out));
-                l.ret.iter().for_each(|t| in_type(t, out));
-            }
-            _ => {}
-        }
-        e.children().into_iter().for_each(|c| in_expr(c, out));
     }
 }

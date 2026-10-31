@@ -22,8 +22,8 @@
 //! signature says it outlives (`check_universals`), and that no loan is used
 //! in a way that clashes with it while its region lasts (`loans.rs`).
 
-use super::mir::{Body, Point, StmtKind, Term};
 use crate::error::Span;
+use crate::mir::{Body, Point, StmtKind, Term};
 use crate::types::{AdtKind, Adts, Bound, FnType, Region, Subst, Type};
 use std::collections::HashMap;
 
@@ -807,7 +807,7 @@ pub(crate) fn liveness(body: &Body) -> HashMap<Point, Vec<bool>> {
         let block = &body.blocks[b];
         // Live at the end: live at the start of any successor.
         let mut live = vec![false; n];
-        for s in body.successors(super::mir::Bb(b)) {
+        for s in body.successors(crate::mir::Bb(b)) {
             for (l, x) in live_in[s.0][0].iter().enumerate() {
                 live[l] |= x;
             }
@@ -829,7 +829,7 @@ pub(crate) fn liveness(body: &Body) -> HashMap<Point, Vec<bool>> {
                     // life. Writing to part of it, or through it, doesn't,
                     // and is taken as using it.
                     let point = Point {
-                        block: super::mir::Bb(b),
+                        block: crate::mir::Bb(b),
                         index: i,
                     };
                     live[place.local.0] = !place.proj.is_empty() || body.drop_uses.contains(&point);
@@ -838,14 +838,15 @@ pub(crate) fn liveness(body: &Body) -> HashMap<Point, Vec<bool>> {
                             live[p.local.0] = true;
                         }
                     }
-                    if let super::mir::Rvalue::Ref(_, _, p) = value {
+                    if let crate::mir::Rvalue::Ref(_, _, p) = value {
                         live[p.local.0] = true;
                     }
                 }
                 StmtKind::Inspect(p) | StmtKind::Consume(p, _) => live[p.local.0] = true,
+                StmtKind::Refine(..) | StmtKind::Kept(_) => {}
                 StmtKind::Dead(l) => {
                     let point = Point {
-                        block: super::mir::Bb(b),
+                        block: crate::mir::Bb(b),
                         index: i,
                     };
                     live[l.0] = body.drop_uses.contains(&point);

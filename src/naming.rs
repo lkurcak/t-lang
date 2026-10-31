@@ -267,7 +267,6 @@ fn variables<'a>(e: &'a Expr, out: &mut Vec<Decl<'a>>) {
 
 fn bindings<'a>(p: &'a Pattern, out: &mut Vec<Decl<'a>>) {
     match &p.kind {
-        PatternKind::Move(_) => unreachable!("written by lift"),
         PatternKind::Bind(name, _) => out.push(Decl {
             name,
             span: p.name_span(),

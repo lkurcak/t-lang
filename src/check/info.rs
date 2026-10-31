@@ -50,7 +50,7 @@ pub struct Info {
     /// The references the checker made into others, by the expression:
     /// `r` used as a `&T` when it's a `&Box<T>`, a `&&T` or a
     /// `&mut T`, with how many more `*`s it takes to get to the `T`, and
-    /// whether the result is `&mut`. `lift` writes them out: `&**r`.
+    /// whether the result is `&mut`. The MIR writes them out: `&**r`.
     pub coercions: HashMap<NodeId, (usize, bool)>,
     /// Every trait and impl, for monomorphisation to find impls by.
     pub traits: crate::traits::Traits,
@@ -76,14 +76,10 @@ pub struct Info {
     /// and the dependencies', which monomorphisation keeps only if the
     /// program uses them.
     pub library_symbols: HashSet<String>,
-    /// Where the borrow checker moved a value rather than copying it, and
-    /// each pattern that moves out of what it matches, for `lift` to write
-    /// out (`ExprKind::Move`, `PatternKind::Move`). It decides by the types
-    /// it knows, so in generic code by the bounds: a value of a type
-    /// parameter that isn't known to be `Copy` moves, whatever type it
-    /// turns out to be. Then the program runs as it was checked, and means
-    /// the same at every type, as it would if it ran once for them all.
-    pub moves: HashSet<MoveSite>,
+    /// The MIR of every function and closure, the libraries' too, as the
+    /// borrow checker built and checked it, at the function's own types,
+    /// regions erased: what monomorphisation copies, and what runs.
+    pub(crate) mir: HashMap<crate::mir::Key, std::sync::Arc<crate::mir::Body>>,
     /// The error type of the `Result` `main` gives back, if it does: the
     /// type monomorphisation makes `std::rt::report` for, which reports
     /// it.
@@ -99,24 +95,6 @@ pub struct Info {
     /// where its name is: the edit that writes them, for an editor to
     /// offer.
     pub inferred_fixes: Vec<(Span, crate::error::Fix)>,
-}
-
-/// Where a value is used by value, which moves it or copies it, as
-/// `Info::moves` says.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum MoveSite {
-    /// A place used as a value.
-    Expr(NodeId),
-    /// The receiver of a call, by the call: what's before the `.` of a
-    /// method call whose method takes `self`, or a closure called as an
-    /// `FnOnce`.
-    Receiver(NodeId),
-    /// The `i`th variable a closure captures, captured by value, by the
-    /// closure.
-    Capture(NodeId, usize),
-    /// A binding by value, which moves into its variable, or a struct or
-    /// enum pattern, which uses up what it takes apart.
-    Pattern(NodeId),
 }
 
 /// What a method call `x.m(..)` or path `T::m` names: method `symbol`.
@@ -820,7 +798,6 @@ fn names(params: &[Ident]) -> crate::types::Params {
 /// the functions nested in it.
 fn each_annotation(e: &Expr, f: &mut impl FnMut(&TypeExpr)) {
     match &e.kind {
-        ExprKind::Move(_) => unreachable!("written by lift"),
         ExprKind::For(_)
         | ExprKind::IfLet(..)
         | ExprKind::WhileLet(..)
@@ -919,7 +896,6 @@ fn each_annotation(e: &Expr, f: &mut impl FnMut(&TypeExpr)) {
 /// Calls `f` on every type argument written in pattern `p`.
 fn pattern_annotations(p: &Pattern, f: &mut impl FnMut(&TypeExpr)) {
     match &p.kind {
-        PatternKind::Move(_) => unreachable!("written by lift"),
         PatternKind::Variant(_, targs, _, pats) => {
             targs.iter().for_each(&mut *f);
             pats.iter().for_each(|p| pattern_annotations(p, f));

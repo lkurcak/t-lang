@@ -14,9 +14,9 @@
 
 use super::build::{Builder, Loan, project};
 use super::describe;
-use super::mir::*;
 use super::regions::Solution;
 use crate::error::{Error, Span};
+use crate::mir::*;
 use crate::types::Type;
 
 /// How a statement uses a place.
@@ -62,7 +62,7 @@ fn accesses(s: &Statement) -> Vec<(Place, Access)> {
                 match o {
                     Operand::Copy(p) => out.push((p.clone(), Access::Read)),
                     Operand::Move(p) => out.push((p.clone(), Access::Move)),
-                    Operand::Const => {}
+                    Operand::Const(_) => {}
                 }
             }
             if let Rvalue::Ref(_, m, p) = value {
@@ -78,6 +78,8 @@ fn accesses(s: &Statement) -> Vec<(Place, Access)> {
         StmtKind::Inspect(p) => out.push((p.clone(), Access::Inspect)),
         StmtKind::Dead(l) => out.push((Place::local(*l), Access::Dead)),
         StmtKind::Consume(p, _) => out.push((p.clone(), Access::Move)),
+        // Only the interpreter looks, at what the refinement checker proved.
+        StmtKind::Refine(..) | StmtKind::Kept(_) => {}
     }
     out
 }
@@ -174,7 +176,9 @@ fn effect(b: &Builder, live: &mut [bool], s: &Statement, point: Point) {
     let gone = match &s.kind {
         StmtKind::Assign { place, .. } => Some(place.clone()),
         StmtKind::Dead(l) => Some(Place::local(*l)),
-        StmtKind::Inspect(_) | StmtKind::Consume(..) => None,
+        StmtKind::Inspect(_) | StmtKind::Consume(..) | StmtKind::Refine(..) | StmtKind::Kept(_) => {
+            None
+        }
     };
     for (i, l) in b.loans.iter().enumerate() {
         if let Some(p) = &gone

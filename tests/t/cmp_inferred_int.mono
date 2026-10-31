@@ -1,36 +1,175 @@
 fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
-    let mut out = os.stdout;
-    let less = |a, b| a < b;
-    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
-        <std::io::Stdout>::line::<bool>(&mut out, &less(1i64, 2i64)),
-    ) {
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
-            {try},
-        ) => {try},
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
-            {try},
-        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
-            {try},
-        ),
-    };
-    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
-        <std::io::Stdout>::line::<bool>(&mut out, &less(2i64, 1i64)),
-    ) {
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
-            {try},
-        ) => {try},
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
-            {try},
-        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
-            {try},
-        ),
-    };
-    core::result::Result::<(), std::io::Error>::Ok(())
+    let _0: Result<(), Error>;
+    let _1: Os; // os
+    let mut _2: Stdout; // out
+    let _3: Stdout;
+    let _4: Stdout;
+    let _5: fn(i64, i64) -> bool; // less
+    let _6: fn(i64, i64) -> bool;
+    let _7: ();
+    let _8: ControlFlow<Result<!, Error>, ()>;
+    let _9: Result<(), Error>;
+    let _10: bool;
+    let _11: i64;
+    let _12: i64;
+    let _13: &mut Stdout;
+    let _14: &bool;
+    let _15: (); // {try}
+    let _16: Result<!, Error>; // {try}
+    let _17: Result<!, Error>;
+    let _18: ();
+    let _19: ControlFlow<Result<!, Error>, ()>;
+    let _20: Result<(), Error>;
+    let _21: bool;
+    let _22: i64;
+    let _23: i64;
+    let _24: &mut Stdout;
+    let _25: &bool;
+    let _26: (); // {try}
+    let _27: Result<!, Error>; // {try}
+    let _28: Result<!, Error>;
+    let _29: ();
+    bb0: {
+        _4 = move _1.1;
+        _3 = move _4;
+        _2 = move _3;
+        dead _4;
+        dead _3;
+        _6 = {closure#8148}();
+        _5 = copy _6;
+        dead _6;
+        _11 = 1_i64;
+        _12 = 2_i64;
+        _10 = copy _5(move _11, move _12);
+        _13 = &mut _2;
+        _14 = &_10;
+        _9 = <std::io::Stdout>::line::<bool>(move _13, move _14);
+        _8 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(move _9);
+        inspect _8;
+        inspect _8;
+        match _8 { #0(_) => bb1, #1(_) => bb2 };
+    }
+    bb1: {
+        _15 = copy (_8 as #0).0;
+        kept _8;
+        _7 = copy _15;
+        dead _15;
+        goto bb3;
+    }
+    bb2: {
+        _16 = move (_8 as #1).0;
+        kept _8;
+        _17 = move _16;
+        _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _17);
+        dead _16;
+        dead _17;
+        dead _14;
+        dead _13;
+        dead _12;
+        dead _11;
+        dead _10;
+        dead _9;
+        dead _8;
+        dead _7;
+        dead _5;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb3: {
+        dead _17;
+        dead _14;
+        dead _13;
+        dead _12;
+        dead _11;
+        dead _10;
+        dead _9;
+        dead _8;
+        dead _7;
+        _22 = 2_i64;
+        _23 = 1_i64;
+        _21 = copy _5(move _22, move _23);
+        _24 = &mut _2;
+        _25 = &_21;
+        _20 = <std::io::Stdout>::line::<bool>(move _24, move _25);
+        _19 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(move _20);
+        inspect _19;
+        inspect _19;
+        match _19 { #0(_) => bb5, #1(_) => bb6 };
+    }
+    bb5: {
+        _26 = copy (_19 as #0).0;
+        kept _19;
+        _18 = copy _26;
+        dead _26;
+        goto bb7;
+    }
+    bb6: {
+        _27 = move (_19 as #1).0;
+        kept _19;
+        _28 = move _27;
+        _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _28);
+        dead _27;
+        dead _28;
+        dead _25;
+        dead _24;
+        dead _23;
+        dead _22;
+        dead _21;
+        dead _20;
+        dead _19;
+        dead _18;
+        dead _5;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb7: {
+        dead _28;
+        dead _25;
+        dead _24;
+        dead _23;
+        dead _22;
+        dead _21;
+        dead _20;
+        dead _19;
+        dead _18;
+        _29 = ();
+        _0 = core::result::Result::<(), std::io::Error>::Ok(move _29);
+        dead _29;
+        dead _5;
+        dead _2;
+        dead _1;
+        return;
+    }
+}
+
+closure main::{closure#8148} {
+    let _0: bool;
+    let _1: i64; // a
+    let _2: i64; // b
+    bb0: {
+        _0 = copy _1 < copy _2;
+        dead _2;
+        dead _1;
+        return;
+    }
 }
 
 fn <&str as core::fmt::Display>::fmt::<std::io::Stderr><'a>(
     &self,
     w: &mut std::io::Stderr,
 ) -> core::result::Result::<(), std::io::Error> {
-    <std::io::Stderr as core::fmt::Write>::write_str(&mut *w, *self)
+    let _0: Result<(), Error>;
+    let _1: &&str; // self
+    let _2: &mut Stderr; // w
+    let _3: &mut Stderr;
+    bb0: {
+        _3 = &mut (*_2);
+        _0 = <std::io::Stderr as core::fmt::Write>::write_str(move _3, copy (*_1));
+        dead _3;
+        dead _2;
+        dead _1;
+        return;
+    }
 }

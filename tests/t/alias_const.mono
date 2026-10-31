@@ -16,74 +16,343 @@ export struct core::slice::Split::<u8><'a> { export head: &'a [u8], export tail:
 export struct core::slice::Iter::<u8><'a> { rest: &'a [u8] }
 
 fn total::<3>(b: &[u8; 3]) -> u64 with panic {
-    let mut sum = 0u64;
-    {
-        let mut {for} = <[u8; 3]>::iter(&*b);
-        loop {
-            match <core::slice::Iter::<u8> as core::iter::Iterator>::next(&mut {for}) {
-                core::option::Option::<&u8>::Some(x) => {
-                    sum = sum + *x as u64;
-                },
-                core::option::Option::<&u8>::None => break,
-            }
-        }
+    let _0: u64;
+    let _1: &[u8; 3]; // b
+    let mut _2: u64; // sum
+    let _3: u64;
+    let _4: ();
+    let mut _5: Iter<u8>; // {for}
+    let _6: Iter<u8>;
+    let _7: &[u8; 3];
+    let _8: ();
+    let _9: ();
+    let _10: ();
+    let _11: Option<&u8>;
+    let _12: &mut Iter<u8>;
+    let _13: &u8; // x
+    let _14: ();
+    let _15: u64;
+    let _16: u64;
+    bb0: {
+        _3 = 0_u64;
+        _2 = copy _3;
+        dead _3;
+        _7 = &(*_1);
+        _6 = <[u8; 3]>::iter(move _7);
+        _5 = move _6;
+        dead _7;
+        dead _6;
+        goto bb1;
     }
-    sum
+    bb1: {
+        _12 = &mut _5;
+        _11 = <core::slice::Iter::<u8> as core::iter::Iterator>::next(move _12);
+        inspect _11;
+        inspect _11;
+        match _11 { #1(_) => bb3, #0 => bb4 };
+    }
+    bb2: {
+        dead _8;
+        _4 = ();
+        dead _5;
+        dead _4;
+        _0 = copy _2;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb3: {
+        _13 = copy (_11 as #1).0;
+        kept _11;
+        _16 = copy (*_13) as u64;
+        _15 = copy _2 + move _16;
+        _2 = move _15;
+        _14 = ();
+        dead _16;
+        dead _15;
+        dead _14;
+        _10 = ();
+        dead _13;
+        goto bb5;
+    }
+    bb4: {
+        kept _11;
+        _8 = ();
+        dead _12;
+        dead _11;
+        dead _10;
+        dead _9;
+        goto bb2;
+    }
+    bb5: {
+        dead _12;
+        dead _11;
+        dead _10;
+        _9 = ();
+        dead _9;
+        goto bb1;
+    }
 }
 
 fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
-    let mut out = os.stdout;
-    let b: [u8; 3] = [1u8, 2u8, 3u8];
-    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
-        <std::io::Stdout>::line::<u64>(&mut out, &total::<3>(&b)),
-    ) {
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
-            {try},
-        ) => {try},
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
-            {try},
-        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
-            {try},
-        ),
-    };
-    let t: [bool; 2] = [true, false];
-    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
-        <std::io::Stdout>::line::<bool>(&mut out, &*<[bool; 2]>::index(&t, 0usize)),
-    ) {
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
-            {try},
-        ) => {try},
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
-            {try},
-        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
-            {try},
-        ),
-    };
-    core::result::Result::<(), std::io::Error>::Ok(())
+    let _0: Result<(), Error>;
+    let _1: Os; // os
+    let mut _2: Stdout; // out
+    let _3: Stdout;
+    let _4: Stdout;
+    let _5: [u8; 3]; // b
+    let _6: [u8; 3];
+    let _7: u8;
+    let _8: u8;
+    let _9: u8;
+    let _10: ();
+    let _11: ControlFlow<Result<!, Error>, ()>;
+    let _12: Result<(), Error>;
+    let _13: u64;
+    let _14: &[u8; 3];
+    let _15: &mut Stdout;
+    let _16: &u64;
+    let _17: (); // {try}
+    let _18: Result<!, Error>; // {try}
+    let _19: Result<!, Error>;
+    let _20: [bool; 2]; // t
+    let _21: [bool; 2];
+    let _22: bool;
+    let _23: bool;
+    let _24: ();
+    let _25: ControlFlow<Result<!, Error>, ()>;
+    let _26: Result<(), Error>;
+    let _27: &bool;
+    let _28: usize;
+    let _29: &[bool; 2];
+    let _30: &mut Stdout;
+    let _31: &bool;
+    let _32: (); // {try}
+    let _33: Result<!, Error>; // {try}
+    let _34: Result<!, Error>;
+    let _35: ();
+    bb0: {
+        _4 = move _1.1;
+        _3 = move _4;
+        _2 = move _3;
+        dead _4;
+        dead _3;
+        _7 = 1_u8;
+        _8 = 2_u8;
+        _9 = 3_u8;
+        _6 = [move _7, move _8, move _9];
+        _5 = copy _6;
+        dead _9;
+        dead _8;
+        dead _7;
+        dead _6;
+        _14 = &_5;
+        _13 = total::<3>(move _14);
+        _15 = &mut _2;
+        _16 = &_13;
+        _12 = <std::io::Stdout>::line::<u64>(move _15, move _16);
+        _11 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(move _12);
+        inspect _11;
+        inspect _11;
+        match _11 { #0(_) => bb1, #1(_) => bb2 };
+    }
+    bb1: {
+        _17 = copy (_11 as #0).0;
+        kept _11;
+        _10 = copy _17;
+        dead _17;
+        goto bb3;
+    }
+    bb2: {
+        _18 = move (_11 as #1).0;
+        kept _11;
+        _19 = move _18;
+        _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _19);
+        dead _18;
+        dead _19;
+        dead _16;
+        dead _15;
+        dead _14;
+        dead _13;
+        dead _12;
+        dead _11;
+        dead _10;
+        dead _5;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb3: {
+        dead _19;
+        dead _16;
+        dead _15;
+        dead _14;
+        dead _13;
+        dead _12;
+        dead _11;
+        dead _10;
+        _22 = true;
+        _23 = false;
+        _21 = [move _22, move _23];
+        _20 = copy _21;
+        dead _23;
+        dead _22;
+        dead _21;
+        _28 = 0_usize;
+        _29 = &_20;
+        _27 = <[bool; 2]>::index(move _29, move _28);
+        _30 = &mut _2;
+        _31 = &(*_27);
+        _26 = <std::io::Stdout>::line::<bool>(move _30, move _31);
+        _25 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(move _26);
+        inspect _25;
+        inspect _25;
+        match _25 { #0(_) => bb5, #1(_) => bb6 };
+    }
+    bb5: {
+        _32 = copy (_25 as #0).0;
+        kept _25;
+        _24 = copy _32;
+        dead _32;
+        goto bb7;
+    }
+    bb6: {
+        _33 = move (_25 as #1).0;
+        kept _25;
+        _34 = move _33;
+        _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _34);
+        dead _33;
+        dead _34;
+        dead _31;
+        dead _30;
+        dead _29;
+        dead _28;
+        dead _27;
+        dead _26;
+        dead _25;
+        dead _24;
+        dead _20;
+        dead _5;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb7: {
+        dead _34;
+        dead _31;
+        dead _30;
+        dead _29;
+        dead _28;
+        dead _27;
+        dead _26;
+        dead _25;
+        dead _24;
+        _35 = ();
+        _0 = core::result::Result::<(), std::io::Error>::Ok(move _35);
+        dead _35;
+        dead _20;
+        dead _5;
+        dead _2;
+        dead _1;
+        return;
+    }
 }
 
 /// The value at `i`, which is less than `len()`, so there's one: `a[i]`
 /// is `*a.index(i)`.
 export fn <[bool; 2]>::index(&self, i: { i: usize | i < self.len() }) -> &bool {
-    let s = <[bool; 2]>::as_slice(&*self);
-    &*<[bool]>::index(&*s, i)
+    let _0: &bool;
+    let _1: &[bool; 2]; // self
+    let _2: usize; // i
+    let _3: &[bool]; // s
+    let _4: &[bool];
+    let _5: &[bool; 2];
+    let _6: &bool;
+    let _7: &[bool];
+    bb0: {
+        _5 = &(*_1);
+        _4 = <[bool; 2]>::as_slice(move _5);
+        _3 = copy _4;
+        dead _5;
+        dead _4;
+        _7 = &(*_3);
+        _6 = <[bool]>::index(move _7, copy _2);
+        _0 = &(*_6);
+        dead _7;
+        dead _6;
+        dead _3;
+        dead _2;
+        dead _1;
+        return;
+    }
 }
 
 /// Its values, by reference, front to back.
-export fn <[u8]>::iter(&self) -> core::slice::Iter::<u8> { core::slice::Iter::<u8> { rest: self } }
+export fn <[u8]>::iter(&self) -> core::slice::Iter::<u8> {
+    let _0: Iter<u8>;
+    let _1: &[u8]; // self
+    bb0: {
+        _0 = core::slice::Iter::<u8> { rest: copy _1 };
+        dead _1;
+        return;
+    }
+}
 
 fn <core::slice::Iter::<u8> as core::iter::Iterator>::next<'a>(
     &mut self,
 ) -> core::option::Option::<&u8> {
-    let rest: &'a [u8] = self.rest;
-    match <[u8]>::split_at(&*rest, 1usize) {
-        core::option::Option::<core::slice::Split<u8>>::Some(
-            core::slice::Split::<u8> { head, tail },
-        ) => {
-            self.rest = tail;
-            <[u8]>::get(&*head, 0usize)
-        },
-        core::option::Option::<core::slice::Split<u8>>::None => core::option::Option::<&u8>::None,
+    let _0: Option<&u8>;
+    let _1: &mut Iter<u8>; // self
+    let _2: &[u8]; // rest
+    let _3: &[u8];
+    let _4: Option<Split<u8>>;
+    let _5: usize;
+    let _6: &[u8];
+    let _7: &[u8]; // head
+    let _8: &[u8]; // tail
+    let _9: ();
+    let _10: usize;
+    let _11: &[u8];
+    bb0: {
+        _3 = copy (*_1).0;
+        _2 = copy _3;
+        dead _3;
+        _5 = 1_usize;
+        _6 = &(*_2);
+        _4 = <[u8]>::split_at(move _6, move _5);
+        inspect _4;
+        inspect _4;
+        match _4 { #1({ 0: _, 1: _ }) => bb1, #0 => bb2 };
+    }
+    bb1: {
+        _7 = copy (_4 as #1).0.0;
+        _8 = copy (_4 as #1).0.1;
+        kept (_4 as #1).0;
+        kept _4;
+        (*_1).0 = copy _8;
+        _9 = ();
+        dead _9;
+        _10 = 0_usize;
+        _11 = &(*_7);
+        _0 = <[u8]>::get(move _11, move _10);
+        dead _11;
+        dead _10;
+        dead _8;
+        dead _7;
+        goto bb3;
+    }
+    bb2: {
+        kept _4;
+        _0 = core::option::Option::<&u8>::None;
+        goto bb3;
+    }
+    bb3: {
+        dead _6;
+        dead _5;
+        dead _4;
+        dead _2;
+        dead _1;
+        return;
     }
 }
 
@@ -104,7 +373,18 @@ fn <&str as core::fmt::Display>::fmt::<std::io::Stderr><'a>(
     &self,
     w: &mut std::io::Stderr,
 ) -> core::result::Result::<(), std::io::Error> {
-    <std::io::Stderr as core::fmt::Write>::write_str(&mut *w, *self)
+    let _0: Result<(), Error>;
+    let _1: &&str; // self
+    let _2: &mut Stderr; // w
+    let _3: &mut Stderr;
+    bb0: {
+        _3 = &mut (*_2);
+        _0 = <std::io::Stderr as core::fmt::Write>::write_str(move _3, copy (*_1));
+        dead _3;
+        dead _2;
+        dead _1;
+        return;
+    }
 }
 
 /// All its values, as a slice.
@@ -118,7 +398,22 @@ export fn <[bool]>::index(&self, i: { i: usize | i < self.len() }) -> &bool;
 
 /// Its values, by reference, front to back.
 export fn <[u8; 3]>::iter(&self) -> core::slice::Iter::<u8> {
-    <[u8]>::iter(&*<[u8; 3]>::as_slice(&*self))
+    let _0: Iter<u8>;
+    let _1: &[u8; 3]; // self
+    let _2: &[u8];
+    let _3: &[u8; 3];
+    let _4: &[u8];
+    bb0: {
+        _3 = &(*_1);
+        _2 = <[u8; 3]>::as_slice(move _3);
+        _4 = &(*_2);
+        _0 = <[u8]>::iter(move _4);
+        dead _4;
+        dead _3;
+        dead _2;
+        dead _1;
+        return;
+    }
 }
 
 /// All its values, as a slice.

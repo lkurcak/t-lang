@@ -209,7 +209,9 @@ There are two classic answers.
 
 T monomorphises, and `src/mono.rs` does it as a real pass: it takes the
 checked program and makes a new one with no generics in it, which the
-interpreter then runs. `t mono` prints it:
+interpreter then runs. `t mono` prints it. (Since step 32 a copy's body is
+its MIR, docs/32-mir.md; this is how it looked when this step was written,
+as T.)
 
 ```sh
 $ t mono tests/t/generics.t
@@ -360,8 +362,9 @@ reads the same table.
   arguments, which is what using a copy amounts to. Nothing in a source
   program can be *declared* with that name, so copies can't clash with
   anything, but it also means `t mono` output with copies in it doesn't
-  parse. For a program without generics it's the program itself, reformatted,
-  and the tests check that it parses back to the same thing.
+  parse. For a program without generics it was the program itself,
+  reformatted, and the tests checked that it parsed back to the same thing,
+  until step 32 made a copy's body its MIR.
 - **Every copy is checked again.** That's cheap here and catches the one
   non-parametric rule. It also checks the pass itself: if monomorphisation
   ever made an ill-typed program, that would show up as an internal error.

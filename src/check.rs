@@ -74,7 +74,7 @@ pub(crate) use expr::{first_use, result_span};
 pub(crate) use generics::{
     AliasDef, Kind, Lifetimes, ProjNames, TypeName, resolve, resolve_effects,
 };
-pub use info::{Info, Instance, MoveSite, Note, NoteKind, Test};
+pub use info::{Info, Instance, Note, NoteKind, Test};
 pub use scope::source_name;
 
 use crate::ast::*;
@@ -268,7 +268,7 @@ pub fn check(prog: &mut Program, warnings: &mut Vec<Warning>) -> (Info, Result<(
         .map(|(s, _)| s.clone())
         .collect();
     cx.info.projections = cx.proj_traits.take();
-    cx.info.moves = cx.moves.take();
+    cx.info.mir = cx.mir.take();
     cx.warnings.sort_by_key(|w| w.span.start);
     warnings.append(&mut cx.warnings);
     prog.next_id = cx.next_id;
@@ -563,9 +563,9 @@ pub(crate) struct Checker {
     /// The trait of each projection written, by its node, as it's worked
     /// out while resolving types (see `Info::projections`).
     proj_traits: std::cell::RefCell<HashMap<NodeId, String>>,
-    /// Where the borrow checker moved, as it checks each body, which only
-    /// needs a `&Checker` (see `Info::moves`).
-    pub(crate) moves: std::cell::RefCell<HashSet<MoveSite>>,
+    /// Each body's MIR, once the borrow checker has checked it, for
+    /// running (see `Info::mir`).
+    pub(crate) mir: std::cell::RefCell<HashMap<crate::mir::Key, std::sync::Arc<crate::mir::Body>>>,
     /// Whether impls are being collected: then what a projection on a type
     /// that isn't a parameter stands for isn't known yet, nor whether the
     /// type implements the trait, which `check_impls` sees to.
@@ -908,7 +908,7 @@ impl Checker {
             diverges: None,
             diverging: Vec::new(),
             proj_traits: Default::default(),
-            moves: Default::default(),
+            mir: Default::default(),
             collecting: false,
             here: Span::new(0, 0),
             goals: Vec::new(),
@@ -1435,7 +1435,8 @@ impl Checker {
             self.traits.opaques.get_mut(s).expect("defined").hidden = Some(t.clone());
             self.adts.proj.opaques.get_mut(s).expect("defined").hidden = Some(t);
         }
-        let warnings = crate::borrowck::check(self, f, &scheme)?;
+        let symbol = self.fns[id.0].symbol.clone();
+        let warnings = crate::borrowck::check(self, f, &symbol, &scheme)?;
         self.warnings.extend(warnings);
         Ok(())
     }

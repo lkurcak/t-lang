@@ -5,180 +5,935 @@ struct Holder { f: fn(i64) -> i64 with panic }
 struct One { n: i64 }
 
 fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
-    let mut out = os.stdout;
-    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
-        <std::io::Stdout>::line::<i64>(&mut out, &main::double(1i64)),
-    ) {
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
-            {try},
-        ) => {try},
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
-            {try},
-        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
-            {try},
-        ),
-    };
-    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
-        <std::io::Stdout>::line::<i64>(&mut out, &main::fact(5i64)),
-    ) {
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
-            {try},
-        ) => {try},
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
-            {try},
-        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
-            {try},
-        ),
-    };
-    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
-        <std::io::Stdout>::line::<bool>(&mut out, &main::is_even(10i64)),
-    ) {
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
-            {try},
-        ) => {try},
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
-            {try},
-        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
-            {try},
-        ),
-    };
-    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
-        <std::io::Stdout>::line::<bool>(&mut out, &main::is_odd(10i64)),
-    ) {
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
-            {try},
-        ) => {try},
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
-            {try},
-        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
-            {try},
-        ),
-    };
-    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
-        <std::io::Stdout>::line::<i64>(&mut out, &main::twice::<i64>(main::double, 3i64)),
-    ) {
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
-            {try},
-        ) => {try},
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
-            {try},
-        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
-            {try},
-        ),
-    };
-    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
-        <std::io::Stdout>::line::<bool>(&mut out, &main::twice::<bool>(|b| !b, true)),
-    ) {
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
-            {try},
-        ) => {try},
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
-            {try},
-        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
-            {try},
-        ),
-    };
-    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
-        <std::io::Stdout>::line::<i64>(&mut out, &main::sum_to(4i64)),
-    ) {
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
-            {try},
-        ) => {try},
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
-            {try},
-        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
-            {try},
-        ),
-    };
-    let k = 3i64;
-    let add_k = |x: i64| { main::inc(x) + k };
-    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
-        <std::io::Stdout>::line::<i64>(&mut out, &(&add_k)(1i64)),
-    ) {
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
-            {try},
-        ) => {try},
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
-            {try},
-        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
-            {try},
-        ),
-    };
-    let f = pick(true);
-    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
-        <std::io::Stdout>::line::<i64>(&mut out, &f(7i64)),
-    ) {
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
-            {try},
-        ) => {try},
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
-            {try},
-        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
-            {try},
-        ),
-    };
-    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
-        <std::io::Stdout>::line::<i64>(&mut out, &top()),
-    ) {
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
-            {try},
-        ) => {try},
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
-            {try},
-        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
-            {try},
-        ),
-    };
-    core::result::Result::<(), std::io::Error>::Ok(())
+    let _0: Result<(), Error>;
+    let _1: Os; // os
+    let mut _2: Stdout; // out
+    let _3: Stdout;
+    let _4: Stdout;
+    let _5: ();
+    let _6: ControlFlow<Result<!, Error>, ()>;
+    let _7: Result<(), Error>;
+    let _8: i64;
+    let _9: i64;
+    let _10: &mut Stdout;
+    let _11: &i64;
+    let _12: (); // {try}
+    let _13: Result<!, Error>; // {try}
+    let _14: Result<!, Error>;
+    let _15: ();
+    let _16: ControlFlow<Result<!, Error>, ()>;
+    let _17: Result<(), Error>;
+    let _18: i64;
+    let _19: i64;
+    let _20: &mut Stdout;
+    let _21: &i64;
+    let _22: (); // {try}
+    let _23: Result<!, Error>; // {try}
+    let _24: Result<!, Error>;
+    let _25: ();
+    let _26: ControlFlow<Result<!, Error>, ()>;
+    let _27: Result<(), Error>;
+    let _28: bool;
+    let _29: i64;
+    let _30: &mut Stdout;
+    let _31: &bool;
+    let _32: (); // {try}
+    let _33: Result<!, Error>; // {try}
+    let _34: Result<!, Error>;
+    let _35: ();
+    let _36: ControlFlow<Result<!, Error>, ()>;
+    let _37: Result<(), Error>;
+    let _38: bool;
+    let _39: i64;
+    let _40: &mut Stdout;
+    let _41: &bool;
+    let _42: (); // {try}
+    let _43: Result<!, Error>; // {try}
+    let _44: Result<!, Error>;
+    let _45: ();
+    let _46: ControlFlow<Result<!, Error>, ()>;
+    let _47: Result<(), Error>;
+    let _48: i64;
+    let _49: i64;
+    let _50: &mut Stdout;
+    let _51: &i64;
+    let _52: (); // {try}
+    let _53: Result<!, Error>; // {try}
+    let _54: Result<!, Error>;
+    let _55: ();
+    let _56: ControlFlow<Result<!, Error>, ()>;
+    let _57: Result<(), Error>;
+    let _58: bool;
+    let _59: fn(bool) -> bool;
+    let _60: bool;
+    let _61: &mut Stdout;
+    let _62: &bool;
+    let _63: (); // {try}
+    let _64: Result<!, Error>; // {try}
+    let _65: Result<!, Error>;
+    let _66: ();
+    let _67: ControlFlow<Result<!, Error>, ()>;
+    let _68: Result<(), Error>;
+    let _69: i64;
+    let _70: i64;
+    let _71: &mut Stdout;
+    let _72: &i64;
+    let _73: (); // {try}
+    let _74: Result<!, Error>; // {try}
+    let _75: Result<!, Error>;
+    let _76: i64; // k
+    let _77: i64;
+    let _78: {closure}; // add_k
+    let _79: {closure};
+    let _80: &i64;
+    let _81: ();
+    let _82: ControlFlow<Result<!, Error>, ()>;
+    let _83: Result<(), Error>;
+    let _84: i64;
+    let _85: i64;
+    let _86: &{closure};
+    let _87: &mut Stdout;
+    let _88: &i64;
+    let _89: (); // {try}
+    let _90: Result<!, Error>; // {try}
+    let _91: Result<!, Error>;
+    let _92: fn(i64) -> i64 with panic; // f
+    let _93: fn(i64) -> i64 with panic;
+    let _94: bool;
+    let _95: ();
+    let _96: ControlFlow<Result<!, Error>, ()>;
+    let _97: Result<(), Error>;
+    let _98: i64;
+    let _99: i64;
+    let _100: &mut Stdout;
+    let _101: &i64;
+    let _102: (); // {try}
+    let _103: Result<!, Error>; // {try}
+    let _104: Result<!, Error>;
+    let _105: ();
+    let _106: ControlFlow<Result<!, Error>, ()>;
+    let _107: Result<(), Error>;
+    let _108: i64;
+    let _109: &mut Stdout;
+    let _110: &i64;
+    let _111: (); // {try}
+    let _112: Result<!, Error>; // {try}
+    let _113: Result<!, Error>;
+    let _114: ();
+    bb0: {
+        _4 = move _1.1;
+        _3 = move _4;
+        _2 = move _3;
+        dead _4;
+        dead _3;
+        _9 = 1_i64;
+        _8 = main::double(move _9);
+        _10 = &mut _2;
+        _11 = &_8;
+        _7 = <std::io::Stdout>::line::<i64>(move _10, move _11);
+        _6 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(move _7);
+        inspect _6;
+        inspect _6;
+        match _6 { #0(_) => bb1, #1(_) => bb2 };
+    }
+    bb1: {
+        _12 = copy (_6 as #0).0;
+        kept _6;
+        _5 = copy _12;
+        dead _12;
+        goto bb3;
+    }
+    bb2: {
+        _13 = move (_6 as #1).0;
+        kept _6;
+        _14 = move _13;
+        _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _14);
+        dead _13;
+        dead _14;
+        dead _11;
+        dead _10;
+        dead _9;
+        dead _8;
+        dead _7;
+        dead _6;
+        dead _5;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb3: {
+        dead _14;
+        dead _11;
+        dead _10;
+        dead _9;
+        dead _8;
+        dead _7;
+        dead _6;
+        dead _5;
+        _19 = 5_i64;
+        _18 = main::fact(move _19);
+        _20 = &mut _2;
+        _21 = &_18;
+        _17 = <std::io::Stdout>::line::<i64>(move _20, move _21);
+        _16 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(move _17);
+        inspect _16;
+        inspect _16;
+        match _16 { #0(_) => bb5, #1(_) => bb6 };
+    }
+    bb5: {
+        _22 = copy (_16 as #0).0;
+        kept _16;
+        _15 = copy _22;
+        dead _22;
+        goto bb7;
+    }
+    bb6: {
+        _23 = move (_16 as #1).0;
+        kept _16;
+        _24 = move _23;
+        _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _24);
+        dead _23;
+        dead _24;
+        dead _21;
+        dead _20;
+        dead _19;
+        dead _18;
+        dead _17;
+        dead _16;
+        dead _15;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb7: {
+        dead _24;
+        dead _21;
+        dead _20;
+        dead _19;
+        dead _18;
+        dead _17;
+        dead _16;
+        dead _15;
+        _29 = 10_i64;
+        _28 = main::is_even(move _29);
+        _30 = &mut _2;
+        _31 = &_28;
+        _27 = <std::io::Stdout>::line::<bool>(move _30, move _31);
+        _26 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(move _27);
+        inspect _26;
+        inspect _26;
+        match _26 { #0(_) => bb9, #1(_) => bb10 };
+    }
+    bb9: {
+        _32 = copy (_26 as #0).0;
+        kept _26;
+        _25 = copy _32;
+        dead _32;
+        goto bb11;
+    }
+    bb10: {
+        _33 = move (_26 as #1).0;
+        kept _26;
+        _34 = move _33;
+        _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _34);
+        dead _33;
+        dead _34;
+        dead _31;
+        dead _30;
+        dead _29;
+        dead _28;
+        dead _27;
+        dead _26;
+        dead _25;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb11: {
+        dead _34;
+        dead _31;
+        dead _30;
+        dead _29;
+        dead _28;
+        dead _27;
+        dead _26;
+        dead _25;
+        _39 = 10_i64;
+        _38 = main::is_odd(move _39);
+        _40 = &mut _2;
+        _41 = &_38;
+        _37 = <std::io::Stdout>::line::<bool>(move _40, move _41);
+        _36 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(move _37);
+        inspect _36;
+        inspect _36;
+        match _36 { #0(_) => bb13, #1(_) => bb14 };
+    }
+    bb13: {
+        _42 = copy (_36 as #0).0;
+        kept _36;
+        _35 = copy _42;
+        dead _42;
+        goto bb15;
+    }
+    bb14: {
+        _43 = move (_36 as #1).0;
+        kept _36;
+        _44 = move _43;
+        _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _44);
+        dead _43;
+        dead _44;
+        dead _41;
+        dead _40;
+        dead _39;
+        dead _38;
+        dead _37;
+        dead _36;
+        dead _35;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb15: {
+        dead _44;
+        dead _41;
+        dead _40;
+        dead _39;
+        dead _38;
+        dead _37;
+        dead _36;
+        dead _35;
+        _49 = 3_i64;
+        _48 = main::twice::<i64>(main::double, move _49);
+        _50 = &mut _2;
+        _51 = &_48;
+        _47 = <std::io::Stdout>::line::<i64>(move _50, move _51);
+        _46 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(move _47);
+        inspect _46;
+        inspect _46;
+        match _46 { #0(_) => bb17, #1(_) => bb18 };
+    }
+    bb17: {
+        _52 = copy (_46 as #0).0;
+        kept _46;
+        _45 = copy _52;
+        dead _52;
+        goto bb19;
+    }
+    bb18: {
+        _53 = move (_46 as #1).0;
+        kept _46;
+        _54 = move _53;
+        _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _54);
+        dead _53;
+        dead _54;
+        dead _51;
+        dead _50;
+        dead _49;
+        dead _48;
+        dead _47;
+        dead _46;
+        dead _45;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb19: {
+        dead _54;
+        dead _51;
+        dead _50;
+        dead _49;
+        dead _48;
+        dead _47;
+        dead _46;
+        dead _45;
+        _59 = {closure#8300}();
+        _60 = true;
+        _58 = main::twice::<bool>(move _59, move _60);
+        _61 = &mut _2;
+        _62 = &_58;
+        _57 = <std::io::Stdout>::line::<bool>(move _61, move _62);
+        _56 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(move _57);
+        inspect _56;
+        inspect _56;
+        match _56 { #0(_) => bb21, #1(_) => bb22 };
+    }
+    bb21: {
+        _63 = copy (_56 as #0).0;
+        kept _56;
+        _55 = copy _63;
+        dead _63;
+        goto bb23;
+    }
+    bb22: {
+        _64 = move (_56 as #1).0;
+        kept _56;
+        _65 = move _64;
+        _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _65);
+        dead _64;
+        dead _65;
+        dead _62;
+        dead _61;
+        dead _60;
+        dead _59;
+        dead _58;
+        dead _57;
+        dead _56;
+        dead _55;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb23: {
+        dead _65;
+        dead _62;
+        dead _61;
+        dead _60;
+        dead _59;
+        dead _58;
+        dead _57;
+        dead _56;
+        dead _55;
+        _70 = 4_i64;
+        _69 = main::sum_to(move _70);
+        _71 = &mut _2;
+        _72 = &_69;
+        _68 = <std::io::Stdout>::line::<i64>(move _71, move _72);
+        _67 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(move _68);
+        inspect _67;
+        inspect _67;
+        match _67 { #0(_) => bb25, #1(_) => bb26 };
+    }
+    bb25: {
+        _73 = copy (_67 as #0).0;
+        kept _67;
+        _66 = copy _73;
+        dead _73;
+        goto bb27;
+    }
+    bb26: {
+        _74 = move (_67 as #1).0;
+        kept _67;
+        _75 = move _74;
+        _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _75);
+        dead _74;
+        dead _75;
+        dead _72;
+        dead _71;
+        dead _70;
+        dead _69;
+        dead _68;
+        dead _67;
+        dead _66;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb27: {
+        dead _75;
+        dead _72;
+        dead _71;
+        dead _70;
+        dead _69;
+        dead _68;
+        dead _67;
+        dead _66;
+        _77 = 3_i64;
+        _76 = copy _77;
+        dead _77;
+        _80 = &_76;
+        _79 = {closure#8390}(move _80);
+        _78 = copy _79;
+        dead _80;
+        dead _79;
+        _85 = 1_i64;
+        _86 = &_78;
+        _84 = (move _86)(move _85);
+        _87 = &mut _2;
+        _88 = &_84;
+        _83 = <std::io::Stdout>::line::<i64>(move _87, move _88);
+        _82 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(move _83);
+        inspect _82;
+        inspect _82;
+        match _82 { #0(_) => bb29, #1(_) => bb30 };
+    }
+    bb29: {
+        _89 = copy (_82 as #0).0;
+        kept _82;
+        _81 = copy _89;
+        dead _89;
+        goto bb31;
+    }
+    bb30: {
+        _90 = move (_82 as #1).0;
+        kept _82;
+        _91 = move _90;
+        _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _91);
+        dead _90;
+        dead _91;
+        dead _88;
+        dead _87;
+        dead _86;
+        dead _85;
+        dead _84;
+        dead _83;
+        dead _82;
+        dead _81;
+        dead _78;
+        dead _76;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb31: {
+        dead _91;
+        dead _88;
+        dead _87;
+        dead _86;
+        dead _85;
+        dead _84;
+        dead _83;
+        dead _82;
+        dead _81;
+        _94 = true;
+        _93 = pick(move _94);
+        _92 = copy _93;
+        dead _94;
+        dead _93;
+        _99 = 7_i64;
+        _98 = copy _92(move _99);
+        _100 = &mut _2;
+        _101 = &_98;
+        _97 = <std::io::Stdout>::line::<i64>(move _100, move _101);
+        _96 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(move _97);
+        inspect _96;
+        inspect _96;
+        match _96 { #0(_) => bb33, #1(_) => bb34 };
+    }
+    bb33: {
+        _102 = copy (_96 as #0).0;
+        kept _96;
+        _95 = copy _102;
+        dead _102;
+        goto bb35;
+    }
+    bb34: {
+        _103 = move (_96 as #1).0;
+        kept _96;
+        _104 = move _103;
+        _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _104);
+        dead _103;
+        dead _104;
+        dead _101;
+        dead _100;
+        dead _99;
+        dead _98;
+        dead _97;
+        dead _96;
+        dead _95;
+        dead _92;
+        dead _78;
+        dead _76;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb35: {
+        dead _104;
+        dead _101;
+        dead _100;
+        dead _99;
+        dead _98;
+        dead _97;
+        dead _96;
+        dead _95;
+        _108 = top();
+        _109 = &mut _2;
+        _110 = &_108;
+        _107 = <std::io::Stdout>::line::<i64>(move _109, move _110);
+        _106 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(move _107);
+        inspect _106;
+        inspect _106;
+        match _106 { #0(_) => bb37, #1(_) => bb38 };
+    }
+    bb37: {
+        _111 = copy (_106 as #0).0;
+        kept _106;
+        _105 = copy _111;
+        dead _111;
+        goto bb39;
+    }
+    bb38: {
+        _112 = move (_106 as #1).0;
+        kept _106;
+        _113 = move _112;
+        _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _113);
+        dead _112;
+        dead _113;
+        dead _110;
+        dead _109;
+        dead _108;
+        dead _107;
+        dead _106;
+        dead _105;
+        dead _92;
+        dead _78;
+        dead _76;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb39: {
+        dead _113;
+        dead _110;
+        dead _109;
+        dead _108;
+        dead _107;
+        dead _106;
+        dead _105;
+        _114 = ();
+        _0 = core::result::Result::<(), std::io::Error>::Ok(move _114);
+        dead _114;
+        dead _92;
+        dead _78;
+        dead _76;
+        dead _2;
+        dead _1;
+        return;
+    }
+}
+
+closure main::{closure#8300} {
+    let _0: bool;
+    let _1: bool; // b
+    bb0: {
+        _0 = !copy _1;
+        dead _1;
+        return;
+    }
+}
+
+closure main::{closure#8390} {
+    let _0: i64;
+    let mut _1: &{closure}; // the closure
+    let _2: i64; // x
+    let _3: i64;
+    bb0: {
+        _3 = main::inc(copy _2);
+        _0 = move _3 + copy (*(*_1).0);
+        dead _3;
+        dead _2;
+        dead _1;
+        return;
+    }
 }
 
 /// Doubles `x`.
-fn main::double(x: i64) -> i64 with panic { x * 2i64 }
+fn main::double(x: i64) -> i64 with panic {
+    let _0: i64;
+    let _1: i64; // x
+    let _2: i64;
+    bb0: {
+        _2 = 2_i64;
+        _0 = copy _1 * move _2;
+        dead _2;
+        dead _1;
+        return;
+    }
+}
 
 fn main::fact(n: i64) -> i64 with panic {
-    if n == 0i64 { 1i64 } else { n * main::fact(n - 1i64) }
+    let _0: i64;
+    let _1: i64; // n
+    let _2: bool;
+    let _3: i64;
+    let _4: i64;
+    let _5: i64;
+    let _6: i64;
+    bb0: {
+        _3 = 0_i64;
+        _2 = copy _1 == copy _3;
+        dead _3;
+        if copy _2 { bb1 } else { bb2 };
+    }
+    bb1: {
+        _0 = 1_i64;
+        goto bb3;
+    }
+    bb2: {
+        _6 = 1_i64;
+        _5 = copy _1 - move _6;
+        _4 = main::fact(move _5);
+        _0 = copy _1 * move _4;
+        dead _6;
+        dead _5;
+        dead _4;
+        goto bb3;
+    }
+    bb3: {
+        dead _2;
+        dead _1;
+        return;
+    }
 }
 
 fn main::is_even(n: i64) -> bool with panic {
-    if n == 0i64 { true } else { main::is_odd(n - 1i64) }
+    let _0: bool;
+    let _1: i64; // n
+    let _2: bool;
+    let _3: i64;
+    let _4: i64;
+    let _5: i64;
+    bb0: {
+        _3 = 0_i64;
+        _2 = copy _1 == copy _3;
+        dead _3;
+        if copy _2 { bb1 } else { bb2 };
+    }
+    bb1: {
+        _0 = true;
+        goto bb3;
+    }
+    bb2: {
+        _5 = 1_i64;
+        _4 = copy _1 - move _5;
+        _0 = main::is_odd(move _4);
+        dead _5;
+        dead _4;
+        goto bb3;
+    }
+    bb3: {
+        dead _2;
+        dead _1;
+        return;
+    }
 }
 
 fn main::is_odd(n: i64) -> bool with panic {
-    if n == 0i64 { false } else { main::is_even(n - 1i64) }
+    let _0: bool;
+    let _1: i64; // n
+    let _2: bool;
+    let _3: i64;
+    let _4: i64;
+    let _5: i64;
+    bb0: {
+        _3 = 0_i64;
+        _2 = copy _1 == copy _3;
+        dead _3;
+        if copy _2 { bb1 } else { bb2 };
+    }
+    bb1: {
+        _0 = false;
+        goto bb3;
+    }
+    bb2: {
+        _5 = 1_i64;
+        _4 = copy _1 - move _5;
+        _0 = main::is_even(move _4);
+        dead _5;
+        dead _4;
+        goto bb3;
+    }
+    bb3: {
+        dead _2;
+        dead _1;
+        return;
+    }
 }
 
-fn main::twice::<i64>(f: fn(i64) -> i64 with panic, x: i64) -> i64 with panic { f(f(x)) }
+fn main::twice::<i64>(f: fn(i64) -> i64 with panic, x: i64) -> i64 with panic {
+    let _0: i64;
+    let _1: fn(i64) -> i64 with panic; // f
+    let _2: i64; // x
+    let _3: i64;
+    let _4: i64;
+    bb0: {
+        _4 = move _2;
+        _3 = copy _1(move _4);
+        _0 = copy _1(move _3);
+        dead _4;
+        dead _3;
+        dead _2;
+        dead _1;
+        return;
+    }
+}
 
-fn main::twice::<bool>(f: fn(bool) -> bool with panic, x: bool) -> bool with panic { f(f(x)) }
+fn main::twice::<bool>(f: fn(bool) -> bool with panic, x: bool) -> bool with panic {
+    let _0: bool;
+    let _1: fn(bool) -> bool with panic; // f
+    let _2: bool; // x
+    let _3: bool;
+    let _4: bool;
+    bb0: {
+        _4 = move _2;
+        _3 = copy _1(move _4);
+        _0 = copy _1(move _3);
+        dead _4;
+        dead _3;
+        dead _2;
+        dead _1;
+        return;
+    }
+}
 
-fn main::sum_to(n: i64) -> i64 with panic { main::sum_to::go(1i64, 0i64, n) }
+fn main::sum_to(n: i64) -> i64 with panic {
+    let _0: i64;
+    let _1: i64; // n
+    let _2: i64;
+    let _3: i64;
+    bb0: {
+        _2 = 1_i64;
+        _3 = 0_i64;
+        _0 = main::sum_to::go(move _2, move _3, copy _1);
+        dead _3;
+        dead _2;
+        dead _1;
+        return;
+    }
+}
 
 fn main::sum_to::go(i: i64, acc: i64, n: i64) -> i64 with panic {
-    if i > n { acc } else { main::sum_to::go(i + 1i64, acc + i, n) }
+    let _0: i64;
+    let _1: i64; // i
+    let _2: i64; // acc
+    let _3: i64; // n
+    let _4: bool;
+    let _5: i64;
+    let _6: i64;
+    let _7: i64;
+    bb0: {
+        _4 = copy _1 > copy _3;
+        if copy _4 { bb1 } else { bb2 };
+    }
+    bb1: {
+        _0 = copy _2;
+        goto bb3;
+    }
+    bb2: {
+        _6 = 1_i64;
+        _5 = copy _1 + move _6;
+        _7 = copy _2 + copy _1;
+        _0 = main::sum_to::go(move _5, move _7, copy _3);
+        dead _7;
+        dead _6;
+        dead _5;
+        goto bb3;
+    }
+    bb3: {
+        dead _4;
+        dead _3;
+        dead _2;
+        dead _1;
+        return;
+    }
 }
 
-fn main::inc(x: i64) -> i64 with panic { x + 1i64 }
+fn main::inc(x: i64) -> i64 with panic {
+    let _0: i64;
+    let _1: i64; // x
+    let _2: i64;
+    bb0: {
+        _2 = 1_i64;
+        _0 = copy _1 + move _2;
+        dead _2;
+        dead _1;
+        return;
+    }
+}
 
 fn pick(b: bool) -> fn(i64) -> i64 with panic {
-    if b { double_it() } else { pick::neg }
+    let _0: fn(i64) -> i64 with panic;
+    let _1: bool; // b
+    let _2: bool;
+    bb0: {
+        _2 = copy _1;
+        if copy _2 { bb1 } else { bb2 };
+    }
+    bb1: {
+        _0 = double_it();
+        goto bb3;
+    }
+    bb2: {
+        _0 = pick::neg;
+        goto bb3;
+    }
+    bb3: {
+        dead _2;
+        dead _1;
+        return;
+    }
 }
 
-fn pick::neg(x: i64) -> i64 with panic { -x }
+fn pick::neg(x: i64) -> i64 with panic {
+    let _0: i64;
+    let _1: i64; // x
+    bb0: {
+        _0 = -copy _1;
+        dead _1;
+        return;
+    }
+}
 
 fn double_it() -> fn(i64) -> i64 with panic {
-    let h = Holder { f: double_it::double };
-    h.f
+    let _0: fn(i64) -> i64 with panic;
+    let _1: Holder; // h
+    let _2: Holder;
+    bb0: {
+        _2 = Holder { f: double_it::double };
+        _1 = move _2;
+        dead _2;
+        _0 = copy _1.0;
+        dead _1;
+        return;
+    }
 }
 
-fn double_it::double(x: i64) -> i64 with panic { x + x }
+fn double_it::double(x: i64) -> i64 with panic {
+    let _0: i64;
+    let _1: i64; // x
+    bb0: {
+        _0 = copy _1 + copy _1;
+        dead _1;
+        return;
+    }
+}
 
-fn top() -> i64 { top::one().n }
+fn top() -> i64 {
+    let _0: i64;
+    let _1: One;
+    bb0: {
+        _1 = top::one();
+        _0 = copy _1.0;
+        dead _1;
+        return;
+    }
+}
 
-fn top::one() -> One { One { n: 1i64 } }
+fn top::one() -> One {
+    let _0: One;
+    let _1: i64;
+    bb0: {
+        _1 = 1_i64;
+        _0 = One { n: move _1 };
+        dead _1;
+        return;
+    }
+}
 
 fn <&str as core::fmt::Display>::fmt::<std::io::Stderr><'a>(
     &self,
     w: &mut std::io::Stderr,
 ) -> core::result::Result::<(), std::io::Error> {
-    <std::io::Stderr as core::fmt::Write>::write_str(&mut *w, *self)
+    let _0: Result<(), Error>;
+    let _1: &&str; // self
+    let _2: &mut Stderr; // w
+    let _3: &mut Stderr;
+    bb0: {
+        _3 = &mut (*_2);
+        _0 = <std::io::Stderr as core::fmt::Write>::write_str(move _3, copy (*_1));
+        dead _3;
+        dead _2;
+        dead _1;
+        return;
+    }
 }

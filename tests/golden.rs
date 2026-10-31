@@ -147,7 +147,7 @@ fn mono() {
         let src = fs::read_to_string(&path).unwrap();
         let checked = t_lang::check_files(&path, &src, &t_lang::load::read_file);
         let actual = match checked.result {
-            Ok(program) => without_std(program.lower().into_program()).to_string(),
+            Ok(program) => without_std(&program.lower()),
             Err(e) => {
                 failures.push(format!("{name}: {}", e.render_in(&checked.sources)));
                 continue;
@@ -167,12 +167,14 @@ fn mono() {
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
 
-/// `program` without the std library's functions, structs and enums, the
-/// copies of others made for them, as `<i64 as core::fmt::Display>::fmt::<std::io::Stdout>`,
-/// and what only they use of the other libraries: what printing adds, the
-/// same in every program, and not what a `.mono` file is there to show.
-fn without_std(program: t_lang::ast::Program) -> t_lang::ast::Program {
-    use t_lang::ast::{FnDecl, Program, TypeDecl};
+/// What `t mono` prints of `exe` without the std library's functions,
+/// structs and enums, the copies of others made for them, as
+/// `<i64 as core::fmt::Display>::fmt::<std::io::Stdout>`, and what only they
+/// use of the other libraries: what printing adds, the same in every
+/// program, and not what a `.mono` file is there to show.
+fn without_std(exe: &t_lang::mono::Executable) -> String {
+    use std::collections::HashSet;
+    let program = exe.program();
     let library = |name: &str| {
         let name = name.strip_prefix('<').unwrap_or(name);
         [
@@ -182,97 +184,31 @@ fn without_std(program: t_lang::ast::Program) -> t_lang::ast::Program {
         .any(|p| name.starts_with(p))
             && !name.starts_with("impl")
     };
-    let text = |types: Vec<TypeDecl>, fns: Vec<FnDecl>| {
-        let mut p = program.clone();
-        (p.types, p.fns) = (types, fns);
-        p.to_string()
-    };
-    let (mut types, mut fns) = (Vec::new(), Vec::new());
-    let (mut left_types, mut left_fns) = (Vec::new(), Vec::new());
-    for d in &program.types {
-        match library(&d.name().name) {
-            true if !d.name().name.contains("std::") => left_types.push(d.clone()),
+    let names = (program.types.iter().map(|d| d.name().name.clone()))
+        .chain(program.fns.iter().map(|f| f.name.name.clone()));
+    let mut kept: HashSet<String> = HashSet::new();
+    let mut left: Vec<String> = Vec::new();
+    for name in names {
+        match library(&name) {
+            true if !name.contains("std::") => left.push(name),
             true => {}
-            false => types.push(d.clone()),
-        }
-    }
-    for f in &program.fns {
-        match library(&f.name.name) {
-            true if !f.name.name.contains("std::") => left_fns.push(f.clone()),
-            true => {}
-            false => fns.push(f.clone()),
+            false => {
+                kept.insert(name);
+            }
         }
     }
     // What the program refers to, and what that does, and so on.
     loop {
-        let kept = text(types.clone(), fns.clone());
+        let text = exe.render_only(&|n| kept.contains(n));
         // A name that's part of a longer one keeps more than it needs to,
         // which only makes the file longer.
-        let used = |name: &str| kept.contains(name);
-        let before = types.len() + fns.len();
-        let (now, later): (Vec<_>, Vec<_>) =
-            left_types.into_iter().partition(|d| used(&d.name().name));
-        types.extend(now);
-        left_types = later;
-        let (now, later): (Vec<_>, Vec<_>) = left_fns.into_iter().partition(|f| used(&f.name.name));
-        fns.extend(now);
-        left_fns = later;
-        if types.len() + fns.len() == before {
-            break;
+        let (now, later): (Vec<_>, Vec<_>) = left.into_iter().partition(|n| text.contains(n));
+        left = later;
+        if now.is_empty() {
+            return text;
         }
+        kept.extend(now);
     }
-    // In the order they were.
-    let order = |name: &str| program.types.iter().position(|d| d.name().name == name);
-    types.sort_by_key(|d| order(&d.name().name));
-    let order = |name: &str| program.fns.iter().position(|f| f.name.name == name);
-    fns.sort_by_key(|f| order(&f.name.name));
-    Program {
-        types,
-        fns,
-        ..program
-    }
-}
-
-/// A program without generics, nested functions or local types prints as
-/// itself: parsing what `t mono` prints gives a program that prints the
-/// same, and does the same. (The names of the copies of generic things,
-/// like `id::<int>`, of lifted nested functions and local types, like
-/// `main::helper`, and of closures' types, which a function that returns
-/// one names, like `{closure#12}`, don't parse.)
-#[test]
-fn printing_round_trips() {
-    let failures: Vec<String> = on_all_cores(&programs(), round_trip)
-        .into_iter()
-        .flatten()
-        .collect();
-    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
-}
-
-/// Whether the program at `path` prints as itself, if it should: what went
-/// wrong, if anything.
-fn round_trip(path: &Path) -> Option<String> {
-    let name = name(path);
-    let files = expect::files_of(path);
-    let program = expect::run_checked(&files).ok()?;
-    let printed = program.to_string();
-    let lifted = program.fns.iter().map(|f| &f.name.name);
-    let lifted = lifted.chain(program.types.iter().map(|d| &d.name().name));
-    if printed.contains("::<")
-        || printed.contains("{closure#")
-        || lifted.into_iter().any(|name| name.contains("::"))
-    {
-        return None;
-    }
-    let reprinted = match t_lang::check_source(&printed).result {
-        Ok(p) => p.lower().to_string(),
-        Err(e) => return Some(format!("{name}: {}", e.render(&name, &printed))),
-    };
-    if reprinted != printed {
-        return Some(format!("{name}: printed\n{printed}\nthen\n{reprinted}"));
-    }
-    let (before, after) = (expect::run(&files), t_lang::run_source(&printed));
-    (!expect::same_behaviour(&before, &after))
-        .then(|| format!("{name}: does something else once printed:\n{printed}"))
 }
 
 /// Every node of a program has an id of its own (`ast::NodeId`), by which

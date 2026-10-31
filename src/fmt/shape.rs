@@ -140,7 +140,7 @@ structs! {
     ForLoop { label, pat, in_span, iter, body };
     Label { name, head };
     LetCond { let_span, pat, expr };
-    Lambda { id, moves, params, ret, body, captures, modes };
+    Lambda { id, moves, params, ret, body, captures };
     LambdaParam { mutable, name, ty };
     FieldInit { name, value };
     Arm { pat, body };
@@ -185,12 +185,11 @@ enums! {
         Assign(op, place, value), While(label, cond, body), WhileLet(label, cond, body),
         Loop(label, body), For(loop_),
         Range(start, end), Index(expr, index, span, mutable), Try(expr, span), Return(expr),
-        Break(label, expr), Continue(label), Move(expr),
+        Break(label, expr), Continue(label),
     };
     PatternKind {
         Wild, Bind(name, mutable), Int(n, kind), Range(start, end, inclusive, kind), Bool(b), Unit,
         Variant(ty, types, name, fields), Struct(ty, types, fields, rest), Array(elems), Or(alts),
-        Move(pat),
     };
 }
 

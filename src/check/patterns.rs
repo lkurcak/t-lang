@@ -141,7 +141,6 @@ impl Checker {
         }
         let ty = &ty;
         Ok(match &p.kind {
-            PatternKind::Move(_) => unreachable!("written by lift"),
             PatternKind::Wild => Pat::Wild,
             PatternKind::Bind(name, mutable) => {
                 if binds.iter().any(|l| l.name == *name) {

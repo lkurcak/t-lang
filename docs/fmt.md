@@ -340,9 +340,10 @@ showing. See the README for Neovim and Helix.
 ## Design decisions worth noticing
 
 - **No options, and the editor's are ignored.** See above.
-- **The formatter is the `t mono` printer.** One printer for both means
-  `t mono` output is formatted T, and the round-trip tests for one test the
-  other.
+- **The formatter is the `t mono` printer.** One printer for both meant
+  `t mono` output was formatted T, and the round-trip tests for one tested
+  the other. Since step 32, `t mono` prints declarations with it and
+  bodies as MIR (docs/32-mir.md).
 - **Print from the AST, keep only blank lines and comments from the
   source.** gofmt prints from the AST too, but keeps some of the author's
   line breaks; clang-format instead edits the whitespace between tokens.
