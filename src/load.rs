@@ -27,6 +27,9 @@ use crate::parser;
 use crate::source::{Kind, Sources};
 use std::path::{Path, PathBuf};
 
+mod git;
+pub use git::cache_dir;
+
 /// Reads a file, for `load`. Tools can give the text of files open in an
 /// editor rather than what's on disk.
 pub type Read<'r> = &'r dyn Fn(&Path) -> std::io::Result<String>;
@@ -114,6 +117,8 @@ pub fn load(path: &Path, src: &str, read: Read) -> (Sources, Result<Program, Err
         loaded: Vec::new(),
         loading: Vec::new(),
         entries: Vec::new(),
+        cache: git::cache_dir(),
+        checkouts: Vec::new(),
     };
     let result = loader.program(path, src);
     (sources, result.map(|()| prog))
@@ -341,6 +346,20 @@ struct Loader<'l> {
     /// Where each package's `t.toml` names each package it depends on,
     /// in the order of `Program::packages`.
     entries: Vec<Vec<Span>>,
+    /// Where packages from git are fetched to, if there's anywhere.
+    cache: Option<PathBuf>,
+    checkouts: Vec<Checkout>,
+}
+
+/// A package's checkout from git (see docs/27-git-dependencies.md).
+struct Checkout {
+    root: PathBuf,
+    url: String,
+    rev: String,
+    /// How its files are shown: `<name@rev>`.
+    label: String,
+    /// The `t.toml` that first named it.
+    by: PathBuf,
 }
 
 /// A package read, a dependency.
@@ -356,7 +375,15 @@ struct Loaded {
 struct Entry {
     name: String,
     at: Span,
-    path: String,
+    source: Source,
+}
+
+/// Where a dependency is.
+enum Source {
+    /// A directory, from the `t.toml`'s.
+    Path(String),
+    /// A commit of a repository.
+    Git { url: String, rev: String },
 }
 
 impl Loader<'_> {
@@ -457,8 +484,8 @@ impl Loader<'_> {
                     Error::syntax(
                         at(dep.span()),
                         format!(
-                            "a dependency is a table with a `path`, as in `{} = {{ path = \
-                             \"../{0}\" }}`",
+                            "a dependency is a table with a `path`, or a `git` and a `rev`, as \
+                             in `{} = {{ path = \"../{0}\" }}`",
                             name.get_ref()
                         ),
                     )
@@ -466,26 +493,87 @@ impl Loader<'_> {
                 let toml::de::DeValue::Table(fields) = dep.get_ref() else {
                     return Err(shape());
                 };
-                let mut path = None;
+                let (mut path, mut git, mut rev) = (None, None, None);
                 for (field, value) in fields {
-                    match (field.get_ref().as_ref(), value.get_ref()) {
-                        ("path", toml::de::DeValue::String(p)) => path = Some(p.to_string()),
-                        ("path", _) => return Err(shape()),
-                        (other, _) => {
+                    let slot = match field.get_ref().as_ref() {
+                        "path" => &mut path,
+                        "git" => &mut git,
+                        "rev" => &mut rev,
+                        other => {
+                            let why = match other {
+                                "branch" | "tag" => {
+                                    ": a branch or tag can move, so a `git` dependency is \
+                                     pinned by its `rev`, for now"
+                                }
+                                _ => "",
+                            };
                             return Err(Error::syntax(
                                 at(field.span()),
-                                format!("a dependency has only a `path`, not a `{other}`"),
+                                format!(
+                                    "a dependency has only a `path`, or a `git` and a `rev`, \
+                                     not a `{other}`{why}"
+                                ),
                             ));
                         }
-                    }
+                    };
+                    let toml::de::DeValue::String(v) = value.get_ref() else {
+                        return Err(shape());
+                    };
+                    *slot = Some((v.to_string(), at(value.span())));
                 }
-                let Some(path) = path else {
-                    return Err(shape());
+                let source = match (path, git, rev) {
+                    (Some(_), Some(_), _) => {
+                        return Err(Error::syntax(
+                            at(dep.span()),
+                            "a dependency is a `path` or a `git` repository, not both",
+                        ));
+                    }
+                    (Some((path, _)), None, None) => Source::Path(path),
+                    (_, None, Some((_, at))) => {
+                        return Err(Error::syntax(
+                            at,
+                            "a `rev` is a commit of a `git` dependency, and this has no `git`",
+                        ));
+                    }
+                    (None, Some(_), None) => {
+                        return Err(Error::syntax(
+                            at(dep.span()),
+                            format!(
+                                "a `git` dependency needs the `rev` it is pinned to: a \
+                                 commit's full hash, as in `{} = {{ git = \"..\", rev = \
+                                 \"..\" }}`",
+                                name.get_ref()
+                            ),
+                        ));
+                    }
+                    (None, Some((url, url_at)), Some((rev, rev_at))) => {
+                        if !git::fetchable(&url) {
+                            return Err(Error::syntax(
+                                url_at,
+                                format!(
+                                    "`{url}` isn't a URL T fetches from: it takes {}",
+                                    git::URLS
+                                ),
+                            ));
+                        }
+                        if !git::is_rev(&rev) {
+                            return Err(Error::syntax(
+                                rev_at,
+                                format!(
+                                    "a `rev` is a commit's full hash, 40 lowercase hex digits \
+                                     (or 64), not `{rev}`"
+                                ),
+                            ));
+                        }
+                        let url = url.trim_end_matches('/').to_string();
+                        Source::Git { url, rev }
+                    }
+                    (None, None, None) => return Err(shape()),
                 };
                 entries.push(Entry {
                     name: name.get_ref().to_string(),
                     at: at(name.span()),
-                    path,
+                    source,
                 });
             }
         }
@@ -517,7 +605,10 @@ impl Loader<'_> {
                 ),
             ));
         }
-        let target = normal(&dir.join(&entry.path));
+        let target = match &entry.source {
+            Source::Path(path) => self.path(dir, entry, path)?,
+            Source::Git { url, rev } => self.fetch(dir, entry, url, rev)?,
+        };
         let id = canonical(&target);
         if let Some(i) = self.loading.iter().position(|(d, _)| canonical(d) == id) {
             let names: Vec<String> = (self.loading[i..].iter())
@@ -689,9 +780,82 @@ impl Loader<'_> {
         Ok(())
     }
 
-    /// `path` for messages: from the program's directory, if it's in it.
+    /// The directory of the package at `path` from `dir`, as `entry` says.
+    /// From a checkout, only one in the checkout: anything else is where
+    /// the cache happens to be, which no package's author chose.
+    fn path(&self, dir: &Path, entry: &Entry, path: &str) -> Result<PathBuf, Error> {
+        let target = normal(&dir.join(path));
+        let dir = normal(dir);
+        let Some(c) = self.checkouts.iter().find(|c| dir.starts_with(&c.root)) else {
+            return Ok(target);
+        };
+        // Not by a `..`, and not by a link: git writes none in a checkout,
+        // but the cache is anyone's to change.
+        let inside = target.starts_with(&c.root)
+            && (!target.exists() || canonical(&target).starts_with(canonical(&c.root)));
+        if !inside {
+            return Err(Error::syntax(
+                entry.at,
+                format!(
+                    "`{path}` is outside the repository of `{}`: a package from git depends by \
+                     `path` only on packages in its own repository",
+                    c.label
+                ),
+            ));
+        }
+        Ok(target)
+    }
+
+    /// The checkout of `url` at `rev`, which `entry` in `dir`'s `t.toml`
+    /// names: fetched, unless it was before.
+    fn fetch(&mut self, dir: &Path, entry: &Entry, url: &str, rev: &str) -> Result<PathBuf, Error> {
+        let short = &rev[..7];
+        if let Some(c) = self.checkouts.iter().find(|c| c.url == url && c.rev != rev) {
+            return Err(Error::syntax(
+                entry.at,
+                format!(
+                    "two versions of `{url}`: `{}` in `{}`, and `{short}` here; a program has one \
+                     version of each package, for now",
+                    &c.rev[..7],
+                    self.shown(&c.by)
+                ),
+            ));
+        }
+        let Some(cache) = &self.cache else {
+            return Err(Error::syntax(
+                entry.at,
+                "there's no directory to fetch packages from git into: set `T_LANG_CACHE` to one",
+            ));
+        };
+        let root = git::fetch(cache, url, rev).map_err(|why| {
+            Error::syntax(entry.at, format!("can't fetch `{url}` at `{short}`: {why}"))
+        })?;
+        let root = normal(&root);
+        if !self.checkouts.iter().any(|c| c.root == root) {
+            let label = format!("<{}@{short}>", entry.name);
+            self.sources.label(root.clone(), label.clone());
+            self.checkouts.push(Checkout {
+                root: root.clone(),
+                url: url.to_string(),
+                rev: rev.to_string(),
+                label,
+                by: dir.join("t.toml"),
+            });
+        }
+        Ok(root)
+    }
+
+    /// `path` for messages: from the program's directory, if it's in it,
+    /// or from a checkout's label.
     fn shown(&self, path: &Path) -> String {
         let path = normal(path);
+        if let Some(c) = self.checkouts.iter().find(|c| path.starts_with(&c.root)) {
+            let rest = path.strip_prefix(&c.root).expect("in it");
+            return match rest.as_os_str().is_empty() {
+                true => c.label.clone(),
+                false => format!("{}/{}", c.label, rest.to_string_lossy().replace('\\', "/")),
+            };
+        }
         let top = normal(&self.top);
         let shown = path.strip_prefix(&top).unwrap_or(&path);
         match shown.as_os_str().is_empty() {

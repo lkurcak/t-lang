@@ -1,0 +1,2 @@
+[dependencies]
+g = { git = 1, rev = "0123456789abcdef0123456789abcdef01234567" }

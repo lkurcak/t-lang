@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased
+
+Step 27: git dependencies. See
+[docs/27-git-dependencies.md](docs/27-git-dependencies.md).
+
+### Added
+
+- Git dependencies: `hashmap = { git = "https://..", rev = "<full hash>" }`
+  in a `t.toml`. The `rev` is a commit's full hash (40 or 64 lowercase hex
+  digits), so the manifest pins the package's files and there's no
+  lockfile; `branch` and `tag` are errors for now. The repository's root
+  is the package, its first file `lib.t`.
+- A commit is checked out once, by the `git` command (so the user's
+  credentials and keys work), into `$T_LANG_CACHE`, or else the system's
+  cache directory, in `t-lang` (`~/.cache/t-lang`,
+  `~/Library/Caches/t-lang`, `%LOCALAPPDATA%\t-lang\cache`), and never
+  fetched again. `t check`, `t run` and the editor all fetch what's
+  missing.
+- Fetching runs nothing: only `https://`, `http://`, `ssh://`, `git://`,
+  `file://` and `user@host:path` URLs (not `ext::`, nor anything starting
+  with `-`), no hooks, no links in a checkout, no `.git` kept.
+- A checkout's files are shown as `<name@rev>/lib.t` in messages; going to
+  one of its items in an editor opens the checkout.
+- One commit is one package, however many depend on it. Two revs of one
+  repository are an error, for now, and a package from git depends by
+  `path` only on packages in its own repository.
+
+### Changed
+
+- A dependency's unknown key is now reported as "a dependency has only a
+  `path`, or a `git` and a `rev`, not a `..`".
+
 ## 0.39.0 (2026-10-30)
 
 Step 26: packages. See [docs/26-packages.md](docs/26-packages.md).

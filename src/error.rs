@@ -393,7 +393,7 @@ impl Edit {
 /// The path and text of the file `span` is in, and where in it `span` is.
 fn in_file(sources: &Sources, span: Span) -> (String, &str, Span) {
     let (file, local) = sources.local(span);
-    (file.path.display().to_string(), sources.src(file), local)
+    (sources.shown(file), sources.src(file), local)
 }
 
 /// A diagnostic rustc-style: the offending line underlined, then a `help`
