@@ -77,6 +77,15 @@ pub const BUILTIN_TRAITS: &[&str] = &[
 /// (see docs/11-integers.md).
 pub const SEALED_TRAITS: &[&str] = &[INT, SIGNED, UNSIGNED];
 
+/// The *closed* traits: proving that a type implements one only ever
+/// needs more of them, of its parts, never another trait. `Discard` and
+/// `Copy` impls need only the same of their type parameters (a written
+/// `Discard` is checked to, `Copy` is derived), the `Fn` traits are the
+/// checker's, and the integer traits need nothing. So an impl's bound on
+/// what isn't a part of its type may be of one of these, and no other (see
+/// `Checker::closed_bounds` and docs/29-closed-and-sealed-traits.md).
+pub const CLOSED_TRAITS: &[&str] = &[DISCARD, COPY, FN, FN_MUT, FN_ONCE, INT, SIGNED, UNSIGNED];
+
 /// The traits of what can be called: `F: Fn(i64) -> i64` says a value of
 /// type `F` can be called with an `i64`, giving an `i64`. Functions and
 /// closures implement them, and nothing else can (see

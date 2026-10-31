@@ -166,7 +166,7 @@ impl Checker {
                     from: owner,
                     to: name,
                     args: args.to_vec(),
-                    inside: Vec::new(),
+                    via: None,
                     span: *span,
                 })
             });

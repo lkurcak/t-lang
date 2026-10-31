@@ -2,7 +2,7 @@
 export struct L {}
 
 impl base::Name for L {
-    fn name(&self) -> i64 { 1 }
+    fn name(&self) -> i64 with panic { 1 }
 }
 
 /// Each package's impls meet the other's only in the program, through

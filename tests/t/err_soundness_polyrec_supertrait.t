@@ -36,4 +36,4 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     out.line(&(W { x: 1i64 }.b(3)))?;
     Result::Ok(())
 }
-// error: polymorphic recursion: this use of `B::b` with `Self` = `W<&W<T>>` leads back
+// error: polymorphic recursion: this use of `impl B for W<T>` with `T` = `&W<T>` leads back

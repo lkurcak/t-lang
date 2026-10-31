@@ -11,11 +11,13 @@
 //! - `impls.rs`: impls against their traits, the orphan rule, coherence
 //! - `termination.rs`: resolution and normalising always end
 //! - `prove.rs`: obligations and well-formedness
-//! - `methods.rs`: method lookup, and `dispatch`
+//! - `methods.rs`: method lookup
+//! - `dicts.rs`: which impls a use picks, for polymorphic recursion
 
 mod bounds;
 mod collect;
 mod derive;
+mod dicts;
 mod impls;
 mod methods;
 mod prove;
@@ -23,14 +25,11 @@ mod termination;
 
 pub(super) use bounds::has_proj;
 pub(super) use collect::Outer;
+pub(super) use dicts::{UNKNOWN, UNKNOWN_PARAMS, dict_names};
 pub(super) use methods::{Found, trait_method_symbol};
 pub(super) use prove::{Obligation, Why};
 
 use crate::types::{AdtKind, Type};
-
-/// A stand-in for a projection, for `dispatch`: its name, the projection,
-/// and which parameters of the function it's in the projection mentions.
-type Hidden = (String, Type, Vec<usize>);
 
 /// Each field of struct or enum `d`, of kind `kind`, as "field `x`" or
 /// "variant `V`", with its type.
@@ -69,33 +68,4 @@ fn each_proj<'t>(t: &'t Type, f: &mut impl FnMut(&'t Type, &'t str)) {
         f(s, tr);
     }
     t.parts().for_each(|p| each_proj(p, f));
-}
-
-/// `t` with each projection in it a stand-in type parameter, `?p0`, `?p1`
-/// and so on, added to `hidden` with the projection and the indices of the
-/// parameters of `params` it mentions (see `dispatch`).
-fn hide_projections(t: &Type, params: &[String], hidden: &mut Vec<Hidden>) -> Type {
-    match t {
-        Type::Proj(..) => {
-            let name = format!("?p{}", hidden.len());
-            let mentions = (0..params.len())
-                .filter(|&i| mentions(t, &params[i]))
-                .collect();
-            hidden.push((name.clone(), t.clone(), mentions));
-            Type::Param(name)
-        }
-        t => t.map(|p| hide_projections(p, params, hidden)),
-    }
-}
-
-/// `t` with the stand-ins of `hide_projections` back as the projections
-/// they stand for.
-fn shown_projections(t: &Type, hidden: &[Hidden]) -> Type {
-    match t {
-        Type::Param(p) => match hidden.iter().find(|x| x.0 == *p) {
-            Some((_, proj, _)) => proj.clone(),
-            None => t.clone(),
-        },
-        t => t.map(|p| shown_projections(p, hidden)),
-    }
 }

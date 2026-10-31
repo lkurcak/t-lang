@@ -15,63 +15,46 @@ impl Checker {
     /// a type that can be bigger than the one the impl is for: with
     /// `impl<I: Iterator> A for W<I> where I::Item: B` and `impl<T: A> B
     /// for V<T>`, an `X` whose `Item` is `V<W<X>>` has `W<X>: A` need
-    /// `V<W<X>>: B`, which needs `W<X>: A` again. So such a bound, in an
-    /// impl of `A`, can only be of a trait that can't lead back to `A`, by
-    /// any impl's bounds.
+    /// `V<W<X>>: B`, which needs `W<X>: A` again. So such a bound can only
+    /// be of a *closed* trait (`CLOSED_TRAITS`), whose proofs only ever
+    /// need more of the closed traits, on parts of the types they're about
+    /// (lemma C1 of docs/29-closed-and-sealed-traits.md).
     ///
-    /// Then the search ends. Take the traits' graph, with an edge from
-    /// each trait to those its impls' bounds are of, and its strongly
-    /// connected components: each step of a proof stays in one, and is a
-    /// bound on a part of the impl's type, or a blanket impl's (which
-    /// `termination` sees to), or goes to a component lower down, which
-    /// can only happen as often as there are components.
+    /// Then the search ends (lemma L1): a step by an impl for more than a
+    /// bare parameter needs bounds on its parts, which are smaller; one by
+    /// a blanket impl is about the same type, lower down the blanket impls
+    /// (`termination`); and one on what isn't a part is of a closed trait,
+    /// a search of its own that ends and never comes back.
     ///
-    /// The packages before the one being checked kept this on their own,
-    /// so a way back that's new goes through one of its impls, which is
-    /// what's at fault.
-    pub(super) fn bound_termination(&self) -> Result<(), Error> {
-        let mut edges: Vec<(&str, &str, &ImplDef)> = Vec::new();
-        for d in &self.traits.impls {
-            let Some(tr) = &d.trait_name else { continue };
-            for pred in &d.preds {
-                edges.push((tr, &pred.trait_name, d));
-            }
-        }
-        for d in self.newest_first() {
-            let Some(tr) = &d.trait_name else { continue };
+    /// It's a rule about each impl alone, so each package keeps it alone,
+    /// and two that don't know each other can't break it together, as they
+    /// could a rule about a graph of every package's traits.
+    pub(super) fn closed_bounds(&self) -> Result<(), Error> {
+        for d in &self.traits.impls[self.impls_from..] {
             let part = |t: &Type| matches!(t, Type::Param(p) if mentions(&d.self_ty, p));
-            for pred in d.preds.iter().filter(|p| !part(&p.ty)) {
-                let mut seen = HashSet::new();
-                let to = pred.trait_name.as_str();
-                let Some(back) = reach(&edges, to, tr, &mut seen) else {
-                    continue;
-                };
-                if !self.current(d.span)
-                    && let Some(own) = back.iter().find(|b| self.current(b.span))
-                {
-                    return Err(Error::ty(
-                        own.span,
-                        format!(
-                            "proving that a type implements `{tr}` could go on forever: `impl \
-                             {}` needs `{}: {to}`, which isn't a part of `{}`, so it can be a \
-                             bigger type, and this impl lets proving that lead back to `{tr}`",
-                            d.header(),
-                            pred.ty,
-                            d.self_ty
-                        ),
-                    ));
-                }
-                let how = match back.first() {
-                    None => String::new(),
-                    Some(b) => format!(", by the bounds of `impl {}`", b.header()),
-                };
+            let open = |p: &&crate::traits::Pred| {
+                !part(&p.ty) && !crate::traits::CLOSED_TRAITS.contains(&p.trait_name.as_str())
+            };
+            if let Some(pred) = d.preds.iter().find(open) {
+                let tr = pred.trait_name.rsplit("::").next().unwrap_or_default();
+                let closed: Vec<String> = (crate::traits::CLOSED_TRAITS.iter())
+                    .map(|t| format!("`{}`", t.rsplit("::").next().unwrap_or(t)))
+                    .collect();
+                let (last, rest) = closed.split_last().expect("some");
                 return Err(Error::ty(
                     d.span,
                     format!(
-                        "proving that a type implements `{tr}` could go on forever: this impl \
-                         needs `{}: {to}`, which isn't a part of `{}`, so it can be a bigger \
-                         type, and proving it could lead back to `{tr}`{how}",
-                        pred.ty, d.self_ty
+                        "this impl's bound `{}: {}` isn't on a type parameter of `{}`, so it's \
+                         about a type that can be bigger, and proving it could go on forever: \
+                         such a bound can only be of a closed trait, {} or {last}, whose proofs \
+                         never get to another trait; to need `{}`, make the type a parameter of \
+                         `{}` (see docs/29-closed-and-sealed-traits.md)",
+                        pred.ty,
+                        tr,
+                        d.self_ty,
+                        rest.join(", "),
+                        tr,
+                        d.self_ty
                     ),
                 ));
             }
@@ -257,14 +240,6 @@ impl Checker {
 }
 
 impl Checker {
-    /// Every impl, the package being checked's first.
-    fn newest_first(&self) -> impl Iterator<Item = &ImplDef> {
-        let impls = &self.traits.impls;
-        impls[self.impls_from..]
-            .iter()
-            .chain(&impls[..self.impls_from])
-    }
-
     /// `edges`, those of impls of the package being checked first.
     fn newest_edges<'e, 'a>(
         &self,

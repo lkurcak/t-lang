@@ -116,7 +116,6 @@ pub fn load(path: &Path, src: &str, read: Read) -> (Sources, Result<Program, Err
         top: path.parent().unwrap_or(Path::new("")).to_path_buf(),
         loaded: Vec::new(),
         loading: Vec::new(),
-        entries: Vec::new(),
         cache: git::cache_dir(),
         checkouts: Vec::new(),
     };
@@ -343,9 +342,6 @@ struct Loader<'l> {
     /// The directories of the packages being read, each depending on the
     /// next, and their names: none for the program's own.
     loading: Vec<(PathBuf, Option<String>)>,
-    /// Where each package's `t.toml` names each package it depends on,
-    /// in the order of `Program::packages`.
-    entries: Vec<Vec<Span>>,
     /// Where packages from git are fetched to, if there's anywhere.
     cache: Option<PathBuf>,
     checkouts: Vec<Checkout>,
@@ -392,7 +388,6 @@ impl Loader<'_> {
         let dir = path.parent().unwrap_or(Path::new("")).to_path_buf();
         let library = path.file_name().is_some_and(|n| n == "lib.t");
         let mut deps = Vec::new();
-        let mut at = Vec::new();
         if is_root_file(path) {
             let other = dir.join(if library { "main.t" } else { "lib.t" });
             if (self.read)(&other).is_ok() {
@@ -412,7 +407,6 @@ impl Loader<'_> {
             self.loading.push((normal(&dir), None));
             for entry in self.manifest(&dir)? {
                 deps.push((entry.name.clone(), self.dependency(&dir, &entry)?));
-                at.push(entry.at);
             }
             self.loading.pop();
         }
@@ -434,8 +428,7 @@ impl Loader<'_> {
             deps,
             library,
         });
-        self.entries.push(at);
-        self.chain()
+        Ok(())
     }
 
     /// Adds the program's first file to the sources, as the crate root's.
@@ -668,10 +661,8 @@ impl Loader<'_> {
         };
         self.loading.push((target.clone(), Some(name.clone())));
         let mut deps = Vec::new();
-        let mut at = Vec::new();
         for inner in self.manifest(&target)? {
             deps.push((inner.name.clone(), self.dependency(&target, &inner)?));
-            at.push(inner.at);
         }
         self.loading.pop();
         if let Some(l) = self.loaded.iter().find(|l| l.name == *name) {
@@ -717,7 +708,6 @@ impl Loader<'_> {
             deps,
             library: true,
         });
-        self.entries.push(at);
         self.loaded.push(Loaded {
             dir: target,
             name: name.clone(),
@@ -725,59 +715,6 @@ impl Loader<'_> {
             by: manifest,
         });
         Ok(root)
-    }
-
-    /// Checks that the packages make a chain, each depending on the one
-    /// before, as `Program::packages` has them in an order in which each
-    /// is after those it depends on: then each package is checked against
-    /// exactly those it depends on, as the order is the only one. Two that
-    /// don't know each other could each keep a rule that spans packages,
-    /// such as that proving what implements what ends, and break it
-    /// together; for now that's ruled out (see docs/26-packages.md).
-    fn chain(&self) -> Result<(), Error> {
-        let packages = &self.prog.packages;
-        let index = |root: usize| packages.iter().position(|p| p.root == root);
-        // What each depends on, directly or not, by index.
-        let mut below: Vec<Vec<bool>> = Vec::new();
-        for p in packages {
-            let mut row = vec![false; packages.len()];
-            for &(_, d) in &p.deps {
-                let d = index(d).expect("a dependency is read before its dependents");
-                row[d] = true;
-                for (k, &b) in below[d].iter().enumerate() {
-                    row[k] |= b;
-                }
-            }
-            below.push(row);
-        }
-        for i in 1..packages.len() {
-            if below[i][i - 1] {
-                continue;
-            }
-            // Where the two meet: the first package that depends on both,
-            // which the program's own does.
-            let (j, p) = (packages.iter().enumerate())
-                .find(|&(j, _)| below[j][i - 1] && below[j][i])
-                .expect("the program's own package depends on every other");
-            let k = (p.deps.iter())
-                .position(|&(_, d)| {
-                    let d = index(d).expect("read");
-                    d == i || below[d][i]
-                })
-                .expect("one of its dependencies brings it in");
-            let name = |m: usize| self.prog.mods[packages[m].root].name.name.clone();
-            return Err(Error::syntax(
-                self.entries[j][k],
-                format!(
-                    "`{}` and `{}` don't depend on one another, which packages of one program \
-                     must, for now: two that don't know each other could each keep the rules \
-                     that span packages and break them together (see docs/26-packages.md)",
-                    name(i - 1),
-                    name(i)
-                ),
-            ));
-        }
-        Ok(())
     }
 
     /// The directory of the package at `path` from `dir`, as `entry` says.

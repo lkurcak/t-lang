@@ -1,8 +1,7 @@
 //! Checking impls against their traits: signatures, associated types,
 //! the orphan rule, and that no two impls overlap (*coherence*).
 
-use super::methods::split;
-use super::{Hidden, each_proj, fields, hide_projections, shown_projections};
+use super::fields;
 use crate::ast::*;
 use crate::check::generics;
 use crate::check::{BOX, Checker, plural};
@@ -166,7 +165,7 @@ impl Checker {
         self.adts.proj.local.clear();
         self.coherence()?;
         self.termination()?;
-        self.bound_termination()?;
+        self.closed_bounds()?;
         self.assoc_termination()?;
         self.assoc_sizes()?;
         self.assoc_regular()
@@ -196,48 +195,13 @@ impl Checker {
                     .map(move |(n, _)| (k, n.clone(), format!("<{} as {tr}>::{n}", d.self_ty)))
             })
             .collect();
+        if nodes.is_empty() {
+            return Ok(());
+        }
+        let dicts = super::dict_names(&self.traits.impls);
+        let derived_eq = vec![None; self.traits.impls.len()];
+        let ix = self.index(&dicts, &derived_eq);
         let mut uses: Vec<generics::Use> = Vec::new();
-        // To each impl a projection on `s` in `from` may be worked out by.
-        let through = |from_params: &[String], s: &Type, tr: &str, name: &str, span: Span| {
-            let mut out = Vec::new();
-            let mut hidden: Vec<Hidden> = Vec::new();
-            let s = &hide_projections(s, from_params, &mut hidden);
-            for (k, n, node) in &nodes {
-                let d = &self.traits.impls[*k];
-                if n != name || d.trait_name.as_deref() != Some(tr) {
-                    continue;
-                }
-                let renamed: Vec<Type> = d
-                    .params
-                    .iter()
-                    .map(|p| Type::Param(format!("{p}'")))
-                    .collect();
-                let header = Subst::new(&d.params, &renamed).apply(&d.self_ty);
-                let mut vars: Vec<String> = d.params.iter().map(|p| format!("{p}'")).collect();
-                vars.extend(from_params.iter().cloned());
-                vars.extend(hidden.iter().map(|h| h.0.clone()));
-                if !overlap(&header, s, &vars) {
-                    continue;
-                }
-                let mut found: Vec<Option<Type>> = vec![None; d.params.len()];
-                let mut inside = Vec::new();
-                split(
-                    &d.self_ty,
-                    s,
-                    &d.params,
-                    (from_params, &hidden),
-                    &mut found,
-                    &mut inside,
-                );
-                let args = found
-                    .into_iter()
-                    .map(|t| shown_projections(&t.unwrap_or(Type::Unit), &hidden))
-                    .collect();
-                out.push((node.as_str(), args, inside, span));
-            }
-            out
-        };
-        let mut edges: Vec<Edge> = Vec::new();
         let mut names: Vec<&String> = self.adts.keys().collect();
         names.sort();
         for a in &names {
@@ -246,57 +210,32 @@ impl Checker {
             let at = self.defs.types.get(*a).copied().unwrap_or(Span::new(0, 0));
             for (_, f) in fields(&def.kind) {
                 crate::check::each_adt(&f, &mut |to, args| {
-                    edges.push((
-                        (*a).clone(),
-                        self.adt_key(to),
-                        args.to_vec(),
-                        Vec::new(),
-                        at,
-                    ));
+                    uses.push(generics::Use {
+                        from: a,
+                        to: self.adt_key(to),
+                        args: args.to_vec(),
+                        via: None,
+                        span: at,
+                    });
                 });
-                each_proj(&f, &mut |s, tr| {
-                    if let Some(name) = proj_name(&f, s, tr) {
-                        for (to, args, inside, span) in through(&def.params, s, tr, &name, at) {
-                            edges.push(((*a).clone(), to, args, inside, span));
-                        }
-                    }
-                });
+                self.type_proof_uses(&ix, &nodes, a, &f, at, &mut uses);
             }
         }
         for (k, n, node) in &nodes {
             let d = &self.traits.impls[*k];
             let (_, t) = d.assoc.iter().find(|(m, _)| m == n).expect("it");
             crate::check::each_adt(t, &mut |to, args| {
-                edges.push((
-                    node.clone(),
-                    self.adt_key(to),
-                    args.to_vec(),
-                    Vec::new(),
-                    d.span,
-                ));
+                uses.push(generics::Use {
+                    from: node,
+                    to: self.adt_key(to),
+                    args: args.to_vec(),
+                    via: None,
+                    span: d.span,
+                });
             });
-            each_proj(t, &mut |s, tr| {
-                if let Some(name) = proj_name(t, s, tr) {
-                    for (to, args, inside, span) in through(&d.params, s, tr, &name, d.span) {
-                        edges.push((node.clone(), to, args, inside, span));
-                    }
-                }
-            });
+            self.type_proof_uses(&ix, &nodes, node, t, d.span, &mut uses);
         }
-        if nodes.is_empty() {
-            return Ok(());
-        }
-        uses.extend(
-            edges
-                .iter()
-                .map(|(from, to, args, inside, span)| generics::Use {
-                    from,
-                    to,
-                    args: args.clone(),
-                    inside: inside.clone(),
-                    span: *span,
-                }),
-        );
+        uses.extend(self.dict_uses(&ix, &nodes, true));
         uses.sort_by_key(|u| u.span.start);
         let mut params: HashMap<&str, &[String]> = self
             .adts
@@ -304,7 +243,10 @@ impl Checker {
             .map(|(name, def)| (name.as_str(), def.params.as_slice()))
             .collect();
         for (k, _, node) in &nodes {
-            params.insert(node, &self.traits.impls[*k].params);
+            params.insert(node, self.traits.impls[*k].params.as_slice());
+        }
+        for (d, name) in self.traits.impls.iter().zip(&dicts) {
+            params.insert(name, d.params.as_slice());
         }
         generics::polymorphic_recursion(&uses, &params, &|s| self.current(s))
     }
@@ -696,10 +638,6 @@ impl Checker {
     }
 }
 
-/// A use in `assoc_regular`: from what, to what, with what arguments, what
-/// of `to`'s parameters is inside `from`'s, and where.
-type Edge<'a> = (String, &'a str, Vec<Type>, Vec<(usize, usize, usize)>, Span);
-
 /// The type arguments of struct or enum type `t`.
 fn args_of(t: &Type) -> Vec<Type> {
     match t {
@@ -758,7 +696,7 @@ fn rigid_on_type(t: &Type) -> Option<Type> {
 
 /// The name of the associated type of the projection in `t` on `s` of
 /// trait `tr`.
-fn proj_name(t: &Type, s: &Type, tr: &str) -> Option<String> {
+pub(super) fn proj_name(t: &Type, s: &Type, tr: &str) -> Option<String> {
     match t {
         Type::Proj(x, y, name) if **x == *s && y == tr => Some(name.clone()),
         t => t.parts().find_map(|p| proj_name(p, s, tr)),
