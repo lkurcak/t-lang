@@ -1231,7 +1231,6 @@ fn each_bind(pat: &Pattern, f: &mut impl FnMut(&Pattern)) {
             pats.iter().for_each(|p| each_bind(p, f))
         }
         PatternKind::Struct(_, _, fields, _) => fields.iter().for_each(|fp| each_bind(&fp.pat, f)),
-        PatternKind::Move(p) => each_bind(p, f),
         PatternKind::Wild
         | PatternKind::Int(..)
         | PatternKind::Range(..)
@@ -1845,7 +1844,6 @@ impl Walk<'_> {
                 Some(p.then(Proj::Field(i)))
             }
             ExprKind::Unary(UnOp::Deref, x) => Some(self.deref(self.place_of(x)?)),
-            ExprKind::Move(x) => self.place_of(x),
             _ => None,
         }
     }
@@ -3006,7 +3004,7 @@ impl Walk<'_> {
     /// can read the struct, which the borrow is of a part of.
     fn no_mut_borrow(&self, x: &Expr, span: Span, scoped: bool) -> Result<(), Error> {
         if let (ExprKind::Var(name, _), Some(Res::Local(id))) =
-            (&x.unmoved().kind, self.cx.typed.vars.get(&x.id))
+            (&x.kind, self.cx.typed.vars.get(&x.id))
             && self.invariants.contains_key(id)
         {
             return Err(Error::ty(
@@ -3038,7 +3036,7 @@ impl Walk<'_> {
     /// part of the value, and no refinement can name what's behind a
     /// `&mut`, nor anything write through a `&`.
     fn constrained_field(&self, x: &Expr) -> Option<String> {
-        let outer = x.unmoved();
+        let outer = x;
         let mut x = outer;
         loop {
             match &x.kind {
@@ -3065,12 +3063,12 @@ impl Walk<'_> {
                     if through_ref {
                         return None;
                     }
-                    x = base.unmoved();
+                    x = base;
                 }
                 ExprKind::Unary(UnOp::Deref, inner)
                     if matches!(self.ty_of(inner), Type::Box(_)) =>
                 {
-                    x = inner.unmoved();
+                    x = inner;
                 }
                 _ => return None,
             }
@@ -3671,7 +3669,6 @@ impl Walk<'_> {
                     }
                 }
             }
-            ExprKind::Move(x) => self.expr(x),
             ExprKind::For(_)
             | ExprKind::IfLet(..)
             | ExprKind::WhileLet(..)
@@ -3767,7 +3764,6 @@ impl Walk<'_> {
                     self.bind_pattern(p, None, None, of)?;
                 }
             }
-            PatternKind::Move(p) => self.bind_pattern(p, s.as_ref(), place, of)?,
             PatternKind::Wild
             | PatternKind::Int(..)
             | PatternKind::Range(..)
@@ -4049,7 +4045,6 @@ fn pattern_formula(pat: &Pattern, s: &Val) -> Option<Formula> {
                 .map(|p| pattern_formula(p, s))
                 .collect::<Option<Vec<_>>>()?,
         )),
-        (PatternKind::Move(p), _) => pattern_formula(p, s),
         _ => None,
     }
 }

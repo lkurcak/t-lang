@@ -1,35 +1,21 @@
 //! Lifting: moves every nested function and local type to the top level,
 //! named by its symbol (`main::helper`, `main::Point`, see `check/scope.rs`
-//! and `check/names.rs`), and renames every use of a function or type to
-//! the symbol the checker found it refers to. A nested function can't
-//! capture anything, and a local type can't use the type parameters of the
-//! function it's in, so that's all it takes: each means the same at the top
-//! level, under a name of its own. After this, nothing needs to know there
-//! were nested functions or local types, or that two of them can share a
-//! name: not monomorphisation, not the interpreter, and not a backend.
+//! and `check/names.rs`), and renames every use of a function or type in
+//! the declarations to the symbol the checker found it refers to. A nested
+//! function can't capture anything, and a local type can't use the type
+//! parameters of the function it's in, so that's all it takes: each means
+//! the same at the top level, under a name of its own. After this, nothing
+//! needs to know there were nested functions or local types, or that two of
+//! them can share a name: not monomorphisation, not the interpreter.
 //!
-//! It also writes out the references the checker made into others
-//! (*coercions*, see `Checker::coerce`): `r` used as a `&T` when it's a
-//! `&Box<T>` becomes `&**r`, so what comes after needn't know about them.
-//! And method calls and paths become plain calls of the methods, named by
-//! their symbols, with the receiver as the first argument, as the method
-//! takes it: `v.push(1)` becomes `<V>::push(&mut v, 1)`. The methods stay
-//! in their impls and traits, renamed the same way, for monomorphisation
-//! to pick from.
-//! A comparison that's an `Ord` call, of a type that isn't an integer
-//! type (`Info::ord_calls`), becomes one the same way: `a < b` becomes
-//! `<core::cmp::Ord>::lt(&a, &b)`.
-//!
-//! And it writes out what the borrow checker moved, rather than copied
-//! (`Info::moves`): `ExprKind::Move` and `PatternKind::Move`. That's
-//! decided by the types the checker knew, so a generic body moves what it
-//! moved when it was checked, whatever its type parameters turn out to be.
+//! What's lifted is declarations: what each function does is its MIR,
+//! which the borrow checker built from its body, checked, and kept
+//! (`Info::mir`), so a lifted function's body is empty. Monomorphisation
+//! copies the MIR.
 
 use crate::ast::*;
-use crate::check::{Info, MoveSite};
-use crate::traits::FnKind;
+use crate::check::Info;
 use std::cell::Cell;
-use std::sync::Arc;
 
 /// A checked program with no nested functions or local types, paired with
 /// its semantic information for monomorphisation.
@@ -133,13 +119,6 @@ struct Cx<'p> {
 }
 
 impl<'p> Cx<'p> {
-    /// An id for a node written here (see `NodeId`).
-    fn id(&self) -> NodeId {
-        let id = self.next_id.get();
-        self.next_id.set(id + 1);
-        NodeId(id)
-    }
-
     /// Adds `f`, named by its symbol, to `out`, then those nested in it.
     fn function(&self, f: &'p FnDecl, out: &mut Vec<FnDecl>) {
         let (decl, nested) = self.lifted(f);
@@ -162,7 +141,13 @@ impl<'p> Cx<'p> {
     /// `f`, named by its symbol, and the functions nested in it.
     fn lifted(&self, f: &'p FnDecl) -> (FnDecl, Vec<&'p FnDecl>) {
         let mut nested = Vec::new();
-        let body = self.expr(&f.body, &mut nested);
+        nested_fns(&f.body, &mut nested);
+        // What it does is its MIR, which the borrow checker kept.
+        let body = Expr {
+            kind: ExprKind::Block(Vec::new(), None),
+            span: f.body.span,
+            id: f.body.id,
+        };
         let decl = FnDecl {
             doc: f.doc.clone(),
             allows: f.allows.clone(),
@@ -327,359 +312,19 @@ impl<'p> Cx<'p> {
     fn types(&self, ts: &[TypeExpr]) -> Vec<TypeExpr> {
         ts.iter().map(|t| self.ty(t)).collect()
     }
+}
 
-    /// `e`, renamed, adding the functions nested in it to `nested`, in
-    /// order. Local types are taken out too: `lift` has them already.
-    fn expr(&self, e: &'p Expr, nested: &mut Vec<&'p FnDecl>) -> Expr {
-        let kind = match &e.kind {
-            ExprKind::For(_)
-            | ExprKind::IfLet(..)
-            | ExprKind::WhileLet(..)
-            | ExprKind::Range(..)
-            | ExprKind::Try(..)
-            | ExprKind::Index(..) => {
-                unreachable!("rewritten when paths are resolved")
-            }
-            ExprKind::Move(_) => unreachable!("written here"),
-            ExprKind::Int(..)
-            | ExprKind::Bool(_)
-            | ExprKind::Char(_)
-            | ExprKind::Str(_)
-            | ExprKind::ByteStr(_)
-            | ExprKind::Unit
-            | ExprKind::Continue(_) => e.kind.clone(),
-            ExprKind::Var(name, targs) => {
-                ExprKind::Var(self.renamed(name, e.id), self.types(targs))
-            }
-            ExprKind::Unary(op, x) => ExprKind::Unary(*op, Box::new(self.expr(x, nested))),
-            ExprKind::As(x, t) => {
-                ExprKind::As(Box::new(self.expr(x, nested)), Box::new(self.ty(t)))
-            }
-            // `l < r` of a type that isn't an integer type is
-            // `Ord::lt(&l, &r)`, named as the checker noted it.
-            ExprKind::Binary(op, l, r) if self.info.ord_calls.contains(&e.id) => {
-                let span = e.span;
-                let Some(crate::check::Instance::Fn(symbol, _)) = self.info.instances.get(&e.id)
-                else {
-                    unreachable!("`{op}` calls an `Ord` method")
-                };
-                let f = Expr {
-                    kind: ExprKind::Var(symbol.clone(), Vec::new()),
-                    span,
-                    id: e.id,
-                };
-                let by_ref = |x: Expr| Expr {
-                    span: x.span,
-                    kind: ExprKind::Unary(UnOp::Ref, Box::new(x)),
-                    id: self.id(),
-                };
-                let args = vec![by_ref(self.expr(l, nested)), by_ref(self.expr(r, nested))];
-                ExprKind::Call(Box::new(f), args)
-            }
-            ExprKind::Binary(op, l, r) => ExprKind::Binary(
-                *op,
-                Box::new(self.expr(l, nested)),
-                Box::new(self.expr(r, nested)),
-            ),
-            // A call of what isn't a function: of what it is through
-            // `derefs` references, by `&` or `&mut`, or by value. One of a
-            // borrow, `(&f)(1)`, is that already.
-            ExprKind::Call(f, args) => {
-                let mut callee = self.expr(f, nested);
-                let borrow = matches!(f.kind, ExprKind::Unary(UnOp::Ref | UnOp::RefMut, _));
-                if let Some(&(derefs, kind)) = self.info.calls.get(&e.id)
-                    && !borrow
-                {
-                    let span = callee.span;
-                    for _ in 0..derefs {
-                        let kind = ExprKind::Unary(UnOp::Deref, Box::new(callee));
-                        callee = Expr {
-                            kind,
-                            span,
-                            id: self.id(),
-                        };
-                    }
-                    let op = match kind {
-                        FnKind::Fn => Some(UnOp::Ref),
-                        FnKind::FnMut => Some(UnOp::RefMut),
-                        FnKind::FnOnce => None,
-                    };
-                    if let Some(op) = op {
-                        let kind = ExprKind::Unary(op, Box::new(callee));
-                        callee = Expr {
-                            kind,
-                            span,
-                            id: self.id(),
-                        };
-                    } else if self.info.moves.contains(&MoveSite::Receiver(e.id)) {
-                        let kind = ExprKind::Move(Box::new(callee));
-                        callee = Expr {
-                            kind,
-                            span,
-                            id: self.id(),
-                        };
-                    }
-                }
-                ExprKind::Call(
-                    Box::new(callee),
-                    args.iter().map(|a| self.expr(a, nested)).collect(),
-                )
-            }
-            ExprKind::MethodCall(x, name, _, args) => {
-                let m = &self.info.methods[&name.id];
-                let mut recv = self.expr(x, nested);
-                let span = recv.span;
-                for _ in 0..m.derefs {
-                    let kind = ExprKind::Unary(UnOp::Deref, Box::new(recv));
-                    recv = Expr {
-                        kind,
-                        span,
-                        id: self.id(),
-                    };
-                }
-                if let Some(mutable) = m.autoref {
-                    let op = if mutable { UnOp::RefMut } else { UnOp::Ref };
-                    let kind = ExprKind::Unary(op, Box::new(recv));
-                    recv = Expr {
-                        kind,
-                        span,
-                        id: self.id(),
-                    };
-                } else if self.info.moves.contains(&MoveSite::Receiver(e.id)) {
-                    let kind = ExprKind::Move(Box::new(recv));
-                    recv = Expr {
-                        kind,
-                        span,
-                        id: self.id(),
-                    };
-                }
-                // As the method's name: what the checker noted of it is
-                // what it noted of the name.
-                let f = Expr {
-                    kind: ExprKind::Var(m.symbol.clone(), Vec::new()),
-                    span: name.span,
-                    id: name.id,
-                };
-                let args = std::iter::once(recv)
-                    .chain(args.iter().map(|a| self.expr(a, nested)))
-                    .collect();
-                ExprKind::Call(Box::new(f), args)
-            }
-            ExprKind::Variant(_, _, name, args, parens)
-                if self.info.methods.contains_key(&name.id) =>
-            {
-                let f = ExprKind::Var(self.info.methods[&name.id].symbol.clone(), Vec::new());
-                let f = Expr {
-                    kind: f,
-                    span: name.span,
-                    id: name.id,
-                };
-                match parens {
-                    true => {
-                        let args = args.iter().map(|a| self.expr(a, nested)).collect();
-                        ExprKind::Call(Box::new(f), args)
-                    }
-                    // Named by the whole of it, as the checker noted.
-                    false => f.kind,
-                }
-            }
-            ExprKind::If(c, then, els) => ExprKind::If(
-                Box::new(self.expr(c, nested)),
-                Box::new(self.expr(then, nested)),
-                els.as_ref().map(|e| Box::new(self.expr(e, nested))),
-            ),
-            ExprKind::Block(stmts, tail) => ExprKind::Block(
-                stmts
-                    .iter()
-                    .filter_map(|s| {
-                        Some(match s {
-                            Stmt::Let {
-                                pat,
-                                ty,
-                                init,
-                                span,
-                                ..
-                            } => Stmt::Let {
-                                span: *span,
-                                els: None,
-                                pat: self.pattern(pat),
-                                ty: ty.as_ref().map(|t| Box::new(self.ty(t))),
-                                init: init.as_ref().map(|e| Box::new(self.expr(e, nested))),
-                            },
-                            Stmt::Expr(e) => Stmt::Expr(self.expr(e, nested)),
-                            Stmt::BlockLike(e) => Stmt::BlockLike(self.expr(e, nested)),
-                            Stmt::Fn(f) => {
-                                nested.push(f);
-                                return None;
-                            }
-                            Stmt::Type(_) => return None,
-                        })
-                    })
-                    .collect(),
-                tail.as_ref().map(|t| Box::new(self.expr(t, nested))),
-            ),
-            ExprKind::StructLit(name, targs, inits) => ExprKind::StructLit(
-                self.ident(name),
-                self.types(targs),
-                inits
-                    .iter()
-                    .map(|i| FieldInit {
-                        name: i.name.clone(),
-                        value: self.expr(&i.value, nested),
-                    })
-                    .collect(),
-            ),
-            ExprKind::Field(x, field) => {
-                ExprKind::Field(Box::new(self.expr(x, nested)), field.clone())
-            }
-            ExprKind::Variant(ty, targs, variant, args, parens) => ExprKind::Variant(
-                self.ident(ty),
-                self.types(targs),
-                variant.clone(),
-                args.iter().map(|a| self.expr(a, nested)).collect(),
-                *parens,
-            ),
-            ExprKind::Array(items) => {
-                ExprKind::Array(items.iter().map(|a| self.expr(a, nested)).collect())
-            }
-            ExprKind::Repeat(v, n) => ExprKind::Repeat(
-                Box::new(self.expr(v, nested)),
-                Box::new(self.expr(n, nested)),
-            ),
-            ExprKind::Match(scrutinee, arms) => ExprKind::Match(
-                Box::new(self.expr(scrutinee, nested)),
-                arms.iter()
-                    .map(|a| Arm {
-                        pat: self.pattern(&a.pat),
-                        body: self.expr(&a.body, nested),
-                    })
-                    .collect(),
-            ),
-            // Its free variables change with the names in it.
-            ExprKind::Lambda(l) => {
-                let params = l
-                    .params
-                    .iter()
-                    .map(|p| LambdaParam {
-                        mutable: p.mutable,
-                        name: p.name.clone(),
-                        ty: p.ty.as_ref().map(|t| self.ty(t)),
-                    })
-                    .collect();
-                let ret = l.ret.as_ref().map(|t| self.ty(t));
-                let body = self.expr(&l.body, nested);
-                let mut lambda = Lambda::new(l.id, params, ret, body);
-                lambda.moves = l.moves;
-                let captures = self.info.captures.get(&l.id).into_iter().flatten();
-                lambda.modes = (captures.enumerate())
-                    .map(|(i, (name, mode))| {
-                        let site = MoveSite::Capture(l.id, i);
-                        (name.clone(), *mode, self.info.moves.contains(&site))
-                    })
-                    .collect();
-                ExprKind::Lambda(Arc::new(lambda))
-            }
-            ExprKind::Assign(op, place, value) => ExprKind::Assign(
-                *op,
-                Box::new(self.expr(place, nested)),
-                Box::new(self.expr(value, nested)),
-            ),
-            ExprKind::While(label, c, body) => ExprKind::While(
-                label.clone(),
-                Box::new(self.expr(c, nested)),
-                Box::new(self.expr(body, nested)),
-            ),
-            ExprKind::Loop(label, body) => {
-                ExprKind::Loop(label.clone(), Box::new(self.expr(body, nested)))
-            }
-            ExprKind::Unsafe(block) => ExprKind::Unsafe(Box::new(self.expr(block, nested))),
-            ExprKind::Return(x) => {
-                ExprKind::Return(x.as_ref().map(|x| Box::new(self.expr(x, nested))))
-            }
-            ExprKind::Break(label, x) => ExprKind::Break(
-                label.clone(),
-                x.as_ref().map(|x| Box::new(self.expr(x, nested))),
-            ),
-        };
-        let moves = self.info.moves.contains(&MoveSite::Expr(e.id));
-        debug_assert!(!moves || e.is_place(), "only a place is moved out of");
-        let e = Expr {
-            kind,
-            span: e.span,
-            id: e.id,
-        };
-        if moves {
-            let span = e.span;
-            return Expr {
-                kind: ExprKind::Move(Box::new(e)),
-                span,
-                id: self.id(),
-            };
-        }
-        match self.info.coercions.get(&e.id) {
-            None => e,
-            Some(&(derefs, mutable)) => {
-                let span = e.span;
-                let mut inner = e;
-                for _ in 0..=derefs {
-                    let kind = ExprKind::Unary(UnOp::Deref, Box::new(inner));
-                    inner = Expr {
-                        kind,
-                        span,
-                        id: self.id(),
-                    };
-                }
-                let op = if mutable { UnOp::RefMut } else { UnOp::Ref };
-                Expr {
-                    kind: ExprKind::Unary(op, Box::new(inner)),
-                    span,
-                    id: self.id(),
-                }
+/// Adds the functions nested in `e` to `out`, in order. Not those nested in
+/// those: lifting each finds its own.
+fn nested_fns<'p>(e: &'p Expr, out: &mut Vec<&'p FnDecl>) {
+    if let ExprKind::Block(stmts, _) = &e.kind {
+        for s in stmts {
+            if let Stmt::Fn(f) = s {
+                out.push(f);
             }
         }
     }
-
-    fn pattern(&self, p: &Pattern) -> Pattern {
-        let kind = match &p.kind {
-            PatternKind::Variant(ty, targs, variant, args) => PatternKind::Variant(
-                self.ident(ty),
-                self.types(targs),
-                variant.clone(),
-                args.iter().map(|a| self.pattern(a)).collect(),
-            ),
-            PatternKind::Struct(name, targs, fields, rest) => PatternKind::Struct(
-                self.ident(name),
-                self.types(targs),
-                fields
-                    .iter()
-                    .map(|f| FieldPat {
-                        name: f.name.clone(),
-                        pat: self.pattern(&f.pat),
-                    })
-                    .collect(),
-                *rest,
-            ),
-            PatternKind::Or(alts) => {
-                PatternKind::Or(alts.iter().map(|a| self.pattern(a)).collect())
-            }
-            PatternKind::Array(pats) => {
-                PatternKind::Array(pats.iter().map(|a| self.pattern(a)).collect())
-            }
-            PatternKind::Move(_) => unreachable!("written here"),
-            kind => kind.clone(),
-        };
-        let pat = Pattern {
-            kind,
-            span: p.span,
-            id: p.id,
-        };
-        match self.info.moves.contains(&MoveSite::Pattern(p.id)) {
-            true => Pattern {
-                kind: PatternKind::Move(Box::new(pat)),
-                span: p.span,
-                id: self.id(),
-            },
-            false => pat,
-        }
+    for c in e.children() {
+        nested_fns(c, out);
     }
 }

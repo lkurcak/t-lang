@@ -351,7 +351,6 @@ impl Checker {
 
     fn synth_inner(&mut self, e: &Expr) -> Result<Type, Error> {
         match &e.kind {
-            ExprKind::Move(_) => unreachable!("written by lift"),
             ExprKind::For(_)
             | ExprKind::IfLet(..)
             | ExprKind::WhileLet(..)

@@ -2212,13 +2212,11 @@ impl Rewrite<'_> {
             PatternKind::Struct(_, _, fields, _) => fields.iter().any(|f| self.refutable(&f.pat)),
             PatternKind::Array(pats) => pats.iter().any(|p| self.refutable(p)),
             PatternKind::Or(alts) => alts.iter().all(|p| self.refutable(p)),
-            PatternKind::Move(_) => unreachable!("written by lift"),
         }
     }
 
     fn pattern(&mut self, p: &mut Pattern) -> Result<(), Error> {
         match &mut p.kind {
-            PatternKind::Move(_) => unreachable!("written by lift"),
             PatternKind::Variant(ty, targs, _, pats) => {
                 for t in targs.iter_mut() {
                     self.ty(t)?;
@@ -2361,7 +2359,6 @@ fn plain_path(t: &TypeExpr) -> Option<Ident> {
 /// them.
 pub(crate) fn children_mut(e: &mut Expr) -> Vec<&mut Expr> {
     match &mut e.kind {
-        ExprKind::Move(_) => unreachable!("written by lift"),
         ExprKind::Int(..)
         | ExprKind::Bool(_)
         | ExprKind::Char(_)

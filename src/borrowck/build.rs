@@ -17,7 +17,7 @@
 use super::regions::{AdtInfo, Regions};
 use crate::ast::*;
 use crate::check::typed::Res;
-use crate::check::{Checker, MoveSite, first_use};
+use crate::check::{Checker, first_use};
 use crate::error::Span;
 use crate::mir::*;
 use crate::traits::FN_ONCE;
@@ -389,7 +389,6 @@ impl<'a> Builder<'a> {
         }
         let span = e.span;
         match &e.kind {
-            ExprKind::Move(_) => unreachable!("written by lift"),
             ExprKind::For(_)
             | ExprKind::IfLet(..)
             | ExprKind::WhileLet(..)
@@ -494,7 +493,7 @@ impl<'a> Builder<'a> {
                 };
                 let (receiver, recv_ty) = match kind {
                     FnKind::FnOnce => {
-                        let (o, ot) = self.use_place(recv, callee.span, MoveSite::Receiver(e.id));
+                        let (o, ot) = self.use_place(recv, callee.span);
                         (Arg::Value(o, ot.clone(), callee.span), ot)
                     }
                     kind => {
@@ -534,7 +533,7 @@ impl<'a> Builder<'a> {
                 let receiver = match autoref {
                     Some(m) => Arg::Borrow(recv, m, None, x.span),
                     None => {
-                        let (o, t) = self.use_place(recv, x.span, MoveSite::Receiver(e.id));
+                        let (o, t) = self.use_place(recv, x.span);
                         Arg::Value(o, t, x.span)
                     }
                 };
@@ -747,7 +746,7 @@ impl<'a> Builder<'a> {
                     let name = &self.cx.typed().binds[id].name;
                     let at = first_use(&l.body, name).unwrap_or(l.body.span);
                     let (o, ot) = match mode {
-                        Capture::Value => self.use_place(place, at, MoveSite::Capture(l.id, i)),
+                        Capture::Value => self.use_place(place, at),
                         Capture::Ref | Capture::Mut | Capture::Unique => {
                             let m = *mode != Capture::Ref;
                             match mode {
@@ -977,7 +976,7 @@ impl<'a> Builder<'a> {
             let p = self.place(e);
             return match coerced {
                 Some((derefs, m)) => self.reborrow(&p, derefs, m, e.span),
-                None => self.use_place(p, e.span, MoveSite::Expr(e.id)),
+                None => self.use_place(p, e.span),
             };
         }
         let (o, t) = match &e.kind {
@@ -1009,16 +1008,17 @@ impl<'a> Builder<'a> {
     }
 
     /// Place `p`, used as a value at `span`: copied, or a `&mut` reborrowed,
-    /// or else moved out of, which the program then does where it runs,
-    /// `site` (see `Info::moves`).
-    fn use_place(&mut self, p: Place, span: Span, site: MoveSite) -> (Operand, Type) {
+    /// or else moved out of, by the type it has here: in generic code, a
+    /// value of a type parameter that isn't known to be `Copy` moves,
+    /// whatever type it turns out to be, so that the body means the same at
+    /// every type, as monomorphisation copies this MIR.
+    fn use_place(&mut self, p: Place, span: Span) -> (Operand, Type) {
         match self.place_ty(&p) {
             Type::Ref(_, true, _) => self.reborrow(&p, 0, true, span),
             t if self.cx.is_copy(&t) => (Operand::Copy(p), t),
             // Moved into a temporary of its own, so that where it's moved is
             // this expression.
             t => {
-                self.cx.moves.borrow_mut().insert(site);
                 let tmp = self.temp(t.clone(), span);
                 let value = Rvalue::Use(Operand::Move(p));
                 self.assign(&Place::local(tmp), value, &t, span, false);
@@ -1381,7 +1381,6 @@ impl<'a> Builder<'a> {
             place = place.project(Proj::Deref);
         }
         match &p.kind {
-            PatternKind::Move(_) => unreachable!("written by lift"),
             PatternKind::Int(..)
             | PatternKind::Range(..)
             | PatternKind::Bool(_)
@@ -1419,7 +1418,6 @@ impl<'a> Builder<'a> {
             place = place.project(Proj::Deref);
         }
         let pat = match &p.kind {
-            PatternKind::Move(_) => unreachable!("written by lift"),
             PatternKind::Wild | PatternKind::Bind(..) | PatternKind::Unit => Pat::Any,
             PatternKind::Int(n, _) => Pat::Range(Some(*n), Some(*n)),
             PatternKind::Range(lo, hi, ..) => Pat::Range(*lo, *hi),
@@ -1513,10 +1511,7 @@ impl<'a> Builder<'a> {
                         let t = self.place_ty(&place);
                         let o = match self.cx.is_copy(&t) {
                             true => Operand::Copy(place),
-                            false => {
-                                self.cx.moves.borrow_mut().insert(MoveSite::Pattern(p.id));
-                                Operand::Move(place)
-                            }
+                            false => Operand::Move(place),
                         };
                         self.assign(&dest, Rvalue::Use(o), &t, p.span, true);
                     }
@@ -1581,7 +1576,6 @@ impl Builder<'_> {
     /// the same point at every type, as a destructor would see.
     fn consume(&mut self, place: &Place, variant: Option<usize>, p: &Pattern) {
         if self.consumes_at(place) {
-            self.cx.moves.borrow_mut().insert(MoveSite::Pattern(p.id));
             self.push(StmtKind::Consume(place.clone(), variant), p.span);
         }
     }
@@ -1686,7 +1680,7 @@ fn field_index(adts: &Adts, t: &Type, name: &str) -> usize {
 fn calls_in(e: &Expr) -> bool {
     match &e.kind {
         ExprKind::Call(..) | ExprKind::MethodCall(..) => true,
-        ExprKind::Field(x, _) | ExprKind::Unary(UnOp::Deref, x) | ExprKind::Move(x) => calls_in(x),
+        ExprKind::Field(x, _) | ExprKind::Unary(UnOp::Deref, x) => calls_in(x),
         _ => false,
     }
 }
