@@ -18,10 +18,14 @@ trait Total {
     fn total(&mut self) -> i64 with {Self::e, panic};
 }
 
+// `I::Item: Show` can't be an impl's bound, as `Show` isn't closed (see
+// docs/29-closed-and-sealed-traits.md): the item type is a parameter of
+// `W` instead, which `item` holds as a function giving one, so that `W`
+// holds no `T`.
 #[derive(Discard where I: Discard)]
-struct W<I> { iter: I }
+struct W<I, T> { iter: I, item: fn() -> T }
 
-impl<I: Iterator> Total for W<I> where I::Item: Show + Discard {
+impl<I, T> Total for W<I, T> where I: Iterator<Item = T>, T: Show + Discard {
     effect e = I::e;
 
     fn total(&mut self) -> i64 with {I::e, panic} {
@@ -42,9 +46,11 @@ fn first<I: Iterator + Discard>(mut i: I) -> i64 with I::e where I::Item: Show +
     }
 }
 
+fn zero() -> i64 { 0 }
+
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
-    out.line(&(W { iter: 0..4i64 }).total())?; // expect: 6
+    out.line(&(W { iter: 0..4i64, item: zero }).total())?; // expect: 6
     out.line(&first(5..7i64))?;                // expect: 5
     Result::Ok(())
 }

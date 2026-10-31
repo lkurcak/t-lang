@@ -1,0 +1,4 @@
+[dependencies]
+r1 = { path = "r1" }
+r2 = { path = "r2" }
+q = { path = "q" }

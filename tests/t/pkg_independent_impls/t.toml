@@ -1,0 +1,4 @@
+[dependencies]
+base = { path = "base" }
+left = { path = "left" }
+right = { path = "right" }
