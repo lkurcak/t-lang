@@ -192,8 +192,11 @@ one value:
 
 - a parameter's, which is checked at the call, and is about the
   arguments then: `index_mut(&mut self, i: { i: usize | i < self.len() })`;
-- a result's, which is about the arguments *at the call* too, even if
-  what's behind the `&mut` has changed by the time it returns;
+- a result's, which was about the arguments *at the call* too, even if
+  what's behind the `&mut` has changed by the time it returns (since
+  step 30 a result's refinement is a postcondition, about the value at
+  return, and `old(..)` says the value at the call, as below:
+  docs/30-postconditions.md);
 - an immutable `let`'s, checked once.
 
 Not a `mut` variable's or a field's, which are checked again later, when
@@ -203,7 +206,7 @@ what's behind the `&mut` may be something else.
 use alloc::list::List;
 
 /// How long the list was.
-fn take_last(l: &mut List<i64>) -> { n: usize | n == l.len() } {
+fn take_last(l: &mut List<i64>) -> { n: usize | n == old(l.len()) } {
     let n = l.len();
     l.pop();
     n
@@ -222,7 +225,9 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
 
 That a result is about the call is what keeps the caller and the callee
 in step: the caller knows what it passed, and the callee what it was
-given, and neither knows what the other did after. It also means a
+given, and neither knows what the other did after. (Step 30 lets both
+know what's left behind a `&mut` at return too, when no borrow of it
+outlives the call.) It also means a
 function can't say what it did to what's behind a `&mut`: after `l[2] =
 7`, nothing's known of `l.len()`, as `index_mut` doesn't say it leaves it
 as it was. A slice can: `let s = l.as_mut_slice();` is as long as `l` was,
@@ -269,7 +274,8 @@ soundness violated".
 - **A result is about the call.** Postconditions on what a function does
   to its `&mut` arguments, `old(..)` and the value at return, are later:
   they need the caller to know when the borrow ends, as prophecies
-  (RustHorn) or strong references (Flux) do.
+  (RustHorn) or strong references (Flux) do. (Step 30 has them for a
+  borrow that ends at the call.)
 - **`x[i]` by name, not a trait.** A trait's method can't carry a
   refinement yet: an impl's would have to ask no more than the trait's.
 
@@ -277,8 +283,8 @@ soundness violated".
 
 | Missing | Why it's missing | Step |
 |---|---|---|
-| `List`'s `len <= cap()` as a field refinement, so `push` proves `len + 1` | an invariant kept while a field is lent `&mut`, as `buf` is to `grow` and `write` | — |
-| what a `&mut self` method leaves as it was, `old(self.len())` | postconditions on what's behind a `&mut`, which need to know when the borrow ends | — |
+| `List`'s `len <= cap()` as a field refinement, so `push` proves `len + 1` | an invariant kept while a field is lent `&mut`, as `buf` is to `grow` and `write` | 30 ✅ |
+| what a `&mut self` method leaves as it was, `old(self.len())` | postconditions on what's behind a `&mut`, which need to know when the borrow ends | 30 ✅ |
 | measures with arguments, `s.is_char_boundary(i)` | a function symbol of several arguments, and its congruence | — |
 | refinements in type arguments, `Option<{ s: &str \| s.len() > 0 }>` | `split_at` relating its halves to what it split | — |
 | `Index` as a trait | refinements in a trait's methods | — |

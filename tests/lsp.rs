@@ -1320,6 +1320,38 @@ fn main() {
     stop(child, c);
 }
 
+/// A parameter named in `ensures`, in `old(..)` too, is renamed there,
+/// and a measure named there is found.
+#[test]
+fn renames_and_finds_names_in_ensures() {
+    let (child, mut c) = start();
+    let src = "\
+#[derive(Copy, Discard)]
+struct W { n: usize }
+impl W {
+    #[measure]
+    fn len(&self) -> usize { self.n }
+}
+fn keep(w: &mut W) ensures w.len() == old(w.len()) { w.n = w.n; }
+fn main() {
+    let mut w = W { n: 2 };
+    keep(&mut w);
+}
+";
+    let (mut d, diags) = Doc::open(&mut c, "file:///tmp/ensures.t", src);
+    assert_eq!(diags, Vec::<Value>::new());
+    let r = d.ask(&mut c, "textDocument/definition", "len()", 1, json!({}));
+    assert_eq!(r["result"]["range"]["start"], d.at("len(&self)", 0), "{r}");
+    assert_eq!(
+        d.rename(&mut c, "w: &mut", 0, "x").unwrap(),
+        src.replace(
+            "fn keep(w: &mut W) ensures w.len() == old(w.len()) { w.n = w.n; }",
+            "fn keep(x: &mut W) ensures x.len() == old(x.len()) { x.n = x.n; }"
+        )
+    );
+    stop(child, c);
+}
+
 /// What can't be renamed, and renames that are refused.
 #[test]
 fn refuses_bad_renames() {
@@ -2463,13 +2495,13 @@ fn browses_open_library_sources_without_editing_them() {
     let text = std::fs::read_to_string(&path).unwrap();
     let (mut d, diagnostics) = Doc::open(&mut c, uri, &text);
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
-    let r = d.ask(&mut c, "textDocument/definition", "RawBuf,", 0, json!({}));
+    let r = d.ask(&mut c, "textDocument/definition", "RawBuf;", 0, json!({}));
     library_location(&r["result"], "alloc", "raw.t", "struct RawBuf", "RawBuf");
     let r = d.ask(&mut c, "textDocument/definition", "empty()", 0, json!({}));
     library_location(&r["result"], "alloc", "raw.t", "fn empty", "empty");
     let r = d.ask(&mut c, "textDocument/definition", "len }", 0, json!({}));
     assert_eq!(r["result"]["uri"], uri, "{r}");
-    let start = d.at("len: usize", 0);
+    let start = d.at("len: { n", 0);
     assert_eq!(
         r["result"]["range"],
         json!({
@@ -2477,7 +2509,7 @@ fn browses_open_library_sources_without_editing_them() {
             "end": {"line": start["line"], "character": start["character"].as_u64().unwrap() + 3}
         })
     );
-    let r = d.ask(&mut c, "textDocument/hover", "RawBuf,", 0, json!({}));
+    let r = d.ask(&mut c, "textDocument/hover", "RawBuf;", 0, json!({}));
     assert!(
         r["result"]["contents"]["value"]
             .as_str()
@@ -2488,13 +2520,7 @@ fn browses_open_library_sources_without_editing_them() {
     let r = d.ask(&mut c, "textDocument/typeDefinition", "buf:", 0, json!({}));
     library_location(&r["result"][0], "alloc", "raw.t", "struct RawBuf", "RawBuf");
     for method in ["textDocument/prepareRename", "textDocument/rename"] {
-        let r = d.ask(
-            &mut c,
-            method,
-            "len: usize",
-            0,
-            json!({"newName": "length"}),
-        );
+        let r = d.ask(&mut c, method, "len: { n", 0, json!({"newName": "length"}));
         assert!(
             r["error"]["message"]
                 .as_str()
@@ -2528,7 +2554,7 @@ fn browses_open_library_sources_without_editing_them() {
         }}),
     );
     assert!(c.diagnostics().is_empty());
-    let r = d.ask(&mut c, "textDocument/definition", "RawBuf,", 0, json!({}));
+    let r = d.ask(&mut c, "textDocument/definition", "RawBuf;", 0, json!({}));
     library_location(&r["result"], "alloc", "raw.t", "struct RawBuf", "RawBuf");
     assert_eq!(std::fs::read_to_string(path).unwrap(), text);
     stop(child, c);

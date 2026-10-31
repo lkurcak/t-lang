@@ -785,6 +785,11 @@ pub struct FnDecl {
     /// Where its `#[measure]` is, if it's one: a method of `&self` the
     /// refinement logic can name (see docs/21-measures.md).
     pub measure: Option<Span>,
+    /// `ensures self.len() == old(self.len()) + 1`: what it promises to
+    /// leave behind its `&mut` parameters, predicates in which their names
+    /// mean their values at return and `old(..)` at the call (see
+    /// docs/30-postconditions.md).
+    pub ensures: Vec<Expr>,
 }
 
 impl FnDecl {

@@ -618,6 +618,12 @@ pub(crate) struct Checker {
     /// once, so it can't name what's behind a `&mut`, which can change in
     /// between: "a result", say.
     pred_again: Option<&'static str>,
+    /// In a postcondition (`ensures`, or a result's refinement), which
+    /// it is, and which parameters are call-scoped `&mut`s, whose values
+    /// at return it can name (see `refine::call_scoped`).
+    pred_post: Option<(&'static str, Vec<bool>)>,
+    /// Inside `old(..)` in a postcondition.
+    pred_in_old: bool,
     /// The refinements to check once every impl is collected.
     pending_refined: Vec<refine::Pending>,
     /// The function whose refinement is being checked, which uses the
@@ -826,6 +832,8 @@ impl Checker {
             measures: HashMap::new(),
             pred_measures: HashMap::new(),
             pred_again: None,
+            pred_post: None,
+            pred_in_old: false,
             pending_refined: Vec::new(),
             pred_owner: None,
             kept_measures: Vec::new(),

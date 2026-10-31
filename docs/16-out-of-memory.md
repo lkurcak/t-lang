@@ -89,7 +89,8 @@ reasons. Two places did:
   to `len`.** The first is now `grow(cap)`, with nothing to overflow. The
   second can't overflow either, as `len < cap()` after growing, but the
   checker can't see that: a fact can't say `cap()` (measures are for
-  later). So `push` says it a way the checker can see:
+  later; step 30 proves it, and the check is gone). So `push` says it a
+  way the checker can see:
 
 ```text
 if self.len == greatest() {
@@ -142,7 +143,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
 | Missing | Why it's missing | Step |
 |---|---|---|
 | fallible allocation, `Box::try_new`, `List::try_push` | needs an allocator design, and a `Result` for each | — |
-| `List` proving `len < cap()` itself | needs measures (21 ✅), and `len <= cap()` as an invariant kept across `&mut` borrows of the buffer | — |
+| `List` proving `len < cap()` itself | needs measures (21 ✅), and `len <= cap()` as an invariant kept across `&mut` borrows of the buffer | 30 ✅ |
 | catching running out of memory | would need effect handlers, as catching a panic would | — |
 
 ## Exercises

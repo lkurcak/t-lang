@@ -45,10 +45,23 @@
 //! closure too, must keep (`Walk::unstable_in`). A `&` can't change what it
 //! points to, as nothing in T can be changed through one, so `*r` for a
 //! `let r = &p;` is `p` (`Walk::alias`). A refined variable can't be
-//! borrowed `&mut` at all, nor a field a refinement is about, so the
-//! refinements of a struct's fields hold of every value of it, wherever it
-//! is: every way of making or changing one checks them, and anything else,
-//! generic code included, only moves whole values. A refinement's predicate
+//! borrowed `&mut` at all, nor a field a refinement is about, or a place in
+//! one (through fields and boxes), but straight to a call-scoped parameter
+//! (`call_scoped`), after which the struct's refinements about it are
+//! proved again (`Walk::post`); so the refinements of a struct's fields
+//! hold of every value of it whenever it can be read: every way of making
+//! or changing one checks them, a call lent one of its fields runs while
+//! nothing can read it (and nothing unwinds), and anything else, generic
+//! code included, only moves whole values.
+//!
+//! Postconditions (`ensures`, a result's refinement) are proved by the
+//! callee at each return, of what's behind its call-scoped `&mut`s then,
+//! and learned by the caller of the places it lent, once they're forgotten
+//! (`Walk::post`): nothing made from such a parameter outlives the call, so
+//! what's behind it at return is what's there when the caller next reads
+//! it. An intrinsic's may be about a `&mut` whose borrow outlives the call,
+//! its value when that ends (a prophecy, trusted), which is also when the
+//! caller next reads the place. A refinement's predicate
 //! names only what can't change. What a call returns has its function's
 //! refinement by induction on how deep the calls go, as for effects: a call
 //! that never returns gives nothing to count on. And what's called through
@@ -109,6 +122,12 @@ pub(super) struct RefinedSig {
     type_params: Vec<String>,
     params: Vec<Option<Refinement>>,
     ret: Option<Refinement>,
+    /// What it `ensures`, with names as in `ret`.
+    ensures: Vec<Refinement>,
+    /// Which parameters are call-scoped `&mut`s (`call_scoped`): a call
+    /// lending a place to one can learn what `ensures` says of it, and a
+    /// field a refinement is about can be lent to one.
+    scoped: Vec<bool>,
 }
 
 /// The refinements of a struct's fields, by the struct's symbol
@@ -243,7 +262,7 @@ impl Checker {
             self.measure_signature(f, params, ret)?;
         }
         let written = f.params.iter().map(|p| &p.ty).chain([&f.ret]);
-        if written.clone().all(|t| t.refinement().is_none()) {
+        if written.clone().all(|t| t.refinement().is_none()) && f.ensures.is_empty() {
             return Ok(());
         }
         // Its predicates may call measures of impls not collected yet, so
@@ -267,13 +286,34 @@ impl Checker {
         Ok(())
     }
 
+    /// Which parameters of function `symbol` are call-scoped `&mut`s
+    /// (`call_scoped`); none, if it isn't one the checker knows.
+    pub(super) fn scoped_params(&self, symbol: &str) -> Vec<bool> {
+        if let Some(sig) = self.refined.get(symbol) {
+            return sig.scoped.clone();
+        }
+        let Some(f) = self.fns.iter().find(|f| f.symbol == symbol) else {
+            return Vec::new();
+        };
+        match &f.scheme.ty {
+            Type::Fn(sig) => call_scoped(&sig.params, &sig.ret, &f.scheme.bounds),
+            _ => Vec::new(),
+        }
+    }
+
     /// The parameters of function `symbol` its refinements name, by index.
     pub(super) fn named_params(&self, symbol: &str) -> Vec<usize> {
         let mut out = Vec::new();
         let Some(sig) = self.refined.get(symbol) else {
             return out;
         };
-        for r in sig.params.iter().chain([&sig.ret]).flatten() {
+        for r in sig
+            .params
+            .iter()
+            .chain([&sig.ret])
+            .flatten()
+            .chain(&sig.ensures)
+        {
             each_expr(&r.pred, &mut |e| {
                 if let Some(PredName::Param(j)) = self.pred_names.get(&e.id) {
                     out.push(*j);
@@ -320,11 +360,19 @@ impl Checker {
         allowed: bool,
         consts: &[Ident],
     ) -> Result<(), Error> {
+        if !allowed && let Some(e) = f.ensures.first() {
+            return Err(Error::ty(
+                e.span,
+                "`ensures` can't be on a trait's methods yet: an impl's would have to promise no \
+                 less",
+            ));
+        }
         let written = f.params.iter().map(|p| &p.ty).chain([&f.ret]);
-        let Some(first) = written.clone().find(|t| t.refinement().is_some()) else {
+        let first = written.clone().find(|t| t.refinement().is_some());
+        if first.is_none() && f.ensures.is_empty() {
             return Ok(());
-        };
-        if !allowed {
+        }
+        if let (false, Some(first)) = (allowed, first) {
             return Err(Error::ty(
                 first.span,
                 "refinements can't be in a trait's methods yet: an impl's would have to ask no \
@@ -335,13 +383,30 @@ impl Checker {
             Some(id) => self.fns[id.0].scheme.params.to_vec(),
             None => Vec::new(),
         };
+        let bounds = match self.pred_owner {
+            Some(id) => self.fns[id.0].scheme.bounds.clone(),
+            None => Vec::new(),
+        };
         let mut sig = RefinedSig {
             name: f.name.name.clone(),
             names: f.params.iter().map(|p| p.name.name.clone()).collect(),
             type_params,
             params: Vec::new(),
             ret: None,
+            ensures: Vec::new(),
+            scoped: call_scoped(params, ret, &bounds),
         };
+        // An intrinsic's postconditions are trusted, and may say what's
+        // behind a `&mut` whose borrow outlives the call: what it is when
+        // the borrow ends, a *prophecy*, which the caller learns of it
+        // there, as the place's next read is after.
+        if f.intrinsic.is_some() {
+            for (i, t) in params.iter().enumerate() {
+                if let Type::Ref(_, true, _) = t {
+                    sig.scoped[i] = true;
+                }
+            }
+        }
         for (i, p) in f.params.iter().enumerate() {
             let scope = |name: &str| {
                 f.params[..i]
@@ -374,9 +439,25 @@ impl Checker {
                 })
                 .or_else(|| const_named(consts, name))
         };
-        // What a result's refinement names is what the parameters were at
-        // the call, so what's behind a `&mut` too.
-        sig.ret = self.refinement(&f.ret, ret, &scope)?;
+        // A result's refinement and `ensures` are postconditions: what's
+        // behind a call-scoped `&mut` is its value at return, and `old(..)`
+        // what it was at the call.
+        self.pred_post = Some(("the result's refinement", sig.scoped.clone()));
+        let r = self.refinement(&f.ret, ret, &scope);
+        self.pred_post = None;
+        sig.ret = r?;
+        for e in &f.ensures {
+            self.pred_post = Some(("`ensures`", sig.scoped.clone()));
+            let got = self.pred_type(e, &scope);
+            self.pred_post = None;
+            if got? != Sort::Bool {
+                return Err(Error::ty(
+                    e.span,
+                    format!("expected `bool`, found {}", Sort::Int),
+                ));
+            }
+            sig.ensures.push(Refinement { pred: e.clone() });
+        }
         let symbol = self.sig_owner.0.clone();
         self.refined.insert(symbol, sig);
         Ok(())
@@ -670,6 +751,25 @@ impl Checker {
                     Ok(Sort::Bool)
                 }
             },
+            ExprKind::Call(callee, args)
+                if matches!(&callee.kind, ExprKind::Var(n, t) if n == "old" && t.is_empty())
+                    && args.len() == 1 =>
+            {
+                if self.pred_post.is_none() {
+                    return Err(Error::ty(
+                        e.span,
+                        "`old(..)` can only be in a postcondition: `ensures`, or a result's \
+                         refinement",
+                    ));
+                }
+                if self.pred_in_old {
+                    return Err(Error::ty(e.span, "`old(..)` inside `old(..)`"));
+                }
+                self.pred_in_old = true;
+                let got = self.pred_type(&args[0], scope);
+                self.pred_in_old = false;
+                got
+            }
             ExprKind::MethodCall(x, m, targs, args) if targs.is_empty() && args.is_empty() => {
                 let ExprKind::Var(name, targs) = &x.kind else {
                     return Err(Error::ty(
@@ -677,7 +777,7 @@ impl Checker {
                         "a refinement can only call a measure of a name: `s.len()`",
                     ));
                 };
-                let ty = match scope(name) {
+                let (ty, named) = match scope(name) {
                     Some(Named::Value(t, what, def)) if targs.is_empty() => {
                         self.pred_names.insert(x.id, what.clone());
                         let kind = match what {
@@ -686,7 +786,7 @@ impl Checker {
                             _ => super::NoteKind::Var(name.clone()),
                         };
                         self.note(x.span, kind, Some(self.solved(&t)), Some(def));
-                        t
+                        (t, what)
                     }
                     // A name that isn't a value: the error it is alone.
                     _ => {
@@ -701,6 +801,21 @@ impl Checker {
                         format!(
                             "the refinement of {what} can't name a measure of what's behind \
                              `&mut` `{name}`, which can change"
+                        ),
+                    ));
+                }
+                if through_mut
+                    && !self.pred_in_old
+                    && let Some((what, scoped)) = &self.pred_post
+                    && !matches!(named, PredName::Param(j) if scoped[j])
+                    && !matches!(named, PredName::Binder)
+                {
+                    return Err(Error::ty(
+                        x.span,
+                        format!(
+                            "{what} can't name `{name}` at return: the borrow it's lent can \
+                             outlive the call, as the lifetime of `{name}` is in the signature \
+                             elsewhere; write `old(..)`"
                         ),
                     ));
                 }
@@ -989,6 +1104,10 @@ impl Checker {
             params: f.params.iter().map(|p| p.name.id).collect(),
             entry: Vec::new(),
             ret: None,
+            ensures: None,
+            posts: HashMap::new(),
+            scoped_args: HashSet::new(),
+            proving_fields: false,
             closures: 0,
             loops: Vec::new(),
             size: None,
@@ -1018,6 +1137,11 @@ impl Checker {
             ret = Some((r.clone(), sig.name.clone()));
         }
         w.ret = ret;
+        if let Some(sig) = &sig
+            && !sig.ensures.is_empty()
+        {
+            w.ensures = Some((sig.ensures.clone(), sig.name.clone()));
+        }
         let v = w.expr(&f.body)?;
         w.result(v, super::expr::result_span(&f.body))?;
         let proved = std::mem::take(&mut w.proved);
@@ -1045,6 +1169,42 @@ impl Checker {
         self.info.proved.extend(proved);
         Ok(())
     }
+}
+
+/// Which of parameters `params` (of a function with result `ret` and
+/// lifetime bounds `bounds`) are *call-scoped* `&mut`s: `&'a mut U` where
+/// `'a` is in no other part of the signature, not in `U`, another
+/// parameter, the result or a bound. Then nothing the function can name
+/// outlives `'a`, nor is outlived by it, so no reference it makes from the
+/// parameter can be kept anywhere when it returns: what's behind it then
+/// is what the caller reads next (see docs/30-postconditions.md). Not if
+/// the result has an `impl` type, which may hold every lifetime.
+fn call_scoped(params: &[Type], ret: &Type, bounds: &[crate::types::Bound]) -> Vec<bool> {
+    fn has_opaque(t: &Type) -> bool {
+        matches!(t, Type::Opaque(..)) || t.parts().any(has_opaque)
+    }
+    let opaque = has_opaque(ret);
+    let in_bounds = |r: &crate::types::Region| {
+        bounds.iter().any(|b| match b {
+            crate::types::Bound::Region(a, b) => a == r || b == r,
+            crate::types::Bound::Param(_, a) | crate::types::Bound::Proj(_, a) => a == r,
+        })
+    };
+    (0..params.len())
+        .map(|i| {
+            let Type::Ref(r @ crate::types::Region::Named(_), true, inner) = &params[i] else {
+                return false;
+            };
+            let elsewhere = params
+                .iter()
+                .enumerate()
+                .filter(|(j, _)| *j != i)
+                .map(|(_, t)| t)
+                .chain([ret, &**inner])
+                .any(|t| t.regions().contains(&r));
+            !opaque && !elsewhere && !in_bounds(r)
+        })
+        .collect()
 }
 
 /// What `name` names in a predicate, if it's one of the const parameters
@@ -1248,6 +1408,17 @@ struct Walk<'c> {
     entry: Vec<Val>,
     /// The refinement of the function's result, with its name.
     ret: Option<(Refinement, String)>,
+    /// What the function ensures, with its name.
+    ensures: Option<(Vec<Refinement>, String)>,
+    /// What each call, by node, has yet to give once what it's lent is
+    /// forgotten (`Walk::returned`): its postconditions.
+    posts: HashMap<NodeId, Post>,
+    /// The `&mut`s, by node, made straight for a call-scoped parameter,
+    /// which can be of a field a refinement is about.
+    scoped_args: HashSet<NodeId>,
+    /// Reading a struct's fields doesn't assume its refinements: they're
+    /// being proved.
+    proving_fields: bool,
     /// How many closures deep this is.
     closures: usize,
     loops: Vec<Loop>,
@@ -1273,6 +1444,18 @@ struct Walk<'c> {
     invalidated: Vec<Invalidation>,
 }
 
+/// A call's postconditions, to learn once what it's lent is forgotten.
+struct Post {
+    sig: Option<RefinedSig>,
+    /// The arguments' values at the call, what's behind references
+    /// included.
+    old: Vec<Val>,
+    /// The place each argument lends to a call-scoped `&mut` parameter.
+    scoped: Vec<Option<Place>>,
+    targs: Vec<(String, Type)>,
+    result: Val,
+}
+
 /// How many references deep what a function's parameters point to is kept
 /// as it is at the call.
 const ENTRY_DEPTH: usize = 4;
@@ -1290,6 +1473,10 @@ enum Env<'a> {
     /// Of a struct's value, with its fields' values, and its type
     /// parameters' arguments.
     Fields(&'a [Val], &'a [(String, Type)]),
+    /// A postcondition's: the arguments' values at the call, for `old(..)`,
+    /// and at return, or `None` for the function being walked, whose
+    /// parameters are read where it returns; and the type arguments.
+    Post(&'a [Val], Option<&'a [Val]>, &'a [(String, Type)]),
 }
 
 impl Walk<'_> {
@@ -1942,6 +2129,10 @@ impl Walk<'_> {
             let ft = self.cx.solved(ft);
             let p = q.then(Proj::Field(j));
             let Some(kind) = self.kind(&ft) else {
+                // A field that's a new object is a new value too.
+                if has_obj(&ft) && (self.is_unstable(&p) || !self.objs.contains_key(&p)) {
+                    fresh = true;
+                }
                 vals.push(self.read_place(&p));
                 continue;
             };
@@ -1959,7 +2150,7 @@ impl Walk<'_> {
             };
             vals.push(self.var(v));
         }
-        if fresh {
+        if fresh && !self.proving_fields {
             self.assume_fields(t, &vals);
         }
         Some(vals)
@@ -2111,7 +2302,10 @@ impl Walk<'_> {
                 (PredName::Param(i), Env::Call(args, _)) => {
                     args.get(*i).ok_or(Failure::Unsupported)?.clone()
                 }
-                (PredName::Param(i), Env::Here) => {
+                (PredName::Param(i), Env::Post(_, Some(now), _)) => {
+                    now.get(*i).ok_or(Failure::Unsupported)?.clone()
+                }
+                (PredName::Param(i), Env::Here | Env::Post(_, None, _)) => {
                     let id = *self.params.get(*i).ok_or(Failure::Unsupported)?;
                     self.read_place(&Place::local(id))
                 }
@@ -2122,12 +2316,13 @@ impl Walk<'_> {
                 (PredName::Param(_), Env::Fields(..)) | (PredName::Field(_), _) => {
                     return Err(Failure::Unsupported);
                 }
-                (PredName::Const(name), Env::Call(_, args) | Env::Fields(_, args)) => {
-                    match args.iter().find(|(p, _)| p == name) {
-                        Some((_, t)) => self.length(&t.clone()),
-                        None => self.length(&Type::Param(name.clone())),
-                    }
-                }
+                (
+                    PredName::Const(name),
+                    Env::Call(_, args) | Env::Fields(_, args) | Env::Post(_, _, args),
+                ) => match args.iter().find(|(p, _)| p == name) {
+                    Some((_, t)) => self.length(&t.clone()),
+                    None => self.length(&Type::Param(name.clone())),
+                },
                 (PredName::Const(name), Env::Here) => self.length(&Type::Param(name.clone())),
             },
             ExprKind::Unary(UnOp::Neg, x) => Val::Int(
@@ -2151,6 +2346,11 @@ impl Walk<'_> {
                 };
                 binary(*op, a, b).ok_or(reason)?
             }
+            // `old(x)`: `x` at the call.
+            ExprKind::Call(_, args) if args.len() == 1 => match env {
+                Env::Post(old, _, targs) => self.term(&args[0], binder, Env::Call(old, targs))?,
+                _ => return Err(Failure::Unsupported),
+            },
             // A measure of what's named, through the `*`s the checker
             // found: the `&self` it's given is the last reference.
             ExprKind::MethodCall(x, ..) => {
@@ -2230,15 +2430,23 @@ impl Walk<'_> {
         Ok(())
     }
 
-    /// `v`, the function's result, at `span`, must have its refinement.
+    /// `v`, the function's result, at `span`, must have its refinement,
+    /// and what the function leaves what `ensures` says. Both are about the
+    /// parameters as they are here, and with `old(..)`, at the call.
     fn result(&mut self, v: Val, span: Span) -> Result<(), Error> {
         if self.closures > 0 {
             return Ok(());
         }
+        let entry = self.entry.clone();
         if let Some((r, name)) = self.ret.clone() {
-            let entry = self.entry.clone();
             let what = format!("the result of `{name}`");
-            self.need(&r, &v, Env::Call(&entry, &[]), span, what)?;
+            self.need(&r, &v, Env::Post(&entry, None, &[]), span, what)?;
+        }
+        if let Some((ensures, name)) = self.ensures.clone() {
+            for r in &ensures {
+                let what = format!("what `{name}` ensures");
+                self.need(r, &Val::Other, Env::Post(&entry, None, &[]), span, what)?;
+            }
         }
         Ok(())
     }
@@ -2359,6 +2567,42 @@ impl Walk<'_> {
                 }
             }
         }
+        // A place each branch left a different object at is a new one, of
+        // which each measure every branch knows of its object is, in each
+        // case, what it was of that branch's: a measure is a function of
+        // the value.
+        let mut joined: Vec<(Val, Vec<Val>)> = Vec::new();
+        let mut differ: Vec<&Place> = (reached[0].objs.keys())
+            .filter(|p| in_scope.contains(&p.root) && !objs.contains_key(*p))
+            .filter(|p| reached.iter().all(|r| r.objs.contains_key(*p)))
+            .collect();
+        differ.sort();
+        for p in differ {
+            let each: Vec<Obj> = reached.iter().map(|r| r.objs[p]).collect();
+            let mut symbols: Vec<String> = (self.measured.keys())
+                .filter(|(o, _)| *o == each[0])
+                .map(|(_, m)| m.clone())
+                .filter(|m| {
+                    each.iter()
+                        .all(|o| self.measured.contains_key(&(*o, m.clone())))
+                })
+                .collect();
+            symbols.sort();
+            let o = self.new_obj();
+            for m in symbols {
+                let vals: Vec<Val> = (each.iter())
+                    .map(|b| self.measured[&(*b, m.clone())].clone())
+                    .collect();
+                if !vals.iter().all(|v| matches!(v, Val::Int(_) | Val::Bool(_))) {
+                    continue;
+                }
+                let ret = self.cx.measures[&m].ret.clone();
+                let v = self.unknown(&ret);
+                self.measured.insert((o, m), v.clone());
+                joined.push((v, vals));
+            }
+            objs.insert(p.clone(), o);
+        }
         let result = self.unknown(ty);
         let mut cases = Vec::new();
         for (i, o) in reached.into_iter().enumerate() {
@@ -2373,6 +2617,9 @@ impl Walk<'_> {
                 if let Some(v) = vars[i] {
                     parts.extend(equal(&self.var(*n), &self.var(v)));
                 }
+            }
+            for (v, vals) in &joined {
+                parts.extend(equal(v, &vals[i]));
             }
             cases.push(Formula::and(parts));
         }
@@ -2636,6 +2883,7 @@ impl Walk<'_> {
         symbol: Option<&str>,
         args: &[&Expr],
         vals: Vec<Val>,
+        places: Vec<Option<Place>>,
     ) -> Result<Val, Error> {
         let ty = self.ty_of(e);
         let sig = symbol.and_then(|s| self.cx.refined.get(s)).cloned();
@@ -2675,17 +2923,88 @@ impl Walk<'_> {
         {
             self.fact(f);
         }
-        if let Some(r) = sig.as_ref().and_then(|s| s.ret.as_ref())
-            && let Some(f) = self.pred(r, &result, Env::Call(&vals, &targs))
-        {
-            self.fact(f);
+        // What it ensures, and its result's refinement, are about what it
+        // leaves behind what it's lent, which is learned once that's
+        // forgotten, where it returns (`Walk::post`); and about the
+        // arguments as they are now, which are kept.
+        let scoped = match symbol {
+            Some(s) => self.cx.scoped_params(s),
+            None => Vec::new(),
+        };
+        let scoped: Vec<Option<Place>> = places
+            .into_iter()
+            .enumerate()
+            .map(|(i, p)| p.filter(|_| scoped.get(i) == Some(&true)))
+            .collect();
+        // The struct a field lent is in is whole until now, so it has its
+        // refinements: what's known of its other fields, which the call
+        // can't change, proves them again after.
+        for p in scoped.iter().flatten() {
+            for (q, _) in self.constrained_around(p) {
+                let t = self.place_ty(&q);
+                self.fields_of(&q, &t);
+            }
         }
+        let old = match sig.is_some() {
+            true => vals
+                .into_iter()
+                .map(|v| self.settled(v, ENTRY_DEPTH))
+                .collect(),
+            false => Vec::new(),
+        };
+        let post = Post {
+            sig,
+            old,
+            scoped,
+            targs,
+            result: result.clone(),
+        };
+        self.posts.insert(e.id, post);
         Ok(result)
     }
 
+    /// What call `e` gives once what it's lent is forgotten (see `call`):
+    /// its postconditions, of the values behind what it lent to call-scoped
+    /// `&mut`s, which are what it left there, as nothing it made from them
+    /// outlives it; and the refinements of the struct of each field a
+    /// refinement is about it lent, proved again.
+    fn post(&mut self, e: &Expr) -> Result<(), Error> {
+        let Some(post) = self.posts.remove(&e.id) else {
+            return Ok(());
+        };
+        if let Some(sig) = &post.sig {
+            let now: Vec<Val> = (post.old.iter().zip(&post.scoped))
+                .map(|(v, p)| match p {
+                    Some(p) => Val::Ref(self.new_obj(), Pointee::Place(p.clone())),
+                    None => v.clone(),
+                })
+                .collect();
+            let env = Env::Post(&post.old, Some(&now), &post.targs);
+            if let Some(r) = &sig.ret
+                && let Some(f) = self.pred(r, &post.result, env)
+            {
+                self.fact(f);
+            }
+            for r in &sig.ensures {
+                if let Some(f) = self.pred(r, &Val::Other, env) {
+                    self.fact(f);
+                }
+            }
+        }
+        for p in post.scoped.iter().flatten() {
+            for (q, i) in self.constrained_around(p) {
+                self.prove_fields(&q, i, e.span)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Fails if `x`, borrowed `&mut` at `span`, is a refined local, or a
-    /// field a refinement is about.
-    fn no_mut_borrow(&self, x: &Expr, span: Span) -> Result<(), Error> {
+    /// field a refinement is about, unless it's lent straight to a
+    /// call-scoped parameter (`scoped`): then the refinements are proved
+    /// again when the call returns (`Walk::post`), and until then nothing
+    /// can read the struct, which the borrow is of a part of.
+    fn no_mut_borrow(&self, x: &Expr, span: Span, scoped: bool) -> Result<(), Error> {
         if let (ExprKind::Var(name, _), Some(Res::Local(id))) =
             (&x.unmoved().kind, self.cx.typed.vars.get(&x.id))
             && self.invariants.contains_key(id)
@@ -2698,7 +3017,7 @@ impl Walk<'_> {
                 ),
             ));
         }
-        if let Some(why) = self.constrained_field(x) {
+        if !scoped && let Some(why) = self.constrained_field(x) {
             return Err(Error::ty(
                 span,
                 format!(
@@ -2713,19 +3032,117 @@ impl Walk<'_> {
 
     /// If `x` is a field a refinement is about, why it can't be borrowed
     /// `&mut`.
+    ///
+    /// Or a place in such a field, through fields and boxes: a write to it
+    /// changes the field. Not through a reference: what's behind one isn't
+    /// part of the value, and no refinement can name what's behind a
+    /// `&mut`, nor anything write through a `&`.
     fn constrained_field(&self, x: &Expr) -> Option<String> {
-        let ExprKind::Field(base, _) = &x.unmoved().kind else {
-            return None;
-        };
-        let (derefs, i) = *self.cx.typed.fields.get(&x.id)?;
-        let mut t = self.ty_of(base);
-        for _ in 0..derefs {
-            t = match t {
-                Type::Ref(_, _, inner) | Type::Box(inner) => self.cx.solved(&inner),
+        let outer = x.unmoved();
+        let mut x = outer;
+        loop {
+            match &x.kind {
+                ExprKind::Field(base, _) => {
+                    let (derefs, i) = *self.cx.typed.fields.get(&x.id)?;
+                    let mut t = self.ty_of(base);
+                    let mut through_ref = false;
+                    for _ in 0..derefs {
+                        t = match t {
+                            Type::Box(inner) => self.cx.solved(&inner),
+                            Type::Ref(_, _, inner) => {
+                                through_ref = true;
+                                self.cx.solved(&inner)
+                            }
+                            _ => return None,
+                        };
+                    }
+                    if let Some(why) = self.refined_fields(&t).and_then(|f| f.constrained(i)) {
+                        return Some(match std::ptr::eq(x, outer) {
+                            true => why,
+                            false => format!("it's in `{}`: {why}", crate::pretty::expr_text(x)),
+                        });
+                    }
+                    if through_ref {
+                        return None;
+                    }
+                    x = base.unmoved();
+                }
+                ExprKind::Unary(UnOp::Deref, inner)
+                    if matches!(self.ty_of(inner), Type::Box(_)) =>
+                {
+                    x = inner.unmoved();
+                }
                 _ => return None,
-            };
+            }
         }
-        self.refined_fields(&t)?.constrained(i)
+    }
+
+    /// The fields that place `p` is, or is in, that a refinement is
+    /// about, innermost first, each as its struct's place and its index:
+    /// through fields and boxes, not references (see `constrained_field`).
+    fn constrained_around(&self, p: &Place) -> Vec<(Place, usize)> {
+        let mut out = Vec::new();
+        for k in (1..=p.path.len()).rev() {
+            let q = Place {
+                root: p.root,
+                path: p.path[..k - 1].to_vec(),
+            };
+            match p.path[k - 1] {
+                Proj::Field(i) => {
+                    let t = self.place_ty(&q);
+                    if self
+                        .refined_fields(&t)
+                        .and_then(|f| f.constrained(i))
+                        .is_some()
+                    {
+                        out.push((q, i));
+                    }
+                }
+                Proj::Deref => {
+                    if !matches!(self.place_ty(&q), Type::Box(_)) {
+                        break;
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Before a write to place `p`: what's known of the structs around it
+    /// whose refinements are about the fields it's in (but the one it's a
+    /// field of, which an assignment proves itself), while they're whole.
+    fn around_before(&mut self, p: &Place) {
+        for (q, i) in self.constrained_around(p) {
+            if q.then(Proj::Field(i)) != *p {
+                let t = self.place_ty(&q);
+                self.fields_of(&q, &t);
+            }
+        }
+    }
+
+    /// After a write to place `p`: those structs' refinements, proved again.
+    fn around_after(&mut self, p: &Place, span: Span) -> Result<(), Error> {
+        for (q, i) in self.constrained_around(p) {
+            if q.then(Proj::Field(i)) != *p {
+                self.prove_fields(&q, i, span)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The refinements of the struct at `q` about its field `i` hold, as
+    /// it is now, after what's in that field changed: proved of its
+    /// fields' values, without assuming them, and then known.
+    fn prove_fields(&mut self, q: &Place, i: usize, span: Span) -> Result<(), Error> {
+        let t = self.place_ty(q);
+        self.proving_fields = true;
+        let vals = self.fields_of(q, &t);
+        self.proving_fields = false;
+        if let Some(vals) = vals {
+            self.need_fields(&t, &vals, Some(i), span)?;
+            self.assume_fields(&t, &vals);
+        }
+        Ok(())
     }
 
     /// The condition `c` as a formula, and what it is if it isn't a `bool`.
@@ -2739,6 +3156,7 @@ impl Walk<'_> {
     fn expr(&mut self, e: &Expr) -> Result<Val, Error> {
         let v = self.expr_here(e)?;
         self.returned(e);
+        self.post(e)?;
         Ok(v)
     }
 
@@ -2852,7 +3270,8 @@ impl Walk<'_> {
             // object: what a slice's length is, say.
             ExprKind::Unary(op, x) => {
                 if *op == UnOp::RefMut {
-                    self.no_mut_borrow(x, e.span)?;
+                    let scoped = self.scoped_args.contains(&e.id);
+                    self.no_mut_borrow(x, e.span, scoped)?;
                 }
                 match self.place_of(x) {
                     Some(p) => {
@@ -2912,22 +3331,37 @@ impl Walk<'_> {
                 if symbol.is_none() {
                     self.expr(callee)?;
                 }
+                let scoped = match &symbol {
+                    Some(s) => self.cx.scoped_params(s),
+                    None => Vec::new(),
+                };
+                for (a, _) in args.iter().zip(&scoped).filter(|(_, s)| **s) {
+                    self.scoped_args.insert(a.id);
+                }
                 let vals = args
                     .iter()
                     .map(|a| self.expr(a))
                     .collect::<Result<Vec<_>, _>>()?;
+                let places = args.iter().map(|a| self.passed(a)).collect();
                 let args: Vec<&Expr> = args.iter().collect();
-                self.call(e, symbol.as_deref(), &args, vals)
+                self.call(e, symbol.as_deref(), &args, vals, places)
             }
             ExprKind::MethodCall(x, _, _, args) => {
                 let method = self.cx.typed.methods.get(&e.id);
-                if let Some((_, 0, Some(true))) = method {
-                    self.no_mut_borrow(x, x.span)?;
-                }
                 let symbol = match method {
                     Some((Res::Fn(s, _), ..)) => Some(s.clone()),
                     _ => None,
                 };
+                let scoped = match &symbol {
+                    Some(s) => self.cx.scoped_params(s),
+                    None => Vec::new(),
+                };
+                if let Some((_, 0, Some(true))) = method {
+                    self.no_mut_borrow(x, x.span, scoped.first() == Some(&true))?;
+                }
+                for (a, _) in args.iter().zip(scoped.iter().skip(1)).filter(|(_, s)| **s) {
+                    self.scoped_args.insert(a.id);
+                }
                 let recv = match method.cloned() {
                     Some((_, derefs, by)) => {
                         let v = self.expr(x)?;
@@ -2939,8 +3373,13 @@ impl Walk<'_> {
                 for a in args {
                     vals.push(self.expr(a)?);
                 }
+                let mut places = vec![match method {
+                    Some((_, derefs, by)) => self.receiver(x, *derefs, *by),
+                    None => None,
+                }];
+                places.extend(args.iter().map(|a| self.passed(a)));
                 let all: Vec<&Expr> = std::iter::once(&**x).chain(args).collect();
-                self.call(e, symbol.as_deref(), &all, vals)
+                self.call(e, symbol.as_deref(), &all, vals, places)
             }
             ExprKind::Variant(_, _, _, args, parens) => {
                 let symbol = self.fn_named(e).map(str::to_string);
@@ -2955,7 +3394,10 @@ impl Walk<'_> {
                     .collect::<Result<Vec<_>, _>>()?;
                 let args: Vec<&Expr> = args.iter().collect();
                 match &symbol {
-                    Some(_) if *parens => self.call(e, symbol.as_deref(), &args, vals),
+                    Some(_) if *parens => {
+                        let places = vec![None; args.len()];
+                        self.call(e, symbol.as_deref(), &args, vals, places)
+                    }
                     _ => {
                         let ty = self.ty_of(e);
                         Ok(self.unknown(&ty))
@@ -3081,7 +3523,9 @@ impl Walk<'_> {
                             self.need_fields(&t, &vals, Some(i), value.span)?;
                         }
                         if let Some(p) = &target {
+                            self.around_before(p);
                             self.write(p, Some(new), Some(e.span));
+                            self.around_after(p, value.span)?;
                         }
                     }
                     _ => {
@@ -3096,7 +3540,9 @@ impl Walk<'_> {
                             }
                         };
                         if let Some(p) = &target {
+                            self.around_before(p);
                             self.write(p, Some(new), Some(e.span));
+                            self.around_after(p, value.span)?;
                         }
                     }
                 }

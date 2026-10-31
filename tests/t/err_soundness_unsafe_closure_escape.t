@@ -3,10 +3,15 @@
 // kept, or not, where it's called.
 use alloc::raw::RawBuf;
 
+/// Slot `i`'s value, moved out, if there's a slot `i`.
+fn get(b: &mut RawBuf<i64>, i: usize) -> i64 with unsafe {
+    if i < b.cap() { b.read(i) } else { 0 }
+}
+
 fn main() with {alloc, panic} {
     let mut b: RawBuf<i64> = RawBuf::new(1);
     // SAFETY: the closure isn't called here.
-    let mut f = unsafe { |b: &mut RawBuf<i64>| b.read(0) };
+    let mut f = unsafe { |b: &mut RawBuf<i64>| get(b, 0) };
     let _v = f(&mut b);
     // SAFETY: the slot is uninitialised.
     unsafe { b.free() };

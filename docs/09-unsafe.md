@@ -51,9 +51,10 @@ an *obligation*, written in its `# Safety`, that the checker doesn't
 check: the index is less than `cap()`, and the slot is initialised, or
 isn't. That the index isn't negative is its type, `usize` (until step 11
 `{ i: int | i >= 0 }`, which the checker proved, see
-docs/08-refinement-types.md): the upper bound would need a refinement to
-name `cap()`, which it can't yet. Nothing in the buffer remembers which slots hold
-what. The code using it does, with `len` in a `List`.
+docs/08-refinement-types.md): the upper bound needed a refinement to
+name `cap()`, which step 30 gave it, `i: { i: usize | i < self.cap() }`
+(docs/30-postconditions.md), so the checker proves it now. Nothing in the
+buffer remembers which slots hold what. The code using it does, with `len` in a `List`.
 
 A typed buffer rather than pointers into bytes keeps the obligations
 local: each is about one slot of one buffer. There's no pointer
@@ -109,8 +110,9 @@ the obligations of the operations in it, so it doesn't have the effect:
 ```rust
 use alloc::raw::RawBuf;
 
-/// The caller must know slot 0 holds a value.
-fn first(b: &RawBuf<i64>) -> Option<&i64> with unsafe { b.slice(0, 1).first() }
+/// The caller must know slot 0 holds a value. That there's a slot 0 is
+/// its refinement, which the checker proves.
+fn first(b: { b: &RawBuf<i64> | b.cap() > 0 }) -> Option<&i64> with unsafe { b.slice(0, 1).first() }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     let mut out = os.stdout;
@@ -151,10 +153,11 @@ fn call<effect e, F: FnOnce() -> i64 with e>(f: F) -> i64 with e {
 }
 
 fn main() with {alloc, panic} {
-    let mut b: RawBuf<i64> = RawBuf::new(1);
-    let _v = call(|| b.read(0));
-    // SAFETY: there's nothing in the slot to leave behind.
-    unsafe { b.free() };
+    let b: RawBuf<i64> = RawBuf::new(1);
+    let _v = call(|| {
+        b.free();
+        0
+    });
 }
 // warning: this `unsafe` block has nothing unsafe in it
 // error: `call` is unsafe, but it isn't in an `unsafe` block
@@ -220,7 +223,7 @@ or from one that says it too. `main` doesn't, so the chain ends in a
 block.
 
 The obligations make each operation safe on its own: an index in range,
-`>= 0` by its type and `< cap()` by the obligation, is memory the buffer
+`>= 0` by its type and `< cap()` by its refinement, is memory the buffer
 has; a slot written only when it's empty loses no
 value; read, `slice` and `slice_mut` only of slots that hold one. What they
 don't cover, the types do. A buffer is linear, so it's freed once, and
@@ -257,7 +260,7 @@ arguments', so a buffer of `&'a i64` can't outlive `'a`.
 | destructors, `Discard` with a `fn discard(self)` | a drop would be a call nobody wrote | 20 ✅ |
 | raw pointers, byte buffers, casts | need an aliasing model, and layouts | — |
 | failing allocation, `RawBuf::try_new` | needs `Result` from an intrinsic | — |
-| an index's upper bound as a refinement, `i < self.cap()` | measures (21 ✅), and `List`'s `len <= cap()` as an invariant, which callers would have to prove it from | — |
+| an index's upper bound as a refinement, `i < self.cap()` | measures (21 ✅), and `List`'s `len <= cap()` as an invariant, which callers would have to prove it from | 30 ✅ |
 | checking initialisation, as ATS's views do | linear capabilities for each slot: research | — |
 
 ## Exercises

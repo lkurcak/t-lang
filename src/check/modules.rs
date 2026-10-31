@@ -506,6 +506,7 @@ impl Resolver {
             interface: None,
             next_id: prog.next_id,
             variants,
+            in_pred: false,
         };
         let rewritten = w.program(prog, from);
         // What's rewritten stays rewritten, ids and all, even past an error.
@@ -1004,6 +1005,9 @@ struct Rewrite<'r> {
     /// The variants of each enum, by its index in `Program::types`, by name
     /// and how many fields each has; `None` for a struct or alias.
     variants: Vec<Option<Vec<(String, usize)>>>,
+    /// In a refinement's predicate or an `ensures`, where `old(x)` is
+    /// the logic's, not a call: only `x` is rewritten.
+    in_pred: bool,
 }
 
 impl Rewrite<'_> {
@@ -1350,6 +1354,9 @@ impl Rewrite<'_> {
             self.ty(&mut p.ty)?;
         }
         self.ty(&mut f.ret)?;
+        for e in &mut f.ensures {
+            self.pred(e)?;
+        }
         self.interface = None;
         self.expr(&mut f.body)?;
         self.interface = outer;
@@ -1361,7 +1368,7 @@ impl Rewrite<'_> {
         match &mut t.kind {
             TypeExprKind::Refined(_, base, pred) => {
                 self.ty(base)?;
-                self.expr(pred)?;
+                self.pred(pred)?;
             }
             TypeExprKind::Named(name, args) => {
                 for a in args.iter_mut() {
@@ -1423,7 +1430,24 @@ impl Rewrite<'_> {
         Ok(())
     }
 
+    /// Predicate `e`, of a refinement or an `ensures`.
+    fn pred(&mut self, e: &mut Expr) -> Result<(), Error> {
+        let outer = std::mem::replace(&mut self.in_pred, true);
+        let r = self.expr(e);
+        self.in_pred = outer;
+        r
+    }
+
     fn expr(&mut self, e: &mut Expr) -> Result<(), Error> {
+        if self.in_pred
+            && let ExprKind::Call(callee, args) = &mut e.kind
+            && let ExprKind::Var(name, targs) = &callee.kind
+            && name == "old"
+            && targs.is_empty()
+            && args.len() == 1
+        {
+            return self.expr(&mut args[0]);
+        }
         if let ExprKind::Block(stmts, tail) = &mut e.kind
             && let Some(i) = stmts
                 .iter()

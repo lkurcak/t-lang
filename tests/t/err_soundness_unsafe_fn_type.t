@@ -2,7 +2,9 @@
 // calling it would be unsafe with nothing to say so.
 use alloc::raw::RawBuf;
 
-fn take(b: &mut RawBuf<i64>) -> i64 with unsafe { b.read(0) }
+fn take(b: &mut RawBuf<i64>) -> i64 with unsafe {
+    if b.cap() > 0 { b.read(0) } else { 0 }
+}
 
 fn main() with {alloc, panic} {
     let f: fn(&mut RawBuf<i64>) -> i64 = take;

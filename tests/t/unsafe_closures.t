@@ -3,10 +3,15 @@
 // keeps them, in a block, or by being unsafe itself.
 use alloc::raw::RawBuf;
 
+/// Slot `i`'s value, moved out, if there's a slot `i`.
+fn get(b: &mut RawBuf<i64>, i: usize) -> i64 with unsafe {
+    if i < b.cap() { b.read(i) } else { 0 }
+}
+
 fn apply<effect e, F: FnOnce() -> i64 with e>(f: F) -> i64 with e { f() }
 
 /// The caller must know slot 0 holds a value, and leave it uninitialised.
-fn take_first(b: &mut RawBuf<i64>) -> i64 with unsafe { apply(|| b.read(0)) }
+fn take_first(b: &mut RawBuf<i64>) -> i64 with unsafe { apply(|| get(b, 0)) }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut out = os.stdout;
@@ -15,12 +20,14 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
         let i = if first { 0 } else { 1 };
         // SAFETY: wrong in general, but each slot is written once here, and
         // there are two.
-        unsafe { b.write(i, v) }
+        unsafe {
+            if i < b.cap() { b.write(i, v) }
+        }
     };
     put(&mut b, true, 3);
     put(&mut b, false, 4);
     // SAFETY: slot 1 holds the 4, and `take` isn't called again.
-    let take = || unsafe { b.read(1) };
+    let take = || unsafe { get(&mut b, 1) };
     let four = apply(take);
     // SAFETY: slot 0 holds the 3; then every slot is uninitialised.
     let three = unsafe {
@@ -31,5 +38,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
         three
     };
     out.line(&four)?; // expect: 4
-    out.line(&three) // expect: 3
+    out.line(&three)  // expect: 3
 }

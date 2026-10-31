@@ -1,5 +1,48 @@
 # Changelog
 
+## Unreleased
+
+Step 30: postconditions, and invariants across `&mut`. See
+[docs/30-postconditions.md](docs/30-postconditions.md).
+
+### Added
+
+- `ensures p, q` after a function's signature: what it leaves behind its
+  `&mut` parameters, whose names there mean their values at return, and
+  `old(e)` the value at the call. It's proved at every return, and the
+  caller knows it of what it lent. Only of a *call-scoped* `&mut`: one
+  whose lifetime is in no other part of the signature (an elided one is),
+  so nothing the callee makes of it outlives the call.
+- A field a refinement is about can be lent `&mut` straight to a call
+  that can't keep it; when the call returns, the struct's refinements
+  about that field are proved again.
+- `List`'s `len <= buf.cap()` is a refinement of its fields. `push`,
+  `pop`, `swap`, `truncate` and `clear` say what they do to `len()`, and
+  `List::new` and `with_capacity` that it's 0.
+- `RawBuf`: `new` and `empty` say what `cap()` is, `grow`, `write`, `read`
+  and `slice_mut` what they leave it as, and `write`, `read`, `slice` and
+  `slice_mut` need their index below `cap()` as a refinement.
+- tree-sitter and `t fmt` know `ensures`.
+
+### Changed
+
+- A result's refinement is a postcondition: a `&mut` parameter in it means
+  its value at return. Write `old(..)` for its value at the call, as
+  `List::as_mut_slice` does. Naming a `&mut` parameter that isn't
+  call-scoped without `old` is an error.
+- `ensures` is a keyword.
+- `List::push` no longer checks for a length that can't count one more:
+  `len < cap()` there, which the checker proves.
+- After an `if` or `match`, a place each branch left differently keeps
+  the measures every branch knew of it, case by case.
+
+### Fixed
+
+- A write to a place *inside* a field a refinement is about, `s.a.b = 0`
+  or `&mut s.a.b` where a refinement names `s.a`'s measures, wasn't
+  checked against that refinement (since 0.34.0). It's proved again after
+  an assignment, and borrowing it `&mut` is as for the field.
+
 ## 0.42.0 (2026-10-31)
 
 Step 29: closed and sealed traits. See

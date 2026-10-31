@@ -657,18 +657,26 @@ impl Refined {
                 Some(m) => m.clone(),
                 None => i.measure_call(e.id, self.eval(i, x, v).val()),
             },
+            // `old(x)` in a postcondition: its measures were found at the
+            // call.
+            ExprKind::Call(_, args) if args.len() == 1 => self.eval(i, &args[0], v),
             _ => unsound("a refinement outside the logic"),
         }
     }
 }
 
-/// Each measure call in predicate `e`, by node, with its receiver.
-fn each_measure_call<'e>(e: &'e Expr, out: &mut Vec<(NodeId, &'e Expr)>) {
-    if let ExprKind::MethodCall(x, ..) = &e.kind {
-        out.push((e.id, x));
+/// Each measure call in predicate `e`, by node, with its receiver: in a
+/// postcondition (`post`), only those inside `old(..)`.
+fn each_measure_call<'e>(e: &'e Expr, post: bool, out: &mut Vec<(NodeId, &'e Expr)>) {
+    match &e.kind {
+        ExprKind::MethodCall(x, ..) if !post => out.push((e.id, x)),
+        ExprKind::Call(_, args) if args.len() == 1 => {
+            return each_measure_call(&args[0], false, out);
+        }
+        _ => {}
     }
     for c in e.children() {
-        each_measure_call(c, out);
+        each_measure_call(c, post, out);
     }
 }
 
@@ -689,6 +697,18 @@ impl Interp<'_, '_> {
     /// The refinement `{ binder | pred }`, whose other names have the
     /// values `env`: what the measures it calls of them give is found now.
     fn refined(&self, binder: &str, pred: &Expr, env: Vec<(String, Value)>) -> Refined {
+        self.refined_at(binder, pred, env, false)
+    }
+
+    /// The same, of a postcondition (`post`): what's behind its names is
+    /// found when it's checked, at return, but for what's in `old(..)`.
+    fn refined_at(
+        &self,
+        binder: &str,
+        pred: &Expr,
+        env: Vec<(String, Value)>,
+        post: bool,
+    ) -> Refined {
         let mut r = Refined {
             binder: binder.to_string(),
             pred: pred.clone(),
@@ -696,7 +716,7 @@ impl Interp<'_, '_> {
             measured: HashMap::new(),
         };
         let mut calls = Vec::new();
-        each_measure_call(pred, &mut calls);
+        each_measure_call(pred, post, &mut calls);
         for (node, x) in calls {
             if let ExprKind::Var(name, _) = &x.kind
                 && *name != r.binder
@@ -755,7 +775,7 @@ impl Interp<'_, '_> {
                     Value::Slots(values) => PredValue::Int(values.len() as i128),
                     other => unsound(&format!("`len` of `{other}`, which isn't an array")),
                 },
-                ("alloc::raw::RawBuf::cap", this) => match self.pred_deref(this.clone()) {
+                ("<RawBuf<T>>::cap", this) => match self.pred_deref(this.clone()) {
                     Value::RawBuf(q) => match self.memory.get(&q) {
                         Value::Slots(slots) => PredValue::Int(slots.len() as i128),
                         other => unsound(&format!("a `RawBuf` of `{other}`")),
@@ -1103,6 +1123,13 @@ impl Interp<'_, '_> {
                     t.refinement()
                         .map(|(v, pred)| i.refined(&v.name, pred, env.clone()))
                 };
+                // A result's refinement and `ensures` are about what's
+                // behind the arguments at return.
+                let ret = (decl.ret.refinement())
+                    .map(|(v, pred)| self.refined_at(&v.name, pred, env.clone(), true));
+                let ensures: Vec<Refined> = (decl.ensures.iter())
+                    .map(|e| self.refined_at("", e, env.clone(), true))
+                    .collect();
                 let intrinsic = decl.intrinsic.is_some();
                 for (p, v) in decl.params.iter().zip(&args) {
                     if let Some(r) = refinement(self, &p.ty) {
@@ -1116,7 +1143,6 @@ impl Interp<'_, '_> {
                         }
                     }
                 }
-                let ret = refinement(self, &decl.ret);
                 // What an intrinsic gives is trusted, and so checked: its
                 // refinement too.
                 let result = if intrinsic {
@@ -1133,6 +1159,12 @@ impl Interp<'_, '_> {
                 };
                 if let (Ok(v), Some(r)) = (&result, ret) {
                     r.check(self, v, &format!("the result of `{}`", decl.name.name));
+                }
+                if result.is_ok() {
+                    for r in &ensures {
+                        let what = format!("what `{}` ensures", decl.name.name);
+                        r.check(self, &Value::Unit, &what);
+                    }
                 }
                 result
             }

@@ -1,4 +1,4 @@
-// Slot `cap()` is one past the end.
+// Slot `cap()` is one past the end, which `write`'s refinement rules out.
 use alloc::raw::RawBuf;
 
 fn main() with alloc {
@@ -9,4 +9,4 @@ fn main() with alloc {
         b.free();
     }
 }
-// error: unsafe code broke its obligation: `RawBuf::write` of slot 2, but it has 2 slots
+// error: can't prove `i < self.cap()` for argument `i` of `write`
