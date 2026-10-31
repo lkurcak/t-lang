@@ -2,7 +2,9 @@
 // caller's block's to answer for: that's where it was said to be kept.
 use alloc::raw::RawBuf;
 
-fn second(b: &RawBuf<i64>) -> usize with unsafe { b.slice(1, 2).len() }
+fn second(b: &RawBuf<i64>) -> usize with unsafe {
+    if b.cap() > 1 { b.slice(1, 2).len() } else { 0 }
+}
 
 fn main() with alloc {
     let mut b: RawBuf<i64> = RawBuf::new(2);

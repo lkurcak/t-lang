@@ -2463,13 +2463,13 @@ fn browses_open_library_sources_without_editing_them() {
     let text = std::fs::read_to_string(&path).unwrap();
     let (mut d, diagnostics) = Doc::open(&mut c, uri, &text);
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
-    let r = d.ask(&mut c, "textDocument/definition", "RawBuf,", 0, json!({}));
+    let r = d.ask(&mut c, "textDocument/definition", "RawBuf;", 0, json!({}));
     library_location(&r["result"], "alloc", "raw.t", "struct RawBuf", "RawBuf");
     let r = d.ask(&mut c, "textDocument/definition", "empty()", 0, json!({}));
     library_location(&r["result"], "alloc", "raw.t", "fn empty", "empty");
     let r = d.ask(&mut c, "textDocument/definition", "len }", 0, json!({}));
     assert_eq!(r["result"]["uri"], uri, "{r}");
-    let start = d.at("len: usize", 0);
+    let start = d.at("len: { n", 0);
     assert_eq!(
         r["result"]["range"],
         json!({
@@ -2477,7 +2477,7 @@ fn browses_open_library_sources_without_editing_them() {
             "end": {"line": start["line"], "character": start["character"].as_u64().unwrap() + 3}
         })
     );
-    let r = d.ask(&mut c, "textDocument/hover", "RawBuf,", 0, json!({}));
+    let r = d.ask(&mut c, "textDocument/hover", "RawBuf;", 0, json!({}));
     assert!(
         r["result"]["contents"]["value"]
             .as_str()
@@ -2491,7 +2491,7 @@ fn browses_open_library_sources_without_editing_them() {
         let r = d.ask(
             &mut c,
             method,
-            "len: usize",
+            "len: { n",
             0,
             json!({"newName": "length"}),
         );
@@ -2528,7 +2528,7 @@ fn browses_open_library_sources_without_editing_them() {
         }}),
     );
     assert!(c.diagnostics().is_empty());
-    let r = d.ask(&mut c, "textDocument/definition", "RawBuf,", 0, json!({}));
+    let r = d.ask(&mut c, "textDocument/definition", "RawBuf;", 0, json!({}));
     library_location(&r["result"], "alloc", "raw.t", "struct RawBuf", "RawBuf");
     assert_eq!(std::fs::read_to_string(path).unwrap(), text);
     stop(child, c);

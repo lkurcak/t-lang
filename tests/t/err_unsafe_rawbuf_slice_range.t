@@ -1,4 +1,5 @@
-// A slice must be of the buffer's slots: `hi <= cap()`, and `lo <= hi`.
+// A slice must be of the buffer's slots: `hi <= cap()`, and `lo <= hi`,
+// which `slice`'s refinement says, so the checker proves it.
 use alloc::raw::RawBuf;
 
 fn main() with alloc {
@@ -9,4 +10,4 @@ fn main() with alloc {
     // SAFETY: every slot is uninitialised.
     unsafe { b.free() };
 }
-// error: unsafe code broke its obligation: `RawBuf::slice` of slots 1..2, but the buffer has 1
+// error: can't prove `h >= lo && h <= self.cap()` for argument `hi` of `slice`

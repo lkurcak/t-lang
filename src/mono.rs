@@ -423,6 +423,7 @@ impl<'p> Mono<'p> {
             body: cx.expr(&f.body),
             intrinsic: f.intrinsic,
             measure: f.measure,
+            ensures: f.ensures.iter().map(|e| *cx.pred(e)).collect(),
         }
     }
 

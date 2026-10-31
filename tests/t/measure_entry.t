@@ -3,7 +3,7 @@
 // is: as long as the list was, which a slice to change can't change.
 use alloc::list::List;
 
-fn take_last(l: &mut List<i64>) -> { r: usize | r == l.len() } {
+fn take_last(l: &mut List<i64>) -> { r: usize | r == old(l.len()) } {
     let n = l.len();
     l.pop();
     n

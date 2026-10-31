@@ -64,6 +64,8 @@ module.exports = grammar({
     // In `#[derive(Eq where T: Eq, U: Show)]`, a name after a `,` could be
     // another bound or another trait: the `:` after it decides.
     [$.where_clause],
+    // `ensures p, {` could go on to another predicate (a block) or end.
+    [$.ensures_clause],
     [$._path, $.projection_type],
     [$._path, $.variant_expression],
     [$._path, $.generic_function, $._type_identifier],
@@ -175,6 +177,15 @@ module.exports = grammar({
       optional(','),
     ),
 
+    // `ensures self.len() == old(self.len()) + 1`: what a function
+    // promises to leave behind its `&mut` parameters.
+    ensures_clause: $ => seq(
+      'ensures',
+      $._expression,
+      repeat(seq(',', $._expression)),
+      optional(','),
+    ),
+
     where_predicate: $ => seq(
       field('left', $._type),
       field('bounds', $.trait_bounds),
@@ -189,6 +200,7 @@ module.exports = grammar({
       optional(seq('->', field('return_type', $._type))),
       optional(field('effects', $.effects)),
       optional($.where_clause),
+      optional($.ensures_clause),
       field('body', $.block),
     ),
 
@@ -203,6 +215,7 @@ module.exports = grammar({
       optional(seq('->', field('return_type', $._type))),
       optional(field('effects', $.effects)),
       optional($.where_clause),
+      optional($.ensures_clause),
       ';',
     ),
 

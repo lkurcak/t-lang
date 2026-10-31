@@ -28,7 +28,7 @@ impl<T, const N: usize> [T; N] {
 
     /// All its values, as a slice to change them through.
     #[intrinsic]
-    export fn as_mut_slice(&mut self) -> { s: &mut [T] | s.len() == self.len() };
+    export fn as_mut_slice(&mut self) -> { s: &mut [T] | s.len() == old(self.len()) };
 
     /// The value at `i`, which is less than `len()`, so there's one: `a[i]`
     /// is `*a.index(i)`.

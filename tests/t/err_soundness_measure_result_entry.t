@@ -2,7 +2,7 @@
 // `r` is how long the list was, not how long it is after `pop`.
 use alloc::list::List;
 
-fn shrink(l: &mut List<i64>) -> { r: usize | r == l.len() } {
+fn shrink(l: &mut List<i64>) -> { r: usize | r == old(l.len()) } {
     let n = l.len();
     l.pop();
     n

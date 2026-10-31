@@ -599,7 +599,7 @@ impl Printer<'_> {
         let ty = self.ty(&d.self_ty);
         let short = |f: &Doc| flat_width(f).is_some_and(|w| w <= WIDTH / 2);
         let ty = flat(&ty).filter(short).unwrap_or(ty);
-        let wheres = self.wheres(None, &d.generics, true);
+        let wheres = self.wheres(None, &d.generics, &[], true);
         doc + "impl" + generics + header + ty + wheres + body
     }
 
@@ -629,7 +629,9 @@ impl Printer<'_> {
             let doc = match *item {
                 BodyItem::Fn(f, true) => self.fn_decl(f),
                 BodyItem::Fn(f, false) => {
-                    self.signature(f) + self.wheres(f.effects.as_ref(), &f.generics, false) + ";"
+                    self.signature(f)
+                        + self.wheres(f.effects.as_ref(), &f.generics, &f.ensures, false)
+                        + ";"
                 }
                 BodyItem::Decl(a) => {
                     let lead = self.lead(a.doc.as_ref(), &[], a.span.start);
@@ -850,11 +852,14 @@ impl Printer<'_> {
     fn fn_decl(&mut self, f: &FnDecl) -> Doc {
         match f.intrinsic {
             Some(_) => {
-                self.signature(f) + self.wheres(f.effects.as_ref(), &f.generics, false) + ";"
+                self.signature(f)
+                    + self.wheres(f.effects.as_ref(), &f.generics, &f.ensures, false)
+                    + ";"
             }
             // In order: comments are printed as what's after them is.
             None => {
-                let head = self.signature(f) + self.wheres(f.effects.as_ref(), &f.generics, true);
+                let head = self.signature(f)
+                    + self.wheres(f.effects.as_ref(), &f.generics, &f.ensures, true);
                 head + self.expr(&f.body, 0, Ctx::default())
             }
         }
@@ -867,8 +872,14 @@ impl Printer<'_> {
     /// there's a `body`.
     ///
     /// A function's `effects`, `with ..`, come first, and go on a line of
-    /// their own with it.
-    fn wheres(&mut self, effects: Option<&EffectSet>, g: &Generics, body: bool) -> Doc {
+    /// their own with it; its `ensures` last, laid out as `where` is.
+    fn wheres(
+        &mut self,
+        effects: Option<&EffectSet>,
+        g: &Generics,
+        ensures: &[Expr],
+        body: bool,
+    ) -> Doc {
         let after = if body { text(" ") } else { Doc::nil() };
         let with = effects.is_some();
         let effects = match effects {
@@ -879,10 +890,29 @@ impl Printer<'_> {
             true => Doc::Line,
             false => Doc::nil(),
         };
+        let comma = Doc::IfBreak(Box::new(text(",")), Box::new(Doc::nil()));
+        let has_ensures = !ensures.is_empty();
+        let ensures = match ensures.is_empty() {
+            true => Doc::nil(),
+            false => {
+                let mut preds = Doc::nil();
+                for (i, e) in ensures.iter().enumerate() {
+                    if i > 0 {
+                        preds = preds + "," + Doc::Line;
+                    }
+                    preds = preds + self.expr(e, 0, Ctx::default());
+                }
+                let comma = match body {
+                    true => comma.clone(),
+                    false => Doc::nil(),
+                };
+                Doc::Line + "ensures" + nest(Doc::Line + preds + comma)
+            }
+        };
         if g.wheres.is_empty() {
-            return match with {
-                true => group(effects + end),
+            return match with || has_ensures {
                 false => after,
+                true => group(effects + ensures + end),
             };
         }
         let mut preds = Doc::nil();
@@ -895,8 +925,7 @@ impl Printer<'_> {
                 preds = preds + if j == 0 { ": " } else { " + " } + self.bound(b);
             }
         }
-        let comma = Doc::IfBreak(Box::new(text(",")), Box::new(Doc::nil()));
-        group(effects + Doc::Line + "where" + nest(Doc::Line + preds + comma) + end)
+        group(effects + Doc::Line + "where" + nest(Doc::Line + preds + comma) + ensures + end)
     }
 
     /// A function, up to its body.

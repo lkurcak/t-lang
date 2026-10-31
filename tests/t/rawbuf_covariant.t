@@ -3,7 +3,7 @@
 // type has no fields to say so.
 use alloc::raw::RawBuf;
 
-fn shorten<'a>(b: RawBuf<&'static i64>) -> RawBuf<&'a i64> { b }
+fn shorten<'a>(b: RawBuf<&'static i64>) -> { r: RawBuf<&'a i64> | r.cap() == b.cap() } { b }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut stdout = os.stdout;

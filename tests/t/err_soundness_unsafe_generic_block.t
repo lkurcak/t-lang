@@ -4,6 +4,11 @@
 // passes an unsafe closure, must keep them.
 use alloc::raw::RawBuf;
 
+/// Slot `i`'s value, moved out, if there's a slot `i`.
+fn get(b: &mut RawBuf<i64>, i: usize) -> i64 with unsafe {
+    if i < b.cap() { b.read(i) } else { 0 }
+}
+
 fn call<effect e, F: FnOnce() -> i64 with e>(f: F) -> i64 with e {
     // SAFETY: nothing here is unsafe but `f`, whose obligations aren't ours.
     unsafe { f() }
@@ -11,7 +16,7 @@ fn call<effect e, F: FnOnce() -> i64 with e>(f: F) -> i64 with e {
 
 fn main() with {alloc, panic} {
     let mut b: RawBuf<i64> = RawBuf::new(1);
-    let _v = call(|| b.read(0));
+    let _v = call(|| get(&mut b, 0));
     // SAFETY: there's nothing in the slot to leave behind.
     unsafe { b.free() };
 }

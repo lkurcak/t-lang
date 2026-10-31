@@ -977,6 +977,15 @@ impl Parser {
         if *self.peek() == Tok::Where {
             self.where_clause(&mut generics)?;
         }
+        let mut ensures = Vec::new();
+        if self.eat(&Tok::Ensures) {
+            loop {
+                ensures.push(self.structs(false, Self::expr)?);
+                if !self.eat(&Tok::Comma) || matches!(self.peek(), Tok::LBrace | Tok::Semi) {
+                    break;
+                }
+            }
+        }
         let intrinsic = head.intrinsic;
         let (body, provided) = match self.peek() {
             Tok::Semi if in_trait || intrinsic.is_some() => {
@@ -1017,6 +1026,7 @@ impl Parser {
             body,
             intrinsic,
             measure: head.measure,
+            ensures,
         };
         Ok((f, provided))
     }
@@ -1042,7 +1052,9 @@ impl Parser {
             }
             end = items[items.len() - 1].span;
             g.wheres.push((subject, items));
-            if !self.eat(&Tok::Comma) || matches!(self.peek(), Tok::LBrace | Tok::Semi) {
+            if !self.eat(&Tok::Comma)
+                || matches!(self.peek(), Tok::LBrace | Tok::Semi | Tok::Ensures)
+            {
                 break;
             }
         }
