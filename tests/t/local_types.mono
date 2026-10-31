@@ -24,133 +24,575 @@ struct other::P { y: i64 }
 enum outer::inner::Sign { Minus, Plus }
 
 fn total() -> i64 with panic {
-    let pair = total::Pair { left: P { x: 1i64 }, right: P { x: 2i64 } };
-    total::sum(pair)
+    let _0: i64;
+    let _1: Pair; // pair
+    let _2: Pair;
+    let _3: P;
+    let _4: i64;
+    let _5: P;
+    let _6: i64;
+    let _7: Pair;
+    bb0: {
+        _4 = 1_i64;
+        _3 = P { x: move _4 };
+        _6 = 2_i64;
+        _5 = P { x: move _6 };
+        _2 = total::Pair { left: move _3, right: move _5 };
+        _1 = move _2;
+        dead _6;
+        dead _5;
+        dead _4;
+        dead _3;
+        dead _2;
+        _7 = move _1;
+        _0 = total::sum(move _7);
+        dead _7;
+        dead _1;
+        return;
+    }
 }
 
-fn total::sum(p: total::Pair) -> i64 with panic { p.left.x + p.right.x }
+fn total::sum(p: total::Pair) -> i64 with panic {
+    let _0: i64;
+    let _1: Pair; // p
+    bb0: {
+        _0 = copy _1.0.0 + copy _1.1.0;
+        dead _1;
+        return;
+    }
+}
 
 fn shapes() -> i64 with panic {
-    shapes::area(shapes::Shape::<i64>::Circle(2i64))
-        + shapes::area(shapes::Shape::<i64>::Rect(2i64, 3i64))
-        + shapes::area(shapes::Shape::<i64>::Empty)
+    let _0: i64;
+    let _1: i64;
+    let _2: i64;
+    let _3: Shape<i64>;
+    let _4: i64;
+    let _5: i64;
+    let _6: Shape<i64>;
+    let _7: i64;
+    let _8: i64;
+    let _9: i64;
+    let _10: Shape<i64>;
+    bb0: {
+        _4 = 2_i64;
+        _3 = shapes::Shape::<i64>::Circle(move _4);
+        _2 = shapes::area(move _3);
+        _7 = 2_i64;
+        _8 = 3_i64;
+        _6 = shapes::Shape::<i64>::Rect(move _7, move _8);
+        _5 = shapes::area(move _6);
+        _1 = move _2 + move _5;
+        _10 = shapes::Shape::<i64>::Empty;
+        _9 = shapes::area(move _10);
+        _0 = move _1 + move _9;
+        dead _10;
+        dead _9;
+        dead _8;
+        dead _7;
+        dead _6;
+        dead _5;
+        dead _4;
+        dead _3;
+        dead _2;
+        dead _1;
+        return;
+    }
 }
 
 fn shapes::area(s: shapes::Shape::<i64>) -> i64 with panic {
-    match s {
-        shapes::Shape::<i64>::Circle(r) => 3i64 * r * r,
-        shapes::Shape::<i64>::Rect(w, h) => w * h,
-        shapes::Shape::<i64>::Empty => 0i64,
+    let _0: i64;
+    let _1: Shape<i64>; // s
+    let _2: i64; // r
+    let _3: i64;
+    let _4: i64;
+    let _5: i64; // w
+    let _6: i64; // h
+    bb0: {
+        inspect _1;
+        inspect _1;
+        inspect _1;
+        match _1 { #0(_) => bb1, #1(_, _) => bb2, #2 => bb3 };
+    }
+    bb1: {
+        _2 = copy (_1 as #0).0;
+        _4 = 3_i64;
+        _3 = move _4 * copy _2;
+        _0 = move _3 * copy _2;
+        dead _2;
+        goto bb4;
+    }
+    bb2: {
+        _5 = copy (_1 as #1).0;
+        _6 = copy (_1 as #1).1;
+        _0 = copy _5 * copy _6;
+        dead _6;
+        dead _5;
+        goto bb4;
+    }
+    bb3: {
+        _0 = 0_i64;
+        goto bb4;
+    }
+    bb4: {
+        dead _4;
+        dead _3;
+        dead _1;
+        return;
     }
 }
 
 fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
-    let mut out = os.stdout;
-    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
-        <std::io::Stdout>::line::<i64>(&mut out, &total()),
-    ) {
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
-            {try},
-        ) => {try},
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
-            {try},
-        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
-            {try},
-        ),
-    };
-    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
-        <std::io::Stdout>::line::<i64>(&mut out, &shapes()),
-    ) {
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
-            {try},
-        ) => {try},
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
-            {try},
-        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
-            {try},
-        ),
-    };
-    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
-        <std::io::Stdout>::line::<bool>(&mut out, &(main::P { y: true }).y),
-    ) {
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
-            {try},
-        ) => {try},
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
-            {try},
-        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
-            {try},
-        ),
-    };
-    let q = { main::Q { n: 7i64 } };
-    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
-        <std::io::Stdout>::line::<i64>(&mut out, &q.n),
-    ) {
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
-            {try},
-        ) => {try},
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
-            {try},
-        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
-            {try},
-        ),
-    };
-    {
-        let main::P#2 { z } = main::P#2 { z: 9i64 };
-        match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
-            <std::io::Stdout>::line::<i64>(&mut out, &z),
-        ) {
-            core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
-                {try},
-            ) => {try},
-            core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
-                {try},
-            ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
-                {try},
-            ),
-        };
+    let _0: Result<(), Error>;
+    let _1: Os; // os
+    let mut _2: Stdout; // out
+    let _3: Stdout;
+    let _4: Stdout;
+    let _5: ();
+    let _6: ControlFlow<Result<!, Error>, ()>;
+    let _7: Result<(), Error>;
+    let _8: i64;
+    let _9: &mut Stdout;
+    let _10: &i64;
+    let _11: (); // {try}
+    let _12: Result<!, Error>; // {try}
+    let _13: Result<!, Error>;
+    let _14: ();
+    let _15: ControlFlow<Result<!, Error>, ()>;
+    let _16: Result<(), Error>;
+    let _17: i64;
+    let _18: &mut Stdout;
+    let _19: &i64;
+    let _20: (); // {try}
+    let _21: Result<!, Error>; // {try}
+    let _22: Result<!, Error>;
+    let _23: ();
+    let _24: ControlFlow<Result<!, Error>, ()>;
+    let _25: Result<(), Error>;
+    let _26: P;
+    let _27: bool;
+    let _28: &mut Stdout;
+    let _29: &bool;
+    let _30: (); // {try}
+    let _31: Result<!, Error>; // {try}
+    let _32: Result<!, Error>;
+    let _33: Q; // q
+    let _34: Q;
+    let _35: i64;
+    let _36: ();
+    let _37: ControlFlow<Result<!, Error>, ()>;
+    let _38: Result<(), Error>;
+    let _39: &mut Stdout;
+    let _40: &i64;
+    let _41: (); // {try}
+    let _42: Result<!, Error>; // {try}
+    let _43: Result<!, Error>;
+    let _44: ();
+    let _45: P;
+    let _46: i64;
+    let _47: i64; // z
+    let _48: ();
+    let _49: ControlFlow<Result<!, Error>, ()>;
+    let _50: Result<(), Error>;
+    let _51: &mut Stdout;
+    let _52: &i64;
+    let _53: (); // {try}
+    let _54: Result<!, Error>; // {try}
+    let _55: Result<!, Error>;
+    let _56: ();
+    let _57: ControlFlow<Result<!, Error>, ()>;
+    let _58: Result<(), Error>;
+    let _59: i64;
+    let _60: &mut Stdout;
+    let _61: &i64;
+    let _62: (); // {try}
+    let _63: Result<!, Error>; // {try}
+    let _64: Result<!, Error>;
+    let _65: ();
+    let _66: ControlFlow<Result<!, Error>, ()>;
+    let _67: Result<(), Error>;
+    let _68: i64;
+    let _69: &mut Stdout;
+    let _70: &i64;
+    let _71: (); // {try}
+    let _72: Result<!, Error>; // {try}
+    let _73: Result<!, Error>;
+    let _74: ();
+    bb0: {
+        _4 = move _1.1;
+        _3 = move _4;
+        _2 = move _3;
+        dead _4;
+        dead _3;
+        _8 = total();
+        _9 = &mut _2;
+        _10 = &_8;
+        _7 = <std::io::Stdout>::line::<i64>(move _9, move _10);
+        _6 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(move _7);
+        inspect _6;
+        inspect _6;
+        match _6 { #0(_) => bb1, #1(_) => bb2 };
     }
-    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
-        <std::io::Stdout>::line::<i64>(&mut out, &other()),
-    ) {
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
-            {try},
-        ) => {try},
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
-            {try},
-        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
-            {try},
-        ),
-    };
-    match <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(
-        <std::io::Stdout>::line::<i64>(&mut out, &outer()),
-    ) {
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Continue(
-            {try},
-        ) => {try},
-        core::ops::ControlFlow::<core::result::Result<!, std::io::Error>, ()>::Break(
-            {try},
-        ) => return <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(
-            {try},
-        ),
-    };
-    core::result::Result::<(), std::io::Error>::Ok(())
+    bb1: {
+        _11 = copy (_6 as #0).0;
+        _5 = copy _11;
+        dead _11;
+        goto bb3;
+    }
+    bb2: {
+        _12 = move (_6 as #1).0;
+        _13 = move _12;
+        _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _13);
+        dead _12;
+        dead _13;
+        dead _10;
+        dead _9;
+        dead _8;
+        dead _7;
+        dead _6;
+        dead _5;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb3: {
+        dead _13;
+        dead _10;
+        dead _9;
+        dead _8;
+        dead _7;
+        dead _6;
+        dead _5;
+        _17 = shapes();
+        _18 = &mut _2;
+        _19 = &_17;
+        _16 = <std::io::Stdout>::line::<i64>(move _18, move _19);
+        _15 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(move _16);
+        inspect _15;
+        inspect _15;
+        match _15 { #0(_) => bb5, #1(_) => bb6 };
+    }
+    bb5: {
+        _20 = copy (_15 as #0).0;
+        _14 = copy _20;
+        dead _20;
+        goto bb7;
+    }
+    bb6: {
+        _21 = move (_15 as #1).0;
+        _22 = move _21;
+        _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _22);
+        dead _21;
+        dead _22;
+        dead _19;
+        dead _18;
+        dead _17;
+        dead _16;
+        dead _15;
+        dead _14;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb7: {
+        dead _22;
+        dead _19;
+        dead _18;
+        dead _17;
+        dead _16;
+        dead _15;
+        dead _14;
+        _27 = true;
+        _26 = main::P { y: move _27 };
+        _28 = &mut _2;
+        _29 = &_26.0;
+        _25 = <std::io::Stdout>::line::<bool>(move _28, move _29);
+        _24 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(move _25);
+        inspect _24;
+        inspect _24;
+        match _24 { #0(_) => bb9, #1(_) => bb10 };
+    }
+    bb9: {
+        _30 = copy (_24 as #0).0;
+        _23 = copy _30;
+        dead _30;
+        goto bb11;
+    }
+    bb10: {
+        _31 = move (_24 as #1).0;
+        _32 = move _31;
+        _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _32);
+        dead _31;
+        dead _32;
+        dead _29;
+        dead _28;
+        dead _27;
+        dead _26;
+        dead _25;
+        dead _24;
+        dead _23;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb11: {
+        dead _32;
+        dead _29;
+        dead _28;
+        dead _27;
+        dead _26;
+        dead _25;
+        dead _24;
+        dead _23;
+        _35 = 7_i64;
+        _34 = main::Q { n: move _35 };
+        dead _35;
+        _33 = move _34;
+        dead _34;
+        _39 = &mut _2;
+        _40 = &_33.0;
+        _38 = <std::io::Stdout>::line::<i64>(move _39, move _40);
+        _37 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(move _38);
+        inspect _37;
+        inspect _37;
+        match _37 { #0(_) => bb13, #1(_) => bb14 };
+    }
+    bb13: {
+        _41 = copy (_37 as #0).0;
+        _36 = copy _41;
+        dead _41;
+        goto bb15;
+    }
+    bb14: {
+        _42 = move (_37 as #1).0;
+        _43 = move _42;
+        _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _43);
+        dead _42;
+        dead _43;
+        dead _40;
+        dead _39;
+        dead _38;
+        dead _37;
+        dead _36;
+        dead _33;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb15: {
+        dead _43;
+        dead _40;
+        dead _39;
+        dead _38;
+        dead _37;
+        dead _36;
+        _46 = 9_i64;
+        _45 = main::P#2 { z: move _46 };
+        _47 = copy _45.0;
+        dead _46;
+        dead _45;
+        _51 = &mut _2;
+        _52 = &_47;
+        _50 = <std::io::Stdout>::line::<i64>(move _51, move _52);
+        _49 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(move _50);
+        inspect _49;
+        inspect _49;
+        match _49 { #0(_) => bb17, #1(_) => bb18 };
+    }
+    bb17: {
+        _53 = copy (_49 as #0).0;
+        _48 = copy _53;
+        dead _53;
+        goto bb19;
+    }
+    bb18: {
+        _54 = move (_49 as #1).0;
+        _55 = move _54;
+        _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _55);
+        dead _54;
+        dead _55;
+        dead _52;
+        dead _51;
+        dead _50;
+        dead _49;
+        dead _48;
+        dead _47;
+        dead _44;
+        dead _33;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb19: {
+        dead _55;
+        dead _52;
+        dead _51;
+        dead _50;
+        dead _49;
+        dead _48;
+        _44 = ();
+        dead _47;
+        dead _44;
+        _59 = other();
+        _60 = &mut _2;
+        _61 = &_59;
+        _58 = <std::io::Stdout>::line::<i64>(move _60, move _61);
+        _57 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(move _58);
+        inspect _57;
+        inspect _57;
+        match _57 { #0(_) => bb21, #1(_) => bb22 };
+    }
+    bb21: {
+        _62 = copy (_57 as #0).0;
+        _56 = copy _62;
+        dead _62;
+        goto bb23;
+    }
+    bb22: {
+        _63 = move (_57 as #1).0;
+        _64 = move _63;
+        _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _64);
+        dead _63;
+        dead _64;
+        dead _61;
+        dead _60;
+        dead _59;
+        dead _58;
+        dead _57;
+        dead _56;
+        dead _33;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb23: {
+        dead _64;
+        dead _61;
+        dead _60;
+        dead _59;
+        dead _58;
+        dead _57;
+        dead _56;
+        _68 = outer();
+        _69 = &mut _2;
+        _70 = &_68;
+        _67 = <std::io::Stdout>::line::<i64>(move _69, move _70);
+        _66 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(move _67);
+        inspect _66;
+        inspect _66;
+        match _66 { #0(_) => bb25, #1(_) => bb26 };
+    }
+    bb25: {
+        _71 = copy (_66 as #0).0;
+        _65 = copy _71;
+        dead _71;
+        goto bb27;
+    }
+    bb26: {
+        _72 = move (_66 as #1).0;
+        _73 = move _72;
+        _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _73);
+        dead _72;
+        dead _73;
+        dead _70;
+        dead _69;
+        dead _68;
+        dead _67;
+        dead _66;
+        dead _65;
+        dead _33;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb27: {
+        dead _73;
+        dead _70;
+        dead _69;
+        dead _68;
+        dead _67;
+        dead _66;
+        dead _65;
+        _74 = ();
+        _0 = core::result::Result::<(), std::io::Error>::Ok(move _74);
+        dead _74;
+        dead _33;
+        dead _2;
+        dead _1;
+        return;
+    }
 }
 
-fn other() -> i64 { (other::P { y: 4i64 }).y }
+fn other() -> i64 {
+    let _0: i64;
+    let _1: P;
+    let _2: i64;
+    bb0: {
+        _2 = 4_i64;
+        _1 = other::P { y: move _2 };
+        _0 = copy _1.0;
+        dead _2;
+        dead _1;
+        return;
+    }
+}
 
-fn outer() -> i64 with panic { outer::inner() }
+fn outer() -> i64 with panic {
+    let _0: i64;
+    bb0: {
+        _0 = outer::inner();
+        return;
+    }
+}
 
 fn outer::inner() -> i64 with panic {
-    outer::inner::value(outer::inner::Sign::Plus)
-        + outer::inner::value(outer::inner::Sign::Minus)
-        + outer::inner::value(outer::inner::Sign::Plus)
+    let _0: i64;
+    let _1: i64;
+    let _2: i64;
+    let _3: Sign;
+    let _4: i64;
+    let _5: Sign;
+    let _6: i64;
+    let _7: Sign;
+    bb0: {
+        _3 = outer::inner::Sign::Plus;
+        _2 = outer::inner::value(move _3);
+        _5 = outer::inner::Sign::Minus;
+        _4 = outer::inner::value(move _5);
+        _1 = move _2 + move _4;
+        _7 = outer::inner::Sign::Plus;
+        _6 = outer::inner::value(move _7);
+        _0 = move _1 + move _6;
+        dead _7;
+        dead _6;
+        dead _5;
+        dead _4;
+        dead _3;
+        dead _2;
+        dead _1;
+        return;
+    }
 }
 
 fn outer::inner::value(s: outer::inner::Sign) -> i64 {
-    match s {
-        outer::inner::Sign::Minus => -5i64,
-        outer::inner::Sign::Plus => 5i64,
+    let _0: i64;
+    let _1: Sign; // s
+    bb0: {
+        inspect _1;
+        inspect _1;
+        match _1 { #0 => bb1, #1 => bb2 };
+    }
+    bb1: {
+        _0 = -5_i64;
+        goto bb3;
+    }
+    bb2: {
+        _0 = 5_i64;
+        goto bb3;
+    }
+    bb3: {
+        dead _1;
+        return;
     }
 }
 
@@ -158,5 +600,16 @@ fn <&str as core::fmt::Display>::fmt::<std::io::Stderr><'a>(
     &self,
     w: &mut std::io::Stderr,
 ) -> core::result::Result::<(), std::io::Error> {
-    <std::io::Stderr as core::fmt::Write>::write_str(&mut *w, *self)
+    let _0: Result<(), Error>;
+    let _1: &&str; // self
+    let _2: &mut Stderr; // w
+    let _3: &mut Stderr;
+    bb0: {
+        _3 = &mut (*_2);
+        _0 = <std::io::Stderr as core::fmt::Write>::write_str(move _3, copy (*_1));
+        dead _3;
+        dead _2;
+        dead _1;
+        return;
+    }
 }

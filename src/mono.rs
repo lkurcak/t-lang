@@ -87,9 +87,68 @@ impl Executable {
     }
 }
 
+/// What `t mono` prints: the structs and enums made, then each function,
+/// its MIR for a body, and after it the closures made in it.
 impl std::fmt::Display for Executable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.program.fmt(f)
+        f.write_str(&self.render_only(&|_| true))
+    }
+}
+
+impl Executable {
+    /// What `t mono` prints of the structs, enums and functions whose names
+    /// `keep` says.
+    pub fn render_only(&self, keep: &dyn Fn(&str) -> bool) -> String {
+        use std::fmt::Write;
+        let mut f = String::new();
+        let types = Program {
+            fns: Vec::new(),
+            types: (self.program.types.iter())
+                .filter(|d| keep(&d.name().name))
+                .cloned()
+                .collect(),
+            ..self.program.clone()
+        };
+        let types = types.to_string();
+        f.push_str(&types);
+        let mut first = types.trim().is_empty();
+        let f = &mut f;
+        for d in self.program.fns.iter().filter(|d| keep(&d.name.name)) {
+            if !std::mem::take(&mut first) {
+                f.push('\n');
+            }
+            let name = &d.name.name;
+            let Some(body) = self.bodies.get(name) else {
+                let _ = writeln!(f, "{}", crate::pretty::fn_text(d).trim_end());
+                continue;
+            };
+            let head = crate::pretty::fn_head(d);
+            let _ = write!(f, "{head}{{\n{}}}\n", body.render("    ", self));
+            let mut closures: Vec<(&String, &crate::mir::Body)> = (self.bodies.iter())
+                .filter(|(c, _)| c.starts_with(&format!("{name}::{{closure#")))
+                .collect();
+            closures.sort_by_key(|(c, _)| c.as_str());
+            for (c, b) in closures {
+                let _ = write!(f, "\nclosure {c} {{\n{}}}\n", b.render("    ", self));
+            }
+        }
+        std::mem::take(f)
+    }
+}
+
+impl crate::mir::Names for Executable {
+    fn field(&self, ty: &str, i: usize) -> Option<String> {
+        self.program.types.iter().find_map(|d| match d {
+            TypeDecl::Struct(s) if s.name.name == ty => Some(s.fields.get(i)?.name.name.clone()),
+            _ => None,
+        })
+    }
+
+    fn variant(&self, ty: &str, i: usize) -> Option<String> {
+        self.program.types.iter().find_map(|d| match d {
+            TypeDecl::Enum(e) if e.name.name == ty => Some(e.variants.get(i)?.name.name.clone()),
+            _ => None,
+        })
     }
 }
 

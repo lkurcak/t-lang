@@ -476,3 +476,182 @@ impl fmt::Debug for Body {
         fmt::Display::fmt(self, f)
     }
 }
+
+/// How `t mono` names what a body's aggregates make: struct fields and
+/// enum variants, by their types' copies' names and their indices.
+pub(crate) trait Names {
+    fn field(&self, ty: &str, i: usize) -> Option<String>;
+    fn variant(&self, ty: &str, i: usize) -> Option<String>;
+}
+
+impl Body {
+    /// The body as `t mono` prints it, each line indented by `indent`: its
+    /// locals, then its blocks, those control can't get to left out.
+    pub(crate) fn render(&self, indent: &str, names: &dyn Names) -> String {
+        let mut out = String::new();
+        for (i, l) in self.locals.iter().enumerate() {
+            let m = if l.mutable && l.kind != LocalKind::Temp && i > 0 {
+                "mut "
+            } else {
+                ""
+            };
+            let what = match (&l.name, l.kind) {
+                (Some(n), _) => format!(" // {n}"),
+                (None, LocalKind::Env) => " // the closure".to_string(),
+                _ => String::new(),
+            };
+            out.push_str(&format!("{indent}let {m}_{i}: {};{what}\n", l.ty));
+        }
+        for (b, block) in self.blocks.iter().enumerate() {
+            let Some(term) = &block.term else { continue };
+            out.push_str(&format!("{indent}bb{b}: {{\n"));
+            let inner = format!("{indent}    ");
+            for s in &block.stmts {
+                let line = match &s.kind {
+                    StmtKind::Assign { place, value, .. } => {
+                        format!("{} = {}", show_place(place), show_rv(value, names))
+                    }
+                    StmtKind::Inspect(p) => format!("inspect {}", show_place(p)),
+                    StmtKind::Dead(l) => format!("dead _{}", l.0),
+                    StmtKind::Consume(p, _) => format!("consume {}", show_place(p)),
+                    StmtKind::Refine(l, r) => {
+                        let r = &self.refinements[*r];
+                        let pred = crate::pretty::expr_text(&r.pred);
+                        format!("refine _{} {{ {} | {pred} }}", l.0, r.binder)
+                    }
+                };
+                out.push_str(&format!("{inner}{line};\n"));
+            }
+            let line = match term {
+                Term::Goto(t) => format!("goto bb{}", t.0),
+                Term::Branch(o, t, e) => {
+                    format!("if {} {{ bb{} }} else {{ bb{} }}", show_op(o), t.0, e.0)
+                }
+                Term::Match(p, pats, ts) => {
+                    let arms: Vec<String> = (pats.iter().zip(ts))
+                        .map(|(pat, t)| format!("{} => bb{}", show_pat(pat), t.0))
+                        .collect();
+                    format!("match {} {{ {} }}", show_place(p), arms.join(", "))
+                }
+                Term::Return => "return".to_string(),
+                Term::Unreachable => "unreachable".to_string(),
+            };
+            out.push_str(&format!("{inner}{line};\n{indent}}}\n"));
+        }
+        out
+    }
+}
+
+fn show_place(p: &Place) -> String {
+    let mut s = format!("_{}", p.local.0);
+    for proj in &p.proj {
+        s = match proj {
+            Proj::Deref => format!("(*{s})"),
+            Proj::Field(i) => format!("{s}.{i}"),
+            Proj::Variant(v, i) => format!("({s} as #{v}).{i}"),
+        };
+    }
+    s
+}
+
+fn show_op(o: &Operand) -> String {
+    match o {
+        Operand::Copy(p) => format!("copy {}", show_place(p)),
+        Operand::Move(p) => format!("move {}", show_place(p)),
+        Operand::Const(c) => match c {
+            Const::Int(n, t) => format!("{n}_{t}"),
+            Const::Bool(b) => b.to_string(),
+            Const::Char(c) => format!("{c:?}"),
+            Const::Unit => "()".to_string(),
+            Const::Str(s) => format!("{s:?}"),
+            Const::Bytes(b) => format!("b{:?}", String::from_utf8_lossy(b)),
+            Const::Fn(name, args) if args.is_empty() => name.clone(),
+            Const::Fn(name, args) => {
+                let args: Vec<String> = args.iter().map(Type::to_string).collect();
+                format!("{name}::<{}>", args.join(", "))
+            }
+            Const::Param(name) => name.clone(),
+            Const::Receiver(_) => "<receiver>".to_string(),
+        },
+    }
+}
+
+fn show_ops(os: &[Operand]) -> String {
+    os.iter().map(show_op).collect::<Vec<_>>().join(", ")
+}
+
+fn show_rv(r: &Rvalue, names: &dyn Names) -> String {
+    match r {
+        Rvalue::Use(o) => show_op(o),
+        Rvalue::Ref(_, m, p) => format!("&{}{}", if *m { "mut " } else { "" }, show_place(p)),
+        Rvalue::Unary(op, o, _) => format!("{op}{}", show_op(o)),
+        Rvalue::Binary(op, a, b, _) => format!("{} {op} {}", show_op(a), show_op(b)),
+        Rvalue::Cast(o, t, _) => format!("{} as {t}", show_op(o)),
+        Rvalue::Aggregate(k, t, os) => {
+            let copy = match t {
+                Type::Adt(name, _, args) => crate::mono::mangle(name, args),
+                t => t.to_string(),
+            };
+            match k {
+                Agg::Struct => {
+                    let fields: Vec<String> = (os.iter().enumerate())
+                        .map(|(i, o)| {
+                            let f = names.field(&copy, i).unwrap_or_else(|| i.to_string());
+                            format!("{f}: {}", show_op(o))
+                        })
+                        .collect();
+                    format!("{copy} {{ {} }}", fields.join(", "))
+                }
+                Agg::Variant(i) => {
+                    let v = names.variant(&copy, *i).unwrap_or_else(|| format!("#{i}"));
+                    match os.is_empty() {
+                        true => format!("{copy}::{v}"),
+                        false => format!("{copy}::{v}({})", show_ops(os)),
+                    }
+                }
+                Agg::Box => format!("Box::new({})", show_ops(os)),
+                Agg::Array => format!("[{}]", show_ops(os)),
+                Agg::Repeat => match t {
+                    Type::Array(_, n) => format!("[{}; {n}]", show_ops(os)),
+                    _ => format!("[{}; ?]", show_ops(os)),
+                },
+                Agg::Closure(id) => format!("{{closure#{}}}({})", id.0, show_ops(os)),
+            }
+        }
+        Rvalue::Call(f, args) => match f {
+            Operand::Const(Const::Receiver(_)) => match args.split_first() {
+                Some((recv, rest)) => format!("({})({})", show_op(recv), show_ops(rest)),
+                None => "<receiver>()".to_string(),
+            },
+            f => format!("{}({})", show_op(f), show_ops(args)),
+        },
+    }
+}
+
+fn show_pat(p: &Pat) -> String {
+    match p {
+        Pat::Any => "_".to_string(),
+        Pat::Range(Some(a), Some(b)) if a == b => a.to_string(),
+        Pat::Range(a, b) => format!(
+            "{}..={}",
+            a.map_or(String::new(), |a| a.to_string()),
+            b.map_or(String::new(), |b| b.to_string())
+        ),
+        Pat::Bool(b) => b.to_string(),
+        Pat::Variant(i, pats) if pats.is_empty() => format!("#{i}"),
+        Pat::Variant(i, pats) => format!("#{i}({})", show_pats(pats)),
+        Pat::Struct(fields) => {
+            let fields: Vec<String> = (fields.iter())
+                .map(|(i, p)| format!("{i}: {}", show_pat(p)))
+                .collect();
+            format!("{{ {} }}", fields.join(", "))
+        }
+        Pat::Array(pats) => format!("[{}]", show_pats(pats)),
+        Pat::Or(alts) => alts.iter().map(show_pat).collect::<Vec<_>>().join(" | "),
+        Pat::Deref(p) => format!("&{}", show_pat(p)),
+    }
+}
+
+fn show_pats(ps: &[Pat]) -> String {
+    ps.iter().map(show_pat).collect::<Vec<_>>().join(", ")
+}

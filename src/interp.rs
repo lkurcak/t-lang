@@ -233,11 +233,7 @@ pub struct Ended {
 /// and, for `main`, the `Os`. An error it gives back is reported, and
 /// after it, everything must have been freed. Tests don't share anything:
 /// each run starts from nothing (docs/31-tests.md, T2).
-pub fn run_entry<'p>(
-    program: &'p crate::mono::Executable,
-    entry: &str,
-    term: &mut dyn Terminal,
-) -> Ended {
+pub fn run_entry(program: &crate::mono::Executable, entry: &str, term: &mut dyn Terminal) -> Ended {
     let prog = program.program();
     let fns = prog.fns.iter().map(|f| (f.name.name.as_str(), f)).collect();
     let derived = |tr: &str| -> HashSet<&str> {

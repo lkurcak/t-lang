@@ -3036,8 +3036,7 @@ impl Walk<'_> {
     /// part of the value, and no refinement can name what's behind a
     /// `&mut`, nor anything write through a `&`.
     fn constrained_field(&self, x: &Expr) -> Option<String> {
-        let outer = x;
-        let mut x = outer;
+        let (outer, mut x) = (x, x);
         loop {
             match &x.kind {
                 ExprKind::Field(base, _) => {

@@ -108,18 +108,6 @@ impl Expectations {
     }
 }
 
-/// Checks the program of `files`, as `t mono` does.
-pub fn run_checked(files: &Files) -> Result<t_lang::ast::Program, t_lang::error::Error> {
-    let (path, src) = &files[0];
-    let read = |p: &Path| match files.iter().find(|(f, _)| f == p) {
-        Some((_, src)) => Ok(src.clone()),
-        None => t_lang::no_files(p),
-    };
-    t_lang::check_files(path, src, &read)
-        .result
-        .map(|p| p.lower().into_program())
-}
-
 /// Runs `src`, named `name` in messages, and checks that it does what its
 /// comments say.
 pub fn check(name: &str, src: &str) -> Result<(), String> {

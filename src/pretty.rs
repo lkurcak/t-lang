@@ -24,6 +24,19 @@ impl fmt::Display for Program {
     }
 }
 
+/// Function `f`'s signature, up to where its body would start, as `t mono`
+/// prints it, before its MIR.
+pub(crate) fn fn_head(f: &FnDecl) -> String {
+    let mut p = Printer::default();
+    let head = p.signature(f) + p.wheres(f.effects.as_ref(), &f.generics, &f.ensures, false);
+    format!("{} ", render(&head).trim_end())
+}
+
+/// Function `f` as `t mono` prints one with no body: an intrinsic.
+pub(crate) fn fn_text(f: &FnDecl) -> String {
+    render(&Printer::default().fn_decl(f))
+}
+
 /// `e` as source, on one line if it fits, for messages.
 pub fn expr_text(e: &Expr) -> String {
     render(&Printer::default().expr(e, 0, Ctx::default()))
