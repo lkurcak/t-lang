@@ -451,8 +451,8 @@ impl Traits {
     }
 
     /// The impl of `tr` (or an inherent one, for `None`) whose type matches
-    /// `ty`, with what its type parameters are for it to. Coherence makes
-    /// that at most one.
+    /// `ty`, and whose sealed bounds don't rule it out there, with what its
+    /// type parameters are for it to. Coherence makes that at most one.
     pub fn select(
         &self,
         ty: &Type,
@@ -1129,7 +1129,8 @@ pub(crate) fn eq_subject(t: &Type) -> &Type {
 /// - Matching decides only the parameters in the header. Those a bound
 ///   decides (`decider`) are worked out from what it matched, never by
 ///   matching: so they never make an impl apply to more or fewer types,
-///   and overlap is still unifying headers (`overlap`). What they're
+///   and overlap is still unifying headers (`overlap`), but for sealed
+///   bounds, below. What they're
 ///   decided as is a function of the type, with no lifetime of a function
 ///   type in it (`impl_args`).
 /// - Nor can anything name an opaque type, so only blanket impls are found
@@ -1146,6 +1147,13 @@ pub(crate) fn eq_subject(t: &Type) -> &Type {
 ///   const parameter, as kinds keep types and lengths apart
 ///   (`generics::len`), and lengths are equal only syntactically: so
 ///   matching `[T; N]` decides `N` as matching decides `T`.
+/// - A bound of a sealed trait can rule an impl out where its type matches
+///   (`sealed_refutes`): `select` and `project` pass over an impl that
+///   needs one no impl of the trait could meet there. Two impls' types may
+///   unify only if one is ruled out so wherever both match (coherence,
+///   lemma S2 of docs/29-closed-and-sealed-traits.md), and being ruled out
+///   stays true of every type the matched one becomes: so one impl is
+///   found at most, the same one by the checker as by monomorphisation.
 pub fn matches(pat: &Type, t: &Type, params: &[String], found: &mut HashMap<String, Type>) -> bool {
     match pat {
         // A parameter never stands for a slice or `str` (see `Type::Slice`).

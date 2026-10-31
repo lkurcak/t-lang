@@ -1570,25 +1570,30 @@ impl Checker {
         self.resolve_with(t, &self.type_params, &mut lts)
     }
 
-    /// Rejects polymorphic recursion between functions: see
-    /// `generics::polymorphic_recursion`. A call of a trait's method may
-    /// run any impl's that could be for its `Self`, so it uses each of
-    /// those (`traits::dispatch`).
+    /// Rejects polymorphic recursion: see `generics::polymorphic_recursion`.
+    /// The graph is of everything monomorphisation copies: functions, and
+    /// the derived `Eq`s' `eq`s; structs and enums, and impls' associated
+    /// types (as `assoc_regular`'s); and each impl's dictionaries, from
+    /// which its methods and associated types are reached, with an edge to
+    /// one from wherever a proof picks the impl (see `traits/dicts.rs`).
     ///
     /// Invariant: every copy monomorphisation can make is of a use here.
     /// So every call or naming of a generic function a body can make, at
     /// its type arguments, is in `info.instances`: calls, method calls,
-    /// paths, and `==`, which calls `<Eq>::eq`. And so is every call made
-    /// by something that isn't a function of the program: a derived `Eq`'s
-    /// `==` on each field, below. Whatever makes monomorphisation copy
-    /// something new must add its uses here too.
+    /// paths, and `==`, which calls `<Eq>::eq`; and the impl a trait's
+    /// method runs is picked by a proof that's here, at a call on a type
+    /// with a head, or where a bound was proved by the impl. So is every
+    /// call made by something that isn't a function of the program: a
+    /// derived `Eq`'s `==` on each field, below, and a `discard` of its
+    /// own, made with each copy of its type (`discard_uses`). And every
+    /// type a copy mentions is: in its signature, its instances' type
+    /// arguments, and its hidden types. Whatever makes monomorphisation
+    /// copy something new must add its uses here too.
     ///
-    /// A projection in a type argument, `f::<T::Out>`, or as the `Self` of
-    /// a method call, can stand for a type as much bigger than `T` as an
-    /// impl likes, so an edge through it has unbounded weight (`dispatch`,
-    /// `generics::polymorphic_recursion`), and any cycle through it is
-    /// rejected. The copies of types that impls' associated types make are
-    /// seen to by `Checker::assoc_regular`.
+    /// A projection in a type argument, `f::<T::Out>`, can stand for a
+    /// type as much bigger than `T` as an impl likes, so an edge through it
+    /// has unbounded weight (`generics::polymorphic_recursion`), and any
+    /// cycle through it is rejected.
     ///
     /// A closure's type is a type constructor applied to the type parameters
     /// in scope, so passing a closure that holds a `G` where a `G` was, as

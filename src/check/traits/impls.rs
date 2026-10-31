@@ -177,9 +177,11 @@ impl Checker {
     /// `S<W<i64>>` need `S<W<W<i64>>>`, and so on, with no end. So that's
     /// polymorphic recursion too (`generics::polymorphic_recursion`), with
     /// each impl's associated type a node of its own, generic over the
-    /// impl's parameters, which a projection in a field gets to the way a
-    /// method call gets to an impl's method (`dispatch`), and which uses
-    /// the types and projections in what it says.
+    /// impl's parameters, reached from the impl's dictionary for types,
+    /// from wherever a proof picks the impl (`traits/dicts.rs`), and which
+    /// uses the types and projections in what it says. It's checked here
+    /// already, before any body, and again with the functions in
+    /// `no_polymorphic_recursion`.
     fn assoc_regular(&self) -> Result<(), Error> {
         let nodes = self.assoc_nodes();
         if nodes.is_empty() {

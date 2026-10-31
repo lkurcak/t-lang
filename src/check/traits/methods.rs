@@ -1,5 +1,4 @@
-//! Finding the method a call `x.m()` or a path `T::m` names, and which
-//! methods a use of a trait method may run (`dispatch`).
+//! Finding the method a call `x.m()` or a path `T::m` names.
 
 use super::Why;
 use crate::ast::*;

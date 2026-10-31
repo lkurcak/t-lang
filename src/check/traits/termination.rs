@@ -181,7 +181,8 @@ impl Checker {
     /// smaller types, and the search ends: the *Paterson conditions*,
     /// which a bound on a type parameter meets whenever the impl is for a
     /// type that's more than that parameter. The others, on projections
-    /// and on parameters a bound decides, are `bound_termination`'s.
+    /// and on parameters a bound decides, are of closed traits
+    /// (`closed_bounds`).
     ///
     /// An impl for a bare parameter, a *blanket impl* like `impl<T: A> B
     /// for T`, needs `T: A` to prove `T: B`: the same type. That still ends
