@@ -21,7 +21,7 @@
 
 use crate::error::Span;
 use crate::types::{Bound, Region, Scheme, Subst, Type};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
@@ -351,6 +351,10 @@ pub struct Traits {
     pub closures: HashMap<String, ClosureDef>,
     /// Every opaque type, by its symbol.
     pub opaques: HashMap<String, OpaqueDef>,
+    /// The sealed traits: only their own packages implement them, so
+    /// their impls, all known wherever they can be named, are all there
+    /// will ever be (see `refuted`).
+    pub sealed: HashSet<String>,
 }
 
 /// How a type implements a trait.
@@ -408,6 +412,7 @@ impl Traits {
             impls: Vec::new(),
             closures: HashMap::new(),
             opaques: HashMap::new(),
+            sealed: HashSet::new(),
         }
     }
 
@@ -462,7 +467,8 @@ impl Traits {
             if !matches(&d.self_ty, ty, &d.params, &mut found) {
                 return None;
             }
-            Some((i, impl_args(d, &found, &self.impls, &self.anon(), local)?))
+            let args = impl_args(d, &found, &self.impls, &self.anon(), local)?;
+            (!sealed_refutes(d, &args, &self.impls, &self.sealed)).then_some((i, args))
         })
     }
 
@@ -684,6 +690,7 @@ impl Traits {
         Anon {
             closures: &self.closures,
             opaques: &self.opaques,
+            sealed: &self.sealed,
         }
     }
 }
@@ -868,6 +875,7 @@ fn part_at(pat: &Type, t: &Type, p: &str, sig: bool) -> Option<Type> {
 pub struct Anon<'a> {
     pub closures: &'a HashMap<String, ClosureDef>,
     pub opaques: &'a HashMap<String, OpaqueDef>,
+    pub sealed: &'a HashSet<String>,
 }
 
 /// What the projections in types stand for: the associated types of every
@@ -915,6 +923,8 @@ pub struct Projections {
     /// What the equality bounds in scope say: `(T::Item, i64)` for
     /// `T: Iter<Item = i64>`.
     pub local: Vec<(Type, Type)>,
+    /// The sealed traits, as `Traits::sealed`.
+    sealed: HashSet<String>,
 }
 
 impl Projections {
@@ -925,6 +935,7 @@ impl Projections {
             closures: traits.closures.clone(),
             opaques: traits.opaques.clone(),
             local: Vec::new(),
+            sealed: traits.sealed.clone(),
         }
     }
 
@@ -932,6 +943,7 @@ impl Projections {
         Anon {
             closures: &self.closures,
             opaques: &self.opaques,
+            sealed: &self.sealed,
         }
     }
 
@@ -1025,6 +1037,9 @@ pub fn project(
         regions_at(&d.self_ty, s, &d.lifetimes, &mut regions);
         let (_, rhs) = d.assoc.iter().find(|(n, _)| n == name)?;
         let args = impl_args(d, &found, impls, anon, local)?;
+        if sealed_refutes(d, &args, impls, anon.sealed) {
+            continue;
+        }
         let regions: Vec<Region> = d
             .lifetimes
             .iter()
@@ -1155,8 +1170,82 @@ pub fn matches(pat: &Type, t: &Type, params: &[String], found: &mut HashMap<Stri
 /// some choice of those? That's two impls *overlapping*. It's unification,
 /// with the parameters for variables.
 pub fn overlap(a: &Type, b: &Type, params: &[String]) -> bool {
+    unifier(a, b, params).is_some()
+}
+
+/// The most general unifier of `a` and `b`, which may mention type
+/// parameters `params`, as what each stands for, if there is one.
+pub fn unifier(a: &Type, b: &Type, params: &[String]) -> Option<HashMap<String, Type>> {
     let mut s: HashMap<String, Type> = HashMap::new();
-    unify(a, b, params, &mut s)
+    unify(a, b, params, &mut s).then_some(s)
+}
+
+/// `t` with what `unifier` found each parameter stands for, all the way.
+pub fn unified(t: &Type, s: &HashMap<String, Type>) -> Type {
+    match t {
+        Type::Param(p) => match s.get(p) {
+            Some(u) => unified(u, s),
+            None => t.clone(),
+        },
+        t => t.map(|p| unified(p, s)),
+    }
+}
+
+/// Is `ty: tr` false however the type parameters in `ty` are chosen, for a
+/// sealed trait `tr`? So when no impl of `tr` could be for `ty`, nor a
+/// built-in rule: on a type with no head, a parameter, a projection or an
+/// opaque type, it never is. One level only: an impl whose type could be
+/// `ty` may still need what `ty` doesn't have, and that's not looked at.
+///
+/// Sound because `tr` is sealed: every impl of it is in its own package,
+/// which every package that can name it depends on, so `impls` has all
+/// the impls of `tr` there will ever be wherever this is asked (lemma S2
+/// of docs/29-closed-and-sealed-traits.md). If no impl's type unifies
+/// with `ty`, none unifies with any type `ty` can become either.
+pub fn refuted(impls: &[ImplDef], ty: &Type, tr: &str) -> bool {
+    match (tr, ty) {
+        (_, Type::Param(_) | Type::Var(_) | Type::Proj(..) | Type::Opaque(..)) => return false,
+        (INT, Type::Int(_)) => return false,
+        (SIGNED, Type::Int(t)) => return !t.signed(),
+        (UNSIGNED, Type::Int(t)) => return t.signed(),
+        _ => {}
+    }
+    let mut vars = Vec::new();
+    params_in(ty, &mut vars);
+    !impls
+        .iter()
+        .filter(|d| d.trait_name.as_deref() == Some(tr))
+        .any(|d| {
+            let renamed: Vec<Type> = (d.params.iter())
+                .map(|p| Type::Param(format!("{p}'")))
+                .collect();
+            let header = Subst::new(&d.params, &renamed).apply(&d.self_ty);
+            let mut params = vars.clone();
+            params.extend(d.params.iter().map(|p| format!("{p}'")));
+            overlap(&header, ty, &params)
+        })
+}
+
+/// Does impl `d` at type arguments `args` need a sealed trait of a type
+/// that can't implement it (`refuted`)? Then it's not for that type.
+pub fn sealed_refutes(
+    d: &ImplDef,
+    args: &[Type],
+    impls: &[ImplDef],
+    sealed: &HashSet<String>,
+) -> bool {
+    let s = Subst::new(&d.params, args);
+    (d.preds.iter())
+        .filter(|p| sealed.contains(&p.trait_name))
+        .any(|p| refuted(impls, &s.apply(&p.ty), &p.trait_name))
+}
+
+/// Each type parameter `t` mentions, added to `out`.
+fn params_in(t: &Type, out: &mut Vec<String>) {
+    match t {
+        Type::Param(p) if !out.contains(p) => out.push(p.clone()),
+        t => t.parts().for_each(|p| params_in(p, out)),
+    }
 }
 
 fn unify(a: &Type, b: &Type, params: &[String], s: &mut HashMap<String, Type>) -> bool {

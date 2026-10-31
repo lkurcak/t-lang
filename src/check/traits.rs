@@ -25,7 +25,7 @@ mod termination;
 
 pub(super) use bounds::has_proj;
 pub(super) use collect::Outer;
-pub(super) use dicts::{UNKNOWN, UNKNOWN_PARAMS, dict_names};
+pub(super) use dicts::{Site, UNKNOWN, UNKNOWN_PARAMS, dict_names};
 pub(super) use methods::{Found, trait_method_symbol};
 pub(super) use prove::{Obligation, Why};
 

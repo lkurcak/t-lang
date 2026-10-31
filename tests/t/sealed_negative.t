@@ -10,23 +10,23 @@ impl Small for u8 {}
 impl Small for bool {}
 
 trait Describe {
-    fn describe(&self) -> i64;
+    fn describe(&self) -> i64 with panic;
 }
 
 impl<T: Small> Describe for T {
-    fn describe(&self) -> i64 { 1 }
+    fn describe(&self) -> i64 with panic { 1 }
 }
 
 impl Describe for char {
-    fn describe(&self) -> i64 { 2 }
+    fn describe(&self) -> i64 with panic { 2 }
 }
 
 impl<'a, T: Describe> Describe for &'a T {
-    fn describe(&self) -> i64 { 20 + (**self).describe() }
+    fn describe(&self) -> i64 with panic { 20 + (**self).describe() }
 }
 
 impl<T: Describe> Describe for Option<T> {
-    fn describe(&self) -> i64 {
+    fn describe(&self) -> i64 with panic {
         match self {
             Option::Some(x) => 10 + x.describe(),
             Option::None => 10,
@@ -34,7 +34,7 @@ impl<T: Describe> Describe for Option<T> {
     }
 }
 
-fn describe<T: Describe>(x: &T) -> i64 { x.describe() }
+fn describe<T: Describe>(x: &T) -> i64 with panic { x.describe() }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;

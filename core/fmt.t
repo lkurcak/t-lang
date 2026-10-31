@@ -90,59 +90,14 @@ impl<'a, T: Display> Display for &'a mut T {
     fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { (**self).fmt(w) }
 }
 
-/// In decimal, with a `-` if it's negative.
-impl Display for i8 {
+/// In decimal, with a `-` if it's negative: one impl for all ten integer
+/// types, which overlaps none of the others, as `Int` is sealed (see
+/// docs/29-closed-and-sealed-traits.md).
+impl<T: Int> Display for T {
     fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { decimal(*self, w) }
 }
 
-/// In decimal, with a `-` if it's negative.
-impl Display for i16 {
-    fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { decimal(*self, w) }
-}
-
-/// In decimal, with a `-` if it's negative.
-impl Display for i32 {
-    fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { decimal(*self, w) }
-}
-
-/// In decimal, with a `-` if it's negative.
-impl Display for i64 {
-    fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { decimal(*self, w) }
-}
-
-/// In decimal, with a `-` if it's negative.
-impl Display for isize {
-    fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { decimal(*self, w) }
-}
-
-/// In decimal.
-impl Display for u8 {
-    fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { decimal(*self, w) }
-}
-
-/// In decimal.
-impl Display for u16 {
-    fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { decimal(*self, w) }
-}
-
-/// In decimal.
-impl Display for u32 {
-    fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { decimal(*self, w) }
-}
-
-/// In decimal.
-impl Display for u64 {
-    fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { decimal(*self, w) }
-}
-
-/// In decimal.
-impl Display for usize {
-    fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { decimal(*self, w) }
-}
-
-/// `n` in decimal, with a `-` if it's negative: once for every integer
-/// type, which the ten impls above call, as one impl for every `T: Int`
-/// would overlap those for `bool` and `char`.
+/// `n` in decimal, with a `-` if it's negative.
 fn decimal<T: Int, W: Write>(n: T, w: &mut W) -> Result<(), W::Error> with W::e {
     if n < 0 {
         w.write_char('-')?;

@@ -80,44 +80,11 @@ fn compare<T: Int>(a: T, b: T) -> Ordering {
     if a < b { Ordering::Less } else if a == b { Ordering::Equal } else { Ordering::Greater }
 }
 
-impl Ord for i8 {
-    fn cmp(&self, other: &i8) -> Ordering { compare(*self, *other) }
-}
-
-impl Ord for i16 {
-    fn cmp(&self, other: &i16) -> Ordering { compare(*self, *other) }
-}
-
-impl Ord for i32 {
-    fn cmp(&self, other: &i32) -> Ordering { compare(*self, *other) }
-}
-
-impl Ord for i64 {
-    fn cmp(&self, other: &i64) -> Ordering { compare(*self, *other) }
-}
-
-impl Ord for isize {
-    fn cmp(&self, other: &isize) -> Ordering { compare(*self, *other) }
-}
-
-impl Ord for u8 {
-    fn cmp(&self, other: &u8) -> Ordering { compare(*self, *other) }
-}
-
-impl Ord for u16 {
-    fn cmp(&self, other: &u16) -> Ordering { compare(*self, *other) }
-}
-
-impl Ord for u32 {
-    fn cmp(&self, other: &u32) -> Ordering { compare(*self, *other) }
-}
-
-impl Ord for u64 {
-    fn cmp(&self, other: &u64) -> Ordering { compare(*self, *other) }
-}
-
-impl Ord for usize {
-    fn cmp(&self, other: &usize) -> Ordering { compare(*self, *other) }
+/// Integers in their order, which `<` says: one impl for all ten types,
+/// which overlaps none of the others, as `Int` is sealed (see
+/// docs/29-closed-and-sealed-traits.md).
+impl<T: Int> Ord for T {
+    fn cmp(&self, other: &T) -> Ordering { compare(*self, *other) }
 }
 
 /// Characters by their numbers, the Unicode scalar values: `'a'` before

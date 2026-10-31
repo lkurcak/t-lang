@@ -123,7 +123,7 @@ structs! {
     Variant { doc, allows, span, name, fields };
     FnDecl { doc, allows, span, module, vis, name, generics, params, parens, ret,
         effects, body, intrinsic, measure };
-    TraitDecl { doc, allows, intrinsic, span, module, vis, name, supers, assoc, effects, methods };
+    TraitDecl { doc, allows, intrinsic, sealed, span, module, vis, name, supers, assoc, effects, methods };
     AssocDecl { doc, span, name, bounds };
     AssocDef { doc, span, name, ty };
     EffectDecl { doc, span, name };

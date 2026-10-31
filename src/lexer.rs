@@ -50,6 +50,7 @@ pub enum Tok {
     Where,
     With,
     Effect,
+    Sealed,
     Const,
     /// `'a`: a lifetime, with its `'`.
     Lifetime(String),
@@ -153,6 +154,7 @@ impl Tok {
             Tok::Where => "where",
             Tok::With => "with",
             Tok::Effect => "effect",
+            Tok::Sealed => "sealed",
             Tok::Const => "const",
             Tok::LParen => "(",
             Tok::RParen => ")",
@@ -629,6 +631,7 @@ pub fn lex_with_comments(src: &str) -> Result<(Vec<Token>, Vec<Comment>), Error>
                 "where" => Tok::Where,
                 "with" => Tok::With,
                 "effect" => Tok::Effect,
+                "sealed" => Tok::Sealed,
                 "const" => Tok::Const,
                 name => Tok::Ident(name.to_string()),
             }

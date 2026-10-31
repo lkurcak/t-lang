@@ -576,7 +576,8 @@ impl Printer<'_> {
         items.extend(t.effects.iter().map(BodyItem::EffectDecl));
         items.extend(t.methods.iter().map(|m| BodyItem::Fn(&m.decl, m.provided)));
         let body = self.methods(open, t.span.end - 1, items);
-        doc + vis(t.vis) + "trait " + &t.name.name + supers + " " + body
+        let sealed = if t.sealed.is_some() { "sealed " } else { "" };
+        doc + vis(t.vis) + sealed + "trait " + &t.name.name + supers + " " + body
     }
 
     /// `impl<T: Show> Show for Option<T> { .. }` or `impl Point { .. }`

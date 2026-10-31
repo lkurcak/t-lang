@@ -104,6 +104,7 @@ pub const INTRINSICS: &[&str] = &[
     "core::panic::panic",
     "core::num::checked_mul",
     "core::num::wrapping_mul",
+    "core::num::wrap",
     "core::num::least",
     "core::num::greatest",
     "core::slice::empty",
@@ -1623,7 +1624,7 @@ impl Checker {
                 continue;
             };
             for (_, f) in traits::fields(&self.adts[symbol].kind) {
-                self.call_uses(&ix, from, eq, &[f], d.span, &mut uses);
+                self.call_uses(&ix, (from, d.span), eq, &[f], &mut uses);
             }
         }
         // Which function each use is in, from where they are.
@@ -1638,7 +1639,7 @@ impl Checker {
             if let Instance::Fn(to, args) = instance
                 && let Some(from) = from
             {
-                self.call_uses(&ix, &from.symbol, to, args, *span, &mut uses);
+                self.call_uses(&ix, (&from.symbol, *span), to, args, &mut uses);
             }
         }
         // What an opaque type's hidden type implements was proved in its
@@ -1648,10 +1649,10 @@ impl Checker {
                 continue;
             };
             let generic = o.generic(symbol);
-            let mut seen = std::collections::HashSet::new();
+            let mut site = traits::Site::new(&ix, from, o.span, &mut uses);
             for p in &o.preds {
                 let t = replace(&p.ty, &generic, hidden);
-                self.proof_uses(&ix, from, &t, &p.trait_name, o.span, &mut seen, &mut uses);
+                self.proof_uses(&mut site, &t, &p.trait_name);
             }
         }
         uses.extend(self.dict_uses(&ix, &[], false));

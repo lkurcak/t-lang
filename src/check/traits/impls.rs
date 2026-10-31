@@ -1,13 +1,14 @@
 //! Checking impls against their traits: signatures, associated types,
 //! the orphan rule, and that no two impls overlap (*coherence*).
 
+use super::dicts::Site;
 use super::fields;
 use crate::ast::*;
 use crate::check::generics;
 use crate::check::{BOX, Checker, plural};
 use crate::error::{Edit, Error, Fix, Span};
 use crate::traits::{COPY, DISCARD};
-use crate::traits::{ImplDef, MethodDef, Pred, overlap};
+use crate::traits::{ImplDef, MethodDef, Pred, refuted, unified, unifier};
 use crate::types::{Bound, Region, Scheme, Subst, Type};
 use std::collections::HashMap;
 
@@ -218,7 +219,7 @@ impl Checker {
                         span: at,
                     });
                 });
-                self.type_proof_uses(&ix, &nodes, a, &f, at, &mut uses);
+                self.type_uses(&mut Site::new(&ix, a, at, &mut uses), &nodes, &f);
             }
         }
         for (k, n, node) in &nodes {
@@ -233,7 +234,7 @@ impl Checker {
                     span: d.span,
                 });
             });
-            self.type_proof_uses(&ix, &nodes, node, t, d.span, &mut uses);
+            self.type_uses(&mut Site::new(&ix, node, d.span, &mut uses), &nodes, t);
         }
         uses.extend(self.dict_uses(&ix, &nodes, true));
         uses.sort_by_key(|u| u.span.start);
@@ -347,6 +348,18 @@ impl Checker {
             Type::Box(_) => declared(BOX, core),
             _ => core,
         };
+        let tr_name = tr.rsplit("::").next().unwrap_or(tr);
+        if self.traits.sealed.contains(tr) && trait_package != package {
+            let owner = &m.mods[trait_package].path;
+            return Err(Error::ty(
+                Span::new(d.span.start, d.self_ty.span.end),
+                format!(
+                    "`{tr_name}` is sealed: only its own package, `{owner}`, can implement it, so \
+                     that what has no impl of it never will (see \
+                     docs/29-closed-and-sealed-traits.md)"
+                ),
+            ));
+        }
         if trait_package == package || head_package == package {
             return Ok(());
         }
@@ -584,7 +597,20 @@ impl Checker {
                 let b_ty = Subst::new(&b.params, &renamed).apply(&b.self_ty);
                 let mut params = a.params.to_vec();
                 params.extend(b.params.iter().map(|p| format!("{p}'")));
-                if !overlap(&a.self_ty, &b_ty, &params) {
+                let Some(mgu) = unifier(&a.self_ty, &b_ty, &params) else {
+                    continue;
+                };
+                // Where they'd overlap, one may need a sealed trait of a
+                // type that can't have it (lemma S2): then they don't.
+                let b_preds = b.preds.iter().map(|p| Pred {
+                    ty: Subst::new(&b.params, &renamed).apply(&p.ty),
+                    trait_name: p.trait_name.clone(),
+                });
+                let refutes = |p: &Pred| {
+                    self.traits.sealed.contains(&p.trait_name)
+                        && refuted(impls, &unified(&p.ty, &mgu), &p.trait_name)
+                };
+                if a.preds.iter().any(refutes) || b_preds.into_iter().any(|p| refutes(&p)) {
                     continue;
                 }
                 let Some(tr) = &a.trait_name else {

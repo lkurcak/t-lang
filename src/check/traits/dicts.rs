@@ -109,37 +109,23 @@ impl Checker {
         }
     }
 
-    /// The uses by which `from`, with type parameters `params`, proves
-    /// `ty: tr`: an edge to the dictionary of each impl the proof picks,
-    /// with what the impl's type parameters are, and on through what those
-    /// impls need. Where `ty` has no head, a type parameter, a projection
-    /// or an opaque type, the proof is an assumption: the impl was picked
-    /// by whoever said what it is.
-    pub(in crate::check) fn proof_uses<'a>(
-        &self,
-        ix: &Index<'a>,
-        from: &'a str,
-        ty: &Type,
-        tr: &str,
-        span: Span,
-        seen: &mut HashSet<(Type, String)>,
-        out: &mut Vec<Use<'a>>,
-    ) {
+    /// The uses by which `site` proves `ty: tr`: an edge to the
+    /// dictionary of each impl the proof picks, with what the impl's type
+    /// parameters are, and on through what those impls need. Where `ty`
+    /// has no head, a type parameter, a projection or an opaque type, the
+    /// proof is an assumption: the impl was picked by whoever said what it
+    /// is.
+    pub(in crate::check) fn proof_uses<'a>(&self, site: &mut Site<'a, '_>, ty: &Type, tr: &str) {
         let ty = crate::traits::normalise(&self.traits.impls, &self.traits.anon(), &[], ty);
-        if !seen.insert((ty.clone(), tr.to_string())) {
+        if headless(&ty) || !site.seen.insert((ty.clone(), tr.to_string())) {
             return;
         }
-        let mut more = |t: &Type, tr: &str, out: &mut Vec<Use<'a>>| {
-            self.proof_uses(ix, from, t, tr, span, seen, out)
-        };
         match (tr, &ty) {
-            (_, Type::Param(_) | Type::Proj(..) | Type::Opaque(..) | Type::Var(_)) => return,
             // The built-in impls that need the same of what's inside.
             (EQ, Type::Ref(_, _, inner) | Type::Box(inner) | Type::Slice(inner))
             | (DISCARD, Type::Box(inner))
             | (DISCARD | COPY | EQ, Type::Array(inner, _)) => {
-                more(inner, tr, out);
-                return;
+                return self.proof_uses(site, inner, tr);
             }
             _ => {}
         }
@@ -149,7 +135,7 @@ impl Checker {
         {
             if tr == DISCARD || tr == COPY {
                 for f in c.fields_at(&ty) {
-                    more(&f, tr, out);
+                    self.proof_uses(site, &f, tr);
                 }
             }
             return;
@@ -157,56 +143,36 @@ impl Checker {
         let Some((k, args)) = self.traits.select(&ty, Some(tr), &[]) else {
             return;
         };
-        out.push(Use {
-            from,
-            to: &ix.dicts[k],
-            args: args.clone(),
-            via: None,
-            span,
-        });
+        site.push(&site.ix.dicts[k], args.clone(), None);
         let d = &self.traits.impls[k];
         let s = Subst::new(&d.params, &args);
         for p in &d.preds {
-            more(&s.apply(&p.ty), &p.trait_name, out);
+            self.proof_uses(site, &s.apply(&p.ty), &p.trait_name);
         }
     }
 
     /// The uses of a use in `from` of `to` at `args`, at `span`: of `to`
     /// itself, or, for a trait's method on a type with a head, of the
     /// method of the impl that's for it, or of the trait's default; and of
-    /// the dictionaries of the impls its bounds are proved by. On a type
-    /// with no head, the impl's type parameters are the dictionary's
-    /// business, and the method's own type arguments go to `UNKNOWN`.
+    /// the dictionaries of the impls its bounds are proved by. Where no
+    /// impl is picked here, as on a type with no head, the impl's type
+    /// parameters are the dictionary's business, and the method's own type
+    /// arguments go to `UNKNOWN`.
     pub(in crate::check) fn call_uses<'a>(
         &self,
         ix: &Index<'a>,
-        from: &'a str,
+        (from, span): (&'a str, Span),
         to: &'a str,
         args: &[Type],
-        span: Span,
         out: &mut Vec<Use<'a>>,
     ) {
-        let mut seen = HashSet::new();
+        let mut site = Site::new(ix, from, span, out);
         let Some(&(tr, m)) = ix.methods.get(to) else {
-            out.push(Use {
-                from,
-                to,
-                args: args.to_vec(),
-                via: None,
-                span,
-            });
+            site.push(to, args.to_vec(), None);
             if let Some(scheme) = ix.schemes.get(to) {
                 let s = Subst::new(&scheme.params, args);
                 for p in &scheme.preds {
-                    self.proof_uses(
-                        ix,
-                        from,
-                        &s.apply(&p.ty),
-                        &p.trait_name,
-                        span,
-                        &mut seen,
-                        out,
-                    );
+                    self.proof_uses(&mut site, &s.apply(&p.ty), &p.trait_name);
                 }
             }
             return;
@@ -218,12 +184,12 @@ impl Checker {
         };
         let self_ty =
             &crate::traits::normalise(&self.traits.impls, &self.traits.anon(), &[], self_ty);
-        let headless = matches!(
-            self_ty,
-            Type::Param(_) | Type::Proj(..) | Type::Opaque(..) | Type::Var(_)
-        );
-        match self.traits.select(self_ty, Some(tr), &[]) {
-            Some((k, impl_args)) if !headless => {
+        let picked = match headless(self_ty) {
+            true => None,
+            false => self.traits.select(self_ty, Some(tr), &[]),
+        };
+        match picked {
+            Some((k, impl_args)) => {
                 let d = &self.traits.impls[k];
                 let derived: Option<&'a str> = ix.derived_eq[k].as_deref();
                 let target: Option<(&'a str, Vec<Type>)> =
@@ -239,51 +205,34 @@ impl Checker {
                     };
                 if let Some((to, mut targs)) = target {
                     targs.extend(own.iter().cloned());
-                    out.push(Use {
-                        from,
-                        to,
-                        args: targs,
-                        via: None,
-                        span,
-                    });
+                    site.push(to, targs, None);
                 }
-                // The dictionaries of what the impl needs.
-                self.proof_uses(ix, from, self_ty, tr, span, &mut seen, out);
             }
-            _ if headless && !own.is_empty() => {
+            None => {
                 for t in own {
-                    out.push(Use {
-                        from,
-                        to: UNKNOWN,
-                        args: vec![t.clone()],
-                        via: Some(m.name.clone()),
-                        span,
-                    });
+                    site.push(UNKNOWN, vec![t.clone()], Some(m.name.clone()));
                 }
-            }
-            _ => {
-                // A built-in impl: of `Eq` on an array or slice, say, which
-                // compares what's in it.
-                self.proof_uses(ix, from, self_ty, tr, span, &mut seen, out);
             }
         }
+        // The dictionaries of what the impl needs, or what a built-in one
+        // does: `Eq` of an array compares what's in it.
+        self.proof_uses(&mut site, self_ty, tr);
         // The method's own bounds, at its own type arguments.
         let s = Subst::new(&m.scheme.params, args);
         for p in &m.scheme.preds {
             let t = s.apply(&p.ty);
-            if p.trait_name == tr && t == *args.first().expect("`Self`") {
-                continue;
+            if p.trait_name != tr || t != args[0] {
+                self.proof_uses(&mut site, &t, &p.trait_name);
             }
-            self.proof_uses(ix, from, &t, &p.trait_name, span, &mut seen, out);
         }
     }
 
     /// The uses of each impl's dictionary: each of its methods, its derived
     /// `eq`, or the trait's default where it has none, at the impl's own
-    /// type parameters; and the dictionaries its own proofs pick, of its
-    /// trait's supertraits and of what its associated types must implement,
-    /// which code that has the dictionary may use. With `assoc`, those of
-    /// the types graph instead: to each of its associated types.
+    /// type parameters; or, for the graph of types (`types`), each of its
+    /// associated types, named in `assoc`. And the dictionaries its own
+    /// proofs pick, of its trait's supertraits and of what its associated
+    /// types must implement, which code that has the dictionary may use.
     pub(in crate::check) fn dict_uses<'a>(
         &'a self,
         ix: &Index<'a>,
@@ -293,52 +242,37 @@ impl Checker {
         let mut out = Vec::new();
         for (k, d) in self.traits.impls.iter().enumerate() {
             let Some(tr) = &d.trait_name else { continue };
-            let from = ix.dicts[k].as_str();
+            let mut site = Site::new(ix, &ix.dicts[k], d.span, &mut out);
             let own: Vec<Type> = d.params.iter().map(|p| Type::Param(p.clone())).collect();
-            let to = |name: &'a str, args: Vec<Type>, out: &mut Vec<Use<'a>>| {
-                out.push(Use {
-                    from,
-                    to: name,
-                    args,
-                    via: None,
-                    span: d.span,
-                })
-            };
+            let def = &self.traits.traits[tr];
             if types {
                 for (_, _, node) in assoc.iter().filter(|(j, ..)| *j == k) {
-                    to(node, own.clone(), &mut out);
+                    site.push(node, own.clone(), None);
                 }
             } else {
-                let def = &self.traits.traits[tr];
                 for m in &def.methods {
-                    match (
-                        d.methods.iter().find(|(n, _)| *n == m.name),
-                        &ix.derived_eq[k],
-                    ) {
+                    let written = d.methods.iter().find(|(n, _)| *n == m.name);
+                    match (written, &ix.derived_eq[k]) {
                         (Some((_, symbol)), _) => {
-                            if let Some((&name, _)) = ix.schemes.get_key_value(symbol.as_str()) {
-                                to(name, own.clone(), &mut out);
+                            if let Some(to) = ix.fn_symbol(symbol) {
+                                site.push(to, own.clone(), None);
                             }
                         }
-                        (None, Some(eq)) => to(eq, own.clone(), &mut out),
+                        (None, Some(eq)) => site.push(eq, own.clone(), None),
                         (None, None) if !d.derived && m.provided => {
-                            to(&m.symbol, vec![d.self_ty.clone()], &mut out)
+                            site.push(&m.symbol, vec![d.self_ty.clone()], None)
                         }
                         _ => {}
                     }
                 }
             }
-            let mut seen = HashSet::new();
-            for s in &self.traits.traits[tr].supers {
-                self.proof_uses(ix, from, &d.self_ty, s, d.span, &mut seen, &mut out);
+            for s in &def.supers {
+                self.proof_uses(&mut site, &d.self_ty, s);
             }
             for (name, t) in &d.assoc {
-                let decl = self.traits.traits[tr]
-                    .assoc
-                    .iter()
-                    .find(|a| a.name == *name);
+                let decl = def.assoc.iter().find(|a| a.name == *name);
                 for b in decl.map_or(&[][..], |a| &a.bounds) {
-                    self.proof_uses(ix, from, t, b, d.span, &mut seen, &mut out);
+                    self.proof_uses(&mut site, t, b);
                 }
             }
         }
@@ -350,87 +284,106 @@ impl Checker {
     /// were, whoever called it.
     pub(in crate::check) fn unknown_uses<'a>(&'a self, ix: &Index<'a>) -> Vec<Use<'a>> {
         let mut out = Vec::new();
-        let entry = |symbol: &str, skip: usize, span: Span, out: &mut Vec<Use<'a>>| {
+        let mut entry = |symbol: &str, skip: usize, span: Span| {
             let Some((&to, scheme)) = ix.schemes.get_key_value(symbol) else {
                 return;
             };
             let n = scheme.params.as_slice().len();
-            if n <= skip {
-                return;
+            if n > skip {
+                let mut args = vec![Type::Unit; skip];
+                args.extend((skip..n).map(|_| Type::Param(UNKNOWN_PARAM.into())));
+                Site::new(ix, UNKNOWN, span, &mut out).push(to, args, None);
             }
-            let mut args = vec![Type::Unit; skip];
-            args.extend((skip..n).map(|_| Type::Param(UNKNOWN_PARAM.into())));
-            out.push(Use {
-                from: UNKNOWN,
-                to,
-                args,
-                via: None,
-                span,
-            });
         };
         for d in &self.traits.impls {
             for (_, symbol) in &d.methods {
-                entry(symbol, d.params.as_slice().len(), d.span, &mut out);
+                entry(symbol, d.params.as_slice().len(), d.span);
             }
         }
         for def in self.traits.traits.values() {
             for m in def.methods.iter().filter(|m| m.provided) {
-                entry(&m.symbol, 1, m.span.unwrap_or(Span::new(0, 0)), &mut out);
+                entry(&m.symbol, 1, m.span.unwrap_or(Span::new(0, 0)));
             }
         }
         out
     }
 
-    /// The uses by which struct or enum type, or associated type, `from`,
-    /// with type parameters `params`, needs what's in type `t`: the impls
-    /// its projections with a head are worked out by, and the dictionaries
-    /// of what the structs and enums in it need of their type arguments.
-    pub(in crate::check) fn type_proof_uses<'a>(
+    /// The uses by which `site`, a struct or enum type or an associated
+    /// type, needs what's in type `t`: the impls its projections with a
+    /// head are worked out by, which are associated types of `assoc`, and
+    /// the dictionaries of what the structs and enums in it need of their
+    /// type arguments.
+    pub(in crate::check) fn type_uses<'a>(
         &self,
-        ix: &Index<'a>,
+        site: &mut Site<'a, '_>,
         assoc: &'a [(usize, String, String)],
-        from: &'a str,
         t: &Type,
-        span: Span,
-        out: &mut Vec<Use<'a>>,
     ) {
-        let mut seen = HashSet::new();
         crate::check::each_adt(t, &mut |name, args| {
             if let Some(def) = self.adts.get(name) {
                 let s = Subst::new(&def.params, args);
                 for p in &def.preds {
-                    self.proof_uses(
-                        ix,
-                        from,
-                        &s.apply(&p.ty),
-                        &p.trait_name,
-                        span,
-                        &mut seen,
-                        out,
-                    );
+                    self.proof_uses(site, &s.apply(&p.ty), &p.trait_name);
                 }
             }
         });
         each_proj(t, &mut |s, tr| {
-            let headless = matches!(s, Type::Param(_) | Type::Proj(..) | Type::Opaque(..));
-            if headless {
+            if headless(s) {
                 return;
             }
-            let Some(name) = super::impls::proj_name(t, s, tr) else {
-                return;
-            };
-            if let Some((k, args)) = self.traits.select(s, Some(tr), &[])
+            if let Some(name) = super::impls::proj_name(t, s, tr)
+                && let Some((k, args)) = self.traits.select(s, Some(tr), &[])
                 && let Some((_, _, node)) = assoc.iter().find(|(j, n, _)| *j == k && *n == name)
             {
-                out.push(Use {
-                    from,
-                    to: node,
-                    args,
-                    via: None,
-                    span,
-                });
+                site.push(node, args, None);
             }
-            self.proof_uses(ix, from, s, tr, span, &mut seen, out);
+            self.proof_uses(site, s, tr);
         });
     }
+}
+
+/// Where uses are from: what, where, and those found so far.
+pub(in crate::check) struct Site<'a, 'o> {
+    ix: &'o Index<'a>,
+    from: &'a str,
+    span: Span,
+    /// What's been proved here, to prove it once.
+    seen: HashSet<(Type, String)>,
+    out: &'o mut Vec<Use<'a>>,
+}
+
+impl<'a, 'o> Site<'a, 'o> {
+    pub(in crate::check) fn new(
+        ix: &'o Index<'a>,
+        from: &'a str,
+        span: Span,
+        out: &'o mut Vec<Use<'a>>,
+    ) -> Site<'a, 'o> {
+        Site {
+            ix,
+            from,
+            span,
+            seen: HashSet::new(),
+            out,
+        }
+    }
+
+    fn push(&mut self, to: &'a str, args: Vec<Type>, via: Option<String>) {
+        self.out.push(Use {
+            from: self.from,
+            to,
+            args,
+            via,
+            span: self.span,
+        });
+    }
+}
+
+/// Is `t` a type with no head, whose impls are picked elsewhere: a type
+/// parameter, a projection, an opaque type, or one not known yet?
+fn headless(t: &Type) -> bool {
+    matches!(
+        t,
+        Type::Param(_) | Type::Proj(..) | Type::Opaque(..) | Type::Var(_)
+    )
 }

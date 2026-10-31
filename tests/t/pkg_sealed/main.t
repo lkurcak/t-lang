@@ -2,6 +2,7 @@
 // `q::Describe` of its own beside `q`'s blanket impl.
 use q::Describe;
 
+#[derive(Discard)]
 struct Mine {}
 
 impl Describe for Mine {

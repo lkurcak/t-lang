@@ -803,6 +803,10 @@ pub struct TraitDecl {
     /// Where its `#[intrinsic]` is, if it has one: the checker knows the
     /// trait, and gives some types it, as it does `Eq` to `i64`.
     pub intrinsic: Option<Span>,
+    /// Where its `sealed` is, if it is: only its own package can implement
+    /// it, so what has no impl of it never will (see
+    /// docs/29-closed-and-sealed-traits.md).
+    pub sealed: Option<Span>,
     /// From the `trait` to the `}`.
     pub span: Span,
     pub module: usize,

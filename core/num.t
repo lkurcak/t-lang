@@ -21,18 +21,20 @@ use crate::option::Option;
 /// Says a type is one of the ten integer types, so the arithmetic
 /// operators work on it, and literals like `0` and `127` are of it. It's
 /// sealed: no impl can add to it, so code over a `T: Int` may count on
-/// what all ten have in common.
+/// what all ten have in common, and an impl for every `T: Int` doesn't
+/// overlap one for a type that isn't an integer type (see
+/// docs/29-closed-and-sealed-traits.md).
 #[intrinsic]
-export trait Int: Copy + Eq + Ord {}
+export sealed trait Int: Copy + Eq + Ord {}
 
 /// Says an integer type is signed: its least value is -1 minus its
 /// greatest (see docs/12-bits.md). Sealed too.
 #[intrinsic]
-export trait Signed: Int {}
+export sealed trait Signed: Int {}
 
 /// Says an integer type is unsigned: its least value is 0. Sealed too.
 #[intrinsic]
-export trait Unsigned: Int {}
+export sealed trait Unsigned: Int {}
 
 /// The least value of integer type `T`: `least::<i8>()` is -128, and
 /// `least::<u8>()` is 0. The checker knows it is.
@@ -146,6 +148,15 @@ export fn wrapping_sub<T: Int>(a: T, b: T) -> T { wrapping_add(a, wrapping_neg(b
 /// `a * b`, modulo 2^w.
 #[intrinsic]
 export fn wrapping_mul<T: Int>(a: T, b: T) -> T;
+
+/// `x` modulo 2^w, for a `U` that's `w` bits wide, in `U`'s range: the
+/// bits of `x`'s two's complement that fit in a `U`, as a `U`. So
+/// `wrap::<i8, u64>(-1)` is the greatest `u64`, `wrap::<u16, u8>(300)` is
+/// 44, and `wrap::<u8, i8>(200)` is -56. Where `x` fits in a `U`, it's
+/// `x`, as `x as U` is: but this is for every pair of integer types, so
+/// generic code can use it, as to hash any integer (see docs/12-bits.md).
+#[intrinsic]
+export fn wrap<T: Int, U: Int>(x: T) -> U;
 
 /// How far `x` is from 0: it panics at the least value, whose distance is
 /// one more than the greatest.
