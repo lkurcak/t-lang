@@ -46,6 +46,10 @@ fn bad_arguments_print_usage() {
         &["tree-sitter", "--out"],
         &["tree-sitter", "--helix"],
         &["tree-sitter", "--nope", "dir"],
+        &["test"],
+        &["test", "--nope"],
+        &["test", "a.t", "f", "g"],
+        &["run", "--deny-warnings", "a.t"],
     ] {
         let out = t(args);
         assert_eq!(out.status.code(), Some(2), "{args:?}");
@@ -93,6 +97,76 @@ fn reads_packages_and_checks_libraries() {
     assert_eq!(out.status.code(), Some(1));
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(stderr.contains("has no `main` to run"), "{stderr}");
+}
+
+/// `t test` says how each test went, as it goes, then why each failure
+/// failed, then how many passed and failed; it fails if any did.
+#[test]
+fn test_runs_the_tests_and_says_how_they_went() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/t");
+    let out = t(&["test", &format!("{dir}/test_basic.t")]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let head = "test doubles ... ok\n\
+                test parsing::inner ... ok\n\
+                test parsing::deeper::deepest ... ok\n\
+                test fails ... FAILED\n\
+                \n\
+                --- fails\n\
+                runtime error: panicked: assertion failed\n";
+    assert!(stdout.starts_with(head), "{stdout}");
+    assert!(stdout.ends_with("\n3 passed; 1 failed\n"), "{stdout}");
+    // Not `main`'s output: it isn't run.
+    assert!(!stdout.contains("\n4\n"), "{stdout}");
+
+    // With a filter, only the tests whose names have it in them.
+    let out = t(&["test", &format!("{dir}/test_basic.t"), "parsing"]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(
+        stdout,
+        "test parsing::inner ... ok\ntest parsing::deeper::deepest ... ok\n\n2 passed; 0 failed\n"
+    );
+
+    // A library's, with no `main`.
+    let out = t(&["test", &format!("{dir}/test_library/lib.t")]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+
+    // A program that doesn't check runs no tests.
+    let out = t(&["test", &format!("{dir}/err_test_params.t")]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert!(out.stdout.is_empty(), "{out:?}");
+}
+
+/// `--deny-warnings` makes `t check` and `t test` fail when there are
+/// warnings, after saying them; tests still run.
+#[test]
+fn deny_warnings_fails_on_warnings() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/t");
+    let warned = format!("{dir}/test_dead_code.t");
+    let out = t(&["check", &warned]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    for args in [
+        &["check", "--deny-warnings", &warned][..],
+        &["check", &warned, "--deny-warnings"],
+    ] {
+        let out = t(args);
+        assert_eq!(out.status.code(), Some(1), "{args:?}: {out:?}");
+        let stderr = String::from_utf8(out.stderr).unwrap();
+        assert!(stderr.contains("function `unused` is never used"), "{stderr}");
+        assert!(stderr.contains("there was a warning, and `--deny-warnings`"), "{stderr}");
+    }
+    let out = t(&["test", "--deny-warnings", &warned]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("test uses_helper ... ok"), "{stdout}");
+    let out = t(&["test", &warned]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+
+    // Nothing to deny: as without it.
+    let clean = format!("{dir}/test_library/lib.t");
+    let out = t(&["check", "--deny-warnings", &clean]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
 }
 
 /// `t tree-sitter <dir>` installs the parser and queries as Neovim looks for
