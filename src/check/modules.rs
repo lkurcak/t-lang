@@ -1989,9 +1989,9 @@ impl Rewrite<'_> {
     ///
     /// So what `pat` binds is there in `after` and not in `els`, and `els`
     /// can't finish, as it's a `!`. The functions and types declared in
-    /// `after` stay in the outer block, whose whole of which they're in
-    /// scope in; they can't use the locals around them, so that's all the
-    /// same to them.
+    /// `after` stay in the outer block, all of which they're in scope in;
+    /// they can't use the locals around them, so where in it they are
+    /// makes no difference to them.
     fn let_else(
         &mut self,
         stmts: &mut Vec<Stmt>,
