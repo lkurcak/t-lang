@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.42.0 (2026-10-31)
 
 Step 29: closed and sealed traits. See
 [docs/29-closed-and-sealed-traits.md](docs/29-closed-and-sealed-traits.md).
