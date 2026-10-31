@@ -206,9 +206,11 @@ module.exports = grammar({
       ';',
     ),
 
-    // `trait Ord: Eq { .. }`
+    // `trait Ord: Eq { .. }`, maybe `sealed`: only its package implements
+    // it.
     trait_item: $ => seq(
       optional($.visibility_modifier),
+      optional('sealed'),
       'trait',
       field('name', $._type_identifier),
       optional(field('bounds', $.trait_bounds)),

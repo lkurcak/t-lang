@@ -1,16 +1,14 @@
 //! Checking impls against their traits: signatures, associated types,
 //! the orphan rule, and that no two impls overlap (*coherence*).
 
-use super::methods::split;
-use super::{Hidden, each_proj, fields, hide_projections, shown_projections};
+use super::fields;
 use crate::ast::*;
 use crate::check::generics;
 use crate::check::{BOX, Checker, plural};
 use crate::error::{Edit, Error, Fix, Span};
 use crate::traits::{COPY, DISCARD};
-use crate::traits::{ImplDef, MethodDef, Pred, overlap};
+use crate::traits::{ImplDef, MethodDef, Pred, refuted, unified, unifier};
 use crate::types::{Bound, Region, Scheme, Subst, Type};
-use std::collections::HashMap;
 
 impl Checker {
     /// Pass 4, once every impl and method signature is known: the rules
@@ -166,7 +164,7 @@ impl Checker {
         self.adts.proj.local.clear();
         self.coherence()?;
         self.termination()?;
-        self.bound_termination()?;
+        self.closed_bounds()?;
         self.assoc_termination()?;
         self.assoc_sizes()?;
         self.assoc_regular()
@@ -179,139 +177,23 @@ impl Checker {
     /// `S<W<i64>>` need `S<W<W<i64>>>`, and so on, with no end. So that's
     /// polymorphic recursion too (`generics::polymorphic_recursion`), with
     /// each impl's associated type a node of its own, generic over the
-    /// impl's parameters, which a projection in a field gets to the way a
-    /// method call gets to an impl's method (`dispatch`), and which uses
-    /// the types and projections in what it says.
+    /// impl's parameters, reached from the impl's dictionary for types,
+    /// from wherever a proof picks the impl (`traits/dicts.rs`), and which
+    /// uses the types and projections in what it says. It's checked here
+    /// already, before any body, and again with the functions in
+    /// `no_polymorphic_recursion`.
     fn assoc_regular(&self) -> Result<(), Error> {
-        // A name for each associated type of each impl.
-        let nodes: Vec<(usize, String, String)> = self
-            .traits
-            .impls
-            .iter()
-            .enumerate()
-            .flat_map(|(k, d)| {
-                let tr = d.trait_name.clone().unwrap_or_default();
-                d.assoc
-                    .iter()
-                    .map(move |(n, _)| (k, n.clone(), format!("<{} as {tr}>::{n}", d.self_ty)))
-            })
-            .collect();
-        let mut uses: Vec<generics::Use> = Vec::new();
-        // To each impl a projection on `s` in `from` may be worked out by.
-        let through = |from_params: &[String], s: &Type, tr: &str, name: &str, span: Span| {
-            let mut out = Vec::new();
-            let mut hidden: Vec<Hidden> = Vec::new();
-            let s = &hide_projections(s, from_params, &mut hidden);
-            for (k, n, node) in &nodes {
-                let d = &self.traits.impls[*k];
-                if n != name || d.trait_name.as_deref() != Some(tr) {
-                    continue;
-                }
-                let renamed: Vec<Type> = d
-                    .params
-                    .iter()
-                    .map(|p| Type::Param(format!("{p}'")))
-                    .collect();
-                let header = Subst::new(&d.params, &renamed).apply(&d.self_ty);
-                let mut vars: Vec<String> = d.params.iter().map(|p| format!("{p}'")).collect();
-                vars.extend(from_params.iter().cloned());
-                vars.extend(hidden.iter().map(|h| h.0.clone()));
-                if !overlap(&header, s, &vars) {
-                    continue;
-                }
-                let mut found: Vec<Option<Type>> = vec![None; d.params.len()];
-                let mut inside = Vec::new();
-                split(
-                    &d.self_ty,
-                    s,
-                    &d.params,
-                    (from_params, &hidden),
-                    &mut found,
-                    &mut inside,
-                );
-                let args = found
-                    .into_iter()
-                    .map(|t| shown_projections(&t.unwrap_or(Type::Unit), &hidden))
-                    .collect();
-                out.push((node.as_str(), args, inside, span));
-            }
-            out
-        };
-        let mut edges: Vec<Edge> = Vec::new();
-        let mut names: Vec<&String> = self.adts.keys().collect();
-        names.sort();
-        for a in &names {
-            let def = &self.adts[*a];
-            // Its name, where it's declared.
-            let at = self.defs.types.get(*a).copied().unwrap_or(Span::new(0, 0));
-            for (_, f) in fields(&def.kind) {
-                crate::check::each_adt(&f, &mut |to, args| {
-                    edges.push((
-                        (*a).clone(),
-                        self.adt_key(to),
-                        args.to_vec(),
-                        Vec::new(),
-                        at,
-                    ));
-                });
-                each_proj(&f, &mut |s, tr| {
-                    if let Some(name) = proj_name(&f, s, tr) {
-                        for (to, args, inside, span) in through(&def.params, s, tr, &name, at) {
-                            edges.push(((*a).clone(), to, args, inside, span));
-                        }
-                    }
-                });
-            }
-        }
-        for (k, n, node) in &nodes {
-            let d = &self.traits.impls[*k];
-            let (_, t) = d.assoc.iter().find(|(m, _)| m == n).expect("it");
-            crate::check::each_adt(t, &mut |to, args| {
-                edges.push((
-                    node.clone(),
-                    self.adt_key(to),
-                    args.to_vec(),
-                    Vec::new(),
-                    d.span,
-                ));
-            });
-            each_proj(t, &mut |s, tr| {
-                if let Some(name) = proj_name(t, s, tr) {
-                    for (to, args, inside, span) in through(&d.params, s, tr, &name, d.span) {
-                        edges.push((node.clone(), to, args, inside, span));
-                    }
-                }
-            });
-        }
+        let nodes = self.assoc_nodes();
         if nodes.is_empty() {
             return Ok(());
         }
-        uses.extend(
-            edges
-                .iter()
-                .map(|(from, to, args, inside, span)| generics::Use {
-                    from,
-                    to,
-                    args: args.clone(),
-                    inside: inside.clone(),
-                    span: *span,
-                }),
-        );
+        let (dicts, type_dicts) = super::dict_names(&self.traits.impls);
+        let derived_eq = vec![None; self.traits.impls.len()];
+        let ix = self.index((&dicts, &type_dicts), &derived_eq);
+        let mut uses = self.type_graph(&ix, &nodes);
         uses.sort_by_key(|u| u.span.start);
-        let mut params: HashMap<&str, &[String]> = self
-            .adts
-            .iter()
-            .map(|(name, def)| (name.as_str(), def.params.as_slice()))
-            .collect();
-        for (k, _, node) in &nodes {
-            params.insert(node, &self.traits.impls[*k].params);
-        }
+        let params = self.graph_params(&ix, &nodes);
         generics::polymorphic_recursion(&uses, &params, &|s| self.current(s))
-    }
-
-    /// The name a struct or enum's symbol is a node by, in `assoc_regular`.
-    fn adt_key<'a>(&'a self, symbol: &str) -> &'a str {
-        self.adts.get_key_value(symbol).expect("a type").0
     }
 
     /// What impl `def` (written as `d`) says its trait's associated types
@@ -405,6 +287,18 @@ impl Checker {
             Type::Box(_) => declared(BOX, core),
             _ => core,
         };
+        let tr_name = tr.rsplit("::").next().unwrap_or(tr);
+        if self.traits.sealed.contains(tr) && trait_package != package {
+            let owner = &m.mods[trait_package].path;
+            return Err(Error::ty(
+                Span::new(d.span.start, d.self_ty.span.end),
+                format!(
+                    "`{tr_name}` is sealed: only its own package, `{owner}`, can implement it, so \
+                     that what has no impl of it never will (see \
+                     docs/29-closed-and-sealed-traits.md)"
+                ),
+            ));
+        }
         if trait_package == package || head_package == package {
             return Ok(());
         }
@@ -642,7 +536,20 @@ impl Checker {
                 let b_ty = Subst::new(&b.params, &renamed).apply(&b.self_ty);
                 let mut params = a.params.to_vec();
                 params.extend(b.params.iter().map(|p| format!("{p}'")));
-                if !overlap(&a.self_ty, &b_ty, &params) {
+                let Some(mgu) = unifier(&a.self_ty, &b_ty, &params) else {
+                    continue;
+                };
+                // Where they'd overlap, one may need a sealed trait of a
+                // type that can't have it (lemma S2): then they don't.
+                let b_preds = b.preds.iter().map(|p| Pred {
+                    ty: Subst::new(&b.params, &renamed).apply(&p.ty),
+                    trait_name: p.trait_name.clone(),
+                });
+                let refutes = |p: &Pred| {
+                    self.traits.sealed.contains(&p.trait_name)
+                        && refuted(impls, &unified(&p.ty, &mgu), &p.trait_name)
+                };
+                if a.preds.iter().any(refutes) || b_preds.into_iter().any(|p| refutes(&p)) {
                     continue;
                 }
                 let Some(tr) = &a.trait_name else {
@@ -695,10 +602,6 @@ impl Checker {
         Ok(())
     }
 }
-
-/// A use in `assoc_regular`: from what, to what, with what arguments, what
-/// of `to`'s parameters is inside `from`'s, and where.
-type Edge<'a> = (String, &'a str, Vec<Type>, Vec<(usize, usize, usize)>, Span);
 
 /// The type arguments of struct or enum type `t`.
 fn args_of(t: &Type) -> Vec<Type> {
@@ -753,14 +656,5 @@ fn rigid_on_type(t: &Type) -> Option<Type> {
     match t {
         Type::Proj(s, ..) if !matches!(**s, Type::Param(_) | Type::Proj(..)) => Some(t.clone()),
         t => t.parts().find_map(rigid_on_type),
-    }
-}
-
-/// The name of the associated type of the projection in `t` on `s` of
-/// trait `tr`.
-fn proj_name(t: &Type, s: &Type, tr: &str) -> Option<String> {
-    match t {
-        Type::Proj(x, y, name) if **x == *s && y == tr => Some(name.clone()),
-        t => t.parts().find_map(|p| proj_name(p, s, tr)),
     }
 }

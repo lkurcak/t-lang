@@ -1194,6 +1194,15 @@ impl Interp<'_, '_> {
             }
             return Ok(int_of(wrap(a.wrapping_mul(b), t), t));
         }
+        if name == "core::num::wrap" {
+            let [Value::Int(x, _)] =
+                <[Value; 1]>::try_from(args).unwrap_or_else(|_| unsound("checked arity"))
+            else {
+                unsound("`wrap` of what isn't an integer")
+            };
+            let u = int_ty(&self.fns[copy].ret);
+            return Ok(int_of(wrap(x, u), u));
+        }
         if let Some(end) = name.strip_prefix("core::num::") {
             let t = int_ty(&self.fns[copy].ret);
             let (lo, hi) = t.range_64();

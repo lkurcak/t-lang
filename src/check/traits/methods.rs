@@ -1,13 +1,11 @@
-//! Finding the method a call `x.m()` or a path `T::m` names, and which
-//! methods a use of a trait method may run (`dispatch`).
+//! Finding the method a call `x.m()` or a path `T::m` names.
 
-use super::{Hidden, Why, hide_projections, shown_projections};
+use super::Why;
 use crate::ast::*;
 use crate::check::Checker;
-use crate::check::generics;
 use crate::error::{Edit, Error, Fix, Span};
+use crate::traits::Pred;
 use crate::traits::{DISCARD, EQ};
-use crate::traits::{Pred, eq_subject, overlap};
 use crate::types::{Subst, Type};
 use std::collections::HashMap;
 
@@ -334,117 +332,6 @@ impl Checker {
             receiver,
         })
     }
-
-    /// The uses, for `generics::polymorphic_recursion`, of the methods a
-    /// use in function `from`, with type parameters `from_params`, of `to`
-    /// at `args`, at `span`, may run, if `to` is a trait's method: the
-    /// method of each impl that could be for its `Self`, or the trait's
-    /// default if the impl has none. An impl's type parameters are parts of
-    /// what `Self` is, or of what its type parameters are.
-    ///
-    /// `Eq` has impls that aren't functions of the program, but do what one
-    /// would. A built-in one of a reference or box compares what it points
-    /// to, so `==` on a `&T` is `==` on a `T`. A derived one is `==` on
-    /// each field: impl `k`'s is named `derived_eq[k]`, and its own uses are
-    /// those (see `Checker::no_polymorphic_recursion`). Leaving either out
-    /// would hide a polymorphic recursion through `==` from the check, and
-    /// monomorphising it would never end (see `mono::Cx::need_eq`).
-    pub(in crate::check) fn dispatch<'a>(
-        &'a self,
-        from: &'a str,
-        from_params: &[String],
-        to: &str,
-        args: &[Type],
-        derived_eq: &'a [Option<String>],
-        span: Span,
-    ) -> Vec<generics::Use<'a>> {
-        let Some((tr, m)) = self.traits.traits.iter().find_map(|(t, d)| {
-            let m = d.methods.iter().find(|m| m.symbol == to)?;
-            Some((t, m))
-        }) else {
-            return Vec::new();
-        };
-        let (self_ty, own) = args.split_first().expect("`Self` first");
-        let self_ty = match tr.as_str() {
-            EQ => eq_subject(self_ty),
-            _ => self_ty,
-        };
-        // A projection in it can be any type, so any impl may be for it,
-        // and the impl's parameters are inside what it stands for, which
-        // can be bigger than the type it's on by any amount: each is a
-        // stand-in, a variable for `overlap`, whose parts are an unbounded
-        // edge away from the parameters the projection mentions.
-        let mut hidden: Vec<Hidden> = Vec::new();
-        let self_ty = &hide_projections(self_ty, from_params, &mut hidden);
-        let mut out = Vec::new();
-        for (k, d) in self.traits.impls.iter().enumerate() {
-            if d.trait_name.as_deref() != Some(tr) {
-                continue;
-            }
-            let renamed: Vec<Type> = d
-                .params
-                .iter()
-                .map(|p| Type::Param(format!("{p}'")))
-                .collect();
-            let header = Subst::new(&d.params, &renamed).apply(&d.self_ty);
-            let mut vars: Vec<String> = d.params.iter().map(|p| format!("{p}'")).collect();
-            vars.extend(from_params.iter().cloned());
-            vars.extend(hidden.iter().map(|h| h.0.clone()));
-            if !overlap(&header, self_ty, &vars) {
-                continue;
-            }
-            let to: &str = match (d.methods.iter().find(|(n, _)| *n == m.name), &derived_eq[k]) {
-                (Some((_, symbol)), _) => {
-                    let f = self.fns.iter().find(|f| f.symbol == *symbol);
-                    &f.expect("a method").symbol
-                }
-                (None, Some(eq)) => eq,
-                // The default, at this `Self`. A derived impl has no
-                // methods, nor do built-in ones.
-                (None, None) => {
-                    if !d.derived && m.provided {
-                        let to = &self
-                            .fns
-                            .iter()
-                            .find(|f| f.symbol == m.symbol)
-                            .expect("a default")
-                            .symbol;
-                        out.push(generics::Use {
-                            from,
-                            to,
-                            args: args.to_vec(),
-                            inside: Vec::new(),
-                            span,
-                        });
-                    }
-                    continue;
-                }
-            };
-            let mut found: Vec<Option<Type>> = vec![None; d.params.len()];
-            let mut inside = Vec::new();
-            split(
-                &d.self_ty,
-                self_ty,
-                &d.params,
-                (from_params, &hidden),
-                &mut found,
-                &mut inside,
-            );
-            let mut args: Vec<Type> = found
-                .into_iter()
-                .map(|t| shown_projections(&t.unwrap_or(Type::Unit), &hidden))
-                .collect();
-            args.extend(own.iter().cloned());
-            out.push(generics::Use {
-                from,
-                to,
-                args,
-                inside,
-                span,
-            });
-        }
-        out
-    }
 }
 
 /// The method a call or path names.
@@ -460,72 +347,6 @@ pub(in crate::check) struct Found {
     /// Where it's declared, if anywhere.
     pub(in crate::check) def: Option<Span>,
     pub(in crate::check) receiver: bool,
-}
-
-/// Matches impl type `header`, with type parameters `params`, against
-/// `t`, which mentions type parameters `outer`: each of `params` is either
-/// a part of `t`, put in `found`, or inside what one of `outer` stands for,
-/// some constructors below, which goes in `inside` as `(param, outer,
-/// depth)`. Where they don't fit, nothing: the impl can't be for `t`.
-///
-/// `outer` comes with the stand-ins for the projections in `t` (see
-/// `dispatch`): each of `params` inside one is inside what it stands for,
-/// as much bigger than the parameters it mentions as an impl likes.
-pub(super) fn split(
-    header: &Type,
-    t: &Type,
-    params: &[String],
-    (outer, hidden): (&[String], &[Hidden]),
-    found: &mut [Option<Type>],
-    inside: &mut Vec<(usize, usize, usize)>,
-) {
-    match (header, t) {
-        (Type::Param(p), _) if params.contains(p) => {
-            let j = params.iter().position(|q| q == p).expect("it");
-            found[j].get_or_insert_with(|| t.clone());
-        }
-        (h, Type::Param(p)) if hidden.iter().any(|x| x.0 == *p) => {
-            let (_, _, mentions) = hidden.iter().find(|x| x.0 == *p).expect("it");
-            let mut below = Vec::new();
-            params_below(h, params, 0, &mut below);
-            for (j, _) in below {
-                for &i in mentions {
-                    inside.push((j, i, usize::MAX));
-                }
-            }
-        }
-        (h, Type::Param(p)) if outer.contains(p) => {
-            let i = outer.iter().position(|q| q == p).expect("it");
-            let mut below = Vec::new();
-            params_below(h, params, 0, &mut below);
-            for (j, d) in below {
-                if found[j].is_none() && !inside.iter().any(|x| x.0 == j) {
-                    inside.push((j, i, d));
-                }
-            }
-        }
-        (h, t) if h.same_shape(t) => {
-            for (a, b) in h.parts().zip(t.parts()) {
-                split(a, b, params, (outer, hidden), found, inside);
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Each of `params` in `t`, with how deep it is, `depth` and more down.
-fn params_below(t: &Type, params: &[String], depth: usize, out: &mut Vec<(usize, usize)>) {
-    match t {
-        Type::Param(p) if params.contains(p) => {
-            let j = params.iter().position(|q| q == p).expect("it");
-            if !out.iter().any(|x| x.0 == j) {
-                out.push((j, depth));
-            }
-        }
-        t => t
-            .parts()
-            .for_each(|t| params_below(t, params, depth + 1, out)),
-    }
 }
 
 /// The symbol of method `m` of trait `tr`: `<Show>::show`.

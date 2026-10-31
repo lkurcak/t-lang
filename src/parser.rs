@@ -28,7 +28,7 @@
 //!          | path "<" (IDENT ("=" type | ":" path ("+" path)*)),* ">"
 //!          | path "(" (type ("," type)*)? ")" ("->" type)?  -- `Fn(i64) -> i64`
 //! param    = "mut"? IDENT ":" type
-//! trait    = "trait" IDENT (":" path ("+" path)*)? "{" (head method)* "}"
+//! trait    = "sealed"? "trait" IDENT (":" path ("+" path)*)? "{" (head method)* "}"
 //! impl     = "impl" generics? (path "for")? type "{" (head vis? method)* "}"
 //! method   = "fn" IDENT generics? "(" ((receiver | param) ("," param)* ","?)? ")"
 //!            ("->" type)? where? (block | ";")       -- `;` only in a trait
@@ -507,6 +507,21 @@ impl Parser {
     fn item(&mut self, prog: &mut Program) -> Result<(), Error> {
         let head = self.head()?;
         let vis = self.vis();
+        let sealed = match self.peek() {
+            Tok::Sealed => {
+                let at = self.span();
+                self.bump();
+                if *self.peek() != Tok::Trait {
+                    return Err(Error::syntax(
+                        at,
+                        "only a trait can be `sealed`: it says no other package can implement \
+                         it",
+                    ));
+                }
+                Some(at)
+            }
+            _ => None,
+        };
         let head = match self.peek() {
             Tok::Fn | Tok::Struct | Tok::Trait => head.no_measure(NOT_METHOD)?,
             _ => head.no_intrinsic()?.no_measure(NOT_METHOD)?,
@@ -530,6 +545,7 @@ impl Parser {
             Tok::Trait => {
                 let mut d = self.trait_decl(head.no_derives()?)?;
                 d.vis = vis;
+                d.sealed = sealed;
                 prog.traits.push(d);
             }
             Tok::Impl => {
@@ -572,7 +588,10 @@ impl Parser {
         self.pos = start;
         let mut braces = 0usize;
         let mut brackets = 0usize;
-        let mut head = matches!(self.peek(), Tok::Hash | Tok::Pub | Tok::Export);
+        let mut head = matches!(
+            self.peek(),
+            Tok::Hash | Tok::Pub | Tok::Export | Tok::Sealed
+        );
         loop {
             let item = matches!(
                 self.peek(),
@@ -585,7 +604,10 @@ impl Parser {
                     | Tok::Mod
                     | Tok::Use
             );
-            let prefix = matches!(self.peek(), Tok::Hash | Tok::Pub | Tok::Export);
+            let prefix = matches!(
+                self.peek(),
+                Tok::Hash | Tok::Pub | Tok::Export | Tok::Sealed
+            );
             if braces == 0 && brackets == 0 {
                 if head && item {
                     // Attributes and visibility belong to this failed item.
@@ -1130,6 +1152,7 @@ impl Parser {
             doc: head.doc,
             allows: head.allows,
             intrinsic: head.intrinsic,
+            sealed: None,
             span: start.to(end),
             module: self.module,
             vis: Vis::Private,

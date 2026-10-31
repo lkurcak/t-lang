@@ -36,6 +36,16 @@ impl Checker {
                 }
                 _ => {}
             }
+            // The checker gives the integer types these, and nothing else
+            // has them: so they're sealed, and must say so.
+            let sealed = crate::traits::SEALED_TRAITS.contains(&name.name.as_str());
+            if sealed && t.sealed.is_none() {
+                let message = format!("`{}` must be `sealed`", name.name);
+                return Err(Error::ty(name.span, message));
+            }
+            if t.sealed.is_some() {
+                self.traits.sealed.insert(name.name.clone());
+            }
             // `FnOnce`'s signature: what a bound like `Fn(i64) -> i64`
             // says it is. Its name can't be written, so nothing else can.
             let assoc = match name.name == FN_ONCE {

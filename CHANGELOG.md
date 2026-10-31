@@ -1,5 +1,54 @@
 # Changelog
 
+## Unreleased
+
+Step 29: closed and sealed traits. See
+[docs/29-closed-and-sealed-traits.md](docs/29-closed-and-sealed-traits.md).
+
+### Added
+
+- `sealed trait S { .. }`: only `S`'s own package can implement it. The
+  overlap check then knows what has no impl of `S` never will: `impl<T:
+  S> Tr for T` doesn't overlap `impl Tr for char` if no impl of `S` is
+  for `char`. Selecting impls and working out projections agree. Adding an
+  impl of a sealed trait is a breaking change.
+- `Int`, `Signed` and `Unsigned` are `sealed`, so one `impl<T: Int>` can
+  sit beside impls for other types.
+- `core::num::wrap::<T, U>(x)`: `x` modulo 2^w for a `w`-bit `U`, for any
+  two integer types: `wrap::<i8, u64>(-1)` is `u64`'s greatest.
+- Packages that don't depend on each other can be used in one program.
+- tree-sitter and `t fmt` know `sealed`.
+
+### Changed
+
+- A trait impl's bound on what isn't a type parameter of its type, like
+  `where I::Item: B` or one on a parameter a bound decides, can only be
+  of a closed trait: `Discard`, `Copy`, `Fn`, `FnMut`, `FnOnce`, `Int`,
+  `Signed` or `Unsigned`. Of another, make the item type a parameter of
+  the type (`struct W<I, T> { iter: I, item: fn() -> T }`). This replaces
+  the graph of every package's traits that step 7.1 checked, and with it
+  the chain rule of step 26.
+- The check against polymorphic recursion follows where a proof picks an
+  impl, not every impl a call on a type parameter could run: it's
+  decided by a package and its dependencies, and accepts more (a call on
+  a type parameter no longer reaches impls its type can't be). A generic
+  method's own type argument passed, bigger, to another trait's generic
+  method on a type parameter is rejected, as some package's impl could
+  pass it back.
+- core's ten `Ord` and ten `Display` impls for the integer types are one
+  `impl<T: Int>` each.
+
+### Fixed
+
+- A `discard` of its own that made a bigger value of its type was
+  accepted, and monomorphising never ended: implicit `discard` calls are
+  now in the check against polymorphic recursion.
+
+### Removed
+
+- The chain rule: "`a` and `b` don't depend on one another, which
+  packages of one program must, for now".
+
 ## 0.41.0 (2026-10-31)
 
 Step 28: `if let`, `let .. else` and `%`. See

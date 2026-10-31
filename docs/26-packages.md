@@ -161,6 +161,16 @@ rules checked over only what it depends on, and checked again where two
 independent packages meet, with an error there saying they can't be used
 together.
 
+**Since step 29 there's no chain rule, and no such error.** Each rule
+that was about the whole program is now about a package and what it
+depends on: an impl's bound on what isn't part of its type can only be of
+a closed trait, which can't lead back to any impl, and the check against
+polymorphic recursion follows the proofs that pick impls, which only ever
+name a package's own or its dependencies'. So `Q` above is an error
+alone, and two packages that check alone check together: adding a
+dependency never breaks a program (see
+docs/29-closed-and-sealed-traits.md).
+
 The program is read whole before anything is checked, so as each package
 is checked, the items of those after it are set aside
 (`Program::split_off`): step 14's passes take a package's items to be
@@ -173,8 +183,9 @@ yet.
   and has one name, so each of its items has one symbol and one meaning.
   Without it, two copies of `geometry` would make two types
   `geometry::Point`, the same by name and not the same.
-- **P2, modularity.** Under the chain rule, a package is checked against
-  exactly the packages it depends on, so it checks the same alone as in
+- **P2, modularity.** Under the chain rule, a package was checked against
+  exactly the packages it depends on; since step 29, what any rule says
+  of it depends only on it and those. So it checks the same alone as in
   any program: its acceptance is final, and an error that only shows up
   with a dependent is the dependent's. The test
   `dependencies_check_as_they_do_alone` checks every dependency in
@@ -200,14 +211,15 @@ yet.
   and the one-name rule keeps that one thing.
 - **A chain, for now.** It's the shape the soundness argument of step 14
   covers unchanged, and every program so far has it: tcalc will depend on
-  one library.
+  one library. (Dropped in step 29.)
 - **Dependencies' warnings are theirs.** A program shows its own
   warnings; a library's own `t check` shows its.
 
 ## Deliberately missing (coming later)
 
 - Versions, a registry, a lockfile.
-- Packages that don't know each other in one program (the chain rule).
+- Packages that don't know each other in one program (the chain rule):
+  done in step 29.
 - A dependent renaming a package, or two versions of one in a program.
 - Keeping a checked package between runs, or across programs in the LSP.
 - `t new`, workspaces, dependencies only for tests.
@@ -225,9 +237,10 @@ yet.
 4. Make a dependency's warnings show in its dependent. Which golden test
    fails? Which warnings would be noise, and which, if any, would be
    useful there?
-5. Relax the chain rule as described above. Which of step 14's
-   whole-program rules need checking again where two packages meet, and
-   which, like overlap, can't fail there because of the orphan rule?
+5. Step 29 dropped the chain rule (docs/29-closed-and-sealed-traits.md).
+   Which of step 14's whole-program rules did it have to change, and
+   which, like overlap, can't fail where two packages meet because of the
+   orphan rule?
 
 ## Reading
 

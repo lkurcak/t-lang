@@ -866,14 +866,9 @@ pub(super) struct Use<'a> {
     pub(super) from: &'a str,
     pub(super) to: &'a str,
     pub(super) args: Vec<Type>,
-    /// `(j, i, depth)`: `to`'s `j`-th type parameter is a part of what
-    /// `from`'s `i`-th stands for, `depth` type constructors inside it,
-    /// rather than an argument built from those. That's how a call of a
-    /// trait's method at `Self = T` gets to an impl's method: for `impl<U>
-    /// Show for Option<U>`, `U` is inside `T`, one down. `usize::MAX` if
-    /// it's inside what a projection on it stands for, which can be bigger
-    /// than it.
-    pub(super) inside: Vec<(usize, usize, usize)>,
+    /// The method of a trait, called on a type with no head, whose own
+    /// type arguments this use passes to `UNKNOWN`, if it is one.
+    pub(super) via: Option<String>,
     pub(super) span: Span,
 }
 
@@ -917,13 +912,6 @@ pub(super) fn polymorphic_recursion(
                     edges.push(((u.from, i), (u.to, j), d, u));
                 }
             }
-        }
-        for &(j, i, d) in &u.inside {
-            let w = match d {
-                usize::MAX => UNBOUNDED,
-                d => -(d as i64),
-            };
-            edges.push(((u.from, i), (u.to, j), w, u));
         }
     }
     // An edge through a projection outweighs every edge that takes
@@ -988,13 +976,24 @@ pub(super) fn polymorphic_recursion(
     let found = (edges.iter().filter(own).filter(|e| e.2 > 0).find(on_cycle))
         .or_else(|| edges.iter().filter(own).find(on_cycle))
         .or_else(|| edges.iter().filter(|e| e.2 > 0).find(on_cycle));
-    let Some(&(_, b, w, u)) = found else {
+    let Some(&(a, b, w, u)) = found else {
         unreachable!("a cycle that weighs more than 0 has an edge that does")
     };
     let arg = &u.args[b.1];
     let to_p = &params[u.to][b.1];
     let (from, to) = (source_name(u.from), source_name(u.to));
-    let message = if w <= 0 {
+    let message = if let Some(m) = &u.via {
+        // A method's own type argument, to whichever impl its `Self` has.
+        let own = from.rsplit("::").next().unwrap_or(&from);
+        let p = &params[u.from][a.1];
+        format!(
+            "polymorphic recursion: this call of `{m}` on a type parameter passes it `{arg}` \
+             for `{own}`'s `{p}`, a bigger type, to whichever impl that is, and an impl in any \
+             package could pass it back to `{own}`, so monomorphising them might never end: \
+             pass a type argument of a method on as it is, not in a bigger type, to a method of \
+             an impl that isn't known here (see docs/29-closed-and-sealed-traits.md)"
+        )
+    } else if w <= 0 {
         format!(
             "polymorphic recursion: this use of `{to}` leads back to `{from}` through uses \
              with a bigger type each time round, so monomorphising them would never end"
@@ -1031,14 +1030,14 @@ mod tests {
             from: "lib::g",
             to: "h",
             args: vec![option(t("T"))],
-            inside: Vec::new(),
+            via: None,
             span: Span::new(10, 11),
         };
         let program = Use {
             from: "h",
             to: "lib::g",
             args: vec![t("U")],
-            inside: Vec::new(),
+            via: None,
             span: Span::new(100, 101),
         };
         let (gt, hu) = (["T".to_string()], ["U".to_string()]);

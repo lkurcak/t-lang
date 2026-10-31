@@ -84,7 +84,6 @@ use crate::traits::{Pred, Traits};
 use crate::types::{Adts, Params, Region, Scheme, Type};
 use adts::{adt_names, each_adt};
 use expr::Target;
-use generics::Use;
 use info::Defs;
 use lints::{Uses, unused, unused_doc};
 use names::{Scoped, TypeDef};
@@ -105,6 +104,7 @@ pub const INTRINSICS: &[&str] = &[
     "core::panic::panic",
     "core::num::checked_mul",
     "core::num::wrapping_mul",
+    "core::num::wrap",
     "core::num::least",
     "core::num::greatest",
     "core::slice::empty",
@@ -1570,25 +1570,30 @@ impl Checker {
         self.resolve_with(t, &self.type_params, &mut lts)
     }
 
-    /// Rejects polymorphic recursion between functions: see
-    /// `generics::polymorphic_recursion`. A call of a trait's method may
-    /// run any impl's that could be for its `Self`, so it uses each of
-    /// those (`traits::dispatch`).
+    /// Rejects polymorphic recursion: see `generics::polymorphic_recursion`.
+    /// The graph is of everything monomorphisation copies: functions, and
+    /// the derived `Eq`s' `eq`s; structs and enums, and impls' associated
+    /// types (as `assoc_regular`'s); and each impl's dictionaries, from
+    /// which its methods and associated types are reached, with an edge to
+    /// one from wherever a proof picks the impl (see `traits/dicts.rs`).
     ///
     /// Invariant: every copy monomorphisation can make is of a use here.
     /// So every call or naming of a generic function a body can make, at
     /// its type arguments, is in `info.instances`: calls, method calls,
-    /// paths, and `==`, which calls `<Eq>::eq`. And so is every call made
-    /// by something that isn't a function of the program: a derived `Eq`'s
-    /// `==` on each field, below. Whatever makes monomorphisation copy
-    /// something new must add its uses here too.
+    /// paths, and `==`, which calls `<Eq>::eq`; and the impl a trait's
+    /// method runs is picked by a proof that's here, at a call on a type
+    /// with a head, or where a bound was proved by the impl. So is every
+    /// call made by something that isn't a function of the program: a
+    /// derived `Eq`'s `==` on each field, below, and a `discard` of its
+    /// own, made with each copy of its type (`discard_uses`). And every
+    /// type a copy mentions is: in its signature, its instances' type
+    /// arguments, and its hidden types. Whatever makes monomorphisation
+    /// copy something new must add its uses here too.
     ///
-    /// A projection in a type argument, `f::<T::Out>`, or as the `Self` of
-    /// a method call, can stand for a type as much bigger than `T` as an
-    /// impl likes, so an edge through it has unbounded weight (`dispatch`,
-    /// `generics::polymorphic_recursion`), and any cycle through it is
-    /// rejected. The copies of types that impls' associated types make are
-    /// seen to by `Checker::assoc_regular`.
+    /// A projection in a type argument, `f::<T::Out>`, can stand for a
+    /// type as much bigger than `T` as an impl likes, so an edge through it
+    /// has unbounded weight (`generics::polymorphic_recursion`), and any
+    /// cycle through it is rejected.
     ///
     /// A closure's type is a type constructor applied to the type parameters
     /// in scope, so passing a closure that holds a `G` where a `G` was, as
@@ -1604,7 +1609,7 @@ impl Checker {
     fn no_polymorphic_recursion(&self) -> Result<(), Error> {
         // The `eq` of each derived `Eq`: not a function of the program, but
         // it does what one would, `==` on each field, so it's a node of its
-        // own (see `dispatch`).
+        // own.
         let derived_eq: Vec<Option<String>> = self
             .traits
             .impls
@@ -1614,15 +1619,17 @@ impl Checker {
                 eq.then(|| format!("<{} as Eq>::eq", d.self_ty.symbols()))
             })
             .collect();
-        let eq = traits::trait_method_symbol(EQ, "eq");
+        let (dicts, type_dicts) = traits::dict_names(&self.traits.impls);
+        let ix = self.index((&dicts, &type_dicts), &derived_eq);
+        let nodes = self.assoc_nodes();
+        let eq = ix.method_symbol(&traits::trait_method_symbol(EQ, "eq"));
         let mut uses = Vec::new();
         for (k, d) in self.traits.impls.iter().enumerate() {
             let (Some(from), Type::Adt(symbol, ..)) = (&derived_eq[k], &d.self_ty) else {
                 continue;
             };
             for (_, f) in traits::fields(&self.adts[symbol].kind) {
-                let args = [f];
-                uses.extend(self.dispatch(from, &d.params, &eq, &args, &derived_eq, d.span));
+                self.call_uses(&ix, (from, d.span), eq, &[f], &mut uses);
             }
         }
         // Which function each use is in, from where they are.
@@ -1634,41 +1641,52 @@ impl Checker {
                 .iter()
                 .filter(|f| f.body.start <= span.start && span.end <= f.body.end)
                 .min_by_key(|f| f.body.end - f.body.start);
-            if let Instance::Fn(to, args) = instance
-                && let Some(from) = from
-            {
-                let mut dispatched = self.dispatch(
-                    &from.symbol,
-                    &from.scheme.params,
-                    to,
-                    args,
-                    &derived_eq,
-                    *span,
-                );
-                if dispatched.is_empty() {
-                    dispatched.push(Use {
-                        from: &from.symbol,
-                        to,
-                        args: args.clone(),
-                        inside: Vec::new(),
-                        span: *span,
-                    });
+            let Some(from) = from else { continue };
+            let mut site = traits::Site::types(&ix, &from.symbol, *span, &mut uses);
+            match instance {
+                Instance::Fn(_, args) => {
+                    for t in args {
+                        self.mention_uses(&mut site, t);
+                    }
                 }
-                uses.extend(dispatched);
+                Instance::Adt(name, args) => {
+                    let t = Type::Adt(name.clone(), Vec::new(), args.clone());
+                    self.mention_uses(&mut site, &t);
+                }
+            }
+            if let Instance::Fn(to, args) = instance {
+                self.call_uses(&ix, (&from.symbol, *span), to, args, &mut uses);
             }
         }
+        // Each function's copies mention the types in its signature.
+        for f in &self.fns {
+            let mut site = traits::Site::types(&ix, &f.symbol, f.name.span, &mut uses);
+            self.mention_uses(&mut site, &f.scheme.ty);
+        }
+        // What an opaque type's hidden type implements was proved in its
+        // function, which picked the impls; and its copies mention it.
+        for (symbol, o) in &self.traits.opaques {
+            let (Some(hidden), Some(from)) = (&o.hidden, ix.fn_symbol(&o.owner)) else {
+                continue;
+            };
+            let generic = o.generic(symbol);
+            let mut site = traits::Site::new(&ix, from, o.span, &mut uses);
+            for p in &o.preds {
+                let t = replace(&p.ty, &generic, hidden);
+                self.proof_uses(&mut site, &t, &p.trait_name);
+            }
+            self.mention_uses(
+                &mut traits::Site::types(&ix, from, o.span, &mut uses),
+                hidden,
+            );
+        }
+        uses.extend(self.dict_uses(&ix, &nodes, false));
+        uses.extend(self.unknown_uses(&ix));
+        uses.extend(self.type_graph(&ix, &nodes));
+        uses.extend(self.discard_uses());
         // In source order, so the first one is reported.
         uses.sort_by_key(|u| u.span.start);
-        let mut params: HashMap<&str, &[String]> = self
-            .fns
-            .iter()
-            .map(|f| (f.symbol.as_str(), f.scheme.params.as_slice()))
-            .collect();
-        for (d, eq) in self.traits.impls.iter().zip(&derived_eq) {
-            if let Some(eq) = eq {
-                params.insert(eq, &d.params);
-            }
-        }
+        let params = self.graph_params(&ix, &nodes);
         generics::polymorphic_recursion(&uses, &params, &|s| self.current(s))
     }
 
@@ -1713,6 +1731,14 @@ impl Checker {
     // This rule isn't syntax-directed: it applies to any expression. So it's
     // only used where the type wanted is known, as `fits`, rather than by
     // `unify`, which would have to guess.
+}
+
+/// `t` with each `from` in it replaced by `to`.
+fn replace(t: &Type, from: &Type, to: &Type) -> Type {
+    match t == from {
+        true => to.clone(),
+        false => t.map(|p| replace(p, from, to)),
+    }
 }
 
 #[cfg(test)]

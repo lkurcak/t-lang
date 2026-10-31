@@ -718,7 +718,7 @@ impl Cx<'_, '_, '_> {
     /// one of its own, or else those of the types of its fields, if it's
     /// derived, and so on down. Each type once: a type can hold itself,
     /// through a box. That ends, as the check against polymorphic
-    /// recursion sees through derived impls the same way (`dispatch`).
+    /// recursion sees through derived impls the same way (`call_uses`).
     ///
     /// `t` and the field types have their projections worked out (`subst`,
     /// `resolved`), so it's the impls of what they stand for that it finds.

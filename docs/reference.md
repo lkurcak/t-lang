@@ -233,9 +233,19 @@ a reference of any lifetime; an omitted result lifetime is inferred from
 what its body returns, then checked. Returning a reference does not
 extend the lifetime of what it borrows.
 
+An impl's bounds on its own type parameters may be of any trait. A trait
+impl's bound on anything else, like `where I::Item: Show` or one on a
+parameter that another bound decides, may only be of `Discard`, `Copy`, the `Fn` traits,
+`Int`, `Signed` or `Unsigned`; make the item type a parameter of the type
+for another. A `sealed trait` is implemented only in its own package, so
+an impl that needs it doesn't overlap an impl for a type that has none:
+`Int` is sealed, so `impl<T: Int> Tr for T` and `impl Tr for bool` can
+both exist.
+
 See [traits](06-traits.md), [closures](06c-closures.md),
-[opaque results](06c.1-opaque-types.md), and
-[closure lifetimes](06e.1-higher-ranked-closures.md).
+[opaque results](06c.1-opaque-types.md),
+[closure lifetimes](06e.1-higher-ranked-closures.md), and
+[closed and sealed traits](29-closed-and-sealed-traits.md).
 
 ## Effects
 
