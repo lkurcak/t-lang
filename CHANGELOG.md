@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.40.0 (2026-10-31)
 
 Step 27: git dependencies. See
 [docs/27-git-dependencies.md](docs/27-git-dependencies.md).
