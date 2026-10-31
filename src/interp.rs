@@ -263,9 +263,8 @@ pub fn run_entry(program: &crate::mono::Executable, entry: &str, term: &mut dyn 
 impl Interp<'_, '_> {
     /// `run_entry`'s work.
     fn entry(&mut self, program: &crate::mono::Executable, entry: &str) -> Result<Value, Error> {
-        let interp = self;
         // `main` takes nothing, or the one `std::Os` there is.
-        let args = match interp.fns[entry].params.len() {
+        let args = match self.fns[entry].params.len() {
             0 => Vec::new(),
             _ => vec![Value::Struct(
                 "std::Os".into(),
@@ -276,7 +275,7 @@ impl Interp<'_, '_> {
                     .collect(),
             )],
         };
-        let result = interp.call(Value::Fn(entry.to_string()), args, Span::new(0, 0))?;
+        let result = self.call(Value::Fn(entry.to_string()), args, Span::new(0, 0))?;
         // An error it gives back is reported, by the copy of `std::rt::report`
         // monomorphisation made for it, with its own `Stderr`.
         if let Value::Variant(ty, variant, fields) = &result
@@ -289,20 +288,20 @@ impl Interp<'_, '_> {
             let [e] = fields.as_slice() else {
                 unsound("an `Err` of one field")
             };
-            let at = interp.memory.alloc(e.clone(), false);
+            let at = self.memory.alloc(e.clone(), false);
             let stderr = Value::Struct("std::io::Stderr".into(), Vec::new());
-            interp.call(
+            self.call(
                 Value::Fn(report),
                 vec![Value::Ref(at.clone()), stderr],
                 Span::new(0, 0),
             )?;
-            interp.memory.free(&at, false);
+            self.memory.free(&at, false);
         }
-        interp.drop(result.clone())?;
-        if interp.memory.on_heap > 0 {
+        self.drop(result.clone())?;
+        if self.memory.on_heap > 0 {
             unsound(&format!(
                 "memory leak: {} boxes or buffers were never freed",
-                interp.memory.on_heap
+                self.memory.on_heap
             ));
         }
         Ok(result)

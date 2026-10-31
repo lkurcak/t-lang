@@ -198,97 +198,87 @@ fn run(
     input: Option<Vec<u8>>,
     checked: fn(&Sources, &[Warning]),
 ) -> RunResult {
-    // The interpreter recurses several times per nested call, so give it a
-    // big stack: enough to reach `MAX_CALL_DEPTH` even in debug builds, where
-    // frames are huge. It's only reserved address space; untouched pages cost
-    // nothing.
-    const STACK_SIZE: usize = 1024 * 1024 * 1024;
     let (path, src) = (path.to_owned(), src.to_owned());
-    std::thread::Builder::new()
-        .stack_size(STACK_SIZE)
-        .spawn(move || {
-            let read = |p: &Path| match &files {
-                None => load::read_file(p),
-                Some(files) => match files.iter().find(|(f, _)| f == p) {
-                    Some((_, text)) => Ok(text.clone()),
-                    None => no_files(p),
-                },
-            };
-            let Checked {
+    on_big_stack(move || {
+        let read = |p: &Path| match &files {
+            None => load::read_file(p),
+            Some(files) => match files.iter().find(|(f, _)| f == p) {
+                Some((_, text)) => Ok(text.clone()),
+                None => no_files(p),
+            },
+        };
+        let Checked {
+            sources,
+            warnings,
+            result,
+            ..
+        } = check_files(&path, &src, &read);
+        checked(&sources, &warnings);
+        let result = result.and_then(|program| match program.program().is_library() {
+            true => {
+                let start = sources.first().start;
+                Err(Error::ty(
+                    error::Span::new(start, start),
+                    "this is a library, which starts in `lib.t` and has no `main` to run; \
+                         `t check` checks it",
+                ))
+            }
+            false => Ok(program),
+        });
+        match result.map(|program| program.lower()) {
+            Err(e) => RunResult {
                 sources,
                 warnings,
-                result,
-                ..
-            } = check_files(&path, &src, &read);
-            checked(&sources, &warnings);
-            let result = result.and_then(|program| match program.program().is_library() {
-                true => {
-                    let start = sources.first().start;
-                    Err(Error::ty(
-                        error::Span::new(start, start),
-                        "this is a library, which starts in `lib.t` and has no `main` to run; \
-                         `t check` checks it",
-                    ))
+                output: Vec::new(),
+                errors: Vec::new(),
+                result: Err(e),
+            },
+            Ok(program) => match input {
+                None => {
+                    let mut term = Process::default();
+                    let result = interp::run(&program, &mut term);
+                    let result = result.map_err(|e| e.blamed_caller(&sources));
+                    // A write may have reached only the buffer. Flush
+                    // even after an error, keeping that error if there
+                    // was one, and otherwise report a failed flush.
+                    let flushed = std::io::Write::flush(&mut term.out);
+                    let result = result.and_then(|value| {
+                        flushed.map(|()| value).map_err(|e| {
+                            let main = program
+                                .program()
+                                .fns
+                                .iter()
+                                .find(|f| f.name.name == "main")
+                                .expect("a checked program has a main function");
+                            Error::runtime(main.name.span, format!("cannot flush stdout: {e}"))
+                        })
+                    });
+                    RunResult {
+                        sources,
+                        warnings,
+                        output: Vec::new(),
+                        errors: Vec::new(),
+                        result,
+                    }
                 }
-                false => Ok(program),
-            });
-            match result.map(|program| program.lower()) {
-                Err(e) => RunResult {
-                    sources,
-                    warnings,
-                    output: Vec::new(),
-                    errors: Vec::new(),
-                    result: Err(e),
-                },
-                Ok(program) => match input {
-                    None => {
-                        let mut term = Process::default();
-                        let result = interp::run(&program, &mut term);
-                        let result = result.map_err(|e| e.blamed_caller(&sources));
-                        // A write may have reached only the buffer. Flush
-                        // even after an error, keeping that error if there
-                        // was one, and otherwise report a failed flush.
-                        let flushed = std::io::Write::flush(&mut term.out);
-                        let result = result.and_then(|value| {
-                            flushed.map(|()| value).map_err(|e| {
-                                let main = program
-                                    .program()
-                                    .fns
-                                    .iter()
-                                    .find(|f| f.name.name == "main")
-                                    .expect("a checked program has a main function");
-                                Error::runtime(main.name.span, format!("cannot flush stdout: {e}"))
-                            })
-                        });
-                        RunResult {
-                            sources,
-                            warnings,
-                            output: Vec::new(),
-                            errors: Vec::new(),
-                            result,
-                        }
+                Some(input) => {
+                    let mut term = interp::Captured {
+                        input: input.into(),
+                        ..interp::Captured::default()
+                    };
+                    let result = interp::run(&program, &mut term);
+                    let result = result.map_err(|e| e.blamed_caller(&sources));
+                    RunResult {
+                        sources,
+                        warnings,
+                        output: lines(&term.out),
+                        errors: lines(&term.err),
+                        result,
                     }
-                    Some(input) => {
-                        let mut term = interp::Captured {
-                            input: input.into(),
-                            ..interp::Captured::default()
-                        };
-                        let result = interp::run(&program, &mut term);
-                        let result = result.map_err(|e| e.blamed_caller(&sources));
-                        RunResult {
-                            sources,
-                            warnings,
-                            output: lines(&term.out),
-                            errors: lines(&term.err),
-                            result,
-                        }
-                    }
-                },
-            }
-        })
-        .expect("failed to spawn interpreter thread")
-        .join()
-        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+                }
+            },
+        }
+    })
 }
 
 /// What `t test` found: the program's files and warnings, as for a run,
