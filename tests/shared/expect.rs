@@ -216,7 +216,9 @@ fn check_tests(files: &Files, want: &[String]) -> Result<(), String> {
         None => *want == format!("{name} ... ok"),
         Some(failure) => want
             .strip_prefix(&format!("{name} ... FAILED"))
-            .is_some_and(|w| w.is_empty() || w.strip_prefix(": ").is_some_and(|w| failure.contains(w))),
+            .is_some_and(|w| {
+                w.is_empty() || w.strip_prefix(": ").is_some_and(|w| failure.contains(w))
+            }),
     };
     let matches = said.len() == want.len() && said.iter().zip(want).all(|(s, w)| says(s, w));
     let said: Vec<String> = (said.into_iter())

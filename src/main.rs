@@ -79,7 +79,10 @@ fn main() -> ExitCode {
     // `--deny-warnings`, wherever it is after `check` or `test`.
     let deny = matches!(args.first().map(String::as_str), Some("check" | "test"))
         && args.iter().any(|a| a == "--deny-warnings");
-    let args: Vec<String> = args.into_iter().filter(|a| !deny || a != "--deny-warnings").collect();
+    let args: Vec<String> = args
+        .into_iter()
+        .filter(|a| !deny || a != "--deny-warnings")
+        .collect();
     if let [cmd, rest @ ..] = args.as_slice()
         && cmd == "test"
     {

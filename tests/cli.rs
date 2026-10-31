@@ -153,8 +153,14 @@ fn deny_warnings_fails_on_warnings() {
         let out = t(args);
         assert_eq!(out.status.code(), Some(1), "{args:?}: {out:?}");
         let stderr = String::from_utf8(out.stderr).unwrap();
-        assert!(stderr.contains("function `unused` is never used"), "{stderr}");
-        assert!(stderr.contains("there was a warning, and `--deny-warnings`"), "{stderr}");
+        assert!(
+            stderr.contains("function `unused` is never used"),
+            "{stderr}"
+        );
+        assert!(
+            stderr.contains("there was a warning, and `--deny-warnings`"),
+            "{stderr}"
+        );
     }
     let out = t(&["test", "--deny-warnings", &warned]);
     assert_eq!(out.status.code(), Some(1), "{out:?}");

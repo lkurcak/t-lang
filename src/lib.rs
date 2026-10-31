@@ -356,7 +356,10 @@ pub fn test_files(path: &Path, src: &str, read: load::Read, filter: Option<&str>
                 (Ok(Value::Variant(_, variant, _)), _) if variant == "Err" => {
                     let why = errors.join("\n");
                     let why = why.strip_prefix("error: ").unwrap_or(&why);
-                    Some(Error::runtime(test.span, format!("gave back an error: {why}")))
+                    Some(Error::runtime(
+                        test.span,
+                        format!("gave back an error: {why}"),
+                    ))
                 }
                 (Ok(_), true) => Some(Error::runtime(
                     test.span,
