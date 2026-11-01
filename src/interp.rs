@@ -41,12 +41,16 @@
 //! (docs/06a.1-linear-types.md). Except on the way out of a run-time error:
 //! that's a panic, which aborts, so nothing is really dropped.
 //!
-//! Drops are still worked out as it runs: going out of scope drops what's
-//! in a slot, whatever's left of it, and an assignment what it replaces.
+//! What's dropped where was worked out before it runs, by drop elaboration
+//! (`borrowck/drops.rs`): a `drop` runs its type's glue, which
+//! monomorphisation wrote (`mono/glue.rs`), sometimes behind a drop flag.
+//! What this still sees, what's in each slot, checks that: a `drop` of what
+//! isn't all there, or a `dead`, assignment or pattern leaving behind what
+//! needed dropping, is a bug in elaboration (docs/32.1-drops.md).
 
 use crate::ast::*;
 use crate::error::{Error, Span};
-use crate::mono::{GLUE_DISCARD, GLUE_EQ};
+use crate::mono::{glue_name, is_glue};
 use crate::types::IntTy;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -328,7 +332,13 @@ impl<'p> Interp<'p, '_> {
             )?;
             self.memory.free(&at, false);
         }
-        self.drop(result.clone())?;
+        if let Some(glue) = program.entry_drop(entry) {
+            self.call(
+                Value::Fn(glue.to_string()),
+                vec![result.clone()],
+                Span::new(0, 0),
+            )?;
+        }
         if self.memory.on_heap > 0 {
             unsound(&format!(
                 "memory leak: {} boxes or buffers were never freed",
@@ -895,73 +905,57 @@ impl<'p> Interp<'p, '_> {
         }
     }
 
-    /// Frees everything `v` owns: the boxes in it, and what's in those.
+    /// Drops `v`, of type `ty`, all of which must be there (lemma E1 of
+    /// docs/32.1-drops.md): by its type's drop glue, which monomorphisation
+    /// wrote, or for an `Arena`, by freeing its values, first put in first,
+    /// each by the glue of its box.
     ///
-    /// Throwing away a struct or enum value that isn't `Discard` is a leak,
-    /// unless it's been taken apart, by moving out of it: then only what's
-    /// left in it counts, each part on its own, as for the borrow checker
-    /// (`moves::leftover`).
-    ///
-    /// A struct or enum with a `discard` of its own, a function `<T as
-    /// Discard>::discard` for its type `T`, is dropped by calling that,
-    /// unless it's been taken apart, or the program is aborting. That can
-    /// fail only by running out of stack: `discard` is total.
-    fn drop(&mut self, v: Value) -> Result<(), Error> {
-        if let Value::RawBuf(_) = v
-            && !self.aborting
-        {
+    /// Throwing away a value that isn't `Discard` is a leak: the borrow
+    /// checker said this drop never happens, or happens to what's been
+    /// taken apart, which drop elaboration drops part by part instead.
+    fn drop(&mut self, v: Value, ty: &crate::types::Type, span: Span) -> Result<(), Error> {
+        if self.taken_apart(&v) {
+            unsound(&format!(
+                "a drop of `{v}`, which isn't all there: drop elaboration is wrong"
+            ));
+        }
+        if let Value::RawBuf(_) = v {
             unsound("a `RawBuf` was thrown away, and it isn't `Discard`: a leak");
         }
         if let Value::Struct(ty, _) | Value::Variant(ty, ..) = &v
-            && !self.aborting
             && !self.discard.contains(ty.as_str())
-            && !self.taken_apart(&v)
         {
             unsound(&format!(
                 "a `{}` was thrown away, and it isn't `Discard`: a leak",
                 crate::check::source_name(ty)
             ));
         }
-        if let Value::Struct(ty, _) | Value::Variant(ty, ..) = &v
-            && !self.aborting
-            && !self.taken_apart(&v)
-            && let Some(f) = self.user_discard(ty)
-        {
-            return self
-                .call(Value::Fn(f), vec![v], Span::new(0, 0))
-                .map(|_| ());
-        }
-        self.drop_parts(v)
-    }
-
-    /// Drops what `v` holds, but not `v` itself: the parts that are left,
-    /// in order.
-    fn drop_parts(&mut self, v: Value) -> Result<(), Error> {
-        let parts: Vec<Value> = match v {
-            Value::Box(p) => vec![self.memory.free(&p, true)],
-            // Its values' boxes, first put in first.
-            Value::Arena(p) => vec![self.memory.free(&p, true)],
-            Value::Struct(_, fields) => fields.into_iter().map(|(_, v)| v).collect(),
-            Value::Variant(_, _, fields) => fields,
-            Value::Closure(c) => c.env.into_iter().map(|(_, v)| v).collect(),
-            // An array's values, front to back.
-            Value::Slots(values) => values,
-            _ => Vec::new(),
-        };
-        self.drop_all(parts)
-    }
-
-    /// Drops each of `vs`, in order, all of them even if one fails, as
-    /// what's left must be freed anyway; the first failure is the result.
-    fn drop_all(&mut self, vs: impl IntoIterator<Item = Value>) -> Result<(), Error> {
-        let mut result = Ok(());
-        for v in vs {
-            let r = self.drop(v);
-            if result.is_ok() {
-                result = r;
+        if let Value::Arena(p) = v {
+            let crate::types::Type::Adt(_, _, args) = ty else {
+                unsound("an arena of no type")
+            };
+            let boxed = crate::types::Type::Box(Box::new(args[0].clone()));
+            let Value::Slots(values) = self.memory.free(&p, true) else {
+                unsound("an arena's values")
+            };
+            let mut result = Ok(());
+            for v in values {
+                let r = self.drop(v, &boxed, span);
+                if result.is_ok() {
+                    result = r;
+                }
             }
+            return result;
         }
-        result
+        let name = glue_name("{drop}", ty);
+        let exe = self.exe;
+        match exe.body_named(&name) {
+            Some((name, body)) => self
+                .run(body, name, None, vec![v], Vec::new(), span)
+                .map(|_| ()),
+            None if self.needs_drop(&v) => unsound(&format!("no drop glue for `{v}`, as `{name}`")),
+            None => Ok(()),
+        }
     }
 
     /// The `discard` of a struct or enum's own, if type `ty` has one.
@@ -1020,20 +1014,14 @@ impl<'p> Interp<'p, '_> {
 
     fn call(&mut self, f: Value, args: Vec<Value>, span: Span) -> Result<Value, Error> {
         match f {
-            // `==` of what a built-in or derived `Eq` compares, as a
-            // function: on what its two references point to.
-            Value::Fn(name) if name == GLUE_EQ => match args.as_slice() {
-                [Value::Ref(p), Value::Ref(q)] => {
-                    let (p, q) = (p.clone(), q.clone());
-                    Ok(Value::Bool(self.equal(&p, &q, span)?))
-                }
-                _ => unsound("`eq` of what aren't two references"),
-            },
-            // Dropping, part by part, as a function.
-            Value::Fn(name) if name == GLUE_DISCARD => {
-                let [v] = <[Value; 1]>::try_from(args).unwrap_or_else(|_| unsound("arity"));
-                self.drop(v)?;
-                Ok(Value::Unit)
+            // Glue, which monomorphisation wrote: a body with no
+            // declaration, which nothing checks the effects of, as it has
+            // none.
+            Value::Fn(name) if is_glue(&name) => {
+                let exe = self.exe;
+                let (name, body) = (exe.body_named(&name))
+                    .unwrap_or_else(|| unsound(&format!("glue `{name}` has no body")));
+                self.run(body, name, None, args, Vec::new(), span)
             }
             Value::Fn(name) => {
                 let decl = self.fns[name.as_str()];
@@ -1095,26 +1083,23 @@ impl<'p> Interp<'p, '_> {
             }
             // A closure called by value is the call's to use up, and what's
             // left of it is dropped when it returns. One whose body takes it
-            // by reference gets one to it, here.
+            // by reference is called through one, by the shim
+            // monomorphisation wrote instead (`Cx::by_ref_body`).
             Value::Closure(c) => {
                 let exe = self.exe;
                 let (code, body) = (exe.body_named(&c.code))
                     .unwrap_or_else(|| unsound(&format!("closure `{}` has no body", c.code)));
+                let root = closure_root(code);
                 match env_by(body) {
                     Some(None) => {
-                        let root = closure_root(code);
                         let mut all = vec![Value::Closure(c.clone())];
                         all.extend(args);
                         self.run(body, root, None, all, Vec::new(), span)
                     }
-                    _ => {
-                        let at = self.memory.alloc(Value::Closure(c), false);
-                        let result = self.call_closure(&at, args, span);
-                        let left = self.memory.free(&at, false);
-                        let dropped = self.drop(left);
-                        let v = result?;
-                        dropped?;
-                        Ok(v)
+                    // One that captures nothing: there's nothing to it.
+                    None => self.run(body, root, None, args, Vec::new(), span),
+                    Some(Some(_)) => {
+                        unsound("a closure whose body takes it by reference called by value")
                     }
                 }
             }
@@ -1223,10 +1208,28 @@ impl<'p> Interp<'p, '_> {
                     }
                     StmtKind::Inspect(_) => Ok(()),
                     StmtKind::Dead(l) => self.dead(&mut fr, l.0),
+                    // What the pattern didn't move out was dropped before.
                     StmtKind::Consume(place, _) => {
                         let p = self.ptr(&fr, place);
                         let old = std::mem::replace(self.memory.get_mut(&p), Value::Moved);
-                        self.drop_parts(old)
+                        self.parts_left_behind(old, "taken apart by a pattern");
+                        Ok(())
+                    }
+                    StmtKind::Drop(place, ty) => {
+                        let p = self.ptr(&fr, place);
+                        let v = std::mem::replace(self.memory.get_mut(&p), Value::Moved);
+                        self.drop(v, ty, s.span)
+                    }
+                    StmtKind::Free(place) => {
+                        let p = self.ptr(&fr, place);
+                        match std::mem::replace(self.memory.get_mut(&p), Value::Moved) {
+                            Value::Box(q) => {
+                                let inner = self.memory.free(&q, true);
+                                self.left_behind(&inner, "freed");
+                                Ok(())
+                            }
+                            v => unsound(&format!("`free` of `{v}`, which isn't a box")),
+                        }
                     }
                     StmtKind::Refine(l, r) => {
                         self.refine(&fr, *l, &body.refinements[*r]);
@@ -1377,7 +1380,7 @@ impl<'p> Interp<'p, '_> {
                     unsound("`==` of what isn't a place")
                 };
                 let (l, r) = (self.ptr(fr, l), self.ptr(fr, r));
-                let same = self.equal(&l, &r, span)?;
+                let same = self.equal(&l, &r);
                 Value::Bool(same == (*op == BinOp::Eq))
             }
             Rvalue::Binary(op, l, r, id) => {
@@ -1493,7 +1496,7 @@ impl<'p> Interp<'p, '_> {
             r.check(self, &v, "a refined variable assigned");
         }
         let old = std::mem::replace(self.memory.get_mut(&p), v);
-        self.drop(old)?;
+        self.left_behind(&old, "assigned over");
         if !p.path.is_empty() {
             let mut outer = p.clone();
             outer.path.pop();
@@ -1514,8 +1517,55 @@ impl<'p> Interp<'p, '_> {
         };
         let v = self.memory.free(&p, false);
         match fr.f.is_some_and(is_discard_fn) && l == 1 {
-            true => self.drop_parts(v),
-            false => self.drop(v),
+            true => self.parts_left_behind(v, "dropped by its own `discard`"),
+            false => self.left_behind(&v, "out of scope"),
+        }
+        Ok(())
+    }
+
+    /// `left_behind` of each part of `v`, which was taken apart, or in its
+    /// own `discard`, is being dropped part by part.
+    fn parts_left_behind(&self, v: Value, what: &str) {
+        let parts: Vec<Value> = match v {
+            Value::Struct(_, fields) => fields.into_iter().map(|(_, v)| v).collect(),
+            Value::Variant(_, _, fields) => fields,
+            Value::Slots(values) => values,
+            Value::Moved => Vec::new(),
+            v => unsound(&format!("`{v}` taken apart")),
+        };
+        for v in &parts {
+            self.left_behind(v, what);
+        }
+    }
+
+    /// Stops the program, as drop elaboration is wrong, if `v`, just
+    /// `what`, holds anything dropping it would have done something
+    /// with: elaboration should have dropped it first (E1 of
+    /// docs/32.1-drops.md).
+    fn left_behind(&self, v: &Value, what: &str) {
+        if self.needs_drop(v) {
+            unsound(&format!(
+                "`{v}` was {what} still holding what needed dropping: drop elaboration is wrong"
+            ));
+        }
+    }
+
+    /// Would dropping `v` do anything: free memory, call a `discard`, or
+    /// throw away what isn't `Discard`?
+    fn needs_drop(&self, v: &Value) -> bool {
+        match v {
+            Value::Box(_) | Value::RawBuf(_) | Value::Arena(_) => true,
+            Value::Struct(ty, _) | Value::Variant(ty, ..)
+                if !self.taken_apart(v)
+                    && (!self.discard.contains(ty.as_str()) || self.user_discard(ty).is_some()) =>
+            {
+                true
+            }
+            Value::Struct(_, fields) => fields.iter().any(|(_, v)| self.needs_drop(v)),
+            Value::Variant(_, _, fields) => fields.iter().any(|v| self.needs_drop(v)),
+            Value::Closure(c) => c.env.iter().any(|(_, v)| self.needs_drop(v)),
+            Value::Slots(values) => values.iter().any(|v| self.needs_drop(v)),
+            _ => false,
         }
     }
 
@@ -1655,7 +1705,10 @@ impl<'p> Interp<'p, '_> {
             "alloc::raw::out_of_memory" => Err(self.out_of_memory(span, "out of memory")),
             // `f(0)`, `f(1)`, .., each made in place, as many as the copy's
             // array type says.
-            "core::array::from_fn" => {
+            // `f(0)`, `f(1)`, .., each made in place, as many as the copy's
+            // array type says, calling `f` where it is. On a panic, what's
+            // made is forgotten: the program is aborting.
+            "core::array::from_fn_mut" => {
                 let [f] = <[Value; 1]>::try_from(args).unwrap_or_else(|_| unsound("arity"));
                 let n = match &self.fns[copy].ret.kind {
                     TypeExprKind::Array(_, n) => match n.kind {
@@ -1664,25 +1717,10 @@ impl<'p> Interp<'p, '_> {
                     },
                     _ => unsound("`from_fn` makes an array"),
                 };
-                let at = self.memory.alloc(f, false);
                 let mut values = Vec::new();
-                let mut result = Ok(());
                 for i in 0..n {
-                    match self.call(Value::Ref(at.clone()), vec![usize_of(i)], span) {
-                        Ok(v) => values.push(v),
-                        Err(e) => {
-                            result = Err(e);
-                            break;
-                        }
-                    }
+                    values.push(self.call(f.clone(), vec![usize_of(i)], span)?);
                 }
-                let left = self.memory.free(&at, false);
-                let dropped = self.drop(left);
-                if result.is_err() {
-                    let _ = self.drop_all(values.drain(..));
-                }
-                result?;
-                dropped?;
                 Ok(Value::Slots(values))
             }
             // Aborts, saying why.
@@ -2144,79 +2182,16 @@ impl<'p> Interp<'p, '_> {
         }
     }
 
-    /// `==` on the values at `p` and `q`, at `span`. References and boxes
-    /// compare what they point to. A struct or enum with an `eq` of its
-    /// own, a function `<T as Eq>::eq` for its type `T`, compares by that;
-    /// one with `#[derive(Eq)]` compares field by field, each by its own
-    /// type's `==`.
-    fn equal(&mut self, p: &Ptr, q: &Ptr, span: Span) -> Result<bool, Error> {
-        // Slices, and strings, which are slices of bytes: of the same
-        // length, with equal values at each index.
-        if let (Some((a, n)), Some((b, m))) = (p.range, q.range) {
-            if n != m {
-                return Ok(false);
-            }
-            for i in 0..n {
-                let (x, y) = (
-                    Ptr {
-                        range: None,
-                        ..p.field(a + i)
-                    },
-                    Ptr {
-                        range: None,
-                        ..q.field(b + i)
-                    },
-                );
-                if !self.equal(&x, &y, span)? {
-                    return Ok(false);
-                }
-            }
-            return Ok(true);
+    /// `==` on the values at `p` and `q`: numbers, `bool`s, characters or
+    /// `()`. Monomorphisation made every other `==` a call of what compares
+    /// it, a type's own `eq` or its glue (see `mono/glue.rs`).
+    fn equal(&self, p: &Ptr, q: &Ptr) -> bool {
+        match (self.memory.get(p), self.memory.get(q)) {
+            (a @ (Value::Int(..) | Value::Bool(_) | Value::Char(_) | Value::Unit), b) => a == b,
+            (a, b) => unsound(&format!(
+                "`==` of `{a}` and `{b}`, left after monomorphising"
+            )),
         }
-        // The type, and how many fields to compare: none if they're
-        // different variants.
-        let (ty, fields) = match (self.memory.get(p), self.memory.get(q)) {
-            (Value::Ref(p) | Value::Box(p), Value::Ref(q) | Value::Box(q)) => {
-                let (p, q) = (p.clone(), q.clone());
-                return self.equal(&p, &q, span);
-            }
-            (Value::Struct(s, xs), Value::Struct(..)) => (s.clone(), Some(xs.len())),
-            (Value::Variant(s, v, xs), Value::Variant(_, w, _)) => {
-                (s.clone(), (v == w).then_some(xs.len()))
-            }
-            // Arrays of a type, so of a length: value by value.
-            (Value::Slots(xs), Value::Slots(_)) => (String::new(), Some(xs.len())),
-            (Value::Moved, _) | (_, Value::Moved) => unsound("comparing a moved value"),
-            (a, b) => return Ok(a == b),
-        };
-        if let Some(f) = self.user_eq(&ty).filter(|_| !ty.is_empty()) {
-            return self.call_eq(f, p, q, span);
-        }
-        let Some(n) = fields else {
-            return Ok(false);
-        };
-        for i in 0..n {
-            if !self.equal(&p.field(i), &q.field(i), span)? {
-                return Ok(false);
-            }
-        }
-        Ok(true)
-    }
-
-    /// The `eq` of a struct or enum's own, if type `ty` has one.
-    ///
-    /// Relies on monomorphisation having made a copy of every `eq` that a
-    /// `==` can get to (`mono::Cx::need_eq`): here a missing one looks like
-    /// a derived `Eq`, and the values would be compared field by field.
-    fn user_eq(&self, ty: &str) -> Option<String> {
-        let name = format!("<{ty} as {}>::eq", crate::traits::EQ);
-        self.fns.contains_key(name.as_str()).then_some(name)
-    }
-
-    /// Calls `eq` `f` on what's at `p` and `q`.
-    fn call_eq(&mut self, f: String, p: &Ptr, q: &Ptr, span: Span) -> Result<bool, Error> {
-        let args = vec![Value::Ref(p.clone()), Value::Ref(q.clone())];
-        Ok(bool(self.call(Value::Fn(f), args, span)?))
     }
 
     /// Stops the program, as the checker is wrong, if it proved the

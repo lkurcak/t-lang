@@ -35,7 +35,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
         _2 = move _3;
         dead _4;
         dead _3;
-        _6 = {closure#8148}();
+        _6 = {closure#8183}();
         _5 = copy _6;
         dead _6;
         _11 = 1_i64;
@@ -69,12 +69,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
         dead _11;
         dead _10;
         dead _9;
-        dead _8;
-        dead _7;
-        dead _5;
-        dead _2;
-        dead _1;
-        return;
+        goto bb9;
     }
     bb3: {
         dead _17;
@@ -117,12 +112,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
         dead _22;
         dead _21;
         dead _20;
-        dead _19;
-        dead _18;
-        dead _5;
-        dead _2;
-        dead _1;
-        return;
+        goto bb12;
     }
     bb7: {
         dead _28;
@@ -142,9 +132,25 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
         dead _1;
         return;
     }
+    bb9: {
+        dead _8;
+        dead _7;
+        dead _5;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb12: {
+        dead _19;
+        dead _18;
+        dead _5;
+        dead _2;
+        dead _1;
+        return;
+    }
 }
 
-closure main::{closure#8148} {
+closure main::{closure#8183} {
     let _0: bool;
     let _1: i64; // a
     let _2: i64; // b

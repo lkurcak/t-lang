@@ -1,14 +1,14 @@
-fn adder(n: i64) -> {closure#81536} {
+fn adder(n: i64) -> {closure#81781} {
     let _0: {closure};
     let _1: i64; // n
     bb0: {
-        _0 = {closure#8139}(copy _1);
+        _0 = {closure#8174}(copy _1);
         dead _1;
         return;
     }
 }
 
-closure adder::{closure#8139} {
+closure adder::{closure#8174} {
     let _0: i64;
     let mut _1: &{closure}; // the closure
     let _2: i64; // x
@@ -20,7 +20,7 @@ closure adder::{closure#8139} {
     }
 }
 
-fn counter() -> {closure#81635} {
+fn counter() -> {closure#81880} {
     let _0: {closure};
     let mut _1: i64; // n
     let _2: i64;
@@ -28,13 +28,13 @@ fn counter() -> {closure#81635} {
         _2 = 0_i64;
         _1 = copy _2;
         dead _2;
-        _0 = {closure#8159}(copy _1);
+        _0 = {closure#8194}(copy _1);
         dead _1;
         return;
     }
 }
 
-closure counter::{closure#8159} {
+closure counter::{closure#8194} {
     let _0: i64;
     let mut _1: &mut {closure}; // the closure
     let _2: ();
@@ -51,10 +51,10 @@ closure counter::{closure#8159} {
     }
 }
 
-fn compose::<{panic}, {closure#81536}, {closure#81536}>(
-    f: {closure#81536},
-    g: {closure#81536},
-) -> {closure#81843}::<{panic}, {closure#81536}, {closure#81536}> {
+fn compose::<{panic}, {closure#81781}, {closure#81781}>(
+    f: {closure#81781},
+    g: {closure#81781},
+) -> {closure#82088}::<{panic}, {closure#81781}, {closure#81781}> {
     let _0: {closure};
     let _1: {closure}; // f
     let _2: {closure}; // g
@@ -63,7 +63,7 @@ fn compose::<{panic}, {closure#81536}, {closure#81536}>(
     bb0: {
         _3 = move _2;
         _4 = move _1;
-        _0 = {closure#8206}(move _3, move _4);
+        _0 = {closure#8241}(move _3, move _4);
         dead _4;
         dead _3;
         dead _2;
@@ -72,7 +72,7 @@ fn compose::<{panic}, {closure#81536}, {closure#81536}>(
     }
 }
 
-closure compose::<{panic}, {closure#81536}, {closure#81536}>::{closure#8206} {
+closure compose::<{panic}, {closure#81781}, {closure#81781}>::{closure#8241} {
     let _0: i64;
     let mut _1: &{closure}; // the closure
     let _2: i64; // x
@@ -93,7 +93,7 @@ closure compose::<{panic}, {closure#81536}, {closure#81536}>::{closure#8206} {
     }
 }
 
-fn pick(c: bool) -> {closure#81536} {
+fn pick(c: bool) -> {closure#81781} {
     let _0: {closure};
     let _1: bool; // c
     let _2: {closure}; // a
@@ -105,6 +105,8 @@ fn pick(c: bool) -> {closure#81536} {
     let _8: bool;
     let _9: {closure};
     let _10: {closure};
+    let _11: bool;
+    let _12: bool;
     bb0: {
         _4 = 1_i64;
         _3 = adder(move _4);
@@ -133,7 +135,13 @@ fn pick(c: bool) -> {closure#81536} {
     }
     bb3: {
         dead _8;
+        goto bb5;
+    }
+    bb5: {
         dead _5;
+        goto bb7;
+    }
+    bb7: {
         dead _2;
         dead _1;
         return;
@@ -268,12 +276,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _12;
         dead _11;
         dead _10;
-        dead _9;
-        dead _8;
-        dead _5;
-        dead _2;
-        dead _1;
-        return;
+        goto bb25;
     }
     bb3: {
         dead _18;
@@ -317,13 +320,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _25;
         dead _24;
         dead _23;
-        dead _22;
-        dead _21;
-        dead _19;
-        dead _5;
-        dead _2;
-        dead _1;
-        return;
+        goto bb28;
     }
     bb7: {
         dead _30;
@@ -363,13 +360,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _35;
         dead _34;
         dead _33;
-        dead _32;
-        dead _31;
-        dead _19;
-        dead _5;
-        dead _2;
-        dead _1;
-        return;
+        goto bb31;
     }
     bb11: {
         dead _40;
@@ -384,7 +375,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         _43 = adder(move _44);
         _46 = 10_i64;
         _45 = adder(move _46);
-        _42 = compose::<{panic}, {closure#81536}, {closure#81536}>(move _43, move _45);
+        _42 = compose::<{panic}, {closure#81781}, {closure#81781}>(move _43, move _45);
         _41 = move _42;
         dead _46;
         dead _45;
@@ -422,14 +413,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _51;
         dead _50;
         dead _49;
-        dead _48;
-        dead _47;
-        dead _41;
-        dead _19;
-        dead _5;
-        dead _2;
-        dead _1;
-        return;
+        goto bb34;
     }
     bb15: {
         dead _57;
@@ -476,14 +460,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _62;
         dead _61;
         dead _60;
-        dead _59;
-        dead _58;
-        dead _41;
-        dead _19;
-        dead _5;
-        dead _2;
-        dead _1;
-        return;
+        goto bb37;
     }
     bb19: {
         dead _70;
@@ -532,14 +509,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _75;
         dead _74;
         dead _73;
-        dead _72;
-        dead _71;
-        dead _41;
-        dead _19;
-        dead _5;
-        dead _2;
-        dead _1;
-        return;
+        goto bb40;
     }
     bb23: {
         dead _83;
@@ -556,6 +526,62 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         _84 = ();
         _0 = core::result::Result::<(), std::io::Error>::Ok(move _84);
         dead _84;
+        dead _41;
+        dead _19;
+        dead _5;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb25: {
+        dead _9;
+        dead _8;
+        dead _5;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb28: {
+        dead _22;
+        dead _21;
+        dead _19;
+        dead _5;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb31: {
+        dead _32;
+        dead _31;
+        dead _19;
+        dead _5;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb34: {
+        dead _48;
+        dead _47;
+        dead _41;
+        dead _19;
+        dead _5;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb37: {
+        dead _59;
+        dead _58;
+        dead _41;
+        dead _19;
+        dead _5;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb40: {
+        dead _72;
+        dead _71;
         dead _41;
         dead _19;
         dead _5;

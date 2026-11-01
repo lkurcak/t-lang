@@ -58,7 +58,7 @@ fn flip::<i64, bool>(p: Pair::<i64, bool>) -> Pair::<bool, i64> {
     }
 }
 
-fn map::<{panic}, i64, i64, {closure#83043}>(o: Option::<i64>, f: {closure#83043}) -> Option::<i64>
+fn map::<{panic}, i64, i64, {closure#83288}>(o: Option::<i64>, f: {closure#83288}) -> Option::<i64>
 with panic {
     let _0: Option<i64>;
     let _1: Option<i64>; // o
@@ -67,6 +67,9 @@ with panic {
     let _4: i64;
     let _5: {closure};
     let _6: i64;
+    let _7: bool;
+    let _8: {closure};
+    let _9: &{closure};
     bb0: {
         inspect _1;
         inspect _1;
@@ -77,7 +80,11 @@ with panic {
         consume _1;
         _5 = move _2;
         _6 = move _3;
-        _4 = (move _5)(move _6);
+        _8 = move _5;
+        _9 = &_8;
+        _4 = (move _9)(move _6);
+        dead _9;
+        dead _8;
         _0 = Option::<i64>::Some(move _4);
         dead _3;
         goto bb3;
@@ -91,6 +98,9 @@ with panic {
         dead _6;
         dead _5;
         dead _4;
+        goto bb5;
+    }
+    bb5: {
         dead _2;
         dead _1;
         return;
@@ -108,6 +118,7 @@ fn map::<{panic}, i64, i64, fn(i64) -> i64 with panic>(
     let _4: i64;
     let _5: fn(i64) -> i64 with panic;
     let _6: i64;
+    let _7: bool;
     bb0: {
         inspect _1;
         inspect _1;
@@ -132,6 +143,9 @@ fn map::<{panic}, i64, i64, fn(i64) -> i64 with panic>(
         dead _6;
         dead _5;
         dead _4;
+        goto bb5;
+    }
+    bb5: {
         dead _2;
         dead _1;
         return;
@@ -146,6 +160,7 @@ fn map::<{}, i64, bool, fn(i64) -> bool>(o: Option::<i64>, f: fn(i64) -> bool) -
     let _4: bool;
     let _5: fn(i64) -> bool;
     let _6: i64;
+    let _7: bool;
     bb0: {
         inspect _1;
         inspect _1;
@@ -170,6 +185,9 @@ fn map::<{}, i64, bool, fn(i64) -> bool>(o: Option::<i64>, f: fn(i64) -> bool) -
         dead _6;
         dead _5;
         dead _4;
+        goto bb5;
+    }
+    bb5: {
         dead _2;
         dead _1;
         return;
@@ -183,6 +201,8 @@ fn unwrap_or::<i64>(o: Option::<i64>, default: i64) -> i64 {
     let _3: i64; // x
     let _4: i64;
     let _5: i64;
+    let _6: bool;
+    let _7: bool;
     bb0: {
         inspect _1;
         inspect _1;
@@ -205,9 +225,24 @@ fn unwrap_or::<i64>(o: Option::<i64>, default: i64) -> i64 {
     bb3: {
         dead _5;
         dead _4;
+        goto bb5;
+    }
+    bb5: {
         dead _2;
+        match _1 { #0(_) => bb7, #1 => bb10 };
+    }
+    bb6: {
         dead _1;
         return;
+    }
+    bb7: {
+        goto bb9;
+    }
+    bb9: {
+        goto bb6;
+    }
+    bb10: {
+        goto bb6;
     }
 }
 
@@ -218,6 +253,8 @@ fn unwrap_or::<bool>(o: Option::<bool>, default: bool) -> bool {
     let _3: bool; // x
     let _4: bool;
     let _5: bool;
+    let _6: bool;
+    let _7: bool;
     bb0: {
         inspect _1;
         inspect _1;
@@ -240,9 +277,24 @@ fn unwrap_or::<bool>(o: Option::<bool>, default: bool) -> bool {
     bb3: {
         dead _5;
         dead _4;
+        goto bb5;
+    }
+    bb5: {
         dead _2;
+        match _1 { #0(_) => bb7, #1 => bb10 };
+    }
+    bb6: {
         dead _1;
         return;
+    }
+    bb7: {
+        goto bb9;
+    }
+    bb9: {
+        goto bb6;
+    }
+    bb10: {
+        goto bb6;
     }
 }
 
@@ -513,11 +565,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _9;
         dead _8;
         dead _7;
-        dead _6;
-        dead _5;
-        dead _2;
-        dead _1;
-        return;
+        goto bb52;
     }
     bb3: {
         dead _14;
@@ -557,11 +605,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _19;
         dead _18;
         dead _17;
-        dead _16;
-        dead _15;
-        dead _2;
-        dead _1;
-        return;
+        goto bb55;
     }
     bb7: {
         dead _24;
@@ -606,12 +650,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _34;
         dead _33;
         dead _32;
-        dead _31;
-        dead _30;
-        dead _25;
-        dead _2;
-        dead _1;
-        return;
+        goto bb58;
     }
     bb11: {
         dead _37;
@@ -645,12 +684,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _42;
         dead _41;
         dead _40;
-        dead _39;
-        dead _38;
-        dead _25;
-        dead _2;
-        dead _1;
-        return;
+        goto bb61;
     }
     bb15: {
         dead _45;
@@ -665,8 +699,8 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         _51 = 4_i64;
         _50 = Option::<i64>::Some(move _51);
         _53 = &_46;
-        _52 = {closure#8409}(move _53);
-        _49 = map::<{panic}, i64, i64, {closure#83043}>(move _50, move _52);
+        _52 = {closure#8444}(move _53);
+        _49 = map::<{panic}, i64, i64, {closure#83288}>(move _50, move _52);
         _48 = move _49;
         dead _53;
         dead _52;
@@ -704,14 +738,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _58;
         dead _57;
         dead _56;
-        dead _55;
-        dead _54;
-        dead _48;
-        dead _46;
-        dead _25;
-        dead _2;
-        dead _1;
-        return;
+        goto bb64;
     }
     bb19: {
         dead _64;
@@ -727,7 +754,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         _65 = move _66;
         dead _66;
         _72 = move _65;
-        _73 = {closure#8439}();
+        _73 = {closure#8474}();
         _71 = map::<{panic}, i64, i64, fn(i64) -> i64 with panic>(move _72, move _73);
         _74 = -1_i64;
         _70 = unwrap_or::<i64>(move _71, move _74);
@@ -761,15 +788,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _71;
         dead _70;
         dead _69;
-        dead _68;
-        dead _67;
-        dead _65;
-        dead _48;
-        dead _46;
-        dead _25;
-        dead _2;
-        dead _1;
-        return;
+        goto bb67;
     }
     bb23: {
         dead _79;
@@ -785,7 +804,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _67;
         _86 = 3_i64;
         _85 = Option::<i64>::Some(move _86);
-        _87 = {closure#8460}();
+        _87 = {closure#8495}();
         _84 = map::<{}, i64, bool, fn(i64) -> bool>(move _85, move _87);
         _88 = false;
         _83 = unwrap_or::<bool>(move _84, move _88);
@@ -820,15 +839,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _84;
         dead _83;
         dead _82;
-        dead _81;
-        dead _80;
-        dead _65;
-        dead _48;
-        dead _46;
-        dead _25;
-        dead _2;
-        dead _1;
-        return;
+        goto bb70;
     }
     bb27: {
         dead _93;
@@ -872,15 +883,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _98;
         dead _97;
         dead _96;
-        dead _95;
-        dead _94;
-        dead _65;
-        dead _48;
-        dead _46;
-        dead _25;
-        dead _2;
-        dead _1;
-        return;
+        goto bb73;
     }
     bb31: {
         dead _103;
@@ -891,7 +894,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _96;
         dead _95;
         dead _94;
-        _108 = {closure#8484}();
+        _108 = {closure#8519}();
         _109 = 1_i64;
         _110 = 10_i64;
         _107 = repeat::<i64>(move _108, move _109, move _110);
@@ -924,15 +927,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _108;
         dead _107;
         dead _106;
-        dead _105;
-        dead _104;
-        dead _65;
-        dead _48;
-        dead _46;
-        dead _25;
-        dead _2;
-        dead _1;
-        return;
+        goto bb76;
     }
     bb35: {
         dead _115;
@@ -1015,18 +1010,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _128;
         dead _127;
         dead _126;
-        dead _125;
-        dead _124;
-        dead _123;
-        dead _122;
-        dead _116;
-        dead _65;
-        dead _48;
-        dead _46;
-        dead _25;
-        dead _2;
-        dead _1;
-        return;
+        goto bb79;
     }
     bb42: {
         dead _132;
@@ -1057,16 +1041,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _136;
         dead _135;
         dead _134;
-        dead _133;
-        dead _122;
-        dead _116;
-        dead _65;
-        dead _48;
-        dead _46;
-        dead _25;
-        dead _2;
-        dead _1;
-        return;
+        goto bb82;
     }
     bb46: {
         dead _140;
@@ -1096,16 +1071,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _145;
         dead _144;
         dead _143;
-        dead _142;
-        dead _141;
-        dead _116;
-        dead _65;
-        dead _48;
-        dead _46;
-        dead _25;
-        dead _2;
-        dead _1;
-        return;
+        goto bb85;
     }
     bb50: {
         dead _150;
@@ -1128,9 +1094,131 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _1;
         return;
     }
+    bb52: {
+        dead _6;
+        dead _5;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb55: {
+        dead _16;
+        dead _15;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb58: {
+        dead _31;
+        dead _30;
+        dead _25;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb61: {
+        dead _39;
+        dead _38;
+        dead _25;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb64: {
+        dead _55;
+        dead _54;
+        dead _48;
+        dead _46;
+        dead _25;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb67: {
+        dead _68;
+        dead _67;
+        dead _65;
+        dead _48;
+        dead _46;
+        dead _25;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb70: {
+        dead _81;
+        dead _80;
+        dead _65;
+        dead _48;
+        dead _46;
+        dead _25;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb73: {
+        dead _95;
+        dead _94;
+        dead _65;
+        dead _48;
+        dead _46;
+        dead _25;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb76: {
+        dead _105;
+        dead _104;
+        dead _65;
+        dead _48;
+        dead _46;
+        dead _25;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb79: {
+        dead _125;
+        dead _124;
+        dead _123;
+        dead _122;
+        dead _116;
+        dead _65;
+        dead _48;
+        dead _46;
+        dead _25;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb82: {
+        dead _133;
+        dead _122;
+        dead _116;
+        dead _65;
+        dead _48;
+        dead _46;
+        dead _25;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb85: {
+        dead _142;
+        dead _141;
+        dead _116;
+        dead _65;
+        dead _48;
+        dead _46;
+        dead _25;
+        dead _2;
+        dead _1;
+        return;
+    }
 }
 
-closure main::{closure#8409} {
+closure main::{closure#8444} {
     let _0: i64;
     let mut _1: &{closure}; // the closure
     let _2: i64; // x
@@ -1142,7 +1230,7 @@ closure main::{closure#8409} {
     }
 }
 
-closure main::{closure#8439} {
+closure main::{closure#8474} {
     let _0: i64;
     let _1: i64; // x
     let _2: i64;
@@ -1155,7 +1243,7 @@ closure main::{closure#8439} {
     }
 }
 
-closure main::{closure#8460} {
+closure main::{closure#8495} {
     let _0: bool;
     let _1: i64; // x
     let _2: i64;
@@ -1168,7 +1256,7 @@ closure main::{closure#8460} {
     }
 }
 
-closure main::{closure#8484} {
+closure main::{closure#8519} {
     let _0: i64;
     let _1: i64; // x
     let _2: i64;

@@ -91,6 +91,8 @@ fn flip::<i64, bool>(a: i64, b: bool, n: i64) -> i64 with panic {
     let _9: i64;
     let _10: i64;
     let _11: i64;
+    let _12: bool;
+    let _13: bool;
     bb0: {
         _5 = 0_i64;
         _4 = copy _3 == copy _5;
@@ -120,7 +122,13 @@ fn flip::<i64, bool>(a: i64, b: bool, n: i64) -> i64 with panic {
     bb3: {
         dead _4;
         dead _3;
+        goto bb5;
+    }
+    bb5: {
         dead _2;
+        goto bb7;
+    }
+    bb7: {
         dead _1;
         return;
     }
@@ -139,6 +147,8 @@ fn flip::<bool, i64>(a: bool, b: i64, n: i64) -> i64 with panic {
     let _9: bool;
     let _10: i64;
     let _11: i64;
+    let _12: bool;
+    let _13: bool;
     bb0: {
         _5 = 0_i64;
         _4 = copy _3 == copy _5;
@@ -168,7 +178,13 @@ fn flip::<bool, i64>(a: bool, b: i64, n: i64) -> i64 with panic {
     bb3: {
         dead _4;
         dead _3;
+        goto bb5;
+    }
+    bb5: {
         dead _2;
+        goto bb7;
+    }
+    bb7: {
         dead _1;
         return;
     }
@@ -241,11 +257,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _9;
         dead _8;
         dead _7;
-        dead _6;
-        dead _5;
-        dead _2;
-        dead _1;
-        return;
+        goto bb9;
     }
     bb3: {
         dead _15;
@@ -290,11 +302,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _20;
         dead _19;
         dead _18;
-        dead _17;
-        dead _16;
-        dead _2;
-        dead _1;
-        return;
+        goto bb12;
     }
     bb7: {
         dead _27;
@@ -310,6 +318,20 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         _28 = ();
         _0 = core::result::Result::<(), std::io::Error>::Ok(move _28);
         dead _28;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb9: {
+        dead _6;
+        dead _5;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb12: {
+        dead _17;
+        dead _16;
         dead _2;
         dead _1;
         return;

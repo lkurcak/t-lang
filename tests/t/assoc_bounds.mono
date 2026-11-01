@@ -244,11 +244,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _9;
         dead _8;
         dead _7;
-        dead _6;
-        dead _5;
-        dead _2;
-        dead _1;
-        return;
+        goto bb21;
     }
     bb3: {
         dead _17;
@@ -296,12 +292,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _26;
         dead _25;
         dead _24;
-        dead _23;
-        dead _22;
-        dead _18;
-        dead _2;
-        dead _1;
-        return;
+        goto bb24;
     }
     bb7: {
         dead _30;
@@ -350,12 +341,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _35;
         dead _34;
         dead _33;
-        dead _32;
-        dead _31;
-        dead _18;
-        dead _2;
-        dead _1;
-        return;
+        goto bb27;
     }
     bb11: {
         dead _45;
@@ -410,12 +396,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _50;
         dead _49;
         dead _48;
-        dead _47;
-        dead _46;
-        dead _18;
-        dead _2;
-        dead _1;
-        return;
+        goto bb30;
     }
     bb15: {
         dead _60;
@@ -468,12 +449,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _65;
         dead _64;
         dead _63;
-        dead _62;
-        dead _61;
-        dead _18;
-        dead _2;
-        dead _1;
-        return;
+        goto bb33;
     }
     bb19: {
         dead _74;
@@ -491,6 +467,45 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         _75 = ();
         _0 = core::result::Result::<(), std::io::Error>::Ok(move _75);
         dead _75;
+        dead _18;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb21: {
+        dead _6;
+        dead _5;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb24: {
+        dead _23;
+        dead _22;
+        dead _18;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb27: {
+        dead _32;
+        dead _31;
+        dead _18;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb30: {
+        dead _47;
+        dead _46;
+        dead _18;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb33: {
+        dead _62;
+        dead _61;
         dead _18;
         dead _2;
         dead _1;

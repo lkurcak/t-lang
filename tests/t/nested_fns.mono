@@ -155,11 +155,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _9;
         dead _8;
         dead _7;
-        dead _6;
-        dead _5;
-        dead _2;
-        dead _1;
-        return;
+        goto bb41;
     }
     bb3: {
         dead _14;
@@ -199,11 +195,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _19;
         dead _18;
         dead _17;
-        dead _16;
-        dead _15;
-        dead _2;
-        dead _1;
-        return;
+        goto bb44;
     }
     bb7: {
         dead _24;
@@ -243,11 +235,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _29;
         dead _28;
         dead _27;
-        dead _26;
-        dead _25;
-        dead _2;
-        dead _1;
-        return;
+        goto bb47;
     }
     bb11: {
         dead _34;
@@ -287,11 +275,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _39;
         dead _38;
         dead _37;
-        dead _36;
-        dead _35;
-        dead _2;
-        dead _1;
-        return;
+        goto bb50;
     }
     bb15: {
         dead _44;
@@ -331,11 +315,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _49;
         dead _48;
         dead _47;
-        dead _46;
-        dead _45;
-        dead _2;
-        dead _1;
-        return;
+        goto bb53;
     }
     bb19: {
         dead _54;
@@ -346,7 +326,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _47;
         dead _46;
         dead _45;
-        _59 = {closure#8300}();
+        _59 = {closure#8335}();
         _60 = true;
         _58 = main::twice::<bool>(move _59, move _60);
         _61 = &mut _2;
@@ -377,11 +357,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _59;
         dead _58;
         dead _57;
-        dead _56;
-        dead _55;
-        dead _2;
-        dead _1;
-        return;
+        goto bb56;
     }
     bb23: {
         dead _65;
@@ -422,11 +398,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _70;
         dead _69;
         dead _68;
-        dead _67;
-        dead _66;
-        dead _2;
-        dead _1;
-        return;
+        goto bb59;
     }
     bb27: {
         dead _75;
@@ -441,7 +413,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         _76 = copy _77;
         dead _77;
         _80 = &_76;
-        _79 = {closure#8390}(move _80);
+        _79 = {closure#8425}(move _80);
         _78 = copy _79;
         dead _80;
         dead _79;
@@ -476,13 +448,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _85;
         dead _84;
         dead _83;
-        dead _82;
-        dead _81;
-        dead _78;
-        dead _76;
-        dead _2;
-        dead _1;
-        return;
+        goto bb62;
     }
     bb31: {
         dead _91;
@@ -528,14 +494,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _99;
         dead _98;
         dead _97;
-        dead _96;
-        dead _95;
-        dead _92;
-        dead _78;
-        dead _76;
-        dead _2;
-        dead _1;
-        return;
+        goto bb65;
     }
     bb35: {
         dead _104;
@@ -573,14 +532,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _109;
         dead _108;
         dead _107;
-        dead _106;
-        dead _105;
-        dead _92;
-        dead _78;
-        dead _76;
-        dead _2;
-        dead _1;
-        return;
+        goto bb68;
     }
     bb39: {
         dead _113;
@@ -600,9 +552,87 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _1;
         return;
     }
+    bb41: {
+        dead _6;
+        dead _5;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb44: {
+        dead _16;
+        dead _15;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb47: {
+        dead _26;
+        dead _25;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb50: {
+        dead _36;
+        dead _35;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb53: {
+        dead _46;
+        dead _45;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb56: {
+        dead _56;
+        dead _55;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb59: {
+        dead _67;
+        dead _66;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb62: {
+        dead _82;
+        dead _81;
+        dead _78;
+        dead _76;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb65: {
+        dead _96;
+        dead _95;
+        dead _92;
+        dead _78;
+        dead _76;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb68: {
+        dead _106;
+        dead _105;
+        dead _92;
+        dead _78;
+        dead _76;
+        dead _2;
+        dead _1;
+        return;
+    }
 }
 
-closure main::{closure#8300} {
+closure main::{closure#8335} {
     let _0: bool;
     let _1: bool; // b
     bb0: {
@@ -612,7 +642,7 @@ closure main::{closure#8300} {
     }
 }
 
-closure main::{closure#8390} {
+closure main::{closure#8425} {
     let _0: i64;
     let mut _1: &{closure}; // the closure
     let _2: i64; // x

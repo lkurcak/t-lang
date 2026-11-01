@@ -175,12 +175,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _14;
         dead _13;
         dead _12;
-        dead _11;
-        dead _10;
-        dead _5;
-        dead _2;
-        dead _1;
-        return;
+        goto bb9;
     }
     bb3: {
         dead _19;
@@ -229,13 +224,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _28;
         dead _27;
         dead _26;
-        dead _25;
-        dead _24;
-        dead _20;
-        dead _5;
-        dead _2;
-        dead _1;
-        return;
+        goto bb12;
     }
     bb7: {
         dead _34;
@@ -250,6 +239,23 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         _35 = ();
         _0 = core::result::Result::<(), std::io::Error>::Ok(move _35);
         dead _35;
+        dead _20;
+        dead _5;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb9: {
+        dead _11;
+        dead _10;
+        dead _5;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb12: {
+        dead _25;
+        dead _24;
         dead _20;
         dead _5;
         dead _2;

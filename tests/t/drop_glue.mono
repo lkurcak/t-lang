@@ -1,0 +1,504 @@
+#[derive(Discard, Eq)]
+struct Two { a: alloc::boxed::Box<i64>, b: i64 }
+
+fn sink(t: Two) -> i64 {
+    let _0: i64;
+    let _1: Two; // t
+    bb0: {
+        _0 = copy _1.1;
+        drop _1;
+        dead _1;
+        return;
+    }
+}
+
+fn pick(c: bool) -> i64 with alloc {
+    let _0: i64;
+    let _1: bool; // c
+    let _2: Two; // t
+    let _3: Two;
+    let _4: Box<i64>;
+    let _5: i64;
+    let _6: i64;
+    let mut _7: i64; // n
+    let _8: i64;
+    let _9: ();
+    let _10: bool;
+    let _11: ();
+    let _12: i64;
+    let _13: Two;
+    let _14: bool;
+    bb0: {
+        _14 = false;
+        _5 = 1_i64;
+        _4 = Box::new(move _5);
+        _6 = 2_i64;
+        _3 = Two { a: move _4, b: move _6 };
+        _2 = move _3;
+        _14 = true;
+        dead _6;
+        dead _5;
+        dead _4;
+        dead _3;
+        _8 = 0_i64;
+        _7 = copy _8;
+        dead _8;
+        _10 = copy _1;
+        if copy _10 { bb1 } else { bb2 };
+    }
+    bb1: {
+        _13 = move _2;
+        _14 = false;
+        _12 = sink(move _13);
+        _7 = move _12;
+        _11 = ();
+        dead _13;
+        dead _12;
+        dead _11;
+        _9 = ();
+        goto bb3;
+    }
+    bb2: {
+        _9 = ();
+        goto bb3;
+    }
+    bb3: {
+        dead _10;
+        dead _9;
+        _0 = copy _7;
+        dead _7;
+        if copy _14 { bb4 } else { bb5 };
+    }
+    bb4: {
+        drop _2;
+        goto bb5;
+    }
+    bb5: {
+        dead _2;
+        _14 = false;
+        dead _1;
+        dead _14;
+        return;
+    }
+}
+
+fn part(t: Two) -> i64 {
+    let _0: i64;
+    let _1: Two; // t
+    let _2: Box<i64>; // a
+    let _3: Box<i64>;
+    let _4: Box<i64>;
+    bb0: {
+        _4 = move _1.0;
+        _3 = move _4;
+        _2 = move _3;
+        dead _4;
+        dead _3;
+        _0 = copy (*_2);
+        drop _2;
+        dead _2;
+        dead _1;
+        return;
+    }
+}
+
+fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with alloc {
+    let _0: Result<(), Error>;
+    let _1: Os; // os
+    let mut _2: Stdout; // out
+    let _3: Stdout;
+    let _4: Stdout;
+    let _5: ();
+    let _6: ControlFlow<Result<!, Error>, ()>;
+    let _7: Result<(), Error>;
+    let _8: i64;
+    let _9: bool;
+    let _10: &mut Stdout;
+    let _11: &i64;
+    let _12: (); // {try}
+    let _13: Result<!, Error>; // {try}
+    let _14: Result<!, Error>;
+    let _15: ();
+    let _16: ControlFlow<Result<!, Error>, ()>;
+    let _17: Result<(), Error>;
+    let _18: i64;
+    let _19: bool;
+    let _20: &mut Stdout;
+    let _21: &i64;
+    let _22: (); // {try}
+    let _23: Result<!, Error>; // {try}
+    let _24: Result<!, Error>;
+    let _25: ();
+    let _26: ControlFlow<Result<!, Error>, ()>;
+    let _27: Result<(), Error>;
+    let _28: i64;
+    let _29: Two;
+    let _30: Box<i64>;
+    let _31: i64;
+    let _32: i64;
+    let _33: &mut Stdout;
+    let _34: &i64;
+    let _35: (); // {try}
+    let _36: Result<!, Error>; // {try}
+    let _37: Result<!, Error>;
+    let _38: bool; // same
+    let _39: bool;
+    let _40: Two;
+    let _41: Box<i64>;
+    let _42: i64;
+    let _43: i64;
+    let _44: Two;
+    let _45: Box<i64>;
+    let _46: i64;
+    let _47: i64;
+    let _48: ();
+    let _49: ControlFlow<Result<!, Error>, ()>;
+    let _50: Result<(), Error>;
+    let _51: &mut Stdout;
+    let _52: &bool;
+    let _53: (); // {try}
+    let _54: Result<!, Error>; // {try}
+    let _55: Result<!, Error>;
+    let _56: ();
+    let _57: &Two;
+    let _58: &Two;
+    bb0: {
+        _4 = move _1.1;
+        _3 = move _4;
+        _2 = move _3;
+        dead _4;
+        dead _3;
+        _9 = true;
+        _8 = pick(move _9);
+        _10 = &mut _2;
+        _11 = &_8;
+        _7 = <std::io::Stdout>::line::<i64>(move _10, move _11);
+        _6 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(move _7);
+        inspect _6;
+        inspect _6;
+        match _6 { #0(_) => bb1, #1(_) => bb2 };
+    }
+    bb1: {
+        _12 = copy (_6 as #0).0;
+        kept _6;
+        _5 = copy _12;
+        dead _12;
+        goto bb3;
+    }
+    bb2: {
+        _13 = move (_6 as #1).0;
+        kept _6;
+        _14 = move _13;
+        _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _14);
+        dead _13;
+        dead _14;
+        dead _11;
+        dead _10;
+        dead _9;
+        dead _8;
+        dead _7;
+        goto bb17;
+    }
+    bb3: {
+        dead _14;
+        dead _11;
+        dead _10;
+        dead _9;
+        dead _8;
+        dead _7;
+        dead _6;
+        dead _5;
+        _19 = false;
+        _18 = pick(move _19);
+        _20 = &mut _2;
+        _21 = &_18;
+        _17 = <std::io::Stdout>::line::<i64>(move _20, move _21);
+        _16 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(move _17);
+        inspect _16;
+        inspect _16;
+        match _16 { #0(_) => bb5, #1(_) => bb6 };
+    }
+    bb5: {
+        _22 = copy (_16 as #0).0;
+        kept _16;
+        _15 = copy _22;
+        dead _22;
+        goto bb7;
+    }
+    bb6: {
+        _23 = move (_16 as #1).0;
+        kept _16;
+        _24 = move _23;
+        _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _24);
+        dead _23;
+        dead _24;
+        dead _21;
+        dead _20;
+        dead _19;
+        dead _18;
+        dead _17;
+        goto bb20;
+    }
+    bb7: {
+        dead _24;
+        dead _21;
+        dead _20;
+        dead _19;
+        dead _18;
+        dead _17;
+        dead _16;
+        dead _15;
+        _31 = 3_i64;
+        _30 = Box::new(move _31);
+        _32 = 4_i64;
+        _29 = Two { a: move _30, b: move _32 };
+        _28 = part(move _29);
+        _33 = &mut _2;
+        _34 = &_28;
+        _27 = <std::io::Stdout>::line::<i64>(move _33, move _34);
+        _26 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(move _27);
+        inspect _26;
+        inspect _26;
+        match _26 { #0(_) => bb9, #1(_) => bb10 };
+    }
+    bb9: {
+        _35 = copy (_26 as #0).0;
+        kept _26;
+        _25 = copy _35;
+        dead _35;
+        goto bb11;
+    }
+    bb10: {
+        _36 = move (_26 as #1).0;
+        kept _26;
+        _37 = move _36;
+        _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _37);
+        dead _36;
+        dead _37;
+        dead _34;
+        dead _33;
+        dead _32;
+        dead _31;
+        dead _30;
+        dead _29;
+        dead _28;
+        dead _27;
+        goto bb23;
+    }
+    bb11: {
+        dead _37;
+        dead _34;
+        dead _33;
+        dead _32;
+        dead _31;
+        dead _30;
+        dead _29;
+        dead _28;
+        dead _27;
+        dead _26;
+        dead _25;
+        _42 = 5_i64;
+        _41 = Box::new(move _42);
+        _43 = 6_i64;
+        _40 = Two { a: move _41, b: move _43 };
+        _46 = 5_i64;
+        _45 = Box::new(move _46);
+        _47 = 6_i64;
+        _44 = Two { a: move _45, b: move _47 };
+        _57 = &_40;
+        _58 = &_44;
+        _39 = {eq}::<Two>(move _57, move _58);
+        dead _58;
+        dead _57;
+        _38 = copy _39;
+        dead _47;
+        dead _46;
+        dead _45;
+        drop _44;
+        dead _44;
+        dead _43;
+        dead _42;
+        dead _41;
+        drop _40;
+        dead _40;
+        dead _39;
+        _51 = &mut _2;
+        _52 = &_38;
+        _50 = <std::io::Stdout>::line::<bool>(move _51, move _52);
+        _49 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(move _50);
+        inspect _49;
+        inspect _49;
+        match _49 { #0(_) => bb13, #1(_) => bb14 };
+    }
+    bb13: {
+        _53 = copy (_49 as #0).0;
+        kept _49;
+        _48 = copy _53;
+        dead _53;
+        goto bb15;
+    }
+    bb14: {
+        _54 = move (_49 as #1).0;
+        kept _49;
+        _55 = move _54;
+        _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _55);
+        dead _54;
+        dead _55;
+        dead _52;
+        dead _51;
+        dead _50;
+        goto bb26;
+    }
+    bb15: {
+        dead _55;
+        dead _52;
+        dead _51;
+        dead _50;
+        dead _49;
+        dead _48;
+        _56 = ();
+        _0 = core::result::Result::<(), std::io::Error>::Ok(move _56);
+        dead _56;
+        dead _38;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb17: {
+        dead _6;
+        dead _5;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb20: {
+        dead _16;
+        dead _15;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb23: {
+        dead _26;
+        dead _25;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb26: {
+        dead _49;
+        dead _48;
+        dead _38;
+        dead _2;
+        dead _1;
+        return;
+    }
+}
+
+fn <&str as core::fmt::Display>::fmt::<std::io::Stderr><'a>(
+    &self,
+    w: &mut std::io::Stderr,
+) -> core::result::Result::<(), std::io::Error> {
+    let _0: Result<(), Error>;
+    let _1: &&str; // self
+    let _2: &mut Stderr; // w
+    let _3: &mut Stderr;
+    bb0: {
+        _3 = &mut (*_2);
+        _0 = <std::io::Stderr as core::fmt::Write>::write_str(move _3, copy (*_1));
+        dead _3;
+        dead _2;
+        dead _1;
+        return;
+    }
+}
+
+glue {drop}::<Box<i64>> {
+    let _0: ();
+    let mut _1: Box<i64>;
+    bb0: {
+        _0 = ();
+        free _1;
+        dead _1;
+        return;
+    }
+}
+
+glue {drop}::<Two> {
+    let _0: ();
+    let mut _1: Two;
+    bb0: {
+        _0 = ();
+        drop _1.0;
+        dead _1;
+        return;
+    }
+}
+
+glue {eq}::<Box<i64>> {
+    let _0: bool;
+    let mut _1: &Box<i64>;
+    let mut _2: &Box<i64>;
+    let _3: bool;
+    bb0: {
+        _3 = copy (*(*_1)) == copy (*(*_2));
+        if copy _3 { bb2 } else { bb3 };
+    }
+    bb1: {
+        dead _3;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb2: {
+        _0 = true;
+        goto bb1;
+    }
+    bb3: {
+        _0 = false;
+        goto bb1;
+    }
+}
+
+glue {eq}::<Two> {
+    let _0: bool;
+    let mut _1: &Two;
+    let mut _2: &Two;
+    let _3: bool;
+    let _4: &Box<i64>;
+    let _5: &Box<i64>;
+    let _6: bool;
+    bb0: {
+        _4 = &(*_1).0;
+        _5 = &(*_2).0;
+        _3 = {eq}::<Box<i64>>(move _4, move _5);
+        dead _5;
+        dead _4;
+        if copy _3 { bb2 } else { bb3 };
+    }
+    bb1: {
+        dead _6;
+        dead _5;
+        dead _4;
+        dead _3;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb2: {
+        _6 = copy (*_1).1 == copy (*_2).1;
+        if copy _6 { bb4 } else { bb5 };
+    }
+    bb3: {
+        _0 = false;
+        goto bb1;
+    }
+    bb4: {
+        _0 = true;
+        goto bb1;
+    }
+    bb5: {
+        _0 = false;
+        goto bb1;
+    }
+}

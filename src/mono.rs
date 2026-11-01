@@ -25,12 +25,12 @@
 //! inherent method's after the type, as `<Point>::len`. Traits and impls
 //! are gone after this: all that's left of them is plain functions, and
 //! which types are `Copy` and `Eq`, which each type's copy says with a
-//! `#[derive(..)]`. The `eq` of a built-in or derived `Eq` is `==`, which
-//! the interpreter does field by field, calling `<T as Eq>::eq` for a type
-//! `T` with an `eq` of its own. So each `==` needs a copy of every such
-//! `eq` it may get to, through fields and what references and boxes point
-//! to (`Cx::need_eq`): the interpreter can't tell a missing one from a
-//! derived one.
+//! `#[derive(..)]`. What the program doesn't spell out, dropping a value
+//! and `==` of a built-in or derived `Eq`, becomes *glue*: MIR functions
+//! written here, per type (`glue.rs`). A `drop` in a body is of its type's
+//! drop glue, left out where that does nothing; an `==` of what isn't a
+//! number, `bool`, character or `()` calls the type's own `eq` or its glue,
+//! as `<` calls `Ord`'s method.
 //!
 //! An opaque type, `impl Fn(i64) -> i64` in a function's return type, is
 //! replaced by the type it stands for, in the copy at the type arguments
@@ -43,18 +43,24 @@
 //! copy of that, with the copy's types, and calls of what's generic naming
 //! the copies they call (`Cx::body`). A closure's MIR is copied with the
 //! function it's in. Nothing about control flow changes, so what the
-//! borrow checker proved of the generic body holds of every copy.
+//! borrow checker proved of the generic body holds of every copy. The
+//! drops the body's drop elaboration worked out (`borrowck/drops.rs`) are
+//! copied too: they depend only on what's moved, which is the same in
+//! every copy.
 //!
 //! The interpreter runs what comes out of here, and `t mono` prints it.
 
 use crate::ast::*;
 use crate::check::{self, Info, Instance};
 use crate::error::Span;
-use crate::traits::{COPY, DISCARD, EQ};
-use crate::traits::{Projections, Source, eq_subject};
+use crate::traits::{COPY, DISCARD, EQ, FnKind};
+use crate::traits::{Projections, Source};
 use crate::types::{Params, Region, Subst, Type};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+
+mod glue;
+pub(crate) use glue::{glue_name, is_glue};
 
 /// A lifted, monomorphised program, ready for the interpreter.
 pub struct Executable {
@@ -65,6 +71,9 @@ pub struct Executable {
     /// For `main` and each test that gives back a `Result`, by symbol,
     /// the copy of `std::rt::report` that reports its error.
     reports: HashMap<String, String>,
+    /// For `main` and each test, by symbol, the drop glue of what it gives
+    /// back, if dropping that does anything.
+    entry_drops: HashMap<String, String>,
 }
 
 impl Executable {
@@ -91,6 +100,12 @@ impl Executable {
     /// or a test, gives back, if it gives back a `Result`.
     pub fn report(&self, entry: &str) -> Option<&str> {
         self.reports.get(entry).map(String::as_str)
+    }
+
+    /// The drop glue of what `entry`, `main` or a test, gives back, if
+    /// dropping that does anything.
+    pub(crate) fn entry_drop(&self, entry: &str) -> Option<&str> {
+        self.entry_drops.get(entry).map(String::as_str)
     }
 }
 
@@ -139,7 +154,32 @@ impl Executable {
                 let _ = write!(f, "\nclosure {c} {{\n{}}}\n", b.render("    ", self));
             }
         }
+        // Then the glue, by name, of the types kept.
+        let mut glue: Vec<(&String, &crate::mir::Body)> = (self.bodies.iter())
+            .filter(|(g, b)| is_glue(g) && b.locals.get(1).is_some_and(|l| keeps(&l.ty, keep)))
+            .collect();
+        glue.sort_by_key(|(g, _)| g.as_str());
+        for (g, b) in glue {
+            if !std::mem::take(&mut first) {
+                f.push('\n');
+            }
+            let _ = write!(f, "glue {g} {{\n{}}}\n", b.render("    ", self));
+        }
         std::mem::take(f)
+    }
+}
+
+/// Does `keep` say to show the glue of a value of type `t`: of a struct or
+/// enum it keeps, through references, boxes, arrays and slices, or of a
+/// closure?
+fn keeps(t: &Type, keep: &dyn Fn(&str) -> bool) -> bool {
+    match t {
+        Type::Adt(name, _, _) if crate::types::is_closure(name) => true,
+        Type::Adt(name, _, args) => keep(&mangle(name, args)),
+        Type::Ref(_, _, inner) | Type::Box(inner) | Type::Slice(inner) | Type::Array(inner, _) => {
+            keeps(inner, keep)
+        }
+        _ => true,
     }
 }
 
@@ -172,17 +212,9 @@ pub fn monomorphise(prog: crate::lift::Lifted<'_>) -> Executable {
         program,
         bodies: mono.bodies,
         reports: mono.reports,
+        entry_drops: mono.entry_drops,
     }
 }
-
-/// What a function value of a built-in or derived `Eq`'s `eq` is called, at
-/// the type as its one type argument: `==` on what its two references
-/// point to.
-pub(crate) const GLUE_EQ: &str = "{eq}";
-
-/// What a function value of a built-in or derived `Discard`'s `discard` is
-/// called, at the type: dropping its argument, part by part.
-pub(crate) const GLUE_DISCARD: &str = "{discard}";
 
 /// The name of the copy of the closure made by the lambda with node `id`,
 /// in the copy of a function `root`.
@@ -253,8 +285,13 @@ struct Mono<'p> {
     type_queue: Vec<(String, Vec<Type>)>,
     /// The copies of each generic type, in that order.
     type_copies: HashMap<String, Vec<Vec<Type>>>,
-    /// The types `==` is used on so far, after `eq_subject`.
-    compared: HashSet<Type>,
+    /// Whether dropping a value of each type does anything, as worked out
+    /// so far (`Cx::needs_drop`).
+    needs_drop: HashMap<Type, bool>,
+    /// The glue made so far, by name (see `glue.rs`).
+    glue_made: HashSet<String>,
+    /// The drop glue of what each entry gives back (`Executable::entry_drop`).
+    entry_drops: HashMap<String, String>,
     /// What projections stand for, by the impls: in a copy, every type is
     /// known, so every one does.
     proj: Projections,
@@ -312,7 +349,9 @@ impl<'p> Mono<'p> {
             fn_queue: Vec::new(),
             type_queue: Vec::new(),
             type_copies: HashMap::new(),
-            compared: HashSet::new(),
+            needs_drop: HashMap::new(),
+            glue_made: HashSet::new(),
+            entry_drops: HashMap::new(),
             proj: Projections::new(&info.traits),
             next_id: prog.next_id,
             reports: HashMap::new(),
@@ -448,6 +487,13 @@ impl<'p> Mono<'p> {
                 || inherent.is_some_and(|ty| self.info.library_symbols.contains(ty))
         };
         let mut used: HashSet<String> = roots.into_iter().collect();
+        // What glue calls is used: nothing names glue, but a drop or `==`
+        // may run it.
+        for (name, body) in &self.bodies {
+            if is_glue(name) {
+                used::in_body(body, &mut used);
+            }
+        }
         let mut kept_types: Vec<bool> = out.types.iter().map(|d| !lazy(&d.name().name)).collect();
         let mut kept_fns: Vec<bool> = out.fns.iter().map(|f| !lazy(&f.name.name)).collect();
         let mut seen_types = vec![false; out.types.len()];
@@ -525,6 +571,13 @@ impl<'p> Mono<'p> {
         params.push_type("Self".into());
         let mut cx = Cx { m: self, s, params };
         let copy = name.unwrap_or(&f.name.name).to_string();
+        if name.is_none() && (f.name.name == "main" || f.test.is_some()) {
+            let ret = cx.resolved(&f.ret);
+            if cx.needs_drop(&ret) {
+                let g = cx.drop_glue(&ret);
+                cx.m.entry_drops.insert(copy.clone(), g);
+            }
+        }
         if f.intrinsic.is_none()
             && let Some(b) = cx.m.info.mir.get(&crate::mir::Key::Fn(f.name.name.clone()))
         {
@@ -884,33 +937,6 @@ impl Cx<'_, '_, '_> {
         }
     }
 
-    /// Makes the copies of every impl's `eq` that `==` on values of type
-    /// `t` may call: the one of `t`'s impl of `Eq`, if it has
-    /// one of its own, or else those of the types of its fields, if it's
-    /// derived, and so on down. Each type once: a type can hold itself,
-    /// through a box. That ends, as the check against polymorphic
-    /// recursion sees through derived impls the same way (`call_uses`).
-    ///
-    /// `t` and the field types have their projections worked out (`subst`,
-    /// `resolved`), so it's the impls of what they stand for that it finds.
-    fn need_eq(&mut self, t: &Type) {
-        let t = eq_subject(t).erased();
-        if !matches!(t, Type::Adt(..)) || !self.m.compared.insert(t.clone()) {
-            return;
-        }
-        match self.target(&format!("<{}>::eq", crate::traits::EQ), vec![t.clone()]) {
-            Target::Fn(of, args, copy) => {
-                self.m.named_copy(&of, args, copy);
-            }
-            Target::Eq(t) => {
-                for f in self.field_types(&t) {
-                    self.need_eq(&f);
-                }
-            }
-            Target::Discard(_) => unreachable!("`eq` of `Eq`"),
-        }
-    }
-
     /// The type of each field of struct or enum type `t`, which has no
     /// type parameters left in it.
     fn field_types(&mut self, t: &Type) -> Vec<Type> {
@@ -930,7 +956,10 @@ impl Cx<'_, '_, '_> {
             TypeDecl::Enum(e) => e.variants.iter().flat_map(|v| &v.fields).collect(),
             TypeDecl::Alias(_) => unreachable!("an alias stands for a type, and isn't one"),
         };
-        written.into_iter().map(|f| cx.resolved(f)).collect()
+        written
+            .into_iter()
+            .map(|f| cx.resolved(unrefined(f)))
+            .collect()
     }
 
     /// How to write `t`, which has no type parameters left in it.
@@ -1143,9 +1172,32 @@ impl Cx<'_, '_, '_> {
             self.copies_in(&l.ty.clone());
         }
         let mut blocks = Vec::new();
+        let temp = |out: &mut crate::mir::Body, ty: Type, span: Span| {
+            out.locals.push(LocalDecl {
+                ty,
+                kind: LocalKind::Temp,
+                mutable: true,
+                name: None,
+                span,
+                mut_span: None,
+                by_ref: None,
+                deferred: false,
+            });
+            Local(out.locals.len() - 1)
+        };
         for block in &b.blocks {
             let mut stmts = Vec::new();
             for s in &block.stmts {
+                // A drop that does nothing at the copy's types goes.
+                if let StmtKind::Drop(p, t) = &s.kind {
+                    let t = self.subst_inferred(t).erased();
+                    if self.needs_drop(&t) {
+                        self.drop_glue(&t);
+                        let kind = StmtKind::Drop(p.clone(), t);
+                        stmts.push(Statement { kind, span: s.span });
+                    }
+                    continue;
+                }
                 let StmtKind::Assign {
                     place,
                     value,
@@ -1155,6 +1207,145 @@ impl Cx<'_, '_, '_> {
                     stmts.push(s.clone());
                     continue;
                 };
+                // `a == b` of what isn't compared directly calls what
+                // compares it, on references, and `a != b` is `!(a == b)`.
+                if let Rvalue::Binary(
+                    op @ (BinOp::Eq | BinOp::Ne),
+                    Operand::Copy(l),
+                    Operand::Copy(r),
+                    id,
+                ) = value
+                {
+                    let t = self.place_ty(&out.locals, l);
+                    if let Some(f) = self.eq_fn(&t) {
+                        let r_ty = Type::Ref(Region::Erased, false, Box::new(t));
+                        let mut refs = Vec::new();
+                        for p in [l, r] {
+                            let t = temp(&mut out, r_ty.clone(), s.span);
+                            let kind = StmtKind::Assign {
+                                place: Place::local(t),
+                                value: Rvalue::Ref(0, false, p.clone()),
+                                declare: false,
+                            };
+                            stmts.push(Statement { kind, span: s.span });
+                            refs.push(t);
+                        }
+                        let call = Rvalue::Call(
+                            Operand::Const(crate::mir::Const::Fn(f, Vec::new())),
+                            refs.iter()
+                                .map(|t| Operand::Move(Place::local(*t)))
+                                .collect(),
+                        );
+                        let (dest, not) = match op {
+                            BinOp::Eq => (place.clone(), None),
+                            _ => {
+                                let t = temp(&mut out, Type::Bool, s.span);
+                                (Place::local(t), Some(t))
+                            }
+                        };
+                        let kind = StmtKind::Assign {
+                            place: dest,
+                            value: call,
+                            declare: *declare && not.is_none(),
+                        };
+                        stmts.push(Statement { kind, span: s.span });
+                        if let Some(t) = not {
+                            let kind = StmtKind::Assign {
+                                place: place.clone(),
+                                value: Rvalue::Unary(
+                                    UnOp::Not,
+                                    Operand::Move(Place::local(t)),
+                                    *id,
+                                ),
+                                declare: *declare,
+                            };
+                            stmts.push(Statement { kind, span: s.span });
+                            stmts.push(Statement {
+                                kind: StmtKind::Dead(t),
+                                span: s.span,
+                            });
+                        }
+                        for t in refs.into_iter().rev() {
+                            stmts.push(Statement {
+                                kind: StmtKind::Dead(t),
+                                span: s.span,
+                            });
+                        }
+                        continue;
+                    }
+                }
+                // A closure called by value whose body takes it by
+                // reference: it's put in a temporary, called through a
+                // reference to it, and what's left of it dropped after.
+                // So is one called directly, as a variable's value.
+                let by_value = match value {
+                    Rvalue::Call(
+                        Operand::Const(crate::mir::Const::Receiver(FnKind::FnOnce)),
+                        args,
+                    ) => args.first().map(|recv| (recv, &args[1..])),
+                    Rvalue::Call(f @ (Operand::Copy(_) | Operand::Move(_)), args) => {
+                        Some((f, &args[..]))
+                    }
+                    _ => None,
+                };
+                if let Some((recv, rest)) = by_value
+                    && let Some(p) = recv.place()
+                    && let t = self.place_ty(&out.locals, p)
+                    && let Some(kind) = self.by_ref_body(&t)
+                {
+                    let args = rest;
+                    let tmp = temp(&mut out, t.clone(), s.span);
+                    let recv = self.operand(recv);
+                    let assign = StmtKind::Assign {
+                        place: Place::local(tmp),
+                        value: Rvalue::Use(recv),
+                        declare: false,
+                    };
+                    stmts.push(Statement {
+                        kind: assign,
+                        span: s.span,
+                    });
+                    let m = kind == FnKind::FnMut;
+                    let r = temp(
+                        &mut out,
+                        Type::Ref(Region::Erased, m, Box::new(t.clone())),
+                        s.span,
+                    );
+                    let borrow = StmtKind::Assign {
+                        place: Place::local(r),
+                        value: Rvalue::Ref(0, m, Place::local(tmp)),
+                        declare: false,
+                    };
+                    stmts.push(Statement {
+                        kind: borrow,
+                        span: s.span,
+                    });
+                    let mut ops = vec![Operand::Move(Place::local(r))];
+                    ops.extend(args.iter().map(|o| self.operand(o)));
+                    let call = StmtKind::Assign {
+                        place: place.clone(),
+                        value: Rvalue::Call(Operand::Const(crate::mir::Const::Receiver(kind)), ops),
+                        declare: *declare,
+                    };
+                    stmts.push(Statement {
+                        kind: call,
+                        span: s.span,
+                    });
+                    stmts.push(Statement {
+                        kind: StmtKind::Dead(r),
+                        span: s.span,
+                    });
+                    if self.needs_drop(&t) {
+                        self.drop_glue(&t);
+                        let kind = StmtKind::Drop(Place::local(tmp), t);
+                        stmts.push(Statement { kind, span: s.span });
+                    }
+                    stmts.push(Statement {
+                        kind: StmtKind::Dead(tmp),
+                        span: s.span,
+                    });
+                    continue;
+                }
                 let value = match value {
                     // `l < r` of what isn't an integer is `Ord`'s method, of
                     // `&l` and `&r`, in temporaries of their own.
@@ -1212,13 +1403,6 @@ impl Cx<'_, '_, '_> {
                         }
                         continue;
                     }
-                    Rvalue::Binary(op @ (BinOp::Eq | BinOp::Ne), l, r, id) => {
-                        if let Some(Instance::Fn(_, args)) = self.m.info.instances.get(id).cloned()
-                        {
-                            self.need_eq(&self.subst(&args[0]));
-                        }
-                        Rvalue::Binary(*op, self.operand(l), self.operand(r), *id)
-                    }
                     Rvalue::Binary(op, l, r, id) => {
                         Rvalue::Binary(*op, self.operand(l), self.operand(r), *id)
                     }
@@ -1258,7 +1442,30 @@ impl Cx<'_, '_, '_> {
         for r in &mut out.refinements {
             r.pred = *self.pred(&r.pred);
         }
+        tidy(&mut out);
         out
+    }
+
+    /// The type of what's at `place`, in a copy whose locals are `locals`.
+    fn place_ty(&mut self, locals: &[crate::mir::LocalDecl], place: &crate::mir::Place) -> Type {
+        use crate::mir::Proj;
+        let mut t = locals[place.local.0].ty.clone();
+        for p in &place.proj {
+            t = match (p, &t) {
+                (Proj::Deref, Type::Ref(_, _, inner) | Type::Box(inner)) => (**inner).clone(),
+                (Proj::Field(_), Type::Array(elem, _)) => (**elem).clone(),
+                (Proj::Field(i), Type::Adt(symbol, ..)) if crate::types::is_closure(symbol) => {
+                    self.m.info.traits.closures[symbol].fields_at(&t)[*i].clone()
+                }
+                (Proj::Field(i), _) => self.field_types(&t)[*i].clone(),
+                (Proj::Variant(v, i), _) => {
+                    self.variant_types(&t).expect("an enum")[*v][*i].clone()
+                }
+                (p, t) => unreachable!("{p:?} of `{t}`"),
+            }
+            .erased();
+        }
+        t
     }
 
     /// Makes the copies of the structs and enums in `t`, which has no type
@@ -1312,8 +1519,8 @@ impl Cx<'_, '_, '_> {
 
     /// Function `symbol` at type arguments `args`, which have no type
     /// parameters left in them, as a value: its copy, or the impl's method,
-    /// for a trait's (see `target`), or what a built-in `eq` or `discard`
-    /// is (`GLUE_EQ`, `GLUE_DISCARD`).
+    /// for a trait's (see `target`), or the glue a built-in or derived
+    /// `eq` or `discard` is (see `glue.rs`).
     fn fn_const(&mut self, symbol: &str, args: Vec<Type>) -> crate::mir::Const {
         use crate::mir::Const;
         let method = self.m.fns.get(symbol).is_some_and(|d| d.self_ty.is_some());
@@ -1322,12 +1529,123 @@ impl Cx<'_, '_, '_> {
         }
         match self.target(symbol, args) {
             Target::Fn(of, args, copy) => Const::Fn(self.m.named_copy(&of, args, copy), Vec::new()),
-            Target::Eq(t) => {
-                self.need_eq(&t);
-                Const::Fn(GLUE_EQ.to_string(), vec![t])
-            }
-            Target::Discard(t) => Const::Fn(GLUE_DISCARD.to_string(), vec![t]),
+            Target::Eq(t) => Const::Fn(self.eq_glue(&t), Vec::new()),
+            Target::Discard(t) => Const::Fn(self.drop_glue(&t), Vec::new()),
         }
+    }
+}
+
+/// Leaves out of a copy what was there only for drops that do nothing at
+/// its types, and which monomorphisation left out: a branch on a drop flag
+/// to a block that does nothing, the blocks control no longer gets to, and
+/// the flags nothing reads. None of that does anything: a branch's operand
+/// is a place's value, and a flag is given a constant.
+fn tidy(body: &mut crate::mir::Body) {
+    use crate::mir::{Bb, Const, Operand, Rvalue, StmtKind, Term};
+    // A branch to a block that does nothing but go where the other goes.
+    for b in 0..body.blocks.len() {
+        if let Some(Term::Branch(_, t, e)) = &body.blocks[b].term {
+            let empty = |x: &Bb, y: &Bb| {
+                let block = &body.blocks[x.0];
+                block.stmts.is_empty() && matches!(block.term, Some(Term::Goto(g)) if g == *y)
+            };
+            if empty(t, e) || t == e {
+                body.blocks[b].term = Some(Term::Goto(*e));
+            }
+        }
+        // A `match` of an open drop each of whose arms does nothing.
+        if let Some(Term::Match(_, _, ts)) = &body.blocks[b].term {
+            let to = |t: &Bb| {
+                let block = &body.blocks[t.0];
+                match (&block.term, block.stmts.is_empty()) {
+                    (Some(Term::Goto(g)), true) => Some(*g),
+                    _ => None,
+                }
+            };
+            let first = ts.first().and_then(to);
+            if first.is_some() && ts.iter().all(|t| to(t) == first) {
+                body.blocks[b].term = first.map(Term::Goto);
+            }
+        }
+    }
+    let mut seen = vec![false; body.blocks.len()];
+    let mut todo = vec![0];
+    while let Some(b) = todo.pop() {
+        if !std::mem::replace(&mut seen[b], true) {
+            todo.extend(body.successors(Bb(b)).iter().map(|s| s.0));
+        }
+    }
+    for (b, seen) in seen.iter().enumerate() {
+        if !seen {
+            body.blocks[b] = Default::default();
+        }
+    }
+    // The locals read: by an operand, a borrow, a `match` or a branch.
+    let mut read = vec![false; body.locals.len()];
+    for block in &body.blocks {
+        for s in &block.stmts {
+            if let StmtKind::Assign { place, value, .. } = &s.kind {
+                if !place.proj.is_empty() {
+                    read[place.local.0] = true;
+                }
+                if let Rvalue::Ref(_, _, p) = value {
+                    read[p.local.0] = true;
+                }
+                for p in value.operands().into_iter().filter_map(Operand::place) {
+                    read[p.local.0] = true;
+                }
+            } else if let StmtKind::Inspect(p)
+            | StmtKind::Consume(p, _)
+            | StmtKind::Kept(p)
+            | StmtKind::Drop(p, _)
+            | StmtKind::Free(p) = &s.kind
+            {
+                read[p.local.0] = true;
+            } else if let StmtKind::Refine(l, _) = &s.kind {
+                read[l.0] = true;
+            }
+        }
+        match &block.term {
+            Some(Term::Branch(o, ..)) => {
+                if let Some(p) = o.place() {
+                    read[p.local.0] = true;
+                }
+            }
+            Some(Term::Match(p, ..)) => read[p.local.0] = true,
+            _ => {}
+        }
+    }
+    for block in &mut body.blocks {
+        block.stmts.retain(|s| match &s.kind {
+            StmtKind::Assign {
+                place,
+                value: Rvalue::Use(Operand::Const(Const::Bool(_))),
+                ..
+            } => !place.proj.is_empty() || read[place.local.0] || place.local.0 == 0,
+            _ => true,
+        });
+    }
+    let written = |l: usize, body: &crate::mir::Body| {
+        body.blocks
+            .iter()
+            .flat_map(|b| &b.stmts)
+            .any(|s| matches!(&s.kind, StmtKind::Assign { place, .. } if place.local.0 == l))
+    };
+    let gone: Vec<usize> = (1 + body.params..body.locals.len())
+        .filter(|&l| !read[l] && !written(l, body))
+        .collect();
+    for block in &mut body.blocks {
+        block
+            .stmts
+            .retain(|s| !matches!(&s.kind, StmtKind::Dead(l) if gone.contains(&l.0)));
+    }
+}
+
+/// `t` without its refinement, if it has one: the type it refines.
+pub(crate) fn unrefined(t: &TypeExpr) -> &TypeExpr {
+    match &t.kind {
+        TypeExprKind::Refined(_, inner, _) => inner,
+        _ => t,
     }
 }
 

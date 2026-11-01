@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+Step 32.1: drops worked out before running. See
+[docs/32.1-drops.md](docs/32.1-drops.md).
+
+### Changed
+
+- What each `dead`, assignment and pattern drops is worked out once, on
+  each body's MIR after borrow checking, with drop flags where it depends
+  on the path, and written into the MIR as `drop` and `free`. Programs
+  behave as before.
+- Dropping a value and `==` of a built-in or derived `Eq` are MIR
+  functions monomorphisation writes, *glue*, which `t mono` prints after
+  the functions. `==` of what isn't a number, `bool`, character or `()`
+  is a call.
+- `core::array::from_fn` is T code over an intrinsic that borrows the
+  closure; calling a `Fn` closure by value is a shim in MIR.
+- The interpreter checks drop elaboration as it runs: a `drop` of what
+  isn't all there, or a `dead`, assignment or pattern leaving behind what
+  needed dropping, is a bug it reports.
+
 ## 0.45.0 (2026-11-01)
 
 Step 32: one MIR, checked and run. See [docs/32-mir.md](docs/32-mir.md).
