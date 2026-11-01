@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.46.0 (2026-11-01)
 
 Step 32.1: drops worked out before running. See
 [docs/32.1-drops.md](docs/32.1-drops.md).
