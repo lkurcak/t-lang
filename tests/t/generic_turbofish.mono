@@ -307,11 +307,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
         dead _9;
         dead _8;
         dead _7;
-        dead _6;
-        dead _5;
-        dead _2;
-        dead _1;
-        return;
+        goto bb52;
     }
     bb3: {
         dead _14;
@@ -351,11 +347,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
         dead _19;
         dead _18;
         dead _17;
-        dead _16;
-        dead _15;
-        dead _2;
-        dead _1;
-        return;
+        goto bb55;
     }
     bb7: {
         dead _24;
@@ -395,11 +387,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
         dead _29;
         dead _28;
         dead _27;
-        dead _26;
-        dead _25;
-        dead _2;
-        dead _1;
-        return;
+        goto bb58;
     }
     bb11: {
         dead _34;
@@ -439,11 +427,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
         dead _39;
         dead _38;
         dead _37;
-        dead _36;
-        dead _35;
-        dead _2;
-        dead _1;
-        return;
+        goto bb61;
     }
     bb15: {
         dead _44;
@@ -483,11 +467,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
         dead _49;
         dead _48;
         dead _47;
-        dead _46;
-        dead _45;
-        dead _2;
-        dead _1;
-        return;
+        goto bb64;
     }
     bb19: {
         dead _54;
@@ -530,12 +510,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
         dead _63;
         dead _62;
         dead _61;
-        dead _60;
-        dead _59;
-        dead _55;
-        dead _2;
-        dead _1;
-        return;
+        goto bb67;
     }
     bb23: {
         dead _66;
@@ -574,13 +549,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
         dead _74;
         dead _73;
         dead _72;
-        dead _71;
-        dead _70;
-        dead _67;
-        dead _55;
-        dead _2;
-        dead _1;
-        return;
+        goto bb70;
     }
     bb27: {
         dead _77;
@@ -619,14 +588,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
         dead _85;
         dead _84;
         dead _83;
-        dead _82;
-        dead _81;
-        dead _78;
-        dead _67;
-        dead _55;
-        dead _2;
-        dead _1;
-        return;
+        goto bb73;
     }
     bb31: {
         dead _88;
@@ -688,17 +650,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
         dead _96;
         dead _95;
         dead _94;
-        dead _93;
-        dead _92;
-        dead _91;
-        dead _90;
-        dead _89;
-        dead _78;
-        dead _67;
-        dead _55;
-        dead _2;
-        dead _1;
-        return;
+        goto bb76;
     }
     bb38: {
         dead _99;
@@ -726,15 +678,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
         dead _105;
         dead _104;
         dead _103;
-        dead _102;
-        dead _101;
-        dead _100;
-        dead _78;
-        dead _67;
-        dead _55;
-        dead _2;
-        dead _1;
-        return;
+        goto bb79;
     }
     bb42: {
         dead _108;
@@ -774,15 +718,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
         dead _113;
         dead _112;
         dead _111;
-        dead _110;
-        dead _109;
-        dead _100;
-        dead _78;
-        dead _67;
-        dead _55;
-        dead _2;
-        dead _1;
-        return;
+        goto bb82;
     }
     bb46: {
         dead _119;
@@ -827,15 +763,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
         dead _124;
         dead _123;
         dead _122;
-        dead _121;
-        dead _120;
-        dead _100;
-        dead _78;
-        dead _67;
-        dead _55;
-        dead _2;
-        dead _1;
-        return;
+        goto bb85;
     }
     bb50: {
         dead _131;
@@ -851,6 +779,114 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> {
         _132 = ();
         _0 = core::result::Result::<(), std::io::Error>::Ok(move _132);
         dead _132;
+        dead _100;
+        dead _78;
+        dead _67;
+        dead _55;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb52: {
+        dead _6;
+        dead _5;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb55: {
+        dead _16;
+        dead _15;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb58: {
+        dead _26;
+        dead _25;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb61: {
+        dead _36;
+        dead _35;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb64: {
+        dead _46;
+        dead _45;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb67: {
+        dead _60;
+        dead _59;
+        dead _55;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb70: {
+        dead _71;
+        dead _70;
+        dead _67;
+        dead _55;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb73: {
+        dead _82;
+        dead _81;
+        dead _78;
+        dead _67;
+        dead _55;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb76: {
+        dead _93;
+        dead _92;
+        dead _91;
+        dead _90;
+        dead _89;
+        dead _78;
+        dead _67;
+        dead _55;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb79: {
+        dead _102;
+        dead _101;
+        dead _100;
+        dead _78;
+        dead _67;
+        dead _55;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb82: {
+        dead _110;
+        dead _109;
+        dead _100;
+        dead _78;
+        dead _67;
+        dead _55;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb85: {
+        dead _121;
+        dead _120;
         dead _100;
         dead _78;
         dead _67;

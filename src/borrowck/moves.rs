@@ -890,7 +890,11 @@ fn gone(b: &Builder, state: &mut Gone, s: &Statement, check: bool) -> Result<(),
             }
             away(state, Place::local(*l));
         }
-        StmtKind::Inspect(_) | StmtKind::Refine(..) | StmtKind::Kept(_) | StmtKind::Drop(..) | StmtKind::Free(_) => {}
+        StmtKind::Inspect(_)
+        | StmtKind::Refine(..)
+        | StmtKind::Kept(_)
+        | StmtKind::Drop(..)
+        | StmtKind::Free(_) => {}
     }
     Ok(())
 }

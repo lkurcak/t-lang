@@ -218,8 +218,9 @@ impl<'b, 'a> Elaborator<'b, 'a> {
             }
         }
         let places: Vec<Place> = set.into_iter().collect();
-        let index: BTreeMap<Place, usize> =
-            (places.iter().cloned().enumerate()).map(|(i, p)| (p, i)).collect();
+        let index: BTreeMap<Place, usize> = (places.iter().cloned().enumerate())
+            .map(|(i, p)| (p, i))
+            .collect();
         // In order, what's inside a place comes right after it.
         let subtree = (0..places.len())
             .map(|i| {

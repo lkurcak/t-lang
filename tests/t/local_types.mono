@@ -254,11 +254,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _9;
         dead _8;
         dead _7;
-        dead _6;
-        dead _5;
-        dead _2;
-        dead _1;
-        return;
+        goto bb29;
     }
     bb3: {
         dead _13;
@@ -295,11 +291,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _18;
         dead _17;
         dead _16;
-        dead _15;
-        dead _14;
-        dead _2;
-        dead _1;
-        return;
+        goto bb32;
     }
     bb7: {
         dead _22;
@@ -338,11 +330,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _27;
         dead _26;
         dead _25;
-        dead _24;
-        dead _23;
-        dead _2;
-        dead _1;
-        return;
+        goto bb35;
     }
     bb11: {
         dead _32;
@@ -383,12 +371,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _40;
         dead _39;
         dead _38;
-        dead _37;
-        dead _36;
-        dead _33;
-        dead _2;
-        dead _1;
-        return;
+        goto bb38;
     }
     bb15: {
         dead _43;
@@ -428,14 +411,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _52;
         dead _51;
         dead _50;
-        dead _49;
-        dead _48;
-        dead _47;
-        dead _44;
-        dead _33;
-        dead _2;
-        dead _1;
-        return;
+        goto bb41;
     }
     bb19: {
         dead _55;
@@ -474,12 +450,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _60;
         dead _59;
         dead _58;
-        dead _57;
-        dead _56;
-        dead _33;
-        dead _2;
-        dead _1;
-        return;
+        goto bb44;
     }
     bb23: {
         dead _64;
@@ -516,12 +487,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _69;
         dead _68;
         dead _67;
-        dead _66;
-        dead _65;
-        dead _33;
-        dead _2;
-        dead _1;
-        return;
+        goto bb47;
     }
     bb27: {
         dead _73;
@@ -534,6 +500,61 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         _74 = ();
         _0 = core::result::Result::<(), std::io::Error>::Ok(move _74);
         dead _74;
+        dead _33;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb29: {
+        dead _6;
+        dead _5;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb32: {
+        dead _15;
+        dead _14;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb35: {
+        dead _24;
+        dead _23;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb38: {
+        dead _37;
+        dead _36;
+        dead _33;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb41: {
+        dead _49;
+        dead _48;
+        dead _47;
+        dead _44;
+        dead _33;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb44: {
+        dead _57;
+        dead _56;
+        dead _33;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb47: {
+        dead _66;
+        dead _65;
         dead _33;
         dead _2;
         dead _1;

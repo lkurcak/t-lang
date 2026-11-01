@@ -176,9 +176,12 @@ fn effect(b: &Builder, live: &mut [bool], s: &Statement, point: Point) {
     let gone = match &s.kind {
         StmtKind::Assign { place, .. } => Some(place.clone()),
         StmtKind::Dead(l) => Some(Place::local(*l)),
-        StmtKind::Inspect(_) | StmtKind::Consume(..) | StmtKind::Refine(..) | StmtKind::Kept(_) | StmtKind::Drop(..) | StmtKind::Free(_) => {
-            None
-        }
+        StmtKind::Inspect(_)
+        | StmtKind::Consume(..)
+        | StmtKind::Refine(..)
+        | StmtKind::Kept(_)
+        | StmtKind::Drop(..)
+        | StmtKind::Free(_) => None,
     };
     for (i, l) in b.loans.iter().enumerate() {
         if let Some(p) = &gone

@@ -126,7 +126,7 @@ pub const INTRINSICS: &[&str] = &[
     "[T; N]::len",
     "[T; N]::as_slice",
     "[T; N]::as_mut_slice",
-    "core::array::from_fn",
+    "core::array::from_fn_mut",
     "alloc::raw::RawBuf::new",
     "alloc::raw::RawBuf::empty",
     "alloc::raw::RawBuf::cap",

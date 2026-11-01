@@ -843,7 +843,10 @@ pub(crate) fn liveness(body: &Body) -> HashMap<Point, Vec<bool>> {
                     }
                 }
                 StmtKind::Inspect(p) | StmtKind::Consume(p, _) => live[p.local.0] = true,
-                StmtKind::Refine(..) | StmtKind::Kept(_) | StmtKind::Drop(..) | StmtKind::Free(_) => {}
+                StmtKind::Refine(..)
+                | StmtKind::Kept(_)
+                | StmtKind::Drop(..)
+                | StmtKind::Free(_) => {}
                 StmtKind::Dead(l) => {
                     let point = Point {
                         block: crate::mir::Bb(b),
