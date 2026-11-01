@@ -1,4 +1,4 @@
-fn adder(n: i64) -> {closure#81781} {
+fn adder(n: i64) -> {closure#82573} {
     let _0: {closure};
     let _1: i64; // n
     bb0: {
@@ -20,7 +20,7 @@ closure adder::{closure#8174} {
     }
 }
 
-fn counter() -> {closure#81880} {
+fn counter() -> {closure#82672} {
     let _0: {closure};
     let mut _1: i64; // n
     let _2: i64;
@@ -51,10 +51,10 @@ closure counter::{closure#8194} {
     }
 }
 
-fn compose::<{panic}, {closure#81781}, {closure#81781}>(
-    f: {closure#81781},
-    g: {closure#81781},
-) -> {closure#82088}::<{panic}, {closure#81781}, {closure#81781}> {
+fn compose::<{panic}, {closure#82573}, {closure#82573}>(
+    f: {closure#82573},
+    g: {closure#82573},
+) -> {closure#82880}::<{panic}, {closure#82573}, {closure#82573}> {
     let _0: {closure};
     let _1: {closure}; // f
     let _2: {closure}; // g
@@ -72,7 +72,7 @@ fn compose::<{panic}, {closure#81781}, {closure#81781}>(
     }
 }
 
-closure compose::<{panic}, {closure#81781}, {closure#81781}>::{closure#8241} {
+closure compose::<{panic}, {closure#82573}, {closure#82573}>::{closure#8241} {
     let _0: i64;
     let mut _1: &{closure}; // the closure
     let _2: i64; // x
@@ -93,7 +93,7 @@ closure compose::<{panic}, {closure#81781}, {closure#81781}>::{closure#8241} {
     }
 }
 
-fn pick(c: bool) -> {closure#81781} {
+fn pick(c: bool) -> {closure#82573} {
     let _0: {closure};
     let _1: bool; // c
     let _2: {closure}; // a
@@ -375,7 +375,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         _43 = adder(move _44);
         _46 = 10_i64;
         _45 = adder(move _46);
-        _42 = compose::<{panic}, {closure#81781}, {closure#81781}>(move _43, move _45);
+        _42 = compose::<{panic}, {closure#82573}, {closure#82573}>(move _43, move _45);
         _41 = move _42;
         dead _46;
         dead _45;
@@ -591,6 +591,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
     }
 }
 
+#[blame_caller]
 fn <&str as core::fmt::Display>::fmt::<std::io::Stderr><'a>(
     &self,
     w: &mut std::io::Stderr,

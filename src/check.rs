@@ -661,6 +661,10 @@ pub(crate) struct Checker {
     /// start.
     tests: Vec<TestFn>,
     tests_from: usize,
+    /// The functions of the package being checked that blame their
+    /// callers, with where each one's `#[blame_caller]` is: each must be
+    /// able to abort, which only its effects, once inferred, say.
+    blaming: Vec<(FnId, Span)>,
     /// The sites of the body of each of them that's checked, kept for
     /// working out its effects with its group's.
     infer_sites: HashMap<usize, Vec<effects::Site>>,
@@ -850,6 +854,34 @@ impl Checker {
         Ok(())
     }
 
+    /// Checks that each function of the package just checked that blames
+    /// its caller can abort, now that its effects are known: by `panic` or
+    /// `alloc`, or by an effect variable, which can stand for a call of
+    /// one that blames its caller in turn (docs/34-blame-caller.md, B4).
+    /// Otherwise its `#[blame_caller]` could change nothing.
+    fn blaming_known(&mut self) -> Result<(), Error> {
+        for (id, at) in std::mem::take(&mut self.blaming) {
+            let Type::Fn(sig) = &self.fns[id.0].scheme.ty else {
+                continue;
+            };
+            let effects = self.with_inferred(&sig.effects);
+            let aborts = (effects.effect_items().iter()).any(|e| {
+                matches!(
+                    e,
+                    Type::Panic | Type::Alloc | Type::Param(_) | Type::Proj(..) | Type::Var(_)
+                )
+            });
+            if !aborts {
+                return Err(Error::ty(
+                    at,
+                    "`#[blame_caller]` on a function that can't abort: nothing it does has the \
+                     effect `panic` or `alloc`, so there's nothing to blame its caller for",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// An id for a node the checker makes up (see `NodeId`).
     fn fresh_id(&mut self) -> NodeId {
         self.next_id += 1;
@@ -943,6 +975,7 @@ impl Checker {
             inferring: HashSet::new(),
             tests: Vec::new(),
             tests_from: 0,
+            blaming: Vec::new(),
             infer_sites: HashMap::new(),
             waiting: Vec::new(),
             deferred: Vec::new(),
@@ -1013,6 +1046,7 @@ impl Checker {
         self.bodies(prog)?;
         self.zonk_inferred();
         self.tests_known(root)?;
+        self.blaming_known()?;
         // What an editor can offer to write, of the program's.
         if root == ROOT {
             for (i, (f, _, method)) in prog
@@ -1146,7 +1180,16 @@ impl Checker {
                 && f.name.name == "main"
                 && let Type::Fn(sig) = &scheme.ty
             {
+                if let Some(at) = f.blame_caller {
+                    return Err(Error::ty(
+                        at,
+                        "`main` can't blame its caller: nothing in the program calls it",
+                    ));
+                }
                 self.info.main_error = self.main_signature(f, sig)?;
+            }
+            if let Some(at) = f.blame_caller {
+                self.blaming.push((FnId(i), at));
             }
             if let Some(test) = f.test
                 && let Type::Fn(sig) = &scheme.ty

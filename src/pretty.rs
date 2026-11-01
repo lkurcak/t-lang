@@ -944,7 +944,8 @@ impl Printer<'_> {
     /// A function, up to its body.
     fn signature(&mut self, f: &FnDecl) -> Doc {
         let mut doc = self.lead(f.doc.as_ref(), &f.allows, fn_start(f));
-        // `#[intrinsic]`, `#[measure]` and `#[test]`, in the order written.
+        // `#[intrinsic]`, `#[measure]`, `#[test]` and `#[blame_caller]`, in
+        // the order written.
         let test = f.test.map(|t| match t.panics {
             true => (t.span, "#[test(panics)]"),
             false => (t.span, "#[test]"),
@@ -952,6 +953,7 @@ impl Printer<'_> {
         let mut attrs: Vec<(Span, &str)> =
             [(f.intrinsic, "#[intrinsic]"), (f.measure, "#[measure]")]
                 .into_iter()
+                .chain([(f.blame_caller, "#[blame_caller]")])
                 .filter_map(|(at, t)| Some((at?, t)))
                 .chain(test)
                 .collect();
@@ -1745,6 +1747,7 @@ fn fn_start(f: &FnDecl) -> usize {
     let start = f.vis.span().map_or(f.span.start, |p| p.start);
     let start = f.intrinsic.map_or(start, |i| i.start.min(start));
     let start = f.measure.map_or(start, |i| i.start.min(start));
+    let start = f.blame_caller.map_or(start, |i| i.start.min(start));
     f.test.map_or(start, |t| t.span.start.min(start))
 }
 

@@ -375,6 +375,7 @@ export fn <[u8]>::split_at<'a>(
 #[intrinsic]
 export fn <[u8]>::get(&self, i: usize) -> core::option::Option::<&u8>;
 
+#[blame_caller]
 fn <&str as core::fmt::Display>::fmt::<std::io::Stderr><'a>(
     &self,
     w: &mut std::io::Stderr,

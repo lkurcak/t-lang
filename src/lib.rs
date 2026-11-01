@@ -239,7 +239,6 @@ fn run(
                 None => {
                     let mut term = Process::default();
                     let result = interp::run(&program, &mut term);
-                    let result = result.map_err(|e| e.blamed_caller(&sources));
                     // A write may have reached only the buffer. Flush
                     // even after an error, keeping that error if there
                     // was one, and otherwise report a failed flush.
@@ -269,7 +268,6 @@ fn run(
                         ..interp::Captured::default()
                     };
                     let result = interp::run(&program, &mut term);
-                    let result = result.map_err(|e| e.blamed_caller(&sources));
                     RunResult {
                         sources,
                         warnings,
@@ -382,7 +380,7 @@ pub fn test_files(path: &Path, src: &str, read: load::Read, filter: Option<&str>
             let (ended, errors) = ended;
             let failure = match (ended.result, test.panics) {
                 (Err(_), true) if ended.panicked => None,
-                (Err(e), _) => Some(e.blamed_caller(&sources)),
+                (Err(e), _) => Some(e),
                 (Ok(Value::Variant(_, variant, _)), _) if variant == "Err" => {
                     let why = errors.join("\n");
                     let why = why.strip_prefix("error: ").unwrap_or(&why);

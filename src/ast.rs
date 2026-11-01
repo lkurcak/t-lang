@@ -793,6 +793,10 @@ pub struct FnDecl {
     /// Its `#[test]`, if it's a test: a function `t test` runs as a
     /// program of its own (see docs/31-tests.md).
     pub test: Option<Test>,
+    /// Where its `#[blame_caller]` is, if it has one: an abort directly in
+    /// its body is shown where it was called (see
+    /// docs/34-blame-caller.md).
+    pub blame_caller: Option<Span>,
 }
 
 /// `#[test]` on a function, or `#[test(panics)]` on one that passes only

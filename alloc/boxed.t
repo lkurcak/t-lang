@@ -16,5 +16,6 @@ export struct Box<T> {}
 
 /// What it holds.
 impl<T: Display> Display for Box<T> {
+    #[blame_caller]
     fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { (**self).fmt(w) }
 }

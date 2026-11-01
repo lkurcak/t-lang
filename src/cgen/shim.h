@@ -25,9 +25,6 @@ typedef struct { uint8_t _; } t_unit;
 static max_align_t t_nowhere;
 #define T_NOWHERE ((void *)&t_nowhere)
 
-/* The innermost call made from the program's own code, not a library's:
- * where a panic in a library is shown, as the interpreter shows it. */
-static uint32_t t_site;
 /* What a site's location looks like in a message, every line after the
  * first of the interpreter's. */
 static const char *t_site_text(uint32_t site);

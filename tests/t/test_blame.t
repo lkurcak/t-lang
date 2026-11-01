@@ -1,5 +1,6 @@
-// A panic in the core library is shown where the program called into it:
-// the innermost call outside of core, alloc and std.
+// A panic in a `#[blame_caller]` function, as core's `assert_eq` and
+// `unwrap` are, is shown where it was called: a test's helper says it too
+// to be blamed in the test.
 fn main() {}
 
 #[test]
@@ -16,6 +17,12 @@ fn through_a_helper() { helper(); }
 
 fn helper() { assert(false); }
 
+#[test]
+fn through_a_blaming_helper() { blaming_helper(); }
+
+#[blame_caller]
+fn blaming_helper() { assert(false); }
+
 // Through a closure the core library calls: the closure's own line.
 #[test]
 fn in_a_closure() {
@@ -23,7 +30,8 @@ fn in_a_closure() {
     let _ = x.map(|v| { assert(v == 2); v });
 }
 
-// test: eq ... FAILED: test_blame.t:6:11
-// test: unwraps ... FAILED: test_blame.t:11:13
-// test: through_a_helper ... FAILED: test_blame.t:17:15
-// test: in_a_closure ... FAILED: test_blame.t:23:25
+// test: eq ... FAILED: test_blame.t:7:11
+// test: unwraps ... FAILED: test_blame.t:12:13
+// test: through_a_helper ... FAILED: test_blame.t:18:15
+// test: through_a_blaming_helper ... FAILED: test_blame.t:21:33
+// test: in_a_closure ... FAILED: test_blame.t:30:25

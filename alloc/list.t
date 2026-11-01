@@ -25,6 +25,7 @@ impl<T> List<T> {
     export fn new() -> { l: List<T> | l.len() == 0 } { List { buf: RawBuf::empty(), len: 0 } }
 
     /// An empty list with room for `cap` values before it grows.
+    #[blame_caller]
     export fn with_capacity(cap: usize) -> { l: List<T> | l.len() == 0 } with alloc {
         List { buf: RawBuf::new(cap), len: 0 }
     }
@@ -46,6 +47,7 @@ impl<T> List<T> {
     /// first, which moves its values somewhere new. A list as long as a
     /// `usize` can count has no room, and its buffer can't double, which
     /// aborts, as running out of memory does.
+    #[blame_caller]
     export fn push(&mut self, v: T) with alloc ensures self.len() == old(self.len()) + 1 {
         let cap = self.buf.cap();
         if self.len == cap {
