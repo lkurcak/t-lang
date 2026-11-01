@@ -300,7 +300,7 @@ fn main(os: std::Os) -> Result<(), Error> with alloc {
 /// `\n` or `\r\n`; the last line needn't have one.
 #[test]
 fn programs_read_lines_of_input() {
-    for compiled in [false, true] {
+    for compiled in [false, !cfg!(windows)] {
         let out = run_with_input("lines", ECHO, "añ\r\nb\n\nlast".as_bytes(), compiled);
         assert_eq!(out.status.code(), Some(0));
         let stdout = String::from_utf8(out.stdout).unwrap();
@@ -314,7 +314,7 @@ fn programs_read_lines_of_input() {
 /// fails.
 #[test]
 fn input_that_isnt_text_fails_the_program() {
-    for compiled in [false, true] {
+    for compiled in [false, !cfg!(windows)] {
         let out = run_with_input("bytes", ECHO, b"ok\n\xFF\n", compiled);
         assert_eq!(out.status.code(), Some(1));
         assert_eq!(String::from_utf8(out.stdout).unwrap(), "> 2ok\n> ");
@@ -374,6 +374,7 @@ fn buffered_output_errors_fail_the_command() {
 /// or with `--emit-c` prints the C it would compile; a library has no
 /// `main` to build.
 #[test]
+#[cfg_attr(windows, ignore = "the C backend is for Linux and macOS, for now")]
 fn build_compiles_programs() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let brew = root.join("examples/brew.t");
