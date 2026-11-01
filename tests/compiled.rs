@@ -1,5 +1,6 @@
 //! Differential tests of the C backend (docs/33-c-backend.md): every
-//! program of `tests/t` and `examples/` that runs is also compiled, through
+//! program of `tests/t`, `examples/` and the docs (a ```` ```rust ````
+//! block with a `fn main`, as `docs.rs` runs) that runs is also compiled, through
 //! C, and run, with the same input, and must do exactly what the
 //! interpreter does: write the same to its output and to where errors go,
 //! a panic's message and where it's shown included, and end the same way.
@@ -20,8 +21,60 @@ use expect::Expectations;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// A program to run both ways: what it's called, and its files.
+struct Program {
+    name: String,
+    files: expect::Files,
+}
+
+/// Every program of `tests/t`, `examples/` and the docs.
+fn programs() -> Vec<Program> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut out: Vec<Program> = (files())
+        .into_iter()
+        .map(|p| Program {
+            name: p.strip_prefix(root).unwrap_or(&p).display().to_string(),
+            files: expect::files_of(&p),
+        })
+        .collect();
+    let mut docs: Vec<PathBuf> = fs::read_dir(root.join("docs"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|e| e == "md"))
+        .collect();
+    docs.sort();
+    docs.insert(0, root.join("README.md"));
+    for doc in docs {
+        let src = fs::read_to_string(&doc).unwrap();
+        let mut lines = src.lines().enumerate();
+        while let Some((i, line)) = lines.next() {
+            let indent = line.len() - line.trim_start().len();
+            let Some(info) = line.trim_start().strip_prefix("```") else {
+                continue;
+            };
+            let mut code = String::new();
+            for (_, line) in lines.by_ref() {
+                if line.trim_start().starts_with("```") {
+                    break;
+                }
+                code.push_str(line.get(indent..).unwrap_or(""));
+                code.push('\n');
+            }
+            // Only whole programs, which `docs.rs` runs.
+            if info.trim() == "rust" && code.contains("fn main") {
+                let name = doc.strip_prefix(root).unwrap_or(&doc).display();
+                out.push(Program {
+                    name: format!("{name}:{}", i + 1),
+                    files: vec![(PathBuf::from("main.t"), code)],
+                });
+            }
+        }
+    }
+    out
+}
+
 /// The first file of every program in `tests/t` and `examples/`.
-fn programs() -> Vec<PathBuf> {
+fn files() -> Vec<PathBuf> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut paths = Vec::new();
     for dir in ["tests/t", "examples"] {
@@ -41,7 +94,7 @@ fn programs() -> Vec<PathBuf> {
 }
 
 /// `f` of each of `paths`, on as many threads as there are cores.
-fn on_all_cores<R: Send>(paths: &[PathBuf], f: impl Fn(&Path) -> R + Sync) -> Vec<R> {
+fn on_all_cores<P: Sync, R: Send>(paths: &[P], f: impl Fn(&P) -> R + Sync) -> Vec<R> {
     use std::sync::atomic::{AtomicUsize, Ordering};
     let next = AtomicUsize::new(0);
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
@@ -86,9 +139,9 @@ enum Outcome {
     Differs(String),
 }
 
-/// Runs the program at `path` both ways, compiled into `dir`.
-fn differential(path: &Path, dir: &Path) -> Outcome {
-    let files = expect::files_of(path);
+/// Runs program `p` both ways, compiled into `dir`.
+fn differential(p: &Program, dir: &Path) -> Outcome {
+    let files = &p.files;
     let all: String = files
         .iter()
         .map(|(_, s)| s.as_str())
@@ -124,11 +177,7 @@ fn differential(path: &Path, dir: &Path) -> Outcome {
         Ok(c) => c,
         Err(e) => return Outcome::Differs(format!("didn't build: {}", e.message)),
     };
-    let name = path
-        .strip_prefix(env!("CARGO_MANIFEST_DIR"))
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace(['/', '.'], "_");
+    let name = p.name.replace(['/', '.', ':'], "_");
     let exe = dir.join(&name);
     if let Err(e) = t_lang::cgen::compile(&c, &exe) {
         let c_file = dir.join(format!("{name}.c"));
@@ -180,6 +229,7 @@ fn differential(path: &Path, dir: &Path) -> Outcome {
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "the C backend is for Linux and macOS, for now")]
 fn compiled_runs_as_interpreted() {
     let dir = std::env::temp_dir().join(format!("t-lang-compiled-{}", std::process::id()));
     fs::create_dir_all(&dir).unwrap();
@@ -198,10 +248,7 @@ fn compiled_runs_as_interpreted() {
         match o {
             Outcome::Same => same += 1,
             Outcome::Skipped(why) => *skipped.entry(why).or_insert(0) += 1,
-            Outcome::Differs(why) => {
-                let name = p.strip_prefix(env!("CARGO_MANIFEST_DIR")).unwrap_or(p);
-                failures.push(format!("{}: {why}", name.display()));
-            }
+            Outcome::Differs(why) => failures.push(format!("{}: {why}", p.name)),
         }
     }
     assert!(
@@ -212,5 +259,6 @@ fn compiled_runs_as_interpreted() {
         failures.join("\n\n")
     );
     let _ = fs::remove_dir_all(&dir);
-    assert!(same > 350, "only {same} programs ran both ways");
+    eprintln!("{same} programs ran the same both ways; skipped: {skipped:?}");
+    assert!(same > 500, "only {same} programs ran both ways");
 }

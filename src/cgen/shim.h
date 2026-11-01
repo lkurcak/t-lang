@@ -36,7 +36,8 @@ static _Noreturn void t_end(uint32_t site) {
     fputc('\n', stderr);
     fputs(t_site_text(site), stderr);
     fflush(stderr);
-    exit(1);
+    /* A panic aborts: nothing is dropped, or freed, on the way out. */
+    _Exit(1);
 }
 
 static void t_begin(void) {

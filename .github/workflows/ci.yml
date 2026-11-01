@@ -14,3 +14,17 @@ permissions:
 jobs:
   ci:
     uses: lkurcak/forge/.github/workflows/rust-ci.yml@v1
+
+  # The C backend's differential tests again, each compiled program built
+  # with AddressSanitizer (and LeakSanitizer) and UndefinedBehaviorSanitizer,
+  # stopping at the first report: the C it writes must have no undefined
+  # behaviour and free all it allocates (docs/33-c-backend.md).
+  sanitizers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --test compiled --locked
+        env:
+          T_LANG_CFLAGS: -fsanitize=address,undefined -fno-sanitize-recover=all

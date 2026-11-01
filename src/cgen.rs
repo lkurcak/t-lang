@@ -521,7 +521,7 @@ impl<'e> Gen<'e> {
         if let Some(c) = self.fn_names.get(name) {
             return c.clone();
         }
-        let c = self.fresh(&format!("t_{}", sanitize(name)));
+        let c = self.fresh(&format!("f_{}", sanitize(name)));
         self.fn_names.insert(name.to_string(), c.clone());
         self.todo.push(name.to_string());
         c
@@ -677,7 +677,7 @@ impl<'e> Gen<'e> {
         }
         // An arena's values, each by its box's glue, in the order they
         // were put in, as the interpreter drops them; then the arena.
-        let c = self.fresh(&format!("t_{}", sanitize(&name)));
+        let c = self.fresh(&format!("f_{}", sanitize(&name)));
         self.fn_names.insert(name, c.clone());
         let a = self.cty(t);
         let elem = args[0].erased();
@@ -1144,7 +1144,7 @@ impl<'e> Gen<'e> {
         if let Some(c) = self.fn_names.get(copy) {
             return c.clone();
         }
-        let c = self.fresh(&format!("t_{}", sanitize(copy)));
+        let c = self.fresh(&format!("f_{}", sanitize(copy)));
         self.fn_names.insert(copy.to_string(), c.clone());
         let r = self.cty(ret);
         let mut ps: Vec<String> = (params.iter().enumerate())
