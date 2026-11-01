@@ -112,10 +112,12 @@ impl<T: Discard, E: Discard> Result<T, E> {
 
 impl<T, E: Discard> Result<T, E> {
     /// What's in an `Ok`, or else a panic. The error is thrown away.
+    #[blame_caller]
     export fn unwrap(self) -> T with panic { self.expect("`unwrap` of `Err`") }
 
     /// What's in an `Ok`, or else a panic, saying `why`. The error is
     /// thrown away.
+    #[blame_caller]
     export fn expect(self, why: &str) -> T with panic {
         match self {
             Result::Ok(x) => x,

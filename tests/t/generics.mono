@@ -58,7 +58,7 @@ fn flip::<i64, bool>(p: Pair::<i64, bool>) -> Pair::<bool, i64> {
     }
 }
 
-fn map::<{panic}, i64, i64, {closure#83288}>(o: Option::<i64>, f: {closure#83288}) -> Option::<i64>
+fn map::<{panic}, i64, i64, {closure#84080}>(o: Option::<i64>, f: {closure#84080}) -> Option::<i64>
 with panic {
     let _0: Option<i64>;
     let _1: Option<i64>; // o
@@ -700,7 +700,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         _50 = Option::<i64>::Some(move _51);
         _53 = &_46;
         _52 = {closure#8444}(move _53);
-        _49 = map::<{panic}, i64, i64, {closure#83288}>(move _50, move _52);
+        _49 = map::<{panic}, i64, i64, {closure#84080}>(move _50, move _52);
         _48 = move _49;
         dead _53;
         dead _52;
@@ -1269,6 +1269,7 @@ closure main::{closure#8519} {
     }
 }
 
+#[blame_caller]
 fn <&str as core::fmt::Display>::fmt::<std::io::Stderr><'a>(
     &self,
     w: &mut std::io::Stderr,

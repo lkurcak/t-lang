@@ -160,6 +160,7 @@ export fn wrap<T: Int, U: Int>(x: T) -> U;
 
 /// How far `x` is from 0: it panics at the least value, whose distance is
 /// one more than the greatest.
+#[blame_caller]
 export fn abs<T: Signed>(x: T) -> T with panic {
     if x < 0 { -x } else { x }
 }

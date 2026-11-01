@@ -13,6 +13,7 @@ export fn panic(why: &str) -> ! with panic;
 /// Aborts the program as `panic` does, saying `why` as its `Display`
 /// writes it. Writing it can't fail, panic or allocate: the sink it's
 /// written into can't, and `fmt` does only what its sink does.
+#[blame_caller]
 export fn panic_with<D: Display>(why: &D) -> ! with panic {
     let mut m = Message::new();
     why.fmt(&mut m).into_ok();
@@ -20,16 +21,19 @@ export fn panic_with<D: Display>(why: &D) -> ! with panic {
 }
 
 /// Panics, saying `assertion failed`, unless `ok`.
+#[blame_caller]
 export fn assert(ok: bool) with panic {
     if !ok { panic("assertion failed") }
 }
 
 /// Panics unless `left == right`, saying what each is.
+#[blame_caller]
 export fn assert_eq<T: Eq + Display>(left: &T, right: &T) with panic {
     if !(left == right) { panic_with(&Mismatch { op: "==", left, right }) }
 }
 
 /// Panics unless `left != right`, saying what they are.
+#[blame_caller]
 export fn assert_ne<T: Eq + Display>(left: &T, right: &T) with panic {
     if left == right { panic_with(&Mismatch { op: "!=", left, right }) }
 }
@@ -42,6 +46,7 @@ struct Mismatch<'a, T> { op: &'a str, left: &'a T, right: &'a T }
 /// `assertion `left == right` failed`, then each side on a line of its
 /// own.
 impl<'a, T: Display> Display for Mismatch<'a, T> {
+    #[blame_caller]
     fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e {
         w.write_str("assertion `left ")?;
         w.write_str(self.op)?;

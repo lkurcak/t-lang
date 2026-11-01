@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased
+
+Step 34: blaming the caller. See
+[docs/34-blame-caller.md](docs/34-blame-caller.md).
+
+### Added
+
+- `#[blame_caller]` on a function with a body: an abort directly in it (a
+  panic, an overflow, running out of memory, or a call of another such
+  function) is shown where it was called. A test's helper, or a library's
+  check of its arguments, can now point at its caller.
+- A function that blames its caller, or an intrinsic, used as a value is
+  blamed where it became a value: `x.map(Option::unwrap)` shows the
+  `Option::unwrap`, not core's `map`.
+- Errors: `#[blame_caller]` on `main`, on a test, on an intrinsic, on a
+  trait's method without a body, on what isn't a function, or on a
+  function that can't abort.
+
+### Changed
+
+- core, alloc and std have no privilege any more: a panic in them was
+  shown at the innermost call outside them, and now their functions that
+  can abort say `#[blame_caller]`, which shows the same places.
+- Compiled programs pass a call's site to a function that blames its
+  caller, as a hidden parameter; the global `t_site` and its save and
+  restore around every call are gone.
+
 ## 0.47.0 (2026-11-01)
 
 Step 33: a C backend. See [docs/33-c-backend.md](docs/33-c-backend.md).

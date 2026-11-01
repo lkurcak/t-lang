@@ -26,11 +26,13 @@ impl String {
     export fn new() -> String { String { bytes: List::new() } }
 
     /// An empty string with room for `cap` bytes before it grows.
+    #[blame_caller]
     export fn with_capacity(cap: usize) -> String with alloc {
         String { bytes: List::with_capacity(cap) }
     }
 
     /// A string of the characters of `s`.
+    #[blame_caller]
     export fn from(s: &str) -> String with alloc {
         let mut out = String::with_capacity(s.len());
         out.push_str(s);
@@ -38,6 +40,7 @@ impl String {
     }
 
     /// `x` as text: what its `Display` writes.
+    #[blame_caller]
     export fn of<D: Display>(x: &D) -> String with alloc {
         let mut out = String::new();
         out.put(x);
@@ -83,6 +86,7 @@ impl String {
     ///
     /// It pushes a zero byte for each byte `c` takes, and then writes `c`
     /// over them: zeros are UTF-8, so the invariant holds all along.
+    #[blame_caller]
     export fn push(&mut self, c: char) with alloc {
         let at = self.bytes.len();
         let n = c.len_utf8();
@@ -101,6 +105,7 @@ impl String {
 
     /// Puts the characters of `s` at the end. Its bytes are UTF-8, so
     /// they're UTF-8 after the string's.
+    #[blame_caller]
     export fn push_str(&mut self, s: &str) with alloc {
         for b in s.as_bytes().iter() {
             self.bytes.push(*b);
@@ -157,6 +162,7 @@ impl Ord for String {
 
 /// Its characters, as they are.
 impl Display for String {
+    #[blame_caller]
     fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e {
         w.write_str(self.as_str())
     }
@@ -168,11 +174,13 @@ impl Write for String {
     type Error = !;
     effect e = alloc;
 
+    #[blame_caller]
     fn write_str(&mut self, s: &str) -> Result<(), !> with alloc {
         self.push_str(s);
         Result::Ok(())
     }
 
+    #[blame_caller]
     fn write_char(&mut self, c: char) -> Result<(), !> with alloc {
         self.push(c);
         Result::Ok(())

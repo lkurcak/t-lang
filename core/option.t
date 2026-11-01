@@ -33,9 +33,11 @@ impl<T> Option<T> {
     }
 
     /// What's in it, or else a panic.
+    #[blame_caller]
     export fn unwrap(self) -> T with panic { self.expect("`unwrap` of `None`") }
 
     /// What's in it, or else a panic, saying `why`.
+    #[blame_caller]
     export fn expect(self, why: &str) -> T with panic {
         match self {
             Option::Some(x) => x,

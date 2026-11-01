@@ -59,6 +59,20 @@ use std::fmt;
 /// recursion with an error instead of crashing the interpreter itself.
 const MAX_CALL_DEPTH: usize = 10_000;
 
+/// What a call says of where an abort under it is shown (see
+/// `Interp::blamed`).
+#[derive(Debug, Clone, Copy)]
+enum Blame {
+    /// Where it happens: what was called doesn't blame its caller.
+    No,
+    /// At the call, and further out if that's in a body that blames its
+    /// caller too.
+    Caller,
+    /// At the call, and nowhere further out: a call through a value, whose
+    /// site is where the value was made.
+    Here,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     /// An integer, of its type: always one of that type's values, here on
@@ -70,8 +84,10 @@ pub enum Value {
     Unit,
     /// A function, by name. It can only see its own parameters and other
     /// functions. Nested ones have been lifted to the top level by now,
-    /// under their symbols (see `lift.rs`).
-    Fn(String),
+    /// under their symbols (see `lift.rs`). For one that blames its caller,
+    /// or an intrinsic, where it was made a value: its caller, wherever
+    /// it's called through the value (docs/34-blame-caller.md, B3).
+    Fn(String, Option<Span>),
     /// A closure: an anonymous function, plus the local variables it can see.
     Closure(Closure),
     /// A struct: its type's name, and its fields in declaration order.
@@ -184,7 +200,7 @@ impl fmt::Display for Value {
             Value::Bool(b) => write!(f, "{b}"),
             Value::Char(c) => write!(f, "{c}"),
             Value::Unit => f.write_str("()"),
-            Value::Fn(name) => write!(f, "<fn {}>", crate::check::source_name(name)),
+            Value::Fn(name, _) => write!(f, "<fn {}>", crate::check::source_name(name)),
             Value::Closure(_) => f.write_str("<closure>"),
             Value::Ref(_) => f.write_str("<reference>"),
             Value::Box(_) => f.write_str("<box>"),
@@ -310,7 +326,7 @@ impl<'p> Interp<'p, '_> {
                     .collect(),
             )],
         };
-        let result = self.call(Value::Fn(entry.to_string()), args, Span::new(0, 0))?;
+        let result = self.call(Value::Fn(entry.to_string(), None), args, Span::new(0, 0))?;
         // An error it gives back is reported, by the copy of `std::rt::report`
         // monomorphisation made for it, with its own `Stderr`.
         if let Value::Variant(ty, variant, fields) = &result
@@ -326,7 +342,7 @@ impl<'p> Interp<'p, '_> {
             let at = self.memory.alloc(e.clone(), false);
             let stderr = Value::Struct("std::io::Stderr".into(), Vec::new());
             self.call(
-                Value::Fn(report),
+                Value::Fn(report, None),
                 vec![Value::Ref(at.clone()), stderr],
                 Span::new(0, 0),
             )?;
@@ -334,7 +350,7 @@ impl<'p> Interp<'p, '_> {
         }
         if let Some(glue) = program.entry_drop(entry) {
             self.call(
-                Value::Fn(glue.to_string()),
+                Value::Fn(glue.to_string(), None),
                 vec![result.clone()],
                 Span::new(0, 0),
             )?;
@@ -529,9 +545,10 @@ struct Interp<'p, 'o> {
     message: String,
     /// Whether the program aborted by a panic.
     panicked: bool,
-    /// Where each call being run was called, outermost first: a panic's
-    /// `Error::trace`.
-    calls: Vec<Span>,
+    /// Where each call being run was called, outermost first, and whether
+    /// what it called blames its caller: where a panic is shown (see
+    /// `Interp::blamed`).
+    calls: Vec<(Span, Blame)>,
     memory: Memory,
     depth: usize,
     /// The functions being run, outermost first, by name: whose effects
@@ -971,9 +988,23 @@ impl<'p> Interp<'p, '_> {
     /// nothing is dropped for real.
     fn panic(&mut self, span: Span, message: impl Into<String>) -> Error {
         self.aborting = true;
-        let mut e = Error::runtime(span, message);
-        e.trace = self.calls.clone();
-        e
+        Error::runtime(self.blamed(span), message)
+    }
+
+    /// Where an abort at `span` is shown: there, unless it's directly in
+    /// the body of a function that blames its caller, which it then is
+    /// where that was called, and so on out (docs/34-blame-caller.md, B2).
+    /// A closure's body, and one of a function that doesn't, ends it.
+    fn blamed(&self, span: Span) -> Span {
+        let mut at = span;
+        for &(call, blame) in self.calls.iter().rev() {
+            match blame {
+                Blame::No => break,
+                Blame::Caller => at = call,
+                Blame::Here => return call,
+            }
+        }
+        at
     }
 
     /// A panic, which every function being run must say it may have: if
@@ -1017,13 +1048,22 @@ impl<'p> Interp<'p, '_> {
             // Glue, which monomorphisation wrote: a body with no
             // declaration, which nothing checks the effects of, as it has
             // none.
-            Value::Fn(name) if is_glue(&name) => {
+            Value::Fn(name, _) if is_glue(&name) => {
                 let exe = self.exe;
                 let (name, body) = (exe.body_named(&name))
                     .unwrap_or_else(|| unsound(&format!("glue `{name}` has no body")));
                 self.run(body, name, None, args, Vec::new(), span)
             }
-            Value::Fn(name) => {
+            Value::Fn(name, Some(at)) => {
+                // Called through a value made at `at`: what aborts in it
+                // is shown there, and nowhere further out, as the site is
+                // the value's, not the call's.
+                self.calls.push((at, Blame::Here));
+                let result = self.call(Value::Fn(name, None), args, at);
+                self.calls.pop();
+                result
+            }
+            Value::Fn(name, None) => {
                 let decl = self.fns[name.as_str()];
                 // What a refinement names of the parameters: their values
                 // here, which can't change.
@@ -1146,7 +1186,12 @@ impl<'p> Interp<'p, '_> {
         refined: Vec<Option<Refined>>,
         span: Span,
     ) -> Result<Value, Error> {
-        self.calls.push(span);
+        let blames = f.is_some_and(|f| self.fns.get(f).is_some_and(|d| d.blame_caller.is_some()));
+        let blame = match blames {
+            true => Blame::Caller,
+            false => Blame::No,
+        };
+        self.calls.push((span, blame));
         let result = self.run_body(body, root, f, args, refined, span);
         self.calls.pop();
         result
@@ -1313,6 +1358,23 @@ impl<'p> Interp<'p, '_> {
         p
     }
 
+    /// Value `v`, made at `span`: a function that blames its caller, or an
+    /// intrinsic, is called there, wherever it's called through `v`
+    /// (docs/34-blame-caller.md, B3).
+    fn made_at(&self, v: Value, span: Span) -> Value {
+        match v {
+            Value::Fn(name, None) if self.blames_caller(&name) => Value::Fn(name, Some(span)),
+            v => v,
+        }
+    }
+
+    /// Whether function `name`'s aborts are shown where it's called: it
+    /// says `#[blame_caller]`, or it's an intrinsic, which is called as an
+    /// operator is.
+    fn blames_caller(&self, name: &str) -> bool {
+        (self.fns.get(name)).is_some_and(|d| d.blame_caller.is_some() || d.intrinsic.is_some())
+    }
+
     /// What operand `o` gives, in frame `fr`: moved out of its place, or
     /// copied, as the borrow checker decided.
     fn operand(&mut self, fr: &Frame, o: &crate::mir::Operand) -> Value {
@@ -1334,7 +1396,7 @@ impl<'p> Interp<'p, '_> {
                 Const::Unit => Value::Unit,
                 Const::Str(s) => Value::Ref(self.literal(s.as_bytes())),
                 Const::Bytes(b) => Value::Ref(self.literal(b)),
-                Const::Fn(name, _) => Value::Fn(name.clone()),
+                Const::Fn(name, _) => Value::Fn(name.clone(), None),
                 Const::Param(_) => unsound("a const parameter left after monomorphising"),
                 Const::Receiver(_) => unsound("a call's receiver as a value"),
             },
@@ -1351,7 +1413,10 @@ impl<'p> Interp<'p, '_> {
         use crate::mir::{Agg, Const, Operand, Rvalue};
         use crate::types::Type;
         Ok(match value {
-            Rvalue::Use(o) => self.operand(fr, o),
+            Rvalue::Use(o) => {
+                let v = self.operand(fr, o);
+                self.made_at(v, span)
+            }
             Rvalue::Ref(_, _, p) => Value::Ref(self.ptr(fr, p)),
             Rvalue::Unary(op, o, id) => {
                 let v = self.operand(fr, o);
@@ -1418,7 +1483,12 @@ impl<'p> Interp<'p, '_> {
                 }
             }
             Rvalue::Aggregate(k, t, os) => {
-                let values: Vec<Value> = os.iter().map(|o| self.operand(fr, o)).collect();
+                let values: Vec<Value> = (os.iter())
+                    .map(|o| {
+                        let v = self.operand(fr, o);
+                        self.made_at(v, span)
+                    })
+                    .collect();
                 match (k, t) {
                     (Agg::Struct, Type::Adt(name, _, args)) => {
                         let name = crate::mono::mangle(name, args);
@@ -1467,7 +1537,12 @@ impl<'p> Interp<'p, '_> {
                 }
             }
             Rvalue::Call(f, args) => {
-                let mut args: Vec<Value> = args.iter().map(|o| self.operand(fr, o)).collect();
+                let mut args: Vec<Value> = (args.iter())
+                    .map(|o| {
+                        let v = self.operand(fr, o);
+                        self.made_at(v, span)
+                    })
+                    .collect();
                 let f = match f {
                     Operand::Const(Const::Receiver(_)) => {
                         if args.is_empty() {

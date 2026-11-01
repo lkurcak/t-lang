@@ -52,6 +52,7 @@ impl Error {
 
 /// What went wrong, for people to read.
 impl Display for Error {
+    #[blame_caller]
     fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e {
         match self.kind {
             ErrorKind::BrokenPipe => w.write_str("broken pipe"),
@@ -74,6 +75,7 @@ impl Stdin {
     ///
     /// Input that isn't UTF-8 is an error of kind `InvalidData`; the line
     /// is read, and `line` is left empty.
+    #[blame_caller]
     export fn read_line(&mut self, line: &mut String) -> Result<bool, Error> with alloc {
         line.clear();
         let mut bytes = List::new();

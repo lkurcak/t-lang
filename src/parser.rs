@@ -20,6 +20,8 @@
 //!                                                     can name (docs/21-measures.md)
 //!          | "#" "[" "test" ("(" "panics" ")")? "]" -- on a module's `fn`: one `t test`
 //!                                                     runs (docs/31-tests.md)
+//!          | "#" "[" "blame_caller" "]"            -- on a `fn` with a body: its aborts are
+//!                                                     its caller's (docs/34-blame-caller.md)
 //! derived  = IDENT ("where" IDENT ":" bound ("+" bound)* ("," IDENT ":" bound ("+" bound)*)*)?
 //! fn_decl  = "fn" IDENT generics? "(" (param ("," param)* ","?)? ")" ("->" type)? where?
 //!            (block | ";")                          -- `;` only for an intrinsic
@@ -337,6 +339,7 @@ impl Parser {
         let mut intrinsic = None;
         let mut measure = None;
         let mut test = None;
+        let mut blame_caller = None;
         while *self.peek() == Tok::Hash {
             let start = self.bump().span;
             self.expect(Tok::LBracket)?;
@@ -350,6 +353,18 @@ impl Parser {
                 Tok::Ident(name) if name == "measure" => {
                     self.bump();
                     measure = Some(start.to(self.expect(Tok::RBracket)?));
+                    continue;
+                }
+                Tok::Ident(name) if name == "blame_caller" => {
+                    self.bump();
+                    if *self.peek() == Tok::LParen {
+                        return Err(Error::syntax(
+                            self.span(),
+                            "`#[blame_caller]` takes nothing: it says the function's caller is \
+                             blamed for what aborts in it",
+                        ));
+                    }
+                    blame_caller = Some(start.to(self.expect(Tok::RBracket)?));
                     continue;
                 }
                 Tok::Ident(name) if name == "test" => {
@@ -376,15 +391,15 @@ impl Parser {
                 }
                 Tok::Ident(name) => {
                     let message = format!(
-                        "unknown attribute `{name}`; the only ones are `allow`, `derive`, \
-                         `intrinsic`, `measure` and `test`"
+                        "unknown attribute `{name}`; the only ones are `allow`, \
+                         `blame_caller`, `derive`, `intrinsic`, `measure` and `test`"
                     );
                     return Err(Error::syntax(self.span(), message));
                 }
                 _ => {
-                    return Err(
-                        self.unexpected("`allow`, `derive`, `intrinsic`, `measure` or `test`")
-                    );
+                    return Err(self.unexpected(
+                        "`allow`, `blame_caller`, `derive`, `intrinsic`, `measure` or `test`",
+                    ));
                 }
             };
             self.bump();
@@ -420,6 +435,7 @@ impl Parser {
             intrinsic,
             measure,
             test,
+            blame_caller,
         })
     }
 
@@ -554,8 +570,10 @@ impl Parser {
         };
         let head = match self.peek() {
             Tok::Fn => head.no_measure(NOT_METHOD)?,
-            Tok::Struct | Tok::Trait => head.no_measure(NOT_METHOD)?.no_test()?,
-            _ => head.no_intrinsic()?.no_measure(NOT_METHOD)?.no_test()?,
+            Tok::Struct | Tok::Trait => {
+                head.no_measure(NOT_METHOD)?.no_test()?.no_blame_caller()?
+            }
+            _ => (head.no_intrinsic()?.no_measure(NOT_METHOD)?.no_test()?).no_blame_caller()?,
         };
         match self.peek() {
             Tok::Struct => {
@@ -1056,6 +1074,21 @@ impl Parser {
             }
             _ => (self.block()?, true),
         };
+        // An intrinsic's aborts are already shown where it's called, as an
+        // operator's are; a trait's method without a body has no aborts of
+        // its own; a test has no caller.
+        if let Some(at) = head.blame_caller {
+            if intrinsic.is_some() || !provided {
+                return Err(Error::syntax(at, NOT_BLAMING));
+            }
+            if head.test.is_some() {
+                return Err(Error::syntax(
+                    at,
+                    "a test can't blame its caller: it's run as a program of its own, which \
+                     nothing in the program calls",
+                ));
+            }
+        }
         let f = FnDecl {
             doc: head.doc,
             allows: head.allows,
@@ -1073,6 +1106,7 @@ impl Parser {
             measure: head.measure,
             ensures,
             test: head.test,
+            blame_caller: head.blame_caller,
         };
         Ok((f, provided))
     }
@@ -1197,8 +1231,8 @@ impl Parser {
             let head = head.no_test()?;
             self.no_pub("a trait's methods are public wherever the trait is")?;
             match self.peek() {
-                Tok::Type => assoc.push(self.assoc_decl(head)?),
-                Tok::Effect => effects.push(self.effect_decl(head)?),
+                Tok::Type => assoc.push(self.assoc_decl(head.no_blame_caller()?)?),
+                Tok::Effect => effects.push(self.effect_decl(head.no_blame_caller()?)?),
                 Tok::Fn => {
                     let (decl, provided) = self.function(head, true, true)?;
                     methods.push(TraitMethod { decl, provided });
@@ -1417,8 +1451,8 @@ impl Parser {
                 None => self.vis(),
             };
             match self.peek() {
-                Tok::Type => assoc.push(self.assoc_def(head)?),
-                Tok::Effect => effects.push(self.effect_def(head)?),
+                Tok::Type => assoc.push(self.assoc_def(head.no_blame_caller()?)?),
+                Tok::Effect => effects.push(self.effect_def(head.no_blame_caller()?)?),
                 Tok::Fn => {
                     let mut f = self.function(head, true, false)?.0;
                     f.vis = vis;
@@ -1615,7 +1649,7 @@ impl Parser {
         let generics = self.generics()?;
         self.expect(Tok::LBrace)?;
         let (fields, end) = self.comma_list(Tok::RBrace, |p| {
-            let Head { doc, allows, .. } = p.head()?.no_derives()?.no_test()?;
+            let Head { doc, allows, .. } = p.head()?.no_derives()?.no_test()?.no_blame_caller()?;
             let vis = p.vis();
             if *p.peek() == Tok::Mut {
                 return Err(Error::syntax(
@@ -1688,7 +1722,7 @@ impl Parser {
         let generics = self.generics()?;
         self.expect(Tok::LBrace)?;
         let (variants, end) = self.comma_list(Tok::RBrace, |p| {
-            let Head { doc, allows, .. } = p.head()?.no_derives()?.no_test()?;
+            let Head { doc, allows, .. } = p.head()?.no_derives()?.no_test()?.no_blame_caller()?;
             p.no_pub("an enum's variants are public wherever it is")?;
             let name = p.ident()?;
             let (fields, span) = if p.eat(&Tok::LParen) {
@@ -1983,6 +2017,10 @@ impl Parser {
                     .no_intrinsic()?
                     .no_measure(NOT_METHOD)?
                     .no_test()?;
+                let head = match self.peek() {
+                    Tok::Fn => head,
+                    _ => head.no_blame_caller()?,
+                };
                 let stmt = match self.peek() {
                     Tok::Fn => Stmt::Fn(Box::new(self.fn_decl(head.no_derives()?)?)),
                     Tok::Struct => Stmt::Type(Box::new(TypeDecl::Struct(self.struct_decl(head)?))),
@@ -3107,6 +3145,12 @@ fn binop(tok: &Tok) -> Option<(BinOp, u8)> {
 /// arguments and where they end, if it has any.
 type Segment = (Ident, Vec<TypeExpr>, Option<Span>);
 
+/// Why a `#[blame_caller]` can't be where it is: what it says is of a
+/// body, which a trait's method without one, an intrinsic, or what isn't
+/// a function doesn't have.
+const NOT_BLAMING: &str = "`#[blame_caller]` can only be on a function with a body: what aborts \
+                           in it is shown where it was called";
+
 /// Why a `#[measure]` can't be where it is.
 const NOT_METHOD: &str = "only a method of `&self` can be a measure";
 const TRAIT_MEASURE: &str =
@@ -3122,6 +3166,9 @@ struct Head {
     measure: Option<Span>,
     /// Its `#[test]`, if it has one: only a module's function's can.
     test: Option<Test>,
+    /// Where its `#[blame_caller]` is, if it has one: only a function's
+    /// with a body can.
+    blame_caller: Option<Span>,
 }
 
 impl Head {
@@ -3173,6 +3220,15 @@ impl Head {
                 "`#[test]` can only be on a function of a module, not a method or a function \
                  inside another",
             )),
+            None => Ok(self),
+        }
+    }
+
+    /// This head, for something that isn't a function, so can't have a
+    /// `#[blame_caller]`.
+    fn no_blame_caller(self) -> Result<Head, Error> {
+        match self.blame_caller {
+            Some(at) => Err(Error::syntax(at, NOT_BLAMING)),
             None => Ok(self),
         }
     }

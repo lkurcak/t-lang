@@ -27,6 +27,7 @@ export trait Iterator {
 
     /// `f(..f(f(init, a), b).., z)` of the values `a`, `b`, .. `z`. It
     /// throws itself, and `f`, away at the end.
+    #[blame_caller]
     fn fold<B, effect fx, F: FnMut(B, Self::Item) -> B with fx + Discard>(
         mut self,
         init: B,
@@ -43,6 +44,7 @@ export trait Iterator {
 
     /// How many values there are, throwing each away. Counting past the
     /// greatest `usize` panics.
+    #[blame_caller]
     fn count(self) -> usize with {Self::e, panic} where Self: Discard, Self::Item: Discard {
         self.fold(0, |n, _x| n + 1)
     }
@@ -54,6 +56,7 @@ impl<'a, I: Iterator> Iterator for &'a mut I {
     type Item = I::Item;
     effect e = I::e;
 
+    #[blame_caller]
     fn next(&mut self) -> Option<I::Item> with I::e { (**self).next() }
 }
 
@@ -66,6 +69,7 @@ impl<U, effect fx, I: Iterator, F: FnMut(I::Item) -> U with fx> Iterator for Map
     type Item = U;
     effect e = {I::e, fx};
 
+    #[blame_caller]
     fn next(&mut self) -> Option<U> with {I::e, fx} {
         match self.iter.next() {
             Option::Some(x) => Option::Some((self.f)(x)),
@@ -87,6 +91,7 @@ where
     type Item = I::Item;
     effect e = {I::e, px};
 
+    #[blame_caller]
     fn next(&mut self) -> Option<I::Item> with {I::e, px} {
         loop {
             match self.iter.next() {

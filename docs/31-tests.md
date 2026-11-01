@@ -3,8 +3,7 @@
 Code: `parser.rs` (`Head::test`, `no_test`), `check.rs`
 (`Checker::test_signature`, `entry_result`, `tests_known`), `check/lints.rs`
 (`dead_code`: tests are live), `mono.rs` (`Executable::report`), in
-`interp.rs`, `run_entry` and `Interp::message`, `Error::blamed_caller` in
-`error.rs`, `test_files` in `lib.rs`, and `core/panic.t`.
+`interp.rs`, `run_entry` and `Interp::message`, `test_files` in `lib.rs`, and `core/panic.t`.
 
 Until now a T program was tested by running it and comparing what it
 printed with a file: tcalc and the hash map each have a `tests/run.sh` that
@@ -244,10 +243,10 @@ fn main() {
 // error: panicked: `unwrap` of `None`
 ```
 
-It's what Rust's `#[track_caller]` does, but for every function of the
-built-in libraries, and with no attribute: nothing in them is the
-program's to fix. A dependency's code isn't skipped: a panic in a library
-someone wrote is shown there, where its bug is.
+It's what Rust's `#[track_caller]` does. In this step it applied to every
+function of the built-in libraries, with no attribute. Since step 34 it's
+opt-in, by `#[blame_caller]`, for any library or program, and core, alloc
+and std say it on their functions (see docs/34-blame-caller.md).
 
 ## One meaning: no `cfg`
 
@@ -327,7 +326,8 @@ passes it, where tcalc's `run.sh` used to look for what `t check` printed.
 - **Caller blame without `#[track_caller]`.** An attribute would be one
   more thing for a library author to remember on every function that
   checks its arguments; drawing the line at the built-in libraries needs
-  none.
+  none. Step 34 reversed this: the line was a privilege no other library
+  could have, and it took a global to compile.
 
 ## Deliberately missing (coming later)
 

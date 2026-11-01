@@ -30,9 +30,11 @@ export trait Write {
 
     /// Writes `x` as text: `x.fmt(self)`, with the sink first, so that
     /// `w.put(&x)?` reads in the order things go.
+    #[blame_caller]
     fn put<D: Display>(&mut self, x: &D) -> Result<(), Self::Error> with Self::e { x.fmt(self) }
 
     /// Writes `x` as text, then a line break.
+    #[blame_caller]
     fn line<D: Display>(&mut self, x: &D) -> Result<(), Self::Error> with Self::e {
         x.fmt(self)?;
         self.write_char('\n')
@@ -44,8 +46,10 @@ impl<'a, W: Write> Write for &'a mut W {
     type Error = W::Error;
     effect e = W::e;
 
+    #[blame_caller]
     fn write_str(&mut self, s: &str) -> Result<(), W::Error> with W::e { (**self).write_str(s) }
 
+    #[blame_caller]
     fn write_char(&mut self, c: char) -> Result<(), W::Error> with W::e { (**self).write_char(c) }
 }
 
@@ -59,6 +63,7 @@ export trait Display {
 
 /// `true` or `false`.
 impl Display for bool {
+    #[blame_caller]
     fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e {
         if *self { w.write_str("true") } else { w.write_str("false") }
     }
@@ -66,27 +71,32 @@ impl Display for bool {
 
 /// The character itself.
 impl Display for char {
+    #[blame_caller]
     fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { w.write_char(*self) }
 }
 
 /// Its characters, as they are.
 impl Display for str {
+    #[blame_caller]
     fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { w.write_str(self) }
 }
 
 /// Its characters: as `str`'s, which a type parameter can't stand for,
 /// so `&T`'s doesn't cover it.
 impl<'a> Display for &'a str {
+    #[blame_caller]
     fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { w.write_str(*self) }
 }
 
 /// What it points to.
 impl<'a, T: Display> Display for &'a T {
+    #[blame_caller]
     fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { (**self).fmt(w) }
 }
 
 /// What it points to.
 impl<'a, T: Display> Display for &'a mut T {
+    #[blame_caller]
     fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { (**self).fmt(w) }
 }
 
@@ -94,10 +104,12 @@ impl<'a, T: Display> Display for &'a mut T {
 /// types, which overlaps none of the others, as `Int` is sealed (see
 /// docs/29-closed-and-sealed-traits.md).
 impl<T: Int> Display for T {
+    #[blame_caller]
     fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { decimal(*self, w) }
 }
 
 /// `n` in decimal, with a `-` if it's negative.
+#[blame_caller]
 fn decimal<T: Int, W: Write>(n: T, w: &mut W) -> Result<(), W::Error> with W::e {
     if n < 0 {
         w.write_char('-')?;
@@ -112,6 +124,7 @@ fn decimal<T: Int, W: Write>(n: T, w: &mut W) -> Result<(), W::Error> with W::e 
 /// so `m / 10` has `m`'s digits but the last, and `m % 10`, which has `m`'s
 /// sign, is the last, or its negation: the checker proves that's 0 to 9,
 /// so that none of it can panic, of every integer type.
+#[blame_caller]
 fn digits<T: Int, W: Write>(m: T, w: &mut W) -> Result<(), W::Error> with W::e {
     let q = m / 10;
     if q != 0 {

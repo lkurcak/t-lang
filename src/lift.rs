@@ -164,6 +164,7 @@ impl<'p> Cx<'p> {
             intrinsic: f.intrinsic,
             measure: f.measure,
             test: f.test,
+            blame_caller: f.blame_caller,
             ensures: f.ensures.clone(),
         };
         (decl, nested)

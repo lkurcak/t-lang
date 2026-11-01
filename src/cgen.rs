@@ -199,6 +199,11 @@ struct Gen<'e> {
     lit_defs: String,
     sites: HashMap<Span, usize>,
     site_texts: Vec<String>,
+    /// Whether the body being written blames its caller: then what aborts
+    /// in it is shown at its `site_` parameter, the site of its call.
+    blaming: bool,
+    /// Where the statement being written is.
+    at: Span,
 }
 
 /// The body being written: its name and MIR.
@@ -235,6 +240,8 @@ impl<'e> Gen<'e> {
             lit_defs: String::new(),
             sites: HashMap::new(),
             site_texts: Vec::new(),
+            blaming: false,
+            at: Span::new(0, 0),
         }
     }
 
@@ -484,7 +491,7 @@ impl<'e> Gen<'e> {
                 Const::Unit => "(t_unit){0}".to_string(),
                 Const::Str(s) => self.literal(s.as_bytes()),
                 Const::Bytes(b) => self.literal(b),
-                Const::Fn(name, _) => self.fn_value(name),
+                Const::Fn(name, _) => self.fn_value(name, self.at),
                 Const::Param(_) | Const::Receiver(_) => panic!("`{c:?}` as a value"),
             },
         }
@@ -537,55 +544,80 @@ impl<'e> Gen<'e> {
             .unwrap_or_else(|| panic!("no signature for intrinsic `{name}`"))
     }
 
-    /// Function `name` as a value: a pointer to its C function. An
-    /// intrinsic's takes no site: one in it is shown at `t_site`.
-    fn fn_value(&mut self, name: &str) -> String {
-        if self.is_intrinsic(name) {
-            let key = format!("{name} as a value");
-            if let Some(c) = self.fn_names.get(&key) {
-                return c.clone();
-            }
-            let w = self.intrinsic(name);
-            let c = self.fresh(&format!("{w}_value"));
-            self.fn_names.insert(key, c.clone());
-            let (params, ret) = self.intrinsic_sig(name);
-            let r = self.cty(&ret);
-            let ps: Vec<String> = (params.iter().enumerate())
-                .map(|(i, p)| format!("{} a{i}", self.cty(p)))
-                .collect();
-            let args: Vec<String> = (0..params.len()).map(|i| format!("a{i}")).collect();
-            let ps = match ps.is_empty() {
-                true => "void".to_string(),
-                false => ps.join(", "),
-            };
-            let call = format!(
-                "{w}({})",
-                args.into_iter()
-                    .chain(["t_site".into()])
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
-            let body = match ret {
-                Type::Never => format!("    {call};\n    t_unreachable();\n"),
-                _ => format!("    return {call};\n"),
-            };
-            let sig = format!("static {r} {c}({ps})");
-            let _ = writeln!(self.protos, "{sig};");
-            let _ = writeln!(self.defs, "{sig} {{\n{body}}}\n");
-            return c;
-        }
-        if self.exe.body(name).is_none() {
-            panic!("`{name}` has no body");
-        }
-        self.body_name(name)
+    /// Whether body `name` blames its caller: it takes the site of its
+    /// call, as its last parameter, `site_`.
+    fn blames(&self, name: &str) -> bool {
+        (self.decls.get(name)).is_some_and(|d| d.blame_caller.is_some())
     }
 
-    /// The site of `span`, as a C expression: where a panic there is
-    /// shown. One in a library is shown where the innermost call from
-    /// the program's own code is, as `Error::blamed_caller` does.
+    /// Function `name` as a value, made at `span`: a pointer to its C
+    /// function. One that takes the site of its call, an intrinsic or one
+    /// that blames its caller, is called through a wrapper that gives it
+    /// `span`'s: wherever it's called through the value, that's its
+    /// caller (docs/34-blame-caller.md, B3).
+    fn fn_value(&mut self, name: &str, span: Span) -> String {
+        let intrinsic = self.is_intrinsic(name);
+        if !intrinsic && !self.blames(name) {
+            if self.exe.body(name).is_none() {
+                panic!("`{name}` has no body");
+            }
+            return self.body_name(name);
+        }
+        let site = self.site_id(span);
+        let key = format!("{name} as a value at {site}");
+        if let Some(c) = self.fn_names.get(&key) {
+            return c.clone();
+        }
+        let (w, params, ret) = match intrinsic {
+            true => {
+                let (params, ret) = self.intrinsic_sig(name);
+                (self.intrinsic(name), params, ret)
+            }
+            false => {
+                let exe: &'e Executable = self.exe;
+                let body = exe
+                    .body(name)
+                    .unwrap_or_else(|| panic!("`{name}` has no body"));
+                let params = (1..=body.params)
+                    .map(|i| body.locals[i].ty.clone())
+                    .collect();
+                (self.body_name(name), params, body.locals[0].ty.clone())
+            }
+        };
+        let c = self.fresh(&format!("{w}_at{site}"));
+        self.fn_names.insert(key, c.clone());
+        let r = self.cty(&ret);
+        let ps: Vec<String> = (params.iter().enumerate())
+            .map(|(i, p)| format!("{} a{i}", self.cty(p)))
+            .collect();
+        let args: Vec<String> = (0..params.len()).map(|i| format!("a{i}")).collect();
+        let ps = match ps.is_empty() {
+            true => "void".to_string(),
+            false => ps.join(", "),
+        };
+        let call = format!(
+            "{w}({})",
+            args.into_iter()
+                .chain([site.to_string()])
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        let body = match ret {
+            Type::Never => format!("    {call};\n    t_unreachable();\n"),
+            _ => format!("    return {call};\n"),
+        };
+        let sig = format!("static {r} {c}({ps})");
+        let _ = writeln!(self.protos, "{sig};");
+        let _ = writeln!(self.defs, "{sig} {{\n{body}}}\n");
+        c
+    }
+
+    /// The site of `span`, as a C expression: where an abort there is
+    /// shown. In a body that blames its caller, that's its call's site
+    /// (docs/34-blame-caller.md, B2).
     fn site(&mut self, span: Span) -> String {
-        match self.sources.in_library(span.start) {
-            true => "t_site".to_string(),
+        match self.blaming {
+            true => "site_".to_string(),
             false => self.site_id(span).to_string(),
         }
     }
@@ -606,11 +638,14 @@ impl<'e> Gen<'e> {
     }
 
     /// The prototype of body `name`, its C name `c`.
-    fn signature(&mut self, c: &str, body: &Body) -> String {
+    fn signature(&mut self, name: &str, c: &str, body: &Body) -> String {
         let ret = self.cty(&body.locals[0].ty);
-        let params: Vec<String> = (1..=body.params)
+        let mut params: Vec<String> = (1..=body.params)
             .map(|i| format!("{} _{i}", self.cty(&body.locals[i].ty)))
             .collect();
+        if self.blames(name) {
+            params.push("uint32_t site_".to_string());
+        }
         let params = match params.is_empty() {
             true => "void".to_string(),
             false => params.join(", "),
@@ -639,8 +674,9 @@ impl<'e> Gen<'e> {
     /// Writes the C function of body `name`.
     fn function(&mut self, name: &str, body: &Body) {
         let c = self.fn_names[name].clone();
-        let sig = self.signature(&c, body);
+        let sig = self.signature(name, &c, body);
         let _ = writeln!(self.protos, "{sig};");
+        self.blaming = self.blames(name);
         let cx = Cx { name, body };
         let mut out = String::new();
         let t_name = name.replace("*/", "* /");
@@ -680,6 +716,7 @@ impl<'e> Gen<'e> {
     }
 
     fn statement(&mut self, cx: &Cx, s: &Statement, out: &mut String) {
+        self.at = s.span;
         match &s.kind {
             StmtKind::Assign { place, value, .. } => self.assign(cx, place, value, s.span, out),
             StmtKind::Drop(p, t) => {
@@ -844,24 +881,13 @@ impl<'e> Gen<'e> {
                 }
             }
             Rvalue::Call(f, args) => {
-                let (call, body, never) = self.call(cx, f, args, span);
+                let (call, never) = self.call(cx, f, args, span);
                 // What never returns gives nothing to write: its place may
                 // be of any type.
-                let assign = match never {
-                    true => format!("{call};"),
-                    false => format!("{dest} = {call};"),
+                let _ = match never {
+                    true => writeln!(out, "    {call};"),
+                    false => writeln!(out, "    {dest} = {call};"),
                 };
-                // A call of a body from the program's own code is where a
-                // panic in a library under it is shown.
-                if body && !self.sources.in_library(span.start) {
-                    let site = self.site_id(span);
-                    let _ = writeln!(
-                        out,
-                        "    {{ uint32_t s_ = t_site; t_site = {site}; {assign} t_site = s_; }}"
-                    );
-                } else {
-                    let _ = writeln!(out, "    {assign}");
-                }
                 return;
             }
         };
@@ -991,20 +1017,30 @@ impl<'e> Gen<'e> {
 
     /// The C call of `f` with `args`, whether it calls a
     /// body (not an intrinsic), and whether what it calls never returns.
-    fn call(&mut self, cx: &Cx, f: &Operand, args: &[Operand], span: Span) -> (String, bool, bool) {
+    /// The C call of `f` with `args`, at `span`, and whether it never
+    /// returns. An intrinsic, and a body that blames its caller, are
+    /// given the site of the call (docs/34-blame-caller.md, B2).
+    fn call(&mut self, cx: &Cx, f: &Operand, args: &[Operand], span: Span) -> (String, bool) {
         match f {
             Operand::Const(Const::Fn(name, _)) if self.is_intrinsic(name) => {
                 let never = self.intrinsic_sig(name).1 == Type::Never;
                 let w = self.intrinsic(name);
                 let mut vals: Vec<String> = args.iter().map(|a| self.operand(cx, a)).collect();
                 vals.push(self.site(span));
-                (format!("{w}({})", vals.join(", ")), false, never)
+                (format!("{w}({})", vals.join(", ")), never)
             }
             Operand::Const(Const::Fn(name, _)) => {
-                let c = self.fn_value(name);
-                let never = self.exe.body(name).expect("a body").locals[0].ty == Type::Never;
-                let vals: Vec<String> = args.iter().map(|a| self.operand(cx, a)).collect();
-                (format!("{c}({})", vals.join(", ")), true, never)
+                let exe: &'e Executable = self.exe;
+                let body = exe
+                    .body(name)
+                    .unwrap_or_else(|| panic!("`{name}` has no body"));
+                let c = self.body_name(name);
+                let never = body.locals[0].ty == Type::Never;
+                let mut vals: Vec<String> = args.iter().map(|a| self.operand(cx, a)).collect();
+                if self.blames(name) {
+                    vals.push(self.site(span));
+                }
+                (format!("{c}({})", vals.join(", ")), never)
             }
             Operand::Const(Const::Receiver(_)) => {
                 let (recv, rest) = args.split_first().expect("a receiver");
@@ -1012,14 +1048,14 @@ impl<'e> Gen<'e> {
                 let e = self.operand(cx, recv);
                 let vals: Vec<String> = rest.iter().map(|a| self.operand(cx, a)).collect();
                 let never = self.returns_never(&t);
-                (self.call_value(&e, &t, vals), true, never)
+                (self.call_value(&e, &t, vals), never)
             }
             f => {
                 let t = self.operand_ty(cx, f);
                 let e = self.operand(cx, f);
                 let vals: Vec<String> = args.iter().map(|a| self.operand(cx, a)).collect();
                 let never = self.returns_never(&t);
-                (self.call_value(&e, &t, vals), true, never)
+                (self.call_value(&e, &t, vals), never)
             }
         }
     }
@@ -1457,7 +1493,6 @@ impl<'e> Gen<'e> {
         let Some(body) = exe.body("main") else {
             return String::new();
         };
-        let start = self.site_id(Span::new(0, 0));
         let main = self.body_name("main");
         // The functions `main` gets to are all written: these are only
         // looked up.
@@ -1468,10 +1503,7 @@ impl<'e> Gen<'e> {
             _ => format!("({}){{0}}", self.cty(&body.locals[1].ty)),
         };
         let mut out = String::new();
-        let _ = writeln!(
-            out,
-            "int main(void) {{\n    t_start();\n    t_site = {start};"
-        );
+        out.push_str("int main(void) {\n    t_start();\n");
         let _ = writeln!(out, "    {ret} r = {main}({args});");
         let mut failed = "false".to_string();
         let _ = writeln!(out, "    (void)r;");
