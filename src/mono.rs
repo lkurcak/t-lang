@@ -74,6 +74,28 @@ pub struct Executable {
     /// For `main` and each test, by symbol, the drop glue of what it gives
     /// back, if dropping that does anything.
     entry_drops: HashMap<String, String>,
+    /// What's in each struct, enum and closure type the bodies use, by its
+    /// copy's name (`mangle`): what a backend lays out (`Shape`).
+    shapes: HashMap<String, Shape>,
+    /// The body each closure type runs, by the type's copy's name: what a
+    /// backend calls, where the interpreter looks at the closure's value.
+    closure_bodies: HashMap<String, String>,
+    /// The types of the parameters and result of each copy of an
+    /// intrinsic, by name: what a backend implements.
+    intrinsic_sigs: HashMap<String, (Vec<Type>, Type)>,
+}
+
+/// What a struct, enum or closure type holds, at a copy's types, for a
+/// backend to lay out: its fields' types, in order; for an enum, each
+/// variant's name and fields'; for a type of the libraries' own that holds
+/// nothing a program can see (a `RawBuf`, an `Arena`, a stream), nothing,
+/// as only intrinsics look inside.
+#[derive(Debug, Clone)]
+pub(crate) enum Shape {
+    Struct(Vec<Type>),
+    Enum(Vec<(String, Vec<Type>)>),
+    Closure(Vec<Type>),
+    Intrinsic,
 }
 
 impl Executable {
@@ -106,6 +128,28 @@ impl Executable {
     /// dropping that does anything.
     pub(crate) fn entry_drop(&self, entry: &str) -> Option<&str> {
         self.entry_drops.get(entry).map(String::as_str)
+    }
+
+    /// What struct, enum or closure type `t` holds.
+    pub(crate) fn shape(&self, t: &Type) -> Option<&Shape> {
+        match t {
+            Type::Adt(name, _, args) => self.shapes.get(&mangle(name, args)),
+            _ => None,
+        }
+    }
+
+    /// The types of the parameters and result of intrinsic copy `name`.
+    pub(crate) fn intrinsic_sig(&self, name: &str) -> Option<&(Vec<Type>, Type)> {
+        self.intrinsic_sigs.get(name)
+    }
+
+    /// The body closure type `t` runs, if a value of it is ever made.
+    pub(crate) fn closure_body(&self, t: &Type) -> Option<&str> {
+        match t {
+            Type::Adt(name, _, args) => self.closure_bodies.get(&mangle(name, args)),
+            _ => None,
+        }
+        .map(String::as_str)
     }
 }
 
@@ -208,11 +252,15 @@ impl crate::mir::Names for Executable {
 pub fn monomorphise(prog: crate::lift::Lifted<'_>) -> Executable {
     let mut mono = Mono::new(&prog.program, prog.info);
     let program = mono.run();
+    let shapes = mono.shapes();
     Executable {
         program,
         bodies: mono.bodies,
         reports: mono.reports,
         entry_drops: mono.entry_drops,
+        shapes,
+        closure_bodies: mono.closure_bodies,
+        intrinsic_sigs: mono.intrinsic_sigs,
     }
 }
 
@@ -306,9 +354,71 @@ struct Mono<'p> {
     /// `{copy}::{closure#7}`, by its lambda's node: what it does depends on
     /// that copy's type arguments.
     bodies: HashMap<String, crate::mir::Body>,
+    /// `Executable::closure_bodies`.
+    closure_bodies: HashMap<String, String>,
+    /// `Executable::intrinsic_sigs`.
+    intrinsic_sigs: HashMap<String, (Vec<Type>, Type)>,
 }
 
 impl<'p> Mono<'p> {
+    /// The shape of every struct, enum and closure type the bodies use,
+    /// and those they hold, by copy name (`Executable::shapes`).
+    fn shapes(&mut self) -> HashMap<String, Shape> {
+        use crate::mir::{Rvalue, StmtKind};
+        let mut todo: Vec<Type> = Vec::new();
+        for b in self.bodies.values() {
+            todo.extend(b.locals.iter().map(|l| l.ty.clone()));
+            for block in &b.blocks {
+                for st in &block.stmts {
+                    if let StmtKind::Assign {
+                        value: Rvalue::Aggregate(_, t, _),
+                        ..
+                    } = &st.kind
+                    {
+                        todo.push(t.clone());
+                    }
+                }
+            }
+        }
+        let mut shapes = HashMap::new();
+        let mut seen = HashSet::new();
+        while let Some(t) = todo.pop() {
+            if !seen.insert(t.clone()) {
+                continue;
+            }
+            todo.extend(t.parts().cloned());
+            let Type::Adt(name, _, args) = &t else {
+                continue;
+            };
+            let s = Subst::default();
+            let mut cx = Cx {
+                m: &mut *self,
+                s: &s,
+                params: Params::default(),
+            };
+            let shape = if crate::types::is_closure(name) {
+                Shape::Closure(cx.m.info.traits.closures[name].fields_at(&t))
+            } else if name == check::BOX || check::INTRINSIC_TYPES.contains(&name.as_str()) {
+                Shape::Intrinsic
+            } else if let Some(variants) = cx.variant_types(&t) {
+                let TypeDecl::Enum(e) = cx.m.types[name.as_str()] else {
+                    unreachable!("variants of an enum")
+                };
+                let names = e.variants.iter().map(|v| v.name.name.clone());
+                Shape::Enum(names.zip(variants).collect())
+            } else {
+                Shape::Struct(cx.field_types(&t))
+            };
+            match &shape {
+                Shape::Struct(fs) | Shape::Closure(fs) => todo.extend(fs.iter().cloned()),
+                Shape::Enum(vs) => todo.extend(vs.iter().flat_map(|(_, fs)| fs.iter().cloned())),
+                Shape::Intrinsic => {}
+            }
+            shapes.insert(mangle(name, args), shape);
+        }
+        shapes
+    }
+
     /// An id for a node made here (see `NodeId`).
     fn id(&mut self) -> NodeId {
         self.next_id += 1;
@@ -356,6 +466,8 @@ impl<'p> Mono<'p> {
             next_id: prog.next_id,
             reports: HashMap::new(),
             bodies: HashMap::new(),
+            closure_bodies: HashMap::new(),
+            intrinsic_sigs: HashMap::new(),
         }
     }
 
@@ -583,6 +695,13 @@ impl<'p> Mono<'p> {
         {
             let b = cx.body(b, &copy);
             cx.m.bodies.insert(copy.clone(), b);
+        }
+        if f.intrinsic.is_some() {
+            let ps = (f.params.iter())
+                .map(|p| cx.resolved(unrefined(&p.ty)).erased())
+                .collect();
+            let ret = cx.resolved(unrefined(&f.ret)).erased();
+            cx.m.intrinsic_sigs.insert(copy.clone(), (ps, ret));
         }
         FnDecl {
             doc: f.doc.clone(),
@@ -1417,6 +1536,15 @@ impl Cx<'_, '_, '_> {
                             self.closure(*id, root);
                         }
                         let t = self.subst_inferred(t).erased();
+                        if let (Agg::Closure(id), Type::Adt(name, _, args)) = (k, &t) {
+                            let body = closure_copy(root, *id);
+                            let copy = mangle(name, args);
+                            let old = self.m.closure_bodies.insert(copy, body.clone());
+                            assert!(
+                                old.is_none_or(|o| o == body),
+                                "one closure type runs one body"
+                            );
+                        }
                         self.copies_in(&t);
                         let os = os.iter().map(|o| self.operand(o)).collect();
                         Rvalue::Aggregate(*k, t, os)

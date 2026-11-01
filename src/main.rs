@@ -1,12 +1,13 @@
 use std::process::ExitCode;
 use t_lang::error::Warning;
 
-const USAGE: &str = "usage: t [run|check|mono] <file.t>\n       t test <file.t> [filter]\n       t fmt [--check] <file.t>...\n       t lsp\n       t tree-sitter [--helix] <dir>";
+const USAGE: &str = "usage: t [run|check|mono] <file.t>\n       t build [-o <out>] [--emit-c] <file.t>\n       t test <file.t> [filter]\n       t fmt [--check] <file.t>...\n       t lsp\n       t tree-sitter [--helix] <dir>";
 
 const HELP: &str = "\
 T: like C, but a different letter.
 
 usage: t [run|check|mono] <file.t>
+       t build [-o <out>] [--emit-c] <file.t>
        t test <file.t> [filter]
        t fmt [--check] <file.t>...
        t lsp
@@ -18,6 +19,9 @@ usage: t [run|check|mono] <file.t>
                       library, each as a program of its own (with a filter:
                       only those whose name has it in it)
   t mono <file.t>     print the program after monomorphisation
+  t build <file.t>    type-check and compile, through C, to a program named
+                      after the file (-o: to <out>; --emit-c: print the C
+                      instead); the C compiler is $CC, or cc
   --deny-warnings     with `check` or `test`: fail if there are warnings
   t fmt <file.t>...   format the files in place (--check: just print a diff)
   t lsp               language server, over stdio
@@ -75,6 +79,11 @@ fn main() -> ExitCode {
         && cmd == "fmt"
     {
         return fmt(rest);
+    }
+    if let [cmd, rest @ ..] = args.as_slice()
+        && cmd == "build"
+    {
+        return build(rest);
     }
     // `--deny-warnings`, wherever it is after `check` or `test`.
     let deny = matches!(args.first().map(String::as_str), Some("check" | "test"))
@@ -150,6 +159,75 @@ fn main() -> ExitCode {
         Ok(_) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("{}", e.render_in(&run.sources));
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `t build [-o <out>] [--emit-c] <file.t>`.
+fn build(args: &[String]) -> ExitCode {
+    let (mut out, mut emit, mut path) = (None, false, None);
+    let mut args = args.iter();
+    while let Some(a) = args.next() {
+        match a.as_str() {
+            "-o" => match args.next() {
+                Some(o) => out = Some(std::path::PathBuf::from(o)),
+                None => {
+                    eprintln!("{USAGE}");
+                    return ExitCode::from(2);
+                }
+            },
+            "--emit-c" => emit = true,
+            p if !p.starts_with('-') && path.is_none() => path = Some(p.to_string()),
+            _ => {
+                eprintln!("{USAGE}");
+                return ExitCode::from(2);
+            }
+        }
+    }
+    let Some(path) = path else {
+        eprintln!("{USAGE}");
+        return ExitCode::from(2);
+    };
+    let src = match std::fs::read_to_string(&path) {
+        Ok(src) => src,
+        Err(e) => {
+            eprintln!("error: cannot read `{path}`: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    let path = std::path::Path::new(&path);
+    let options = t_lang::cgen::Options { lines: !emit };
+    let built = t_lang::build_c(path, &src, &t_lang::load::read_file, options);
+    for w in Warning::render_all_in(&built.warnings, &built.sources) {
+        eprintln!("{w}\n");
+    }
+    let c = match built.result {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{}", e.render_in(&built.sources));
+            return ExitCode::FAILURE;
+        }
+    };
+    if emit {
+        print!("{c}");
+        return ExitCode::SUCCESS;
+    }
+    // Named after the file, or its directory for a `main.t`, here.
+    let out = out.unwrap_or_else(|| {
+        let stem = match path.file_name().is_some_and(|n| n == "main.t") {
+            true => path
+                .canonicalize()
+                .ok()
+                .and_then(|p| p.parent()?.file_name().map(|n| n.to_owned())),
+            false => path.file_stem().map(|n| n.to_owned()),
+        };
+        std::path::PathBuf::from(stem.unwrap_or_else(|| "a.out".into()))
+    });
+    match t_lang::cgen::compile(&c, &out) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("error: {e}");
             ExitCode::FAILURE
         }
     }
