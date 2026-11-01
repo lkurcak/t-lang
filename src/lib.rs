@@ -10,6 +10,7 @@
 mod allow;
 pub mod ast;
 mod borrowck;
+pub mod cgen;
 pub mod check;
 mod doc;
 pub mod error;
@@ -280,6 +281,44 @@ fn run(
             },
         }
     })
+}
+
+/// What `t build` made of a program: its files and warnings, as for a
+/// run, and its C, or the error that stopped it.
+pub struct Built {
+    pub sources: Sources,
+    pub warnings: Vec<Warning>,
+    pub result: Result<String, Error>,
+}
+
+/// Checks the program that starts at `path`, whose text is `src`, reading
+/// the files of its modules with `read`, and writes it as C (see
+/// `cgen.rs`).
+pub fn build_c(path: &Path, src: &str, read: load::Read, options: cgen::Options) -> Built {
+    {
+        let Checked {
+            sources,
+            warnings,
+            result,
+            ..
+        } = check_files(path, src, read);
+        let result = result.and_then(|program| match program.program().is_library() {
+            true => {
+                let start = sources.first().start;
+                Err(Error::ty(
+                    error::Span::new(start, start),
+                    "this is a library, which starts in `lib.t` and has no `main` to build; \
+                     `t check` checks it",
+                ))
+            }
+            false => Ok(cgen::emit(&program.lower(), &sources, options)),
+        });
+        Built {
+            sources,
+            warnings,
+            result,
+        }
+    }
 }
 
 /// What `t test` found: the program's files and warnings, as for a run,
