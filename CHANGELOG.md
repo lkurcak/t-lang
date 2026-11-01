@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.48.0 (2026-11-02)
 
 Step 34: blaming the caller. See
 [docs/34-blame-caller.md](docs/34-blame-caller.md).
