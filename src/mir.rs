@@ -179,6 +179,15 @@ pub(crate) enum StmtKind {
     /// be `Discard`. Only the interpreter looks: it checks that it is, at
     /// the type it turned out to be.
     Kept(Place),
+    /// Drops the value at the place, all of it, which must be there, by
+    /// the *drop glue* of its type, `.1`: its own `discard`, or its parts,
+    /// each by theirs. Then nothing's there. Only drop elaboration makes
+    /// these (`borrowck/drops.rs`), after the borrow checker's done.
+    Drop(Place, Type),
+    /// Frees the box at the place, whose value has been moved out or
+    /// dropped already. Then nothing's there. Drop elaboration makes these
+    /// too, where what a box points to was moved out of.
+    Free(Place),
 }
 
 #[derive(Clone)]
@@ -448,6 +457,8 @@ impl fmt::Display for Body {
                     StmtKind::Consume(p, v) => writeln!(f, "    consume {p:?} {v:?}")?,
                     StmtKind::Refine(l, r) => writeln!(f, "    refine _{} {r}", l.0)?,
                     StmtKind::Kept(p) => writeln!(f, "    kept {p:?}")?,
+                    StmtKind::Drop(p, t) => writeln!(f, "    drop {p:?}: {t}")?,
+                    StmtKind::Free(p) => writeln!(f, "    free {p:?}")?,
                 }
             }
             match &block.term {
@@ -521,6 +532,8 @@ impl Body {
                     StmtKind::Dead(l) => format!("dead _{}", l.0),
                     StmtKind::Consume(p, _) => format!("consume {}", show_place(p)),
                     StmtKind::Kept(p) => format!("kept {}", show_place(p)),
+                    StmtKind::Drop(p, _) => format!("drop {}", show_place(p)),
+                    StmtKind::Free(p) => format!("free {}", show_place(p)),
                     StmtKind::Refine(l, r) => {
                         let r = &self.refinements[*r];
                         let pred = crate::pretty::expr_text(&r.pred);

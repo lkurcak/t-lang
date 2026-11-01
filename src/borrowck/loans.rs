@@ -79,7 +79,7 @@ fn accesses(s: &Statement) -> Vec<(Place, Access)> {
         StmtKind::Dead(l) => out.push((Place::local(*l), Access::Dead)),
         StmtKind::Consume(p, _) => out.push((p.clone(), Access::Move)),
         // Only the interpreter looks, at what the refinement checker proved.
-        StmtKind::Refine(..) | StmtKind::Kept(_) => {}
+        StmtKind::Refine(..) | StmtKind::Kept(_) | StmtKind::Drop(..) | StmtKind::Free(_) => {}
     }
     out
 }
@@ -176,7 +176,7 @@ fn effect(b: &Builder, live: &mut [bool], s: &Statement, point: Point) {
     let gone = match &s.kind {
         StmtKind::Assign { place, .. } => Some(place.clone()),
         StmtKind::Dead(l) => Some(Place::local(*l)),
-        StmtKind::Inspect(_) | StmtKind::Consume(..) | StmtKind::Refine(..) | StmtKind::Kept(_) => {
+        StmtKind::Inspect(_) | StmtKind::Consume(..) | StmtKind::Refine(..) | StmtKind::Kept(_) | StmtKind::Drop(..) | StmtKind::Free(_) => {
             None
         }
     };

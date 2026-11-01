@@ -1223,10 +1223,39 @@ impl<'p> Interp<'p, '_> {
                     }
                     StmtKind::Inspect(_) => Ok(()),
                     StmtKind::Dead(l) => self.dead(&mut fr, l.0),
+                    // What the pattern didn't move out was dropped before.
                     StmtKind::Consume(place, _) => {
                         let p = self.ptr(&fr, place);
                         let old = std::mem::replace(self.memory.get_mut(&p), Value::Moved);
-                        self.drop_parts(old)
+                        let parts: Vec<Value> = match old {
+                            Value::Struct(_, fields) => fields.into_iter().map(|(_, v)| v).collect(),
+                            Value::Variant(_, _, fields) => fields,
+                            Value::Slots(values) => values,
+                            v => unsound(&format!("`{v}` taken apart by a pattern")),
+                        };
+                        for v in &parts {
+                            self.left_behind(v, "left by a pattern");
+                        }
+                        Ok(())
+                    }
+                    StmtKind::Drop(place, _) => {
+                        let p = self.ptr(&fr, place);
+                        let v = std::mem::replace(self.memory.get_mut(&p), Value::Moved);
+                        if self.taken_apart(&v) {
+                            unsound("a drop of a value that isn't all there: drop elaboration is wrong");
+                        }
+                        self.drop(v)
+                    }
+                    StmtKind::Free(place) => {
+                        let p = self.ptr(&fr, place);
+                        match std::mem::replace(self.memory.get_mut(&p), Value::Moved) {
+                            Value::Box(q) => {
+                                let inner = self.memory.free(&q, true);
+                                self.left_behind(&inner, "freed");
+                                Ok(())
+                            }
+                            v => unsound(&format!("`free` of `{v}`, which isn't a box")),
+                        }
                     }
                     StmtKind::Refine(l, r) => {
                         self.refine(&fr, *l, &body.refinements[*r]);
@@ -1493,7 +1522,7 @@ impl<'p> Interp<'p, '_> {
             r.check(self, &v, "a refined variable assigned");
         }
         let old = std::mem::replace(self.memory.get_mut(&p), v);
-        self.drop(old)?;
+        self.left_behind(&old, "assigned over");
         if !p.path.is_empty() {
             let mut outer = p.clone();
             outer.path.pop();
@@ -1513,9 +1542,38 @@ impl<'p> Interp<'p, '_> {
             return Ok(());
         };
         let v = self.memory.free(&p, false);
-        match fr.f.is_some_and(is_discard_fn) && l == 1 {
-            true => self.drop_parts(v),
-            false => self.drop(v),
+        self.left_behind(&v, "out of scope");
+        Ok(())
+    }
+
+    /// Stops the program, as drop elaboration is wrong, if `v`, just
+    /// `what`, holds anything dropping it would have done something
+    /// with: elaboration should have dropped it first (E1 of
+    /// docs/32.1-drops.md).
+    fn left_behind(&self, v: &Value, what: &str) {
+        if self.needs_drop(v) {
+            unsound(&format!(
+                "`{v}` was {what} still holding what needed dropping: drop elaboration is wrong"
+            ));
+        }
+    }
+
+    /// Would dropping `v` do anything: free memory, call a `discard`, or
+    /// throw away what isn't `Discard`?
+    fn needs_drop(&self, v: &Value) -> bool {
+        match v {
+            Value::Box(_) | Value::RawBuf(_) | Value::Arena(_) => true,
+            Value::Struct(ty, _) | Value::Variant(ty, ..)
+                if !self.taken_apart(v)
+                    && (!self.discard.contains(ty.as_str()) || self.user_discard(ty).is_some()) =>
+            {
+                true
+            }
+            Value::Struct(_, fields) => fields.iter().any(|(_, v)| self.needs_drop(v)),
+            Value::Variant(_, _, fields) => fields.iter().any(|v| self.needs_drop(v)),
+            Value::Closure(c) => c.env.iter().any(|(_, v)| self.needs_drop(v)),
+            Value::Slots(values) => values.iter().any(|v| self.needs_drop(v)),
+            _ => false,
         }
     }
 

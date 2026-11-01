@@ -27,6 +27,7 @@
 //! closure's type there.
 
 mod build;
+mod drops;
 mod loans;
 
 mod moves;
@@ -101,9 +102,9 @@ pub(crate) fn check(
     let names = Names::of(f, sig);
     let (warnings, _) = analyze(&mut b, &names, false)?;
     let key = crate::mir::Key::Fn(symbol.to_string());
-    cx.mir
-        .borrow_mut()
-        .insert(key, std::sync::Arc::new(b.body.erased()));
+    let mut kept = b.body.erased();
+    drops::elaborate(&b, &mut kept);
+    cx.mir.borrow_mut().insert(key, std::sync::Arc::new(kept));
     Ok(warnings)
 }
 
@@ -727,9 +728,9 @@ fn closure_body(
     if later == 0 {
         let (warnings, reqs) = analyze(&mut b, &names, true)?;
         let key = crate::mir::Key::Closure(c.lambda.id);
-        cx.mir
-            .borrow_mut()
-            .insert(key, std::sync::Arc::new(b.body.erased()));
+        let mut kept = b.body.erased();
+        drops::elaborate(&b, &mut kept);
+        cx.mir.borrow_mut().insert(key, std::sync::Arc::new(kept));
         return Ok(Outcome::Checked(warnings, reqs));
     }
     closures_in(&mut b);
