@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.47.0 (2026-11-01)
 
 Step 33: a C backend. See [docs/33-c-backend.md](docs/33-c-backend.md).
 
