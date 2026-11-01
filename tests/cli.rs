@@ -50,6 +50,10 @@ fn bad_arguments_print_usage() {
         &["test", "--nope"],
         &["test", "a.t", "f", "g"],
         &["run", "--deny-warnings", "a.t"],
+        &["build"],
+        &["build", "-o"],
+        &["build", "a.t", "b.t"],
+        &["build", "--nope", "a.t"],
     ] {
         let out = t(args);
         assert_eq!(out.status.code(), Some(2), "{args:?}");
@@ -244,15 +248,24 @@ fn tree_sitter_installs_for_helix() {
     assert!(!dir.join("parser").exists());
 }
 
-/// Runs the program `src`, as `t` does, with `input` for its stdin.
-fn run_with_input(name: &str, src: &str, input: &[u8]) -> Output {
+/// Runs the program `src`, as `t` does, with `input` for its stdin, or if
+/// `compiled`, as the program `t build` makes of it.
+fn run_with_input(name: &str, src: &str, input: &[u8], compiled: bool) -> Output {
     use std::io::Write;
-    let dir = std::env::temp_dir().join(format!("t-cli-{name}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("t-cli-{name}-{compiled}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("main.t");
     std::fs::write(&path, src).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_t"))
-        .arg(&path)
+    let mut command = Command::new(env!("CARGO_BIN_EXE_t"));
+    if compiled {
+        let exe = dir.join("main");
+        let built = t(&["build", "-o", exe.to_str().unwrap(), path.to_str().unwrap()]);
+        assert!(built.status.success(), "{built:?}");
+        command = Command::new(exe);
+    } else {
+        command.arg(&path);
+    }
+    let mut child = command
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -287,11 +300,13 @@ fn main(os: std::Os) -> Result<(), Error> with alloc {
 /// `\n` or `\r\n`; the last line needn't have one.
 #[test]
 fn programs_read_lines_of_input() {
-    let out = run_with_input("lines", ECHO, "añ\r\nb\n\nlast".as_bytes());
-    assert_eq!(out.status.code(), Some(0));
-    let stdout = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(stdout, "> 3añ\n> 1b\n> 0\n> 4last\n> bye\n");
-    assert!(out.stderr.is_empty());
+    for compiled in [false, true] {
+        let out = run_with_input("lines", ECHO, "añ\r\nb\n\nlast".as_bytes(), compiled);
+        assert_eq!(out.status.code(), Some(0));
+        let stdout = String::from_utf8(out.stdout).unwrap();
+        assert_eq!(stdout, "> 3añ\n> 1b\n> 0\n> 4last\n> bye\n");
+        assert!(out.stderr.is_empty());
+    }
 }
 
 /// Input that isn't UTF-8 is an error, which `main` gives back: it's
@@ -299,13 +314,15 @@ fn programs_read_lines_of_input() {
 /// fails.
 #[test]
 fn input_that_isnt_text_fails_the_program() {
-    let out = run_with_input("bytes", ECHO, b"ok\n\xFF\n");
-    assert_eq!(out.status.code(), Some(1));
-    assert_eq!(String::from_utf8(out.stdout).unwrap(), "> 2ok\n> ");
-    assert_eq!(
-        String::from_utf8(out.stderr).unwrap(),
-        "error: stream did not contain valid UTF-8\n"
-    );
+    for compiled in [false, true] {
+        let out = run_with_input("bytes", ECHO, b"ok\n\xFF\n", compiled);
+        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(String::from_utf8(out.stdout).unwrap(), "> 2ok\n> ");
+        assert_eq!(
+            String::from_utf8(out.stderr).unwrap(),
+            "error: stream did not contain valid UTF-8\n"
+        );
+    }
 }
 
 /// A small write succeeds into the interpreter's buffer, then fails when
@@ -327,14 +344,66 @@ fn buffered_output_errors_fail_the_command() {
         drop(reader);
         let writer: OwnedFd = writer.into();
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(file);
-        let out = Command::new(env!("CARGO_BIN_EXE_t"))
-            .arg(path)
+        let interpreted = Command::new(env!("CARGO_BIN_EXE_t"))
+            .arg(&path)
+            .stdout(std::process::Stdio::from(writer.try_clone().unwrap()))
+            .output()
+            .unwrap();
+        // Compiled, it fails the same way.
+        let exe = std::env::temp_dir().join(format!("t-cli-pipe-{}", std::process::id()));
+        let built = t(&["build", "-o", exe.to_str().unwrap(), path.to_str().unwrap()]);
+        assert!(built.status.success(), "{built:?}");
+        let compiled = Command::new(&exe)
             .stdout(std::process::Stdio::from(writer))
             .output()
             .unwrap();
-        assert_eq!(out.status.code(), Some(1), "{out:?}");
-        let stderr = String::from_utf8(out.stderr).unwrap();
-        assert!(stderr.contains(message), "{stderr}");
-        assert!(stderr.contains(&format!("{file}:")), "{stderr}");
+        std::fs::remove_file(&exe).unwrap();
+        for out in [&interpreted, &compiled] {
+            assert_eq!(out.status.code(), Some(1), "{out:?}");
+            let stderr = String::from_utf8(out.stderr.clone()).unwrap();
+            assert!(stderr.contains(message), "{stderr}");
+        }
+        assert_eq!(
+            String::from_utf8_lossy(&interpreted.stderr),
+            String::from_utf8_lossy(&compiled.stderr)
+        );
     }
+}
+
+/// `t build` makes a program, named after the file, or where `-o` says,
+/// or with `--emit-c` prints the C it would compile; a library has no
+/// `main` to build.
+#[test]
+fn build_compiles_programs() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let brew = root.join("examples/brew.t");
+    let dir = std::env::temp_dir().join(format!("t-cli-build-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_t"))
+        .args(["build", brew.to_str().unwrap()])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let ran = Command::new(dir.join("brew")).output().unwrap();
+    assert_eq!(String::from_utf8(ran.stdout).unwrap(), "3628800\n");
+    assert!(ran.status.success());
+
+    let exe = dir.join("other");
+    let out = t(&["build", "-o", exe.to_str().unwrap(), brew.to_str().unwrap()]);
+    assert!(out.status.success(), "{out:?}");
+    assert!(exe.exists());
+
+    let out = t(&["build", "--emit-c", brew.to_str().unwrap()]);
+    assert!(out.status.success(), "{out:?}");
+    let c = String::from_utf8(out.stdout).unwrap();
+    assert!(c.starts_with("/* Written by `t build`"), "{c}");
+    assert!(c.contains("int main(void)"), "{c}");
+
+    let lib = root.join("tests/t/pkg_library_alone/lib.t");
+    let out = t(&["build", lib.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.contains("has no `main` to build"), "{stderr}");
+    std::fs::remove_dir_all(&dir).unwrap();
 }

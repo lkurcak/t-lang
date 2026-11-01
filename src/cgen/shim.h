@@ -150,10 +150,10 @@ static inline int64_t t_sx(uint64_t u, unsigned w) {
     static inline T t_wrap_##N(uint64_t u) { return (T)t_sx(u, W); }
 
 #define T_UNSIGNED(N, T, W, MAX)                                                       \
-    static inline bool t_add_ok_##N(uint64_t a, uint64_t b) { return a <= MAX - b; }   \
+    static inline bool t_add_ok_##N(uint64_t a, uint64_t b) { return a <= (uint64_t)MAX - b; }   \
     static inline bool t_sub_ok_##N(uint64_t a, uint64_t b) { return a >= b; }         \
     static inline bool t_mul_ok_##N(uint64_t a, uint64_t b) {                          \
-        return b == 0 || a <= MAX / b;                                                 \
+        return b == 0 || a <= (uint64_t)MAX / b;                                       \
     }                                                                                  \
     static inline T t_add_##N(T a, T b, uint32_t s) {                                  \
         if (!t_add_ok_##N(a, b)) t_fail("integer overflow", s);                        \
@@ -184,7 +184,7 @@ static inline int64_t t_sx(uint64_t u, unsigned w) {
             if (a != 0) t_fail("integer overflow", s);                                 \
             return 0;                                                                  \
         }                                                                              \
-        if ((uint64_t)a > (MAX >> r)) t_fail("integer overflow", s);                   \
+        if ((uint64_t)a > ((uint64_t)MAX >> r)) t_fail("integer overflow", s);                   \
         return (T)((uint64_t)a << r);                                                  \
     }                                                                                  \
     static inline T t_wadd_##N(T a, T b) { return (T)((uint64_t)a + b); }              \
@@ -311,11 +311,15 @@ static void t_grow_ptrs(void ***items, uint64_t *cap, uint64_t len, uint32_t sit
 }
 
 /* Ends the program after `main` returned: flushes its output, and fails
- * if `failed`, as `t run` does. */
-static int t_exit(bool failed) {
+ * if `failed`, as `t run` does; a failed flush is shown at `site`, where
+ * `main` is. */
+static int t_exit(bool failed, uint32_t site) {
+    errno = 0;
     if (fflush(stdout) != 0) {
-        fprintf(stderr, "runtime error: cannot flush stdout: %s\n", strerror(errno));
-        return 1;
+        int e = errno;
+        t_begin();
+        fprintf(stderr, "cannot flush stdout: %s (os error %d)", strerror(e), e);
+        t_end(site);
     }
     return failed ? 1 : 0;
 }

@@ -503,7 +503,7 @@ impl<'e> Gen<'e> {
                 let _ = writeln!(
                     self.lit_defs,
                     "static uint8_t {n}[{}] = {};",
-                    bytes.len(),
+                    bytes.len() + 1,
                     c_str(bytes)
                 );
                 self.lits.insert(bytes.to_vec(), n.clone());
@@ -1461,7 +1461,8 @@ impl<'e> Gen<'e> {
             let glue = self.fn_names[glue].clone();
             let _ = writeln!(out, "    {glue}(r);");
         }
-        let _ = writeln!(out, "    return t_exit({failed});\n}}");
+        let at = self.site_id(self.decls["main"].name.span);
+        let _ = writeln!(out, "    return t_exit({failed}, {at});\n}}");
         out
     }
 }
