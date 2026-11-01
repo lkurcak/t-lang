@@ -7,7 +7,11 @@ use alloc::boxed::Box;
 
 mod noisy {
     /// Says its `id` when it's dropped whole.
-    pub struct Noisy<'a> { pub out: &'a mut std::io::Stdout, pub id: i64, pub b: alloc::boxed::Box<i64> }
+    pub struct Noisy<'a> {
+        pub out: &'a mut std::io::Stdout,
+        pub id: i64,
+        pub b: alloc::boxed::Box<i64>,
+    }
 
     impl<'a> Discard for Noisy<'a> {
         fn discard(self) {
@@ -87,7 +91,7 @@ fn variant(o: Opt, c: bool) -> i64 {
     if c {
         match o {
             Opt::Some(b) => n = sink(b),
-            Opt::None => {}
+            Opt::None => {},
         }
     }
     n
@@ -153,35 +157,35 @@ fn closure(c: bool) -> i64 with alloc {
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     let mut out = os.stdout;
-    out.line(&maybe(true))?; // expect: 1
-    out.line(&maybe(false))?; // expect: 0
-    out.line(&deferred(true))?; // expect: 2
-    out.line(&deferred(false))?; // expect: 0
-    out.line(&partly(true))?; // expect: 3
-    out.line(&partly(false))?; // expect: 0
-    out.line(&variant(Opt::Some(Box::new(4)), true))?; // expect: 4
+    out.line(&maybe(true))?;                            // expect: 1
+    out.line(&maybe(false))?;                           // expect: 0
+    out.line(&deferred(true))?;                         // expect: 2
+    out.line(&deferred(false))?;                        // expect: 0
+    out.line(&partly(true))?;                           // expect: 3
+    out.line(&partly(false))?;                          // expect: 0
+    out.line(&variant(Opt::Some(Box::new(4)), true))?;  // expect: 4
     out.line(&variant(Opt::Some(Box::new(4)), false))?; // expect: 0
-    out.line(&variant(Opt::None, true))?; // expect: 0
-    out.line(&boxed(true))?; // expect: 5
-    out.line(&boxed(false))?; // expect: 0
-    out.line(&assign(true))?; // expect: 8
-    out.line(&assign(false))?; // expect: 8
-    out.line(&rounds())?; // expect: 90
-    out.line(&array(true))?; // expect: 2
-    out.line(&array(false))?; // expect: 0
-    out.line(&closure(true))?; // expect: 9
-    out.line(&closure(false))?; // expect: 0
+    out.line(&variant(Opt::None, true))?;               // expect: 0
+    out.line(&boxed(true))?;                            // expect: 5
+    out.line(&boxed(false))?;                           // expect: 0
+    out.line(&assign(true))?;                           // expect: 8
+    out.line(&assign(false))?;                          // expect: 8
+    out.line(&rounds())?;                               // expect: 90
+    out.line(&array(true))?;                            // expect: 2
+    out.line(&array(false))?;                           // expect: 0
+    out.line(&closure(true))?;                          // expect: 9
+    out.line(&closure(false))?;                         // expect: 0
     let n = Noisy { out: &mut out, id: 10, b: Box::new(11) };
     let k = noisy::maybe_open(n, true);
     out.line(&k)?; // expect: 11
     let n = Noisy { out: &mut out, id: 12, b: Box::new(13) };
     let k = noisy::maybe_open(n, false); // expect: 12
-    out.line(&k)?; // expect: 0
+    out.line(&k)?;                       // expect: 0
     let n = Noisy { out: &mut out, id: 14, b: Box::new(15) };
     let k = noisy::maybe_part(n, true);
     out.line(&k)?; // expect: 15
     let n = Noisy { out: &mut out, id: 16, b: Box::new(17) };
     let k = noisy::maybe_part(n, false); // expect: 16
-    out.line(&k)?; // expect: 0
+    out.line(&k)?;                       // expect: 0
     Result::Ok(())
 }

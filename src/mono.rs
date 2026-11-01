@@ -25,12 +25,12 @@
 //! inherent method's after the type, as `<Point>::len`. Traits and impls
 //! are gone after this: all that's left of them is plain functions, and
 //! which types are `Copy` and `Eq`, which each type's copy says with a
-//! `#[derive(..)]`. The `eq` of a built-in or derived `Eq` is `==`, which
-//! the interpreter does field by field, calling `<T as Eq>::eq` for a type
-//! `T` with an `eq` of its own. So each `==` needs a copy of every such
-//! `eq` it may get to, through fields and what references and boxes point
-//! to (`Cx::need_eq`): the interpreter can't tell a missing one from a
-//! derived one.
+//! `#[derive(..)]`. What the program doesn't spell out, dropping a value
+//! and `==` of a built-in or derived `Eq`, becomes *glue*: MIR functions
+//! written here, per type (`glue.rs`). A `drop` in a body is of its type's
+//! drop glue, left out where that does nothing; an `==` of what isn't a
+//! number, `bool`, character or `()` calls the type's own `eq` or its glue,
+//! as `<` calls `Ord`'s method.
 //!
 //! An opaque type, `impl Fn(i64) -> i64` in a function's return type, is
 //! replaced by the type it stands for, in the copy at the type arguments
@@ -43,7 +43,10 @@
 //! copy of that, with the copy's types, and calls of what's generic naming
 //! the copies they call (`Cx::body`). A closure's MIR is copied with the
 //! function it's in. Nothing about control flow changes, so what the
-//! borrow checker proved of the generic body holds of every copy.
+//! borrow checker proved of the generic body holds of every copy. The
+//! drops the body's drop elaboration worked out (`borrowck/drops.rs`) are
+//! copied too: they depend only on what's moved, which is the same in
+//! every copy.
 //!
 //! The interpreter runs what comes out of here, and `t mono` prints it.
 

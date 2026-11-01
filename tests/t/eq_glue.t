@@ -26,34 +26,34 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let a = Pair { p: Parity { n: 1 }, name: "a" };
     let b = Pair { p: Parity { n: 3 }, name: "a" };
     let c = Pair { p: Parity { n: 2 }, name: "a" };
-    out.line(&(a == b))?; // expect: true
-    out.line(&(a == c))?; // expect: false
-    out.line(&(a != c))?; // expect: true
+    out.line(&(a == b))?;     // expect: true
+    out.line(&(a == c))?;     // expect: false
+    out.line(&(a != c))?;     // expect: true
     out.line(&(&&a == &&b))?; // expect: true
     out.line(&same(&a, &b))?; // expect: true
 
     let s = Shape::Box(Box::new(Pair { p: Parity { n: 4 }, name: "x" }), true);
     let t = Shape::Box(Box::new(Pair { p: Parity { n: 6 }, name: "x" }), true);
     let u = Shape::Box(Box::new(Pair { p: Parity { n: 6 }, name: "y" }), true);
-    out.line(&(s == t))?; // expect: true
-    out.line(&(s == u))?; // expect: false
+    out.line(&(s == t))?;                           // expect: true
+    out.line(&(s == u))?;                           // expect: false
     out.line(&(Shape::Line(1) == Shape::Line(1)))?; // expect: true
-    out.line(&(Shape::Line(1) == Shape::Dot))?; // expect: false
-    out.line(&(Shape::Dot == Shape::Dot))?; // expect: true
+    out.line(&(Shape::Line(1) == Shape::Dot))?;     // expect: false
+    out.line(&(Shape::Dot == Shape::Dot))?;         // expect: true
 
     let xs = [Parity { n: 1 }, Parity { n: 2 }];
     let ys = [Parity { n: 3 }, Parity { n: 4 }];
     let zs = [Parity { n: 3 }, Parity { n: 5 }];
-    out.line(&(xs == ys))?; // expect: true
-    out.line(&(xs == zs))?; // expect: false
+    out.line(&(xs == ys))?;                       // expect: true
+    out.line(&(xs == zs))?;                       // expect: false
     out.line(&(xs.as_slice() == ys.as_slice()))?; // expect: true
     match ys.as_slice().split_at(1) {
         Option::Some(core::slice::Split { head, .. }) => out.line(&(xs.as_slice() == head))?, // expect: false
-        Option::None => {}
+        Option::None => {},
     }
-    out.line(&("abc" == "abc"))?; // expect: true
-    out.line(&("abc" == "abd"))?; // expect: false
-    out.line(&("ab" == "abc"))?; // expect: false
+    out.line(&("abc" == "abc"))?;                   // expect: true
+    out.line(&("abc" == "abd"))?;                   // expect: false
+    out.line(&("ab" == "abc"))?;                    // expect: false
     out.line(&(Box::new(5i64) == Box::new(5i64)))?; // expect: true
     Result::Ok(())
 }

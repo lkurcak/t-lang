@@ -93,7 +93,10 @@ borrow checker, which lowers each body to MIR, checks it, and keeps it) →
 (monomorphisation: a copy of each generic function's MIR and of each type
 per type it's used at) → `interp` (an interpreter of that MIR, which checks
 memory as it goes). So what runs is what the borrow checker checked
-(docs/32-mir.md). A C backend translating the MIR comes next.
+(docs/32-mir.md). What's dropped where is worked out before running, with
+drop flags where it depends on the path, and dropping and `==` are MIR
+functions too (docs/32.1-drops.md). A C backend translating the MIR comes
+next.
 
 `t check` stops after semantic checking, including effects, refinements and
 borrows. Running a program and `t mono` then lower it for execution. The
@@ -415,8 +418,8 @@ combine features in ways nobody planned for.
 | 30 ✅ | postconditions: `ensures`, `old(..)`, on what a call leaves behind a `&mut` that can't outlive it; a field a refinement is about lent to such a call, its refinement proved again after; `List`'s `len <= cap()` as a refinement, `push` without its overflow check; `RawBuf`'s bounds as refinements | call-scoped borrows read off lifetimes; invariants broken only while no one can look (no unwinding); prophecies (RustHorn) for intrinsics; why writing through a `&` needs invariance (`Cell`) | [docs/30-postconditions.md](docs/30-postconditions.md) |
 | 31 ✅ | tests: `#[test]` functions, each run by `t test` as a program of its own, with no `Os`; `#[test(panics)]`; `assert`, `assert_eq`, `assert_ne` in the prelude, through `panic_with` and a sink that can't fail or allocate; a panic in the built-in libraries shown at the caller; `--deny-warnings` | a test as a program: isolation from no I/O and no globals, not from catching panics; one meaning, no `cfg`; caller location without `#[track_caller]` | [docs/31-tests.md](docs/31-tests.md) |
 | 32 ✅ | one MIR: the borrow checker's MIR gets what running needs (constants, operators' nodes, aggregates, match patterns, refinements, `unsafe` spans) and is kept; mono copies MIR; the interpreter runs it; the AST interpreter and `lift`'s body rewriting gone; `t mono` prints MIR | borrow checking the code that runs, not a second lowering that must agree; monomorphisation changes no control flow; generic meaning wins by construction | [docs/32-mir.md](docs/32-mir.md) |
-| 32.1 | drop elaboration: static drops, drop flags, drop and `==` glue as MIR | | next |
-| 33 | C backend: `t build`, differential tests against the interpreter | | |
+| 32.1 ✅ | drop elaboration: move paths and an init dataflow on the generic MIR after borrow checking; `drop`s where values are definitely there, drop flags where it depends on the path, open drops of what's left; drop and `==` glue as MIR functions from mono; `from_fn` and closure calls no longer drop behind the scenes | flags track exactly what's there, so elaborated drops are the old dynamic ones, in the same order, checked by the interpreter as it runs; decisions only from moves, so the same in every copy | [docs/32.1-drops.md](docs/32.1-drops.md) |
+| 33 | C backend: `t build`, differential tests against the interpreter | | next |
 
 ## License
 

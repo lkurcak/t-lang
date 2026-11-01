@@ -41,8 +41,12 @@
 //! (docs/06a.1-linear-types.md). Except on the way out of a run-time error:
 //! that's a panic, which aborts, so nothing is really dropped.
 //!
-//! Drops are still worked out as it runs: going out of scope drops what's
-//! in a slot, whatever's left of it, and an assignment what it replaces.
+//! What's dropped where was worked out before it runs, by drop elaboration
+//! (`borrowck/drops.rs`): a `drop` runs its type's glue, which
+//! monomorphisation wrote (`mono/glue.rs`), sometimes behind a drop flag.
+//! What this still sees, what's in each slot, checks that: a `drop` of what
+//! isn't all there, or a `dead`, assignment or pattern leaving behind what
+//! needed dropping, is a bug in elaboration (docs/32.1-drops.md).
 
 use crate::ast::*;
 use crate::error::{Error, Span};

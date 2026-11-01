@@ -659,13 +659,13 @@ enum Dropped {
 ///
 /// Invariant: a value is dropped only at a `Dead` (a scope's or
 /// statement's end, or a jump out of them), at an `Assign` (what the place
-/// held), and at a `Consume` (what the pattern didn't move out), as the
-/// interpreter runs this MIR (`Interp::dead`, `Interp::write`); and moved
-/// only by a `Move` operand. The interpreter checks each drop for a leak
-/// (`Interp::drop`), so a program this lets through that throws away a
-/// linear value fails there. Where the value's
-/// type has a `discard` of its own, the interpreter calls it at that drop,
-/// unless the value's been taken apart, as here; `drop_uses` makes such a
+/// held), and at a `Consume` (what the pattern didn't move out), where drop
+/// elaboration puts the `Drop`s of what's there (`drops::elaborate`); and
+/// moved only by a `Move` operand. The interpreter checks each drop for a
+/// leak (`Interp::drop`), so a program this lets through that throws away a
+/// linear value fails there. Where the value's type has a `discard` of its
+/// own, its drop glue calls it, unless the value's been taken apart, as
+/// here, which elaboration drops part by part; `drop_uses` makes such a
 /// drop a use of the value.
 ///
 /// Whether it's been used up depends on the path, so it's a dataflow

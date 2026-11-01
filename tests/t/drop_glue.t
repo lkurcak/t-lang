@@ -25,8 +25,8 @@ fn part(t: Two) -> i64 {
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut out = os.stdout;
-    out.line(&pick(true))?; // expect: 2
-    out.line(&pick(false))?; // expect: 0
+    out.line(&pick(true))?;                         // expect: 2
+    out.line(&pick(false))?;                        // expect: 0
     out.line(&part(Two { a: Box::new(3), b: 4 }))?; // expect: 3
     let same = Two { a: Box::new(5), b: 6 } == Two { a: Box::new(5), b: 6 };
     out.line(&same)?; // expect: true
