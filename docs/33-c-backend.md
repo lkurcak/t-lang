@@ -177,20 +177,13 @@ runtime error: panicked: `unwrap` of `None`
 ```
 
 The location and the line of source are written into the C, one string
-per place a panic can be shown. A panic in a library is shown where the
-program called into it (step 31's `Error::blamed_caller`), which the
-interpreter works out from its stack of calls. A compiled program has
-none to look at, so it keeps the one thing the interpreter looks for:
-`t_site`, the innermost call made from the program's own code. Each such
-call saves it, sets it, and puts it back after (D2):
-
-```text
-{ uint32_t s_ = t_site; t_site = 3; _5 = f_Option_i64_unwrap(_6); t_site = s_; }
-```
-
-That's two stores per call from the program's own code, and none from a
-library's. As a panic aborts, nothing is dropped on the way out, and
-nothing unwinds.
+per place a panic can be shown. A panic in a library was shown where the
+program called into it (step 31), and C did this with a global, `t_site`,
+saved, set and restored around every call from the program's own code
+(D2). Since step 34, a function that says `#[blame_caller]` takes the site
+of its call as a hidden last parameter instead, and the global is gone
+(see docs/34-blame-caller.md). As a panic aborts, nothing is dropped on
+the way out, and nothing unwinds.
 
 ## The runtime
 

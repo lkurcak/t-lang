@@ -426,8 +426,11 @@ there is no automatic conversion between different error types.
 Every early exit must also satisfy ownership rules. A panic aborts
 without unwinding. `assert(ok)`, `assert_eq(&a, &b)` and `assert_ne(&a,
 &b)` panic unless what they check holds; the last two say both values by
-their `Display`. A panic inside core, alloc or std is reported at the
-innermost call outside them.
+their `Display`. An abort (a panic, or running out of memory) directly in
+the body of a function marked `#[blame_caller]` is reported where that
+function was called, and further out while the caller is marked too; one
+used as a value is blamed where it became a value. core, alloc and std mark
+their functions that can abort.
 
 A `#[test]` function takes nothing and gives back `()` or `Result<(), E>`,
 as `main` may; `t test` runs each as a program of its own, which passes
