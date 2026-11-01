@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+Step 33: a C backend. See [docs/33-c-backend.md](docs/33-c-backend.md).
+
+### Added
+
+- `t build <file.t>` compiles a program, through C, to a native program
+  named after the file (`-o` names it; `--emit-c` prints the C instead).
+  It uses the C compiler `$CC`, or `cc`, and adds `$T_LANG_CFLAGS` to its
+  flags. For 64-bit Linux and macOS, for now.
+- The C translates the MIR the interpreter runs, statement by statement,
+  with no undefined behaviour whatever the program does. A compiled
+  program writes what the interpreted one does, panics and where they're
+  shown included, and ends the same way; it leaves out the interpreter's
+  checks of what the checker proved, and of `unsafe` blocks' obligations.
+- Every program of the tests, examples and docs that runs is compiled and
+  run too, and compared with the interpreter (`tests/compiled.rs`, which
+  needs a C compiler), and again in CI with AddressSanitizer and
+  UndefinedBehaviorSanitizer.
+
 ## 0.46.0 (2026-11-01)
 
 Step 32.1: drops worked out before running. See

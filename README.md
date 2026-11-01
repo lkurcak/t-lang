@@ -43,6 +43,7 @@ t examples/hello.t          # type-check and run
 t check examples/hello.t    # type-check only (--deny-warnings: fail on a warning)
 t test examples/hello.t     # type-check, then run each #[test] (see docs/31-tests.md)
 t mono examples/hello.t     # print the program after monomorphisation
+t build examples/hello.t    # compile, through C, to ./hello (see docs/33-c-backend.md)
 t fmt examples/hello.t      # format the file in place (--check: just print a diff)
 t lsp                       # language server (see below)
 ```
@@ -92,11 +93,12 @@ borrow checker, which lowers each body to MIR, checks it, and keeps it) →
 `lift` (nested functions and types moved to the top level) → `mono`
 (monomorphisation: a copy of each generic function's MIR and of each type
 per type it's used at) → `interp` (an interpreter of that MIR, which checks
-memory as it goes). So what runs is what the borrow checker checked
-(docs/32-mir.md). What's dropped where is worked out before running, with
-drop flags where it depends on the path, and dropping and `==` are MIR
-functions too (docs/32.1-drops.md). A C backend translating the MIR comes
-next.
+memory as it goes), or `cgen` (C, for `t build`, from the same MIR). So
+what runs is what the borrow checker checked (docs/32-mir.md). What's
+dropped where is worked out before running, with drop flags where it
+depends on the path, and dropping and `==` are MIR functions too
+(docs/32.1-drops.md), so the C backend translates the MIR a statement at
+a time, and decides nothing of its own (docs/33-c-backend.md).
 
 `t check` stops after semantic checking, including effects, refinements and
 borrows. Running a program and `t mono` then lower it for execution. The
@@ -273,6 +275,11 @@ change what the program does. A program of several files is a directory,
 from all of them. A `tests/t/<name>.mono` file holds what
 `t mono` prints for that test; `BLESS=1 cargo test` rewrites them.
 
+Every one of those programs that runs is also compiled by the C backend
+and run, and must do exactly what the interpreter does (`tests/compiled.rs`,
+which needs a C compiler); CI does it again with AddressSanitizer and
+UndefinedBehaviorSanitizer (`T_LANG_CFLAGS`).
+
 The T code in this README and in `docs/` is tested too (`tests/docs.rs`).
 Every ```` ```rust ```` block must parse and be formatted as `t fmt` would,
 and one with a `fn main` must run, with the same comments as above. Words
@@ -419,7 +426,7 @@ combine features in ways nobody planned for.
 | 31 ✅ | tests: `#[test]` functions, each run by `t test` as a program of its own, with no `Os`; `#[test(panics)]`; `assert`, `assert_eq`, `assert_ne` in the prelude, through `panic_with` and a sink that can't fail or allocate; a panic in the built-in libraries shown at the caller; `--deny-warnings` | a test as a program: isolation from no I/O and no globals, not from catching panics; one meaning, no `cfg`; caller location without `#[track_caller]` | [docs/31-tests.md](docs/31-tests.md) |
 | 32 ✅ | one MIR: the borrow checker's MIR gets what running needs (constants, operators' nodes, aggregates, match patterns, refinements, `unsafe` spans) and is kept; mono copies MIR; the interpreter runs it; the AST interpreter and `lift`'s body rewriting gone; `t mono` prints MIR | borrow checking the code that runs, not a second lowering that must agree; monomorphisation changes no control flow; generic meaning wins by construction | [docs/32-mir.md](docs/32-mir.md) |
 | 32.1 ✅ | drop elaboration: move paths and an init dataflow on the generic MIR after borrow checking; `drop`s where values are definitely there, drop flags where it depends on the path, open drops of what's left; drop and `==` glue as MIR functions from mono; `from_fn` and closure calls no longer drop behind the scenes | flags track exactly what's there, so elaborated drops are the old dynamic ones, in the same order, checked by the interpreter as it runs; decisions only from moves, so the same in every copy | [docs/32.1-drops.md](docs/32.1-drops.md) |
-| 33 | C backend: `t build`, differential tests against the interpreter | | next |
+| 33 ✅ | C backend: `t build` compiles, through one C11 file and `$CC`, for 64-bit Linux and macOS; the MIR translated a statement at a time, with a small runtime; panics shown as the interpreter shows them; every program of the tests and docs run both ways and compared, and again under sanitizers | one semantics, translated not reimplemented; C without undefined behaviour by construction (checked arithmetic in wider types, defined shifts, no punning, zeroed locals); proofs never trusted with more than a wrong number; differential testing | [docs/33-c-backend.md](docs/33-c-backend.md) |
 
 ## License
 

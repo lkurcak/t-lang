@@ -29,7 +29,7 @@
 //! pointer, a slice or `&str` a pointer and a length, and a type that
 //! holds nothing a byte.
 
-use crate::ast::{BinOp, FnDecl, TypeExprKind, UnOp};
+use crate::ast::{BinOp, FnDecl, UnOp};
 use crate::error::{Error, Span};
 use crate::mir::*;
 use crate::mono::{Executable, Shape, glue_name};
@@ -531,10 +531,48 @@ impl<'e> Gen<'e> {
         self.decls.get(name).is_some_and(|d| d.intrinsic.is_some())
     }
 
-    /// Function `name` as a value: a pointer to its C function.
+    /// The types of the parameters and result of intrinsic copy `name`.
+    fn intrinsic_sig(&self, name: &str) -> (Vec<Type>, Type) {
+        (self.exe.intrinsic_sig(name).cloned())
+            .unwrap_or_else(|| panic!("no signature for intrinsic `{name}`"))
+    }
+
+    /// Function `name` as a value: a pointer to its C function. An
+    /// intrinsic's takes no site: one in it is shown at `t_site`.
     fn fn_value(&mut self, name: &str) -> String {
         if self.is_intrinsic(name) {
-            panic!("intrinsic `{name}` as a value");
+            let key = format!("{name} as a value");
+            if let Some(c) = self.fn_names.get(&key) {
+                return c.clone();
+            }
+            let w = self.intrinsic(name);
+            let c = self.fresh(&format!("{w}_value"));
+            self.fn_names.insert(key, c.clone());
+            let (params, ret) = self.intrinsic_sig(name);
+            let r = self.cty(&ret);
+            let ps: Vec<String> = (params.iter().enumerate())
+                .map(|(i, p)| format!("{} a{i}", self.cty(p)))
+                .collect();
+            let args: Vec<String> = (0..params.len()).map(|i| format!("a{i}")).collect();
+            let ps = match ps.is_empty() {
+                true => "void".to_string(),
+                false => ps.join(", "),
+            };
+            let call = format!(
+                "{w}({})",
+                args.into_iter()
+                    .chain(["t_site".into()])
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            let body = match ret {
+                Type::Never => format!("    {call};\n    t_unreachable();\n"),
+                _ => format!("    return {call};\n"),
+            };
+            let sig = format!("static {r} {c}({ps})");
+            let _ = writeln!(self.protos, "{sig};");
+            let _ = writeln!(self.defs, "{sig} {{\n{body}}}\n");
+            return c;
         }
         if self.exe.body(name).is_none() {
             panic!("`{name}` has no body");
@@ -694,7 +732,7 @@ impl<'e> Gen<'e> {
     }
 
     fn assign(&mut self, cx: &Cx, place: &Place, value: &Rvalue, span: Span, out: &mut String) {
-        let (dest, dest_ty) = self.place(cx, place);
+        let (dest, _) = self.place(cx, place);
         // There's no value of `!`: what reads one can't run, and the C
         // types wouldn't fit, as the place may be of any type.
         let never = |g: &mut Gen, o: &Operand| match o.place() {
@@ -806,7 +844,7 @@ impl<'e> Gen<'e> {
                 }
             }
             Rvalue::Call(f, args) => {
-                let (call, body, never) = self.call(cx, f, args, &dest_ty, span);
+                let (call, body, never) = self.call(cx, f, args, span);
                 // What never returns gives nothing to write: its place may
                 // be of any type.
                 let assign = match never {
@@ -951,22 +989,13 @@ impl<'e> Gen<'e> {
         }
     }
 
-    /// The C call of `f` with `args`, giving a `ret`, whether it calls a
+    /// The C call of `f` with `args`, whether it calls a
     /// body (not an intrinsic), and whether what it calls never returns.
-    fn call(
-        &mut self,
-        cx: &Cx,
-        f: &Operand,
-        args: &[Operand],
-        ret: &Type,
-        span: Span,
-    ) -> (String, bool, bool) {
+    fn call(&mut self, cx: &Cx, f: &Operand, args: &[Operand], span: Span) -> (String, bool, bool) {
         match f {
             Operand::Const(Const::Fn(name, _)) if self.is_intrinsic(name) => {
-                let never = matches!(self.decls[name.as_str()].ret.kind, TypeExprKind::Never);
-                let ret = if never { Type::Never } else { ret.clone() };
-                let tys: Vec<Type> = args.iter().map(|a| self.operand_ty(cx, a)).collect();
-                let w = self.intrinsic(name, &tys, &ret);
+                let never = self.intrinsic_sig(name).1 == Type::Never;
+                let w = self.intrinsic(name);
                 let mut vals: Vec<String> = args.iter().map(|a| self.operand(cx, a)).collect();
                 vals.push(self.site(span));
                 (format!("{w}({})", vals.join(", ")), false, never)
@@ -1138,12 +1167,14 @@ impl<'e> Gen<'e> {
 
     // Intrinsics.
 
-    /// The C function for intrinsic copy `copy`, taking `params` and giving
-    /// `ret`, and then a site, where it may stop the program.
-    fn intrinsic(&mut self, copy: &str, params: &[Type], ret: &Type) -> String {
+    /// The C function for intrinsic copy `copy`, taking its parameters,
+    /// and then a site, where it may stop the program.
+    fn intrinsic(&mut self, copy: &str) -> String {
         if let Some(c) = self.fn_names.get(copy) {
             return c.clone();
         }
+        let (params, ret) = self.intrinsic_sig(copy);
+        let (params, ret) = (&params[..], &ret);
         let c = self.fresh(&format!("f_{}", sanitize(copy)));
         self.fn_names.insert(copy.to_string(), c.clone());
         let r = self.cty(ret);

@@ -80,6 +80,9 @@ pub struct Executable {
     /// The body each closure type runs, by the type's copy's name: what a
     /// backend calls, where the interpreter looks at the closure's value.
     closure_bodies: HashMap<String, String>,
+    /// The types of the parameters and result of each copy of an
+    /// intrinsic, by name: what a backend implements.
+    intrinsic_sigs: HashMap<String, (Vec<Type>, Type)>,
 }
 
 /// What a struct, enum or closure type holds, at a copy's types, for a
@@ -133,6 +136,11 @@ impl Executable {
             Type::Adt(name, _, args) => self.shapes.get(&mangle(name, args)),
             _ => None,
         }
+    }
+
+    /// The types of the parameters and result of intrinsic copy `name`.
+    pub(crate) fn intrinsic_sig(&self, name: &str) -> Option<&(Vec<Type>, Type)> {
+        self.intrinsic_sigs.get(name)
     }
 
     /// The body closure type `t` runs, if a value of it is ever made.
@@ -252,6 +260,7 @@ pub fn monomorphise(prog: crate::lift::Lifted<'_>) -> Executable {
         entry_drops: mono.entry_drops,
         shapes,
         closure_bodies: mono.closure_bodies,
+        intrinsic_sigs: mono.intrinsic_sigs,
     }
 }
 
@@ -347,6 +356,8 @@ struct Mono<'p> {
     bodies: HashMap<String, crate::mir::Body>,
     /// `Executable::closure_bodies`.
     closure_bodies: HashMap<String, String>,
+    /// `Executable::intrinsic_sigs`.
+    intrinsic_sigs: HashMap<String, (Vec<Type>, Type)>,
 }
 
 impl<'p> Mono<'p> {
@@ -456,6 +467,7 @@ impl<'p> Mono<'p> {
             reports: HashMap::new(),
             bodies: HashMap::new(),
             closure_bodies: HashMap::new(),
+            intrinsic_sigs: HashMap::new(),
         }
     }
 
@@ -683,6 +695,13 @@ impl<'p> Mono<'p> {
         {
             let b = cx.body(b, &copy);
             cx.m.bodies.insert(copy.clone(), b);
+        }
+        if f.intrinsic.is_some() {
+            let ps = (f.params.iter())
+                .map(|p| cx.resolved(unrefined(&p.ty)).erased())
+                .collect();
+            let ret = cx.resolved(unrefined(&f.ret)).erased();
+            cx.m.intrinsic_sigs.insert(copy.clone(), (ps, ret));
         }
         FnDecl {
             doc: f.doc.clone(),
