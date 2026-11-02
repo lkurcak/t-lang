@@ -1358,7 +1358,6 @@ impl Parser {
             return Ok(EffectSet {
                 items,
                 span: start.to(end),
-                braced: true,
                 with: with.is_some(),
             });
         }
@@ -1366,7 +1365,6 @@ impl Parser {
         Ok(EffectSet {
             span: start.to(item.span),
             items: vec![item],
-            braced: false,
             with: with.is_some(),
         })
     }

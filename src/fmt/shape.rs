@@ -129,7 +129,7 @@ structs! {
     AssocDef { doc, span, name, ty };
     EffectDecl { doc, span, name };
     EffectDef { doc, span, name, effects };
-    EffectSet { items, span, braced, with };
+    EffectSet { items, span, with };
     Effect { kind, span, id };
     TraitMethod { decl, provided };
     ImplDecl { doc, allows, span, module, generics, trait_name, self_ty, assoc, effects, methods };
