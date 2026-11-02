@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+Step 35: the libraries a package uses. See
+[docs/35-libraries.md](docs/35-libraries.md).
+
+### Added
+
+- `libraries = ["alloc", "std"]` in a `t.toml` lists the built-in
+  libraries a package uses, beside core, which every package has.
+- Warning `unused_dependencies`: a library or package that a `t.toml`
+  lists and nothing in the package names.
+- Errors: a path starting with a library the package's `t.toml` doesn't
+  list (with a fix that lists it); `core`, an unknown library, or one
+  twice in `libraries`.
+
+### Changed
+
+- A package with a `t.toml` has only the libraries it lists: with no
+  `libraries`, core alone. Add `libraries = ["alloc", "std"]` (or less)
+  to an existing `t.toml`. A package with no `t.toml` has all three, as
+  before.
+
 ### Fixed
 
 - `t fmt` refused files with one effect in braces, `with {panic}` or
