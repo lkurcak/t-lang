@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.49.0 (2026-11-02)
 
 Step 35: the libraries a package uses. See
 [docs/35-libraries.md](docs/35-libraries.md).
