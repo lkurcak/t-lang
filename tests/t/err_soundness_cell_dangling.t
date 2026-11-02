@@ -13,4 +13,4 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     out.line(&c.get())?;
     Result::Ok(())
 }
-// error: does not live long enough
+// error: `s` doesn't live long enough

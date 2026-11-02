@@ -6,4 +6,5 @@ struct Ticket { n: i64 }
 fn main() {
     let c = Cell::new(Ticket { n: 1 });
 }
-// error: Discard
+// warning: unused variable `c`
+// error: never used up

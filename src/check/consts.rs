@@ -4,7 +4,9 @@
 //!
 //! - Its type must be *plain data* (`Checker::plain`): what can be worked
 //!   out while compiling and then made again at each use, so nothing on
-//!   the heap, nothing mutable, no function. Lemma C4.
+//!   the heap, nothing mutable, no function. Lemma C4. And it must be
+//!   *frozen*, no `Cell` in it (`crate::types::frozen`, lemma K5 of
+//!   docs/37-cell.md).
 //! - Its initializer may panic and do nothing else (`const_effects`):
 //!   no `alloc`, no `unsafe`, and no I/O, which needs the `Os`. Whatever
 //!   it does, then, the interpreter can do while compiling, which is when
@@ -35,6 +37,19 @@ impl Checker {
 
     /// Checks that const `f`, of type `ty`, is plain data.
     pub(super) fn const_type(&self, f: &FnDecl, ty: &Type) -> Result<(), Error> {
+        // Frozen first, for the better message: plain data is frozen, as
+        // nothing in a const may change through a `&` (lemma K5 of
+        // docs/37-cell.md), which a `&CONST` that lives for ever needs.
+        if !crate::types::frozen(&self.adts, ty) {
+            return Err(Error::ty(
+                f.ret.span,
+                format!(
+                    "a const can't be of type `{}`: a const is frozen, and a `Cell` in it could \
+                     be changed through a `&`",
+                    f.ret
+                ),
+            ));
+        }
         if self.plain(ty, &mut HashSet::new()) {
             return Ok(());
         }

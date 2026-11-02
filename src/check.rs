@@ -165,6 +165,12 @@ pub const INTRINSIC_TYPES: &[&str] = &[
 /// that's invariant in its parameter (lemma R3 of docs/23-arenas.md).
 pub const ARENA: &str = "alloc::arena::Arena";
 
+/// The symbol of the core library's `Cell`: a struct, whose one field is
+/// private to `core::cell`, but invariant in its parameter, which its field
+/// doesn't show, as its intrinsic `replace` puts a `T` in through a `&`
+/// (lemma K2 of docs/37-cell.md). It's what isn't *frozen* (lemma K5).
+pub const CELL: &str = "core::cell::Cell";
+
 /// The symbol of the alloc library's `Box`, which is `Type::Box`.
 pub const BOX: &str = "alloc::boxed::Box";
 

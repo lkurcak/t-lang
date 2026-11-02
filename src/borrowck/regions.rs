@@ -126,6 +126,14 @@ impl AdtInfo {
                     changed |= variances.insert((*n).clone(), all.clone()) != Some(all);
                     continue;
                 }
+                // `Cell<T>`'s field is a `T`, but `replace` puts one in
+                // through a `&`, so it's invariant too (lemma K2 of
+                // docs/37-cell.md).
+                if n.as_str() == crate::check::CELL {
+                    let all = vec![Variance::Inv; d.lifetimes.len() + d.params.len()];
+                    changed |= variances.insert((*n).clone(), all.clone()) != Some(all);
+                    continue;
+                }
                 let mut v = variances[*n].clone();
                 for t in field_types(adts, n) {
                     vary(&t, Variance::Co, d, &variances, &mut v);
