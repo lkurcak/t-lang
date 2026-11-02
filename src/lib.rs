@@ -112,8 +112,8 @@ pub fn check_files(path: &Path, src: &str, read: load::Read) -> Checked {
     allow::apply(&program, &sources, &mut warnings);
     // The libraries' are their own business: what a program doesn't use
     // of one isn't dead, for one. So are the dependencies', which checking
-    // each on its own shows.
-    warnings.retain(|w| !sources.in_others(w.span.start));
+    // each on its own shows. The program's `t.toml` is its own.
+    warnings.retain(|w| sources.in_program(w.span.start));
     let mut result = result;
     // Messages name the prelude's traits as programs do.
     let shorten = |t: &str| info.traits.shorten(t);

@@ -141,6 +141,20 @@ impl Sources {
         self.file_at(offset).kind != Kind::Program
     }
 
+    /// Is `offset` in one of the program's own files, or its `t.toml`:
+    /// not in a library's, nor a dependency's file or `t.toml`?
+    pub fn in_program(&self, offset: usize) -> bool {
+        let file = self.file_at(offset);
+        match file.kind {
+            Kind::Program => true,
+            Kind::Manifest => {
+                let first = self.first().path.parent().map(|d| d.join("t.toml"));
+                first.is_some_and(|f| f == file.path)
+            }
+            _ => false,
+        }
+    }
+
     /// The file at `path`, if it's one of these.
     pub fn file(&self, path: &Path) -> Option<&File> {
         self.files.iter().find(|f| f.path == path)
@@ -192,6 +206,19 @@ impl Sources {
         self.program_files()
             .iter()
             .map(|f| crate::error::Fix::new("", self.edits_in(f, edits)).apply(self.src(f)))
+            .collect()
+    }
+
+    /// Each file that isn't a library's, with `edits` made, by its path:
+    /// the program's, its dependencies' and their `t.toml`s. A fix can be
+    /// in any of them: one that lists a library edits a `t.toml`.
+    pub fn edited_files(&self, edits: &[Edit]) -> Vec<(PathBuf, String)> {
+        (self.files.iter())
+            .filter(|f| !f.is_library())
+            .map(|f| {
+                let fix = crate::error::Fix::new("", self.edits_in(f, edits));
+                (f.path.clone(), fix.apply(self.src(f)))
+            })
             .collect()
     }
 

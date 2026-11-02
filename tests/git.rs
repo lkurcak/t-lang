@@ -70,8 +70,10 @@ fn dep(name: &str, repo: &Path, rev: &str) -> String {
     format!("{name} = {{ git = \"{}\", rev = \"{rev}\" }}\n", url(repo))
 }
 
+/// A `t.toml` of git dependencies, for a package that uses std, as the
+/// programs here do to print.
 fn manifest(deps: &[String]) -> String {
-    format!("[dependencies]\n{}", deps.concat())
+    format!("libraries = [\"std\"]\n\n[dependencies]\n{}", deps.concat())
 }
 
 /// Runs `t` on `args` in `dir`, with `cache` as its cache.

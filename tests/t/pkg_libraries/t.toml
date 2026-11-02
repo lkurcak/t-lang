@@ -1,0 +1,3 @@
+[dependencies]
+host = { path = "host" }
+pure = { path = "pure" }

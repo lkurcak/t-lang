@@ -76,6 +76,8 @@ file `lib.t` is where a library starts.
 The built-in libraries are still there for every package without asking:
 `std`'s I/O needs the `Os` that only `main` is given (docs/19-io.md), so a
 library that's handed nothing can't do I/O behind its dependents' backs.
+(Since step 35, a `t.toml` also lists the libraries its package uses, as
+`libraries = ["alloc", "std"]`: docs/35-libraries.md.)
 
 ## Names and identity
 

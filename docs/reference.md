@@ -450,7 +450,11 @@ and exits unsuccessfully when it returns `Err`; `E` must implement
 | [`alloc`](../alloc/lib.t) | `boxed::Box`, `list::List`, `string::String`, and `arena::Arena` |
 | [`std`](../std/lib.t) | `Os` and `io` streams |
 
-The compiler embeds these libraries. The
+The compiler embeds these libraries. Every package has `core`. A
+package with a `t.toml` beside its root has only the other libraries
+that file lists, as `libraries = ["alloc", "std"]`, and a path starting
+with one it doesn't list is an error; a program with no `t.toml` has all
+three (see [libraries](35-libraries.md)). The
 [`core` prelude](../core/prelude.t) supplies names including `Option`,
 `Result`, `Copy`, `Discard`, `Iterator`, and the `Fn` traits. Import
 allocating containers explicitly, for example `use alloc::list::List;`.

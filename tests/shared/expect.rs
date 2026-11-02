@@ -224,8 +224,7 @@ fn check_tests(files: &Files, want: &[String]) -> Result<(), String> {
 /// The files of `run`'s program with `fix` made, and those it didn't read
 /// as they were.
 pub fn fixed(files: &Files, run: &RunResult, fix: &t_lang::error::Fix) -> Files {
-    let read = run.sources.program_files().iter().map(|f| f.path.clone());
-    let mut out: Files = read.zip(run.sources.edited(&fix.edits)).collect();
+    let mut out: Files = run.sources.edited_files(&fix.edits);
     let unread: Files = files
         .iter()
         .filter(|(p, _)| out.iter().all(|(q, _)| p != q))

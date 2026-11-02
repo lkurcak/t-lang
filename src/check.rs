@@ -1001,6 +1001,7 @@ impl Checker {
         resolved?;
         let resolved = std::mem::take(&mut self.modules.warnings);
         self.warnings.extend(resolved);
+        self.unused_dependencies(root);
         let stray = &prog.stray_docs[from.stray_docs..];
         self.warnings.extend(stray.iter().map(unused_doc));
         self.fn_symbols = scope::symbols(prog, &self.modules, &self.fn_symbols);
@@ -1024,6 +1025,49 @@ impl Checker {
         let result = self.program(prog, root);
         self.type_notes(prog);
         result
+    }
+
+    /// Warns of each library and package that the `t.toml` of the package
+    /// whose root is `root` lists, and that no path in it names: a path
+    /// is the only way to reach one (see docs/35-libraries.md, L3), so
+    /// the package doesn't need it.
+    fn unused_dependencies(&mut self, root: usize) {
+        let modules = &self.modules;
+        let Some(manifest) = modules.manifests.get(&root) else {
+            return;
+        };
+        let used: HashSet<usize> = modules.module_refs[self.refs_from..]
+            .iter()
+            .map(|&(_, m)| m)
+            .collect();
+        let deps = modules.deps.get(&root);
+        for (i, (name, at)) in manifest.names.iter().enumerate() {
+            let library = i < manifest.libraries;
+            let target = match library {
+                true => modules.library(name),
+                false => deps
+                    .and_then(|d| d.iter().find(|(n, _)| n == name))
+                    .map(|&(_, m)| m),
+            };
+            if target.is_some_and(|m| !used.contains(&m)) {
+                let message = match library {
+                    true => format!(
+                        "the `{name}` library is in `libraries`, but nothing in this package \
+                         names it"
+                    ),
+                    false => format!(
+                        "package `{name}` is in `dependencies`, but nothing in this package names \
+                         it"
+                    ),
+                };
+                self.warnings.push(Warning {
+                    lint: crate::error::Lint::UnusedDependencies,
+                    span: *at,
+                    message,
+                    fixes: Vec::new(),
+                });
+            }
+        }
     }
 
     fn program(&mut self, prog: &Program, root: usize) -> Result<(), Error> {

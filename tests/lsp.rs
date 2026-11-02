@@ -2192,6 +2192,71 @@ fn packages_are_checked_with_their_program() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// A library the `t.toml` doesn't list is an error where it's named,
+/// whose quick fix lists it there; one it lists and nothing names is a
+/// warning in the `t.toml`.
+#[test]
+fn libraries_are_listed_in_the_manifest() {
+    let dir = std::env::temp_dir().join(format!("t-lsp-libraries-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = "fn main(os: std::Os) {}\n";
+    std::fs::write(dir.join("main.t"), main).unwrap();
+    std::fs::write(dir.join("t.toml"), "libraries = [\"alloc\"]\n").unwrap();
+    let main_uri = file_uri(&dir.join("main.t"));
+    let toml_uri = file_uri(&dir.join("t.toml"));
+
+    let (child, mut c) = start();
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": main_uri, "languageId": "t", "version": 1, "text": main}
+        }}),
+    );
+    let diags = diagnostics_for(&mut c, &main_uri);
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    let d = &diags[0];
+    let cursor = json!({"line": 0, "character": 13});
+    c.send(
+        json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/codeAction", "params": {
+            "textDocument": {"uri": main_uri},
+            "range": {"start": cursor, "end": cursor},
+            "context": {"diagnostics": [d]}
+        }}),
+    );
+    let actions = c.response(2)["result"].clone();
+    assert_eq!(
+        actions[0]["title"], "list `std` in `libraries`",
+        "{actions}"
+    );
+    assert_eq!(
+        actions[0]["edit"]["changes"][&toml_uri],
+        json!([{
+            "range": {"start": {"line": 0, "character": 20}, "end": {"line": 0, "character": 20}},
+            "newText": ", \"std\""
+        }]),
+        "{actions}"
+    );
+
+    // Listed, `std` is fine, and `alloc` is listed for nothing.
+    std::fs::write(dir.join("t.toml"), "libraries = [\"alloc\", \"std\"]\n").unwrap();
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "workspace/didChangeWatchedFiles", "params": {
+            "changes": [{"uri": toml_uri, "type": 2}]
+        }}),
+    );
+    let diags = diagnostics_for(&mut c, &toml_uri);
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    assert_eq!(diags[0]["code"], "unused_dependencies", "{diags:?}");
+    assert_eq!(
+        diags[0]["range"]["start"],
+        json!({"line": 0, "character": 13}),
+        "{diags:?}"
+    );
+
+    stop(child, c);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 fn closing_unsaved_files_refreshes_the_programs_diagnostics() {
     let dir = std::env::temp_dir().join(format!("t-lsp-close-{}", std::process::id()));

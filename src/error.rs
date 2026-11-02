@@ -175,7 +175,7 @@ impl Warning {
     /// Renders the warning rustc-style. With `note`, it ends by saying how
     /// to turn its lint off, as it should the first time the lint comes up.
     pub fn render(&self, path: &str, src: &str, note: bool) -> String {
-        let note = note.then(|| format!("`#[allow({})]` turns this off", self.lint.name()));
+        let note = note.then(|| self.lint.off());
         let (span, fixes) = (self.span, &self.fixes);
         render("warning", span, &self.message, fixes, note, path, src)
     }
@@ -190,7 +190,7 @@ impl Warning {
                 let first = !seen.contains(&w.lint);
                 seen.push(w.lint);
                 let (path, src, span) = in_file(sources, w.span);
-                let note = first.then(|| format!("`#[allow({})]` turns this off", w.lint.name()));
+                let note = first.then(|| w.lint.off());
                 render("warning", span, &w.message, &w.fixes, note, &path, src)
             })
             .collect()
@@ -266,6 +266,9 @@ pub enum Lint {
     /// A statement whose value is a `Result` that may be an `Err`, which
     /// is thrown away unseen.
     UnusedResults,
+    /// A library or package a `t.toml` lists that nothing in the package
+    /// names.
+    UnusedDependencies,
 }
 
 impl Lint {
@@ -292,10 +295,11 @@ impl Lint {
             Lint::MissingSafetyComments => "missing_safety_comments",
             Lint::UnwrapInfallible => "unwrap_infallible",
             Lint::UnusedResults => "unused_results",
+            Lint::UnusedDependencies => "unused_dependencies",
         }
     }
 
-    pub const ALL: [Lint; 21] = [
+    pub const ALL: [Lint; 22] = [
         Lint::UnreachablePatterns,
         Lint::OverlappingRanges,
         Lint::MergeableRanges,
@@ -317,7 +321,18 @@ impl Lint {
         Lint::MissingSafetyComments,
         Lint::UnwrapInfallible,
         Lint::UnusedResults,
+        Lint::UnusedDependencies,
     ];
+
+    /// How to turn the lint off, as a warning's note says. One about a
+    /// `t.toml` can't be: no attribute is on a `t.toml`, and what's
+    /// listed there is the package's to change.
+    pub fn off(self) -> String {
+        match self {
+            Lint::UnusedDependencies => "taking it out of the `t.toml` fixes this".to_string(),
+            lint => format!("`#[allow({})]` turns this off", lint.name()),
+        }
+    }
 
     pub fn from_name(name: &str) -> Option<Lint> {
         Lint::ALL.into_iter().find(|l| l.name() == name)
