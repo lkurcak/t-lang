@@ -226,6 +226,8 @@ pub(super) enum PredName {
     /// A const parameter of the function, or of the struct, in a field's
     /// refinement, by name.
     Const(String),
+    /// A const item, by symbol: its value (see `Walk::const_item`).
+    Item(String),
 }
 
 /// What a name a predicate is checked in names: a value, of this type,
@@ -696,6 +698,28 @@ impl Checker {
                          which of its values it meant"
                     ),
                 )),
+                // A const, of an integer type or `bool`.
+                None if let Some((symbol, t, def)) = self.pred_const(name, e.id) => {
+                    let sort = match t {
+                        Type::Int(_) | Type::Char => Sort::Int,
+                        Type::Bool => Sort::Bool,
+                        t => {
+                            return Err(Error::ty(
+                                e.span,
+                                format!(
+                                    "a refinement can't name `{name}`, a const of type `{}`: only \
+                                     integers and `bool`s are in its logic",
+                                    t.erased()
+                                ),
+                            ));
+                        }
+                    };
+                    self.info.pred_consts.insert(e.id, symbol.clone());
+                    self.pred_names.insert(e.id, PredName::Item(symbol));
+                    let kind = super::NoteKind::Const(name.clone());
+                    self.note(e.span, kind, Some(t), Some(def));
+                    Ok(sort)
+                }
                 None => Err(Error::ty(
                     e.span,
                     format!("cannot find value `{name}` in this refinement"),
@@ -1143,9 +1167,21 @@ impl Checker {
             w.ensures = Some((sig.ensures.clone(), sig.name.clone()));
         }
         let v = w.expr(&f.body)?;
+        let mut known = None;
+        if f.is_const() && w.reachable {
+            known = match &v {
+                Val::Int(l) => l.as_constant().map(Known::Int),
+                Val::Bool(Formula::True) => Some(Known::Bool(true)),
+                Val::Bool(Formula::False) => Some(Known::Bool(false)),
+                _ => None,
+            };
+        }
         w.result(v, super::expr::result_span(&f.body))?;
         let proved = std::mem::take(&mut w.proved);
         let failures = std::mem::take(&mut w.failures);
+        if let Some(k) = known {
+            self.const_values.insert(symbol.clone(), k);
+        }
         for (node, failure) in failures {
             let span = self
                 .effect_sites
@@ -1254,6 +1290,18 @@ fn constant(e: &Expr) -> bool {
 /// box, as what it points to, or anything else, of which nothing is known.
 /// But for those, each value is an *object*, which says which value it
 /// is, so what a measure gives of it (`Walk::measured`).
+/// What the logic knows a const's value is, from its initializer: when
+/// the value it worked out for the body is a constant, as it is of a
+/// literal, or arithmetic on those and on other consts it knows (lemma C5
+/// of docs/36-consts.md). Of a call, it's what the function's type says,
+/// so nothing, without a refinement. The interpreter, which works out the
+/// value while compiling, checks it's this (`crate::consts`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Known {
+    Int(i128),
+    Bool(bool),
+}
+
 #[derive(Debug, Clone)]
 enum Val {
     Int(Lin),
@@ -2322,6 +2370,10 @@ impl Walk<'_> {
                     None => self.length(&Type::Param(name.clone())),
                 },
                 (PredName::Const(name), Env::Here) => self.length(&Type::Param(name.clone())),
+                (PredName::Item(symbol), _) => {
+                    let symbol = symbol.clone();
+                    self.const_item(&symbol)
+                }
             },
             ExprKind::Unary(UnOp::Neg, x) => Val::Int(
                 int(self.term(x, binder, env)?)?
@@ -2437,7 +2489,10 @@ impl Walk<'_> {
         }
         let entry = self.entry.clone();
         if let Some((r, name)) = self.ret.clone() {
-            let what = format!("the result of `{name}`");
+            let what = match self.cx.current.is_some_and(|id| self.cx.fns[id.0].konst) {
+                true => format!("the value of const `{name}`"),
+                false => format!("the result of `{name}`"),
+            };
             self.need(&r, &v, Env::Post(&entry, None, &[]), span, what)?;
         }
         if let Some((ensures, name)) = self.ensures.clone() {
@@ -2818,11 +2873,14 @@ impl Walk<'_> {
     }
 
     /// The value of length `n`: a `Nat`'s number, or a const parameter's
-    /// variable, one for the whole function, as the caller picks it once.
+    /// variable, one for the whole function, as the caller picks it once;
+    /// or a const item's value, if it's known, and else a variable of its
+    /// own the same way.
     fn length(&mut self, n: &Type) -> Val {
         let usize = Type::Int(crate::types::IntTy::Usize);
         match n {
             Type::Nat(k) => Val::Int(Lin::constant(i128::from(*k))),
+            Type::Const(symbol) => self.const_item(symbol),
             Type::Param(name) => {
                 if let Some(v) = self.consts.get(name) {
                     return v.clone();
@@ -2833,6 +2891,44 @@ impl Walk<'_> {
             }
             _ => self.unknown(&usize),
         }
+    }
+
+    /// The value of const `symbol`, wherever it's named, in a body, a
+    /// length or a predicate: what's known of it (`Known`), or else one
+    /// variable for the whole function, of the const's type, of which what
+    /// its type's refinement says holds.
+    fn const_item(&mut self, symbol: &str) -> Val {
+        match self.cx.const_values.get(symbol) {
+            Some(Known::Int(k)) => return Val::Int(Lin::constant(*k)),
+            Some(Known::Bool(true)) => return Val::Bool(Formula::True),
+            Some(Known::Bool(false)) => return Val::Bool(Formula::False),
+            None => {}
+        }
+        // Not a name a const parameter can have.
+        let key = format!("const {symbol}");
+        if let Some(v) = self.consts.get(&key) {
+            return v.clone();
+        }
+        let ty = match self
+            .cx
+            .fns
+            .iter()
+            .find(|f| f.symbol == symbol)
+            .map(|f| &f.scheme.ty)
+        {
+            Some(Type::Fn(sig)) => (*sig.ret).clone(),
+            _ => return Val::Other,
+        };
+        let v = self.unknown(&ty);
+        // It holds everywhere in the function, not only on the path where
+        // the const is first named, which a branch would forget.
+        if let Some(r) = self.cx.refined.get(symbol).and_then(|s| s.ret.clone())
+            && let Some(f) = self.pred(&r, &v, Env::Post(&[], None, &[]))
+        {
+            self.laws.push(f);
+        }
+        self.consts.insert(key, v.clone());
+        v
     }
 
     /// What struct type `t`'s type parameters are, by name.
@@ -3170,6 +3266,12 @@ impl Walk<'_> {
                     Ok(Val::Other)
                 }
                 Some(Res::Const(name)) => Ok(self.length(&Type::Param(name.clone()))),
+                // A const: what's known of its value, or else what its type
+                // says, as of a call of a function with no parameters.
+                Some(Res::Item(symbol)) => {
+                    let symbol = symbol.clone();
+                    Ok(self.const_item(&symbol))
+                }
                 _ => Ok(Val::Other),
             },
             ExprKind::Array(items) => {

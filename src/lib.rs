@@ -12,6 +12,7 @@ pub mod ast;
 mod borrowck;
 pub mod cgen;
 pub mod check;
+mod consts;
 mod doc;
 pub mod error;
 pub mod exhaust;

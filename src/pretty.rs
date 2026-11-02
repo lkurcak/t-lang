@@ -28,6 +28,13 @@ impl fmt::Display for Program {
 /// prints it, before its MIR.
 pub(crate) fn fn_head(f: &FnDecl) -> String {
     let mut p = Printer::default();
+    if f.is_const() {
+        return format!(
+            "const {}: {} = ",
+            f.name.name,
+            render(&p.ty(&f.ret)).trim_end()
+        );
+    }
     let head = p.signature(f) + p.wheres(f.effects.as_ref(), &f.generics, &f.ensures, false);
     format!("{} ", render(&head).trim_end())
 }
@@ -863,6 +870,12 @@ impl Printer<'_> {
     }
 
     fn fn_decl(&mut self, f: &FnDecl) -> Doc {
+        if f.is_const() {
+            let doc = self.lead(f.doc.as_ref(), &f.allows, fn_start(f));
+            let ty = self.ty(&f.ret);
+            let value = self.expr(&f.body, 0, Ctx::default());
+            return doc + vis(f.vis) + "const " + &f.name.name + ": " + ty + " = " + value + ";";
+        }
         match f.intrinsic {
             Some(_) => {
                 self.signature(f)

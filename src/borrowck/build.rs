@@ -981,6 +981,20 @@ impl<'a> Builder<'a> {
             };
         }
         let (o, t) = match &e.kind {
+            // A const's value is what calling it gives: a function of no
+            // parameters, whose body is its value once that's worked out
+            // (see `crate::consts`).
+            ExprKind::Var(_, _)
+                if let Some(Res::Item(symbol)) = self.cx.typed().vars.get(&e.id) =>
+            {
+                let symbol = symbol.clone();
+                let t = self.ty(e);
+                let tmp = self.temp(t.clone(), e.span);
+                let ft = self.fn_value(&symbol, &[], e.span);
+                let f = Operand::Const(self.fn_const(&symbol, &[]));
+                self.call_into(f, ft, None, &[], &Place::local(tmp), e.span);
+                (Operand::Move(Place::local(tmp)), t)
+            }
             ExprKind::Var(_, _) => {
                 let (c, t) = match &self.cx.typed().vars[&e.id] {
                     Res::Fn(symbol, targs) => (
@@ -992,6 +1006,7 @@ impl<'a> Builder<'a> {
                         Type::Int(crate::types::IntTy::Usize),
                     ),
                     Res::Local(_) => unreachable!("a place"),
+                    Res::Item(_) => unreachable!("lowered above"),
                 };
                 (Operand::Const(c), t)
             }

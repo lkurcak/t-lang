@@ -86,6 +86,26 @@ machines. A literal of either type must fit on both. See
 [integers](11-integers.md), [bits](12-bits.md),
 [strings](13-strings.md), and [arrays](22-arrays.md) for the detailed rules.
 
+A `const` item names a value fixed while compiling. Its type is written,
+and is plain data: integers, `bool`, `char`, `()`, `&str`, `&[u8]`, and
+arrays, structs and enums of those. The initializer may call functions
+and loop, but may only panic: no allocation and no `unsafe`. It runs on a
+32-bit and a 64-bit machine, which must agree, and a panic there is a
+compile error. A const can be an array length, where it is equal only to
+itself, and can be named in refinements. See [consts](36-consts.md).
+
+```rust
+const SIZE: usize = 4;
+
+fn last(a: &[u8; SIZE]) -> u8 { a[SIZE - 1] }
+
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    let a = [9u8; SIZE];
+    out.line(&last(&a)) // expect: 9
+}
+```
+
 ## Functions and inference
 
 Named functions declare their parameter types and result type. Omitting

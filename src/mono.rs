@@ -264,6 +264,33 @@ pub fn monomorphise(prog: crate::lift::Lifted<'_>) -> Executable {
     }
 }
 
+/// `prog`, which has been checked and lifted, without generics, as far as
+/// const `root` needs it: only what it reaches, for working out its value
+/// (see `crate::consts`). With the consts it needs whose values aren't
+/// known yet, as lengths or by calls: if there are any, what this makes
+/// doesn't do what it would, and is only for finding them.
+pub(crate) fn rooted(
+    prog: &Program,
+    info: &Info,
+    root: &str,
+) -> (Executable, std::collections::BTreeSet<String>) {
+    let mut mono = Mono::new(prog, info);
+    mono.roots = Some(vec![root.to_string()]);
+    let program = mono.run();
+    let shapes = mono.shapes();
+    let missing = mono.missing.take();
+    let exe = Executable {
+        program,
+        bodies: mono.bodies,
+        reports: mono.reports,
+        entry_drops: mono.entry_drops,
+        shapes,
+        closure_bodies: mono.closure_bodies,
+        intrinsic_sigs: mono.intrinsic_sigs,
+    };
+    (exe, missing)
+}
+
 /// The name of the copy of the closure made by the lambda with node `id`,
 /// in the copy of a function `root`.
 pub(crate) fn closure_copy(root: &str, id: NodeId) -> String {
@@ -358,6 +385,13 @@ struct Mono<'p> {
     closure_bodies: HashMap<String, String>,
     /// `Executable::intrinsic_sigs`.
     intrinsic_sigs: HashMap<String, (Vec<Type>, Type)>,
+    /// What to start from, if it's not everything that isn't generic: to
+    /// work out a const's value, only what it needs (`crate::consts`).
+    /// Then everything is copied only where it's needed.
+    roots: Option<Vec<String>>,
+    /// The consts whose values were needed, as lengths or by calls, but
+    /// aren't known yet, so that they can be worked out first.
+    missing: std::cell::RefCell<std::collections::BTreeSet<String>>,
 }
 
 impl<'p> Mono<'p> {
@@ -419,6 +453,25 @@ impl<'p> Mono<'p> {
         shapes
     }
 
+    /// `t` with each const in it as a length (`Type::Const`) its value,
+    /// or, if that isn't known yet, noted `missing`, and 0 for now: a copy
+    /// with that is only made to find what's missing, and never runs.
+    fn lengths(&self, t: &Type) -> Type {
+        match t {
+            Type::Const(symbol) => match self.info.const_values.get(symbol) {
+                Some(crate::consts::Value::Int(n)) => {
+                    Type::Nat(u64::try_from(*n).expect("a `usize`"))
+                }
+                Some(v) => unreachable!("a length of `{v:?}`"),
+                None => {
+                    self.missing.borrow_mut().insert(symbol.clone());
+                    Type::Nat(0)
+                }
+            },
+            t => t.map(|p| self.lengths(p)),
+        }
+    }
+
     /// An id for a node made here (see `NodeId`).
     fn id(&mut self) -> NodeId {
         self.next_id += 1;
@@ -468,6 +521,8 @@ impl<'p> Mono<'p> {
             bodies: HashMap::new(),
             closure_bodies: HashMap::new(),
             intrinsic_sigs: HashMap::new(),
+            roots: None,
+            missing: Default::default(),
         }
     }
 
@@ -476,7 +531,12 @@ impl<'p> Mono<'p> {
         // Non-generic functions and types are where it starts: each is
         // its own one copy, and from them come all the others.
         let mut fns: HashMap<String, FnDecl> = HashMap::new();
-        for f in prog.fns.iter().filter(|f| f.generics.types.is_empty()) {
+        let rooted = self.roots.clone();
+        for r in rooted.iter().flatten() {
+            self.named_copy(r, Vec::new(), r.clone());
+        }
+        let eager = (prog.fns.iter()).filter(|f| rooted.is_none() && f.generics.types.is_empty());
+        for f in eager {
             fns.insert(
                 f.name.name.clone(),
                 self.function(f, &Subst::default(), &Params::default(), None),
@@ -485,10 +545,13 @@ impl<'p> Mono<'p> {
         // The report of `main`'s error, and each test's, which the
         // interpreter calls.
         let entries = (self.info.main_error.clone())
+            .filter(|_| rooted.is_none())
             .map(|e| ("main".to_string(), e))
             .into_iter()
             .chain(
-                (self.info.tests.iter()).filter_map(|t| Some((t.symbol.clone(), t.error.clone()?))),
+                (self.info.tests.iter())
+                    .filter(|_| rooted.is_none())
+                    .filter_map(|t| Some((t.symbol.clone(), t.error.clone()?))),
             );
         let entries: Vec<(String, Type)> = entries.collect();
         let mut roots = Vec::new();
@@ -502,7 +565,7 @@ impl<'p> Mono<'p> {
             .types
             .iter()
             .filter(|d| !matches!(d, TypeDecl::Alias(_)));
-        for d in adts.filter(|d| d.type_params().is_empty()) {
+        for d in adts.filter(|d| rooted.is_none() && d.type_params().is_empty()) {
             types.insert(d.name().name.clone(), self.type_decl(d, &[]));
         }
         loop {
@@ -570,6 +633,7 @@ impl<'p> Mono<'p> {
         for copy in &self.copy_order {
             out.fns.extend(fns.remove(copy));
         }
+        roots.extend(rooted.into_iter().flatten());
         self.without_unused_core(&mut out, roots);
         out
     }
@@ -665,7 +729,8 @@ impl<'p> Mono<'p> {
     /// it's new.
     fn type_copy(&mut self, name: &str, args: Vec<Type>) -> String {
         let mangled = mangle(name, &args);
-        if !args.is_empty() {
+        // Rooted, one that isn't generic is made only once it's needed too.
+        if !args.is_empty() || self.roots.is_some() {
             let copies = self.type_copies.entry(name.to_string()).or_default();
             if !copies.contains(&args) {
                 copies.push(args.clone());
@@ -747,6 +812,7 @@ impl<'p> Mono<'p> {
             measure: f.measure,
             test: f.test,
             blame_caller: f.blame_caller,
+            konst: f.konst,
             ensures: f.ensures.iter().map(|e| *cx.pred(e)).collect(),
         }
     }
@@ -962,6 +1028,32 @@ impl Cx<'_, '_, '_> {
                 }
                 return;
             }
+            if let Some(symbol) = cx.m.info.pred_consts.get(&e.id) {
+                use crate::consts::Value;
+                match cx.m.info.const_values.get(symbol) {
+                    Some(Value::Int(n)) => {
+                        let lit = |n: i128| ExprKind::Int(n.unsigned_abs() as u64, None);
+                        e.kind = match *n < 0 {
+                            false => lit(*n),
+                            true => ExprKind::Unary(
+                                UnOp::Neg,
+                                Box::new(Expr {
+                                    kind: lit(*n),
+                                    span: e.span,
+                                    id: e.id,
+                                }),
+                            ),
+                        };
+                    }
+                    Some(Value::Bool(b)) => e.kind = ExprKind::Bool(*b),
+                    Some(Value::Char(c)) => e.kind = ExprKind::Char(*c),
+                    Some(v) => unreachable!("a const of `{v:?}` in a predicate"),
+                    None => {
+                        cx.m.missing.borrow_mut().insert(symbol.clone());
+                    }
+                }
+                return;
+            }
             for c in check::modules::children_mut(e) {
                 go(cx, c);
             }
@@ -1003,6 +1095,9 @@ impl Cx<'_, '_, '_> {
         let (arities, aliases) = (&self.m.arities, &self.m.aliases);
         let opaques = &self.m.info.opaques;
         let names = |name: &str, t: &TypeExpr| {
+            if let Some(symbol) = self.m.info.lengths.get(&t.id) {
+                return Some(check::TypeName::Const(symbol.clone()));
+            }
             if let Some(symbol) = opaques.get(&t.id) {
                 let d = &self.m.info.traits.opaques[symbol];
                 let (lifetimes, params) = (d.lifetimes.clone(), d.params.clone());
@@ -1035,7 +1130,7 @@ impl Cx<'_, '_, '_> {
     /// arguments, every opaque type replaced by the type it stands for,
     /// and every projection worked out, as each can be now.
     fn subst(&self, t: &Type) -> Type {
-        self.m.proj.reveal(&self.s.apply(t))
+        self.m.lengths(&self.m.proj.reveal(&self.s.apply(t)))
     }
 
     /// `t`, of the original, as it is in the copy, as `subst` says, and
@@ -1148,7 +1243,7 @@ impl Cx<'_, '_, '_> {
                 Box::new(self.written(n, span)),
             ),
             Type::Nat(n) => TypeExprKind::Nat(*n),
-            Type::Param(_) | Type::Var(_) | Type::Proj(..) | Type::Opaque(..) => {
+            Type::Param(_) | Type::Const(_) | Type::Var(_) | Type::Proj(..) | Type::Opaque(..) => {
                 unreachable!("`{t}` left after monomorphising")
             }
             Type::Effects(_) | Type::Alloc | Type::Panic | Type::Unsafe | Type::Inferred(..) => {
@@ -1653,6 +1748,15 @@ impl Cx<'_, '_, '_> {
         use crate::mir::Const;
         let method = self.m.fns.get(symbol).is_some_and(|d| d.self_ty.is_some());
         if args.is_empty() && !method {
+            // A const whose value isn't known yet would run its initializer.
+            if self.m.fns.get(symbol).is_some_and(|d| d.f.is_const())
+                && !self.m.info.const_values.contains_key(symbol)
+            {
+                self.m.missing.borrow_mut().insert(symbol.to_string());
+            }
+            if self.m.roots.is_some() {
+                self.m.named_copy(symbol, Vec::new(), symbol.to_string());
+            }
             return Const::Fn(symbol.to_string(), Vec::new());
         }
         match self.target(symbol, args) {

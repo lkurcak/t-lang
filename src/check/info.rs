@@ -95,6 +95,16 @@ pub struct Info {
     /// where its name is: the edit that writes them, for an editor to
     /// offer.
     pub inferred_fixes: Vec<(Span, crate::error::Fix)>,
+    /// Each const's value, by symbol, as worked out while compiling (see
+    /// `crate::consts`): its MIR body by then gives it.
+    pub(crate) const_values: HashMap<String, crate::consts::Value>,
+    /// Each const written as a length, by the node of the type it's
+    /// written as: its symbol (see `Type::Const`).
+    pub(crate) lengths: HashMap<NodeId, String>,
+    /// Each const named in a predicate, by the node of the name: its
+    /// symbol, for monomorphisation to write its value there for the
+    /// interpreter, as it does a const parameter's.
+    pub(crate) pred_consts: HashMap<NodeId, String>,
 }
 
 /// What a method call `x.m(..)` or path `T::m` names: method `symbol`.
@@ -176,6 +186,8 @@ pub struct Note {
 pub enum NoteKind {
     Var(String),
     Fn(String),
+    /// A const item: its type is the const's, not a function's.
+    Const(String),
     Trait(String),
     Struct(String),
     Enum(String),
@@ -197,6 +209,7 @@ pub enum NoteKind {
 /// it's written, so the same goes for it.
 fn last_segment(span: Span, kind: NoteKind) -> (Span, NoteKind) {
     let (NoteKind::Fn(name)
+    | NoteKind::Const(name)
     | NoteKind::Trait(name)
     | NoteKind::Struct(name)
     | NoteKind::Enum(name)
@@ -214,6 +227,7 @@ fn last_segment(span: Span, kind: NoteKind) -> (Span, NoteKind) {
     );
     let kind = match kind {
         NoteKind::Fn(_) => NoteKind::Fn(last),
+        NoteKind::Const(_) => NoteKind::Const(last),
         NoteKind::Trait(_) => NoteKind::Trait(last),
         NoteKind::Struct(_) => NoteKind::Struct(last),
         NoteKind::Alias(_) => NoteKind::Alias(last),
@@ -233,6 +247,7 @@ impl Note {
         match &self.kind {
             NoteKind::Var(name) => format!("{name}: {ty}"),
             NoteKind::Fn(name) => format!("fn {name}{args}: {ty}"),
+            NoteKind::Const(name) => format!("const {name}: {ty}"),
             NoteKind::Trait(name) => format!("trait {name}"),
             NoteKind::Struct(_) => format!("struct {ty}"),
             NoteKind::Enum(_) => format!("enum {ty}"),
@@ -546,11 +561,18 @@ impl Checker {
                         let Some(f) = self.fns.get(i) else {
                             continue;
                         };
-                        (
-                            NoteKind::Fn(f.name.name.clone()),
-                            Some(f.scheme.ty.clone()),
-                            f.name.span,
-                        )
+                        match &f.scheme.ty {
+                            Type::Fn(sig) if f.konst => (
+                                NoteKind::Const(f.name.name.clone()),
+                                Some((*sig.ret).clone()),
+                                f.name.span,
+                            ),
+                            ty => (
+                                NoteKind::Fn(f.name.name.clone()),
+                                Some(ty.clone()),
+                                f.name.span,
+                            ),
+                        }
                     }
                     Item::Type(k) => {
                         let d = &prog.types[k];
@@ -722,7 +744,12 @@ impl Checker {
             TypeExprKind::Named(name, args) => {
                 // Only the name, not the arguments after it.
                 let span = Span::new(t.span.start, t.span.start + name.len());
-                if let Some(symbol) = self.adt_symbol(t.id) {
+                if let Some(&(i, _)) = self.modules.lengths.get(&t.id) {
+                    // A const, as a length: a use of it, as in an expression.
+                    let def = self.fns.get(i).map(|f| f.name.span);
+                    let ty = Type::Int(crate::types::IntTy::Usize);
+                    self.note(span, NoteKind::Const(name.clone()), Some(ty), def);
+                } else if let Some(symbol) = self.adt_symbol(t.id) {
                     let def = self.defs.types.get(symbol).copied();
                     let kind = match self.adts.get(symbol).map(|d| &d.kind) {
                         _ if self.aliases.contains_key(symbol) => NoteKind::Alias(name.clone()),
@@ -757,6 +784,8 @@ impl Checker {
                 {
                     let kind = NoteKind::ConstParam(name.clone());
                     self.note(n.span, kind, None, Some(p.span));
+                } else {
+                    self.type_expr_notes(n, params);
                 }
             }
             TypeExprKind::Nat(_) => {}

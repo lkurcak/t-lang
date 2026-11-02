@@ -51,6 +51,7 @@
 
 mod adts;
 mod closures;
+mod consts;
 mod effects;
 mod expr;
 mod generics;
@@ -75,6 +76,7 @@ pub(crate) use generics::{
     AliasDef, Kind, Lifetimes, ProjNames, TypeName, resolve, resolve_effects,
 };
 pub use info::{Info, Instance, Note, NoteKind, Test};
+pub(crate) use refine::Known;
 pub use scope::source_name;
 
 use crate::ast::*;
@@ -269,6 +271,28 @@ pub fn check(prog: &mut Program, warnings: &mut Vec<Warning>) -> (Info, Result<(
         .collect();
     cx.info.projections = cx.proj_traits.take();
     cx.info.mir = cx.mir.take();
+    cx.info.lengths = (cx.modules.lengths.iter())
+        .map(|(&id, &(i, _))| (id, cx.fn_symbols[i].clone()))
+        .collect();
+    // Once it all checks, what each const is (see `crate::consts`).
+    if result.is_ok() {
+        let consts: Vec<crate::consts::Const> = (cx.fns.iter())
+            .filter(|f| f.konst)
+            .map(|f| {
+                let Type::Fn(sig) = &f.scheme.ty else {
+                    unreachable!("a const is a function of no parameters to the checker")
+                };
+                crate::consts::Const {
+                    symbol: f.symbol.clone(),
+                    name: f.name.name.clone(),
+                    span: f.name.span,
+                    ty: (*sig.ret).clone(),
+                    known: cx.const_values.get(&f.symbol).copied(),
+                }
+            })
+            .collect();
+        result = crate::consts::evaluate(prog, &mut cx.info, &cx.adts, &consts);
+    }
     cx.warnings.sort_by_key(|w| w.span.start);
     warnings.append(&mut cx.warnings);
     prog.next_id = cx.next_id;
@@ -312,7 +336,7 @@ fn check_main(prog: &Program) -> Result<(), Error> {
     match prog
         .fns
         .iter()
-        .find(|f| f.module == ROOT && f.name.name == "main")
+        .find(|f| f.module == ROOT && f.name.name == "main" && !f.is_const())
     {
         None => {
             let start = prog.mods[ROOT].span.start;
@@ -619,6 +643,9 @@ pub(crate) struct Checker {
     /// The refinements in each function's signature that has any, by
     /// symbol (see `refine`).
     refined: HashMap<String, refine::RefinedSig>,
+    /// What the refinement logic knows each const's value is, by symbol,
+    /// if it worked it out from its initializer (see `refine::Known`).
+    const_values: HashMap<String, refine::Known>,
     /// The refinements of each struct's fields that has any, by symbol.
     field_refined: HashMap<String, refine::RefinedFields>,
     /// The refinement of each refined `let`'s variable, by id.
@@ -959,6 +986,7 @@ impl Checker {
             in_trait_impl: false,
             in_discard: false,
             refined: HashMap::new(),
+            const_values: HashMap::new(),
             refined_lets: HashMap::new(),
             field_refined: HashMap::new(),
             pred_names: HashMap::new(),
@@ -1084,6 +1112,7 @@ impl Checker {
         self.projections_known(prog);
         self.derive(prog)?;
         self.signatures(prog, &fns)?;
+        self.const_lengths()?;
         self.pending_refinements()?;
         self.check_impls(prog)?;
         self.info.traits = self.traits.clone();
@@ -1208,6 +1237,11 @@ impl Checker {
                 }
                 None => self.fn_scheme(f)?,
             };
+            if f.is_const()
+                && let Type::Fn(sig) = &scheme.ty
+            {
+                self.const_type(f, &sig.ret)?;
+            }
             // Effects it doesn't say are its body's, which are inferred
             // with it.
             let mut scheme = scheme;
@@ -1263,6 +1297,7 @@ impl Checker {
                 body: f.body.span,
                 module: f.module,
                 level: f.vis.level(),
+                konst: f.is_const(),
             });
         }
         self.uses.resize_with(fns.len(), Uses::default);
@@ -1331,6 +1366,9 @@ impl Checker {
             }
         }
         let input = match (f.receiver(), param_tys.first(), &inputs[..]) {
+            // A const's references are to literals, which last as long as
+            // the program (see `check/consts.rs`).
+            _ if f.is_const() => Ok(Region::Static),
             (Some(_), Some(Type::Ref(r, _, _)), _) => Ok(r.clone()),
             (_, _, [r]) => Ok((*r).clone()),
             _ => Err(inputs.len()),
@@ -1440,9 +1478,12 @@ impl Checker {
         let Type::Fn(sig) = &scheme.ty else {
             unreachable!("a function has a function type")
         };
-        let kind = NoteKind::Fn(f.name.name.clone());
         let def = self.method_decl(id).unwrap_or(Some(f.name.span));
-        self.note(f.name.span, kind, Some(scheme.ty.clone()), def);
+        let (kind, ty) = match f.is_const() {
+            true => (NoteKind::Const(f.name.name.clone()), (*sig.ret).clone()),
+            false => (NoteKind::Fn(f.name.name.clone()), scheme.ty.clone()),
+        };
+        self.note(f.name.span, kind, Some(ty), def);
         // Inside the body its type parameters are in scope, and opaque:
         // `Type::Param` is equal only to itself. Its bounds hold.
         self.type_params = scheme.params.clone();
@@ -1714,6 +1755,9 @@ impl Checker {
     /// What the name of type `t` refers to, if it's a struct or enum, an
     /// outer type parameter (see `names.rs`) or an opaque type.
     fn type_name(&self, t: &TypeExpr) -> Option<TypeName> {
+        if let Some(&(i, _)) = self.modules.lengths.get(&t.id) {
+            return Some(TypeName::Const(self.fn_symbols[i].clone()));
+        }
         if let Some(symbol) = self.opaque_at.get(&t.id) {
             let d = &self.traits.opaques[symbol];
             let (lifetimes, params) = (d.lifetimes.clone(), d.params.clone());

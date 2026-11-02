@@ -50,6 +50,7 @@ const MOST_EFFECTS: usize = 256;
 /// no body to infer them from, or must have none.
 pub(super) fn infers(prog: &Program, f: &FnDecl, method: Option<MethodOf>) -> bool {
     f.effects.is_none()
+        && !f.is_const()
         && !f.vis.is_export()
         && f.intrinsic.is_none()
         && f.measure.is_none()
@@ -74,7 +75,11 @@ pub(super) fn root(fns: &[(&FnDecl, Option<usize>, Option<MethodOf>)], mut i: us
 /// each with the ones nested in them, callees first. Each group is those
 /// that may call each other: a strongly connected component of the graph
 /// of which may call which, of which the groups after it are never
-/// callees. Measures come first, as `bodies` needs.
+/// callees. Measures come first, as `bodies` needs; then each group with
+/// a const in it as soon as what it calls has been, so that what the
+/// refinement logic learns of its value is known to as many others as can
+/// be, whether they name it in a body, a type or through what they call
+/// (see `refine::Known`): that only adds facts, never removes any.
 ///
 /// Which may call which is only what the names in their bodies suggest:
 /// each name of a function, method or variant there is taken to be a call
@@ -91,7 +96,9 @@ pub(super) fn body_groups(
     let mut by_name: HashMap<&str, HashSet<usize>> = HashMap::new();
     for &i in &own {
         let (f, _, method) = fns[i];
-        if infers(prog, f, method) {
+        // A const's users come after it too, so that what's known of its
+        // value is known where they're checked (see `refine.rs`).
+        if infers(prog, f, method) || f.is_const() {
             by_name
                 .entry(&f.name.name)
                 .or_default()
@@ -115,12 +122,42 @@ pub(super) fn body_groups(
             }
         }
     }
-    let mut groups: Vec<Vec<usize>> = sccs(&edges)
-        .into_iter()
+    let components = sccs(&edges);
+    let mut of = vec![0; tops.len()];
+    for (c, g) in components.iter().enumerate() {
+        for &k in g {
+            of[k] = c;
+        }
+    }
+    // What each component calls, other than itself: those before it.
+    let mut needs: Vec<HashSet<usize>> = vec![HashSet::new(); components.len()];
+    for (k, out) in edges.iter().enumerate() {
+        needs[of[k]].extend(out.iter().map(|&j| of[j]).filter(|&c| c != of[k]));
+    }
+    let groups: Vec<Vec<usize>> = (components.into_iter())
         .map(|g| g.into_iter().map(|k| tops[k]).collect())
         .collect();
-    groups.sort_by_key(|g: &Vec<usize>| !g.iter().any(|&i| fns[i].0.measure.is_some()));
-    groups
+    let has = |g: &[usize], what: fn(&FnDecl) -> bool| g.iter().any(|&i| what(fns[i].0));
+    // Callees first, and of those that can be next, a measure's group, or
+    // else a const's, or else the first.
+    let mut done = vec![false; groups.len()];
+    let mut order = Vec::with_capacity(groups.len());
+    while order.len() < groups.len() {
+        let ready = |c: &usize| !done[*c] && needs[*c].iter().all(|&d| done[d]);
+        let mut next = (0..groups.len()).filter(ready);
+        let first = next.clone().next().expect("components are acyclic");
+        let c = (next
+            .clone()
+            .find(|&c| has(&groups[c], |f| f.measure.is_some())))
+        .or_else(|| next.find(|&c| has(&groups[c], FnDecl::is_const)))
+        .unwrap_or(first);
+        done[c] = true;
+        order.push(c);
+    }
+    let mut groups: Vec<Option<Vec<usize>>> = groups.into_iter().map(Some).collect();
+    (order.into_iter())
+        .map(|c| groups[c].take().expect("each once"))
+        .collect()
 }
 
 /// The last segment of each name in `e` that may name a function or

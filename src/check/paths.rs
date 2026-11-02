@@ -75,6 +75,24 @@ impl Checker {
                 );
                 return Ok(Some((ty, Res::Local(id))));
             }
+            Some(Binding::Fn(fid)) if self.fns[fid.0].konst => {
+                self.uses().fns.insert(fid);
+                if !targs.is_empty() {
+                    return Err(Error::ty(
+                        span,
+                        format!("`{name}` is a const, which takes no type arguments"),
+                    ));
+                }
+                let f = &self.fns[fid.0];
+                let Type::Fn(sig) = &f.scheme.ty else {
+                    unreachable!("a const is a function of no parameters to the checker")
+                };
+                let (ty, def, symbol) = ((*sig.ret).clone(), f.name.span, f.symbol.clone());
+                self.info.symbols.insert(id, symbol.clone());
+                let kind = NoteKind::Const(name.to_string());
+                self.note_use(at, kind, ty.clone(), Some(def), None, false);
+                return Ok(Some((ty, Res::Item(symbol))));
+            }
             Some(Binding::Fn(id)) => {
                 self.uses().fns.insert(id);
                 let f = &self.fns[id.0];
@@ -170,6 +188,9 @@ impl Checker {
                     ),
                     TypeExprKind::Named(n, a) if a.is_empty() && self.type_params.is_const(n) => {
                         Type::Param(n.clone())
+                    }
+                    _ if let Some(&(i, _)) = self.modules.lengths.get(&t.id) => {
+                        Type::Const(self.fn_symbols[i].clone())
                     }
                     _ => return Err(generics::length_arg(name, t.span)),
                 },

@@ -163,7 +163,7 @@ fn main() {
     let n: usize = 3;
     let _a = [0; n];
 }
-// error: an array's length must be an integer literal or a const parameter
+// error: an array's length must be an integer literal, a const parameter or a const
 ```
 
 An array of values that aren't `Copy`, a list in each place say, is made

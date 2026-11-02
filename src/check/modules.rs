@@ -137,6 +137,12 @@ pub(crate) struct Modules {
     /// literal or pattern (by its name), and one to a function where one is
     /// used (by the expression).
     pub(crate) paths: HashMap<NodeId, Item>,
+    /// The const items, by `FnId`: their index in `Program::all_fns`.
+    pub(crate) consts: HashSet<usize>,
+    /// Each name of a const item written as a length, `[u8; SIZE]` or
+    /// `Ring<u8, SIZE>`, by the node of the type it's written as: the
+    /// const's `FnId` (see docs/36-consts.md).
+    pub(crate) lengths: HashMap<NodeId, (usize, Span)>,
     /// Where each `?` is, which is where the calls it means are
     /// (`Rewrite::try_expr`), for saying what's wrong with them in terms of
     /// the `?`.
@@ -690,6 +696,9 @@ impl Resolver {
             fns.filter(|(_, (_, parent, method))| parent.is_none() && method.is_none())
         {
             items.push((f.module, &f.name, f.vis.level(), Item::Fn(i), Ns::Values));
+            if f.is_const() {
+                self.m.consts.insert(i);
+            }
         }
         items.sort_by_key(|(_, name, ..)| name.span.start);
         for &(module, _, level, item, _) in &items {
@@ -1271,6 +1280,34 @@ impl Rewrite<'_> {
         }
     }
 
+    /// The const item a type written `name`, with no arguments, names, if
+    /// it isn't a type: then it's a length (see `Modules::lengths`).
+    fn const_length(&mut self, name: &Ident) -> Result<Option<usize>, Error> {
+        if self.params.contains(&name.name) {
+            return Ok(None);
+        }
+        let found = match name.name.contains("::") {
+            false => match self.r.m.get(self.module, &name.name, Ns::Types) {
+                Some(_) => None,
+                None => self.r.m.get(self.module, &name.name, Ns::Values).cloned(),
+            },
+            true => match self.path(name, Ns::Types) {
+                Ok(_) => None,
+                Err(_) => self.path(name, Ns::Values).ok(),
+            },
+        };
+        match found {
+            Some(b)
+                if let Item::Fn(i) = b.item
+                    && self.r.m.consts.contains(&i) =>
+            {
+                self.exposed(b.item, &name.name, name.span)?;
+                Ok(Some(i))
+            }
+            _ => Ok(None),
+        }
+    }
+
     fn type_decl(&mut self, d: &mut TypeDecl) -> Result<(), Error> {
         let n = d.type_params().len();
         self.params
@@ -1432,12 +1469,18 @@ impl Rewrite<'_> {
                 for a in args.iter_mut() {
                     self.ty(a)?;
                 }
+                let plain = args.is_empty();
                 let name = Ident {
                     name: name.clone(),
                     span: t.span,
                     id: t.id,
                 };
-                self.type_path(&name)?;
+                match plain {
+                    true if let Some(i) = self.const_length(&name)? => {
+                        self.r.m.lengths.insert(name.id, (i, name.span));
+                    }
+                    _ => self.type_path(&name)?,
+                }
             }
             TypeExprKind::Unit | TypeExprKind::Never | TypeExprKind::Lifetime(_) => {}
             TypeExprKind::Fn(params, ret, effects) => {
@@ -1460,6 +1503,12 @@ impl Rewrite<'_> {
                 if let Some(path) = plain_path(t)
                     && self.is_module(&first_segment(&path))?
                 {
+                    // `m::SIZE`, a const as a length.
+                    if let Some(i) = self.const_length(&path)? {
+                        self.r.m.lengths.insert(t.id, (i, t.span));
+                        t.kind = TypeExprKind::Named(path.name, Vec::new());
+                        return Ok(());
+                    }
                     let b = self.path(&path, Ns::Types)?;
                     if !matches!(b.item, Item::Type(_)) {
                         return Err(Error::ty(

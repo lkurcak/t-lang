@@ -570,6 +570,9 @@ impl Parser {
         };
         let head = match self.peek() {
             Tok::Fn => head.no_measure(NOT_METHOD)?,
+            Tok::Const => (head.no_intrinsic()?.no_measure(NOT_METHOD)?.no_test()?)
+                .no_blame_caller()?
+                .no_derives()?,
             Tok::Struct | Tok::Trait => {
                 head.no_measure(NOT_METHOD)?.no_test()?.no_blame_caller()?
             }
@@ -615,6 +618,11 @@ impl Parser {
                 prog.impls.push(self.impl_decl(head.no_derives()?)?);
             }
             Tok::Mod => self.mod_decl(prog, head.no_derives()?, vis)?,
+            Tok::Const => {
+                let mut f = self.const_decl(head)?;
+                f.vis = vis;
+                prog.fns.push(f);
+            }
             Tok::Use => {
                 head.no_derives()?.no_allows_on("a `use`")?;
                 let d = self.use_decl(vis)?;
@@ -997,7 +1005,9 @@ impl Parser {
 
     fn fn_decl(&mut self, head: Head) -> Result<FnDecl, Error> {
         if *self.peek() != Tok::Fn {
-            return Err(self.unexpected("`fn`, `struct`, `enum`, `type`, `trait` or `impl`"));
+            return Err(
+                self.unexpected("`fn`, `const`, `struct`, `enum`, `type`, `trait` or `impl`")
+            );
         }
         Ok(self.function(head, false, false)?.0)
     }
@@ -1107,8 +1117,49 @@ impl Parser {
             ensures,
             test: head.test,
             blame_caller: head.blame_caller,
+            konst: None,
         };
         Ok((f, provided))
+    }
+
+    /// `const N: usize = 4;`, after its head: a function of no parameters
+    /// as far as the checker goes, marked `konst`, whose result type is
+    /// the const's and whose body is its initializer (see
+    /// docs/36-consts.md).
+    fn const_decl(&mut self, head: Head) -> Result<FnDecl, Error> {
+        let start = self.expect(Tok::Const)?;
+        let name = self.ident()?;
+        if *self.peek() == Tok::Lt {
+            return Err(Error::syntax(
+                self.span(),
+                "a const has no parameters: it's one value, the same wherever it's used",
+            ));
+        }
+        self.expect(Tok::Colon)?;
+        let ret = self.ty()?;
+        self.expect(Tok::Eq)?;
+        let body = self.expr()?;
+        let end = self.expect(Tok::Semi)?;
+        Ok(FnDecl {
+            doc: head.doc,
+            allows: head.allows,
+            span: start.to(end),
+            module: self.module,
+            vis: Vis::Private,
+            parens: name.span,
+            name,
+            generics: Generics::default(),
+            params: Vec::new(),
+            ret,
+            effects: None,
+            body,
+            intrinsic: None,
+            measure: None,
+            ensures: Vec::new(),
+            test: None,
+            blame_caller: None,
+            konst: Some(start),
+        })
     }
 
     /// `where T: Show, Self::Item: Discard` after a function's signature,
@@ -1236,6 +1287,12 @@ impl Parser {
                 Tok::Fn => {
                     let (decl, provided) = self.function(head, true, true)?;
                     methods.push(TraitMethod { decl, provided });
+                }
+                Tok::Const => {
+                    return Err(Error::syntax(
+                        self.span(),
+                        "a const is an item of a module: there are no associated consts yet",
+                    ));
                 }
                 _ => return Err(self.unexpected("`fn`, `type`, `effect` or `}`")),
             }
@@ -1455,6 +1512,12 @@ impl Parser {
                     let mut f = self.function(head, true, false)?.0;
                     f.vis = vis;
                     methods.push(f);
+                }
+                Tok::Const => {
+                    return Err(Error::syntax(
+                        self.span(),
+                        "a const is an item of a module: there are no associated consts yet",
+                    ));
                 }
                 _ => return Err(self.unexpected("`fn`, `type`, `effect` or `}`")),
             }
@@ -1981,6 +2044,13 @@ impl Parser {
             if *self.peek() == Tok::Let {
                 stmts.push(self.let_stmt()?);
                 continue;
+            }
+            if *self.peek() == Tok::Const {
+                return Err(Error::syntax(
+                    self.span(),
+                    "a const is an item of a module, not of a block: declare it outside the \
+                     function",
+                ));
             }
             if matches!(self.peek(), Tok::Trait | Tok::Impl) {
                 return Err(Error::syntax(

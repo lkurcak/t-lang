@@ -319,6 +319,7 @@ fn name(kind: &NoteKind) -> &str {
     match kind {
         NoteKind::Var(n)
         | NoteKind::Fn(n)
+        | NoteKind::Const(n)
         | NoteKind::Trait(n)
         | NoteKind::Struct(n)
         | NoteKind::Enum(n)
@@ -337,6 +338,7 @@ fn what(kind: &NoteKind) -> &'static str {
     match kind {
         NoteKind::Var(_) => "variable",
         NoteKind::Fn(_) => "function",
+        NoteKind::Const(_) => "const",
         NoteKind::Trait(_) => "trait",
         NoteKind::Struct(_) => "struct",
         NoteKind::Enum(_) => "enum",

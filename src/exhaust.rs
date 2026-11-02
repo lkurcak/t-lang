@@ -444,6 +444,7 @@ impl Cx<'_> {
             Type::Fn(..)
             | Type::Param(_)
             | Type::Nat(_)
+            | Type::Const(_)
             | Type::Proj(..)
             | Type::Opaque(..)
             | Type::Var(_)

@@ -1143,8 +1143,9 @@ pub(crate) fn eq_subject(t: &Type) -> &Type {
 ///   by value. `overlap` agrees, so `impl<T> Tr for &T` and `impl Tr for
 ///   &[i64]` don't overlap, and the checker and monomorphisation find the
 ///   same one.
-/// - A const parameter only ever meets a length, a `Type::Nat` or another
-///   const parameter, as kinds keep types and lengths apart
+/// - A const parameter only ever meets a length, a `Type::Nat`, a const
+///   item (`Type::Const`) or another const parameter, as kinds keep types
+///   and lengths apart
 ///   (`generics::len`), and lengths are equal only syntactically: so
 ///   matching `[T; N]` decides `N` as matching decides `T`.
 /// - A bound of a sealed trait can rule an impl out where its type matches
@@ -1273,6 +1274,11 @@ fn unify(a: &Type, b: &Type, params: &[String], s: &mut HashMap<String, Type>) -
     let var = |t: &Type| matches!(t, Type::Param(p) if params.contains(p));
     match (&a, &b) {
         (Type::Param(p), Type::Param(q)) if p == q => true,
+        // A const item, as a length, is equal only to itself, but may one
+        // day be equal to its value: so it could be any length, for two
+        // impls not to overlap then either (lemma C6 of docs/36-consts.md).
+        (Type::Const(_), Type::Nat(_) | Type::Const(_) | Type::Param(_))
+        | (Type::Nat(_) | Type::Param(_), Type::Const(_)) => true,
         (Type::Param(p), t) | (t, Type::Param(p)) if var(&Type::Param(p.clone())) => {
             if occurs(p, t, s) || t.is_unsized() {
                 return false;

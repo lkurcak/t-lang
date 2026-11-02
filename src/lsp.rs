@@ -907,7 +907,8 @@ fn type_definitions(info: &Info, offset: usize) -> Vec<Span> {
     let Some(note) = info.note_at(offset) else {
         return Vec::new();
     };
-    let (NoteKind::Var(_) | NoteKind::Field(_) | NoteKind::Fn(_)) = note.kind else {
+    let (NoteKind::Var(_) | NoteKind::Field(_) | NoteKind::Fn(_) | NoteKind::Const(_)) = note.kind
+    else {
         return Vec::new();
     };
     let mut symbols = Vec::new();
@@ -1057,6 +1058,17 @@ fn label(name: &crate::ast::Ident) -> (&str, Span) {
 }
 
 fn fn_symbol(src: &str, f: &FnDecl, children: Vec<DocumentSymbol>) -> DocumentSymbol {
+    if f.is_const() {
+        let detail = f.ret.to_string();
+        return symbol(
+            src,
+            label(&f.name),
+            detail,
+            SymbolKind::CONSTANT,
+            f.span,
+            children,
+        );
+    }
     let params: Vec<&crate::ast::TypeExpr> = f.params.iter().map(|p| &p.ty).collect();
     let detail = format!("fn({}) -> {}", comma_list(&params), f.ret);
     symbol(
