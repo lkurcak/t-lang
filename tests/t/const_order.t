@@ -5,6 +5,9 @@ pub fn at(a: &[u8; m::SIZE], i: { i: usize | i < m::SIZE }) -> u8 { a[i] }
 
 fn last(a: &[u8; m::SIZE]) -> u8 { at(a, m::SIZE - 1) }
 
+// Here only its type names it.
+fn second(a: &[u8; m::SIZE]) -> u8 with {} { a[1] }
+
 mod m {
     pub const SIZE: usize = 4;
 }
@@ -13,6 +16,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let mut a = [3u8; m::SIZE];
     a[3] = 5;
-    out.line(&last(&a))?; // expect: 5
+    out.line(&last(&a))?;   // expect: 5
+    out.line(&second(&a))?; // expect: 3
     Result::Ok(())
 }

@@ -2920,10 +2920,12 @@ impl Walk<'_> {
             _ => return Val::Other,
         };
         let v = self.unknown(&ty);
+        // It holds everywhere in the function, not only on the path where
+        // the const is first named, which a branch would forget.
         if let Some(r) = self.cx.refined.get(symbol).and_then(|s| s.ret.clone())
             && let Some(f) = self.pred(&r, &v, Env::Post(&[], None, &[]))
         {
-            self.fact(f);
+            self.laws.push(f);
         }
         self.consts.insert(key, v.clone());
         v

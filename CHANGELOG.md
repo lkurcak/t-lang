@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased
+
+Step 36: consts. See [docs/36-consts.md](docs/36-consts.md).
+
+### Added
+
+- Const items, `const SIZE: usize = 4;`, in modules, `pub` or `export`
+  like any item. The initializer runs while compiling, on a 64-bit and a
+  32-bit machine, which must agree; a panic, or more than a million
+  steps, is an error there. Its effects can only be `panic`: no `alloc`,
+  no `unsafe`. A use is the value, of the const's type, with no effects.
+- A const's type is plain data: integers, `bool`, `char`, `()`, `&str`,
+  `&[u8]`, and arrays, structs and enums of those. It needn't be `Copy`.
+- A const as an array's length or a const argument: `[u8; SIZE]`,
+  `[0; SIZE]`, `Ring<u8, SIZE>`, `zeros::<SIZE>()`. As a length it's
+  equal only to itself, and for coherence it could be any length.
+- Consts in refinements, `{ i: usize | i < SIZE }`; the logic knows a
+  const's value when it can tell it from the initializer, and otherwise
+  what its type says.
+- Errors: a const that depends on itself; a const named by a pattern
+  (reserved for consts in patterns); a const in a block or an impl.
+- `t fmt`, tree-sitter, hover (`const SIZE: usize`) and document symbols
+  know consts.
+
+### Changed
+
+- The interpreter takes the width of `usize` as a parameter (`t run` is
+  still a 64-bit machine).
+
 ## 0.49.0 (2026-11-02)
 
 Step 35: the libraries a package uses. See

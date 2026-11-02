@@ -15,6 +15,9 @@ fn clamp(x: u32) -> { y: u32 | y <= LIMIT } {
     if x > LIMIT { LIMIT } else { x }
 }
 
+// Proved from `LIMIT > 100` alone, with no `panic` to fall back on.
+fn headroom() -> u32 with {} { LIMIT - 100 }
+
 fn check(b: { b: bool | b == DEBUG }) -> bool { b }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> {
@@ -22,7 +25,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&above(-9))?;      // expect: -9
     out.line(&clamp(5000))?;    // expect: 1000
     out.line(&clamp(50))?;      // expect: 50
-    out.line(&(LIMIT - 100))?;  // expect: 900
+    out.line(&headroom())?;     // expect: 900
     out.line(&check(false))?;   // expect: false
     Result::Ok(())
 }
