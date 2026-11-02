@@ -103,6 +103,7 @@ use unify::Var;
 /// trusts.
 pub const INTRINSICS: &[&str] = &[
     "core::mem::swap",
+    "core::cell::Cell::replace",
     "core::panic::panic",
     "core::panic::Message::new",
     "core::panic::Message::push_str",
