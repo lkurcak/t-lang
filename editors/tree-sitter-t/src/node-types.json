@@ -348,6 +348,10 @@
           {
             "type": "integer_literal",
             "named": true
+          },
+          {
+            "type": "scoped_identifier",
+            "named": true
           }
         ]
       }

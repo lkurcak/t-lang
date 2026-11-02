@@ -470,7 +470,7 @@ module.exports = grammar({
       '[',
       field('element', $._type),
       ';',
-      field('length', choice($.integer_literal, $.identifier)),
+      field('length', choice($.integer_literal, $.identifier, $.scoped_identifier)),
       ']',
     ),
 
