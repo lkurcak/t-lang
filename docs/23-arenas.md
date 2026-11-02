@@ -199,8 +199,8 @@ one heap. What it decided is a direction, recorded here:
 | allocator-generic containers, `List<T, A>`, `Box<T, A>` | default type parameters first, and a backend to measure them by | — |
 | a bump arena of values of any `Copy` type | memory of no one type, so an untyped primitive | — |
 | `into_iter`, `free_with` for an arena of linear values | moving every value out, which no reference may still point to | — |
-| `Cell`, `RefCell` | interior mutability, its own soundness argument | — |
-| cycles, `a.next = b; b.next = a` | setting a field through a `&`, interior mutability again | — |
+| `Cell` (done), `RefCell` | interior mutability, its own soundness argument | 37 |
+| cycles, `a.next = b; b.next = a` | setting a field through a `&`, interior mutability again: a `Cell` field (done) | 37 |
 
 ## Exercises
 

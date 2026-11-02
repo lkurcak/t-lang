@@ -328,7 +328,8 @@ a branch never taken still counts.
 
 - Consts in patterns, as above.
 - Associated consts, in traits and impls, and consts in blocks.
-- `&CONST` as a `&'static`: needs statics, and frozenness (step 37).
+- `&CONST` as a `&'static`: needs statics, and frozenness (which step 37
+  added: a const has no `Cell` in it).
 - Generic arithmetic on lengths, `[T; N + 1]`, which the logic can decide
   (linear arithmetic).
 - Statics, `static` items, which are places, not values: with `Cell`, a

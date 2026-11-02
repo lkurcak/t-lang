@@ -3130,7 +3130,9 @@ impl Walk<'_> {
     /// Or a place in such a field, through fields and boxes: a write to it
     /// changes the field. Not through a reference: what's behind one isn't
     /// part of the value, and no refinement can name what's behind a
-    /// `&mut`, nor anything write through a `&`.
+    /// `&mut`, nor anything write through a `&`: only a cell's `replace`
+    /// does, and no refinement can name what's in a cell (lemma K1 of
+    /// docs/37-cell.md).
     fn constrained_field(&self, x: &Expr) -> Option<String> {
         let (outer, mut x) = (x, x);
         loop {
