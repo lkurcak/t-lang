@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.50.0 (2026-11-02)
 
 Step 36: consts. See [docs/36-consts.md](docs/36-consts.md).
 
