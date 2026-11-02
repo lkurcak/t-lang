@@ -168,6 +168,12 @@ pub(crate) struct Modules {
     /// root module of each, as `Program::packages` has them: by name, the
     /// first segment of a path in it.
     pub(crate) deps: HashMap<usize, Vec<(String, usize)>>,
+    /// The libraries built in, beside core, that each package's paths can
+    /// start with, by its root module: those it lists. A package not here
+    /// was put together by hand, not by `load`, and has them all.
+    pub(crate) uses: HashMap<usize, Vec<String>>,
+    /// The `t.toml` of each package that has one, by its root module.
+    pub(crate) manifests: HashMap<usize, crate::ast::Manifest>,
     pub(crate) prelude: Option<usize>,
     /// Warnings about what's rewritten here: empty ranges.
     pub(crate) warnings: Vec<Warning>,
@@ -339,6 +345,17 @@ impl Modules {
         self.library(name).or(dep.map(|&(_, m)| m))
     }
 
+    /// The library built in whose root is `root`, if it's one that a path
+    /// in module `from` can't start with, as its package doesn't list it.
+    pub(crate) fn unlisted(&self, from: usize, root: usize) -> Option<&str> {
+        let name = self.mods[root].path.as_str();
+        let listed = match self.uses.get(&self.package_root(from)) {
+            Some(uses) => uses.iter().any(|u| u == name),
+            None => true,
+        };
+        (self.libraries.contains(&root) && Some(root) != self.core && !listed).then_some(name)
+    }
+
     /// Is `inner` module `outer` or in it?
     pub(crate) fn within(&self, inner: usize, outer: usize) -> bool {
         let mut m = Some(inner);
@@ -458,6 +475,16 @@ impl Resolver {
         r.m.libraries = prog.libraries.clone();
         r.m.deps = (prog.packages.iter())
             .map(|p| (p.root, p.deps.clone()))
+            .collect();
+        r.m.uses = (prog.packages.iter())
+            .map(|p| (p.root, p.libraries.clone()))
+            .chain(r.m.libraries.iter().map(|&l| {
+                let uses = crate::load::library_uses(&r.m.mods[l].path);
+                (l, uses.iter().map(|u| u.to_string()).collect())
+            }))
+            .collect();
+        r.m.manifests = (prog.packages.iter())
+            .filter_map(|p| Some((p.root, p.manifest.clone()?)))
             .collect();
         r.declare(prog, from)?;
         r.imports(prog, from)?;
@@ -901,6 +928,10 @@ impl Resolver {
                         && i == 0
                         && let Some(library) = self.m.package_named(from, name)
                     {
+                        if let Some(name) = self.m.unlisted(from, library) {
+                            let manifest = self.m.manifests.get(&self.m.package_root(from));
+                            return Err(unlisted(name, seg.span, manifest));
+                        }
                         m = library;
                         self.m.module_refs.push((seg.span, m));
                         continue;
@@ -942,6 +973,33 @@ fn already(name: &Ident, old: Item, new: Item) -> Error {
         _ => format!("`{}` is already defined", name.name),
     };
     Error::ty(name.span, message)
+}
+
+/// The error for a path at `at` starting with library `name`, which its
+/// package doesn't list (see docs/35-libraries.md).
+/// Its fix lists it, in `manifest`.
+fn unlisted(name: &str, at: Span, manifest: Option<&crate::ast::Manifest>) -> Error {
+    let mut e = Error::ty(
+        at,
+        format!("this package's `t.toml` doesn't list the `{name}` library in its `libraries`"),
+    );
+    // Only a package with a `t.toml` can be missing a library.
+    if let Some(manifest) = manifest {
+        let edit = match manifest.list {
+            Some(list) if manifest.libraries == 0 => {
+                crate::error::Edit::insert(list.end - 1, format!("\"{name}\""))
+            }
+            Some(list) => crate::error::Edit::insert(list.end - 1, format!(", \"{name}\"")),
+            None => {
+                crate::error::Edit::insert(manifest.start, format!("libraries = [\"{name}\"]\n\n"))
+            }
+        };
+        e.fixes.push(Fix::new(
+            format!("list `{name}` in `libraries`"),
+            vec![edit],
+        ));
+    }
+    e
 }
 
 /// The error for module `m` having no item `name`.

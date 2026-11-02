@@ -1,3 +1,5 @@
+libraries = ["std"]
+
 [dependencies]
 left = { path = "left" }
 right = { path = "right" }

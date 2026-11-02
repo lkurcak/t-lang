@@ -20,7 +20,7 @@
 //! `<core>/a/b.t`. The alloc library is the same, read next, from `alloc/`
 //! (see docs/09-unsafe.md).
 
-use crate::ast::{Ident, ModDecl, Package, Program, ROOT, Vis};
+use crate::ast::{Ident, Manifest, ModDecl, Package, Program, ROOT, Vis};
 use crate::error::{Error, Span};
 use crate::lexer;
 use crate::parser;
@@ -93,6 +93,15 @@ pub(crate) const LIBRARIES: [Library; 3] = [
     ("alloc", ALLOC_FILES, ALLOC_DIR),
     ("std", STD_FILES, STD_DIR),
 ];
+
+/// The libraries built in, beside core, that library `name`'s paths can
+/// start with: what its `t.toml` would list, if it had one.
+pub(crate) fn library_uses(name: &str) -> &'static [&'static str] {
+    match name {
+        "std" => &["alloc"],
+        _ => &[],
+    }
+}
 
 /// Reads the file system.
 pub fn read_file(path: &Path) -> std::io::Result<String> {
@@ -367,6 +376,29 @@ struct Loaded {
     by: PathBuf,
 }
 
+/// What a package's `t.toml` lists.
+struct Listed {
+    entries: Vec<Entry>,
+    /// The libraries built in that it uses, beside core.
+    libraries: Vec<String>,
+    manifest: Option<Manifest>,
+}
+
+impl Default for Listed {
+    /// What a package with no `t.toml` has: no dependencies, and every
+    /// library, as a program in a single file does.
+    fn default() -> Self {
+        Listed {
+            entries: Vec::new(),
+            libraries: (LIBRARIES.iter())
+                .filter(|(l, ..)| *l != "core")
+                .map(|(l, ..)| l.to_string())
+                .collect(),
+            manifest: None,
+        }
+    }
+}
+
 /// A dependency, as a `t.toml` says it.
 struct Entry {
     name: String,
@@ -388,6 +420,7 @@ impl Loader<'_> {
         let dir = path.parent().unwrap_or(Path::new("")).to_path_buf();
         let library = path.file_name().is_some_and(|n| n == "lib.t");
         let mut deps = Vec::new();
+        let mut listed = Listed::default();
         if is_root_file(path) {
             let other = dir.join(if library { "main.t" } else { "lib.t" });
             if (self.read)(&other).is_ok() {
@@ -405,8 +438,9 @@ impl Loader<'_> {
                 ));
             }
             self.loading.push((normal(&dir), None));
-            for entry in self.manifest(&dir)? {
-                deps.push((entry.name.clone(), self.dependency(&dir, &entry)?));
+            listed = self.manifest(&dir)?;
+            for entry in &listed.entries {
+                deps.push((entry.name.clone(), self.dependency(&dir, entry)?));
             }
             self.loading.pop();
         }
@@ -427,6 +461,8 @@ impl Loader<'_> {
             from,
             deps,
             library,
+            libraries: listed.libraries,
+            manifest: listed.manifest,
         });
         Ok(())
     }
@@ -439,13 +475,14 @@ impl Loader<'_> {
         start
     }
 
-    /// The dependencies the `t.toml` in `dir` lists, if there's one, in
-    /// the order of their names.
-    fn manifest(&mut self, dir: &Path) -> Result<Vec<Entry>, Error> {
+    /// What the `t.toml` in `dir` lists: its dependencies, in the order of
+    /// their names, and the libraries built in that it uses. With no
+    /// `t.toml`, that's no dependencies and every library.
+    fn manifest(&mut self, dir: &Path) -> Result<Listed, Error> {
         let path = dir.join("t.toml");
         let text = match (self.read)(&path) {
             Ok(text) => text,
-            Err(_) => return Ok(Vec::new()),
+            Err(_) => return Ok(Listed::default()),
         };
         let start = (self.sources).add(path.clone(), &text, ROOT, None, Kind::Manifest);
         let at = |r: std::ops::Range<usize>| Span::new(start + r.start, start + r.end);
@@ -456,12 +493,53 @@ impl Loader<'_> {
             Error::syntax(span, format!("`{shown}` isn't TOML: {why}"))
         })?;
         let mut entries = Vec::new();
+        let mut libraries: Vec<(String, Span)> = Vec::new();
+        let mut list = None;
         for (key, value) in table.get_ref() {
+            if key.get_ref() == "libraries" {
+                let shape = || {
+                    Error::syntax(
+                        at(value.span()),
+                        "`libraries` is a list of the libraries built in that the package \
+                         uses, as in `libraries = [\"alloc\", \"std\"]`",
+                    )
+                };
+                let toml::de::DeValue::Array(items) = value.get_ref() else {
+                    return Err(shape());
+                };
+                for item in items {
+                    let toml::de::DeValue::String(name) = item.get_ref() else {
+                        return Err(shape());
+                    };
+                    let span = at(item.span());
+                    let why = match name.as_ref() {
+                        "core" => Some(
+                            "every package has the core library; `libraries` lists only \
+                             `alloc` and `std`"
+                                .to_string(),
+                        ),
+                        name if !LIBRARIES.iter().any(|(l, ..)| *l == name) => Some(format!(
+                            "no library called `{name}` is built into T; `libraries` lists \
+                             only `alloc` and `std`"
+                        )),
+                        name if libraries.iter().any(|(l, _)| l == name) => {
+                            Some(format!("`{name}` is already in `libraries`"))
+                        }
+                        _ => None,
+                    };
+                    if let Some(why) = why {
+                        return Err(Error::syntax(span, why));
+                    }
+                    libraries.push((name.to_string(), span));
+                }
+                list = Some(at(value.span()));
+                continue;
+            }
             if key.get_ref() != "dependencies" {
                 return Err(Error::syntax(
                     at(key.span()),
                     format!(
-                        "a `t.toml` has only `[dependencies]`, not `{}`",
+                        "a `t.toml` has only `libraries` and `[dependencies]`, not `{}`",
                         key.get_ref()
                     ),
                 ));
@@ -571,7 +649,19 @@ impl Loader<'_> {
             }
         }
         entries.sort_by(|a, b| a.name.cmp(&b.name));
-        Ok(entries)
+        let names = (libraries.iter().cloned())
+            .chain(entries.iter().map(|e| (e.name.clone(), e.at)))
+            .collect();
+        Ok(Listed {
+            manifest: Some(Manifest {
+                start,
+                names,
+                libraries: libraries.len(),
+                list,
+            }),
+            libraries: libraries.into_iter().map(|(l, _)| l).collect(),
+            entries,
+        })
     }
 
     /// Reads the package `entry` names, from the `t.toml` in `dir`, unless
@@ -661,8 +751,9 @@ impl Loader<'_> {
         };
         self.loading.push((target.clone(), Some(name.clone())));
         let mut deps = Vec::new();
-        for inner in self.manifest(&target)? {
-            deps.push((inner.name.clone(), self.dependency(&target, &inner)?));
+        let listed = self.manifest(&target)?;
+        for inner in &listed.entries {
+            deps.push((inner.name.clone(), self.dependency(&target, inner)?));
         }
         self.loading.pop();
         if let Some(l) = self.loaded.iter().find(|l| l.name == *name) {
@@ -707,6 +798,8 @@ impl Loader<'_> {
             from,
             deps,
             library: true,
+            libraries: listed.libraries,
+            manifest: listed.manifest,
         });
         self.loaded.push(Loaded {
             dir: target,

@@ -1,3 +1,5 @@
+libraries = ["std"]
+
 [dependencies]
 shapes = { path = "shapes" }
 geometry = { path = "geometry" }

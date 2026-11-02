@@ -1,0 +1,4 @@
+libraries = ["std"]
+
+[dependencies]
+quiet = { path = "quiet" }

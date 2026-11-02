@@ -1,2 +1,4 @@
+libraries = ["std"]
+
 [dependencies]
 counter = { path = "counter" }

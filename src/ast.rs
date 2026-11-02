@@ -136,6 +136,27 @@ pub struct Package {
     pub deps: Vec<(String, usize)>,
     /// Does it start in `lib.t`, as a library, rather than in `main.t`?
     pub library: bool,
+    /// The libraries built in that a path in it can start with, beside
+    /// core, which every package has: those its `t.toml` lists in
+    /// `libraries`, or, with no `t.toml`, all of them (see
+    /// docs/35-libraries.md).
+    pub libraries: Vec<String>,
+    /// Its `t.toml`, if it has one.
+    pub manifest: Option<Manifest>,
+}
+
+/// What a package's `t.toml` lists, and where, for what's said about it.
+#[derive(Debug, Clone)]
+pub struct Manifest {
+    /// Where its text starts.
+    pub start: usize,
+    /// Each library and package it lists, by name, and where the name is:
+    /// libraries first.
+    pub names: Vec<(String, Span)>,
+    /// How many of `names` are libraries'.
+    pub libraries: usize,
+    /// Its `libraries` list, if it has one.
+    pub list: Option<Span>,
 }
 
 /// How many of each kind of item a program has, in its lists and in
