@@ -1186,7 +1186,6 @@ impl Cx<'_, '_, '_> {
             return None;
         }
         Some(EffectSet {
-            braced: items.len() > 1,
             items,
             span,
             with: true,

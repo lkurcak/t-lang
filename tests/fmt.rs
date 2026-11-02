@@ -852,3 +852,36 @@ fn f() {
 "
     );
 }
+
+#[test]
+fn one_effect_in_braces_loses_them() {
+    let src = "\
+trait W {
+    effect e;
+    fn w(&self) with Self::e;
+}
+struct P {}
+impl W for P {
+    effect e = {panic};
+    fn w(&self) with {panic} {}
+}
+fn f() with {alloc, panic} {}
+fn g() with {} {}
+";
+    assert_eq!(
+        fmt(src),
+        "\
+trait W {
+    effect e;
+    fn w(&self) with Self::e;
+}
+struct P {}
+impl W for P {
+    effect e = panic;
+    fn w(&self) with panic {}
+}
+fn f() with {alloc, panic} {}
+fn g() with {} {}
+"
+    );
+}

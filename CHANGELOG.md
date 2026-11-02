@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- `t fmt` refused files with one effect in braces, `with {panic}` or
+  `effect e = {panic};`: it printed them without the braces, and then took
+  that for a different program. They're the same program, so it now
+  prints `with panic` and formats the file.
+
 ## 0.48.0 (2026-11-02)
 
 Step 34: blaming the caller. See

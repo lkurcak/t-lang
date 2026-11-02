@@ -631,7 +631,6 @@ impl Checker {
         let set = EffectSet {
             items: vec![item.clone()],
             span: item.span,
-            braced: false,
             with: true,
         };
         let mut lts = super::Lifetimes::Any;

@@ -893,8 +893,6 @@ pub struct EffectSet {
     pub items: Vec<Effect>,
     /// From the `with`, or the `{` of a set after an `=`, to the end.
     pub span: Span,
-    /// Was it written in braces?
-    pub braced: bool,
     /// Is there a `with` before it? There is everywhere but after `effect
     /// e =`.
     pub with: bool,
@@ -936,14 +934,15 @@ impl EffectSet {
     }
 }
 
-/// As written: `with panic`, `with {alloc, e}`, or `{}` after `effect e =`.
+/// `with panic`, `with {alloc, e}`, or `{}` after `effect e =`: in braces
+/// unless it's one effect, however it was written, as `t fmt` prints it.
 impl fmt::Display for EffectSet {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if self.with {
             f.write_str("with ")?;
         }
         let items: Vec<String> = self.items.iter().map(Effect::to_string).collect();
-        match self.braced || items.len() != 1 {
+        match items.len() != 1 {
             true => write!(f, "{{{}}}", items.join(", ")),
             false => f.write_str(&items[0]),
         }
