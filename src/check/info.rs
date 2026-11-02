@@ -95,6 +95,12 @@ pub struct Info {
     /// where its name is: the edit that writes them, for an editor to
     /// offer.
     pub inferred_fixes: Vec<(Span, crate::error::Fix)>,
+    /// Each const's value, by symbol, as worked out while compiling (see
+    /// `crate::consts`): its MIR body by then gives it.
+    pub(crate) const_values: HashMap<String, crate::consts::Value>,
+    /// Each const written as a length, by the node of the type it's
+    /// written as: its symbol (see `Type::Const`).
+    pub(crate) lengths: HashMap<NodeId, String>,
 }
 
 /// What a method call `x.m(..)` or path `T::m` names: method `symbol`.
@@ -722,7 +728,12 @@ impl Checker {
             TypeExprKind::Named(name, args) => {
                 // Only the name, not the arguments after it.
                 let span = Span::new(t.span.start, t.span.start + name.len());
-                if let Some(symbol) = self.adt_symbol(t.id) {
+                if let Some(&i) = self.modules.lengths.get(&t.id) {
+                    // A const, as a length: a use of it, as in an expression.
+                    let def = self.fns.get(i).map(|f| f.name.span);
+                    let ty = Type::Int(crate::types::IntTy::Usize);
+                    self.note(span, NoteKind::Fn(name.clone()), Some(ty), def);
+                } else if let Some(symbol) = self.adt_symbol(t.id) {
                     let def = self.defs.types.get(symbol).copied();
                     let kind = match self.adts.get(symbol).map(|d| &d.kind) {
                         _ if self.aliases.contains_key(symbol) => NoteKind::Alias(name.clone()),
@@ -757,6 +768,8 @@ impl Checker {
                 {
                     let kind = NoteKind::ConstParam(name.clone());
                     self.note(n.span, kind, None, Some(p.span));
+                } else {
+                    self.type_expr_notes(n, params);
                 }
             }
             TypeExprKind::Nat(_) => {}

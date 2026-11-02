@@ -36,7 +36,7 @@ pub fn lift(checked: &crate::CheckedProgram) -> Lifted<'_> {
     }
 }
 
-fn lift_program(prog: &Program, info: &Info) -> Program {
+pub(crate) fn lift_program(prog: &Program, info: &Info) -> Program {
     let cx = Cx {
         info,
         next_id: Cell::new(prog.next_id),
@@ -165,6 +165,7 @@ impl<'p> Cx<'p> {
             measure: f.measure,
             test: f.test,
             blame_caller: f.blame_caller,
+            konst: f.konst,
             ensures: f.ensures.clone(),
         };
         (decl, nested)

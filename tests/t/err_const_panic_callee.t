@@ -8,7 +8,7 @@ fn first(a: &[u8]) -> Option<u8> {
 
 const EMPTY: &[u8] = b"";
 const HEAD: u8 = first(EMPTY).unwrap();
-// error: evaluating `HEAD` panicked
+// error: evaluating `HEAD` panicked: `unwrap` of `None`
 
 fn main() {
     let _ = HEAD;

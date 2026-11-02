@@ -68,6 +68,12 @@ pub enum Type {
     /// value. Lengths are equal only when they're the same `Nat` or the
     /// same parameter: there's no arithmetic on them.
     Nat(u64),
+    /// A const item, by symbol, as a length: `[u8; SIZE]`. Equal only to
+    /// itself, not to its value, as a const parameter is, so that what a
+    /// type is doesn't depend on what a const's initializer works out to
+    /// (lemma C6 of docs/36-consts.md). Monomorphisation replaces it with
+    /// its value, a `Nat`, once that's worked out.
+    Const(String),
     /// `str`: a *string*, bytes that are UTF-8, how many known only as the
     /// program runs. Like a slice, it's only ever what a reference points
     /// to, and only a shared one, `&'a str`: changing its bytes could make
@@ -502,6 +508,7 @@ impl Type {
             Type::Array(t, n) => (&[], Some(&**t), Some(&**n)),
             Type::Int(_)
             | Type::Nat(_)
+            | Type::Const(_)
             | Type::Bool
             | Type::Char
             | Type::Str
@@ -563,6 +570,7 @@ impl Type {
             Type::Proj(t, tr, name) => Type::Proj(Box::new(f(t)), tr.clone(), name.clone()),
             Type::Int(_)
             | Type::Nat(_)
+            | Type::Const(_)
             | Type::Bool
             | Type::Char
             | Type::Str
@@ -826,10 +834,18 @@ impl IntTy {
 
     /// Its range on a 64-bit machine, which the interpreter is.
     pub fn range_64(self) -> (i128, i128) {
-        match self {
-            IntTy::Isize => IntTy::I64.range_64(),
-            IntTy::Usize => IntTy::U64.range_64(),
-            t => t.range().expect("a fixed size"),
+        self.range_at(64)
+    }
+
+    /// Its least and greatest values on a machine whose `usize` is `bits`
+    /// bits, 32 or 64.
+    pub fn range_at(self, bits: u32) -> (i128, i128) {
+        match (self, bits) {
+            (IntTy::Isize, 32) => IntTy::I32.range_at(bits),
+            (IntTy::Usize, 32) => IntTy::U32.range_at(bits),
+            (IntTy::Isize, _) => IntTy::I64.range_at(bits),
+            (IntTy::Usize, _) => IntTy::U64.range_at(bits),
+            (t, _) => t.range().expect("a fixed size"),
         }
     }
 
@@ -914,6 +930,7 @@ impl fmt::Display for Type {
             Type::Slice(t) => write!(f, "[{t}]"),
             Type::Array(t, n) => write!(f, "[{t}; {n}]"),
             Type::Nat(n) => write!(f, "{n}"),
+            Type::Const(symbol) => f.write_str(&crate::check::source_name(symbol)),
             // `T::Item` is what's written, and says enough in a message.
             Type::Proj(t, _, name) if matches!(**t, Type::Param(_)) => write!(f, "{t}::{name}"),
             Type::Proj(t, tr, name) => write!(f, "<{t} as {tr}>::{name}"),

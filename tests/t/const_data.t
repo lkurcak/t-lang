@@ -9,6 +9,7 @@ enum Shape { Dot(Point), Line(Point, Point) }
 
 const ORIGIN: Point = Point { x: 0, y: 0 };
 const UNIT: Shape = Shape::Line(ORIGIN, Point { x: 1, y: 1 });
+const DOT: Shape = Shape::Dot(Point { x: 5, y: 5 });
 const PRIMES: [u8; 4] = [2, 3, 5, 7];
 const NAMES: [&str; 2] = ["ada", "alan"];
 const MAYBE: Option<u8> = Option::Some(7);
@@ -41,8 +42,9 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&(a.x + b.y))?;        // expect: 0
     out.line(&len(UNIT))?;          // expect: 2
     out.line(&len(UNIT))?;          // expect: 2
+    out.line(&len(DOT))?;           // expect: 0
     out.line(&PRIMES[3])?;          // expect: 7
-    out.line(NAMES[1])?;            // expect: alan
+    out.line(&NAMES[1])?;           // expect: alan
     out.line(&MAYBE.unwrap_or(0))?; // expect: 7
     out.line(&SQUARES[3])?;         // expect: 9
     Result::Ok(())

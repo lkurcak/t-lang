@@ -1,7 +1,8 @@
 //! The naming lints, as in Rust: `UpperCamelCase` for structs, enums,
 //! variants, traits and type parameters (`non_camel_case_types`), and
 //! `snake_case` for modules, functions, methods, parameters, variables and
-//! fields (`non_snake_case`).
+//! fields (`non_snake_case`); and `UPPER_CASE` for consts and const
+//! parameters (`non_upper_case_globals`).
 //! Underscores before or after a name don't count, and digits are fine
 //! (`Vec2`, `x1`). An acronym is one word, so `HTTPServer` should be
 //! `HttpServer`.
@@ -203,6 +204,7 @@ fn decls(prog: &Program) -> Vec<Decl<'_>> {
             // Named by the trait: the warning is there.
             Some(MethodOf::Impl(k)) if prog.impls[k].trait_name.is_some() => {}
             Some(_) => out.push(ident(&f.name, "method", Case::Snake)),
+            None if f.is_const() => out.push(ident(&f.name, "const", Case::Upper)),
             None => out.push(ident(&f.name, "function", Case::Snake)),
         }
         params(&f.generics, &mut out);

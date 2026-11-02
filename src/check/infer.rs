@@ -50,6 +50,7 @@ const MOST_EFFECTS: usize = 256;
 /// no body to infer them from, or must have none.
 pub(super) fn infers(prog: &Program, f: &FnDecl, method: Option<MethodOf>) -> bool {
     f.effects.is_none()
+        && !f.is_const()
         && !f.vis.is_export()
         && f.intrinsic.is_none()
         && f.measure.is_none()
@@ -91,7 +92,9 @@ pub(super) fn body_groups(
     let mut by_name: HashMap<&str, HashSet<usize>> = HashMap::new();
     for &i in &own {
         let (f, _, method) = fns[i];
-        if infers(prog, f, method) {
+        // A const's users come after it too, so that what's known of its
+        // value is known where they're checked (see `refine.rs`).
+        if infers(prog, f, method) || f.is_const() {
             by_name
                 .entry(&f.name.name)
                 .or_default()

@@ -7,5 +7,5 @@ const N: usize = three();
 fn main() {
     let a = [0u8; 3];
     let _ = a[N - 1];
-// error: 
+// error: can't prove `i < self.len()` for argument `i` of `index`
 }

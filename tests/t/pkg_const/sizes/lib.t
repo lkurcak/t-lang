@@ -9,6 +9,7 @@ fn twice(n: usize) -> usize with panic { n * 2 }
 export const PAIR: usize = twice(BLOCK);
 
 /// A block of bytes.
+#[derive(Discard)]
 export struct Block { bytes: [u8; BLOCK] }
 
 impl Block {

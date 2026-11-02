@@ -3,7 +3,7 @@
 
 use super::info::{Instance, Resolved};
 use super::lints::{Unwrap, narrowable, unreachable_alt, unreachable_code, unused_label};
-use super::scope::{FnScope, to_closure};
+use super::scope::{Binding, FnScope, to_closure};
 use super::typed::Res;
 use super::{Checker, ITERATOR, effects, generics, modules, plural, source_name, traits, unify};
 use crate::ast::*;
@@ -440,10 +440,18 @@ impl Checker {
                     {
                         Type::Param(name.clone())
                     }
+                    ExprKind::Var(name, targs)
+                        if targs.is_empty()
+                            && let Some(Binding::Fn(f)) = self.const_binding(name, n.id)
+                            && self.fns[f.0].konst =>
+                    {
+                        Type::Const(self.fns[f.0].symbol.clone())
+                    }
                     _ => {
                         return Err(Error::ty(
                             n.span,
-                            "an array's length must be an integer literal or a const parameter",
+                            "an array's length must be an integer literal, a const parameter or \
+                             a const",
                         ));
                     }
                 };

@@ -43,6 +43,9 @@ pub(super) struct FnDef {
     /// The module it's in, and how far it's seen from there.
     pub(super) module: usize,
     pub(super) level: Level,
+    /// Is it a const item? Then a use of its name is its value, of its
+    /// result type (see `check/consts.rs`).
+    pub(super) konst: bool,
 }
 
 /// The functions a block declares, which are in scope in all of it. Locals

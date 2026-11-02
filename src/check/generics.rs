@@ -47,6 +47,8 @@ pub(crate) enum TypeName {
     /// A parameter of a type alias, in what it stands for, as resolved for
     /// a use of it: the argument written for it there, resolved.
     Arg(Type),
+    /// A const item, by symbol, which can only be a length.
+    Const(String),
 }
 
 /// What a type alias stands for, and what of it a use must give.
@@ -370,6 +372,7 @@ fn resolve_in(
     let arg = |t: &TypeExpr| match &t.kind {
         TypeExprKind::Named(n, a) if a.is_empty() => match names(n, t) {
             Some(TypeName::Arg(ty)) => Some(ty),
+            Some(TypeName::Const(symbol)) => Some(Type::Const(symbol)),
             _ => None,
         },
         _ => None,
@@ -437,6 +440,12 @@ fn resolve_in(
             let mut alias = None;
             let (ty, lt_arity, lengths) = match names(name, t) {
                 Some(TypeName::Arg(ty)) => return Ok(ty),
+                Some(TypeName::Const(_)) => {
+                    return Err(Error::ty(
+                        t.span,
+                        format!("`{name}` is a const: it can be a length, not a type"),
+                    ));
+                }
                 Some(TypeName::Alias(def)) => {
                     let arity = (def.lifetimes.len(), def.lengths.clone());
                     alias = Some(def);
@@ -681,7 +690,7 @@ fn len(t: &TypeExpr, params: &Params) -> Result<Type, Error> {
         }
         _ => Err(Error::ty(
             t.span,
-            "an array's length must be an integer literal or a const parameter",
+            "an array's length must be an integer literal, a const parameter or a const",
         )),
     }
 }

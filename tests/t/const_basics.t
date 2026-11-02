@@ -26,7 +26,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&DOUBLE)?;            // expect: 84
     out.line(&YES)?;               // expect: true
     out.line(&LETTER)?;            // expect: x
-    out.line(GREETING)?;           // expect: hello
+    out.line(&GREETING)?;          // expect: hello
     out.line(&BYTES.len())?;       // expect: 2
     out.line(&NINE)?;              // expect: 9
     out.line(&limits::MAX_USERS)?; // expect: 1000

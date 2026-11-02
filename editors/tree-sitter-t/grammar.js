@@ -82,6 +82,7 @@ module.exports = grammar({
       $.struct_item,
       $.enum_item,
       $.type_item,
+      $.const_item,
       $.trait_item,
       $.impl_item,
       $.mod_item,
@@ -410,6 +411,18 @@ module.exports = grammar({
       ';',
     ),
 
+    // `const SIZE: usize = 4;`, a const item.
+    const_item: $ => seq(
+      optional($.visibility_modifier),
+      'const',
+      field('name', $.identifier),
+      ':',
+      field('type', $._type),
+      '=',
+      field('value', $._expression),
+      ';',
+    ),
+
     enum_item: $ => seq(
       optional($.visibility_modifier),
       'enum',
@@ -452,7 +465,7 @@ module.exports = grammar({
     // says.
     slice_type: $ => seq('[', field('element', $._type), ']'),
 
-    // `[T; N]`, an array, whose length is a literal or a const parameter.
+    // `[T; N]`, an array, whose length is a literal, a const parameter or a const.
     array_type: $ => seq(
       '[',
       field('element', $._type),

@@ -251,6 +251,7 @@ fn vary(
         }
         Type::Int(_)
         | Type::Nat(_)
+        | Type::Const(_)
         | Type::Char
         | Type::Str
         | Type::Bool
@@ -323,6 +324,7 @@ fn wf_into(t: &Type, adts: &Adts, outlives: &HashMap<String, Vec<Bound>>, out: &
         | Type::Inferred(..)
         | Type::Int(_)
         | Type::Nat(_)
+        | Type::Const(_)
         | Type::Char
         | Type::Str
         | Type::Bool
@@ -380,6 +382,7 @@ pub(crate) fn type_outlives(t: &Type, r: &Region, out: &mut Vec<Bound>) {
         | Type::Inferred(..)
         | Type::Int(_)
         | Type::Nat(_)
+        | Type::Const(_)
         | Type::Char
         | Type::Str
         | Type::Bool
@@ -662,6 +665,7 @@ impl Regions {
             | (Type::Str, Type::Str)
             | (Type::Unit, Type::Unit)
             | (Type::Nat(_), Type::Nat(_))
+            | (Type::Const(_), Type::Const(_))
             | (Type::Never, _)
             | (_, Type::Never) => {}
             (Type::Param(p), Type::Param(q)) if p == q => {}

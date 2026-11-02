@@ -1143,9 +1143,21 @@ impl Checker {
             w.ensures = Some((sig.ensures.clone(), sig.name.clone()));
         }
         let v = w.expr(&f.body)?;
+        let mut known = None;
+        if f.is_const() && w.reachable {
+            known = match &v {
+                Val::Int(l) => l.as_constant().map(Known::Int),
+                Val::Bool(Formula::True) => Some(Known::Bool(true)),
+                Val::Bool(Formula::False) => Some(Known::Bool(false)),
+                _ => None,
+            };
+        }
         w.result(v, super::expr::result_span(&f.body))?;
         let proved = std::mem::take(&mut w.proved);
         let failures = std::mem::take(&mut w.failures);
+        if let Some(k) = known {
+            self.const_values.insert(symbol.clone(), k);
+        }
         for (node, failure) in failures {
             let span = self
                 .effect_sites
@@ -1254,6 +1266,18 @@ fn constant(e: &Expr) -> bool {
 /// box, as what it points to, or anything else, of which nothing is known.
 /// But for those, each value is an *object*, which says which value it
 /// is, so what a measure gives of it (`Walk::measured`).
+/// What the logic knows a const's value is, from its initializer: when
+/// the value it worked out for the body is a constant, as it is of a
+/// literal, or arithmetic on those and on other consts it knows (lemma C5
+/// of docs/36-consts.md). Of a call, it's what the function's type says,
+/// so nothing, without a refinement. The interpreter, which works out the
+/// value while compiling, checks it's this (`crate::consts`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Known {
+    Int(i128),
+    Bool(bool),
+}
+
 #[derive(Debug, Clone)]
 enum Val {
     Int(Lin),
@@ -2437,7 +2461,10 @@ impl Walk<'_> {
         }
         let entry = self.entry.clone();
         if let Some((r, name)) = self.ret.clone() {
-            let what = format!("the result of `{name}`");
+            let what = match self.cx.current.is_some_and(|id| self.cx.fns[id.0].konst) {
+                true => format!("the value of const `{name}`"),
+                false => format!("the result of `{name}`"),
+            };
             self.need(&r, &v, Env::Post(&entry, None, &[]), span, what)?;
         }
         if let Some((ensures, name)) = self.ensures.clone() {
@@ -2818,11 +2845,26 @@ impl Walk<'_> {
     }
 
     /// The value of length `n`: a `Nat`'s number, or a const parameter's
-    /// variable, one for the whole function, as the caller picks it once.
+    /// variable, one for the whole function, as the caller picks it once;
+    /// or a const item's value, if it's known, and else a variable of its
+    /// own the same way.
     fn length(&mut self, n: &Type) -> Val {
         let usize = Type::Int(crate::types::IntTy::Usize);
         match n {
             Type::Nat(k) => Val::Int(Lin::constant(i128::from(*k))),
+            Type::Const(symbol) => match self.cx.const_values.get(symbol) {
+                Some(Known::Int(k)) => Val::Int(Lin::constant(*k)),
+                _ => {
+                    // Not a name a const parameter can have.
+                    let key = format!("const {symbol}");
+                    if let Some(v) = self.consts.get(&key) {
+                        return v.clone();
+                    }
+                    let v = self.unknown(&usize);
+                    self.consts.insert(key, v.clone());
+                    v
+                }
+            },
             Type::Param(name) => {
                 if let Some(v) = self.consts.get(name) {
                     return v.clone();
@@ -3170,6 +3212,19 @@ impl Walk<'_> {
                     Ok(Val::Other)
                 }
                 Some(Res::Const(name)) => Ok(self.length(&Type::Param(name.clone()))),
+                // A const: what's known of its value, or else what its type
+                // says, as of a call of a function with no parameters.
+                Some(Res::Item(symbol)) => match self.cx.const_values.get(symbol) {
+                    Some(Known::Int(n)) => Ok(Val::Int(Lin::constant(*n))),
+                    Some(Known::Bool(b)) => Ok(Val::Bool(match b {
+                        true => Formula::True,
+                        false => Formula::False,
+                    })),
+                    None => {
+                        let symbol = symbol.clone();
+                        self.call(e, Some(&symbol), &[], Vec::new(), Vec::new())
+                    }
+                },
                 _ => Ok(Val::Other),
             },
             ExprKind::Array(items) => {

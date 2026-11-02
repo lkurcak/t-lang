@@ -143,6 +143,11 @@ impl Checker {
         Ok(match &p.kind {
             PatternKind::Wild => Pat::Wild,
             PatternKind::Bind(name, mutable) => {
+                if let Some(super::scope::Binding::Fn(f)) = self.binding(name)
+                    && self.fns[f.0].konst
+                {
+                    return Err(self.const_pattern(name, p.span));
+                }
                 if binds.iter().any(|l| l.name == *name) {
                     return Err(Error::ty(
                         p.span,

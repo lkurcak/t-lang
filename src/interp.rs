@@ -257,53 +257,7 @@ pub struct Ended {
 /// after it, everything must have been freed. Tests don't share anything:
 /// each run starts from nothing (docs/31-tests.md, T2).
 pub fn run_entry(program: &crate::mono::Executable, entry: &str, term: &mut dyn Terminal) -> Ended {
-    let prog = program.program();
-    let fns = prog.fns.iter().map(|f| (f.name.name.as_str(), f)).collect();
-    let derived = |tr: &str| -> HashSet<&str> {
-        let with = prog.types.iter().filter(|d| d.derive_of(tr).is_some());
-        with.map(|d| d.name().name.as_str()).collect()
-    };
-    let structs = prog
-        .types
-        .iter()
-        .filter_map(|t| match t {
-            TypeDecl::Struct(s) => Some((s.name.name.as_str(), s)),
-            TypeDecl::Enum(_) | TypeDecl::Alias(_) => None,
-        })
-        .collect();
-    let enums = prog
-        .types
-        .iter()
-        .filter_map(|t| match t {
-            TypeDecl::Enum(e) => Some((e.name.name.as_str(), e)),
-            TypeDecl::Struct(_) | TypeDecl::Alias(_) => None,
-        })
-        .collect();
-    let mut memory = Memory::default();
-    // Where every empty slice points: no slots, never freed.
-    let nowhere = memory.alloc(Value::Slots(Vec::new()), false);
-    let mut interp = Interp {
-        fns,
-        structs,
-        enums,
-        nowhere,
-        literals: HashMap::new(),
-        copy: derived("Copy"),
-        discard: derived("Discard"),
-        aborting: false,
-        message: String::new(),
-        panicked: false,
-        calls: Vec::new(),
-        memory,
-        depth: 0,
-        frames: Vec::new(),
-        sites: Vec::new(),
-        proved: &prog.proved,
-        measures: &prog.measures,
-        refined: HashMap::new(),
-        exe: program,
-        term,
-    };
+    let mut interp = Interp::new(program, term, 64, None);
     let result = interp.entry(program, entry);
     Ended {
         result,
@@ -311,7 +265,168 @@ pub fn run_entry(program: &crate::mono::Executable, entry: &str, term: &mut dyn 
     }
 }
 
+/// Why working out a const's value failed (`evaluate`).
+pub(crate) enum Failed {
+    /// It aborted: panicked, or ran out of stack, with this error.
+    Aborted(Error),
+    /// It took more than its budget of steps.
+    Budget,
+}
+
+/// The value const `entry` gives, worked out on a machine whose `usize` is
+/// `bits` bits, in at most `budget` steps, each a basic block: as plain
+/// data, which a const's type says it is (lemma C4 of docs/36-consts.md).
+pub(crate) fn evaluate(
+    program: &crate::mono::Executable,
+    entry: &str,
+    bits: u32,
+    budget: u64,
+) -> Result<crate::consts::Value, Failed> {
+    let mut term = Captured::default();
+    let mut interp = Interp::new(program, &mut term, bits, Some(budget));
+    match interp.call(
+        Value::Fn(entry.to_string(), None),
+        Vec::new(),
+        Span::new(0, 0),
+    ) {
+        Ok(v) => Ok(interp.tree(&v)),
+        Err(_) if interp.out_of_steps => Err(Failed::Budget),
+        Err(e) => Err(Failed::Aborted(e)),
+    }
+}
+
+impl<'p, 'o> Interp<'p, 'o> {
+    /// An interpreter of `program`, with `term` as its streams, on a
+    /// machine whose `usize` is `bits` bits, that stops after `steps`
+    /// basic blocks, if there's a limit.
+    fn new(
+        program: &'p crate::mono::Executable,
+        term: &'o mut dyn Terminal,
+        bits: u32,
+        steps: Option<u64>,
+    ) -> Interp<'p, 'o> {
+        let prog = program.program();
+        let fns = prog.fns.iter().map(|f| (f.name.name.as_str(), f)).collect();
+        let derived = |tr: &str| -> HashSet<&str> {
+            let with = prog.types.iter().filter(|d| d.derive_of(tr).is_some());
+            with.map(|d| d.name().name.as_str()).collect()
+        };
+        let structs = prog
+            .types
+            .iter()
+            .filter_map(|t| match t {
+                TypeDecl::Struct(s) => Some((s.name.name.as_str(), s)),
+                TypeDecl::Enum(_) | TypeDecl::Alias(_) => None,
+            })
+            .collect();
+        let enums = prog
+            .types
+            .iter()
+            .filter_map(|t| match t {
+                TypeDecl::Enum(e) => Some((e.name.name.as_str(), e)),
+                TypeDecl::Struct(_) | TypeDecl::Alias(_) => None,
+            })
+            .collect();
+        let mut memory = Memory::default();
+        // Where every empty slice points: no slots, never freed.
+        let nowhere = memory.alloc(Value::Slots(Vec::new()), false);
+        Interp {
+            fns,
+            structs,
+            enums,
+            nowhere,
+            literals: HashMap::new(),
+            copy: derived("Copy"),
+            discard: derived("Discard"),
+            aborting: false,
+            message: String::new(),
+            panicked: false,
+            calls: Vec::new(),
+            memory,
+            depth: 0,
+            frames: Vec::new(),
+            sites: Vec::new(),
+            proved: &prog.proved,
+            measures: &prog.measures,
+            refined: HashMap::new(),
+            exe: program,
+            term,
+            bits,
+            steps,
+            out_of_steps: false,
+        }
+    }
+
+    /// Value `v`, of a const, as plain data: what a reference points to
+    /// is bytes, of a literal, which are all a const's references can
+    /// point to.
+    fn tree(&self, v: &Value) -> crate::consts::Value {
+        use crate::consts::Value as C;
+        match v {
+            Value::Int(n, _) => C::Int(*n),
+            Value::Bool(b) => C::Bool(*b),
+            Value::Char(c) => C::Char(*c),
+            Value::Unit => C::Unit,
+            Value::Struct(_, fields) => {
+                C::Struct(fields.iter().map(|(_, f)| self.tree(f)).collect())
+            }
+            Value::Variant(ty, variant, fields) => {
+                let i = (self.enums[ty.as_str()].variants.iter())
+                    .position(|v| v.name.name == *variant)
+                    .unwrap_or_else(|| unsound(&format!("no variant `{variant}` of `{ty}`")));
+                C::Variant(i, fields.iter().map(|f| self.tree(f)).collect())
+            }
+            Value::Slots(values) => C::Array(values.iter().map(|f| self.tree(f)).collect()),
+            Value::Ref(p) => {
+                let whole = Ptr {
+                    range: None,
+                    ..p.clone()
+                };
+                let Value::Slots(slots) = self.memory.get(&whole) else {
+                    unsound("a const's reference to what isn't bytes")
+                };
+                let (lo, len) = p.range.unwrap_or((0, slots.len()));
+                let bytes = slots[lo..lo + len].iter().map(|b| match b {
+                    Value::Int(n, IntTy::U8) => *n as u8,
+                    other => unsound(&format!("a const's reference to `{other}`, not a byte")),
+                });
+                C::Bytes(bytes.collect())
+            }
+            other => unsound(&format!("a const's value `{other}` isn't plain data")),
+        }
+    }
+}
+
 impl<'p> Interp<'p, '_> {
+    /// The least and greatest `t` on the machine this is (see `bits`).
+    fn range(&self, t: IntTy) -> (i128, i128) {
+        t.range_at(self.bits)
+    }
+
+    /// `n`, as a `t`, which it must be one of.
+    fn int_of(&self, n: i128, t: IntTy) -> Value {
+        let (lo, hi) = self.range(t);
+        if !(lo..=hi).contains(&n) {
+            unsound(&format!("{n} as {}", t.a()));
+        }
+        Value::Int(n, t)
+    }
+
+    /// The `t` that `n` is congruent to modulo 2^w, if `t` is `w` bits wide:
+    /// `n` is right in its last `w` bits, which is all that's kept of a
+    /// product that overflowed `i128`, as `wrapping_mul` is.
+    fn wrap(&self, n: i128, t: IntTy) -> i128 {
+        let (lo, hi) = self.range(t);
+        let modulus = hi - lo + 1;
+        let m = n.rem_euclid(modulus);
+        if m > hi { m - modulus } else { m }
+    }
+
+    /// A `usize`, from a count the interpreter keeps.
+    fn usize_of(&self, n: usize) -> Value {
+        self.int_of(n as i128, IntTy::Usize)
+    }
+
     /// `run_entry`'s work.
     fn entry(&mut self, program: &crate::mono::Executable, entry: &str) -> Result<Value, Error> {
         // `main` takes nothing, or the one `std::Os` there is.
@@ -375,30 +490,6 @@ fn int(v: Value) -> i128 {
         Value::Int(n, _) => n,
         other => unsound(&format!("expected an integer, got `{other}`")),
     }
-}
-
-/// `n`, as a `t`, which it must be one of.
-fn int_of(n: i128, t: IntTy) -> Value {
-    let (lo, hi) = t.range_64();
-    if !(lo..=hi).contains(&n) {
-        unsound(&format!("{n} as {}", t.a()));
-    }
-    Value::Int(n, t)
-}
-
-/// The `t` that `n` is congruent to modulo 2^w, if `t` is `w` bits wide:
-/// `n` is right in its last `w` bits, which is all that's kept of a
-/// product that overflowed `i128`, as `wrapping_mul` is.
-fn wrap(n: i128, t: IntTy) -> i128 {
-    let (lo, hi) = t.range_64();
-    let modulus = hi - lo + 1;
-    let m = n.rem_euclid(modulus);
-    if m > hi { m - modulus } else { m }
-}
-
-/// A `usize`, from a count the interpreter keeps.
-fn usize_of(n: usize) -> Value {
-    int_of(n as i128, IntTy::Usize)
 }
 
 /// The integer type written `t`, after monomorphisation.
@@ -524,6 +615,13 @@ impl Memory {
 }
 
 struct Interp<'p, 'o> {
+    /// How many bits a `usize` is on the machine this is, 32 or 64.
+    bits: u32,
+    /// How many more basic blocks it may run, if there's a limit: there is
+    /// for a const, worked out while compiling (`evaluate`).
+    steps: Option<u64>,
+    /// Did it stop because `steps` ran out?
+    out_of_steps: bool,
     fns: HashMap<&'p str, &'p FnDecl>,
     /// For putting struct literals' fields in declaration order.
     structs: HashMap<&'p str, &'p StructDecl>,
@@ -1030,6 +1128,11 @@ impl<'p> Interp<'p, '_> {
     /// functions that call them, which have their effects.
     fn effect(&self, name: &str) {
         for f in &self.frames {
+            // A const's initializer may panic, while compiling, where it's
+            // run: once it's known not to, it's its value (`crate::consts`).
+            if self.fns[f.as_str()].is_const() {
+                continue;
+            }
             let says = self.fns[f.as_str()]
                 .effects
                 .iter()
@@ -1300,6 +1403,14 @@ impl<'p> Interp<'p, '_> {
                     break 'run Err(e);
                 }
             }
+            if let Some(n) = &mut self.steps {
+                if *n == 0 {
+                    self.out_of_steps = true;
+                    let at = self.sites.last().expect("pushed").span;
+                    break 'run Err(self.panic(at, "out of steps"));
+                }
+                *n -= 1;
+            }
             match block.term.as_ref() {
                 Some(Term::Goto(t)) => b = *t,
                 Some(Term::Branch(o, t, e)) => {
@@ -1389,7 +1500,7 @@ impl<'p> Interp<'p, '_> {
                 self.read(&p, true)
             }
             Operand::Const(c) => match c {
-                Const::Int(n, crate::types::Type::Int(t)) => int_of(*n, *t),
+                Const::Int(n, crate::types::Type::Int(t)) => self.int_of(*n, *t),
                 Const::Int(_, t) => unsound(&format!("an integer of type `{t}`")),
                 Const::Bool(b) => Value::Bool(*b),
                 Const::Char(c) => Value::Char(*c),
@@ -1432,8 +1543,8 @@ impl<'p> Interp<'p, '_> {
                     // it, which is in its type, so never panics.
                     _ => match v {
                         Value::Int(n, t) => {
-                            let (lo, hi) = t.range_64();
-                            int_of(lo + hi - n, t)
+                            let (lo, hi) = self.range(t);
+                            self.int_of(lo + hi - n, t)
                         }
                         v => Value::Bool(!bool(v)),
                     },
@@ -1471,7 +1582,7 @@ impl<'p> Interp<'p, '_> {
                     },
                     // The same number, if it fits.
                     Type::Int(t) => {
-                        let (lo, hi) = t.range_64();
+                        let (lo, hi) = self.range(*t);
                         if !(lo..=hi).contains(&n) {
                             self.not_proved(*id);
                             let message = format!("`as` overflowed: {n} isn't {}", t.a());
@@ -1707,7 +1818,7 @@ impl<'p> Interp<'p, '_> {
             if t != u {
                 unsound("`checked_mul` of two integer types");
             }
-            let (lo, hi) = t.range_64();
+            let (lo, hi) = self.range(t);
             let result = a.checked_mul(b).filter(|n| (lo..=hi).contains(n));
             // The copy of `Option<T>` the intrinsic returns.
             let TypeExprKind::Named(option, _) = &self.fns[copy].ret.kind else {
@@ -1726,7 +1837,7 @@ impl<'p> Interp<'p, '_> {
             if t != u {
                 unsound("`wrapping_mul` of two integer types");
             }
-            return Ok(int_of(wrap(a.wrapping_mul(b), t), t));
+            return Ok(self.int_of(self.wrap(a.wrapping_mul(b), t), t));
         }
         if name == "core::num::wrap" {
             let [Value::Int(x, _)] =
@@ -1735,11 +1846,11 @@ impl<'p> Interp<'p, '_> {
                 unsound("`wrap` of what isn't an integer")
             };
             let u = int_ty(&self.fns[copy].ret);
-            return Ok(int_of(wrap(x, u), u));
+            return Ok(self.int_of(self.wrap(x, u), u));
         }
         if let Some(end) = name.strip_prefix("core::num::") {
             let t = int_ty(&self.fns[copy].ret);
-            let (lo, hi) = t.range_64();
+            let (lo, hi) = self.range(t);
             return Ok(match end {
                 "least" => Value::Int(lo, t),
                 "greatest" => Value::Int(hi, t),
@@ -1794,7 +1905,7 @@ impl<'p> Interp<'p, '_> {
                 };
                 let mut values = Vec::new();
                 for i in 0..n {
-                    values.push(self.call(f.clone(), vec![usize_of(i)], span)?);
+                    values.push(self.call(f.clone(), vec![self.usize_of(i)], span)?);
                 }
                 Ok(Value::Slots(values))
             }
@@ -1939,7 +2050,7 @@ impl<'p> Interp<'p, '_> {
             };
             let len = values.len();
             return match op {
-                "len" => usize_of(len),
+                "len" => self.usize_of(len),
                 "as_slice" | "as_mut_slice" => Value::Ref(p.slice(0, len)),
                 _ => unsound(&format!("unknown intrinsic `[T; N]::{op}`")),
             };
@@ -1974,7 +2085,7 @@ impl<'p> Interp<'p, '_> {
             usize::try_from(i).ok().filter(|i| *i <= max)
         };
         let made = match op {
-            "len" => return usize_of(len),
+            "len" => return self.usize_of(len),
             // Its refinement says `i < len()`, so it's the checker's bug
             // if it isn't.
             "index" | "index_mut" => {
@@ -2044,7 +2155,7 @@ impl<'p> Interp<'p, '_> {
             "len" => {
                 let q = boxes(self, &arg());
                 match self.memory.get(&q) {
-                    Value::Slots(values) => usize_of(values.len()),
+                    Value::Slots(values) => self.usize_of(values.len()),
                     other => unsound(&format!("an `Arena` of `{other}`")),
                 }
             }
@@ -2097,7 +2208,7 @@ impl<'p> Interp<'p, '_> {
             )),
             "cap" => {
                 let q = buf(self, &arg());
-                Ok(usize_of(slots(self, &q)))
+                Ok(self.usize_of(slots(self, &q)))
             }
             "grow" => {
                 let this = arg();
@@ -2298,16 +2409,16 @@ impl<'p> Interp<'p, '_> {
             unsound(&format!("`{op}` of {} and {}", t.a(), u.a()));
         }
         let (l, r, t) = (*l, *r, *t);
-        let (lo, hi) = t.range_64();
+        let (lo, hi) = self.range(t);
         let n = match op {
             // Bit by bit, which `i128`'s operators are, on two's
             // complement: the result is in `t` (`int_of` checks).
-            BinOp::BitAnd => return Ok(int_of(l & r, t)),
-            BinOp::BitOr => return Ok(int_of(l | r, t)),
-            BinOp::BitXor => return Ok(int_of(l ^ r, t)),
+            BinOp::BitAnd => return Ok(self.int_of(l & r, t)),
+            BinOp::BitOr => return Ok(self.int_of(l | r, t)),
+            BinOp::BitXor => return Ok(self.int_of(l ^ r, t)),
             // Rounding down, as `i128`'s `>>` does. Past 126 bits, every
             // integer of any type is 0, or -1 if it's negative.
-            BinOp::Shr => return Ok(int_of(l >> r.min(127), t)),
+            BinOp::Shr => return Ok(self.int_of(l >> r.min(127), t)),
             // Times 2^r, which overflows `i128` past 126 bits but for 0.
             BinOp::Shl if l == 0 => Some(0),
             BinOp::Shl if r >= 127 => None,

@@ -443,6 +443,31 @@ impl Checker {
         self.unused_unsafe();
         let sites = std::mem::take(&mut self.effect_sites);
         let id = self.current.expect("in a function");
+        if f.is_const() {
+            for s in &sites {
+                if let Some(at) = s.unsafe_block {
+                    return Err(self.const_unsafe(f, at));
+                }
+                let effects = self.solved(&s.effects);
+                if has_placeholder(&effects) {
+                    self.deferred.push(Deferred {
+                        sub: effects,
+                        sup: Type::effects([Type::Panic]),
+                        why: Why::Site {
+                            what: s.what.clone(),
+                            name: f.name.name.clone(),
+                        },
+                        subject: String::new(),
+                        span: s.span,
+                    });
+                    continue;
+                }
+                for e in effects.effect_items() {
+                    self.const_effect(f, e, &s.what, s.span)?;
+                }
+            }
+            return Ok(());
+        }
         if self.inferring.contains(&id.0) {
             return self.inferred_sites(id, sites);
         }

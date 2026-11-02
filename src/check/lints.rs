@@ -455,10 +455,10 @@ impl Checker {
         for ((f, is_live), (.., method)) in own {
             let in_live = f.parent.is_none_or(|p| live[p.0]);
             if !is_live && in_live && !on_purpose(&f.name) {
-                let what = if method.is_some() {
-                    "method"
-                } else {
-                    "function"
+                let what = match method {
+                    Some(_) => "method",
+                    None if f.konst => "const",
+                    None => "function",
                 };
                 let message = format!("{what} `{}` is never used", f.name.name);
                 self.warnings.push(dead(f.name.span, message));

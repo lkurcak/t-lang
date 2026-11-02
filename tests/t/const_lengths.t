@@ -4,6 +4,7 @@
 const SIZE: usize = 4;
 const LAST: usize = SIZE - 1;
 
+#[derive(Discard)]
 struct Buffer { data: [u8; SIZE] }
 
 #[derive(Discard)]

@@ -36,6 +36,7 @@
 ; Functions
 
 (function_item name: (identifier) @function)
+(const_item name: (identifier) @constant)
 (function_signature_item name: (identifier) @function)
 (method_call_expression method: (identifier) @function.method)
 (self) @variable.builtin

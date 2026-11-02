@@ -818,6 +818,18 @@ pub struct FnDecl {
     /// its body is shown where it was called (see
     /// docs/34-blame-caller.md).
     pub blame_caller: Option<Span>,
+    /// Where its `const` is, if it's a const item, `const N: usize = 4;`:
+    /// then it has no parameters, `ret` is the const's type, and `body`
+    /// its initializer, which runs while the program is compiled. A use
+    /// of its name is its value (see docs/36-consts.md).
+    pub konst: Option<Span>,
+}
+
+impl FnDecl {
+    /// Is it a const item, not a function?
+    pub fn is_const(&self) -> bool {
+        self.konst.is_some()
+    }
 }
 
 /// `#[test]` on a function, or `#[test(panics)]` on one that passes only

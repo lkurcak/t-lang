@@ -67,6 +67,8 @@ pub(crate) enum Res {
     /// A const parameter of the function, by name: a `usize` the caller
     /// picks, the same for the whole call.
     Const(String),
+    /// A const item, by symbol: its value (see `check/consts.rs`).
+    Item(String),
 }
 
 /// A local variable.
