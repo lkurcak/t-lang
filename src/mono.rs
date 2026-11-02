@@ -1028,6 +1028,32 @@ impl Cx<'_, '_, '_> {
                 }
                 return;
             }
+            if let Some(symbol) = cx.m.info.pred_consts.get(&e.id) {
+                use crate::consts::Value;
+                match cx.m.info.const_values.get(symbol) {
+                    Some(Value::Int(n)) => {
+                        let lit = |n: i128| ExprKind::Int(n.unsigned_abs() as u64, None);
+                        e.kind = match *n < 0 {
+                            false => lit(*n),
+                            true => ExprKind::Unary(
+                                UnOp::Neg,
+                                Box::new(Expr {
+                                    kind: lit(*n),
+                                    span: e.span,
+                                    id: e.id,
+                                }),
+                            ),
+                        };
+                    }
+                    Some(Value::Bool(b)) => e.kind = ExprKind::Bool(*b),
+                    Some(Value::Char(c)) => e.kind = ExprKind::Char(*c),
+                    Some(v) => unreachable!("a const of `{v:?}` in a predicate"),
+                    None => {
+                        cx.m.missing.borrow_mut().insert(symbol.clone());
+                    }
+                }
+                return;
+            }
             for c in check::modules::children_mut(e) {
                 go(cx, c);
             }

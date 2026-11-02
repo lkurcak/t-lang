@@ -272,7 +272,7 @@ pub fn check(prog: &mut Program, warnings: &mut Vec<Warning>) -> (Info, Result<(
     cx.info.projections = cx.proj_traits.take();
     cx.info.mir = cx.mir.take();
     cx.info.lengths = (cx.modules.lengths.iter())
-        .map(|(&id, &i)| (id, cx.fn_symbols[i].clone()))
+        .map(|(&id, &(i, _))| (id, cx.fn_symbols[i].clone()))
         .collect();
     // Once it all checks, what each const is (see `crate::consts`).
     if result.is_ok() {
@@ -1112,6 +1112,7 @@ impl Checker {
         self.projections_known(prog);
         self.derive(prog)?;
         self.signatures(prog, &fns)?;
+        self.const_lengths()?;
         self.pending_refinements()?;
         self.check_impls(prog)?;
         self.info.traits = self.traits.clone();
@@ -1477,9 +1478,12 @@ impl Checker {
         let Type::Fn(sig) = &scheme.ty else {
             unreachable!("a function has a function type")
         };
-        let kind = NoteKind::Fn(f.name.name.clone());
         let def = self.method_decl(id).unwrap_or(Some(f.name.span));
-        self.note(f.name.span, kind, Some(scheme.ty.clone()), def);
+        let (kind, ty) = match f.is_const() {
+            true => (NoteKind::Const(f.name.name.clone()), (*sig.ret).clone()),
+            false => (NoteKind::Fn(f.name.name.clone()), scheme.ty.clone()),
+        };
+        self.note(f.name.span, kind, Some(ty), def);
         // Inside the body its type parameters are in scope, and opaque:
         // `Type::Param` is equal only to itself. Its bounds hold.
         self.type_params = scheme.params.clone();
@@ -1751,7 +1755,7 @@ impl Checker {
     /// What the name of type `t` refers to, if it's a struct or enum, an
     /// outer type parameter (see `names.rs`) or an opaque type.
     fn type_name(&self, t: &TypeExpr) -> Option<TypeName> {
-        if let Some(&i) = self.modules.lengths.get(&t.id) {
+        if let Some(&(i, _)) = self.modules.lengths.get(&t.id) {
             return Some(TypeName::Const(self.fn_symbols[i].clone()));
         }
         if let Some(symbol) = self.opaque_at.get(&t.id) {

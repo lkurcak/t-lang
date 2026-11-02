@@ -29,7 +29,11 @@ impl fmt::Display for Program {
 pub(crate) fn fn_head(f: &FnDecl) -> String {
     let mut p = Printer::default();
     if f.is_const() {
-        return format!("const {}: {} = ", f.name.name, render(&p.ty(&f.ret)).trim_end());
+        return format!(
+            "const {}: {} = ",
+            f.name.name,
+            render(&p.ty(&f.ret)).trim_end()
+        );
     }
     let head = p.signature(f) + p.wheres(f.effects.as_ref(), &f.generics, &f.ensures, false);
     format!("{} ", render(&head).trim_end())

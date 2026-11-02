@@ -89,8 +89,8 @@ impl Checker {
                 };
                 let (ty, def, symbol) = ((*sig.ret).clone(), f.name.span, f.symbol.clone());
                 self.info.symbols.insert(id, symbol.clone());
-                let kind = NoteKind::Fn(name.to_string());
-                self.note_use(at, kind, ty.clone(), Some(def), None, true);
+                let kind = NoteKind::Const(name.to_string());
+                self.note_use(at, kind, ty.clone(), Some(def), None, false);
                 return Ok(Some((ty, Res::Item(symbol))));
             }
             Some(Binding::Fn(id)) => {
@@ -188,6 +188,9 @@ impl Checker {
                     ),
                     TypeExprKind::Named(n, a) if a.is_empty() && self.type_params.is_const(n) => {
                         Type::Param(n.clone())
+                    }
+                    _ if let Some(&(i, _)) = self.modules.lengths.get(&t.id) => {
+                        Type::Const(self.fn_symbols[i].clone())
                     }
                     _ => return Err(generics::length_arg(name, t.span)),
                 },

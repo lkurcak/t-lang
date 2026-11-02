@@ -115,6 +115,51 @@ impl Checker {
         )
     }
 
+    /// The const that `name`, a path or not, written at node `id` in a
+    /// predicate, names, if it names one: its symbol, its type, and where
+    /// it's declared.
+    pub(super) fn pred_const(&self, name: &str, id: NodeId) -> Option<(String, Type, Span)> {
+        let i = match name.contains("::") {
+            true => match self.modules.paths.get(&id) {
+                Some(super::modules::Item::Fn(i)) => *i,
+                _ => return None,
+            },
+            false => self.modules.fn_named(self.module, name)?,
+        };
+        if !self.modules.consts.contains(&i) {
+            return None;
+        }
+        let f = self.fns.get(i)?;
+        let Type::Fn(sig) = &f.scheme.ty else {
+            return None;
+        };
+        Some((f.symbol.clone(), (*sig.ret).clone(), f.name.span))
+    }
+
+    /// Checks that each const written as a length is a `usize`, as a
+    /// length is: which can only be known once their types are, after the
+    /// types it may be written in were resolved.
+    pub(super) fn const_lengths(&self) -> Result<(), Error> {
+        let mut lengths: Vec<_> = self.modules.lengths.values().collect();
+        lengths.sort_by_key(|(_, at)| at.start);
+        for &&(i, at) in &lengths {
+            let f = &self.fns[i];
+            let Type::Fn(sig) = &f.scheme.ty else {
+                continue;
+            };
+            if *sig.ret != Type::Int(IntTy::Usize) {
+                return Err(Error::ty(
+                    at,
+                    format!(
+                        "`{}` is a const of type `{}`, but a length is a `usize`",
+                        f.name.name, sig.ret
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// The error for a pattern binding `name` at `span` where a const of
     /// that name is in scope: whether it binds or compares would depend on
     /// what's in scope, so it's neither yet, and the name is kept for

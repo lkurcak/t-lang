@@ -142,7 +142,7 @@ pub(crate) struct Modules {
     /// Each name of a const item written as a length, `[u8; SIZE]` or
     /// `Ring<u8, SIZE>`, by the node of the type it's written as: the
     /// const's `FnId` (see docs/36-consts.md).
-    pub(crate) lengths: HashMap<NodeId, usize>,
+    pub(crate) lengths: HashMap<NodeId, (usize, Span)>,
     /// Where each `?` is, which is where the calls it means are
     /// (`Rewrite::try_expr`), for saying what's wrong with them in terms of
     /// the `?`.
@@ -1477,7 +1477,7 @@ impl Rewrite<'_> {
                 };
                 match plain {
                     true if let Some(i) = self.const_length(&name)? => {
-                        self.r.m.lengths.insert(name.id, i);
+                        self.r.m.lengths.insert(name.id, (i, name.span));
                     }
                     _ => self.type_path(&name)?,
                 }
@@ -1503,6 +1503,12 @@ impl Rewrite<'_> {
                 if let Some(path) = plain_path(t)
                     && self.is_module(&first_segment(&path))?
                 {
+                    // `m::SIZE`, a const as a length.
+                    if let Some(i) = self.const_length(&path)? {
+                        self.r.m.lengths.insert(t.id, (i, t.span));
+                        t.kind = TypeExprKind::Named(path.name, Vec::new());
+                        return Ok(());
+                    }
                     let b = self.path(&path, Ns::Types)?;
                     if !matches!(b.item, Item::Type(_)) {
                         return Err(Error::ty(
