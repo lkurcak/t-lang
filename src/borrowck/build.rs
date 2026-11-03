@@ -355,7 +355,18 @@ impl<'a> Builder<'a> {
 
     /// The type of expression `e`, as the checker found it, with a new
     /// region variable for each region in it.
+    /// The type of `e`'s value: if it's a closure used as a function
+    /// (*reified*), the function's.
     fn ty(&mut self, e: &Expr) -> Type {
+        let t = self.unreified_ty(e);
+        match self.cx.typed().reified.get(&e.id) {
+            Some(symbol) => self.cx.traits().closures[symbol].sig_at(&t),
+            None => t,
+        }
+    }
+
+    /// The type of `e`, before it's reified, if it is: the closure's.
+    fn unreified_ty(&mut self, e: &Expr) -> Type {
         let t = self.cx.typed().exprs.get(&e.id);
         let t = self
             .cx
@@ -379,7 +390,8 @@ impl<'a> Builder<'a> {
         if !self.reachable() {
             return;
         }
-        if self.cx.typed().coerced.contains_key(&e.id) {
+        let typed = self.cx.typed();
+        if typed.coerced.contains_key(&e.id) || typed.reified.contains_key(&e.id) {
             let (o, t) = self.operand(e);
             self.assign(dest, Rvalue::Use(o), &t, e.span, false);
             return;
@@ -741,7 +753,7 @@ impl<'a> Builder<'a> {
             // reference to each variable, borrowed here for as long as the
             // closure lasts, or its value, moved or copied in.
             ExprKind::Lambda(l) => {
-                let t = self.ty(e);
+                let t = self.unreified_ty(e);
                 let modes = self.cx.typed().modes.get(&l.id).cloned();
                 let fields = struct_fields(self.adts(), &t).unwrap_or_default();
                 let mut ops = Vec::new();
@@ -963,7 +975,24 @@ impl<'a> Builder<'a> {
     /// points to is borrowed again, for as long as the new reference is
     /// used, so the old one can be used again after. Anything else is
     /// lowered into a temporary, which is moved out of.
+    ///
+    /// A closure used as a function (*reified*, see `Checker::reify`) is
+    /// cast to it: to its body, called with what it captured, which is
+    /// nothing. The function's type is the closure's signature, which has
+    /// its result's lifetimes worked out by now.
     fn operand(&mut self, e: &'a Expr) -> (Operand, Type) {
+        let Some(symbol) = self.cx.typed().reified.get(&e.id).cloned() else {
+            return self.operand_unreified(e);
+        };
+        let (o, t) = self.operand_unreified(e);
+        let ft = self.cx.traits().closures[&symbol].sig_at(&t);
+        let tmp = self.temp(ft.clone(), e.span);
+        let value = Rvalue::Cast(o, ft.erased(), e.id);
+        self.assign(&Place::local(tmp), value, &ft, e.span, false);
+        (Operand::Move(Place::local(tmp)), ft)
+    }
+
+    fn operand_unreified(&mut self, e: &'a Expr) -> (Operand, Type) {
         let coerced = self.cx.typed().coerced.get(&e.id).copied();
         let local_var = |b: &Self| match &e.kind {
             ExprKind::Var(..) => matches!(b.cx.typed().vars.get(&e.id), Some(Res::Local(_))),
@@ -1011,7 +1040,7 @@ impl<'a> Builder<'a> {
                 (Operand::Const(c), t)
             }
             _ => {
-                let t = self.ty(e);
+                let t = self.unreified_ty(e);
                 let tmp = self.temp(t.clone(), e.span);
                 self.expr_into_uncoerced(e, &Place::local(tmp));
                 (Operand::Move(Place::local(tmp)), t)

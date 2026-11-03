@@ -140,19 +140,16 @@ fn sanitize(name: &str) -> String {
     s
 }
 
-/// How the body of a closure takes the closure: `Some(Some(m))` by
-/// reference, `&mut` if `m`; `Some(None)` by value; `None` not at all.
-fn env_by(body: &Body) -> Option<Option<bool>> {
-    let env = body.locals.get(1).filter(|l| l.kind == LocalKind::Env)?;
-    Some(match &env.ty {
+/// How the body of a closure takes the closure: `Some(m)` by reference,
+/// `&mut` if `m`; `None` by value.
+fn env_by(body: &Body) -> Option<bool> {
+    let env = (body.locals.get(1))
+        .filter(|l| l.kind == LocalKind::Env)
+        .expect("a closure's body takes the closure");
+    match &env.ty {
         Type::Ref(_, m, _) => Some(*m),
         _ => None,
-    })
-}
-
-/// The copy of a function that closure `code` is in.
-fn closure_root(code: &str) -> &str {
-    code.split("::{closure#").next().unwrap_or(code)
+    }
 }
 
 /// What tells C structs apart: a type's symbols, which leave out its
@@ -206,9 +203,8 @@ struct Gen<'e> {
     at: Span,
 }
 
-/// The body being written: its name and MIR.
+/// The body being written: its MIR.
 struct Cx<'b> {
-    name: &'b str,
     body: &'b Body,
 }
 
@@ -677,7 +673,7 @@ impl<'e> Gen<'e> {
         let sig = self.signature(name, &c, body);
         let _ = writeln!(self.protos, "{sig};");
         self.blaming = self.blames(name);
-        let cx = Cx { name, body };
+        let cx = Cx { body };
         let mut out = String::new();
         let t_name = name.replace("*/", "* /");
         let _ = writeln!(out, "/* {t_name} */\n{sig} {{");
@@ -864,20 +860,13 @@ impl<'e> Gen<'e> {
                             }
                         }
                     }
-                    Agg::Closure(id) => match &t {
-                        // One that captures nothing is its body.
-                        Type::Fn(_) => {
-                            let code = crate::mono::closure_copy(closure_root(cx.name), *id);
-                            self.body_name(&code)
+                    Agg::Closure(_) => {
+                        let c = self.cty(&t);
+                        match vals.is_empty() {
+                            true => format!("(({c}){{0}})"),
+                            false => format!("(({c}){{{}}})", vals.join(", ")),
                         }
-                        _ => {
-                            let c = self.cty(&t);
-                            match vals.is_empty() {
-                                true => format!("(({c}){{0}})"),
-                                false => format!("(({c}){{{}}})", vals.join(", ")),
-                            }
-                        }
-                    },
+                    }
                 }
             }
             Rvalue::Call(f, args) => {
@@ -1086,9 +1075,8 @@ impl<'e> Gen<'e> {
                 Type::Adt(..) => {
                     let (c, by) = self.closure_fn(inner);
                     match by {
-                        Some(Some(_)) => format!("{c}({})", join(Some(e.to_string()), args)),
-                        None => format!("{c}({})", join(None, args)),
-                        Some(None) => panic!("a closure taken by value called through a reference"),
+                        Some(_) => format!("{c}({})", join(Some(e.to_string()), args)),
+                        None => panic!("a closure taken by value called through a reference"),
                     }
                 }
                 t => panic!("a call of a `&{t}`"),
@@ -1096,9 +1084,8 @@ impl<'e> Gen<'e> {
             Type::Adt(..) => {
                 let (c, by) = self.closure_fn(t);
                 match by {
-                    Some(None) => format!("{c}({})", join(Some(e.to_string()), args)),
-                    None => format!("{c}({})", join(None, args)),
-                    Some(Some(_)) => panic!("a closure taken by reference called by value"),
+                    None => format!("{c}({})", join(Some(e.to_string()), args)),
+                    Some(_) => panic!("a closure taken by reference called by value"),
                 }
             }
             t => panic!("a call of a `{t}`"),
@@ -1106,7 +1093,7 @@ impl<'e> Gen<'e> {
     }
 
     /// The C function closure type `t` runs, and how it takes the closure.
-    fn closure_fn(&mut self, t: &Type) -> (String, Option<Option<bool>>) {
+    fn closure_fn(&mut self, t: &Type) -> (String, Option<bool>) {
         let exe: &'e Executable = self.exe;
         let code = (exe.closure_body(&t.erased()))
             .unwrap_or_else(|| panic!("no body for closure type `{t}`"));

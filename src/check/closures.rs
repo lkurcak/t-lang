@@ -1,9 +1,10 @@
 //! Closures: checking a lambda against the signature its context wants
-//! (`Checker::lambda`), and closures that capture, as values of types of
-//! their own (see docs/06c-closures.md).
+//! (`Checker::lambda`), and closures as values of types of their own (see
+//! docs/06c-closures.md). One that captures nothing can be used where a
+//! function type is wanted, as its body (`Checker::reify`).
 //!
-//! A closure that captures is a struct of what it captures, with an impl of
-//! the `Fn` traits whose body is the closure's: its type is a
+//! A closure is a struct of what it captures, with an impl of the `Fn`
+//! traits whose body is the closure's: its type is a
 //! `Type::Adt` named by its symbol, whose definition is a
 //! `traits::ClosureDef`. How it captures each variable, and so which of the
 //! traits it implements, depends on the types of what the body does with
@@ -40,12 +41,12 @@ use crate::types::{FnType, Region, Type};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// A closure in the function being checked whose captures, if it has any,
-/// or the lifetimes of whose result, are to be worked out at its end.
+/// A closure in the function being checked whose captures, and the
+/// lifetimes of whose result, are to be worked out at its end.
 #[derive(Clone)]
 pub(super) struct Pending {
-    /// Its symbol, if it captures: then its type is one of its own.
-    pub(super) symbol: Option<String>,
+    /// Its type's symbol.
+    pub(super) symbol: String,
     pub(super) lambda: Arc<Lambda>,
     /// The variables it captures, by id, in the order it names them.
     pub(super) captured: Vec<NodeId>,
@@ -242,21 +243,7 @@ impl Checker {
             bound,
             effects: Box::new(effects),
         };
-        match captured.is_empty() {
-            true => {
-                if later > 0 {
-                    self.closures.push(Pending {
-                        symbol: None,
-                        lambda: l.clone(),
-                        captured,
-                        ty: Type::Fn(sig.clone()),
-                        later,
-                    });
-                }
-                Ok(Type::Fn(sig))
-            }
-            false => Ok(self.closure_type(l, captured, sig, later)),
-        }
+        Ok(self.closure_type(l, captured, sig, later))
     }
 
     /// The variables around closure `l` its body uses, by id.
@@ -285,7 +272,7 @@ impl Checker {
 }
 
 impl Checker {
-    /// The type of closure `l`, whose signature is `sig`, if it captures
+    /// The type of closure `l`, whose signature is `sig`, which captures
     /// the variables `captured`, by id: one of its own, generic over every
     /// type parameter in scope.
     pub(super) fn closure_type(
@@ -302,6 +289,7 @@ impl Checker {
             sig,
             kind: None,
             fields: Vec::new(),
+            lambda: l.id,
         };
         self.adts.insert(
             symbol.clone(),
@@ -319,7 +307,7 @@ impl Checker {
         let args = self.type_params.iter().cloned().map(Type::Param).collect();
         let ty = Type::Adt(symbol.clone(), Vec::new(), args);
         self.closures.push(Pending {
-            symbol: Some(symbol),
+            symbol,
             lambda: l.clone(),
             captured,
             ty: ty.clone(),
@@ -360,28 +348,7 @@ impl Checker {
                 .get(name)
                 .is_some_and(|c| c.kind.is_none());
         });
-        found
-            || self
-                .decided_regions(t)
-                .regions()
-                .into_iter()
-                .any(is_result_lifetime)
-    }
-
-    /// `t` with each lifetime of a closure's result that's been worked out
-    /// what it turned out to be.
-    pub(super) fn decided_regions(&self, t: &Type) -> Type {
-        if self.decided.is_empty() {
-            return t.clone();
-        }
-        t.map_regions(&mut |r| match r {
-            Region::Result(l, i) => self
-                .decided
-                .get(&(*l, *i))
-                .cloned()
-                .unwrap_or_else(|| r.clone()),
-            r => r.clone(),
-        })
+        found || t.regions().into_iter().any(is_result_lifetime)
     }
 
     /// At the end of a function, once its types are known: how each of its
@@ -394,9 +361,7 @@ impl Checker {
     pub(super) fn settle_closures(&mut self) -> Result<(), Error> {
         let pending = std::mem::take(&mut self.closures);
         for p in &pending {
-            if let Some(symbol) = &p.symbol {
-                self.settle_closure(symbol, p)?;
-            }
+            self.settle_closure(&p.symbol, p)?;
         }
         self.settle_calls()?;
         for p in &pending {
@@ -466,10 +431,7 @@ impl Checker {
             .collect();
         let def = &self.traits.closures[symbol];
         let sig = Type::Fn(def.sig.clone());
-        let Type::Fn(sig) = self
-            .decided_regions(&self.solved(&sig))
-            .map_regions(&mut fresh)
-        else {
+        let Type::Fn(sig) = self.solved(&sig).map_regions(&mut fresh) else {
             unreachable!("a signature is a function type")
         };
         let def = crate::traits::ClosureDef {
@@ -478,6 +440,7 @@ impl Checker {
             sig,
             kind: Some(kind),
             fields,
+            lambda: l.id,
         };
         self.closure_why.insert(symbol.clone(), why);
         self.define_closure(symbol, &def);
@@ -498,11 +461,7 @@ impl Checker {
         let ty = self.solution(&p.ty);
         let decided = crate::borrowck::decide_result(self, &p.lambda, &ty, p.later)?;
         let l = p.lambda.id;
-        let Some(symbol) = &p.symbol else {
-            let decided = decided.into_iter().enumerate();
-            self.decided.extend(decided.map(|(i, r)| ((l, i), r)));
-            return Ok(());
-        };
+        let symbol = &p.symbol;
         let mut def = self.traits.closures[symbol].clone();
         // One fixed where it's made is a lifetime parameter of its own.
         let decided: Vec<Region> = decided

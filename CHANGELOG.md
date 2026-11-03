@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+H5 of retrospective 3: every closure has a type of its own. See
+[docs/06c-closures.md](docs/06c-closures.md#closures-as-functions).
+
+### Changed
+
+- A closure that captures nothing has a type of its own too, rather than a
+  function type: calling it, or passing it to generic code, calls its body
+  directly. Where a function type is wanted (an annotation, an argument, a
+  result, a field), it's used as that function. `if`/`else` and array
+  literals now pass the type wanted on to their parts, as blocks and
+  `match` did.
+- Breaking: two closures that capture nothing no longer share a type.
+  `let mut f = |x: i64| x; f = |x: i64| x + 1;`, `[|x: i64| x, |x: i64| -x]`
+  and `if b { |x: i64| x } else { inc }` with no type wanted are errors;
+  say `fn(i64) -> i64` where they're made.
+
+### Internal
+
+- Closure-to-function is a cast in MIR that monomorphisation turns into
+  `{fn}::<C>` glue; every closure body takes its closure, so the
+  interpreter, the C backend and the borrow checker lose their cases for a
+  closure of a function type. `Checker::decided` is gone.
+
 ## 0.51.0 (2026-11-03)
 
 Step 37: cells. See [docs/37-cell.md](docs/37-cell.md).

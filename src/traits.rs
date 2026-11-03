@@ -165,6 +165,8 @@ pub struct ClosureDef {
     /// What it captures, in order: each variable's name, and the type of
     /// the field it's in, a reference to it or its value.
     pub fields: Vec<(String, Type)>,
+    /// The lambda that makes it.
+    pub lambda: crate::ast::NodeId,
 }
 
 impl ClosureDef {

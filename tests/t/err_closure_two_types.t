@@ -14,4 +14,4 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&(s.f)())?;
     Result::Ok(())
 }
-// error: expected `{closure}`, found `{closure}`; each closure that captures has a type of its own
+// error: expected `{closure}`, found `{closure}`; each closure has a type of its own

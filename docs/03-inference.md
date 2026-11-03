@@ -39,7 +39,8 @@ parameters and other functions.
 
 Closures and functions have the same types, so either can go wherever a
 `fn(i64) -> i64` is wanted. (Since step 6c, only closures that capture
-nothing do.)
+nothing do, and since 0.52.0 each closure has a type of its own, used as a
+function where one is wanted: see docs/06c-closures.md.)
 
 ### Nested functions
 
@@ -379,7 +380,8 @@ stack, and closures that capture can only be passed down, not returned
 (Since step 6c it still is, as a function type can't hold a closure that
 captures.)
 
-Closures that capture nothing are plain functions, and go anywhere.
+Closures that capture nothing are plain functions, and go anywhere. (Since
+0.52.0, where a function type is wanted.)
 
 The rule (`src/check/escape.rs`) follows *where a value may have come from*,
 not its type: `fn(i64) -> i64` is one type, whether or not the function

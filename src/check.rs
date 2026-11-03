@@ -511,10 +511,6 @@ pub(crate) struct Checker {
     /// lifetimes of whose results, are worked out at its end (see
     /// `closures`), innermost first.
     closures: Vec<closures::Pending>,
-    /// What each lifetime of a closure's result that's worked out at the
-    /// end of its function turned out to be, by its name (see
-    /// `closures::result_lifetime`), for closures that are function types.
-    decided: HashMap<(NodeId, usize), Region>,
     /// Why each closure implements only the `Fn` traits it does, by
     /// symbol, for messages: "it moves `b` out".
     closure_why: HashMap<String, String>,
@@ -948,7 +944,6 @@ impl Checker {
             next_id: 0,
             typed: Typed::default(),
             closures: Vec::new(),
-            decided: HashMap::new(),
             closure_why: HashMap::new(),
             calls: Vec::new(),
             locals: Vec::new(),
@@ -1688,9 +1683,9 @@ impl Checker {
     }
 
     /// `t` with the type variables in it replaced by what they turned out
-    /// to be, and the lifetimes of closures' results too.
+    /// to be, and each closure type with its regions.
     pub(crate) fn solution(&self, t: &Type) -> Type {
-        self.closure_regions(&self.decided_regions(&self.solved(t)))
+        self.closure_regions(&self.solved(t))
     }
 
     /// `t`, with each closure type in it with as many regions as the

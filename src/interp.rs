@@ -156,23 +156,17 @@ pub struct Closure {
     pub env: Vec<(String, Value)>,
 }
 
-/// How the body of a closure takes the closure: `Some(Some(m))` by
-/// reference, `&mut` if `m`, as it's `Fn` or `FnMut`; `Some(None)` by
-/// value, as it's `FnOnce`; `None` not at all, as it captures nothing.
-fn env_by(body: &crate::mir::Body) -> Option<Option<bool>> {
-    let env = body
-        .locals
-        .get(1)
-        .filter(|l| l.kind == crate::mir::LocalKind::Env)?;
-    Some(match &env.ty {
+/// How the body of a closure takes the closure: `Some(m)` by reference,
+/// `&mut` if `m`, as it's `Fn` or `FnMut`; `None` by value, as it's
+/// `FnOnce`.
+pub(crate) fn env_by(body: &crate::mir::Body) -> Option<bool> {
+    let env = (body.locals.get(1))
+        .filter(|l| l.kind == crate::mir::LocalKind::Env)
+        .unwrap_or_else(|| unsound("a closure's body that doesn't take the closure"));
+    match &env.ty {
         crate::types::Type::Ref(_, m, _) => Some(*m),
         _ => None,
-    })
-}
-
-/// The copy of a function that closure `code` is in.
-fn closure_root(code: &str) -> &str {
-    code.split("::{closure#").next().unwrap_or(code)
+    }
 }
 
 /// A function or closure being run: its body, the copy of the function
@@ -180,7 +174,6 @@ fn closure_root(code: &str) -> &str {
 /// each of its locals that has one.
 struct Frame<'p> {
     body: &'p crate::mir::Body,
-    root: &'p str,
     f: Option<&'p str>,
     slots: Vec<Option<Ptr>>,
 }
@@ -1064,10 +1057,8 @@ impl<'p> Interp<'p, '_> {
         }
         let name = glue_name("{drop}", ty);
         let exe = self.exe;
-        match exe.body_named(&name) {
-            Some((name, body)) => self
-                .run(body, name, None, vec![v], Vec::new(), span)
-                .map(|_| ()),
+        match exe.body(&name) {
+            Some(body) => self.run(body, None, vec![v], Vec::new(), span).map(|_| ()),
             None if self.needs_drop(&v) => unsound(&format!("no drop glue for `{v}`, as `{name}`")),
             None => Ok(()),
         }
@@ -1153,9 +1144,9 @@ impl<'p> Interp<'p, '_> {
             // none.
             Value::Fn(name, _) if is_glue(&name) => {
                 let exe = self.exe;
-                let (name, body) = (exe.body_named(&name))
+                let body = (exe.body(&name))
                     .unwrap_or_else(|| unsound(&format!("glue `{name}` has no body")));
-                self.run(body, name, None, args, Vec::new(), span)
+                self.run(body, None, args, Vec::new(), span)
             }
             Value::Fn(name, Some(at)) => {
                 // Called through a value made at `at`: what aborts in it
@@ -1209,7 +1200,7 @@ impl<'p> Interp<'p, '_> {
                     let (name, body) = (exe.body_named(&name))
                         .unwrap_or_else(|| unsound(&format!("`{name}` has no body")));
                     self.frames.push(name.to_string());
-                    let result = self.run(body, name, Some(name), args, refined, span);
+                    let result = self.run(body, Some(name), args, refined, span);
                     self.frames.pop();
                     result
                 };
@@ -1230,18 +1221,15 @@ impl<'p> Interp<'p, '_> {
             // monomorphisation wrote instead (`Cx::by_ref_body`).
             Value::Closure(c) => {
                 let exe = self.exe;
-                let (code, body) = (exe.body_named(&c.code))
+                let body = (exe.body(&c.code))
                     .unwrap_or_else(|| unsound(&format!("closure `{}` has no body", c.code)));
-                let root = closure_root(code);
                 match env_by(body) {
-                    Some(None) => {
+                    None => {
                         let mut all = vec![Value::Closure(c.clone())];
                         all.extend(args);
-                        self.run(body, root, None, all, Vec::new(), span)
+                        self.run(body, None, all, Vec::new(), span)
                     }
-                    // One that captures nothing: there's nothing to it.
-                    None => self.run(body, root, None, args, Vec::new(), span),
-                    Some(Some(_)) => {
+                    Some(_) => {
                         unsound("a closure whose body takes it by reference called by value")
                     }
                 }
@@ -1256,34 +1244,31 @@ impl<'p> Interp<'p, '_> {
     }
 
     /// Calls the closure at `at`, in place: its body gets a reference to it,
-    /// as it's `Fn` or `FnMut`, or nothing, if it captures nothing.
+    /// as it's `Fn` or `FnMut`.
     fn call_closure(&mut self, at: &Ptr, args: Vec<Value>, span: Span) -> Result<Value, Error> {
         let Value::Closure(c) = self.memory.get(at).clone() else {
             unreachable!("a closure")
         };
         let exe = self.exe;
-        let (code, body) = (exe.body_named(&c.code))
+        let body = (exe.body(&c.code))
             .unwrap_or_else(|| unsound(&format!("closure `{}` has no body", c.code)));
-        let all = match env_by(body) {
-            Some(Some(_)) => std::iter::once(Value::Ref(at.clone()))
-                .chain(args)
-                .collect(),
-            Some(None) => unsound("a closure that's `FnOnce` called through a reference"),
-            None => args,
-        };
-        self.run(body, closure_root(code), None, all, Vec::new(), span)
+        if env_by(body).is_none() {
+            unsound("a closure that's `FnOnce` called through a reference");
+        }
+        let all = std::iter::once(Value::Ref(at.clone()))
+            .chain(args)
+            .collect();
+        self.run(body, None, all, Vec::new(), span)
     }
 
-    /// Runs MIR `body`, of function `f` or else of a closure, both in the
-    /// copy of a function `root`, with its parameters `args`, the first
-    /// the closure if it's a closure's that captures, those with
+    /// Runs MIR `body`, of function `f` or else of a closure or glue, with
+    /// its parameters `args`, the first the closure if it's a closure's, those with
     /// refinements having them, called at `span`. Each local's slot is made
     /// when it's first given a value, and freed when it goes out of scope
     /// (`StmtKind::Dead`), which drops what's in it.
     fn run(
         &mut self,
         body: &'p crate::mir::Body,
-        root: &'p str,
         f: Option<&'p str>,
         args: Vec<Value>,
         refined: Vec<Option<Refined>>,
@@ -1295,7 +1280,7 @@ impl<'p> Interp<'p, '_> {
             false => Blame::No,
         };
         self.calls.push((span, blame));
-        let result = self.run_body(body, root, f, args, refined, span);
+        let result = self.run_body(body, f, args, refined, span);
         self.calls.pop();
         result
     }
@@ -1304,7 +1289,6 @@ impl<'p> Interp<'p, '_> {
     fn run_body(
         &mut self,
         body: &'p crate::mir::Body,
-        root: &'p str,
         f: Option<&'p str>,
         args: Vec<Value>,
         refined: Vec<Option<Refined>>,
@@ -1322,7 +1306,6 @@ impl<'p> Interp<'p, '_> {
         }
         let mut fr = Frame {
             body,
-            root,
             f,
             slots: vec![None; body.locals.len()],
         };
@@ -1634,9 +1617,13 @@ impl<'p> Interp<'p, '_> {
                         Value::Slots(vec![v; n as usize])
                     }
                     // What it captured, by the names its body knows them by.
-                    (Agg::Closure(id), _) => {
-                        let code = crate::mono::closure_copy(fr.root, *id);
+                    // Its body is its type's, wherever it's made: in the
+                    // function the closure is in, or in its `{fn}` glue.
+                    (Agg::Closure(_), t) => {
                         let exe = self.exe;
+                        let code = (exe.closure_body(t))
+                            .unwrap_or_else(|| unsound(&format!("closure type `{t}` has no body")))
+                            .to_string();
                         let body = (exe.body(&code))
                             .unwrap_or_else(|| unsound(&format!("closure `{code}` has no body")));
                         let env = (body.env.iter().map(|v| v.name.clone()))

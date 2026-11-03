@@ -37,6 +37,9 @@ pub(crate) struct Typed {
     /// wanted, or a `&Box<T>` or `&&T` where a `&T` is. With how many more
     /// `*`s it takes to get to the `T`, and whether the result is `&mut`.
     pub(crate) coerced: HashMap<NodeId, (usize, bool)>,
+    /// Closures used as functions (*reified*: see `Checker::reify`), by
+    /// the node of what's used, with the closure's type's symbol.
+    pub(crate) reified: HashMap<NodeId, String>,
     /// For each field expression, how many references and boxes it looked
     /// through to find the struct (`r.x` for `r: &P` looks through one),
     /// and which field it is.

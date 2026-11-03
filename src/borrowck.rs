@@ -607,55 +607,41 @@ fn closure_body(
 ) -> Result<Outcome, Error> {
     let mut lifetimes = external.clone();
     let typed = cx.typed();
-    let mut captures = Vec::new();
-    let (sig, env) = match &c.ty {
-        Type::Fn(sig) => {
-            let sig = Type::Fn(sig.clone()).map_regions(&mut |r| {
-                if is_result_lifetime(r) {
-                    return r.clone();
-                }
-                let name = format!("'_c{}", lifetimes.len());
-                lifetimes.push(name.clone());
-                Region::Named(name)
-            });
-            (sig, None)
-        }
-        Type::Adt(symbol, _, args) => {
-            let def = &cx.traits().closures[symbol];
-            lifetimes.extend(def.lifetimes.iter().cloned());
-            captures = def
-                .fields
-                .iter()
-                .map(|(n, t)| (n.clone(), t.regions().into_iter().cloned().collect()))
-                .collect();
-            let own = Type::Adt(
-                symbol.clone(),
-                def.lifetimes.iter().cloned().map(Region::Named).collect(),
-                args.clone(),
-            );
-            let modes = &typed.modes[&c.lambda.id];
-            let vars = modes
-                .iter()
-                .map(|(id, capture)| {
-                    let bind = &typed.binds[id];
-                    EnvVar {
-                        name: bind.name.clone(),
-                        capture: *capture,
-                        id: *id,
-                        span: bind.span,
-                        mutable: bind.mutable,
-                    }
-                })
-                .collect();
-            let by_ref = match def.kind.expect("settled") {
-                FnKind::Fn => Some(false),
-                FnKind::FnMut => Some(true),
-                FnKind::FnOnce => None,
-            };
-            (def.sig_at(&own), Some((own, by_ref, vars)))
-        }
-        t => unreachable!("a closure of type `{t}`"),
+    let Type::Adt(symbol, _, args) = &c.ty else {
+        unreachable!("a closure of type `{}`", c.ty)
     };
+    let def = &cx.traits().closures[symbol];
+    lifetimes.extend(def.lifetimes.iter().cloned());
+    let captures = def
+        .fields
+        .iter()
+        .map(|(n, t)| (n.clone(), t.regions().into_iter().cloned().collect()))
+        .collect();
+    let own = Type::Adt(
+        symbol.clone(),
+        def.lifetimes.iter().cloned().map(Region::Named).collect(),
+        args.clone(),
+    );
+    let modes = &typed.modes[&c.lambda.id];
+    let env_vars: Vec<EnvVar> = modes
+        .iter()
+        .map(|(id, capture)| {
+            let bind = &typed.binds[id];
+            EnvVar {
+                name: bind.name.clone(),
+                capture: *capture,
+                id: *id,
+                span: bind.span,
+                mutable: bind.mutable,
+            }
+        })
+        .collect();
+    let by_ref = match def.kind.expect("settled") {
+        FnKind::Fn => Some(false),
+        FnKind::FnMut => Some(true),
+        FnKind::FnOnce => None,
+    };
+    let sig = def.sig_at(&own);
     let Type::Fn(sig) = &sig else {
         unreachable!("a closure's signature is a function type")
     };
@@ -706,14 +692,12 @@ fn closure_body(
             .collect(),
     };
     let adts = local_adts(cx, &regions);
-    let env = env.map(|(own, by_ref, vars)| {
-        let own = regions.renumber(&own);
-        let t = match by_ref {
-            Some(m) => Type::Ref(Region::Var(regions.call_region()), m, Box::new(own)),
-            None => own,
-        };
-        (t, by_ref, vars, c.span)
-    });
+    let own = regions.renumber(&own);
+    let env_ty = match by_ref {
+        Some(m) => Type::Ref(Region::Var(regions.call_region()), m, Box::new(own)),
+        None => own,
+    };
+    let env = Some((env_ty, by_ref, env_vars, c.span));
     let mut b = Builder::new(cx, &adts, info, regions);
     b.closure = true;
     let ret = b.regions.renumber(&ret);
