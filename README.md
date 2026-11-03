@@ -44,6 +44,7 @@ t check examples/hello.t    # type-check only (--deny-warnings: fail on a warnin
 t test examples/hello.t     # type-check, then run each #[test] (see docs/31-tests.md)
 t mono examples/hello.t     # print the program after monomorphisation
 t build examples/hello.t    # compile, through C, to ./hello (see docs/33-c-backend.md)
+                            # (--target freestanding: an object for bare metal, docs/39)
 t fmt examples/hello.t      # format the file in place (--check: just print a diff)
 t lsp                       # language server (see below)
 ```
@@ -277,7 +278,8 @@ from all of them. A `tests/t/<name>.mono` file holds what
 
 Every one of those programs that runs is also compiled by the C backend
 and run, and must do exactly what the interpreter does (`tests/compiled.rs`,
-which needs a C compiler); CI does it again with AddressSanitizer and
+which needs a C compiler); those that need no std, again for the
+freestanding target, linked with a platform for the test machine; CI does it again with AddressSanitizer and
 UndefinedBehaviorSanitizer (`T_LANG_CFLAGS`).
 
 The T code in this README and in `docs/` is tested too (`tests/docs.rs`).
@@ -432,6 +434,7 @@ combine features in ways nobody planned for.
 | 36 ✅ | const items: `const SIZE: usize = 4;`, worked out while compiling by the interpreter, on a 32-bit and a 64-bit machine; plain data; usable as values, lengths and in refinements | a const's initializer may only panic, so the interpreter computes what the program would, and both widths agreeing keeps checking independent of the machine; as a length a const is equal only to itself | [docs/36-consts.md](docs/36-consts.md) |
 | 37 ✅ | cells: `core::cell::Cell<T>`, a value changed through a `&`, by `get`/`set`/`replace`; invariant; consts must be frozen (no `Cell` in them) | nothing points into a cell and the logic never reads one, so every `&T` still sees a value that doesn't change, and measures stay functions of values; invariance keeps what's put in living long enough | [docs/37-cell.md](docs/37-cell.md) |
 | 38 ✅ | statics, `static COUNT: Atomic<u32> = Atomic::new(0);`, used `with global`; `core::sync::Atomic<T>`, sequentially consistent; `Send` and `Sync`, derived like `Copy` | shared state as a type property (`Sync`) and an effect (`global`); marker traits by structure, but only where derived, never auto traits; a static as a place behind a `&'static`, so the borrow checker keeps it shared | [docs/38-statics.md](docs/38-statics.md) |
+| 39 ✅ | the freestanding target: `t build --target freestanding` makes an object with `t_main` for a machine with no C library, needing only five platform functions (write, halt, alloc, realloc, free); a target provides libraries (no std there); the runtime split into a libc-free core and a hosted layer; statics in the program's data | hosted and freestanding C (C11 §4); one runtime over a small platform interface, so the hosted corpus tests what runs on bare metal; what a program may use as a property of its packages, what's there as a property of the build | [docs/39-freestanding.md](docs/39-freestanding.md) |
 
 ## License
 

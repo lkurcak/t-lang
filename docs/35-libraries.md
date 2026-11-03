@@ -9,8 +9,8 @@ Until now every package had core, alloc and std, whether it used them or
 not. So nothing said which libraries a package needs, and nothing could:
 a library of hash maps and a program that prints looked the same. That
 matters as soon as there's a machine without an operating system
-(docs/39, to come): std can't be there, and alloc only if the program
-brings an allocator. A package now says which built-in libraries it uses,
+(docs/39-freestanding.md): std can't be there, and alloc only if the
+platform brings an allocator. A package now says which built-in libraries it uses,
 in its `t.toml`:
 
 ```text
