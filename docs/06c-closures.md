@@ -42,7 +42,7 @@ fn call(self: &Closure<'a>, x: i64) -> i64 { x * *self.k }
 ```
 
 Turning a closure into that is *closure conversion*, and here it's done in
-the types. Each closure that captures has a type of its own: a struct of what
+the types. Each closure has a type of its own: a struct of what
 it captures, generic over the type parameters in scope where it's written,
 with a lifetime for each region in its fields' types and in its signature
 (`traits::ClosureDef`). It can't be named, and messages show it as
@@ -63,10 +63,11 @@ is `F: Fn<(signature) = fn(i64) -> i64>`, worked out and checked as in
 docs/06b-associated-types.md. Inside `apply`, `f(x)` is `F`'s call, with
 `F`'s signature.
 
-Functions and closures that capture nothing keep their function types, and
-implement all three traits, so `apply(inc, 1)` works too. A function type
-holds only those, which is why `fn(i64) -> i64` can be a field or a result
-type while a closure that captures can't be put there:
+Functions keep their function types, and implement all three traits, so
+`apply(inc, 1)` works too. A closure that captures nothing can be used as
+one (see *Closures as functions*, below). A function type holds only those,
+which is why `fn(i64) -> i64` can be a field or a result type while a
+closure that captures can't be put there:
 
 ```rust,error
 fn adder(n: i64) -> fn(i64) -> i64 {
@@ -79,6 +80,68 @@ relies on: a function value works at every lifetime (`traits::matches`),
 which is true when it holds no references. Returning a closure that captures
 needs a way to say "some type that implements `Fn`" in a signature, `impl
 Fn(i64) -> i64`: that's step 6c.1, docs/06c.1-opaque-types.md.
+
+## Closures as functions
+
+Until 0.52.0, a closure that captured nothing had a function type, not one
+of its own. Since then every closure has its own type, and one that captures
+nothing is a struct with no fields: `Copy` and `Discard`, implementing `Fn`,
+by the rules above. Calling it, or passing it to generic code, calls its
+body, as for any closure, with no function pointer in between.
+
+Where a function type is wanted, such a closure is that function
+(*reified*, `Checker::reify`): its body, called with the closure, which
+holds nothing. That's wherever the checker knows the type it wants: an
+annotation, an argument, a result, a field, and through blocks, `if`,
+`match` and array literals to their parts:
+
+```rust
+fn apply(f: fn(i64) -> i64 with panic, x: i64) -> i64 with panic { f(x) }
+fn inc(x: i64) -> i64 with panic { x + 1 }
+fn pick(double: bool) -> fn(i64) -> i64 with panic {
+    if double { |x| x * 2 } else { inc }
+}
+
+fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+    let mut out = os.stdout;
+    let neg = |x: i64| 0 - x;
+    out.line(&apply(neg, 4))?;          // expect: -4
+    out.line(&pick(true)(5))?;          // expect: 10
+    let fs: [fn(i64) -> i64 with panic; 2] = [|x| x - 1, neg];
+    out.line(&(fs[0](1) + fs[1](1)))?;  // expect: -1
+    Result::Ok(())
+}
+```
+
+Two closures are two types, even when neither captures, so with no type
+wanted they don't mix: `let f = if b { |x: i64| x } else { inc };` is an
+error (`` `if` and `else` have different types ``), and so is giving
+`let mut f = |x: i64| x;` another closure. Saying
+`let f: fn(i64) -> i64 = ...` makes both functions. There's no "least upper
+bound" as in Rust, where the first branch's type can decide the second's:
+what's wanted decides, or nothing does.
+
+Why it's sound:
+
+- **C1. It holds nothing.** A closure that captures nothing has no fields,
+  so no regions in them: it lives as long as anything, as a function does
+  (`traits::matches` lets a function value work at every lifetime).
+- **C2. Only if it captures nothing.** Whether it does is known from the
+  lambda alone, before its types are worked out. What it captures has to
+  be somewhere, and a function value is only code, so one that captures is
+  an error: `expected fn(i64) -> i64, found a closure that captures n`.
+  The function has the closure's effects, and gains more as any function
+  does, as a whole value.
+- **C3. Its lifetimes are checked as before.** The function's type is the
+  closure's signature once its result's lifetimes are worked out. The borrow
+  checker checks its body at each lifetime it's generic over, as for every
+  closure, and checks that type against the one wanted, as for any function
+  value (`err_soundness_closure_reify_lifetime`).
+- **C4. One way to run a closure.** Monomorphisation writes the function as
+  glue, `{fn}::<C>`, which makes the closure and calls its body by `&`
+  (`mono/glue.rs`). So every closure's body takes the closure, and the
+  interpreter and the C backend no longer need a case for one that's code
+  alone.
 
 ## How a closure captures
 
@@ -234,9 +297,11 @@ function can't go wrong where the function didn't.
   default and `move` is the exception.
 - **Whole variables, not paths.** Capturing `p.x` rather than `p` would
   accept more programs, and can be done later without breaking any.
-- **Function types stay.** Only closures that capture get types of their
-  own; a function type is still a code address, and a closure capturing
-  nothing still fits in one.
+- **Function types stay.** Every closure has a type of its own (since
+  0.52.0), and functions keep their function types: a function type is
+  still a code address, and a closure capturing nothing still fits in one,
+  when one is wanted. Giving each function a type of its own too, as Rust
+  does, would let generic code call it directly; it can come later.
 - **Invariant closure types.** Simple, and sound whatever the signature
   does; it rejects little in practice, as a closure's type is never written.
 - **No supertrait `FnMut: Discard`.** Adding it later breaks nothing, and
