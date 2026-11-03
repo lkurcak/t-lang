@@ -34,39 +34,17 @@ impl Checker {
             ExprKind::Unsafe(block) => self.unsafe_block(e, block, Some(want))?,
             ExprKind::Match(scrutinee, arms) => self.match_expr(e, scrutinee, arms, Some(want))?,
             ExprKind::Loop(label, body) => self.loop_expr(label, None, body, Some(want))?,
+            ExprKind::If(c, then, Some(els)) => self.if_else(e, c, then, els, Some(want))?,
+            ExprKind::Array(items) => match self.shallow(want) {
+                Type::Array(elem, _) => self.array(e, items, Some(*elem))?,
+                _ => self.synth(e)?,
+            },
             ExprKind::Lambda(l) => {
                 let sig = match self.shallow(want) {
-                    // A function type is wanted, which a closure can only be
-                    // if it captures nothing: what it captures has to be
-                    // somewhere.
-                    Type::Fn(sig) => match self.captured(l).first() {
-                        Some(id) => {
-                            let name = &self.typed.binds[id].name;
-                            let at = first_use(&l.body, name).unwrap_or(l.body.span);
-                            let ps: Vec<String> =
-                                sig.params.iter().map(|p| p.to_string()).collect();
-                            return Err(Error::ty(
-                                e.span,
-                                format!(
-                                    "expected `{}`, found a closure that captures `{name}`",
-                                    Type::Fn(sig.clone())
-                                ),
-                            )
-                            .with_note(at, format!("`{name}` is captured here"))
-                            .with_note(
-                                e.span,
-                                format!(
-                                    "a function type only holds functions, and closures that \
-                                     capture nothing; to take this, take a type parameter \
-                                     `F: Fn({}) -> {}`",
-                                    ps.join(", "),
-                                    sig.ret
-                                ),
-                            ));
-                        }
-                        None if sig.params.len() == l.params.len() => Some(sig),
-                        None => None,
-                    },
+                    // A function type is wanted: the closure takes and gives
+                    // what it does, and is then that function (`reify`), if
+                    // it captures nothing.
+                    Type::Fn(sig) if sig.params.len() == l.params.len() => Some(sig),
                     // What a bound on a type to be inferred says calls of it
                     // take and give: `F: Fn(i64) -> i64` for `apply`'s `F`
                     // in `apply(|x| x + 1)`.
@@ -95,6 +73,7 @@ impl Checker {
         };
         self.typed.exprs.insert(e.id, got.clone());
         self.note_never(e, &got);
+        let got = self.reify(e, got, want)?;
         if let Some(target) = self.coerce(e, &got, want) {
             return match self.unify(&target, want) {
                 Ok(()) => Ok(()),
@@ -286,6 +265,100 @@ impl Checker {
         }
     }
 
+    /// `if c { then } else { els }`, `e`, with each branch checked against
+    /// `want` if it's given, as it then is, so a closure in one is made a
+    /// function if that's wanted (`reify`); or else of the type the two
+    /// branches have, which must be the same.
+    pub(super) fn if_else(
+        &mut self,
+        e: &Expr,
+        c: &Expr,
+        then: &Expr,
+        els: &Expr,
+        want: Option<&Type>,
+    ) -> Result<Type, Error> {
+        self.check(c, &Type::Bool)?;
+        let before = self.diverges.take();
+        let branch = |cx: &mut Self, b: &Expr| match want {
+            Some(w) => cx.check(b, w).map(|()| w.clone()),
+            None => cx.synth(b),
+        };
+        let t = branch(self, then)?;
+        let then_diverges = self.diverges.take();
+        let u = branch(self, els)?;
+        let both = then_diverges.is_some() && self.diverges.is_some();
+        self.diverges = before.or(both.then_some(e.span));
+        match want {
+            Some(w) => Ok(w.clone()),
+            None => self.join(&t, &u, result_span(els), |t, u| {
+                format!("`if` and `else` have different types: `{t}` and `{u}`")
+            }),
+        }
+    }
+
+    /// The array literal `e`, of `items`, whose values are wanted to be of
+    /// type `elem`, if it's given.
+    pub(super) fn array(
+        &mut self,
+        e: &Expr,
+        items: &[Expr],
+        elem: Option<Type>,
+    ) -> Result<Type, Error> {
+        let elem = elem.unwrap_or_else(|| {
+            self.fresh(
+                e.span,
+                "the type of this array's values".into(),
+                "say what it is, as in `let a: [i64; 0] = [];`".into(),
+            )
+        });
+        for item in items {
+            self.check(item, &elem)?;
+        }
+        let n = Type::Nat(items.len() as u64);
+        Ok(Type::Array(Box::new(elem), Box::new(n)))
+    }
+
+    /// `got`, the type of `e`, or if it's a closure's and a function type
+    /// is `want`ed, the function the closure is (*reified*): its body,
+    /// called with nothing captured. Only a closure that captures nothing
+    /// is one: what it captures has to be somewhere, and a function value
+    /// is only code. Recorded for the borrow checker, which reads the
+    /// closure's signature once its result's lifetimes are worked out.
+    fn reify(&mut self, e: &Expr, got: Type, want: &Type) -> Result<Type, Error> {
+        let (Type::Adt(symbol, ..), Type::Fn(sig)) = (self.shallow(&got), self.shallow(want))
+        else {
+            return Ok(got);
+        };
+        let Some(p) = self.closures.iter().find(|p| p.symbol == symbol) else {
+            return Ok(got);
+        };
+        if let Some(id) = p.captured.first() {
+            let name = &self.typed.binds[id].name;
+            let at = first_use(&p.lambda.body, name).unwrap_or(p.lambda.body.span);
+            let ps: Vec<String> = sig.params.iter().map(|p| p.to_string()).collect();
+            return Err(Error::ty(
+                result_span(e),
+                format!(
+                    "expected `{}`, found a closure that captures `{name}`",
+                    self.solved(want)
+                ),
+            )
+            .with_note(at, format!("`{name}` is captured here"))
+            .with_note(
+                result_span(e),
+                format!(
+                    "a function type only holds functions, and closures that capture \
+                     nothing; to take this, take a type parameter `F: Fn({}) -> {}`",
+                    ps.join(", "),
+                    sig.ret
+                ),
+            ));
+        }
+        let sig = self.traits.closures[&symbol].sig.clone();
+        self.typed.reified.insert(e.id, symbol);
+        Ok(Type::Fn(sig))
+    }
+
     /// If `e`, a reference of type `got`, is wanted as a reference of type
     /// `want` that it isn't, the reference it can be *coerced* to: it's
     /// borrowed again, as `&**e` say. A `&mut T` can be used as a `&T`,
@@ -410,18 +483,7 @@ impl Checker {
             //
             // As many values as it lists: its length is in its type, so no
             // value of the type has another (lemma A1 of docs/22-arrays.md).
-            ExprKind::Array(items) => {
-                let elem = self.fresh(
-                    e.span,
-                    "the type of this array's values".into(),
-                    "say what it is, as in `let a: [i64; 0] = [];`".into(),
-                );
-                for item in items {
-                    self.check(item, &elem)?;
-                }
-                let n = Type::Nat(items.len() as u64);
-                Ok(Type::Array(Box::new(elem), Box::new(n)))
-            }
+            ExprKind::Array(items) => self.array(e, items, None),
 
             //   Γ ⊢ v : τ   τ: Copy   n a literal or const parameter
             //  ------------------------------------------------------ (T-Repeat)
@@ -774,20 +836,11 @@ impl Checker {
             // If one branch is a `!`, the `if` has the other's type (T-Never).
             // It diverges if both branches do.
             ExprKind::If(c, then, els) => {
-                self.check(c, &Type::Bool)?;
-                let before = self.diverges.take();
                 let t = match els {
-                    Some(els) => {
-                        let t = self.synth(then)?;
-                        let then_diverges = self.diverges.take();
-                        let u = self.synth(els)?;
-                        let both = then_diverges.is_some() && self.diverges.is_some();
-                        self.diverges = before.or(both.then_some(e.span));
-                        self.join(&t, &u, result_span(els), |t, u| {
-                            format!("`if` and `else` have different types: `{t}` and `{u}`")
-                        })?
-                    }
+                    Some(els) => self.if_else(e, c, then, els, None)?,
                     None => {
+                        self.check(c, &Type::Bool)?;
+                        let before = self.diverges.take();
                         let t = self.synth(then)?;
                         self.diverges = before;
                         self.fits(&t, &Type::Unit, result_span(then), |t, _| {

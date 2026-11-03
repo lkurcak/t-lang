@@ -15,6 +15,10 @@
 //!   references and boxes to what they point to, and value by value for
 //!   arrays, slices and strings, which a loop does.
 //!
+//! - `{fn}::<C>(..) -> ..` is closure type `C`, which captures nothing,
+//!   used as a function (*reified*, see `Checker::reify`): it makes the
+//!   closure, which has nothing in it, and calls its body with it, by `&`.
+//!
 //! Each does what the interpreter did when it worked these out as it ran,
 //! in the same order (E4).
 
@@ -33,10 +37,11 @@ pub(crate) fn glue_name(kind: &str, t: &Type) -> String {
 
 pub(crate) const DROP: &str = "{drop}";
 pub(crate) const EQ_GLUE: &str = "{eq}";
+pub(crate) const FN_GLUE: &str = "{fn}";
 
 /// Is glue `name` one of these, which have bodies but no declarations?
 pub(crate) fn is_glue(name: &str) -> bool {
-    name.starts_with("{drop}::<") || name.starts_with("{eq}::<")
+    name.starts_with("{drop}::<") || name.starts_with("{eq}::<") || name.starts_with("{fn}::<")
 }
 
 /// A body being written.
@@ -617,6 +622,45 @@ impl Cx<'_, '_, '_> {
             .map(|(_, s)| s.clone())
             .unwrap_or_else(|| unreachable!("`{self_ty}` has a method `{method}`"));
         self.fn_const(&symbol, args)
+    }
+
+    /// The function closure type `t`, which captures nothing, is: its
+    /// glue, made if it isn't yet. The closure's body is copied in `root`,
+    /// the copy of the function it's made in, if it isn't yet.
+    pub(super) fn fn_glue(&mut self, t: &Type, root: &str) -> String {
+        let t = t.erased();
+        let name = glue_name(FN_GLUE, &t);
+        if !self.m.glue_made.insert(name.clone()) {
+            return name;
+        }
+        let Type::Adt(symbol, ..) = &t else {
+            unreachable!("a closure type is a struct's")
+        };
+        let def = &self.m.info.traits.closures[symbol];
+        let lambda = def.lambda;
+        let Type::Fn(sig) = def.sig_at(&t).erased() else {
+            unreachable!("a signature is a function type")
+        };
+        debug_assert!(def.fields.is_empty(), "a reified closure captures nothing");
+        self.made_closure(lambda, &t, root);
+        let n = sig.params.len();
+        let mut g = G::new(*sig.ret, sig.params);
+        let c = g.temp(t.clone());
+        g.assign(
+            Place::local(c),
+            Rvalue::Aggregate(Agg::Closure(lambda), t.clone(), Vec::new()),
+        );
+        let r = g.temp(shared(&t));
+        g.assign(Place::local(r), Rvalue::Ref(0, false, Place::local(c)));
+        let mut args = vec![Operand::Move(Place::local(r))];
+        args.extend((1..=n).map(|i| Operand::Move(Place::local(Local(i)))));
+        g.assign(
+            Place::local(RETURN),
+            Rvalue::Call(Operand::Const(Const::Receiver(FnKind::Fn)), args),
+        );
+        let body = g.finish();
+        self.m.bodies.insert(name.clone(), body);
+        name
     }
 
     /// The call shim of a closure called by value whose body takes it by

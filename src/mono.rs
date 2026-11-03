@@ -1623,22 +1623,23 @@ impl Cx<'_, '_, '_> {
                     Rvalue::Use(o) => Rvalue::Use(self.operand(o)),
                     Rvalue::Ref(..) => value.clone(),
                     Rvalue::Unary(op, o, id) => Rvalue::Unary(*op, self.operand(o), *id),
+                    // A closure used as a function is its glue.
                     Rvalue::Cast(o, t, id) => {
-                        Rvalue::Cast(self.operand(o), self.subst_inferred(t).erased(), *id)
+                        let to = self.subst_inferred(t).erased();
+                        let from = o.place().map(|p| self.place_ty(&out.locals, p));
+                        match (from, &to) {
+                            (Some(c @ Type::Adt(..)), Type::Fn(_)) => {
+                                let glue = self.fn_glue(&c, root);
+                                let f = crate::mir::Const::Fn(glue, Vec::new());
+                                Rvalue::Use(Operand::Const(f))
+                            }
+                            _ => Rvalue::Cast(self.operand(o), to, *id),
+                        }
                     }
                     Rvalue::Aggregate(k, t, os) => {
-                        if let Agg::Closure(id) = k {
-                            self.closure(*id, root);
-                        }
                         let t = self.subst_inferred(t).erased();
-                        if let (Agg::Closure(id), Type::Adt(name, _, args)) = (k, &t) {
-                            let body = closure_copy(root, *id);
-                            let copy = mangle(name, args);
-                            let old = self.m.closure_bodies.insert(copy, body.clone());
-                            assert!(
-                                old.is_none_or(|o| o == body),
-                                "one closure type runs one body"
-                            );
+                        if let Agg::Closure(id) = k {
+                            self.made_closure(*id, &t, root);
                         }
                         self.copies_in(&t);
                         let os = os.iter().map(|o| self.operand(o)).collect();
@@ -1707,6 +1708,22 @@ impl Cx<'_, '_, '_> {
 
     /// Makes the copy of the closure made by the lambda with node `id`, in
     /// the copy of a function `root`, if it isn't made yet.
+    /// Closure type `t`, made by the lambda with node `id` in `root`, the
+    /// copy of a function: its body is copied there, and run by every
+    /// closure of the type (`Executable::closure_body`).
+    fn made_closure(&mut self, id: NodeId, t: &Type, root: &str) {
+        self.closure(id, root);
+        if let Type::Adt(name, _, args) = t {
+            let body = closure_copy(root, id);
+            let copy = mangle(name, args);
+            let old = self.m.closure_bodies.insert(copy, body.clone());
+            assert!(
+                old.is_none_or(|o| o == body),
+                "one closure type runs one body"
+            );
+        }
+    }
+
     fn closure(&mut self, id: NodeId, root: &str) {
         let name = closure_copy(root, id);
         if self.m.bodies.contains_key(&name) {

@@ -1634,9 +1634,13 @@ impl<'p> Interp<'p, '_> {
                         Value::Slots(vec![v; n as usize])
                     }
                     // What it captured, by the names its body knows them by.
-                    (Agg::Closure(id), _) => {
-                        let code = crate::mono::closure_copy(fr.root, *id);
+                    // Its body is its type's, wherever it's made: in the
+                    // function the closure is in, or in its `{fn}` glue.
+                    (Agg::Closure(_), t) => {
                         let exe = self.exe;
+                        let code = (exe.closure_body(t))
+                            .unwrap_or_else(|| unsound(&format!("closure type `{t}` has no body")))
+                            .to_string();
                         let body = (exe.body(&code))
                             .unwrap_or_else(|| unsound(&format!("closure `{code}` has no body")));
                         let env = (body.env.iter().map(|v| v.name.clone()))
