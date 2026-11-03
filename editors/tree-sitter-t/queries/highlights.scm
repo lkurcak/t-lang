@@ -37,6 +37,7 @@
 
 (function_item name: (identifier) @function)
 (const_item name: (identifier) @constant)
+(static_item name: (identifier) @constant)
 (function_signature_item name: (identifier) @function)
 (method_call_expression method: (identifier) @function.method)
 (self) @variable.builtin
@@ -76,7 +77,7 @@
 ; Keywords
 
 "fn" @keyword.function
-["trait" "sealed" "impl" "for" "mod" "use" "where" "ensures" "with" "effect" "const" "unsafe"] @keyword
+["trait" "sealed" "impl" "for" "mod" "use" "where" "ensures" "with" "effect" "const" "static" "unsafe"] @keyword
 (effect) @type.builtin
 (visibility_modifier) @keyword.storage.modifier
 "let" @keyword

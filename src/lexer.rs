@@ -53,6 +53,7 @@ pub enum Tok {
     Effect,
     Sealed,
     Const,
+    Static,
     /// `'a`: a lifetime, with its `'`.
     Lifetime(String),
     // punctuation
@@ -158,6 +159,7 @@ impl Tok {
             Tok::Effect => "effect",
             Tok::Sealed => "sealed",
             Tok::Const => "const",
+            Tok::Static => "static",
             Tok::LParen => "(",
             Tok::RParen => ")",
             Tok::LBrace => "{",
@@ -636,6 +638,7 @@ pub fn lex_with_comments(src: &str) -> Result<(Vec<Token>, Vec<Comment>), Error>
                 "effect" => Tok::Effect,
                 "sealed" => Tok::Sealed,
                 "const" => Tok::Const,
+                "static" => Tok::Static,
                 name => Tok::Ident(name.to_string()),
             }
         } else if c == b'\'' {

@@ -413,7 +413,8 @@ impl Checker {
                 effects_text(sub)
             ),
             Why::Site { what, name } => format!(
-                "{what} {does}, but `{name}` doesn't say `with {}`",
+                "{}, but `{name}` doesn't say `with {}`",
+                says(what, &missing),
                 effects_text(&missing)
             ),
         };
@@ -519,9 +520,8 @@ impl Checker {
                     s.what, f.name.name,
                 ),
                 _ => format!(
-                    "{} {}, but `{}` doesn't say `with {}`",
-                    s.what,
-                    does(&Type::effects([first.clone()])),
+                    "{}, but `{}` doesn't say `with {}`",
+                    says(&s.what, &Type::effects([first.clone()])),
                     f.name.name,
                     effects_text(&Type::effects([first.clone()])),
                 ),
@@ -678,6 +678,16 @@ fn without_unsafe(effects: &Type) -> Type {
     Type::effects(items.filter(|e| **e != Type::Unsafe).cloned())
 }
 
+/// That what's at a site, `what`, has effects `missing`: "`f` may panic".
+/// A use of a static says what it is, "`COUNT` is a static", which is all
+/// there is to say of its `global`.
+pub(super) fn says(what: &str, missing: &Type) -> String {
+    match what.ends_with(" is a static") {
+        true => what.to_string(),
+        false => format!("{what} {}", does(missing)),
+    }
+}
+
 /// What effects `missing` mean a call may do: "may panic".
 pub(super) fn does(missing: &Type) -> String {
     match missing.effect_items() {
@@ -685,6 +695,7 @@ pub(super) fn does(missing: &Type) -> String {
         [Type::Alloc] => "may allocate".into(),
         [Type::Alloc, Type::Panic] => "may allocate and panic".into(),
         [Type::Unsafe] => "is unsafe".into(),
+        [Type::Global] => "may use a static".into(),
         _ => format!("may have the effects `{}`", effects_text(missing)),
     }
 }
@@ -695,6 +706,7 @@ fn cant(missing: &Type) -> String {
         [Type::Panic] => "can't panic".into(),
         [Type::Alloc] => "can't allocate".into(),
         [Type::Unsafe] => "can't be unsafe".into(),
+        [Type::Global] => "can't use a static".into(),
         _ => format!("can't have the effects `{}`", effects_text(missing)),
     }
 }

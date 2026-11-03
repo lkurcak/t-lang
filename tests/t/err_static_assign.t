@@ -5,5 +5,5 @@ static COUNT: Atomic<u32> = Atomic::new(0);
 
 fn main() with global {
     COUNT = Atomic::new(1);
-// error: cannot assign to
+// error: cannot assign to `COUNT`, a static: it's only ever shared
 }

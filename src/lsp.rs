@@ -1060,14 +1060,11 @@ fn label(name: &crate::ast::Ident) -> (&str, Span) {
 fn fn_symbol(src: &str, f: &FnDecl, children: Vec<DocumentSymbol>) -> DocumentSymbol {
     if f.is_const() {
         let detail = f.ret.to_string();
-        return symbol(
-            src,
-            label(&f.name),
-            detail,
-            SymbolKind::CONSTANT,
-            f.span,
-            children,
-        );
+        let kind = match f.is_static() {
+            true => SymbolKind::VARIABLE,
+            false => SymbolKind::CONSTANT,
+        };
+        return symbol(src, label(&f.name), detail, kind, f.span, children);
     }
     let params: Vec<&crate::ast::TypeExpr> = f.params.iter().map(|p| &p.ty).collect();
     let detail = format!("fn({}) -> {}", comma_list(&params), f.ret);

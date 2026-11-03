@@ -505,7 +505,8 @@ impl Checker {
                     ExprKind::Var(name, targs)
                         if targs.is_empty()
                             && let Some(Binding::Fn(f)) = self.const_binding(name, n.id)
-                            && self.fns[f.0].konst =>
+                            && self.fns[f.0].konst
+                            && !self.fns[f.0].is_static =>
                     {
                         Type::Const(self.fns[f.0].symbol.clone())
                     }
@@ -692,6 +693,16 @@ impl Checker {
                             return Err(Error::ty(
                                 place.span,
                                 format!("cannot assign to `{name}`, a const parameter"),
+                            ));
+                        }
+                        Some(Res::Static(_)) => {
+                            return Err(Error::ty(
+                                place.span,
+                                format!(
+                                    "cannot assign to `{name}`, a static: it's only ever \
+                                     shared, so it changes only through what's in it, like an \
+                                     atomic"
+                                ),
                             ));
                         }
                         _ => return Err(not_place()),

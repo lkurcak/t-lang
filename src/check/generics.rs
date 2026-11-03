@@ -620,6 +620,7 @@ pub(crate) fn resolve_effects(
                 "panic" => Type::Panic,
                 "alloc" => Type::Alloc,
                 "unsafe" => Type::Unsafe,
+                "global" => Type::Global,
                 name if params.is_effect(name) => Type::Param(name.to_string()),
                 name if params.contains(&name.to_string()) => {
                     return Err(Error::ty(

@@ -59,7 +59,18 @@ pub(crate) fn behind_references(b: &Builder) -> Result<(), Error> {
                     let t = b.place_ty(p);
                     // What a reference a call gave points to, as `s[i]` is
                     // `*s.index(i)`, has no name of its own.
-                    let what = match b.body.locals[p.local.0].name {
+                    let decl = &b.body.locals[p.local.0];
+                    let what = match decl.name {
+                        None if decl.of_static.is_some() => {
+                            return Err(Error::ty(
+                                s.span,
+                                format!(
+                                    "cannot move out of `{}`: it's in a static, which is there \
+                                     for the whole run, and a `{t}` isn't `Copy`",
+                                    describe(b, p)
+                                ),
+                            ));
+                        }
                         None if p.proj.first() == Some(&Proj::Deref) => "this value".to_string(),
                         _ => format!("`{}`", describe(b, p)),
                     };
@@ -205,6 +216,18 @@ pub(crate) fn mutability(b: &Builder) -> Result<(Vec<Local>, Vec<crate::ast::Nod
             }
             match behind {
                 Some((true, _)) => continue,
+                // What's in a static is only ever shared (lemma Y4 of
+                // docs/38-statics.md).
+                Some((false, 0)) if b.body.locals[place.local.0].of_static.is_some() => {
+                    return Err(Error::ty(
+                        s.span,
+                        format!(
+                            "{}: it's in a static, which is only ever shared, so it changes \
+                             only through what's in it, like an atomic",
+                            act(&describe(b, place)),
+                        ),
+                    ));
+                }
                 Some((false, i)) => {
                     let through = Place {
                         local: place.local,

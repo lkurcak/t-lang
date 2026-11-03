@@ -329,6 +329,7 @@ impl<'p, 'o> Interp<'p, 'o> {
             enums,
             nowhere,
             literals: HashMap::new(),
+            statics: HashMap::new(),
             copy: derived("Copy"),
             discard: derived("Discard"),
             aborting: false,
@@ -625,6 +626,10 @@ struct Interp<'p, 'o> {
     /// Where each literal's bytes are, by what they are: slots of `u8`s,
     /// never freed nor changed, made the first time they're needed.
     literals: HashMap<Vec<u8>, Ptr>,
+    /// Where each static is, by symbol, once it's been used: a slot made
+    /// then from its value, worked out while compiling, so it doesn't
+    /// matter when (lemma Y6 of docs/38-statics.md). It's never freed.
+    statics: HashMap<String, Ptr>,
     /// The structs and enums that are `Copy`, and that are `Discard`, as
     /// monomorphisation's copies of them say.
     copy: HashSet<&'p str>,
@@ -1121,6 +1126,8 @@ impl<'p> Interp<'p, '_> {
         for f in &self.frames {
             // A const's initializer may panic, while compiling, where it's
             // run: once it's known not to, it's its value (`crate::consts`).
+            // A static's too, which is run to make the static, at its
+            // first use.
             if self.fns[f.as_str()].is_const() {
                 continue;
             }
@@ -1492,6 +1499,7 @@ impl<'p> Interp<'p, '_> {
                 Const::Bytes(b) => Value::Ref(self.literal(b)),
                 Const::Fn(name, _) => Value::Fn(name.clone(), None),
                 Const::Param(_) => unsound("a const parameter left after monomorphising"),
+                Const::Static(symbol) => Value::Ref(self.static_place(symbol)),
                 Const::Receiver(_) => unsound("a call's receiver as a value"),
             },
         }
@@ -1982,6 +1990,25 @@ impl<'p> Interp<'p, '_> {
             _ => unsound(&format!("unknown intrinsic `<std::io::{stream}`")),
         };
         Value::Int(i128::from(code), IntTy::U32)
+    }
+
+    /// Where static `symbol` is, used, as it is, by a function that says
+    /// `with global`, as must all those running.
+    fn static_place(&mut self, symbol: &str) -> Ptr {
+        self.effect("global");
+        if let Some(p) = self.statics.get(symbol) {
+            return p.clone();
+        }
+        let value = self
+            .call(
+                Value::Fn(symbol.to_string(), None),
+                Vec::new(),
+                Span::new(0, 0),
+            )
+            .unwrap_or_else(|_| unsound(&format!("static `{symbol}`'s value failed")));
+        let p = self.memory.alloc(value, false);
+        self.statics.insert(symbol.to_string(), p.clone());
+        p
     }
 
     /// Where the literal of bytes `bytes` is: a slice of `u8`s, which a

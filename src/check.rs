@@ -1256,7 +1256,10 @@ impl Checker {
             if f.is_const()
                 && let Type::Fn(sig) = &scheme.ty
             {
-                self.const_type(f, &sig.ret)?;
+                match f.is_static() {
+                    true => self.static_type(f, &sig.ret)?,
+                    false => self.const_type(f, &sig.ret)?,
+                }
             }
             // Effects it doesn't say are its body's, which are inferred
             // with it.
@@ -1314,6 +1317,7 @@ impl Checker {
                 module: f.module,
                 level: f.vis.level(),
                 konst: f.is_const(),
+                is_static: f.is_static(),
             });
         }
         self.uses.resize_with(fns.len(), Uses::default);

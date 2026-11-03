@@ -570,7 +570,7 @@ impl Parser {
         };
         let head = match self.peek() {
             Tok::Fn => head.no_measure(NOT_METHOD)?,
-            Tok::Const => (head.no_intrinsic()?.no_measure(NOT_METHOD)?.no_test()?)
+            Tok::Const | Tok::Static => (head.no_intrinsic()?.no_measure(NOT_METHOD)?.no_test()?)
                 .no_blame_caller()?
                 .no_derives()?,
             Tok::Struct | Tok::Trait => {
@@ -618,7 +618,7 @@ impl Parser {
                 prog.impls.push(self.impl_decl(head.no_derives()?)?);
             }
             Tok::Mod => self.mod_decl(prog, head.no_derives()?, vis)?,
-            Tok::Const => {
+            Tok::Const | Tok::Static => {
                 let mut f = self.const_decl(head)?;
                 f.vis = vis;
                 prog.fns.push(f);
@@ -1005,9 +1005,9 @@ impl Parser {
 
     fn fn_decl(&mut self, head: Head) -> Result<FnDecl, Error> {
         if *self.peek() != Tok::Fn {
-            return Err(
-                self.unexpected("`fn`, `const`, `struct`, `enum`, `type`, `trait` or `impl`")
-            );
+            return Err(self.unexpected(
+                "`fn`, `const`, `static`, `struct`, `enum`, `type`, `trait` or `impl`",
+            ));
         }
         Ok(self.function(head, false, false)?.0)
     }
@@ -1118,6 +1118,7 @@ impl Parser {
             test: head.test,
             blame_caller: head.blame_caller,
             konst: None,
+            is_static: false,
         };
         Ok((f, provided))
     }
@@ -1125,15 +1126,21 @@ impl Parser {
     /// `const N: usize = 4;`, after its head: a function of no parameters
     /// as far as the checker goes, marked `konst`, whose result type is
     /// the const's and whose body is its initializer (see
-    /// docs/36-consts.md).
+    /// docs/36-consts.md). Or `static COUNT: Atomic<u32> = ..;`, the same,
+    /// marked `is_static` too (see docs/38-statics.md).
     fn const_decl(&mut self, head: Head) -> Result<FnDecl, Error> {
-        let start = self.expect(Tok::Const)?;
+        let is_static = *self.peek() == Tok::Static;
+        let start = match is_static {
+            true => self.expect(Tok::Static)?,
+            false => self.expect(Tok::Const)?,
+        };
         let name = self.ident()?;
         if *self.peek() == Tok::Lt {
-            return Err(Error::syntax(
-                self.span(),
-                "a const has no parameters: it's one value, the same wherever it's used",
-            ));
+            let message = match is_static {
+                true => "a static has no parameters: it's one place, the same wherever it's used",
+                false => "a const has no parameters: it's one value, the same wherever it's used",
+            };
+            return Err(Error::syntax(self.span(), message));
         }
         self.expect(Tok::Colon)?;
         let ret = self.ty()?;
@@ -1159,6 +1166,7 @@ impl Parser {
             test: None,
             blame_caller: None,
             konst: Some(start),
+            is_static,
         })
     }
 
@@ -1288,10 +1296,11 @@ impl Parser {
                     let (decl, provided) = self.function(head, true, true)?;
                     methods.push(TraitMethod { decl, provided });
                 }
-                Tok::Const => {
+                Tok::Const | Tok::Static => {
                     return Err(Error::syntax(
                         self.span(),
-                        "a const is an item of a module: there are no associated consts yet",
+                        "a const or static is an item of a module: there are no associated ones \
+                         yet",
                     ));
                 }
                 _ => return Err(self.unexpected("`fn`, `type`, `effect` or `}`")),
@@ -1513,10 +1522,11 @@ impl Parser {
                     f.vis = vis;
                     methods.push(f);
                 }
-                Tok::Const => {
+                Tok::Const | Tok::Static => {
                     return Err(Error::syntax(
                         self.span(),
-                        "a const is an item of a module: there are no associated consts yet",
+                        "a const or static is an item of a module: there are no associated ones \
+                         yet",
                     ));
                 }
                 _ => return Err(self.unexpected("`fn`, `type`, `effect` or `}`")),
@@ -2045,11 +2055,17 @@ impl Parser {
                 stmts.push(self.let_stmt()?);
                 continue;
             }
-            if *self.peek() == Tok::Const {
+            if matches!(self.peek(), Tok::Const | Tok::Static) {
+                let what = match self.peek() {
+                    Tok::Static => "static",
+                    _ => "const",
+                };
                 return Err(Error::syntax(
                     self.span(),
-                    "a const is an item of a module, not of a block: declare it outside the \
-                     function",
+                    format!(
+                        "a {what} is an item of a module, not of a block: declare it outside the \
+                         function"
+                    ),
                 ));
             }
             if matches!(self.peek(), Tok::Trait | Tok::Impl) {

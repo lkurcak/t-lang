@@ -813,6 +813,7 @@ impl<'p> Mono<'p> {
             test: f.test,
             blame_caller: f.blame_caller,
             konst: f.konst,
+            is_static: f.is_static,
             ensures: f.ensures.iter().map(|e| *cx.pred(e)).collect(),
         }
     }
@@ -1246,7 +1247,12 @@ impl Cx<'_, '_, '_> {
             Type::Param(_) | Type::Const(_) | Type::Var(_) | Type::Proj(..) | Type::Opaque(..) => {
                 unreachable!("`{t}` left after monomorphising")
             }
-            Type::Effects(_) | Type::Alloc | Type::Panic | Type::Unsafe | Type::Inferred(..) => {
+            Type::Effects(_)
+            | Type::Alloc
+            | Type::Panic
+            | Type::Global
+            | Type::Unsafe
+            | Type::Inferred(..) => {
                 unreachable!("effects `{t}` written as a type")
             }
         };
@@ -1265,7 +1271,7 @@ impl Cx<'_, '_, '_> {
             .iter()
             .map(|e| {
                 let name = match e {
-                    Type::Alloc | Type::Panic | Type::Unsafe => e.to_string(),
+                    Type::Alloc | Type::Panic | Type::Global | Type::Unsafe => e.to_string(),
                     // An `Inferred` too: none is left once checking is done.
                     e => unreachable!("effect `{e}` left after monomorphising"),
                 };
@@ -1396,6 +1402,7 @@ impl Cx<'_, '_, '_> {
                 mut_span: None,
                 by_ref: None,
                 deferred: false,
+                of_static: None,
             });
             Local(out.locals.len() - 1)
         };
@@ -1587,6 +1594,7 @@ impl Cx<'_, '_, '_> {
                                 mut_span: None,
                                 by_ref: None,
                                 deferred: false,
+                                of_static: None,
                             });
                             let t = Local(out.locals.len() - 1);
                             let kind = StmtKind::Assign {
@@ -1746,6 +1754,14 @@ impl Cx<'_, '_, '_> {
                 Operand::Const(self.fn_const(symbol, args))
             }
             Operand::Const(Const::Int(n, t)) => Operand::Const(Const::Int(*n, self.subst(t))),
+            // A static's body makes its value, which is where it is, so
+            // it's needed wherever the static is.
+            Operand::Const(Const::Static(symbol)) => {
+                let Const::Fn(symbol, _) = self.fn_const(symbol, Vec::new()) else {
+                    unreachable!("a static is a function of no parameters to the checker")
+                };
+                Operand::Const(Const::Static(symbol))
+            }
             Operand::Const(Const::Param(name)) => match self.subst(&Type::Param(name.clone())) {
                 Type::Nat(n) => Operand::Const(Const::Int(
                     i128::from(n),
@@ -1939,9 +1955,15 @@ mod used {
                 in_ty(t, out);
             }
             for o in value.operands() {
-                if let Operand::Const(Const::Fn(name, args)) = o {
-                    out.insert(name.clone());
-                    args.iter().for_each(|t| in_ty(t, out));
+                match o {
+                    Operand::Const(Const::Fn(name, args)) => {
+                        out.insert(name.clone());
+                        args.iter().for_each(|t| in_ty(t, out));
+                    }
+                    Operand::Const(Const::Static(name)) => {
+                        out.insert(name.clone());
+                    }
+                    _ => {}
                 }
             }
         }

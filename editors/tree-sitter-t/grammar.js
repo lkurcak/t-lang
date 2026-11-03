@@ -83,6 +83,7 @@ module.exports = grammar({
       $.enum_item,
       $.type_item,
       $.const_item,
+      $.static_item,
       $.trait_item,
       $.impl_item,
       $.mod_item,
@@ -464,6 +465,18 @@ module.exports = grammar({
     // `[T]`, a slice: only right after `&` or `&mut`, which the checker
     // says.
     slice_type: $ => seq('[', field('element', $._type), ']'),
+
+    // `static COUNT: Atomic<u32> = Atomic::new(0);`, a static item.
+    static_item: $ => seq(
+      optional($.visibility_modifier),
+      'static',
+      field('name', $.identifier),
+      ':',
+      field('type', $._type),
+      '=',
+      field('value', $._expression),
+      ';',
+    ),
 
     // `[T; N]`, an array, whose length is a literal, a const parameter or a const.
     array_type: $ => seq(

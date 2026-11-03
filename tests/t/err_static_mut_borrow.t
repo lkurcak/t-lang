@@ -5,6 +5,6 @@ static COUNT: Atomic<u32> = Atomic::new(0);
 
 fn main() with global {
     let n = COUNT.get_mut();
-// error: cannot borrow
+// error: cannot borrow `COUNT` as mutable: it's in a static, which is only ever shared
     *n = 3;
 }

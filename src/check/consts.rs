@@ -63,6 +63,61 @@ impl Checker {
         ))
     }
 
+    /// Checks that static `f`, of type `ty`, may be one (see
+    /// docs/38-statics.md): not frozen, as a static of a frozen type
+    /// never changes, and is a const; plain data, as its value is worked
+    /// out while compiling, as a const's is, with atomics in it (lemma Y6);
+    /// `Sync`, as every function can reach it (Y3); and `Discard`, as
+    /// nothing ever uses it up.
+    pub(super) fn static_type(&self, f: &FnDecl, ty: &Type) -> Result<(), Error> {
+        let at = f.ret.span;
+        if crate::types::frozen(&self.adts, ty) {
+            let e = Error::ty(
+                at,
+                format!(
+                    "a static of a frozen type, `{}`, never changes: make it a const, which is \
+                     what one that doesn't is",
+                    f.ret
+                ),
+            );
+            return Err(match f.konst {
+                Some(k) => e.with_fix(crate::error::Fix::new(
+                    "make it a const",
+                    vec![crate::error::Edit::replace(k, "const")],
+                )),
+                None => e,
+            });
+        }
+        if !self.plain(ty, &mut HashSet::new()) {
+            return Err(Error::ty(
+                at,
+                format!(
+                    "a static can't be of type `{}`: its value is worked out while compiling, so \
+                     it's plain data, of integers, `bool`, `char`, `()`, `&str` and `&[u8]`, and \
+                     arrays, structs and enums of those, and atomics",
+                    f.ret
+                ),
+            ));
+        }
+        let env = &self.adts.proj.local;
+        for (tr, why) in [
+            (crate::traits::SYNC, "every function can reach it"),
+            (crate::traits::DISCARD, "it's never used up"),
+        ] {
+            if self.traits.implements(ty, tr, &[], env).is_err() {
+                return Err(Error::ty(
+                    at,
+                    format!(
+                        "a static must be `{}`, as {why}, and `{}` isn't",
+                        tr.rsplit("::").next().unwrap_or(tr),
+                        f.ret
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Is `t` plain data: a value with no address in it but a literal's,
     /// which the interpreter can give back as a tree and a use can make
     /// again? A `&'static` in a const can only point into a literal, as
@@ -108,10 +163,11 @@ impl Checker {
         Err(Error::ty(
             span,
             format!(
-                "a const's initializer can't have the effect `{}`: {what} {}, and `{}` is \
-                 worked out while the program is compiled, where only panicking is possible",
+                "a {}'s initializer can't have the effect `{}`: {}, and `{}` is worked out \
+                 while the program is compiled, where only panicking is possible",
+                f.item_keyword(),
                 crate::types::effects_text(&Type::effects([effect.clone()])),
-                super::effects::does(&Type::effects([effect.clone()])),
+                super::effects::says(what, &Type::effects([effect.clone()])),
                 f.name.name,
             ),
         ))
@@ -123,8 +179,9 @@ impl Checker {
         Error::ty(
             span,
             format!(
-                "a const's initializer can't use `unsafe`: `{}` is worked out while the program \
+                "a {}'s initializer can't use `unsafe`: `{}` is worked out while the program \
                  is compiled, where nothing keeps what `unsafe` promises",
+                f.item_keyword(),
                 f.name.name
             ),
         )
@@ -180,6 +237,14 @@ impl Checker {
     /// what's in scope, so it's neither yet, and the name is kept for
     /// comparing (see docs/36-consts.md).
     pub(super) fn const_pattern(&self, name: &str, span: Span) -> Error {
+        let is_static =
+            matches!(self.binding(name), Some(Binding::Fn(f)) if self.fns[f.0].is_static);
+        if is_static {
+            return Error::ty(
+                span,
+                format!("`{name}` is a static: a pattern can't name one, only a value"),
+            );
+        }
         Error::ty(
             span,
             format!(

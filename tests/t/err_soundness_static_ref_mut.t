@@ -8,6 +8,6 @@ static X: S = S { n: 1, a: Atomic::new(0) };
 
 fn main() with global {
     let r = &mut X.n;
-// error: cannot borrow
+// error: cannot borrow `X.n` as mutable: it's in a static, which is only ever shared
     *r = 2;
 }

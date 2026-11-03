@@ -109,6 +109,10 @@ pub enum Type {
     Alloc,
     /// `panic`, in an `Effects`: may abort the program.
     Panic,
+    /// `global`, in an `Effects`: may use a static, state that every
+    /// function can reach, not only what its arguments do (see
+    /// docs/38-statics.md).
+    Global,
     /// `unsafe`, in an `Effects`: has obligations its caller must keep,
     /// which the checker doesn't check (see docs/09-unsafe.md). Only an
     /// `unsafe` block takes it away.
@@ -244,17 +248,18 @@ impl Type {
     }
 }
 
-/// Where an effect goes in a set: `alloc`, `panic`, `unsafe`, then parameters,
+/// Where an effect goes in a set: `alloc`, `global`, `panic`, `unsafe`, then parameters,
 /// associated effects and variables, each in an order of their own.
 fn effect_key(t: &Type) -> (u8, String) {
     match t {
         Type::Alloc => (0, String::new()),
-        Type::Panic => (1, String::new()),
-        Type::Unsafe => (2, String::new()),
-        Type::Param(p) => (3, p.clone()),
-        Type::Proj(..) => (4, format!("{t:?}")),
-        Type::Var(v) => (5, format!("{v:010}")),
-        t => (6, format!("{t:?}")),
+        Type::Global => (1, String::new()),
+        Type::Panic => (2, String::new()),
+        Type::Unsafe => (3, String::new()),
+        Type::Param(p) => (4, p.clone()),
+        Type::Proj(..) => (5, format!("{t:?}")),
+        Type::Var(v) => (6, format!("{v:010}")),
+        t => (7, format!("{t:?}")),
     }
 }
 
@@ -553,6 +558,7 @@ impl Type {
             | Type::Var(_)
             | Type::Alloc
             | Type::Panic
+            | Type::Global
             | Type::Unsafe => (&[], None, None),
         };
         params.iter().chain(ret).chain(effects)
@@ -615,6 +621,7 @@ impl Type {
             | Type::Var(_)
             | Type::Alloc
             | Type::Panic
+            | Type::Global
             | Type::Unsafe => self.clone(),
         }
     }
@@ -935,6 +942,7 @@ impl fmt::Display for Type {
             Type::Alloc => f.write_str("alloc"),
             Type::Panic => f.write_str("panic"),
             Type::Unsafe => f.write_str("unsafe"),
+            Type::Global => f.write_str("global"),
             // Its type parameters are those in scope where it's written,
             // which say nothing to a reader.
             Type::Adt(name, ..) if is_closure(name) => f.write_str("{closure}"),

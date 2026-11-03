@@ -66,7 +66,9 @@ impl<T: Atom> Atomic<T> {
     export fn load(&self) -> T;
 
     /// Puts `value` in it.
-    export fn store(&self, value: T) { let _ = self.swap(value); }
+    export fn store(&self, value: T) {
+        let _ = self.swap(value);
+    }
 
     /// Puts `value` in it, and gives back what was there.
     #[intrinsic]

@@ -823,12 +823,30 @@ pub struct FnDecl {
     /// its initializer, which runs while the program is compiled. A use
     /// of its name is its value (see docs/36-consts.md).
     pub konst: Option<Span>,
+    /// Is it a static, `static COUNT: Atomic<u32> = ..;`, rather than a
+    /// const? Then `konst` is where its `static` is, and it's checked and
+    /// worked out as a const is, but a use of its name is a place, the one
+    /// the static is, for the whole run (see docs/38-statics.md).
+    pub is_static: bool,
 }
 
 impl FnDecl {
-    /// Is it a const item, not a function?
+    /// Is it a const or static item, not a function?
     pub fn is_const(&self) -> bool {
         self.konst.is_some()
+    }
+
+    /// Is it a static item?
+    pub fn is_static(&self) -> bool {
+        self.is_static
+    }
+
+    /// `const` or `static`, as it's declared.
+    pub fn item_keyword(&self) -> &'static str {
+        match self.is_static {
+            true => "static",
+            false => "const",
+        }
     }
 }
 

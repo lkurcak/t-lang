@@ -1,4 +1,5 @@
 //! Fresh ids, from one counter for the whole program.
+
 use core::sync::Atomic;
 
 static NEXT: Atomic<u64> = Atomic::new(1);
