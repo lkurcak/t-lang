@@ -328,7 +328,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _46;
         dead _45;
         _59 = {closure#8743}();
-        _60 = {fn}::<{closure#91173}>;
+        _60 = {fn}::<{closure#91185}>;
         _61 = true;
         _58 = main::twice::<bool>(move _60, move _61);
         _62 = &mut _2;
@@ -975,7 +975,7 @@ fn <&str as core::fmt::Display>::fmt::<std::io::Stderr><'a>(
     }
 }
 
-glue {fn}::<{closure#91173}> {
+glue {fn}::<{closure#91185}> {
     let _0: bool;
     let mut _1: bool;
     let _2: {closure};

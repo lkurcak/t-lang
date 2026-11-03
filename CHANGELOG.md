@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased
+
+Step 38: statics, atomics, `Send` and `Sync`. See
+[docs/38-statics.md](docs/38-statics.md).
+
+### Added
+
+- `static NAME: T = value;`: one place for the whole run, which every
+  function can reach. Its type is plain data with atomics in it, not
+  frozen (else it's a const, which a fix makes it), `Sync` and `Discard`;
+  its value is worked out while compiling, as a const's is. A use of its
+  name is the place, behind a `&'static`: there's no `&mut` to a static,
+  no moving out of one and no assigning to one.
+- The effect `global`: each use of a static has it. Inferred where effects
+  are, written by exported functions; const and static initializers can't
+  have it.
+- `core::sync::Atomic<T>` for `T: Atom` (the integers and `bool`, sealed):
+  `new`, `load`, `store`, `swap`, `compare_swap`, `compare_exchange`,
+  `fetch_and`/`fetch_or`/`fetch_xor`, and for integers `fetch_add` and
+  `fetch_sub` (wrapping), `into_inner`, `get_mut`. All sequentially
+  consistent. Invariant, not frozen, never `Copy`.
+- `core::sync::Send` and `core::sync::Sync`, in the prelude: like `Copy`
+  and `Discard`, only derived (`#[derive(Send, Sync)]`, with `where` bounds
+  as for `Discard`) or built in. `&T` is `Send` and `Sync` if `T` is
+  `Sync`, `&mut T` is `Send` if `T` is `Send`; boxes, arrays and slices as
+  what they hold; closures as what they capture. The libraries' types
+  derive them; `Cell` and `Arena` are `Send` but never `Sync`.
+
+### Changed
+
+- Breaking: `static` is a keyword.
+- A const can't hold an `Atomic` either (it must be frozen).
+- `t fmt` puts each trait of a `#[derive(..)]` that doesn't fit on a line
+  on a line of its own.
+
 ## 0.52.0 (2026-11-03)
 
 H5 of retrospective 3: every closure has a type of its own. See

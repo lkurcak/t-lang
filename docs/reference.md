@@ -88,7 +88,8 @@ machines. A literal of either type must fit on both. See
 
 A `const` item names a value fixed while compiling. Its type is written,
 and is plain data: integers, `bool`, `char`, `()`, `&str`, `&[u8]`, and
-arrays, structs and enums of those, with no `Cell` in them. The initializer may call functions
+arrays, structs and enums of those, with no `Cell` or `Atomic` in them
+(they're *frozen*). The initializer may call functions
 and loop, but may only panic: no allocation and no `unsafe`. It runs on a
 32-bit and a 64-bit machine, which must agree, and a panic there is a
 compile error. A const can be an array length, where it is equal only to
@@ -103,6 +104,26 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let a = [9u8; SIZE];
     out.line(&last(&a)) // expect: 9
+}
+```
+
+A `static` item names one place for the whole run, which every function
+can reach. Its type is written, and is plain data with atomics in it:
+not frozen (else it's a const), `Sync` and `Discard`. Its value is worked
+out while compiling, as a const's is. A use of its name is that place,
+behind a `&'static`: no `&mut`, no moving out, no assigning; it changes
+only through atomics in it. Each use has the effect `global`. See
+[statics](38-statics.md).
+
+```rust
+use core::sync::Atomic;
+
+static COUNT: Atomic<u32> = Atomic::new(0);
+
+fn main(os: std::Os) -> Result<(), std::io::Error> with global {
+    let mut out = os.stdout;
+    let _ = COUNT.fetch_add(2);
+    out.line(&COUNT.load()) // expect: 2
 }
 ```
 
@@ -212,14 +233,25 @@ the single input lifetime when there is exactly one. Other ambiguous
 outputs require a named lifetime. A reference to a local cannot escape
 the call that owns it.
 
-The one value that changes behind a `&` is a `core::cell::Cell<T>`'s:
+The values that change behind a `&` are a `core::cell::Cell<T>`'s and a
+`core::sync::Atomic<T>`'s. A cell's:
 `get` copies it out (`T: Copy`), `set` replaces it and drops the old one
 (`T: Discard`), `replace` swaps it, `into_inner` and `get_mut` work as
 for any value. Nothing gives a reference into a cell from a `&Cell<T>`,
 and no measure or refinement can read one. `Cell` is invariant in `T`.
+An atomic holds an integer or `bool` (`T: Atom`), changed by `load`,
+`store`, `swap`, `compare_exchange` and `fetch_add` and the like, each one
+sequentially consistent step.
+
+`Send` (may be handed to another thread) and `Sync` (may be shared by
+threads through `&`) are, like `Copy` and `Discard`, only derived or
+built in: `&T` is `Send` and `Sync` when `T` is `Sync`, a closure when
+what it captures is, a `Cell` is `Send` but never `Sync`, an `Atomic` is
+both.
 
 See [ownership](05-ownership.md), [linear values](06a.1-linear-types.md),
-[destructors](20-destructors.md), and [cells](37-cell.md).
+[destructors](20-destructors.md), [cells](37-cell.md), and
+[statics and atomics](38-statics.md).
 
 ## Closures and generic bounds
 
@@ -324,6 +356,9 @@ which it cannot do. A refinement or a guard can supply the missing bound.
 `unwrap` that may panic. `alloc` covers allocation and aborting on out of
 memory; it does not require `panic` as well. `with {}` also excludes
 allocation, but does not promise termination.
+
+`global` is using a `static`: state no argument reaches. A function
+without it (and without `unsafe`) touches only what its arguments reach.
 
 `unsafe` marks operations whose callers must uphold obligations the
 checker cannot establish. It is never inferred: declare `with unsafe`
@@ -472,7 +507,7 @@ and exits unsuccessfully when it returns `Err`; `E` must implement
 
 | Library | Common items |
 |---|---|
-| [`core`](../core/lib.t) | `Option`, `Result`, `Iterator`, `cell::Cell`, numeric operations, traits, and formatting |
+| [`core`](../core/lib.t) | `Option`, `Result`, `Iterator`, `cell::Cell`, `sync::Atomic`, numeric operations, traits, and formatting |
 | [`alloc`](../alloc/lib.t) | `boxed::Box`, `list::List`, `string::String`, and `arena::Arena` |
 | [`std`](../std/lib.t) | `Os` and `io` streams |
 
