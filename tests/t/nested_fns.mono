@@ -326,7 +326,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _47;
         dead _46;
         dead _45;
-        _59 = {closure#8335}();
+        _59 = {closure#8427}();
         _60 = true;
         _58 = main::twice::<bool>(move _59, move _60);
         _61 = &mut _2;
@@ -413,7 +413,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         _76 = copy _77;
         dead _77;
         _80 = &_76;
-        _79 = {closure#8425}(move _80);
+        _79 = {closure#8517}(move _80);
         _78 = copy _79;
         dead _80;
         dead _79;
@@ -632,7 +632,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
     }
 }
 
-closure main::{closure#8335} {
+closure main::{closure#8427} {
     let _0: bool;
     let _1: bool; // b
     bb0: {
@@ -642,7 +642,7 @@ closure main::{closure#8335} {
     }
 }
 
-closure main::{closure#8425} {
+closure main::{closure#8517} {
     let _0: i64;
     let mut _1: &{closure}; // the closure
     let _2: i64; // x

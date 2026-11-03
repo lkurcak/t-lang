@@ -58,7 +58,7 @@ fn flip::<i64, bool>(p: Pair::<i64, bool>) -> Pair::<bool, i64> {
     }
 }
 
-fn map::<{panic}, i64, i64, {closure#84080}>(o: Option::<i64>, f: {closure#84080}) -> Option::<i64>
+fn map::<{panic}, i64, i64, {closure#86087}>(o: Option::<i64>, f: {closure#86087}) -> Option::<i64>
 with panic {
     let _0: Option<i64>;
     let _1: Option<i64>; // o
@@ -699,8 +699,8 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         _51 = 4_i64;
         _50 = Option::<i64>::Some(move _51);
         _53 = &_46;
-        _52 = {closure#8444}(move _53);
-        _49 = map::<{panic}, i64, i64, {closure#84080}>(move _50, move _52);
+        _52 = {closure#8536}(move _53);
+        _49 = map::<{panic}, i64, i64, {closure#86087}>(move _50, move _52);
         _48 = move _49;
         dead _53;
         dead _52;
@@ -754,7 +754,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         _65 = move _66;
         dead _66;
         _72 = move _65;
-        _73 = {closure#8474}();
+        _73 = {closure#8566}();
         _71 = map::<{panic}, i64, i64, fn(i64) -> i64 with panic>(move _72, move _73);
         _74 = -1_i64;
         _70 = unwrap_or::<i64>(move _71, move _74);
@@ -804,7 +804,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _67;
         _86 = 3_i64;
         _85 = Option::<i64>::Some(move _86);
-        _87 = {closure#8495}();
+        _87 = {closure#8587}();
         _84 = map::<{}, i64, bool, fn(i64) -> bool>(move _85, move _87);
         _88 = false;
         _83 = unwrap_or::<bool>(move _84, move _88);
@@ -894,7 +894,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _96;
         dead _95;
         dead _94;
-        _108 = {closure#8519}();
+        _108 = {closure#8611}();
         _109 = 1_i64;
         _110 = 10_i64;
         _107 = repeat::<i64>(move _108, move _109, move _110);
@@ -1218,7 +1218,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
     }
 }
 
-closure main::{closure#8444} {
+closure main::{closure#8536} {
     let _0: i64;
     let mut _1: &{closure}; // the closure
     let _2: i64; // x
@@ -1230,7 +1230,7 @@ closure main::{closure#8444} {
     }
 }
 
-closure main::{closure#8474} {
+closure main::{closure#8566} {
     let _0: i64;
     let _1: i64; // x
     let _2: i64;
@@ -1243,7 +1243,7 @@ closure main::{closure#8474} {
     }
 }
 
-closure main::{closure#8495} {
+closure main::{closure#8587} {
     let _0: bool;
     let _1: i64; // x
     let _2: i64;
@@ -1256,7 +1256,7 @@ closure main::{closure#8495} {
     }
 }
 
-closure main::{closure#8519} {
+closure main::{closure#8611} {
     let _0: i64;
     let _1: i64; // x
     let _2: i64;

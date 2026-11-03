@@ -1,8 +1,9 @@
 //! The borrow checker: that a program uses memory correctly, which types
 //! alone can't say. Nothing is used after it's moved, nothing borrowed is
 //! changed or moved or freed while the borrow lasts, nothing is changed
-//! through a `&`, and no reference outlives what it points to. See
-//! docs/05-ownership.md.
+//! through a `&` (but what's in a `Cell`, by its intrinsic `replace`, which
+//! nothing points into: docs/37-cell.md), and no reference outlives what
+//! it points to. See docs/05-ownership.md.
 //!
 //! It runs on each function once its types are known (`check`), and works
 //! on a lowered form of its body, MIR (`mir.rs`, `build.rs`), the way

@@ -1863,6 +1863,9 @@ impl<'p> Interp<'p, '_> {
         if let Some(stream) = name.strip_prefix("<std::io::") {
             return Ok(self.stream(stream, args));
         }
+        if name == "<core::cell::Cell" {
+            return Ok(self.cell_replace(copy, args));
+        }
         if name == "<alloc::arena::Arena" {
             let op = copy.rsplit("::").next().unwrap_or_default();
             return Ok(self.arena(op, args));
@@ -2119,6 +2122,31 @@ impl<'p> Interp<'p, '_> {
             Some(v) => Value::Variant(option, "Some".into(), vec![v]),
             None => Value::Variant(option, "None".into(), Vec::new()),
         }
+    }
+
+    /// Runs `Cell::replace` on `args`: a `&Cell<T>` and a `T`. The cell is
+    /// a struct whose one field is what's in it, written here through a
+    /// `&`, which only a cell's field may be (lemma K3 of docs/37-cell.md).
+    fn cell_replace(&mut self, copy: &str, args: Vec<Value>) -> Value {
+        if !copy.ends_with("::replace") {
+            unsound(&format!("unknown intrinsic `{copy}`"));
+        }
+        let [Value::Ref(p), v] = <[Value; 2]>::try_from(args).unwrap_or_else(|_| unsound("arity"))
+        else {
+            unsound("`Cell::replace` of what isn't a reference")
+        };
+        if !matches!(self.memory.get(&p), Value::Struct(ty, _) if ty.split("::<").next() == Some(crate::check::CELL))
+        {
+            unsound(&format!(
+                "`Cell::replace` of `{}`, which isn't a cell",
+                self.memory.get(&p)
+            ));
+        }
+        let old = std::mem::replace(self.memory.get_mut(&p.field(0)), v);
+        if self.taken_apart(&old) {
+            unsound("a cell whose value was moved out");
+        }
+        old
     }
 
     /// Runs `Arena`'s intrinsic method `op` on `args`. Each value put in

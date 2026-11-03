@@ -91,7 +91,8 @@ program:
 > points to.
 
 What it reads, it reads through `&self`, and nothing in T changes
-through a `&`: no interior mutability. It has no effects, so it can't
+through a `&` but what's in a cell, which no measure can read (lemma K1
+of docs/37-cell.md). It has no effects, so it can't
 allocate, panic or read input, and the checker proves its arithmetic
 can't overflow, as for any function that doesn't say `with panic`. Its
 body has no loops, and measures defined by each other are an error (a

@@ -1326,6 +1326,12 @@ impl<'e> Gen<'e> {
                 Some("Stderr>::write_byte") => "    return t_write_byte(stderr, a1);\n".to_string(),
                 _ => panic!("unknown intrinsic `{copy}`"),
             },
+            // A cell is a struct of what's in it (lemma K3 of
+            // docs/37-cell.md).
+            "<core::cell::Cell" => match op {
+                "replace" => format!("    {r} old = a0->f0;\n    a0->f0 = a1;\n    return old;\n"),
+                _ => panic!("unknown intrinsic `{copy}`"),
+            },
             "<alloc::arena::Arena" => {
                 let e = self.cty(&elem(&params.first().cloned().unwrap_or(ret.clone())));
                 match op {

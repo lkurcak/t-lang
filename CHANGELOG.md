@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+Step 37: cells. See [docs/37-cell.md](docs/37-cell.md).
+
+### Added
+
+- `core::cell::Cell<T>`: a value that can be changed through a shared
+  reference. `new`, `get` (`T: Copy`), `set` (`T: Discard`; puts the new
+  value in, then drops the old), `replace`, `into_inner`, `get_mut`.
+  It's invariant in `T`, `Discard` if `T` is, and never `Copy`. Nothing
+  gives a reference into a cell from a `&Cell<T>`, and no measure or
+  refinement can read what's in one.
+
+### Changed
+
+- A const's type must be frozen: no `Cell` in it, but behind a
+  reference.
+
 ## 0.50.0 (2026-11-02)
 
 Step 36: consts. See [docs/36-consts.md](docs/36-consts.md).

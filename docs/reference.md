@@ -88,7 +88,7 @@ machines. A literal of either type must fit on both. See
 
 A `const` item names a value fixed while compiling. Its type is written,
 and is plain data: integers, `bool`, `char`, `()`, `&str`, `&[u8]`, and
-arrays, structs and enums of those. The initializer may call functions
+arrays, structs and enums of those, with no `Cell` in them. The initializer may call functions
 and loop, but may only panic: no allocation and no `unsafe`. It runs on a
 32-bit and a 64-bit machine, which must agree, and a panic there is a
 compile error. A const can be an array length, where it is equal only to
@@ -212,8 +212,14 @@ the single input lifetime when there is exactly one. Other ambiguous
 outputs require a named lifetime. A reference to a local cannot escape
 the call that owns it.
 
+The one value that changes behind a `&` is a `core::cell::Cell<T>`'s:
+`get` copies it out (`T: Copy`), `set` replaces it and drops the old one
+(`T: Discard`), `replace` swaps it, `into_inner` and `get_mut` work as
+for any value. Nothing gives a reference into a cell from a `&Cell<T>`,
+and no measure or refinement can read one. `Cell` is invariant in `T`.
+
 See [ownership](05-ownership.md), [linear values](06a.1-linear-types.md),
-and [destructors](20-destructors.md).
+[destructors](20-destructors.md), and [cells](37-cell.md).
 
 ## Closures and generic bounds
 
@@ -466,7 +472,7 @@ and exits unsuccessfully when it returns `Err`; `E` must implement
 
 | Library | Common items |
 |---|---|
-| [`core`](../core/lib.t) | `Option`, `Result`, `Iterator`, numeric operations, traits, and formatting |
+| [`core`](../core/lib.t) | `Option`, `Result`, `Iterator`, `cell::Cell`, numeric operations, traits, and formatting |
 | [`alloc`](../alloc/lib.t) | `boxed::Box`, `list::List`, `string::String`, and `arena::Arena` |
 | [`std`](../std/lib.t) | `Os` and `io` streams |
 

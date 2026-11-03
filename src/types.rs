@@ -427,6 +427,31 @@ pub fn all_fields(adts: &Adts, ty: &Type) -> Vec<Type> {
     }
 }
 
+/// Is `t` *frozen*: does nothing in a value of it change through a `&` to
+/// it? Only a `Cell` does (lemma K5 of docs/37-cell.md), so a type is
+/// frozen if no `Cell` is in it, but behind a reference: what a `&` in it
+/// points to isn't part of the value, as with Rust's `Freeze`. A box owns
+/// what it points to, so that's part of it. A type parameter might be a
+/// cell, so it isn't known to be frozen.
+pub fn frozen(adts: &Adts, t: &Type) -> bool {
+    fn go(adts: &Adts, t: &Type, seen: &mut Vec<Type>) -> bool {
+        match t {
+            Type::Adt(symbol, ..) if symbol == crate::check::CELL => false,
+            Type::Adt(..) => {
+                if seen.contains(t) {
+                    return true;
+                }
+                seen.push(t.clone());
+                all_fields(adts, t).iter().all(|f| go(adts, f, seen))
+            }
+            Type::Box(inner) | Type::Array(inner, _) => go(adts, inner, seen),
+            Type::Param(_) => false,
+            _ => true,
+        }
+    }
+    go(adts, t, &mut Vec::new())
+}
+
 /// A *substitution*: which type each type parameter stands for, and which
 /// region each lifetime parameter does. Applying one to `fn(T) -> Option<T>`
 /// with `T := i64` gives `fn(i64) -> Option<i64>`.
