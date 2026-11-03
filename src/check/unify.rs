@@ -72,8 +72,7 @@ fn same_name(a: &Type, b: &Type) -> String {
         .count()
         > 1
     {
-        return "; each closure has a type of its own, even if two look the same"
-            .to_string();
+        return "; each closure has a type of its own, even if two look the same".to_string();
     }
     symbols.retain(|s| !crate::types::is_closure(s));
     for (i, x) in symbols.iter().enumerate() {

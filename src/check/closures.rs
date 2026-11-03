@@ -431,10 +431,7 @@ impl Checker {
             .collect();
         let def = &self.traits.closures[symbol];
         let sig = Type::Fn(def.sig.clone());
-        let Type::Fn(sig) = self
-            .solved(&sig)
-            .map_regions(&mut fresh)
-        else {
+        let Type::Fn(sig) = self.solved(&sig).map_regions(&mut fresh) else {
             unreachable!("a signature is a function type")
         };
         let def = crate::traits::ClosureDef {
