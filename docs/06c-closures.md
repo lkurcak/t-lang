@@ -105,10 +105,10 @@ fn pick(double: bool) -> fn(i64) -> i64 with panic {
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     let neg = |x: i64| 0 - x;
-    out.line(&apply(neg, 4))?;          // expect: -4
-    out.line(&pick(true)(5))?;          // expect: 10
+    out.line(&apply(neg, 4))?; // expect: -4
+    out.line(&pick(true)(5))?; // expect: 10
     let fs: [fn(i64) -> i64 with panic; 2] = [|x| x - 1, neg];
-    out.line(&(fs[0](1) + fs[1](1)))?;  // expect: -1
+    out.line(&((fs[0])(1) + (fs[1])(1)))?; // expect: -1
     Result::Ok(())
 }
 ```
