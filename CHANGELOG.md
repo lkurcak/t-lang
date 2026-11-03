@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.51.0 (2026-11-03)
 
 Step 37: cells. See [docs/37-cell.md](docs/37-cell.md).
 
