@@ -121,7 +121,8 @@ impl Checker {
     /// Is `t` plain data: a value with no address in it but a literal's,
     /// which the interpreter can give back as a tree and a use can make
     /// again? A `&'static` in a const can only point into a literal, as
-    /// there are no statics and nothing else lives that long (lemma C4).
+    /// an initializer can't name a static (`global`) and nothing else lives
+    /// that long (lemma C4).
     /// `seen` are the structs and enums already being looked at, which a
     /// recursive one meets again.
     fn plain(&self, t: &Type, seen: &mut HashSet<Type>) -> bool {
