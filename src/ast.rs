@@ -38,6 +38,9 @@ pub struct Program {
     /// Doc comments that aren't before anything they can document, in
     /// order. The checker warns about each.
     pub stray_docs: Vec<DocComment>,
+    /// What it's built for: it can use only the libraries that provides
+    /// (see docs/39-freestanding.md).
+    pub target: crate::Target,
     /// The id the next node made gets (see `NodeId`).
     pub next_id: u32,
     /// The operators the checker proved can't panic, by node (see

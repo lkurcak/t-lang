@@ -20,6 +20,7 @@
 //! `<core>/a/b.t`. The alloc library is the same, read next, from `alloc/`
 //! (see docs/09-unsafe.md).
 
+use crate::Target;
 use crate::ast::{Ident, Manifest, ModDecl, Package, Program, ROOT, Vis};
 use crate::error::{Error, Span};
 use crate::lexer;
@@ -118,9 +119,23 @@ pub fn read_file(path: &Path) -> std::io::Result<String> {
 /// The libraries are as checking them left them (see `check::libraries`),
 /// with their paths resolved: they're read and checked only once.
 pub fn load(path: &Path, src: &str, read: Read) -> (Sources, Result<Program, Error>) {
+    load_for(path, src, read, Target::Hosted)
+}
+
+/// `load`, for `target`: a package with no `t.toml` has its libraries, and
+/// one can't list a library it doesn't provide (see
+/// docs/39-freestanding.md).
+pub fn load_for(
+    path: &Path,
+    src: &str,
+    read: Read,
+    target: Target,
+) -> (Sources, Result<Program, Error>) {
     let libraries = crate::check::libraries();
     let (mut sources, mut prog) = (libraries.sources.clone(), libraries.prog.clone());
+    prog.target = target;
     let mut loader = Loader {
+        target,
         prog: &mut prog,
         sources: &mut sources,
         read,
@@ -343,6 +358,8 @@ fn add_library(
 /// name, which its items' symbols start with, so no two symbols are the
 /// same.
 struct Loader<'l> {
+    /// What the program is built for.
+    target: Target,
     prog: &'l mut Program,
     sources: &'l mut Sources,
     read: Read<'l>,
@@ -386,16 +403,13 @@ struct Listed {
     manifest: Option<Manifest>,
 }
 
-impl Default for Listed {
+impl Listed {
     /// What a package with no `t.toml` has: no dependencies, and every
-    /// library, as a program in a single file does.
-    fn default() -> Self {
+    /// library `target` provides, as a program in a single file does.
+    fn none(target: Target) -> Self {
         Listed {
             entries: Vec::new(),
-            libraries: (LIBRARIES.iter())
-                .filter(|(l, ..)| *l != "core")
-                .map(|(l, ..)| l.to_string())
-                .collect(),
+            libraries: target.libraries().iter().map(|l| l.to_string()).collect(),
             manifest: None,
         }
     }
@@ -422,7 +436,7 @@ impl Loader<'_> {
         let dir = path.parent().unwrap_or(Path::new("")).to_path_buf();
         let library = path.file_name().is_some_and(|n| n == "lib.t");
         let mut deps = Vec::new();
-        let mut listed = Listed::default();
+        let mut listed = Listed::none(self.target);
         if is_root_file(path) {
             let other = dir.join(if library { "main.t" } else { "lib.t" });
             if (self.read)(&other).is_ok() {
@@ -484,7 +498,7 @@ impl Loader<'_> {
         let path = dir.join("t.toml");
         let text = match (self.read)(&path) {
             Ok(text) => text,
-            Err(_) => return Ok(Listed::default()),
+            Err(_) => return Ok(Listed::none(self.target)),
         };
         let start = (self.sources).add(path.clone(), &text, ROOT, None, Kind::Manifest);
         let at = |r: std::ops::Range<usize>| Span::new(start + r.start, start + r.end);
@@ -531,6 +545,9 @@ impl Loader<'_> {
                     };
                     if let Some(why) = why {
                         return Err(Error::syntax(span, why));
+                    }
+                    if !self.target.has(name) {
+                        return Err(Error::ty(span, self.target.lacks(name)));
                     }
                     libraries.push((name.to_string(), span));
                 }

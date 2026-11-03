@@ -105,6 +105,7 @@ pub(crate) fn lift_program(prog: &Program, info: &Info) -> Program {
             .collect(),
         fns,
         stray_docs: prog.stray_docs.clone(),
+        target: prog.target,
         next_id: cx.next_id.get(),
         proved: info.proved.clone(),
         measures: info.measures.clone(),

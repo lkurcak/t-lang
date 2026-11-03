@@ -73,7 +73,9 @@ pub fn link(c: &str, exe: &Path) -> Result<(), String> {
                 false => name,
             };
             if !name.is_empty() && !NEEDS.contains(&name) {
-                return Err(format!("the object needs `{name}`, which isn't the platform's"));
+                return Err(format!(
+                    "the object needs `{name}`, which isn't the platform's"
+                ));
             }
         }
     }

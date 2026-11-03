@@ -311,5 +311,8 @@ fn compiled_runs_as_interpreted() {
          skipped: {skipped:?}"
     );
     assert!(same > 500, "only {same} programs ran both ways");
-    assert!(freestanding > 30, "only {freestanding} programs ran freestanding");
+    assert!(
+        freestanding > 30,
+        "only {freestanding} programs ran freestanding"
+    );
 }

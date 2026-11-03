@@ -182,6 +182,7 @@ fn empty_program(tokens: &[Token]) -> Program {
         impls: Vec::new(),
         fns: Vec::new(),
         stray_docs: Vec::new(),
+        target: crate::Target::Hosted,
         next_id: 1,
         proved: Default::default(),
         measures: Default::default(),

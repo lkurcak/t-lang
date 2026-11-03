@@ -1,20 +1,35 @@
 /* The runtime of a T program compiled to C (docs/33-c-backend.md): what
- * its intrinsics need of a hosted C library, and arithmetic as T defines
- * it. Everything here is defined behaviour in ISO C11: integers are
- * computed in `int64_t`/`uint64_t` and checked before anything could
- * overflow, conversions to signed types go through `t_sx`, and shifts
- * never reach the width of their type. */
+ * its intrinsics need, and arithmetic as T defines it. Everything here is
+ * defined behaviour in ISO C11: integers are computed in
+ * `int64_t`/`uint64_t` and checked before anything could overflow,
+ * conversions to signed types go through `t_sx`, and shifts never reach
+ * the width of their type.
+ *
+ * It needs no C library, only C11's freestanding headers: what it needs
+ * of the machine it gets from the platform's functions below
+ * (docs/39-freestanding.md). On the hosted target, `hosted.h` gives them,
+ * with the C library; on the freestanding one, the program's platform. */
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <errno.h>
-#include <signal.h>
 
 _Static_assert(sizeof(void *) == 8, "T's C backend needs 64-bit pointers");
 _Static_assert(sizeof(size_t) == 8, "T's C backend needs a 64-bit size_t");
+
+/* The platform. Writes `len` bytes of a panic's message, from `bytes`,
+ * to wherever errors go; it can't fail, or it fails quietly. */
+void t_platform_write(const uint8_t *bytes, size_t len);
+/* Stops the program, after a panic: it never returns. */
+_Noreturn void t_platform_halt(void);
+/* A block of `size` bytes (never 0), aligned to `align` (a power of two,
+ * at most `_Alignof(max_align_t)`), or `NULL` if there's no memory. */
+void *t_platform_alloc(size_t size, size_t align);
+/* Block `p`, of `size` bytes and alignment `align`, made `new_size` bytes,
+ * its contents kept up to the smaller of the two; or `NULL` if there's no
+ * memory, `p` then left as it was. */
+void *t_platform_realloc(void *p, size_t size, size_t align, size_t new_size);
+/* Gives back block `p`, given with `size` and `align`. */
+void t_platform_free(void *p, size_t size, size_t align);
 
 /* What a value of a type that holds nothing is: ISO C has no empty
  * structs, so it's a byte nothing reads. */
@@ -29,43 +44,71 @@ static max_align_t t_nowhere;
  * first of the interpreter's. */
 static const char *t_site_text(uint32_t site);
 
-static _Noreturn void t_end(uint32_t site) {
-    fputc('\n', stderr);
-    fputs(t_site_text(site), stderr);
-    fflush(stderr);
-    /* A panic aborts: nothing is dropped, or freed, on the way out. */
-    _Exit(1);
+/* Writes C string `s` where errors go. */
+static void t_say(const char *s) {
+    size_t n = 0;
+    while (s[n]) n++;
+    t_platform_write((const uint8_t *)s, n);
 }
 
-static void t_begin(void) {
-    fflush(stdout);
-    fputs("runtime error: ", stderr);
+/* Writes `n` in decimal where errors go. */
+static void t_say_u(uint64_t n) {
+    uint8_t b[20];
+    size_t i = sizeof b;
+    do {
+        b[--i] = (uint8_t)('0' + n % 10);
+        n /= 10;
+    } while (n);
+    t_platform_write(b + i, sizeof b - i);
 }
+
+static void t_say_i(int64_t n) {
+    if (n < 0) {
+        t_say("-");
+        t_say_u(-(uint64_t)n);
+    } else {
+        t_say_u((uint64_t)n);
+    }
+}
+
+static _Noreturn void t_end(uint32_t site) {
+    t_say("\n");
+    t_say(t_site_text(site));
+    /* A panic aborts: nothing is dropped, or freed, on the way out. */
+    t_platform_halt();
+}
+
+static void t_begin(void) { t_say("runtime error: "); }
 
 /* Stops the program with message `msg`, at `site`. */
 static _Noreturn void t_fail(const char *msg, uint32_t site) {
     t_begin();
-    fputs(msg, stderr);
+    t_say(msg);
     t_end(site);
 }
 
 /* A bug of the checker's or this backend's: what it proved can't happen
  * did. Not a panic: no T program can make it happen. */
 static _Noreturn void t_bug(const char *what) {
-    fflush(stdout);
-    fprintf(stderr, "internal error: %s\n", what);
-    abort();
+    t_say("internal error: ");
+    t_say(what);
+    t_say("\n");
+    t_platform_halt();
 }
 
 static _Noreturn void t_unreachable(void) { t_bug("control got where it can't"); }
 
-static void *t_alloc(uint64_t size, uint32_t site) {
-    void *p = malloc(size ? size : 1);
+/* A block for a value of `size` bytes, aligned to `align`: a type's
+ * `sizeof` and `_Alignof`, as `t_free` is given them again. */
+static void *t_alloc(size_t size, size_t align, uint32_t site) {
+    void *p = t_platform_alloc(size ? size : 1, align);
     if (!p) t_fail("out of memory", site);
     return p;
 }
 
-static void t_free(void *p) { free(p); }
+static void t_free(void *p, size_t size, size_t align) {
+    t_platform_free(p, size ? size : 1, align);
+}
 
 /* The low `w` bits of `u`, as a two's complement number. */
 static inline int64_t t_sx(uint64_t u, unsigned w) {
@@ -208,25 +251,35 @@ T_UNSIGNED(u64, uint64_t, 64, UINT64_MAX)
 /* `n as T` that doesn't fit, `what` being "a `u8`" or the like. */
 static _Noreturn void t_as_fail_i(int64_t n, const char *what, uint32_t site) {
     t_begin();
-    fprintf(stderr, "`as` overflowed: %lld isn't %s", (long long)n, what);
+    t_say("`as` overflowed: ");
+    t_say_i(n);
+    t_say(" isn't ");
+    t_say(what);
     t_end(site);
 }
 
 static _Noreturn void t_as_fail_u(uint64_t n, const char *what, uint32_t site) {
     t_begin();
-    fprintf(stderr, "`as` overflowed: %llu isn't %s", (unsigned long long)n, what);
+    t_say("`as` overflowed: ");
+    t_say_u(n);
+    t_say(" isn't ");
+    t_say(what);
     t_end(site);
 }
 
 static _Noreturn void t_char_fail_i(int64_t n, uint32_t site) {
     t_begin();
-    fprintf(stderr, "`%lld` isn't a character", (long long)n);
+    t_say("`");
+    t_say_i(n);
+    t_say("` isn't a character");
     t_end(site);
 }
 
 static _Noreturn void t_char_fail_u(uint64_t n, uint32_t site) {
     t_begin();
-    fprintf(stderr, "`%llu` isn't a character", (unsigned long long)n);
+    t_say("`");
+    t_say_u(n);
+    t_say("` isn't a character");
     t_end(site);
 }
 
@@ -237,14 +290,16 @@ static inline bool t_is_char(uint64_t n) {
 /* `panic(why)`, its bytes `ptr`, `len` of them. */
 static _Noreturn void t_panic(const uint8_t *ptr, uint64_t len, uint32_t site) {
     t_begin();
-    fputs("panicked: ", stderr);
-    fwrite(ptr, 1, len, stderr);
+    t_say("panicked: ");
+    t_platform_write(ptr, len);
     t_end(site);
 }
 
 static _Noreturn void t_oom_slots(uint64_t n, uint32_t site) {
     t_begin();
-    fprintf(stderr, "out of memory for %llu slots", (unsigned long long)n);
+    t_say("out of memory for ");
+    t_say_u(n);
+    t_say(" slots");
     t_end(site);
 }
 
@@ -252,10 +307,10 @@ static _Noreturn void t_oom_slots(uint64_t n, uint32_t site) {
  * nothing can come between making one and aborting with it. */
 static void t_msg_new(void) {
     t_begin();
-    fputs("panicked: ", stderr);
+    t_say("panicked: ");
 }
 
-static void t_msg_push(const uint8_t *ptr, uint64_t len) { fwrite(ptr, 1, len, stderr); }
+static void t_msg_push(const uint8_t *ptr, uint64_t len) { t_platform_write(ptr, len); }
 
 static void t_msg_char(uint32_t c) {
     uint8_t b[4];
@@ -279,50 +334,17 @@ static void t_msg_char(uint32_t c) {
         b[3] = (uint8_t)(0x80 | (c & 0x3F));
         n = 4;
     }
-    fwrite(b, 1, (size_t)n, stderr);
-}
-
-/* What a stream's intrinsic gives back for an error: 257 for a broken
- * pipe, 258 for anything else, as `std::io::error` reads it. */
-static uint32_t t_io_error(void) { return errno == EPIPE ? 257 : 258; }
-
-static uint32_t t_read_byte(void) {
-    int c = fgetc(stdin);
-    if (c != EOF) return (uint32_t)c;
-    return ferror(stdin) ? t_io_error() : 256;
-}
-
-static uint32_t t_write_byte(FILE *f, uint8_t b) {
-    errno = 0;
-    return fputc(b, f) == EOF ? t_io_error() : 0;
+    t_platform_write(b, (size_t)n);
 }
 
 /* Grows `*items`, of `*cap` pointers, to hold one more than `len`. */
 static void t_grow_ptrs(void ***items, uint64_t *cap, uint64_t len, uint32_t site) {
     if (len < *cap) return;
     uint64_t n = *cap ? *cap * 2 : 8;
-    void **p = realloc(*items, n * sizeof(void *));
+    void **p = *cap
+        ? t_platform_realloc(*items, *cap * sizeof(void *), _Alignof(void *), n * sizeof(void *))
+        : t_platform_alloc(n * sizeof(void *), _Alignof(void *));
     if (!p) t_fail("out of memory", site);
     *items = p;
     *cap = n;
-}
-
-/* Ends the program after `main` returned: flushes its output, and fails
- * if `failed`, as `t run` does; a failed flush is shown at `site`, where
- * `main` is. */
-static int t_exit(bool failed, uint32_t site) {
-    errno = 0;
-    if (fflush(stdout) != 0) {
-        int e = errno;
-        t_begin();
-        fprintf(stderr, "cannot flush stdout: %s (os error %d)", strerror(e), e);
-        t_end(site);
-    }
-    return failed ? 1 : 0;
-}
-
-static void t_start(void) {
-#ifdef SIGPIPE
-    signal(SIGPIPE, SIG_IGN);
-#endif
 }

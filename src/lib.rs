@@ -30,6 +30,8 @@ mod pretty;
 pub mod rename;
 mod safety;
 pub mod source;
+mod target;
+pub use target::Target;
 pub mod traits;
 mod trivia;
 pub mod types;
@@ -92,8 +94,14 @@ pub fn no_files(path: &Path) -> std::io::Result<String> {
 /// Analyses the program that starts at `path`, whose text is `src`, reading
 /// the files of its modules with `read` (see `load.rs`).
 pub fn check_files(path: &Path, src: &str, read: load::Read) -> Checked {
+    check_files_for(path, src, read, Target::Hosted)
+}
+
+/// `check_files`, for `target`, which says which libraries the program has
+/// (see docs/39-freestanding.md).
+pub fn check_files_for(path: &Path, src: &str, read: load::Read, target: Target) -> Checked {
     let mut warnings = Vec::new();
-    let (sources, program) = load::load(path, src, read);
+    let (sources, program) = load::load_for(path, src, read, target);
     let mut program = match program {
         Ok(program) => program,
         Err(e) => {
@@ -300,7 +308,7 @@ pub fn build_c(path: &Path, src: &str, read: load::Read, options: cgen::Options)
             warnings,
             result,
             ..
-        } = check_files(path, src, read);
+        } = check_files_for(path, src, read, options.target);
         let result = result.and_then(|program| match program.program().is_library() {
             true => {
                 let start = sources.first().start;

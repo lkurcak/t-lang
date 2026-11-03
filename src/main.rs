@@ -1,13 +1,13 @@
 use std::process::ExitCode;
 use t_lang::error::Warning;
 
-const USAGE: &str = "usage: t [run|check|mono] <file.t>\n       t build [-o <out>] [--emit-c] <file.t>\n       t test <file.t> [filter]\n       t fmt [--check] <file.t>...\n       t lsp\n       t tree-sitter [--helix] <dir>";
+const USAGE: &str = "usage: t [run|check|mono] <file.t>\n       t build [-o <out>] [--emit-c] [--target hosted|freestanding] <file.t>\n       t test <file.t> [filter]\n       t fmt [--check] <file.t>...\n       t lsp\n       t tree-sitter [--helix] <dir>";
 
 const HELP: &str = "\
 T: like C, but a different letter.
 
 usage: t [run|check|mono] <file.t>
-       t build [-o <out>] [--emit-c] <file.t>
+       t build [-o <out>] [--emit-c] [--target hosted|freestanding] <file.t>
        t test <file.t> [filter]
        t fmt [--check] <file.t>...
        t lsp
@@ -22,6 +22,9 @@ usage: t [run|check|mono] <file.t>
   t build <file.t>    type-check and compile, through C, to a program named
                       after the file (-o: to <out>; --emit-c: print the C
                       instead); the C compiler is $CC, or cc
+                      (--target freestanding: an object with `t_main`,
+                      for a machine with no C library, named after the
+                      file with `.o`; see docs/39-freestanding.md)
   --deny-warnings     with `check` or `test`: fail if there are warnings
   t fmt <file.t>...   format the files in place (--check: just print a diff)
   t lsp               language server, over stdio
@@ -164,9 +167,10 @@ fn main() -> ExitCode {
     }
 }
 
-/// `t build [-o <out>] [--emit-c] <file.t>`.
+/// `t build [-o <out>] [--emit-c] [--target hosted|freestanding] <file.t>`.
 fn build(args: &[String]) -> ExitCode {
     let (mut out, mut emit, mut path) = (None, false, None);
+    let mut target = t_lang::Target::Hosted;
     let mut args = args.iter();
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -178,6 +182,13 @@ fn build(args: &[String]) -> ExitCode {
                 }
             },
             "--emit-c" => emit = true,
+            "--target" => match args.next().and_then(|t| t_lang::Target::named(t)) {
+                Some(t) => target = t,
+                None => {
+                    eprintln!("{USAGE}");
+                    return ExitCode::from(2);
+                }
+            },
             p if !p.starts_with('-') && path.is_none() => path = Some(p.to_string()),
             _ => {
                 eprintln!("{USAGE}");
@@ -197,7 +208,10 @@ fn build(args: &[String]) -> ExitCode {
         }
     };
     let path = std::path::Path::new(&path);
-    let options = t_lang::cgen::Options { lines: !emit };
+    let options = t_lang::cgen::Options {
+        lines: !emit,
+        target,
+    };
     let built = t_lang::build_c(path, &src, &t_lang::load::read_file, options);
     for w in Warning::render_all_in(&built.warnings, &built.sources) {
         eprintln!("{w}\n");
@@ -213,7 +227,8 @@ fn build(args: &[String]) -> ExitCode {
         print!("{c}");
         return ExitCode::SUCCESS;
     }
-    // Named after the file, or its directory for a `main.t`, here.
+    // Named after the file, or its directory for a `main.t`, here; an
+    // object with `.o`.
     let out = out.unwrap_or_else(|| {
         let stem = match path.file_name().is_some_and(|n| n == "main.t") {
             true => path
@@ -222,9 +237,13 @@ fn build(args: &[String]) -> ExitCode {
                 .and_then(|p| p.parent()?.file_name().map(|n| n.to_owned())),
             false => path.file_stem().map(|n| n.to_owned()),
         };
-        std::path::PathBuf::from(stem.unwrap_or_else(|| "a.out".into()))
+        let out = std::path::PathBuf::from(stem.unwrap_or_else(|| "a.out".into()));
+        match target {
+            t_lang::Target::Hosted => out,
+            t_lang::Target::Freestanding => out.with_extension("o"),
+        }
     });
-    match t_lang::cgen::compile(&c, &out) {
+    match t_lang::cgen::compile(&c, &out, target) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("error: {e}");

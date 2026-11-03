@@ -180,6 +180,9 @@ pub(crate) struct Modules {
     pub(crate) uses: HashMap<usize, Vec<String>>,
     /// The `t.toml` of each package that has one, by its root module.
     pub(crate) manifests: HashMap<usize, crate::ast::Manifest>,
+    /// What the program is built for, which provides some of the
+    /// libraries (see docs/39-freestanding.md).
+    pub(crate) target: crate::Target,
     pub(crate) prelude: Option<usize>,
     /// Warnings about what's rewritten here: empty ranges.
     pub(crate) warnings: Vec<Warning>,
@@ -492,6 +495,7 @@ impl Resolver {
         r.m.manifests = (prog.packages.iter())
             .filter_map(|p| Some((p.root, p.manifest.clone()?)))
             .collect();
+        r.m.target = prog.target;
         r.declare(prog, from)?;
         r.imports(prog, from)?;
         if r.m.prelude.is_none() {
@@ -938,6 +942,11 @@ impl Resolver {
                         && let Some(library) = self.m.package_named(from, name)
                     {
                         if let Some(name) = self.m.unlisted(from, library) {
+                            // Listing it wouldn't help: the target hasn't
+                            // got it.
+                            if !self.m.target.has(name) {
+                                return Err(Error::ty(seg.span, self.m.target.lacks(name)));
+                            }
                             let manifest = self.m.manifests.get(&self.m.package_root(from));
                             return Err(unlisted(name, seg.span, manifest));
                         }

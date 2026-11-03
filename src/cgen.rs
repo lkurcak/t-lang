@@ -38,8 +38,13 @@ use crate::types::{IntTy, Region, Type};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
-/// The runtime every compiled program starts with.
+/// The runtime every compiled program starts with, which needs no C
+/// library.
 const SHIM: &str = include_str!("cgen/shim.h");
+
+/// What a program for the hosted target has after it: the platform's
+/// functions from the C library, and std's streams.
+const HOSTED: &str = include_str!("cgen/hosted.h");
 
 /// How to write the C.
 #[derive(Clone, Copy, Debug, Default)]
@@ -47,6 +52,9 @@ pub struct Options {
     /// With `#line` directives, so that a debugger and the C compiler's
     /// messages show the T source each statement comes from.
     pub lines: bool,
+    /// What it's for: with a C library, or with only the platform's
+    /// functions (see docs/39-freestanding.md).
+    pub target: crate::Target,
 }
 
 /// The C program for `exe`, whose files are `sources`.
@@ -194,9 +202,10 @@ struct Gen<'e> {
     defs: String,
     lits: HashMap<Vec<u8>, String>,
     lit_defs: String,
-    /// Each static used, by symbol, and the C name of its global, which
-    /// `main` sets from its value before it runs T's `main`.
+    /// Each static used, by symbol, and the C name of its global.
     statics: Vec<(String, String)>,
+    /// The definitions of the statics' globals, each with its value.
+    static_defs: String,
     sites: HashMap<Span, usize>,
     site_texts: Vec<String>,
     /// Whether the body being written blames its caller: then what aborts
@@ -218,6 +227,7 @@ impl<'e> Gen<'e> {
             .collect();
         // The runtime's names are taken.
         let taken = (SHIM.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')))
+            .chain(HOSTED.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')))
             .filter(|w| w.starts_with("t_") || w.starts_with("T_"))
             .map(str::to_string)
             .collect();
@@ -238,6 +248,7 @@ impl<'e> Gen<'e> {
             lits: HashMap::new(),
             lit_defs: String::new(),
             statics: Vec::new(),
+            static_defs: String::new(),
             sites: HashMap::new(),
             site_texts: Vec::new(),
             blaming: false,
@@ -507,10 +518,11 @@ impl<'e> Gen<'e> {
         body.locals[0].ty.erased()
     }
 
-    /// The C global static `symbol` is: set once, before T's `main` runs,
-    /// from its value, worked out while compiling, so it doesn't matter in
-    /// what order (lemma Y6 of docs/38-statics.md). Atomics in it are
-    /// changed by the compiler's builtins.
+    /// The C global static `symbol` is: in the program's data, its value
+    /// worked out while compiling (lemma Y6 of docs/38-statics.md), so
+    /// it's there before anything runs (lemma F3 of
+    /// docs/39-freestanding.md). Atomics in it are changed by the
+    /// compiler's builtins.
     fn static_name(&mut self, symbol: &str) -> String {
         if let Some((_, c)) = self.statics.iter().find(|(s, _)| s == symbol) {
             return c.clone();
@@ -518,17 +530,75 @@ impl<'e> Gen<'e> {
         let c = self.fresh(&format!("s_{}", sanitize(symbol)));
         let t = self.static_ty(symbol);
         let ct = self.cty(&t);
-        let _ = writeln!(self.protos, "static {ct} {c};");
-        self.body_name(symbol);
         self.statics.push((symbol.to_string(), c.clone()));
+        let init = self.static_init(symbol);
+        let _ = writeln!(self.static_defs, "static {ct} {c} = {init};");
         c
+    }
+
+    /// The value of static `symbol`, as a C initializer: what its body,
+    /// which builds the value worked out while compiling, its parts first
+    /// (see `consts::value_body`), builds, as a constant expression.
+    fn static_init(&mut self, symbol: &str) -> String {
+        let exe: &'e Executable = self.exe;
+        let body = (exe.body(symbol)).unwrap_or_else(|| panic!("static `{symbol}` has no body"));
+        let mut vals: HashMap<usize, String> = HashMap::new();
+        let block = &body.blocks[0];
+        for s in &block.stmts {
+            let StmtKind::Assign { place, value, .. } = &s.kind else {
+                continue;
+            };
+            assert!(
+                place.proj.is_empty(),
+                "a static's value built in `{place:?}`"
+            );
+            let part = |g: &mut Gen, o: &Operand| match o {
+                Operand::Copy(p) | Operand::Move(p) => vals[&p.local.0].clone(),
+                Operand::Const(c) => match c {
+                    Const::Int(n, Type::Int(t)) => int_lit(*n, *t),
+                    Const::Bool(b) => b.to_string(),
+                    Const::Char(c) => format!("UINT32_C({})", u32::from(*c)),
+                    Const::Unit => "{0}".to_string(),
+                    Const::Str(s) => g.literal_init(s.as_bytes()),
+                    Const::Bytes(b) => g.literal_init(b),
+                    c => panic!("`{c:?}` in a static's value"),
+                },
+            };
+            let v = match value {
+                Rvalue::Use(o) => part(self, o),
+                Rvalue::Aggregate(k, _, os) => {
+                    let parts: Vec<String> = os.iter().map(|o| part(self, o)).collect();
+                    let parts = parts.join(", ");
+                    match (k, os.is_empty()) {
+                        (Agg::Struct | Agg::Array, true) => "{0}".to_string(),
+                        (Agg::Struct, false) => format!("{{{parts}}}"),
+                        (Agg::Array, false) => format!("{{{{{parts}}}}}"),
+                        (Agg::Variant(v), true) => format!("{{.tag = {v}}}"),
+                        (Agg::Variant(v), false) => {
+                            format!("{{.tag = {v}, .u.v{v} = {{{parts}}}}}")
+                        }
+                        (k, _) => panic!("`{k:?}` in a static's value"),
+                    }
+                }
+                _ => panic!("a static's value isn't only parts"),
+            };
+            vals.insert(place.local.0, v);
+        }
+        vals.remove(&crate::mir::RETURN.0)
+            .expect("a static's value")
     }
 
     /// A string or byte string literal, as a reference to its bytes.
     fn literal(&mut self, bytes: &[u8]) -> String {
         let sl = self.cty(&ref_to(Type::Str));
+        format!("(({sl}){})", self.literal_init(bytes))
+    }
+
+    /// A string or byte string literal, as the initializer of a reference
+    /// to its bytes: a constant expression.
+    fn literal_init(&mut self, bytes: &[u8]) -> String {
         if bytes.is_empty() {
-            return format!("(({sl}){{(uint8_t *)T_NOWHERE, 0}})");
+            return "{(uint8_t *)T_NOWHERE, 0}".to_string();
         }
         let name = match self.lits.get(bytes) {
             Some(n) => n.clone(),
@@ -544,7 +614,7 @@ impl<'e> Gen<'e> {
                 n
             }
         };
-        format!("(({sl}){{{name}, {}}})", bytes.len())
+        format!("{{{name}, {}}}", bytes.len())
     }
 
     // Functions.
@@ -752,8 +822,12 @@ impl<'e> Gen<'e> {
                 let _ = writeln!(out, "    {glue}({e});");
             }
             StmtKind::Free(p) => {
-                let (e, _) = self.place(cx, p);
-                let _ = writeln!(out, "    t_free({e});");
+                let (e, t) = self.place(cx, p);
+                let Type::Box(inner) = t.erased() else {
+                    panic!("freeing a `{t}`")
+                };
+                let inner = self.cty(&inner);
+                let _ = writeln!(out, "    t_free({e}, sizeof({inner}), _Alignof({inner}));");
             }
             // What only the borrow checker and the interpreter look at.
             StmtKind::Inspect(_)
@@ -790,7 +864,8 @@ impl<'e> Gen<'e> {
         let _ = writeln!(
             self.defs,
             "{sig} {{\n    for (uint64_t i = 0; i < x.len; i++) {boxed}(({e} *)x.items[i]);\n    \
-             free(x.items);\n    return (t_unit){{0}};\n}}\n"
+             if (x.cap) t_free(x.items, x.cap * sizeof(void *), _Alignof(void *));\n    \
+             return (t_unit){{0}};\n}}\n"
         );
         c
     }
@@ -843,7 +918,7 @@ impl<'e> Gen<'e> {
                         let site = self.site(span);
                         let _ = writeln!(
                             out,
-                            "    {{ {inner} *p_ = t_alloc(sizeof({inner}), {site}); *p_ = {}; {dest} = p_; }}",
+                            "    {{ {inner} *p_ = t_alloc(sizeof({inner}), _Alignof({inner}), {site}); *p_ = {}; {dest} = p_; }}",
                             vals[0]
                         );
                         return;
@@ -1386,7 +1461,7 @@ impl<'e> Gen<'e> {
                 match op {
                     "new" => format!("    return ({r}){{0}};\n"),
                     "alloc" => format!(
-                        "    {e} *p = t_alloc(sizeof({e}), s);\n    *p = a1;\n    \
+                        "    {e} *p = t_alloc(sizeof({e}), _Alignof({e}), s);\n    *p = a1;\n    \
                          t_grow_ptrs(&a0->items, &a0->cap, a0->len, s);\n    \
                          a0->items[a0->len++] = p;\n    return p;\n"
                     ),
@@ -1405,7 +1480,8 @@ impl<'e> Gen<'e> {
                     "new" => format!(
                         "    if (a0 == 0) return ({r}){{({e} *)T_NOWHERE, 0}};\n    \
                          if (a0 > UINT64_MAX / sizeof({e})) t_oom_slots(a0, s);\n    \
-                         {e} *p = malloc(a0 * sizeof({e}));\n    if (!p) t_oom_slots(a0, s);\n    \
+                         {e} *p = t_platform_alloc(a0 * sizeof({e}), _Alignof({e}));\n    \
+                         if (!p) t_oom_slots(a0, s);\n    \
                          return ({r}){{p, a0}};\n"
                     ),
                     "empty" => format!("    return ({r}){{({e} *)T_NOWHERE, 0}};\n"),
@@ -1414,7 +1490,9 @@ impl<'e> Gen<'e> {
                         "    uint64_t n = a0->cap + a1;\n    \
                          if (n < a0->cap || n > UINT64_MAX / sizeof({e})) t_oom_slots(n, s);\n    \
                          if (n == 0) return (t_unit){{0}};\n    \
-                         {e} *p = a0->cap ? realloc(a0->ptr, n * sizeof({e})) : malloc(n * sizeof({e}));\n    \
+                         {e} *p = a0->cap\n        \
+                         ? t_platform_realloc(a0->ptr, a0->cap * sizeof({e}), _Alignof({e}), n * sizeof({e}))\n        \
+                         : t_platform_alloc(n * sizeof({e}), _Alignof({e}));\n    \
                          if (!p) t_oom_slots(n, s);\n    a0->ptr = p;\n    a0->cap = n;\n{unit}"
                     ),
                     "slice" | "slice_mut" => format!(
@@ -1427,7 +1505,9 @@ impl<'e> Gen<'e> {
                     "read" => {
                         format!("    if (a1 >= a0->cap) {broken};\n    return a0->ptr[a1];\n")
                     }
-                    "free" => format!("    if (a0.cap) free(a0.ptr);\n{unit}"),
+                    "free" => format!(
+                        "    if (a0.cap) t_platform_free(a0.ptr, a0.cap * sizeof({e}), _Alignof({e}));\n{unit}"
+                    ),
                     _ => panic!("unknown intrinsic `{copy}`"),
                 }
             }
@@ -1520,6 +1600,10 @@ impl<'e> Gen<'e> {
         out.push_str("/* Written by `t build` (https://github.com/lkurcak/t-lang). */\n");
         out.push_str(SHIM);
         out.push('\n');
+        if self.options.target == crate::Target::Hosted {
+            out.push_str(HOSTED);
+            out.push('\n');
+        }
         for t in &self.ty_order {
             let name = &self.tys[&key(t)];
             let _ = writeln!(out, "typedef struct {name} {name};");
@@ -1530,6 +1614,7 @@ impl<'e> Gen<'e> {
         out.push_str(&self.protos);
         out.push('\n');
         out.push_str(&self.lit_defs);
+        out.push_str(&self.static_defs);
         out.push_str("\nstatic const char *const t_sites[] = {\n");
         for s in &self.site_texts {
             let _ = writeln!(out, "    {},", c_str(s.as_bytes()));
@@ -1542,7 +1627,9 @@ impl<'e> Gen<'e> {
     }
 
     /// C's `main`: runs T's, reports the error it gives back, if it gives
-    /// back one, drops what it gives back, and ends as `t run` does.
+    /// back one, drops what it gives back, and ends as `t run` does. On the
+    /// freestanding target, `t_main`, which the platform calls, and which
+    /// runs T's and returns (lemma F4 of docs/39-freestanding.md).
     fn main(&mut self) -> String {
         let exe: &'e Executable = self.exe;
         let Some(body) = exe.body("main") else {
@@ -1558,10 +1645,20 @@ impl<'e> Gen<'e> {
             _ => format!("({}){{0}}", self.cty(&body.locals[1].ty)),
         };
         let mut out = String::new();
-        out.push_str("int main(void) {\n    t_start();\n");
-        for (symbol, c) in &self.statics {
-            let _ = writeln!(out, "    {c} = {}();", self.fn_names[symbol]);
+        if self.options.target == crate::Target::Freestanding {
+            assert!(
+                exe.report("main").is_none(),
+                "a freestanding `main` gives back `()`"
+            );
+            out.push_str("void t_main(void);\n\nvoid t_main(void) {\n");
+            let _ = writeln!(out, "    {ret} r = {main}({args});\n    (void)r;");
+            if let Some(glue) = exe.entry_drop("main") {
+                let _ = writeln!(out, "    {}(r);", self.fn_names[glue]);
+            }
+            out.push_str("}\n");
+            return out;
         }
+        out.push_str("int main(void) {\n    t_start();\n");
         let _ = writeln!(out, "    {ret} r = {main}({args});");
         let mut failed = "false".to_string();
         let _ = writeln!(out, "    (void)r;");
@@ -1590,8 +1687,11 @@ impl<'e> Gen<'e> {
 
 /// Compiles C program `c` to an executable at `out`, with the C compiler
 /// `$CC` names, or `cc`, and the flags `$T_LANG_CFLAGS` adds after the
-/// usual ones. What it says when it fails is the error.
-pub fn compile(c: &str, out: &std::path::Path) -> Result<(), String> {
+/// usual ones. What it says when it fails is the error. For the
+/// freestanding target, to an object, with no C library: the platform
+/// links it with what it needs (see docs/39-freestanding.md). With no
+/// stack protector, as nothing would be there to report a smashed stack.
+pub fn compile(c: &str, out: &std::path::Path, target: crate::Target) -> Result<(), String> {
     use std::sync::atomic::{AtomicUsize, Ordering};
     static N: AtomicUsize = AtomicUsize::new(0);
     let dir = std::env::temp_dir().join(format!(
@@ -1605,8 +1705,14 @@ pub fn compile(c: &str, out: &std::path::Path) -> Result<(), String> {
         std::fs::write(&file, c).map_err(|e| format!("cannot write `{}`: {e}", file.display()))?;
         let cc = std::env::var("CC").unwrap_or_else(|_| "cc".to_string());
         let extra = std::env::var("T_LANG_CFLAGS").unwrap_or_default();
+        let freestanding: &[&str] = match target {
+            crate::Target::Hosted => &[],
+            crate::Target::Freestanding => &["-ffreestanding", "-fno-stack-protector", "-c"],
+        };
         let output = std::process::Command::new(&cc)
-            .args(["-std=c11", "-O2", "-o"])
+            .args(["-std=c11", "-O2"])
+            .args(freestanding)
+            .arg("-o")
             .arg(out)
             .arg(&file)
             .args(extra.split_whitespace())

@@ -292,8 +292,9 @@ pub fn check(prog: &mut Program, warnings: &mut Vec<Warning>) -> (Info, Result<(
         .collect();
     cx.info.projections = cx.proj_traits.take();
     cx.info.mir = cx.mir.take();
+    // Resolving can fail before every function has a symbol.
     cx.info.lengths = (cx.modules.lengths.iter())
-        .map(|(&id, &(i, _))| (id, cx.fn_symbols[i].clone()))
+        .filter_map(|(&id, &(i, _))| Some((id, cx.fn_symbols.get(i)?.clone())))
         .collect();
     // Once it all checks, what each const is (see `crate::consts`).
     if result.is_ok() {
@@ -780,7 +781,17 @@ impl Checker {
                 format!("`main` takes nothing, or the `std::Os`, as `fn main(os: Os)`, not `{t}`"),
             ));
         }
-        self.entry_result(f, sig, "`main`")
+        let error = self.entry_result(f, sig, "`main`")?;
+        // What reports the error is std's runtime (lemma F4 of
+        // docs/39-freestanding.md).
+        if error.is_some() && self.modules.target == crate::Target::Freestanding {
+            return Err(Error::ty(
+                f.ret.span,
+                "on the freestanding target, `main` gives back `()`: what reports an error it \
+                 gives back is std's, which a freestanding program hasn't got",
+            ));
+        }
+        Ok(error)
     }
 
     /// Checks what `f`, of type `sig`, gives back, as a program's start:

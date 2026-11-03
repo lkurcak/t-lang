@@ -1,7 +1,7 @@
 // Statics are in the program's data, set before anything runs (lemma F3
 // of docs/39-freestanding.md): an atomic, and a struct with frozen fields,
-// a string among them, and an enum. With no std, the program says how it
-// went by ending: here, well.
+// a string among them, and an enum. With no std, the program says what it
+// found by how it ends.
 use core::sync::Atomic;
 
 #[derive(Discard, Sync)]
@@ -32,4 +32,6 @@ fn main() {
     assert(CONFIG.flags[2] == 3);
     assert(!EMPTY.swap(true));
     assert(EMPTY.load());
+    core::panic::panic_with(&(COUNT.load() as u64 + CONFIG.seen.load()))
+    // error: runtime error: panicked: 13
 }
