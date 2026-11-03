@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.52.0 (2026-11-03)
 
 H5 of retrospective 3: every closure has a type of its own. See
 [docs/06c-closures.md](docs/06c-closures.md#closures-as-functions).
