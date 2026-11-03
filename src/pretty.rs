@@ -30,7 +30,8 @@ pub(crate) fn fn_head(f: &FnDecl) -> String {
     let mut p = Printer::default();
     if f.is_const() {
         return format!(
-            "const {}: {} = ",
+            "{} {}: {} = ",
+            f.item_keyword(),
             f.name.name,
             render(&p.ty(&f.ret)).trim_end()
         );
@@ -353,7 +354,15 @@ impl Printer<'_> {
                     _ => l.name.clone(),
                 })
                 .collect();
-            let attr = format!("#[{attr}({})]", names.join(", "));
+            // One that doesn't fit on a line has a line for each trait.
+            let one_line = format!("#[{attr}({})]", names.join(", "));
+            let attr = match one_line.len() > WIDTH {
+                true => {
+                    let each = names.iter().map(|n| Doc::HardLine + text(format!("{n},")));
+                    text(format!("#[{attr}(")) + nest(concat(each)) + Doc::HardLine + ")]"
+                }
+                false => text(one_line),
+            };
             out = out + self.element(span.start, true) + attr + self.trailing(span.end);
             out = out + Doc::HardLine;
         }
@@ -874,7 +883,8 @@ impl Printer<'_> {
             let doc = self.lead(f.doc.as_ref(), &f.allows, fn_start(f));
             let ty = self.ty(&f.ret);
             let value = self.expr(&f.body, 0, Ctx::default());
-            return doc + vis(f.vis) + "const " + &f.name.name + ": " + ty + " = " + value + ";";
+            let keyword = format!("{} ", f.item_keyword());
+            return doc + vis(f.vis) + &keyword + &f.name.name + ": " + ty + " = " + value + ";";
         }
         match f.intrinsic {
             Some(_) => {

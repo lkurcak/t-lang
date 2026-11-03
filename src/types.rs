@@ -109,6 +109,10 @@ pub enum Type {
     Alloc,
     /// `panic`, in an `Effects`: may abort the program.
     Panic,
+    /// `global`, in an `Effects`: may use a static, state that every
+    /// function can reach, not only what its arguments do (see
+    /// docs/38-statics.md).
+    Global,
     /// `unsafe`, in an `Effects`: has obligations its caller must keep,
     /// which the checker doesn't check (see docs/09-unsafe.md). Only an
     /// `unsafe` block takes it away.
@@ -244,17 +248,18 @@ impl Type {
     }
 }
 
-/// Where an effect goes in a set: `alloc`, `panic`, `unsafe`, then parameters,
+/// Where an effect goes in a set: `alloc`, `global`, `panic`, `unsafe`, then parameters,
 /// associated effects and variables, each in an order of their own.
 fn effect_key(t: &Type) -> (u8, String) {
     match t {
         Type::Alloc => (0, String::new()),
-        Type::Panic => (1, String::new()),
-        Type::Unsafe => (2, String::new()),
-        Type::Param(p) => (3, p.clone()),
-        Type::Proj(..) => (4, format!("{t:?}")),
-        Type::Var(v) => (5, format!("{v:010}")),
-        t => (6, format!("{t:?}")),
+        Type::Global => (1, String::new()),
+        Type::Panic => (2, String::new()),
+        Type::Unsafe => (3, String::new()),
+        Type::Param(p) => (4, p.clone()),
+        Type::Proj(..) => (5, format!("{t:?}")),
+        Type::Var(v) => (6, format!("{v:010}")),
+        t => (7, format!("{t:?}")),
     }
 }
 
@@ -428,15 +433,25 @@ pub fn all_fields(adts: &Adts, ty: &Type) -> Vec<Type> {
 }
 
 /// Is `t` *frozen*: does nothing in a value of it change through a `&` to
-/// it? Only a `Cell` does (lemma K5 of docs/37-cell.md), so a type is
-/// frozen if no `Cell` is in it, but behind a reference: what a `&` in it
+/// it? Only a `Cell`, an `Atomic` and an `Arena` do (lemma K5 of
+/// docs/37-cell.md, Y1 of docs/38-statics.md), so a type is frozen if
+/// none of them is in it, but behind a reference: what a `&` in it
 /// points to isn't part of the value, as with Rust's `Freeze`. A box owns
 /// what it points to, so that's part of it. A type parameter might be a
 /// cell, so it isn't known to be frozen.
 pub fn frozen(adts: &Adts, t: &Type) -> bool {
     fn go(adts: &Adts, t: &Type, seen: &mut Vec<Type>) -> bool {
         match t {
-            Type::Adt(symbol, ..) if symbol == crate::check::CELL => false,
+            Type::Adt(symbol, ..)
+                if [
+                    crate::check::CELL,
+                    crate::check::ATOMIC,
+                    crate::check::ARENA,
+                ]
+                .contains(&symbol.as_str()) =>
+            {
+                false
+            }
             Type::Adt(..) => {
                 if seen.contains(t) {
                     return true;
@@ -543,6 +558,7 @@ impl Type {
             | Type::Var(_)
             | Type::Alloc
             | Type::Panic
+            | Type::Global
             | Type::Unsafe => (&[], None, None),
         };
         params.iter().chain(ret).chain(effects)
@@ -605,6 +621,7 @@ impl Type {
             | Type::Var(_)
             | Type::Alloc
             | Type::Panic
+            | Type::Global
             | Type::Unsafe => self.clone(),
         }
     }
@@ -925,6 +942,7 @@ impl fmt::Display for Type {
             Type::Alloc => f.write_str("alloc"),
             Type::Panic => f.write_str("panic"),
             Type::Unsafe => f.write_str("unsafe"),
+            Type::Global => f.write_str("global"),
             // Its type parameters are those in scope where it's written,
             // which say nothing to a reader.
             Type::Adt(name, ..) if is_closure(name) => f.write_str("{closure}"),

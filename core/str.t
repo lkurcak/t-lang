@@ -102,11 +102,11 @@ export fn from_utf8_unchecked(b: &[u8]) -> { s: &str | s.len() == b.len() } with
 
 /// What `split_at` gives: the string before the index it's given, and
 /// from it on.
-#[derive(Copy, Discard)]
+#[derive(Copy, Discard, Send, Sync)]
 export struct StrSplit<'a> { export head: &'a str, export tail: &'a str }
 
 /// What `chars` gives: each character of `bytes` from `at` on.
-#[derive(Discard)]
+#[derive(Discard, Send, Sync)]
 export struct Chars<'a> { bytes: &'a [u8], at: usize }
 
 /// Safe code over `decode`. A `str`'s bytes are UTF-8, so it stops only

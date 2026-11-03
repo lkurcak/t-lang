@@ -261,6 +261,7 @@ impl<'a> Builder<'a> {
             mut_span: None,
             by_ref: None,
             deferred: false,
+            of_static: None,
         });
         Local(self.body.locals.len() - 1)
     }
@@ -995,7 +996,10 @@ impl<'a> Builder<'a> {
     fn operand_unreified(&mut self, e: &'a Expr) -> (Operand, Type) {
         let coerced = self.cx.typed().coerced.get(&e.id).copied();
         let local_var = |b: &Self| match &e.kind {
-            ExprKind::Var(..) => matches!(b.cx.typed().vars.get(&e.id), Some(Res::Local(_))),
+            ExprKind::Var(..) => matches!(
+                b.cx.typed().vars.get(&e.id),
+                Some(Res::Local(_) | Res::Static(_))
+            ),
             _ => true,
         };
         let place = matches!(
@@ -1034,7 +1038,7 @@ impl<'a> Builder<'a> {
                         Const::Param(name.clone()),
                         Type::Int(crate::types::IntTy::Usize),
                     ),
-                    Res::Local(_) => unreachable!("a place"),
+                    Res::Local(_) | Res::Static(_) => unreachable!("a place"),
                     Res::Item(_) => unreachable!("lowered above"),
                 };
                 (Operand::Const(c), t)
@@ -1251,11 +1255,26 @@ impl<'a> Builder<'a> {
     fn place(&mut self, e: &'a Expr) -> Place {
         let typed = self.cx.typed();
         match &e.kind {
-            ExprKind::Var(..) => {
-                if let Some(Res::Local(id)) = typed.vars.get(&e.id) {
-                    return self.var_place(*id);
+            ExprKind::Var(..) => match typed.vars.get(&e.id) {
+                Some(Res::Local(id)) => return self.var_place(*id),
+                // A static is what a `&'static` to it points to, so it's
+                // only ever shared: there's no `&mut` to one, no moving
+                // out, no assigning (lemma Y4 of docs/38-statics.md).
+                Some(Res::Static(symbol)) => {
+                    let symbol = symbol.clone();
+                    let t = self.ty(e);
+                    let r = Type::Ref(Region::Static, false, Box::new(t));
+                    let tmp = self.temp(r.clone(), e.span);
+                    let ExprKind::Var(name, _) = &e.kind else {
+                        unreachable!("a variable")
+                    };
+                    self.body.locals[tmp.0].of_static = Some(name.clone());
+                    let value = Rvalue::Use(Operand::Const(Const::Static(symbol)));
+                    self.assign(&Place::local(tmp), value, &r, e.span, false);
+                    return Place::local(tmp).project(Proj::Deref);
                 }
-            }
+                _ => {}
+            },
             ExprKind::Field(x, _) => {
                 let (derefs, i) = typed.fields[&e.id];
                 let mut p = self.place(x);

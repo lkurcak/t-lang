@@ -222,6 +222,7 @@ fn value_body(v: &Value, ty: &Type, adts: &Adts, span: Span) -> Body {
         mut_span: None,
         by_ref: None,
         deferred: false,
+        of_static: None,
     };
     let mut b = Builder {
         adts,

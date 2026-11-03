@@ -13,22 +13,22 @@ use alloc::list::List;
 use alloc::string::String;
 
 /// Where a program's input comes from.
-#[derive(Discard)]
+#[derive(Discard, Send, Sync)]
 #[intrinsic]
 export struct Stdin {}
 
 /// Where a program's output goes.
-#[derive(Discard)]
+#[derive(Discard, Send, Sync)]
 #[intrinsic]
 export struct Stdout {}
 
 /// Where a program says what went wrong.
-#[derive(Discard)]
+#[derive(Discard, Send, Sync)]
 #[intrinsic]
 export struct Stderr {}
 
 /// What kind of failure an `Error` is.
-#[derive(Discard, Copy, Eq)]
+#[derive(Discard, Copy, Eq, Send, Sync)]
 export enum ErrorKind {
     /// What's at the other end went away: a pipe's reader, say.
     BrokenPipe,
@@ -39,7 +39,7 @@ export enum ErrorKind {
 }
 
 /// Why reading or writing failed.
-#[derive(Discard)]
+#[derive(Discard, Send, Sync)]
 export struct Error { kind: ErrorKind }
 
 impl Error {

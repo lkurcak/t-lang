@@ -78,6 +78,7 @@ impl G {
             mut_span: None,
             by_ref: None,
             deferred: false,
+            of_static: None,
         });
         Local(self.locals.len() - 1)
     }

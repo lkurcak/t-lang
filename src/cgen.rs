@@ -194,6 +194,9 @@ struct Gen<'e> {
     defs: String,
     lits: HashMap<Vec<u8>, String>,
     lit_defs: String,
+    /// Each static used, by symbol, and the C name of its global, which
+    /// `main` sets from its value before it runs T's `main`.
+    statics: Vec<(String, String)>,
     sites: HashMap<Span, usize>,
     site_texts: Vec<String>,
     /// Whether the body being written blames its caller: then what aborts
@@ -234,6 +237,7 @@ impl<'e> Gen<'e> {
             defs: String::new(),
             lits: HashMap::new(),
             lit_defs: String::new(),
+            statics: Vec::new(),
             sites: HashMap::new(),
             site_texts: Vec::new(),
             blaming: false,
@@ -469,6 +473,7 @@ impl<'e> Gen<'e> {
                 Const::Unit => Type::Unit,
                 Const::Str(_) => ref_to(Type::Str),
                 Const::Bytes(_) => ref_to(Type::Slice(Box::new(Type::Int(IntTy::U8)))),
+                Const::Static(s) => ref_to(self.static_ty(s)),
                 c => panic!("the type of `{c:?}`"),
             },
         }
@@ -488,9 +493,35 @@ impl<'e> Gen<'e> {
                 Const::Str(s) => self.literal(s.as_bytes()),
                 Const::Bytes(b) => self.literal(b),
                 Const::Fn(name, _) => self.fn_value(name, self.at),
+                Const::Static(s) => format!("(&{})", self.static_name(s)),
                 Const::Param(_) | Const::Receiver(_) => panic!("`{c:?}` as a value"),
             },
         }
+    }
+
+    /// The type of static `symbol`: what its body, which makes its value,
+    /// gives.
+    fn static_ty(&self, symbol: &str) -> Type {
+        let body =
+            (self.exe.body(symbol)).unwrap_or_else(|| panic!("static `{symbol}` has no body"));
+        body.locals[0].ty.erased()
+    }
+
+    /// The C global static `symbol` is: set once, before T's `main` runs,
+    /// from its value, worked out while compiling, so it doesn't matter in
+    /// what order (lemma Y6 of docs/38-statics.md). Atomics in it are
+    /// changed by the compiler's builtins.
+    fn static_name(&mut self, symbol: &str) -> String {
+        if let Some((_, c)) = self.statics.iter().find(|(s, _)| s == symbol) {
+            return c.clone();
+        }
+        let c = self.fresh(&format!("s_{}", sanitize(symbol)));
+        let t = self.static_ty(symbol);
+        let ct = self.cty(&t);
+        let _ = writeln!(self.protos, "static {ct} {c};");
+        self.body_name(symbol);
+        self.statics.push((symbol.to_string(), c.clone()));
+        c
     }
 
     /// A string or byte string literal, as a reference to its bytes.
@@ -1319,6 +1350,37 @@ impl<'e> Gen<'e> {
                 "replace" => format!("    {r} old = a0->f0;\n    a0->f0 = a1;\n    return old;\n"),
                 _ => panic!("unknown intrinsic `{copy}`"),
             },
+            // An atomic is a struct of what's in it, which the compiler's
+            // builtins change, each sequentially consistent (lemma Y7 of
+            // docs/38-statics.md). Adding to a signed integer wraps there.
+            // A `bool` has no `fetch_and` and the like in every compiler,
+            // so it's a loop of compare-and-swaps.
+            "<core::sync::Atomic" => {
+                let sc = "__ATOMIC_SEQ_CST";
+                let fetch = |f: &str, c: &str| match *ret == Type::Bool {
+                    false => format!("    return __atomic_{f}(&a0->f0, a1, {sc});\n"),
+                    true => format!(
+                        "    {r} e = __atomic_load_n(&a0->f0, {sc});\n    \
+                         while (!__atomic_compare_exchange_n(&a0->f0, &e, e {c} a1, 0, {sc}, \
+                         {sc})) {{}}\n    return e;\n"
+                    ),
+                };
+                match op {
+                    "load" => format!("    return __atomic_load_n(&a0->f0, {sc});\n"),
+                    "swap" => format!("    return __atomic_exchange_n(&a0->f0, a1, {sc});\n"),
+                    "compare_swap" => format!(
+                        "    {r} e = a1;\n    \
+                         __atomic_compare_exchange_n(&a0->f0, &e, a2, 0, {sc}, {sc});\n    \
+                         return e;\n"
+                    ),
+                    "fetch_and" => fetch("fetch_and", "&"),
+                    "fetch_or" => fetch("fetch_or", "|"),
+                    "fetch_xor" => fetch("fetch_xor", "^"),
+                    "fetch_add" => fetch("fetch_add", "+"),
+                    "fetch_sub" => fetch("fetch_sub", "-"),
+                    _ => panic!("unknown intrinsic `{copy}`"),
+                }
+            }
             "<alloc::arena::Arena" => {
                 let e = self.cty(&elem(&params.first().cloned().unwrap_or(ret.clone())));
                 match op {
@@ -1497,6 +1559,9 @@ impl<'e> Gen<'e> {
         };
         let mut out = String::new();
         out.push_str("int main(void) {\n    t_start();\n");
+        for (symbol, c) in &self.statics {
+            let _ = writeln!(out, "    {c} = {}();", self.fn_names[symbol]);
+        }
         let _ = writeln!(out, "    {ret} r = {main}({args});");
         let mut failed = "false".to_string();
         let _ = writeln!(out, "    (void)r;");

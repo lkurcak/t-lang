@@ -1,7 +1,7 @@
 //! Optional values.
 
 /// A value that may be missing: `Some(x)`, or `None`.
-#[derive(Discard, Copy, Eq)]
+#[derive(Discard, Copy, Eq, Send, Sync)]
 export enum Option<T> { None, Some(T) }
 
 impl<T> Option<T> {

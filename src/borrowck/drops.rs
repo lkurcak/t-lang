@@ -348,6 +348,7 @@ impl<'b, 'a> Elaborator<'b, 'a> {
                 mut_span: None,
                 by_ref: None,
                 deferred: false,
+                of_static: None,
             })
             .collect();
         locals.extend(out.temps);
@@ -382,6 +383,7 @@ impl<'b, 'a> Elaborator<'b, 'a> {
                         mut_span: None,
                         by_ref: None,
                         deferred: false,
+                        of_static: None,
                     });
                     let kind = StmtKind::Assign {
                         place: Place::local(tmp),

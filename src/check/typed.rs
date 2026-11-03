@@ -72,6 +72,9 @@ pub(crate) enum Res {
     Const(String),
     /// A const item, by symbol: its value (see `check/consts.rs`).
     Item(String),
+    /// A static item, by symbol: the place it is, which a `&'static` to it
+    /// reaches (see docs/38-statics.md).
+    Static(String),
 }
 
 /// A local variable.

@@ -464,6 +464,7 @@ impl Checker {
             if !is_live && in_live && !on_purpose(&f.name) {
                 let what = match method {
                     Some(_) => "method",
+                    None if f.is_static => "static",
                     None if f.konst => "const",
                     None => "function",
                 };

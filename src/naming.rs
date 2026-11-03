@@ -204,7 +204,7 @@ fn decls(prog: &Program) -> Vec<Decl<'_>> {
             // Named by the trait: the warning is there.
             Some(MethodOf::Impl(k)) if prog.impls[k].trait_name.is_some() => {}
             Some(_) => out.push(ident(&f.name, "method", Case::Snake)),
-            None if f.is_const() => out.push(ident(&f.name, "const", Case::Upper)),
+            None if f.is_const() => out.push(ident(&f.name, f.item_keyword(), Case::Upper)),
             None => out.push(ident(&f.name, "function", Case::Snake)),
         }
         params(&f.generics, &mut out);

@@ -77,10 +77,12 @@ impl Checker {
             }
             Some(Binding::Fn(fid)) if self.fns[fid.0].konst => {
                 self.uses().fns.insert(fid);
+                let is_static = self.fns[fid.0].is_static;
                 if !targs.is_empty() {
+                    let what = if is_static { "static" } else { "const" };
                     return Err(Error::ty(
                         span,
-                        format!("`{name}` is a const, which takes no type arguments"),
+                        format!("`{name}` is a {what}, which takes no type arguments"),
                     ));
                 }
                 let f = &self.fns[fid.0];
@@ -91,6 +93,13 @@ impl Checker {
                 self.info.symbols.insert(id, symbol.clone());
                 let kind = NoteKind::Const(name.to_string());
                 self.note_use(at, kind, ty.clone(), Some(def), None, false);
+                // A static is a place every function can reach: using it
+                // is the effect `global` (lemma Y5 of docs/38-statics.md).
+                if is_static {
+                    let what = format!("`{name}` is a static");
+                    self.effect(at, what, Type::effects([Type::Global]));
+                    return Ok(Some((ty, Res::Static(symbol))));
+                }
                 return Ok(Some((ty, Res::Item(symbol))));
             }
             Some(Binding::Fn(id)) => {

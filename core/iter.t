@@ -61,7 +61,11 @@ impl<'a, I: Iterator> Iterator for &'a mut I {
 }
 
 /// What `Iterator::map` gives: `f` of what `iter` does.
-#[derive(Discard where I: Discard, F: Discard)]
+#[derive(
+    Discard where I: Discard, F: Discard,
+    Send where I: Send, F: Send,
+    Sync where I: Sync, F: Sync,
+)]
 export struct Map<I, F> { iter: I, f: F }
 
 /// Its values are `U`s, what `f` gives, which `F`'s bound decides.
@@ -80,7 +84,11 @@ impl<U, effect fx, I: Iterator, F: FnMut(I::Item) -> U with fx> Iterator for Map
 
 /// What `Iterator::filter` gives: the values of `iter` that `p` says `true`
 /// of.
-#[derive(Discard where I: Discard, P: Discard)]
+#[derive(
+    Discard where I: Discard, P: Discard,
+    Send where I: Send, P: Send,
+    Sync where I: Sync, P: Sync,
+)]
 export struct Filter<I, P> { iter: I, p: P }
 
 /// `next` throws away what `p` doesn't keep, so those must be `Discard`.

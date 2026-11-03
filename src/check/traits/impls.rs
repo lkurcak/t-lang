@@ -437,7 +437,7 @@ impl Checker {
             let own = more
                 .effect_items()
                 .iter()
-                .all(|e| matches!(e, Type::Alloc | Type::Panic | Type::Unsafe))
+                .all(|e| matches!(e, Type::Alloc | Type::Panic | Type::Global | Type::Unsafe))
                 && !(want.effects_at.iter())
                     .flat_map(|(_, w)| w)
                     .any(|w| w.starts_with("Self::"));

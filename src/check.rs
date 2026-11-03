@@ -104,6 +104,14 @@ use unify::Var;
 pub const INTRINSICS: &[&str] = &[
     "core::mem::swap",
     "core::cell::Cell::replace",
+    "core::sync::Atomic::load",
+    "core::sync::Atomic::swap",
+    "core::sync::Atomic::compare_swap",
+    "core::sync::Atomic::fetch_and",
+    "core::sync::Atomic::fetch_or",
+    "core::sync::Atomic::fetch_xor",
+    "core::sync::Atomic::fetch_add",
+    "core::sync::Atomic::fetch_sub",
     "core::panic::panic",
     "core::panic::Message::new",
     "core::panic::Message::push_str",
@@ -170,6 +178,12 @@ pub const ARENA: &str = "alloc::arena::Arena";
 /// doesn't show, as its intrinsic `replace` puts a `T` in through a `&`
 /// (lemma K2 of docs/37-cell.md). It's what isn't *frozen* (lemma K5).
 pub const CELL: &str = "core::cell::Cell";
+
+/// The symbol of the core library's `Atomic`: a struct like `Cell`, its one
+/// field private to `core::sync`, invariant in its parameter, and not
+/// frozen, as its intrinsics write through a `&`, atomically (lemma Y7 of
+/// docs/38-statics.md).
+pub const ATOMIC: &str = "core::sync::Atomic";
 
 /// The symbol of the alloc library's `Box`, which is `Type::Box`.
 pub const BOX: &str = "alloc::boxed::Box";
@@ -1242,7 +1256,10 @@ impl Checker {
             if f.is_const()
                 && let Type::Fn(sig) = &scheme.ty
             {
-                self.const_type(f, &sig.ret)?;
+                match f.is_static() {
+                    true => self.static_type(f, &sig.ret)?,
+                    false => self.const_type(f, &sig.ret)?,
+                }
             }
             // Effects it doesn't say are its body's, which are inferred
             // with it.
@@ -1300,6 +1317,7 @@ impl Checker {
                 module: f.module,
                 level: f.vis.level(),
                 konst: f.is_const(),
+                is_static: f.is_static(),
             });
         }
         self.uses.resize_with(fns.len(), Uses::default);

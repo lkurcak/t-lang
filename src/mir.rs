@@ -135,6 +135,9 @@ pub(crate) struct LocalDecl {
     /// Declared with no value, `let x;`: an assignment gives it its first
     /// one, whether it's `mut` or not.
     pub(crate) deferred: bool,
+    /// For a temporary holding the `&'static` a use of a static is, the
+    /// static's name, as messages write `*` of it.
+    pub(crate) of_static: Option<String>,
 }
 
 #[derive(Default, Clone)]
@@ -342,6 +345,9 @@ pub(crate) enum Const {
     Fn(String, Vec<Type>),
     /// The value of a const parameter of the function: a `usize`.
     Param(String),
+    /// A `&'static` to static `.0`, by symbol: where it is, for the whole
+    /// run (see docs/38-statics.md).
+    Static(String),
     /// What's called is the call's first argument, its receiver: a
     /// closure, or what a bound says can be called, by `&` for `Fn`, `&mut`
     /// for `FnMut`, or by value for `FnOnce`.
@@ -366,6 +372,7 @@ impl Body {
                 .map(|l| LocalDecl {
                     ty: l.ty.erased(),
                     name: l.name.clone(),
+                    of_static: l.of_static.clone(),
                     mut_span: l.mut_span,
                     ..*l
                 })
@@ -591,6 +598,7 @@ fn show_op(o: &Operand) -> String {
                 format!("{name}::<{}>", args.join(", "))
             }
             Const::Param(name) => name.clone(),
+            Const::Static(name) => format!("&{name}"),
             Const::Receiver(_) => "<receiver>".to_string(),
         },
     }

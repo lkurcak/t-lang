@@ -1,0 +1,4 @@
+libraries = ["std"]
+
+[dependencies]
+ids = { path = "ids" }

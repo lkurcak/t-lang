@@ -10,3 +10,4 @@ export use crate::ops::{Fn, FnMut, FnOnce};
 export use crate::option::Option;
 export use crate::panic::{assert, assert_eq, assert_ne, panic};
 export use crate::result::Result;
+export use crate::sync::{Send, Sync};

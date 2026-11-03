@@ -14,7 +14,7 @@ export trait Eq {
 }
 
 /// How one value compares with another.
-#[derive(Discard, Copy, Eq)]
+#[derive(Discard, Copy, Eq, Send, Sync)]
 export enum Ordering { Less, Equal, Greater }
 
 /// A total order: any two values compare, one way. `a < b` is

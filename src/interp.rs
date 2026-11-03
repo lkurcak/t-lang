@@ -329,6 +329,7 @@ impl<'p, 'o> Interp<'p, 'o> {
             enums,
             nowhere,
             literals: HashMap::new(),
+            statics: HashMap::new(),
             copy: derived("Copy"),
             discard: derived("Discard"),
             aborting: false,
@@ -625,6 +626,10 @@ struct Interp<'p, 'o> {
     /// Where each literal's bytes are, by what they are: slots of `u8`s,
     /// never freed nor changed, made the first time they're needed.
     literals: HashMap<Vec<u8>, Ptr>,
+    /// Where each static is, by symbol, once it's been used: a slot made
+    /// then from its value, worked out while compiling, so it doesn't
+    /// matter when (lemma Y6 of docs/38-statics.md). It's never freed.
+    statics: HashMap<String, Ptr>,
     /// The structs and enums that are `Copy`, and that are `Discard`, as
     /// monomorphisation's copies of them say.
     copy: HashSet<&'p str>,
@@ -1121,6 +1126,8 @@ impl<'p> Interp<'p, '_> {
         for f in &self.frames {
             // A const's initializer may panic, while compiling, where it's
             // run: once it's known not to, it's its value (`crate::consts`).
+            // A static's too, which is run to make the static, at its
+            // first use.
             if self.fns[f.as_str()].is_const() {
                 continue;
             }
@@ -1492,6 +1499,7 @@ impl<'p> Interp<'p, '_> {
                 Const::Bytes(b) => Value::Ref(self.literal(b)),
                 Const::Fn(name, _) => Value::Fn(name.clone(), None),
                 Const::Param(_) => unsound("a const parameter left after monomorphising"),
+                Const::Static(symbol) => Value::Ref(self.static_place(symbol)),
                 Const::Receiver(_) => unsound("a call's receiver as a value"),
             },
         }
@@ -1853,6 +1861,10 @@ impl<'p> Interp<'p, '_> {
         if name == "<core::cell::Cell" {
             return Ok(self.cell_replace(copy, args));
         }
+        if name == "<core::sync::Atomic" {
+            let op = copy.rsplit("::").next().unwrap_or_default();
+            return Ok(self.atomic(op, args));
+        }
         if name == "<alloc::arena::Arena" {
             let op = copy.rsplit("::").next().unwrap_or_default();
             return Ok(self.arena(op, args));
@@ -1978,6 +1990,25 @@ impl<'p> Interp<'p, '_> {
             _ => unsound(&format!("unknown intrinsic `<std::io::{stream}`")),
         };
         Value::Int(i128::from(code), IntTy::U32)
+    }
+
+    /// Where static `symbol` is, used, as it is, by a function that says
+    /// `with global`, as must all those running.
+    fn static_place(&mut self, symbol: &str) -> Ptr {
+        self.effect("global");
+        if let Some(p) = self.statics.get(symbol) {
+            return p.clone();
+        }
+        let value = self
+            .call(
+                Value::Fn(symbol.to_string(), None),
+                Vec::new(),
+                Span::new(0, 0),
+            )
+            .unwrap_or_else(|_| unsound(&format!("static `{symbol}`'s value failed")));
+        let p = self.memory.alloc(value, false);
+        self.statics.insert(symbol.to_string(), p.clone());
+        p
     }
 
     /// Where the literal of bytes `bytes` is: a slice of `u8`s, which a
@@ -2133,6 +2164,71 @@ impl<'p> Interp<'p, '_> {
         if self.taken_apart(&old) {
             unsound("a cell whose value was moved out");
         }
+        old
+    }
+
+    /// Runs `Atomic`'s intrinsic method `op` on `args`: a `&Atomic<T>`,
+    /// and its `T`s. An atomic is a struct whose one field is what's in it,
+    /// written here through a `&`, which only a cell's or an atomic's field
+    /// may be. There's one thread, so each is one step anyway: the
+    /// orderings are a C compiler's business (lemma Y7 of
+    /// docs/38-statics.md).
+    fn atomic(&mut self, op: &str, args: Vec<Value>) -> Value {
+        let mut args = args.into_iter();
+        let Some(Value::Ref(p)) = args.next() else {
+            unsound(&format!("`Atomic::{op}` of what isn't a reference"))
+        };
+        if !matches!(self.memory.get(&p), Value::Struct(ty, _) if ty.split("::<").next() == Some(crate::check::ATOMIC))
+        {
+            unsound(&format!(
+                "`Atomic::{op}` of `{}`, which isn't an atomic",
+                self.memory.get(&p)
+            ));
+        }
+        let at = p.field(0);
+        let old = self.memory.get(&at).clone();
+        let args: Vec<Value> = args.collect();
+        let int = |v: &Value| match v {
+            Value::Int(n, t) => (*n, *t),
+            _ => unsound(&format!("`Atomic::{op}` of `{v}`, which isn't an integer")),
+        };
+        let new = match (op, args.as_slice()) {
+            ("load", []) => return old,
+            ("swap", [v]) => v.clone(),
+            ("compare_swap", [current, new]) => match old == *current {
+                true => new.clone(),
+                false => return old,
+            },
+            ("fetch_and" | "fetch_or" | "fetch_xor", [Value::Bool(b)]) => {
+                let Value::Bool(a) = old else {
+                    unsound("`Atomic<bool>` of what isn't a `bool`")
+                };
+                Value::Bool(match op {
+                    "fetch_and" => a & b,
+                    "fetch_or" => a | b,
+                    _ => a ^ b,
+                })
+            }
+            ("fetch_and" | "fetch_or" | "fetch_xor" | "fetch_add" | "fetch_sub", [v]) => {
+                let ((a, t), (b, u)) = (int(&old), int(v));
+                if t != u {
+                    unsound("`Atomic` of two integer types");
+                }
+                let n = match op {
+                    "fetch_and" => a & b,
+                    "fetch_or" => a | b,
+                    "fetch_xor" => a ^ b,
+                    "fetch_add" => self.wrap(a + b, t),
+                    _ => self.wrap(a - b, t),
+                };
+                self.int_of(n, t)
+            }
+            _ => unsound(&format!("unknown intrinsic `Atomic::{op}`")),
+        };
+        if self.taken_apart(&old) {
+            unsound("an atomic whose value was moved out");
+        }
+        *self.memory.get_mut(&at) = new;
         old
     }
 

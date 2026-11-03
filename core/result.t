@@ -3,7 +3,7 @@
 use crate::option::Option;
 
 /// What worked, `Ok(x)`, or why it didn't, `Err(e)`.
-#[derive(Discard, Copy, Eq)]
+#[derive(Discard, Copy, Eq, Send, Sync)]
 export enum Result<T, E> { Ok(T), Err(E) }
 
 impl<T, E> Result<T, E> {

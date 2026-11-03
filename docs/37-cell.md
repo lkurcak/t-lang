@@ -256,7 +256,8 @@ see.
   implement it or be generic over it.
 - **No effect.** Changing a cell isn't an effect: a function can change
   one only if it's given a reference to it, which its signature says.
-  A `static`, which needs no reference, will be (`global`, a later step).
+  A `static`, which needs no reference, is: `global`
+  ([docs/38](38-statics.md)).
 
 ## Deliberately missing (coming later)
 
@@ -266,7 +267,7 @@ see.
 | `Cell::from_mut(&mut T) -> &Cell<T>`, `as_slice_of_cells` | sound, but nothing needs them yet | — |
 | `take` | needs a `Default` trait | — |
 | `RefCell`: a `&T` into a shared value, checked while running | its own soundness argument, and panics | — |
-| `Send`/`Sync`: a cell can't be shared between threads | threads | 38 |
+| threads: a cell is `Send` but not `Sync` ([docs/38](38-statics.md)) | threads | after 39 |
 | `&CONST` as a `&'static` | frozenness is ready for it | — |
 
 ## Exercises

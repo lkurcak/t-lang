@@ -14,8 +14,10 @@
 /// in what doesn't live as long as the arena's type says.
 ///
 /// Dropping it drops each value in it, in the order they were put in, so
-/// it's `Discard` if `T` is. It's never `Copy`.
-#[derive(Discard where T: Discard)]
+/// it's `Discard` if `T` is. It's never `Copy`. It's `Send` if `T` is,
+/// but never `Sync`, as `alloc` changes it through a `&` (lemma Y1 of
+/// docs/38-statics.md).
+#[derive(Discard where T: Discard, Send where T: Send)]
 #[intrinsic]
 export struct Arena<T> {}
 

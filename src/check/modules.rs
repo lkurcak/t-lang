@@ -54,7 +54,7 @@
 
 use crate::ast::*;
 use crate::error::{Edit, Error, Fix, Lint, Span, Warning};
-use crate::traits::{COPY, DISCARD, EQ};
+use crate::traits::DERIVABLE;
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 
@@ -1358,7 +1358,7 @@ impl Rewrite<'_> {
                 return Ok(());
             }
         };
-        // Each derived trait by its symbol: only core's three can be.
+        // Each derived trait by its symbol: only core's five can be.
         for name in derives.iter_mut().flat_map(|d| &mut d.names) {
             let written = name.name.clone();
             let a_trait = written.contains("::")
@@ -1370,14 +1370,15 @@ impl Rewrite<'_> {
                     })
                 );
             self.trait_ref(name)?;
-            if ![DISCARD, COPY, EQ].contains(&name.name.as_str()) {
+            if !DERIVABLE.contains(&name.name.as_str()) {
                 let message = match !a_trait {
                     true => format!(
-                        "can't derive `{written}`; only `Copy`, `Discard` and `Eq` can be derived"
+                        "can't derive `{written}`; only `Copy`, `Discard`, `Eq`, `Send` and `Sync` \
+                         can be derived"
                     ),
                     false => format!(
-                        "only `core`'s `Discard`, `Copy` and `Eq` can be derived, and `{written}` \
-                         here is `{}`",
+                        "only `core`'s `Discard`, `Copy`, `Eq`, `Send` and `Sync` can be derived, \
+                         and `{written}` here is `{}`",
                         match is_library_symbol(&name.name) {
                             true => name.name.clone(),
                             false => format!("crate::{}", name.name),

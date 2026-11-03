@@ -868,10 +868,19 @@ fn describe(b: &Builder, place: &Place) -> String {
         (Some(n), _) => n.clone(),
         (None, LocalKind::Return) => "the result".to_string(),
         (None, LocalKind::Env) => "the closure".to_string(),
-        (None, _) => "a temporary".to_string(),
+        (None, _) => match &decl.of_static {
+            Some(s) => format!("&{s}"),
+            None => "a temporary".to_string(),
+        },
     };
     let mut t = decl.ty.clone();
     let mut proj = &place.proj[..];
+    // A static is `*` of the `&'static` to it, written as its name.
+    if let (Some(s), Some(Proj::Deref)) = (&decl.of_static, proj.first()) {
+        out = s.clone();
+        t = build::project(b.adts(), &t, Proj::Deref);
+        proj = &proj[1..];
+    }
     // In a closure's body, what it captured is written as the variable:
     // `x` for `*(*env).x`, where it has a reference to `x`.
     if let Some(v) = moves::env_var(b, place) {

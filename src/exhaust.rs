@@ -452,7 +452,12 @@ impl Cx<'_> {
             | Type::Slice(_)
             | Type::Str => None,
             Type::Ref(..) => unreachable!("peeled"),
-            Type::Effects(_) | Type::Alloc | Type::Panic | Type::Unsafe | Type::Inferred(..) => {
+            Type::Effects(_)
+            | Type::Alloc
+            | Type::Panic
+            | Type::Global
+            | Type::Unsafe
+            | Type::Inferred(..) => {
                 unreachable!("effects have no values")
             }
         }
