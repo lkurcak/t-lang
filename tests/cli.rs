@@ -54,6 +54,8 @@ fn bad_arguments_print_usage() {
         &["build", "-o"],
         &["build", "a.t", "b.t"],
         &["build", "--nope", "a.t"],
+        &["build", "--target"],
+        &["build", "--target", "mars", "a.t"],
     ] {
         let out = t(args);
         assert_eq!(out.status.code(), Some(2), "{args:?}");
@@ -400,6 +402,43 @@ fn build_compiles_programs() {
     let c = String::from_utf8(out.stdout).unwrap();
     assert!(c.starts_with("/* Written by `t build`"), "{c}");
     assert!(c.contains("int main(void)"), "{c}");
+
+    // For the freestanding target, an object exporting `t_main`, named
+    // after the file, with `.o`; its C includes no hosted header.
+    let program = root.join("tests/freestanding/ok_core_only.t");
+    let out = Command::new(env!("CARGO_BIN_EXE_t"))
+        .args([
+            "build",
+            "--target",
+            "freestanding",
+            program.to_str().unwrap(),
+        ])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert!(dir.join("ok_core_only.o").exists());
+    let out = t(&[
+        "build",
+        "--target",
+        "freestanding",
+        "--emit-c",
+        program.to_str().unwrap(),
+    ]);
+    assert!(out.status.success(), "{out:?}");
+    let c = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        c.contains("void t_main(void)") && !c.contains("int main"),
+        "{c}"
+    );
+    assert!(!c.contains("stdio.h"), "{c}");
+    let out = t(&["build", "--target", "freestanding", brew.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("`std` is for the hosted target"),
+        "{stderr}"
+    );
 
     let lib = root.join("tests/t/pkg_library_alone/lib.t");
     let out = t(&["build", lib.to_str().unwrap()]);

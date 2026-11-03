@@ -261,6 +261,7 @@ impl Describe for Program {
             impls,
             fns,
             stray_docs,
+            target: _,
             next_id: _,
             proved: _,
             measures: _,

@@ -294,7 +294,7 @@ value; the C backend makes a global, and sets it before `main` runs.
 | `unsafe impl Sync` against the fields | its syntax comes with `Mutex` | after 39 |
 | weaker orderings | SeqCst is the safe default | — |
 | `&STATIC` in a static's initializer | needs addresses in const evaluation | — |
-| statics in C's data section | the freestanding target | 39 |
+| statics in C's data section | the freestanding target | 39 ✅ |
 | `&CONST` promotion, frozen statics | frozenness is ready for it | — |
 
 ## Exercises

@@ -1,0 +1,1 @@
+libraries = ["std"] # error: `std` is for the hosted target, and this is built for the freestanding one

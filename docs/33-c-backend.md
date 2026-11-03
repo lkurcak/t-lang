@@ -202,9 +202,9 @@ and the intrinsics:
 - The streams are C's: `fgetc`, `fputc`, with errors as `std::io::error`
   reads them, a broken pipe as one (`SIGPIPE` is ignored, as Rust does).
 
-It needs a hosted C11 library: `stdio.h`, `stdlib.h`, `string.h`. A
-freestanding target, with no C library, needs a `panic` sink and an
-allocator of the program's own; that's for later.
+It needed a hosted C11 library: `stdio.h`, `stdlib.h`, `string.h`. Since
+step 39 the runtime needs none, only a platform's five functions, which
+the hosted target writes over the C library (docs/39-freestanding.md).
 
 ## Why it's sound
 
@@ -261,7 +261,8 @@ machine's. Mutation checks (leaving out each `free`, the overflow check of
 - Erasing types that hold nothing, niches (`Option<&T>` as a pointer),
   field reordering: optimisations the unspecified layout allows.
 - `t test` compiled: tests still run interpreted.
-- Freestanding targets (no C library), 32-bit targets, Windows.
+- Freestanding targets (no C library): done in step 39
+  (docs/39-freestanding.md). 32-bit targets, Windows.
 - FFI and `#[repr(C)]`, which would make layout observable.
 - An effect for running out of stack (B7).
 

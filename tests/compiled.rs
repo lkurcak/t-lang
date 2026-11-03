@@ -10,12 +10,18 @@
 //! in a compiled program, as `unsafe` means; and the interpreter's own
 //! limits, on how much memory and how deep a stack it gives a program.
 //!
+//! A program that needs no std is also built for the freestanding target
+//! (docs/39-freestanding.md), linked with a platform for this machine
+//! (`shared/platform.c`), and must run the same way again.
+//!
 //! It needs a C compiler, `$CC` or `cc`. `$T_LANG_CFLAGS` adds flags, as
 //! for `t build`: CI runs this again with
 //! `-fsanitize=address,undefined -fno-sanitize-recover=all`.
 
 #[path = "shared/expect.rs"]
 mod expect;
+#[path = "shared/platform.rs"]
+mod platform;
 
 use expect::Expectations;
 use std::fs;
@@ -132,8 +138,9 @@ fn lines(bytes: &[u8]) -> Vec<String> {
 
 /// What happened to a program.
 enum Outcome {
-    /// It ran both ways, the same.
-    Same,
+    /// It ran both ways, the same; for the freestanding target too, if it
+    /// says so.
+    Same(bool),
     /// Only the interpreter can say what it does, or it doesn't run: why.
     Skipped(&'static str),
     Differs(String),
@@ -172,19 +179,56 @@ fn differential(p: &Program, dir: &Path) -> Outcome {
         Some((_, text)) => Ok(text.clone()),
         None => t_lang::no_files(p),
     };
-    let options = t_lang::cgen::Options { lines: true };
+    let options = t_lang::cgen::Options {
+        lines: true,
+        target: t_lang::Target::Hosted,
+    };
     let c = match t_lang::build_c(root, src, &read, options).result {
         Ok(c) => c,
         Err(e) => return Outcome::Differs(format!("didn't build: {}", e.message)),
     };
     let name = p.name.replace(['/', '.', ':'], "_");
     let exe = dir.join(&name);
-    if let Err(e) = t_lang::cgen::compile(&c, &exe) {
-        let c_file = dir.join(format!("{name}.c"));
-        let _ = fs::write(&c_file, &c);
-        return Outcome::Differs(format!("{e}(the C is in {})", c_file.display()));
+    let built = t_lang::cgen::compile(&c, &exe, t_lang::Target::Hosted);
+    if let Some(why) = same(&c, built, &exe, &input, &run, &want_err, &dir.join(&name)) {
+        return Outcome::Differs(why);
     }
-    let mut child = std::process::Command::new(&exe)
+    // Again for the freestanding target, if it needs no std.
+    let options = t_lang::cgen::Options {
+        lines: true,
+        target: t_lang::Target::Freestanding,
+    };
+    let Ok(c) = t_lang::build_c(root, src, &read, options).result else {
+        return Outcome::Same(false);
+    };
+    let name = format!("{name}_freestanding");
+    let exe = dir.join(&name);
+    let built = platform::link(&c, &exe);
+    match same(&c, built, &exe, &input, &run, &want_err, &dir.join(&name)) {
+        Some(why) => Outcome::Differs(format!("freestanding: {why}")),
+        None => Outcome::Same(true),
+    }
+}
+
+/// Runs `exe`, which was built (or not, `built` says) from C program `c`,
+/// with `input`: what's different from what the interpreter did, `run`,
+/// its errors being `want_err`, if anything is. The C is kept beside
+/// `name` if so.
+fn same(
+    c: &str,
+    built: Result<(), String>,
+    exe: &Path,
+    input: &[u8],
+    run: &t_lang::RunResult,
+    want_err: &[String],
+    name: &Path,
+) -> Option<String> {
+    let c_file = name.with_extension("c");
+    if let Err(e) = built {
+        let _ = fs::write(&c_file, c);
+        return Some(format!("{e}(the C is in {})", c_file.display()));
+    }
+    let mut child = std::process::Command::new(exe)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -193,7 +237,7 @@ fn differential(p: &Program, dir: &Path) -> Outcome {
     {
         use std::io::Write;
         let mut stdin = child.stdin.take().unwrap();
-        let _ = stdin.write_all(&input);
+        let _ = stdin.write_all(input);
     }
     let out = child.wait_with_output().unwrap();
     let mut diffs = Vec::new();
@@ -216,14 +260,13 @@ fn differential(p: &Program, dir: &Path) -> Outcome {
             out.status
         ));
     }
-    let _ = fs::remove_file(&exe);
+    let _ = fs::remove_file(exe);
     match diffs.is_empty() {
-        true => Outcome::Same,
+        true => None,
         false => {
-            let c_file = dir.join(format!("{name}.c"));
-            let _ = fs::write(&c_file, &c);
+            let _ = fs::write(&c_file, c);
             diffs.push(format!("(the C is in {})", c_file.display()));
-            Outcome::Differs(diffs.join("\n"))
+            Some(diffs.join("\n"))
         }
     }
 }
@@ -243,10 +286,14 @@ fn compiled_runs_as_interpreted() {
         })
     });
     let mut failures = Vec::new();
-    let (mut same, mut skipped) = (0, std::collections::BTreeMap::new());
+    let (mut same, mut freestanding) = (0, 0);
+    let mut skipped = std::collections::BTreeMap::new();
     for (p, o) in paths.iter().zip(outcomes) {
         match o {
-            Outcome::Same => same += 1,
+            Outcome::Same(f) => {
+                same += 1;
+                freestanding += usize::from(f);
+            }
             Outcome::Skipped(why) => *skipped.entry(why).or_insert(0) += 1,
             Outcome::Differs(why) => failures.push(format!("{}: {why}", p.name)),
         }
@@ -259,6 +306,13 @@ fn compiled_runs_as_interpreted() {
         failures.join("\n\n")
     );
     let _ = fs::remove_dir_all(&dir);
-    eprintln!("{same} programs ran the same both ways; skipped: {skipped:?}");
+    eprintln!(
+        "{same} programs ran the same both ways, {freestanding} of them freestanding too; \
+         skipped: {skipped:?}"
+    );
     assert!(same > 500, "only {same} programs ran both ways");
+    assert!(
+        freestanding > 30,
+        "only {freestanding} programs ran freestanding"
+    );
 }

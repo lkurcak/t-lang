@@ -603,6 +603,7 @@ impl<'p> Mono<'p> {
             impls: Vec::new(),
             fns: Vec::new(),
             stray_docs: Vec::new(),
+            target: prog.target,
             next_id: self.next_id,
             proved: prog.proved.clone(),
             measures: prog.measures.clone(),

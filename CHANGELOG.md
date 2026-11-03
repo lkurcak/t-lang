@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+Step 39: the freestanding target. See
+[docs/39-freestanding.md](docs/39-freestanding.md).
+
+### Added
+
+- `t build --target freestanding`: an object (named after the file, with
+  `.o`) for a machine with no C library, exporting `void t_main(void)`,
+  which runs `main` and returns. It needs only the platform's functions,
+  `t_platform_write`, `t_platform_halt`, and for `alloc`
+  `t_platform_alloc`, `t_platform_realloc` and `t_platform_free`, plus
+  `memcpy`/`memmove`/`memset`/`memcmp`. `--target hosted` is the default.
+- A target provides libraries: hosted core, alloc and std; freestanding
+  core and alloc. A package with no `t.toml` has its target's libraries.
+  Listing `std` (in any package's `t.toml`) or naming `std::` on the
+  freestanding target is an error, and so is a `main` giving back a
+  `Result` there.
+
+### Changed
+
+- The C runtime needs no C library: `cgen/shim.h` uses only C11's
+  freestanding headers, writes panic messages (numbers included) through
+  `t_platform_write`, and takes memory from `t_platform_alloc` and the
+  rest, given each block's size and alignment. The hosted target provides
+  them over the C library (`cgen/hosted.h`).
+- Statics are C constant initializers, in the program's data, on both
+  targets, rather than set by C's `main`.
+
+### Fixed
+
+- The checker crashed on a path its package can't start (a library it
+  doesn't list) in a program that uses a const as an array length.
+
 ## 0.53.0 (2026-11-03)
 
 Step 38: statics, atomics, `Send` and `Sync`. See
