@@ -18,6 +18,7 @@ use crate::raw::RawBuf;
 /// block here counts on it, and every method keeps it. Its fields are
 /// private, so nothing else can break it. That `len <= buf.cap()` is a
 /// refinement, which the checker proves each method keeps.
+#[derive(Send where T: Send, Sync where T: Sync)]
 export struct List<T> { buf: RawBuf<T>, len: { n: usize | n <= buf.cap() } }
 
 impl<T> List<T> {

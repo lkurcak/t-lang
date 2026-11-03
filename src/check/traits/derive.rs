@@ -4,7 +4,7 @@ use super::fields;
 use crate::ast::*;
 use crate::check::Checker;
 use crate::error::{Edit, Error, Fix, Span};
-use crate::traits::{COPY, DISCARD, EQ};
+use crate::traits::{COPY, DERIVABLE, DISCARD, EQ, MARKERS, SEND, SYNC};
 use crate::traits::{ImplDef, Pred};
 use crate::types::{Subst, Type};
 use std::collections::HashMap;
@@ -45,7 +45,7 @@ impl Checker {
         // (impl index, type, the derive, trait)
         let mut derived: Vec<(usize, usize, Span, &'static str)> = Vec::new();
         for (i, (d, _)) in decls.iter().enumerate().skip(self.from.all_types) {
-            for tr in [COPY, DISCARD, EQ] {
+            for &tr in DERIVABLE {
                 let Some(at) = d.derive_of(tr) else {
                     continue;
                 };
@@ -90,19 +90,25 @@ impl Checker {
                         format!("`{}` isn't a type parameter of `{}`", p.name, d.name().name),
                     ));
                 }
-                // A derived `Discard` or `Copy` needs only more of the same
-                // (see `collect_impls_in`), so that's all it can say.
-                if (tr == DISCARD || tr == COPY)
+                // A derived marker needs only more of the same (see
+                // `collect_impls_in`), so that's all it can say: but a
+                // `Send` can need `Sync`, of what a `&` in it shares.
+                let may = |b: &str| b == tr || (tr == SEND && b == SYNC);
+                if MARKERS.contains(&tr)
                     && let Some(b) = w
                         .bounds
                         .iter()
                         .flat_map(|(_, b)| b)
-                        .find(|b| b.name.name != tr)
+                        .find(|b| !may(&b.name.name))
                 {
+                    let what = match tr {
+                        SEND => "`Send` or `Sync`".to_string(),
+                        _ => format!("`{tr}`"),
+                    };
                     return Err(Error::ty(
                         b.span,
                         format!(
-                            "a derived `{tr}` can only need `{tr}` of type parameters: that's \
+                            "a derived `{tr}` can only need {what} of type parameters: that's \
                              all its fields can need"
                         ),
                     ));
@@ -286,7 +292,26 @@ impl Checker {
                 return self.needs(inner, tr, params, out);
             }
             Type::Box(inner) if tr == DISCARD => return self.needs(inner, tr, params, out),
-            // An array is its values, for all three.
+            // As `Traits::implements` has them (lemma Y2 of
+            // docs/38-statics.md): a box or slice is its values; a `&`
+            // shares what it points to, as a `&mut` does when it's shared.
+            Type::Box(inner) | Type::Slice(inner) if tr == SEND || tr == SYNC => {
+                return self.needs(inner, tr, params, out);
+            }
+            Type::Ref(_, mutable, inner) if tr == SEND || tr == SYNC => {
+                let of = if tr == SEND && *mutable { SEND } else { SYNC };
+                return self.needs(inner, of, params, out);
+            }
+            Type::Adt(symbol, ..)
+                if tr == SYNC
+                    && (symbol == crate::check::CELL || symbol == crate::check::ARENA) =>
+            {
+                return Err(Pred {
+                    ty: t.clone(),
+                    trait_name: tr.to_string(),
+                });
+            }
+            // An array is its values, for all of them.
             Type::Array(inner, _) => return self.needs(inner, tr, params, out),
             Type::Adt(..) => {}
             t => {

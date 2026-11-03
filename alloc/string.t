@@ -18,7 +18,7 @@ use crate::list::List;
 /// `as_str`, counts on it, and every method keeps it, though they're safe
 /// code: so the block is right only if they are. Its field is private, so
 /// nothing else can break it.
-#[derive(Discard)]
+#[derive(Discard, Send, Sync)]
 export struct String { bytes: List<u8> }
 
 impl String {

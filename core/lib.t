@@ -23,3 +23,4 @@ export mod prelude;
 export mod result;
 export mod slice;
 export mod str;
+export mod sync;

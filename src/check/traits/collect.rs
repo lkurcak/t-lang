@@ -8,7 +8,7 @@ use crate::check::generics::{self, Lifetimes};
 use crate::check::{Checker, plural};
 use crate::error::{Edit, Error, Fix, Span};
 use crate::traits::{AssocDecl, ImplDef, MethodDef, Pred, TraitDef};
-use crate::traits::{COPY, DISCARD, FN_ONCE, SIGNED, UNSIGNED};
+use crate::traits::{COPY, DISCARD, FN_ONCE, SEND, SIGNED, SYNC, UNSIGNED};
 use crate::types::{AdtKind, Bound, Region, Scheme, Subst, Type};
 
 impl Checker {
@@ -469,7 +469,7 @@ impl Checker {
                 // Only derived, so whether a type is one follows from its
                 // fields alone: a proof of it needs only more of the same,
                 // never another trait (see `derive`).
-                (Some(tr), t) if tr == COPY => {
+                (Some(tr), t) if tr == COPY || tr == SEND || tr == SYNC => {
                     let e = Error::ty(
                         header,
                         format!(

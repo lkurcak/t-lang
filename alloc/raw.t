@@ -24,6 +24,7 @@ export fn out_of_memory() -> ! with alloc;
 ///
 /// It isn't `Discard`: it's used up by `free`, so its memory is never
 /// leaked, nor freed twice.
+#[derive(Send where T: Send, Sync where T: Sync)]
 #[intrinsic]
 export struct RawBuf<T> {}
 

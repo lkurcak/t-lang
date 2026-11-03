@@ -19,7 +19,7 @@ export trait Fn: FnMut {}
 /// `start..end`: from `start` up to, not including, `end`. It's empty if
 /// `start` isn't before `end`. Its fields are private, so only `a..b` and
 /// `Range::new` make one.
-#[derive(Discard where T: Discard, Eq where T: Eq)]
+#[derive(Discard where T: Discard, Eq where T: Eq, Send where T: Send, Sync where T: Sync)]
 export struct Range<T> { start: T, end: T }
 
 impl<T> Range<T> {
@@ -54,7 +54,13 @@ impl<T: Int> Iterator for Range<T> {
 }
 
 /// Whether to go on, with a `C`, or stop early, with a `B`.
-#[derive(Discard where B: Discard, C: Discard, Copy where B: Copy, C: Copy, Eq where B: Eq, C: Eq)]
+#[derive(
+    Discard where B: Discard, C: Discard,
+    Copy where B: Copy, C: Copy,
+    Eq where B: Eq, C: Eq,
+    Send where B: Send, C: Send,
+    Sync where B: Sync, C: Sync,
+)]
 export enum ControlFlow<B, C> { Continue(C), Break(B) }
 
 /// What `?` works on: a value that either goes on, as an `Output`, or

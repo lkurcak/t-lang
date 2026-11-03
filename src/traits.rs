@@ -45,6 +45,12 @@ pub const DISCARD: &str = "core::mem::Discard";
 /// `core::mem::Copy`: a type's values are copied rather than moved, which
 /// needs `Discard`.
 pub const COPY: &str = "core::mem::Copy";
+/// `core::sync::Send`: a type's values may be handed to another thread
+/// (see docs/38-statics.md).
+pub const SEND: &str = "core::sync::Send";
+/// `core::sync::Sync`: a type's values may be shared with another thread,
+/// by `&`: nothing in one changes through a `&` but atomically.
+pub const SYNC: &str = "core::sync::Sync";
 /// `core::cmp::Eq`, behind `==` and `!=`.
 pub const EQ: &str = "core::cmp::Eq";
 /// `core::cmp::Ord`, behind `<`, `<=`, `>` and `>=`. It isn't intrinsic:
@@ -69,8 +75,18 @@ pub const FN_ONCE: &str = "core::ops::FnOnce";
 /// as `Discard` to linear values. A program's trait of the same name is
 /// another trait, with none of them.
 pub const BUILTIN_TRAITS: &[&str] = &[
-    COPY, DISCARD, EQ, FN, FN_MUT, FN_ONCE, INT, SIGNED, UNSIGNED,
+    COPY, DISCARD, EQ, FN, FN_MUT, FN_ONCE, INT, SIGNED, UNSIGNED, SEND, SYNC,
 ];
+
+/// The traits `#[derive(..)]` can write an impl of. `Discard`, `Copy`,
+/// `Send` and `Sync` can only be derived, never written, so whether a
+/// type has one follows from its fields alone (the *markers*, `MARKERS`).
+pub const DERIVABLE: &[&str] = &[COPY, DISCARD, EQ, SEND, SYNC];
+
+/// The traits that are only ever derived or built in: what a proof of one
+/// needs is only more of them, of the parts of the type (lemma D1 of
+/// docs/17-retrospective-1.md, Y2 of docs/38-statics.md).
+pub const MARKERS: &[&str] = &[COPY, DISCARD, SEND, SYNC];
 
 /// The built-in traits no impl can add to: the integer types are all
 /// there are, and generic code may count on what they have in common
@@ -84,7 +100,9 @@ pub const SEALED_TRAITS: &[&str] = &[INT, SIGNED, UNSIGNED];
 /// checker's, and the integer traits need nothing. So an impl's bound on
 /// what isn't a part of its type may be of one of these, and no other (see
 /// `Checker::closed_bounds` and docs/29-closed-and-sealed-traits.md).
-pub const CLOSED_TRAITS: &[&str] = &[DISCARD, COPY, FN, FN_MUT, FN_ONCE, INT, SIGNED, UNSIGNED];
+pub const CLOSED_TRAITS: &[&str] = &[
+    DISCARD, COPY, SEND, SYNC, FN, FN_MUT, FN_ONCE, INT, SIGNED, UNSIGNED,
+];
 
 /// The traits of what can be called: `F: Fn(i64) -> i64` says a value of
 /// type `F` can be called with an `i64`, giving an `i64`. Functions and
@@ -110,7 +128,9 @@ const PRELUDE_TRAITS: &[&str] = &[
     FN,
     INT,
     ORD,
+    SEND,
     SIGNED,
+    SYNC,
     UNSIGNED,
 ];
 
@@ -597,10 +617,46 @@ impl Traits {
                 return Ok(Source::Builtin);
             }
             (FN, Type::Ref(_, true, _)) => return Err(fail()),
+            // What has no parts, or only plain bytes, may go to another
+            // thread or be shared with one: nothing in it changes through a
+            // `&`. A function holds nothing; what it reaches of statics is
+            // `Sync` (lemma Y3 of docs/38-statics.md).
+            (
+                SEND | SYNC,
+                Type::Int(_)
+                | Type::Bool
+                | Type::Char
+                | Type::Unit
+                | Type::Never
+                | Type::Str
+                | Type::Fn(_),
+            ) => return Ok(Source::Builtin),
+            // A box owns what it points to, and an array or slice its
+            // values: they are what's handed over or shared.
+            (SEND | SYNC, Type::Box(inner) | Type::Array(inner, _) | Type::Slice(inner)) => {
+                return all(&[inner]);
+            }
+            // A `&T` handed to another thread shares the `T` with it, so it
+            // needs `T: Sync`, as does sharing it. A `&mut T` is the only
+            // way to the `T` while it lives, so handing it over is as
+            // handing over the `T`; sharing it shares the `T`, by `&`.
+            (SEND | SYNC, Type::Ref(_, false, inner)) | (SYNC, Type::Ref(_, true, inner)) => {
+                self.implements_at(inner, SYNC, env, eqs, depth + 1)?;
+                return Ok(Source::Builtin);
+            }
+            (SEND, Type::Ref(_, true, inner)) => return all(&[inner]),
+            // A cell or an arena changes through a `&`, not atomically: never
+            // `Sync`, whatever their libraries derive (lemma Y1).
+            (SYNC, Type::Adt(symbol, ..))
+                if symbol == crate::check::CELL || symbol == crate::check::ARENA =>
+            {
+                return Err(fail());
+            }
             _ => {}
         }
-        // A closure is what it captures: it may be thrown away, or copied,
-        // if all of that may be. A reference it holds always may be thrown
+        // A closure is what it captures: it may be thrown away, copied,
+        // handed to another thread or shared with one, if all of that may
+        // be. A reference it holds always may be thrown
         // away, and copied unless it's `&mut`.
         if let Type::Adt(symbol, ..) = ty
             && let Some(c) = self.closures.get(symbol)
@@ -609,7 +665,9 @@ impl Traits {
                 unreachable!("`{ty}: {tr}` asked before the closure's captures were known")
             };
             return match (tr, FnKind::of(tr)) {
-                (DISCARD | COPY, _) => all(&c.fields_at(ty).iter().collect::<Vec<_>>()),
+                (DISCARD | COPY | SEND | SYNC, _) => {
+                    all(&c.fields_at(ty).iter().collect::<Vec<_>>())
+                }
                 (_, Some(wanted)) if kind <= wanted => Ok(Source::Builtin),
                 _ => Err(fail()),
             };

@@ -1853,6 +1853,10 @@ impl<'p> Interp<'p, '_> {
         if name == "<core::cell::Cell" {
             return Ok(self.cell_replace(copy, args));
         }
+        if name == "<core::sync::Atomic" {
+            let op = copy.rsplit("::").next().unwrap_or_default();
+            return Ok(self.atomic(op, args));
+        }
         if name == "<alloc::arena::Arena" {
             let op = copy.rsplit("::").next().unwrap_or_default();
             return Ok(self.arena(op, args));
@@ -2133,6 +2137,71 @@ impl<'p> Interp<'p, '_> {
         if self.taken_apart(&old) {
             unsound("a cell whose value was moved out");
         }
+        old
+    }
+
+    /// Runs `Atomic`'s intrinsic method `op` on `args`: a `&Atomic<T>`,
+    /// and its `T`s. An atomic is a struct whose one field is what's in it,
+    /// written here through a `&`, which only a cell's or an atomic's field
+    /// may be. There's one thread, so each is one step anyway: the
+    /// orderings are a C compiler's business (lemma Y7 of
+    /// docs/38-statics.md).
+    fn atomic(&mut self, op: &str, args: Vec<Value>) -> Value {
+        let mut args = args.into_iter();
+        let Some(Value::Ref(p)) = args.next() else {
+            unsound(&format!("`Atomic::{op}` of what isn't a reference"))
+        };
+        if !matches!(self.memory.get(&p), Value::Struct(ty, _) if ty.split("::<").next() == Some(crate::check::ATOMIC))
+        {
+            unsound(&format!(
+                "`Atomic::{op}` of `{}`, which isn't an atomic",
+                self.memory.get(&p)
+            ));
+        }
+        let at = p.field(0);
+        let old = self.memory.get(&at).clone();
+        let args: Vec<Value> = args.collect();
+        let int = |v: &Value| match v {
+            Value::Int(n, t) => (*n, *t),
+            _ => unsound(&format!("`Atomic::{op}` of `{v}`, which isn't an integer")),
+        };
+        let new = match (op, args.as_slice()) {
+            ("load", []) => return old,
+            ("swap", [v]) => v.clone(),
+            ("compare_swap", [current, new]) => match old == *current {
+                true => new.clone(),
+                false => return old,
+            },
+            ("fetch_and" | "fetch_or" | "fetch_xor", [Value::Bool(b)]) => {
+                let Value::Bool(a) = old else {
+                    unsound("`Atomic<bool>` of what isn't a `bool`")
+                };
+                Value::Bool(match op {
+                    "fetch_and" => a & b,
+                    "fetch_or" => a | b,
+                    _ => a ^ b,
+                })
+            }
+            ("fetch_and" | "fetch_or" | "fetch_xor" | "fetch_add" | "fetch_sub", [v]) => {
+                let ((a, t), (b, u)) = (int(&old), int(v));
+                if t != u {
+                    unsound("`Atomic` of two integer types");
+                }
+                let n = match op {
+                    "fetch_and" => a & b,
+                    "fetch_or" => a | b,
+                    "fetch_xor" => a ^ b,
+                    "fetch_add" => self.wrap(a + b, t),
+                    _ => self.wrap(a - b, t),
+                };
+                self.int_of(n, t)
+            }
+            _ => unsound(&format!("unknown intrinsic `Atomic::{op}`")),
+        };
+        if self.taken_apart(&old) {
+            unsound("an atomic whose value was moved out");
+        }
+        *self.memory.get_mut(&at) = new;
         old
     }
 

@@ -1319,6 +1319,37 @@ impl<'e> Gen<'e> {
                 "replace" => format!("    {r} old = a0->f0;\n    a0->f0 = a1;\n    return old;\n"),
                 _ => panic!("unknown intrinsic `{copy}`"),
             },
+            // An atomic is a struct of what's in it, which the compiler's
+            // builtins change, each sequentially consistent (lemma Y7 of
+            // docs/38-statics.md). Adding to a signed integer wraps there.
+            // A `bool` has no `fetch_and` and the like in every compiler,
+            // so it's a loop of compare-and-swaps.
+            "<core::sync::Atomic" => {
+                let sc = "__ATOMIC_SEQ_CST";
+                let fetch = |f: &str, c: &str| match *ret == Type::Bool {
+                    false => format!("    return __atomic_{f}(&a0->f0, a1, {sc});\n"),
+                    true => format!(
+                        "    {r} e = __atomic_load_n(&a0->f0, {sc});\n    \
+                         while (!__atomic_compare_exchange_n(&a0->f0, &e, e {c} a1, 0, {sc}, \
+                         {sc})) {{}}\n    return e;\n"
+                    ),
+                };
+                match op {
+                    "load" => format!("    return __atomic_load_n(&a0->f0, {sc});\n"),
+                    "swap" => format!("    return __atomic_exchange_n(&a0->f0, a1, {sc});\n"),
+                    "compare_swap" => format!(
+                        "    {r} e = a1;\n    \
+                         __atomic_compare_exchange_n(&a0->f0, &e, a2, 0, {sc}, {sc});\n    \
+                         return e;\n"
+                    ),
+                    "fetch_and" => fetch("fetch_and", "&"),
+                    "fetch_or" => fetch("fetch_or", "|"),
+                    "fetch_xor" => fetch("fetch_xor", "^"),
+                    "fetch_add" => fetch("fetch_add", "+"),
+                    "fetch_sub" => fetch("fetch_sub", "-"),
+                    _ => panic!("unknown intrinsic `{copy}`"),
+                }
+            }
             "<alloc::arena::Arena" => {
                 let e = self.cty(&elem(&params.first().cloned().unwrap_or(ret.clone())));
                 match op {

@@ -128,8 +128,9 @@ impl AdtInfo {
                 }
                 // `Cell<T>`'s field is a `T`, but `replace` puts one in
                 // through a `&`, so it's invariant too (lemma K2 of
-                // docs/37-cell.md).
-                if n.as_str() == crate::check::CELL {
+                // docs/37-cell.md). So is `Atomic<T>`, by its `swap`,
+                // though only an integer or `bool` can be in it.
+                if n.as_str() == crate::check::CELL || n.as_str() == crate::check::ATOMIC {
                     let all = vec![Variance::Inv; d.lifetimes.len() + d.params.len()];
                     changed |= variances.insert((*n).clone(), all.clone()) != Some(all);
                     continue;

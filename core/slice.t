@@ -107,16 +107,16 @@ export fn empty_mut<'a, T>() -> &'a mut [T];
 
 /// What `split_at` gives: the values before the index it's given, and
 /// those from it on.
-#[derive(Copy, Discard)]
+#[derive(Copy, Discard, Send, Sync)]
 export struct Split<'a, T> { export head: &'a [T], export tail: &'a [T] }
 
 /// What `split_at_mut` gives: the values before the index it's given, and
 /// those from it on, each to change.
-#[derive(Discard)]
+#[derive(Discard, Send, Sync)]
 export struct SplitMut<'a, T> { export head: &'a mut [T], export tail: &'a mut [T] }
 
 /// What `iter` gives: a reference to each value of `rest`, front to back.
-#[derive(Discard)]
+#[derive(Discard, Send where T: Sync, Sync where T: Sync)]
 export struct Iter<'a, T> { rest: &'a [T] }
 
 /// Safe code over `split_at`: each value is the head of what's left.
@@ -138,7 +138,7 @@ impl<'a, T> Iterator for Iter<'a, T> {
 
 /// What `iter_mut` gives: a reference to change each value of `rest`,
 /// front to back.
-#[derive(Discard)]
+#[derive(Discard, Send where T: Send, Sync where T: Sync)]
 export struct IterMut<'a, T> { rest: &'a mut [T] }
 
 /// Safe code over `split_at_mut`: it takes what's left out of the

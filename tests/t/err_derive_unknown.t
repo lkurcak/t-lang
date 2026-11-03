@@ -2,4 +2,4 @@
 struct P { x: i64 }
 
 fn main() {}
-// error: can't derive `Debug`; only `Copy`, `Discard` and `Eq` can be derived
+// error: can't derive `Debug`; only `Copy`, `Discard`, `Eq`, `Send` and `Sync` can be derived

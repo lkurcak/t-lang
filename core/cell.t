@@ -13,10 +13,13 @@
 /// `&Cell<&'a str>`, through which `set` would put in a reference that
 /// doesn't live as long as the cell's type says (lemma K2).
 ///
+/// It's `Send` if `T` is, but never `Sync`: two threads could change it
+/// at once, through two `&`s (lemma Y1 of docs/38-statics.md).
+///
 /// Dropping it drops what's in it, so it's `Discard` if `T` is. It's never
 /// `Copy`: a copy would be a second cell, which a change to one doesn't
 /// change.
-#[derive(Discard where T: Discard)]
+#[derive(Discard where T: Discard, Send where T: Send)]
 export struct Cell<T> { value: T }
 
 impl<T> Cell<T> {
