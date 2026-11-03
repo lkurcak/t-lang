@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.54.0 (2026-11-03)
 
 Step 39: the freestanding target. See
 [docs/39-freestanding.md](docs/39-freestanding.md).
