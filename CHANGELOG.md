@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.53.0 (2026-11-03)
 
 Step 38: statics, atomics, `Send` and `Sync`. See
 [docs/38-statics.md](docs/38-statics.md).
