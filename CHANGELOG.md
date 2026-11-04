@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.56.0 (2026-11-04)
 
 Step 41: threads, `Mutex` and `unsafe impl`. See
 [docs/41-threads.md](docs/41-threads.md).
