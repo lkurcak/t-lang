@@ -232,19 +232,20 @@ generic over `T` has none. Only the core library can declare an intrinsic.
 **Lemma C4 (a `for` is a `loop`).** `for p in it { body }` means
 
 ```text
-{
-    let mut iter = it;
-    loop {
+match it {
+    mut iter => loop {
         match core::iter::Iterator::next(&mut iter) {
             core::option::Option::Some(p) => body,
             core::option::Option::None => break,
         }
-    }
+    },
 }
 ```
 
 with the `for`'s label, if it has one, on the `loop`, and `iter` a name no
-program can write. Resolving paths rewrites it into just that, naming the
+program can write. (Until step 42 it was `{ let mut iter = it; loop { .. }
+}`, which dropped what `it` made, a const's value or a call's result,
+before the loop began: see docs/42-patterns-and-loops.md.) Resolving paths rewrites it into just that, naming the
 library's items by their symbols, so a program's own `Option` or
 `Iterator` doesn't change it. Nothing after that knows `for` exists, so it
 needs no typing rule, borrow rule or linearity rule of its own: what holds

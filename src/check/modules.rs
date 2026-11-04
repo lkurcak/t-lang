@@ -768,7 +768,12 @@ impl Resolver {
             };
             let items = [types, values].into_iter().flatten().map(|b| b.item);
             let last = leaf.path[leaf.path.len() - 1].clone();
-            self.m.leaf_items.push((last, items.collect()));
+            let items: Vec<Item> = items.collect();
+            // `{self}` names the module too, where an editor points.
+            if leaf.module_only {
+                self.m.leaf_items.push((leaf.name.clone(), items.clone()));
+            }
+            self.m.leaf_items.push((last, items));
             for (target, ns) in [(types, Ns::Types), (values, Ns::Values)] {
                 let Some(target) = target else {
                     continue;
