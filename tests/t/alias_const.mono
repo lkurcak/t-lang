@@ -21,39 +21,31 @@ fn total::<3>(b: &[u8; 3]) -> u64 with panic {
     let mut _2: u64; // sum
     let _3: u64;
     let _4: ();
-    let mut _5: Iter<u8>; // {for}
-    let _6: Iter<u8>;
-    let _7: &[u8; 3];
+    let _5: Iter<u8>;
+    let _6: &[u8; 3];
+    let mut _7: Iter<u8>; // {for}
     let _8: ();
     let _9: ();
-    let _10: ();
-    let _11: Option<&u8>;
-    let _12: &mut Iter<u8>;
-    let _13: &u8; // x
-    let _14: ();
+    let _10: Option<&u8>;
+    let _11: &mut Iter<u8>;
+    let _12: &u8; // x
+    let _13: ();
+    let _14: u64;
     let _15: u64;
-    let _16: u64;
     bb0: {
         _3 = 0_u64;
         _2 = copy _3;
         dead _3;
-        _7 = &(*_1);
-        _6 = <[u8; 3]>::iter(move _7);
-        _5 = move _6;
-        dead _7;
-        dead _6;
-        goto bb1;
+        _6 = &(*_1);
+        _5 = <[u8; 3]>::iter(move _6);
+        match _5 { _ => bb1 };
     }
     bb1: {
-        _12 = &mut _5;
-        _11 = <core::slice::Iter::<u8> as core::iter::Iterator>::next(move _12);
-        inspect _11;
-        inspect _11;
-        match _11 { #1(_) => bb3, #0 => bb4 };
+        _7 = move _5;
+        goto bb3;
     }
     bb2: {
-        dead _8;
-        _4 = ();
+        dead _6;
         dead _5;
         dead _4;
         _0 = copy _2;
@@ -62,35 +54,46 @@ fn total::<3>(b: &[u8; 3]) -> u64 with panic {
         return;
     }
     bb3: {
-        _13 = copy (_11 as #1).0;
-        kept _11;
-        _16 = copy (*_13) as u64;
-        _15 = copy _2 + move _16;
-        _2 = move _15;
-        _14 = ();
-        dead _16;
-        dead _15;
-        dead _14;
-        _10 = ();
-        dead _13;
-        goto bb5;
+        _11 = &mut _7;
+        _10 = <core::slice::Iter::<u8> as core::iter::Iterator>::next(move _11);
+        inspect _10;
+        inspect _10;
+        match _10 { #1(_) => bb5, #0 => bb6 };
     }
     bb4: {
-        kept _11;
-        _8 = ();
-        dead _12;
-        dead _11;
-        dead _10;
-        dead _9;
+        dead _7;
         goto bb2;
     }
     bb5: {
+        _12 = copy (_10 as #1).0;
+        kept _10;
+        _15 = copy (*_12) as u64;
+        _14 = copy _2 + move _15;
+        _2 = move _14;
+        _13 = ();
+        dead _15;
+        dead _14;
+        dead _13;
+        _9 = ();
         dead _12;
+        goto bb7;
+    }
+    bb6: {
+        kept _10;
+        _4 = ();
         dead _11;
         dead _10;
-        _9 = ();
         dead _9;
-        goto bb1;
+        dead _8;
+        goto bb4;
+    }
+    bb7: {
+        dead _11;
+        dead _10;
+        dead _9;
+        _8 = ();
+        dead _8;
+        goto bb3;
     }
 }
 

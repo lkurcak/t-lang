@@ -1271,6 +1271,7 @@ fn each_bind(pat: &Pattern, f: &mut impl FnMut(&Pattern)) {
         | PatternKind::Int(..)
         | PatternKind::Range(..)
         | PatternKind::Bool(_)
+        | PatternKind::Str(_)
         | PatternKind::Unit => {}
     }
 }
@@ -1730,6 +1731,38 @@ impl Walk<'_> {
         match by {
             Some(_) if derefs == 0 => Val::Ref(self.new_obj(), Pointee::Val(Box::new(v))),
             _ => v,
+        }
+    }
+
+    /// What it says of `s` that `pat` matches it, beyond `pattern_formula`
+    /// (which is exactly when it matches): a string pattern of `n` bytes
+    /// matches only a `&str` whose `len()` is `n`, but not every such
+    /// one. So this may be assumed where `pat` matched, and its negation
+    /// never where it didn't (lemma S1 of docs/42-patterns-and-loops.md).
+    fn pattern_implies(&mut self, pat: &Pattern, s: &Val) -> Option<Formula> {
+        match &pat.kind {
+            PatternKind::Str(text) => {
+                const LEN: &str = "<str>::len";
+                if !self.cx.measures.contains_key(LEN) {
+                    return None;
+                }
+                let peels = self.cx.typed.peels.get(&pat.id).copied().unwrap_or(0);
+                let mut s = s.clone();
+                for _ in 0..peels {
+                    s = self.pointee(s);
+                }
+                let Val::Int(len) = self.measure(LEN, s) else {
+                    return None;
+                };
+                let n = i128::try_from(text.len()).expect("a literal fits");
+                Formula::eq(&len, &Lin::constant(n))
+            }
+            // Each alternative implies what it does; one of them matched.
+            PatternKind::Or(alts) => {
+                let each = alts.iter().map(|a| self.pattern_implies(a, s));
+                Some(Formula::or(each.collect::<Option<Vec<_>>>()?))
+            }
+            _ => None,
         }
     }
 
@@ -3534,8 +3567,15 @@ impl Walk<'_> {
                 let mut outcomes = Vec::new();
                 for arm in arms {
                     let this = pattern_formula(&arm.pat, &s);
-                    let assume =
-                        Formula::and(before.iter().cloned().map(Formula::not).chain(this.clone()));
+                    // What matching implies but isn't the same as: true of
+                    // this arm, so assumed in it, but not false of the arms
+                    // after, so not in `before`.
+                    let implied = self.pattern_implies(&arm.pat, &s);
+                    let assume = Formula::and(
+                        (before.iter().cloned().map(Formula::not))
+                            .chain(this.clone())
+                            .chain(implied),
+                    );
                     let o = self.branch(&start, Some(assume), |w| {
                         w.bind_pattern(&arm.pat, Some(&s), place.clone(), None)?;
                         w.expr(&arm.body)
@@ -3871,6 +3911,7 @@ impl Walk<'_> {
             | PatternKind::Int(..)
             | PatternKind::Range(..)
             | PatternKind::Bool(_)
+            | PatternKind::Str(_)
             | PatternKind::Unit => {}
         }
         Ok(())

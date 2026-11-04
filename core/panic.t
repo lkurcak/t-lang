@@ -20,9 +20,10 @@ export fn panic_with<D: Display>(why: &D) -> ! with panic {
     m.abort()
 }
 
-/// Panics, saying `assertion failed`, unless `ok`.
+/// Panics, saying `assertion failed`, unless `ok`. So once it returns,
+/// `ok` holds, and the checker knows it.
 #[blame_caller]
-export fn assert(ok: bool) with panic {
+export fn assert(ok: bool) with panic ensures ok {
     if !ok { panic("assertion failed") }
 }
 

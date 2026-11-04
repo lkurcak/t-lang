@@ -405,6 +405,7 @@ fn shorthand_pats(p: &Pattern, out: &mut HashSet<Span>) {
         | PatternKind::Int(..)
         | PatternKind::Range(..)
         | PatternKind::Bool(_)
+        | PatternKind::Str(_)
         | PatternKind::Unit => {}
     }
 }

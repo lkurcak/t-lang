@@ -189,7 +189,7 @@ enums! {
         Break(label, expr), Continue(label),
     };
     PatternKind {
-        Wild, Bind(name, mutable), Int(n, kind), Range(start, end, inclusive, kind), Bool(b), Unit,
+        Wild, Bind(name, mutable), Int(n, kind), Range(start, end, inclusive, kind), Bool(b), Unit, Str(s),
         Variant(ty, types, name, fields), Struct(ty, types, fields, rest), Array(elems), Or(alts),
     };
 }

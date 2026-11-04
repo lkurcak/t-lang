@@ -127,9 +127,15 @@ impl Checker {
             PatternKind::Wild | PatternKind::Bind(..) | PatternKind::Or(_)
         );
         let mut ty = ty.clone();
+        // A string literal matches a `&str`: it looks through every `&`
+        // but that last one.
+        let str_pattern = matches!(p.kind, PatternKind::Str(_));
         if looks_inside {
             let mut peeled = 0;
             while let Type::Ref(_, m, inner) = self.shallow(&ty) {
+                if str_pattern && !matches!(self.shallow(&inner), Type::Ref(..)) {
+                    break;
+                }
                 // Through a `&` to a `&mut`, it's still only shared.
                 by_ref = Some(by_ref.unwrap_or(true) && m);
                 ty = *inner;
@@ -197,6 +203,14 @@ impl Checker {
             PatternKind::Unit => {
                 self.pattern_is(p, ty, Type::Unit)?;
                 Pat::Ctor(Ctor::Unit, Vec::new())
+            }
+            // As the literal is typed as an expression: `&'static str`, a
+            // subtype of every `&'a str`, so the pattern constrains no
+            // region of what it's matched against.
+            PatternKind::Str(s) => {
+                let found = Type::Ref(Region::Static, false, Box::new(Type::Str));
+                self.pattern_is(p, ty, found)?;
+                Pat::Ctor(crate::exhaust::str_ctor(s), Vec::new())
             }
             PatternKind::Variant(name, targs, variant, args) => {
                 let (t, i) = self.variant(name, targs, variant)?;

@@ -930,6 +930,7 @@ fn pattern_annotations(p: &Pattern, f: &mut impl FnMut(&TypeExpr)) {
         | PatternKind::Int(..)
         | PatternKind::Range(..)
         | PatternKind::Bool(_)
+        | PatternKind::Str(_)
         | PatternKind::Unit => {}
     }
 }

@@ -644,6 +644,10 @@ struct Leaf {
     name: Ident,
     vis: Vis,
     decl: Span,
+    /// `self` in a group, `a::{self}`: the leaf names module `a` (its
+    /// `path`), and only that, in the types namespace. `name` is the
+    /// `self` (or its `as`), named after `a`.
+    module_only: bool,
 }
 
 /// How far resolving a `use` has got.
@@ -731,13 +735,19 @@ impl Resolver {
     fn imports(&mut self, prog: &Program, from: Counts) -> Result<(), Error> {
         let first = self.m.leaves.len();
         for u in &prog.uses[from.uses..] {
-            for (path, name) in u.tree.leaves() {
+            for (path, name, module_only) in u.tree.leaves() {
+                let mut name = name.clone();
+                if module_only && name.name == "self" {
+                    let last = path.last().expect("a group has a path before it");
+                    name.name = last.name.clone();
+                }
                 self.m.leaves.push(Leaf {
                     module: u.module,
                     path: path.into_iter().cloned().collect(),
-                    name: name.clone(),
+                    name,
                     vis: u.vis,
                     decl: u.span,
+                    module_only,
                 });
             }
         }
@@ -811,8 +821,23 @@ impl Resolver {
         }
         self.m.states[i] = State::Doing;
         let leaf = &self.m.leaves[i];
-        let (from, path) = (leaf.module, leaf.path.clone());
+        let (from, path, module_only) = (leaf.module, leaf.path.clone(), leaf.module_only);
         let (last, init) = path.split_last().expect("a path has a segment");
+        if module_only && matches!(last.name.as_str(), "crate" | "super" | "self") {
+            let what = match last.name.as_str() {
+                "crate" => "the crate root",
+                "self" => "this module",
+                _ => "the module around this one",
+            };
+            let written: Vec<&str> = path.iter().map(|s| s.name.as_str()).collect();
+            return Err(Error::ty(
+                self.m.leaves[i].name.span,
+                format!(
+                    "`use {}::{{self}}` would name {what}, which has no name to bring in",
+                    written.join("::")
+                ),
+            ));
+        }
         let module = match init.is_empty() {
             // `use name;` can only be of something in this module already,
             // which it would bring in again.
@@ -828,14 +853,54 @@ impl Resolver {
             }
             false => self.modules(from, init)?,
         };
-        if matches!(last.name.as_str(), "crate" | "super" | "self") {
+        if last.name == "self" {
+            let written: Vec<&str> = init.iter().map(|s| s.name.as_str()).collect();
+            return Err(Error::ty(
+                last.span,
+                format!(
+                    "`self` can only start a path, or name the module of a `{{..}}` group of a \
+                     `use`: `use {}::{{self}};`",
+                    written.join("::")
+                ),
+            ));
+        }
+        if matches!(last.name.as_str(), "crate" | "super") {
             return Err(Error::ty(
                 last.span,
                 format!("`{}` can only start a path", last.name),
             ));
         }
+        // `use crate::a;` in the crate root, where `a` is already: it would
+        // find itself.
+        if module == from && self.m.leaves[i].name.name == last.name {
+            return Err(Error::ty(
+                last.span,
+                format!(
+                    "`{}` is already a name in this module; `use` brings in names from \
+                     elsewhere",
+                    last.name
+                ),
+            ));
+        }
         let types = self.lookup(module, &last.name, Ns::Types)?;
-        let values = self.lookup(module, &last.name, Ns::Values)?;
+        let values = match module_only {
+            true => None,
+            false => self.lookup(module, &last.name, Ns::Values)?,
+        };
+        if module_only
+            && !matches!(
+                types,
+                Some(Binding {
+                    item: Item::Mod(_),
+                    ..
+                })
+            )
+        {
+            return Err(match types {
+                Some(_) => Error::ty(last.span, format!("`{}` isn't a module", last.name)),
+                None => no_item(&self.m, module, last),
+            });
+        }
         let seen = |b: &Option<Binding>| {
             b.as_ref()
                 .is_some_and(|b| self.m.visible(b.module, b.level, from))
@@ -1805,22 +1870,25 @@ impl Rewrite<'_> {
     /// What `for pat in iter { body }`, `f`, at `span`, means (lemma C4):
     ///
     /// ```text
-    /// {
-    ///     let mut it = iter;
-    ///     loop {
+    /// match iter {
+    ///     mut it => loop {
     ///         match core::iter::Iterator::next(&mut it) {
     ///             core::option::Option::Some(pat) => body,
     ///             core::option::Option::None => break,
     ///         }
-    ///     }
+    ///     },
     /// }
     /// ```
     ///
     /// with the `for`'s label on the `loop`, and `it` a name no program can
     /// write. So `it` is thrown away when the loop ends, which it can only
     /// be if it's `Discard`, and each value `pat` binds is the body's to use
-    /// up, by the rules for any variable. Nothing about a `for` needs a rule
-    /// of its own.
+    /// up, by the rules for any variable. `iter` is a `match`'s scrutinee,
+    /// not a `let`'s initializer, so its temporaries (a const's value, a
+    /// call's result that `.iter()` borrows) go at the end of the statement
+    /// the `for` is in, after the loop and after `it` (lemma F1 of
+    /// docs/42-patterns-and-loops.md). Nothing about a `for` needs a rule of
+    /// its own.
     ///
     /// Each node made here gets an id of its own, which is what the checker
     /// files what it learns about it by. Its span is only where messages
@@ -1832,16 +1900,10 @@ impl Rewrite<'_> {
         let at = Span::new;
         let it = || ExprKind::Var(FOR_ITERATOR.into(), Vec::new());
         let iter_span = f.iter.span;
-        let init = Stmt::Let {
-            pat: Pattern {
-                kind: PatternKind::Bind(FOR_ITERATOR.into(), true),
-                span: iter_span,
-                id: self.id(),
-            },
-            ty: None,
-            init: Some(Box::new(f.iter)),
-            els: None,
-            span: at(k, iter_span.end),
+        let bind = Pattern {
+            kind: PatternKind::Bind(FOR_ITERATOR.into(), true),
+            span: iter_span,
+            id: self.id(),
         };
         let borrow = Expr {
             kind: ExprKind::Unary(
@@ -1945,7 +2007,13 @@ impl Rewrite<'_> {
             span: at(k, k + 3),
             id: self.id(),
         };
-        ExprKind::Block(vec![init, Stmt::BlockLike(looped)], None)
+        ExprKind::Match(
+            Box::new(f.iter),
+            vec![Arm {
+                pat: bind,
+                body: looped,
+            }],
+        )
     }
 
     /// What `x?`, with its `?` at `q`, means (lemma Q1):
@@ -2321,7 +2389,10 @@ impl Rewrite<'_> {
     fn refutable(&mut self, p: &Pattern) -> bool {
         match &p.kind {
             PatternKind::Wild | PatternKind::Bind(..) | PatternKind::Unit => false,
-            PatternKind::Int(..) | PatternKind::Range(..) | PatternKind::Bool(_) => true,
+            PatternKind::Int(..)
+            | PatternKind::Range(..)
+            | PatternKind::Bool(_)
+            | PatternKind::Str(_) => true,
             PatternKind::Variant(ty, _, _, pats) => {
                 self.variants_of(ty).is_none_or(|vs| vs.len() != 1)
                     || pats.iter().any(|p| self.refutable(p))
@@ -2362,6 +2433,7 @@ impl Rewrite<'_> {
             | PatternKind::Int(..)
             | PatternKind::Range(..)
             | PatternKind::Bool(_)
+            | PatternKind::Str(_)
             | PatternKind::Unit => {}
         }
         Ok(())

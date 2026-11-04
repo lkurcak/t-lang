@@ -219,6 +219,8 @@ pub(crate) enum Pat {
     /// A number in `lo..=hi`, either end maybe open.
     Range(Option<i128>, Option<i128>),
     Bool(bool),
+    /// A `&str` with these bytes.
+    Str(String),
     /// Variant `.0` of an enum, with patterns for its fields.
     Variant(usize, Vec<Pat>),
     /// Patterns for some of a struct's fields, by index.
@@ -666,6 +668,7 @@ fn show_pat(p: &Pat) -> String {
             b.map_or(String::new(), |b| b.to_string())
         ),
         Pat::Bool(b) => b.to_string(),
+        Pat::Str(s) => crate::lexer::str_literal(s),
         Pat::Variant(i, pats) if pats.is_empty() => format!("#{i}"),
         Pat::Variant(i, pats) => format!("#{i}({})", show_pats(pats)),
         Pat::Struct(fields) => {
