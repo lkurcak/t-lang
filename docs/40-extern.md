@@ -291,7 +291,7 @@ The rules are tested as the language's others are, in `tests/t`
 functions). What only a machine runs is in `tests/extern.rs`: each
 `hosted_*` program is built and run against the C library, and each
 `machine_*` one is built for the freestanding target and linked with
-`tests/shared/machine.c`, a machine with a device, a screen of bytes with
+`tests/shared/machine.c` (and the case's own `.c`, if any), a machine with a device, a screen of bytes with
 a cursor, which the program drives with volatile accesses from its own
 `t_platform_write`, and which C calls back into. The differential tests
 (`tests/compiled.rs`) leave out a program where the interpreter stops for

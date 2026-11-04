@@ -26,15 +26,6 @@ _Noreturn void power_off(int32_t code) {
     exit(code);
 }
 
-/* What T exports, if the program has it: C calls back into T. */
-__attribute__((weak)) void tick(void);
-__attribute__((weak)) uint32_t ticks(void);
-
-/* Calls the program's `tick`, `n` times. */
-void tick_times(uint32_t n) {
-    for (uint32_t i = 0; i < n; i++) tick();
-}
-
 /* Adds two numbers, as a C function the program imports would. */
 int64_t add(int64_t a, int64_t b) { return a + b; }
 _Bool is_even(uint8_t n) { return n % 2 == 0; }

@@ -56,12 +56,19 @@ pub fn headers(c: &str) -> Result<(), String> {
 /// `NEEDS` says (unless `$T_LANG_CFLAGS` adds flags, as sanitizers need
 /// their runtimes), then links it with `platform.c`.
 pub fn link(c: &str, exe: &Path) -> Result<(), String> {
-    link_with(c, exe, "platform.c", &[])
+    link_with(c, exe, "platform.c", &[], &[])
 }
 
 /// `link`, with `machine`, a C file of `tests/shared`, for the platform,
-/// the object also needing the C functions `imports`.
-pub fn link_with(c: &str, exe: &Path, machine: &str, imports: &[String]) -> Result<(), String> {
+/// and the C files `more`, the object also needing the C functions
+/// `imports`.
+pub fn link_with(
+    c: &str,
+    exe: &Path,
+    machine: &str,
+    more: &[std::path::PathBuf],
+    imports: &[String],
+) -> Result<(), String> {
     headers(c)?;
     let obj = exe.with_extension("o");
     t_lang::cgen::compile(c, &obj, t_lang::Target::Freestanding)?;
@@ -94,6 +101,7 @@ pub fn link_with(c: &str, exe: &Path, machine: &str, imports: &[String]) -> Resu
         .arg(exe)
         .arg(&obj)
         .arg(&platform)
+        .args(more)
         .args(flags.split_whitespace())
         .output()
         .map_err(|e| format!("cannot run `{cc}`: {e}"))?;

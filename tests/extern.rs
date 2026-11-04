@@ -5,7 +5,8 @@
 //!
 //! A `hosted_*` program is built for the hosted target, and calls the C
 //! library. A `machine_*` one is built for the freestanding target, and
-//! linked with `shared/machine.c`, a machine whose device it drives: its
+//! linked with `shared/machine.c`, a machine whose device it drives, and
+//! its own `.c` beside it, if it has one: its
 //! object must need nothing but the platform's functions, the C functions
 //! it imports, and none of the platform's it writes itself.
 //!
@@ -23,6 +24,7 @@ fn cases() -> Vec<PathBuf> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/extern");
     let mut out: Vec<PathBuf> = (fs::read_dir(dir).unwrap())
         .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|e| e == "t"))
         .collect();
     out.sort();
     out
@@ -85,7 +87,13 @@ fn what_needs_the_machine_runs_on_one() {
         let exe = dir.join(&name);
         let built = match target {
             Target::Hosted => t_lang::cgen::compile(&c, &exe, target),
-            Target::Freestanding => platform::link_with(&c, &exe, "machine.c", &imports(&src)),
+            Target::Freestanding => {
+                let more: Vec<PathBuf> = Some(p.with_extension("c"))
+                    .filter(|c| c.exists())
+                    .into_iter()
+                    .collect();
+                platform::link_with(&c, &exe, "machine.c", &more, &imports(&src))
+            }
         };
         if let Err(e) = built {
             failures.push(format!("{name}: {e}"));
