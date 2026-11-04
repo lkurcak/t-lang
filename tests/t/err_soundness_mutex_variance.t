@@ -13,7 +13,7 @@ fn main() with alloc {
     {
         let s = String::from("short");
         put(&m, s.as_str());
-// error: `s` doesn't live long enough
+        // error: `s` doesn't live long enough
     }
     let _ = m.into_inner();
 }

@@ -5,6 +5,6 @@ use core::cell::Cell;
 fn main() {
     let c = Cell::new(1u32);
     let a = c.as_mut();
-// error: unsafe
+    // error: unsafe
     *a = 2;
 }

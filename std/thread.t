@@ -40,9 +40,7 @@ impl Threads {
     export fn spawn<'a, R: Send + 'a, effect e, F: FnOnce() -> R with e + Send + 'a>(
         &self,
         f: F,
-    ) -> JoinHandle<'a, R> with {alloc, e} {
-        start(f, run)
-    }
+    ) -> JoinHandle<'a, R> with {alloc, e} { start(f, run) }
 }
 
 impl<'a, R> JoinHandle<'a, R> {
@@ -56,7 +54,5 @@ fn run<R, effect e, F: FnOnce() -> R with e>(f: F) -> R with e { f() }
 
 /// Starts a thread that runs `run(f)`.
 #[intrinsic]
-fn start<'a, R: 'a, effect e, F: 'a>(f: F, run: fn(F) -> R with e) -> JoinHandle<'a, R> with {
-    alloc,
-    e,
-};
+fn start<'a, R: 'a, effect e, F: 'a>(f: F, run: fn(F) -> R with e) -> JoinHandle<'a, R>
+with {alloc, e};

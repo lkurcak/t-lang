@@ -18,8 +18,8 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mine = sum(data.as_slice());
     let theirs = h.join();
     let mut out = os.stdout;
-    out.line(&mine)?;   // expect: 10
-    out.line(&theirs)?; // expect: 10
+    out.line(&mine)?;    // expect: 10
+    out.line(&theirs)?;  // expect: 10
     out.line(&data[0])?; // expect: 1
     Result::Ok(())
 }

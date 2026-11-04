@@ -1,5 +1,41 @@
 # Changelog
 
+## Unreleased
+
+Step 41: threads, `Mutex` and `unsafe impl`. See
+[docs/41-threads.md](docs/41-threads.md).
+
+### Added
+
+- `std::thread`: `Threads`, the right to start threads, in the new field
+  `Os::threads`; `Threads::spawn(&self, f) -> JoinHandle<'a, R>` with
+  `F: FnOnce() -> R with e + Send + 'a`, `R: Send + 'a`, and the effects
+  `{alloc, e}`; `JoinHandle::join(self) -> R`. A `JoinHandle` isn't
+  `Discard`: it must be joined, so a thread may borrow what outlives its
+  handle. Failing to start a thread stops the program, as running out of
+  memory does.
+- `core::sync::Mutex<T>`: `new`, `lock(&self, f)` (calls `f` with a
+  `&mut T` while no other thread has the mutex, spinning meanwhile),
+  `get_mut`, `into_inner`. `Sync` if `T: Send`; invariant, not frozen;
+  usable in statics and on the freestanding target. No poisoning: a panic
+  stops the program.
+- `unsafe impl<..> Send|Sync for Type<..> {}`: a promise against what the
+  fields say, only of `Send` or `Sync`, only in the package that declares
+  the type, only for the type with any parameters, with bounds of `Send`
+  or `Sync` only, never beside a derive of the same trait.
+- `Cell::as_mut(&self) -> &mut T`, `unsafe`: for writing locks.
+- The interpreter runs threads one at a time, handing over at atomic
+  operations, spins and joins, in a fixed order; it stops with
+  "deadlock" when every thread waits to join another.
+- Compiled, threads are POSIX threads (`-pthread`), each with an 8 MiB
+  stack; one thread at a time writes a panic's message.
+
+### Changed
+
+- A derived `Sync` can need `Send` of a type parameter (as a struct holding
+  a `Mutex<T>` does), and a derived `Send` `Sync`.
+- A static's plain data may hold mutexes.
+
 ## 0.55.0 (2026-11-04)
 
 Step 40: `extern fn` and volatile memory. See

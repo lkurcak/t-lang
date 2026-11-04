@@ -36,7 +36,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     shared(&f);
     let ran = f.try_with(|x: &mut u64| *x = core::num::wrapping_add(*x, 41));
     let mut out = os.stdout;
-    out.line(&ran)?; // expect: true
+    out.line(&ran)?;           // expect: true
     out.line(&f.value.get())?; // expect: 42
     Result::Ok(())
 }

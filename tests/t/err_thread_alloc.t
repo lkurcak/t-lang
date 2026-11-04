@@ -3,7 +3,7 @@ use std::thread::Threads;
 
 export fn start(threads: &Threads) -> u32 {
     threads.spawn(|| 1u32).join()
-// error: `spawn` may allocate, but `start` doesn't say `with alloc`
+    // error: `spawn` may allocate, but `start` doesn't say `with alloc`
 }
 
 fn main(os: std::Os) with alloc {

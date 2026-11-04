@@ -7,7 +7,7 @@ fn start(threads: &Threads) -> u32 with alloc {
         let v: Option<u32> = Option::None;
         v.unwrap()
     }).join()
-// error: `spawn` may panic, but `start` doesn't say `with panic`
+    // error: `spawn` may panic, but `start` doesn't say `with panic`
 }
 
 fn main(os: std::Os) with {alloc, panic} {

@@ -4,6 +4,6 @@ fn main(os: std::Os) with alloc {
     let mut n = 1u32;
     let h = os.threads.spawn(|| core::num::wrapping_add(n, 1));
     n = 5;
-// error: cannot assign to `n` while `n` is borrowed
+    // error: cannot assign to `n` while `n` is borrowed
     let _ = core::num::wrapping_add(h.join(), n);
 }

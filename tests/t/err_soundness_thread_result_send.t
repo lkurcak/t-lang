@@ -5,6 +5,6 @@ struct Local { n: u32 }
 
 fn main(os: std::Os) with alloc {
     let h = os.threads.spawn(|| Local { n: 1 });
-// error: `spawn` needs its `R` to implement `Send`, and `Local` doesn't
+    // error: `Threads::spawn` needs its `R` to implement `Send`, and `Local` doesn't
     let _ = h.join();
 }

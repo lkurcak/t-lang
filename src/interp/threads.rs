@@ -269,7 +269,8 @@ impl<'p, 'o> Interp<'p, 'o> {
         let me = self.threads.current;
         loop {
             if let Status::Done(_) = self.threads.list[id].status {
-                let Status::Done(v) = std::mem::replace(&mut self.threads.list[id].status, Status::Over)
+                let Status::Done(v) =
+                    std::mem::replace(&mut self.threads.list[id].status, Status::Over)
                 else {
                     unreachable!()
                 };
@@ -305,7 +306,10 @@ impl<'p, 'o> Interp<'p, 'o> {
             self.threads.failed.get_or_insert_with(|| e.clone());
         }
         for t in 1..self.threads.list.len() {
-            if matches!(self.threads.list[t].status, Status::Ready | Status::Joining(_)) {
+            if matches!(
+                self.threads.list[t].status,
+                Status::Ready | Status::Joining(_)
+            ) {
                 if self.threads.failed.is_none() {
                     unsound("`main` ended before a thread it started");
                 }

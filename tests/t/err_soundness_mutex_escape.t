@@ -5,6 +5,6 @@ use core::sync::Mutex;
 fn main() {
     let m = Mutex::new(1u32);
     let r = m.lock(|x: &mut u32| x);
-// error: this function isn't general enough
+    // error: this function isn't general enough
     *r = 2;
 }

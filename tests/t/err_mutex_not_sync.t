@@ -9,5 +9,5 @@ fn main() {
     let c = Cell::new(1u32);
     let m = Mutex::new(&c);
     shared(&m);
-// error: `shared` needs its `T` to implement `Sync`, and `Mutex<&Cell<u32>>` doesn't
+    // error: `shared` needs its `T` to implement `Sync`, and `Mutex<&Cell<u32>>` doesn't
 }

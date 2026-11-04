@@ -290,8 +290,8 @@ value; the C backend makes a global, and sets it before `main` runs.
 
 | Missing | Why it's missing | Step |
 |---|---|---|
-| threads, `spawn`, `Mutex` | `Send`/`Sync` were the groundwork | after 39 |
-| `unsafe impl Sync` against the fields | its syntax comes with `Mutex` | after 39 |
+| threads, `spawn`, `Mutex` | `Send`/`Sync` were the groundwork | 41 ✅ |
+| `unsafe impl Sync` against the fields | its syntax comes with `Mutex` | 41 ✅ |
 | weaker orderings | SeqCst is the safe default | — |
 | `&STATIC` in a static's initializer | needs addresses in const evaluation | — |
 | statics in C's data section | the freestanding target | 39 ✅ |
