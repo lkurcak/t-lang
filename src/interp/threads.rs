@@ -59,6 +59,10 @@ pub(super) struct Threads<'p> {
     /// gets the baton, gives up, and hands it back to the first, which
     /// waits for them all to be gone.
     failed: Option<Error>,
+    /// The interpreter's own panic, a bug's (`unsound`), in a thread: then
+    /// the program has stopped (`failed`), and once every thread is gone,
+    /// `wind_down` panics with it, on the first.
+    panicked: Option<Box<dyn std::any::Any + Send>>,
 }
 
 impl Default for Threads<'_> {
@@ -72,6 +76,7 @@ impl Default for Threads<'_> {
             current: 0,
             baton: Arc::new((Mutex::new(0), Condvar::new())),
             failed: None,
+            panicked: None,
         }
     }
 }
@@ -204,7 +209,14 @@ impl<'p, 'o> Interp<'p, 'o> {
             // interpreter outlives it: `wind_down` and `join` wait for
             // every thread before it's dropped.
             let me: &mut Interp<'p, 'o> = unsafe { &mut *interp };
-            me.thread_body(id, f, run, span);
+            let body = std::panic::AssertUnwindSafe(|| me.thread_body(id, f, run, span));
+            if let Err(p) = std::panic::catch_unwind(body) {
+                // It still holds the baton: hands it to the first, which
+                // stops the others, and then panics with it.
+                me.threads.list[id].status = Status::Over;
+                me.stopped(p);
+                me.hand_to(0);
+            }
         };
         // SAFETY: the thread may borrow the interpreter, which isn't
         // `'static`, as it's joined before the interpreter goes (see
@@ -249,6 +261,15 @@ impl<'p, 'o> Interp<'p, 'o> {
             },
         };
         self.hand_to(to);
+    }
+
+    /// After the interpreter's panic `p`, in the running thread: the
+    /// program stops, and once every thread has given up, `wind_down`
+    /// panics with it.
+    pub(super) fn stopped(&mut self, p: Box<dyn std::any::Any + Send>) -> Error {
+        self.threads.panicked.get_or_insert(p);
+        let e = Error::runtime(Span::new(0, 0), "the interpreter stopped");
+        self.threads.failed.get_or_insert(e).clone()
     }
 
     /// The error when no thread can run: each waits for another to end.
@@ -298,7 +319,17 @@ impl<'p, 'o> Interp<'p, 'o> {
     /// error, or another thread's, every other thread must give up before
     /// the interpreter goes, as it runs on it. What stopped the program
     /// first is what's given back.
+    /// The interpreter's own panic, in any thread, is panicked with again
+    /// once they're all gone.
     pub(super) fn wind_down(&mut self, result: Result<Value, Error>) -> Result<Value, Error> {
+        let result = self.wound_down(result);
+        match self.threads.panicked.take() {
+            Some(p) => std::panic::resume_unwind(p),
+            None => result,
+        }
+    }
+
+    fn wound_down(&mut self, result: Result<Value, Error>) -> Result<Value, Error> {
         if self.threads.list.len() == 1 {
             return result;
         }

@@ -447,7 +447,14 @@ impl<'p> Interp<'p, '_> {
                     .collect(),
             )],
         };
-        let result = self.call(Value::Fn(entry.to_string(), None), args, Span::new(0, 0));
+        // The interpreter's own panic, a bug's, waits for the threads to
+        // give up before it goes on (`wind_down`), as they run on it.
+        let main = Value::Fn(entry.to_string(), None);
+        let call = std::panic::AssertUnwindSafe(|| self.call(main, args, Span::new(0, 0)));
+        let result = match std::panic::catch_unwind(call) {
+            Ok(result) => result,
+            Err(p) => Err(self.stopped(p)),
+        };
         let result = self.wind_down(result)?;
         // An error it gives back is reported, by the copy of `std::rt::report`
         // monomorphisation made for it, with its own `Stderr`.
