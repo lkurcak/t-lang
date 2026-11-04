@@ -54,6 +54,7 @@ mod closures;
 mod consts;
 mod effects;
 mod expr;
+mod externs;
 mod generics;
 mod infer;
 mod info;
@@ -112,6 +113,9 @@ pub const INTRINSICS: &[&str] = &[
     "core::sync::Atomic::fetch_xor",
     "core::sync::Atomic::fetch_add",
     "core::sync::Atomic::fetch_sub",
+    "core::volatile::Volatile::at",
+    "core::volatile::Volatile::read",
+    "core::volatile::Volatile::write",
     "core::panic::panic",
     "core::panic::Message::new",
     "core::panic::Message::push_str",
@@ -185,9 +189,16 @@ pub const CELL: &str = "core::cell::Cell";
 /// docs/38-statics.md).
 pub const ATOMIC: &str = "core::sync::Atomic";
 
+/// The symbol of the core library's `Volatile`: a struct like `Atomic`, its
+/// one field private to `core::volatile`, invariant in its parameter, and
+/// not frozen, as a device changes it, and its intrinsics write through a
+/// `&` (lemma V of docs/40-extern.md).
+pub const VOLATILE: &str = "core::volatile::Volatile";
+
 /// The symbol of the alloc library's `Box`, which is `Type::Box`.
 pub const BOX: &str = "alloc::boxed::Box";
 
+pub(crate) use externs::PLATFORM_HOOKS;
 pub(crate) use modules::FOR_ITERATOR;
 
 /// The symbol of the core library's `Iterator`, which a `for` loop uses.
@@ -710,6 +721,8 @@ pub(crate) struct Checker {
     /// callers, with where each one's `#[blame_caller]` is: each must be
     /// able to abort, which only its effects, once inferred, say.
     blaming: Vec<(FnId, Span)>,
+    /// The `extern fn`s of the package being checked (docs/40-extern.md).
+    externs: Vec<externs::ExternFn>,
     /// The sites of the body of each of them that's checked, kept for
     /// working out its effects with its group's.
     infer_sites: HashMap<usize, Vec<effects::Site>>,
@@ -1031,6 +1044,7 @@ impl Checker {
             tests: Vec::new(),
             tests_from: 0,
             blaming: Vec::new(),
+            externs: Vec::new(),
             infer_sites: HashMap::new(),
             waiting: Vec::new(),
             deferred: Vec::new(),
@@ -1147,6 +1161,7 @@ impl Checker {
         self.zonk_inferred();
         self.tests_known(root)?;
         self.blaming_known()?;
+        self.externs_known()?;
         // What an editor can offer to write, of the program's.
         if root == ROOT {
             for (i, (f, _, method)) in prog
@@ -1272,9 +1287,12 @@ impl Checker {
                     false => self.const_type(f, &sig.ret)?,
                 }
             }
+            let mut scheme = match f.ext {
+                Some(ext) => self.extern_signature(prog, f, ext, i, scheme)?,
+                None => scheme,
+            };
             // Effects it doesn't say are its body's, which are inferred
             // with it.
-            let mut scheme = scheme;
             if infer::infers(prog, f, method) {
                 let effects = self.placeholder(&self.fn_symbols[i], &scheme.params);
                 if let Type::Fn(sig) = &mut scheme.ty {
@@ -1469,8 +1487,8 @@ impl Checker {
         i: usize,
     ) -> Result<(), Error> {
         {
-            // What an intrinsic does isn't written in T.
-            if f.intrinsic.is_some() || parent.is_some() {
+            // What an intrinsic or a C function does isn't written in T.
+            if f.bodiless() || parent.is_some() {
                 return Ok(());
             }
             self.self_ty = match method {

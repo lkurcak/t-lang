@@ -1199,7 +1199,16 @@ impl<'p> Interp<'p, '_> {
                 }
                 // What an intrinsic gives is trusted, and so checked: its
                 // refinement too.
-                let result = if decl.intrinsic.is_some() {
+                // What a C function does is the machine's: there's none here
+                // (docs/40-extern.md, I).
+                let result = if decl.is_import() {
+                    let message = format!(
+                        "`{}` is a C function, which the interpreter can't call: build the \
+                         program, with `t build`, to run it",
+                        decl.name.name
+                    );
+                    Err(self.panic(span, message))
+                } else if decl.intrinsic.is_some() {
                     let of = name.split("::<").next().unwrap_or_default().to_string();
                     self.intrinsic(&of, &name, args, span)
                 } else {
@@ -1805,6 +1814,17 @@ impl<'p> Interp<'p, '_> {
         args: Vec<Value>,
         span: Span,
     ) -> Result<Value, Error> {
+        // A device's memory is the machine's: there's none here
+        // (docs/40-extern.md, I). Without an address, there's nothing to
+        // read or write.
+        if name == "<core::volatile::Volatile" && copy.ends_with("::at") {
+            let message = "`Volatile::at` names an address of the machine's, which the interpreter \
+                           hasn't got: build the program, with `t build`, to run it";
+            return Err(self.panic(span, message));
+        }
+        if name == "<core::volatile::Volatile" {
+            unsound("a volatile value the interpreter never made");
+        }
         if name == "core::num::checked_mul" {
             let [a, b] = <[Value; 2]>::try_from(args).unwrap_or_else(|_| unsound("checked arity"));
             let (Value::Int(a, t), Value::Int(b, u)) = (a, b) else {

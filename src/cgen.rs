@@ -79,6 +79,38 @@ fn c_int(t: IntTy) -> &'static str {
     }
 }
 
+/// The C type of a value of scalar type `t`, as an `extern fn` takes or
+/// gives one (lemma E3 of docs/40-extern.md).
+fn c_scalar(t: &Type) -> &'static str {
+    match t {
+        Type::Int(IntTy::Isize) => "intptr_t",
+        Type::Int(IntTy::Usize) => "uintptr_t",
+        Type::Int(i) => c_int(*i),
+        Type::Bool => "bool",
+        t => panic!("`{t}` isn't one of C's scalars"),
+    }
+}
+
+/// The C result type of an `extern fn` that gives back a `t`.
+fn c_result(t: &Type) -> &'static str {
+    match t {
+        Type::Unit => "void",
+        Type::Never => "_Noreturn void",
+        t => c_scalar(t),
+    }
+}
+
+/// The C prototype of `extern fn` `c`, of parameters `params` and result
+/// `ret`.
+fn c_prototype(c: &str, params: &[Type], ret: &Type) -> String {
+    let ps: Vec<&str> = params.iter().map(c_scalar).collect();
+    let ps = match ps.is_empty() {
+        true => "void".to_string(),
+        false => ps.join(", "),
+    };
+    format!("{} {c}({ps})", c_result(ret))
+}
+
 fn suffix(t: IntTy) -> &'static str {
     match t {
         IntTy::Isize => "i64",
@@ -200,6 +232,8 @@ struct Gen<'e> {
     todo: Vec<String>,
     protos: String,
     defs: String,
+    /// The C functions of the exports (see `Gen::exports`).
+    exported: String,
     lits: HashMap<Vec<u8>, String>,
     lit_defs: String,
     /// Each static used, by symbol, and the C name of its global.
@@ -245,6 +279,7 @@ impl<'e> Gen<'e> {
             todo: Vec::new(),
             protos: String::new(),
             defs: String::new(),
+            exported: String::new(),
             lits: HashMap::new(),
             lit_defs: String::new(),
             statics: Vec::new(),
@@ -631,8 +666,10 @@ impl<'e> Gen<'e> {
         c
     }
 
+    /// Is `name` an intrinsic, or an import: a function with no body in T,
+    /// called through a wrapper that takes the site of its call?
     fn is_intrinsic(&self, name: &str) -> bool {
-        self.decls.get(name).is_some_and(|d| d.intrinsic.is_some())
+        self.decls.get(name).is_some_and(|d| d.bodiless())
     }
 
     /// The types of the parameters and result of intrinsic copy `name`.
@@ -761,6 +798,7 @@ impl<'e> Gen<'e> {
                 self.body_name(g);
             }
         }
+        self.exports();
         while let Some(name) = self.todo.pop() {
             let exe: &'e Executable = self.exe;
             let (name, body) = exe.body_named(&name).expect("a body");
@@ -1323,6 +1361,9 @@ impl<'e> Gen<'e> {
     }
 
     fn intrinsic_body(&mut self, copy: &str, params: &[Type], ret: &Type) -> String {
+        if self.decls.get(copy).is_some_and(|d| d.is_import()) {
+            return self.import_body(copy, params, ret);
+        }
         let of = copy.split("::<").next().unwrap_or_default();
         let op = copy.rsplit("::").next().unwrap_or_default();
         let r = self.cty(ret);
@@ -1456,6 +1497,21 @@ impl<'e> Gen<'e> {
                     _ => panic!("unknown intrinsic `{copy}`"),
                 }
             }
+            // A volatile value is a struct of what's at its address, which
+            // is where the `&` to it points: each read and write is one
+            // volatile access of it (lemma V of docs/40-extern.md).
+            "<core::volatile::Volatile" => {
+                let e = self.cty(&elem(match op {
+                    "at" => ret,
+                    _ => &params[0],
+                }));
+                match op {
+                    "at" => format!("    return ({r})(uintptr_t)a0;\n"),
+                    "read" => format!("    return *(volatile {e} *)&a0->f0;\n"),
+                    "write" => format!("    *(volatile {e} *)&a0->f0 = a1;\n{unit}"),
+                    _ => panic!("unknown intrinsic `{copy}`"),
+                }
+            }
             "<alloc::arena::Arena" => {
                 let e = self.cty(&elem(&params.first().cloned().unwrap_or(ret.clone())));
                 match op {
@@ -1563,6 +1619,77 @@ impl<'e> Gen<'e> {
 
     // The program.
 
+    /// The body of the wrapper of import `copy`, an `extern fn` with no
+    /// body, of parameters `params` and result `ret`: it calls the C
+    /// function, declared under a name of its own, with the symbol of the
+    /// import's, so that no name of C's, nor any header's declaration of
+    /// it, can clash (lemma E4 of docs/40-extern.md).
+    fn import_body(&mut self, copy: &str, params: &[Type], ret: &Type) -> String {
+        let name = &self.decls[copy].name.name;
+        let c = self.fresh(&format!("c_{name}"));
+        let args: Vec<String> = (0..params.len()).map(|i| format!("a{i}")).collect();
+        let proto = c_prototype(&c, params, ret);
+        let _ = writeln!(self.protos, "extern {proto} __asm__(T_SYMBOL(\"{name}\"));");
+        let call = format!("{c}({})", args.join(", "));
+        match ret {
+            Type::Never => format!("    {call};\n    t_unreachable();\n"),
+            Type::Unit => format!("    {call};\n    return (t_unit){{0}};\n"),
+            _ => format!("    return {call};\n"),
+        }
+    }
+
+    /// Writes the C function of each export, an `extern fn` with a body: one
+    /// with the export's symbol, and C's types, which calls the function
+    /// the body is. The platform's are written under their own names, as
+    /// the runtime declares them (lemma P of docs/40-extern.md).
+    fn exports(&mut self) {
+        let exe: &'e Executable = self.exe;
+        let mut exports: Vec<(&'e str, &'e FnDecl)> = (self.decls.iter())
+            .filter(|(_, d)| d.ext.is_some_and(|e| !e.import))
+            .map(|(n, d)| (*n, *d))
+            .collect();
+        exports.sort_by_key(|(n, _)| *n);
+        for (copy, d) in exports {
+            let body = exe
+                .body(copy)
+                .unwrap_or_else(|| panic!("`{copy}` has no body"));
+            let f = self.body_name(copy);
+            let params: Vec<Type> = (1..=body.params)
+                .map(|i| body.locals[i].ty.clone())
+                .collect();
+            let ret = body.locals[0].ty.clone();
+            let name = &d.name.name;
+            let hook = crate::check::PLATFORM_HOOKS.contains(&name.as_str());
+            let c = match hook {
+                true => name.clone(),
+                false => self.fresh(&format!("x_{name}")),
+            };
+            let proto = c_prototype(&c, &params, &ret);
+            if !hook {
+                let _ = writeln!(self.protos, "{proto} __asm__(T_SYMBOL(\"{name}\"));");
+            }
+            let ps: Vec<String> = (params.iter().enumerate())
+                .map(|(i, p)| format!("{} a{i}", c_scalar(p)))
+                .collect();
+            let ps = match ps.is_empty() {
+                true => "void".to_string(),
+                false => ps.join(", "),
+            };
+            let args: Vec<String> = (0..params.len()).map(|i| format!("a{i}")).collect();
+            let call = format!("{f}({})", args.join(", "));
+            let body = match ret {
+                Type::Never => format!("    {call};\n    t_unreachable();\n"),
+                Type::Unit => format!("    (void){call};\n"),
+                _ => format!("    return {call};\n"),
+            };
+            let r = c_result(&ret);
+            let _ = writeln!(
+                self.exported,
+                "/* extern fn {name} */\n{r} {c}({ps}) {{\n{body}}}\n"
+            );
+        }
+    }
+
     fn finish(mut self) -> String {
         let main = self.main();
         // The structs, each after those it holds by value.
@@ -1622,6 +1749,7 @@ impl<'e> Gen<'e> {
         out.push_str("    \"\",\n};\n\n");
         out.push_str("static const char *t_site_text(uint32_t site) { return t_sites[site]; }\n\n");
         out.push_str(&self.defs);
+        out.push_str(&self.exported);
         out.push_str(&main);
         out
     }

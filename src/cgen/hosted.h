@@ -6,10 +6,10 @@
 #include <errno.h>
 #include <signal.h>
 
-void t_platform_write(const uint8_t *bytes, size_t len) {
+void t_platform_write(uint8_t byte) {
     /* What the program wrote first, as the interpreter shows it. */
     fflush(stdout);
-    fwrite(bytes, 1, len, stderr);
+    fputc(byte, stderr);
 }
 
 _Noreturn void t_platform_halt(void) {

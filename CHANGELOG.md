@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased
+
+Step 40: `extern fn` and volatile memory. See
+[docs/40-extern.md](docs/40-extern.md).
+
+### Added
+
+- `extern fn name(params) -> R;`, an import: a C function, called by its
+  name. A call has the effects it declares and `unsafe`. Its result can't
+  be a refinement. The interpreter stops at a call of one; `t build`
+  compiles it.
+- `extern fn name(params) -> R { .. }`, an export: a T function, also a C
+  function by its name, which C can call. It can't say `with unsafe`, its
+  parameters can't be refinements, and it's never reported as unused.
+- Only integers, `bool`, and as a result `()` and `!`, cross; no generics,
+  lifetimes or effect parameters. Only a program (not a library) can have
+  an `extern fn`, each C name once; `main` and names starting with `t_`
+  are the runtime's. Symbols are given by `__asm__` labels, so C keywords
+  and the C library's headers don't clash.
+- `core::volatile::Volatile<T>`, for `T: Atom`: `Volatile::at(address)`
+  (`unsafe`) gives a `&'static Volatile<T>`, whose `read` and `write` are
+  C volatile accesses. Invariant, not frozen, not `Copy`, `Send` or
+  `Sync`. The interpreter stops at `Volatile::at`.
+- On the freestanding target, a program can write the platform's
+  `t_platform_write` and `t_platform_halt` in T, as exports of exactly the
+  runtime's types, with at most the effect `global`.
+
+### Changed
+
+- `t_platform_write` takes one byte, `void t_platform_write(uint8_t
+  byte)`, rather than a pointer and a length.
+- `extern` is a keyword.
+
 ## 0.54.0 (2026-11-03)
 
 Step 39: the freestanding target. See

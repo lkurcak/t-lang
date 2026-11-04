@@ -886,14 +886,14 @@ impl Printer<'_> {
             let keyword = format!("{} ", f.item_keyword());
             return doc + vis(f.vis) + &keyword + &f.name.name + ": " + ty + " = " + value + ";";
         }
-        match f.intrinsic {
-            Some(_) => {
+        match f.bodiless() {
+            true => {
                 self.signature(f)
                     + self.wheres(f.effects.as_ref(), &f.generics, &f.ensures, false)
                     + ";"
             }
             // In order: comments are printed as what's after them is.
-            None => {
+            false => {
                 let head = self.signature(f)
                     + self.wheres(f.effects.as_ref(), &f.generics, &f.ensures, true);
                 head + self.expr(&f.body, 0, Ctx::default())
@@ -1020,7 +1020,11 @@ impl Printer<'_> {
             },
             params => params + ret,
         };
-        doc + "fn " + &f.name.name + generics + head
+        let ext = match f.ext {
+            Some(_) => text("extern "),
+            None => Doc::nil(),
+        };
+        doc + ext + "fn " + &f.name.name + generics + head
     }
 
     /// `with panic`, `with {alloc, e}`, or `{}` after `effect e =`. One

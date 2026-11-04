@@ -71,16 +71,17 @@ a program has, and nothing else.
 What the runtime needs from the machine is five C functions:
 
 ```c
-void t_platform_write(const uint8_t *bytes, size_t len);
+void t_platform_write(uint8_t byte);
 _Noreturn void t_platform_halt(void);
 void *t_platform_alloc(size_t size, size_t align);
 void *t_platform_realloc(void *p, size_t size, size_t align, size_t new_size);
 void t_platform_free(void *p, size_t size, size_t align);
 ```
 
-- `t_platform_write` writes part of a panic's message wherever errors
+- `t_platform_write` writes a byte of a panic's message wherever errors
   go: a serial port, a screen, nowhere. It can't fail, or it fails
-  quietly.
+  quietly. (Until step 40, it took a pointer and a length:
+  docs/40-extern.md.)
 - `t_platform_halt` stops the program after a panic, and never returns:
   a loop, a reset, a shutdown.
 - `t_platform_alloc` gives a block of `size` bytes, never 0, aligned to
@@ -208,9 +209,9 @@ for it, and that each error is where it should be.
 
 | Missing | Why it's missing | Step |
 |---|---|---|
-| calling C, and being called by it (`extern fn`) | the platform's functions are enough to run | 40 |
-| volatile accesses, memory-mapped devices | needs addresses, `unsafe`, and `extern` | 40 |
-| the platform's functions written in T | needs the two above | 40 |
+| calling C, and being called by it (`extern fn`) | the platform's functions are enough to run | 40 ✅ |
+| volatile accesses, memory-mapped devices | needs addresses, `unsafe`, and `extern` | 40 ✅ |
+| the platform's functions written in T | needs the two above | 40 ✅ (write and halt) |
 | 32-bit machines | the backend assumes 64-bit pointers and `usize` | — |
 | interrupt handlers, `#[repr(C)]` | with FFI | — |
 

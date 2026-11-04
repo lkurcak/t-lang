@@ -11,9 +11,7 @@
 
 void t_main(void);
 
-void t_platform_write(const uint8_t *bytes, size_t len) {
-    fwrite(bytes, 1, len, stderr);
-}
+void t_platform_write(uint8_t byte) { fputc(byte, stderr); }
 
 _Noreturn void t_platform_halt(void) {
     fflush(stderr);

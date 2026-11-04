@@ -168,6 +168,7 @@ impl<'p> Cx<'p> {
             blame_caller: f.blame_caller,
             konst: f.konst,
             is_static: f.is_static,
+            ext: f.ext,
             ensures: f.ensures.clone(),
         };
         (decl, nested)

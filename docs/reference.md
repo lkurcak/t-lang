@@ -370,6 +370,27 @@ function's effects.
 See [effects](07-effects.md), [effect inference](24-visibility.md#effects-of-what-isnt-exported),
 [allocation failure](16-out-of-memory.md), and [unsafe code](09-unsafe.md).
 
+An `extern fn` has C's calling convention, under its own name. With no
+body it's an import, a C function: a call has the effects it declares
+and `unsafe`, and its result can't be a refinement. With a body it's an
+export, a T function C can call too: it can't say `with unsafe`, and its
+parameters can't be refinements. Only integers, `bool`, and as a result
+`()` and `!`, cross; an `extern fn` has no generic parameters, and only a
+program, not a library, can have one. The interpreter stops at an
+import's call; `t build` compiles it. `core::volatile::Volatile<T>` is a
+`T: Atom` at a fixed address: `Volatile::at(address)` is `unsafe`, and
+`read` and `write` on what it gives are safe volatile accesses. See
+[`extern fn`](40-extern.md).
+
+```rust,error
+extern fn abs(x: i32) -> i32;
+
+fn main() {
+    let _ = abs(-3);
+}
+// error: `abs` is unsafe, but it isn't in an `unsafe` block
+```
+
 ## Visibility and modules
 
 Visibility and effects are separate choices. `pub` exposes an item within
@@ -507,7 +528,7 @@ and exits unsuccessfully when it returns `Err`; `E` must implement
 
 | Library | Common items |
 |---|---|
-| [`core`](../core/lib.t) | `Option`, `Result`, `Iterator`, `cell::Cell`, `sync::Atomic`, numeric operations, traits, and formatting |
+| [`core`](../core/lib.t) | `Option`, `Result`, `Iterator`, `cell::Cell`, `sync::Atomic`, `volatile::Volatile`, numeric operations, traits, and formatting |
 | [`alloc`](../alloc/lib.t) | `boxed::Box`, `list::List`, `string::String`, and `arena::Arena` |
 | [`std`](../std/lib.t) | `Os` and `io` streams |
 

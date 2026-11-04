@@ -4011,6 +4011,10 @@
     "named": false
   },
   {
+    "type": "extern",
+    "named": false
+  },
+  {
     "type": "false",
     "named": false
   },
