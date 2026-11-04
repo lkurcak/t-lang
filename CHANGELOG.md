@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.55.0 (2026-11-04)
 
 Step 40: `extern fn` and volatile memory. See
 [docs/40-extern.md](docs/40-extern.md).
