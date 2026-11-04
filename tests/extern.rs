@@ -69,6 +69,19 @@ fn what_needs_the_machine_runs_on_one() {
                 continue;
             }
         };
+        // Each access of a `Volatile` is C's `volatile` (lemma V): its
+        // reads and its writes.
+        let read = |line: &str| line.contains("return *(volatile ");
+        let write =
+            |line: &str| line.trim_start().starts_with("*(volatile ") && line.contains(" = ");
+        let uses = |m: &str| src.contains(&format!(".{m}("));
+        if src.contains("Volatile::")
+            && ((uses("read") && !c.lines().any(read)) || (uses("write") && !c.lines().any(write)))
+        {
+            failures.push(format!(
+                "{name}: its C reads or writes a `Volatile` but not volatilely"
+            ));
+        }
         let exe = dir.join(&name);
         let built = match target {
             Target::Hosted => t_lang::cgen::compile(&c, &exe, target),

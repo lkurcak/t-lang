@@ -1323,6 +1323,7 @@ impl Parser {
                          yet",
                     ));
                 }
+                Tok::Extern => return Err(Error::syntax(self.span(), NOT_EXTERN)),
                 _ => return Err(self.unexpected("`fn`, `type`, `effect` or `}`")),
             }
         }
@@ -1549,6 +1550,7 @@ impl Parser {
                          yet",
                     ));
                 }
+                Tok::Extern => return Err(Error::syntax(self.span(), NOT_EXTERN)),
                 _ => return Err(self.unexpected("`fn`, `type`, `effect` or `}`")),
             }
         }
@@ -2111,6 +2113,9 @@ impl Parser {
                     _ => "what's in a function can't be `export`: only it can see it",
                 };
                 return Err(Error::syntax(self.span(), what));
+            }
+            if *self.peek() == Tok::Extern {
+                return Err(Error::syntax(self.span(), NOT_EXTERN));
             }
             if matches!(
                 self.peek(),
@@ -3252,6 +3257,11 @@ type Segment = (Ident, Vec<TypeExpr>, Option<Span>);
 /// Why a `#[blame_caller]` can't be where it is: what it says is of a
 /// body, which a trait's method without one, an intrinsic, or what isn't
 /// a function doesn't have.
+/// Why an `extern fn` can't be where one is written: in a function, an
+/// impl or a trait.
+const NOT_EXTERN: &str = "an `extern fn` is a module's: C calls it, or it's C, by its name alone, \
+                          which no function, impl or trait it's in could be part of";
+
 const NOT_BLAMING: &str = "`#[blame_caller]` can only be on a function with a body: what aborts \
                            in it is shown where it was called";
 
