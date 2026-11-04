@@ -194,8 +194,10 @@ module.exports = grammar({
       field('bounds', $.trait_bounds),
     ),
 
+    // `extern fn tick() { .. }`: one C can call, an export.
     function_item: $ => seq(
       optional($.visibility_modifier),
+      optional('extern'),
       'fn',
       field('name', $.identifier),
       optional(field('type_parameters', $.type_parameters)),
@@ -207,10 +209,12 @@ module.exports = grammar({
       field('body', $.block),
     ),
 
-    // A method of a trait with no default, `fn show(&self);`, or an
-    // intrinsic, which the compiler provides.
+    // A method of a trait with no default, `fn show(&self);`, an
+    // intrinsic, which the compiler provides, or an import, `extern fn
+    // putchar(c: i32) -> i32;`, a C function.
     function_signature_item: $ => seq(
       optional($.visibility_modifier),
+      optional('extern'),
       'fn',
       field('name', $.identifier),
       optional(field('type_parameters', $.type_parameters)),

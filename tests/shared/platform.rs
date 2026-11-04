@@ -56,6 +56,12 @@ pub fn headers(c: &str) -> Result<(), String> {
 /// `NEEDS` says (unless `$T_LANG_CFLAGS` adds flags, as sanitizers need
 /// their runtimes), then links it with `platform.c`.
 pub fn link(c: &str, exe: &Path) -> Result<(), String> {
+    link_with(c, exe, "platform.c", &[])
+}
+
+/// `link`, with `machine`, a C file of `tests/shared`, for the platform,
+/// the object also needing the C functions `imports`.
+pub fn link_with(c: &str, exe: &Path, machine: &str, imports: &[String]) -> Result<(), String> {
     headers(c)?;
     let obj = exe.with_extension("o");
     t_lang::cgen::compile(c, &obj, t_lang::Target::Freestanding)?;
@@ -72,14 +78,16 @@ pub fn link(c: &str, exe: &Path) -> Result<(), String> {
                 true => name.strip_prefix('_').unwrap_or(name),
                 false => name,
             };
-            if !name.is_empty() && !NEEDS.contains(&name) {
+            if !name.is_empty() && !NEEDS.contains(&name) && !imports.iter().any(|i| i == name) {
                 return Err(format!(
                     "the object needs `{name}`, which isn't the platform's"
                 ));
             }
         }
     }
-    let platform = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/shared/platform.c");
+    let platform = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/shared")
+        .join(machine);
     let cc = std::env::var("CC").unwrap_or_else(|_| "cc".to_string());
     let out = std::process::Command::new(&cc)
         .args(["-std=c11", "-O2", "-o"])

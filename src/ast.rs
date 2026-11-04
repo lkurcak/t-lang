@@ -831,9 +831,33 @@ pub struct FnDecl {
     /// worked out as a const is, but a use of its name is a place, the one
     /// the static is, for the whole run (see docs/38-statics.md).
     pub is_static: bool,
+    /// Its `extern`, if it's written `extern fn`: a function with the C
+    /// calling convention, under its own name. One with no body is an
+    /// *import*, a C function T calls; one with a body an *export*, a T
+    /// function C can call (see docs/40-extern.md).
+    pub ext: Option<Extern>,
+}
+
+/// `extern` on a function: where it's written, and which way it goes.
+#[derive(Debug, Clone, Copy)]
+pub struct Extern {
+    pub span: Span,
+    /// Has it no body: is it a C function, declared for T to call?
+    pub import: bool,
 }
 
 impl FnDecl {
+    /// Is it an import, `extern fn f(x: u32) -> u32;`: a C function, with
+    /// no body in T?
+    pub fn is_import(&self) -> bool {
+        self.ext.is_some_and(|e| e.import)
+    }
+
+    /// Has it no body written in T: is it an intrinsic, or an import?
+    pub fn bodiless(&self) -> bool {
+        self.intrinsic.is_some() || self.is_import()
+    }
+
     /// Is it a const or static item, not a function?
     pub fn is_const(&self) -> bool {
         self.konst.is_some()

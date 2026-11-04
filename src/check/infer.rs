@@ -52,7 +52,7 @@ pub(super) fn infers(prog: &Program, f: &FnDecl, method: Option<MethodOf>) -> bo
     f.effects.is_none()
         && !f.is_const()
         && !f.vis.is_export()
-        && f.intrinsic.is_none()
+        && !f.bodiless()
         && f.measure.is_none()
         && match method {
             None => true,

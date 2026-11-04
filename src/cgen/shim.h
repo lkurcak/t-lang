@@ -16,9 +16,10 @@
 _Static_assert(sizeof(void *) == 8, "T's C backend needs 64-bit pointers");
 _Static_assert(sizeof(size_t) == 8, "T's C backend needs a 64-bit size_t");
 
-/* The platform. Writes `len` bytes of a panic's message, from `bytes`,
- * to wherever errors go; it can't fail, or it fails quietly. */
-void t_platform_write(const uint8_t *bytes, size_t len);
+/* The platform. Writes a byte of a panic's message to wherever errors
+ * go; it can't fail, or it fails quietly. One byte at a time, so that a
+ * program can write it in T (docs/40-extern.md). */
+void t_platform_write(uint8_t byte);
 /* Stops the program, after a panic: it never returns. */
 _Noreturn void t_platform_halt(void);
 /* A block of `size` bytes (never 0), aligned to `align` (a power of two,
@@ -30,6 +31,21 @@ void *t_platform_alloc(size_t size, size_t align);
 void *t_platform_realloc(void *p, size_t size, size_t align, size_t new_size);
 /* Gives back block `p`, given with `size` and `align`. */
 void t_platform_free(void *p, size_t size, size_t align);
+
+/* The symbol of C name `name`, a string literal, for an `__asm__` label:
+ * with the prefix the machine's C names get, if any (`_` on macOS). */
+#define T_STRING_(x) #x
+#define T_STRING(x) T_STRING_(x)
+#ifdef __USER_LABEL_PREFIX__
+#define T_SYMBOL(name) T_STRING(__USER_LABEL_PREFIX__) name
+#else
+#define T_SYMBOL(name) name
+#endif
+
+/* Writes `len` bytes, from `bytes`, where errors go. */
+static void t_write(const uint8_t *bytes, size_t len) {
+    for (size_t i = 0; i < len; i++) t_platform_write(bytes[i]);
+}
 
 /* What a value of a type that holds nothing is: ISO C has no empty
  * structs, so it's a byte nothing reads. */
@@ -48,7 +64,7 @@ static const char *t_site_text(uint32_t site);
 static void t_say(const char *s) {
     size_t n = 0;
     while (s[n]) n++;
-    t_platform_write((const uint8_t *)s, n);
+    t_write((const uint8_t *)s, n);
 }
 
 /* Writes `n` in decimal where errors go. */
@@ -59,7 +75,7 @@ static void t_say_u(uint64_t n) {
         b[--i] = (uint8_t)('0' + n % 10);
         n /= 10;
     } while (n);
-    t_platform_write(b + i, sizeof b - i);
+    t_write(b + i, sizeof b - i);
 }
 
 static void t_say_i(int64_t n) {
@@ -291,7 +307,7 @@ static inline bool t_is_char(uint64_t n) {
 static _Noreturn void t_panic(const uint8_t *ptr, uint64_t len, uint32_t site) {
     t_begin();
     t_say("panicked: ");
-    t_platform_write(ptr, len);
+    t_write(ptr, len);
     t_end(site);
 }
 
@@ -310,7 +326,7 @@ static void t_msg_new(void) {
     t_say("panicked: ");
 }
 
-static void t_msg_push(const uint8_t *ptr, uint64_t len) { t_platform_write(ptr, len); }
+static void t_msg_push(const uint8_t *ptr, uint64_t len) { t_write(ptr, len); }
 
 static void t_msg_char(uint32_t c) {
     uint8_t b[4];
@@ -334,7 +350,7 @@ static void t_msg_char(uint32_t c) {
         b[3] = (uint8_t)(0x80 | (c & 0x3F));
         n = 4;
     }
-    t_platform_write(b, (size_t)n);
+    t_write(b, (size_t)n);
 }
 
 /* Grows `*items`, of `*cap` pointers, to hold one more than `len`. */

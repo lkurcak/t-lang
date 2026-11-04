@@ -433,7 +433,7 @@ pub fn all_fields(adts: &Adts, ty: &Type) -> Vec<Type> {
 }
 
 /// Is `t` *frozen*: does nothing in a value of it change through a `&` to
-/// it? Only a `Cell`, an `Atomic` and an `Arena` do (lemma K5 of
+/// it? Only a `Cell`, an `Atomic`, a `Volatile` and an `Arena` do (lemma K5 of
 /// docs/37-cell.md, Y1 of docs/38-statics.md), so a type is frozen if
 /// none of them is in it, but behind a reference: what a `&` in it
 /// points to isn't part of the value, as with Rust's `Freeze`. A box owns
@@ -446,6 +446,7 @@ pub fn frozen(adts: &Adts, t: &Type) -> bool {
                 if [
                     crate::check::CELL,
                     crate::check::ATOMIC,
+                    crate::check::VOLATILE,
                     crate::check::ARENA,
                 ]
                 .contains(&symbol.as_str()) =>

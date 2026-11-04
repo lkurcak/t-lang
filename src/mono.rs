@@ -756,13 +756,13 @@ impl<'p> Mono<'p> {
                 cx.m.entry_drops.insert(copy.clone(), g);
             }
         }
-        if f.intrinsic.is_none()
+        if !f.bodiless()
             && let Some(b) = cx.m.info.mir.get(&crate::mir::Key::Fn(f.name.name.clone()))
         {
             let b = cx.body(b, &copy);
             cx.m.bodies.insert(copy.clone(), b);
         }
-        if f.intrinsic.is_some() {
+        if f.bodiless() {
             let ps = (f.params.iter())
                 .map(|p| cx.resolved(unrefined(&p.ty)).erased())
                 .collect();
@@ -815,6 +815,7 @@ impl<'p> Mono<'p> {
             blame_caller: f.blame_caller,
             konst: f.konst,
             is_static: f.is_static,
+            ext: f.ext,
             ensures: f.ensures.iter().map(|e| *cx.pred(e)).collect(),
         }
     }

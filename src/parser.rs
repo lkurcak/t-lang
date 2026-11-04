@@ -4,7 +4,8 @@
 //!
 //! ```text
 //! program  = item*
-//! item     = head vis? (fn_decl | struct | enum | trait | mod | use) | head impl
+//! item     = head vis? (fn_decl | "extern" fn_decl | struct | enum | trait | mod | use)
+//!          | head impl                                 -- `extern fn`: docs/40-extern.md
 //! mod      = "mod" IDENT ("{" item* "}" | ";")           -- `;`: in a file of its own
 //! use      = "use" tree ";"
 //! tree     = path ("as" IDENT)? | path "::" "{" (tree ("," tree)* ","?)? "}"
@@ -24,7 +25,7 @@
 //!                                                     its caller's (docs/34-blame-caller.md)
 //! derived  = IDENT ("where" IDENT ":" bound ("+" bound)* ("," IDENT ":" bound ("+" bound)*)*)?
 //! fn_decl  = "fn" IDENT generics? "(" (param ("," param)* ","?)? ")" ("->" type)? where?
-//!            (block | ";")                          -- `;` only for an intrinsic
+//!            (block | ";")                          -- `;` only for an intrinsic or import
 //! where    = "where" type ":" bound ("+" bound)* ("," type ":" bound ("+" bound)*)* ","?
 //! generics = "<" (gparam ("," gparam)* ","?)? ">"     -- lifetimes before types
 //! gparam   = LIFETIME (":" LIFETIME ("+" LIFETIME)*)? | IDENT (":" bound ("+" bound)*)?
@@ -571,6 +572,7 @@ impl Parser {
         };
         let head = match self.peek() {
             Tok::Fn => head.no_measure(NOT_METHOD)?,
+            Tok::Extern => head.for_extern()?,
             Tok::Const | Tok::Static => (head.no_intrinsic()?.no_measure(NOT_METHOD)?.no_test()?)
                 .no_blame_caller()?
                 .no_derives()?,
@@ -621,6 +623,16 @@ impl Parser {
             Tok::Mod => self.mod_decl(prog, head.no_derives()?, vis)?,
             Tok::Const | Tok::Static => {
                 let mut f = self.const_decl(head)?;
+                f.vis = vis;
+                prog.fns.push(f);
+            }
+            Tok::Extern => {
+                let at = self.bump().span;
+                if *self.peek() != Tok::Fn {
+                    return Err(self.unexpected("`fn` after `extern`: only a function can be"));
+                }
+                let mut f = self.function(head, false, false, Some(at))?.0;
+                f.span = at.to(f.span);
                 f.vis = vis;
                 prog.fns.push(f);
             }
@@ -1010,16 +1022,18 @@ impl Parser {
                 "`fn`, `const`, `static`, `struct`, `enum`, `type`, `trait` or `impl`",
             ));
         }
-        Ok(self.function(head, false, false)?.0)
+        Ok(self.function(head, false, false, None)?.0)
     }
 
     /// A function, after its head. A method (`method`) can take `self` and,
-    /// in a trait (`in_trait`), have no body. Says whether it has one.
+    /// in a trait (`in_trait`), have no body. An `extern fn` (`ext` is where
+    /// its `extern` is) has none if it's an import. Says whether it has one.
     fn function(
         &mut self,
         head: Head,
         method: bool,
         in_trait: bool,
+        ext: Option<Span>,
     ) -> Result<(FnDecl, bool), Error> {
         let start = self.expect(Tok::Fn)?;
         let name = self.ident()?;
@@ -1062,7 +1076,7 @@ impl Parser {
         }
         let intrinsic = head.intrinsic;
         let (body, provided) = match self.peek() {
-            Tok::Semi if in_trait || intrinsic.is_some() => {
+            Tok::Semi if in_trait || intrinsic.is_some() || ext.is_some() => {
                 let span = self.bump().span;
                 let body = Expr {
                     kind: ExprKind::Block(Vec::new(), None),
@@ -1120,6 +1134,10 @@ impl Parser {
             blame_caller: head.blame_caller,
             konst: None,
             is_static: false,
+            ext: ext.map(|span| Extern {
+                span,
+                import: !provided,
+            }),
         };
         Ok((f, provided))
     }
@@ -1168,6 +1186,7 @@ impl Parser {
             blame_caller: None,
             konst: Some(start),
             is_static,
+            ext: None,
         })
     }
 
@@ -1294,7 +1313,7 @@ impl Parser {
                 Tok::Type => assoc.push(self.assoc_decl(head.no_blame_caller()?)?),
                 Tok::Effect => effects.push(self.effect_decl(head.no_blame_caller()?)?),
                 Tok::Fn => {
-                    let (decl, provided) = self.function(head, true, true)?;
+                    let (decl, provided) = self.function(head, true, true, None)?;
                     methods.push(TraitMethod { decl, provided });
                 }
                 Tok::Const | Tok::Static => {
@@ -1519,7 +1538,7 @@ impl Parser {
                 Tok::Type => assoc.push(self.assoc_def(head.no_blame_caller()?)?),
                 Tok::Effect => effects.push(self.effect_def(head.no_blame_caller()?)?),
                 Tok::Fn => {
-                    let mut f = self.function(head, true, false)?.0;
+                    let mut f = self.function(head, true, false, None)?.0;
                     f.vis = vis;
                     methods.push(f);
                 }
@@ -3314,6 +3333,28 @@ impl Head {
     fn no_blame_caller(self) -> Result<Head, Error> {
         match self.blame_caller {
             Some(at) => Err(Error::syntax(at, NOT_BLAMING)),
+            None => Ok(self),
+        }
+    }
+
+    /// This head, for an `extern fn`: C calls it, or it's C, so it's none
+    /// of what the attributes on a function make it.
+    fn for_extern(self) -> Result<Head, Error> {
+        let at = [
+            (self.intrinsic, "`#[intrinsic]`"),
+            (self.measure, "`#[measure]`"),
+            (self.test.map(|t| t.span), "`#[test]`"),
+            (self.blame_caller, "`#[blame_caller]`"),
+            (self.derives.first().map(|d| d.span), "`#[derive(..)]`"),
+        ];
+        match at.into_iter().find_map(|(at, what)| Some((at?, what))) {
+            Some((at, what)) => Err(Error::syntax(
+                at,
+                format!(
+                    "{what} can't be on an `extern fn`: it's called by C, or is C, the same \
+                     way any C function is"
+                ),
+            )),
             None => Ok(self),
         }
     }

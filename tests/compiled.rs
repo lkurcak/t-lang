@@ -7,8 +7,10 @@
 //!
 //! Left out are runs that end where only the interpreter can say: an
 //! `unsafe` block breaking its obligations, which is undefined behaviour
-//! in a compiled program, as `unsafe` means; and the interpreter's own
-//! limits, on how much memory and how deep a stack it gives a program.
+//! in a compiled program, as `unsafe` means; the interpreter's own
+//! limits, on how much memory and how deep a stack it gives a program; and
+//! where it stops for want of a machine, at a C function or an address
+//! (docs/40-extern.md), which `extern.rs` runs compiled.
 //!
 //! A program that needs no std is also built for the freestanding target
 //! (docs/39-freestanding.md), linked with a platform for this machine
@@ -167,6 +169,10 @@ fn differential(p: &Program, dir: &Path) -> Outcome {
                 ("broke its obligation", "breaks an obligation"),
                 ("out of memory for", "runs out of the interpreter's memory"),
                 ("stack overflow", "runs out of the interpreter's stack"),
+                (
+                    "with `t build`, to run it",
+                    "needs the machine (tests/extern.rs)",
+                ),
             ];
             if let Some((_, why)) = only.iter().find(|(m, _)| e.message.contains(m)) {
                 return Outcome::Skipped(why);
