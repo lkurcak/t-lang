@@ -1,11 +1,12 @@
 //! Sharing values between threads: the two traits that say what may be
-//! handed to another thread or shared with one, and atomics, which can be
-//! changed by several at once (see docs/38-statics.md).
+//! handed to another thread or shared with one, atomics, which can be
+//! changed by several at once (see docs/38-statics.md), and mutexes, which
+//! let one thread at a time change what's in them (docs/41-threads.md).
 //!
-//! There are no threads yet, but statics are already shared by every
-//! function that names them, so what's in one must be `Sync`, and changes
-//! only atomically.
+//! Statics are shared by every function that names them, and so by every
+//! thread, so what's in one must be `Sync` too.
 
+use crate::cell::Cell;
 use crate::num::Int;
 use crate::result::Result;
 
@@ -121,3 +122,59 @@ impl<T: Atom + Int> Atomic<T> {
     #[intrinsic]
     export fn fetch_sub(&self, value: T) -> T;
 }
+
+/// A value that threads take turns at: `lock` waits until no other thread
+/// has it, then lends what's in it as `&mut`, for as long as the closure
+/// it's given runs.
+///
+/// It's `Sync` if `T` is `Send`, against its fields (a `Cell<T>` isn't):
+/// only one thread at a time reaches what's in it, so it's as if that
+/// were handed from thread to thread. The `unsafe impl` below is that
+/// promise, which the lock keeps (lemma Z2 of docs/41-threads.md).
+///
+/// Like a `Cell`, which it holds its value in, it's invariant in `T`, and
+/// the checker's logic never looks inside. A panic while it's locked stops
+/// the whole program, so no one ever finds it locked for good, nor what's
+/// in it half changed.
+///
+/// Locking it again in the closure `lock` runs waits for ever: the closure
+/// already has what's in it.
+#[derive(Discard where T: Discard, Send where T: Send)]
+export struct Mutex<T> { locked: Atomic<bool>, value: Cell<T> }
+
+unsafe impl<T: Send> Sync for Mutex<T> {}
+
+impl<T> Mutex<T> {
+    /// A mutex holding `value`, not locked.
+    export fn new(value: T) -> Mutex<T> {
+        Mutex { locked: Atomic::new(false), value: Cell::new(value) }
+    }
+
+    /// Waits until no other thread has the mutex, then calls `f` with what's
+    /// in it, and gives back what `f` does. No other thread has it until
+    /// `f` is done.
+    export fn lock<R, effect e, F: FnOnce(&mut T) -> R with e>(&self, f: F) -> R with e {
+        while self.locked.swap(true) {
+            spin();
+        }
+        // SAFETY: no other `as_mut` of the cell, nor anything else, until
+        // `locked` is `false` again: it's `true` only while one thread has
+        // the lock, and only `lock` reaches the cell through a `&`.
+        let r = f(unsafe { self.value.as_mut() });
+        self.locked.store(false);
+        r
+    }
+
+    /// What's in it, which is used up.
+    export fn into_inner(self) -> T { self.value.into_inner() }
+
+    /// A reference to what's in it, which is lent as `&mut`, so no other
+    /// thread can reach it while the reference lives, and no lock is
+    /// needed.
+    export fn get_mut(&mut self) -> &mut T { self.value.get_mut() }
+}
+
+/// Says the thread is waiting for another: so the machine may run another
+/// thread, or rest a moment, before trying again.
+#[intrinsic]
+fn spin();

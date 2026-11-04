@@ -46,6 +46,19 @@ const SHIM: &str = include_str!("cgen/shim.h");
 /// functions from the C library, and std's streams.
 const HOSTED: &str = include_str!("cgen/hosted.h");
 
+/// What a program for the freestanding target has after the runtime: the
+/// one thing of the platform's that isn't a hook.
+const FREESTANDING: &str = "\
+/* Tells the processor the thread is waiting, if it can be told. */
+static void t_spin(void) {
+#if defined(__x86_64__)
+    __builtin_ia32_pause();
+#elif defined(__aarch64__)
+    __asm__ volatile(\"yield\");
+#endif
+}
+";
+
 /// How to write the C.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Options {
@@ -457,6 +470,8 @@ impl<'e> Gen<'e> {
                     crate::check::ARENA => {
                         members.push_str(" void **items; uint64_t len; uint64_t cap;");
                     }
+                    // Where the thread's packet is: see `start`.
+                    "std::thread::JoinHandle" => members.push_str(" void *p;"),
                     _ => members.push_str(" uint8_t _;"),
                 },
             },
@@ -1417,6 +1432,37 @@ impl<'e> Gen<'e> {
                 format!("    return {};\n", int_lit(n, i))
             }
             "core::panic::panic" => "    t_panic(a0.ptr, a0.len, s);\n".to_string(),
+            "core::sync::spin" => format!("    t_spin();\n{unit}"),
+            // A thread's *packet*, on the heap: the thread, how big the
+            // packet is, what its closure gives back, then the closure and
+            // what runs it. `join` sees the first four, the same in every
+            // packet whose result is the same type, and frees it.
+            "std::thread::start" => {
+                let rt = self.cty(&elem(ret));
+                let (f, run) = (self.cty(&params[0]), self.cty(&params[1]));
+                let k = self.fresh("t_thread");
+                let call = self.call_value("k->run", &params[1], vec!["k->f".to_string()]);
+                let _ = writeln!(
+                    self.defs,
+                    "struct {k} {{ pthread_t th; size_t size; size_t align; {rt} r; {f} f; {run} \
+                     run; }};\nstatic void *{k}_go(void *p) {{\n    struct {k} *k = p;\n    \
+                     k->r = {call};\n    return NULL;\n}}\n"
+                );
+                format!(
+                    "    struct {k} *k = t_alloc(sizeof(struct {k}), _Alignof(struct {k}), s);\n    \
+                     k->size = sizeof(struct {k});\n    k->align = _Alignof(struct {k});\n    \
+                     k->f = a0;\n    k->run = a1;\n    t_thread_start(&k->th, {k}_go, k, s);\n    \
+                     return ({r}){{k}};\n"
+                )
+            }
+            _ if of == "<std::thread::JoinHandle" => {
+                let rt = self.cty(ret);
+                format!(
+                    "    struct {{ pthread_t th; size_t size; size_t align; {rt} r; }} *k = a0.p;\n    \
+                     t_thread_join(k->th);\n    {rt} r = k->r;\n    \
+                     t_free(k, k->size, k->align);\n    return r;\n"
+                )
+            }
             "alloc::raw::out_of_memory" => "    t_fail(\"out of memory\", s);\n".to_string(),
             "core::str::from_utf8_unchecked" => "    return a0;\n".to_string(),
             "core::mem::swap" => {
@@ -1464,6 +1510,7 @@ impl<'e> Gen<'e> {
             // docs/37-cell.md).
             "<core::cell::Cell" => match op {
                 "replace" => format!("    {r} old = a0->f0;\n    a0->f0 = a1;\n    return old;\n"),
+                "as_mut" => "    return &a0->f0;\n".to_string(),
                 _ => panic!("unknown intrinsic `{copy}`"),
             },
             // An atomic is a struct of what's in it, which the compiler's
@@ -1725,12 +1772,17 @@ impl<'e> Gen<'e> {
         }
         let mut out = String::new();
         out.push_str("/* Written by `t build` (https://github.com/lkurcak/t-lang). */\n");
+        if self.options.target == crate::Target::Hosted {
+            // Threads and `sched_yield`, which strict C11 leaves out.
+            out.push_str("#define _POSIX_C_SOURCE 200809L\n");
+        }
         out.push_str(SHIM);
         out.push('\n');
-        if self.options.target == crate::Target::Hosted {
-            out.push_str(HOSTED);
-            out.push('\n');
+        match self.options.target {
+            crate::Target::Hosted => out.push_str(HOSTED),
+            crate::Target::Freestanding => out.push_str(FREESTANDING),
         }
+        out.push('\n');
         for t in &self.ty_order {
             let name = &self.tys[&key(t)];
             let _ = writeln!(out, "typedef struct {name} {name};");
@@ -1834,7 +1886,7 @@ pub fn compile(c: &str, out: &std::path::Path, target: crate::Target) -> Result<
         let cc = std::env::var("CC").unwrap_or_else(|_| "cc".to_string());
         let extra = std::env::var("T_LANG_CFLAGS").unwrap_or_default();
         let freestanding: &[&str] = match target {
-            crate::Target::Hosted => &[],
+            crate::Target::Hosted => &["-pthread"],
             crate::Target::Freestanding => &["-ffreestanding", "-fno-stack-protector", "-c"],
         };
         let output = std::process::Command::new(&cc)

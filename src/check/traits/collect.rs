@@ -383,6 +383,9 @@ impl Checker {
                 None => None,
             };
             let header = Span::new(d.span.start, d.self_ty.span.end);
+            if let Some(at) = d.unsafe_ {
+                self.unsafe_impl(prog, d, at, trait_name.as_deref(), &self_ty)?;
+            }
             match (&trait_name, &self_ty) {
                 // So all of a type's own methods are where its private
                 // fields can be seen.
@@ -469,12 +472,18 @@ impl Checker {
                 // Only derived, so whether a type is one follows from its
                 // fields alone: a proof of it needs only more of the same,
                 // never another trait (see `derive`).
+                (Some(tr), _) if (tr == SEND || tr == SYNC) && d.unsafe_.is_some() => {}
                 (Some(tr), t) if tr == COPY || tr == SEND || tr == SYNC => {
+                    let promised = match tr == COPY {
+                        true => "",
+                        false => ", or promised with `unsafe impl`",
+                    };
                     let e = Error::ty(
                         header,
                         format!(
                             "`{tr}` can only be derived, with `#[derive({tr})]` on a struct or \
-                             enum, so that whether a type is `{tr}` follows from its fields alone"
+                             enum, so that whether a type is `{tr}` follows from its fields \
+                             alone{promised}"
                         ),
                     );
                     return Err(match self.derive_fix(prog, d, tr, t) {
@@ -610,6 +619,108 @@ impl Checker {
 
     /// The fix for impl `d` of `tr`, which can only be derived, for type
     /// `t`: derive it instead, if `t` is a struct or enum of this package.
+    /// `unsafe impl<T: Send> Sync for Mutex<T> {}`: a type's writer's
+    /// promise that it's `Send` or `Sync`, against what its fields say, as
+    /// a lock guards them (lemma Z5 of docs/41-threads.md). Only of those
+    /// two, which have no methods; only in the package that declares the
+    /// type, which alone sees its fields and keeps the promise; for the
+    /// type with any parameters, as a derive is, never beside one; and
+    /// needing only `Send` or `Sync` of them, so that a proof of either
+    /// still needs nothing but the two (lemma D1 of
+    /// docs/17-retrospective-1.md).
+    fn unsafe_impl(
+        &self,
+        prog: &Program,
+        d: &ImplDecl,
+        at: Span,
+        tr: Option<&str>,
+        self_ty: &Type,
+    ) -> Result<(), Error> {
+        let only = "only `Send` and `Sync` can be implemented with `unsafe impl`: a promise that \
+                    a type may go to, or be shared with, another thread, which its fields don't \
+                    show";
+        let Some(tr) = tr.filter(|t| *t == SEND || *t == SYNC) else {
+            return Err(Error::ty(at, only));
+        };
+        let short = tr.rsplit("::").next().unwrap_or(tr);
+        let Type::Adt(symbol, regions, args) = self_ty else {
+            return Err(Error::ty(
+                d.self_ty.span,
+                format!("`unsafe impl` of `{short}` can only be for a struct or enum"),
+            ));
+        };
+        let Some(i) = self.types.iter().position(|t| t.symbol == *symbol) else {
+            return Err(Error::ty(
+                d.self_ty.span,
+                format!("`unsafe impl` of `{short}` can only be for a struct or enum"),
+            ));
+        };
+        let def = &self.types[i];
+        let name = symbol.rsplit("::").next().unwrap_or(symbol);
+        if self.modules.package_root(def.module) != self.modules.package_root(d.module) {
+            return Err(Error::ty(
+                d.self_ty.span,
+                format!(
+                    "`unsafe impl` of `{short}` must be in the package that declares `{name}`: \
+                     only there can its fields be seen, and the promise kept"
+                ),
+            ));
+        }
+        if let Some((decl, _)) = prog.all_types().get(i)
+            && decl.derive_of(tr).is_some()
+        {
+            return Err(Error::ty(
+                at,
+                format!(
+                    "`{name}` derives `{short}` already: a type is `{short}` by its fields, or by \
+                     a promise, not both"
+                ),
+            ));
+        }
+        // `L<T>`, each parameter its own, as the type declares them.
+        let adt = &self.adts[symbol];
+        let mut seen: Vec<&Type> = Vec::new();
+        let generic = args.len() == adt.params.len()
+            && regions.len() == adt.lifetimes.len()
+            && args.iter().all(|a| {
+                let fresh = matches!(a, Type::Param(_)) && !seen.contains(&a);
+                seen.push(a);
+                fresh
+            })
+            && {
+                let mut rs: Vec<&Region> = Vec::new();
+                regions.iter().all(|r| {
+                    let fresh = matches!(r, Region::Named(_)) && !rs.contains(&r);
+                    rs.push(r);
+                    fresh
+                })
+            };
+        if !generic {
+            let ty = adt.generic(symbol);
+            return Err(Error::ty(
+                d.self_ty.span,
+                format!(
+                    "`unsafe impl` must be for `{ty}`, whatever its parameters are, with bounds \
+                     on them, as a derive is"
+                ),
+            ));
+        }
+        let markers = |b: &str| b == SEND || b == SYNC || b.starts_with('\'');
+        let bad = (d.generics.bounds.iter().flat_map(|(_, b)| b))
+            .chain(d.generics.wheres.iter().flat_map(|(_, b)| b))
+            .find(|b| !markers(&b.name.name));
+        if let Some(b) = bad {
+            return Err(Error::ty(
+                b.span,
+                format!(
+                    "`unsafe impl` of `{short}` can only need `Send` or `Sync` of its parameters: \
+                     a proof of either needs nothing else"
+                ),
+            ));
+        }
+        Ok(())
+    }
+
     fn derive_fix(&self, prog: &Program, d: &ImplDecl, tr: &str, t: &Type) -> Option<Fix> {
         let Type::Adt(symbol, ..) = t else {
             return None;

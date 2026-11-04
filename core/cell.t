@@ -41,6 +41,17 @@ impl<T> Cell<T> {
     #[intrinsic]
     export fn replace(&self, value: T) -> T;
 
+    /// A reference to what's in the cell, lent as `&mut` though the cell
+    /// is only borrowed by `&`: how a lock, like `core::sync::Mutex`,
+    /// lends what it guards.
+    ///
+    /// It's unsafe, as the cell can be reached by other `&`s: whoever calls
+    /// it must make sure that, while the reference lives, nothing else
+    /// reaches what's in the cell, by `get`, `set`, `replace` or another
+    /// `as_mut` (see docs/41-threads.md).
+    #[intrinsic]
+    export fn as_mut(&self) -> &mut T with unsafe;
+
     /// What's in the cell, which is used up.
     export fn into_inner(self) -> T { self.value }
 

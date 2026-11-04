@@ -1062,6 +1062,10 @@ pub struct ImplDecl {
     pub span: Span,
     pub module: usize,
     pub generics: Generics,
+    /// `unsafe impl`: a promise the checker can't check, that the type
+    /// is `Send` or `Sync` against what its fields say (see
+    /// docs/41-threads.md).
+    pub unsafe_: Option<Span>,
     /// The trait, if it implements one.
     pub trait_name: Option<Ident>,
     /// The type it's for, which `Self` means in it.

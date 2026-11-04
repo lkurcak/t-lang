@@ -417,14 +417,16 @@ pub fn test_files(path: &Path, src: &str, read: load::Read, filter: Option<&str>
     }
 }
 
+/// The stack each thread of the interpreter's runs on (see `on_big_stack`).
+pub(crate) const INTERP_STACK_SIZE: usize = 1024 * 1024 * 1024;
+
 /// `f`'s result, worked out on a thread of its own with a big stack: the
 /// interpreter recurses several times per nested call, so give it enough
 /// to reach `MAX_CALL_DEPTH` even in debug builds, where frames are huge.
 /// It's only reserved address space; untouched pages cost nothing.
 fn on_big_stack<R: Send + 'static>(f: impl FnOnce() -> R + Send + 'static) -> R {
-    const STACK_SIZE: usize = 1024 * 1024 * 1024;
     std::thread::Builder::new()
-        .stack_size(STACK_SIZE)
+        .stack_size(INTERP_STACK_SIZE)
         .spawn(f)
         .expect("failed to spawn interpreter thread")
         .join()

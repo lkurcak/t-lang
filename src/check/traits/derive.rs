@@ -92,8 +92,11 @@ impl Checker {
                 }
                 // A derived marker needs only more of the same (see
                 // `collect_impls_in`), so that's all it can say: but a
-                // `Send` can need `Sync`, of what a `&` in it shares.
-                let may = |b: &str| b == tr || (tr == SEND && b == SYNC);
+                // `Send` can need `Sync`, of what a `&` in it shares, and a
+                // `Sync` can need `Send`, of what a mutex in it holds (an
+                // `unsafe impl`'s bounds are of the two only).
+                let threads = |t: &str| t == SEND || t == SYNC;
+                let may = |b: &str| b == tr || (threads(tr) && threads(b));
                 if MARKERS.contains(&tr)
                     && let Some(b) = w
                         .bounds
@@ -102,7 +105,7 @@ impl Checker {
                         .find(|b| !may(&b.name.name))
                 {
                     let what = match tr {
-                        SEND => "`Send` or `Sync`".to_string(),
+                        SEND | SYNC => "`Send` or `Sync`".to_string(),
                         _ => format!("`{tr}`"),
                     };
                     return Err(Error::ty(
