@@ -238,8 +238,10 @@ module.exports = grammar({
     ),
 
     // `impl<T: Show> Show for Option<T> { .. }` or `impl Point { .. }`,
-    // maybe with a `where` clause before the body.
+    // maybe with a `where` clause before the body; `unsafe impl<T: Send>
+    // Sync for Mutex<T> {}`, a promise.
     impl_item: $ => seq(
+      optional('unsafe'),
       'impl',
       optional(field('type_parameters', $.type_parameters)),
       optional(seq(field('trait', $._path_type), 'for')),

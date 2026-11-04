@@ -1,14 +1,14 @@
-fn adder(n: i64) -> {closure#92064} {
+fn adder(n: i64) -> {closure#97626} {
     let _0: {closure};
     let _1: i64; // n
     bb0: {
-        _0 = {closure#8627}(copy _1);
+        _0 = {closure#8894}(copy _1);
         dead _1;
         return;
     }
 }
 
-closure adder::{closure#8627} {
+closure adder::{closure#8894} {
     let _0: i64;
     let mut _1: &{closure}; // the closure
     let _2: i64; // x
@@ -20,7 +20,7 @@ closure adder::{closure#8627} {
     }
 }
 
-fn counter() -> {closure#92163} {
+fn counter() -> {closure#97725} {
     let _0: {closure};
     let mut _1: i64; // n
     let _2: i64;
@@ -28,13 +28,13 @@ fn counter() -> {closure#92163} {
         _2 = 0_i64;
         _1 = copy _2;
         dead _2;
-        _0 = {closure#8647}(copy _1);
+        _0 = {closure#8914}(copy _1);
         dead _1;
         return;
     }
 }
 
-closure counter::{closure#8647} {
+closure counter::{closure#8914} {
     let _0: i64;
     let mut _1: &mut {closure}; // the closure
     let _2: ();
@@ -51,10 +51,10 @@ closure counter::{closure#8647} {
     }
 }
 
-fn compose::<{panic}, {closure#92064}, {closure#92064}>(
-    f: {closure#92064},
-    g: {closure#92064},
-) -> {closure#92371}::<{panic}, {closure#92064}, {closure#92064}> {
+fn compose::<{panic}, {closure#97626}, {closure#97626}>(
+    f: {closure#97626},
+    g: {closure#97626},
+) -> {closure#97933}::<{panic}, {closure#97626}, {closure#97626}> {
     let _0: {closure};
     let _1: {closure}; // f
     let _2: {closure}; // g
@@ -63,7 +63,7 @@ fn compose::<{panic}, {closure#92064}, {closure#92064}>(
     bb0: {
         _3 = move _2;
         _4 = move _1;
-        _0 = {closure#8694}(move _3, move _4);
+        _0 = {closure#8961}(move _3, move _4);
         dead _4;
         dead _3;
         dead _2;
@@ -72,7 +72,7 @@ fn compose::<{panic}, {closure#92064}, {closure#92064}>(
     }
 }
 
-closure compose::<{panic}, {closure#92064}, {closure#92064}>::{closure#8694} {
+closure compose::<{panic}, {closure#97626}, {closure#97626}>::{closure#8961} {
     let _0: i64;
     let mut _1: &{closure}; // the closure
     let _2: i64; // x
@@ -93,7 +93,7 @@ closure compose::<{panic}, {closure#92064}, {closure#92064}>::{closure#8694} {
     }
 }
 
-fn pick(c: bool) -> {closure#92064} {
+fn pick(c: bool) -> {closure#97626} {
     let _0: {closure};
     let _1: bool; // c
     let _2: {closure}; // a
@@ -375,7 +375,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         _43 = adder(move _44);
         _46 = 10_i64;
         _45 = adder(move _46);
-        _42 = compose::<{panic}, {closure#92064}, {closure#92064}>(move _43, move _45);
+        _42 = compose::<{panic}, {closure#97626}, {closure#97626}>(move _43, move _45);
         _41 = move _42;
         dead _46;
         dead _45;

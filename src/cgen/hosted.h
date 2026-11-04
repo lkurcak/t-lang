@@ -5,6 +5,8 @@
 #include <string.h>
 #include <errno.h>
 #include <signal.h>
+#include <pthread.h>
+#include <sched.h>
 
 void t_platform_write(uint8_t byte) {
     /* What the program wrote first, as the interpreter shows it. */
@@ -73,4 +75,25 @@ static void t_start(void) {
 #ifdef SIGPIPE
     signal(SIGPIPE, SIG_IGN);
 #endif
+}
+
+static void t_spin(void) { sched_yield(); }
+
+/* Starts a thread, `th`, running `go(k)`, with a stack as big as `main`'s
+ * usually is. If it can't, the program stops, as when there's no memory:
+ * a stack is memory (docs/41-threads.md). */
+static void t_thread_start(pthread_t *th, void *(*go)(void *), void *k, uint32_t site) {
+    pthread_attr_t attr;
+    int failed = pthread_attr_init(&attr) != 0;
+    if (!failed) {
+        (void)pthread_attr_setstacksize(&attr, (size_t)8 << 20);
+        failed = pthread_create(th, &attr, go, k) != 0;
+        (void)pthread_attr_destroy(&attr);
+    }
+    if (failed) t_fail("out of memory: no thread could be started", site);
+}
+
+/* Waits for thread `th` to end. */
+static void t_thread_join(pthread_t th) {
+    if (pthread_join(th, NULL) != 0) t_bug("a thread couldn't be joined");
 }

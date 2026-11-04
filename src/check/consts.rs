@@ -66,7 +66,8 @@ impl Checker {
     /// Checks that static `f`, of type `ty`, may be one (see
     /// docs/38-statics.md): not frozen, as a static of a frozen type
     /// never changes, and is a const; plain data, as its value is worked
-    /// out while compiling, as a const's is, with atomics in it (lemma Y6);
+    /// out while compiling, as a const's is, with atomics and mutexes in it
+    /// (lemma Y6);
     /// `Sync`, as every function can reach it (Y3); and `Discard`, as
     /// nothing ever uses it up.
     pub(super) fn static_type(&self, f: &FnDecl, ty: &Type) -> Result<(), Error> {
@@ -94,7 +95,7 @@ impl Checker {
                 format!(
                     "a static can't be of type `{}`: its value is worked out while compiling, so \
                      it's plain data, of integers, `bool`, `char`, `()`, `&str` and `&[u8]`, and \
-                     arrays, structs and enums of those, and atomics",
+                     arrays, structs and enums of those, atomics and mutexes",
                     f.ret
                 ),
             ));

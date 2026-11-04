@@ -612,7 +612,11 @@ impl Printer<'_> {
     /// `impl<T: Show> Show for Option<T> { .. }` or `impl Point { .. }`
     fn impl_decl(&mut self, d: &ImplDecl) -> Doc {
         let doc = self.lead(d.doc.as_ref(), &d.allows, d.span.start);
-        let generics = self.generics(d.span.start + 4, &d.generics);
+        let (unsafe_, at) = match d.unsafe_ {
+            Some(u) => ("unsafe ", self.find(u.end, &Tok::Impl)),
+            None => ("", d.span.start),
+        };
+        let generics = self.generics(at + 4, &d.generics);
         let header = match &d.trait_name {
             Some(t) => text(format!(" {} for ", t.name)),
             None => text(" "),
@@ -629,7 +633,7 @@ impl Printer<'_> {
         let short = |f: &Doc| flat_width(f).is_some_and(|w| w <= WIDTH / 2);
         let ty = flat(&ty).filter(short).unwrap_or(ty);
         let wheres = self.wheres(None, &d.generics, &[], true);
-        doc + "impl" + generics + header + ty + wheres + body
+        doc + unsafe_ + "impl" + generics + header + ty + wheres + body
     }
 
     /// The `{ .. }` of a trait or impl, with the `{` at `open` and the `}`

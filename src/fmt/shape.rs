@@ -133,7 +133,7 @@ structs! {
     EffectSet { items, span, with };
     Effect { kind, span, id };
     TraitMethod { decl, provided };
-    ImplDecl { doc, allows, span, module, generics, trait_name, self_ty, assoc, effects, methods };
+    ImplDecl { doc, allows, span, module, generics, unsafe_, trait_name, self_ty, assoc, effects, methods };
     Param { doc, allows, mutable, vis, name, ty };
     Ident { name, span, id };
     TypeExpr { kind, span, id };

@@ -105,6 +105,8 @@ use unify::Var;
 pub const INTRINSICS: &[&str] = &[
     "core::mem::swap",
     "core::cell::Cell::replace",
+    "core::cell::Cell::as_mut",
+    "core::sync::spin",
     "core::sync::Atomic::load",
     "core::sync::Atomic::swap",
     "core::sync::Atomic::compare_swap",
@@ -158,6 +160,8 @@ pub const INTRINSICS: &[&str] = &[
     "std::io::Stdin::read_byte",
     "std::io::Stdout::write_byte",
     "std::io::Stderr::write_byte",
+    "std::thread::start",
+    "std::thread::JoinHandle::join",
 ];
 
 /// The intrinsic structs, by symbol: types the alloc library declares
@@ -171,6 +175,8 @@ pub const INTRINSIC_TYPES: &[&str] = &[
     "std::io::Stdin",
     "std::io::Stdout",
     "std::io::Stderr",
+    "std::thread::Threads",
+    "std::thread::JoinHandle",
 ];
 
 /// The symbol of the alloc library's `Arena`, the one intrinsic type

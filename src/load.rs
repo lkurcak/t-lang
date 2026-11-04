@@ -85,6 +85,7 @@ pub(crate) type Library = (
 pub const STD_FILES: &[(&str, &str)] = &[
     ("lib.t", include_str!("../std/lib.t")),
     ("io.t", include_str!("../std/io.t")),
+    ("thread.t", include_str!("../std/thread.t")),
     ("rt.t", include_str!("../std/rt.t")),
 ];
 

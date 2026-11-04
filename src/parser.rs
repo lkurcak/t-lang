@@ -620,6 +620,21 @@ impl Parser {
                 }
                 prog.impls.push(self.impl_decl(head.no_derives()?)?);
             }
+            Tok::Unsafe => {
+                let at = self.bump().span;
+                if *self.peek() != Tok::Impl {
+                    return Err(self.unexpected(
+                        "`impl` after `unsafe`: only an impl can be, outside a function",
+                    ));
+                }
+                if let Some(v) = vis.span() {
+                    return Err(Error::syntax(v, "an `impl` can't be `pub` or `export`"));
+                }
+                let mut d = self.impl_decl(head.no_derives()?)?;
+                d.unsafe_ = Some(at);
+                d.span = at.to(d.span);
+                prog.impls.push(d);
+            }
             Tok::Mod => self.mod_decl(prog, head.no_derives()?, vis)?,
             Tok::Const | Tok::Static => {
                 let mut f = self.const_decl(head)?;
@@ -674,7 +689,7 @@ impl Parser {
         let mut brackets = 0usize;
         let mut head = matches!(
             self.peek(),
-            Tok::Hash | Tok::Pub | Tok::Export | Tok::Sealed
+            Tok::Hash | Tok::Pub | Tok::Export | Tok::Sealed | Tok::Unsafe
         );
         loop {
             let item = matches!(
@@ -690,7 +705,7 @@ impl Parser {
             );
             let prefix = matches!(
                 self.peek(),
-                Tok::Hash | Tok::Pub | Tok::Export | Tok::Sealed
+                Tok::Hash | Tok::Pub | Tok::Export | Tok::Sealed | Tok::Unsafe
             );
             if braces == 0 && brackets == 0 {
                 if head && item {
@@ -1561,6 +1576,7 @@ impl Parser {
             span: start.to(end),
             module: self.module,
             generics,
+            unsafe_: None,
             trait_name,
             self_ty,
             assoc,

@@ -32,6 +32,11 @@ void *t_platform_realloc(void *p, size_t size, size_t align, size_t new_size);
 /* Gives back block `p`, given with `size` and `align`. */
 void t_platform_free(void *p, size_t size, size_t align);
 
+/* Waits a moment, in a loop that waits for another thread: lets another
+ * run, on the hosted target; on the freestanding one, tells the
+ * processor, if it can be. */
+static void t_spin(void);
+
 /* The symbol of C name `name`, a string literal, for an `__asm__` label:
  * with the prefix the machine's C names get, if any (`_` on macOS). */
 #define T_STRING_(x) #x
@@ -94,7 +99,17 @@ static _Noreturn void t_end(uint32_t site) {
     t_platform_halt();
 }
 
-static void t_begin(void) { t_say("runtime error: "); }
+/* Whether a thread is saying why the program stops: only one does, and
+ * any other that gets here waits for the end, so their messages aren't
+ * mixed (docs/41-threads.md). */
+static uint32_t t_stopping;
+
+static void t_begin(void) {
+    if (__atomic_exchange_n(&t_stopping, 1, __ATOMIC_SEQ_CST)) {
+        for (;;) t_spin();
+    }
+    t_say("runtime error: ");
+}
 
 /* Stops the program with message `msg`, at `site`. */
 static _Noreturn void t_fail(const char *msg, uint32_t site) {

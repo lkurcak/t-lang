@@ -55,6 +55,8 @@ use crate::types::IntTy;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
+mod threads;
+
 /// Deep enough for any reasonable recursion, shallow enough to stop runaway
 /// recursion with an error instead of crashing the interpreter itself.
 const MAX_CALL_DEPTH: usize = 10_000;
@@ -100,6 +102,8 @@ pub enum Value {
     Box(Ptr),
     /// A `RawBuf`: where its slots are, on the heap, as a `Slots`.
     RawBuf(Ptr),
+    /// A `JoinHandle`: which thread it's of, by number (see `threads`).
+    Thread(usize),
     /// An `Arena`: where its values are, on the heap, as a `Slots` of a
     /// `Box` for each, in the order they were put in.
     Arena(Ptr),
@@ -180,6 +184,7 @@ struct Frame<'p> {
 
 /// Where a function or closure being run is: the `unsafe` blocks of its
 /// body, the statement it's at, and the function's name, if it's one.
+#[derive(Clone)]
 struct Site<'p> {
     unsafe_blocks: &'p [Span],
     span: Span,
@@ -199,6 +204,7 @@ impl fmt::Display for Value {
             Value::Box(_) => f.write_str("<box>"),
             Value::RawBuf(_) => f.write_str("<buffer>"),
             Value::Arena(_) => f.write_str("<arena>"),
+            Value::Thread(id) => write!(f, "<thread {id}>"),
             Value::Slots(_) => f.write_str("<slots>"),
             Value::Moved => f.write_str("<moved>"),
             Value::Struct(name, fields) if fields.is_empty() => {
@@ -343,6 +349,7 @@ impl<'p, 'o> Interp<'p, 'o> {
             proved: &prog.proved,
             measures: &prog.measures,
             refined: HashMap::new(),
+            threads: threads::Threads::default(),
             exe: program,
             term,
             bits,
@@ -428,14 +435,27 @@ impl<'p> Interp<'p, '_> {
             0 => Vec::new(),
             _ => vec![Value::Struct(
                 "std::Os".into(),
-                ["stdin", "stdout", "stderr"]
+                ["stdin", "stdout", "stderr", "threads"]
                     .into_iter()
-                    .zip(["std::io::Stdin", "std::io::Stdout", "std::io::Stderr"])
+                    .zip([
+                        "std::io::Stdin",
+                        "std::io::Stdout",
+                        "std::io::Stderr",
+                        "std::thread::Threads",
+                    ])
                     .map(|(field, ty)| (field.to_string(), Value::Struct(ty.into(), Vec::new())))
                     .collect(),
             )],
         };
-        let result = self.call(Value::Fn(entry.to_string(), None), args, Span::new(0, 0))?;
+        // The interpreter's own panic, a bug's, waits for the threads to
+        // give up before it goes on (`wind_down`), as they run on it.
+        let main = Value::Fn(entry.to_string(), None);
+        let call = std::panic::AssertUnwindSafe(|| self.call(main, args, Span::new(0, 0)));
+        let result = match std::panic::catch_unwind(call) {
+            Ok(result) => result,
+            Err(p) => Err(self.stopped(p)),
+        };
+        let result = self.wind_down(result)?;
         // An error it gives back is reported, by the copy of `std::rt::report`
         // monomorphisation made for it, with its own `Stderr`.
         if let Value::Variant(ty, variant, fields) = &result
@@ -662,6 +682,8 @@ struct Interp<'p, 'o> {
     refined: HashMap<(usize, u64), Refined>,
     /// What runs: the MIR of each copy of a function and closure.
     exe: &'p crate::mono::Executable,
+    /// The program's threads, and which is running (see `threads`).
+    threads: threads::Threads<'p>,
     /// The operating system's streams, as the program's `std::Os` reaches
     /// them.
     term: &'o mut dyn Terminal,
@@ -1878,12 +1900,28 @@ impl<'p> Interp<'p, '_> {
         if let Some(stream) = name.strip_prefix("<std::io::") {
             return Ok(self.stream(stream, args));
         }
+        if name == "<core::cell::Cell" && copy.ends_with("::as_mut") {
+            return Ok(self.cell_as_mut(args));
+        }
         if name == "<core::cell::Cell" {
             return Ok(self.cell_replace(copy, args));
         }
         if name == "<core::sync::Atomic" {
+            // What another thread does with it can be seen here, and what
+            // this one does there.
+            self.turn()?;
             let op = copy.rsplit("::").next().unwrap_or_default();
             return Ok(self.atomic(op, args));
+        }
+        if name == "core::sync::spin" {
+            self.turn()?;
+            return Ok(Value::Unit);
+        }
+        if name == "std::thread::start" {
+            return self.start(args, span);
+        }
+        if name == "<std::thread::JoinHandle" {
+            return self.join(args, span);
         }
         if name == "<alloc::arena::Arena" {
             let op = copy.rsplit("::").next().unwrap_or_default();
@@ -2185,6 +2223,24 @@ impl<'p> Interp<'p, '_> {
             unsound("a cell whose value was moved out");
         }
         old
+    }
+
+    /// Runs `Cell::as_mut` on `args`, a `&Cell<T>`: a reference to its one
+    /// field, what's in it. That it's the only way there while it lives is
+    /// the caller's obligation (`unsafe`).
+    fn cell_as_mut(&mut self, args: Vec<Value>) -> Value {
+        let [Value::Ref(p)] = <[Value; 1]>::try_from(args).unwrap_or_else(|_| unsound("arity"))
+        else {
+            unsound("`Cell::as_mut` of what isn't a reference")
+        };
+        if !matches!(self.memory.get(&p), Value::Struct(ty, _) if ty.split("::<").next() == Some(crate::check::CELL))
+        {
+            unsound(&format!(
+                "`Cell::as_mut` of `{}`, which isn't a cell",
+                self.memory.get(&p)
+            ));
+        }
+        Value::Ref(p.field(0))
     }
 
     /// Runs `Atomic`'s intrinsic method `op` on `args`: a `&Atomic<T>`,

@@ -18,7 +18,8 @@ safe. This reference describes the current language; the
 
 Run a file with `t file.t`, or check it without running it with
 `t check file.t`. A program starts at `fn main`. It can take no arguments,
-or receive `std::Os`, which supplies its input and output streams.
+or receive `std::Os`, which supplies its input and output streams and
+the right to start threads.
 
 ```rust
 fn main(os: std::Os) -> Result<(), std::io::Error> {
@@ -237,21 +238,31 @@ The values that change behind a `&` are a `core::cell::Cell<T>`'s and a
 `core::sync::Atomic<T>`'s. A cell's:
 `get` copies it out (`T: Copy`), `set` replaces it and drops the old one
 (`T: Discard`), `replace` swaps it, `into_inner` and `get_mut` work as
-for any value. Nothing gives a reference into a cell from a `&Cell<T>`,
-and no measure or refinement can read one. `Cell` is invariant in `T`.
+for any value. Nothing safe gives a reference into a cell from a
+`&Cell<T>` (`as_mut` is `unsafe`, for writing locks), and no measure or
+refinement can read one. `Cell` is invariant in `T`.
 An atomic holds an integer or `bool` (`T: Atom`), changed by `load`,
 `store`, `swap`, `compare_exchange` and `fetch_add` and the like, each one
 sequentially consistent step.
 
 `Send` (may be handed to another thread) and `Sync` (may be shared by
-threads through `&`) are, like `Copy` and `Discard`, only derived or
-built in: `&T` is `Send` and `Sync` when `T` is `Sync`, a closure when
-what it captures is, a `Cell` is `Send` but never `Sync`, an `Atomic` is
-both.
+threads through `&`) are, like `Copy` and `Discard`, derived or built in:
+`&T` is `Send` and `Sync` when `T` is `Sync`, a closure when what it
+captures is, a `Cell` is `Send` but never `Sync`, an `Atomic` is both.
+Or promised, against the fields, by `unsafe impl<T: Send> Sync for
+Mutex<T> {}`: only of the two, only in the type's own package, for the
+type with any parameters, needing only `Send` or `Sync` of them.
+
+`os.threads.spawn(f)` starts a thread running closure `f` (`Send`, with a
+`Send` result), with `f`'s effects and `alloc`, and gives a
+`JoinHandle<'a, R>`, which isn't `Discard`: `join` must use it up, and
+gives `f`'s result. So `f` may borrow what lives as long as the handle.
+`core::sync::Mutex<T>` is `Sync` when `T` is `Send`; `m.lock(|x| ..)`
+lends `x: &mut T` to the closure while no other thread has it.
 
 See [ownership](05-ownership.md), [linear values](06a.1-linear-types.md),
-[destructors](20-destructors.md), [cells](37-cell.md), and
-[statics and atomics](38-statics.md).
+[destructors](20-destructors.md), [cells](37-cell.md),
+[statics and atomics](38-statics.md), and [threads](41-threads.md).
 
 ## Closures and generic bounds
 
