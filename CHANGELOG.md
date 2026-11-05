@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.57.0 (2026-11-05)
 
 Step 42: string patterns, `for` over temporaries, `{self}`. See
 [docs/42-patterns-and-loops.md](docs/42-patterns-and-loops.md).
