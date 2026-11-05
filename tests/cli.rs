@@ -80,7 +80,7 @@ fn bad_arguments_print_usage() {
 #[test]
 fn reads_the_files_of_modules() {
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/t");
-    let out = t(&[&format!("{dir}/module_files/main.t")]);
+    let out = t_runs(&[&format!("{dir}/module_files/main.t")]);
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(
         String::from_utf8(out.stdout).unwrap(),
