@@ -531,7 +531,11 @@ fn fetching_runs_no_hooks() {
         .env("GIT_CONFIG_COUNT", "1")
         .env("GIT_CONFIG_KEY_0", "core.hooksPath")
         .env("GIT_CONFIG_VALUE_0", &hooks)
-        .arg("main.t")
+        .args(if cfg!(windows) {
+            &["--interp", "main.t"][..]
+        } else {
+            &["main.t"]
+        })
         .output()
         .unwrap();
     assert!(out.status.success(), "{}", text(&out.stderr));
