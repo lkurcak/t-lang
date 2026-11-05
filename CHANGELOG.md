@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.59.0 (2026-11-05)
 
 Step 43.1: `Debug` and format strings. See
 [docs/43.1-formatting.md](docs/43.1-formatting.md).
