@@ -285,6 +285,7 @@ fn bindings<'a>(p: &'a Pattern, out: &mut Vec<Decl<'a>>) {
         | PatternKind::Int(..)
         | PatternKind::Range(..)
         | PatternKind::Bool(_)
+        | PatternKind::Str(_)
         | PatternKind::Unit => {}
     }
 }

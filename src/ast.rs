@@ -362,7 +362,11 @@ pub enum UseKind {
 
 impl UseTree {
     /// Each name it brings in: the path to it, and the name it's given.
-    pub fn leaves(&self) -> Vec<(Vec<&Ident>, &Ident)> {
+    /// Each name it brings in: the path to it as written, and the name.
+    /// `self` in a group, `a::{self}`, is a leaf of its own, the `bool`
+    /// set: its path is the group's, `a`, and its name is `self`, or the
+    /// one after its `as`.
+    pub fn leaves(&self) -> Vec<(Vec<&Ident>, &Ident, bool)> {
         let mut out = Vec::new();
         self.collect(&mut Vec::new(), &mut out);
         out
@@ -371,14 +375,21 @@ impl UseTree {
     fn collect<'a>(
         &'a self,
         prefix: &mut Vec<&'a Ident>,
-        out: &mut Vec<(Vec<&'a Ident>, &'a Ident)>,
+        out: &mut Vec<(Vec<&'a Ident>, &'a Ident, bool)>,
     ) {
         let len = prefix.len();
+        if let (UseKind::Name(alias), [me]) = (&self.kind, &self.path[..])
+            && me.name == "self"
+            && len > 0
+        {
+            out.push((prefix.clone(), alias.as_ref().unwrap_or(me), true));
+            return;
+        }
         prefix.extend(&self.path);
         match &self.kind {
             UseKind::Name(alias) => {
                 if let Some(last) = prefix.last().copied() {
-                    out.push((prefix.clone(), alias.as_ref().unwrap_or(last)));
+                    out.push((prefix.clone(), alias.as_ref().unwrap_or(last), false));
                 }
             }
             UseKind::Group(trees) => trees.iter().for_each(|t| t.collect(prefix, out)),
@@ -1794,6 +1805,7 @@ fn pattern_binds(p: &Pattern, out: &mut Vec<String>) {
         | PatternKind::Int(..)
         | PatternKind::Range(..)
         | PatternKind::Bool(_)
+        | PatternKind::Str(_)
         | PatternKind::Unit => {}
     }
 }
@@ -1935,6 +1947,9 @@ pub enum PatternKind {
     Range(Option<i128>, Option<i128>, bool, Lit),
     Bool(bool),
     Unit,
+    /// A string literal, `"help"`: matches a `&str` of the same bytes. The
+    /// text is as the literal means it, escapes worked out.
+    Str(String),
     /// `Shape::Rect(w, _)`, or `Option::<i64>::Some(x)` with type arguments.
     Variant(Ident, Vec<TypeExpr>, Ident, Vec<Pattern>),
     /// `Point { x, y: 0 }`, or `Point { x, .. }` to ignore the other fields

@@ -2951,10 +2951,11 @@ impl Parser {
     fn pat_atom(&mut self) -> Result<Pattern, Error> {
         let start = self.span();
         let kind = match self.peek().clone() {
-            Tok::Str(_) | Tok::ByteStr(_) => {
+            Tok::Str(s) => PatternKind::Str(s),
+            Tok::ByteStr(_) => {
                 return Err(Error::syntax(
                     start,
-                    "a string literal can't be a pattern yet; compare with `==`",
+                    "a byte string literal can't be a pattern yet; compare with `==`",
                 ));
             }
             Tok::Int(..) | Tok::Minus | Tok::Byte(_) | Tok::Char(_) => {

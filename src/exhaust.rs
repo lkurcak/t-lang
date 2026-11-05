@@ -61,6 +61,37 @@ pub enum Ctor {
     Struct,
     /// The n-th variant of an enum.
     Variant(usize),
+    /// A string, by its number in `str_ctor`'s table: equal numbers, equal
+    /// strings. A `str` has as many values as there are strings, so no
+    /// set of these covers them all; `_` has to.
+    Str(u32),
+}
+
+thread_local! {
+    /// Every string a pattern has had, by number. Numbers only need to be
+    /// equal exactly when the strings are, so one table per thread, for
+    /// every program it checks, will do.
+    static STRS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The constructor for string pattern `s`.
+pub fn str_ctor(s: &str) -> Ctor {
+    STRS.with(|strs| {
+        let mut strs = strs.borrow_mut();
+        let i = match strs.iter().position(|t| t == s) {
+            Some(i) => i,
+            None => {
+                strs.push(s.to_string());
+                strs.len() - 1
+            }
+        };
+        Ctor::Str(u32::try_from(i).expect("fewer than 2^32 strings in patterns"))
+    })
+}
+
+/// The string `Ctor::Str(i)` stands for.
+fn str_of(i: u32) -> String {
+    STRS.with(|strs| strs.borrow()[i as usize].clone())
 }
 
 /// A part of a `match` that can never be the one that matches.
@@ -523,7 +554,7 @@ impl Cx<'_> {
     fn fields(&self, c: Ctor, ty: &Type) -> Vec<Type> {
         let ty = peel(ty);
         match c {
-            Ctor::Bool(_) | Ctor::Unit | Ctor::Int(..) => Vec::new(),
+            Ctor::Bool(_) | Ctor::Unit | Ctor::Int(..) | Ctor::Str(_) => Vec::new(),
             Ctor::Struct if let Type::Array(elem, n) = ty => match **n {
                 Type::Nat(k) => vec![(**elem).clone(); k as usize],
                 _ => unreachable!("array pattern on `{ty}`"),
@@ -552,6 +583,7 @@ impl Cx<'_> {
             .collect();
         match (c, ty) {
             (Ctor::Bool(b), _) => b.to_string(),
+            (Ctor::Str(i), _) => crate::lexer::str_literal(&str_of(*i)),
             (Ctor::Unit, _) => "()".to_string(),
             (Ctor::Int(lo, hi), Type::Int(t)) => {
                 let (lo, hi) = open(*lo, *hi, t.range_64());

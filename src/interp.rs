@@ -1809,6 +1809,7 @@ impl<'p> Interp<'p, '_> {
             (Pat::Range(lo, hi), Value::Int(m, _)) => in_range(lo, hi, *m),
             (Pat::Range(lo, hi), Value::Char(c)) => in_range(lo, hi, i128::from(u32::from(*c))),
             (Pat::Bool(b), Value::Bool(c)) => b == c,
+            (Pat::Str(s), v @ Value::Ref(..)) => self.bytes(v) == s.as_bytes(),
             (Pat::Variant(i, pats), Value::Variant(ty, name, _)) => {
                 self.enums[ty.as_str()].variants[*i].name.name == *name
                     && (pats.iter().enumerate()).all(|(j, p)| self.matches(p, &v.field(j)))

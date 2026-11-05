@@ -129,6 +129,16 @@ static _Noreturn void t_bug(const char *what) {
 
 static _Noreturn void t_unreachable(void) { t_bug("control got where it can't"); }
 
+/* Are the `n` bytes at `a` the `m` at `b`? A string pattern's test, with
+   no C library to call. */
+static bool t_bytes_eq(const uint8_t *a, uint64_t n, const uint8_t *b, uint64_t m) {
+    if (n != m) return false;
+    for (uint64_t i = 0; i < n; i++) {
+        if (a[i] != b[i]) return false;
+    }
+    return true;
+}
+
 /* A block for a value of `size` bytes, aligned to `align`: a type's
  * `sizeof` and `_Alignof`, as `t_free` is given them again. */
 static void *t_alloc(size_t size, size_t align, uint32_t site) {

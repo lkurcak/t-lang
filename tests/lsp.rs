@@ -655,6 +655,46 @@ fn main() with alloc {
     stop(child, c);
 }
 
+/// `self` in a `use` group names its module, for hovers as for the
+/// checker.
+#[test]
+fn hovers_show_the_module_of_self_in_a_use() {
+    let (child, mut c) = start();
+    let uri = "file:///tmp/use_self.t";
+    let src = "\
+mod shapes {
+    //! Shapes.
+    pub fn one() -> i64 { 1 }
+}
+mod game {
+    use crate::shapes::{self};
+    pub fn two() -> i64 { shapes::one() + 1 }
+}
+fn main() {
+    print(game::two());
+}
+\nfn print<T: Int>(_x: T) {}\n";
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
+        }}),
+    );
+    assert_eq!(c.diagnostics(), Vec::<Value>::new());
+    let offset = src.find("self}").unwrap();
+    let line = src[..offset].matches('\n').count();
+    let character = offset - src[..offset].rfind('\n').map_or(0, |i| i + 1);
+    c.send(
+        json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": {
+            "textDocument": {"uri": uri}, "position": {"line": line, "character": character}
+        }}),
+    );
+    assert_eq!(
+        c.response(2)["result"]["contents"]["value"],
+        "```t\nmod crate::shapes\n```\n\n---\n\nShapes."
+    );
+    stop(child, c);
+}
+
 #[test]
 fn hovers_show_the_traits_and_box_of_the_libraries() {
     let (child, mut c) = start();

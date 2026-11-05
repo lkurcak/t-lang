@@ -440,6 +440,7 @@ impl Walk<'_> {
             | PatternKind::Int(..)
             | PatternKind::Range(..)
             | PatternKind::Bool(_)
+            | PatternKind::Str(_)
             | PatternKind::Unit => {}
         }
     }

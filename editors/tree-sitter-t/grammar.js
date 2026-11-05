@@ -936,6 +936,7 @@ module.exports = grammar({
       $.integer_pattern,
       $.range_pattern,
       $.boolean_literal,
+      $.string_literal,
       $.unit_pattern,
       $.variant_pattern,
       $.struct_pattern,

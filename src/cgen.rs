@@ -1292,6 +1292,13 @@ impl<'e> Gen<'e> {
             Pat::Any => "1".to_string(),
             Pat::Bool(true) => format!("({e})"),
             Pat::Bool(false) => format!("(!{e})"),
+            Pat::Str(s) => {
+                let lit = self.literal(s.as_bytes());
+                format!(
+                    "t_bytes_eq({e}.ptr, {e}.len, {lit}.ptr, UINT64_C({}))",
+                    s.len()
+                )
+            }
             Pat::Range(lo, hi) => {
                 let lit = |n: i128| match t {
                     Type::Int(i) if i.signed() => format!("INT64_C({n})"),

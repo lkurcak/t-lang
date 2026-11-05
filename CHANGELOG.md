@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased
+
+Step 42: string patterns, `for` over temporaries, `{self}`. See
+[docs/42-patterns-and-loops.md](docs/42-patterns-and-loops.md).
+
+### Added
+
+- String literal patterns: `"help" | "h" => ..` matches a `&str` (or,
+  through references, a `&&str`) with the same bytes, in any pattern,
+  `if let` and `let .. else` included. A `match` on strings needs a `_`;
+  the same string twice is an unreachable pattern. In its arm, matching
+  tells the checker the string's `len()`. Byte string patterns are still
+  an error.
+- `use a::{self, B}`: `self` in a group brings in the module `a` (and
+  only it, not a function of the same name); `{self as x}` renames it.
+- `assert(ok)` ensures `ok`: after it returns, the checker knows `ok`
+  holds.
+
+### Changed
+
+- A `for`'s head keeps what it makes until the statement with the `for`
+  ends, so `for w in CONST.iter()` and `for x in f().iter()` work: `for`
+  now means `match it { mut iter => loop { .. } }`.
+
+### Fixed
+
+- `use crate::a;` in the module that has `a` says `a` is already a name
+  there, not that the imports go round in a circle.
+
 ## 0.56.0 (2026-11-04)
 
 Step 41: threads, `Mutex` and `unsafe impl`. See

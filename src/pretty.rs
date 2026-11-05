@@ -1642,6 +1642,7 @@ impl Printer<'_> {
                 self.spelled(p.span, range(*lo, *hi, *inclusive, *lit))
             }
             PatternKind::Bool(b) => text(b.to_string()),
+            PatternKind::Str(s) => self.spelled(p.span, crate::lexer::str_literal(s)),
             PatternKind::Unit => text("()"),
             PatternKind::Variant(ty, targs, variant, args) => {
                 let head = text(&ty.name) + self.turbofish(targs) + "::" + &variant.name;

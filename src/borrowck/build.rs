@@ -1448,6 +1448,7 @@ impl<'a> Builder<'a> {
             PatternKind::Int(..)
             | PatternKind::Range(..)
             | PatternKind::Bool(_)
+            | PatternKind::Str(_)
             | PatternKind::Unit => self.push(StmtKind::Inspect(place), p.span),
             PatternKind::Variant(_, _, v, pats) => {
                 self.push(StmtKind::Inspect(place.clone()), p.span);
@@ -1486,6 +1487,7 @@ impl<'a> Builder<'a> {
             PatternKind::Int(n, _) => Pat::Range(Some(*n), Some(*n)),
             PatternKind::Range(lo, hi, ..) => Pat::Range(*lo, *hi),
             PatternKind::Bool(b) => Pat::Bool(*b),
+            PatternKind::Str(s) => Pat::Str(s.clone()),
             PatternKind::Variant(_, _, v, pats) => {
                 let t = self.place_ty(&place);
                 let i = variant_index(self.adts(), &t, &v.name);
