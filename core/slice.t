@@ -1,5 +1,6 @@
 //! Slices: values one after another in memory, seen through a reference.
 
+use crate::cmp::{Ord, Ordering};
 use crate::iter::Iterator;
 use crate::mem;
 use crate::option::Option;
@@ -94,6 +95,42 @@ impl<T> [T] {
 
     /// Its values, to change, front to back.
     export fn iter_mut(&mut self) -> IterMut<T> { IterMut { rest: self } }
+}
+
+impl<T: Eq> [T] {
+    /// Is one of its values equal to `x`?
+    export fn contains(&self, x: &T) -> bool {
+        for y in self.iter() {
+            if *y == *x {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+/// Slices value by value, the first that differ deciding, and a slice
+/// before a longer one it starts: the order of words in a dictionary.
+impl<T: Ord> Ord for [T] {
+    fn cmp(&self, other: &[T]) -> Ordering {
+        let n = self.len();
+        let m = other.len();
+        let mut i = 0usize;
+        while i < n && i < m {
+            match self[i].cmp(&other[i]) {
+                Ordering::Equal => {},
+                o => return o,
+            }
+            i = i + 1;
+        }
+        n.cmp(&m)
+    }
+}
+
+/// References to slices by the slices, which `&'a T` can't say, as `T`
+/// can't be `[T]`.
+impl<'a, T: Ord> Ord for &'a [T] {
+    fn cmp(&self, other: &&'a [T]) -> Ordering { (**self).cmp(*other) }
 }
 
 /// A slice with no values, of any lifetime: it points at nothing.

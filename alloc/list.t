@@ -1,5 +1,6 @@
 //! Lists: dense, resizable arrays.
 
+use core::cmp::Ordering;
 use core::slice::{Iter, IterMut};
 
 use crate::raw::RawBuf;
@@ -103,6 +104,12 @@ impl<T> List<T> {
     /// The value at `i`, to change, or `None` if there's none.
     export fn get_mut(&mut self, i: usize) -> Option<&mut T> { self.as_mut_slice().get_mut(i) }
 
+    /// The first value, or `None` if it's empty.
+    export fn first(&self) -> Option<&T> { self.as_slice().first() }
+
+    /// The last value, or `None` if it's empty.
+    export fn last(&self) -> Option<&T> { self.as_slice().last() }
+
     /// Its values, by reference, front to back.
     export fn iter(&self) -> Iter<T> { self.as_slice().iter() }
 
@@ -149,4 +156,20 @@ impl<T: Discard> List<T> {
 
     /// Throws all its values away, keeping the buffer for more.
     export fn clear(&mut self) ensures self.len() == 0 { self.truncate(0) }
+}
+
+impl<T: Eq> List<T> {
+    /// Is one of its values equal to `x`?
+    export fn contains(&self, x: &T) -> bool { self.as_slice().contains(x) }
+}
+
+/// Lists are equal when their values are, one by one, as their slices.
+impl<T: Eq> Eq for List<T> {
+    fn eq(&self, other: &List<T>) -> bool { self.as_slice() == other.as_slice() }
+}
+
+/// Lists in the order of their slices: value by value, the first that
+/// differ deciding.
+impl<T: Ord> Ord for List<T> {
+    fn cmp(&self, other: &List<T>) -> Ordering { self.as_slice().cmp(other.as_slice()) }
 }

@@ -347,8 +347,12 @@ impl Checker {
             }
             let self_ty = match &d.self_ty.kind {
                 // `impl<T> [T]`: a slice's own methods, which only the
-                // built-in libraries give it, each taking it by reference.
-                TypeExprKind::Slice(elem) if d.trait_name.is_none() => {
+                // built-in libraries give it, each taking it by reference;
+                // and there, `impl<T: Ord> Ord for [T]`, which takes care
+                // as `impl Ord for str` does, below.
+                TypeExprKind::Slice(elem)
+                    if d.trait_name.is_none() || self.modules.in_library(d.module) =>
+                {
                     Type::Slice(Box::new(self.resolve_with(elem, &params, &mut lts)?))
                 }
                 // `impl str`, and in the built-in libraries, `impl Ord for

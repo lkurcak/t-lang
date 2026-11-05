@@ -89,6 +89,32 @@ impl char {
             _ => false,
         }
     }
+
+    /// Is it whitespace, as Unicode's `White_Space` property says: the
+    /// ASCII ones, the line tabulation `\u{B}`, and the spaces, line and
+    /// paragraph separators beyond ASCII. Not the zero-width space,
+    /// `\u{200B}`, which isn't.
+    export fn is_whitespace(self) -> bool {
+        match self {
+            '\t'..='\r' | ' ' | '\u{85}' | '\u{A0}' | '\u{1680}' => true,
+            '\u{2000}'..='\u{200A}' | '\u{2028}' | '\u{2029}' | '\u{202F}' | '\u{205F}' => true,
+            '\u{3000}' => true,
+            _ => false,
+        }
+    }
+
+    /// Its value as a digit in base `radix`, or `None` if it isn't one:
+    /// `0` to `9` and then `a` to `z`, or `A` to `Z`, for 10 to 35, as far
+    /// as `radix` goes.
+    export fn to_digit(self, radix: { r: u32 | r >= 2 && r <= 36 }) -> Option<u32> {
+        let d = match self {
+            '0'..='9' => self as u32 - 0x30,
+            'a'..='z' => self as u32 - 0x61 + 10,
+            'A'..='Z' => self as u32 - 0x41 + 10,
+            _ => return Option::None,
+        };
+        if d < radix { Option::Some(d) } else { Option::None }
+    }
 }
 
 /// Byte `i` of `s` becomes `b`, if there's one.

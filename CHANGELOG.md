@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased
+
+Step 43: text and lists in the libraries. See
+[docs/43-text-and-lists.md](docs/43-text-and-lists.md).
+
+### Added
+
+- `str`: `split`, `split_whitespace`, `lines`, `trim`, `trim_start`,
+  `trim_end`, `starts_with`, `ends_with`, `strip_prefix`,
+  `strip_suffix`, `find`, `contains` and `parse`. What they look for is a
+  `core::str::Pattern`, a sealed trait implemented for `char` and `&str`;
+  `split` follows Rust's rules, empty pieces and the empty pattern
+  included.
+- `core::str::Parse`, Rust's `FromStr`: `s.parse::<T>()` or `T::parse(s)`,
+  for every integer type (`core::num::ParseIntError`: `Empty`,
+  `InvalidDigit`, `PosOverflow`, `NegOverflow`), `bool`
+  (`ParseBoolError`) and `char` (`ParseCharError`), each error with
+  `Display`.
+- `char::is_whitespace` (Unicode `White_Space`) and `char::to_digit`,
+  whose radix is proved to be from 2 to 36.
+- `List`: `first`, `last`, `contains`, and `Eq` and `Ord` as its slice's.
+  Slices: `contains`, and `Ord`, for `[T]` and `&[T]`.
+- `Option<&T>::copied`.
+
+### Fixed
+
+- Inside an impl of a trait, the trait's associated types of the impl's
+  own type are what the impl says, also when that type is a type
+  parameter: `impl<T: Int> Tr for T { type A = u8; fn f() -> u8 }`
+  matches `fn f() -> Self::A`.
+- A method's type arguments can name the program's own types:
+  `s.parse::<Point>()` no longer says "unknown type `Point`".
+
 ## 0.57.0 (2026-11-05)
 
 Step 42: string patterns, `for` over temporaries, `{self}`. See

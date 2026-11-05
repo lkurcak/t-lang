@@ -99,3 +99,14 @@ impl<T: Discard> Option<T> {
         }
     }
 }
+
+impl<'a, T: Copy> Option<&'a T> {
+    /// What it points to, copied, if anything: `Option<&T>` to
+    /// `Option<T>`.
+    export fn copied(self) -> Option<T> {
+        match self {
+            Option::Some(x) => Option::Some(*x),
+            Option::None => Option::None,
+        }
+    }
+}

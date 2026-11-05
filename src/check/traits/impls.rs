@@ -383,7 +383,7 @@ impl Checker {
         // `Self::Item` in the trait's is what this impl says it is, with
         // what its bounds say, which decide its effect parameters.
         let mut proj = self.adts.proj.clone();
-        proj.local = d.eqs.clone();
+        proj.local = d.local_eqs();
         let wanted = proj.normalise(&s.apply(&want.scheme.ty));
         let (Type::Fn(g), Type::Fn(w)) = (&got.ty, &wanted) else {
             unreachable!("methods have function types")

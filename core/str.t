@@ -3,7 +3,9 @@
 use crate::cmp::{Ord, Ordering};
 use crate::iter::Iterator;
 use crate::option::Option;
-use crate::slice::Split;
+use crate::fmt::{Display, Write};
+use crate::result::Result;
+use crate::slice;
 
 /// `str`: a string, bytes that are UTF-8, seen through a shared reference,
 /// `&str`, which knows how many. Like a slice, it's never a value of its
@@ -48,7 +50,7 @@ impl str {
         match bytes.split_at(mid) {
             // SAFETY: UTF-8 cut where a character starts is UTF-8 on
             // either side.
-            Option::Some(Split { head, tail }) => unsafe {
+            Option::Some(slice::Split { head, tail }) => unsafe {
                 Option::Some(StrSplit {
                     head: from_utf8_unchecked(head),
                     tail: from_utf8_unchecked(tail),
@@ -76,6 +78,381 @@ impl str {
 
     /// Its characters, front to back.
     export fn chars(&self) -> Chars { Chars { bytes: self.as_bytes(), at: 0 } }
+
+    /// The pieces between the places `pat` is found, front to back: a
+    /// `,` gives `"a"`, `""` and `"b"` of `"a,,b"`, and `""` and `""` of
+    /// `","`. An empty string is found before and after each character.
+    export fn split<'a, P: Pattern>(&'a self, pat: P) -> Split<'a, P> {
+        Split { rest: self, pat, empty: false, done: false }
+    }
+
+    /// The words between whitespace, front to back, none of them empty:
+    /// `"a"` and `"b"` of `" a\t b\n"`.
+    export fn split_whitespace<'a>(&'a self) -> SplitWhitespace<'a> {
+        SplitWhitespace { rest: self }
+    }
+
+    /// Its lines, front to back, without the `\n` that ends each, or the
+    /// `\r\n`. A last line needn't end in one, and an empty string has no
+    /// lines.
+    export fn lines<'a>(&'a self) -> Lines<'a> { Lines { rest: self } }
+
+    /// Without the whitespace at its start and its end, which
+    /// `char::is_whitespace` says.
+    export fn trim<'a>(&'a self) -> &'a str { self.trim_start().trim_end() }
+
+    /// Without the whitespace at its start.
+    export fn trim_start<'a>(&'a self) -> &'a str {
+        let b = self.as_bytes();
+        let mut at = 0usize;
+        loop {
+            match decode(b, at) {
+                Option::Some(d) => match d.c.is_whitespace() {
+                    true => at = d.next,
+                    false => return after(self, at),
+                },
+                Option::None => return after(self, at),
+            }
+        }
+    }
+
+    /// Without the whitespace at its end.
+    export fn trim_end<'a>(&'a self) -> &'a str {
+        let b = self.as_bytes();
+        let mut at = 0usize;
+        let mut end = 0usize;
+        loop {
+            match decode(b, at) {
+                Option::Some(d) => {
+                    if !d.c.is_whitespace() {
+                        end = d.next;
+                    }
+                    at = d.next;
+                },
+                Option::None => return before(self, end),
+            }
+        }
+    }
+
+    /// Does it start with `pat`?
+    export fn starts_with<P: Pattern>(&self, pat: P) -> bool { pat.prefix_of(self).is_some() }
+
+    /// Does it end with `pat`?
+    export fn ends_with<P: Pattern>(&self, pat: P) -> bool { pat.suffix_of(self).is_some() }
+
+    /// What follows `pat`, if it starts with it, or `None`.
+    export fn strip_prefix<'a, P: Pattern>(&'a self, pat: P) -> Option<&'a str> {
+        match pat.prefix_of(self) {
+            Option::Some(n) => Option::Some(after(self, n)),
+            Option::None => Option::None,
+        }
+    }
+
+    /// What comes before `pat`, if it ends with it, or `None`.
+    export fn strip_suffix<'a, P: Pattern>(&'a self, pat: P) -> Option<&'a str> {
+        let Option::Some(n) = pat.suffix_of(self) else { return Option::None };
+        if n > self.len() {
+            return Option::None;
+        }
+        Option::Some(before(self, self.len() - n))
+    }
+
+    /// The byte where `pat` is first found, or `None` if it isn't.
+    export fn find<P: Pattern>(&self, pat: P) -> Option<usize> {
+        match pat.find_in(self, 0) {
+            Option::Some(f) => Option::Some(f.start),
+            Option::None => Option::None,
+        }
+    }
+
+    /// Is `pat` in it anywhere?
+    export fn contains<P: Pattern>(&self, pat: P) -> bool { pat.find_in(self, 0).is_some() }
+
+    /// It, read as a `T`, or what's wrong with it as one: `"42".parse()`
+    /// is `Ok(42)` of any integer type that holds 42.
+    export fn parse<T: Parse>(&self) -> Result<T, T::Error> { T::parse(self) }
+}
+
+/// The bytes of `s` from `at` on. `at` is where a character starts, or the
+/// end, wherever it's used; were it not, it would be the empty string.
+fn after<'a>(s: &'a str, at: usize) -> &'a str {
+    match s.split_at(at) {
+        Option::Some(cut) => cut.tail,
+        Option::None => "",
+    }
+}
+
+/// The bytes of `s` before `at`, which is where a character starts or the
+/// end, as for `after`.
+fn before<'a>(s: &'a str, at: usize) -> &'a str {
+    match s.split_at(at) {
+        Option::Some(cut) => cut.head,
+        Option::None => "",
+    }
+}
+
+/// What a `str`'s methods look for: a `char`, or a `&str`. It's sealed, as
+/// those methods count on what it finds starting and ending where
+/// characters do.
+export sealed trait Pattern: Copy {
+    /// Where it's first found in `s`, starting at byte `from` or after.
+    fn find_in(&self, s: &str, from: usize) -> Option<Found>;
+
+    /// If `s` starts with it, how many bytes of `s` it is.
+    fn prefix_of(&self, s: &str) -> Option<usize>;
+
+    /// If `s` ends with it, how many bytes of `s` it is.
+    fn suffix_of(&self, s: &str) -> Option<usize>;
+}
+
+/// Where a pattern was found: bytes `start` up to, not including, `end`.
+#[derive(Copy, Discard, Eq, Send, Sync)]
+export struct Found { export start: usize, export end: usize }
+
+/// A string is found where its bytes are: as it's UTF-8, that's where a
+/// character starts, and it ends where one does.
+impl<'b> Pattern for &'b str {
+    fn find_in(&self, s: &str, from: usize) -> Option<Found> {
+        let h = s.as_bytes();
+        let n = self.as_bytes();
+        if n.len() > h.len() {
+            return Option::None;
+        }
+        let last = h.len() - n.len();
+        let mut i = from;
+        while i <= last {
+            if bytes_at(h, n, i) {
+                return Option::Some(Found { start: i, end: i + n.len() });
+            }
+            if i == last {
+                return Option::None;
+            }
+            i = i + 1;
+        }
+        Option::None
+    }
+
+    fn prefix_of(&self, s: &str) -> Option<usize> {
+        let h = s.as_bytes();
+        let n = self.as_bytes();
+        if n.len() <= h.len() && bytes_at(h, n, 0) { Option::Some(n.len()) } else { Option::None }
+    }
+
+    fn suffix_of(&self, s: &str) -> Option<usize> {
+        let h = s.as_bytes();
+        let n = self.as_bytes();
+        if n.len() <= h.len() && bytes_at(h, n, h.len() - n.len()) {
+            Option::Some(n.len())
+        } else {
+            Option::None
+        }
+    }
+}
+
+/// A character is found where its UTF-8 is, as a string.
+impl Pattern for char {
+    fn find_in(&self, s: &str, from: usize) -> Option<Found> {
+        let mut buf = [0u8; 4];
+        match self.encode_utf8(buf.as_mut_slice()) {
+            Option::Some(p) => Pattern::find_in(&p, s, from),
+            Option::None => Option::None,
+        }
+    }
+
+    fn prefix_of(&self, s: &str) -> Option<usize> {
+        let mut buf = [0u8; 4];
+        match self.encode_utf8(buf.as_mut_slice()) {
+            Option::Some(p) => Pattern::prefix_of(&p, s),
+            Option::None => Option::None,
+        }
+    }
+
+    fn suffix_of(&self, s: &str) -> Option<usize> {
+        let mut buf = [0u8; 4];
+        match self.encode_utf8(buf.as_mut_slice()) {
+            Option::Some(p) => Pattern::suffix_of(&p, s),
+            Option::None => Option::None,
+        }
+    }
+}
+
+/// Are the bytes of `h` from `at` on those of `n`, all of which `h` has?
+fn bytes_at(h: &[u8], n: &[u8], at: { a: usize | a + n.len() <= h.len() }) -> bool {
+    let mut j = 0usize;
+    while j < n.len() {
+        if h[at + j] != n[j] {
+            return false;
+        }
+        j = j + 1;
+    }
+    true
+}
+
+/// What `split` gives: the pieces of `rest` between where `pat` is found,
+/// `empty` if what was found last was empty, at the start of `rest`, and
+/// `done` once the last piece is given.
+#[derive(Copy where P: Copy, Discard where P: Discard, Send where P: Send, Sync where P: Sync)]
+export struct Split<'a, P> { rest: &'a str, pat: P, empty: bool, done: bool }
+
+impl<'a, P: Pattern> Iterator for Split<'a, P> {
+    type Item = &'a str;
+    effect e = {};
+
+    fn next(&mut self) -> Option<&'a str> {
+        if self.done {
+            return Option::None;
+        }
+        let rest = self.rest;
+        // Past an empty string found at the start of `rest`, the next is
+        // looked for after its first character, if it has one.
+        let from = match self.empty {
+            true => match decode(rest.as_bytes(), 0) {
+                Option::Some(d) => Option::Some(d.next),
+                Option::None => Option::None,
+            },
+            false => Option::Some(0),
+        };
+        let found = match from {
+            Option::Some(from) => self.pat.find_in(rest, from),
+            Option::None => Option::None,
+        };
+        match found {
+            Option::Some(f) => {
+                self.rest = after(rest, f.end);
+                self.empty = f.start == f.end;
+                Option::Some(before(rest, f.start))
+            },
+            Option::None => {
+                self.done = true;
+                Option::Some(rest)
+            },
+        }
+    }
+}
+
+/// What `split_whitespace` gives: the words of `rest`.
+#[derive(Copy, Discard, Send, Sync)]
+export struct SplitWhitespace<'a> { rest: &'a str }
+
+impl<'a> Iterator for SplitWhitespace<'a> {
+    type Item = &'a str;
+    effect e = {};
+
+    fn next(&mut self) -> Option<&'a str> {
+        let rest = self.rest.trim_start();
+        if rest.is_empty() {
+            return Option::None;
+        }
+        let b = rest.as_bytes();
+        let mut at = 0usize;
+        loop {
+            match decode(b, at) {
+                Option::Some(d) => match d.c.is_whitespace() {
+                    false => at = d.next,
+                    true => break,
+                },
+                Option::None => break,
+            }
+        }
+        self.rest = after(rest, at);
+        Option::Some(before(rest, at))
+    }
+}
+
+/// What `lines` gives: the lines of `rest`.
+#[derive(Copy, Discard, Send, Sync)]
+export struct Lines<'a> { rest: &'a str }
+
+impl<'a> Iterator for Lines<'a> {
+    type Item = &'a str;
+    effect e = {};
+
+    fn next(&mut self) -> Option<&'a str> {
+        let rest = self.rest;
+        if rest.is_empty() {
+            return Option::None;
+        }
+        let line = match '\n'.find_in(rest, 0) {
+            Option::Some(f) => {
+                self.rest = after(rest, f.end);
+                before(rest, f.start)
+            },
+            Option::None => {
+                self.rest = "";
+                rest
+            },
+        };
+        Option::Some(line.strip_suffix('\r').unwrap_or(line))
+    }
+}
+
+/// What can be read from a string: `s.parse::<T>()`, or `T::parse(s)`.
+/// The integers, `bool` and `char` can, and other types by impls of their
+/// own.
+export trait Parse {
+    /// What's wrong with a string that isn't one.
+    type Error;
+
+    /// `s`, read as one, or what's wrong with it.
+    fn parse(s: &str) -> Result<Self, Self::Error>;
+}
+
+/// `true` or `false`, written so, and nothing else.
+impl Parse for bool {
+    type Error = ParseBoolError;
+
+    fn parse(s: &str) -> Result<bool, ParseBoolError> {
+        match s {
+            "true" => Result::Ok(true),
+            "false" => Result::Ok(false),
+            _ => Result::Err(ParseBoolError {}),
+        }
+    }
+}
+
+/// What's wrong with a string that isn't a `bool`: it's neither `true`
+/// nor `false`.
+#[derive(Copy, Discard, Eq, Send, Sync)]
+export struct ParseBoolError {}
+
+impl Display for ParseBoolError {
+    fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e {
+        w.write_str("provided string was not `true` or `false`")
+    }
+}
+
+/// One character, and nothing else.
+impl Parse for char {
+    type Error = ParseCharError;
+
+    fn parse(s: &str) -> Result<char, ParseCharError> {
+        let mut cs = s.chars();
+        match cs.next() {
+            Option::Some(c) => match cs.next() {
+                Option::Some(_) => Result::Err(ParseCharError::TooMany),
+                Option::None => Result::Ok(c),
+            },
+            Option::None => Result::Err(ParseCharError::Empty),
+        }
+    }
+}
+
+/// What's wrong with a string that isn't a `char`.
+#[derive(Copy, Discard, Eq, Send, Sync)]
+export enum ParseCharError {
+    /// It has none.
+    Empty,
+    /// It has more than one.
+    TooMany,
+}
+
+impl Display for ParseCharError {
+    fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e {
+        match self {
+            ParseCharError::Empty => w.write_str("cannot parse char from empty string"),
+            ParseCharError::TooMany => w.write_str("too many characters in string"),
+        }
+    }
 }
 
 /// Bytes `b`, as a string, if they're UTF-8, or `None`.
