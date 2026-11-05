@@ -7,6 +7,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut x: i64 = 1;
     swap(&mut x, &mut x);
     out.line(&x)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: cannot borrow `x` as mutable more than once at a time

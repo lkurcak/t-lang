@@ -5,6 +5,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     for b in false..true {
         out.line(&b)?;
     }
-    Result::Ok(())
+    Ok(())
 }
 // error: `Range<bool>` doesn't implement `Iterator`

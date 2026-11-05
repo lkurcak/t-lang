@@ -26,6 +26,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     // A name after `as`, so this is a comparison.
     out.line(&(c as i64 < 0))?;   // expect: true
     out.line(&wrong(300))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: runtime error: `as` overflowed: 300 isn't a `u8`

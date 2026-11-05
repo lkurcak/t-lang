@@ -10,5 +10,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&(-5i64 + 2))?;        // expect: -3
     out.line(&(--5i64))?;           // expect: 5
     out.line(&(1_000_000i64 * 3))?; // expect: 3000000
-    Result::Ok(())
+    Ok(())
 }

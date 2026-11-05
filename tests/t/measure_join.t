@@ -13,5 +13,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
         l.push(3);
     }
     out.line(&l[0])?; // expect: 1
-    Result::Ok(())
+    Ok(())
 }

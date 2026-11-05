@@ -6,7 +6,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     fn doIt() -> i64 with panic { addOne(1) }
     out.line(&(doIt() + other()))?;
-    Result::Ok(())
+    Ok(())
 }
 
 fn other() -> i64 {

@@ -4,7 +4,7 @@ use std::thread::Threads;
 
 fn start(threads: &Threads) -> u32 with alloc {
     threads.spawn(|| {
-        let v: Option<u32> = Option::None;
+        let v: Option<u32> = None;
         v.unwrap()
     }).join()
     // error: `spawn` may panic, but `start` doesn't say `with panic`

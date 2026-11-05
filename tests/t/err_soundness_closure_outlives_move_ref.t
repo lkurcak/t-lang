@@ -8,6 +8,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         move || *r
     };
     out.line(&c())?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `n` doesn't live long enough

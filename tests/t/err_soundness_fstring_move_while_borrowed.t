@@ -10,6 +10,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let n = take(s);
     out.line(&line)?;
     out.line(&n)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: cannot move out of `s` while `s` is borrowed

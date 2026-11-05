@@ -13,7 +13,7 @@ fn get(m: Maybe) -> i64 {
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&get(Maybe::Real(4)))?;
-    Result::Ok(())
+    Ok(())
 }
 // warning: variant `Maybe::Impossible` is never constructed
 // warning: unreachable pattern

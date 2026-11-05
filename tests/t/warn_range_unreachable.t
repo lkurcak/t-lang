@@ -12,7 +12,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&f(5))?;
     out.line(&f(15))?;
     out.line(&f(21))?;
-    Result::Ok(())
+    Ok(())
 }
 // warning: unreachable pattern
 // expect: 1

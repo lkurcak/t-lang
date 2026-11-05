@@ -7,6 +7,6 @@ fn boom() -> i64 with panic { panic("stop") }
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     out.line(&call(boom))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: expected `fn() -> i64`, found `fn() -> i64 with panic`

@@ -4,6 +4,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {} {
     let d: i64 = 1;
     let d = d - 1;
     out.line(&(10 / d))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `/` may panic, but `main` doesn't say `with panic`

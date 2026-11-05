@@ -7,6 +7,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let _fd = Fd { n: 1 };
     out.line(&run(|| return 1))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: expected `!`, found `{integer}`

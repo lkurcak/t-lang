@@ -7,6 +7,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         x
     };
     out.line(&f(1))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: this closure returns `bool`, but its body is `i64`

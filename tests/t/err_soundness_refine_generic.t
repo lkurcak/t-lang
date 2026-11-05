@@ -6,6 +6,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let k: { v: i64 | v > 0 } = 5;
     let j: { v: i64 | v > 0 } = id(k);
     out.line(&j)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: can't prove `v > 0` for `j`

@@ -11,5 +11,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let n: i64 = 4;
     let r = &n;
     out.line(get(&[Slot { r: &r }]))?; // expect: 4
-    Result::Ok(())
+    Ok(())
 }

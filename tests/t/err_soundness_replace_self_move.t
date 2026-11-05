@@ -14,6 +14,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut x = Fd { n: 1 };
     let y = replace(&mut x, x);
     out.line(&close(y))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: use of moved value `x`

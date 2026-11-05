@@ -28,5 +28,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let t = Span::new(5, 2);
     out.line(&t.hi)?; // expect: 7
     out.line(&t.per(9))?; // expect: 3
-    Result::Ok(())
+    Ok(())
 }

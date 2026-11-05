@@ -3,6 +3,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     for x in 3i64 {
         out.line(&x)?;
     }
-    Result::Ok(())
+    Ok(())
 }
 // error: `i64` doesn't implement `Iterator`

@@ -7,5 +7,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let m = c.get_mut();
     *m = *m + 1;
     out.line(&c.get())?; // expect: 6
-    Result::Ok(())
+    Ok(())
 }

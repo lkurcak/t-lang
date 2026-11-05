@@ -86,8 +86,8 @@ impl<T: Atom> Atomic<T> {
     export fn compare_exchange(&self, current: T, new: T) -> Result<T, T> {
         let old = self.compare_swap(current, new);
         match old == current {
-            true => Result::Ok(old),
-            false => Result::Err(old),
+            true => Ok(old),
+            false => Err(old),
         }
     }
 

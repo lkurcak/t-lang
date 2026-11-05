@@ -28,6 +28,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         r = get(Pair { a: &long, b: &short });
     }
     out.line(&(*r))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `short` doesn't live long enough

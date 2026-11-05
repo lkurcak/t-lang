@@ -44,7 +44,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     // expect: 2 5
     quietly(4, &mut out)?; // expect: 2
     inner::shown(4, &mut out)?; // expect: 2
-    std::Result::Ok(())
+    std::Ok(())
 }
 // warning: this hole holds more than a name or a field of one
 // warning: `half` may panic in a hole of a format string

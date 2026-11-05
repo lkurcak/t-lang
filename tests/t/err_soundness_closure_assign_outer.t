@@ -15,6 +15,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
         f = || *r.r;
     }
     out.line(&f())?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `r` doesn't live long enough

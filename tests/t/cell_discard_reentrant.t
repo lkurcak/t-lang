@@ -18,5 +18,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&log.get())?; // expect: 2
     let last = c.into_inner();
     out.line(&last.n)?; // expect: 3
-    Result::Ok(())
+    Ok(())
 }

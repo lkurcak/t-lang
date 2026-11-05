@@ -4,6 +4,6 @@ fn inc(x: { v: i64 | v <= 9223372036854775807 }) -> i64 with {} { x + 1 }
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     out.line(&inc(9223372036854775807))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `+` may panic, but `inc` doesn't say `with panic`

@@ -6,7 +6,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let a: [u8; WIDTH] = core::array::from_fn(|i| i as u8);
     out.line(&second(&a))?; // expect: 1
-    Result::Ok(())
+    Ok(())
 }
 
 const WIDTH: usize = 3;

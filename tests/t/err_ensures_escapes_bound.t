@@ -10,7 +10,7 @@ impl Counter {
 
 fn stash<'b, 'a: 'b>(c: &'a mut Counter, h: &mut Option<&'b mut Counter>) ensures c.get() == 0 {
     c.n = 0;
-    *h = Option::Some(c);
+    *h = Some(c);
 }
 
 fn main() {}

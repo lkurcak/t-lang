@@ -30,6 +30,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         r = w.get(&n);
     }
     out.line(&(*r))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `W<fn(&i64) -> &i64>` doesn't implement `Get`, which method `get` is of

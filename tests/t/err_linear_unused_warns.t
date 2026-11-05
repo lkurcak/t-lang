@@ -14,6 +14,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let fd = open(1); // warning: unused variable `fd`: use it up, as its type, `Fd`, isn't `Discard`
     let n: i64 = 2; // warning: unused variable `n`
     out.line(&close(open(3)))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `fd` is never used up

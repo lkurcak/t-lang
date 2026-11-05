@@ -38,5 +38,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     out.line(&sum(Pair { a: 1, b: 2 }))?;                    // expect: 3
     out.line(&(area(Shape::Circle(2)) + area(Shape::Empty)))?; // expect: 12
-    Result::Ok(())
+    Ok(())
 }

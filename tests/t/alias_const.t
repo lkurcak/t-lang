@@ -17,5 +17,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&total(&b))?; // expect: 6
     let t: Two<bool> = [true, false];
     out.line(&t[0])?; // expect: true
-    Result::Ok(())
+    Ok(())
 }

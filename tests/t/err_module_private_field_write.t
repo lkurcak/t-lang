@@ -18,6 +18,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut fd = fs::open(1);
     fd.raw = 5;
     out.line(&fs::close(fd))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: field `raw` of `Fd` is private

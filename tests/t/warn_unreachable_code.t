@@ -48,7 +48,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&only_one_branch(false))?;  // expect: 2
     out.line(&(*dead_borrow(&3, &4)))?;    // expect: 3
     out.line(&allowed())?;               // expect: 1
-    Result::Ok(())
+    Ok(())
 }
 // warning: unreachable code: what comes before it never finishes, so this never runs
 // warning: unreachable code

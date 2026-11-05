@@ -10,5 +10,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let k: i64 = 2;
     out.line(&app(|x| x))?;              // expect: 1
     out.line(&app(|x| if k > 1 { x } else { x }))?; // expect: 1
-    Result::Ok(())
+    Ok(())
 }

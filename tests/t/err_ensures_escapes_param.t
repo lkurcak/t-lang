@@ -11,7 +11,7 @@ struct Hold<'a> { c: Option<&'a mut Counter> }
 
 fn stash<'a>(c: &'a mut Counter, h: &mut Hold<'a>) ensures c.get() == 0 {
     c.n = 0;
-    h.c = Option::Some(c);
+    h.c = Some(c);
 }
 
 fn main() {}

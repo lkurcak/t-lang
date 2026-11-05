@@ -1446,6 +1446,7 @@ impl<'a> Builder<'a> {
             place = place.project(Proj::Deref);
         }
         match &p.kind {
+            PatternKind::Path(..) => unreachable!("resolved into a variant (`check::modules`)"),
             PatternKind::Int(..)
             | PatternKind::Range(..)
             | PatternKind::Bool(_)
@@ -1484,6 +1485,7 @@ impl<'a> Builder<'a> {
             place = place.project(Proj::Deref);
         }
         let pat = match &p.kind {
+            PatternKind::Path(..) => unreachable!("resolved into a variant (`check::modules`)"),
             PatternKind::Wild | PatternKind::Bind(..) | PatternKind::Unit => Pat::Any,
             PatternKind::Int(n, _) => Pat::Range(Some(*n), Some(*n)),
             PatternKind::Range(lo, hi, ..) => Pat::Range(*lo, *hi),

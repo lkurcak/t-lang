@@ -22,5 +22,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     out.line(&f"{ { let n = p.x * p.y; n - 1 } }")?; // expect: -13
     out.line(&f"[{make()}] {core::num::wrapping_add(p.x, 1)}")?; // expect: [made] 4
     out.line(&f"{':'} {(p.x + 62) as u8 as char} {-p.x}")?; // expect: : A -3
-    Result::Ok(())
+    Ok(())
 }

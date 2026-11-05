@@ -20,5 +20,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&(-5i32).sign())?; // expect: -1
     out.line(&5u8.sign())?;     // expect: 0
-    Result::Ok(())
+    Ok(())
 }

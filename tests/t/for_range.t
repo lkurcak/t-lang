@@ -65,7 +65,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     // A `for` is `()`: one can end a block.
     let mut f = || -> Result<(), std::io::Error> {
         for i in 0..3i64 { out.line(&(i * 10))?; }
-        Result::Ok(())
+        Ok(())
     };
     f()
     // expect: 0

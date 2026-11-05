@@ -18,7 +18,7 @@ fn sum_line(out: &mut std::io::Stdout, n: i64) -> Result<i64, std::io::Error> wi
     for x in l.iter() {
         total = total + *x;
     }
-    Result::Ok(total)
+    Ok(total)
 }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {

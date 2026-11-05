@@ -25,5 +25,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&b.hi)?; // expect: 7
     set_hi(&mut b, 0);
     out.line(&b.hi)?; // expect: 7
-    Result::Ok(())
+    Ok(())
 }

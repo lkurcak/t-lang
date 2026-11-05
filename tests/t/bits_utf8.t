@@ -29,5 +29,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&cont(0x20AC, 6))?; // expect: 130
     out.line(&cont(0x20AC, 0))?; // expect: 172
     out.line(&lead(0x1F600))?;   // expect: 240
-    Result::Ok(())
+    Ok(())
 }

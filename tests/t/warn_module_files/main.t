@@ -5,5 +5,5 @@ mod util;
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&util::Helper())?;   // expect: 2
-    Result::Ok(())
+    Ok(())
 }

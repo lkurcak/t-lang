@@ -7,6 +7,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     let v = Stack { top: 1 };
     out.line(&add(&v, take(v)))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: use of moved value `v`

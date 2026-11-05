@@ -8,6 +8,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let r: &i64 = &c.value;
     c.set(2);
     out.line(r)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: private

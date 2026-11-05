@@ -6,5 +6,5 @@ impl P {
     fn get(&self) -> i64 { self.v? }
 }
 
-fn main() { let _ = P { v: Option::None }; }
+fn main() { let _ = P { v: None }; }
 // error: `?` returns early from `get`, but its result, `i64`, doesn't implement `core::ops::Try`

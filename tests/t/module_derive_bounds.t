@@ -42,5 +42,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     let _l = cells::later(five);
     let o = cells::Open { v: Box::new(2i64) };
     out.line(&(*o.v))?;                           // expect: 2
-    Result::Ok(())
+    Ok(())
 }

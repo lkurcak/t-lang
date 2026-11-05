@@ -10,6 +10,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut z = 0;
     swap(&mut p.n, &mut z);
     out.line(&p.n)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: can't prove `v > 0` for field `n` of `Pos`

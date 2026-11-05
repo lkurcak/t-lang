@@ -58,5 +58,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     match () { () => out.line(&1i64)? }         // expect: 1
     let k = match Opt::Some(3) { Opt::Some(n) => { let m = n * n; m } Opt::None => 0 };
     out.line(&k)?;                           // expect: 9
-    Result::Ok(())
+    Ok(())
 }

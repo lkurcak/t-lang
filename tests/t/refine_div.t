@@ -11,5 +11,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     if k > 0 {
         out.line(&div(50, k))?; // expect: 4
     }
-    Result::Ok(())
+    Ok(())
 }

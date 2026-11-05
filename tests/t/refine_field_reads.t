@@ -17,5 +17,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&g(&P { x: 5 }))?; // expect: 2
     let p = P { x: 2 };
     out.line(&(10 / p.x))?; // expect: 5
-    Result::Ok(())
+    Ok(())
 }

@@ -17,5 +17,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let fd = Fd { n: 4 };
     let c = move || close(fd);
     out.line(&c())?;                     // expect: 4
-    Result::Ok(())
+    Ok(())
 }

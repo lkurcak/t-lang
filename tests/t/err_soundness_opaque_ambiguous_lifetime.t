@@ -11,6 +11,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let n = 1;
     let m = 2;
     out.line(&either(true, &n, &m)())?;
-    Result::Ok(())
+    Ok(())
 }
 // error: borrows for a lifetime that isn't

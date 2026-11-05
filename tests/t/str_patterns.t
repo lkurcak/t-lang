@@ -25,10 +25,10 @@ fn code(c: Command) -> u8 {
 // Nested in a variant, and the empty string.
 fn first(w: Option<&str>) -> u8 {
     match w {
-        Option::Some("") => 10,
-        Option::Some("yes") => 11,
-        Option::Some(_) => 12,
-        Option::None => 13,
+        Some("") => 10,
+        Some("yes") => 11,
+        Some(_) => 12,
+        None => 13,
     }
 }
 
@@ -59,18 +59,18 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&code(command("hel")))?;
     out.line(&code(command("helpx")))?;
     out.line(&code(command("")))?;
-    out.line(&first(Option::Some("")))?;
-    out.line(&first(Option::Some("yes")))?;
-    out.line(&first(Option::Some("ye")))?;
-    out.line(&first(Option::None))?;
+    out.line(&first(Some("")))?;
+    out.line(&first(Some("yes")))?;
+    out.line(&first(Some("ye")))?;
+    out.line(&first(None))?;
     let words = ["the", "cat", "an", "owl", "a"];
     out.line(&count(words.as_slice()))?;
     out.line(&odd("é\n"))?;
     out.line(&odd("e\n"))?;
     let line = "fill 3";
-    let Option::Some(parts) = line.split_at(4) else { return Result::Ok(()) };
+    let Some(parts) = line.split_at(4) else { return Ok(()) };
     out.line(&code(command(parts.head)))?;
-    Result::Ok(())
+    Ok(())
 }
 // expect: 1
 // expect: 2

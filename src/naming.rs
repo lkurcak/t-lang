@@ -277,9 +277,9 @@ fn bindings<'a>(p: &'a Pattern, out: &mut Vec<Decl<'a>>) {
         }),
         // Each alternative binds the same variables.
         PatternKind::Or(alts) => alts.iter().take(1).for_each(|p| bindings(p, out)),
-        PatternKind::Variant(_, _, _, pats) | PatternKind::Array(pats) => {
-            pats.iter().for_each(|p| bindings(p, out))
-        }
+        PatternKind::Variant(_, _, _, pats)
+        | PatternKind::Path(_, pats, _)
+        | PatternKind::Array(pats) => pats.iter().for_each(|p| bindings(p, out)),
         PatternKind::Struct(_, _, fields, _) => fields.iter().for_each(|f| bindings(&f.pat, out)),
         PatternKind::Wild
         | PatternKind::Int(..)

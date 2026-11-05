@@ -29,5 +29,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&main::helper())?;   // expect: 10
 
     fn helper() -> i64 { 20 }
-    Result::Ok(())
+    Ok(())
 }

@@ -14,5 +14,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let old = b.replace(10);
     out.line(&old)?; // expect: 3
     out.line(&c.into_inner())?; // expect: 10
-    Result::Ok(())
+    Ok(())
 }

@@ -3,5 +3,5 @@
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&noisy::f())?; // expect: 1
-    Result::Ok(())
+    Ok(())
 }

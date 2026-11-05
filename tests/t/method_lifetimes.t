@@ -24,5 +24,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
         out.line(&(*h.peek()))?;    // expect: 7
     }
     out.line(&(*r + 1))?;           // expect: 8
-    Result::Ok(())
+    Ok(())
 }

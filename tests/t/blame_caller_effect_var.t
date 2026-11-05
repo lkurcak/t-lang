@@ -13,10 +13,10 @@ impl Write for Loud {
     #[blame_caller]
     fn write_str(&mut self, s: &str) -> Result<(), !> with panic {
         assert(s.len() == 0);
-        Result::Ok(())
+        Ok(())
     }
 
-    fn write_char(&mut self, _: char) -> Result<(), !> { Result::Ok(()) }
+    fn write_char(&mut self, _: char) -> Result<(), !> { Ok(()) }
 }
 
 #[blame_caller]

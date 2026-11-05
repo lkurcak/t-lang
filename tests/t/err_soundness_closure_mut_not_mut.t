@@ -5,6 +5,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let inc = || n = n + 1;
     inc();
     out.line(&n)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: cannot borrow `inc` as mutable, as `inc` isn't declared `mut`

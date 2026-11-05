@@ -32,5 +32,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let n: u8 = (One { x: 7u8 }).of();
     out.line(&b)?; // expect: true
     out.line(&n)?; // expect: 7
-    Result::Ok(())
+    Ok(())
 }

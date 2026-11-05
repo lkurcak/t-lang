@@ -17,6 +17,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         i += 1;
     }
     out.line(&close(fd))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: this assignment would throw away the value `fd` holds

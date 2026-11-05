@@ -10,5 +10,5 @@ impl<'a, X: Tr> Tr for &'a X {
     fn f(&self) -> i64 { (**self).f() }
 }
 impl Tr for i64 { fn f(&self) -> i64 { *self } }
-fn main(os: std::Os) -> Result<(), std::io::Error> { let mut out = os.stdout; out.line(&(W { x: 1i64 }.f()))?;  Result::Ok(()) }
+fn main(os: std::Os) -> Result<(), std::io::Error> { let mut out = os.stdout; out.line(&(W { x: 1i64 }.f()))?;  Ok(()) }
 // error: polymorphic recursion: `<W<X> as Tr>::f` uses itself with `X` = `&W<X>`

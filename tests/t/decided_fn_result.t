@@ -21,10 +21,10 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     let t = Thunk { f: || 21 };
     out.line(&twice(&t))?;                   // expect: 42
-    let b = Thunk { f: || Option::Some(7i64) };
+    let b = Thunk { f: || Some(7i64) };
     match b.get() {
-        Option::Some(n) => out.line(&n)?,    // expect: 7
-        Option::None => {},
+        Some(n) => out.line(&n)?,    // expect: 7
+        None => {},
     }
-    Result::Ok(())
+    Ok(())
 }

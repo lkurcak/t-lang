@@ -7,6 +7,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let s = String::of(&"moved");
     out.line(&f"{ { s } }")?;
     out.line(&s)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: use of moved value `s`

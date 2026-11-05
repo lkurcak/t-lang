@@ -18,6 +18,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let z: i64 = 0;
     let w = W { f: || 1 / z };
     out.line(&go(&w))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `go` needs its `R` to implement `Run`, and `W<{closure}>` doesn't

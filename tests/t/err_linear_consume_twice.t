@@ -14,6 +14,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let Fd { n } = fd;
     out.line(&n)?;
     out.line(&close(fd))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: use of moved value `fd`

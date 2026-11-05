@@ -14,5 +14,5 @@ impl<'a> Discard for Named<'a> {
 fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut out = os.stdout;
     let _n = Named { out: &mut out, name: String::from("bye") };
-    Result::Ok(())
+    Ok(())
 } // expect: bye

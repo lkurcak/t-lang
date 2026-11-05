@@ -11,5 +11,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let v = Weighted { item: 7i64, weight: 3 };
     out.line(&share(v, 12))?; // expect: 4
     out.line(&v.item)?; // expect: 7
-    Result::Ok(())
+    Ok(())
 }

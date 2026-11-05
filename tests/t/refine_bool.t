@@ -15,5 +15,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     }
     out.line(&needs(true))?; // expect: 1
     out.line(&needs(x == 5))?; // expect: 1
-    Result::Ok(())
+    Ok(())
 }

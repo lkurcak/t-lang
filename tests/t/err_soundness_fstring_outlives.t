@@ -8,6 +8,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
         f"<{s}>"
     };
     out.line(&line)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `s` doesn't live long enough

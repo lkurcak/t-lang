@@ -187,5 +187,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     let n = Noisy { out: &mut out, id: 16, b: Box::new(17) };
     let k = noisy::maybe_part(n, false); // expect: 16
     out.line(&k)?;                       // expect: 0
-    Result::Ok(())
+    Ok(())
 }

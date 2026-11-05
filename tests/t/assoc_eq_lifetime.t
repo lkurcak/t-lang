@@ -25,5 +25,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let n = 5;
     out.line(&(*field(W { r: &n })))?;      // expect: 5
     out.line(&in_closure(W { r: &n }))?;  // expect: 5
-    Result::Ok(())
+    Ok(())
 }

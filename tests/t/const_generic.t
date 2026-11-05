@@ -22,5 +22,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     out.line(&zeros::<SIZE>().len())?; // expect: 3
     let t = tokens();
     out.line(&*t[2].b)?;              // expect: 20
-    Result::Ok(())
+    Ok(())
 }

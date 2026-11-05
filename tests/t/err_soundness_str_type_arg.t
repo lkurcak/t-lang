@@ -1,5 +1,5 @@
 // Nor as a type argument.
 fn main() {
-    let x: Option<str> = Option::None;
+    let x: Option<str> = None;
 }
 // error: `str` can only be behind a shared reference, as in `&str`

@@ -15,5 +15,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&('\'' as u32))?; // expect: 39
     out.line(&"two
 lines".len())?; // expect: 9
-    Result::Ok(())
+    Ok(())
 }

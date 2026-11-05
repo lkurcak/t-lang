@@ -21,6 +21,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let a = W { q: Q { x: 1i64 } };
     let b = W { q: Q { x: 1 } };
     out.line(&(a == b))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: cannot compare `W<i64>` with `==`: that needs `i64: Show`

@@ -2,6 +2,6 @@
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     if 1 { out.line(&1)? }
-    Result::Ok(())
+    Ok(())
 }
 // error: expected `bool`, found `{integer}`

@@ -10,5 +10,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let m = Meter { n: 12 };
     out.line(&m.split(4))?; // expect: 3
-    Result::Ok(())
+    Ok(())
 }

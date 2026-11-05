@@ -12,6 +12,6 @@ mod b {
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&b::f())?;
-    Result::Ok(())
+    Ok(())
 }
 // expect: 6

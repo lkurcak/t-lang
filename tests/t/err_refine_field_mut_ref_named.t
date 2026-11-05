@@ -11,6 +11,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut s = Span { lo: 1, hi: 3 };
     big(&mut s.lo);
     out.line(&s.lo)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: can't prove `h >= lo` for field `hi` of `Span`, which names `lo`

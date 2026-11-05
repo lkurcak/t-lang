@@ -7,6 +7,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         out.line(&it.start())?;
         out.line(&i)?;
     }
-    Result::Ok(())
+    Ok(())
 }
 // error: cannot borrow `it` while `it` is mutably borrowed

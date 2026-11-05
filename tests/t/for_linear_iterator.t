@@ -7,9 +7,9 @@ impl Iterator for Lines {
     effect e = panic;
 
     fn next(&mut self) -> Option<i64> with panic {
-        if self.left == 0 { return Option::None; }
+        if self.left == 0 { return None; }
         self.left = self.left - 1;
-        Option::Some(self.left)
+        Some(self.left)
     }
 }
 
@@ -36,5 +36,5 @@ fn show(out: &mut std::io::Stdout, lines: &mut Lines) -> Result<(), std::io::Err
         }
         out.line(&n)?;
     }
-    Result::Ok(())
+    Ok(())
 }

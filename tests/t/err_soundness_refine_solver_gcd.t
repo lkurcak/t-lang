@@ -6,6 +6,6 @@ fn f(x: { v: i64 | 2 * v == 4 }) -> i64 { negative(x) }
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&f(2))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: can't prove `v < 0` for argument `n` of `negative`

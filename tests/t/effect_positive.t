@@ -17,5 +17,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     out.line(&f(4, 5))?; // expect: 5
     let g: fn(i64) -> i64 with panic = inc;
     out.line(&g(4))?; // expect: 5
-    Result::Ok(())
+    Ok(())
 }

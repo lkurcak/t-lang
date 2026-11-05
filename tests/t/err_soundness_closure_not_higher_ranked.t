@@ -29,6 +29,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         out = w.call(&y);
     }
     stdout.line(&(*out))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: doesn't implement `Call`

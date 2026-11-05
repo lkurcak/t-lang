@@ -17,6 +17,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut fd = open(1);
     set(&mut fd);
     out.line(&close(fd))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: use `core::mem::replace(&mut *r, ..)`

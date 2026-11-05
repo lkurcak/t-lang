@@ -9,6 +9,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
         r = a.alloc(5i64);
     }
     out.line(r)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `a` doesn't live long enough

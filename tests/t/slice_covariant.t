@@ -10,5 +10,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&e.len())?; // expect: 0
     let m: &mut [i64] = shorter_mut(core::slice::empty_mut());
     out.line(&m.len())?; // expect: 0
-    Result::Ok(())
+    Ok(())
 }

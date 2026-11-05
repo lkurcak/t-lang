@@ -12,6 +12,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     out.line(&m)?;   // expect: 256
     let x: u8 = 255;
     out.line(&(x + 1))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: runtime error: integer overflow

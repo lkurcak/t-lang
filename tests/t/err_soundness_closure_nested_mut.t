@@ -10,6 +10,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         g();
     });
     out.line(&n)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: this closure is only `FnMut`, as it changes `n`, but `call` needs it to implement `Fn`

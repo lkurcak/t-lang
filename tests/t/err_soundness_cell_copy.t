@@ -8,6 +8,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let d = c;
     c.set(2);
     out.line(&d.get())?;
-    Result::Ok(())
+    Ok(())
 }
 // error: moved

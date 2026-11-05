@@ -25,5 +25,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     out.line(&g(3))?;         // expect: 7
     out.line(&h(true))?;      // expect: 3
     if true { 1i64 } else { 2 }; // with `;` the value is discarded, any type
-    Result::Ok(())
+    Ok(())
 }

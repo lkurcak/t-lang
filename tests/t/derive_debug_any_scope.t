@@ -18,5 +18,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&f"{p:?} {p.n}")?; // expect: P { n: 4 } 4
     out.line(&p.mine())?; // expect: 4
     assert_eq(&p, &P { n: 4 });
-    Result::Ok(())
+    Ok(())
 }

@@ -20,5 +20,5 @@ trait Iter {}
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&(a::Foo { x: 3 }).f())?; // expect: 3
-    Result::Ok(())
+    Ok(())
 }

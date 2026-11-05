@@ -5,6 +5,6 @@ fn apply<effect e, F: Fn(i64) -> i64 with e + Discard>(f: F) -> i64 with {} { f(
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     out.line(&apply(|x| x / 0))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `f` may have the effects `e`, but `apply` doesn't say `with e`

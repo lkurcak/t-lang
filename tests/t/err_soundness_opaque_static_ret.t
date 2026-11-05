@@ -5,6 +5,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let n = 1;
     out.line(&(*pick(&n)()))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: lifetime may not live long enough

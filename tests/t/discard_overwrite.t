@@ -18,5 +18,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     if s.len() > 3 {
         take(t);
     }
-    Result::Ok(())
+    Ok(())
 }

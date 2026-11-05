@@ -12,7 +12,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&f(10))?;
     out.line(&f(19))?;
     out.line(&f(20))?;
-    Result::Ok(())
+    Ok(())
 }
 // warning: `0..10` and `10..20` can be merged into `0..20`
 // expect: 2

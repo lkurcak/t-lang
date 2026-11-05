@@ -6,7 +6,6 @@ static A: Atomic<u32> = Atomic::new(1);
 fn f(x: u32) -> bool {
     match x {
         A => true,
-// warning: variable `A` should have a snake case name
 // error: `A` is a static: a pattern can't name one
         _ => false,
     }

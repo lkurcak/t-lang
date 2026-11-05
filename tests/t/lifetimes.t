@@ -54,5 +54,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     out.line(&(*shorter(&n, &p.a)))?;              // expect: 1
     let rn = &n;
     out.line(&(*deref(&rn)))?;                     // expect: 5
-    Result::Ok(())
+    Ok(())
 }

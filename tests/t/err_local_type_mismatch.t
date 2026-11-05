@@ -15,6 +15,6 @@ fn f() -> i64 {
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&f())?;
-    Result::Ok(())
+    Ok(())
 }
 // error: expected `P`, found `P`; these are two different types called `P`, one declared in `h` and one in `f`

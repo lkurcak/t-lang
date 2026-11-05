@@ -21,6 +21,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         c.reset();
         out.line(&pos(c.get()))?;
     }
-    Result::Ok(())
+    Ok(())
 }
 // error: can't prove `n > 0` for argument `n` of `pos`

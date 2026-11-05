@@ -6,6 +6,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     out.line(&rem(-9223372036854775807, -1))?; // expect: 0
     out.line(&rem(core::num::least(), -1))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: runtime error: integer overflow

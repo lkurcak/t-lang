@@ -17,6 +17,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     l.push(1);
     l.push(2);
     out.line(&f(l.as_slice(), core::slice::empty(), false))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: can't prove `i < self.len()` for argument `i` of `index`

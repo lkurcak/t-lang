@@ -7,6 +7,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let k = pick();
     out.line(&div(1, k))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: can't prove `d > 0` for argument `d` of `div`

@@ -13,5 +13,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let c = Cell::new(4u8);
     send(c);
     out.line(&n)?; // expect: 3
-    Result::Ok(())
+    Ok(())
 }

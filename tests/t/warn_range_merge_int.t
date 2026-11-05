@@ -10,7 +10,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&f(9))?;
     out.line(&f(10))?;
     out.line(&f(11))?;
-    Result::Ok(())
+    Ok(())
 }
 // warning: `0..10` and `10` can be merged into `0..=10`
 // expect: 1

@@ -10,13 +10,13 @@ impl<'a> Discard for Noisy<'a> {
 }
 
 fn fails() -> Result<(), i64> {
-    Result::Err(0)
+    Err(0)
 }
 
 fn early(out: &mut std::io::Stdout, n: i64) -> Result<(), i64> {
     let _noisy = Noisy { out, n };
     fails()?;
-    Result::Ok(())
+    Ok(())
 }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> {
@@ -31,5 +31,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut c = Noisy { out: &mut out, n: 4 };
     c.n = 5;
     let _d = c; // expect: 5
-    Result::Ok(())
+    Ok(())
 }

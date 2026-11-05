@@ -10,6 +10,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
         d = d - 1;
         n = n - 1;
     }
-    Result::Ok(())
+    Ok(())
 }
 // error: can't prove `v > 0` for argument `d` of `pos`

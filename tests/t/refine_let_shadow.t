@@ -6,5 +6,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let x: i64 = 5;
     let x: { v: i64 | v > x } = 7;
     out.line(&x)?; // expect: 7
-    Result::Ok(())
+    Ok(())
 }

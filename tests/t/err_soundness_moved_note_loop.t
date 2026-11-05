@@ -12,6 +12,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         out.line(&take(x))?;
         i += 1;
     }
-    Result::Ok(())
+    Ok(())
 }
 // error: moved here, in an earlier time round the loop

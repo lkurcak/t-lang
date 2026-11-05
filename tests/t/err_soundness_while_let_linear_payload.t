@@ -7,12 +7,12 @@ fn close(fd: Fd) -> i64 {
 }
 
 fn get(i: i64) -> Result<i64, Fd> {
-    if i < 3 { Result::Ok(i) } else { Result::Err(Fd { n: i }) }
+    if i < 3 { Ok(i) } else { Err(Fd { n: i }) }
 }
 
 fn main() {
     let mut i = 0;
-    while let Result::Ok(k) = get(i) {
+    while let Ok(k) = get(i) {
         i = i + k + 1;
     }
     let _ = close(Fd { n: i });

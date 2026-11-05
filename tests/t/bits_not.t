@@ -16,5 +16,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&(!false))?;     // expect: true
     let f = |x| !x;
     out.line(&f(1u8))?;          // expect: 254
-    Result::Ok(())
+    Ok(())
 }

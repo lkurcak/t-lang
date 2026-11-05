@@ -23,5 +23,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     if 1i64 > 2 {
         out.line(&give_up(open(1)))?;
     }
-    Result::Ok(())
+    Ok(())
 }

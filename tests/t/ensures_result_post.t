@@ -26,5 +26,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     out.line(&l[i])?;              // expect: 7
     out.line(&l[j])?;              // expect: 8
     out.line(&take_last(&mut l))?; // expect: 2
-    Result::Ok(())
+    Ok(())
 }

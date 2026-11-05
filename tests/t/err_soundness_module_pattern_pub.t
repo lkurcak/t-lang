@@ -18,6 +18,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let fs::Fd { id, .. } = fs::open(1);
     out.line(&id.n)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: can't take `Fd` apart here: it has private fields and isn't `Discard`, so only `fs` can

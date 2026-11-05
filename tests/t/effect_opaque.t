@@ -9,5 +9,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     out.line(&a(1))?; // expect: 3
     let w = wrap(|x| if x < 0 { 0 } else { x });
     out.line(&w(5))?; // expect: 5
-    Result::Ok(())
+    Ok(())
 }

@@ -33,5 +33,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let k = 7;
     let w = Wrap { f: |x| x + k };
     out.line(&w.run(1))?; // expect: 8
-    Result::Ok(())
+    Ok(())
 }

@@ -7,6 +7,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&s.get(1).copied().unwrap_or(0))?; // expect: 20
     out.line(&s.get(7).copied().unwrap_or(0))?; // expect: 0
     let x: Option<u8> = s.first().copied();
-    out.line(&(x == Option::Some(10)))?; // expect: true
-    Result::Ok(())
+    out.line(&(x == Some(10)))?; // expect: true
+    Ok(())
 }

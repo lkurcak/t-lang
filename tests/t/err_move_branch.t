@@ -10,6 +10,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
         out.line(&(*c))?;
     }
     out.line(&(*b))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: use of moved value `b`

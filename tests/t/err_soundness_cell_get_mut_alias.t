@@ -8,6 +8,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     c.set(2);
     *m = 3;
     out.line(&c.get())?;
-    Result::Ok(())
+    Ok(())
 }
 // error: borrowed

@@ -70,5 +70,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     out.line(&(K { f: || n }.call()))?;                 // expect: 7
     // A closure that only borrows is `Copy` too.
     out.line(&(S { p: || n }.arg()))?;             // expect: true
-    Result::Ok(())
+    Ok(())
 }

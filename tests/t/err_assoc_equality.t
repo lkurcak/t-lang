@@ -18,6 +18,6 @@ fn total<C: Container<Item = i64>>(c: &C) -> i64 { c.first() }
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&total(&Flags { on: true }))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `<Flags as Container>::Item` is `bool`, but `total` needs it to be `i64`

@@ -1,10 +1,10 @@
 // A `None` isn't an `Err(())`: residuals that were just "what's in the
 // error" would make the two the same, and this would check.
-fn get() -> Option<i64> { Option::None }
+fn get() -> Option<i64> { None }
 
 fn f() -> Result<i64, ()> {
     let x = get()?;
-    Result::Ok(x)
+    Ok(x)
 }
 
 fn main() { let _ = f(); }

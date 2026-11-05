@@ -17,5 +17,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     out.line(&(big << 63))?;       // expect: 9223372036854775808
     let k: u32 = 3;
     out.line(&(1i64 << k))?;       // expect: 8
-    Result::Ok(())
+    Ok(())
 }

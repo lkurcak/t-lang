@@ -12,6 +12,6 @@ fn call<T: Half>(x: T) -> i64 { x.half(0) }
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&call(4))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: refinements can't be in a trait's methods yet

@@ -20,5 +20,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let s = S { n: 7 };
     out.line(&s.copy())?; // expect: 7
     out.line(&get(&3i64))?; // expect: 3
-    Result::Ok(())
+    Ok(())
 }

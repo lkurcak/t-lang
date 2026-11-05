@@ -10,5 +10,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&checked_neg(5i64).is_some())?; // expect: true
     // A negative literal is a constant: `-` of a literal can't overflow.
     out.line(&(-9223372036854775807i64))?; // expect: -9223372036854775807
-    Result::Ok(())
+    Ok(())
 }

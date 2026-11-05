@@ -6,5 +6,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     let outer = os.threads.spawn(move || inner.join() + 1);
     let mut out = os.stdout;
     out.line(&outer.join())?; // expect: 21
-    Result::Ok(())
+    Ok(())
 }

@@ -10,7 +10,7 @@ use m::{g, f as h};
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     out.line(&(m::f() + g()))?; // expect: 3
-    Result::Ok(())
+    Ok(())
 }
 // warning: unused import `f`
 // warning: unused import `h`

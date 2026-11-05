@@ -38,5 +38,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     m = 1;
     m += 1;
     out.line(&m)?;               // expect: 2
-    Result::Ok(())
+    Ok(())
 }

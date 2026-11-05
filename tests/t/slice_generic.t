@@ -7,14 +7,14 @@ use core::fmt::Write;
 fn count<T>(s: &[T]) -> usize { s.len() }
 
 fn biggest<T: Ord + Copy>(s: &[T]) -> Option<T> {
-    let mut best: Option<T> = Option::None;
+    let mut best: Option<T> = None;
     for x in s.iter() {
         let keep = match best {
-            Option::Some(b) => b.ge(x),
-            Option::None => false,
+            Some(b) => b.ge(x),
+            None => false,
         };
         if !keep {
-            best = Option::Some(*x);
+            best = Some(*x);
         }
     }
     best

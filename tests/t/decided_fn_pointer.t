@@ -23,5 +23,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let g = t.get();
     let n = 5;
     out.line(&(*g(&n)))?;  // expect: 5
-    Result::Ok(())
+    Ok(())
 }

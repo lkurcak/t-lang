@@ -10,7 +10,7 @@ fn close(fd: Fd) -> i64 {
 }
 
 fn half(n: i64) -> Option<i64> {
-    if n % 2 == 0 { Option::Some(n / 2) } else { Option::None }
+    if n % 2 == 0 { Some(n / 2) } else { None }
 }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
@@ -29,28 +29,28 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     out.line(&half(6).or_else(|| half(4)).unwrap_or(0))?; // expect: 3
 
     // A default made only when it's needed, so it can be linear.
-    let none: Option<Fd> = Option::None;
+    let none: Option<Fd> = None;
     out.line(&close(none.unwrap_or_else(|| Fd { n: 7 })))?; // expect: 7
-    out.line(&close(Option::Some(Fd { n: 8 }).unwrap_or_else(|| Fd { n: 7 })))?; // expect: 8
+    out.line(&close(Some(Fd { n: 8 }).unwrap_or_else(|| Fd { n: 7 })))?; // expect: 8
 
     // `as_ref` looks without taking; `take` takes and leaves `None`.
-    let mut slot = Option::Some(Fd { n: 5 });
+    let mut slot = Some(Fd { n: 5 });
     let seen = match slot.as_ref() {
-        Option::Some(fd) => fd.n,
-        Option::None => 0,
+        Some(fd) => fd.n,
+        None => 0,
     };
     match slot.as_mut() {
-        Option::Some(fd) => fd.n = 6,
-        Option::None => {}
+        Some(fd) => fd.n = 6,
+        None => {}
     }
     let taken = match slot.take() {
-        Option::Some(fd) => close(fd),
-        Option::None => 0,
+        Some(fd) => close(fd),
+        None => 0,
     };
     let none = slot.is_none();
     let left = match slot {
-        Option::Some(fd) => close(fd),
-        Option::None => 0,
+        Some(fd) => close(fd),
+        None => 0,
     };
     out.line(&seen)?; // expect: 5
     out.line(&taken)?; // expect: 6
@@ -61,5 +61,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let c = a;
     out.line(&(a == c))?; // expect: true
     out.line(&(a != b))?; // expect: true
-    Result::Ok(())
+    Ok(())
 }

@@ -18,7 +18,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&f(5))?;
     out.line(&f(6))?;
     out.line(&g(true))?;
-    Result::Ok(())
+    Ok(())
 }
 // warning: this range can be narrowed to `6..=10`
 // warning: unreachable pattern

@@ -13,6 +13,6 @@ fn mk<T: Tr>(x: T::Out) -> T::Out { x }
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&mk(1i64))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: cannot fully infer

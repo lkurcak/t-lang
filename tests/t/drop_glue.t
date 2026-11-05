@@ -30,5 +30,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     out.line(&part(Two { a: Box::new(3), b: 4 }))?; // expect: 3
     let same = Two { a: Box::new(5), b: 6 } == Two { a: Box::new(5), b: 6 };
     out.line(&same)?; // expect: true
-    Result::Ok(())
+    Ok(())
 }

@@ -6,6 +6,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         out.line(&i)?;
     }
     out.line(&1i64)?; // expect: 1
-    Result::Ok(())
+    Ok(())
 }
 // warning: this range is empty: `5` is after `0`, so it never yields anything

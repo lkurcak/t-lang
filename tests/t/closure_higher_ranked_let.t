@@ -60,5 +60,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
         out.line(&(*through(&f)))?;        // expect: 8
     }
     out.line(&(*through(&a)))?;            // expect: 3
-    Result::Ok(())
+    Ok(())
 }

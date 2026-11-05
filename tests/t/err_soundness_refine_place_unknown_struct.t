@@ -10,6 +10,6 @@ fn f() -> i64 with {} { 10 / make().x }
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     out.line(&f())?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `/` may panic, but `f` doesn't say `with panic`

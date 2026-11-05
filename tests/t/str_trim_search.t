@@ -27,5 +27,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&"abc".find("").unwrap_or(99))?;               // expect: 0
     out.line(&"abc".contains("bc"))?;                       // expect: true
     out.line(&"abc".contains('z'))?;                        // expect: false
-    Result::Ok(())
+    Ok(())
 }

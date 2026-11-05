@@ -8,8 +8,8 @@ impl<T> Option<T> {
     /// Is it `Some`?
     export fn is_some(&self) -> bool {
         match self {
-            Option::Some(_) => true,
-            Option::None => false,
+            Some(_) => true,
+            None => false,
         }
     }
 
@@ -19,16 +19,16 @@ impl<T> Option<T> {
     /// A reference to what's in it, if anything.
     export fn as_ref(&self) -> Option<&T> {
         match self {
-            Option::Some(x) => Option::Some(x),
-            Option::None => Option::None,
+            Some(x) => Some(x),
+            None => None,
         }
     }
 
     /// A mutable reference to what's in it, if anything.
     export fn as_mut(&mut self) -> Option<&mut T> {
         match self {
-            Option::Some(x) => Option::Some(x),
-            Option::None => Option::None,
+            Some(x) => Some(x),
+            None => None,
         }
     }
 
@@ -40,20 +40,20 @@ impl<T> Option<T> {
     #[blame_caller]
     export fn expect(self, why: &str) -> T with panic {
         match self {
-            Option::Some(x) => x,
-            Option::None => crate::panic::panic(why),
+            Some(x) => x,
+            None => crate::panic::panic(why),
         }
     }
 
     /// Takes what's in it out, leaving `None`.
-    export fn take(&mut self) -> Option<T> { crate::mem::replace(self, Option::None) }
+    export fn take(&mut self) -> Option<T> { crate::mem::replace(self, None) }
 
     /// `f` of what's in it, if anything. On `None`, `f` is thrown away
     /// uncalled, so it must be `Discard`.
     export fn map<U, effect e, F: FnOnce(T) -> U with e + Discard>(self, f: F) -> Option<U> with e {
         match self {
-            Option::Some(x) => Option::Some(f(x)),
-            Option::None => Option::None,
+            Some(x) => Some(f(x)),
+            None => None,
         }
     }
 
@@ -64,8 +64,8 @@ impl<T> Option<T> {
         f: F,
     ) -> Option<U> with e {
         match self {
-            Option::Some(x) => f(x),
-            Option::None => Option::None,
+            Some(x) => f(x),
+            None => None,
         }
     }
 
@@ -73,8 +73,8 @@ impl<T> Option<T> {
     /// `f`, uncalled, so `T` needn't be `Discard`.
     export fn unwrap_or_else<effect e, F: FnOnce() -> T with e + Discard>(self, f: F) -> T with e {
         match self {
-            Option::Some(x) => x,
-            Option::None => f(),
+            Some(x) => x,
+            None => f(),
         }
     }
 
@@ -84,8 +84,8 @@ impl<T> Option<T> {
     with e
     {
         match self {
-            Option::Some(x) => Option::Some(x),
-            Option::None => f(),
+            Some(x) => Some(x),
+            None => f(),
         }
     }
 }
@@ -94,8 +94,8 @@ impl<T: Discard> Option<T> {
     /// What's in it, or else `default`. One of the two is thrown away.
     export fn unwrap_or(self, default: T) -> T {
         match self {
-            Option::Some(x) => x,
-            Option::None => default,
+            Some(x) => x,
+            None => default,
         }
     }
 }
@@ -105,8 +105,8 @@ impl<'a, T: Copy> Option<&'a T> {
     /// `Option<T>`.
     export fn copied(self) -> Option<T> {
         match self {
-            Option::Some(x) => Option::Some(*x),
-            Option::None => Option::None,
+            Some(x) => Some(*x),
+            None => None,
         }
     }
 }

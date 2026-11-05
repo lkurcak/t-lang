@@ -7,5 +7,5 @@ fn count_down(n: { v: i64 | v >= 0 }) -> { r: i64 | r == 0 } {
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&count_down(5))?; // expect: 0
-    Result::Ok(())
+    Ok(())
 }

@@ -25,5 +25,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&(j + 1))?;   // expect: 6
     out.line(&(b - 5))?;   // expect: 250
     out.line(&(h / 3))?;   // expect: 6148914691236517205
-    Result::Ok(())
+    Ok(())
 }

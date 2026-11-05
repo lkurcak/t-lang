@@ -16,6 +16,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let Fd { n } = a;
     let Fd { n: m } = b;
     out.line(&(n + m))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: cannot borrow `p.a` as mutable more than once at a time

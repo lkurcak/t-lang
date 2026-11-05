@@ -7,6 +7,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let p = P { n: 1 };
     out.line(&f"p = {p}")?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `P` doesn't implement `Display`, which a hole `{x}` of a format string needs

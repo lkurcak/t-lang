@@ -4,6 +4,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let n = 1i64;
     out.line(&f"{n // one
     }")?;
-    Result::Ok(())
+    Ok(())
 }
 // error: a hole in a format string can't hold a comment

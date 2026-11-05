@@ -7,6 +7,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         if i == 4 { break true; }
     };
     out.line(&x)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: expected `{integer}`, found `bool`

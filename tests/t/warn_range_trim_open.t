@@ -9,7 +9,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&f(0))?;
     out.line(&f(-1))?;
-    Result::Ok(())
+    Ok(())
 }
 // warning: this range can be narrowed to `..=-1`
 // expect: 1

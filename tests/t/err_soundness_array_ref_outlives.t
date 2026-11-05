@@ -7,6 +7,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         a = [&x];
     }
     out.line(a[0])?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `x` doesn't live long enough: it goes out of scope here while still borrowed

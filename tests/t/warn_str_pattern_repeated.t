@@ -11,7 +11,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&code("a"))?;
     out.line(&code("b"))?;
-    Result::Ok(())
+    Ok(())
 }
 // warning: unreachable alternative
 // warning: unreachable pattern

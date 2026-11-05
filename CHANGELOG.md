@@ -1,5 +1,44 @@
 # Changelog
 
+## Unreleased
+
+Step 45: variants by their names. See
+[docs/45-variants.md](docs/45-variants.md).
+
+### Changed
+
+- In a pattern, a name that starts with an uppercase letter is a path,
+  never a new variable: `None`, `Some(x)`, `Dot(p)`. One that names
+  nothing in scope is an error, with a fix that writes its enum if one in
+  scope has a variant of that name.
+- A variable's name can't start with an uppercase letter: in a `let`, a
+  pattern, a parameter of a function or closure, or the shorthand
+  `P { x }`. A variant's name must start with one, and so must the name a
+  `use .. as` gives a variant. (Before, both were naming lints.)
+- A const or static named in a pattern is an error, as before, now
+  whatever its case.
+- `dead_code` no longer skips a variant whose name starts with `_`, which
+  can't be one now: `#[allow(dead_code)]` on the variant does that.
+- The libraries, examples and tests say `Some`, `None`, `Ok` and `Err`.
+
+### Added
+
+- Variants can be brought in by `use`: `use Shape::{Dot, Empty};`,
+  `use lights::Light::Red as Stop;`, `pub use`/`export use` as far as the
+  enum is seen. Then `Dot(3)` in an expression and `Dot(p)` in a pattern
+  name `Shape::Dot`. A variant has no type arguments of its own:
+  `None::<i64>` is an error that says `Option::<i64>::None`.
+- The prelude brings in `Some`, `None`, `Ok` and `Err` (plain
+  `export use`s in `core/prelude.t`).
+- Editors: hover, go to definition and rename through imported variants;
+  tree-sitter parses `Some(x)` patterns and colors a bare uppercase name
+  as a constructor.
+
+### Fixed
+
+- Checking a package with a `use a::{self}` could index its unused-import
+  warnings by the wrong list (`imports_from`).
+
 ## 0.60.0 (2026-11-05)
 
 Step 44: compiled runs, expressions in holes, `#[warn]`. See

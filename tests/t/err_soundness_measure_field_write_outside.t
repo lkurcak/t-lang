@@ -19,6 +19,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         w.n = 0;
         out.line(&m::at(&w, 0))?;
     }
-    Result::Ok(())
+    Ok(())
 }
 // error: can't prove `i < w.len()` for argument `i` of `at`

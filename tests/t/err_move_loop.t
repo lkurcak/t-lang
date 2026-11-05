@@ -10,6 +10,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
         out.line(&consume(b))?;
         i += 1;
     }
-    Result::Ok(())
+    Ok(())
 }
 // error: use of moved value `b`

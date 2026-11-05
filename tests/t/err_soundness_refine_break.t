@@ -15,6 +15,6 @@ fn f(stop: bool) -> i64 with panic {
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     out.line(&f(true))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: can't prove `v > 0` for argument `n` of `pos`

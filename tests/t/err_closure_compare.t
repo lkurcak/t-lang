@@ -4,6 +4,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let n: i64 = 1;
     let a = || n;
     out.line(&(a == a))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: cannot compare closures with `==`

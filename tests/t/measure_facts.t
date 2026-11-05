@@ -51,5 +51,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     if b.len() > 0 {
         out.line(&b[0])?; // expect: 5
     }
-    Result::Ok(())
+    Ok(())
 }

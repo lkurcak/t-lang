@@ -12,6 +12,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let b = 2;
     put(&mut s, || b);
     out.line(&(s.f)())?;
-    Result::Ok(())
+    Ok(())
 }
 // error: expected `{closure}`, found `{closure}`; each closure has a type of its own

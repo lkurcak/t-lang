@@ -39,5 +39,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let _ = c.bump();
     out.line(&c.bump())?;               // expect: 2
     out.line(&c.done())?;               // expect: 2
-    Result::Ok(())
+    Ok(())
 }

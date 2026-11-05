@@ -19,6 +19,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let x: i64 = mk(1);
     out.line(&x)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: cannot infer

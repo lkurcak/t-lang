@@ -8,5 +8,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with global {
     out.line(&fresh())?; // expect: 2
     let _ = SEEN.fetch_add(5);
     out.line(&SEEN.load())?; // expect: 105
-    Result::Ok(())
+    Ok(())
 }

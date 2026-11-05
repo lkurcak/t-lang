@@ -7,5 +7,5 @@ fn twice<F: Copy>(f: F) -> F {
     f
 }
 
-fn main(os: std::Os) -> Result<(), std::io::Error> { let mut out = os.stdout; out.line(&twice(adder(1))(2))?;  Result::Ok(()) }
+fn main(os: std::Os) -> Result<(), std::io::Error> { let mut out = os.stdout; out.line(&twice(adder(1))(2))?;  Ok(()) }
 // error: `twice` needs its `F` to implement `Copy`, and `impl Fn(i64) -> i64 with panic + Discard` doesn't

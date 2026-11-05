@@ -11,7 +11,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&f(Pair::R(1, 2)))?;
     out.line(&f(Pair::L(3, 4)))?;
-    Result::Ok(())
+    Ok(())
 }
 // warning: unused variable `b`
 // expect: 2

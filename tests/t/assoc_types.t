@@ -94,5 +94,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let x: <Ints as Make>::Out = i.make();
     out.line(&x.b)?;                     // expect: 4
     out.line(&(first_of(&i) + i.size()))?; // expect: 5
-    Result::Ok(())
+    Ok(())
 }

@@ -33,5 +33,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     out.line(&seen)?; // expect: true
     out.line(&sum)?;  // expect: 550
     out.line(&adds)?; // expect: 100
-    Result::Ok(())
+    Ok(())
 }

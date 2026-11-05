@@ -6,6 +6,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut f = |x: i64| x + 1;
     f = |x: i64| x * 2;
     out.line(&f(1))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: expected `{closure}`, found `{closure}`; each closure has a type of its own

@@ -16,6 +16,6 @@ impl Sink for S {
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&(S {}.put(Fd { n: 1 })))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: method `put` doesn't match its declaration in trait `Sink`: its bounds should be none

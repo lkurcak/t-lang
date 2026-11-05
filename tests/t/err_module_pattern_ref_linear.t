@@ -20,6 +20,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     match &fd {
         fs::Fd { id, .. } => out.line(&id.n)?,
     }
-    Result::Ok(())
+    Ok(())
 }
 // error: `fd` is never used up

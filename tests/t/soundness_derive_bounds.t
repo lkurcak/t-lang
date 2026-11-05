@@ -26,5 +26,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&(W { q: Q { x: 1i64 } } == W { q: Q { x: 11 } }))?; // expect: true
     out.line(&same(W { q: Q { x: 2i64 } }, W { q: Q { x: 3 } }))?; // expect: false
-    Result::Ok(())
+    Ok(())
 }

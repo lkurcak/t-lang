@@ -12,10 +12,10 @@ impl<'a> Write for Keep<'a> {
 
     fn write_str(&mut self, s: &str) -> Result<(), !> {
         self.last = s;
-        Result::Ok(())
+        Ok(())
     }
 
-    fn write_char(&mut self, _c: char) -> Result<(), !> { Result::Ok(()) }
+    fn write_char(&mut self, _c: char) -> Result<(), !> { Ok(()) }
 }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
@@ -25,6 +25,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     k.write_str(s.as_str());
     s.discard();
     out.line(&k.last)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: lifetime may not live long enough: this needs the lifetime of `s` to outlive `'a`, and the signature doesn't say it does

@@ -9,6 +9,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let r = &mut x;
     swap(r, &mut *r);
     out.line(&(*x))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: cannot borrow `*r` as mutable more than once at a time

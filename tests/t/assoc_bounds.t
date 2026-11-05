@@ -68,5 +68,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     out.line(&same(&A { n: 1 }, &A { n: 1 }))?;        // expect: true
     out.line(&same(&B { b: true }, &B { b: false }))?; // expect: false
     out.line(&hold(&A { n: 1 }, &5))?;                      // expect: 5
-    Result::Ok(())
+    Ok(())
 }

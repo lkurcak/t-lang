@@ -20,6 +20,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     y = Fd { n: 3 };
     y = Fd { n: 4 };
     out.line(&close(y))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: this assignment would throw away the value `y` holds, and its type, `Fd`, isn't `Discard`

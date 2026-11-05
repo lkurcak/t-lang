@@ -15,5 +15,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let s = S {};
     let p = s.id::<Point>(Point { x: 3 });
     out.line(&p.x)?; // expect: 3
-    Result::Ok(())
+    Ok(())
 }

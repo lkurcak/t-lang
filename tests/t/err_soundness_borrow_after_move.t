@@ -11,6 +11,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     let x = Fd { n: 1 };
     out.line(&two(&x, x))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: use of moved value `x`

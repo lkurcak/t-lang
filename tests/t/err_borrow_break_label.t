@@ -11,6 +11,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         }
     }
     out.line(&(*r))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `y` doesn't live long enough

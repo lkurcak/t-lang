@@ -5,5 +5,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let p: geometry::Point = shapes::origin();
     let q = shapes::Point { x: p.x + 1, y: 2 };
     out.line(&(q.x + q.y))?; // expect: 3
-    Result::Ok(())
+    Ok(())
 }

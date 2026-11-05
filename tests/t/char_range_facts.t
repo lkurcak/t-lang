@@ -11,5 +11,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&not_surrogate('\u{E000}'))?; // expect: 57344
     out.line(&plus_one('\u{10FFFF}'))?; // expect: 1114112
     out.line(&low('é'))?; // expect: 233
-    Result::Ok(())
+    Ok(())
 }

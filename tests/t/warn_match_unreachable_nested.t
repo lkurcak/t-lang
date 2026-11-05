@@ -7,7 +7,7 @@ fn f(a: bool) -> i64 {
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&f(true))?;
-    Result::Ok(())
+    Ok(())
 }
 // warning: unreachable pattern
 // expect: 1

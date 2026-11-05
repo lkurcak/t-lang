@@ -6,9 +6,9 @@ impl Iterator for Lines {
     effect e = {};
 
     fn next(&mut self) -> Option<i64> {
-        if self.left == 0 { return Option::None; }
+        if self.left == 0 { return None; }
         self.left = self.left - 1;
-        Option::Some(self.left)
+        Some(self.left)
     }
 }
 
@@ -18,6 +18,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     for n in &mut lines {
         out.line(&n)?;
     }
-    Result::Ok(())
+    Ok(())
 }
 // error: `lines` is never used up, and its type, `Lines`, isn't `Discard`

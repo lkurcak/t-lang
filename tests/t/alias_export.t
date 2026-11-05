@@ -22,5 +22,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let ps: Points<2> = [geo::origin(), geo::Point { x: 1, y: 2 }];
     out.line(&sum(&ps))?; // expect: 3
-    Result::Ok(())
+    Ok(())
 }

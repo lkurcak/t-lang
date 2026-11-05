@@ -7,6 +7,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         inner()
     }
     out.line(&outer())?;
-    Result::Ok(())
+    Ok(())
 }
 // error: can't capture `n` in a nested `fn`; use a closure

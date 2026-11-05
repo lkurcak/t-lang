@@ -14,6 +14,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let r = &fd;
     let Fd { n } = fd;
     out.line(&(r.n + n))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: cannot move out of `fd` while `fd` is borrowed

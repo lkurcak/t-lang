@@ -14,5 +14,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let second = spend(c.into_inner());
     out.line(&first)?; // expect: 1
     out.line(&second)?; // expect: 2
-    Result::Ok(())
+    Ok(())
 }

@@ -37,5 +37,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let e: List<i64> = List::new();
     out.line(&e.first().is_none())?; // expect: true
     out.line(&e.last().is_none())?;  // expect: true
-    Result::Ok(())
+    Ok(())
 }

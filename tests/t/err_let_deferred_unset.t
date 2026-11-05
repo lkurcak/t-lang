@@ -7,6 +7,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         r = 1;
     }
     out.line(&r)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: use of `r`, which has no value here

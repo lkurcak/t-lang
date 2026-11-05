@@ -14,9 +14,9 @@ impl Iterator for Fds {
     effect e = {};
 
     fn next(&mut self) -> Option<Fd> {
-        if self.left == 0 { return Option::None; }
+        if self.left == 0 { return None; }
         self.left = self.left - 1;
-        Option::Some(Fd { n: self.left })
+        Some(Fd { n: self.left })
     }
 }
 
@@ -28,6 +28,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         }
         out.line(&close(fd))?;
     }
-    Result::Ok(())
+    Ok(())
 }
 // error: `fd` is never used up

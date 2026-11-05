@@ -9,5 +9,5 @@ impl core::fmt::Display for Fd {
     }
 }
 
-fn main() -> Result<(), Fd> { Result::Err(Fd { n: 1 }) }
+fn main() -> Result<(), Fd> { Err(Fd { n: 1 }) }
 // error: the error `main` gives back is thrown away once it's written out, so it must be `Discard`, and a `Fd` isn't

@@ -15,6 +15,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut p = Pair { a: open(1), b: open(2) };
     p.a = open(3);
     out.line(&(close(p.a) + close(p.b)))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: this assignment would throw away the value `p.a` holds

@@ -6,11 +6,10 @@ fn my_fn() -> i64 { 3 }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
-    let True = Match();
-    out.line(&(True + myFn() + my_fn()))?;
-    Result::Ok(())
+    let total = Match();
+    out.line(&(total + myFn() + my_fn()))?;
+    Ok(())
 }
 // warning: function `Match` should have a snake case name
 // warning: function `myFn` should have a snake case name: `my_fn`
-// warning: variable `True` should have a snake case name
 // expect: 6

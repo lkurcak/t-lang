@@ -46,7 +46,7 @@ fn join<D: Display, W: Write>(xs: &[D], sep: &str, w: &mut W) -> Result<(), W::E
         first = false;
         w.put(x)?;
     }
-    Result::Ok(())
+    Ok(())
 }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
@@ -65,7 +65,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     l.push(1);
     l.push(4);
     let mut out = String::new();
-    let Result::Ok(()) = join(l.as_slice(), ", ", &mut out);
+    let Ok(()) = join(l.as_slice(), ", ", &mut out);
     let w = stdout.line(&out.as_str()); // expect: 3, 1, 4
     out.discard();
     l.discard();

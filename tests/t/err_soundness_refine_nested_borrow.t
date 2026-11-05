@@ -16,6 +16,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let r = &mut s.a.b;
     *r = 0;
     out.line(&s.n)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: can't borrow `s.a.b` as `&mut`: it's in `s.a`: the refinement of field `n` of `S` names it, which a write through the reference could break

@@ -11,6 +11,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         f(&b);
     }
     out.line(&(*keep))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: this closure stores a reference from `x` in `keep`

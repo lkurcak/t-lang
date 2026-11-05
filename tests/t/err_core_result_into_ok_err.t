@@ -2,8 +2,8 @@
 // must say what to do with its error.
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
-    let r: Result<i64, bool> = Result::Ok(1);
+    let r: Result<i64, bool> = Ok(1);
     out.line(&r.into_ok())?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `Result<i64, bool>` has no method `into_ok`

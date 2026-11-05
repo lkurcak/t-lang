@@ -14,6 +14,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     if 1i64 < 2 {
         out.line(&close(fd))?;
     }
-    Result::Ok(())
+    Ok(())
 }
 // error: `fd` isn't used up on every path

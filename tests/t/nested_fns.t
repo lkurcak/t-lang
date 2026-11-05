@@ -49,7 +49,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let f = pick(true);
     out.line(&f(7))?;  // expect: 14
     out.line(&top())?; // expect: 1
-    Result::Ok(())
+    Ok(())
 }
 
 fn pick(b: bool) -> fn(i64) -> i64 with panic {

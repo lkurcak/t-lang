@@ -12,6 +12,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let r = &v;
     v.push(r.len());
     out.line(&r.size)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: cannot borrow `v` as mutable while `v` is borrowed

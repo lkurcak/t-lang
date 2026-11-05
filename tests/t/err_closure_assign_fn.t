@@ -6,6 +6,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let n = 1;
     f = |x| x + n;
     out.line(&f(1))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: expected `fn(i64) -> i64`, found a closure that captures `n`

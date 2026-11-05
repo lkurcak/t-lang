@@ -81,7 +81,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         ffi_result::OK => out.line(&0i64)?, // expect: 0
         _ => out.line(&1i64)?,
     }
-    Result::Ok(())
+    Ok(())
 }
 ```
 
@@ -444,6 +444,7 @@ combine features in ways nobody planned for.
 | 43 | text and lists in the libraries: `str::split`/`split_whitespace`/`lines`/`trim`/`find`/`strip_prefix` and the like over a sealed `Pattern` (`char` or `&str`), the `Parse` trait and `s.parse::<u8>()`, `char::to_digit`/`is_whitespace`, `Eq`/`Ord`/`first`/`contains` for `List`, `Option<&T>::copied`; an impl knows its own associated types | all safe, total T, no new intrinsic; pieces borrow the string, never the pattern; Rust's rules for `split` and `parse` | [docs/43-text-and-lists.md](docs/43-text-and-lists.md) |
 | 43.1 | `core::fmt::Debug` and `#[derive(Debug)]` (Rust's `{:?}`), format strings `f"x = {x}, p = {p.y:?}"` as values that are `Display`, `assert_eq`/`assert_ne` on `Eq + Debug`; derive names are always core's | a format string means calls of three core functions, checked as T: holes are places, borrowed; a derived `fmt` is glue that does only what its sink does | [docs/43.1-formatting.md](docs/43.1-formatting.md) |
 | 44 | `t main.t` and `t test` compile through C by default (`--interp` for the interpreter), a panic exits 101; a format string's hole holds any expression; `#[warn(..)]` and `#![allow(..)]`/`#![warn(..)]` at the top of a module, and off-by-default lints `format_hole_expressions`, `format_hole_effects` | compiled and interpreted runs and tests agree (differential tests); a hole is an ordinary argument `&e`; lints never change meaning | [docs/44-runs-and-holes.md](docs/44-runs-and-holes.md) |
+| 45 | Variants by their names: in a pattern a name that starts with an uppercase letter is a path, never a variable; `use Shape::{Dot, Empty}`; the prelude brings in `Some`, `None`, `Ok`, `Err`; no variable starts uppercase, no variant lowercase | resolving rewrites a bare variant into the qualified form (nothing after it changes); no capture (no variable is uppercase); no silent binding (an uppercase pattern name must resolve) | [docs/45-variants.md](docs/45-variants.md) |
 
 ## License
 

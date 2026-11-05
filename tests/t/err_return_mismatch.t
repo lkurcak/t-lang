@@ -5,6 +5,6 @@ fn f(c: bool) -> i64 {
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&f(true))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: expected `i64`, found `bool`

@@ -12,6 +12,6 @@ impl<T: Copy> Tr for T {
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&(Fd { n: 1 }.f()))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `Fd` doesn't implement `Tr`, which method `f` is of; that needs `Fd: Copy`

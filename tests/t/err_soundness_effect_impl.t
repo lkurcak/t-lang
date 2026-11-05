@@ -16,6 +16,6 @@ fn total<R: Run>(r: &R) -> i64 { r.run(4) }
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&total(&Half {}))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `run` may panic, but `Run`'s `run` can't, so its impls can't either

@@ -35,6 +35,15 @@ and `match` arms must agree on their result type. A `match` must cover
 every possible value. `return`, `break`, `continue`, and calls that never
 return have type `!`, which can occur wherever a value is expected.
 
+In a pattern, a name that starts with an uppercase letter is always a
+path to a variant, never a new variable: `None`, `Some(x)`, `Dot(p)`. One
+that names nothing in scope is an error. So no variable's name (in a
+`let`, a pattern, a parameter of a function or closure) can start with an
+uppercase letter, and every variant's name must. A variant is named with
+its enum, `Shape::Dot`, or by itself where a `use` brings it in,
+`use Shape::{Dot, Empty};`. The prelude brings in `Some`, `None`, `Ok` and
+`Err`. See [variants](45-variants.md).
+
 `if let p = e { .. } else { .. }` runs its block when the pattern matches,
 and `while let p = e { .. }` loops while it does. `let p = e else { .. };`
 binds the pattern for the rest of the block; its `else` must leave the
@@ -45,8 +54,8 @@ variants the pattern misses, so a value the `else` cannot name must be
 
 ```rust
 fn first(s: &str) -> Option<char> {
-    let Option::Some(c) = s.chars().next() else { return Option::None };
-    if let 'a'..='z' = c { Option::Some(c) } else { Option::None }
+    let Some(c) = s.chars().next() else { return None };
+    if let 'a'..='z' = c { Some(c) } else { None }
 }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> {
@@ -153,7 +162,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let twice = |x| x + x;
     let n = identity(3i64);
     out.line(&twice(n))?; // expect: 6
-    Result::Ok(())
+    Ok(())
 }
 ```
 
@@ -208,7 +217,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let finished = finish(ticket);
     out.line(&seen)?;     // expect: 7
     out.line(&finished)?; // expect: 7
-    Result::Ok(())
+    Ok(())
 }
 ```
 
@@ -299,7 +308,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let n: i64 = 7;
     out.line(&apply(|| n))?; // expect: 7
-    Result::Ok(())
+    Ok(())
 }
 ```
 
@@ -350,7 +359,7 @@ pub fn increment(n: i64) -> i64 { n + 1 }
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&increment(4))?; // expect: 5
-    Result::Ok(())
+    Ok(())
 }
 ```
 
@@ -431,8 +440,8 @@ as the item.
 Struct fields and inherent methods have their own visibility, bounded
 by their type's visibility. A struct with hidden fields cannot be
 constructed or taken apart outside the boundary that hides them.
-An enum's variants share its visibility; trait methods share their
-trait's interface.
+An enum's variants share its visibility, including when a `use` brings
+them in by themselves; trait methods share their trait's interface.
 
 Modules do not implicitly import the surrounding module's names. Use
 `self::`, `super::`, or `crate::` paths, or a `use` declaration; the core
@@ -449,7 +458,7 @@ use crate::numbers::answer;
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&answer())?; // expect: 42
-    Result::Ok(())
+    Ok(())
 }
 ```
 
@@ -490,14 +499,14 @@ require the checker to prove that the `usize` index is in range.
 
 ```rust
 fn first(s: &[i64]) -> Option<i64> with {} {
-    if s.len() > 0 { Option::Some(s[0]) } else { Option::None }
+    if s.len() > 0 { Some(s[0]) } else { None }
 }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let values: [i64; 2] = [5, 9];
     out.line(&first(values.as_slice()).unwrap_or(0))?; // expect: 5
-    Result::Ok(())
+    Ok(())
 }
 ```
 

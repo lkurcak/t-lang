@@ -31,5 +31,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     out.line(&f())?;                     // expect: 1
     out.line(&outer(deref, &n))?;        // expect: 2
     out.line(&call(&n, deref))?;         // expect: 2
-    Result::Ok(())
+    Ok(())
 }

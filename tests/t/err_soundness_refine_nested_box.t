@@ -24,6 +24,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
         zero(&mut s.a.b);
     }
     out.line(&s.n)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: can't prove `n <= a.m()` for field `n` of `S`, which names `a`

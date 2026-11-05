@@ -10,6 +10,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let rb = &b;
     let r = get(&rb);
     out.line(&(*r))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: expected `i64`, found `&Box<{integer}>`

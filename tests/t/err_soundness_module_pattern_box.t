@@ -21,6 +21,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let b = Box::new(fs::open(1));
     let fs::Fd { id, .. } = *b;
     out.line(&id.n)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: can't take `Fd` apart here

@@ -5,6 +5,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     out.line(&r.count())?;   // expect: 255
     let none: u8 = 5;
     out.line(&(none - 6))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: runtime error: integer overflow

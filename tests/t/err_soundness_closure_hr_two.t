@@ -11,6 +11,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         put(&mut keep, &b);
     }
     stdout.line(&(*keep))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: this needs the lifetime of `x` to outlive the lifetime of `out`, but each call picks those

@@ -284,10 +284,13 @@ its own, `!` (docs/05.1-control-flow.md). Now that's what an empty match is.
   are different types, though they have the same shape (`Type::Adt` holds a
   *name*). That's what makes them useful for keeping units apart. Structural
   typing (TypeScript, OCaml objects) would compare the fields instead.
-- **Variants are always qualified:** `Shape::Empty`, not `Empty`. In Rust,
+- **Variants were always qualified:** `Shape::Empty`, not `Empty`. In Rust,
   `match x { Empty => .. }` with `Empty` *not* in scope silently binds a new
-  variable named `Empty` and matches everything. Requiring the prefix makes
-  that mistake impossible here.
+  variable named `Empty` and matches everything. Requiring the prefix made
+  that mistake impossible here. Step 45 (docs/45-variants.md) keeps it
+  impossible another way: in a pattern a name that starts with an
+  uppercase letter is always a path, so `Empty` can be brought in by `use`
+  and written by itself.
 - **Errors vs. warnings.** An error means the program has no meaning, or
   might get stuck: a type mismatch, a non-exhaustive `match`, a refutable
   `let`. A warning means it has one, just not the one you probably wanted:

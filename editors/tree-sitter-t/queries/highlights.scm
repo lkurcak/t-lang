@@ -50,7 +50,7 @@
 ((call_expression function: (identifier) @function.builtin)
   (#match? @function.builtin "^(replace|swap)$"))
 ((call_expression function: (identifier) @function)
-  (#not-match? @function "^(replace|swap)$"))
+  (#not-match? @function "^(replace|swap|[A-Z].*)$"))
 
 (generic_function function: (identifier) @function)
 
@@ -66,6 +66,13 @@
 (enum_variant name: (identifier) @constructor)
 (variant_expression variant: (identifier) @constructor)
 (variant_pattern variant: (identifier) @constructor)
+
+; A name that starts with an uppercase letter, by itself: a variant, as
+; `None` or `Some(x)`, or a const. In a pattern it's never a variable.
+((_expression/identifier) @constructor
+  (#match? @constructor "^[A-Z]"))
+((_pattern/identifier) @constructor
+  (#match? @constructor "^[A-Z]"))
 
 ; Modules
 

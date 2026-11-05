@@ -17,6 +17,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         }
         out.line(&close(fd))?;
     }
-    Result::Ok(())
+    Ok(())
 }
 // error: `fd` is never used up

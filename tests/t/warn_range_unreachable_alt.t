@@ -8,7 +8,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&f(3))?;
     out.line(&f(10))?;
-    Result::Ok(())
+    Ok(())
 }
 // warning: unreachable
 // expect: 1

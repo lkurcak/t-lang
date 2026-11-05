@@ -9,8 +9,8 @@ fn empty() -> List<i64> { List::new() }
 
 fn first(l: &List<i64>) -> Option<i64> {
     match l.get(0) {
-        Option::Some(x) => Option::Some(*x),
-        Option::None => Option::None,
+        Some(x) => Some(*x),
+        None => None,
     }
 }
 

@@ -69,6 +69,10 @@ pub(crate) enum Item {
     Trait(usize),
     /// A top-level function, by its `FnId`: its index in `Program::all_fns`.
     Fn(usize),
+    /// A variant, by its enum's index in `Program::types` and its own
+    /// among the enum's variants. It's in no module's namespace by
+    /// itself, only where a `use` brings it in (step 45).
+    Variant(usize, usize),
 }
 
 /// A name in a module's namespace: an item declared there, or brought in
@@ -139,6 +143,11 @@ pub(crate) struct Modules {
     pub(crate) paths: HashMap<NodeId, Item>,
     /// The const items, by `FnId`: their index in `Program::all_fns`.
     pub(crate) consts: HashSet<usize>,
+    /// The statics, the same way.
+    pub(crate) statics: HashSet<usize>,
+    /// The name of each struct or enum by its index in `Program::types`,
+    /// and its variants' if it's an enum, for `use`s of them.
+    pub(crate) enums: Vec<(String, Option<Vec<String>>)>,
     /// Each name of a const item written as a length, `[u8; SIZE]` or
     /// `Ring<u8, SIZE>`, by the node of the type it's written as: the
     /// const's `FnId` (see docs/36-consts.md).
@@ -552,6 +561,7 @@ impl Resolver {
             next_id: prog.next_id,
             variants,
             in_pred: false,
+            locals: Vec::new(),
         };
         let rewritten = w.program(prog, from);
         // What's rewritten stays rewritten, ids and all, even past an error.
@@ -695,6 +705,14 @@ impl Resolver {
             }
             items.push((parent, &m.name, m.vis.level(), Item::Mod(i), Ns::Types));
         }
+        self.m.enums.truncate(from.types);
+        for d in &prog.types[from.types..] {
+            let variants = match d {
+                TypeDecl::Enum(d) => Some(d.variants.iter().map(|v| v.name.name.clone()).collect()),
+                TypeDecl::Struct(_) | TypeDecl::Alias(_) => None,
+            };
+            self.m.enums.push((d.name().name.clone(), variants));
+        }
         for (k, d) in prog.types.iter().enumerate().skip(from.types) {
             items.push((
                 d.module(),
@@ -714,6 +732,9 @@ impl Resolver {
             items.push((f.module, &f.name, f.vis.level(), Item::Fn(i), Ns::Values));
             if f.is_const() {
                 self.m.consts.insert(i);
+            }
+            if f.is_static() {
+                self.m.statics.insert(i);
             }
         }
         items.sort_by_key(|(_, name, ..)| name.span.start);
@@ -864,7 +885,10 @@ impl Resolver {
                     ),
                 ));
             }
-            false => self.modules(from, init)?,
+            false => match self.enum_at(from, init)? {
+                Some(k) => return self.variant_leaf(i, k, last),
+                None => self.modules(from, init)?,
+            },
         };
         if last.name == "self" {
             let written: Vec<&str> = init.iter().map(|s| s.name.as_str()).collect();
@@ -951,8 +975,125 @@ impl Resolver {
             };
             return Err(Error::ty(last.span, message));
         }
+        if let Some(Binding {
+            item: Item::Variant(..),
+            ..
+        }) = &values
+        {
+            self.variant_name(i)?;
+        }
         self.m.states[i] = State::Done(types.clone(), values.clone());
         Ok((types, values))
+    }
+
+    /// The enum that `init`, the start of `use` path in module `from`
+    /// before its last segment, names, if it names one: then the last
+    /// segment is one of its variants (step 45). Not if it names a module,
+    /// or nothing, which `modules` says what's wrong with.
+    fn enum_at(&mut self, from: usize, init: &[Ident]) -> Result<Option<usize>, Error> {
+        let (ty, before) = init.split_last().expect("a path has a segment");
+        if matches!(ty.name.as_str(), "crate" | "super" | "self") {
+            return Ok(None);
+        }
+        let m = match before.is_empty() {
+            true => from,
+            false => self.modules(from, before)?,
+        };
+        let Some(b) = self.lookup(m, &ty.name, Ns::Types)? else {
+            return Ok(None);
+        };
+        let Item::Type(k) = b.item else {
+            return Ok(None);
+        };
+        if !before.is_empty() && !self.m.visible(b.module, b.level, from) {
+            return Err(private(&self.m, &ty.name, &b, ty.span));
+        }
+        match &self.m.enums[k].1 {
+            Some(_) => {
+                // For editors: the enum's name in the path names it.
+                self.m.leaf_items.push((ty.clone(), vec![Item::Type(k)]));
+                Ok(Some(k))
+            }
+            None => Err(Error::ty(
+                ty.span,
+                format!(
+                    "`{}` is a struct: a `use` can bring in an enum's variants, not a struct's \
+                     fields",
+                    ty.name
+                ),
+            )),
+        }
+    }
+
+    /// Resolves `use` leaf `i`, whose path ends in variant `last` of enum
+    /// `k`: a name in the values namespace, seen as far as its enum is
+    /// (lemma V4 of docs/45-variants.md).
+    fn variant_leaf(
+        &mut self,
+        i: usize,
+        k: usize,
+        last: &Ident,
+    ) -> Result<(Option<Binding>, Option<Binding>), Error> {
+        let (name, variants) = &self.m.enums[k];
+        let variants = variants.as_ref().expect("an enum");
+        let Some(v) = variants.iter().position(|v| *v == last.name) else {
+            return Err(Error::ty(
+                last.span,
+                format!("enum `{name}` has no variant `{}`", last.name),
+            ));
+        };
+        if self.m.leaves[i].module_only {
+            return Err(Error::ty(
+                last.span,
+                format!("`{}` isn't a module", last.name),
+            ));
+        }
+        let (module, level) = self.m.decls[&Item::Type(k)];
+        let leaf = &self.m.leaves[i];
+        if leaf.vis.level() > level {
+            let message = match leaf.vis.level() {
+                Level::Export if level == Level::Package => format!(
+                    "`{}` isn't exported, so `export use` can't export its variants",
+                    name
+                ),
+                Level::Export => format!(
+                    "`{}` is private, so `export use` can't export its variants",
+                    name
+                ),
+                _ => format!(
+                    "`{}` is private, so `pub use` can't make its variants public",
+                    name
+                ),
+            };
+            return Err(Error::ty(last.span, message));
+        }
+        self.variant_name(i)?;
+        let values = Some(Binding {
+            item: Item::Variant(k, v),
+            module,
+            level,
+            import: None,
+        });
+        self.m.states[i] = State::Done(None, values.clone());
+        Ok((None, values))
+    }
+
+    /// Checks the name `use` leaf `i` gives the variant it brings in:
+    /// one that starts with an uppercase letter, so that it's a path in a
+    /// pattern, not a new variable (lemma V3 of docs/45-variants.md).
+    fn variant_name(&self, i: usize) -> Result<(), Error> {
+        let name = &self.m.leaves[i].name;
+        if crate::parser::starts_upper(&name.name) {
+            return Ok(());
+        }
+        Err(Error::ty(
+            name.span,
+            format!(
+                "a variant's name starts with an uppercase letter, so it can't be brought in as \
+                 `{}`: in a pattern, that would be a new variable",
+                name.name
+            ),
+        ))
     }
 
     /// The binding of `name` in module `m`, while `use`s are being resolved:
@@ -1162,6 +1303,9 @@ struct Rewrite<'r> {
     /// In a refinement's predicate or an `ensures`, where `old(x)` is
     /// the logic's, not a call: only `x` is rewritten.
     in_pred: bool,
+    /// The names of the nested functions of the blocks the walk is in,
+    /// which come before what the module's namespace says.
+    locals: Vec<String>,
 }
 
 impl Rewrite<'_> {
@@ -1659,7 +1803,14 @@ impl Rewrite<'_> {
                 .iter()
                 .position(|s| matches!(s, Stmt::Let { els: Some(_), .. }))
         {
+            // What its pattern names decides its `else` (`else_pattern`).
+            if let Stmt::Let { pat, .. } = &mut stmts[i] {
+                self.pattern(pat)?;
+            }
             self.let_else(stmts, tail, i, e.span);
+        }
+        if let ExprKind::IfLet(c, ..) | ExprKind::WhileLet(_, c, _) = &mut e.kind {
+            self.pattern(&mut c.pat)?;
         }
         match &mut e.kind {
             ExprKind::IfLet(..) => {
@@ -1795,6 +1946,12 @@ impl Rewrite<'_> {
                 for t in targs.iter_mut() {
                     self.ty(t)?;
                 }
+                if let Some((k, v)) = self.variant_named(name) {
+                    let member = self.member(k, v, e.span);
+                    no_variant_targs(&member, targs, &self.r.m.enums[k].0)?;
+                    e.kind = self.variant_expr(k, v, member, Vec::new(), false);
+                    return Ok(());
+                }
                 if name.contains("::") {
                     let name = Ident {
                         name: name.clone(),
@@ -1805,12 +1962,29 @@ impl Rewrite<'_> {
                     self.r.m.paths.insert(e.id, b.item);
                 }
             }
+            ExprKind::Call(callee, args)
+                if let ExprKind::Var(name, targs) = &callee.kind
+                    && let Some((k, v)) = self.variant_named(name) =>
+            {
+                let member = self.member(k, v, callee.span);
+                no_variant_targs(&member, targs, &self.r.m.enums[k].0)?;
+                for a in args.iter_mut() {
+                    self.expr(a)?;
+                }
+                let args = std::mem::take(args);
+                e.kind = self.variant_expr(k, v, member, args, true);
+                return Ok(());
+            }
             ExprKind::Variant(ty, targs, member, args, parens) => {
                 for t in targs.iter_mut() {
                     self.ty(t)?;
                 }
                 for a in args.iter_mut() {
                     self.expr(a)?;
+                }
+                // Made here, already resolved.
+                if self.r.m.paths.contains_key(&ty.id) {
+                    return Ok(());
                 }
                 if self.is_module(ty)? {
                     // `a::f(1)`: a function in a module, not a variant.
@@ -1826,6 +2000,13 @@ impl Rewrite<'_> {
                         id: self.id(),
                     };
                     let b = self.path(&path, Ns::Values)?;
+                    // `lights::Red`: a variant a module brings in.
+                    if let Item::Variant(k, v) = b.item {
+                        let member = self.member(k, v, member.span);
+                        let args = std::mem::take(args);
+                        e.kind = self.variant_expr(k, v, member, args, *parens);
+                        return Ok(());
+                    }
                     let var = Expr {
                         kind: ExprKind::Var(path.name, Vec::new()),
                         span: path.span,
@@ -1868,19 +2049,15 @@ impl Rewrite<'_> {
                 }
             }
             ExprKind::Block(stmts, _) => {
-                for s in stmts.iter_mut() {
-                    match s {
-                        Stmt::Let { pat, ty, .. } => {
-                            self.pattern(pat)?;
-                            if let Some(t) = ty {
-                                self.ty(t)?;
-                            }
-                        }
-                        Stmt::Fn(f) => self.function(f, None)?,
-                        Stmt::Type(d) => self.type_decl(d)?,
-                        Stmt::Expr(_) | Stmt::BlockLike(_) => {}
+                let outer = self.locals.len();
+                for s in stmts.iter() {
+                    if let Stmt::Fn(f) = s {
+                        self.locals.push(f.name.name.clone());
                     }
                 }
+                let walked = self.block(e);
+                self.locals.truncate(outer);
+                return walked;
             }
             ExprKind::Match(_, arms) => {
                 for a in arms.iter_mut() {
@@ -1904,6 +2081,90 @@ impl Rewrite<'_> {
             self.expr(c)?;
         }
         Ok(())
+    }
+
+    /// Block `e`, in the scope of its nested functions.
+    fn block(&mut self, e: &mut Expr) -> Result<(), Error> {
+        if let ExprKind::Block(stmts, _) = &mut e.kind {
+            for s in stmts.iter_mut() {
+                match s {
+                    Stmt::Let { pat, ty, .. } => {
+                        self.pattern(pat)?;
+                        if let Some(t) = ty {
+                            self.ty(t)?;
+                        }
+                    }
+                    Stmt::Fn(f) => self.function(f, None)?,
+                    Stmt::Type(d) => self.type_decl(d)?,
+                    Stmt::Expr(_) | Stmt::BlockLike(_) => {}
+                }
+            }
+        }
+        for c in children_mut(e) {
+            self.expr(c)?;
+        }
+        Ok(())
+    }
+
+    /// The variant an expression `name`, with no `::`, names: one that
+    /// starts with an uppercase letter, which no variable's can (lemma V2
+    /// of docs/45-variants.md), and isn't a type or const parameter's or a
+    /// nested function's, which come first.
+    fn variant_named(&self, name: &str) -> Option<(usize, usize)> {
+        if !crate::parser::starts_upper(name)
+            || name.contains("::")
+            || self.params.iter().any(|p| p == name)
+            || self.locals.iter().any(|l| l == name)
+        {
+            return None;
+        }
+        match self.r.m.get(self.module, name, Ns::Values)?.item {
+            Item::Variant(k, v) => Some((k, v)),
+            _ => None,
+        }
+    }
+
+    /// The name of enum `k`'s type, where `member`, one of its variants,
+    /// is written by itself: a path from anywhere, its node saying which
+    /// enum it is, so it can be named where it isn't in scope.
+    fn enum_ident(&mut self, k: usize, at: Span) -> Ident {
+        let module = self.r.m.decls[&Item::Type(k)].0;
+        let ty = Ident {
+            name: format!("{}::{}", self.r.m.full_path(module), self.r.m.enums[k].0),
+            span: Span::new(at.start, at.start),
+            id: self.id(),
+        };
+        self.r.m.paths.insert(ty.id, Item::Type(k));
+        ty
+    }
+
+    /// Variant `v` of enum `k`, named where it's written at `at`: by its
+    /// own name, which an `as` may have written another way.
+    fn member(&mut self, k: usize, v: usize, at: Span) -> Ident {
+        let variants = self.r.m.enums[k].1.as_ref().expect("an enum");
+        Ident {
+            name: variants[v].clone(),
+            span: at,
+            id: self.id(),
+        }
+    }
+
+    /// Variant `v` of enum `k`, written as `member`, as an expression:
+    /// with `args` if it's written with `(..)` (`parens`).
+    fn variant_expr(
+        &mut self,
+        k: usize,
+        v: usize,
+        member: Ident,
+        args: Vec<Expr>,
+        parens: bool,
+    ) -> ExprKind {
+        debug_assert_eq!(
+            self.r.m.enums[k].1.as_ref().map(|vs| &vs[v]),
+            Some(&member.name)
+        );
+        let ty = self.enum_ident(k, member.span);
+        ExprKind::Variant(ty, Vec::new(), member, args, parens)
     }
 
     /// What format string `f"..."`, its `pieces`, at `span`, means (lemma
@@ -2435,11 +2696,7 @@ impl Rewrite<'_> {
                     for (name, n) in missed {
                         let fields = (0..n).map(|_| self.wild(at)).collect();
                         let kind = PatternKind::Variant(
-                            Ident {
-                                name: ty.name.clone(),
-                                span: empty,
-                                id: self.id(),
-                            },
+                            self.same_type(ty, empty),
                             Vec::new(),
                             Ident {
                                 name,
@@ -2462,16 +2719,7 @@ impl Rewrite<'_> {
                 }
             }
             PatternKind::Struct(ty, ..) if alts.len() == 1 && self.refutable(p) => {
-                kind = PatternKind::Struct(
-                    Ident {
-                        name: ty.name.clone(),
-                        span: empty,
-                        id: self.id(),
-                    },
-                    Vec::new(),
-                    Vec::new(),
-                    true,
-                );
+                kind = PatternKind::Struct(self.same_type(ty, empty), Vec::new(), Vec::new(), true);
             }
             PatternKind::Array(pats) if alts.len() == 1 && self.refutable(p) => {
                 kind = PatternKind::Array(pats.iter().map(|_| self.wild(at)).collect());
@@ -2485,6 +2733,21 @@ impl Rewrite<'_> {
         }
     }
 
+    /// Type name `ty` again, at `at`, as a node of its own: naming what
+    /// `ty` was resolved to, if it was (as a variant written by itself
+    /// is, by a path that needn't be in scope).
+    fn same_type(&mut self, ty: &Ident, at: Span) -> Ident {
+        let id = self.id();
+        if let Some(&item) = self.r.m.paths.get(&ty.id) {
+            self.r.m.paths.insert(id, item);
+        }
+        Ident {
+            name: ty.name.clone(),
+            span: at,
+            id,
+        }
+    }
+
     fn wild(&mut self, at: Span) -> Pattern {
         Pattern {
             kind: PatternKind::Wild,
@@ -2493,10 +2756,116 @@ impl Rewrite<'_> {
         }
     }
 
+    /// The variant that `name`, a path in a pattern, names (lemma V3 of
+    /// docs/45-variants.md): it must name one, as a name there is never a
+    /// new variable. `member` is its last segment, if it has a `::`.
+    fn pattern_path(
+        &mut self,
+        name: &Ident,
+        member: Option<&Ident>,
+    ) -> Result<(usize, usize), Error> {
+        let last = member.unwrap_or(name);
+        let found = match member {
+            Some(_) => Some(self.path(name, Ns::Values)?.item),
+            None if self.params.contains(&name.name) => {
+                return Err(Error::ty(
+                    name.span,
+                    format!(
+                        "`{}` is a const parameter: a pattern can't name one yet; to compare \
+                         with it, bind another name and use `if x == {}`",
+                        name.name, name.name
+                    ),
+                ));
+            }
+            None => self
+                .r
+                .m
+                .get(self.module, &name.name, Ns::Values)
+                .map(|b| b.item),
+        };
+        match found {
+            Some(Item::Variant(k, v)) => Ok((k, v)),
+            Some(Item::Fn(i)) if self.r.m.statics.contains(&i) => Err(Error::ty(
+                name.span,
+                format!(
+                    "`{}` is a static: a pattern can't name one, only a value",
+                    last.name
+                ),
+            )),
+            Some(Item::Fn(i)) if self.r.m.consts.contains(&i) => Err(Error::ty(
+                name.span,
+                format!(
+                    "`{}` is a const: a pattern can't name one yet; to compare with it, bind \
+                     another name and use `if x == {}`",
+                    last.name, name.name
+                ),
+            )),
+            Some(Item::Fn(_)) => Err(Error::ty(
+                name.span,
+                format!("`{}` is a function: a pattern can't name one", last.name),
+            )),
+            Some(_) | None => Err(self.no_variant(name)),
+        }
+    }
+
+    /// The error for `name`, a name in a pattern that starts with an
+    /// uppercase letter, naming nothing in scope: with a fix that writes
+    /// out an enum in scope that has a variant of that name, if one does.
+    fn no_variant(&self, name: &Ident) -> Error {
+        let mut enums: Vec<&str> = Vec::new();
+        for m in [Some(self.module), self.r.m.prelude].into_iter().flatten() {
+            for (n, b) in &self.r.m.mods[m].types {
+                if let Item::Type(k) = b.item
+                    && let Some(vs) = &self.r.m.enums[k].1
+                    && vs.contains(&name.name)
+                    && !enums.contains(&n.as_str())
+                    && self.r.m.get(self.module, n, Ns::Types).map(|b| b.item) == Some(b.item)
+                {
+                    enums.push(n);
+                }
+            }
+        }
+        enums.sort();
+        match enums.first() {
+            Some(e) => {
+                let full = format!("{e}::{}", name.name);
+                Error::ty(
+                    name.span,
+                    format!(
+                        "`{}` isn't a variant in scope: write `{full}`, or bring it in with \
+                         `use {full};`",
+                        name.name
+                    ),
+                )
+                .with_fix(Fix::new(
+                    format!("write `{full}`"),
+                    vec![Edit::replace(name.span, &full)],
+                ))
+            }
+            None => {
+                let lower = crate::naming::snake(&name.name);
+                Error::ty(
+                    name.span,
+                    format!(
+                        "`{}` isn't a variant in scope; a variable's name starts with a lowercase \
+                         letter, as `{lower}`",
+                        name.name
+                    ),
+                )
+                .with_fix(Fix::new(
+                    format!("call it `{lower}`"),
+                    vec![Edit::replace(name.span, &lower)],
+                ))
+            }
+        }
+    }
+
     /// The variants of the enum `ty` names, as far as the module can tell:
     /// not a local type's, nor an alias's.
     fn variants_of(&mut self, ty: &Ident) -> Option<Vec<(String, usize)>> {
-        let k = if ty.name.contains("::") {
+        let k = if let Some(&Item::Type(k)) = self.r.m.paths.get(&ty.id) {
+            k
+        } else if ty.name.contains("::") {
             match self.path(ty, Ns::Types).ok()?.item {
                 Item::Type(k) => k,
                 _ => return None,
@@ -2514,6 +2883,8 @@ impl Rewrite<'_> {
     /// may never match, which only adds what it throws away.
     fn refutable(&mut self, p: &Pattern) -> bool {
         match &p.kind {
+            // Not yet resolved, as where resolving failed: it can't tell.
+            PatternKind::Path(..) => true,
             PatternKind::Wild | PatternKind::Bind(..) | PatternKind::Unit => false,
             PatternKind::Int(..)
             | PatternKind::Range(..)
@@ -2531,14 +2902,46 @@ impl Rewrite<'_> {
 
     fn pattern(&mut self, p: &mut Pattern) -> Result<(), Error> {
         match &mut p.kind {
-            PatternKind::Variant(ty, targs, _, pats) => {
+            PatternKind::Path(name, pats, _) => {
+                for p in pats.iter_mut() {
+                    self.pattern(p)?;
+                }
+                let (k, v) = self.pattern_path(name, None)?;
+                let ty = self.enum_ident(k, name.span);
+                let member = self.member(k, v, name.span);
+                let pats = std::mem::take(pats);
+                p.kind = PatternKind::Variant(ty, Vec::new(), member, pats);
+            }
+            PatternKind::Variant(ty, targs, member, pats) => {
                 for t in targs.iter_mut() {
                     self.ty(t)?;
                 }
-                self.type_path(&ty.clone())?;
-                for p in pats {
+                for p in pats.iter_mut() {
                     self.pattern(p)?;
                 }
+                // Made here, already resolved.
+                if self.r.m.paths.contains_key(&ty.id) {
+                    return Ok(());
+                }
+                if self.is_module(ty)? {
+                    // `lights::Red`: a variant a module brings in.
+                    let path = Ident {
+                        name: format!("{}::{}", ty.name, member.name),
+                        span: ty.span.to(member.span),
+                        id: member.id,
+                    };
+                    if let Some(t) = targs.first() {
+                        return Err(Error::ty(
+                            t.span,
+                            "a module has no type arguments; they go after the enum",
+                        ));
+                    }
+                    let (k, v) = self.pattern_path(&path, Some(member))?;
+                    *ty = self.enum_ident(k, path.span);
+                    *member = self.member(k, v, member.span);
+                    return Ok(());
+                }
+                self.type_path(&ty.clone())?;
             }
             PatternKind::Struct(ty, targs, fields, _) => {
                 for t in targs.iter_mut() {
@@ -2564,6 +2967,25 @@ impl Rewrite<'_> {
         }
         Ok(())
     }
+}
+
+/// Checks that `member`, a variant written by itself, has no type
+/// arguments: they're its enum's, `enum_name`'s, and go after it.
+fn no_variant_targs(member: &Ident, targs: &[TypeExpr], enum_name: &str) -> Result<(), Error> {
+    let Some(first) = targs.first() else {
+        return Ok(());
+    };
+    let last = &targs[targs.len() - 1];
+    let written: Vec<String> = targs.iter().map(|t| t.to_string()).collect();
+    Err(Error::ty(
+        first.span.to(last.span),
+        format!(
+            "a variant has no type arguments of its own; write them after its enum: \
+             `{enum_name}::<{}>::{}`",
+            written.join(", "),
+            member.name
+        ),
+    ))
 }
 
 /// The name of the variable a `for` loop keeps its iterator in, which no

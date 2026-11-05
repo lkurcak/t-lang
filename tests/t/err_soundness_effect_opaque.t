@@ -6,6 +6,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let f = make();
     out.line(&f(1))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: this closure may panic, but `make's return type` needs calls of it to fit `fn(i64) -> i64`, which can't panic

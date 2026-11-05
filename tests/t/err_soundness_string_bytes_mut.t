@@ -5,8 +5,8 @@ use alloc::string::String;
 fn main() with alloc {
     let s = String::from("a");
     match s.as_bytes().get_mut(0) {
-        Option::Some(b) => *b = 0xFF,
-        Option::None => {},
+        Some(b) => *b = 0xFF,
+        None => {},
     }
     let _v = s.as_str();
     s.discard();

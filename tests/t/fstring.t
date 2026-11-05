@@ -45,7 +45,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     out.line(&g.greet())?; // expect: hi ann, at Point { x: 3, y: 4 }
     let s = String::of(&f"{g.p.x}-{g.p.y}");
     out.line(&f"{s} {s:?}")?; // expect: 3-4 "3-4"
-    Result::Ok(())
+    Ok(())
 }
 
 #[test]

@@ -10,12 +10,12 @@ impl<I: Iterator<Item = i64>> Iterator for Evens<I> {
     fn next(&mut self) -> Option<i64> with {I::e, panic} {
         loop {
             match self.iter.next() {
-                Option::Some(x) => {
+                Some(x) => {
                     if x % 2 == 0 {
-                        return Option::Some(x);
+                        return Some(x);
                     }
                 },
-                Option::None => return Option::None,
+                None => return None,
             }
         }
     }
@@ -33,8 +33,8 @@ where
 
     fn next(&mut self) -> Option<I::Item> with I::e {
         match self.iter.next() {
-            Option::Some(_x) => self.iter.next(),
-            Option::None => Option::None,
+            Some(_x) => self.iter.next(),
+            None => None,
         }
     }
 }
@@ -44,7 +44,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     for x in (Second { iter: Evens { iter: 0..10i64 } }) {
         out.line(&x)?;
     }
-    Result::Ok(())
+    Ok(())
     // expect: 2
     // expect: 6
 }

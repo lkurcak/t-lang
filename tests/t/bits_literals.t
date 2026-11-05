@@ -19,5 +19,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&class(0x41))?;         // expect: 1
     out.line(&class(0xA9))?;         // expect: 0
     out.line(&class(0xE2))?;         // expect: 2
-    Result::Ok(())
+    Ok(())
 }

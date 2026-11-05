@@ -48,5 +48,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let f = W::<S>::eq;
     out.line(&f(&W { x: S { n: 1 } }, &W { x: S { n: 4 } }))?; // expect: true
     out.line(&Eq::eq(&1i64, &2))?;                               // expect: false
-    Result::Ok(())
+    Ok(())
 }

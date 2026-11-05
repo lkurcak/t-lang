@@ -20,5 +20,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&(*f(&a)))?; // expect: 1
     let id = |x: &i64| -> &i64 { x };
     out.line(&at(id, &a))?; // expect: 1
-    Result::Ok(())
+    Ok(())
 }

@@ -3,8 +3,8 @@ use alloc::list::List;
 
 fn put<'a>(s: &mut [&'a i64], r: &'a i64) {
     match s.get_mut(0) {
-        Option::Some(x) => *x = r,
-        Option::None => {},
+        Some(x) => *x = r,
+        None => {},
     }
 }
 

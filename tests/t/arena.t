@@ -11,5 +11,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     *y = *y + 20;
     out.line(&(*x + *y))?; // expect: 33
     out.line(&a.len())?;   // expect: 2
-    Result::Ok(())
+    Ok(())
 }

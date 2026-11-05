@@ -6,6 +6,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let max = |x: &i64, y: &i64| if *x > *y { x } else { y };
     let a = 1;
     out.line(&(*max(&a, &a)))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: this closure's result could borrow from `x` or from `y`

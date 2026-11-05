@@ -9,6 +9,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         reader(&n)
     };
     out.line(&r())?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `n` doesn't live long enough

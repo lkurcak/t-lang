@@ -50,5 +50,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
         i = i + 1;
     }
     out.line(&total)?;                   // expect: 6
-    Result::Ok(())
+    Ok(())
 }

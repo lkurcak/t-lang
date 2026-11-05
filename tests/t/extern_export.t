@@ -16,5 +16,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     nothing();
     out.line(&register(6))?;       // expect: 7
     out.line(&double(true, -21))?; // expect: -42
-    Result::Ok(())
+    Ok(())
 }

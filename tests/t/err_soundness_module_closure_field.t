@@ -19,6 +19,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let fd = fs::open(1);
     let f = move || fd.id;
     out.line(&f().n)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: can't take `Fd` apart here

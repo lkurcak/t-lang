@@ -15,5 +15,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     out.line(&step(&mut c))?;            // expect: 20
     out.line(&c.calls)?;                 // expect: 2
     out.line(&i)?;                       // expect: 20
-    Result::Ok(())
+    Ok(())
 }

@@ -8,7 +8,7 @@ struct S<T> { t: T }
 
 impl<T: Discard> Discard for S<T> {
     fn discard(self) {
-        let _x = S { t: Option::Some(self.t) };
+        let _x = S { t: Some(self.t) };
     }
 }
 

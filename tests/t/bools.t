@@ -14,5 +14,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&b(true || false && false))?;   // expect: 1
     // Short-circuit: the division by zero never runs.
     out.line(&b(false && 1i64 / 0 == 0))?;      // expect: 0
-    Result::Ok(())
+    Ok(())
 }

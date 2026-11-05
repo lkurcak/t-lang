@@ -15,6 +15,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let s = S {};
     let r = s.get(&b);
     out.line(&(*r))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: expected `i64`, found `Box<{integer}>`

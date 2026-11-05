@@ -13,6 +13,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let b = B { x: 1 };
     out.line(&twice(|| take(b)))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: this closure is only `FnOnce`, as it moves `b` out, but `twice` needs it to implement `Fn`

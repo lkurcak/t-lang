@@ -14,7 +14,7 @@ fn first(s: { s: &[i64] | s.len() > 0 }) -> i64 { s[0] }
 
 fn last(s: &[i64]) -> Option<i64> {
     let n = s.len();
-    if n == 0 { Option::None } else { Option::Some(s[n - 1]) }
+    if n == 0 { None } else { Some(s[n - 1]) }
 }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
@@ -29,5 +29,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
         out.line(&first(s))?; // expect: 3
     }
     out.line(&last(s).unwrap_or(0))?; // expect: 5
-    Result::Ok(())
+    Ok(())
 }

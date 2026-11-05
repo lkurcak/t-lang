@@ -8,6 +8,8 @@ export use crate::num::{Int, Signed, Unsigned};
 export use crate::num::{checked_add, checked_div, checked_mul, checked_neg, checked_rem, checked_sub};
 export use crate::ops::{Fn, FnMut, FnOnce};
 export use crate::option::Option;
+export use crate::option::Option::{None, Some};
 export use crate::panic::{assert, assert_eq, assert_ne, panic};
 export use crate::result::Result;
+export use crate::result::Result::{Err, Ok};
 export use crate::sync::{Send, Sync};

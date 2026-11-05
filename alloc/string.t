@@ -49,11 +49,7 @@ impl String {
 
     /// Bytes `b`, as a string, if they're UTF-8, or else `b` back.
     export fn from_utf8(b: List<u8>) -> Result<String, List<u8>> {
-        if str::from_utf8(b.as_slice()).is_some() {
-            Result::Ok(String { bytes: b })
-        } else {
-            Result::Err(b)
-        }
+        if str::from_utf8(b.as_slice()).is_some() { Ok(String { bytes: b }) } else { Err(b) }
     }
 
     /// Its bytes, as a list, which uses it up.
@@ -96,10 +92,10 @@ impl String {
             i = i + 1;
         }
         match self.bytes.as_mut_slice().split_at_mut(at) {
-            Option::Some(split) => {
+            Some(split) => {
                 c.encode_utf8(split.tail);
             },
-            Option::None => {},
+            None => {},
         }
     }
 
@@ -116,15 +112,15 @@ impl String {
     export fn pop(&mut self) -> Option<char> {
         let n = self.bytes.len();
         if n == 0 {
-            return Option::None;
+            return None;
         }
         let mut at = n - 1;
         while at > 0 && !self.as_str().is_char_boundary(at) {
             at = at - 1;
         }
         let c = match self.as_str().get(at, n) {
-            Option::Some(last) => last.chars().next(),
-            Option::None => Option::None,
+            Some(last) => last.chars().next(),
+            None => None,
         };
         // Cut where the last character starts, so the rest is UTF-8.
         self.bytes.truncate(at);
@@ -185,12 +181,12 @@ impl Write for String {
     #[blame_caller]
     fn write_str(&mut self, s: &str) -> Result<(), !> with alloc {
         self.push_str(s);
-        Result::Ok(())
+        Ok(())
     }
 
     #[blame_caller]
     fn write_char(&mut self, c: char) -> Result<(), !> with alloc {
         self.push(c);
-        Result::Ok(())
+        Ok(())
     }
 }

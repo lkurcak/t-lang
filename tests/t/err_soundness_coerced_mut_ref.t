@@ -15,6 +15,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
         out = id(&mut x);
     }
     stdout.line(&(*out))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `n` doesn't live long enough

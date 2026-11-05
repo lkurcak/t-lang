@@ -7,9 +7,9 @@ impl Iterator for Lines {
     effect e = {};
 
     fn next(&mut self) -> Option<i64> {
-        if self.left == 0 { return Option::None; }
+        if self.left == 0 { return None; }
         self.left = self.left - 1;
-        Option::Some(self.left)
+        Some(self.left)
     }
 }
 
@@ -18,6 +18,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     for n in (Lines { left: 2 }) {
         out.line(&n)?;
     }
-    Result::Ok(())
+    Ok(())
 }
 // error: a `for` throws its iterator away when it ends, and `Lines` isn't `Discard`; to keep it, iterate over a mutable reference to it: `for x in &mut it`

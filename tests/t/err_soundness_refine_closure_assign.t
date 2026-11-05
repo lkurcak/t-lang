@@ -5,6 +5,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut c = || i = 0;
     c();
     out.line(&i)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: can't prove `v > 0` for `i`

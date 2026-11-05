@@ -7,6 +7,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let l = s.into_bytes();
     out.line(&s.as_str())?;
     l.discard();
-    Result::Ok(())
+    Ok(())
 }
 // error: use of moved value `s`

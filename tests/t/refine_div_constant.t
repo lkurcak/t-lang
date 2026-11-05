@@ -15,5 +15,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&mean(200, 255))?;  // expect: 227
     out.line(&half_neg(-1))?;    // expect: 0
     out.line(&digit(1234))?;     // expect: 4
-    Result::Ok(())
+    Ok(())
 }

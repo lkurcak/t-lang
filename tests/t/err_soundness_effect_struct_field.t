@@ -8,6 +8,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     let h = Holder { f: || panic("stop") };
     out.line(&call(&h))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: this closure may panic, but `Holder` needs calls of it to fit `fn() -> i64`, which can't panic

@@ -19,5 +19,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     out.line(&sum(4))?; // expect: 6
     out.line(&count(3))?; // expect: true
-    Result::Ok(())
+    Ok(())
 }

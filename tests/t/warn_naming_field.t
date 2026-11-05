@@ -10,7 +10,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let p = P { xPos, y: 2 };
     let P { xPos, y } = p;
     out.line(&(xPos + y + p.xPos))?;
-    Result::Ok(())
+    Ok(())
 }
 // warning: field `xPos` should have a snake case name: `x_pos`
 // warning: variable `xPos` should have a snake case name: `x_pos`

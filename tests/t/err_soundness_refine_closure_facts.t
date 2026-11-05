@@ -15,6 +15,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     };
     out.line(&c(1))?;
     out.line(&non_zero(d))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: can't prove `v != 0` for argument `n` of `non_zero`

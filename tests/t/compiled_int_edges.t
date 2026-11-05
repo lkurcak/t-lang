@@ -55,5 +55,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     out.line(&core::num::wrap::<i32, i16>(32768))?; // expect: -32768
     out.line(&core::num::checked_mul(min, -1).is_none())?; // expect: true
     out.line(&core::num::checked_mul(3u8, 85).unwrap())?; // expect: 255
-    Result::Ok(())
+    Ok(())
 }

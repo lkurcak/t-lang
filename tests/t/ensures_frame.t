@@ -35,5 +35,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     if b.len() < greatest() {
         out.line(&(b.len() + 1))?; // expect: 3
     }
-    Result::Ok(())
+    Ok(())
 }

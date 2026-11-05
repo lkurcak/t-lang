@@ -6,6 +6,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     let f = |x: i64| may(x);
     out.line(&apply(f, 1))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: expected `fn(i64) -> i64`, found `fn(i64) -> i64 with panic`

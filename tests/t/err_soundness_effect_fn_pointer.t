@@ -6,6 +6,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let f: fn(i64) -> i64 = inc;
     out.line(&f(9223372036854775807))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: expected `fn(i64) -> i64`, found `fn(i64) -> i64 with panic`

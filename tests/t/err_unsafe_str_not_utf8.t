@@ -5,6 +5,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     // SAFETY: wrong: `\xC3` starts a character that never ends.
     let s = unsafe { core::str::from_utf8_unchecked(b) };
     out.line(&s.len())?;
-    Result::Ok(())
+    Ok(())
 }
 // error: unsafe code broke its obligation: `str::from_utf8_unchecked` of bytes that aren't UTF-8

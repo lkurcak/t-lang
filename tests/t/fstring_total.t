@@ -12,12 +12,12 @@ impl Write for Counter {
 
     fn write_str(&mut self, s: &str) -> Result<(), !> {
         self.n = core::num::wrapping_add(self.n, s.len());
-        Result::Ok(())
+        Ok(())
     }
 
     fn write_char(&mut self, c: char) -> Result<(), !> {
         self.n = core::num::wrapping_add(self.n, c.len_utf8());
-        Result::Ok(())
+        Ok(())
     }
 }
 
@@ -36,5 +36,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&length(&Tree::Leaflet(-5), 10))?; // expect: 14
     out.line(&length(&Tree::Doubled("ab", [1, 2]), -1))?; // expect: 24
-    Result::Ok(())
+    Ok(())
 }

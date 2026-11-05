@@ -8,6 +8,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     out.line(&apply(c))?;
     d = 0;
     out.line(&d)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: this closure may panic, but `apply` needs calls of it to fit `fn() -> i64`, which can't panic

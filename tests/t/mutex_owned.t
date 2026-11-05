@@ -12,5 +12,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&doubled)?;        // expect: 12
     out.line(&m.into_inner())?; // expect: 12
-    Result::Ok(())
+    Ok(())
 }

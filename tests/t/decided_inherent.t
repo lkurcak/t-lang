@@ -11,5 +11,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let k: i64 = 5;
     let t = Thunk { f: || k };
     out.line(&t.call())?;    // expect: 5
-    Result::Ok(())
+    Ok(())
 }

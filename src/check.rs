@@ -494,6 +494,8 @@ pub(crate) struct Checker {
     from: Counts,
     /// Where its `use`s' names start in `modules.leaf_items`.
     leaves_from: usize,
+    /// Where its `use`s start in `modules.imports`.
+    imports_from: usize,
     /// Where its paths' modules start in `modules.module_refs`.
     refs_from: usize,
     /// How many blocks have declared types so far (see `names`).
@@ -985,6 +987,7 @@ impl Checker {
             spans_from: 0,
             from: Counts::default(),
             leaves_from: 0,
+            imports_from: 0,
             refs_from: 0,
             fns: Vec::new(),
             nested_ids: HashMap::new(),
@@ -1077,6 +1080,7 @@ impl Checker {
     fn package(&mut self, prog: &mut Program, root: usize, from: Counts) -> Result<(), Error> {
         self.from = from;
         self.leaves_from = self.modules.leaf_items.len();
+        self.imports_from = self.modules.imports.len();
         self.refs_from = self.modules.module_refs.len();
         self.impls_from = self.traits.impls.len();
         self.spans_from = prog.mods[root].span.start;
@@ -1211,7 +1215,7 @@ impl Checker {
             // checks.
             self.dead_code(prog);
         }
-        let unused = self.modules.imports[self.leaves_from..]
+        let unused = self.modules.imports[self.imports_from..]
             .iter()
             .filter(|i| i.level == Level::Module && !i.used.get());
         self.warnings.extend(unused.map(lints::unused_import));

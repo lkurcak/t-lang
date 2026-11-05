@@ -12,6 +12,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut p = Pos { n: 1 };
     zero(&mut p.n);
     out.line(&p.n)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: can't prove `v > 0` for field `n` of `Pos`

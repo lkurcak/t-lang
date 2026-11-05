@@ -19,6 +19,6 @@ fn f(early: bool) -> i64 {
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&f(false))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `fd` is never used up

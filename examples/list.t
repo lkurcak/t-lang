@@ -36,5 +36,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     out.line(&sum(&l))?; // expect: 10
     double(&mut l);
     out.line(&sum(&l))?; // expect: 20
-    Result::Ok(())
+    Ok(())
 }

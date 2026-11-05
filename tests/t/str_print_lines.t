@@ -5,5 +5,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&"one\ntwo")?; // expect: one
     // expect: two
     out.line(&"")?; // expect: 
-    Result::Ok(())
+    Ok(())
 }

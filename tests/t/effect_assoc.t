@@ -8,10 +8,10 @@ impl Iterator for Ones {
 
     fn next(&mut self) -> Option<i64> with panic {
         if self.left == 0 {
-            Option::None
+            None
         } else {
             self.left = self.left - 1;
-            Option::Some(1)
+            Some(1)
         }
     }
 }
@@ -24,5 +24,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     // A range's `next` can't panic, so neither can this call.
     out.line(&first(0..3).is_some())?; // expect: true
     out.line(&(0..4).map(|x| x * 2i64).fold(0, |a, b| a + b))?; // expect: 12
-    Result::Ok(())
+    Ok(())
 }

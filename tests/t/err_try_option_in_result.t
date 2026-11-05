@@ -1,9 +1,9 @@
 // What an `Option`'s `?` returns is a `None`, which isn't a `Result`.
-fn get() -> Option<i64> { Option::None }
+fn get() -> Option<i64> { None }
 
 fn f() -> Result<i64, bool> {
     let x = get()?;
-    Result::Ok(x)
+    Ok(x)
 }
 
 fn main() { let _ = f(); }

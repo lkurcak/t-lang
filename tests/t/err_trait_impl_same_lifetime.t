@@ -20,6 +20,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         l = p.leak().long;
     }
     out.line(&(*l))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `Pair<'a, 'a>` says two lifetimes are the same, but an impl of a trait must hold at every lifetime, as finding the impl for a type doesn't look at lifetimes

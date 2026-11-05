@@ -54,9 +54,9 @@ impl<T: Int> Iterator for Range<T> {
         if self.start < self.end {
             let n = self.start;
             self.start = self.start + 1;
-            Option::Some(n)
+            Some(n)
         } else {
-            Option::None
+            None
         }
     }
 }
@@ -105,14 +105,14 @@ impl<T> Try for Option<T> {
 
     fn branch(self) -> ControlFlow<Option<!>, T> {
         match self {
-            Option::Some(v) => ControlFlow::Continue(v),
-            Option::None => ControlFlow::Break(Option::None),
+            Some(v) => ControlFlow::Continue(v),
+            None => ControlFlow::Break(None),
         }
     }
 
     fn from_residual(r: Option<!>) -> Option<T> {
         match r {
-            Option::None => Option::None,
+            None => None,
         }
     }
 }
@@ -127,14 +127,14 @@ impl<T, E> Try for Result<T, E> {
 
     fn branch(self) -> ControlFlow<Result<!, E>, T> {
         match self {
-            Result::Ok(v) => ControlFlow::Continue(v),
-            Result::Err(e) => ControlFlow::Break(Result::Err(e)),
+            Ok(v) => ControlFlow::Continue(v),
+            Err(e) => ControlFlow::Break(Err(e)),
         }
     }
 
     fn from_residual(r: Result<!, E>) -> Result<T, E> {
         match r {
-            Result::Err(e) => Result::Err(e),
+            Err(e) => Err(e),
         }
     }
 }

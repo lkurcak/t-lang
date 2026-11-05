@@ -21,6 +21,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let mut z = Z {};
     out.line(&z.two())?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `next` may have the effects `Self::e`, but `two` doesn't say `with Self::e`

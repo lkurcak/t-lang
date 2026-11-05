@@ -26,5 +26,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     out.line(&first_true([false, true]))?; // expect: 1
     let [x, y, z] = [1i64, 2, 3];
     out.line(&(x + y + z))?;            // expect: 6
-    Result::Ok(())
+    Ok(())
 }

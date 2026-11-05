@@ -11,6 +11,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let p = m::P { n: 1 };
     out.line(&p.secret())?;
-    Result::Ok(())
+    Ok(())
 }
 // error: method `secret` of `P` is private to `m`

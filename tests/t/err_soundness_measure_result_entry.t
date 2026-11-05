@@ -16,6 +16,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     if r > 0 {
         out.line(&l[r - 1])?;
     }
-    Result::Ok(())
+    Ok(())
 }
 // error: can't prove `i < self.len()` for argument `i` of `index`

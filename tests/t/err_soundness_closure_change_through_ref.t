@@ -6,6 +6,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut set = || *r = 1;
     set();
     out.line(&n)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: cannot assign to `*r`: it's behind a `&` reference

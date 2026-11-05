@@ -11,10 +11,10 @@ impl Iterator for Fds {
 
     fn next(&mut self) -> Option<Fd> with panic {
         if self.left == 0 {
-            return Option::None;
+            return None;
         }
         self.left = self.left - 1;
-        Option::Some(Fd { n: self.left })
+        Some(Fd { n: self.left })
     }
 }
 
@@ -27,8 +27,8 @@ impl<I: Iterator> Iterator for Second<I> where I::Item: Discard {
 
     fn next(&mut self) -> Option<I::Item> with I::e {
         match self.iter.next() {
-            Option::Some(_x) => self.iter.next(),
-            Option::None => Option::None,
+            Some(_x) => self.iter.next(),
+            None => None,
         }
     }
 }
@@ -38,6 +38,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     for Fd { n } in (Second { iter: Fds { left: 4 } }) {
         out.line(&n)?;
     }
-    Result::Ok(())
+    Ok(())
 }
 // error: `Second<Fds>` doesn't implement `Iterator`, which method `next` is of; that needs `Fd: Discard`

@@ -26,6 +26,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut s = Stack { room: Room::new(4), len: 3 };
     s.room.shrink();
     out.line(&s.len)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: can't prove `n <= room.cap()` for field `len` of `Stack`, which names `room`

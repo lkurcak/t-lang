@@ -10,7 +10,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     #[derive(Discard)]
     struct _OnPurpose {}
     out.line(&1i64)?; // expect: 1
-    Result::Ok(())
+    Ok(())
 }
 
 fn dead() {

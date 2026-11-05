@@ -17,6 +17,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let w = W { f: not_zero };
     out.line(&w.go())?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `W<fn(i64) -> bool>` doesn't implement `Go`

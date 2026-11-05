@@ -39,5 +39,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     out.line(&geometry::scale::back())?;                           // expect: 7
     let d = geometry::Shape::Dot(p);
     out.line(&geometry::len(d))?;                                  // expect: 0
-    Result::Ok(())
+    Ok(())
 }

@@ -32,5 +32,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let r = &mut a;
     *r -= 5;
     out.line(&a)?;                   // expect: -3
-    Result::Ok(())
+    Ok(())
 }

@@ -10,11 +10,11 @@ fn close(fd: Fd) -> i64 {
 enum Shape { Circle(Fd), Square(Fd) }
 
 fn f(o: Option<Shape>) -> i64 {
-    let Option::Some(Shape::Circle(fd)) = o else { return 0 };
+    let Some(Shape::Circle(fd)) = o else { return 0 };
     close(fd)
 }
 
 fn main() {
-    let _ = f(Option::None);
+    let _ = f(None);
 }
 // error: if the pattern of this `let .. else` doesn't match, it throws away `o.0`, and its type, `Shape`

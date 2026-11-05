@@ -3,7 +3,7 @@
 use alloc::string::String;
 use core::fmt::Write;
 
-fn never_fails(x: i64) -> Result<i64, !> { Result::Ok(x * 0 + 7) }
+fn never_fails(x: i64) -> Result<i64, !> { Ok(x * 0 + 7) }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut out = os.stdout;

@@ -86,11 +86,11 @@ impl Write for Message {
 
     fn write_str(&mut self, s: &str) -> Result<(), !> {
         self.push_str(s);
-        Result::Ok(())
+        Ok(())
     }
 
     fn write_char(&mut self, c: char) -> Result<(), !> {
         self.push_char(c);
-        Result::Ok(())
+        Ok(())
     }
 }

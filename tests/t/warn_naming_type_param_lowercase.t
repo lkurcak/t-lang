@@ -5,6 +5,6 @@ fn id<t>(x: t) -> t { x }
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&id(1i64))?; // expect: 1
-    Result::Ok(())
+    Ok(())
 }
 // warning: type parameter `t` should have an upper camel case name: `T`

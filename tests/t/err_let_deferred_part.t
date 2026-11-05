@@ -9,6 +9,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     p.x = 1;
     p.y = 2;
     out.line(&p.x)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: cannot assign to `p.x`, part of `p`, which has no value here

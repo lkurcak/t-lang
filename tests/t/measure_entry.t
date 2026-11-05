@@ -25,5 +25,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     if !t.is_empty() {
         out.line(&t[0])?; // expect: 6
     }
-    Result::Ok(())
+    Ok(())
 }

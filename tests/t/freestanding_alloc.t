@@ -15,11 +15,11 @@ struct Node<'a> { value: u32, next: Option<&'a Node<'a>> }
 // them; dropped with 20 values in 32 slots.
 fn chain() -> u32 {
     let nodes = Arena::new();
-    let mut last: &Node = nodes.alloc(Node { value: 0, next: Option::None });
-    for i in 1..20u32 { last = nodes.alloc(Node { value: i, next: Option::Some(last) }) }
+    let mut last: &Node = nodes.alloc(Node { value: 0, next: None });
+    for i in 1..20u32 { last = nodes.alloc(Node { value: i, next: Some(last) }) }
     let mut sum = 0u32;
-    let mut at = Option::Some(last);
-    while let Option::Some(n) = at {
+    let mut at = Some(last);
+    while let Some(n) = at {
         sum = sum + n.value;
         at = n.next;
     }

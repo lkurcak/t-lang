@@ -98,5 +98,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {panic, alloc} {
         two(Fd { n: 1 }, die());
     }
     stdout.line(&x)?; // expect: 1
-    Result::Ok(())
+    Ok(())
 }

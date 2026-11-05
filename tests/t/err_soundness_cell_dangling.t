@@ -11,6 +11,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
         c.set(s.as_str());
     }
     out.line(&c.get())?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `s` doesn't live long enough

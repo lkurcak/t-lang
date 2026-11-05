@@ -1378,6 +1378,59 @@ fn main() {
     stop(child, c);
 }
 
+/// A variant brought in by a `use` (step 45) hovers, goes to its
+/// definition and renames as one written with its enum does, and so does
+/// the enum named in the `use`.
+#[test]
+fn imported_variants_hover_and_rename() {
+    let (child, mut c) = start();
+    let src = "\
+use Shape::{Dot, Empty};
+#[derive(Discard)] enum Shape {
+    Empty,
+    Dot(i64),
+}
+fn area(s: Shape) -> i64 {
+    match s {
+        Empty => 0,
+        Dot(n) => n,
+    }
+}
+fn main() {
+    let _ = area(Dot(2)) + area(Shape::Empty);
+    let _ = Some(1i64);
+}
+";
+    let (mut d, diags) = Doc::open(&mut c, "file:///tmp/variants.t", src);
+    assert_eq!(diags, Vec::<Value>::new());
+    let hover = d.ask(&mut c, "textDocument/hover", "Dot", 2, json!({}));
+    assert!(
+        hover["result"]["contents"]["value"]
+            .as_str()
+            .is_some_and(|v| v.contains("Dot: fn(i64) -> Shape")),
+        "{hover}"
+    );
+    let hover = d.ask(&mut c, "textDocument/hover", "Some", 0, json!({}));
+    assert!(
+        hover["result"]["contents"]["value"]
+            .as_str()
+            .is_some_and(|v| v.contains("Option::Some")),
+        "{hover}"
+    );
+    let def = d.ask(&mut c, "textDocument/definition", "Dot", 3, json!({}));
+    assert_eq!(def["result"]["range"], d.range("Dot", 1), "{def}");
+    assert_eq!(
+        d.rename(&mut c, "Dot", 1, "Point").unwrap(),
+        src.replace("Dot", "Point")
+    );
+    assert_eq!(
+        d.rename(&mut c, "Shape", 1, "Form").unwrap(),
+        src.replace("Shape", "Form")
+    );
+
+    stop(child, c);
+}
+
 /// An effect parameter renames as a type parameter does, but not to a
 /// built-in effect's name, which `with` would then mean.
 #[test]

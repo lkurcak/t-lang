@@ -3,7 +3,7 @@
 // does: here, panic.
 fn main(os: std::Os) with {alloc, panic} {
     let h = os.threads.spawn(|| {
-        let v: Option<u32> = Option::None;
+        let v: Option<u32> = None;
         v.unwrap()
     });
     let _ = h.join();

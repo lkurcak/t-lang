@@ -32,5 +32,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
         j = j + 1;
     }
     out.line(&total)?; // expect: 85
-    Result::Ok(())
+    Ok(())
 }

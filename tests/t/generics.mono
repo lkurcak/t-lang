@@ -58,9 +58,9 @@ fn flip::<i64, bool>(p: Pair::<i64, bool>) -> Pair::<bool, i64> {
     }
 }
 
-fn map::<{panic}, i64, i64, {closure#124722}>(
+fn map::<{panic}, i64, i64, {closure#122358}>(
     o: Option::<i64>,
-    f: {closure#124722},
+    f: {closure#122358},
 ) -> Option::<i64> with panic {
     let _0: Option<i64>;
     let _1: Option<i64>; // o
@@ -109,9 +109,9 @@ fn map::<{panic}, i64, i64, {closure#124722}>(
     }
 }
 
-fn map::<{panic}, i64, i64, {closure#124881}>(
+fn map::<{panic}, i64, i64, {closure#122517}>(
     o: Option::<i64>,
-    f: {closure#124881},
+    f: {closure#122517},
 ) -> Option::<i64> with panic {
     let _0: Option<i64>;
     let _1: Option<i64>; // o
@@ -160,7 +160,7 @@ fn map::<{panic}, i64, i64, {closure#124881}>(
     }
 }
 
-fn map::<{}, i64, bool, {closure#124966}>(o: Option::<i64>, f: {closure#124966}) -> Option::<bool> {
+fn map::<{}, i64, bool, {closure#122602}>(o: Option::<i64>, f: {closure#122602}) -> Option::<bool> {
     let _0: Option<bool>;
     let _1: Option<i64>; // o
     let _2: {closure}; // f
@@ -714,8 +714,8 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         _51 = 4_i64;
         _50 = Option::<i64>::Some(move _51);
         _53 = &_46;
-        _52 = {closure#12601}(move _53);
-        _49 = map::<{panic}, i64, i64, {closure#124722}>(move _50, move _52);
+        _52 = {closure#12824}(move _53);
+        _49 = map::<{panic}, i64, i64, {closure#122358}>(move _50, move _52);
         _48 = move _49;
         dead _53;
         dead _52;
@@ -769,8 +769,8 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         _65 = move _66;
         dead _66;
         _72 = move _65;
-        _73 = {closure#12631}();
-        _71 = map::<{panic}, i64, i64, {closure#124881}>(move _72, move _73);
+        _73 = {closure#12854}();
+        _71 = map::<{panic}, i64, i64, {closure#122517}>(move _72, move _73);
         _74 = -1_i64;
         _70 = unwrap_or::<i64>(move _71, move _74);
         _75 = &mut _2;
@@ -819,8 +819,8 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _67;
         _86 = 3_i64;
         _85 = Option::<i64>::Some(move _86);
-        _87 = {closure#12652}();
-        _84 = map::<{}, i64, bool, {closure#124966}>(move _85, move _87);
+        _87 = {closure#12875}();
+        _84 = map::<{}, i64, bool, {closure#122602}>(move _85, move _87);
         _88 = false;
         _83 = unwrap_or::<bool>(move _84, move _88);
         _89 = &mut _2;
@@ -909,8 +909,8 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _96;
         dead _95;
         dead _94;
-        _108 = {closure#12676}();
-        _109 = {fn}::<{closure#125095}>;
+        _108 = {closure#12899}();
+        _109 = {fn}::<{closure#122731}>;
         _110 = 1_i64;
         _111 = 10_i64;
         _107 = repeat::<i64>(move _109, move _110, move _111);
@@ -1236,7 +1236,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
     }
 }
 
-closure main::{closure#12601} {
+closure main::{closure#12824} {
     let _0: i64;
     let mut _1: &{closure}; // the closure
     let _2: i64; // x
@@ -1248,7 +1248,7 @@ closure main::{closure#12601} {
     }
 }
 
-closure main::{closure#12631} {
+closure main::{closure#12854} {
     let _0: i64;
     let mut _1: &{closure}; // the closure
     let _2: i64; // x
@@ -1263,7 +1263,7 @@ closure main::{closure#12631} {
     }
 }
 
-closure main::{closure#12652} {
+closure main::{closure#12875} {
     let _0: bool;
     let mut _1: &{closure}; // the closure
     let _2: i64; // x
@@ -1278,7 +1278,7 @@ closure main::{closure#12652} {
     }
 }
 
-closure main::{closure#12676} {
+closure main::{closure#12899} {
     let _0: i64;
     let mut _1: &{closure}; // the closure
     let _2: i64; // x
@@ -1312,13 +1312,13 @@ fn <&str as core::fmt::Display>::fmt::<std::io::Stderr><'a>(
     }
 }
 
-glue {fn}::<{closure#125095}> {
+glue {fn}::<{closure#122731}> {
     let _0: i64;
     let mut _1: i64;
     let _2: {closure};
     let _3: &{closure};
     bb0: {
-        _2 = {closure#12676}();
+        _2 = {closure#12899}();
         _3 = &_2;
         _0 = (move _3)(move _1);
         dead _3;

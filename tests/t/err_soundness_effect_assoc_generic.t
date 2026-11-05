@@ -5,6 +5,6 @@ fn first<I: Iterator<Item = i64>>(mut it: I) -> Option<i64> with {} where I: Dis
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     out.line(&first(0..3).unwrap())?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `next` may have the effects `I::e`, but `first` doesn't say `with I::e`

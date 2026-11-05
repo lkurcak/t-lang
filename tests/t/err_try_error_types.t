@@ -1,9 +1,9 @@
 // An `Err` isn't converted: its type must be the function's.
-fn get() -> Result<i64, i32> { Result::Ok(1) }
+fn get() -> Result<i64, i32> { Ok(1) }
 
 fn f() -> Result<i64, bool> {
     let x = get()?;
-    Result::Ok(x)
+    Ok(x)
 }
 
 fn main() { let _ = f(); }

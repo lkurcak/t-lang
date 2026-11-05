@@ -12,12 +12,12 @@ impl Write for Count {
 
     fn write_str(&mut self, s: &str) -> Result<(), !> {
         self.n = wrapping_add(self.n, s.len());
-        Result::Ok(())
+        Ok(())
     }
 
     fn write_char(&mut self, c: char) -> Result<(), !> {
         self.n = wrapping_add(self.n, c.len_utf8());
-        Result::Ok(())
+        Ok(())
     }
 }
 
@@ -34,5 +34,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&width(-5))?;                   // expect: 2
     out.line(&width(123456))?;               // expect: 6
     out.line(&width(-9223372036854775808))?; // expect: 20
-    Result::Ok(())
+    Ok(())
 }

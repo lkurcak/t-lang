@@ -9,6 +9,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let p = P { n: 1 };
     out.line(&core::fmt::debug(&p))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `core::fmt::debug` needs its `T` to implement `core::fmt::Debug`, and `P` doesn't

@@ -19,6 +19,6 @@ impl<U> Tr for W<U> {
 }
 
 fn main() {
-    let _s: S<W<i64>> = S { b: Option::None };
+    let _s: S<W<i64>> = S { b: None };
 }
 // error: polymorphic recursion

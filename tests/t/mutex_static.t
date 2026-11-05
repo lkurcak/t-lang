@@ -20,5 +20,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, global, panic} {
     let sum = LOG.lock(|log: &mut [u32; 4]| log[0] + log[1] + log[2] + log[3]);
     let mut out = os.stdout;
     out.line(&sum)?; // expect: 16
-    Result::Ok(())
+    Ok(())
 }

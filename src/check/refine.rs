@@ -1263,9 +1263,10 @@ fn each_expr(e: &Expr, f: &mut impl FnMut(&Expr)) {
 fn each_bind(pat: &Pattern, f: &mut impl FnMut(&Pattern)) {
     match &pat.kind {
         PatternKind::Bind(..) => f(pat),
-        PatternKind::Variant(_, _, _, pats) | PatternKind::Or(pats) | PatternKind::Array(pats) => {
-            pats.iter().for_each(|p| each_bind(p, f))
-        }
+        PatternKind::Variant(_, _, _, pats)
+        | PatternKind::Path(_, pats, _)
+        | PatternKind::Or(pats)
+        | PatternKind::Array(pats) => pats.iter().for_each(|p| each_bind(p, f)),
         PatternKind::Struct(_, _, fields, _) => fields.iter().for_each(|fp| each_bind(&fp.pat, f)),
         PatternKind::Wild
         | PatternKind::Int(..)
@@ -3843,6 +3844,7 @@ impl Walk<'_> {
             place = place.map(|p| (0..peels).fold(p, |p, _| self.deref(p)));
         }
         match &pat.kind {
+            PatternKind::Path(..) => unreachable!("resolved into a variant (`check::modules`)"),
             PatternKind::Bind(name, _) => {
                 let id = self.cx.typed.sites.get(&pat.id).copied().unwrap_or(pat.id);
                 match self.cx.typed.binds.get(&id).and_then(|b| b.by_ref) {

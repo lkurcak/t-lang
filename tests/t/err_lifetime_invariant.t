@@ -12,6 +12,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         assign(&mut r, &y);
     }
     out.line(&(*r))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `y` doesn't live long enough

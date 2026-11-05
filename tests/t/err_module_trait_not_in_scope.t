@@ -16,6 +16,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let p = P { n: 1 };
     out.line(&p.show())?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `P` has no method `show` in scope; trait `show::Show` has one: import it with `use show::Show;`

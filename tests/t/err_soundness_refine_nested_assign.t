@@ -16,6 +16,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut s = S { a: Inner { b: 5 }, n: 5 };
     s.a.b = 0;
     out.line(&s.n)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: can't prove `n <= a.m()` for field `n` of `S`, which names `a`

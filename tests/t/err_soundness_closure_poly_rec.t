@@ -7,6 +7,6 @@ fn f<effect e, G: Fn() -> i64 with e + Discard>(g: G, n: i64) -> i64 with {e, pa
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     out.line(&f(|| 0, 3))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: polymorphic recursion

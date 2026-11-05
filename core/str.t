@@ -35,8 +35,8 @@ impl str {
     /// be cut there.
     export fn is_char_boundary(&self, i: usize) -> bool {
         match self.as_bytes().get(i) {
-            Option::Some(b) => !is_continuation(*b),
-            Option::None => i == self.len(),
+            Some(b) => !is_continuation(*b),
+            None => i == self.len(),
         }
     }
 
@@ -44,19 +44,16 @@ impl str {
     /// character starts at `mid` and it isn't the end.
     export fn split_at<'a>(&'a self, mid: usize) -> Option<StrSplit<'a>> {
         if !self.is_char_boundary(mid) {
-            return Option::None;
+            return None;
         }
         let bytes: &'a [u8] = self.as_bytes();
         match bytes.split_at(mid) {
             // SAFETY: UTF-8 cut where a character starts is UTF-8 on
             // either side.
-            Option::Some(slice::Split { head, tail }) => unsafe {
-                Option::Some(StrSplit {
-                    head: from_utf8_unchecked(head),
-                    tail: from_utf8_unchecked(tail),
-                })
+            Some(slice::Split { head, tail }) => unsafe {
+                Some(StrSplit { head: from_utf8_unchecked(head), tail: from_utf8_unchecked(tail) })
             },
-            Option::None => Option::None,
+            None => None,
         }
     }
 
@@ -64,15 +61,15 @@ impl str {
     /// where characters start, or the end, or `lo` is past `hi`.
     export fn get<'a>(&'a self, lo: usize, hi: usize) -> Option<&'a str> {
         if lo > hi {
-            return Option::None;
+            return None;
         }
         let head: &'a str = match self.split_at(hi) {
-            Option::Some(s) => s.head,
-            Option::None => return Option::None,
+            Some(s) => s.head,
+            None => return None,
         };
         match head.split_at(lo) {
-            Option::Some(s) => Option::Some(s.tail),
-            Option::None => Option::None,
+            Some(s) => Some(s.tail),
+            None => None,
         }
     }
 
@@ -107,11 +104,11 @@ impl str {
         let mut at = 0usize;
         loop {
             match decode(b, at) {
-                Option::Some(d) => match d.c.is_whitespace() {
+                Some(d) => match d.c.is_whitespace() {
                     true => at = d.next,
                     false => return after(self, at),
                 },
-                Option::None => return after(self, at),
+                None => return after(self, at),
             }
         }
     }
@@ -123,13 +120,13 @@ impl str {
         let mut end = 0usize;
         loop {
             match decode(b, at) {
-                Option::Some(d) => {
+                Some(d) => {
                     if !d.c.is_whitespace() {
                         end = d.next;
                     }
                     at = d.next;
                 },
-                Option::None => return before(self, end),
+                None => return before(self, end),
             }
         }
     }
@@ -143,25 +140,25 @@ impl str {
     /// What follows `pat`, if it starts with it, or `None`.
     export fn strip_prefix<'a, P: Pattern>(&'a self, pat: P) -> Option<&'a str> {
         match pat.prefix_of(self) {
-            Option::Some(n) => Option::Some(after(self, n)),
-            Option::None => Option::None,
+            Some(n) => Some(after(self, n)),
+            None => None,
         }
     }
 
     /// What comes before `pat`, if it ends with it, or `None`.
     export fn strip_suffix<'a, P: Pattern>(&'a self, pat: P) -> Option<&'a str> {
-        let Option::Some(n) = pat.suffix_of(self) else { return Option::None };
+        let Some(n) = pat.suffix_of(self) else { return None };
         if n > self.len() {
-            return Option::None;
+            return None;
         }
-        Option::Some(before(self, self.len() - n))
+        Some(before(self, self.len() - n))
     }
 
     /// The byte where `pat` is first found, or `None` if it isn't.
     export fn find<P: Pattern>(&self, pat: P) -> Option<usize> {
         match pat.find_in(self, 0) {
-            Option::Some(f) => Option::Some(f.start),
-            Option::None => Option::None,
+            Some(f) => Some(f.start),
+            None => None,
         }
     }
 
@@ -177,8 +174,8 @@ impl str {
 /// end, wherever it's used; were it not, it would be the empty string.
 fn after<'a>(s: &'a str, at: usize) -> &'a str {
     match s.split_at(at) {
-        Option::Some(cut) => cut.tail,
-        Option::None => "",
+        Some(cut) => cut.tail,
+        None => "",
     }
 }
 
@@ -186,8 +183,8 @@ fn after<'a>(s: &'a str, at: usize) -> &'a str {
 /// end, as for `after`.
 fn before<'a>(s: &'a str, at: usize) -> &'a str {
     match s.split_at(at) {
-        Option::Some(cut) => cut.head,
-        Option::None => "",
+        Some(cut) => cut.head,
+        None => "",
     }
 }
 
@@ -216,36 +213,32 @@ impl<'b> Pattern for &'b str {
         let h = s.as_bytes();
         let n = self.as_bytes();
         if n.len() > h.len() {
-            return Option::None;
+            return None;
         }
         let last = h.len() - n.len();
         let mut i = from;
         while i <= last {
             if bytes_at(h, n, i) {
-                return Option::Some(Found { start: i, end: i + n.len() });
+                return Some(Found { start: i, end: i + n.len() });
             }
             if i == last {
-                return Option::None;
+                return None;
             }
             i = i + 1;
         }
-        Option::None
+        None
     }
 
     fn prefix_of(&self, s: &str) -> Option<usize> {
         let h = s.as_bytes();
         let n = self.as_bytes();
-        if n.len() <= h.len() && bytes_at(h, n, 0) { Option::Some(n.len()) } else { Option::None }
+        if n.len() <= h.len() && bytes_at(h, n, 0) { Some(n.len()) } else { None }
     }
 
     fn suffix_of(&self, s: &str) -> Option<usize> {
         let h = s.as_bytes();
         let n = self.as_bytes();
-        if n.len() <= h.len() && bytes_at(h, n, h.len() - n.len()) {
-            Option::Some(n.len())
-        } else {
-            Option::None
-        }
+        if n.len() <= h.len() && bytes_at(h, n, h.len() - n.len()) { Some(n.len()) } else { None }
     }
 }
 
@@ -254,24 +247,24 @@ impl Pattern for char {
     fn find_in(&self, s: &str, from: usize) -> Option<Found> {
         let mut buf = [0u8; 4];
         match self.encode_utf8(buf.as_mut_slice()) {
-            Option::Some(p) => Pattern::find_in(&p, s, from),
-            Option::None => Option::None,
+            Some(p) => Pattern::find_in(&p, s, from),
+            None => None,
         }
     }
 
     fn prefix_of(&self, s: &str) -> Option<usize> {
         let mut buf = [0u8; 4];
         match self.encode_utf8(buf.as_mut_slice()) {
-            Option::Some(p) => Pattern::prefix_of(&p, s),
-            Option::None => Option::None,
+            Some(p) => Pattern::prefix_of(&p, s),
+            None => None,
         }
     }
 
     fn suffix_of(&self, s: &str) -> Option<usize> {
         let mut buf = [0u8; 4];
         match self.encode_utf8(buf.as_mut_slice()) {
-            Option::Some(p) => Pattern::suffix_of(&p, s),
-            Option::None => Option::None,
+            Some(p) => Pattern::suffix_of(&p, s),
+            None => None,
         }
     }
 }
@@ -300,31 +293,31 @@ impl<'a, P: Pattern> Iterator for Split<'a, P> {
 
     fn next(&mut self) -> Option<&'a str> {
         if self.done {
-            return Option::None;
+            return None;
         }
         let rest = self.rest;
         // Past an empty string found at the start of `rest`, the next is
         // looked for after its first character, if it has one.
         let from = match self.empty {
             true => match decode(rest.as_bytes(), 0) {
-                Option::Some(d) => Option::Some(d.next),
-                Option::None => Option::None,
+                Some(d) => Some(d.next),
+                None => None,
             },
-            false => Option::Some(0),
+            false => Some(0),
         };
         let found = match from {
-            Option::Some(from) => self.pat.find_in(rest, from),
-            Option::None => Option::None,
+            Some(from) => self.pat.find_in(rest, from),
+            None => None,
         };
         match found {
-            Option::Some(f) => {
+            Some(f) => {
                 self.rest = after(rest, f.end);
                 self.empty = f.start == f.end;
-                Option::Some(before(rest, f.start))
+                Some(before(rest, f.start))
             },
-            Option::None => {
+            None => {
                 self.done = true;
-                Option::Some(rest)
+                Some(rest)
             },
         }
     }
@@ -341,21 +334,21 @@ impl<'a> Iterator for SplitWhitespace<'a> {
     fn next(&mut self) -> Option<&'a str> {
         let rest = self.rest.trim_start();
         if rest.is_empty() {
-            return Option::None;
+            return None;
         }
         let b = rest.as_bytes();
         let mut at = 0usize;
         loop {
             match decode(b, at) {
-                Option::Some(d) => match d.c.is_whitespace() {
+                Some(d) => match d.c.is_whitespace() {
                     false => at = d.next,
                     true => break,
                 },
-                Option::None => break,
+                None => break,
             }
         }
         self.rest = after(rest, at);
-        Option::Some(before(rest, at))
+        Some(before(rest, at))
     }
 }
 
@@ -370,19 +363,19 @@ impl<'a> Iterator for Lines<'a> {
     fn next(&mut self) -> Option<&'a str> {
         let rest = self.rest;
         if rest.is_empty() {
-            return Option::None;
+            return None;
         }
         let line = match '\n'.find_in(rest, 0) {
-            Option::Some(f) => {
+            Some(f) => {
                 self.rest = after(rest, f.end);
                 before(rest, f.start)
             },
-            Option::None => {
+            None => {
                 self.rest = "";
                 rest
             },
         };
-        Option::Some(line.strip_suffix('\r').unwrap_or(line))
+        Some(line.strip_suffix('\r').unwrap_or(line))
     }
 }
 
@@ -403,9 +396,9 @@ impl Parse for bool {
 
     fn parse(s: &str) -> Result<bool, ParseBoolError> {
         match s {
-            "true" => Result::Ok(true),
-            "false" => Result::Ok(false),
-            _ => Result::Err(ParseBoolError {}),
+            "true" => Ok(true),
+            "false" => Ok(false),
+            _ => Err(ParseBoolError {}),
         }
     }
 }
@@ -428,11 +421,11 @@ impl Parse for char {
     fn parse(s: &str) -> Result<char, ParseCharError> {
         let mut cs = s.chars();
         match cs.next() {
-            Option::Some(c) => match cs.next() {
-                Option::Some(_) => Result::Err(ParseCharError::TooMany),
-                Option::None => Result::Ok(c),
+            Some(c) => match cs.next() {
+                Some(_) => Err(ParseCharError::TooMany),
+                None => Ok(c),
             },
-            Option::None => Result::Err(ParseCharError::Empty),
+            None => Err(ParseCharError::Empty),
         }
     }
 }
@@ -461,12 +454,12 @@ export fn from_utf8(b: &[u8]) -> Option<&str> {
     let mut at = 0usize;
     while at < n {
         match decode(b, at) {
-            Option::Some(d) => at = d.next,
-            Option::None => return Option::None,
+            Some(d) => at = d.next,
+            None => return None,
         }
     }
     // SAFETY: every byte is in a character `decode` found.
-    Option::Some(unsafe { from_utf8_unchecked(b) })
+    Some(unsafe { from_utf8_unchecked(b) })
 }
 
 /// Bytes `b`, as a string.
@@ -494,11 +487,11 @@ impl<'a> Iterator for Chars<'a> {
 
     fn next(&mut self) -> Option<char> {
         match decode(self.bytes, self.at) {
-            Option::Some(d) => {
+            Some(d) => {
                 self.at = d.next;
-                Option::Some(d.c)
+                Some(d.c)
             },
-            Option::None => Option::None,
+            None => None,
         }
     }
 }
@@ -544,54 +537,54 @@ struct Decoded { c: char, next: usize }
 fn decode(b: &[u8], at: usize) -> Option<Decoded> {
     let n = b.len();
     if at >= n {
-        return Option::None;
+        return None;
     }
     let x = b[at] as u32;
     if x < 0x80 {
-        return Option::Some(Decoded { c: x as char, next: at + 1 });
+        return Some(Decoded { c: x as char, next: at + 1 });
     }
     // A continuation byte can't come first, `C0` and `C1` could only start
     // an overlong two, and `F5` and up something past `10FFFF`.
     if x < 0xC2 || x > 0xF4 {
-        return Option::None;
+        return None;
     }
     if at >= n - 1 {
-        return Option::None;
+        return None;
     }
     let c1 = match continuation(b, at + 1) {
-        Option::Some(c) => c.bits,
-        Option::None => return Option::None,
+        Some(c) => c.bits,
+        None => return None,
     };
     if x < 0xE0 {
         let v = (x - 0xC0) * 0x40 + c1;
-        return Option::Some(Decoded { c: v as char, next: at + 2 });
+        return Some(Decoded { c: v as char, next: at + 2 });
     }
     if at + 1 >= n - 1 {
-        return Option::None;
+        return None;
     }
     let c2 = match continuation(b, at + 2) {
-        Option::Some(c) => c.bits,
-        Option::None => return Option::None,
+        Some(c) => c.bits,
+        None => return None,
     };
     if x < 0xF0 {
         let v = (x - 0xE0) * 0x1000 + c1 * 0x40 + c2;
         if v < 0x800 || (v >= 0xD800 && v <= 0xDFFF) {
-            return Option::None;
+            return None;
         }
-        return Option::Some(Decoded { c: v as char, next: at + 3 });
+        return Some(Decoded { c: v as char, next: at + 3 });
     }
     if at + 2 >= n - 1 {
-        return Option::None;
+        return None;
     }
     let c3 = match continuation(b, at + 3) {
-        Option::Some(c) => c.bits,
-        Option::None => return Option::None,
+        Some(c) => c.bits,
+        None => return None,
     };
     let v = (x - 0xF0) * 0x40000 + c1 * 0x1000 + c2 * 0x40 + c3;
     if v < 0x10000 || v > 0x10FFFF {
-        return Option::None;
+        return None;
     }
-    Option::Some(Decoded { c: v as char, next: at + 4 })
+    Some(Decoded { c: v as char, next: at + 4 })
 }
 
 /// The six bits of a continuation byte, `10xxxxxx`.
@@ -602,7 +595,7 @@ struct Six { bits: { c: u32 | c <= 0x3F } }
 fn continuation(b: &[u8], i: { i: usize | i < b.len() }) -> Option<Six> {
     let y = b[i];
     if y < 0x80 || y > 0xBF {
-        return Option::None;
+        return None;
     }
-    Option::Some(Six { bits: (y - 0x80) as u32 })
+    Some(Six { bits: (y - 0x80) as u32 })
 }

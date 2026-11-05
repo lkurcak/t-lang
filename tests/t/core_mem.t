@@ -32,5 +32,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut n = 7;
     out.line(&deep::bump(&mut n))?; // expect: 7
     out.line(&n)?;                  // expect: 8
-    Result::Ok(())
+    Ok(())
 }

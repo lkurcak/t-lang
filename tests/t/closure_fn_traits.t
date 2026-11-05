@@ -41,5 +41,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     // Lending a closure: `&F` is `Fn` when `F` is.
     let add = |x| x + k;
     stdout.line(&(apply(&add, 1) + apply(&add, 2)))?; // expect: 23
-    Result::Ok(())
+    Ok(())
 }

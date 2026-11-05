@@ -3,6 +3,6 @@
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&f"{"x".len()}")?;
-    Result::Ok(())
+    Ok(())
 }
 // error: a hole in a format string can't hold a `"`; work out what needs one in a `let` first

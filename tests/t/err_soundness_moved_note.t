@@ -11,6 +11,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let y = B { n: 2 };
     let c = true;
     out.line(&two(&x, if c { x } else { y }))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `x` was moved here

@@ -8,7 +8,7 @@ fn eq() { assert_eq(&1u8, &2); }
 
 #[test]
 fn unwraps() {
-    let x: Option<u8> = Option::None;
+    let x: Option<u8> = None;
     let _ = x.unwrap();
 }
 
@@ -26,7 +26,7 @@ fn blaming_helper() { assert(false); }
 // Through a closure the core library calls: the closure's own line.
 #[test]
 fn in_a_closure() {
-    let x: Option<u8> = Option::Some(1);
+    let x: Option<u8> = Some(1);
     let _ = x.map(|v| { assert(v == 2); v });
 }
 

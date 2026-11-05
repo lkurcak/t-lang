@@ -26,7 +26,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     // Higher-order: `f` is a function because it's called.
     let call = |f, x| f(x);
     out.line(&call(inc, 9))?;                    // expect: 10
-    Result::Ok(())
+    Ok(())
 }
 
 // A match with no arms is a `!`, which fits any type: `i64` here. (It can

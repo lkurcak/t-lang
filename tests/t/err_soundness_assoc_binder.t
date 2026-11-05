@@ -29,6 +29,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         r = Tr::call(f, &n);
     }
     out.line(&(*r))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `A` is only inside a function type in `fn(A) -> B`

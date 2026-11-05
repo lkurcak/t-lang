@@ -26,5 +26,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut t = || v.push(1);
     go(&mut t);
     out.line(&v.n)?; // expect: 4
-    Result::Ok(())
+    Ok(())
 }

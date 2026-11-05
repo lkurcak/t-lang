@@ -13,6 +13,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let f = || take(b);
     out.line(&f())?;
     out.line(&f())?;
-    Result::Ok(())
+    Ok(())
 }
 // error: use of moved value `f`

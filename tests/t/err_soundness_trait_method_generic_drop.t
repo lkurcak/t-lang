@@ -16,6 +16,6 @@ impl Sink for S {
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&(S {}.put(Fd { n: 1 })))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `_x` is never used up, and its type, `T`, isn't `Discard`; to let it be thrown away, add a bound: `T: Discard`

@@ -45,5 +45,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     if n > 1 {
         out.line(&w[n - 1])?; // expect: 2
     }
-    Result::Ok(())
+    Ok(())
 }

@@ -33,5 +33,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&short_circuit(10, 3))?; // expect: true
     out.line(&sum_small(10, -5))?; // expect: 40
     out.line(&(1i64 + 2 * 3))?; // expect: 7
-    Result::Ok(())
+    Ok(())
 }

@@ -44,6 +44,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let f39 = || f38() + 1;
     let f40 = || f39() + 1;
     out.line(&f40())?;
-    Result::Ok(())
+    Ok(())
 }
 // expect: 41

@@ -10,5 +10,5 @@ fn fact(n: i64) -> i64 with panic {
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     out.line(&fact(10))?; // expect: 3628800
-    Result::Ok(())
+    Ok(())
 }

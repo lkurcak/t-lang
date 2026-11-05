@@ -11,11 +11,7 @@ use crate::str;
 impl char {
     /// The character numbered `n`, or `None` if there's none.
     export fn from_u32(n: u32) -> Option<char> {
-        if n <= 0x10FFFF && (n < 0xD800 || n > 0xDFFF) {
-            Option::Some(n as char)
-        } else {
-            Option::None
-        }
+        if n <= 0x10FFFF && (n < 0xD800 || n > 0xDFFF) { Some(n as char) } else { None }
     }
 
     /// How many bytes it takes in UTF-8: 1 to 4.
@@ -29,8 +25,8 @@ impl char {
     export fn encode_utf8(self, out: &mut [u8]) -> Option<&str> {
         let n = self as u32;
         let bytes: &mut [u8] = match out.split_at_mut(self.len_utf8()) {
-            Option::Some(split) => split.head,
-            Option::None => return Option::None,
+            Some(split) => split.head,
+            None => return None,
         };
         if n < 0x80 {
             set(bytes, 0, n as u8);
@@ -111,17 +107,17 @@ impl char {
             '0'..='9' => self as u32 - 0x30,
             'a'..='z' => self as u32 - 0x61 + 10,
             'A'..='Z' => self as u32 - 0x41 + 10,
-            _ => return Option::None,
+            _ => return None,
         };
-        if d < radix { Option::Some(d) } else { Option::None }
+        if d < radix { Some(d) } else { None }
     }
 }
 
 /// Byte `i` of `s` becomes `b`, if there's one.
 fn set(s: &mut [u8], i: usize, b: u8) {
     match s.get_mut(i) {
-        Option::Some(x) => *x = b,
-        Option::None => {},
+        Some(x) => *x = b,
+        None => {},
     }
 }
 

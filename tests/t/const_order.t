@@ -18,5 +18,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     a[3] = 5;
     out.line(&last(&a))?;   // expect: 5
     out.line(&second(&a))?; // expect: 3
-    Result::Ok(())
+    Ok(())
 }

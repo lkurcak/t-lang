@@ -15,7 +15,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut all = List::new();
     all.push(String::from("ada"));
     all.push(String::from("grace"));
-    let names = Names { all, best: Option::Some(Box::new(String::from("barbara"))) };
+    let names = Names { all, best: Some(Box::new(String::from("barbara"))) };
     out.line(&names.all.len())?; // expect: 2
     keep(names);
     let s = String::from("closure");

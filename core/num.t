@@ -52,22 +52,22 @@ export fn greatest<T: Int>() -> T;
 /// `a + b`, or `None` if it doesn't fit in a `T`.
 export fn checked_add<T: Int>(a: T, b: T) -> Option<T> {
     if b > 0 {
-        if a <= greatest::<T>() - b { Option::Some(a + b) } else { Option::None }
+        if a <= greatest::<T>() - b { Some(a + b) } else { None }
     } else if a >= least::<T>() - b {
-        Option::Some(a + b)
+        Some(a + b)
     } else {
-        Option::None
+        None
     }
 }
 
 /// `a - b`, or `None` if it doesn't fit in a `T`.
 export fn checked_sub<T: Int>(a: T, b: T) -> Option<T> {
     if b < 0 {
-        if a <= greatest::<T>() + b { Option::Some(a - b) } else { Option::None }
+        if a <= greatest::<T>() + b { Some(a - b) } else { None }
     } else if a >= least::<T>() + b {
-        Option::Some(a - b)
+        Some(a - b)
     } else {
-        Option::None
+        None
     }
 }
 
@@ -80,31 +80,23 @@ export fn checked_mul<T: Int>(a: T, b: T) -> Option<T>;
 /// `b < 0 && b + 1 == 0` here, as -1 isn't a literal of every integer
 /// type.
 export fn checked_div<T: Int>(a: T, b: T) -> Option<T> {
-    if b == 0 || (b < 0 && b + 1 == 0 && a == least::<T>()) {
-        Option::None
-    } else {
-        Option::Some(a / b)
-    }
+    if b == 0 || (b < 0 && b + 1 == 0 && a == least::<T>()) { None } else { Some(a / b) }
 }
 
 /// `a % b`, which has the sign of `a`, or `None` where `checked_div` is.
 export fn checked_rem<T: Int>(a: T, b: T) -> Option<T> {
-    if b == 0 || (b < 0 && b + 1 == 0 && a == least::<T>()) {
-        Option::None
-    } else {
-        Option::Some(a % b)
-    }
+    if b == 0 || (b < 0 && b + 1 == 0 && a == least::<T>()) { None } else { Some(a % b) }
 }
 
 /// `-a`, or `None` if it doesn't fit in a `T`: for the least value of a
 /// signed type, and for all but 0 of an unsigned one.
 export fn checked_neg<T: Int>(a: T) -> Option<T> {
     if a > 0 {
-        if a + least::<T>() <= 0 { Option::Some(-a) } else { Option::None }
+        if a + least::<T>() <= 0 { Some(-a) } else { None }
     } else if a + greatest::<T>() >= 0 {
-        Option::Some(-a)
+        Some(-a)
     } else {
-        Option::None
+        None
     }
 }
 
@@ -170,7 +162,7 @@ export fn abs<T: Signed>(x: T) -> T with panic {
 
 /// How far `x` is from 0, or `None` at the least value.
 export fn checked_abs<T: Signed>(x: T) -> Option<T> {
-    if x < 0 { checked_neg(x) } else { Option::Some(x) }
+    if x < 0 { checked_neg(x) } else { Some(x) }
 }
 
 /// How far `x` is from 0, modulo 2^w: the least value is its own.
@@ -187,15 +179,15 @@ impl<T: Int> Parse for T {
     fn parse(s: &str) -> Result<T, ParseIntError> {
         let b = s.as_bytes();
         if b.len() == 0 {
-            return Result::Err(ParseIntError::Empty);
+            return Err(ParseIntError::Empty);
         }
         let negative = b[0] == 0x2D;
         if negative && least::<T>() == 0 {
-            return Result::Err(ParseIntError::InvalidDigit);
+            return Err(ParseIntError::InvalidDigit);
         }
         let mut i: usize = if negative || b[0] == 0x2B { 1 } else { 0 };
         if i == b.len() {
-            return Result::Err(ParseIntError::InvalidDigit);
+            return Err(ParseIntError::InvalidDigit);
         }
         let overflow = if negative {
             ParseIntError::NegOverflow
@@ -206,16 +198,16 @@ impl<T: Int> Parse for T {
         while i < b.len() {
             let c = b[i];
             if c < 0x30 || c > 0x39 {
-                return Result::Err(ParseIntError::InvalidDigit);
+                return Err(ParseIntError::InvalidDigit);
             }
             let d: T = wrap(c - 0x30);
-            let Option::Some(m) = checked_mul(n, 10) else { return Result::Err(overflow) };
+            let Some(m) = checked_mul(n, 10) else { return Err(overflow) };
             let next = if negative { checked_sub(m, d) } else { checked_add(m, d) };
-            let Option::Some(next) = next else { return Result::Err(overflow) };
+            let Some(next) = next else { return Err(overflow) };
             n = next;
             i = i + 1;
         }
-        Result::Ok(n)
+        Ok(n)
     }
 }
 

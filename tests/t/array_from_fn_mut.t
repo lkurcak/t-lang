@@ -9,5 +9,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     });
     out.line(&a[2])?; // expect: 30
     out.line(&n)?;    // expect: 30
-    Result::Ok(())
+    Ok(())
 }

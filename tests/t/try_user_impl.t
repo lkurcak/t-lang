@@ -24,11 +24,11 @@ impl<T> Try for Parsed<T> {
 
 fn digit(s: &str, at: usize) -> Parsed<u32> {
     match s.as_bytes().get(at) {
-        Option::Some(b) => match *b {
+        Some(b) => match *b {
             0x30..=0x39 => Parsed::Done(*b as u32 - 0x30),
             _ => Parsed::Failed(at),
         },
-        Option::None => Parsed::Failed(at),
+        None => Parsed::Failed(at),
     }
 }
 

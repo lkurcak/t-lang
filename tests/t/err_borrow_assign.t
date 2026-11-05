@@ -4,6 +4,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let r = &x;
     x = 2;
     out.line(&(*r))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: cannot assign to `x` while `x` is borrowed

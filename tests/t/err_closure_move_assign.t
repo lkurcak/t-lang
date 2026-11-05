@@ -8,6 +8,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         n
     };
     out.line(&c())?;
-    Result::Ok(())
+    Ok(())
 }
 // error: cannot assign to `n`, as `n` isn't declared `mut`

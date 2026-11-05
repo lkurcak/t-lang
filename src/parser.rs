@@ -1014,6 +1014,30 @@ impl Parser {
 
     /// A name being bound: anything but `self`, which only a receiver
     /// binds.
+    /// A variable's name, where one is bound: a parameter, or in a
+    /// pattern. It can't start with an uppercase letter, which in a pattern
+    /// makes a name a path (lemma V2 of docs/45-variants.md): so no
+    /// variable can be named what a variant or const is.
+    fn variable(&mut self) -> Result<Ident, Error> {
+        let name = self.binder()?;
+        if starts_upper(&name.name) {
+            let lower = crate::naming::snake(&name.name);
+            return Err(Error::syntax(
+                name.span,
+                format!(
+                    "a variable's name can't start with an uppercase letter: a name like \
+                     `{}` is a variant's or a const's",
+                    name.name
+                ),
+            )
+            .with_fix(Fix::new(
+                format!("call it `{lower}`"),
+                vec![Edit::replace(name.span, &lower)],
+            )));
+        }
+        Ok(name)
+    }
+
     fn binder(&mut self) -> Result<Ident, Error> {
         let name = self.ident()?;
         match name.name.as_str() {
@@ -1780,7 +1804,7 @@ impl Parser {
     /// A function parameter: `x: i64` or `mut x: i64`.
     fn param(&mut self) -> Result<Param, Error> {
         let mutable = (*self.peek() == Tok::Mut).then(|| self.bump().span);
-        let name = self.binder()?;
+        let name = self.variable()?;
         self.expect(Tok::Colon)?;
         let ty = self.ty()?;
         Ok(Param {
@@ -1808,11 +1832,15 @@ impl Parser {
                      struct is",
                 ));
             }
+            let name = p.binder()?;
+            p.expect(Tok::Colon)?;
             Ok(Param {
                 doc,
                 allows,
                 vis,
-                ..p.param()?
+                mutable: None,
+                name,
+                ty: p.ty()?,
             })
         })?;
         if let (Some(_), Some(field)) = (head.intrinsic, fields.first()) {
@@ -1875,6 +1903,21 @@ impl Parser {
             let Head { doc, allows, .. } = p.head()?.no_derives()?.no_test()?.no_blame_caller()?;
             p.no_pub("an enum's variants are public wherever it is")?;
             let name = p.ident()?;
+            if !starts_upper(&name.name) {
+                let upper = crate::naming::camel(&name.name);
+                return Err(Error::syntax(
+                    name.span,
+                    format!(
+                        "a variant's name starts with an uppercase letter: in a pattern, \
+                         `{}` would be a new variable",
+                        name.name
+                    ),
+                )
+                .with_fix(Fix::new(
+                    format!("call it `{upper}`"),
+                    vec![Edit::replace(name.span, &upper)],
+                )));
+            }
             let (fields, span) = if p.eat(&Tok::LParen) {
                 let (fields, close) = p.comma_list(Tok::RParen, Self::ty)?;
                 (fields, name.span.to(close))
@@ -2966,7 +3009,7 @@ impl Parser {
             self.expect(Tok::Pipe)?;
             self.comma_list(Tok::Pipe, |p| {
                 let mutable = (*p.peek() == Tok::Mut).then(|| p.bump().span);
-                let name = p.binder()?;
+                let name = p.variable()?;
                 let ty = if p.eat(&Tok::Colon) {
                     Some(p.ty()?)
                 } else {
@@ -3072,7 +3115,7 @@ impl Parser {
             Tok::False => PatternKind::Bool(false),
             Tok::Mut => {
                 self.bump();
-                let name = self.binder()?;
+                let name = self.variable()?;
                 if name.name == "_" {
                     return Err(Error::syntax(
                         name.span,
@@ -3111,6 +3154,23 @@ impl Parser {
                     return self.struct_pattern(ty, Vec::new());
                 }
                 _ if name == "_" => PatternKind::Wild,
+                // In a pattern, a name that starts with an uppercase letter
+                // is a path: a variant or a const, never a new variable
+                // (lemma V3 of docs/45-variants.md).
+                _ if starts_upper(&name) => {
+                    let name = self.ident()?;
+                    let (args, end, parens) = if self.eat(&Tok::LParen) {
+                        let (args, end) = self.comma_list(Tok::RParen, Self::pattern)?;
+                        (args, end, true)
+                    } else {
+                        (Vec::new(), name.span, false)
+                    };
+                    return Ok(Pattern {
+                        span: start.to(end),
+                        kind: PatternKind::Path(name, args, parens),
+                        id: self.id(),
+                    });
+                }
                 _ => {
                     let name = self.binder()?;
                     return Ok(Pattern {
@@ -3214,6 +3274,21 @@ impl Parser {
             let pat = if self.eat(&Tok::Colon) {
                 self.pattern()?
             } else {
+                if starts_upper(&name.name) {
+                    let lower = crate::naming::snake(&name.name);
+                    return Err(Error::syntax(
+                        name.span,
+                        format!(
+                            "a variable's name can't start with an uppercase letter: write \
+                             `{}: {lower}` to bind field `{}`",
+                            name.name, name.name
+                        ),
+                    )
+                    .with_fix(Fix::new(
+                        format!("bind it as `{lower}`"),
+                        vec![Edit::insert(name.span.end, format!(": {lower}"))],
+                    )));
+                }
                 Pattern {
                     kind: PatternKind::Bind(name.name.clone(), false),
                     span: name.span,
@@ -3232,6 +3307,12 @@ impl Parser {
             id: self.id(),
         })
     }
+}
+
+/// Does `name` start with an uppercase letter, which makes it a path in a
+/// pattern (step 45)?
+pub(crate) fn starts_upper(name: &str) -> bool {
+    name.starts_with(|c: char| c.is_ascii_uppercase())
 }
 
 /// Can a literal in a pattern start with `tok`?

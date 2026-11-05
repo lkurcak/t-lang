@@ -12,7 +12,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&f(Opt::Some(1)))?;
     out.line(&f(Opt::Some(2)))?;
     out.line(&f(Opt::None))?;
-    Result::Ok(())
+    Ok(())
 }
 // warning: unreachable alternative
 // expect: 1
