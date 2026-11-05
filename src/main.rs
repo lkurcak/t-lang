@@ -182,7 +182,7 @@ fn main() -> ExitCode {
 }
 
 /// What a program that panicked ends with, compiled or interpreted, as in
-/// Rust: anything else that fails ends with 1 (docs/44-native.md).
+/// Rust: anything else that fails ends with 1 (docs/44-runs-and-holes.md).
 const PANICKED: u8 = 101;
 
 /// `t run <file.t>`, compiled: builds the program as `t build` does, into
@@ -226,8 +226,8 @@ fn run_compiled(path: &std::path::Path, src: &str) -> ExitCode {
 /// without one.
 fn compile_failed(e: &t_lang::cgen::CompileError) -> ExitCode {
     eprintln!("error: {e}");
-    if let t_lang::cgen::CompileError::NoCompiler(_) = e {
-        eprintln!("note: `--interp` runs it in the interpreter, which needs none");
+    if let t_lang::cgen::CompileError::NoCompiler(_) | t_lang::cgen::CompileError::Unsupported = e {
+        eprintln!("note: `--interp` runs it in the interpreter, which needs no C compiler");
     }
     ExitCode::FAILURE
 }

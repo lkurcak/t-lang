@@ -482,6 +482,35 @@ fn hovers_and_goes_to_definitions_in_format_strings() {
     stop(child, c);
 }
 
+/// A hole's expression is code like any: what's in it hovers and goes to
+/// its definition.
+#[test]
+fn hovers_and_goes_to_definitions_in_expression_holes() {
+    let (child, mut c) = start();
+    let uri = "file:///tmp/holes.t";
+    let src = "fn twice(n: i32) -> i32 { n }\nfn main() {\n    let k = 2i32;\n    let s = f\"{twice(k + 1):?}\";\n    let _ = s;\n}\n";
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
+        }}),
+    );
+    assert_eq!(c.diagnostics(), Vec::<Value>::new());
+    let at = |line: u32, character: u32| json!({"textDocument": {"uri": uri}, "position": {"line": line, "character": character}});
+    c.send(json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": at(3, 15)}));
+    let hover = c.response(2)["result"].clone();
+    assert_eq!(
+        hover["contents"]["value"], "```t\nfn twice: fn(i32) -> i32\n```",
+        "{hover}"
+    );
+    c.send(json!({"jsonrpc": "2.0", "id": 3, "method": "textDocument/definition", "params": at(3, 21)}));
+    let def = c.response(3)["result"].clone();
+    assert_eq!(
+        def["range"],
+        json!({"start": {"line": 2, "character": 8}, "end": {"line": 2, "character": 9}})
+    );
+    stop(child, c);
+}
+
 #[test]
 fn hovers_and_hints_show_opaque_types_as_written() {
     let (child, mut c) = start();

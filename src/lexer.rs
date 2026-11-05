@@ -253,7 +253,7 @@ pub enum FPiece {
 /// The format string starting with the `f` at `at`: its pieces, and where
 /// it ends, after the closing quote (lemma F1 of docs/43.1-formatting.md).
 /// Its text is a string literal's, with `{{` and `}}` for braces; a hole
-/// is an expression, and `:?` after it for `Debug` (docs/44-native.md).
+/// is an expression, and `:?` after it for `Debug` (docs/44-runs-and-holes.md).
 fn fstring(src: &str, at: usize) -> Result<(Vec<FPiece>, usize), Error> {
     let bytes = src.as_bytes();
     let mut pieces = Vec::new();

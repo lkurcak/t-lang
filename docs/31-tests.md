@@ -156,8 +156,9 @@ It's also why a test that panics can fail without taking the others with
 it, though T has no way to catch a panic, and won't (docs/07-effects.md:
 a panic aborts, which lemma P4 of step 30 relies on). Nothing needs to be
 caught: each test is a run of its own, so a panic aborts only that run.
-The interpreter starts each afresh; a compiled `t test` would run each in
-a process of its own, or start again after a panic, as `fork` lets it.
+The interpreter starts each afresh; since step 44, `t test` compiles the
+tests and runs each in a process of its own (`--interp` interprets them,
+as here; see [44-runs-and-holes.md](44-runs-and-holes.md)).
 
 ## Tests that panic
 
@@ -298,7 +299,7 @@ passes it, where tcalc's `run.sh` used to look for what `t check` printed.
   but by what they give back.
 - **T3, `panics`.** A `#[test(panics)]` passes only by the `panic` effect
   happening, which the interpreter tells apart from running out of memory
-  or stack. One whose effects lack `panic` can't pass, by the effect
+  or stack, and a compiled test by its status, 101 (step 44). One whose effects lack `panic` can't pass, by the effect
   system's soundness (docs/07-effects.md), so it's an error.
 - **T4, the message sink.** `panic_with` writes into a `Message`, which
   only it can make and which aborts the program; `Display::fmt` into it is

@@ -113,7 +113,7 @@ static void t_begin(void) {
 
 /* Whether the program stops because it panicked, rather than running out
  * of memory: the hosted platform then ends it with status 101, as the
- * interpreter does (docs/44-native.md). Only the thread that's saying why
+ * interpreter does (docs/44-runs-and-holes.md). Only the thread that's saying why
  * the program stops sets it. */
 static bool t_panicking;
 

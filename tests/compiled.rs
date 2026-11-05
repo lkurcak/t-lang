@@ -352,7 +352,7 @@ fn compiled_runs_as_interpreted() {
 /// The tests of each program of `tests/t` and `examples/` that has any,
 /// run compiled, each as a program of its own, as `t test` runs them, go
 /// as they do in the interpreter: each passes or fails the same, saying
-/// the same (docs/44-native.md). Left out are those that fail where only
+/// the same (docs/44-runs-and-holes.md). Left out are those that fail where only
 /// the interpreter can say, as for `compiled_runs_as_interpreted`.
 #[test]
 #[cfg_attr(windows, ignore = "the C backend is for Linux and macOS, for now")]

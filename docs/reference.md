@@ -82,8 +82,10 @@ Integer literals support suffixes such as `42i64`, hexadecimal `0xFF`,
 and binary `0b1010`. Text uses `"..."` and `'x'`; byte literals use
 `b"..."` and `b'x'`. A format string, `f"x = {x}, p = {p.y:?}"`, is a
 value that's `Display`: its text, with each hole written by `Display`, or
-by `Debug` with `:?`. A hole names a variable or a field of one, which it
-borrows; `{{` and `}}` are braces (see [format strings](43.1-formatting.md)).
+by `Debug` with `:?`. A hole holds an expression, which it borrows, as
+`&e`; it ends at the first `}` or `:` outside brackets of its own, and
+can't hold a `"` or a comment. `{{` and `}}` are braces (see
+[format strings](43.1-formatting.md) and [holes](44-runs-and-holes.md)).
 
 Proofs involving `usize` and `isize` must hold on both 32-bit and 64-bit
 machines. A literal of either type must fit on both. See
@@ -393,8 +395,8 @@ and `unsafe`, and its result can't be a refinement. With a body it's an
 export, a T function C can call too: it can't say `with unsafe`, and its
 parameters can't be refinements. Only integers, `bool`, and as a result
 `()` and `!`, cross; an `extern fn` has no generic parameters, and only a
-program, not a library, can have one. The interpreter stops at an
-import's call; `t build` compiles it. `core::volatile::Volatile<T>` is a
+program, not a library, can have one. The interpreter (`--interp`)
+stops at an import's call; compiled, it's called. `core::volatile::Volatile<T>` is a
 `T: Atom` at a fixed address: `Volatile::at(address)` is `unsafe`, and
 `read` and `write` on what it gives are safe volatile accesses. See
 [`extern fn`](40-extern.md).
@@ -536,6 +538,18 @@ as `main` may; `t test` runs each as a program of its own, which passes
 unless it panics, aborts or gives back `Err`. `#[test(panics)]` passes only
 if it panics. Tests are checked by every command, and are never run by
 `t` (see [31-tests.md](31-tests.md)).
+
+`t main.t` and `t test` compile the program through C and run it;
+`--interp` runs it in the interpreter, which checks as it goes what the
+checker proved. A panic ends a program with status 101; anything else
+that fails, with 1 (see [44-runs-and-holes.md](44-runs-and-holes.md)).
+
+Lints are warnings, which `#[allow(..)]` turns off and `#[warn(..)]` on,
+on an item, field, variant or `mod`, or, as `#![allow(..)]` and
+`#![warn(..)]` at the top of a module, in all of it; the innermost
+decides. `format_hole_expressions` and `format_hole_effects` are off
+unless turned on. `--deny-warnings` makes `t check` and `t test` fail on
+warnings.
 
 I/O requires a stream passed as a value, usually from `main`'s `std::Os`.
 It has no separate effect: stream methods report failures as `Result`s.

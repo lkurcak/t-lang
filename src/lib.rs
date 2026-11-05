@@ -448,7 +448,7 @@ pub fn test_files(path: &Path, src: &str, read: load::Read, filter: Option<&str>
 /// runs any of its tests (`cgen::emit_tests`), compiles it with the C
 /// compiler, and runs it once for each test whose name has `filter` in
 /// it, in order, as a process of its own: from nothing, with no input,
-/// its output thrown away, and with nothing shared (docs/44-native.md).
+/// its output thrown away, and with nothing shared (docs/44-runs-and-holes.md).
 /// Its status says how it went: 0 passed, 101 panicked, and anything
 /// else failed some other way. What it wrote where errors go is why it
 /// failed, as the interpreter would say it.

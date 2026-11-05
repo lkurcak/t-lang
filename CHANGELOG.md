@@ -1,5 +1,50 @@
 # Changelog
 
+## Unreleased
+
+Step 44: compiled runs, expressions in holes, `#[warn]`. See
+[docs/44-runs-and-holes.md](docs/44-runs-and-holes.md).
+
+### Changed
+
+- `t main.t`, `t run` and `t test` compile the program through C, as
+  `t build` does (`-O2`, `$CC` or `cc`), and run it: about a thousand
+  times faster than the interpreter. `--interp` runs it in the
+  interpreter, as before. `t test` runs each test as a process of its
+  own. With no C compiler, they fail and say so.
+- A panic ends a program with status 101, compiled or interpreted;
+  running out of memory, an `Err` from `main` and failing to flush end
+  with 1, as before.
+- A format string's hole holds any expression, `f"{y + 1} {v.len()}"`:
+  it means `display(&e)`, an argument like any, its effects and borrows
+  checked as any. It ends at the first `}` or `:` outside brackets of its
+  own (not a `::`); it can't hold a `"` or a comment.
+- "has no method `m` in scope" names every trait that has `m`, with an
+  import for each.
+
+### Added
+
+- `#[warn(..)]`, wherever `#[allow(..)]` goes, and `#![allow(..)]` and
+  `#![warn(..)]` at the top of a module (after its `//!`): of all of it,
+  and of the whole program at the top of the crate root. The innermost
+  attribute that names a lint decides; of two on one thing, the last.
+- Lints that are off unless `#[warn(..)]` turns them on:
+  `format_hole_expressions` (a hole that holds more than a name or a
+  field of one) and `format_hole_effects` (something in a hole that may
+  panic, allocate or have another effect).
+- Tree-sitter knows expressions in holes and `#![..]`; `t fmt` keeps
+  `#![..]` at the top of a module.
+
+### Fixed
+
+- The C backend could write the struct of an array of `&str`s or of
+  slices before the struct of `&str` it holds, which C rejects; tcalc's
+  tests, compiled, found it.
+
+### Removed
+
+- A stray `a.out` in the repository.
+
 ## 0.59.0 (2026-11-05)
 
 Step 43.1: `Debug` and format strings. See

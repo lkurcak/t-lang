@@ -10,6 +10,16 @@ fn t(args: &[&str]) -> Output {
         .unwrap()
 }
 
+/// `t` with `args`, for a command that runs a program: on Windows, which
+/// the C backend isn't for yet, in the interpreter (docs/44-runs-and-holes.md).
+fn t_runs(args: &[&str]) -> Output {
+    let mut args = args.to_vec();
+    if cfg!(windows) {
+        args.push("--interp");
+    }
+    t(&args)
+}
+
 #[test]
 fn help_goes_to_stdout_and_succeeds() {
     for flag in ["--help", "-h"] {
@@ -92,14 +102,14 @@ fn reads_the_files_of_modules() {
 #[test]
 fn reads_packages_and_checks_libraries() {
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/t");
-    let out = t(&[&format!("{dir}/pkg_basic/main.t")]);
+    let out = t_runs(&[&format!("{dir}/pkg_basic/main.t")]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     assert_eq!(String::from_utf8(out.stdout).unwrap(), "2\n2\n2\n");
 
     let lib = format!("{dir}/pkg_basic/counter/lib.t");
     let out = t(&["check", &lib]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
-    let out = t(&[&lib]);
+    let out = t_runs(&[&lib]);
     assert_eq!(out.status.code(), Some(1));
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(stderr.contains("has no `main` to run"), "{stderr}");
@@ -110,7 +120,7 @@ fn reads_packages_and_checks_libraries() {
 #[test]
 fn test_runs_the_tests_and_says_how_they_went() {
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/t");
-    let out = t(&["test", &format!("{dir}/test_basic.t")]);
+    let out = t_runs(&["test", &format!("{dir}/test_basic.t")]);
     assert_eq!(out.status.code(), Some(1), "{out:?}");
     let stdout = String::from_utf8(out.stdout).unwrap();
     let head = "test doubles ... ok\n\
@@ -126,7 +136,7 @@ fn test_runs_the_tests_and_says_how_they_went() {
     assert!(!stdout.contains("\n4\n"), "{stdout}");
 
     // With a filter, only the tests whose names have it in them.
-    let out = t(&["test", &format!("{dir}/test_basic.t"), "parsing"]);
+    let out = t_runs(&["test", &format!("{dir}/test_basic.t"), "parsing"]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert_eq!(
@@ -135,7 +145,7 @@ fn test_runs_the_tests_and_says_how_they_went() {
     );
 
     // A library's, with no `main`.
-    let out = t(&["test", &format!("{dir}/test_library/lib.t")]);
+    let out = t_runs(&["test", &format!("{dir}/test_library/lib.t")]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
 
     // A program that doesn't check runs no tests.
@@ -168,11 +178,11 @@ fn deny_warnings_fails_on_warnings() {
             "{stderr}"
         );
     }
-    let out = t(&["test", "--deny-warnings", &warned]);
+    let out = t_runs(&["test", "--deny-warnings", &warned]);
     assert_eq!(out.status.code(), Some(1), "{out:?}");
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("test uses_helper ... ok"), "{stdout}");
-    let out = t(&["test", &warned]);
+    let out = t_runs(&["test", &warned]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
 
     // Nothing to deny: as without it.
@@ -254,6 +264,7 @@ fn tree_sitter_installs_for_helix() {
 /// interpreter instead, which says the same; with no C compiler, they
 /// fail, saying so, and that `--interp` needs none.
 #[test]
+#[cfg_attr(windows, ignore = "the C backend is for Linux and macOS, for now")]
 fn compiled_by_default_or_interpreted() {
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/t");
     let compiled = t(&["test", &format!("{dir}/test_basic.t")]);
@@ -300,6 +311,26 @@ fn compiled_by_default_or_interpreted() {
         .env("CC", "t-lang-no-such-cc")
         .output()
         .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+}
+
+/// On Windows, which the C backend isn't for yet, `t` and `t test` fail,
+/// saying so, and that `--interp` runs the program in the interpreter.
+#[cfg(windows)]
+#[test]
+fn compiling_needs_linux_or_macos() {
+    let brew = concat!(env!("CARGO_MANIFEST_DIR"), "/examples/brew.t");
+    let tests = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/t/test_basic.t");
+    for args in [vec![brew], vec!["test", tests]] {
+        let out = t(&args);
+        assert_eq!(out.status.code(), Some(1), "{out:?}");
+        let stderr = String::from_utf8(out.stderr).unwrap();
+        assert!(
+            stderr.contains("for Linux and macOS") && stderr.contains("`--interp`"),
+            "{stderr}"
+        );
+    }
+    let out = t(&["--interp", brew]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
 }
 

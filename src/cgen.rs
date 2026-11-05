@@ -80,7 +80,7 @@ pub fn emit(exe: &Executable, sources: &Sources, options: Options) -> String {
 /// The C program that runs test `tests[i]` of `exe`, by its symbol, when
 /// its only argument is `i`, as `t test` runs each: as a program of its
 /// own, which ends as `main` would if it were the test (docs/31-tests.md,
-/// docs/44-native.md). Hosted only.
+/// docs/44-runs-and-holes.md). Hosted only.
 pub fn emit_tests(
     exe: &Executable,
     sources: &Sources,
@@ -430,15 +430,7 @@ impl<'e> Gen<'e> {
         let mut members = String::new();
         let mut member = |g: &mut Gen, ty: &Type, field: &str, out: &mut String| {
             let c = g.cty(ty);
-            // A reference to a slice holds the C struct of one.
-            deps.push(match ty.erased() {
-                Type::Ref(_, _, inner) | Type::Box(inner) => match *inner {
-                    Type::Slice(e) => Type::Slice(e),
-                    Type::Str => Type::Slice(Box::new(Type::Int(IntTy::U8))),
-                    inner => Type::Ref(Region::Erased, false, Box::new(inner)),
-                },
-                t => t,
-            });
+            deps.push(held(ty));
             let _ = write!(out, " {c} {field};");
         };
         match t {
@@ -450,7 +442,7 @@ impl<'e> Gen<'e> {
                 Type::Nat(0) => members.push_str(" uint8_t _;"),
                 Type::Nat(n) => {
                     let c = self.cty(e);
-                    deps.push(e.erased());
+                    deps.push(held(e));
                     let _ = write!(members, " {c} a[{n}];");
                 }
                 ref n => panic!("an array of length `{n}`"),
@@ -1950,6 +1942,9 @@ impl<'e> Gen<'e> {
 /// links it with what it needs (see docs/39-freestanding.md). With no
 /// stack protector, as nothing would be there to report a smashed stack.
 pub fn compile(c: &str, out: &std::path::Path, target: crate::Target) -> Result<(), CompileError> {
+    if cfg!(windows) && target == crate::Target::Hosted {
+        return Err(CompileError::Unsupported);
+    }
     use std::sync::atomic::{AtomicUsize, Ordering};
     static N: AtomicUsize = AtomicUsize::new(0);
     let dir = std::env::temp_dir().join(format!(
@@ -1993,11 +1988,28 @@ pub fn compile(c: &str, out: &std::path::Path, target: crate::Target) -> Result<
     result
 }
 
+/// The type whose C struct a field or element of type `t` holds by value,
+/// which must be defined before the struct it's in: a reference to a
+/// slice or `str`, or a box of one, holds the struct of the slice.
+fn held(t: &Type) -> Type {
+    match t.erased() {
+        Type::Ref(_, _, inner) | Type::Box(inner) => match *inner {
+            Type::Slice(e) => Type::Slice(e),
+            Type::Str => Type::Slice(Box::new(Type::Int(IntTy::U8))),
+            inner => Type::Ref(Region::Erased, false, Box::new(inner)),
+        },
+        t => t,
+    }
+}
+
 /// Why `compile` failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompileError {
     /// There's no C compiler of this name: `$CC`'s, or `cc`.
     NoCompiler(String),
+    /// The C backend isn't for this machine's system: it's for 64-bit
+    /// Linux and macOS (docs/33-c-backend.md).
+    Unsupported,
     /// What went wrong otherwise, the C compiler's messages included.
     Failed(String),
 }
@@ -2010,6 +2022,9 @@ impl std::fmt::Display for CompileError {
                 "there's no C compiler `{cc}`, which `t` compiles programs with: install one, \
                  or name one with $CC"
             ),
+            CompileError::Unsupported => {
+                f.write_str("compiling programs is for Linux and macOS, for now, which this isn't")
+            }
             CompileError::Failed(why) => f.write_str(why),
         }
     }
