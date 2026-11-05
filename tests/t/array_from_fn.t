@@ -8,5 +8,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     out.line(&squares[3])?; // expect: 9
     let lists: [List<i64>; 2] = core::array::from_fn(|_| List::new());
     out.line(&lists[1].len())?; // expect: 0
-    Result::Ok(())
+    Ok(())
 }

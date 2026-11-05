@@ -10,5 +10,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let n: i64 = 5;
     out.line(&(*call(&n)))?;               // expect: 5
-    Result::Ok(())
+    Ok(())
 }

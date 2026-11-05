@@ -6,7 +6,7 @@ fn double(x: i64) -> i64 { x * 2 }
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&double(2))?; // expect: 4
-    Result::Ok(())
+    Ok(())
 }
 
 #[test]

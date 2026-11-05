@@ -33,5 +33,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&above.passes(&b))?;                   // expect: true
     out.line(&check_all(&above, &a, &b))?;          // expect: false
     out.line(&check_all(&positive, &a, &b))?;       // expect: true
-    Result::Ok(())
+    Ok(())
 }

@@ -10,8 +10,8 @@ impl<T, E> Result<T, E> {
     /// Is it `Ok`?
     export fn is_ok(&self) -> bool {
         match self {
-            Result::Ok(_) => true,
-            Result::Err(_) => false,
+            Ok(_) => true,
+            Err(_) => false,
         }
     }
 
@@ -21,8 +21,8 @@ impl<T, E> Result<T, E> {
     /// References to what's in it.
     export fn as_ref(&self) -> Result<&T, &E> {
         match self {
-            Result::Ok(x) => Result::Ok(x),
-            Result::Err(e) => Result::Err(e),
+            Ok(x) => Ok(x),
+            Err(e) => Err(e),
         }
     }
 
@@ -31,8 +31,8 @@ impl<T, E> Result<T, E> {
     with e
     {
         match self {
-            Result::Ok(x) => Result::Ok(f(x)),
-            Result::Err(e) => Result::Err(e),
+            Ok(x) => Ok(f(x)),
+            Err(e) => Err(e),
         }
     }
 
@@ -42,8 +42,8 @@ impl<T, E> Result<T, E> {
         f: F,
     ) -> Result<U, E> with e {
         match self {
-            Result::Ok(x) => f(x),
-            Result::Err(e) => Result::Err(e),
+            Ok(x) => f(x),
+            Err(e) => Err(e),
         }
     }
 
@@ -52,8 +52,8 @@ impl<T, E> Result<T, E> {
     with e
     {
         match self {
-            Result::Ok(x) => Result::Ok(x),
-            Result::Err(e) => Result::Err(f(e)),
+            Ok(x) => Ok(x),
+            Err(e) => Err(f(e)),
         }
     }
 
@@ -62,8 +62,8 @@ impl<T, E> Result<T, E> {
     /// `Discard`.
     export fn unwrap_or_else<effect e, F: FnOnce(E) -> T with e + Discard>(self, f: F) -> T with e {
         match self {
-            Result::Ok(x) => x,
-            Result::Err(e) => f(e),
+            Ok(x) => x,
+            Err(e) => f(e),
         }
     }
 
@@ -74,8 +74,8 @@ impl<T, E> Result<T, E> {
         f: F,
     ) -> Result<T, G> with e {
         match self {
-            Result::Ok(x) => Result::Ok(x),
-            Result::Err(e) => f(e),
+            Ok(x) => Ok(x),
+            Err(e) => f(e),
         }
     }
 }
@@ -84,8 +84,8 @@ impl<T, E: Discard> Result<T, E> {
     /// What's in an `Ok`, throwing away an `Err`.
     export fn ok(self) -> Option<T> {
         match self {
-            Result::Ok(x) => Option::Some(x),
-            Result::Err(_e) => Option::None,
+            Ok(x) => Some(x),
+            Err(_e) => None,
         }
     }
 }
@@ -94,8 +94,8 @@ impl<T: Discard, E> Result<T, E> {
     /// What's in an `Err`, throwing away an `Ok`.
     export fn err(self) -> Option<E> {
         match self {
-            Result::Ok(_x) => Option::None,
-            Result::Err(e) => Option::Some(e),
+            Ok(_x) => None,
+            Err(e) => Some(e),
         }
     }
 }
@@ -104,8 +104,8 @@ impl<T: Discard, E: Discard> Result<T, E> {
     /// What's in an `Ok`, or else `default`.
     export fn unwrap_or(self, default: T) -> T {
         match self {
-            Result::Ok(x) => x,
-            Result::Err(_e) => default,
+            Ok(x) => x,
+            Err(_e) => default,
         }
     }
 }
@@ -120,8 +120,8 @@ impl<T, E: Discard> Result<T, E> {
     #[blame_caller]
     export fn expect(self, why: &str) -> T with panic {
         match self {
-            Result::Ok(x) => x,
-            Result::Err(_) => crate::panic::panic(why),
+            Ok(x) => x,
+            Err(_) => crate::panic::panic(why),
         }
     }
 }
@@ -132,7 +132,7 @@ impl<T> Result<T, !> {
     /// a `String`, is one (see `core::fmt`).
     export fn into_ok(self) -> T {
         match self {
-            Result::Ok(x) => x,
+            Ok(x) => x,
         }
     }
 }

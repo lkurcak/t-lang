@@ -5,9 +5,9 @@ use core::str::{Found, Pattern};
 struct Any {}
 
 impl Pattern for Any {
-    fn find_in(&self, s: &str) -> Option<Found> { Option::None }
-    fn prefix_of(&self, s: &str) -> Option<usize> { Option::None }
-    fn suffix_of(&self, s: &str) -> Option<usize> { Option::None }
+    fn find_in(&self, s: &str) -> Option<Found> { None }
+    fn prefix_of(&self, s: &str) -> Option<usize> { None }
+    fn suffix_of(&self, s: &str) -> Option<usize> { None }
 }
 
 fn main() {}

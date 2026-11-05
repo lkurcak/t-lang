@@ -9,6 +9,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     *a = 1;
     *b = 2;
     out.line(&x)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: this closure returns a reference to what it captured, which only lasts as long as the call

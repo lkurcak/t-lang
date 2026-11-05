@@ -43,5 +43,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&0i64)?; // expect: positive0
     let n = 7i64;
     out.line(pick(&n))?; // expect: 7
-    Result::Ok(())
+    Ok(())
 }

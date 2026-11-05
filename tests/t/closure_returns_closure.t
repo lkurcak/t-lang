@@ -5,5 +5,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let b: i64 = 2;
     let make = || || b;
     out.line(&make()())?;                // expect: 2
-    Result::Ok(())
+    Ok(())
 }

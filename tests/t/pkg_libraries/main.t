@@ -5,5 +5,5 @@
 fn main(os: host::Os) -> Result<(), host::Error> {
     let mut out = os.stdout;
     out.line(&pure::twice(21))?; // expect: 42
-    Result::Ok(())
+    Ok(())
 }

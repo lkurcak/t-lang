@@ -10,5 +10,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let m = 2;
     let g = |_r: &i64| &n;
     out.line(&(*g(&m)))?;                  // expect: 5
-    Result::Ok(())
+    Ok(())
 }

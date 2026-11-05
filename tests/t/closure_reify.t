@@ -34,10 +34,10 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let op = Op { f: |x| x * 5 };
     out.line(&(op.f)(2))?;                   // expect: 10
     let minus: fn(i64) -> i64 with panic = |x| x - 2;
-    let o = Option::Some(minus);
+    let o = Some(minus);
     match o {
-        Option::Some(g) => out.line(&g(2))?, // expect: 0
-        Option::None => {}
+        Some(g) => out.line(&g(2))?, // expect: 0
+        None => {}
     }
     // A function made from a closure is a function: generic code takes it
     // as one.
@@ -50,5 +50,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let id = |x: i64| x;
     let h: fn(i64) -> i64 with panic = id;
     out.line(&h(1))?;                        // expect: 1
-    Result::Ok(())
+    Ok(())
 }

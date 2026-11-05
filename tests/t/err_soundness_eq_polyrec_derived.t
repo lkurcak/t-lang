@@ -13,6 +13,6 @@ impl<T: Eq> Eq for V<T> {
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&(V { x: 1i64 } == V { x: 1 }))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: polymorphic recursion: this use of `<D<U> as Eq>::eq` with `U` = `&V<T>` leads back

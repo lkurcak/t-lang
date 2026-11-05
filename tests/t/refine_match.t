@@ -21,5 +21,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&div_or_zero(7, 2))?; // expect: 3
     out.line(&small_inc(3))?; // expect: 4
     out.line(&small_inc(30))?; // expect: 0
-    Result::Ok(())
+    Ok(())
 }

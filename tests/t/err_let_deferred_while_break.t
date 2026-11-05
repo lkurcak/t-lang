@@ -10,6 +10,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         break;
     }
     out.line(&x)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: use of `x`, which has no value here

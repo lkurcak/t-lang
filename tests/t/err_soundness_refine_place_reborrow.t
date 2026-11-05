@@ -17,6 +17,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     let mut p = P { x: 1 };
     out.line(&f(&mut p))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `/` may panic, but `f` doesn't say `with panic`

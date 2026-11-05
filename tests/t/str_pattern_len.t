@@ -13,7 +13,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&last_of_three("xyz"))?;
     out.line(&last_of_three(""))?;
     out.line(&last_of_three("ab"))?;
-    Result::Ok(())
+    Ok(())
 }
 // expect: 122
 // expect: 0

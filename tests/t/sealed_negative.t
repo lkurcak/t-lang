@@ -28,8 +28,8 @@ impl<'a, T: Describe> Describe for &'a T {
 impl<T: Describe> Describe for Option<T> {
     fn describe(&self) -> i64 with panic {
         match self {
-            Option::Some(x) => 10 + x.describe(),
-            Option::None => 10,
+            Some(x) => 10 + x.describe(),
+            None => 10,
         }
     }
 }
@@ -40,7 +40,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     out.line(&describe(&5u8))?;                 // expect: 1
     out.line(&describe(&'a'))?;                 // expect: 2
-    out.line(&describe(&Option::Some(true)))?;  // expect: 11
-    out.line(&describe(&&Option::Some(&'b')))?; // expect: 52
-    Result::Ok(())
+    out.line(&describe(&Some(true)))?;  // expect: 11
+    out.line(&describe(&&Some(&'b')))?; // expect: 52
+    Ok(())
 }

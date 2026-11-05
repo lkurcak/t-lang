@@ -10,5 +10,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let p = P { x: 1 };
     let q = p;
     out.line(&(p == q))?; // expect: true
-    Result::Ok(())
+    Ok(())
 }

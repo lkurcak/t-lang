@@ -8,6 +8,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let f = keep(&n);
     let m = 2;
     out.line(&(*f(&m)))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: this closure's result has the lifetime of `_y`, which each call picks

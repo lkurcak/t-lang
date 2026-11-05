@@ -11,7 +11,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let p = my_pair { a: true };
     out.line(&p.a)?;
     out.line(&other().b)?;
-    Result::Ok(())
+    Ok(())
 }
 
 fn other() -> my_pair {

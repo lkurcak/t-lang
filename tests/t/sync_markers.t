@@ -37,5 +37,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     sync(&g);
     let mut out = os.stdout;
     out.line(&c.n.get())?; // expect: 0
-    Result::Ok(())
+    Ok(())
 }

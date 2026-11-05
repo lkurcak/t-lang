@@ -11,7 +11,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     out.line(&count(x))?;    // expect: 2
     let f = |mut z: i64| z * 2;
     out.line(&f(2))?;        // expect: 4
-    Result::Ok(())
+    Ok(())
 }
 // warning: variable `n` doesn't need to be mutable
 // warning: variable `x` doesn't need to be mutable

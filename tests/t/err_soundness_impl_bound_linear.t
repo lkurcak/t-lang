@@ -20,6 +20,6 @@ fn call<U: Tr>(u: U) -> i64 { u.go() }
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&call(W { x: Fd { n: 1 } }))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `call` needs its `U` to implement `Tr`, and `W<Fd>` doesn't; that needs `Fd: Discard`

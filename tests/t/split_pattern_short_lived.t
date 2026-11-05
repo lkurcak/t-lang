@@ -12,5 +12,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
         last = it.next().unwrap_or("");
     }
     out.line(&last)?; // expect: a
-    Result::Ok(())
+    Ok(())
 }

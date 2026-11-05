@@ -7,5 +7,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let y = 'b';
     out.line(&(*first(&x, &y) as u32))?; // expect: 97
     out.line(&(*first(&y, &x) as u32))?; // expect: 97
-    Result::Ok(())
+    Ok(())
 }

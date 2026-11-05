@@ -5,9 +5,9 @@ fn nothing() {}
 
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
-    let f: Option<fn()> = Option::Some(nothing);
+    let f: Option<fn()> = Some(nothing);
     let g: Option<fn() with panic> = f;
     out.line(&g.is_some())?;
-    Result::Ok(())
+    Ok(())
 }
 // error: expected `Option<fn() -> () with panic>`, found `Option<fn() -> ()>`

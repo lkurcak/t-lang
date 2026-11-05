@@ -9,5 +9,5 @@ fn g(n: i64) -> impl Fn() -> i64 + Discard {
     move || h()
 }
 
-fn main(os: std::Os) -> Result<(), std::io::Error> { let mut out = os.stdout; out.line(&f(1)())?;  Result::Ok(()) }
+fn main(os: std::Os) -> Result<(), std::io::Error> { let mut out = os.stdout; out.line(&f(1)())?;  Ok(()) }
 // error: would contain itself

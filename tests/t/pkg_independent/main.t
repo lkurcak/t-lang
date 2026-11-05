@@ -6,5 +6,5 @@
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&(left::f() + right::g()))?; // expect: 3
-    Result::Ok(())
+    Ok(())
 }

@@ -16,5 +16,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let b: bool = z > x;      // a different type is fine when shadowing too
     let x = b;
     if x { out.line(&1i64)? }         // expect: 1
-    Result::Ok(())
+    Ok(())
 }

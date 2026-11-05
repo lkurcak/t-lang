@@ -29,5 +29,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let r = ring();
     out.line(&r.buf.len())?;        // expect: 4
     out.line(&r.head)?;             // expect: 0
-    Result::Ok(())
+    Ok(())
 }

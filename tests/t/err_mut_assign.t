@@ -3,6 +3,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let x: i64 = 1;
     x = 2;
     out.line(&x)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: cannot assign to `x`, as `x` isn't declared `mut`

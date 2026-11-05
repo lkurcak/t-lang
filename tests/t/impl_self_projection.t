@@ -21,5 +21,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let w: u64 = both(7u8);
     out.line(&w)?;                 // expect: 7
     out.line(&(u16::zero() + 1))?; // expect: 1
-    Result::Ok(())
+    Ok(())
 }

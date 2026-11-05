@@ -23,6 +23,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
         r2 = Tr::out(&short);
     }
     stdout.line(&(*r1 + *r2))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `short` doesn't live long enough

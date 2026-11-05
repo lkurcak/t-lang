@@ -6,15 +6,15 @@ impl Iterator for Lines {
     effect e = {};
 
     fn next(&mut self) -> Option<i64> {
-        if self.left == 0 { return Option::None; }
+        if self.left == 0 { return None; }
         self.left = self.left - 1;
-        Option::Some(self.left)
+        Some(self.left)
     }
 }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&(Lines { left: 3 }.fold(0, |a, b| a + b)))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `fold` needs its `Self` to implement `Discard`, and `Lines` doesn't

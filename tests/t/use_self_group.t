@@ -18,6 +18,6 @@ mod game {
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&game::f())?;
-    Result::Ok(())
+    Ok(())
 }
 // expect: 10

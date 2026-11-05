@@ -18,6 +18,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         r = launder(W { r: &n });
     }
     out.line(&(*r))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `n` doesn't live long enough

@@ -9,7 +9,7 @@ impl Counter {
     fn clear(&mut self, r: Result<(), bool>) -> Result<(), bool> ensures self.get() == 0 {
         r?;
         self.n = 0;
-        Result::Ok(())
+        Ok(())
     }
 }
 

@@ -9,5 +9,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     twice(&|| calls.set(calls.get() + 1));
     twice(&|| calls.set(calls.get() + 1));
     out.line(&calls.get())?; // expect: 4
-    Result::Ok(())
+    Ok(())
 }

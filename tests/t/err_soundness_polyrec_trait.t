@@ -26,6 +26,6 @@ impl<'a, T: Tr> Tr for &'a T {
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     out.line(&1i64.go(3))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: polymorphic recursion: `<W<T> as Tr>::go` uses itself with `T` = `&W<T>`

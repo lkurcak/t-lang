@@ -29,5 +29,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     let mut out = os.stdout;
     out.line(&total)?;       // expect: 6
     out.line(&turn.load())?; // expect: 6
-    Result::Ok(())
+    Ok(())
 }

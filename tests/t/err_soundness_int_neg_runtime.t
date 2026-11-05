@@ -5,6 +5,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     out.line(&neg(0))?;  // expect: 0
     out.line(&neg(1))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: runtime error: integer overflow

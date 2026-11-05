@@ -13,5 +13,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&((a + b) << 2))?;            // expect: 12
     let x: u16 = 0x1234;
     out.line(&((x >> 8) as u8 & 0x0F))?;   // expect: 2
-    Result::Ok(())
+    Ok(())
 }

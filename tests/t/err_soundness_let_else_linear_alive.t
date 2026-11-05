@@ -8,11 +8,11 @@ fn close(fd: Fd) -> i64 {
 
 fn f(o: Option<i64>) -> i64 {
     let fd = Fd { n: 1 };
-    let Option::Some(n) = o else { return 0 };
+    let Some(n) = o else { return 0 };
     n + close(fd)
 }
 
 fn main() {
-    let _ = f(Option::None);
+    let _ = f(None);
 }
 // error: `fd` goes out of scope here

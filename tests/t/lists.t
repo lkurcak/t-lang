@@ -79,5 +79,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     let r = reverse(l);
     out.line(&first(&r))?;           // expect: 2
     out.line(&len(&r))?;             // expect: 3
-    Result::Ok(())
+    Ok(())
 }

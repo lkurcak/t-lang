@@ -14,6 +14,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let Pair { a, .. } = Pair { a: open(1), b: open(2) };
     out.line(&close(a))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: this pattern throws away part of the value it matches, and its type, `Fd`, isn't `Discard`

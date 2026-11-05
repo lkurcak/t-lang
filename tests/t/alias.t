@@ -33,8 +33,8 @@ fn swap<T>(p: Pair<T>) -> Pair<T> {
 // Declared after its first use, like any item.
 fn first(o: Later) -> i64 {
     match o {
-        Option::Some(n) => n,
-        Option::None => 0,
+        Some(n) => n,
+        None => 0,
     }
 }
 type Later = Option<i64>;
@@ -51,10 +51,10 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&h(8))?; // expect: 4
     let p: P = Point { x: 1, y: 2 };
     out.line(&p.sum())?; // expect: 3
-    out.line(&first(Option::Some(5)))?; // expect: 5
+    out.line(&first(Some(5)))?; // expect: 5
     // In a block, as a `struct` can be.
     type Local = Pair<bool>;
     let l: Local = Two { a: true, b: false };
     out.line(&l.a)?; // expect: true
-    Result::Ok(())
+    Ok(())
 }

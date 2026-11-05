@@ -23,5 +23,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     out.line(&(s.f)(1))?;               // expect: 0
     let r = &inc;
     out.line(&apply(r, 41))?;           // expect: 42
-    Result::Ok(())
+    Ok(())
 }

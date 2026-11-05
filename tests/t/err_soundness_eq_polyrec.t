@@ -11,6 +11,6 @@ impl<T: Eq> Eq for W<T> {
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&(W { x: 1i64 } == W { x: 1 }))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: polymorphic recursion: `<W<T> as Eq>::eq` uses itself with `T` = `&W<T>`

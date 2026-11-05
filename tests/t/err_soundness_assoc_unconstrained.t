@@ -29,6 +29,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         put::<S>(&mut slot, &short);
     }
     out.line(&(*slot))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `'a` isn't in `S`

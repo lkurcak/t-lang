@@ -14,5 +14,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&'\u{2028}'.is_whitespace())?;     // expect: true
     out.line(&'\u{200b}'.is_whitespace())?;     // expect: false
     out.line(&'x'.is_whitespace())?;            // expect: false
-    Result::Ok(())
+    Ok(())
 }

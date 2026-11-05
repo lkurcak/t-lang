@@ -6,6 +6,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     /// Adds `n`.
     fn add_n(x: i64) -> i64 { x + n }
     out.line(&add_n(1))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: can't capture `n` in a nested `fn`; use a closure

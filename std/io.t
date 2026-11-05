@@ -91,20 +91,20 @@ impl Stdin {
             } else if b == 256 {
                 break;
             } else {
-                return Result::Err(error(b));
+                return Err(error(b));
             }
         }
         match bytes.pop() {
-            Option::Some(0x0D) => {},
-            Option::Some(b) => bytes.push(b),
-            Option::None => {},
+            Some(0x0D) => {},
+            Some(b) => bytes.push(b),
+            None => {},
         }
         match String::from_utf8(bytes) {
-            Result::Ok(s) => {
+            Ok(s) => {
                 line.push_str(s.as_str());
-                Result::Ok(any)
+                Ok(any)
             },
-            Result::Err(_) => Result::Err(Error::new(ErrorKind::InvalidData)),
+            Err(_) => Err(Error::new(ErrorKind::InvalidData)),
         }
     }
 
@@ -176,14 +176,14 @@ trait Bytes {
 impl Bytes for Stdout {
     fn byte(&mut self, b: u8) -> Result<(), Error> {
         let code = self.write_byte(b);
-        if code == 0 { Result::Ok(()) } else { Result::Err(error(code)) }
+        if code == 0 { Ok(()) } else { Err(error(code)) }
     }
 }
 
 impl Bytes for Stderr {
     fn byte(&mut self, b: u8) -> Result<(), Error> {
         let code = self.write_byte(b);
-        if code == 0 { Result::Ok(()) } else { Result::Err(error(code)) }
+        if code == 0 { Ok(()) } else { Err(error(code)) }
     }
 }
 
@@ -192,7 +192,7 @@ fn write_str<B: Bytes>(out: &mut B, s: &str) -> Result<(), Error> {
     for b in s.as_bytes().iter() {
         out.byte(*b)?;
     }
-    Result::Ok(())
+    Ok(())
 }
 
 /// Writes `c`, in UTF-8.

@@ -48,5 +48,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     out.line(&(Nat { n: 0 }.skip(5)))?; // expect: 5
     out.line(&pick(1i64, 2, false))?;    // expect: 2
     out.line(&apply(|x| x * 2, 21))?; // expect: 42
-    Result::Ok(())
+    Ok(())
 }

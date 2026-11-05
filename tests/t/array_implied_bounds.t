@@ -17,5 +17,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let y: i64 = 8;
     let p = shorten(Pair { refs: [&x, &y] });
     out.line(p.refs[1])?;             // expect: 8
-    Result::Ok(())
+    Ok(())
 }

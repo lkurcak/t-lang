@@ -61,12 +61,12 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     stdout.line(&(*r))?; // expect: 5
 
     // Nothing: as for a function, the one parameter's.
-    let never = Wrap { p: |_x: &i64| -> Option<&i64> { Option::None } };
+    let never = Wrap { p: |_x: &i64| -> Option<&i64> { None } };
     stdout.line(&never.get(&a).is_some())?; // expect: false
-    let some = Wrap { p: |x: &i64| Option::Some(x) };
+    let some = Wrap { p: |x: &i64| Some(x) };
     match some.get(&a) {
-        Option::Some(x) => stdout.line(&(*x))?, // expect: 1
-        Option::None => {}
+        Some(x) => stdout.line(&(*x))?, // expect: 1
+        None => {}
     }
-    Result::Ok(())
+    Ok(())
 }

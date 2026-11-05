@@ -5,6 +5,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     // SAFETY: nothing to keep.
     let n = unsafe { 1i64 };
     out.line(&n)?; // expect: 1
-    Result::Ok(())
+    Ok(())
 }
 // warning: this `unsafe` block has nothing unsafe in it

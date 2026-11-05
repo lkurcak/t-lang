@@ -8,14 +8,14 @@ struct Node<'a> { v: i64, next: Option<&'a Node<'a>> }
 
 fn sum(n: &Node) -> i64 with panic {
     let mut total = 0;
-    let mut at = Option::Some(n);
+    let mut at = Some(n);
     loop {
         match at {
-            Option::Some(m) => {
+            Some(m) => {
                 total = total + m.v;
                 at = m.next;
             },
-            Option::None => return total,
+            None => return total,
         }
     }
 }
@@ -23,10 +23,10 @@ fn sum(n: &Node) -> i64 with panic {
 fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     let mut out = os.stdout;
     let a = Arena::new();
-    let mut head: &Node = a.alloc(Node { v: 1, next: Option::None });
+    let mut head: &Node = a.alloc(Node { v: 1, next: None });
     for i in 2..5 {
-        head = a.alloc(Node { v: i, next: Option::Some(head) });
+        head = a.alloc(Node { v: i, next: Some(head) });
     }
     out.line(&sum(head))?; // expect: 10
-    Result::Ok(())
+    Ok(())
 }

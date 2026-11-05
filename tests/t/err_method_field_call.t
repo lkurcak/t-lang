@@ -5,6 +5,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let s = F { f: one };
     out.line(&s.f())?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `F` has no method `f`, but it has a field `f`, which holds a function; to call that, put the field in parentheses

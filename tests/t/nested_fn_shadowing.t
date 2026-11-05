@@ -43,5 +43,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         out.line(&helper)?; // expect: 70
     }
     out.line(&helper)?; // expect: 60
-    Result::Ok(())
+    Ok(())
 }

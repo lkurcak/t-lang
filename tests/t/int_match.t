@@ -24,5 +24,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&sign(-128))?;  // expect: -1
     out.line(&sign(0))?;     // expect: 0
     out.line(&sign(5))?;     // expect: 1
-    Result::Ok(())
+    Ok(())
 }

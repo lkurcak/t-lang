@@ -15,6 +15,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
         out.line(&(*b))?;
     }
     out.line(&(*a))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `short` doesn't live long enough

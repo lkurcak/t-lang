@@ -26,6 +26,6 @@ fn f<T: Tr>(x: T, n: i64) -> i64 with panic {
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     out.line(&f(W { t: 1i64 }, 3))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: polymorphic recursion

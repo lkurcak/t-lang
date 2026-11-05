@@ -24,7 +24,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     // Top-level functions aren't captured; they're always there.
     let h = || double(b);
     out.line(&h())?;                     // expect: 4
-    Result::Ok(())
+    Ok(())
 }
 
 fn double(x: i64) -> i64 with panic { x * 2 }

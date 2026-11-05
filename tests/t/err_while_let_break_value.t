@@ -2,7 +2,7 @@
 // to give, so it's a `()`, as a `while` is.
 fn main() {
     let mut it = 0..3i64;
-    let _x = 'a: while let Option::Some(k) = it.next() {
+    let _x = 'a: while let Some(k) = it.next() {
         while let 0..=1 = k {
             break 'a 5;
         }

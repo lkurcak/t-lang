@@ -26,8 +26,8 @@ impl<'a, T: Describe> Describe for &'a T {
 impl<T: Describe> Describe for Option<T> {
     fn describe(&self) -> i64 {
         match self {
-            Option::Some(x) => 10 + x.describe(),
-            Option::None => 10,
+            Some(x) => 10 + x.describe(),
+            None => 10,
         }
     }
 }

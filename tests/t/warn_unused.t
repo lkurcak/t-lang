@@ -29,7 +29,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&first(6, 7))?;
     out.line(&get(Opt::Some(8)))?;
     out.line(&get(Opt::None))?;
-    Result::Ok(())
+    Ok(())
 }
 // warning: unused variable `b`
 // warning: unused variable `n`

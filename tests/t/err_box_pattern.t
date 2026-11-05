@@ -6,6 +6,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     match b {
         Box::new(x) => out.line(&x)?,
     }
-    Result::Ok(())
+    Ok(())
 }
 // error: `Box` isn't an enum

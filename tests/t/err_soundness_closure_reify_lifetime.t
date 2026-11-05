@@ -11,6 +11,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let id = |x: &i64| x;
     let r = keep(id);
     out.line(&(*r))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: this function isn't general enough

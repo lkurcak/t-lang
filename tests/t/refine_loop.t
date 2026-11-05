@@ -14,5 +14,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&count(5))?; // expect: 5
     out.line(&count(-3))?; // expect: 0
-    Result::Ok(())
+    Ok(())
 }

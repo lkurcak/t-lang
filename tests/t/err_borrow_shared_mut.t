@@ -5,6 +5,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let b = &mut x;
     *b += 1;
     out.line(&(*a))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: cannot borrow `x` as mutable while `x` is borrowed

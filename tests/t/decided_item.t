@@ -10,8 +10,8 @@ impl<T: Discard, I: Iterator<Item = T>> Iterator for Skip1<I> {
         if !self.skipped {
             self.skipped = true;
             match self.iter.next() {
-                Option::Some(_x) => {},
-                Option::None => return Option::None,
+                Some(_x) => {},
+                None => return None,
             }
         }
         self.iter.next()
@@ -23,7 +23,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     for x in (Skip1 { iter: 0..4, skipped: false }).map(|x| x * 10i64) {
         out.line(&x)?;
     }
-    Result::Ok(())
+    Ok(())
     // expect: 10
     // expect: 20
     // expect: 30

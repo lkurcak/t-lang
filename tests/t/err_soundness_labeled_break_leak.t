@@ -10,6 +10,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         }
     };
     out.line(&x)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `_a` is never used up, and its type, `Fd`, isn't `Discard`

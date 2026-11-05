@@ -32,5 +32,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&limits::MAX_USERS)?; // expect: 1000
     out.line(&total())?;           // expect: 42
     let () = NOTHING;
-    Result::Ok(())
+    Ok(())
 }

@@ -25,5 +25,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     stdout.line(&(*n))?;                  // expect: 7
     let nested = Box::new(Box::new(5i64));
     stdout.line(&(**nested))?;            // expect: 5
-    Result::Ok(())
+    Ok(())
 }

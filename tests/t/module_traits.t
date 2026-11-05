@@ -36,5 +36,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     out.line(&s.show())?;               // expect: 9
     out.line(&show::twice(&s))?;        // expect: 18
     out.line(&show::Show::show(&s))?;   // expect: 9
-    Result::Ok(())
+    Ok(())
 }

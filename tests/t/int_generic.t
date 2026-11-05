@@ -34,5 +34,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     out.line(&(core::num::greatest::<u32>()))?; // expect: 4294967295
     let none: i64 = 0;
     out.line(&sum(none, 3))?;        // expect: 3
-    Result::Ok(())
+    Ok(())
 }

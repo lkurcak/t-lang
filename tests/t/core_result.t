@@ -1,7 +1,7 @@
 // `Result` comes from `core`, through the prelude.
 
 fn div(a: i64, b: i64) -> Result<i64, bool> with panic {
-    if b == 0 { Result::Err(false) } else { Result::Ok(a / b) }
+    if b == 0 { Err(false) } else { Ok(a / b) }
 }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
@@ -24,8 +24,8 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     out.line(&ok.ok().unwrap_or(0))?;  // expect: 2
     out.line(&ok.err().is_none())?; // expect: true
     match err.as_ref() {
-        Result::Ok(n) => out.line(&(*n))?,
-        Result::Err(e) => out.line(&(*e))?, // expect: false
+        Ok(n) => out.line(&(*n))?,
+        Err(e) => out.line(&(*e))?, // expect: false
     }
-    Result::Ok(())
+    Ok(())
 }

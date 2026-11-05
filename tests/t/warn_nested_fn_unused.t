@@ -15,7 +15,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         2
     }
     out.line(&used())?; // expect: 2
-    Result::Ok(())
+    Ok(())
 }
 
 fn dead() {

@@ -13,5 +13,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         out.line(&100i64)?;     // expect: 100
     }
     if false { out.line(&999i64)? }
-    Result::Ok(())
+    Ok(())
 }

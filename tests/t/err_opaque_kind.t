@@ -9,5 +9,5 @@ fn close(fd: Fd) -> i64 {
 
 fn once(fd: Fd) -> impl Fn() -> i64 { move || close(fd) }
 
-fn main(os: std::Os) -> Result<(), std::io::Error> { let mut out = os.stdout; out.line(&once(Fd { n: 1 })())?;  Result::Ok(()) }
+fn main(os: std::Os) -> Result<(), std::io::Error> { let mut out = os.stdout; out.line(&once(Fd { n: 1 })())?;  Ok(()) }
 // error: this closure is only `FnOnce`, as

@@ -13,5 +13,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&(Mine {}).describe())?; // expect: 2
     out.line(&7u8.describe())?;       // expect: 1
-    Result::Ok(())
+    Ok(())
 }

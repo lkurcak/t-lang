@@ -16,21 +16,21 @@ impl Write for Bounded {
     fn write_str(&mut self, s: &str) -> Result<(), Full> with alloc {
         let n = s.len();
         if n > self.room {
-            return Result::Err(Full { wanted: n });
+            return Err(Full { wanted: n });
         }
         self.room = self.room - n;
         self.s.push_str(s);
-        Result::Ok(())
+        Ok(())
     }
 
     fn write_char(&mut self, c: char) -> Result<(), Full> with alloc {
         let n = c.len_utf8();
         if n > self.room {
-            return Result::Err(Full { wanted: n });
+            return Err(Full { wanted: n });
         }
         self.room = self.room - n;
         self.s.push(c);
-        Result::Ok(())
+        Ok(())
     }
 }
 
@@ -48,15 +48,15 @@ fn attempt(out: &mut std::io::Stdout, room: usize) -> Result<(), std::io::Error>
     let r = both(&1234i64, &"abc", &mut b);
     let Bounded { s, room: _ } = b;
     let wanted = match r {
-        Result::Ok(()) => Option::None,
-        Result::Err(Full { wanted }) => Option::Some(wanted),
+        Ok(()) => None,
+        Err(Full { wanted }) => Some(wanted),
     };
     let w = out.line(&s.as_str());
     s.discard();
     w?;
     match wanted {
-        Option::Some(n) => out.line(&n),
-        Option::None => Result::Ok(()),
+        Some(n) => out.line(&n),
+        None => Ok(()),
     }
 }
 
@@ -67,5 +67,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
                  // expect: 3
     attempt(&mut out, 2)?;  // expect: 12
                  // expect: 1
-    Result::Ok(())
+    Ok(())
 }

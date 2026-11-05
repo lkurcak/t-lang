@@ -10,7 +10,7 @@ impl Iterator for Down {
     fn next(&mut self) -> Option<i64> with Self::e {
         let n = self.n;
         self.n = n - 1;
-        Option::Some(n)
+        Some(n)
     }
 }
 
@@ -18,6 +18,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let mut d = Down { n: 3 };
     out.line(&d.next().is_some())?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `-` may panic, but `next` doesn't say `with panic`

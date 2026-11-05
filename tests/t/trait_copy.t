@@ -30,5 +30,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {panic, alloc} {
     out.line(&(t.degrees + u.degrees))?;                    // expect: 40
     let q = dup(Pair { a: true, b: 7i64 });
     out.line(&q.b.b)?;                                    // expect: 7
-    Result::Ok(())
+    Ok(())
 }

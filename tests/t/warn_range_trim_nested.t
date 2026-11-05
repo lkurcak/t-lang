@@ -12,7 +12,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&f(Opt::Some(5)))?;
     out.line(&f(Opt::Some(6)))?;
     out.line(&f(Opt::None))?;
-    Result::Ok(())
+    Ok(())
 }
 // warning: this range can be narrowed to `6..10`
 // expect: 1

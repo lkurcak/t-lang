@@ -15,6 +15,6 @@ impl<T: Discard> Tr for T {
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     out.line(&1i64.deep(3))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: polymorphic recursion: `<T as Tr>::deep` uses itself with `T` = `W<T>`

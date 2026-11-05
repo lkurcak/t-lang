@@ -11,9 +11,9 @@ impl Write for Never {
     type Error = Lost;
     effect e = {};
 
-    fn write_str(&mut self, _s: &str) -> Result<(), Lost> { Result::Err(Lost {}) }
+    fn write_str(&mut self, _s: &str) -> Result<(), Lost> { Err(Lost {}) }
 
-    fn write_char(&mut self, _c: char) -> Result<(), Lost> { Result::Err(Lost {}) }
+    fn write_char(&mut self, _c: char) -> Result<(), Lost> { Err(Lost {}) }
 }
 
 fn main() {

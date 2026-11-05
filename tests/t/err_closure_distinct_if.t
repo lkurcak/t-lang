@@ -7,6 +7,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let b = true;
     let f = if b { |x: i64| x * 2 } else { inc };
     out.line(&f(1))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `if` and `else` have different types: `{closure}` and `fn(i64) -> i64

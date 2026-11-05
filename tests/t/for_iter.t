@@ -10,10 +10,10 @@ impl Iterator for Countdown {
 
     fn next(&mut self) -> Option<i64> with panic {
         if self.n == 0 {
-            return Option::None;
+            return None;
         }
         self.n = self.n - 1;
-        Option::Some(self.n + 1)
+        Some(self.n + 1)
     }
 }
 
@@ -34,10 +34,10 @@ impl Iterator for Fds {
 
     fn next(&mut self) -> Option<Fd> with panic {
         if self.left == 0 {
-            return Option::None;
+            return None;
         }
         self.left = self.left - 1;
-        Option::Some(Fd { n: self.left })
+        Some(Fd { n: self.left })
     }
 }
 
@@ -75,5 +75,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     }
     out.line(&it.next().unwrap_or(-1))?; // expect: 4
     out.line(&total(it))?; // expect: 35
-    Result::Ok(())
+    Ok(())
 }

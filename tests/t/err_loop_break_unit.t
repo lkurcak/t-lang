@@ -4,6 +4,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         break;
     };
     out.line(&x)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: a `break` with no value gives the loop `()`, but it should be `i64`

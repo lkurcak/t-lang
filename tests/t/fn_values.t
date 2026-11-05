@@ -29,5 +29,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     out.line(&(n(3) + fs.n))?;                 // expect: 4
     let k = 7;
     out.line(&call(|x| x + k))?;             // expect: 14
-    Result::Ok(())
+    Ok(())
 }

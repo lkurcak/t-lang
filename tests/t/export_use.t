@@ -16,5 +16,5 @@ export use m::{f, P};
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     out.line(&(f() + P { x: 2 }.get()))?; // expect: 3
-    Result::Ok(())
+    Ok(())
 }

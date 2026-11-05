@@ -9,6 +9,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         Pos { n } => *n = 0,
     }
     out.line(&p.n)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: can't bind `n` by `&mut`: field `n` of `Pos` has a refinement, which a write through the reference could break

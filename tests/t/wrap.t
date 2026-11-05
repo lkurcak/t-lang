@@ -17,5 +17,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&wrap::<i16, i64>(-300))?;                 // expect: -300
     out.line(&bits(-2i32))?;                            // expect: 18446744073709551614
     out.line(&bits(255u8))?;                            // expect: 255
-    Result::Ok(())
+    Ok(())
 }

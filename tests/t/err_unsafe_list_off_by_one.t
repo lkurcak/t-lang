@@ -11,7 +11,7 @@ impl Bad {
             // SAFETY: wrong: slot `len` isn't in use.
             unsafe { self.buf.slice(i, i + 1).get(0) }
         } else {
-            Option::None
+            None
         }
     }
 }

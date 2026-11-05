@@ -7,5 +7,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&MIB)?; // expect: 1048576
     out.line(&BIG)?; // expect: 1099511627776
-    Result::Ok(())
+    Ok(())
 }

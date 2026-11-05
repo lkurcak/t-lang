@@ -50,8 +50,8 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     out.line(&f"{u:?}")?; // expect: Unit
     let c = Chain::Link(1, Box::new(Chain::Link(2, Box::new(Chain::End))));
     out.line(&f"{c:?}")?; // expect: Link(1, Link(2, End))
-    let n1 = Node { v: 1, next: Option::None };
-    let n2 = Node { v: 2, next: Option::Some(&n1) };
+    let n1 = Node { v: 1, next: None };
+    let n2 = Node { v: 2, next: Some(&n1) };
     out.line(&f"{n2:?}")?; // expect: Node { v: 2, next: Some(Node { v: 1, next: None }) }
     let login = Login { user: "ann", secret: Secret { code: 1234 } };
     out.line(&f"{login:?}")?; // expect: Login { user: "ann", secret: <hidden> }
@@ -61,5 +61,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let view = View { items: xs.as_slice(), first: &xs[0], boxed: Box::new(3) };
     out.line(&f"{view:?}")?; // expect: View { items: [1, 2], first: 1, boxed: 3 }
     let _ = login.secret.code;
-    Result::Ok(())
+    Ok(())
 }

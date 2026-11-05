@@ -9,5 +9,5 @@ mod b {
 use a::f;
 use b::f;
 
-fn main(os: std::Os) -> Result<(), std::io::Error> { let mut out = os.stdout; out.line(&f())?;  Result::Ok(()) }
+fn main(os: std::Os) -> Result<(), std::io::Error> { let mut out = os.stdout; out.line(&f())?;  Ok(()) }
 // error: `f` is imported twice

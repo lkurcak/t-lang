@@ -13,5 +13,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&n.name)?; // expect: good morning
     out.line(&greeting(false))?; // expect: hi
     out.line(&n.name.len())?; // expect: 12
-    Result::Ok(())
+    Ok(())
 }

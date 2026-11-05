@@ -7,6 +7,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         break &y;
     };
     out.line(&(*r))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `y` doesn't live long enough: it goes out of scope here while still borrowed

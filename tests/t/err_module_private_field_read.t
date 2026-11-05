@@ -16,5 +16,5 @@ mod fs {
 
 fn peek(fd: &fs::Fd) -> i64 { fd.raw }
 
-fn main(os: std::Os) -> Result<(), std::io::Error> { let mut out = os.stdout; out.line(&fs::close(fs::open(1)))?;  Result::Ok(()) }
+fn main(os: std::Os) -> Result<(), std::io::Error> { let mut out = os.stdout; out.line(&fs::close(fs::open(1)))?;  Ok(()) }
 // error: field `raw` of `Fd` is private

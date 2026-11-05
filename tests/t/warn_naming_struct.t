@@ -18,7 +18,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let s = HTTPServer { port: 80 };
     let v = Vec2 { x: 3, y: 4 };
     out.line(&(p.x + p.y + s.port + v.x + v.y))?;
-    Result::Ok(())
+    Ok(())
 }
 // warning: type `my_point` should have an upper camel case name: `MyPoint`
 // warning: type `HTTPServer` should have an upper camel case name: `HttpServer`

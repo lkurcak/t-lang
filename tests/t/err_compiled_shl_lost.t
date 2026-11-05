@@ -6,6 +6,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     out.line(&shl(1, 6))?; // expect: 64
     out.line(&shl(1, 7))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: runtime error: integer overflow

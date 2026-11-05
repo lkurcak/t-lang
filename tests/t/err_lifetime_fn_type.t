@@ -7,6 +7,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let n = 1;
     out.line(&apply(only_static, &n))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: this function isn't general enough

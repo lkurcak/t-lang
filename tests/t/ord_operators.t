@@ -42,7 +42,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     out.line(&(r1 >= r2))?; // expect: false
     out.line(&least(v1, v2).minor)?; // expect: 9
     out.line(&least(5i64, 3))?; // expect: 3
-    Result::Ok(())
+    Ok(())
 }
 
 fn show(out: &mut std::io::Stdout, s: &String, t: &String) -> Result<(), std::io::Error> {

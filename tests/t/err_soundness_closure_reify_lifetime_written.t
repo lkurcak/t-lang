@@ -8,6 +8,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let r = keep(|x: &i64| -> &i64 { x });
     out.line(&(*r))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: this closure returns a reference from `x`, whose lifetime each call picks, but its result doesn't have that lifetime

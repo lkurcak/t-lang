@@ -33,5 +33,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&join(0xA, 0x5))?;      // expect: 165
     out.line(&mix(1000, 3))?;        // expect: 1003
     out.line(&half(-7, 1))?;         // expect: -4
-    Result::Ok(())
+    Ok(())
 }

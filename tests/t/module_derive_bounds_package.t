@@ -18,5 +18,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut out = os.stdout;
     let c = cells::cell(5i64);
     out.line(&cells::get(&c))?; // expect: 5
-    Result::Ok(())
+    Ok(())
 }

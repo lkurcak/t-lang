@@ -31,5 +31,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&largest(4i64, 1, 2))?;                   // expect: 4
     out.line(&same(&m, &Money { cents: 9 }))?; // expect: true
     out.line(&same(&1i64, &2))?;                  // expect: false
-    Result::Ok(())
+    Ok(())
 }

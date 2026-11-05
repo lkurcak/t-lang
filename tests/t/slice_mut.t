@@ -9,8 +9,8 @@ fn bump(s: &mut [i64]) with panic {
     let mut i = 0;
     while i < s.len() {
         match s.get_mut(i) {
-            Option::Some(x) => *x = *x + 1,
-            Option::None => {},
+            Some(x) => *x = *x + 1,
+            None => {},
         }
         i = i + 1;
     }

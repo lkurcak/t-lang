@@ -11,5 +11,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     out.line(&x)?;   // expect: 23
     x <<= 3;
     out.line(&x)?;   // expect: 184
-    Result::Ok(())
+    Ok(())
 }

@@ -47,7 +47,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     out.line(&(p.x + p.Y))?; // expect: 3
     // Only in what it's on.
     let unused: i64 = 0;
-    Result::Ok(())
+    Ok(())
 }
 // warning: unknown lint `dead_cod`
 // warning: unknown lint `unused_variable`

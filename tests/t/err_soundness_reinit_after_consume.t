@@ -14,6 +14,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let P { a, b } = p;
     p.a = Fd { n: 3 };
     out.line(&(close(a) + close(b)))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: cannot assign to `p.a`, part of `p`, which was moved out of

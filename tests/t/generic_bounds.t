@@ -13,5 +13,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let n = 1;
     out.line(&(*caller(&n, true)))?;   // expect: 1
     out.line(&(*implied(&false, &n)))?; // expect: 1
-    Result::Ok(())
+    Ok(())
 }

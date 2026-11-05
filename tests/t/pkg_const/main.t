@@ -9,5 +9,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let a = [7u8; BLOCK];
     out.line(&a[BLOCK - 1])?;       // expect: 7
     out.line(&Block::zeros().last())?; // expect: 0
-    Result::Ok(())
+    Ok(())
 }

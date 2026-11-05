@@ -31,5 +31,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     show(&mut out, -7i64, 10i64)?;                          // expect: -7 10
     show(&mut out, -10i32, 9i32)?;                          // expect: -10 9
     show(&mut out, 100u8, 101u8)?;                          // expect: 100 101
-    Result::Ok(())
+    Ok(())
 }

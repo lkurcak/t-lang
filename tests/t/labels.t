@@ -87,5 +87,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {panic, alloc} {
         stdout.line(&f(3))?;                        // expect: 3
         break 'a;
     }
-    Result::Ok(())
+    Ok(())
 }

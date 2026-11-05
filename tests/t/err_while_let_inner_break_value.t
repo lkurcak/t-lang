@@ -2,11 +2,11 @@
 // one for the `while let`, past an inner `while let`, isn't.
 fn main() {
     let mut it = 0..3i64;
-    while let Option::Some(_) = it.next() {
+    while let Some(_) = it.next() {
         let _ = loop {
             break 1i64;
         };
-        while let Option::Some(_) = it.next() {
+        while let Some(_) = it.next() {
             break;
         }
         break 7;

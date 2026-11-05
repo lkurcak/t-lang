@@ -2,6 +2,6 @@
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&b"\u{41}".len())?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `\u{..}` escapes are for characters; write a byte as `\x..`

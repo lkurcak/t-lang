@@ -27,5 +27,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     out.line(&checked_abs(-127i8).unwrap_or(0))?; // expect: 127
     out.line(&wrapping_abs(-128i8))?;        // expect: -128
     out.line(&wrapping_abs(-3i64))?;         // expect: 3
-    Result::Ok(())
+    Ok(())
 }

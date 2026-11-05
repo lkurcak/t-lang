@@ -9,6 +9,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         r = keep(&mut it);
     }
     out.line(&r.next().unwrap_or(0))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `it` doesn't live long enough

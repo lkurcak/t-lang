@@ -7,6 +7,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         if i == 2 { break; }
     }
     out.line(&i)?; // expect: 2
-    Result::Ok(())
+    Ok(())
 }
 // warning: unused label `'outer`: no `break` or `continue` names it

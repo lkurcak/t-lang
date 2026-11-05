@@ -11,6 +11,6 @@ fn f(d: i64) -> i64 {
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&f(5))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: can't prove `v == 0` for argument `z` of `zero`

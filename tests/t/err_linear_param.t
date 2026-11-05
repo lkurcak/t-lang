@@ -13,6 +13,6 @@ fn ignore(_fd: Fd) -> i64 { 0 }
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&ignore(open(1)))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `_fd` is dropped here, when the function returns

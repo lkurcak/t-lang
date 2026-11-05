@@ -31,5 +31,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&p[0])?;                // expect: 2
     out.line(&none([]))?;            // expect: 0
     out.line(&count::<5>())?;        // expect: 5
-    Result::Ok(())
+    Ok(())
 }

@@ -40,5 +40,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     r.push(3);
     out.line(&r.buf[0])?;               // expect: 3
     out.line(&r.buf[1])?;               // expect: 2
-    Result::Ok(())
+    Ok(())
 }

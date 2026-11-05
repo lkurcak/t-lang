@@ -10,5 +10,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     if k > 0 {
         out.line(&apply(|x| x / k))?; // expect: 2
     }
-    Result::Ok(())
+    Ok(())
 }

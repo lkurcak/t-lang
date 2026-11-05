@@ -10,6 +10,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         r = f(&a);
     }
     out.line(&(*r))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `n` doesn't live long enough

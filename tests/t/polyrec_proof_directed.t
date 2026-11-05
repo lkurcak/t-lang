@@ -43,5 +43,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&(A { t: 5i64 }).one())?; // expect: 1
     out.line(&(B { v: 7i64 }).two())?; // expect: 7
-    Result::Ok(())
+    Ok(())
 }

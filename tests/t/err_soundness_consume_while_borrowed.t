@@ -16,6 +16,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let P { a, b } = p;
     out.line(&r.n)?;
     out.line(&(close(a) + close(b)))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: cannot move out of `p` while `p.b` is borrowed

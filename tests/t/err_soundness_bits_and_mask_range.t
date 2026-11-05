@@ -4,6 +4,6 @@ fn f(a: { v: u16 | v <= 300 }) -> { r: u16 | r == a } { a & 0xFF }
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&f(300))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: can't prove `r == a` for the result of `f`

@@ -7,5 +7,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&(f(0x20AC) as u32))?; // expect: 8364
     out.line(&(byte(255) as u32))?; // expect: 255
-    Result::Ok(())
+    Ok(())
 }

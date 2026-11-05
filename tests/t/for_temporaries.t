@@ -19,7 +19,7 @@ fn tail(out: &mut std::io::Stdout) -> Result<(), std::io::Error> {
         if *w == "three" { break 'words; }
         out.line(w)?;
     }
-    Result::Ok(())
+    Ok(())
 }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> {
@@ -31,7 +31,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     }
     out.line(&total())?;
     tail(&mut out)?;
-    Result::Ok(())
+    Ok(())
 }
 // expect: one
 // expect: two

@@ -6,6 +6,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let c = Cell::new(1i64);
     let Cell { value } = c;
     out.line(&value)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: private

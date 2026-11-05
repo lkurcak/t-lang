@@ -4,19 +4,19 @@
 struct P { x: i64 }
 
 impl P {
-    fn get(self) -> Option<i64> { if self.x > 0 { Option::Some(self.x) } else { Option::None } }
+    fn get(self) -> Option<i64> { if self.x > 0 { Some(self.x) } else { None } }
 }
 
-fn p(x: i64) -> Option<P> { Option::Some(P { x }) }
+fn p(x: i64) -> Option<P> { Some(P { x }) }
 
-fn neg(x: i64) -> Option<i64> with panic { Option::Some(-p(x)?.get()? * 2) }
+fn neg(x: i64) -> Option<i64> with panic { Some(-p(x)?.get()? * 2) }
 
-fn field(x: i64) -> Option<i64> { Option::Some(p(x)?.x) }
+fn field(x: i64) -> Option<i64> { Some(p(x)?.x) }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     out.line(&neg(3).unwrap_or(0))?; // expect: -6
     out.line(&neg(-3).unwrap_or(0))?; // expect: 0
     out.line(&field(7).unwrap_or(0))?; // expect: 7
-    Result::Ok(())
+    Ok(())
 }

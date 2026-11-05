@@ -68,12 +68,12 @@ impl<T> List<T> {
         self.len() + 1 == old(self.len()) || (self.len() == 0 && old(self.len()) == 0),
     {
         if self.len == 0 {
-            return Option::None;
+            return None;
         }
         self.len = self.len - 1;
         // SAFETY: slot `len` held the last value, and is past those that
         // hold values now.
-        Option::Some(unsafe { self.buf.read(self.len) })
+        Some(unsafe { self.buf.read(self.len) })
     }
 
     /// Its values, as a slice, as many as it holds.

@@ -8,6 +8,6 @@ mod shapes {
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&shapes::one())?;
-    Result::Ok(())
+    Ok(())
 }
 // error: a module's doc comment goes inside it, as `//!` lines at the start

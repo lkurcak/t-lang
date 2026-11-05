@@ -10,6 +10,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         Holder { f: || n }
     };
     out.line(&(h.f)())?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `n` doesn't live long enough

@@ -21,5 +21,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with global {
     let t = &TOTAL;
     each(|n| add_to(t, n));
     out.line(&TOTAL.load())?; // expect: 6
-    Result::Ok(())
+    Ok(())
 }

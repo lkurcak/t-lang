@@ -7,7 +7,7 @@ with {A::e, B::e}
 {
     a.write_str(s)?;
     b.write_str(s)?;
-    Result::Ok(())
+    Ok(())
 }
 
 fn main() {}

@@ -9,6 +9,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let a = o.a;
     out.line(&(*a))?;
     let _p = o;
-    Result::Ok(())
+    Ok(())
 }
 // error: use of partly moved value `o`: `o.a` was moved out of it

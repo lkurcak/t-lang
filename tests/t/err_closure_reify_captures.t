@@ -7,6 +7,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let k = 10;
     let f = |x: i64| x * k;
     out.line(&apply(f, 4))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: expected `fn(i64) -> i64`, found a closure that captures `k`

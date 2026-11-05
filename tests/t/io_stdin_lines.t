@@ -13,7 +13,7 @@ fn echo(input: &mut Stdin, out: &mut Stdout, line: &mut String) -> Result<i64, E
         out.put(&line.as_str())?;
         out.line(&"]")?;
     }
-    Result::Ok(n)
+    Ok(n)
 }
 
 fn main(os: Os) -> Result<(), Error> with alloc {

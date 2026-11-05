@@ -16,5 +16,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     c.n = c.step;
     out.line(&per_step(&c, 10))?; // expect: 5
     out.line(&c.n)?; // expect: 2
-    Result::Ok(())
+    Ok(())
 }

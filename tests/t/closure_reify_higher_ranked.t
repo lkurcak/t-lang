@@ -15,5 +15,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     out.line(&twice(written))?;              // expect: 3
     out.line(&twice(inferred))?;             // expect: 3
     out.line(&twice(|x| x))?;                // expect: 3
-    Result::Ok(())
+    Ok(())
 }

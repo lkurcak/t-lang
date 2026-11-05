@@ -23,5 +23,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     let mut out = os.stdout;
     out.line(&done)?;     // expect: 300
     out.line(&n.load())?; // expect: 300
-    Result::Ok(())
+    Ok(())
 }

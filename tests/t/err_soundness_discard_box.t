@@ -15,7 +15,7 @@ fn main(os: std::Os) with alloc {
     let _f;
     {
         let x = 5;
-        let b = Option::Some(Box::new(Peek { r: &x, out: &mut out }));
+        let b = Some(Box::new(Peek { r: &x, out: &mut out }));
         _f = move || { let _b = &b; };
     }
 }

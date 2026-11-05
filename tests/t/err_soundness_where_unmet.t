@@ -10,15 +10,15 @@ impl Iterator for Fds {
     effect e = {};
 
     fn next(&mut self) -> Option<Fd> {
-        if self.left == 0 { return Option::None; }
+        if self.left == 0 { return None; }
         self.left = self.left - 1;
-        Option::Some(Fd { n: self.left })
+        Some(Fd { n: self.left })
     }
 }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&(Fds { left: 3 }.count()))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `count` needs its `Self::Item` to implement `Discard`, and `Fd` doesn't

@@ -19,6 +19,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let fd = fs::open(1);
     let id = fd.id;
     out.line(&id.n)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: can't take `Fd` apart here: it has private fields and isn't `Discard`, so only `fs` can

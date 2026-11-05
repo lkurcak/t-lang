@@ -15,5 +15,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         Ordering::Greater => out.line(&1u8)?, // expect: 1
         _ => out.line(&0u8)?,
     }
-    Result::Ok(())
+    Ok(())
 }

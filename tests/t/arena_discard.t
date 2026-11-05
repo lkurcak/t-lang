@@ -25,5 +25,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
         let a = Arena::new();
         let _ = a.alloc(Noisy { out: &mut out, n: 7 });
     } // expect: 7
-    Result::Ok(())
+    Ok(())
 }

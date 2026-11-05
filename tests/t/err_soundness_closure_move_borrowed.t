@@ -14,6 +14,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let y = take(b);
     c();
     out.line(&y)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: cannot move out of `b` while `b` is mutably borrowed

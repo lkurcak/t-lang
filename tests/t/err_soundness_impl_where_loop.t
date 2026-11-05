@@ -32,12 +32,12 @@ impl Iterator for X {
     type Item = V<W<X>>;
     effect e = {};
 
-    fn next(&mut self) -> Option<V<W<X>>> { Option::None }
+    fn next(&mut self) -> Option<V<W<X>>> { None }
 }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&(W { iter: X {} }).a())?;
-    Result::Ok(())
+    Ok(())
 }
 // error: this impl's bound `I::Item: Tr2` isn't on a type parameter of `W<I>`

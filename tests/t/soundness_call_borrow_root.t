@@ -37,5 +37,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     let mut r = &mut x;
     out.line(&g(&mut *r, { r = &mut y; 10 }))?; // expect: 12
     out.line(&(*x + *y))?;                        // expect: 3
-    Result::Ok(())
+    Ok(())
 }

@@ -11,6 +11,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         g(&n)
     };
     out.line(&f())?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `n` doesn't live long enough

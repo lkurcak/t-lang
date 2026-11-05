@@ -14,5 +14,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let xs: &[u8] = a.as_slice();
     Debug::fmt(xs, &mut buf).into_ok();
     out.line(&buf)?; // expect: "a\"b"a"b[1, 2]
-    Result::Ok(())
+    Ok(())
 }

@@ -13,7 +13,7 @@ fn code(c: light_color) -> i64 {
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     out.line(&(code(light_color::Red) + code(light_color::Yellow_ish) + code(light_color::GREEN_LIGHT)))?;
-    Result::Ok(())
+    Ok(())
 }
 // warning: type `light_color` should have an upper camel case name: `LightColor`
 // warning: variant `Yellow_ish` should have an upper camel case name: `YellowIsh`

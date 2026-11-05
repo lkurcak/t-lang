@@ -9,7 +9,7 @@ fn sum(s: &str) -> Result<i64, ParseIntError> {
         let n: i64 = w.trim().parse()?;
         total = core::num::wrapping_add(total, n);
     }
-    Result::Ok(total)
+    Ok(total)
 }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> {
@@ -21,27 +21,27 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&"18446744073709551615".parse::<u64>().unwrap_or(0))?; // expect: 18446744073709551615
     out.line(&"-9223372036854775808".parse::<i64>().unwrap_or(0))?; // expect: -9223372036854775808
     out.line(&"007".parse::<u16>().unwrap_or(0))?;                  // expect: 7
-    out.line(&(u32::parse("12") == Result::Ok(12)))?;               // expect: true
-    out.line(&(i8::parse("-0") == Result::Ok(0)))?;                 // expect: true
-    out.line(&(u8::parse("256") == Result::Err(ParseIntError::PosOverflow)))?;  // expect: true
-    out.line(&(i8::parse("-129") == Result::Err(ParseIntError::NegOverflow)))?; // expect: true
-    out.line(&(u8::parse("") == Result::Err(ParseIntError::Empty)))?;           // expect: true
-    out.line(&(u8::parse("-1") == Result::Err(ParseIntError::InvalidDigit)))?;  // expect: true
-    out.line(&(u8::parse("+") == Result::Err(ParseIntError::InvalidDigit)))?;   // expect: true
-    out.line(&(i8::parse("-") == Result::Err(ParseIntError::InvalidDigit)))?;   // expect: true
-    out.line(&(u8::parse("1 ") == Result::Err(ParseIntError::InvalidDigit)))?;  // expect: true
-    out.line(&(u8::parse("١") == Result::Err(ParseIntError::InvalidDigit)))?;   // expect: true
+    out.line(&(u32::parse("12") == Ok(12)))?;               // expect: true
+    out.line(&(i8::parse("-0") == Ok(0)))?;                 // expect: true
+    out.line(&(u8::parse("256") == Err(ParseIntError::PosOverflow)))?;  // expect: true
+    out.line(&(i8::parse("-129") == Err(ParseIntError::NegOverflow)))?; // expect: true
+    out.line(&(u8::parse("") == Err(ParseIntError::Empty)))?;           // expect: true
+    out.line(&(u8::parse("-1") == Err(ParseIntError::InvalidDigit)))?;  // expect: true
+    out.line(&(u8::parse("+") == Err(ParseIntError::InvalidDigit)))?;   // expect: true
+    out.line(&(i8::parse("-") == Err(ParseIntError::InvalidDigit)))?;   // expect: true
+    out.line(&(u8::parse("1 ") == Err(ParseIntError::InvalidDigit)))?;  // expect: true
+    out.line(&(u8::parse("١") == Err(ParseIntError::InvalidDigit)))?;   // expect: true
     match "x".parse::<u8>() {
-        Result::Ok(_) => {},
-        Result::Err(e) => out.line(&e)?, // expect: invalid digit found in string
+        Ok(_) => {},
+        Err(e) => out.line(&e)?, // expect: invalid digit found in string
     }
     match "999".parse::<u8>() {
-        Result::Ok(_) => {},
-        Result::Err(e) => out.line(&e)?, // expect: number too large to fit in target type
+        Ok(_) => {},
+        Err(e) => out.line(&e)?, // expect: number too large to fit in target type
     }
     match sum("1, 2,3") {
-        Result::Ok(n) => out.line(&n)?, // expect: 6
-        Result::Err(_) => {},
+        Ok(n) => out.line(&n)?, // expect: 6
+        Err(_) => {},
     }
     out.line(&sum("1,,3").is_err())?;                    // expect: true
     out.line(&"true".parse::<bool>().unwrap_or(false))?; // expect: true
@@ -49,5 +49,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&"é".parse::<char>().unwrap_or('?'))?;      // expect: é
     out.line(&"ab".parse::<char>().is_err())?;           // expect: true
     out.line(&"".parse::<char>().is_err())?;             // expect: true
-    Result::Ok(())
+    Ok(())
 }

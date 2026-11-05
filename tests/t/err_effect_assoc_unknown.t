@@ -6,7 +6,7 @@ impl Iterator for Ones {
     effect e = {};
     effect f = {};
 
-    fn next(&mut self) -> Option<i64> { Option::Some(1) }
+    fn next(&mut self) -> Option<i64> { Some(1) }
 }
 
 fn main() {}

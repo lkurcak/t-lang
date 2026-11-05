@@ -14,6 +14,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     match &fd {
         Fd { n } => out.line(&(*n))?,
     }
-    Result::Ok(())
+    Ok(())
 }
 // error: `fd` is never used up

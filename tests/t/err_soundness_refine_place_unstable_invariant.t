@@ -17,6 +17,6 @@ fn f(mut s: Span) -> i64 with {} {
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     out.line(&f(Span { lo: 1, hi: 2 }))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `/` may panic, but `f` doesn't say `with panic`

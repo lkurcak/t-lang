@@ -23,5 +23,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let c: Temp = Celsius { t: 21 };
     show(&c, &mut out)?; // expect: 21C
-    Result::Ok(())
+    Ok(())
 }

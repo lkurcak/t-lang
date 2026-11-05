@@ -8,6 +8,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let s = l.as_slice();
     l.discard();
     out.line(&s.len())?;
-    Result::Ok(())
+    Ok(())
 }
 // error: cannot move out of `l` while `l` is borrowed

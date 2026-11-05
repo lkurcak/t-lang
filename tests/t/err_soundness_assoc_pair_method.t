@@ -25,6 +25,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         r = p.second();
     }
     out.line(&(*r))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `short` doesn't live long enough

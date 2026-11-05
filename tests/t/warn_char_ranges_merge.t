@@ -10,6 +10,6 @@ fn f(c: char) -> bool {
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&f('q'))?; // expect: true
-    Result::Ok(())
+    Ok(())
 }
 // warning: `'a'..='m'` and `'n'..='z'` can be merged into `'a'..='z'`

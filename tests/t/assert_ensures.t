@@ -9,6 +9,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let words = ["f", "3", "2-5"];
     out.line(&third(words.as_slice()))?;
-    Result::Ok(())
+    Ok(())
 }
 // expect: 2-5

@@ -10,7 +10,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&f(3))?;
     out.line(&f(15))?;
     out.line(&f(20))?;
-    Result::Ok(())
+    Ok(())
 }
 // warning: this range can be narrowed to `10..20`
 // expect: 1

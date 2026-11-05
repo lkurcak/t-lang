@@ -28,5 +28,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&rem_natural(7, 3))?; // expect: 1
     out.line(&rem_negative(-7, -3))?; // expect: -1
     out.line(&index(&[1, 2, 3, 4], 6))?; // expect: 3
-    Result::Ok(())
+    Ok(())
 }

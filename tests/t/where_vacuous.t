@@ -20,5 +20,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let Fd { n } = Fd { n: 1 }.keep();
     out.line(&n)?; // expect: 1
-    Result::Ok(())
+    Ok(())
 }

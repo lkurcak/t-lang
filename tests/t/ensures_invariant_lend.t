@@ -45,5 +45,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     s.room.touch();
     out.line(&s.len)?;        // expect: 2
     out.line(&s.room.cap())?; // expect: 4
-    Result::Ok(())
+    Ok(())
 }

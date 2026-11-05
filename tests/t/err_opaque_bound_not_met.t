@@ -4,5 +4,5 @@ trait Show {
 
 fn f() -> impl Show { 1i64 }
 
-fn main(os: std::Os) -> Result<(), std::io::Error> { let mut out = os.stdout; out.line(&f().show())?;  Result::Ok(()) }
+fn main(os: std::Os) -> Result<(), std::io::Error> { let mut out = os.stdout; out.line(&f().show())?;  Ok(()) }
 // error: `i64` doesn't implement `Show`, which `f`'s return type says

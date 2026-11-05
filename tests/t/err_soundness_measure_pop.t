@@ -10,6 +10,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
         l.pop();
         out.line(&l[0])?;
     }
-    Result::Ok(())
+    Ok(())
 }
 // error: can't prove `i < self.len()` for argument `i` of `index`

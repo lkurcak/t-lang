@@ -2,7 +2,7 @@
 // called them, under `t` as under `t test`: here, the `unwrap`, not core's
 // `panic`.
 fn main() {
-    let x: Option<u8> = Option::None;
+    let x: Option<u8> = None;
     let _ = x.unwrap();
 }
 // error: panic_blame.t:6:13

@@ -27,5 +27,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&clamp(50))?;      // expect: 50
     out.line(&headroom())?;     // expect: 900
     out.line(&check(false))?;   // expect: false
-    Result::Ok(())
+    Ok(())
 }

@@ -7,7 +7,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     // warning: unused doc comment
     let x: i64 = 1;
     out.line(&x)?; // expect: 1
-    Result::Ok(())
+    Ok(())
     // warning: unused doc comment
     /// At the end of a block.
 }

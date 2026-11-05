@@ -6,6 +6,6 @@ fn f(c: bool, o: Option<i64>) -> i64 {
 }
 
 fn main() {
-    let _ = f(true, Option::None);
+    let _ = f(true, None);
 }
 // error: what's before the `else` of a `let .. else` can't end in `}`

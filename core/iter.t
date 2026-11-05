@@ -36,8 +36,8 @@ export trait Iterator {
         let mut acc = init;
         loop {
             match self.next() {
-                Option::Some(x) => acc = f(acc, x),
-                Option::None => return acc,
+                Some(x) => acc = f(acc, x),
+                None => return acc,
             }
         }
     }
@@ -76,8 +76,8 @@ impl<U, effect fx, I: Iterator, F: FnMut(I::Item) -> U with fx> Iterator for Map
     #[blame_caller]
     fn next(&mut self) -> Option<U> with {I::e, fx} {
         match self.iter.next() {
-            Option::Some(x) => Option::Some((self.f)(x)),
-            Option::None => Option::None,
+            Some(x) => Some((self.f)(x)),
+            None => None,
         }
     }
 }
@@ -103,12 +103,12 @@ where
     fn next(&mut self) -> Option<I::Item> with {I::e, px} {
         loop {
             match self.iter.next() {
-                Option::Some(x) => {
+                Some(x) => {
                     if (self.p)(&x) {
-                        return Option::Some(x);
+                        return Some(x);
                     }
                 },
-                Option::None => return Option::None,
+                None => return None,
             }
         }
     }

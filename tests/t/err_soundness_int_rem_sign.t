@@ -4,6 +4,6 @@ fn f(a: { v: i64 | v == -7 }) -> { r: i64 | r >= 0 } { a % 4 }
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&f(-7))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: can't prove `r >= 0` for the result of `f`

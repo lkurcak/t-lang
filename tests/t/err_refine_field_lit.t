@@ -6,6 +6,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let s = Span { lo: 5, hi: 3 };
     out.line(&s.hi)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: can't prove `h >= lo` for field `hi` of `Span`

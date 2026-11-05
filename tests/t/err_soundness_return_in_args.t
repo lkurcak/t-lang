@@ -16,6 +16,6 @@ fn g() -> i64 with panic {
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&g())?;
-    Result::Ok(())
+    Ok(())
 }
 // error: this value is never used up, and its type, `Fd`, isn't `Discard`

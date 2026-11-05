@@ -11,5 +11,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let p = P { x: 3 };
     if p == (P { x: 3 }) { out.line(&2i64)? }          // expect: 2
     match (P { x: 4 }) { P { x } => out.line(&x)? } // expect: 4
-    Result::Ok(())
+    Ok(())
 }

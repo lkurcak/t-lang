@@ -27,5 +27,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let c = List::Cons(Digit { n: 11 }, Box::new(List::Nil));
     out.line(&(a == c))?; // expect: false
     out.line(&same(P { a: 1i64, b: Box::new(Digit { n: 5 }) }, P { a: 1, b: Box::new(Digit { n: 15 }) }))?; // expect: true
-    Result::Ok(())
+    Ok(())
 }

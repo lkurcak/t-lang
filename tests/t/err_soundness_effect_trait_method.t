@@ -15,6 +15,6 @@ impl Op for Inc {
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     out.line(&twice(&Inc {}, 1))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `op` may panic, but `twice` doesn't say `with panic`

@@ -109,5 +109,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     // Irrefutable, so fine in `let`.
     let Opt::Some(..0) | Opt::Some(0..) | Opt::None = Opt::Some(5);
     out.line(&1i64)?;               // expect: 1
-    Result::Ok(())
+    Ok(())
 }

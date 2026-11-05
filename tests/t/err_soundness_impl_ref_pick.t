@@ -22,6 +22,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
         r = choose(&*long, &*short);
     }
     out.line(&(*r))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `short` doesn't live long enough

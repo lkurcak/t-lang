@@ -36,5 +36,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&below(c.get()))?; // expect: 2
     c.clear(1);
     out.line(&below(c.get()))?; // expect: 0
-    Result::Ok(())
+    Ok(())
 }

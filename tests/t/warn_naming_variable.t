@@ -19,7 +19,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let _ignoredValue = 4i64;
     let addTo = |baseValue: i64| baseValue + firstTry;
     out.line(&(addTo(x1) + side(Shape::Empty, 5)))?;
-    Result::Ok(())
+    Ok(())
 }
 // warning: variable `defaultSide` should have a snake case name: `default_side`
 // warning: variable `sideLen` should have a snake case name: `side_len`

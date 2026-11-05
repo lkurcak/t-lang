@@ -6,5 +6,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let less = |a, b| a < b;
     out.line(&less(1i64, 2))?; // expect: true
     out.line(&less(2i64, 1))?; // expect: false
-    Result::Ok(())
+    Ok(())
 }

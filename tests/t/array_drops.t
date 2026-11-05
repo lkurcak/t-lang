@@ -16,5 +16,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     out.line(&pick(c))?; // expect: 4
     let n: [[Box<i64>; 1]; 2] = [[Box::new(7i64)], [Box::new(8i64)]];
     out.line(&(*n[1][0]))?; // expect: 8
-    Result::Ok(())
+    Ok(())
 }

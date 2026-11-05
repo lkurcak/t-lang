@@ -18,5 +18,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&lib::one())?;        // expect: 1
     let u = One { n: 5 };
     out.line(&u.n)?;               // expect: 5
-    Result::Ok(())
+    Ok(())
 }

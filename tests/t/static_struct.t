@@ -19,5 +19,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with global {
     out.line(&hit())?;             // expect: false
     out.line(&STATS.name)?;        // expect: hits
     out.line(&STATS.hits.load())?; // expect: 3
-    Result::Ok(())
+    Ok(())
 }

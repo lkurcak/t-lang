@@ -8,6 +8,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     let a = above(-5);
     out.line(&pos(a))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: can't prove `v > 0` for argument `n` of `pos`

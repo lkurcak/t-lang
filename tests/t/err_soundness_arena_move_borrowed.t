@@ -10,6 +10,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let r = a.alloc(5i64);
     take(a);
     out.line(r)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: cannot move out of `a` while `a` is borrowed

@@ -18,5 +18,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     let n = fib(&os.threads, 12);
     let mut out = os.stdout;
     out.line(&n)?; // expect: 144
-    Result::Ok(())
+    Ok(())
 }

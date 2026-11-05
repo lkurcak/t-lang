@@ -53,7 +53,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     }
     out.line(&other())?; // expect: 4
     out.line(&outer())?; // expect: 5
-    Result::Ok(())
+    Ok(())
 }
 
 // Another function's `P`.

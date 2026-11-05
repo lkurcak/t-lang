@@ -16,5 +16,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let n = s.m.lock(|c: &mut Cell<u8>| c.replace(2));
     let mut out = os.stdout;
     out.line(&n)?; // expect: 1
-    Result::Ok(())
+    Ok(())
 }

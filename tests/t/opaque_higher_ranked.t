@@ -11,5 +11,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         let b = 2;
         out.line(&(*f(&b)))?;              // expect: 2
     }
-    Result::Ok(())
+    Ok(())
 }

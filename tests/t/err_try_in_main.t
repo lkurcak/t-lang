@@ -1,5 +1,5 @@
 // `main` gives `()`, so `?` has nothing to return early as.
-fn get() -> Option<i64> { Option::None }
+fn get() -> Option<i64> { None }
 
 fn main() {
     let _x = get()?;

@@ -17,5 +17,5 @@ export fn safe() -> i64 with panic {
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&safe())?; // expect: 1
-    Result::Ok(())
+    Ok(())
 }

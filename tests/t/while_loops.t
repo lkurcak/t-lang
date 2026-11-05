@@ -22,5 +22,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut never = true;
     while false { never = false; }
     out.line(&never)?;          // expect: true
-    Result::Ok(())
+    Ok(())
 }

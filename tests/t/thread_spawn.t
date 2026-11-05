@@ -21,5 +21,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     out.line(&mine)?;    // expect: 10
     out.line(&theirs)?;  // expect: 10
     out.line(&data[0])?; // expect: 1
-    Result::Ok(())
+    Ok(())
 }

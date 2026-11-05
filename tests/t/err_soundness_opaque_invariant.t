@@ -15,6 +15,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         feed(sink(&mut r), &short);
     }
     out.line(&(*r))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `short` doesn't live long enough

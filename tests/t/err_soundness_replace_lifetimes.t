@@ -13,6 +13,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
         out.line(&(*old))?;
     }
     out.line(&(*a))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `short` doesn't live long enough

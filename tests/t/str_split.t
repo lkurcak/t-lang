@@ -36,5 +36,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     show(&mut out, "x\r".lines())?;                     // expect: [x]
     let n = "a b c".split(' ').count();
     out.line(&n)?; // expect: 3
-    Result::Ok(())
+    Ok(())
 }

@@ -9,6 +9,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let t = Celsius { degrees: 20 };
     let u = t;
     out.line(&(t.degrees + u.degrees))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `Copy` can only be derived, with `#[derive(Copy)]` on a struct or enum, so that whether a type is `Copy` follows from its fields alone

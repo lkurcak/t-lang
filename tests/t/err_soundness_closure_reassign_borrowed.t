@@ -17,6 +17,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let b = Box::new(5);
     let c = Box::new(6);
     out.line(&(*call(&*b, &*c)))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: cannot assign to `v` while `v` is borrowed

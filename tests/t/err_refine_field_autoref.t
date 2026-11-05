@@ -15,6 +15,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut p = Pos { n: 1 };
     p.n.clear();
     out.line(&p.n)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: can't borrow `p.n` as `&mut`: field `n` of `Pos` has a refinement, which a write through the reference could break

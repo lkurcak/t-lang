@@ -38,5 +38,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&ran)?;           // expect: true
     out.line(&f.value.get())?; // expect: 42
-    Result::Ok(())
+    Ok(())
 }

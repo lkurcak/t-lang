@@ -1,10 +1,10 @@
 fn yes(s: Option<&str>) -> bool {
     match s {
-        Option::Some("y") => true,
-        Option::None => false,
+        Some("y") => true,
+        None => false,
     }
 }
 fn main() {
-    let _ = yes(Option::None);
+    let _ = yes(None);
 }
 // error: non-exhaustive `match`: `Option::Some(_)` not covered

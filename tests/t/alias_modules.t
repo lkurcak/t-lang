@@ -21,5 +21,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&p.x)?; // expect: 1
     let q = Point { x: true };
     out.line(&q.x)?; // expect: true
-    Result::Ok(())
+    Ok(())
 }

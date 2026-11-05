@@ -54,5 +54,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     stdout.line(&(g::<&i64>(&long, &long)))?; // expect: 1
     let x = &long;
     stdout.line(&(**hold::<&i64>(&x)))?; // expect: 1
-    Result::Ok(())
+    Ok(())
 }

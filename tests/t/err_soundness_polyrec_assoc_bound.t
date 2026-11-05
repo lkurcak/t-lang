@@ -37,6 +37,6 @@ impl<U: Copy> Show for V<U> {
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     out.line(&go(&W { u: 1i64 }, 3))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: polymorphic recursion

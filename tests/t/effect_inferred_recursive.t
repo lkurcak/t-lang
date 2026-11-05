@@ -14,8 +14,8 @@ enum Expr {
 /// The byte at `at`, or 0 past the end.
 fn byte(s: &[u8], at: usize) -> u8 {
     match s.get(at) {
-        Option::Some(c) => *c,
-        Option::None => 0,
+        Some(c) => *c,
+        None => 0,
     }
 }
 
@@ -65,5 +65,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let Pair { e, .. } = expr(b"1+-(2+3)+4", 0);
     out.line(&eval(&e))?; // expect: 0
-    Result::Ok(())
+    Ok(())
 }

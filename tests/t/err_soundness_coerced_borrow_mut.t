@@ -9,6 +9,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut out = os.stdout;
     let b = Box::new(1);
     out.line(&get(&mut b))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: cannot borrow `b` as mutable, as `b` isn't declared `mut`

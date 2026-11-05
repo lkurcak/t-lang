@@ -56,5 +56,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     // A method as a function value.
     let g = Counter::get;
     out.line(&g(&Counter { n: 9 }))?;          // expect: 9
-    Result::Ok(())
+    Ok(())
 }

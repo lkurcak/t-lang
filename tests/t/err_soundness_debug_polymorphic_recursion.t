@@ -22,6 +22,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let v = V { x: 1i64 };
     out.line(&f"{v:?}")?;
-    Result::Ok(())
+    Ok(())
 }
 // error: polymorphic recursion: this use of `<D<U> as Debug>::fmt` with `U` = `&V<T>` leads back

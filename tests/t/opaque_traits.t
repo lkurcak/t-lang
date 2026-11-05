@@ -58,5 +58,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let x: i64 = i.next();
     out.line(&x)?;                       // expect: 6
     out.line(&(i.next() + 1))?;            // expect: 8
-    Result::Ok(())
+    Ok(())
 }

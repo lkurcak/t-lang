@@ -12,7 +12,7 @@ const UNIT: Shape = Shape::Line(ORIGIN, Point { x: 1, y: 1 });
 const DOT: Shape = Shape::Dot(Point { x: 5, y: 5 });
 const PRIMES: [u8; 4] = [2, 3, 5, 7];
 const NAMES: [&str; 2] = ["ada", "alan"];
-const MAYBE: Option<u8> = Option::Some(7);
+const MAYBE: Option<u8> = Some(7);
 
 fn squares() -> [u32; 4] {
     let mut a = [0u32; 4];
@@ -47,5 +47,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&NAMES[1])?;           // expect: alan
     out.line(&MAYBE.unwrap_or(0))?; // expect: 7
     out.line(&SQUARES[3])?;         // expect: 9
-    Result::Ok(())
+    Ok(())
 }

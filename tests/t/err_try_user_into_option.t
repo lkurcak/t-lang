@@ -18,7 +18,7 @@ impl Try for Code {
 
 fn f() -> Option<i64> {
     Code { code: 1 }?;
-    Option::Some(1)
+    Some(1)
 }
 
 fn main() { let _ = f(); }

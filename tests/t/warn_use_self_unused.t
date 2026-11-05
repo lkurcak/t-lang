@@ -11,7 +11,7 @@ mod game {
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&(game::f() + game::g()))?;
-    Result::Ok(())
+    Ok(())
 }
 // warning: unused import `line`
 // expect: 8

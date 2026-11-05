@@ -19,5 +19,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     out.line(&(10 / b.x))?; // expect: 5
     b.x = 5;
     out.line(&(10 / b.x))?; // expect: 2
-    Result::Ok(())
+    Ok(())
 }

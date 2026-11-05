@@ -48,12 +48,12 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     out.line(&(xs == zs))?;                       // expect: false
     out.line(&(xs.as_slice() == ys.as_slice()))?; // expect: true
     match ys.as_slice().split_at(1) {
-        Option::Some(core::slice::Split { head, .. }) => out.line(&(xs.as_slice() == head))?, // expect: false
-        Option::None => {},
+        Some(core::slice::Split { head, .. }) => out.line(&(xs.as_slice() == head))?, // expect: false
+        None => {},
     }
     out.line(&("abc" == "abc"))?;                   // expect: true
     out.line(&("abc" == "abd"))?;                   // expect: false
     out.line(&("ab" == "abc"))?;                    // expect: false
     out.line(&(Box::new(5i64) == Box::new(5i64)))?; // expect: true
-    Result::Ok(())
+    Ok(())
 }

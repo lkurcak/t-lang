@@ -8,10 +8,10 @@ fn close(fd: Fd) -> i64 {
 }
 
 fn f(r: Result<i64, Fd>) -> i64 {
-    if let Result::Ok(n) = r { n } else { 0 }
+    if let Ok(n) = r { n } else { 0 }
 }
 
 fn main() {
-    let _ = close(Fd { n: f(Result::Ok(1)) });
+    let _ = close(Fd { n: f(Ok(1)) });
 }
 // error: if the pattern of this `if let` doesn't match, it throws away `r.0`

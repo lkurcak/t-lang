@@ -77,5 +77,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
         out.line(&consume(b))?;              // expect: 5
         break;
     }
-    Result::Ok(())
+    Ok(())
 }

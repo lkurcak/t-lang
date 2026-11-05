@@ -11,5 +11,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let m: &mut [bool] = slice::empty_mut();
     out.line(&m.get_mut(0).is_none())?; // expect: true
     out.line(&m.swap(0, 0))?;           // expect: false
-    Result::Ok(())
+    Ok(())
 }

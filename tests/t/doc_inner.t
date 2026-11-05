@@ -18,5 +18,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let p = shapes::Point { x: 1 };
     out.line(&p.x)?; // expect: 1
-    Result::Ok(())
+    Ok(())
 }

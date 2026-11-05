@@ -23,6 +23,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
         out = s.get();
     }
     stdout.line(&(*out))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `s` doesn't live long enough

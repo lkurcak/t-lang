@@ -11,5 +11,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     out.line(&count(true, 5))?;      // expect: 5
     out.line(&flip(1i64, false, 4))?;   // expect: 4
-    Result::Ok(())
+    Ok(())
 }

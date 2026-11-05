@@ -12,5 +12,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let x = 5;
     let p = a.alloc(Peek { r: &x });
     out.line(p.r)?; // expect: 5
-    Result::Ok(())
+    Ok(())
 }

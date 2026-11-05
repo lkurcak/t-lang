@@ -11,10 +11,10 @@ impl Iterator for Fds {
 
     fn next(&mut self) -> Option<Fd> {
         if self.left == 0 {
-            return Option::None;
+            return None;
         }
         self.left = self.left - 1;
-        Option::Some(Fd { n: self.left })
+        Some(Fd { n: self.left })
     }
 }
 
@@ -24,6 +24,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     for Fd { n } in kept {
         out.line(&n)?;
     }
-    Result::Ok(())
+    Ok(())
 }
 // error: `filter` needs its `Self::Item` to implement `Discard`, and `Fd` doesn't

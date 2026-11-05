@@ -14,6 +14,6 @@ impl core::fmt::Display for Oops {
 fn main(os: std::Os) -> Result<(), Oops> {
     let mut out = os.stdout;
     let _ = out.line(&1i64); // expect: 1
-    Result::Err(Oops { n: 2 })
+    Err(Oops { n: 2 })
 }
 // stderr: error: oops 2

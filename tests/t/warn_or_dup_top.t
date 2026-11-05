@@ -10,7 +10,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&f(C::R))?;
     out.line(&f(C::G))?;
-    Result::Ok(())
+    Ok(())
 }
 // warning: unreachable alternative
 // expect: 1

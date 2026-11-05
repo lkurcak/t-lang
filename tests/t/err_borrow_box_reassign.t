@@ -8,6 +8,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let r = &*b;
     b = Box::new(2);
     out.line(&(*r))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: cannot assign to `b` while `*b` is borrowed

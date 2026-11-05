@@ -6,8 +6,8 @@ fn main() {}
 
 fn parse(s: &str) -> Result<u8, String> {
     match s.len() {
-        1 => Result::Ok(1),
-        _ => Result::Err(String::from("not one byte")),
+        1 => Ok(1),
+        _ => Err(String::from("not one byte")),
     }
 }
 
@@ -15,13 +15,13 @@ fn parse(s: &str) -> Result<u8, String> {
 fn parses() -> Result<(), String> {
     let n = parse("a")?;
     assert_eq(&n, &1);
-    Result::Ok(())
+    Ok(())
 }
 
 #[test]
 fn fails_to_parse() -> Result<(), String> {
     let _ = parse("ab")?;
-    Result::Ok(())
+    Ok(())
 }
 
 // test: parses ... ok

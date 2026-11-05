@@ -5,7 +5,7 @@ struct Bag { n: i64 }
 
 impl Bag {
     fn take(self, k: i64) -> Option<Bag> with panic {
-        if k <= self.n { Option::Some(Bag { n: self.n - k }) } else { Option::None }
+        if k <= self.n { Some(Bag { n: self.n - k }) } else { None }
     }
 
     fn take_all(self, ks: core::ops::Range<i64>) -> Option<Bag> with panic {
@@ -13,19 +13,19 @@ impl Bag {
         for k in ks {
             bag = bag.take(k)?;
         }
-        Option::Some(bag)
+        Some(bag)
     }
 }
 
-fn wrap(n: i64) -> Option<Option<i64>> { Option::Some(if n > 0 { Option::Some(n) } else { Option::None }) }
+fn wrap(n: i64) -> Option<Option<i64>> { Some(if n > 0 { Some(n) } else { None }) }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
-    fn twice(n: i64) -> Option<i64> with panic { Option::Some(wrap(n)?? * 2) }
+    fn twice(n: i64) -> Option<i64> with panic { Some(wrap(n)?? * 2) }
     let bag = Bag { n: 10 };
     out.line(&bag.take_all(1..4).unwrap_or(Bag { n: -1 }).n)?; // expect: 4
     out.line(&bag.take_all(3..6).unwrap_or(Bag { n: -1 }).n)?; // expect: -1
     out.line(&twice(4).unwrap_or(0))?; // expect: 8
     out.line(&twice(-4).unwrap_or(0))?; // expect: 0
-    Result::Ok(())
+    Ok(())
 }

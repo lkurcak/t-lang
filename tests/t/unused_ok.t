@@ -12,7 +12,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&a)?;
     out.line(&x)?;
     out.line(&ignore(6))?;
-    Result::Ok(())
+    Ok(())
 }
 // expect: 5
 // expect: 2

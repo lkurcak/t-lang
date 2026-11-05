@@ -46,8 +46,8 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     out.line(&l.len())?;                          // expect: 2
     let s = core::slice::empty::<i64>();
     match s.split_at(0) {
-        Option::Some(parts) => out.line(&(parts.head.len() + parts.tail.len()))?, // expect: 0
-        Option::None => out.line(&"none")?,
+        Some(parts) => out.line(&(parts.head.len() + parts.tail.len()))?, // expect: 0
+        None => out.line(&"none")?,
     }
-    Result::Ok(())
+    Ok(())
 }

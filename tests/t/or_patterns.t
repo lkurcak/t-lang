@@ -76,5 +76,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         _ => -1,
     };
     out.line(&x)?;                               // expect: 5
-    Result::Ok(())
+    Ok(())
 }

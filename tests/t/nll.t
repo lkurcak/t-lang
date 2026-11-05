@@ -50,5 +50,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
         out.line(&(*s))?;
     }
     out.line(&y)?;                   // expect: 0
-    Result::Ok(())
+    Ok(())
 }

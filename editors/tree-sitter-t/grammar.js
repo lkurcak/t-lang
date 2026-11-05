@@ -1006,12 +1006,18 @@ module.exports = grammar({
 
     unit_pattern: _ => seq('(', ')'),
 
-    variant_pattern: $ => seq(
-      field('type', choice($._path_type, $.crate, $.super, $.self)),
-      optional($._turbofish),
-      '::',
-      field('variant', $.identifier),
-      optional(seq('(', commaSep($._pattern), ')')),
+    // `Shape::Dot(p)`, or `Dot(p)` by itself: a name that starts with an
+    // uppercase letter is a path in a pattern, never a variable, so a bare
+    // `None` is an `identifier` the queries color as a constructor.
+    variant_pattern: $ => choice(
+      seq(
+        field('type', choice($._path_type, $.crate, $.super, $.self)),
+        optional($._turbofish),
+        '::',
+        field('variant', $.identifier),
+        optional(seq('(', commaSep($._pattern), ')')),
+      ),
+      seq(field('variant', $.identifier), '(', commaSep($._pattern), ')'),
     ),
 
     array_pattern: $ => seq('[', commaSep($._pattern), ']'),

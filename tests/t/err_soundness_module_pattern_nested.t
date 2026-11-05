@@ -22,6 +22,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         Opt::Some(fs::Fd { .. }) => out.line(&1i64)?,
         Opt::None => out.line(&0i64)?,
     }
-    Result::Ok(())
+    Ok(())
 }
 // error: can't take `Fd` apart here

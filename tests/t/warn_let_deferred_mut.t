@@ -4,6 +4,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut r: i64;
     r = 1;
     out.line(&r)?;       // expect: 1
-    Result::Ok(())
+    Ok(())
 }
 // warning: variable `r` doesn't need to be mutable

@@ -24,5 +24,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     out.line(&rr.y)?;                // expect: 2
     out.line(&(**rr == p))?;      // expect: true
     out.line(&(&p == &q))?;       // expect: false
-    Result::Ok(())
+    Ok(())
 }

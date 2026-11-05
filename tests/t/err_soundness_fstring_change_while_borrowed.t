@@ -9,6 +9,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let line = f"{p.x}";
     p.x = 2;
     out.line(&line)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: cannot assign to `p.x` while `p.x` is borrowed

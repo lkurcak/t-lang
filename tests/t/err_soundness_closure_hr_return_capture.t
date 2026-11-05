@@ -12,6 +12,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         r = f(&a);
     }
     out.line(&(*r))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: this closure's result has the lifetime of `x`, which each call picks, so it could be any, even `'static`, but this only lives as long as the captured `n`

@@ -14,12 +14,12 @@ impl Write for Limited {
 
     fn write_str(&mut self, s: &str) -> Result<(), Full> {
         if self.left == 0 {
-            return Result::Err(Full { why: 1 });
+            return Err(Full { why: 1 });
         }
         self.left = self.left - 1;
         self.written = core::num::wrapping_add(self.written, 1);
         let _ = s;
-        Result::Ok(())
+        Ok(())
     }
 
     fn write_char(&mut self, c: char) -> Result<(), Full> {
@@ -37,8 +37,8 @@ enum Wrap { One(Point) }
 fn count(left: u8) -> u8 {
     let mut w = Limited { left, written: 0 };
     match core::fmt::Debug::fmt(&Wrap::One(Point { x: 1, y: 2 }), &mut w) {
-        Result::Ok(()) => 100 + w.written,
-        Result::Err(Full { why }) => why * 10 + w.written,
+        Ok(()) => 100 + w.written,
+        Err(Full { why }) => why * 10 + w.written,
     }
 }
 
@@ -50,5 +50,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&count(6))?; // expect: 16
     out.line(&count(2))?; // expect: 12
     out.line(&count(0))?; // expect: 10
-    Result::Ok(())
+    Ok(())
 }

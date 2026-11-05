@@ -14,5 +14,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&digit(7))?; // expect: 7
     out.line(&digit(70))?; // expect: 0
     out.line(&small(3))?; // expect: 3
-    Result::Ok(())
+    Ok(())
 }

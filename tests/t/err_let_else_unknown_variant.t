@@ -6,6 +6,6 @@ fn f(o: Option<i64>) -> i64 {
 }
 
 fn main() {
-    let _ = f(Option::None);
+    let _ = f(None);
 }
 // error: Sum

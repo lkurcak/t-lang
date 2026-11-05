@@ -1,8 +1,8 @@
 // Also in what it calls: here, `unwrap` of `None`.
 fn first(a: &[u8]) -> Option<u8> {
     match a.get(0) {
-        Option::Some(x) => Option::Some(*x),
-        Option::None => Option::None,
+        Some(x) => Some(*x),
+        None => None,
     }
 }
 

@@ -50,7 +50,7 @@ impl<T> [T] {
     /// The last value, or `None` if it's empty.
     export fn last(&self) -> Option<&T> {
         let n = self.len();
-        if n == 0 { Option::None } else { self.get(n - 1) }
+        if n == 0 { None } else { self.get(n - 1) }
     }
 
     /// The values before index `mid` and those from it on, or `None` if
@@ -76,17 +76,17 @@ impl<T> [T] {
         let lo = if i < j { i } else { j };
         let hi = if i < j { j } else { i };
         match self.split_at_mut(hi) {
-            Option::Some(SplitMut { head, tail }) => match head.get_mut(lo) {
-                Option::Some(a) => match tail.get_mut(0) {
-                    Option::Some(b) => {
+            Some(SplitMut { head, tail }) => match head.get_mut(lo) {
+                Some(a) => match tail.get_mut(0) {
+                    Some(b) => {
                         mem::swap(a, b);
                         true
                     },
-                    Option::None => false,
+                    None => false,
                 },
-                Option::None => false,
+                None => false,
             },
-            Option::None => false,
+            None => false,
         }
     }
 
@@ -164,11 +164,11 @@ impl<'a, T> Iterator for Iter<'a, T> {
     fn next(&mut self) -> Option<&'a T> {
         let rest: &'a [T] = self.rest;
         match rest.split_at(1) {
-            Option::Some(Split { head, tail }) => {
+            Some(Split { head, tail }) => {
                 self.rest = tail;
                 head.get(0)
             },
-            Option::None => Option::None,
+            None => None,
         }
     }
 }
@@ -189,11 +189,11 @@ impl<'a, T> Iterator for IterMut<'a, T> {
     fn next(&mut self) -> Option<&'a mut T> {
         let rest: &'a mut [T] = mem::replace(&mut self.rest, empty_mut());
         match rest.split_at_mut(1) {
-            Option::Some(SplitMut { head, tail }) => {
+            Some(SplitMut { head, tail }) => {
                 self.rest = tail;
                 head.get_mut(0)
             },
-            Option::None => Option::None,
+            None => None,
         }
     }
 }

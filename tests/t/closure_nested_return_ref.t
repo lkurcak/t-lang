@@ -13,5 +13,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         out.line(&(*id(&short)))?; // expect: 7
     }
     out.line(&(*long))?; // expect: 5
-    Result::Ok(())
+    Ok(())
 }

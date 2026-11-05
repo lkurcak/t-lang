@@ -19,5 +19,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let w: u64 = 0xFFFF_FFFF_FFFF_FFFF;
     out.line(&(w ^ 0xFF))?;        // expect: 18446744073709551360
     out.line(&(0x0Fu32 & 0x3C))?;  // expect: 12
-    Result::Ok(())
+    Ok(())
 }

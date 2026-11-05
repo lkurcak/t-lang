@@ -8,6 +8,6 @@ fn id(x: i64) -> i64 { x }
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&(W { f: id, n: 1 } == W { f: id, n: 1 }))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `W` can't be `Eq`: its field `f` holds a `fn(T) -> i64`, which isn't (functions can't be compared)

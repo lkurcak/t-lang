@@ -9,5 +9,5 @@ export fn total(x: i64) -> i64 { twice(inc, x) }
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&total(1))?; // expect: 3
-    Result::Ok(())
+    Ok(())
 }

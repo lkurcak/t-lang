@@ -17,6 +17,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         r = Get::get(&s);
     }
     out.line(&(*r))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `&'static S` says a lifetime is `'static`, but an impl of a trait must hold at every lifetime, as finding the impl for a type doesn't look at lifetimes

@@ -7,6 +7,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut n: i64 = 0;
     call(|| n = n + 1);
     out.line(&n)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: this closure is only `FnMut`, as it changes `n`, but `call` needs it to implement `Fn`

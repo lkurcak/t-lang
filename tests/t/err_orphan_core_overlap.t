@@ -7,7 +7,7 @@ struct Mine {}
 impl Iterator for &mut Mine {
     type Item = i64;
 
-    fn next(&mut self) -> Option<i64> { Option::None }
+    fn next(&mut self) -> Option<i64> { None }
 }
 
 fn main() {}

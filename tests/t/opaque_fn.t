@@ -35,5 +35,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     out.line(&h(0))?;                    // expect: 11
     out.line(&pick(false)(0))?;          // expect: 2
     out.line(&adder(2)(3))?;             // expect: 5
-    Result::Ok(())
+    Ok(())
 }

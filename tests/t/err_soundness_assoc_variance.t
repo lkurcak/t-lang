@@ -29,6 +29,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         *h.f = &short;
     }
     out.line(&(*slot))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: lifetime may not live long enough: this needs `'s` to outlive `'l`

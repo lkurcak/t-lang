@@ -24,6 +24,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         r = h.v;
     }
     out.line(&(*r))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `short` doesn't live long enough

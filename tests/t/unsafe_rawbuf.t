@@ -21,16 +21,16 @@ impl Stack {
 
     fn pop(&mut self) -> Option<i64> {
         if self.len == 0 || self.len > self.buf.cap() {
-            return Option::None;
+            return None;
         }
         self.len = self.len - 1;
         // SAFETY: slot `len` was in use, and isn't any more.
-        Option::Some(unsafe { self.buf.read(self.len) })
+        Some(unsafe { self.buf.read(self.len) })
     }
 
     fn top(&self) -> Option<&i64> {
         if self.len == 0 || self.len > self.buf.cap() {
-            return Option::None;
+            return None;
         }
         // SAFETY: slot `len - 1` is in use.
         unsafe { self.buf.slice(self.len - 1, self.len).get(0) }

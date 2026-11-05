@@ -25,14 +25,14 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let sl = a.as_slice();
     let empty: [i32; 0] = [];
     out.line(&f"{a:?} {sl:?} {empty:?}")?; // expect: [1, 2, 3] [1, 2, 3] []
-    let o: Option<&str> = Option::Some("x");
-    let none: Option<u8> = Option::None;
-    let r: Result<u8, Ordering> = Result::Err(Ordering::Less);
+    let o: Option<&str> = Some("x");
+    let none: Option<u8> = None;
+    let r: Result<u8, Ordering> = Err(Ordering::Less);
     out.line(&f"{o:?} {none:?} {r:?}")?; // expect: Some("x") None Err(Less)
     let mut l = List::new();
     l.push(String::of(&"a\nb"));
     l.push(String::new());
-    let bx = Box::new(Option::Some(7i64));
+    let bx = Box::new(Some(7i64));
     out.line(&f"{l:?} {bx:?}")?; // expect: ["a\nb", ""] Some(7)
     let range = 1u8..4;
     out.line(&f"{range:?}")?; // expect: Range { start: 1, end: 4 }
@@ -41,5 +41,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut five = 5i32;
     let refs = &&mut five;
     out.line(&f"{refs:?}")?; // expect: 5
-    Result::Ok(())
+    Ok(())
 }

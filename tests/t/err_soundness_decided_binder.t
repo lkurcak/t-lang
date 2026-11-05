@@ -32,6 +32,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         r = w.call(&n);
     }
     out.line(&(*r))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: expected `<W<fn(&i64) -> &i64> as Call>::In`, found `&{integer}`

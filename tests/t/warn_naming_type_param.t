@@ -14,7 +14,7 @@ fn id<T>(x: T) -> T { x }
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&unwrap(Wrap { inner: id::<i64>(1) }))?;
-    Result::Ok(())
+    Ok(())
 }
 // warning: type parameter `My_item` should have an upper camel case name: `MyItem`
 // warning: type parameter `My_item` should have an upper camel case name: `MyItem`

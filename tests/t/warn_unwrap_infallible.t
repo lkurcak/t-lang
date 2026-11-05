@@ -6,7 +6,7 @@
 use alloc::string::String;
 use core::fmt::Write;
 
-fn sure(x: i64) -> Result<i64, !> { Result::Ok(x) }
+fn sure(x: i64) -> Result<i64, !> { Ok(x) }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     let mut out = os.stdout;

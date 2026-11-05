@@ -17,5 +17,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     out.line(&get(&mut b))?;                 // expect: 3
     b = Box::new(4);
     out.line(&(*b))?;                          // expect: 4
-    Result::Ok(())
+    Ok(())
 }

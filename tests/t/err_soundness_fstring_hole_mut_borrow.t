@@ -9,6 +9,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let mut n = 1i64;
     out.line(&f"{n} {bump(&mut n)}")?;
-    Result::Ok(())
+    Ok(())
 }
 // error: cannot borrow `n` as mutable while `n` is borrowed

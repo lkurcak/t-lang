@@ -5,8 +5,8 @@ use core::fmt::Write;
 
 fn show(out: &mut String, o: Option<char>) with alloc {
     match o {
-        Option::Some(c) => out.line(&(c as u32)).into_ok(),
-        Option::None => out.line(&"none").into_ok(),
+        Some(c) => out.line(&(c as u32)).into_ok(),
+        None => out.line(&"none").into_ok(),
     }
 }
 

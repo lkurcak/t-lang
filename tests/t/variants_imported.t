@@ -116,7 +116,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     assert_eq(&own::picked(own::none()), &0);
     assert_eq(&own::picked(own::Pick::One(4)), &4);
     assert_eq(&first_even(&[1, 3, 8, 5]), &Some(8));
-    assert_eq(&first_even(&[1, 3, 5, 7]), &Option::None);
+    assert_eq(&first_even(&[1, 3, 5, 7]), &None);
     let mut stack = Some(3i64);
     let mut steps = 0i64;
     while let Some(n) = stack {

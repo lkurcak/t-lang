@@ -5,6 +5,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     r = 1;
     r = 2;
     out.line(&r)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: cannot assign twice to `r`, as it isn't declared `mut`: it may have a value already

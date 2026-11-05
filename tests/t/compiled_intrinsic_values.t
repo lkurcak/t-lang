@@ -13,6 +13,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let g: fn() -> u8 = core::num::greatest::<u8>;
     out.line(&g())?; // expect: 255
     out.line(&stop(core::panic::panic))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: runtime error: panicked: through a value

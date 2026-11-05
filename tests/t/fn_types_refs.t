@@ -18,5 +18,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let a = 1;
     let b = 2;
     out.line(&(g(&a) + g(&b)))?;           // expect: 30
-    Result::Ok(())
+    Ok(())
 }

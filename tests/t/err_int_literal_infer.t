@@ -3,6 +3,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let x = 5;
     out.line(&(x == 5))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: cannot infer the type of this integer

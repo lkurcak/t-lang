@@ -34,5 +34,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&true.hash())?;    // expect: 1
     out.line(&hash(&"abc"))?;   // expect: 3
     out.line(&(&7i64).hash())?; // expect: 7
-    Result::Ok(())
+    Ok(())
 }

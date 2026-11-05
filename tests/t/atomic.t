@@ -17,12 +17,12 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&a.fetch_xor(3))?;  // expect: 9
     out.line(&a.swap(7))?;       // expect: 10
     match a.compare_exchange(7, 8) {
-        Result::Ok(old) => out.line(&old)?, // expect: 7
-        Result::Err(_) => {},
+        Ok(old) => out.line(&old)?, // expect: 7
+        Err(_) => {},
     }
     match a.compare_exchange(7, 9) {
-        Result::Ok(_) => {},
-        Result::Err(now) => out.line(&now)?, // expect: 8
+        Ok(_) => {},
+        Err(now) => out.line(&now)?, // expect: 8
     }
     let mut b = Atomic::new(false);
     out.line(&b.fetch_or(true))?;  // expect: false
@@ -32,5 +32,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let n = Atomic::new(-1i64);
     n.store(n.load() - 1);
     out.line(&n.into_inner())?; // expect: -2
-    Result::Ok(())
+    Ok(())
 }

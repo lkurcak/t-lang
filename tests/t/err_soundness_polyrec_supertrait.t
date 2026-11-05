@@ -34,6 +34,6 @@ impl<'a, T: B> B for &'a T {}
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     out.line(&(W { x: 1i64 }).b(3))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: polymorphic recursion: this use of `impl B for W<T>` with `T` = `&W<T>` leads back

@@ -8,5 +8,5 @@ mod a {
 
 use a::b::f;
 
-fn main(os: std::Os) -> Result<(), std::io::Error> { let mut out = os.stdout; out.line(&(f() + a::g()))?;  Result::Ok(()) }
+fn main(os: std::Os) -> Result<(), std::io::Error> { let mut out = os.stdout; out.line(&(f() + a::g()))?;  Ok(()) }
 // error: module `b` is private to `a`

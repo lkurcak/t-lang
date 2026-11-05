@@ -13,7 +13,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&f(5))?;
     out.line(&f(10))?;
     out.line(&f(11))?;
-    Result::Ok(())
+    Ok(())
 }
 // warning: this range can be narrowed to `1..=9`
 // expect: 1

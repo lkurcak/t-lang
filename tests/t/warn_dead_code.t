@@ -50,7 +50,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let Holder { i: Inner::X } = h;
     out.line(&red(Color::Red))?;
     let f = read;
-    Result::Ok(())
+    Ok(())
 }
 // warning: struct `Unbuilt` is never constructed
 // warning: variant `Color::Green` is never constructed

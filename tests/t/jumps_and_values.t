@@ -9,7 +9,7 @@ fn consume(b: Box<i64>) -> i64 { *b }
 // `x` has a value on every path that gets to the `line`: the other returns.
 fn deferred_return(out: &mut std::io::Stdout, c: bool) -> Result<(), std::io::Error> {
     let x: i64;
-    if c { x = 1; } else { return Result::Ok(()); }
+    if c { x = 1; } else { return Ok(()); }
     out.line(&x)
 }
 
@@ -78,5 +78,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {panic, alloc} {
         break |x| x + n;
     };
     out.line(&f(1))?;                            // expect: 6
-    Result::Ok(())
+    Ok(())
 }

@@ -33,7 +33,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     for x in odd_squares {
         out.line(&x)?;
     }
-    Result::Ok(())
+    Ok(())
     // expect: 9
     // expect: 25
     // expect: 49

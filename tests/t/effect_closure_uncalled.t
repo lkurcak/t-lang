@@ -5,6 +5,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let z: i64 = 0;
     let c = || 1 / z;
     out.line(&1i64)?; // expect: 1
-    Result::Ok(())
+    Ok(())
 }
 // warning: unused variable `c`

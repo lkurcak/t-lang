@@ -29,5 +29,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     b();
     b();
     out.line(&k)?;                       // expect: 2
-    Result::Ok(())
+    Ok(())
 }

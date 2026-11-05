@@ -4,6 +4,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let fs = [|x: i64| x + 1, |x: i64| x * 2];
     out.line(&fs[0](1))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: expected `{closure}`, found `{closure}`; each closure has a type of its own

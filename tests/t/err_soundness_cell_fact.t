@@ -14,6 +14,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
         reset(&c);
         out.line(&need(c.get()))?;
     }
-    Result::Ok(())
+    Ok(())
 }
 // error: can't prove

@@ -12,5 +12,5 @@ fn checked(a: i64, d: i64) -> i64 with panic {
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     out.line(&checked(9, 3))?; // expect: 3
-    Result::Ok(())
+    Ok(())
 }

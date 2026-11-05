@@ -31,7 +31,7 @@ impl core::fmt::Display for Oops {
 #[test(panics)]
 fn errs() -> Result<(), Oops> {
     if first([1u8].as_slice()) == 2 { panic("no") }
-    Result::Err(Oops {})
+    Err(Oops {})
 }
 
 // Running out of stack isn't a panic, though it aborts too.

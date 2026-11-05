@@ -4,6 +4,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut i: { v: i64 | v >= 0 } = 0;
     i = i - 1;
     out.line(&i)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: can't prove `v >= 0` for `i`

@@ -5,7 +5,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     ignore(|| {});
     out.line(&1i64)?; // expect: 1
-    Result::Ok(())
+    Ok(())
 }
 // warning: unused variable `f`
 // warning: `ignore` says `with e`, but nothing in it has the effects `e`

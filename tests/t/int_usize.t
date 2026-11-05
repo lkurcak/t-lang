@@ -7,7 +7,7 @@ use core::fmt::Write;
 
 fn last(s: &[u8]) -> Option<&u8> {
     let n = s.len();
-    if n > 0 { s.get(n - 1) } else { Option::None }
+    if n > 0 { s.get(n - 1) } else { None }
 }
 
 fn index(i: u32) -> usize { i as usize }

@@ -10,6 +10,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let p = Pair { a: Opaque {}, b: Opaque {} };
     out.line(&f"{p:?}")?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `Pair<Opaque>` doesn't implement `Debug`, which a hole `{x:?}` of a format string needs; that needs `Opaque: core::fmt::Debug`

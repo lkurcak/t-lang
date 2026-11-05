@@ -7,5 +7,5 @@ const N: u8 = call(|| 1);
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&N)?; // expect: 1
-    Result::Ok(())
+    Ok(())
 }

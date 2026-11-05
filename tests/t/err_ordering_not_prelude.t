@@ -6,6 +6,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         Ordering::Less => out.line(&1)?,
         _ => out.line(&2)?,
     }
-    Result::Ok(())
+    Ok(())
 }
 // error: unknown type `Ordering`

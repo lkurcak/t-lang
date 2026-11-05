@@ -33,6 +33,6 @@ fn go<T: Tr>(x: T, n: i64) -> i64 with panic { x.wrap().show(n) }
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     out.line(&go(W { t: 1i64 }, 3))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: polymorphic recursion

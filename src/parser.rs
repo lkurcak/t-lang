@@ -3286,7 +3286,7 @@ impl Parser {
                     )
                     .with_fix(Fix::new(
                         format!("bind it as `{lower}`"),
-                        vec![Edit::insert(name.span.end, &format!(": {lower}"))],
+                        vec![Edit::insert(name.span.end, format!(": {lower}"))],
                     )));
                 }
                 Pattern {

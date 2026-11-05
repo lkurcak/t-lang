@@ -5,6 +5,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let b = b"\xFF";
     let s = core::str::from_utf8_unchecked(b);
     out.line(&s)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `core::str::from_utf8_unchecked` is unsafe, but it isn't in an `unsafe` block

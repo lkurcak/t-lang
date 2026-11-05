@@ -15,6 +15,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let p = Pair { a: open(1), b: open(2) };
     let a = p.a;
     out.line(&close(a))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `p.b` is never used up

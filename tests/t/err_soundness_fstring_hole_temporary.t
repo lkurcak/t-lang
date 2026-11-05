@@ -8,6 +8,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut out = os.stdout;
     let line = f"<{make()}>";
     out.line(&line)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: a temporary value is dropped here while still borrowed

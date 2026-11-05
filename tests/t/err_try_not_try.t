@@ -1,6 +1,6 @@
 fn f() -> Option<i64> {
     let x = 3i64?;
-    Option::Some(x)
+    Some(x)
 }
 
 fn main() { let _ = f(); }

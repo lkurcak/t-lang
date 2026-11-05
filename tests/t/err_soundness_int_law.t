@@ -12,6 +12,6 @@ fn f<T: Int>() -> T with {} {
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&(f::<i8>()))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `-` may panic, but `f` doesn't say `with panic`

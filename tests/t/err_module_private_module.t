@@ -8,5 +8,5 @@ mod a {
     pub fn g() -> i64 { b::f() }
 }
 
-fn main(os: std::Os) -> Result<(), std::io::Error> { let mut out = os.stdout; out.line(&a::b::f())?;  Result::Ok(()) }
+fn main(os: std::Os) -> Result<(), std::io::Error> { let mut out = os.stdout; out.line(&a::b::f())?;  Ok(()) }
 // error: module `b` is private to `a`

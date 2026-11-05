@@ -15,5 +15,5 @@ const SIX: i64 = count();
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&SIX)?; // expect: 6
-    Result::Ok(())
+    Ok(())
 }

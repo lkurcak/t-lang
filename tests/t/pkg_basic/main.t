@@ -20,5 +20,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&t.number())?; // expect: 2
     let Wrapped { c } = t;
     out.line(&counter::Counter::get(&c))?; // expect: 2
-    Result::Ok(())
+    Ok(())
 }

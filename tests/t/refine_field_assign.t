@@ -38,5 +38,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&s.hi)?; // expect: 3
     s.hi = s.lo;
     out.line(&s.hi)?; // expect: 1
-    Result::Ok(())
+    Ok(())
 }

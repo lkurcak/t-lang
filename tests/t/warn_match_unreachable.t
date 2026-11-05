@@ -11,7 +11,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&f(Opt::Some(7)))?;
     out.line(&f(Opt::None))?;
-    Result::Ok(())
+    Ok(())
 }
 // warning: unreachable pattern
 // expect: 7

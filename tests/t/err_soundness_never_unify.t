@@ -12,6 +12,6 @@ fn pick<T>(a: fn() -> T, _b: fn() -> T) -> T { a() }
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&pick(one, die))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: expected `fn() -> i64`, found `fn() -> !`

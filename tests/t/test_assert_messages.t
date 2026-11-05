@@ -14,7 +14,7 @@ fn ne() { assert_ne(&'x', &'x'); }
 
 #[test]
 fn unwraps() {
-    let x: Option<u8> = Option::None;
+    let x: Option<u8> = None;
     let _ = x.unwrap();
 }
 

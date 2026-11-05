@@ -10,9 +10,9 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let r = core::ops::Range::new(4i64, 9);
     let n: ItemOf<core::ops::Range<i64>> = match first(r) {
-        Option::Some(n) => n,
-        Option::None => 0,
+        Some(n) => n,
+        None => 0,
     };
     out.line(&n)?; // expect: 4
-    Result::Ok(())
+    Ok(())
 }

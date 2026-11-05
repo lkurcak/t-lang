@@ -13,6 +13,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut out = os.stdout;
     out.line(&give_up(1))?; // expect: 1
     give_up(0);
-    Result::Ok(())
+    Ok(())
 }
 // error: runtime error: out of memory

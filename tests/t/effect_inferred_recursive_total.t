@@ -14,5 +14,5 @@ export fn parity(n: u64) -> bool { even(n) }
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&parity(7))?; // expect: false
-    Result::Ok(())
+    Ok(())
 }

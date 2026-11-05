@@ -15,5 +15,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     out.line(&m)?;                   // expect: -128
     let n: u64 = 18446744073709551615;
     out.line(&n)?;                   // expect: 18446744073709551615
-    Result::Ok(())
+    Ok(())
 }

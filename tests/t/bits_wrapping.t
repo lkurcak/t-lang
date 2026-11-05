@@ -27,5 +27,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&wrapping_mul(-128i8, -1))?;    // expect: -128
     out.line(&wrapping_mul(100i8, 3))?;      // expect: 44
     out.line(&fnv(1, 2))?;                   // expect: 3983810698
-    Result::Ok(())
+    Ok(())
 }

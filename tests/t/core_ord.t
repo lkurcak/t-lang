@@ -45,5 +45,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     );
     out.line(&v.minor)?;                  // expect: 10
     out.line(&show(Version { major: 2, minor: 0 }.cmp(&v)))?; // expect: 1
-    Result::Ok(())
+    Ok(())
 }

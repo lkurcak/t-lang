@@ -7,6 +7,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let fd = Fd { n: 3 };
     let c = move || fd.n;
     out.line(&c())?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `fd` is never used up

@@ -7,7 +7,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     out.line(&b(is_even(10)))?;  // expect: 1
     out.line(&b(is_odd(7)))?;    // expect: 1
     out.line(&sum_to(5000))?;    // expect: 12502500
-    Result::Ok(())
+    Ok(())
 }
 
 fn fact(n: i64) -> i64 with panic { if n <= 1 { 1 } else { n * fact(n - 1) } }

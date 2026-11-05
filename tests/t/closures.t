@@ -53,7 +53,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     // Calling an argument with unknown type makes it a function.
     let twice = |f, x| f(f(x));
     out.line(&twice(inc, 0))?;                   // expect: 2
-    Result::Ok(())
+    Ok(())
 }
 
 #[derive(Discard)]

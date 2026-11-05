@@ -15,5 +15,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&kind('7'))?; // expect: 2
     out.line(&kind(' '))?; // expect: 3
     out.line(&kind('\u{FFFD}'))?; // expect: 4
-    Result::Ok(())
+    Ok(())
 }

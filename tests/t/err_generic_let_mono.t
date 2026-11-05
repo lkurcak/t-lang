@@ -6,6 +6,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let f = id;
     out.line(&f(1))?;
     out.line(&f(true))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: expected `{integer}`, found `bool`

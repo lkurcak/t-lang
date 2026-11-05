@@ -21,5 +21,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with global {
     let c: &'static Atomic<u32> = &COUNT;
     c.store(10);
     out.line(&bump())?; // expect: 10
-    Result::Ok(())
+    Ok(())
 }

@@ -18,8 +18,8 @@ impl<I: Iterator> W<I> where I::Item: Show + Discard {
         let mut n = 0;
         loop {
             match self.iter.next() {
-                Option::Some(x) => n = n + x.show(),
-                Option::None => return n,
+                Some(x) => n = n + x.show(),
+                None => return n,
             }
         }
     }
@@ -28,5 +28,5 @@ impl<I: Iterator> W<I> where I::Item: Show + Discard {
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     out.line(&(W { iter: 0..4i64 }).total())?; // expect: 6
-    Result::Ok(())
+    Ok(())
 }

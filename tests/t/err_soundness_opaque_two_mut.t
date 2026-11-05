@@ -9,6 +9,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     a();
     b();
     out.line(&n)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: cannot borrow `n` as mutable more than once at a time

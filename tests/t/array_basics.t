@@ -42,5 +42,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     }
     out.line(&a[2])?;               // expect: 7
     out.line(&(a == [21, 1, 7, 69]))?; // expect: true
-    Result::Ok(())
+    Ok(())
 }

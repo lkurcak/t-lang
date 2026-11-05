@@ -13,6 +13,6 @@ impl Tr for Fd {
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&(Fd { n: 1 }.gone()))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `gone` needs its `Self` to implement `Discard`, and `Fd` doesn't

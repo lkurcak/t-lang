@@ -8,7 +8,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
     let total = Match();
     out.line(&(total + myFn() + my_fn()))?;
-    Result::Ok(())
+    Ok(())
 }
 // warning: function `Match` should have a snake case name
 // warning: function `myFn` should have a snake case name: `my_fn`

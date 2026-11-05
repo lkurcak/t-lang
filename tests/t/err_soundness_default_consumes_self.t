@@ -14,6 +14,6 @@ impl Tr for Fd {
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&(Fd { n: 1 }.consume()))?;
-    Result::Ok(())
+    Ok(())
 }
 // error: `self` is never used up, and its type, `Self`, isn't `Discard`

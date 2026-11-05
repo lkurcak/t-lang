@@ -54,5 +54,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {panic, alloc} {
     stdout.line(&h.b.size)?;         // expect: 11
     // What isn't a place is worked out in order.
     stdout.line(&make().len())?;     // expect: 7
-    Result::Ok(())
+    Ok(())
 }

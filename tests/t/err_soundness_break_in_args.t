@@ -14,6 +14,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
         two(Fd { n: 1 }, break 3i64);
     };
     out.line(&x)?;
-    Result::Ok(())
+    Ok(())
 }
 // error: this value is never used up, and its type, `Fd`, isn't `Discard`

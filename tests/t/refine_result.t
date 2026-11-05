@@ -19,5 +19,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     out.line(&div(9, at_least_one(3)))?; // expect: 3
     let y = inc(4);
     out.line(&div(10, y - 4))?; // expect: 10
-    Result::Ok(())
+    Ok(())
 }
