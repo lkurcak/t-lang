@@ -24,8 +24,10 @@ pub(super) struct Var {
     /// May it be a slice or `str`? Only `Self` of a path to a trait's
     /// method, `Debug::fmt(s, w)` with `s: &str`: as `s.fmt(w)` would find
     /// it, with its receiver's type. Sound as that is: only the libraries
-    /// implement traits for unsized types, and their methods have `Self`
-    /// only behind references (`collect_impls`).
+    /// implement traits for unsized types; their impls' methods have `Self`
+    /// only behind references (`collect_impls`); and none of those traits
+    /// has a method giving a `Self` without taking one by value, which no
+    /// expression can be (see docs/43.1-formatting.md).
     pub(super) unsized_ok: bool,
     /// Where it came from, for when it's never solved: the span, what it's
     /// the type of ("the type of `x`") and how to fix that.

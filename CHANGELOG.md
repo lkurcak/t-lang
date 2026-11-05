@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased
+
+Step 43.1: `Debug` and format strings. See
+[docs/43.1-formatting.md](docs/43.1-formatting.md).
+
+### Added
+
+- `core::fmt::Debug`, Rust's `{:?}`: strings and characters quoted and
+  escaped, slices, arrays and lists in brackets, references and boxes as
+  what they point to. Implemented for the integers, `bool`, `char`,
+  `str`, `()`, references, slices, arrays, `Option`, `Result`,
+  `Ordering`, `Range`, `ControlFlow`, the parse errors, `List`, `String`,
+  `Box`, and `std::io::Error` and `ErrorKind`.
+- `#[derive(Debug)]`: `Point { x: 1, y: -2 }`, `Some(3)`, needing only what
+  the fields need, as other derives do.
+- Format strings: `f"x = {x}, p = {p.y:?}"` is a value that's `Display`,
+  writing `x` by its `Display` and `p.y` by its `Debug`. A hole names a
+  variable or a field of one; `{{` and `}}` are braces. It needs no
+  import, and goes wherever a `Display` does: `out.line(&f"..")?`,
+  `String::of(&f"..")`, `panic_with(&f"..")`. Tree-sitter, `t fmt` and
+  the LSP (hover, definitions, renames in holes) know it.
+- `Debug::fmt(s, w)` and other paths to a trait's method accept a `str`
+  or slice `Self`, as method calls do.
+
+### Changed
+
+- `assert_eq` and `assert_ne` need `T: Eq + Debug`, not `Display`, and
+  say both sides by their `Debug`: `left: "abc"`.
+- A bare name in `#[derive(..)]` is always core's trait of that name,
+  whatever's in scope; deriving needs no import. A path is resolved as
+  before.
+- Of several bounds that don't hold, the error reported is the one
+  nearest the cause: one that fails itself, rather than by what it
+  needs.
+
 ## 0.58.0 (2026-11-05)
 
 Step 43: text and lists in the libraries. See

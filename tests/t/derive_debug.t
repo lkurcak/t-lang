@@ -36,6 +36,10 @@ struct Login<'a> { user: &'a str, secret: Secret }
 #[derive(Debug, Discard)]
 struct Pair<T> { both: [T; 2] }
 
+// Through references, slices and boxes too: `T: Debug` again.
+#[derive(Debug, Discard)]
+struct View<'a, T> { items: &'a [T], first: &'a T, boxed: Box<T> }
+
 fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut out = os.stdout;
     let p = Point { x: 1, y: -2 };
@@ -53,6 +57,9 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     out.line(&f"{login:?}")?; // expect: Login { user: "ann", secret: <hidden> }
     let pair = Pair { both: ['a', 'b'] };
     out.line(&f"{pair:?}")?; // expect: Pair { both: ['a', 'b'] }
+    let xs = [1u8, 2];
+    let view = View { items: xs.as_slice(), first: &xs[0], boxed: Box::new(3) };
+    out.line(&f"{view:?}")?; // expect: View { items: [1, 2], first: 1, boxed: 3 }
     let _ = login.secret.code;
     Result::Ok(())
 }
