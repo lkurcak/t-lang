@@ -239,13 +239,18 @@ impl DocComment {
 }
 
 /// `#[allow(dead_code, unused_variables)]` before a `fn`, `struct`, `enum`,
-/// field or variant: no warnings of those lints in it. The only attribute
-/// there is. Which names are lints isn't checked until `allow::apply`.
+/// field, variant or `mod`: no warnings of those lints in it; or
+/// `#[warn(..)]`: warnings of those, even those off unless asked for. As
+/// `#![allow(..)]` or `#![warn(..)]` at the top of a module, in all of it
+/// (see `allow.rs`). Which names are lints isn't checked until
+/// `allow::apply`.
 #[derive(Debug, Clone)]
 pub struct Allow {
     /// From the `#` to the `]`.
     pub span: Span,
     pub lints: Vec<Ident>,
+    /// `warn`, not `allow`?
+    pub warn: bool,
 }
 
 /// The crate root's index in `Program::mods`.
@@ -315,7 +320,11 @@ impl Vis {
 #[derive(Debug, Clone)]
 pub struct ModDecl {
     pub doc: Option<DocComment>,
+    /// The `#[allow(..)]`s and `#[warn(..)]`s before `mod`.
     pub allows: Vec<Allow>,
+    /// The `#![allow(..)]`s and `#![warn(..)]`s at the top of it, after its
+    /// `//!` doc comment: in its file, for one in a file of its own.
+    pub inner_allows: Vec<Allow>,
     /// From the `pub` or `mod` to the `}` or `;`; for the crate root, the
     /// whole file.
     pub span: Span,
@@ -772,13 +781,13 @@ pub struct EnumDecl {
     pub variants: Vec<Variant>,
 }
 
-/// A piece of a format string: text, or a hole, `{p.x}` or `{p.x:?}`,
-/// with the place it names as an expression, a name and fields.
+/// A piece of a format string: text, or a hole, `{p.x}` or `{n + 1:?}`,
+/// with the expression it holds.
 #[derive(Debug, Clone)]
 pub enum FmtPiece {
     Text(String),
     Hole {
-        place: Expr,
+        value: Expr,
         /// Is it `{x:?}`, written by `Debug`?
         debug: bool,
         /// From the `{` to the `}`.
@@ -787,11 +796,11 @@ pub enum FmtPiece {
 }
 
 impl FmtPiece {
-    /// The place it names, if it's a hole.
-    pub fn place(&self) -> Option<&Expr> {
+    /// The expression it holds, if it's a hole.
+    pub fn value(&self) -> Option<&Expr> {
         match self {
             FmtPiece::Text(_) => None,
-            FmtPiece::Hole { place, .. } => Some(place),
+            FmtPiece::Hole { value, .. } => Some(value),
         }
     }
 }
@@ -1268,7 +1277,7 @@ impl Expr {
             | ExprKind::Unit
             | ExprKind::Var(..)
             | ExprKind::Continue(_) => Vec::new(),
-            ExprKind::Format(pieces) => pieces.iter().filter_map(FmtPiece::place).collect(),
+            ExprKind::Format(pieces) => pieces.iter().filter_map(FmtPiece::value).collect(),
             ExprKind::Unary(_, x)
             | ExprKind::As(x, _)
             | ExprKind::Field(x, _)
@@ -1714,7 +1723,7 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
         ExprKind::Var(name, _) if name.contains("::") => {}
         ExprKind::Format(pieces) => pieces
             .iter()
-            .filter_map(FmtPiece::place)
+            .filter_map(FmtPiece::value)
             .for_each(|x| go(x, bound)),
         ExprKind::Var(name, _) => {
             if !bound.contains(name) && !out.contains(name) {

@@ -443,6 +443,7 @@ impl Checker {
     pub(super) fn body_effects(&mut self, f: &FnDecl, declared: &Type) -> Result<(), Error> {
         self.unused_unsafe();
         let sites = std::mem::take(&mut self.effect_sites);
+        self.hole_sites(&sites);
         let id = self.current.expect("in a function");
         if f.is_const() {
             for s in &sites {
@@ -632,6 +633,43 @@ impl Checker {
             });
         }
         Ok(())
+    }
+
+    /// Keeps those of `sites`, of a body, that are in holes of format
+    /// strings, with their effects as far as they're known.
+    fn hole_sites(&mut self, sites: &[Site]) {
+        let holes = &self.modules.holes;
+        let in_hole =
+            |s: &Site| (holes.iter()).any(|h| h.start <= s.span.start && s.span.end <= h.end);
+        for s in sites.iter().filter(|s| in_hole(s)) {
+            let mut s = s.clone();
+            s.effects = self.solved(&s.effects);
+            if s.unsafe_block.is_some() {
+                s.effects = without_unsafe(&s.effects);
+            }
+            self.hole_sites.push(s);
+        }
+    }
+
+    /// Warns of each site in a hole of a format string that has effects
+    /// (`format_hole_effects`, off unless asked for): once every
+    /// function's effects are known, as a call's may be inferred.
+    pub(super) fn hole_effects(&mut self) {
+        for s in std::mem::take(&mut self.hole_sites) {
+            let effects = self.with_inferred(&s.effects);
+            if effects.is_no_effects() {
+                continue;
+            }
+            self.warnings.push(Warning {
+                lint: Lint::FormatHoleEffects,
+                span: s.span,
+                message: format!(
+                    "{} in a hole of a format string; work it out in a `let` first",
+                    says(&s.what, &effects)
+                ),
+                fixes: Vec::new(),
+            });
+        }
     }
 
     /// Keeps the sites of the body of the function `id`, whose effects are

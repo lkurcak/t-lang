@@ -1542,21 +1542,24 @@
   {
     "type": "format_hole",
     "named": true,
-    "fields": {},
+    "fields": {
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "_expression",
+            "named": true
+          }
+        ]
+      }
+    },
     "children": {
-      "multiple": true,
-      "required": true,
+      "multiple": false,
+      "required": false,
       "types": [
         {
-          "type": "field_identifier",
-          "named": true
-        },
-        {
           "type": "format_spec",
-          "named": true
-        },
-        {
-          "type": "identifier",
           "named": true
         }
       ]
@@ -1993,6 +1996,32 @@
     }
   },
   {
+    "type": "inner_attribute_item",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "identifier",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "integer_pattern",
     "named": true,
     "fields": {},
@@ -2297,6 +2326,10 @@
         },
         {
           "type": "impl_item",
+          "named": true
+        },
+        {
+          "type": "inner_attribute_item",
           "named": true
         },
         {
@@ -2936,6 +2969,10 @@
         },
         {
           "type": "impl_item",
+          "named": true
+        },
+        {
+          "type": "inner_attribute_item",
           "named": true
         },
         {

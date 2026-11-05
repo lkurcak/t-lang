@@ -269,6 +269,12 @@ pub enum Lint {
     /// A library or package a `t.toml` lists that nothing in the package
     /// names.
     UnusedDependencies,
+    /// A hole of a format string that isn't a place, a name or a field of
+    /// one, as `{x + 1}`. Off unless `#[warn(..)]` turns it on.
+    FormatHoleExpressions,
+    /// A hole of a format string that may have an effect, as `{f(x)}`
+    /// for an `f` that may panic. Off unless `#[warn(..)]` turns it on.
+    FormatHoleEffects,
 }
 
 impl Lint {
@@ -296,10 +302,12 @@ impl Lint {
             Lint::UnwrapInfallible => "unwrap_infallible",
             Lint::UnusedResults => "unused_results",
             Lint::UnusedDependencies => "unused_dependencies",
+            Lint::FormatHoleExpressions => "format_hole_expressions",
+            Lint::FormatHoleEffects => "format_hole_effects",
         }
     }
 
-    pub const ALL: [Lint; 22] = [
+    pub const ALL: [Lint; 24] = [
         Lint::UnreachablePatterns,
         Lint::OverlappingRanges,
         Lint::MergeableRanges,
@@ -322,7 +330,16 @@ impl Lint {
         Lint::UnwrapInfallible,
         Lint::UnusedResults,
         Lint::UnusedDependencies,
+        Lint::FormatHoleExpressions,
+        Lint::FormatHoleEffects,
     ];
+
+    /// Is it on where no `#[allow(..)]` or `#[warn(..)]` says? The lints
+    /// that are off say what one may want of a program, not what's likely
+    /// a mistake in it.
+    pub fn on_by_default(self) -> bool {
+        !matches!(self, Lint::FormatHoleExpressions | Lint::FormatHoleEffects)
+    }
 
     /// How to turn the lint off, as a warning's note says. One about a
     /// `t.toml` can't be: no attribute is on a `t.toml`, and what's

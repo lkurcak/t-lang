@@ -244,15 +244,16 @@ impl OpEq {
 pub enum FPiece {
     /// Text, its escapes and `{{`/`}}` worked out.
     Text(String),
-    /// `{p.x}` or `{p.x:?}`: the names, each with its span; whether it's
-    /// written by `Debug`; and its span, the braces included.
-    Hole(Vec<(String, Span)>, bool, Span),
+    /// `{e}` or `{e:?}`: the tokens of expression `e`, ending with an
+    /// `Eof` where it ends; whether it's written by `Debug`; and its span,
+    /// the braces included.
+    Hole(Vec<Token>, bool, Span),
 }
 
 /// The format string starting with the `f` at `at`: its pieces, and where
 /// it ends, after the closing quote (lemma F1 of docs/43.1-formatting.md).
 /// Its text is a string literal's, with `{{` and `}}` for braces; a hole
-/// is a name, maybe with fields, `{p.x}`, and `:?` after it for `Debug`.
+/// is an expression, and `:?` after it for `Debug` (docs/44-native.md).
 fn fstring(src: &str, at: usize) -> Result<(Vec<FPiece>, usize), Error> {
     let bytes = src.as_bytes();
     let mut pieces = Vec::new();
@@ -309,59 +310,97 @@ fn fstring(src: &str, at: usize) -> Result<(Vec<FPiece>, usize), Error> {
 }
 
 /// The hole of a format string starting with the `{` at `at`, and where
-/// it ends, after its `}`.
+/// it ends, after its `}`. Its expression ends at the first `}` or `:`
+/// not in brackets, braces or parentheses of its own, but for a `::`; a
+/// `:` starts what it says of how it's written, which is only `?` yet. It
+/// can't hold a `"`, which would end the format string where it's read
+/// by anything that doesn't know holes, nor a comment.
 fn fstring_hole(src: &str, at: usize) -> Result<(FPiece, usize), Error> {
     let bytes = src.as_bytes();
-    let mut names = Vec::new();
     let mut i = at + 1;
-    let what = "a hole in a format string holds a name, or a field of one, as in `{x}` or \
-                `{p.x}`; work out anything else in a `let` first";
-    loop {
-        let start = i;
-        while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
-            i += 1;
-        }
-        let name = &src[start..i];
-        if name.is_empty() || name.as_bytes()[0].is_ascii_digit() {
-            if names.is_empty() && bytes.get(i) == Some(&b'}') {
+    let mut depth = 0usize;
+    let never_closed = || {
+        Error::syntax(
+            Span::new(at, at + 1),
+            "this hole is never closed; write `{{` for the character",
+        )
+    };
+    let end = loop {
+        let Some(c) = src[i..].chars().next() else {
+            return Err(never_closed());
+        };
+        match c {
+            // A `"` that ends the format string, rather than starting a
+            // string in the hole: no `}` follows it on the line.
+            '"' if depth == 0 && !src[i + 1..].split('\n').next().unwrap_or("").contains('}') => {
+                return Err(never_closed());
+            }
+            '"' => {
                 return Err(Error::syntax(
-                    Span::new(at, i + 1),
-                    "a hole in a format string names what goes in it, as in `{x}`",
+                    Span::new(i, i + 1),
+                    "a hole in a format string can't hold a `\"`; work out what needs one in \
+                     a `let` first",
                 ));
             }
-            let end = src[i..].chars().next().map_or(i, |c| i + c.len_utf8());
-            return Err(Error::syntax(Span::new(start, end.max(start + 1)), what));
+            '/' if bytes.get(i + 1) == Some(&b'/') => {
+                return Err(Error::syntax(
+                    Span::new(i, i + 2),
+                    "a hole in a format string can't hold a comment",
+                ));
+            }
+            '\'' if is_char_literal(src, i) => {
+                let (_, end) = quoted(src, i, Quote::Char)?;
+                i = end;
+                continue;
+            }
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' if depth > 0 => depth -= 1,
+            '}' if depth > 0 => depth -= 1,
+            '}' => break i,
+            ':' if bytes.get(i + 1) == Some(&b':') => i += 1,
+            ':' if depth == 0 => break i,
+            _ => {}
         }
-        names.push((name.to_string(), Span::new(start, i)));
-        if bytes.get(i) != Some(&b'.') {
-            break;
-        }
-        i += 1;
+        i += c.len_utf8();
+    };
+    if src[at + 1..end].trim().is_empty() {
+        return Err(Error::syntax(
+            Span::new(at, end + 1),
+            "a hole in a format string says what goes in it, as in `{x}`",
+        ));
     }
+    let (mut toks, comments) = lex_between(src, at + 1, end)?;
+    debug_assert!(comments.is_empty(), "a hole has no comments");
+    if toks
+        .iter()
+        .any(|t| matches!(t.tok, Tok::Doc(_) | Tok::InnerDoc(_)))
+    {
+        return Err(Error::syntax(
+            Span::new(at + 1, end),
+            "a hole in a format string can't hold a comment",
+        ));
+    }
+    if let Some(eof) = toks.last_mut() {
+        eof.span = Span::new(end, end);
+    }
+    let mut i = end;
     let debug = match bytes.get(i) {
         Some(b':') if src[i..].starts_with(":?}") => {
             i += 2;
             true
         }
         Some(b':') => {
-            let end = src[i..].find(['}', '"']).map_or(i + 1, |n| i + n);
+            let stop = src[i..].find(['}', '"']).map_or(i + 1, |n| i + n);
             return Err(Error::syntax(
-                Span::new(i, end),
+                Span::new(i, stop),
                 "a hole in a format string can say `:?`, for `Debug`, and nothing else yet",
             ));
         }
         _ => false,
     };
     match bytes.get(i) {
-        Some(b'}') => Ok((FPiece::Hole(names, debug, Span::new(at, i + 1)), i + 1)),
-        Some(b'"') | None => Err(Error::syntax(
-            Span::new(at, at + 1),
-            "this hole is never closed; write `{{` for the character",
-        )),
-        Some(_) => {
-            let c = src[i..].chars().next().expect("a character");
-            Err(Error::syntax(Span::new(i, i + c.len_utf8()), what))
-        }
+        Some(b'}') => Ok((FPiece::Hole(toks, debug, Span::new(at, i + 1)), i + 1)),
+        _ => Err(never_closed()),
     }
 }
 
@@ -592,7 +631,7 @@ fn escape_byte(b: u8, quote: u8) -> String {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Token {
     pub tok: Tok,
     pub span: Span,
@@ -606,10 +645,10 @@ impl Token {
         self.span = moved(self.span);
         if let Tok::FStr(pieces) = &mut self.tok {
             for p in pieces {
-                if let FPiece::Hole(names, _, span) = p {
+                if let FPiece::Hole(toks, _, span) = p {
                     *span = moved(*span);
-                    for (_, s) in names {
-                        *s = moved(*s);
+                    for t in toks {
+                        t.shift(by);
                     }
                 }
             }
@@ -631,12 +670,20 @@ pub fn lex(src: &str) -> Result<Vec<Token>, Error> {
 
 /// The tokens, and the comments between them, both in order.
 pub fn lex_with_comments(src: &str) -> Result<(Vec<Token>, Vec<Comment>), Error> {
+    lex_between(src, 0, src.len())
+}
+
+/// The tokens of `src` from `from` to `to`, with an `Eof` at `to`, and the
+/// comments between them, both in order and where they are in all of
+/// `src`. Nothing that starts before `to` goes on past it, for the holes
+/// of format strings, which end where a token can't go on.
+fn lex_between(src: &str, from: usize, to: usize) -> Result<(Vec<Token>, Vec<Comment>), Error> {
     let bytes = src.as_bytes();
     let mut toks = Vec::new();
     let mut comments = Vec::new();
-    let mut i = 0;
+    let mut i = from;
 
-    while i < bytes.len() {
+    while i < to {
         let c = bytes[i];
         let start = i;
 
@@ -890,7 +937,7 @@ pub fn lex_with_comments(src: &str) -> Result<(Vec<Token>, Vec<Comment>), Error>
 
     toks.push(Token {
         tok: Tok::Eof,
-        span: Span::new(src.len(), src.len()),
+        span: Span::new(to, to),
     });
     Ok((toks, comments))
 }

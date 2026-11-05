@@ -1,68 +1,121 @@
-//! `#[allow(..)]`: turning lints off. One on a `fn`, `struct`, `enum`,
-//! field or variant turns off the lints it names in all of it: a `fn`'s
-//! parameters and body, the functions and types nested in it, a type's
-//! fields and variants. As in Rust, a name that isn't a lint's is only a
-//! warning (`unknown_lints`), so that a program keeps working when a lint is
-//! renamed or removed. One on a `mod` turns them off in the module, the
-//! files of `mod m;` in it included.
+//! `#[allow(..)]` and `#[warn(..)]`: turning lints off and on. One on a
+//! `fn`, `struct`, `enum`, field or variant says so of the lints it names
+//! in all of it: a `fn`'s parameters and body, the functions and types
+//! nested in it, a type's fields and variants. One on a `mod` says so in
+//! the module, the files of `mod m;` in it included, and so does
+//! `#![allow(..)]` or `#![warn(..)]` at the top of the module: of the crate
+//! root, in all the program. Where several say something of a lint, the
+//! innermost decides, and of those on the same thing, the last. Where none
+//! does, a lint is on unless it's one of those off by default
+//! (`Lint::on_by_default`). As in Rust, a name that isn't a lint's is only
+//! a warning (`unknown_lints`), so that a program keeps working when a lint
+//! is renamed or removed.
+//!
+//! Lints only ever add warnings, so turning one on or off never changes
+//! what a program means.
 
 use crate::ast::*;
 use crate::error::{Edit, Fix, Lint, Span, Warning};
 use crate::source::Sources;
 
-/// Adds a warning for each name in `prog`'s `#[allow(..)]`s that isn't a
-/// lint, then drops the warnings they turn off.
+/// What an attribute says of one lint in a part of the program.
+struct Scope {
+    span: Span,
+    /// How many modules out from where it's written the part is, for the
+    /// files of modules: those of a module and of the modules it's in
+    /// cover the same file.
+    depth: usize,
+    /// Its place among all of them, in the order they're written.
+    order: usize,
+    lint: Lint,
+    warn: bool,
+}
+
+/// Adds a warning for each name in `prog`'s `#[allow(..)]`s and
+/// `#[warn(..)]`s that isn't a lint, then drops the warnings of lints
+/// that are off where they are.
 pub fn apply(prog: &Program, sources: &Sources, warnings: &mut Vec<Warning>) {
-    let mut scopes: Vec<(Span, Lint)> = Vec::new();
-    for (span, allows) in allowed(prog, sources) {
-        for name in allows.iter().flat_map(|a| &a.lints) {
-            match Lint::from_name(&name.name) {
-                Some(lint) => scopes.push((span, lint)),
-                None => warnings.push(unknown(name)),
+    let mut scopes: Vec<Scope> = Vec::new();
+    for (span, depth, allows) in allowed(prog, sources) {
+        for a in allows {
+            for name in &a.lints {
+                match Lint::from_name(&name.name) {
+                    Some(lint) => scopes.push(Scope {
+                        span,
+                        depth,
+                        order: scopes.len(),
+                        lint,
+                        warn: a.warn,
+                    }),
+                    None => warnings.push(unknown(name)),
+                }
             }
         }
     }
     warnings.retain(|w| {
-        !scopes
-            .iter()
-            .any(|&(s, lint)| lint == w.lint && s.start <= w.span.start && w.span.end <= s.end)
+        let innermost = (scopes.iter())
+            .filter(|s| {
+                s.lint == w.lint && s.span.start <= w.span.start && w.span.end <= s.span.end
+            })
+            .min_by_key(|s| {
+                (
+                    s.span.end - s.span.start,
+                    s.depth,
+                    std::cmp::Reverse(s.order),
+                )
+            });
+        match innermost {
+            Some(s) => s.warn,
+            None => w.lint.on_by_default(),
+        }
     });
     warnings.sort_by_key(|w| w.span.start);
 }
 
-/// Everything in `prog` that has attributes, as its spans and them: a
-/// module that has files is in them too.
-fn allowed<'p>(prog: &'p Program, sources: &Sources) -> Vec<(Span, &'p [Allow])> {
-    let mut out: Vec<(Span, &[Allow])> = Vec::new();
+/// Everything in `prog` that has attributes, as the part of the program
+/// they're of, how many modules out that is from where they're written,
+/// and the attributes: a module that has files is in them too, and the
+/// crate root's own are of all of it.
+fn allowed<'p>(prog: &'p Program, sources: &Sources) -> Vec<(Span, usize, &'p [Allow])> {
+    let mut out: Vec<(Span, usize, &[Allow])> = Vec::new();
+    out.push((
+        Span::new(0, usize::MAX),
+        usize::MAX,
+        &prog.mods[ROOT].inner_allows,
+    ));
     for m in &prog.mods[1..] {
-        out.push((m.span, &m.allows));
+        out.push((m.span, 0, &m.allows));
+        out.push((m.span, 0, &m.inner_allows));
     }
     let first = sources.first().start;
     for file in sources.files().iter().filter(|f| f.start != first) {
         let mut m = Some(file.module);
+        let mut depth = 0;
         while let Some(i) = m.filter(|&i| i != ROOT) {
-            out.push((file.span(), &prog.mods[i].allows));
+            out.push((file.span(), depth, &prog.mods[i].allows));
+            out.push((file.span(), depth, &prog.mods[i].inner_allows));
             m = prog.mods[i].parent;
+            depth += 1;
         }
     }
     for (f, ..) in prog.all_fns() {
-        out.push((f.span, &f.allows));
+        out.push((f.span, 0, &f.allows));
     }
     for (d, _) in prog.all_types() {
-        out.push((d.span(), d.allows()));
+        out.push((d.span(), 0, d.allows()));
         match d {
             TypeDecl::Struct(s) => {
                 out.extend(
                     s.fields
                         .iter()
-                        .map(|f| (f.name.span.to(f.ty.span), &f.allows[..])),
+                        .map(|f| (f.name.span.to(f.ty.span), 0, &f.allows[..])),
                 );
             }
-            TypeDecl::Enum(e) => out.extend(e.variants.iter().map(|v| (v.span, &v.allows[..]))),
+            TypeDecl::Enum(e) => out.extend(e.variants.iter().map(|v| (v.span, 0, &v.allows[..]))),
             TypeDecl::Alias(_) => {}
         }
     }
-    out.retain(|(_, allows)| !allows.is_empty());
+    out.retain(|(_, _, allows)| !allows.is_empty());
     out
 }
 
