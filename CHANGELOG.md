@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.61.0 (2026-11-06)
 
 Step 45: variants by their names. See
 [docs/45-variants.md](docs/45-variants.md).
