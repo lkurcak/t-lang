@@ -78,6 +78,7 @@
 ; Attributes
 
 (attribute_item) @attribute
+(inner_attribute_item) @attribute
 
 ; Keywords
 

@@ -55,6 +55,7 @@ pub fn run(files: &Files) -> RunResult {
             output: Vec::new(),
             errors: Vec::new(),
             result: checked.result.map(|_| t_lang::interp::Value::Unit),
+            panicked: false,
         };
     }
     let texts: Vec<&str> = files.iter().map(|(_, src)| src.as_str()).collect();

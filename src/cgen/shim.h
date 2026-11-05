@@ -111,9 +111,29 @@ static void t_begin(void) {
     t_say("runtime error: ");
 }
 
-/* Stops the program with message `msg`, at `site`. */
+/* Whether the program stops because it panicked, rather than running out
+ * of memory: the hosted platform then ends it with status 101, as the
+ * interpreter does (docs/44-runs-and-holes.md). Only the thread that's saying why
+ * the program stops sets it. */
+static bool t_panicking;
+
+/* `t_begin`, for a panic. */
+static void t_begin_panic(void) {
+    t_begin();
+    t_panicking = true;
+}
+
+/* Stops the program with message `msg`, at `site`: for what isn't a panic,
+ * running out of memory. */
 static _Noreturn void t_fail(const char *msg, uint32_t site) {
     t_begin();
+    t_say(msg);
+    t_end(site);
+}
+
+/* Stops the program with message `msg`, at `site`, a panic. */
+static _Noreturn void t_fail_panic(const char *msg, uint32_t site) {
+    t_begin_panic();
     t_say(msg);
     t_end(site);
 }
@@ -172,38 +192,38 @@ static inline int64_t t_sx(uint64_t u, unsigned w) {
         return a == 0 || b >= MAX / a;                                                 \
     }                                                                                  \
     static inline T t_add_##N(T a, T b, uint32_t s) {                                  \
-        if (!t_add_ok_##N(a, b)) t_fail("integer overflow", s);                        \
+        if (!t_add_ok_##N(a, b)) t_fail_panic("integer overflow", s);                        \
         return (T)((int64_t)a + b);                                                    \
     }                                                                                  \
     static inline T t_sub_##N(T a, T b, uint32_t s) {                                  \
-        if (!t_sub_ok_##N(a, b)) t_fail("integer overflow", s);                        \
+        if (!t_sub_ok_##N(a, b)) t_fail_panic("integer overflow", s);                        \
         return (T)((int64_t)a - b);                                                    \
     }                                                                                  \
     static inline T t_mul_##N(T a, T b, uint32_t s) {                                  \
-        if (!t_mul_ok_##N(a, b)) t_fail("integer overflow", s);                        \
+        if (!t_mul_ok_##N(a, b)) t_fail_panic("integer overflow", s);                        \
         return (T)((int64_t)a * b);                                                    \
     }                                                                                  \
     static inline T t_div_##N(T a, T b, uint32_t s) {                                  \
-        if (b == 0) t_fail("division by zero", s);                                     \
-        if (a == MIN && b == -1) t_fail("integer overflow", s);                        \
+        if (b == 0) t_fail_panic("division by zero", s);                                     \
+        if (a == MIN && b == -1) t_fail_panic("integer overflow", s);                        \
         return (T)(a / b);                                                             \
     }                                                                                  \
     static inline T t_rem_##N(T a, T b, uint32_t s) {                                  \
-        if (b == 0) t_fail("division by zero", s);                                     \
-        if (a == MIN && b == -1) t_fail("integer overflow", s);                        \
+        if (b == 0) t_fail_panic("division by zero", s);                                     \
+        if (a == MIN && b == -1) t_fail_panic("integer overflow", s);                        \
         return (T)(a % b);                                                             \
     }                                                                                  \
     static inline T t_neg_##N(T a, uint32_t s) {                                       \
-        if (a == MIN) t_fail("integer overflow", s);                                   \
+        if (a == MIN) t_fail_panic("integer overflow", s);                                   \
         return (T)(-(int64_t)a);                                                       \
     }                                                                                  \
     static inline T t_shl_##N(T a, uint32_t r, uint32_t s) {                           \
         if (r >= W) {                                                                  \
-            if (a != 0) t_fail("integer overflow", s);                                 \
+            if (a != 0) t_fail_panic("integer overflow", s);                                 \
             return 0;                                                                  \
         }                                                                              \
         int64_t lo = -(int64_t)(((uint64_t)1 << (W - 1)) >> r), hi = MAX >> r;         \
-        if (a < lo || a > hi) t_fail("integer overflow", s);                           \
+        if (a < lo || a > hi) t_fail_panic("integer overflow", s);                           \
         return (T)t_sx((uint64_t)(int64_t)a << r, W);                                  \
     }                                                                                  \
     /* What the checker proved can't overflow: defined, whatever happens. */           \
@@ -237,35 +257,35 @@ static inline int64_t t_sx(uint64_t u, unsigned w) {
         return b == 0 || a <= (uint64_t)MAX / b;                                       \
     }                                                                                  \
     static inline T t_add_##N(T a, T b, uint32_t s) {                                  \
-        if (!t_add_ok_##N(a, b)) t_fail("integer overflow", s);                        \
+        if (!t_add_ok_##N(a, b)) t_fail_panic("integer overflow", s);                        \
         return (T)((uint64_t)a + b);                                                   \
     }                                                                                  \
     static inline T t_sub_##N(T a, T b, uint32_t s) {                                  \
-        if (!t_sub_ok_##N(a, b)) t_fail("integer overflow", s);                        \
+        if (!t_sub_ok_##N(a, b)) t_fail_panic("integer overflow", s);                        \
         return (T)((uint64_t)a - b);                                                   \
     }                                                                                  \
     static inline T t_mul_##N(T a, T b, uint32_t s) {                                  \
-        if (!t_mul_ok_##N(a, b)) t_fail("integer overflow", s);                        \
+        if (!t_mul_ok_##N(a, b)) t_fail_panic("integer overflow", s);                        \
         return (T)((uint64_t)a * b);                                                   \
     }                                                                                  \
     static inline T t_div_##N(T a, T b, uint32_t s) {                                  \
-        if (b == 0) t_fail("division by zero", s);                                     \
+        if (b == 0) t_fail_panic("division by zero", s);                                     \
         return (T)((uint64_t)a / b);                                                   \
     }                                                                                  \
     static inline T t_rem_##N(T a, T b, uint32_t s) {                                  \
-        if (b == 0) t_fail("division by zero", s);                                     \
+        if (b == 0) t_fail_panic("division by zero", s);                                     \
         return (T)((uint64_t)a % b);                                                   \
     }                                                                                  \
     static inline T t_neg_##N(T a, uint32_t s) {                                       \
-        if (a != 0) t_fail("integer overflow", s);                                     \
+        if (a != 0) t_fail_panic("integer overflow", s);                                     \
         return 0;                                                                      \
     }                                                                                  \
     static inline T t_shl_##N(T a, uint32_t r, uint32_t s) {                           \
         if (r >= W) {                                                                  \
-            if (a != 0) t_fail("integer overflow", s);                                 \
+            if (a != 0) t_fail_panic("integer overflow", s);                                 \
             return 0;                                                                  \
         }                                                                              \
-        if ((uint64_t)a > ((uint64_t)MAX >> r)) t_fail("integer overflow", s);                   \
+        if ((uint64_t)a > ((uint64_t)MAX >> r)) t_fail_panic("integer overflow", s);                   \
         return (T)((uint64_t)a << r);                                                  \
     }                                                                                  \
     static inline T t_wadd_##N(T a, T b) { return (T)((uint64_t)a + b); }              \
@@ -291,7 +311,7 @@ T_UNSIGNED(u64, uint64_t, 64, UINT64_MAX)
 
 /* `n as T` that doesn't fit, `what` being "a `u8`" or the like. */
 static _Noreturn void t_as_fail_i(int64_t n, const char *what, uint32_t site) {
-    t_begin();
+    t_begin_panic();
     t_say("`as` overflowed: ");
     t_say_i(n);
     t_say(" isn't ");
@@ -300,7 +320,7 @@ static _Noreturn void t_as_fail_i(int64_t n, const char *what, uint32_t site) {
 }
 
 static _Noreturn void t_as_fail_u(uint64_t n, const char *what, uint32_t site) {
-    t_begin();
+    t_begin_panic();
     t_say("`as` overflowed: ");
     t_say_u(n);
     t_say(" isn't ");
@@ -309,7 +329,7 @@ static _Noreturn void t_as_fail_u(uint64_t n, const char *what, uint32_t site) {
 }
 
 static _Noreturn void t_char_fail_i(int64_t n, uint32_t site) {
-    t_begin();
+    t_begin_panic();
     t_say("`");
     t_say_i(n);
     t_say("` isn't a character");
@@ -317,7 +337,7 @@ static _Noreturn void t_char_fail_i(int64_t n, uint32_t site) {
 }
 
 static _Noreturn void t_char_fail_u(uint64_t n, uint32_t site) {
-    t_begin();
+    t_begin_panic();
     t_say("`");
     t_say_u(n);
     t_say("` isn't a character");
@@ -330,7 +350,7 @@ static inline bool t_is_char(uint64_t n) {
 
 /* `panic(why)`, its bytes `ptr`, `len` of them. */
 static _Noreturn void t_panic(const uint8_t *ptr, uint64_t len, uint32_t site) {
-    t_begin();
+    t_begin_panic();
     t_say("panicked: ");
     t_write(ptr, len);
     t_end(site);
@@ -347,7 +367,7 @@ static _Noreturn void t_oom_slots(uint64_t n, uint32_t site) {
 /* `core::panic::Message`: written straight to where errors go, as
  * nothing can come between making one and aborting with it. */
 static void t_msg_new(void) {
-    t_begin();
+    t_begin_panic();
     t_say("panicked: ");
 }
 

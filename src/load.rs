@@ -331,6 +331,7 @@ fn add_library(
     prog.mods.push(ModDecl {
         doc: None,
         allows: Vec::new(),
+        inner_allows: Vec::new(),
         span,
         name: Ident {
             name: name.into(),
@@ -794,6 +795,7 @@ impl Loader<'_> {
         self.prog.mods.push(ModDecl {
             doc: None,
             allows: Vec::new(),
+            inner_allows: Vec::new(),
             span: Span::new(start, start + text.len()),
             name: Ident {
                 name: name.clone(),

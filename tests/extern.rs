@@ -86,7 +86,7 @@ fn what_needs_the_machine_runs_on_one() {
         }
         let exe = dir.join(&name);
         let built = match target {
-            Target::Hosted => t_lang::cgen::compile(&c, &exe, target),
+            Target::Hosted => t_lang::cgen::compile(&c, &exe, target).map_err(String::from),
             Target::Freestanding => {
                 let more: Vec<PathBuf> = Some(p.with_extension("c"))
                     .filter(|c| c.exists())

@@ -34,14 +34,17 @@ cargo install t-lang    # either way, installs the `t` command
 ```
 
 (`cargo install` also needs a C compiler, for the tree-sitter parser `t`
-carries; see [Syntax highlighting](#syntax-highlighting).)
+carries; see [Syntax highlighting](#syntax-highlighting). So does running
+a program: `t` compiles it through C, with `$CC` or `cc`.)
 
 ## Usage
 
 ```sh
-t examples/hello.t          # type-check and run
+t examples/hello.t          # type-check, compile through C, and run
+t --interp examples/hello.t # ...or run in the interpreter (slow; no C compiler needed)
 t check examples/hello.t    # type-check only (--deny-warnings: fail on a warning)
 t test examples/hello.t     # type-check, then run each #[test] (see docs/31-tests.md)
+                            # (compiled; --interp: interpreted)
 t mono examples/hello.t     # print the program after monomorphisation
 t build examples/hello.t    # compile, through C, to ./hello (see docs/33-c-backend.md)
                             # (--target freestanding: an object for bare metal, docs/39)
@@ -440,6 +443,7 @@ combine features in ways nobody planned for.
 | 42 ✅ | string patterns, `"help" \| "h" => ..` on `&str`, needing a `_`, telling the checker the string's `len()` in their arm; a `for` keeps its head's temporaries (`for w in CONST.iter()`, `for x in f().iter()`) for the loop; `use a::{self, B}`; `assert(ok)` ensures `ok` | a pattern as a test of bytes, not a call; facts a match implies kept apart from facts equivalent to it, so a failed match never assumes their negation; `for` as Rust's `match` rewrite, so no new borrow rule | [docs/42-patterns-and-loops.md](docs/42-patterns-and-loops.md) |
 | 43 | text and lists in the libraries: `str::split`/`split_whitespace`/`lines`/`trim`/`find`/`strip_prefix` and the like over a sealed `Pattern` (`char` or `&str`), the `Parse` trait and `s.parse::<u8>()`, `char::to_digit`/`is_whitespace`, `Eq`/`Ord`/`first`/`contains` for `List`, `Option<&T>::copied`; an impl knows its own associated types | all safe, total T, no new intrinsic; pieces borrow the string, never the pattern; Rust's rules for `split` and `parse` | [docs/43-text-and-lists.md](docs/43-text-and-lists.md) |
 | 43.1 | `core::fmt::Debug` and `#[derive(Debug)]` (Rust's `{:?}`), format strings `f"x = {x}, p = {p.y:?}"` as values that are `Display`, `assert_eq`/`assert_ne` on `Eq + Debug`; derive names are always core's | a format string means calls of three core functions, checked as T: holes are places, borrowed; a derived `fmt` is glue that does only what its sink does | [docs/43.1-formatting.md](docs/43.1-formatting.md) |
+| 44 | `t main.t` and `t test` compile through C by default (`--interp` for the interpreter), a panic exits 101; a format string's hole holds any expression; `#[warn(..)]` and `#![allow(..)]`/`#![warn(..)]` at the top of a module, and off-by-default lints `format_hole_expressions`, `format_hole_effects` | compiled and interpreted runs and tests agree (differential tests); a hole is an ordinary argument `&e`; lints never change meaning | [docs/44-runs-and-holes.md](docs/44-runs-and-holes.md) |
 
 ## License
 

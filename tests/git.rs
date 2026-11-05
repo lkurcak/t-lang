@@ -92,7 +92,13 @@ fn text(bytes: &[u8]) -> String {
 
 /// Runs the program in `dir`, and asserts it succeeds; returns its output.
 fn runs(dir: &Path, cache: &Path) -> String {
-    let out = t(dir, cache, &["main.t"]);
+    // Interpreted on Windows, which the C backend isn't for yet.
+    let args: &[&str] = if cfg!(windows) {
+        &["--interp", "main.t"]
+    } else {
+        &["main.t"]
+    };
+    let out = t(dir, cache, args);
     assert!(
         out.status.success(),
         "stdout: {}\nstderr: {}",
@@ -525,7 +531,11 @@ fn fetching_runs_no_hooks() {
         .env("GIT_CONFIG_COUNT", "1")
         .env("GIT_CONFIG_KEY_0", "core.hooksPath")
         .env("GIT_CONFIG_VALUE_0", &hooks)
-        .arg("main.t")
+        .args(if cfg!(windows) {
+            &["--interp", "main.t"][..]
+        } else {
+            &["main.t"]
+        })
         .output()
         .unwrap();
     assert!(out.status.success(), "{}", text(&out.stderr));

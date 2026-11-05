@@ -77,6 +77,23 @@ pub fn emit(exe: &Executable, sources: &Sources, options: Options) -> String {
     g.finish()
 }
 
+/// The C program that runs test `tests[i]` of `exe`, by its symbol, when
+/// its only argument is `i`, as `t test` runs each: as a program of its
+/// own, which ends as `main` would if it were the test (docs/31-tests.md,
+/// docs/44-runs-and-holes.md). Hosted only.
+pub fn emit_tests(
+    exe: &Executable,
+    sources: &Sources,
+    options: Options,
+    tests: &[String],
+) -> String {
+    assert!(options.target == crate::Target::Hosted, "tests run hosted");
+    let mut g = Gen::new(exe, sources, options);
+    g.tests = tests.to_vec();
+    g.run();
+    g.finish()
+}
+
 /// The C name of each integer type, and the suffix of the runtime's
 /// helpers for it.
 fn c_int(t: IntTy) -> &'static str {
@@ -227,6 +244,9 @@ struct Gen<'e> {
     exe: &'e Executable,
     sources: &'e Sources,
     options: Options,
+    /// The tests to run, by their symbols, for a program of tests
+    /// (`emit_tests`); none for one that runs `main`.
+    tests: Vec<String>,
     decls: HashMap<&'e str, &'e FnDecl>,
     /// The C name of each type that's a C struct, by its type's symbols
     /// (`key`), which leave out its regions (a slice's is the pointer and
@@ -282,6 +302,7 @@ impl<'e> Gen<'e> {
             exe,
             sources,
             options,
+            tests: Vec::new(),
             decls,
             tys: HashMap::new(),
             ty_order: Vec::new(),
@@ -409,15 +430,7 @@ impl<'e> Gen<'e> {
         let mut members = String::new();
         let mut member = |g: &mut Gen, ty: &Type, field: &str, out: &mut String| {
             let c = g.cty(ty);
-            // A reference to a slice holds the C struct of one.
-            deps.push(match ty.erased() {
-                Type::Ref(_, _, inner) | Type::Box(inner) => match *inner {
-                    Type::Slice(e) => Type::Slice(e),
-                    Type::Str => Type::Slice(Box::new(Type::Int(IntTy::U8))),
-                    inner => Type::Ref(Region::Erased, false, Box::new(inner)),
-                },
-                t => t,
-            });
+            deps.push(held(ty));
             let _ = write!(out, " {c} {field};");
         };
         match t {
@@ -429,7 +442,7 @@ impl<'e> Gen<'e> {
                 Type::Nat(0) => members.push_str(" uint8_t _;"),
                 Type::Nat(n) => {
                     let c = self.cty(e);
-                    deps.push(e.erased());
+                    deps.push(held(e));
                     let _ = write!(members, " {c} a[{n}];");
                 }
                 ref n => panic!("an array of length `{n}`"),
@@ -803,13 +816,19 @@ impl<'e> Gen<'e> {
     }
 
     fn run(&mut self) {
-        let main = self.exe.body("main").is_some();
-        if main {
-            self.body_name("main");
-            if let Some(r) = self.exe.report("main") {
+        let entries: Vec<String> = match self.tests.is_empty() {
+            true => (self.exe.body("main").is_some())
+                .then(|| "main".to_string())
+                .into_iter()
+                .collect(),
+            false => self.tests.clone(),
+        };
+        for entry in &entries {
+            self.body_name(entry);
+            if let Some(r) = self.exe.report(entry) {
                 self.body_name(r);
             }
-            if let Some(g) = self.exe.entry_drop("main") {
+            if let Some(g) = self.exe.entry_drop(entry) {
                 self.body_name(g);
             }
         }
@@ -1816,8 +1835,12 @@ impl<'e> Gen<'e> {
     /// C's `main`: runs T's, reports the error it gives back, if it gives
     /// back one, drops what it gives back, and ends as `t run` does. On the
     /// freestanding target, `t_main`, which the platform calls, and which
-    /// runs T's and returns (lemma F4 of docs/39-freestanding.md).
+    /// runs T's and returns (lemma F4 of docs/39-freestanding.md). For a
+    /// program of tests, runs the one its argument says, the same way.
     fn main(&mut self) -> String {
+        if !self.tests.is_empty() {
+            return self.test_main();
+        }
         let exe: &'e Executable = self.exe;
         let Some(body) = exe.body("main") else {
             return String::new();
@@ -1846,10 +1869,25 @@ impl<'e> Gen<'e> {
             return out;
         }
         out.push_str("int main(void) {\n    t_start();\n");
-        let _ = writeln!(out, "    {ret} r = {main}({args});");
+        out.push_str(&self.entry_body("main", &args));
+        out.push_str("}\n");
+        out
+    }
+
+    /// What C's `main` does to run `entry`, `main` or a test, with
+    /// arguments `args`: runs it, reports the error it gives back, if any,
+    /// drops what it gives back, and returns with what `t_exit` says.
+    fn entry_body(&mut self, entry: &str, args: &str) -> String {
+        let exe: &'e Executable = self.exe;
+        let body = exe.body(entry).expect("an entry's body");
+        let f = self.body_name(entry);
+        let ret_ty = body.locals[0].ty.erased();
+        let ret = self.cty(&ret_ty);
+        let mut out = String::new();
+        let _ = writeln!(out, "    {ret} r = {f}({args});");
         let mut failed = "false".to_string();
         let _ = writeln!(out, "    (void)r;");
-        if let Some(report) = exe.report("main") {
+        if let Some(report) = exe.report(entry) {
             let err = self.variant(&ret_ty, "Err");
             let rb = exe.body(report).expect("a report's body");
             let report = self.fn_names[report].clone();
@@ -1862,12 +1900,37 @@ impl<'e> Gen<'e> {
             let _ = writeln!(out, "    bool failed = r.tag == {err};");
             failed = "failed".to_string();
         }
-        if let Some(glue) = exe.entry_drop("main") {
+        if let Some(glue) = exe.entry_drop(entry) {
             let glue = self.fn_names[glue].clone();
             let _ = writeln!(out, "    {glue}(r);");
         }
-        let at = self.site_id(self.decls["main"].name.span);
-        let _ = writeln!(out, "    return t_exit({failed}, {at});\n}}");
+        let at = self.site_id(self.decls[entry].name.span);
+        let _ = writeln!(out, "    return t_exit({failed}, {at});");
+        out
+    }
+
+    /// C's `main` for a program of tests: runs test `tests[i]`, `i` its
+    /// only argument, as `main` runs T's `main`. Anything else is a
+    /// mistake of whatever ran it, which it says, and fails with 2.
+    fn test_main(&mut self) -> String {
+        let mut runners = String::new();
+        let mut cases = String::new();
+        for (i, test) in self.tests.clone().iter().enumerate() {
+            let body = self.entry_body(test, "");
+            let name = self.fresh(&format!("t_test_{i}"));
+            let _ = writeln!(runners, "static int {name}(void) {{\n{body}}}\n");
+            let _ = writeln!(cases, "    case {i}: return {name}();");
+        }
+        let mut out = runners;
+        out.push_str("int main(int argc, char **argv) {\n");
+        out.push_str("    char *end = NULL;\n");
+        out.push_str("    long i = argc == 2 ? strtol(argv[1], &end, 10) : -1;\n");
+        out.push_str("    if (end == NULL || *end != 0 || end == argv[1]) i = -1;\n");
+        out.push_str("    t_start();\n    switch (i) {\n");
+        out.push_str(&cases);
+        out.push_str("    default:\n");
+        out.push_str("        fputs(\"this runs a test of a T program: its index, as `t test` gives it\\n\", stderr);\n");
+        out.push_str("        return 2;\n    }\n}\n");
         out
     }
 }
@@ -1878,7 +1941,10 @@ impl<'e> Gen<'e> {
 /// freestanding target, to an object, with no C library: the platform
 /// links it with what it needs (see docs/39-freestanding.md). With no
 /// stack protector, as nothing would be there to report a smashed stack.
-pub fn compile(c: &str, out: &std::path::Path, target: crate::Target) -> Result<(), String> {
+pub fn compile(c: &str, out: &std::path::Path, target: crate::Target) -> Result<(), CompileError> {
+    if cfg!(windows) && target == crate::Target::Hosted {
+        return Err(CompileError::Unsupported);
+    }
     use std::sync::atomic::{AtomicUsize, Ordering};
     static N: AtomicUsize = AtomicUsize::new(0);
     let dir = std::env::temp_dir().join(format!(
@@ -1886,10 +1952,12 @@ pub fn compile(c: &str, out: &std::path::Path, target: crate::Target) -> Result<
         std::process::id(),
         N.fetch_add(1, Ordering::Relaxed)
     ));
-    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot make `{}`: {e}", dir.display()))?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| CompileError::Failed(format!("cannot make `{}`: {e}", dir.display())))?;
     let file = dir.join("main.c");
     let result = (|| {
-        std::fs::write(&file, c).map_err(|e| format!("cannot write `{}`: {e}", file.display()))?;
+        std::fs::write(&file, c)
+            .map_err(|e| CompileError::Failed(format!("cannot write `{}`: {e}", file.display())))?;
         let cc = std::env::var("CC").unwrap_or_else(|_| "cc".to_string());
         let extra = std::env::var("T_LANG_CFLAGS").unwrap_or_default();
         let freestanding: &[&str] = match target {
@@ -1904,15 +1972,66 @@ pub fn compile(c: &str, out: &std::path::Path, target: crate::Target) -> Result<
             .arg(&file)
             .args(extra.split_whitespace())
             .output()
-            .map_err(|e| format!("cannot run the C compiler `{cc}`: {e}"))?;
+            .map_err(|e| match e.kind() {
+                std::io::ErrorKind::NotFound => CompileError::NoCompiler(cc.clone()),
+                _ => CompileError::Failed(format!("cannot run the C compiler `{cc}`: {e}")),
+            })?;
         match output.status.success() {
             true => Ok(()),
-            false => Err(format!(
+            false => Err(CompileError::Failed(format!(
                 "the C compiler `{cc}` failed:\n{}",
                 String::from_utf8_lossy(&output.stderr)
-            )),
+            ))),
         }
     })();
     let _ = std::fs::remove_dir_all(&dir);
     result
+}
+
+/// The type whose C struct a field or element of type `t` holds by value,
+/// which must be defined before the struct it's in: a reference to a
+/// slice or `str`, or a box of one, holds the struct of the slice.
+fn held(t: &Type) -> Type {
+    match t.erased() {
+        Type::Ref(_, _, inner) | Type::Box(inner) => match *inner {
+            Type::Slice(e) => Type::Slice(e),
+            Type::Str => Type::Slice(Box::new(Type::Int(IntTy::U8))),
+            inner => Type::Ref(Region::Erased, false, Box::new(inner)),
+        },
+        t => t,
+    }
+}
+
+/// Why `compile` failed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompileError {
+    /// There's no C compiler of this name: `$CC`'s, or `cc`.
+    NoCompiler(String),
+    /// The C backend isn't for this machine's system: it's for 64-bit
+    /// Linux and macOS (docs/33-c-backend.md).
+    Unsupported,
+    /// What went wrong otherwise, the C compiler's messages included.
+    Failed(String),
+}
+
+impl std::fmt::Display for CompileError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CompileError::NoCompiler(cc) => write!(
+                f,
+                "there's no C compiler `{cc}`, which `t` compiles programs with: install one, \
+                 or name one with $CC"
+            ),
+            CompileError::Unsupported => {
+                f.write_str("compiling programs is for Linux and macOS, for now, which this isn't")
+            }
+            CompileError::Failed(why) => f.write_str(why),
+        }
+    }
+}
+
+impl From<CompileError> for String {
+    fn from(e: CompileError) -> String {
+        e.to_string()
+    }
 }

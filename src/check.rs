@@ -736,6 +736,10 @@ pub(crate) struct Checker {
     /// The sites of the body of each of them that's checked, kept for
     /// working out its effects with its group's.
     infer_sites: HashMap<usize, Vec<effects::Site>>,
+    /// The sites in holes of format strings, with their effects as far as
+    /// they're known at the end of their bodies, for `format_hole_effects`
+    /// once every function's effects are (`hole_effects`).
+    hole_sites: Vec<effects::Site>,
     /// The functions of groups whose effects wait for another's.
     waiting: Vec<FnId>,
     /// What waits for effects being inferred to be known.
@@ -1056,6 +1060,7 @@ impl Checker {
             blaming: Vec::new(),
             externs: Vec::new(),
             infer_sites: HashMap::new(),
+            hole_sites: Vec::new(),
             waiting: Vec::new(),
             deferred: Vec::new(),
             inferred: HashMap::new(),
@@ -1169,6 +1174,7 @@ impl Checker {
         self.info.traits = self.traits.clone();
         self.bodies(prog)?;
         self.zonk_inferred();
+        self.hole_effects();
         self.tests_known(root)?;
         self.blaming_known()?;
         self.externs_known()?;

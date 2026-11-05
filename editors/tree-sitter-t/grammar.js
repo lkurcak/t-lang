@@ -74,7 +74,7 @@ module.exports = grammar({
   ],
 
   rules: {
-    source_file: $ => repeat(choice($._item, $.attribute_item)),
+    source_file: $ => seq(repeat($.inner_attribute_item), repeat(choice($._item, $.attribute_item))),
 
     _item: $ => choice(
       $.function_item,
@@ -100,7 +100,12 @@ module.exports = grammar({
       choice(field('body', $.mod_body), ';'),
     ),
 
-    mod_body: $ => seq('{', repeat(choice($._item, $.attribute_item)), '}'),
+    mod_body: $ => seq(
+      '{',
+      repeat($.inner_attribute_item),
+      repeat(choice($._item, $.attribute_item)),
+      '}',
+    ),
 
     // `use a::b;`, `pub use a::{b, c as d};`
     use_declaration: $ => seq(
@@ -149,6 +154,19 @@ module.exports = grammar({
     inner_doc_comment: _ => token(seq('//!', /.*/)),
 
     // Items
+
+    // `#![allow(dead_code)]` or `#![warn(unused_variables)]` at the top of
+    // a module: of all of it.
+    inner_attribute_item: $ => seq(
+      '#',
+      '!',
+      '[',
+      field('name', $.identifier),
+      '(',
+      commaSep($.identifier),
+      ')',
+      ']',
+    ),
 
     // `#[allow(dead_code)]` before an item, field or variant,
     // `#[derive(Copy)]` before a struct or enum, `#[intrinsic]` before a
@@ -688,7 +706,7 @@ module.exports = grammar({
 
     // `f"x = {x}, p = {p.y:?}"`: a format string, a value that's
     // `Display`. Its text is a string literal's, with `{{` and `}}` for
-    // braces; a hole names a variable or a field of one, with `:?` for
+    // braces; a hole holds an expression, with `:?` after it for
     // `Debug`.
     format_string: $ => seq(
       'f"',
@@ -701,16 +719,13 @@ module.exports = grammar({
       token.immediate('"'),
     ),
 
-    // `{p.x}` or `{p.x:?}` in a format string.
+    // `{p.x}`, `{n + 1}` or `{f(x):?}` in a format string: an
+    // expression, with `:?` after it for `Debug`.
     format_hole: $ => seq(
       token.immediate('{'),
-      alias(token.immediate(/[a-zA-Z_][a-zA-Z0-9_]*/), $.identifier),
-      repeat(seq(
-        token.immediate('.'),
-        alias(token.immediate(/[a-zA-Z_][a-zA-Z0-9_]*/), $.field_identifier),
-      )),
-      optional(alias(token.immediate(':?'), $.format_spec)),
-      token.immediate('}'),
+      field('value', $._expression),
+      optional(alias(':?', $.format_spec)),
+      '}',
     ),
 
     // `b"hi\xFF"`, a `&'static [u8]`: ASCII and `\x` escapes.

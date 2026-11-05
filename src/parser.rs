@@ -3,17 +3,18 @@
 //! Grammar (lowest to highest precedence for operators):
 //!
 //! ```text
-//! program  = item*
+//! program  = inner* item*
+//! inner    = "#" "!" "[" ("allow" | "warn") "(" (IDENT ("," IDENT)* ","?)? ")" "]"
 //! item     = head vis? (fn_decl | "extern" fn_decl | struct | enum | trait | mod | use)
 //!          | head impl                                 -- `extern fn`: docs/40-extern.md
-//! mod      = "mod" IDENT ("{" item* "}" | ";")           -- `;`: in a file of its own
+//! mod      = "mod" IDENT ("{" inner* item* "}" | ";")           -- `;`: in a file of its own
 //! use      = "use" tree ";"
 //! tree     = path ("as" IDENT)? | path "::" "{" (tree ("," tree)* ","?)? "}"
 //! path     = seg ("::" IDENT)*                       -- `a::b::C`
 //! seg      = IDENT | "crate" | "super" | "self"
 //! vis      = "pub" | "export"
 //! head     = attr*
-//! attr     = "#" "[" "allow" "(" (IDENT ("," IDENT)* ","?)? ")" "]"
+//! attr     = "#" "[" ("allow" | "warn") "(" (IDENT ("," IDENT)* ","?)? ")" "]"
 //!          | "#" "[" "derive" "(" (derived ("," derived)* ","?)? ")" "]"
 //!          | "#" "[" "intrinsic" "]"               -- on a `fn`, a fieldless `struct` or an
 //!                                                     inherent impl's method, in a library
@@ -164,6 +165,7 @@ fn empty_program(tokens: &[Token]) -> Program {
         mods: vec![ModDecl {
             doc: None,
             allows: Vec::new(),
+            inner_allows: Vec::new(),
             span: Span::new(0, end),
             name: Ident {
                 name: "crate".into(),
@@ -332,6 +334,36 @@ impl Parser {
         (!lines.is_empty()).then(|| doc_comment(&lines))
     }
 
+    /// The `(lints)]` of `#[allow(lints)]` or `#[warn(lints)]`, the `#`
+    /// at `start`; `warn` for `warn`.
+    fn lint_list(&mut self, start: Span, warn: bool) -> Result<Allow, Error> {
+        self.expect(Tok::LParen)?;
+        let lints = self.comma_list(Tok::RParen, Self::ident)?.0;
+        let span = start.to(self.expect(Tok::RBracket)?);
+        Ok(Allow { span, lints, warn })
+    }
+
+    /// The `#![allow(..)]`s and `#![warn(..)]`s at the top of a module.
+    fn inner_allows(&mut self) -> Result<Vec<Allow>, Error> {
+        let mut out = Vec::new();
+        while *self.peek() == Tok::Hash && *self.peek2() == Tok::Bang {
+            let start = self.bump().span;
+            self.bump();
+            self.expect(Tok::LBracket)?;
+            let warn = match self.peek() {
+                Tok::Ident(name) if name == "allow" || name == "warn" => name == "warn",
+                _ => {
+                    return Err(
+                        self.unexpected("`allow` or `warn`, the only attributes of a module's own")
+                    );
+                }
+            };
+            self.bump();
+            out.push(self.lint_list(start, warn)?);
+        }
+        Ok(out)
+    }
+
     /// The doc comment and attributes of what starts at the next token, or
     /// after the attributes there.
     fn head(&mut self) -> Result<Head, Error> {
@@ -344,9 +376,18 @@ impl Parser {
         let mut blame_caller = None;
         while *self.peek() == Tok::Hash {
             let start = self.bump().span;
+            if *self.peek() == Tok::Bang {
+                return Err(Error::syntax(
+                    start.to(self.span()),
+                    "`#![..]` is only at the top of a module: of its file, or of the \
+                     `{ }` of `mod m { .. }`, after its `//!` doc comment",
+                ));
+            }
             self.expect(Tok::LBracket)?;
-            let derive = match self.peek() {
-                Tok::Ident(name) if name == "allow" || name == "derive" => name == "derive",
+            let kind = match self.peek() {
+                Tok::Ident(name) if matches!(&name[..], "allow" | "warn" | "derive") => {
+                    name.clone()
+                }
                 Tok::Ident(name) if name == "intrinsic" => {
                     self.bump();
                     intrinsic = Some(start.to(self.expect(Tok::RBracket)?));
@@ -394,32 +435,29 @@ impl Parser {
                 Tok::Ident(name) => {
                     let message = format!(
                         "unknown attribute `{name}`; the only ones are `allow`, \
-                         `blame_caller`, `derive`, `intrinsic`, `measure` and `test`"
+                         `blame_caller`, `derive`, `intrinsic`, `measure`, `test` and `warn`"
                     );
                     return Err(Error::syntax(self.span(), message));
                 }
                 _ => {
                     return Err(self.unexpected(
-                        "`allow`, `blame_caller`, `derive`, `intrinsic`, `measure` or `test`",
+                        "`allow`, `blame_caller`, `derive`, `intrinsic`, `measure`, `test` or \
+                         `warn`",
                     ));
                 }
             };
             self.bump();
-            self.expect(Tok::LParen)?;
-            let (names, wheres) = match derive {
-                true => self.derive_list()?,
-                false => (self.comma_list(Tok::RParen, Self::ident)?.0, Vec::new()),
-            };
-            let end = self.expect(Tok::RBracket)?;
-            let span = start.to(end);
-            if derive {
+            if kind == "derive" {
+                self.expect(Tok::LParen)?;
+                let (names, wheres) = self.derive_list()?;
+                let span = start.to(self.expect(Tok::RBracket)?);
                 derives.push(Derive {
                     span,
                     names,
                     wheres,
                 });
             } else {
-                allows.push(Allow { span, lints: names });
+                allows.push(self.lint_list(start, kind == "warn")?);
             }
         }
         if !(allows.is_empty() && derives.is_empty())
@@ -514,6 +552,8 @@ impl Parser {
         if let Some(doc) = self.inner_doc() {
             prog.mods[self.module].doc = Some(doc);
         }
+        let inner = self.inner_allows()?;
+        prog.mods[self.module].inner_allows.extend(inner);
         while *self.peek() != close {
             if *self.peek() == Tok::Eof {
                 return Err(self.unexpected(&close.describe()));
@@ -789,6 +829,7 @@ impl Parser {
         let decl = ModDecl {
             doc: None,
             allows: head.allows,
+            inner_allows: Vec::new(),
             span: start,
             name,
             parent: Some(self.module),
@@ -2563,27 +2604,19 @@ impl Parser {
     }
 
     /// The place a format string's hole names: a name, then its fields.
-    fn hole_place(&mut self, names: Vec<(String, Span)>) -> Expr {
-        let mut names = names.into_iter();
-        let (name, span) = names.next().expect("a hole has a name");
-        let mut e = Expr {
-            kind: ExprKind::Var(name, Vec::new()),
-            span,
-            id: self.id(),
-        };
-        for (name, at) in names {
-            let field = Ident {
-                name,
-                span: at,
-                id: self.id(),
-            };
-            e = Expr {
-                span: e.span.to(at),
-                kind: ExprKind::Field(Box::new(e), field),
-                id: self.id(),
-            };
+    /// The expression of a format string's hole, from its tokens, which
+    /// end with an `Eof`.
+    fn hole(&mut self, toks: Vec<Token>) -> Result<Expr, Error> {
+        let mut p = Parser::new(toks, self.module, self.next_id);
+        let e = p.expr()?;
+        if *p.peek() != Tok::Eof {
+            return Err(Error::syntax(
+                p.span(),
+                "a hole in a format string holds one expression; this is after it",
+            ));
         }
-        e
+        self.next_id = p.next_id;
+        Ok(e)
     }
 
     /// Call arguments, after the `(`.
@@ -2602,15 +2635,17 @@ impl Parser {
             Tok::FStr(pieces) => ExprKind::Format(
                 pieces
                     .into_iter()
-                    .map(|p| match p {
-                        FPiece::Text(t) => FmtPiece::Text(t),
-                        FPiece::Hole(names, debug, span) => FmtPiece::Hole {
-                            place: self.hole_place(names),
-                            debug,
-                            span,
-                        },
+                    .map(|p| {
+                        Ok(match p {
+                            FPiece::Text(t) => FmtPiece::Text(t),
+                            FPiece::Hole(toks, debug, span) => FmtPiece::Hole {
+                                value: self.hole(toks)?,
+                                debug,
+                                span,
+                            },
+                        })
                     })
-                    .collect(),
+                    .collect::<Result<_, Error>>()?,
             ),
             Tok::True => ExprKind::Bool(true),
             Tok::False => ExprKind::Bool(false),

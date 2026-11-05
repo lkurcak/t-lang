@@ -159,6 +159,9 @@ pub struct RunResult {
     pub errors: Vec<String>,
     /// The value `main` returned, or the error that stopped the program.
     pub result: Result<Value, Error>,
+    /// Did it stop by panicking: not by running out of memory or of
+    /// stack, nor by giving back an `Err`? `t` then fails with 101.
+    pub panicked: bool,
 }
 
 impl RunResult {
@@ -243,11 +246,13 @@ fn run(
                 output: Vec::new(),
                 errors: Vec::new(),
                 result: Err(e),
+                panicked: false,
             },
             Ok(program) => match input {
                 None => {
                     let mut term = Process::default();
-                    let result = interp::run(&program, &mut term);
+                    let interp::Ended { result, panicked } =
+                        interp::run_entry(&program, "main", &mut term);
                     // A write may have reached only the buffer. Flush
                     // even after an error, keeping that error if there
                     // was one, and otherwise report a failed flush.
@@ -269,6 +274,7 @@ fn run(
                         output: Vec::new(),
                         errors: Vec::new(),
                         result,
+                        panicked,
                     }
                 }
                 Some(input) => {
@@ -276,13 +282,15 @@ fn run(
                         input: input.into(),
                         ..interp::Captured::default()
                     };
-                    let result = interp::run(&program, &mut term);
+                    let interp::Ended { result, panicked } =
+                        interp::run_entry(&program, "main", &mut term);
                     RunResult {
                         sources,
                         warnings,
                         output: lines(&term.out),
                         errors: lines(&term.err),
                         result,
+                        panicked,
                     }
                 }
             },
@@ -314,8 +322,8 @@ pub fn build_c(path: &Path, src: &str, read: load::Read, options: cgen::Options)
                 let start = sources.first().start;
                 Err(Error::ty(
                     error::Span::new(start, start),
-                    "this is a library, which starts in `lib.t` and has no `main` to build; \
-                     `t check` checks it",
+                    "this is a library, which starts in `lib.t` and has no `main` to run or \
+                     build; `t check` checks it",
                 ))
             }
             false => Ok(cgen::emit(&program.lower(), &sources, options)),
@@ -342,7 +350,26 @@ pub struct TestOutcome {
     /// Its name: its module's path, then the function's.
     pub name: String,
     /// Why it failed, or nothing if it passed.
-    pub failure: Option<Error>,
+    pub failure: Option<Failure>,
+}
+
+/// Why a test failed: the interpreter's error, or what a compiled test
+/// said where errors go, which is what the interpreter's error says
+/// (docs/33-c-backend.md), or how it ended if it said nothing.
+#[derive(Debug, Clone)]
+pub enum Failure {
+    Error(Error),
+    Said(String),
+}
+
+impl Failure {
+    /// It as it's shown, with the program's files `sources`.
+    pub fn render_in(&self, sources: &Sources) -> String {
+        match self {
+            Failure::Error(e) => e.render_in(sources),
+            Failure::Said(text) => text.clone(),
+        }
+    }
 }
 
 impl TestRun {
@@ -389,19 +416,19 @@ pub fn test_files(path: &Path, src: &str, read: load::Read, filter: Option<&str>
             let (ended, errors) = ended;
             let failure = match (ended.result, test.panics) {
                 (Err(_), true) if ended.panicked => None,
-                (Err(e), _) => Some(e),
+                (Err(e), _) => Some(Failure::Error(e)),
                 (Ok(Value::Variant(_, variant, _)), _) if variant == "Err" => {
                     let why = errors.join("\n");
                     let why = why.strip_prefix("error: ").unwrap_or(&why);
-                    Some(Error::runtime(
+                    Some(Failure::Error(Error::runtime(
                         test.span,
                         format!("gave back an error: {why}"),
-                    ))
+                    )))
                 }
-                (Ok(_), true) => Some(Error::runtime(
+                (Ok(_), true) => Some(Failure::Error(Error::runtime(
                     test.span,
                     "didn't panic, which this test passes only by doing",
-                )),
+                ))),
                 (Ok(_), false) => None,
             };
             TestOutcome {
@@ -415,6 +442,122 @@ pub fn test_files(path: &Path, src: &str, read: load::Read, filter: Option<&str>
         warnings,
         result: Ok(outcomes),
     }
+}
+
+/// `test_files`, compiled: checks the program, writes one C program that
+/// runs any of its tests (`cgen::emit_tests`), compiles it with the C
+/// compiler, and runs it once for each test whose name has `filter` in
+/// it, in order, as a process of its own: from nothing, with no input,
+/// its output thrown away, and with nothing shared (docs/44-runs-and-holes.md).
+/// Its status says how it went: 0 passed, 101 panicked, and anything
+/// else failed some other way. What it wrote where errors go is why it
+/// failed, as the interpreter would say it.
+pub fn test_native(
+    path: &Path,
+    src: &str,
+    read: load::Read,
+    filter: Option<&str>,
+) -> Result<TestRun, cgen::CompileError> {
+    let Checked {
+        sources,
+        warnings,
+        info,
+        result,
+    } = check_files(path, src, read);
+    let program = match result {
+        Ok(program) => program.lower(),
+        Err(e) => {
+            return Ok(TestRun {
+                sources,
+                warnings,
+                result: Err(e),
+            });
+        }
+    };
+    let tests: Vec<_> = (info.tests.iter())
+        .filter(|t| filter.is_none_or(|f| t.symbol.contains(f)))
+        .collect();
+    if tests.is_empty() {
+        return Ok(TestRun {
+            sources,
+            warnings,
+            result: Ok(Vec::new()),
+        });
+    }
+    let symbols: Vec<String> = tests.iter().map(|t| t.symbol.clone()).collect();
+    let options = cgen::Options {
+        lines: true,
+        target: Target::Hosted,
+    };
+    let c = cgen::emit_tests(&program, &sources, options, &symbols);
+    let dir = scratch_dir("test");
+    let exe = dir.join("tests");
+    let result = cgen::compile(&c, &exe, Target::Hosted).map(|()| {
+        (tests.iter().enumerate())
+            .map(|(i, test)| TestOutcome {
+                name: test.symbol.clone(),
+                failure: run_test(&exe, i, test.span, test.panics),
+            })
+            .collect()
+    });
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(TestRun {
+        sources,
+        warnings,
+        result: Ok(result?),
+    })
+}
+
+/// Runs the `i`th test of the compiled tests `exe`, whose name is at
+/// `span`, and which passes only by panicking if `panics`, and says why it
+/// failed, if it did.
+fn run_test(exe: &Path, i: usize, span: error::Span, panics: bool) -> Option<Failure> {
+    let output = std::process::Command::new(exe)
+        .arg(i.to_string())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .output();
+    let output = match output {
+        Ok(output) => output,
+        Err(e) => return Some(Failure::Said(format!("couldn't be run: {e}"))),
+    };
+    let said = String::from_utf8_lossy(&output.stderr)
+        .trim_end()
+        .to_string();
+    let code = output.status.code();
+    match (code, panics) {
+        (Some(101), true) => None,
+        (Some(0), false) => None,
+        (Some(0), true) => Some(Failure::Error(Error::runtime(
+            span,
+            "didn't panic, which this test passes only by doing",
+        ))),
+        // `main`'s error, reported as `t run` reports it.
+        (Some(1), _) if said.starts_with("error: ") => {
+            let why = said.strip_prefix("error: ").unwrap_or(&said);
+            Some(Failure::Error(Error::runtime(
+                span,
+                format!("gave back an error: {why}"),
+            )))
+        }
+        _ if !said.is_empty() => Some(Failure::Said(said)),
+        _ => Some(Failure::Said(format!("ended with {}", output.status))),
+    }
+}
+
+/// A new directory of its own in the system's, for a compiled program,
+/// named for `what` it's for: whoever makes it removes it.
+pub fn scratch_dir(what: &str) -> PathBuf {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static N: AtomicUsize = AtomicUsize::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "t-lang-{what}-{}-{}",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    ));
+    let _ = std::fs::create_dir_all(&dir);
+    dir
 }
 
 /// The stack each thread of the interpreter's runs on (see `on_big_stack`).

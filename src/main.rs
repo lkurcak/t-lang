@@ -13,11 +13,15 @@ usage: t [run|check|mono] <file.t>
        t lsp
        t tree-sitter [--helix] <dir>
 
-  t <file.t>          type-check and run
+  t <file.t>          type-check, compile through C, as `t build` does,
+                      and run (as `t run <file.t>`)
   t check <file.t>    type-check only
-  t test <file.t>     type-check, and run each `#[test]` of the program or
-                      library, each as a program of its own (with a filter:
-                      only those whose name has it in it)
+  t test <file.t>     type-check, compile, and run each `#[test]` of the
+                      program or library, each as a program of its own
+                      (with a filter: only those whose name has it in it)
+  --interp            with `run` or `test`: run in the interpreter rather
+                      than compiled, checking as it goes what the checker
+                      proved (slow; needs no C compiler)
   t mono <file.t>     print the program after monomorphisation
   t build <file.t>    type-check and compile, through C, to a program named
                       after the file (-o: to <out>; --emit-c: print the C
@@ -88,20 +92,24 @@ fn main() -> ExitCode {
     {
         return build(rest);
     }
-    // `--deny-warnings`, wherever it is after `check` or `test`.
+    // `--deny-warnings`, wherever it is after `check` or `test`, and
+    // `--interp` after `run` or `test`, or before the file.
     let deny = matches!(args.first().map(String::as_str), Some("check" | "test"))
         && args.iter().any(|a| a == "--deny-warnings");
+    let interp = !matches!(args.first().map(String::as_str), Some("check" | "mono"))
+        && args.iter().any(|a| a == "--interp");
     let args: Vec<String> = args
         .into_iter()
         .filter(|a| !deny || a != "--deny-warnings")
+        .filter(|a| !interp || a != "--interp")
         .collect();
     if let [cmd, rest @ ..] = args.as_slice()
         && cmd == "test"
     {
         return match rest {
-            [path] if !path.starts_with('-') => test(path, None, deny),
+            [path] if !path.starts_with('-') => test(path, None, deny, interp),
             [path, filter] if !path.starts_with('-') && !filter.starts_with('-') => {
-                test(path, Some(filter), deny)
+                test(path, Some(filter), deny, interp)
             }
             _ => {
                 eprintln!("{USAGE}");
@@ -151,6 +159,9 @@ fn main() -> ExitCode {
         };
     }
 
+    if !interp {
+        return run_compiled(path, &src);
+    }
     let run = t_lang::run_process(path, &src, |sources, warnings| {
         for w in Warning::render_all_in(warnings, sources) {
             eprintln!("{w}\n");
@@ -162,9 +173,85 @@ fn main() -> ExitCode {
         Ok(_) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("{}", e.render_in(&run.sources));
+            match run.panicked {
+                true => ExitCode::from(PANICKED),
+                false => ExitCode::FAILURE,
+            }
+        }
+    }
+}
+
+/// What a program that panicked ends with, compiled or interpreted, as in
+/// Rust: anything else that fails ends with 1 (docs/44-runs-and-holes.md).
+const PANICKED: u8 = 101;
+
+/// `t run <file.t>`, compiled: builds the program as `t build` does, into
+/// a directory of its own that's removed after, and runs it with this
+/// process's streams, ending as it ends.
+fn run_compiled(path: &std::path::Path, src: &str) -> ExitCode {
+    let options = t_lang::cgen::Options {
+        lines: true,
+        target: t_lang::Target::Hosted,
+    };
+    let built = t_lang::build_c(path, src, &t_lang::load::read_file, options);
+    for w in Warning::render_all_in(&built.warnings, &built.sources) {
+        eprintln!("{w}\n");
+    }
+    let c = match built.result {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{}", e.render_in(&built.sources));
+            return ExitCode::FAILURE;
+        }
+    };
+    let dir = t_lang::scratch_dir("run");
+    let stem = path.file_stem().map_or("main".into(), |s| s.to_owned());
+    let exe = dir.join(stem);
+    if let Err(e) = t_lang::cgen::compile(&c, &exe, t_lang::Target::Hosted) {
+        let _ = std::fs::remove_dir_all(&dir);
+        return compile_failed(&e);
+    }
+    let status = std::process::Command::new(&exe).status();
+    let _ = std::fs::remove_dir_all(&dir);
+    match status {
+        Ok(status) => ended(status),
+        Err(e) => {
+            eprintln!("error: cannot run the compiled program: {e}");
             ExitCode::FAILURE
         }
     }
+}
+
+/// Says why compiling failed: with no C compiler, that `--interp` runs
+/// without one.
+fn compile_failed(e: &t_lang::cgen::CompileError) -> ExitCode {
+    eprintln!("error: {e}");
+    if let t_lang::cgen::CompileError::NoCompiler(_) | t_lang::cgen::CompileError::Unsupported = e {
+        eprintln!("note: `--interp` runs it in the interpreter, which needs no C compiler");
+    }
+    ExitCode::FAILURE
+}
+
+/// This process's end, for a program that ended with `status`: its status,
+/// or, if a signal stopped it, saying so, and 128 and the signal's number,
+/// as a shell does.
+fn ended(status: std::process::ExitStatus) -> ExitCode {
+    if let Some(code) = status.code() {
+        return ExitCode::from(u8::try_from(code).unwrap_or(1));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(signal) = status.signal() {
+            let why = match signal {
+                11 => " (a segmentation fault: most likely, it ran out of stack)",
+                _ => "",
+            };
+            eprintln!("error: the program was stopped by signal {signal}{why}");
+            return ExitCode::from(u8::try_from(128 + signal).unwrap_or(1));
+        }
+    }
+    ExitCode::FAILURE
 }
 
 /// `t build [-o <out>] [--emit-c] [--target hosted|freestanding] <file.t>`.
@@ -265,7 +352,7 @@ fn denied(n: usize) -> String {
 /// says how each went: a line each as it goes, then why each that failed
 /// did, then how many passed and failed. It fails if any failed, if the
 /// program doesn't check, or, if `deny`, if there were warnings.
-fn test(path: &str, filter: Option<&str>, deny: bool) -> ExitCode {
+fn test(path: &str, filter: Option<&str>, deny: bool, interp: bool) -> ExitCode {
     let src = match std::fs::read_to_string(path) {
         Ok(src) => src,
         Err(e) => {
@@ -273,12 +360,14 @@ fn test(path: &str, filter: Option<&str>, deny: bool) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let run = t_lang::test_files(
-        std::path::Path::new(path),
-        &src,
-        &t_lang::load::read_file,
-        filter,
-    );
+    let (path, read) = (std::path::Path::new(path), &t_lang::load::read_file);
+    let run = match interp {
+        true => t_lang::test_files(path, &src, read, filter),
+        false => match t_lang::test_native(path, &src, read, filter) {
+            Ok(run) => run,
+            Err(e) => return compile_failed(&e),
+        },
+    };
     for w in Warning::render_all_in(&run.warnings, &run.sources) {
         eprintln!("{w}\n");
     }

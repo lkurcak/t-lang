@@ -152,6 +152,9 @@ pub(crate) struct Modules {
     /// format string is, where its calls of `cat` are (`Rewrite::format`):
     /// names the program doesn't have, with nothing to show or rename.
     pub(crate) formats: HashSet<Span>,
+    /// The expression of each hole of a format string in the program's
+    /// own code, for `format_hole_effects` (`Checker::hole_effects`).
+    pub(crate) holes: Vec<Span>,
     /// The `else` arm of the `match` each `if let`, `while let` and `let ..
     /// else` means, by where its pattern is, the `let` (`Rewrite::if_let`):
     /// for saying what's wrong with it in terms of what was written.
@@ -1726,9 +1729,23 @@ impl Rewrite<'_> {
                 return Ok(());
             }
             ExprKind::Format(pieces) => {
+                let own = !self.r.m.in_library(self.module);
                 for p in pieces.iter_mut() {
-                    if let FmtPiece::Hole { place, .. } = p {
-                        self.expr(place)?;
+                    if let FmtPiece::Hole { value, span, .. } = p {
+                        if own {
+                            self.r.m.holes.push(value.span);
+                            if !is_place(value) {
+                                self.r.m.warnings.push(Warning {
+                                    lint: Lint::FormatHoleExpressions,
+                                    span: *span,
+                                    message: "this hole holds more than a name or a field of \
+                                              one; work it out in a `let` first"
+                                        .to_string(),
+                                    fixes: Vec::new(),
+                                });
+                            }
+                        }
+                        self.expr(value)?;
                     }
                 }
                 let ExprKind::Format(pieces) = std::mem::replace(&mut e.kind, ExprKind::Unit)
@@ -1932,10 +1949,10 @@ impl Rewrite<'_> {
                     span: at,
                     id: self.id(),
                 },
-                FmtPiece::Hole { place, debug, span } => {
+                FmtPiece::Hole { value, debug, span } => {
                     let borrow = Expr {
-                        span: place.span,
-                        kind: ExprKind::Unary(UnOp::Ref, Box::new(place)),
+                        span: value.span,
+                        kind: ExprKind::Unary(UnOp::Ref, Box::new(value)),
                         id: self.id(),
                     };
                     let f = if debug { "debug" } else { "display" };
@@ -2668,7 +2685,7 @@ pub(crate) fn children_mut(e: &mut Expr) -> Vec<&mut Expr> {
         ExprKind::Format(pieces) => (pieces.iter_mut())
             .filter_map(|p| match p {
                 FmtPiece::Text(_) => None,
-                FmtPiece::Hole { place, .. } => Some(place),
+                FmtPiece::Hole { value, .. } => Some(value),
             })
             .collect(),
         ExprKind::Unary(_, x)
@@ -2750,4 +2767,14 @@ pub(crate) fn is_library_symbol(symbol: &str) -> bool {
     crate::load::LIBRARIES
         .iter()
         .any(|(name, ..)| *name == first)
+}
+
+/// Is `e` a place a format string's hole could hold before step 44: a
+/// name, or a field of one, `p.x.y`?
+fn is_place(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Var(name, targs) => targs.is_empty() && !name.contains("::"),
+        ExprKind::Field(x, _) => is_place(x),
+        _ => false,
+    }
 }

@@ -154,23 +154,40 @@ impl Checker {
         having.sort();
         let tr = match having[..] {
             [tr] => tr.to_string(),
-            [] if let Some(h) = hidden.iter().find(|h| self.traits.method(h, m).is_some()) => {
-                let path = self.modules.path_to_trait(self.module, h);
-                let fix = Fix::new(
-                    format!("import `{h}`"),
-                    vec![Edit::insert(
-                        self.modules.ends[self.module],
-                        format!("\nuse {path};\n"),
-                    )],
-                );
-                return Err(Error::ty(
-                    name.span,
-                    format!(
+            [] if hidden.iter().any(|h| self.traits.method(h, m).is_some()) => {
+                // Every trait that has one, each with its import: which
+                // is meant is the programmer's to say.
+                let with: Vec<(&String, String)> = (hidden.iter())
+                    .filter(|h| self.traits.method(h, m).is_some())
+                    .map(|h| (h, self.modules.path_to_trait(self.module, h)))
+                    .collect();
+                let message = match &with[..] {
+                    [(h, path)] => format!(
                         "`{ty}` has no method `{m}` in scope; trait `{h}` has one: import it \
                          with `use {path};`"
                     ),
-                )
-                .with_fix(fix));
+                    _ => {
+                        let names: Vec<String> =
+                            with.iter().map(|(h, _)| format!("`{h}`")).collect();
+                        let (last, rest) = names.split_last().expect("several");
+                        format!(
+                            "`{ty}` has no method `{m}` in scope; traits {} and {last} have one: \
+                             import the one meant",
+                            rest.join(", ")
+                        )
+                    }
+                };
+                let mut e = Error::ty(name.span, message);
+                for (h, path) in &with {
+                    e = e.with_fix(Fix::new(
+                        format!("import `{h}`"),
+                        vec![Edit::insert(
+                            self.modules.ends[self.module],
+                            format!("\nuse {path};\n"),
+                        )],
+                    ));
+                }
+                return Err(e);
             }
             [] => {
                 let message = match (tr, &ty) {

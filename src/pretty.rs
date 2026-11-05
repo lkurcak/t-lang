@@ -59,6 +59,7 @@ pub fn format(program: &Program, trivia: Trivia) -> String {
         trivia: Some(trivia),
     };
     let docs = program.mods[ROOT].doc.as_ref().map(inner_doc);
+    let docs = p.with_inner_allows(docs, &program.mods[ROOT].inner_allows);
     let (mut doc, mut empty) = p.items(program, ROOT);
     if let Some(docs) = docs {
         doc = match empty {
@@ -337,9 +338,10 @@ impl Printer<'_> {
                 .map(|l| text(format!("///{}", l.text)) + Doc::HardLine),
         );
         let no_wheres = Vec::new();
-        let attrs = allows
-            .iter()
-            .map(|a| ("allow", a.span, &a.lints, &no_wheres));
+        let attrs = allows.iter().map(|a| {
+            let attr = if a.warn { "warn" } else { "allow" };
+            (attr, a.span, &a.lints, &no_wheres)
+        });
         let attrs = attrs.chain(
             derives
                 .iter()
@@ -367,6 +369,25 @@ impl Printer<'_> {
             out = out + Doc::HardLine;
         }
         out + self.element(pos, true)
+    }
+
+    /// A module's `//!` doc comment, `doc`, then its `#![allow(..)]`s and
+    /// `#![warn(..)]`, `allows`, each on a line of its own: nothing if it
+    /// has neither.
+    fn with_inner_allows(&mut self, doc: Option<Doc>, allows: &[Allow]) -> Option<Doc> {
+        let mut out = doc;
+        for a in allows {
+            let attr = if a.warn { "warn" } else { "allow" };
+            let names: Vec<&str> = a.lints.iter().map(|l| l.name.as_str()).collect();
+            let line = self.element(a.span.start, true)
+                + text(format!("#![{attr}({})]", names.join(", ")))
+                + self.trailing(a.span.end);
+            out = Some(match out {
+                Some(d) => d + Doc::HardLine + line,
+                None => line,
+            });
+        }
+        out
     }
 
     /// The comment after something that ends at `end`, if it's on the same
@@ -530,7 +551,11 @@ impl Printer<'_> {
             doc = doc
                 + match item {
                     Item::Mod(i, m) => {
-                        let body = nest(Doc::HardLine + self.plain_items(program, i));
+                        let mut body = Doc::HardLine;
+                        if let Some(d) = self.with_inner_allows(None, &m.inner_allows) {
+                            body = body + d + Doc::HardLine + Doc::HardLine;
+                        }
+                        let body = nest(body + self.plain_items(program, i));
                         self.lead(None, &m.allows, m.span.start)
                             + vis(m.vis)
                             + "mod "
@@ -556,13 +581,16 @@ impl Printer<'_> {
         let head = lead + vis(m.vis) + "mod " + &m.name.name + " ";
         let open = self.find(m.name.span.end, &Tok::LBrace);
         let close = m.span.end - 1;
+        let mut body = self.trailing(open + 1);
+        let docs = m.doc.as_ref().map(inner_doc);
+        let docs = self.with_inner_allows(docs, &m.inner_allows);
         let (items, mut empty) = self.items(program, i);
-        if empty && m.doc.is_none() && !self.comments_before(close) {
+        if empty && docs.is_none() && !self.comments_before(close) {
             return head + "{}";
         }
-        let mut body = self.trailing(open + 1);
-        if let Some(d) = &m.doc {
-            body = body + Doc::HardLine + inner_doc(d);
+        let has_docs = docs.is_some();
+        if let Some(d) = docs {
+            body = body + Doc::HardLine + d;
             if !empty {
                 body = body + Doc::HardLine;
             }
@@ -570,7 +598,7 @@ impl Printer<'_> {
         if !empty {
             body = body + Doc::HardLine + items;
         }
-        empty = empty && m.doc.is_none();
+        empty = empty && !has_docs;
         for c in self.dangling(close, empty) {
             body = body + Doc::HardLine + c;
         }
@@ -1809,15 +1837,9 @@ fn use_tree(t: &UseTree) -> String {
     }
 }
 
-/// Format string `pieces` as written: `f"x = {p.x:?}"`.
+/// Format string `pieces` as written, but for spacing: `f"x = {p.x:?}"`.
+/// A hole's expression is on one line, as a format string is.
 fn format_literal(pieces: &[FmtPiece]) -> String {
-    fn place(e: &Expr) -> String {
-        match &e.kind {
-            ExprKind::Var(name, _) => name.clone(),
-            ExprKind::Field(x, f) => format!("{}.{}", place(x), f.name),
-            _ => unreachable!("a hole names a place"),
-        }
-    }
     let mut out = String::from("f\"");
     for p in pieces {
         match p {
@@ -1826,11 +1848,17 @@ fn format_literal(pieces: &[FmtPiece]) -> String {
                 let s = s[1..s.len() - 1].replace('{', "{{").replace('}', "}}");
                 out.push_str(&s);
             }
-            FmtPiece::Hole {
-                place: x, debug, ..
-            } => {
+            FmtPiece::Hole { value, debug, .. } => {
+                let doc = Printer::default().expr(value, 0, Ctx::default());
+                let one_line = match flat(&doc) {
+                    Some(doc) => render(&doc),
+                    None => render(&doc)
+                        .split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                };
                 out.push('{');
-                out.push_str(&place(x));
+                out.push_str(one_line.trim_end());
                 if *debug {
                     out.push_str(":?");
                 }

@@ -10,6 +10,16 @@ fn t(args: &[&str]) -> Output {
         .unwrap()
 }
 
+/// `t` with `args`, for a command that runs a program: on Windows, which
+/// the C backend isn't for yet, in the interpreter (docs/44-runs-and-holes.md).
+fn t_runs(args: &[&str]) -> Output {
+    let mut args = args.to_vec();
+    if cfg!(windows) {
+        args.push("--interp");
+    }
+    t(&args)
+}
+
 #[test]
 fn help_goes_to_stdout_and_succeeds() {
     for flag in ["--help", "-h"] {
@@ -70,7 +80,7 @@ fn bad_arguments_print_usage() {
 #[test]
 fn reads_the_files_of_modules() {
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/t");
-    let out = t(&[&format!("{dir}/module_files/main.t")]);
+    let out = t_runs(&[&format!("{dir}/module_files/main.t")]);
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(
         String::from_utf8(out.stdout).unwrap(),
@@ -92,14 +102,14 @@ fn reads_the_files_of_modules() {
 #[test]
 fn reads_packages_and_checks_libraries() {
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/t");
-    let out = t(&[&format!("{dir}/pkg_basic/main.t")]);
+    let out = t_runs(&[&format!("{dir}/pkg_basic/main.t")]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     assert_eq!(String::from_utf8(out.stdout).unwrap(), "2\n2\n2\n");
 
     let lib = format!("{dir}/pkg_basic/counter/lib.t");
     let out = t(&["check", &lib]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
-    let out = t(&[&lib]);
+    let out = t_runs(&[&lib]);
     assert_eq!(out.status.code(), Some(1));
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(stderr.contains("has no `main` to run"), "{stderr}");
@@ -110,7 +120,7 @@ fn reads_packages_and_checks_libraries() {
 #[test]
 fn test_runs_the_tests_and_says_how_they_went() {
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/t");
-    let out = t(&["test", &format!("{dir}/test_basic.t")]);
+    let out = t_runs(&["test", &format!("{dir}/test_basic.t")]);
     assert_eq!(out.status.code(), Some(1), "{out:?}");
     let stdout = String::from_utf8(out.stdout).unwrap();
     let head = "test doubles ... ok\n\
@@ -126,7 +136,7 @@ fn test_runs_the_tests_and_says_how_they_went() {
     assert!(!stdout.contains("\n4\n"), "{stdout}");
 
     // With a filter, only the tests whose names have it in them.
-    let out = t(&["test", &format!("{dir}/test_basic.t"), "parsing"]);
+    let out = t_runs(&["test", &format!("{dir}/test_basic.t"), "parsing"]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert_eq!(
@@ -135,7 +145,7 @@ fn test_runs_the_tests_and_says_how_they_went() {
     );
 
     // A library's, with no `main`.
-    let out = t(&["test", &format!("{dir}/test_library/lib.t")]);
+    let out = t_runs(&["test", &format!("{dir}/test_library/lib.t")]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
 
     // A program that doesn't check runs no tests.
@@ -168,11 +178,11 @@ fn deny_warnings_fails_on_warnings() {
             "{stderr}"
         );
     }
-    let out = t(&["test", "--deny-warnings", &warned]);
+    let out = t_runs(&["test", "--deny-warnings", &warned]);
     assert_eq!(out.status.code(), Some(1), "{out:?}");
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("test uses_helper ... ok"), "{stdout}");
-    let out = t(&["test", &warned]);
+    let out = t_runs(&["test", &warned]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
 
     // Nothing to deny: as without it.
@@ -250,8 +260,82 @@ fn tree_sitter_installs_for_helix() {
     assert!(!dir.join("parser").exists());
 }
 
-/// Runs the program `src`, as `t` does, with `input` for its stdin, or if
-/// `compiled`, as the program `t build` makes of it.
+/// `t` and `t test` compile through C, and `--interp` runs in the
+/// interpreter instead, which says the same; with no C compiler, they
+/// fail, saying so, and that `--interp` needs none.
+#[test]
+#[cfg_attr(windows, ignore = "the C backend is for Linux and macOS, for now")]
+fn compiled_by_default_or_interpreted() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/t");
+    let compiled = t(&["test", &format!("{dir}/test_basic.t")]);
+    let interpreted = t(&["test", "--interp", &format!("{dir}/test_basic.t")]);
+    assert_eq!(compiled.status.code(), Some(1), "{compiled:?}");
+    assert_eq!(interpreted.status.code(), Some(1), "{interpreted:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&compiled.stdout),
+        String::from_utf8_lossy(&interpreted.stdout)
+    );
+
+    let brew = concat!(env!("CARGO_MANIFEST_DIR"), "/examples/brew.t");
+    for args in [
+        vec![brew],
+        vec!["--interp", brew],
+        vec!["run", "--interp", brew],
+    ] {
+        let out = t(&args);
+        assert_eq!(out.status.code(), Some(0), "{args:?}: {out:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "3628800\n",
+            "{args:?}"
+        );
+    }
+
+    let tests = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/t/test_basic.t");
+    for args in [vec![brew], vec!["test", tests]] {
+        let out = Command::new(env!("CARGO_BIN_EXE_t"))
+            .args(&args)
+            .env("CC", "t-lang-no-such-cc")
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1), "{out:?}");
+        let stderr = String::from_utf8(out.stderr).unwrap();
+        assert!(
+            stderr.contains("there's no C compiler `t-lang-no-such-cc`")
+                && stderr.contains("`--interp` runs it in the interpreter"),
+            "{stderr}"
+        );
+    }
+    let out = Command::new(env!("CARGO_BIN_EXE_t"))
+        .args(["--interp", brew])
+        .env("CC", "t-lang-no-such-cc")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+}
+
+/// On Windows, which the C backend isn't for yet, `t` and `t test` fail,
+/// saying so, and that `--interp` runs the program in the interpreter.
+#[cfg(windows)]
+#[test]
+fn compiling_needs_linux_or_macos() {
+    let brew = concat!(env!("CARGO_MANIFEST_DIR"), "/examples/brew.t");
+    let tests = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/t/test_basic.t");
+    for args in [vec![brew], vec!["test", tests]] {
+        let out = t(&args);
+        assert_eq!(out.status.code(), Some(1), "{out:?}");
+        let stderr = String::from_utf8(out.stderr).unwrap();
+        assert!(
+            stderr.contains("for Linux and macOS") && stderr.contains("`--interp`"),
+            "{stderr}"
+        );
+    }
+    let out = t(&["--interp", brew]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+}
+
+/// Runs the program `src`, as `t --interp` does, with `input` for its
+/// stdin, or if `compiled`, as the program `t build` makes of it.
 fn run_with_input(name: &str, src: &str, input: &[u8], compiled: bool) -> Output {
     use std::io::Write;
     let dir = std::env::temp_dir().join(format!("t-cli-{name}-{compiled}-{}", std::process::id()));
@@ -265,7 +349,7 @@ fn run_with_input(name: &str, src: &str, input: &[u8], compiled: bool) -> Output
         assert!(built.status.success(), "{built:?}");
         command = Command::new(exe);
     } else {
-        command.arg(&path);
+        command.arg("--interp").arg(&path);
     }
     let mut child = command
         .stdin(std::process::Stdio::piped())
@@ -328,18 +412,21 @@ fn input_that_isnt_text_fails_the_program() {
 }
 
 /// A small write succeeds into the interpreter's buffer, then fails when
-/// the buffer is flushed. The command must still report that failure.
+/// the buffer is flushed. The command must still report that failure: as
+/// a failure, 1, or, after a panic, as the panic, 101; interpreted, run
+/// by `t` compiled, and built, the same.
 #[cfg(unix)]
 #[test]
 fn buffered_output_errors_fail_the_command() {
     use std::os::fd::OwnedFd;
     use std::os::unix::net::UnixStream;
 
-    for (file, message) in [
-        ("examples/brew.t", "runtime error: cannot flush stdout:"),
+    for (file, message, code) in [
+        ("examples/brew.t", "runtime error: cannot flush stdout:", 1),
         (
             "tests/t/panic_message.t",
             "runtime error: panicked: the end",
+            101,
         ),
     ] {
         let (writer, reader) = UnixStream::pair().unwrap();
@@ -347,6 +434,12 @@ fn buffered_output_errors_fail_the_command() {
         let writer: OwnedFd = writer.into();
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(file);
         let interpreted = Command::new(env!("CARGO_BIN_EXE_t"))
+            .arg("--interp")
+            .arg(&path)
+            .stdout(std::process::Stdio::from(writer.try_clone().unwrap()))
+            .output()
+            .unwrap();
+        let run = Command::new(env!("CARGO_BIN_EXE_t"))
             .arg(&path)
             .stdout(std::process::Stdio::from(writer.try_clone().unwrap()))
             .output()
@@ -360,13 +453,17 @@ fn buffered_output_errors_fail_the_command() {
             .output()
             .unwrap();
         std::fs::remove_file(&exe).unwrap();
-        for out in [&interpreted, &compiled] {
-            assert_eq!(out.status.code(), Some(1), "{out:?}");
+        for out in [&interpreted, &run, &compiled] {
+            assert_eq!(out.status.code(), Some(code), "{out:?}");
             let stderr = String::from_utf8(out.stderr.clone()).unwrap();
             assert!(stderr.contains(message), "{stderr}");
         }
         assert_eq!(
             String::from_utf8_lossy(&interpreted.stderr),
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&run.stderr),
             String::from_utf8_lossy(&compiled.stderr)
         );
     }
@@ -444,6 +541,6 @@ fn build_compiles_programs() {
     let out = t(&["build", lib.to_str().unwrap()]);
     assert_eq!(out.status.code(), Some(1));
     let stderr = String::from_utf8(out.stderr).unwrap();
-    assert!(stderr.contains("has no `main` to build"), "{stderr}");
+    assert!(stderr.contains("has no `main` to run or build"), "{stderr}");
     std::fs::remove_dir_all(&dir).unwrap();
 }

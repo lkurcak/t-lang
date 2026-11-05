@@ -4,4 +4,4 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&f"x = {}")?;
     Result::Ok(())
 }
-// error: a hole in a format string names what goes in it, as in `{x}`
+// error: a hole in a format string says what goes in it, as in `{x}`

@@ -109,8 +109,8 @@ macro_rules! structs {
 structs! {
     DocComment { lines, inner };
     DocLine { text, span };
-    Allow { span, lints };
-    ModDecl { doc, allows, span, name, parent, vis, in_file };
+    Allow { span, lints, warn };
+    ModDecl { doc, allows, inner_allows, span, name, parent, vis, in_file };
     UseDecl { span, module, vis, tree };
     UseTree { path, kind, span };
     BoundItem { name, assoc, sig, effects, span };
@@ -198,9 +198,9 @@ impl Describe for FmtPiece {
     fn describe(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Text(s) => f.debug_tuple("Text").field(&Shape(s)).finish(),
-            Self::Hole { place, debug, span } => f
+            Self::Hole { value, debug, span } => f
                 .debug_struct("Hole")
-                .field("place", &Shape(place))
+                .field("value", &Shape(value))
                 .field("debug", &Shape(debug))
                 .field("span", &Shape(span))
                 .finish(),
