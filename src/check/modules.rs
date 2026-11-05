@@ -2696,11 +2696,7 @@ impl Rewrite<'_> {
                     for (name, n) in missed {
                         let fields = (0..n).map(|_| self.wild(at)).collect();
                         let kind = PatternKind::Variant(
-                            Ident {
-                                name: ty.name.clone(),
-                                span: empty,
-                                id: self.id(),
-                            },
+                            self.same_type(ty, empty),
                             Vec::new(),
                             Ident {
                                 name,
@@ -2723,16 +2719,7 @@ impl Rewrite<'_> {
                 }
             }
             PatternKind::Struct(ty, ..) if alts.len() == 1 && self.refutable(p) => {
-                kind = PatternKind::Struct(
-                    Ident {
-                        name: ty.name.clone(),
-                        span: empty,
-                        id: self.id(),
-                    },
-                    Vec::new(),
-                    Vec::new(),
-                    true,
-                );
+                kind = PatternKind::Struct(self.same_type(ty, empty), Vec::new(), Vec::new(), true);
             }
             PatternKind::Array(pats) if alts.len() == 1 && self.refutable(p) => {
                 kind = PatternKind::Array(pats.iter().map(|_| self.wild(at)).collect());
@@ -2743,6 +2730,21 @@ impl Rewrite<'_> {
             kind,
             span: at,
             id: self.id(),
+        }
+    }
+
+    /// Type name `ty` again, at `at`, as a node of its own: naming what
+    /// `ty` was resolved to, if it was (as a variant written by itself
+    /// is, by a path that needn't be in scope).
+    fn same_type(&mut self, ty: &Ident, at: Span) -> Ident {
+        let id = self.id();
+        if let Some(&item) = self.r.m.paths.get(&ty.id) {
+            self.r.m.paths.insert(id, item);
+        }
+        Ident {
+            name: ty.name.clone(),
+            span: at,
+            id,
         }
     }
 
