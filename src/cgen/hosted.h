@@ -16,7 +16,7 @@ void t_platform_write(uint8_t byte) {
 
 _Noreturn void t_platform_halt(void) {
     fflush(stderr);
-    _Exit(1);
+    _Exit(t_panicking ? 101 : 1);
 }
 
 /* `malloc` aligns for any type, which is all a T type needs: `align` is

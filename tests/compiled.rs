@@ -195,8 +195,17 @@ fn differential(p: &Program, dir: &Path) -> Outcome {
     };
     let name = p.name.replace(['/', '.', ':'], "_");
     let exe = dir.join(&name);
-    let built = t_lang::cgen::compile(&c, &exe, t_lang::Target::Hosted);
-    if let Some(why) = same(&c, built, &exe, &input, &run, &want_err, &dir.join(&name)) {
+    let built = t_lang::cgen::compile(&c, &exe, t_lang::Target::Hosted).map_err(String::from);
+    if let Some(why) = same(
+        &c,
+        built,
+        &exe,
+        &input,
+        &run,
+        &want_err,
+        &dir.join(&name),
+        false,
+    ) {
         return Outcome::Differs(why);
     }
     // Again for the freestanding target, if it needs no std.
@@ -210,7 +219,16 @@ fn differential(p: &Program, dir: &Path) -> Outcome {
     let name = format!("{name}_freestanding");
     let exe = dir.join(&name);
     let built = platform::link(&c, &exe);
-    match same(&c, built, &exe, &input, &run, &want_err, &dir.join(&name)) {
+    match same(
+        &c,
+        built,
+        &exe,
+        &input,
+        &run,
+        &want_err,
+        &dir.join(&name),
+        true,
+    ) {
         Some(why) => Outcome::Differs(format!("freestanding: {why}")),
         None => Outcome::Same(true),
     }
@@ -219,7 +237,10 @@ fn differential(p: &Program, dir: &Path) -> Outcome {
 /// Runs `exe`, which was built (or not, `built` says) from C program `c`,
 /// with `input`: what's different from what the interpreter did, `run`,
 /// its errors being `want_err`, if anything is. The C is kept beside
-/// `name` if so.
+/// `name` if so. A panic ends a hosted program with 101, as the
+/// interpreter; on the `freestanding` target, the platform says how it
+/// halts, and this one's ends with 1.
+#[allow(clippy::too_many_arguments)]
 fn same(
     c: &str,
     built: Result<(), String>,
@@ -228,6 +249,7 @@ fn same(
     run: &t_lang::RunResult,
     want_err: &[String],
     name: &Path,
+    freestanding: bool,
 ) -> Option<String> {
     let c_file = name.with_extension("c");
     if let Err(e) = built {
@@ -259,7 +281,11 @@ fn same(
             "errors\n  interpreted: {want_err:?}\n  compiled:    {got_err:?}"
         ));
     }
-    let want_code = if run.failed() { 1 } else { 0 };
+    let want_code = match run.failed() {
+        true if run.panicked && !freestanding => 101,
+        true => 1,
+        false => 0,
+    };
     if out.status.code() != Some(want_code) {
         diffs.push(format!(
             "ended with {} where the interpreter's {want_code}",
@@ -321,4 +347,78 @@ fn compiled_runs_as_interpreted() {
         freestanding > 30,
         "only {freestanding} programs ran freestanding"
     );
+}
+
+/// The tests of each program of `tests/t` and `examples/` that has any,
+/// run compiled, each as a program of its own, as `t test` runs them, go
+/// as they do in the interpreter: each passes or fails the same, saying
+/// the same (docs/44-native.md). Left out are those that fail where only
+/// the interpreter can say, as for `compiled_runs_as_interpreted`.
+#[test]
+#[cfg_attr(windows, ignore = "the C backend is for Linux and macOS, for now")]
+fn compiled_tests_run_as_interpreted() {
+    let paths: Vec<PathBuf> = (files().into_iter())
+        .filter(|p| {
+            let files = expect::files_of(p);
+            files.iter().any(|(_, src)| src.contains("#[test"))
+        })
+        .collect();
+    let outcomes = on_all_cores(&paths, |p| {
+        let files = expect::files_of(p);
+        let (root, src) = &files[0];
+        let read = |p: &Path| match files.iter().find(|(f, _)| f == p) {
+            Some((_, text)) => Ok(text.clone()),
+            None => t_lang::no_files(p),
+        };
+        let interpreted = t_lang::test_files(root, src, &read, None);
+        let Ok(tests) = &interpreted.result else {
+            return Outcome::Skipped("doesn't check");
+        };
+        let only = [
+            "broke its obligation",
+            "out of memory for",
+            "stack overflow",
+        ];
+        let said = |run: &t_lang::TestRun, t: &t_lang::TestOutcome| {
+            (
+                t.name.clone(),
+                t.failure.as_ref().map(|f| f.render_in(&run.sources)),
+            )
+        };
+        let want: Vec<_> = tests.iter().map(|t| said(&interpreted, t)).collect();
+        if (want.iter()).any(|(_, f)| {
+            f.as_ref()
+                .is_some_and(|f| only.iter().any(|m| f.contains(m)))
+        }) {
+            return Outcome::Skipped("a test fails where only the interpreter can say");
+        }
+        let compiled = match t_lang::test_native(root, src, &read, None) {
+            Ok(run) => run,
+            Err(e) => return Outcome::Differs(format!("didn't compile: {e}")),
+        };
+        let got: Vec<_> = match &compiled.result {
+            Ok(tests) => tests.iter().map(|t| said(&compiled, t)).collect(),
+            Err(e) => return Outcome::Differs(format!("didn't build: {}", e.message)),
+        };
+        match got == want {
+            true => Outcome::Same(false),
+            false => Outcome::Differs(format!("interpreted: {want:#?}\ncompiled: {got:#?}")),
+        }
+    });
+    let mut failures = Vec::new();
+    let mut same = 0;
+    for (p, o) in paths.iter().zip(outcomes) {
+        match o {
+            Outcome::Same(_) => same += 1,
+            Outcome::Skipped(_) => {}
+            Outcome::Differs(why) => failures.push(format!("{}: {why}", p.display())),
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} programs' tests went differently compiled:\n\n{}\n",
+        failures.len(),
+        failures.join("\n\n")
+    );
+    assert!(same >= 8, "only {same} programs' tests ran both ways");
 }

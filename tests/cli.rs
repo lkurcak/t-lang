@@ -250,8 +250,61 @@ fn tree_sitter_installs_for_helix() {
     assert!(!dir.join("parser").exists());
 }
 
-/// Runs the program `src`, as `t` does, with `input` for its stdin, or if
-/// `compiled`, as the program `t build` makes of it.
+/// `t` and `t test` compile through C, and `--interp` runs in the
+/// interpreter instead, which says the same; with no C compiler, they
+/// fail, saying so, and that `--interp` needs none.
+#[test]
+fn compiled_by_default_or_interpreted() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/t");
+    let compiled = t(&["test", &format!("{dir}/test_basic.t")]);
+    let interpreted = t(&["test", "--interp", &format!("{dir}/test_basic.t")]);
+    assert_eq!(compiled.status.code(), Some(1), "{compiled:?}");
+    assert_eq!(interpreted.status.code(), Some(1), "{interpreted:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&compiled.stdout),
+        String::from_utf8_lossy(&interpreted.stdout)
+    );
+
+    let brew = concat!(env!("CARGO_MANIFEST_DIR"), "/examples/brew.t");
+    for args in [
+        vec![brew],
+        vec!["--interp", brew],
+        vec!["run", "--interp", brew],
+    ] {
+        let out = t(&args);
+        assert_eq!(out.status.code(), Some(0), "{args:?}: {out:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "3628800\n",
+            "{args:?}"
+        );
+    }
+
+    let tests = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/t/test_basic.t");
+    for args in [vec![brew], vec!["test", tests]] {
+        let out = Command::new(env!("CARGO_BIN_EXE_t"))
+            .args(&args)
+            .env("CC", "t-lang-no-such-cc")
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1), "{out:?}");
+        let stderr = String::from_utf8(out.stderr).unwrap();
+        assert!(
+            stderr.contains("there's no C compiler `t-lang-no-such-cc`")
+                && stderr.contains("`--interp` runs it in the interpreter"),
+            "{stderr}"
+        );
+    }
+    let out = Command::new(env!("CARGO_BIN_EXE_t"))
+        .args(["--interp", brew])
+        .env("CC", "t-lang-no-such-cc")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+}
+
+/// Runs the program `src`, as `t --interp` does, with `input` for its
+/// stdin, or if `compiled`, as the program `t build` makes of it.
 fn run_with_input(name: &str, src: &str, input: &[u8], compiled: bool) -> Output {
     use std::io::Write;
     let dir = std::env::temp_dir().join(format!("t-cli-{name}-{compiled}-{}", std::process::id()));
@@ -265,7 +318,7 @@ fn run_with_input(name: &str, src: &str, input: &[u8], compiled: bool) -> Output
         assert!(built.status.success(), "{built:?}");
         command = Command::new(exe);
     } else {
-        command.arg(&path);
+        command.arg("--interp").arg(&path);
     }
     let mut child = command
         .stdin(std::process::Stdio::piped())
@@ -328,18 +381,21 @@ fn input_that_isnt_text_fails_the_program() {
 }
 
 /// A small write succeeds into the interpreter's buffer, then fails when
-/// the buffer is flushed. The command must still report that failure.
+/// the buffer is flushed. The command must still report that failure: as
+/// a failure, 1, or, after a panic, as the panic, 101; interpreted, run
+/// by `t` compiled, and built, the same.
 #[cfg(unix)]
 #[test]
 fn buffered_output_errors_fail_the_command() {
     use std::os::fd::OwnedFd;
     use std::os::unix::net::UnixStream;
 
-    for (file, message) in [
-        ("examples/brew.t", "runtime error: cannot flush stdout:"),
+    for (file, message, code) in [
+        ("examples/brew.t", "runtime error: cannot flush stdout:", 1),
         (
             "tests/t/panic_message.t",
             "runtime error: panicked: the end",
+            101,
         ),
     ] {
         let (writer, reader) = UnixStream::pair().unwrap();
@@ -347,6 +403,12 @@ fn buffered_output_errors_fail_the_command() {
         let writer: OwnedFd = writer.into();
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(file);
         let interpreted = Command::new(env!("CARGO_BIN_EXE_t"))
+            .arg("--interp")
+            .arg(&path)
+            .stdout(std::process::Stdio::from(writer.try_clone().unwrap()))
+            .output()
+            .unwrap();
+        let run = Command::new(env!("CARGO_BIN_EXE_t"))
             .arg(&path)
             .stdout(std::process::Stdio::from(writer.try_clone().unwrap()))
             .output()
@@ -360,13 +422,17 @@ fn buffered_output_errors_fail_the_command() {
             .output()
             .unwrap();
         std::fs::remove_file(&exe).unwrap();
-        for out in [&interpreted, &compiled] {
-            assert_eq!(out.status.code(), Some(1), "{out:?}");
+        for out in [&interpreted, &run, &compiled] {
+            assert_eq!(out.status.code(), Some(code), "{out:?}");
             let stderr = String::from_utf8(out.stderr.clone()).unwrap();
             assert!(stderr.contains(message), "{stderr}");
         }
         assert_eq!(
             String::from_utf8_lossy(&interpreted.stderr),
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&run.stderr),
             String::from_utf8_lossy(&compiled.stderr)
         );
     }
@@ -444,6 +510,6 @@ fn build_compiles_programs() {
     let out = t(&["build", lib.to_str().unwrap()]);
     assert_eq!(out.status.code(), Some(1));
     let stderr = String::from_utf8(out.stderr).unwrap();
-    assert!(stderr.contains("has no `main` to build"), "{stderr}");
+    assert!(stderr.contains("has no `main` to run or build"), "{stderr}");
     std::fs::remove_dir_all(&dir).unwrap();
 }
