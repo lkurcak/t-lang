@@ -285,7 +285,7 @@ can't be `str`.
 |---|---|---|
 | a `format!`-like way to write text with values in it | T has no macros, and string templates would be syntax with typing rules of their own; `put` and `?` cover it | — |
 | width, padding, hexadecimal | wrapper types (`Hex(n)`, `Pad(..)`) implementing `Display`, not flags in a `Formatter` | — |
-| `Debug` and `#[derive(Debug)]` | a second trait, and a derive that writes code, with strings escaped | — |
+| `Debug` and `#[derive(Debug)]` | a second trait, and a derive that writes code, with strings escaped | 43.1 |
 | `Display` for `Option` and `Result` | as in Rust: how to show one depends on the program | — |
 | printing to the terminal through a sink | std I/O | 19 |
 

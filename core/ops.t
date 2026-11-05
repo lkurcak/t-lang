@@ -1,5 +1,7 @@
 //! What operators are written with.
 
+use crate::fmt::Debug;
+
 /// What can be called, taking it: `F: FnOnce(i64) -> i64` says a value
 /// of type `F` can be called once with an `i64`, giving an `i64`.
 /// Functions and closures have it, and nothing else can (see
@@ -19,7 +21,13 @@ export trait Fn: FnMut {}
 /// `start..end`: from `start` up to, not including, `end`. It's empty if
 /// `start` isn't before `end`. Its fields are private, so only `a..b` and
 /// `Range::new` make one.
-#[derive(Discard where T: Discard, Eq where T: Eq, Send where T: Send, Sync where T: Sync)]
+#[derive(
+    Discard where T: Discard,
+    Debug where T: Debug,
+    Eq where T: Eq,
+    Send where T: Send,
+    Sync where T: Sync,
+)]
 export struct Range<T> { start: T, end: T }
 
 impl<T> Range<T> {
@@ -57,6 +65,7 @@ impl<T: Int> Iterator for Range<T> {
 #[derive(
     Discard where B: Discard, C: Discard,
     Copy where B: Copy, C: Copy,
+    Debug where B: Debug, C: Debug,
     Eq where B: Eq, C: Eq,
     Send where B: Send, C: Send,
     Sync where B: Sync, C: Sync,

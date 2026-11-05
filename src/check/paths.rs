@@ -25,7 +25,12 @@ impl Checker {
         id: NodeId,
     ) -> Result<Option<(Type, Res)>, Error> {
         // Notes are for the name, not any `::<..>` after it.
-        let at = Span::new(span.start, span.start + name.len());
+        // A format string names the calls it means where its holes are, and
+        // where it is (`Rewrite::format`).
+        let at = match self.modules.formats.contains(&span) {
+            true => span,
+            false => Span::new(span.start, span.start + name.len()),
+        };
         // A path, `a::f`, names what resolving it said.
         let binding = match name.contains("::") {
             true => match self.modules.paths.get(&id) {
@@ -447,6 +452,9 @@ impl Checker {
                 let what = format!("`Self` for this use of `{tr}::{}`", name.name);
                 let hint = "annotate the type of its argument".to_string();
                 let s = self.fresh(name.span, what, hint);
+                if let Type::Var(v) = s {
+                    self.vars[v as usize].unsized_ok = true;
+                }
                 self.lookup_method(&s, Some(&tr), name, &[], "trait")?
             }
             false => {

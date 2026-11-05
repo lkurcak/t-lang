@@ -56,6 +56,12 @@ pub const EQ: &str = "core::cmp::Eq";
 /// `core::cmp::Ord`, behind `<`, `<=`, `>` and `>=`. It isn't intrinsic:
 /// core implements it, for the integers too.
 pub const ORD: &str = "core::cmp::Ord";
+/// `core::fmt::Debug`: a value written as text for whoever debugs the
+/// program. Not built in: core implements it; `#[derive(Debug)]` has no
+/// methods, and monomorphisation writes its `fmt` as glue (`mono::glue`).
+pub const DEBUG: &str = "core::fmt::Debug";
+/// `core::fmt::Write`, where `Debug::fmt` writes.
+pub const WRITE: &str = "core::fmt::Write";
 /// `core::num::Int`: only the integer types implement it, and it says the
 /// arithmetic operators work on a type (see docs/11-integers.md).
 pub const INT: &str = "core::num::Int";
@@ -81,7 +87,7 @@ pub const BUILTIN_TRAITS: &[&str] = &[
 /// The traits `#[derive(..)]` can write an impl of. `Discard`, `Copy`,
 /// `Send` and `Sync` can only be derived, never written, so whether a
 /// type has one follows from its fields alone (the *markers*, `MARKERS`).
-pub const DERIVABLE: &[&str] = &[COPY, DISCARD, EQ, SEND, SYNC];
+pub const DERIVABLE: &[&str] = &[COPY, DEBUG, DISCARD, EQ, SEND, SYNC];
 
 /// The traits that are only ever derived or built in: what a proof of one
 /// needs is only more of them, of the parts of the type (lemma D1 of

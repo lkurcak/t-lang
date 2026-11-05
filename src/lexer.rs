@@ -16,6 +16,9 @@ pub enum Tok {
     Str(String),
     /// `b"hi"`: a byte string literal, its escapes worked out.
     ByteStr(Vec<u8>),
+    /// `f"x = {x}"`: a format string, its text's escapes worked out, and
+    /// its holes read.
+    FStr(Vec<FPiece>),
     Ident(String),
     // keywords
     Fn,
@@ -119,6 +122,7 @@ impl Tok {
             Tok::Byte(b) => return format!("`{}`", byte_literal(*b)),
             Tok::Char(c) => return format!("`{}`", char_literal(*c)),
             Tok::Str(_) => return "a string literal".to_string(),
+            Tok::FStr(_) => return "a format string".to_string(),
             Tok::ByteStr(_) => return "a byte string literal".to_string(),
             Tok::Ident(name) => return format!("`{name}`"),
             Tok::Doc(_) | Tok::InnerDoc(_) => return "a doc comment".to_string(),
@@ -235,6 +239,132 @@ impl OpEq {
     }
 }
 
+/// A piece of a format string, `f".."`: text, or a hole.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FPiece {
+    /// Text, its escapes and `{{`/`}}` worked out.
+    Text(String),
+    /// `{p.x}` or `{p.x:?}`: the names, each with its span; whether it's
+    /// written by `Debug`; and its span, the braces included.
+    Hole(Vec<(String, Span)>, bool, Span),
+}
+
+/// The format string starting with the `f` at `at`: its pieces, and where
+/// it ends, after the closing quote (lemma F1 of docs/43.1-formatting.md).
+/// Its text is a string literal's, with `{{` and `}}` for braces; a hole
+/// is a name, maybe with fields, `{p.x}`, and `:?` after it for `Debug`.
+fn fstring(src: &str, at: usize) -> Result<(Vec<FPiece>, usize), Error> {
+    let bytes = src.as_bytes();
+    let mut pieces = Vec::new();
+    let mut text = Vec::new();
+    let mut i = at + 2;
+    let flush = |text: &mut Vec<u8>, pieces: &mut Vec<FPiece>| {
+        if !text.is_empty() {
+            let t = String::from_utf8(std::mem::take(text)).expect("UTF-8");
+            pieces.push(FPiece::Text(t));
+        }
+    };
+    loop {
+        let Some(c) = src[i..].chars().next() else {
+            return Err(Error::syntax(
+                Span::new(at, at + 2),
+                "this format string never ends",
+            ));
+        };
+        match c {
+            '"' => {
+                i += 1;
+                break;
+            }
+            '\\' => i = escape(src, i, Quote::Str, &mut text)?,
+            '{' if bytes.get(i + 1) == Some(&b'{') => {
+                text.push(b'{');
+                i += 2;
+            }
+            '}' if bytes.get(i + 1) == Some(&b'}') => {
+                text.push(b'}');
+                i += 2;
+            }
+            '}' => {
+                return Err(Error::syntax(
+                    Span::new(i, i + 1),
+                    "a `}` in a format string closes a hole; write `}}` for the character",
+                ));
+            }
+            '{' => {
+                flush(&mut text, &mut pieces);
+                let (hole, end) = fstring_hole(src, i)?;
+                pieces.push(hole);
+                i = end;
+            }
+            c => {
+                let mut buf = [0; 4];
+                text.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+                i += c.len_utf8();
+            }
+        }
+    }
+    flush(&mut text, &mut pieces);
+    Ok((pieces, i))
+}
+
+/// The hole of a format string starting with the `{` at `at`, and where
+/// it ends, after its `}`.
+fn fstring_hole(src: &str, at: usize) -> Result<(FPiece, usize), Error> {
+    let bytes = src.as_bytes();
+    let mut names = Vec::new();
+    let mut i = at + 1;
+    let what = "a hole in a format string holds a name, or a field of one, as in `{x}` or \
+                `{p.x}`; work out anything else in a `let` first";
+    loop {
+        let start = i;
+        while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+            i += 1;
+        }
+        let name = &src[start..i];
+        if name.is_empty() || name.as_bytes()[0].is_ascii_digit() {
+            if names.is_empty() && bytes.get(i) == Some(&b'}') {
+                return Err(Error::syntax(
+                    Span::new(at, i + 1),
+                    "a hole in a format string names what goes in it, as in `{x}`",
+                ));
+            }
+            let end = src[i..].chars().next().map_or(i, |c| i + c.len_utf8());
+            return Err(Error::syntax(Span::new(start, end.max(start + 1)), what));
+        }
+        names.push((name.to_string(), Span::new(start, i)));
+        if bytes.get(i) != Some(&b'.') {
+            break;
+        }
+        i += 1;
+    }
+    let debug = match bytes.get(i) {
+        Some(b':') if src[i..].starts_with(":?}") => {
+            i += 2;
+            true
+        }
+        Some(b':') => {
+            let end = src[i..].find(['}', '"']).map_or(i + 1, |n| i + n);
+            return Err(Error::syntax(
+                Span::new(i, end),
+                "a hole in a format string can say `:?`, for `Debug`, and nothing else yet",
+            ));
+        }
+        _ => false,
+    };
+    match bytes.get(i) {
+        Some(b'}') => Ok((FPiece::Hole(names, debug, Span::new(at, i + 1)), i + 1)),
+        Some(b'"') | None => Err(Error::syntax(
+            Span::new(at, at + 1),
+            "this hole is never closed; write `{{` for the character",
+        )),
+        Some(_) => {
+            let c = src[i..].chars().next().expect("a character");
+            Err(Error::syntax(Span::new(i, i + c.len_utf8()), what))
+        }
+    }
+}
+
 /// Which kind of quoted literal `quoted` reads.
 #[derive(Clone, Copy, PartialEq)]
 enum Quote {
@@ -317,86 +447,7 @@ fn quoted(src: &str, at: usize, kind: Quote) -> Result<(Vec<u8>, usize), Error> 
             i += c.len_utf8();
             continue;
         }
-        let esc = i;
-        let Some(e) = src[i + 1..].chars().next() else {
-            i += 1;
-            continue;
-        };
-        i += 1 + e.len_utf8();
-        let simple = match e {
-            'n' => Some(b'\n'),
-            'r' => Some(b'\r'),
-            't' => Some(b'\t'),
-            '\\' => Some(b'\\'),
-            '0' => Some(0),
-            '\'' => Some(b'\''),
-            '"' => Some(b'"'),
-            _ => None,
-        };
-        if let Some(b) = simple {
-            out.push(b);
-            continue;
-        }
-        match (e, kind.bytes()) {
-            ('x', true) => {
-                let hex = src
-                    .get(i..i + 2)
-                    .filter(|h| h.bytes().all(|b| b.is_ascii_hexdigit()));
-                let Some(hex) = hex else {
-                    return Err(Error::syntax(
-                        Span::new(esc, i),
-                        "`\\x` takes two hexadecimal digits, as in `\\x7F`",
-                    ));
-                };
-                out.push(u8::from_str_radix(hex, 16).expect("hex digits"));
-                i += 2;
-            }
-            ('x', false) => {
-                return Err(Error::syntax(
-                    Span::new(esc, i),
-                    "`\\x` escapes are for byte literals; write a character as `\\u{..}`",
-                ));
-            }
-            ('u', true) => {
-                return Err(Error::syntax(
-                    Span::new(esc, i),
-                    "`\\u{..}` escapes are for characters; write a byte as `\\x..`",
-                ));
-            }
-            ('u', false) => {
-                let close = src[i..].find('}').map(|n| i + n);
-                let digits = match close {
-                    Some(close) if src[i..].starts_with('{') => &src[i + 1..close],
-                    _ => "",
-                };
-                if digits.is_empty()
-                    || digits.len() > 6
-                    || !digits.bytes().all(|b| b.is_ascii_hexdigit())
-                {
-                    return Err(Error::syntax(
-                        Span::new(esc, i),
-                        "`\\u` takes one to six hexadecimal digits in braces, as in `\\u{20AC}`",
-                    ));
-                }
-                let end = close.expect("found") + 1;
-                let n = u32::from_str_radix(digits, 16).expect("hex digits");
-                let Some(ch) = char::from_u32(n) else {
-                    return Err(Error::syntax(
-                        Span::new(esc, end),
-                        format!("`\\u{{{digits}}}` isn't a Unicode scalar value"),
-                    ));
-                };
-                let mut buf = [0; 4];
-                out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
-                i = end;
-            }
-            _ => {
-                return Err(Error::syntax(
-                    Span::new(esc, i),
-                    format!("unknown escape `\\{e}`"),
-                ));
-            }
-        }
+        i = escape(src, i, kind, &mut out)?;
     }
     if kind.one() && count != 1 {
         return Err(Error::syntax(
@@ -405,6 +456,92 @@ fn quoted(src: &str, at: usize, kind: Quote) -> Result<(Vec<u8>, usize), Error> 
         ));
     }
     Ok((out, i))
+}
+
+/// The escape at `at`, a `\`, in a literal of kind `kind`: what it means
+/// is pushed to `out`, and what's given is where it ends.
+fn escape(src: &str, at: usize, kind: Quote, out: &mut Vec<u8>) -> Result<usize, Error> {
+    let mut i = at;
+    let esc = i;
+    let Some(e) = src[i + 1..].chars().next() else {
+        return Ok(i + 1);
+    };
+    i += 1 + e.len_utf8();
+    let simple = match e {
+        'n' => Some(b'\n'),
+        'r' => Some(b'\r'),
+        't' => Some(b'\t'),
+        '\\' => Some(b'\\'),
+        '0' => Some(0),
+        '\'' => Some(b'\''),
+        '"' => Some(b'"'),
+        _ => None,
+    };
+    if let Some(b) = simple {
+        out.push(b);
+        return Ok(i);
+    }
+    match (e, kind.bytes()) {
+        ('x', true) => {
+            let hex = src
+                .get(i..i + 2)
+                .filter(|h| h.bytes().all(|b| b.is_ascii_hexdigit()));
+            let Some(hex) = hex else {
+                return Err(Error::syntax(
+                    Span::new(esc, i),
+                    "`\\x` takes two hexadecimal digits, as in `\\x7F`",
+                ));
+            };
+            out.push(u8::from_str_radix(hex, 16).expect("hex digits"));
+            i += 2;
+        }
+        ('x', false) => {
+            return Err(Error::syntax(
+                Span::new(esc, i),
+                "`\\x` escapes are for byte literals; write a character as `\\u{..}`",
+            ));
+        }
+        ('u', true) => {
+            return Err(Error::syntax(
+                Span::new(esc, i),
+                "`\\u{..}` escapes are for characters; write a byte as `\\x..`",
+            ));
+        }
+        ('u', false) => {
+            let close = src[i..].find('}').map(|n| i + n);
+            let digits = match close {
+                Some(close) if src[i..].starts_with('{') => &src[i + 1..close],
+                _ => "",
+            };
+            if digits.is_empty()
+                || digits.len() > 6
+                || !digits.bytes().all(|b| b.is_ascii_hexdigit())
+            {
+                return Err(Error::syntax(
+                    Span::new(esc, i),
+                    "`\\u` takes one to six hexadecimal digits in braces, as in `\\u{20AC}`",
+                ));
+            }
+            let end = close.expect("found") + 1;
+            let n = u32::from_str_radix(digits, 16).expect("hex digits");
+            let Some(ch) = char::from_u32(n) else {
+                return Err(Error::syntax(
+                    Span::new(esc, end),
+                    format!("`\\u{{{digits}}}` isn't a Unicode scalar value"),
+                ));
+            };
+            let mut buf = [0; 4];
+            out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
+            i = end;
+        }
+        _ => {
+            return Err(Error::syntax(
+                Span::new(esc, i),
+                format!("unknown escape `\\{e}`"),
+            ));
+        }
+    }
+    Ok(i)
 }
 
 /// Character `c` as a literal: `'a'`, `'\n'`, `'\u{e000}'`.
@@ -459,6 +596,25 @@ fn escape_byte(b: u8, quote: u8) -> String {
 pub struct Token {
     pub tok: Tok,
     pub span: Span,
+}
+
+impl Token {
+    /// Moves it, and the holes of a format string, `by` bytes on: where
+    /// it is in the sources, once it's lexed on its own.
+    pub fn shift(&mut self, by: usize) {
+        let moved = |s: Span| Span::new(s.start + by, s.end + by);
+        self.span = moved(self.span);
+        if let Tok::FStr(pieces) = &mut self.tok {
+            for p in pieces {
+                if let FPiece::Hole(names, _, span) = p {
+                    *span = moved(*span);
+                    for (_, s) in names {
+                        *s = moved(*s);
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// A `// ...` comment. The parser never sees these; `t fmt` keeps them.
@@ -579,6 +735,10 @@ pub fn lex_with_comments(src: &str) -> Result<(Vec<Token>, Vec<Comment>), Error>
                 })?),
             };
             Tok::Int(n, suffix)
+        } else if c == b'f' && bytes.get(i + 1) == Some(&b'"') {
+            let (pieces, end) = fstring(src, i)?;
+            i = end;
+            Tok::FStr(pieces)
         } else if c == b'"' {
             let (text, end) = quoted(src, i, Quote::Str)?;
             i = end;

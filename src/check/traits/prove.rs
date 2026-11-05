@@ -5,7 +5,7 @@ use super::fields;
 use crate::ast::*;
 use crate::check::Checker;
 use crate::error::{Error, Span};
-use crate::traits::{COPY, DISCARD, EQ};
+use crate::traits::{COPY, DEBUG, DISCARD, EQ};
 use crate::traits::{ImplDef, Pred};
 use crate::types::{Subst, Type};
 
@@ -124,10 +124,10 @@ impl Checker {
             (Type::Fn(_), EQ) if at_bottom => ": functions can't be compared".to_string(),
             (Type::Fn(_), EQ) => ", and functions can't be compared".to_string(),
             (Type::Adt(s, ..), _) if crate::types::is_closure(s) => String::new(),
-            (t @ Type::Adt(..), tr @ (EQ | COPY | DISCARD)) => {
+            (t @ Type::Adt(..), tr @ (EQ | COPY | DISCARD | DEBUG)) => {
                 format!(
                     "; add `#[derive({})]` to `{}`",
-                    tr,
+                    tr.rsplit("::").next().unwrap_or(tr),
                     crate::check::source_name(&t.to_string())
                 )
             }
@@ -139,6 +139,19 @@ impl Checker {
             false => format!("; that needs `{bad}`"),
         };
         let message = match &o.why {
+            // A hole of a format string, which is a call of `display` or
+            // `debug` (`modules::Rewrite::format`).
+            Why::Bound(f, _) if self.modules.formats.contains(&o.span) && f != "core::fmt::cat" => {
+                let (name, hole) = match tr.as_str() {
+                    DEBUG => ("Debug", "`{x:?}`"),
+                    _ => ("Display", "`{x}`"),
+                };
+                format!(
+                    "`{ty}` doesn't implement `{name}`, which a hole {hole} of a format string \
+                     needs{needs}{}",
+                    fix(&bad)
+                )
+            }
             Why::Compare(op) => match (ty, at_bottom) {
                 (Type::Fn(_), _) => format!("cannot compare functions with `{op}`"),
                 (Type::Adt(s, ..), _) if crate::types::is_closure(s) => {
@@ -225,15 +238,36 @@ impl Checker {
     }
 
     /// At the end of a function, the obligations that waited for its types.
+    /// Of those that don't hold, the one reported is the first nearest the
+    /// cause: one that fails itself, rather than by what it needs; else one
+    /// of a hole of an `f".."`, where the value was written, rather than of
+    /// the call the whole string is passed to; else the first.
     pub(in crate::check) fn prove_all(&mut self) -> Result<(), Error> {
+        let mut found: Option<(u8, Error)> = None;
         for mut o in std::mem::take(&mut self.obligations) {
             o.pred.ty = self.solved(&o.pred.ty);
             // If it's still not fully known, that's reported later.
-            if !crate::check::unify::has_vars(&o.pred.ty) {
-                self.prove(&o)?;
+            if crate::check::unify::has_vars(&o.pred.ty) {
+                continue;
+            }
+            if let Err(e) = self.prove(&o) {
+                let (ty, tr) = (&o.pred.ty, &o.pred.trait_name);
+                let local = &self.adts.proj.local;
+                let rank = match self.traits.implements(ty, tr, &self.env, local) {
+                    Err(bad) if bad == o.pred => return Err(e),
+                    _ if self.modules.formats.contains(&o.span)
+                        && !matches!(&o.why, Why::Bound(f, _) if f == "core::fmt::cat") =>
+                    {
+                        1
+                    }
+                    _ => 2,
+                };
+                if found.as_ref().is_none_or(|(r, _)| rank < *r) {
+                    found = Some((rank, e));
+                }
             }
         }
-        Ok(())
+        found.map_or(Ok(()), |(_, e)| Err(e))
     }
 
     /// Requires what struct or enum types in `t` need of their type

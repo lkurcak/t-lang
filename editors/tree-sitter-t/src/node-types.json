@@ -68,6 +68,10 @@
         "named": true
       },
       {
+        "type": "format_string",
+        "named": true
+      },
+      {
         "type": "generic_function",
         "named": true
       },
@@ -1533,6 +1537,52 @@
           }
         ]
       }
+    }
+  },
+  {
+    "type": "format_hole",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "field_identifier",
+          "named": true
+        },
+        {
+          "type": "format_spec",
+          "named": true
+        },
+        {
+          "type": "identifier",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "format_string",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "escape_sequence",
+          "named": true
+        },
+        {
+          "type": "format_hole",
+          "named": true
+        },
+        {
+          "type": "format_text",
+          "named": true
+        }
+      ]
     }
   },
   {
@@ -3794,6 +3844,10 @@
     "named": false
   },
   {
+    "type": "\"",
+    "named": false
+  },
+  {
     "type": "#",
     "named": false
   },
@@ -4011,11 +4065,19 @@
     "named": false
   },
   {
+    "type": "escape_sequence",
+    "named": true
+  },
+  {
     "type": "export",
     "named": false
   },
   {
     "type": "extern",
+    "named": false
+  },
+  {
+    "type": "f\"",
     "named": false
   },
   {
@@ -4033,6 +4095,14 @@
   {
     "type": "for",
     "named": false
+  },
+  {
+    "type": "format_spec",
+    "named": true
+  },
+  {
+    "type": "format_text",
+    "named": true
   },
   {
     "type": "identifier",

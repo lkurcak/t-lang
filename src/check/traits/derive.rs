@@ -4,7 +4,7 @@ use super::fields;
 use crate::ast::*;
 use crate::check::Checker;
 use crate::error::{Edit, Error, Fix, Span};
-use crate::traits::{COPY, DERIVABLE, DISCARD, EQ, MARKERS, SEND, SYNC};
+use crate::traits::{COPY, DEBUG, DERIVABLE, DISCARD, EQ, MARKERS, SEND, SYNC};
 use crate::traits::{ImplDef, Pred};
 use crate::types::{Subst, Type};
 use std::collections::HashMap;
@@ -316,6 +316,9 @@ impl Checker {
             }
             // An array is its values, for all of them.
             Type::Array(inner, _) => return self.needs(inner, tr, params, out),
+            // Core's and alloc's impls of `Debug` for these are picked, as
+            // a struct's are, and need what they need.
+            Type::Ref(..) | Type::Box(_) | Type::Slice(_) if tr == DEBUG => {}
             Type::Adt(..) => {}
             t => {
                 return self

@@ -188,6 +188,7 @@ impl<'s> Trivia<'s> {
                 | Tok::Byte(_)
                 | Tok::Char(_)
                 | Tok::Str(_)
+                | Tok::FStr(_)
                 | Tok::ByteStr(_)
                 | Tok::Minus
                 | Tok::DotDot

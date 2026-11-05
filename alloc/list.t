@@ -1,6 +1,7 @@
 //! Lists: dense, resizable arrays.
 
 use core::cmp::Ordering;
+use core::fmt::{Debug, Write};
 use core::slice::{Iter, IterMut};
 
 use crate::raw::RawBuf;
@@ -172,4 +173,12 @@ impl<T: Eq> Eq for List<T> {
 /// differ deciding.
 impl<T: Ord> Ord for List<T> {
     fn cmp(&self, other: &List<T>) -> Ordering { self.as_slice().cmp(other.as_slice()) }
+}
+
+/// Its values, in brackets, as its slice's: `[1, 2, 3]`.
+impl<T: Debug> Debug for List<T> {
+    #[blame_caller]
+    fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e {
+        Debug::fmt(self.as_slice(), w)
+    }
 }

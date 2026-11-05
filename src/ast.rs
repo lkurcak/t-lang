@@ -772,6 +772,30 @@ pub struct EnumDecl {
     pub variants: Vec<Variant>,
 }
 
+/// A piece of a format string: text, or a hole, `{p.x}` or `{p.x:?}`,
+/// with the place it names as an expression, a name and fields.
+#[derive(Debug, Clone)]
+pub enum FmtPiece {
+    Text(String),
+    Hole {
+        place: Expr,
+        /// Is it `{x:?}`, written by `Debug`?
+        debug: bool,
+        /// From the `{` to the `}`.
+        span: Span,
+    },
+}
+
+impl FmtPiece {
+    /// The place it names, if it's a hole.
+    pub fn place(&self) -> Option<&Expr> {
+        match self {
+            FmtPiece::Text(_) => None,
+            FmtPiece::Hole { place, .. } => Some(place),
+        }
+    }
+}
+
 /// One case of an enum: `Rect(i64, i64)`, or `Empty` with no fields.
 #[derive(Debug, Clone)]
 pub struct Variant {
@@ -1244,6 +1268,7 @@ impl Expr {
             | ExprKind::Unit
             | ExprKind::Var(..)
             | ExprKind::Continue(_) => Vec::new(),
+            ExprKind::Format(pieces) => pieces.iter().filter_map(FmtPiece::place).collect(),
             ExprKind::Unary(_, x)
             | ExprKind::As(x, _)
             | ExprKind::Field(x, _)
@@ -1496,6 +1521,11 @@ pub enum ExprKind {
     Str(String),
     /// `b"hi"`: a byte string literal, a `&'static [u8]`.
     ByteStr(Vec<u8>),
+    /// `f"x = {x}, p = {p.y:?}"`: a format string, a value that's
+    /// `Display`, borrowing what its holes name. Resolving rewrites it
+    /// into calls of `core::fmt::{cat, display, debug}` (lemma F2 of
+    /// docs/43.1-formatting.md), so nothing after sees it.
+    Format(Vec<FmtPiece>),
     Unit,
     /// `x`, or `id::<i64>` with type arguments (a *turbofish*) for a generic
     /// function. Every list of type arguments here and below is empty if none
@@ -1682,6 +1712,10 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
         | ExprKind::Continue(_) => {}
         // A path, `a::f`, names a function, which needs no capturing.
         ExprKind::Var(name, _) if name.contains("::") => {}
+        ExprKind::Format(pieces) => pieces
+            .iter()
+            .filter_map(FmtPiece::place)
+            .for_each(|x| go(x, bound)),
         ExprKind::Var(name, _) => {
             if !bound.contains(name) && !out.contains(name) {
                 out.push(name.clone());

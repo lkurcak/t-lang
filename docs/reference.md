@@ -80,7 +80,10 @@ their mathematical result or panic if it is invalid or out of range.
 They never silently wrap. Explicit wrapping operations are in `core::num`.
 Integer literals support suffixes such as `42i64`, hexadecimal `0xFF`,
 and binary `0b1010`. Text uses `"..."` and `'x'`; byte literals use
-`b"..."` and `b'x'`.
+`b"..."` and `b'x'`. A format string, `f"x = {x}, p = {p.y:?}"`, is a
+value that's `Display`: its text, with each hole written by `Display`, or
+by `Debug` with `:?`. A hole names a variable or a field of one, which it
+borrows; `{{` and `}}` are braces (see [format strings](43.1-formatting.md)).
 
 Proofs involving `usize` and `isize` must hold on both 32-bit and 64-bit
 machines. A literal of either type must fit on both. See
@@ -212,6 +215,9 @@ The ticket is consumed before either I/O call can return early through
 
 For ordinary data, `#[derive(Discard)]` allows dropping all fields.
 `#[derive(Copy, Discard)]` also permits copying when the fields support it.
+`#[derive(Eq)]` compares field by field, and `#[derive(Debug)]` writes
+the value for debugging, `Point { x: 1, y: -2 }`. A bare name in
+`#[derive(..)]` is always core's trait.
 Derive requirements on generic parameters follow from the fields; exported
 types with hidden fields must state the promised bounds explicitly.
 `Copy` is derived, rather than implemented by hand. A custom
@@ -519,7 +525,7 @@ there is no automatic conversion between different error types.
 Every early exit must also satisfy ownership rules. A panic aborts
 without unwinding. `assert(ok)`, `assert_eq(&a, &b)` and `assert_ne(&a,
 &b)` panic unless what they check holds; the last two say both values by
-their `Display`. An abort (a panic, or running out of memory) directly in
+their `Debug`. An abort (a panic, or running out of memory) directly in
 the body of a function marked `#[blame_caller]` is reported where that
 function was called, and further out while the caller is marked too; one
 used as a value is blamed where it became a value. core, alloc and std mark

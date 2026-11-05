@@ -443,6 +443,46 @@ fn hovers_hints_and_goes_to_definitions() {
 }
 
 #[test]
+fn hovers_and_goes_to_definitions_in_format_strings() {
+    let (child, mut c) = start();
+    let uri = "file:///tmp/format.t";
+    let src = "#[derive(Debug, Discard)]\nstruct P { x: i32 }\nfn main() {\n    let p = P { x: 1 };\n    let s = f\"x = {p.x}, p = {p:?}\";\n    let _ = s;\n}\n";
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
+        }}),
+    );
+    assert_eq!(c.diagnostics(), Vec::<Value>::new());
+    let at = |line: u32, character: u32| json!({"textDocument": {"uri": uri}, "position": {"line": line, "character": character}});
+
+    // A name in a hole is the variable, and a field after it the field.
+    c.send(json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": at(4, 19)}));
+    let hover = c.response(2)["result"].clone();
+    assert_eq!(hover["contents"]["value"], "```t\np: P\n```", "{hover}");
+    c.send(json!({"jsonrpc": "2.0", "id": 3, "method": "textDocument/hover", "params": at(4, 21)}));
+    let hover = c.response(3)["result"].clone();
+    assert_eq!(
+        hover["contents"]["value"], "```t\nfield x: i32\n```",
+        "{hover}"
+    );
+    c.send(json!({"jsonrpc": "2.0", "id": 4, "method": "textDocument/definition", "params": at(4, 30)}));
+    let def = c.response(4)["result"].clone();
+    assert_eq!(
+        def["range"],
+        json!({"start": {"line": 3, "character": 8}, "end": {"line": 3, "character": 9}})
+    );
+    // The calls it means have nothing to show: not at the `{`, nor at the `f`.
+    c.send(json!({"jsonrpc": "2.0", "id": 5, "method": "textDocument/hover", "params": at(4, 18)}));
+    let hover = c.response(5)["result"].clone();
+    assert_eq!(hover, Value::Null, "{hover}");
+    c.send(json!({"jsonrpc": "2.0", "id": 6, "method": "textDocument/hover", "params": at(4, 12)}));
+    let hover = c.response(6)["result"].clone();
+    assert_eq!(hover, Value::Null, "{hover}");
+
+    stop(child, c);
+}
+
+#[test]
 fn hovers_and_hints_show_opaque_types_as_written() {
     let (child, mut c) = start();
     let uri = "file:///tmp/opaque.t";

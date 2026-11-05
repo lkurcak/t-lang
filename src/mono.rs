@@ -53,7 +53,7 @@
 use crate::ast::*;
 use crate::check::{self, Info, Instance};
 use crate::error::Span;
-use crate::traits::{COPY, DISCARD, EQ, FnKind};
+use crate::traits::{COPY, DEBUG, DISCARD, EQ, FnKind};
 use crate::traits::{Projections, Source};
 use crate::types::{Params, Region, Subst, Type};
 use std::collections::{HashMap, HashSet};
@@ -339,6 +339,9 @@ enum Target {
     /// The `discard` of a built-in or derived `Discard`, of the type:
     /// dropping it, which the interpreter does part by part.
     Discard(Type),
+    /// The `fmt` of a derived `Debug`, of the type, into a sink of the
+    /// second type.
+    Debug(Type, Type),
 }
 
 struct Mono<'p> {
@@ -1352,6 +1355,10 @@ impl Cx<'_, '_, '_> {
                 }
             }
             Ok(Source::Impl(..) | Source::Builtin) if tr == DISCARD => Target::Discard(self_ty),
+            Ok(Source::Impl(..)) if tr == DEBUG => {
+                let w = own.first().expect("`fmt`'s sink").clone();
+                Target::Debug(self_ty, w)
+            }
             Ok(Source::Impl(..) | Source::Builtin) => Target::Eq(self_ty),
             r => unreachable!("`{self_ty}: {tr}` in a copy: {r:?}"),
         }
@@ -1798,6 +1805,7 @@ impl Cx<'_, '_, '_> {
             Target::Fn(of, args, copy) => Const::Fn(self.m.named_copy(&of, args, copy), Vec::new()),
             Target::Eq(t) => Const::Fn(self.eq_glue(&t), Vec::new()),
             Target::Discard(t) => Const::Fn(self.drop_glue(&t), Vec::new()),
+            Target::Debug(t, w) => Const::Fn(self.debug_glue(&t, &w), Vec::new()),
         }
     }
 }

@@ -21,6 +21,14 @@ pub(super) struct Var {
     /// type or projection that implements `Int`, which an obligation made
     /// with it says (`Checker::fresh_int`).
     pub(super) int: bool,
+    /// May it be a slice or `str`? Only `Self` of a path to a trait's
+    /// method, `Debug::fmt(s, w)` with `s: &str`: as `s.fmt(w)` would find
+    /// it, with its receiver's type. Sound as that is: only the libraries
+    /// implement traits for unsized types; their impls' methods have `Self`
+    /// only behind references (`collect_impls`); and none of those traits
+    /// has a method giving a `Self` without taking one by value, which no
+    /// expression can be (see docs/43.1-formatting.md).
+    pub(super) unsized_ok: bool,
     /// Where it came from, for when it's never solved: the span, what it's
     /// the type of ("the type of `x`") and how to fix that.
     span: Span,
@@ -119,6 +127,7 @@ impl Checker {
             solution: None,
             param: false,
             int: false,
+            unsized_ok: false,
             span,
             what,
             hint,
@@ -344,12 +353,16 @@ impl Checker {
                     return Err(Clash::Infinite(v, t));
                 }
                 match &t {
-                    Type::Slice(_) | Type::Str => return Err(Clash::Unsized(v, t)),
+                    Type::Slice(_) | Type::Str if !self.vars[v as usize].unsized_ok => {
+                        return Err(Clash::Unsized(v, t));
+                    }
                     Type::Var(w) => {
                         let (param, int) = (self.vars[v as usize].param, self.vars[v as usize].int);
+                        let unsized_ok = self.vars[v as usize].unsized_ok;
                         let w = &mut self.vars[*w as usize];
                         w.param |= param;
                         w.int |= int;
+                        w.unsized_ok &= unsized_ok;
                     }
                     // Its obligation, `Int`, says whether these may be.
                     Type::Int(_) | Type::Param(_) | Type::Opaque(..) | Type::Proj(..) => {}

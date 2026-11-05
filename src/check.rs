@@ -82,7 +82,7 @@ pub use scope::source_name;
 
 use crate::ast::*;
 use crate::error::{Error, Fix, Span, Warning};
-use crate::traits::EQ;
+use crate::traits::{DEBUG, EQ};
 use crate::traits::{Pred, Traits};
 use crate::types::{Adts, Params, Region, Scheme, Type};
 use adts::{adt_names, each_adt};
@@ -200,6 +200,10 @@ pub const ATOMIC: &str = "core::sync::Atomic";
 /// not frozen, as a device changes it, and its intrinsics write through a
 /// `&` (lemma V of docs/40-extern.md).
 pub const VOLATILE: &str = "core::volatile::Volatile";
+
+/// The sink type parameter of a derived `Debug`'s `fmt`, in the graph of
+/// what monomorphisation copies: a name no program can write.
+const DERIVED_SINK: &str = "{W}";
 
 /// The symbol of the alloc library's `Box`, which is `Type::Box`.
 pub const BOX: &str = "alloc::boxed::Box";
@@ -1918,29 +1922,44 @@ impl Checker {
     /// What a closure's body uses is in the function it's in, by where it
     /// is, and is copied with it.
     fn no_polymorphic_recursion(&self) -> Result<(), Error> {
-        // The `eq` of each derived `Eq`: not a function of the program, but
-        // it does what one would, `==` on each field, so it's a node of its
-        // own.
-        let derived_eq: Vec<Option<String>> = self
+        // The `eq` of each derived `Eq`, and the `fmt` of each derived
+        // `Debug`: not functions of the program, but each does what one
+        // would, `==` or `Debug::fmt` on each field, so each is a node of
+        // its own. `fmt`'s sink is a parameter no program can name.
+        let derived_eq: Vec<Option<(String, Vec<String>)>> = self
             .traits
             .impls
             .iter()
             .map(|d| {
-                let eq = d.derived && d.trait_name.as_deref() == Some(EQ);
-                eq.then(|| format!("<{} as Eq>::eq", d.self_ty.symbols()))
+                let (name, own) = match d.trait_name.as_deref() {
+                    Some(EQ) if d.derived => ("Eq>::eq", None),
+                    Some(DEBUG) if d.derived => ("Debug>::fmt", Some(DERIVED_SINK.to_string())),
+                    _ => return None,
+                };
+                let params = d.params.iter().cloned().chain(own).collect();
+                Some((format!("<{} as {name}", d.self_ty.symbols()), params))
             })
             .collect();
         let (dicts, type_dicts) = traits::dict_names(&self.traits.impls);
         let ix = self.index((&dicts, &type_dicts), &derived_eq);
         let nodes = self.assoc_nodes();
         let eq = ix.method_symbol(&traits::trait_method_symbol(EQ, "eq"));
+        let fmt = (self.traits.traits.contains_key(DEBUG))
+            .then(|| ix.method_symbol(&traits::trait_method_symbol(DEBUG, "fmt")));
         let mut uses = Vec::new();
         for (k, d) in self.traits.impls.iter().enumerate() {
-            let (Some(from), Type::Adt(symbol, ..)) = (&derived_eq[k], &d.self_ty) else {
+            let (Some((from, _)), Type::Adt(symbol, ..)) = (&derived_eq[k], &d.self_ty) else {
                 continue;
             };
+            let debug = d.trait_name.as_deref() == Some(DEBUG);
             for (_, f) in traits::fields(&self.adts[symbol].kind) {
-                self.call_uses(&ix, (from, d.span), eq, &[f], &mut uses);
+                match (debug, fmt) {
+                    (true, Some(fmt)) => {
+                        let sink = Type::Param(DERIVED_SINK.into());
+                        self.call_uses(&ix, (from, d.span), fmt, &[f, sink], &mut uses);
+                    }
+                    _ => self.call_uses(&ix, (from, d.span), eq, &[f], &mut uses),
+                }
             }
         }
         // Which function each use is in, from where they are.

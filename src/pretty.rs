@@ -1100,6 +1100,7 @@ impl Printer<'_> {
             ExprKind::Char(c) => self.spelled(e.span, crate::lexer::char_literal(*c)),
             ExprKind::Str(s) => self.spelled(e.span, crate::lexer::str_literal(s)),
             ExprKind::ByteStr(b) => self.spelled(e.span, crate::lexer::byte_str_literal(b)),
+            ExprKind::Format(pieces) => self.spelled(e.span, format_literal(pieces)),
             ExprKind::Unit => text("()"),
             ExprKind::Var(name, targs) => text(name) + self.turbofish(targs),
             ExprKind::Unary(op, x) => text(op.to_string()) + self.expr(x, UNARY, ctx.inner()),
@@ -1806,6 +1807,39 @@ fn use_tree(t: &UseTree) -> String {
             }
         }
     }
+}
+
+/// Format string `pieces` as written: `f"x = {p.x:?}"`.
+fn format_literal(pieces: &[FmtPiece]) -> String {
+    fn place(e: &Expr) -> String {
+        match &e.kind {
+            ExprKind::Var(name, _) => name.clone(),
+            ExprKind::Field(x, f) => format!("{}.{}", place(x), f.name),
+            _ => unreachable!("a hole names a place"),
+        }
+    }
+    let mut out = String::from("f\"");
+    for p in pieces {
+        match p {
+            FmtPiece::Text(t) => {
+                let s = crate::lexer::str_literal(t);
+                let s = s[1..s.len() - 1].replace('{', "{{").replace('}', "}}");
+                out.push_str(&s);
+            }
+            FmtPiece::Hole {
+                place: x, debug, ..
+            } => {
+                out.push('{');
+                out.push_str(&place(x));
+                if *debug {
+                    out.push_str(":?");
+                }
+                out.push('}');
+            }
+        }
+    }
+    out.push('"');
+    out
 }
 
 /// `where T: Discard, U: Eq` after a derived trait.

@@ -1,6 +1,6 @@
 //! Boxes: values on the heap.
 
-use core::fmt::{Display, Write};
+use core::fmt::{Debug, Display, Write};
 
 /// A value on the heap, which the box owns: `Box::new(x)` moves `x` there,
 /// and `*b` is what box `b` holds, which can be read, changed, or moved
@@ -17,5 +17,13 @@ export struct Box<T> {}
 /// What it holds.
 impl<T: Display> Display for Box<T> {
     #[blame_caller]
-    fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { (**self).fmt(w) }
+    fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e {
+        Display::fmt(&**self, w)
+    }
+}
+
+/// What it holds.
+impl<T: Debug> Debug for Box<T> {
+    #[blame_caller]
+    fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { Debug::fmt(&**self, w) }
 }

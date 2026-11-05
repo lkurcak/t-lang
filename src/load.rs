@@ -303,7 +303,7 @@ fn parse_file(prog: &mut Program, m: usize, text: &str, start: usize) -> Result<
     let toks = toks
         .into_iter()
         .map(|mut t| {
-            t.span = moved(t.span, start);
+            t.shift(start);
             t
         })
         .collect();

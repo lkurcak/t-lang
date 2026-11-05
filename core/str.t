@@ -206,7 +206,7 @@ export sealed trait Pattern: Copy {
 }
 
 /// Where a pattern was found: bytes `start` up to, not including, `end`.
-#[derive(Copy, Discard, Eq, Send, Sync)]
+#[derive(Copy, Debug, Discard, Eq, Send, Sync)]
 export struct Found { export start: usize, export end: usize }
 
 /// A string is found where its bytes are: as it's UTF-8, that's where a
@@ -412,7 +412,7 @@ impl Parse for bool {
 
 /// What's wrong with a string that isn't a `bool`: it's neither `true`
 /// nor `false`.
-#[derive(Copy, Discard, Eq, Send, Sync)]
+#[derive(Copy, Debug, Discard, Eq, Send, Sync)]
 export struct ParseBoolError {}
 
 impl Display for ParseBoolError {
@@ -438,7 +438,7 @@ impl Parse for char {
 }
 
 /// What's wrong with a string that isn't a `char`.
-#[derive(Copy, Discard, Eq, Send, Sync)]
+#[derive(Copy, Debug, Discard, Eq, Send, Sync)]
 export enum ParseCharError {
     /// It has none.
     Empty,
