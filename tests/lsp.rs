@@ -3184,8 +3184,11 @@ fn check_run_and_lsp_agree_on_semantic_acceptance() {
     for (index, (src, accepted)) in cases.into_iter().enumerate() {
         std::fs::write(&path, src).unwrap();
         for command in ["check", "run"] {
+            // Interpreted on Windows, which the C backend isn't for yet.
+            let interp = command == "run" && cfg!(windows);
             let output = Command::new(env!("CARGO_BIN_EXE_t"))
                 .arg(command)
+                .args(interp.then_some("--interp"))
                 .arg(&path)
                 .output()
                 .unwrap();
