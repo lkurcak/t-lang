@@ -20,6 +20,7 @@
 //! says `use core::fmt::{Display, Write};`.
 
 use crate::result::Result;
+use crate::slice::Iter;
 
 /// Where text goes: a string, or one day a file or the terminal. Writing
 /// gives `Ok`, or an `Error` if the sink can't take it, and does what `e`
@@ -217,18 +218,20 @@ impl<'a, T: Debug> Debug for &'a mut T {
 /// Its values, in brackets: `[1, 2, 3]`.
 impl<T: Debug> Debug for [T] {
     #[blame_caller]
-    fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e {
-        w.write_char('[')?;
-        let mut first = true;
-        for x in self.iter() {
-            if !first {
-                w.write_str(", ")?;
-            }
-            first = false;
-            Debug::fmt(x, w)?;
-        }
-        w.write_char(']')
-    }
+    fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { items(self.iter(), w) }
+}
+
+/// Its values, as `[T]`'s, which a type parameter can't stand for, so
+/// `&T`'s doesn't cover it.
+impl<'a, T: Debug> Debug for &'a [T] {
+    #[blame_caller]
+    fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { items(self.iter(), w) }
+}
+
+/// Its values, as `&[T]`'s.
+impl<'a, T: Debug> Debug for &'a mut [T] {
+    #[blame_caller]
+    fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { items(self.iter(), w) }
 }
 
 /// Its values, as a slice's.
@@ -237,6 +240,21 @@ impl<T: Debug, const N: usize> Debug for [T; N] {
     fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e {
         Debug::fmt(self.as_slice(), w)
     }
+}
+
+/// The values `xs` gives, in brackets, by their `Debug`: `[1, 2, 3]`.
+#[blame_caller]
+fn items<'a, T: Debug, W: Write>(xs: Iter<'a, T>, w: &mut W) -> Result<(), W::Error> with W::e {
+    w.write_char('[')?;
+    let mut first = true;
+    for x in xs {
+        if !first {
+            w.write_str(", ")?;
+        }
+        first = false;
+        Debug::fmt(x, w)?;
+    }
+    w.write_char(']')
 }
 
 /// `s` in double quotes, escaped.

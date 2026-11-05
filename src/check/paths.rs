@@ -25,12 +25,11 @@ impl Checker {
         id: NodeId,
     ) -> Result<Option<(Type, Res)>, Error> {
         // Notes are for the name, not any `::<..>` after it.
-        // A format string's hole names its call where it is, a span
-        // shorter than the name (`Rewrite::format`).
-        let end = span.start + name.len();
-        let at = match span.start == span.end {
-            true => Span::new(span.start, end),
-            false => Span::new(span.start, end.min(span.end)),
+        // A format string names the calls it means where its holes are, and
+        // where it is (`Rewrite::format`).
+        let at = match self.modules.formats.contains(&span) {
+            true => span,
+            false => Span::new(span.start, span.start + name.len()),
         };
         // A path, `a::f`, names what resolving it said.
         let binding = match name.contains("::") {

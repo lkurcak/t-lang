@@ -49,12 +49,9 @@ struct Mismatch<'a, T> { op: &'a str, left: &'a T, right: &'a T }
 impl<'a, T: Debug> Display for Mismatch<'a, T> {
     #[blame_caller]
     fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e {
-        w.write_str("assertion `left ")?;
-        w.write_str(self.op)?;
-        w.write_str(" right` failed\n  left: ")?;
-        Debug::fmt(self.left, w)?;
-        w.write_str("\n right: ")?;
-        Debug::fmt(self.right, w)
+        w.put(
+            &f"assertion `left {self.op} right` failed\n  left: {self.left:?}\n right: {self.right:?}",
+        )
     }
 }
 

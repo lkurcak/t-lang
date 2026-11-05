@@ -148,8 +148,9 @@ pub(crate) struct Modules {
     /// the `?`.
     pub(crate) tries: HashSet<Span>,
     /// Where each hole of a format string is, which is where the call of
-    /// `core::fmt::display` or `debug` it means is named (`Rewrite::format`):
-    /// a name the program doesn't have, with nothing to show or rename.
+    /// `core::fmt::display` or `debug` it means is named, and where each
+    /// format string is, where its calls of `cat` are (`Rewrite::format`):
+    /// names the program doesn't have, with nothing to show or rename.
     pub(crate) formats: HashSet<Span>,
     /// The `else` arm of the `match` each `if let`, `while let` and `let ..
     /// else` means, by where its pattern is, the `let` (`Rewrite::if_let`):
@@ -1907,11 +1908,8 @@ impl Rewrite<'_> {
         let at = Span::new(span.start, span.start);
         let call = |cx: &mut Self, f: &str, args: Vec<Expr>, span: Span| {
             // A hole's call is named where the hole is, so that what's
-            // wrong with it is there; `cat`, at no span.
-            let named = match f {
-                "cat" => Span::new(span.start, span.start),
-                _ => span,
-            };
+            // wrong with it is there; `cat`'s, where the whole string is.
+            let named = span;
             cx.r.m.formats.insert(named);
             let callee = Expr {
                 kind: ExprKind::Var(format!("core::fmt::{f}"), Vec::new()),

@@ -598,6 +598,25 @@ pub struct Token {
     pub span: Span,
 }
 
+impl Token {
+    /// Moves it, and the holes of a format string, `by` bytes on: where
+    /// it is in the sources, once it's lexed on its own.
+    pub fn shift(&mut self, by: usize) {
+        let moved = |s: Span| Span::new(s.start + by, s.end + by);
+        self.span = moved(self.span);
+        if let Tok::FStr(pieces) = &mut self.tok {
+            for p in pieces {
+                if let FPiece::Hole(names, _, span) = p {
+                    *span = moved(*span);
+                    for (_, s) in names {
+                        *s = moved(*s);
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// A `// ...` comment. The parser never sees these; `t fmt` keeps them.
 /// A `///` or `//!` doc comment is a token instead (`Tok::Doc`,
 /// `Tok::InnerDoc`).

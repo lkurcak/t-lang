@@ -141,7 +141,7 @@ impl Checker {
         let message = match &o.why {
             // A hole of a format string, which is a call of `display` or
             // `debug` (`modules::Rewrite::format`).
-            Why::Bound(..) if self.modules.formats.contains(&o.span) => {
+            Why::Bound(f, _) if self.modules.formats.contains(&o.span) && f != "core::fmt::cat" => {
                 let (name, hole) = match tr.as_str() {
                     DEBUG => ("Debug", "`{x:?}`"),
                     _ => ("Display", "`{x}`"),
@@ -238,12 +238,12 @@ impl Checker {
     }
 
     /// At the end of a function, the obligations that waited for its types.
-    /// Of those that don't hold, the first that fails itself, rather than
-    /// by what it needs, is reported: it's nearest the cause, as the hole
-    /// `{p}` of an `f".."` is, where `p` isn't `Display`, rather than the
-    /// call the whole string is passed to.
+    /// Of those that don't hold, the one reported is the first nearest the
+    /// cause: one that fails itself, rather than by what it needs; else one
+    /// of a hole of an `f".."`, where the value was written, rather than of
+    /// the call the whole string is passed to; else the first.
     pub(in crate::check) fn prove_all(&mut self) -> Result<(), Error> {
-        let mut first = None;
+        let mut found: Option<(u8, Error)> = None;
         for mut o in std::mem::take(&mut self.obligations) {
             o.pred.ty = self.solved(&o.pred.ty);
             // If it's still not fully known, that's reported later.
@@ -253,15 +253,21 @@ impl Checker {
             if let Err(e) = self.prove(&o) {
                 let (ty, tr) = (&o.pred.ty, &o.pred.trait_name);
                 let local = &self.adts.proj.local;
-                match self.traits.implements(ty, tr, &self.env, local) {
+                let rank = match self.traits.implements(ty, tr, &self.env, local) {
                     Err(bad) if bad == o.pred => return Err(e),
-                    _ => {
-                        first.get_or_insert(e);
+                    _ if self.modules.formats.contains(&o.span)
+                        && !matches!(&o.why, Why::Bound(f, _) if f == "core::fmt::cat") =>
+                    {
+                        1
                     }
+                    _ => 2,
+                };
+                if found.as_ref().is_none_or(|(r, _)| rank < *r) {
+                    found = Some((rank, e));
                 }
             }
         }
-        first.map_or(Ok(()), Err)
+        found.map_or(Ok(()), |(_, e)| Err(e))
     }
 
     /// Requires what struct or enum types in `t` need of their type

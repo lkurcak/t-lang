@@ -18,6 +18,11 @@
 (char_literal) @constant.character
 (string_literal) @string
 (byte_string_literal) @string
+(format_string "f\"" @string)
+(format_string "\"" @string)
+(format_text) @string
+(escape_sequence) @constant.character.escape
+(format_spec) @punctuation.special
 (boolean_literal) @constant.builtin.boolean
 (unit_expression) @constant.builtin
 (unit_pattern) @constant.builtin

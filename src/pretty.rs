@@ -1826,7 +1826,9 @@ fn format_literal(pieces: &[FmtPiece]) -> String {
                 let s = s[1..s.len() - 1].replace('{', "{{").replace('}', "}}");
                 out.push_str(&s);
             }
-            FmtPiece::Hole { place: x, debug, .. } => {
+            FmtPiece::Hole {
+                place: x, debug, ..
+            } => {
                 out.push('{');
                 out.push_str(&place(x));
                 if *debug {

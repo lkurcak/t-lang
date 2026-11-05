@@ -1712,7 +1712,10 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
         | ExprKind::Continue(_) => {}
         // A path, `a::f`, names a function, which needs no capturing.
         ExprKind::Var(name, _) if name.contains("::") => {}
-        ExprKind::Format(pieces) => pieces.iter().filter_map(FmtPiece::place).for_each(|x| go(x, bound)),
+        ExprKind::Format(pieces) => pieces
+            .iter()
+            .filter_map(FmtPiece::place)
+            .for_each(|x| go(x, bound)),
         ExprKind::Var(name, _) => {
             if !bound.contains(name) && !out.contains(name) {
                 out.push(name.clone());

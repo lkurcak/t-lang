@@ -400,8 +400,7 @@ impl Docs {
                 crate::lexer::lex(checked.sources.src(file))
                     .map(|mut tokens| {
                         for token in &mut tokens {
-                            token.span.start += file.start;
-                            token.span.end += file.start;
+                            token.shift(file.start);
                         }
                         crate::parser::parse_for_editor(tokens).errors
                     })

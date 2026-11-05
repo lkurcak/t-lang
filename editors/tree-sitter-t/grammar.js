@@ -623,6 +623,7 @@ module.exports = grammar({
       $.byte_literal,
       $.string_literal,
       $.byte_string_literal,
+      $.format_string,
       $.boolean_literal,
       $.unit_expression,
       $.identifier,
@@ -684,6 +685,33 @@ module.exports = grammar({
       repeat(choice(/[^"\\]/, /\\[nrt\\0'"]/, /\\u\{[0-9a-fA-F]{1,6}\}/)),
       '"',
     )),
+
+    // `f"x = {x}, p = {p.y:?}"`: a format string, a value that's
+    // `Display`. Its text is a string literal's, with `{{` and `}}` for
+    // braces; a hole names a variable or a field of one, with `:?` for
+    // `Debug`.
+    format_string: $ => seq(
+      'f"',
+      repeat(choice(
+        alias(token.immediate(prec(1, /[^"\\{}]+/)), $.format_text),
+        alias(token.immediate(choice(/\\[nrt\\0'"]/, /\\u\{[0-9a-fA-F]{1,6}\}/)), $.escape_sequence),
+        alias(token.immediate(choice('{{', '}}')), $.escape_sequence),
+        $.format_hole,
+      )),
+      token.immediate('"'),
+    ),
+
+    // `{p.x}` or `{p.x:?}` in a format string.
+    format_hole: $ => seq(
+      token.immediate('{'),
+      alias(token.immediate(/[a-zA-Z_][a-zA-Z0-9_]*/), $.identifier),
+      repeat(seq(
+        token.immediate('.'),
+        alias(token.immediate(/[a-zA-Z_][a-zA-Z0-9_]*/), $.field_identifier),
+      )),
+      optional(alias(token.immediate(':?'), $.format_spec)),
+      token.immediate('}'),
+    ),
 
     // `b"hi\xFF"`, a `&'static [u8]`: ASCII and `\x` escapes.
     byte_string_literal: _ => token(seq(

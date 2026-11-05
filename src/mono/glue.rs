@@ -703,11 +703,7 @@ impl Cx<'_, '_, '_> {
     /// isn't yet.
     pub(super) fn debug_glue(&mut self, t: &Type, w: &Type) -> String {
         let (t, w) = (t.erased(), w.erased());
-        let name = format!(
-            "{DEBUG_GLUE}::<{}, {}>",
-            t.symbols(),
-            w.symbols()
-        );
+        let name = format!("{DEBUG_GLUE}::<{}, {}>", t.symbols(), w.symbols());
         if self.m.glue_made.insert(name.clone()) {
             let body = self.debug_body(&t, &w);
             self.m.bodies.insert(name.clone(), body);
@@ -767,7 +763,9 @@ impl Cx<'_, '_, '_> {
                 let parts = (self.field_types(t).into_iter().enumerate())
                     .map(|(i, f)| (Some(names[i].clone()), f, x.project(Proj::Field(i))))
                     .collect();
-                self.debug_parts(&mut g, &d, &s.name.name, parts, true);
+                // By its own name, without the path to it.
+                let name = s.name.name.rsplit("::").next().unwrap_or(&s.name.name);
+                self.debug_parts(&mut g, &d, name, parts, true);
             }
             _ => unreachable!("a derived `Debug` of `{t}`"),
         }
@@ -800,13 +798,19 @@ impl Cx<'_, '_, '_> {
             }
             self.debug_write_str(g, d, std::mem::take(&mut text));
             // `Debug::fmt(&place, &mut *w)`.
-            let f = self.fn_const(&format!("<{DEBUG}>::fmt"), vec![t.clone(), self.sink_of(g, d)]);
+            let f = self.fn_const(
+                &format!("<{DEBUG}>::fmt"),
+                vec![t.clone(), self.sink_of(g, d)],
+            );
             let x = g.temp(shared(&t));
             g.assign(Place::local(x), Rvalue::Ref(0, false, place));
             let w = self.reborrow(g, d);
             let call = Rvalue::Call(
                 Operand::Const(f),
-                vec![Operand::Move(Place::local(x)), Operand::Move(Place::local(w))],
+                vec![
+                    Operand::Move(Place::local(x)),
+                    Operand::Move(Place::local(w)),
+                ],
             );
             self.debug_step(g, d, call);
         }
@@ -818,7 +822,10 @@ impl Cx<'_, '_, '_> {
         let w = self.reborrow(g, d);
         let call = Rvalue::Call(
             Operand::Const(f),
-            vec![Operand::Move(Place::local(w)), Operand::Const(Const::Str(text))],
+            vec![
+                Operand::Move(Place::local(w)),
+                Operand::Const(Const::Str(text)),
+            ],
         );
         g.assign(Place::local(RETURN), call);
         g.terminate(Term::Goto(Bb(d.join)));
@@ -847,7 +854,10 @@ impl Cx<'_, '_, '_> {
         let w = self.reborrow(g, d);
         let call = Rvalue::Call(
             Operand::Const(f),
-            vec![Operand::Move(Place::local(w)), Operand::Const(Const::Str(text))],
+            vec![
+                Operand::Move(Place::local(w)),
+                Operand::Const(Const::Str(text)),
+            ],
         );
         self.debug_step(g, d, call);
     }
@@ -865,7 +875,10 @@ impl Cx<'_, '_, '_> {
             vec![Bb(go_on), Bb(stop)],
         ));
         g.cur = stop;
-        g.assign(Place::local(RETURN), Rvalue::Use(Operand::Move(Place::local(r))));
+        g.assign(
+            Place::local(RETURN),
+            Rvalue::Use(Operand::Move(Place::local(r))),
+        );
         g.terminate(Term::Goto(Bb(d.join)));
         g.cur = go_on;
         g.push(StmtKind::Consume(Place::local(r), Some(d.ok)));
