@@ -147,6 +147,7 @@ impl Checker {
         }
         let ty = &ty;
         Ok(match &p.kind {
+            PatternKind::Path(..) => unreachable!("resolved into a variant (`check::modules`)"),
             PatternKind::Wild => Pat::Wild,
             PatternKind::Bind(name, mutable) => {
                 if let Some(super::scope::Binding::Fn(f)) = self.binding(name)

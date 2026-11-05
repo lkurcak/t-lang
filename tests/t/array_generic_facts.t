@@ -22,11 +22,6 @@ fn count<const N: usize>() -> usize {
     f()
 }
 
-fn shadow<const N: usize>() -> usize {
-    let N = 7;
-    N
-}
-
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&third(&[1, 2, 3]))?;   // expect: 3
@@ -36,7 +31,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&p[0])?;                // expect: 2
     out.line(&none([]))?;            // expect: 0
     out.line(&count::<5>())?;        // expect: 5
-    out.line(&shadow::<5>())?;       // expect: 7
     Result::Ok(())
 }
-// warning: variable `N` should have a snake case name: `n`

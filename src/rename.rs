@@ -397,7 +397,10 @@ fn shorthand_pats(p: &Pattern, out: &mut HashSet<Span>) {
                 shorthand_pats(&f.pat, out);
             }
         }
-        PatternKind::Variant(_, _, _, pats) | PatternKind::Or(pats) | PatternKind::Array(pats) => {
+        PatternKind::Variant(_, _, _, pats)
+        | PatternKind::Path(_, pats, _)
+        | PatternKind::Or(pats)
+        | PatternKind::Array(pats) => {
             pats.iter().for_each(|p| shorthand_pats(p, out));
         }
         PatternKind::Wild

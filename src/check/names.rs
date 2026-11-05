@@ -424,6 +424,7 @@ impl Walk<'_> {
 
     fn pattern(&mut self, p: &Pattern) {
         match &p.kind {
+            PatternKind::Path(_, pats, _) => pats.iter().for_each(|p| self.pattern(p)),
             PatternKind::Variant(name, targs, _, pats) => {
                 self.name(&name.name, name.id);
                 targs.iter().for_each(|t| self.ty(t));

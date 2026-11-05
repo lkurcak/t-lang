@@ -512,7 +512,7 @@ impl Checker {
                 TypeDecl::Enum(e) => {
                     for v in &e.variants {
                         let key = (symbol.clone(), v.name.name.clone());
-                        if !on_purpose(&v.name) && !used.variants.contains(&key) {
+                        if !used.variants.contains(&key) {
                             let message = format!(
                                 "variant `{}::{}` is never constructed",
                                 e.name.name, v.name.name

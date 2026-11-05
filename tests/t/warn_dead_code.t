@@ -1,6 +1,7 @@
 // Code that can never run: functions `main` doesn't reach, structs it never
 // builds, enums it never mentions and variants it never constructs. A name
-// starting with `_` says that's on purpose.
+// starting with `_` says that's on purpose, or for a variant, whose name
+// starts with an uppercase letter, `#[allow(dead_code)]`.
 #[derive(Discard)]
 struct Used { a: i64 }
 #[derive(Discard)]
@@ -8,7 +9,7 @@ struct Unbuilt { a: i64 }
 #[derive(Discard)]
 struct _Kept { a: i64 }
 #[derive(Discard)]
-enum Color { Red, Green, _Blue }
+enum Color { Red, Green, #[allow(dead_code)] Blue }
 #[derive(Discard)]
 enum Unused { A, B }
 #[derive(Discard)]

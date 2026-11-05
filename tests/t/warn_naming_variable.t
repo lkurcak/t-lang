@@ -5,10 +5,10 @@
 #[derive(Discard)]
 enum Shape { Circle(i64), Square(i64), Empty }
 
-fn side(s: Shape, Default: i64) -> i64 {
+fn side(s: Shape, defaultSide: i64) -> i64 {
     match s {
         Shape::Circle(sideLen) | Shape::Square(sideLen) => sideLen,
-        Shape::Empty => Default,
+        Shape::Empty => defaultSide,
     }
 }
 
@@ -21,7 +21,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     out.line(&(addTo(x1) + side(Shape::Empty, 5)))?;
     Result::Ok(())
 }
-// warning: variable `Default` should have a snake case name: `default`
+// warning: variable `defaultSide` should have a snake case name: `default_side`
 // warning: variable `sideLen` should have a snake case name: `side_len`
 // warning: variable `firstTry` should have a snake case name: `first_try`
 // warning: variable `_ignoredValue` should have a snake case name: `_ignored_value`

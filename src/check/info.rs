@@ -9,7 +9,7 @@ use super::modules::Item;
 use super::{Checker, Lifetimes};
 use crate::ast::*;
 use crate::error::Span;
-use crate::types::{Type, comma_list};
+use crate::types::{Type, comma_list, variant_fields};
 use std::collections::{HashMap, HashSet};
 
 /// Everything the checker found out, as far as it got.
@@ -594,6 +594,23 @@ impl Checker {
                         let kind = NoteKind::Module(self.modules.full_path(m));
                         (kind, None, module_def(prog, m))
                     }
+                    Item::Variant(k, v) => {
+                        let TypeDecl::Enum(d) = &prog.types[k] else {
+                            continue;
+                        };
+                        let symbol = &self.types[k].symbol;
+                        let ty = self.adts.get(symbol).map(|def| {
+                            let t = def.generic(symbol);
+                            let fields = variant_fields(&self.adts, &t, v);
+                            match fields.is_empty() {
+                                true => t,
+                                false => Type::func(fields, t),
+                            }
+                        });
+                        let variant = &d.variants[v].name;
+                        let kind = NoteKind::Variant(d.name.name.clone(), variant.name.clone());
+                        (kind, ty, variant.span)
+                    }
                 };
                 self.note(name.span, kind, ty, Some(def));
             }
@@ -925,6 +942,7 @@ fn pattern_annotations(p: &Pattern, f: &mut impl FnMut(&TypeExpr)) {
             targs.iter().for_each(&mut *f);
             pats.iter().for_each(|p| pattern_annotations(p, f));
         }
+        PatternKind::Path(_, pats, _) => pats.iter().for_each(|p| pattern_annotations(p, f)),
         PatternKind::Struct(_, targs, fields, _) => {
             targs.iter().for_each(&mut *f);
             fields.iter().for_each(|fp| pattern_annotations(&fp.pat, f));

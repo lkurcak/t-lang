@@ -1673,6 +1673,21 @@ impl Printer<'_> {
             PatternKind::Bool(b) => text(b.to_string()),
             PatternKind::Str(s) => self.spelled(p.span, crate::lexer::str_literal(s)),
             PatternKind::Unit => text("()"),
+            PatternKind::Path(name, args, _) => {
+                if args.is_empty() {
+                    return text(&name.name);
+                }
+                let close = p.span.end - 1;
+                text(&name.name)
+                    + self.list(
+                        PARENS,
+                        close,
+                        args,
+                        |a| (a.span.start, a.span.end),
+                        None,
+                        |p, a| p.pattern(a),
+                    )
+            }
             PatternKind::Variant(ty, targs, variant, args) => {
                 let head = text(&ty.name) + self.turbofish(targs) + "::" + &variant.name;
                 if args.is_empty() {

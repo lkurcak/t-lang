@@ -1838,7 +1838,10 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
 fn pattern_binds(p: &Pattern, out: &mut Vec<String>) {
     match &p.kind {
         PatternKind::Bind(name, _) => out.push(name.clone()),
-        PatternKind::Variant(_, _, _, pats) | PatternKind::Or(pats) | PatternKind::Array(pats) => {
+        PatternKind::Variant(_, _, _, pats)
+        | PatternKind::Path(_, pats, _)
+        | PatternKind::Or(pats)
+        | PatternKind::Array(pats) => {
             pats.iter().for_each(|p| pattern_binds(p, out));
         }
         PatternKind::Struct(_, _, fields, _) => {
@@ -1998,6 +2001,12 @@ pub enum PatternKind {
     /// `Point { x, y: 0 }`, or `Point { x, .. }` to ignore the other fields
     /// (the `bool`).
     Struct(Ident, Vec<TypeExpr>, Vec<FieldPat>, bool),
+    /// `None`, `Dot(p)` or `MAX`: a name that starts with an uppercase
+    /// letter, which in a pattern is always a path, never a new variable
+    /// (step 45), with the patterns of its fields in `(..)` if it's written
+    /// with them (the `bool`). Resolving rewrites it into the `Variant` it
+    /// names (`check::modules`), so the checker never sees one.
+    Path(Ident, Vec<Pattern>, bool),
     /// `[a, b, c]`: matches an array of exactly as many values, each
     /// matched by the pattern in its place.
     Array(Vec<Pattern>),

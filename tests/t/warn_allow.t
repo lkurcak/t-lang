@@ -5,7 +5,7 @@
 #[derive(Discard)]
 enum light_color {
     Red,
-    yellow,
+    Yellow_ish,
     Off,
 }
 
@@ -27,12 +27,12 @@ struct Point {
 }
 
 #[allow(non_snake_case, unused_variables)]
-fn sumPixel(P: Pixel) -> i64 with panic {
-    let Unused = 0i64;
-    fn innerHelper(N: i64) -> i64 {
-        N
+fn sumPixel(pIxel: Pixel) -> i64 with panic {
+    let unUsed = 0i64;
+    fn innerHelper(nUm: i64) -> i64 {
+        nUm
     }
-    innerHelper(P.R) + P.G
+    innerHelper(pIxel.R) + pIxel.G
 }
 
 #[allow(dead_code)]
@@ -41,7 +41,7 @@ fn never_called() {}
 #[allow(dead_cod, unused_variable, nonsense)]
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
-    let c = light_color::yellow;
+    let c = light_color::Yellow_ish;
     out.line(&sumPixel(Pixel { R: 1, G: 2, B: 3 }))?; // expect: 3
     let p = Point { x: 1, Y: 2 };
     out.line(&(p.x + p.Y))?; // expect: 3
