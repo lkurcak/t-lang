@@ -16,7 +16,10 @@
 //! docs/11-integers.md), so it needn't be trusted; `checked_mul` would need
 //! it to reason about products of unknowns, which it doesn't.
 
+use crate::fmt::{Display, Write};
 use crate::option::Option;
+use crate::result::Result;
+use crate::str::Parse;
 
 /// Says a type is one of the ten integer types, so the arithmetic
 /// operators work on it, and literals like `0` and `127` are of it. It's
@@ -173,4 +176,69 @@ export fn checked_abs<T: Signed>(x: T) -> Option<T> {
 /// How far `x` is from 0, modulo 2^w: the least value is its own.
 export fn wrapping_abs<T: Signed>(x: T) -> T {
     if x < 0 { wrapping_neg(x) } else { x }
+}
+
+/// Decimal, with a `+` or a `-` first if it's wanted, and nothing else:
+/// `"42"`, `"-7"`, `"+007"`. A `-` before a number of an unsigned type is
+/// an invalid digit, even before `0`.
+impl<T: Int> Parse for T {
+    type Error = ParseIntError;
+
+    fn parse(s: &str) -> Result<T, ParseIntError> {
+        let b = s.as_bytes();
+        if b.len() == 0 {
+            return Result::Err(ParseIntError::Empty);
+        }
+        let negative = b[0] == 0x2D;
+        if negative && least::<T>() == 0 {
+            return Result::Err(ParseIntError::InvalidDigit);
+        }
+        let mut i: usize = if negative || b[0] == 0x2B { 1 } else { 0 };
+        if i == b.len() {
+            return Result::Err(ParseIntError::InvalidDigit);
+        }
+        let overflow = if negative {
+            ParseIntError::NegOverflow
+        } else {
+            ParseIntError::PosOverflow
+        };
+        let mut n: T = 0;
+        while i < b.len() {
+            let c = b[i];
+            if c < 0x30 || c > 0x39 {
+                return Result::Err(ParseIntError::InvalidDigit);
+            }
+            let d: T = wrap(c - 0x30);
+            let Option::Some(m) = checked_mul(n, 10) else { return Result::Err(overflow) };
+            let next = if negative { checked_sub(m, d) } else { checked_add(m, d) };
+            let Option::Some(next) = next else { return Result::Err(overflow) };
+            n = next;
+            i = i + 1;
+        }
+        Result::Ok(n)
+    }
+}
+
+/// What's wrong with a string that isn't an integer of a type.
+#[derive(Copy, Discard, Eq, Send, Sync)]
+export enum ParseIntError {
+    /// It has no characters.
+    Empty,
+    /// One isn't a digit, or a sign where one can be.
+    InvalidDigit,
+    /// It's greater than the type's greatest.
+    PosOverflow,
+    /// It's less than the type's least.
+    NegOverflow,
+}
+
+impl Display for ParseIntError {
+    fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e {
+        w.write_str(match self {
+            ParseIntError::Empty => "cannot parse integer from empty string",
+            ParseIntError::InvalidDigit => "invalid digit found in string",
+            ParseIntError::PosOverflow => "number too large to fit in target type",
+            ParseIntError::NegOverflow => "number too small to fit in target type",
+        })
+    }
 }

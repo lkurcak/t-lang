@@ -375,7 +375,9 @@ impl Walk<'_> {
 
     fn expr(&mut self, e: &Expr) {
         match &e.kind {
-            ExprKind::Var(_, targs) => targs.iter().for_each(|t| self.ty(t)),
+            ExprKind::Var(_, targs) | ExprKind::MethodCall(_, _, targs, _) => {
+                targs.iter().for_each(|t| self.ty(t))
+            }
             ExprKind::StructLit(name, targs, _) | ExprKind::Variant(name, targs, ..) => {
                 self.name(&name.name, name.id);
                 targs.iter().for_each(|t| self.ty(t));

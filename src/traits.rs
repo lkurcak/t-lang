@@ -362,6 +362,27 @@ impl ImplDef {
             None => self.self_ty.to_string(),
         }
     }
+
+    /// What holds inside it, its methods' bodies and signatures: its
+    /// equality bounds, and that its trait's associated types of its own
+    /// type are what it says, `<Self as Tr>::A = ..` with `Self` its type.
+    /// That's news only when the type is a type parameter, as in `impl<T:
+    /// Int> Tr for T`, whose projections `normalise` leaves rigid.
+    ///
+    /// Sound: the impl's methods are checked assuming its bounds, and at
+    /// every type arguments that meet them, coherence makes it the one impl
+    /// of the trait for its type, so `normalise` after monomorphisation
+    /// gives the same type.
+    pub fn local_eqs(&self) -> Vec<(Type, Type)> {
+        let mut eqs = self.eqs.clone();
+        if let Some(tr) = &self.trait_name {
+            for (name, rhs) in &self.assoc {
+                let lhs = Type::Proj(Box::new(self.self_ty.clone()), tr.clone(), name.clone());
+                eqs.push((lhs, rhs.clone()));
+            }
+        }
+        eqs
+    }
 }
 
 /// Every trait and impl in a program, the built-in ones too.

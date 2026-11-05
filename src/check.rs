@@ -1270,7 +1270,7 @@ impl Checker {
                         lifetimes: d.lifetimes.clone(),
                         bounds: d.bounds.clone(),
                         preds: d.preds.clone(),
-                        eqs: d.eqs.clone(),
+                        eqs: d.local_eqs(),
                     };
                     let this = d.trait_name.clone().map(|tr| Pred {
                         ty: Type::Param("Self".into()),
