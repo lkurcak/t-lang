@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.58.0 (2026-11-05)
 
 Step 43: text and lists in the libraries. See
 [docs/43-text-and-lists.md](docs/43-text-and-lists.md).
