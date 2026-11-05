@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.60.0 (2026-11-05)
 
 Step 44: compiled runs, expressions in holes, `#[warn]`. See
 [docs/44-runs-and-holes.md](docs/44-runs-and-holes.md).
