@@ -78,8 +78,9 @@ pub(in crate::check) struct Index<'a> {
     methods: HashMap<&'a str, (&'a str, &'a crate::traits::MethodDef)>,
     /// Each function's type scheme, by symbol.
     schemes: HashMap<&'a str, &'a crate::types::Scheme>,
-    /// The name of each derived `Eq`'s `eq`, by impl.
-    derived_eq: &'a [Option<String>],
+    /// The name of each derived `Eq`'s `eq` or `Debug`'s `fmt`, by impl,
+    /// with its type parameters: the impl's, and `fmt`'s sink's.
+    derived_eq: &'a [Option<(String, Vec<String>)>],
 }
 
 impl<'a> Index<'a> {
@@ -101,7 +102,7 @@ impl Checker {
     pub(in crate::check) fn index<'a>(
         &'a self,
         (dicts, type_dicts): (&'a [String], &'a [String]),
-        derived_eq: &'a [Option<String>],
+        derived_eq: &'a [Option<(String, Vec<String>)>],
     ) -> Index<'a> {
         let methods = (self.traits.traits.iter())
             .flat_map(|(t, d)| {
@@ -208,7 +209,7 @@ impl Checker {
         match picked {
             Some((k, impl_args)) => {
                 let d = &self.traits.impls[k];
-                let derived: Option<&'a str> = ix.derived_eq[k].as_deref();
+                let derived: Option<&'a str> = ix.derived_eq[k].as_ref().map(|(n, _)| n.as_str());
                 let target: Option<(&'a str, Vec<Type>)> =
                     match (d.methods.iter().find(|(n, _)| *n == m.name), derived) {
                         (Some((_, symbol)), _) => {
@@ -278,7 +279,7 @@ impl Checker {
                                 site.push(to, own.clone(), None);
                             }
                         }
-                        (None, Some(eq)) => site.push(eq, own.clone(), None),
+                        (None, Some((eq, _))) => site.push(eq, own.clone(), None),
                         (None, None) if !d.derived && m.provided => {
                             site.push(&m.symbol, vec![d.self_ty.clone()], None)
                         }
@@ -464,8 +465,8 @@ impl Checker {
         for (k, d) in self.traits.impls.iter().enumerate() {
             params.insert(&ix.dicts[k], d.params.as_slice());
             params.insert(&ix.type_dicts[k], d.params.as_slice());
-            if let Some(eq) = &ix.derived_eq[k] {
-                params.insert(eq, d.params.as_slice());
+            if let Some((eq, ps)) = &ix.derived_eq[k] {
+                params.insert(eq, ps.as_slice());
             }
         }
         for (k, _, node) in nodes {

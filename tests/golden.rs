@@ -263,6 +263,18 @@ fn node_ids(debug: &str, next_id: u32) -> Result<usize, String> {
     let mut i = 0;
     while i < debug.len() {
         let rest = &debug[i..];
+        // A character, which may be a quote or brace: `'"'`, `'}'`, `'\''`.
+        if let Some(c) = rest.strip_prefix('\'') {
+            let len = match c.strip_prefix('\\') {
+                Some(e) if e.starts_with('u') => e.find('}').map_or(1, |k| k + 2),
+                Some(_) => 2,
+                None => c.chars().next().map_or(0, char::len_utf8),
+            };
+            if c.get(len..).is_some_and(|r| r.starts_with('\'')) {
+                i += 1 + len + 1;
+                continue;
+            }
+        }
         if rest.starts_with('"') {
             // A name or a doc comment's text, which may hold anything.
             let mut chars = rest.char_indices().skip(1);

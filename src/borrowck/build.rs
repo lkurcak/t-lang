@@ -411,6 +411,7 @@ impl<'a> Builder<'a> {
             | ExprKind::WhileLet(..)
             | ExprKind::Range(..)
             | ExprKind::Try(..)
+            | ExprKind::Format(_)
             | ExprKind::Index(..) => {
                 unreachable!("rewritten when paths are resolved")
             }

@@ -350,6 +350,9 @@ impl Checker {
     /// Notes what's at `span`. Its types may still have variables in them:
     /// `finish_notes` solves them once the function is checked.
     pub(super) fn note(&mut self, span: Span, kind: NoteKind, ty: Option<Type>, def: Option<Span>) {
+        if self.modules.formats.contains(&span) {
+            return;
+        }
         let (span, kind) = last_segment(span, kind);
         if unwritten(span, &kind) {
             return;
@@ -393,6 +396,9 @@ impl Checker {
             && !args.is_empty()
         {
             self.pending.push(instance);
+        }
+        if self.modules.formats.contains(&span) {
+            return;
         }
         let (span, kind) = last_segment(span, kind);
         if unwritten(span, &kind) {
@@ -821,6 +827,7 @@ fn each_annotation(e: &Expr, f: &mut impl FnMut(&TypeExpr)) {
         | ExprKind::WhileLet(..)
         | ExprKind::Range(..)
         | ExprKind::Try(..)
+        | ExprKind::Format(_)
         | ExprKind::Index(..) => {
             unreachable!("rewritten when paths are resolved")
         }

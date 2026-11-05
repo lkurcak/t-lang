@@ -304,6 +304,17 @@ fn parse_file(prog: &mut Program, m: usize, text: &str, start: usize) -> Result<
         .into_iter()
         .map(|mut t| {
             t.span = moved(t.span, start);
+            // A format string's holes have spans of their own.
+            if let lexer::Tok::FStr(pieces) = &mut t.tok {
+                for p in pieces {
+                    if let lexer::FPiece::Hole(names, _, span) = p {
+                        *span = moved(*span, start);
+                        for (_, s) in names {
+                            *s = moved(*s, start);
+                        }
+                    }
+                }
+            }
             t
         })
         .collect();

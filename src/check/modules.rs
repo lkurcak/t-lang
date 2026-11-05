@@ -147,6 +147,10 @@ pub(crate) struct Modules {
     /// (`Rewrite::try_expr`), for saying what's wrong with them in terms of
     /// the `?`.
     pub(crate) tries: HashSet<Span>,
+    /// Where each hole of a format string is, which is where the call of
+    /// `core::fmt::display` or `debug` it means is named (`Rewrite::format`):
+    /// a name the program doesn't have, with nothing to show or rename.
+    pub(crate) formats: HashSet<Span>,
     /// The `else` arm of the `match` each `if let`, `while let` and `let ..
     /// else` means, by where its pattern is, the `let` (`Rewrite::if_let`):
     /// for saying what's wrong with it in terms of what was written.
@@ -1437,9 +1441,18 @@ impl Rewrite<'_> {
                 return Ok(());
             }
         };
-        // Each derived trait by its symbol: only core's five can be.
+        // Each derived trait by its symbol: only core's six can be, and a
+        // name without a path is one of them, whatever's in scope, so
+        // deriving needs no import (lemma F4 of docs/43.1-formatting.md).
         for name in derives.iter_mut().flat_map(|d| &mut d.names) {
             let written = name.name.clone();
+            if let Some(symbol) = DERIVABLE
+                .iter()
+                .find(|s| s.rsplit("::").next() == Some(written.as_str()))
+            {
+                name.name = symbol.to_string();
+                continue;
+            }
             let a_trait = written.contains("::")
                 || matches!(
                     self.r.m.get(self.module, &written, Ns::Types),
@@ -1448,16 +1461,18 @@ impl Rewrite<'_> {
                         ..
                     })
                 );
-            self.trait_ref(name)?;
+            if a_trait {
+                self.trait_ref(name)?;
+            }
             if !DERIVABLE.contains(&name.name.as_str()) {
                 let message = match !a_trait {
                     true => format!(
-                        "can't derive `{written}`; only `Copy`, `Discard`, `Eq`, `Send` and `Sync` \
-                         can be derived"
+                        "can't derive `{written}`; only `Copy`, `Debug`, `Discard`, `Eq`, `Send` \
+                         and `Sync` can be derived"
                     ),
                     false => format!(
-                        "only `core`'s `Discard`, `Copy`, `Eq`, `Send` and `Sync` can be derived, \
-                         and `{written}` here is `{}`",
+                        "only `core`'s `Copy`, `Debug`, `Discard`, `Eq`, `Send` and `Sync` can be \
+                         derived, and `{written}` here is `{}`",
                         match is_library_symbol(&name.name) {
                             true => name.name.clone(),
                             false => format!("crate::{}", name.name),
@@ -1709,6 +1724,19 @@ impl Rewrite<'_> {
                 e.kind = self.try_expr(*x, q);
                 return Ok(());
             }
+            ExprKind::Format(pieces) => {
+                for p in pieces.iter_mut() {
+                    if let FmtPiece::Hole { place, .. } = p {
+                        self.expr(place)?;
+                    }
+                }
+                let ExprKind::Format(pieces) = std::mem::replace(&mut e.kind, ExprKind::Unit)
+                else {
+                    unreachable!("matched above");
+                };
+                e.kind = self.format(pieces, e.span);
+                return Ok(());
+            }
             ExprKind::Range(l, r) => {
                 self.expr(l)?;
                 self.expr(r)?;
@@ -1858,6 +1886,84 @@ impl Rewrite<'_> {
             self.expr(c)?;
         }
         Ok(())
+    }
+
+    /// What format string `f"..."`, its `pieces`, at `span`, means (lemma
+    /// F2 of docs/43.1-formatting.md): its pieces, each a `Display`, one
+    /// after another, by `core::fmt::cat`, as in
+    ///
+    /// ```text
+    /// f"x = {x}, p = {p.y:?}"
+    /// core::fmt::cat("x = ", core::fmt::cat(core::fmt::display(&x),
+    ///     core::fmt::cat(", p = ", core::fmt::debug(&p.y))))
+    /// ```
+    ///
+    /// A hole `{x}` borrows the place it names, which must be `Display`,
+    /// and `{x:?}` one that must be `Debug`: the call of `display` or
+    /// `debug` is the hole, which is where an error about it is. The
+    /// library's functions are named by their symbols, so the program's
+    /// own names don't change what it means, and it needs no import.
+    fn format(&mut self, pieces: Vec<FmtPiece>, span: Span) -> ExprKind {
+        let at = Span::new(span.start, span.start);
+        let call = |cx: &mut Self, f: &str, args: Vec<Expr>, span: Span| {
+            // A hole's call is named where the hole is, so that what's
+            // wrong with it is there; `cat`, at no span.
+            let named = match f {
+                "cat" => Span::new(span.start, span.start),
+                _ => span,
+            };
+            cx.r.m.formats.insert(named);
+            let callee = Expr {
+                kind: ExprKind::Var(format!("core::fmt::{f}"), Vec::new()),
+                span: named,
+                id: cx.id(),
+            };
+            let item = cx.core_value("fmt", f);
+            cx.r.m.paths.insert(callee.id, item);
+            Expr {
+                kind: ExprKind::Call(Box::new(callee), args),
+                span,
+                id: cx.id(),
+            }
+        };
+        let mut parts: Vec<Expr> = Vec::new();
+        for p in pieces {
+            parts.push(match p {
+                FmtPiece::Text(t) => Expr {
+                    kind: ExprKind::Str(t),
+                    span: at,
+                    id: self.id(),
+                },
+                FmtPiece::Hole { place, debug, span } => {
+                    let borrow = Expr {
+                        span: place.span,
+                        kind: ExprKind::Unary(UnOp::Ref, Box::new(place)),
+                        id: self.id(),
+                    };
+                    let f = if debug { "debug" } else { "display" };
+                    call(self, f, vec![borrow], span)
+                }
+            });
+        }
+        let Some(mut whole) = parts.pop() else {
+            return ExprKind::Str(String::new());
+        };
+        while let Some(p) = parts.pop() {
+            whole = call(self, "cat", vec![p, whole], span);
+        }
+        whole.kind
+    }
+
+    /// Value `name` of the core library's module `module`, which it has.
+    fn core_value(&self, module: &str, name: &str) -> Item {
+        let core = self.r.m.core.expect("the core library is loaded");
+        let Some(Binding {
+            item: Item::Mod(m), ..
+        }) = self.r.m.mods[core].types.get(module)
+        else {
+            unreachable!("the core library has a module `{module}`");
+        };
+        self.r.m.mods[*m].values[name].item
     }
 
     /// Item `name` of the core library's module `module`, which it has.
@@ -2561,6 +2667,12 @@ pub(crate) fn children_mut(e: &mut Expr) -> Vec<&mut Expr> {
         | ExprKind::Unit
         | ExprKind::Var(..)
         | ExprKind::Continue(_) => Vec::new(),
+        ExprKind::Format(pieces) => (pieces.iter_mut())
+            .filter_map(|p| match p {
+                FmtPiece::Text(_) => None,
+                FmtPiece::Hole { place, .. } => Some(place),
+            })
+            .collect(),
         ExprKind::Unary(_, x)
         | ExprKind::As(x, _)
         | ExprKind::Field(x, _)

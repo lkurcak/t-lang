@@ -177,7 +177,7 @@ enums! {
         Impl(bounds), Refined(name, ty, pred),
     };
     ExprKind {
-        Int(n, ty), Bool(b), Char(c), Str(s), ByteStr(bytes), Unit, Var(name, args),
+        Int(n, ty), Bool(b), Char(c), Str(s), ByteStr(bytes), Format(pieces), Unit, Var(name, args),
         Unary(op, expr), As(expr, ty), Binary(op, left, right), Call(callee, args),
         MethodCall(receiver, name, types, args), If(cond, then, otherwise),
         IfLet(cond, then, otherwise), Array(elems),
@@ -192,6 +192,20 @@ enums! {
         Wild, Bind(name, mutable), Int(n, kind), Range(start, end, inclusive, kind), Bool(b), Unit, Str(s),
         Variant(ty, types, name, fields), Struct(ty, types, fields, rest), Array(elems), Or(alts),
     };
+}
+
+impl Describe for FmtPiece {
+    fn describe(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Text(s) => f.debug_tuple("Text").field(&Shape(s)).finish(),
+            Self::Hole { place, debug, span } => f
+                .debug_struct("Hole")
+                .field("place", &Shape(place))
+                .field("debug", &Shape(debug))
+                .field("span", &Shape(span))
+                .finish(),
+        }
+    }
 }
 
 impl Describe for Stmt {

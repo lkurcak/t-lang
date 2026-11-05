@@ -28,7 +28,7 @@ export struct Stdout {}
 export struct Stderr {}
 
 /// What kind of failure an `Error` is.
-#[derive(Discard, Copy, Eq, Send, Sync)]
+#[derive(Discard, Copy, Debug, Eq, Send, Sync)]
 export enum ErrorKind {
     /// What's at the other end went away: a pipe's reader, say.
     BrokenPipe,
@@ -39,7 +39,7 @@ export enum ErrorKind {
 }
 
 /// Why reading or writing failed.
-#[derive(Discard, Send, Sync)]
+#[derive(Debug, Discard, Send, Sync)]
 export struct Error { kind: ErrorKind }
 
 impl Error {

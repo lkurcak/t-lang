@@ -1,7 +1,7 @@
 //! Stopping the program, and checking what must be true on the way.
 
 use crate::cmp::Eq;
-use crate::fmt::{Display, Write};
+use crate::fmt::{Debug, Display, Write};
 use crate::result::Result;
 
 /// Aborts the program, saying `why`: nothing after it runs, nothing is
@@ -27,15 +27,15 @@ export fn assert(ok: bool) with panic ensures ok {
     if !ok { panic("assertion failed") }
 }
 
-/// Panics unless `left == right`, saying what each is.
+/// Panics unless `left == right`, saying what each is, by its `Debug`.
 #[blame_caller]
-export fn assert_eq<T: Eq + Display>(left: &T, right: &T) with panic {
+export fn assert_eq<T: Eq + Debug>(left: &T, right: &T) with panic {
     if !(left == right) { panic_with(&Mismatch { op: "==", left, right }) }
 }
 
-/// Panics unless `left != right`, saying what they are.
+/// Panics unless `left != right`, saying what they are, by their `Debug`.
 #[blame_caller]
-export fn assert_ne<T: Eq + Display>(left: &T, right: &T) with panic {
+export fn assert_ne<T: Eq + Debug>(left: &T, right: &T) with panic {
     if left == right { panic_with(&Mismatch { op: "!=", left, right }) }
 }
 
@@ -45,16 +45,16 @@ export fn assert_ne<T: Eq + Display>(left: &T, right: &T) with panic {
 struct Mismatch<'a, T> { op: &'a str, left: &'a T, right: &'a T }
 
 /// `assertion `left == right` failed`, then each side on a line of its
-/// own.
-impl<'a, T: Display> Display for Mismatch<'a, T> {
+/// own, by its `Debug`.
+impl<'a, T: Debug> Display for Mismatch<'a, T> {
     #[blame_caller]
     fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e {
         w.write_str("assertion `left ")?;
         w.write_str(self.op)?;
         w.write_str(" right` failed\n  left: ")?;
-        w.line(self.left)?;
-        w.write_str(" right: ")?;
-        w.put(self.right)
+        Debug::fmt(self.left, w)?;
+        w.write_str("\n right: ")?;
+        Debug::fmt(self.right, w)
     }
 }
 

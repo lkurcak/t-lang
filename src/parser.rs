@@ -122,7 +122,7 @@
 
 use crate::ast::*;
 use crate::error::{Edit, Error, Fix, Span};
-use crate::lexer::{OpEq, Tok, Token};
+use crate::lexer::{FPiece, OpEq, Tok, Token};
 use std::sync::Arc;
 
 /// Parses a file as the crate root. A `mod m;` in it is a module of no
@@ -2562,6 +2562,30 @@ impl Parser {
         }
     }
 
+    /// The place a format string's hole names: a name, then its fields.
+    fn hole_place(&mut self, names: Vec<(String, Span)>) -> Expr {
+        let mut names = names.into_iter();
+        let (name, span) = names.next().expect("a hole has a name");
+        let mut e = Expr {
+            kind: ExprKind::Var(name, Vec::new()),
+            span,
+            id: self.id(),
+        };
+        for (name, at) in names {
+            let field = Ident {
+                name,
+                span: at,
+                id: self.id(),
+            };
+            e = Expr {
+                span: e.span.to(at),
+                kind: ExprKind::Field(Box::new(e), field),
+                id: self.id(),
+            };
+        }
+        e
+    }
+
     /// Call arguments, after the `(`.
     fn args(&mut self) -> Result<(Vec<Expr>, Span), Error> {
         self.structs(true, |p| p.comma_list(Tok::RParen, Self::expr))
@@ -2575,6 +2599,19 @@ impl Parser {
             Tok::Char(c) => ExprKind::Char(c),
             Tok::Str(s) => ExprKind::Str(s),
             Tok::ByteStr(b) => ExprKind::ByteStr(b),
+            Tok::FStr(pieces) => ExprKind::Format(
+                pieces
+                    .into_iter()
+                    .map(|p| match p {
+                        FPiece::Text(t) => FmtPiece::Text(t),
+                        FPiece::Hole(names, debug, span) => FmtPiece::Hole {
+                            place: self.hole_place(names),
+                            debug,
+                            span,
+                        },
+                    })
+                    .collect(),
+            ),
             Tok::True => ExprKind::Bool(true),
             Tok::False => ExprKind::Bool(false),
             Tok::Crate | Tok::Super => return self.path_expr(),

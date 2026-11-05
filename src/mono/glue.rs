@@ -15,6 +15,13 @@
 //!   references and boxes to what they point to, and value by value for
 //!   arrays, slices and strings, which a loop does.
 //!
+//! - `{debug}::<T, W>(x: &T, w: &mut W) -> Result<(), W::Error>` is the
+//!   `fmt` of a derived `Debug`: the type's name, then its fields, each
+//!   by its type's `Debug::fmt`, as `Point { x: 1, y: 2 }`, or the name of
+//!   the variant the value is, then its fields, as `Some(3)`. Each write
+//!   gives a `Result`, and the first `Err` is what it gives (lemma G1 of
+//!   docs/43.1-formatting.md).
+//!
 //! - `{fn}::<C>(..) -> ..` is closure type `C`, which captures nothing,
 //!   used as a function (*reified*, see `Checker::reify`): it makes the
 //!   closure, which has nothing in it, and calls its body with it, by `&`.
@@ -26,7 +33,7 @@ use super::{Cx, Target};
 use crate::ast::BinOp;
 use crate::error::Span;
 use crate::mir::*;
-use crate::traits::{DISCARD, EQ, FnKind, Source};
+use crate::traits::{DEBUG, DISCARD, EQ, FnKind, Source, WRITE};
 use crate::types::{Region, Type};
 
 /// The name of glue `kind`, `{drop}` or `{eq}`, for type `t`, which has no
@@ -38,10 +45,13 @@ pub(crate) fn glue_name(kind: &str, t: &Type) -> String {
 pub(crate) const DROP: &str = "{drop}";
 pub(crate) const EQ_GLUE: &str = "{eq}";
 pub(crate) const FN_GLUE: &str = "{fn}";
+pub(crate) const DEBUG_GLUE: &str = "{debug}";
 
 /// Is glue `name` one of these, which have bodies but no declarations?
 pub(crate) fn is_glue(name: &str) -> bool {
-    name.starts_with("{drop}::<") || name.starts_with("{eq}::<") || name.starts_with("{fn}::<")
+    ["{drop}::<", "{eq}::<", "{fn}::<", "{debug}::<"]
+        .iter()
+        .any(|g| name.starts_with(g))
 }
 
 /// A body being written.
@@ -338,7 +348,7 @@ impl Cx<'_, '_, '_> {
         Some(match self.target(&format!("<{EQ}>::eq"), vec![t.clone()]) {
             Target::Fn(of, args, copy) => self.m.named_copy(&of, args, copy),
             Target::Eq(t) => self.eq_glue(&t),
-            Target::Discard(_) => unreachable!("`eq` of `Eq`"),
+            Target::Discard(_) | Target::Debug(..) => unreachable!("`eq` of `Eq`"),
         })
     }
 
@@ -676,6 +686,189 @@ impl Cx<'_, '_, '_> {
             FnKind::FnOnce => None,
             k => Some(k),
         }
+    }
+}
+
+/// A `{debug}` body being written: the value's place, the sink, the
+/// result's type, which variant of it is `Ok`, and where it returns from.
+struct Dbg {
+    w: Local,
+    result: Type,
+    ok: usize,
+    join: usize,
+}
+
+impl Cx<'_, '_, '_> {
+    /// The name of the `Debug::fmt` glue of `t` into sink `w`, made if it
+    /// isn't yet.
+    pub(super) fn debug_glue(&mut self, t: &Type, w: &Type) -> String {
+        let (t, w) = (t.erased(), w.erased());
+        let name = format!(
+            "{DEBUG_GLUE}::<{}, {}>",
+            t.symbols(),
+            w.symbols()
+        );
+        if self.m.glue_made.insert(name.clone()) {
+            let body = self.debug_body(&t, &w);
+            self.m.bodies.insert(name.clone(), body);
+        }
+        name
+    }
+
+    fn debug_body(&mut self, t: &Type, w: &Type) -> Body {
+        let error = Type::Proj(Box::new(w.clone()), WRITE.into(), "Error".into());
+        let error = self.m.proj.reveal(&error).erased();
+        let result = Type::Adt(
+            crate::check::RESULT.into(),
+            Vec::new(),
+            vec![Type::Unit, error],
+        );
+        let ok = match self.m.types[crate::check::RESULT] {
+            crate::ast::TypeDecl::Enum(e) => (e.variants.iter())
+                .position(|v| v.name.name == "Ok")
+                .expect("`Result` has `Ok`"),
+            _ => unreachable!("`Result` is an enum"),
+        };
+        let sink = Type::Ref(Region::Erased, true, Box::new(w.clone()));
+        let mut g = G::new(result.clone(), vec![shared(t), sink]);
+        let join = g.new_block();
+        let d = Dbg {
+            w: Local(2),
+            result,
+            ok,
+            join,
+        };
+        let x = Place::local(Local(1)).project(Proj::Deref);
+        let Type::Adt(symbol, ..) = t else {
+            unreachable!("a derived `Debug` is of a struct or enum")
+        };
+        let decl = self.m.types[symbol.as_str()];
+        match (decl, self.variant_types(t)) {
+            (crate::ast::TypeDecl::Enum(e), Some(variants)) => {
+                let names: Vec<String> = e.variants.iter().map(|v| v.name.name.clone()).collect();
+                let start = g.cur;
+                let mut pats = Vec::new();
+                let mut targets = Vec::new();
+                for (v, fields) in variants.iter().enumerate() {
+                    g.cur = g.new_block();
+                    targets.push(Bb(g.cur));
+                    pats.push(Pat::Variant(v, vec![Pat::Any; fields.len()]));
+                    let parts = (fields.iter().enumerate())
+                        .map(|(i, f)| (None, f.clone(), x.project(Proj::Variant(v, i))))
+                        .collect();
+                    self.debug_parts(&mut g, &d, &names[v], parts, false);
+                }
+                g.cur = start;
+                g.push(StmtKind::Inspect(x.clone()));
+                g.terminate(Term::Match(x.clone(), pats, targets));
+            }
+            (crate::ast::TypeDecl::Struct(s), None) => {
+                let names: Vec<String> = s.fields.iter().map(|f| f.name.name.clone()).collect();
+                let parts = (self.field_types(t).into_iter().enumerate())
+                    .map(|(i, f)| (Some(names[i].clone()), f, x.project(Proj::Field(i))))
+                    .collect();
+                self.debug_parts(&mut g, &d, &s.name.name, parts, true);
+            }
+            _ => unreachable!("a derived `Debug` of `{t}`"),
+        }
+        g.cur = join;
+        g.finish()
+    }
+
+    /// Writes `name`, then the parts, each `(field name, type, place)`:
+    /// `name { a: .., b: .. }` if `braces`, and else `name(.., ..)`; just
+    /// `name` if there are none. Then returns what the last write gave.
+    fn debug_parts(
+        &mut self,
+        g: &mut G,
+        d: &Dbg,
+        name: &str,
+        parts: Vec<(Option<String>, Type, Place)>,
+        braces: bool,
+    ) {
+        let (open, close) = match braces {
+            true => (" { ", " }"),
+            false => ("(", ")"),
+        };
+        let mut text = name.to_string();
+        let n = parts.len();
+        for (i, (field, t, place)) in parts.into_iter().enumerate() {
+            text.push_str(if i == 0 { open } else { ", " });
+            if let Some(f) = field {
+                text.push_str(&f);
+                text.push_str(": ");
+            }
+            self.debug_write_str(g, d, std::mem::take(&mut text));
+            // `Debug::fmt(&place, &mut *w)`.
+            let f = self.fn_const(&format!("<{DEBUG}>::fmt"), vec![t.clone(), self.sink_of(g, d)]);
+            let x = g.temp(shared(&t));
+            g.assign(Place::local(x), Rvalue::Ref(0, false, place));
+            let w = self.reborrow(g, d);
+            let call = Rvalue::Call(
+                Operand::Const(f),
+                vec![Operand::Move(Place::local(x)), Operand::Move(Place::local(w))],
+            );
+            self.debug_step(g, d, call);
+        }
+        if n > 0 {
+            text.push_str(close);
+        }
+        // The last write's result is the body's.
+        let f = self.fn_const(&format!("<{WRITE}>::write_str"), vec![self.sink_of(g, d)]);
+        let w = self.reborrow(g, d);
+        let call = Rvalue::Call(
+            Operand::Const(f),
+            vec![Operand::Move(Place::local(w)), Operand::Const(Const::Str(text))],
+        );
+        g.assign(Place::local(RETURN), call);
+        g.terminate(Term::Goto(Bb(d.join)));
+    }
+
+    /// The sink's type, `W`.
+    fn sink_of(&self, g: &G, d: &Dbg) -> Type {
+        match &g.locals[d.w.0].ty {
+            Type::Ref(_, _, w) => (**w).clone(),
+            t => unreachable!("a sink `{t}`"),
+        }
+    }
+
+    /// `&mut *w`, in a new temporary.
+    fn reborrow(&self, g: &mut G, d: &Dbg) -> Local {
+        let ty = g.locals[d.w.0].ty.clone();
+        let w = g.temp(ty);
+        let place = Place::local(d.w).project(Proj::Deref);
+        g.assign(Place::local(w), Rvalue::Ref(0, true, place));
+        w
+    }
+
+    /// `w.write_str(text)`, returning its error if it gives one.
+    fn debug_write_str(&mut self, g: &mut G, d: &Dbg, text: String) {
+        let f = self.fn_const(&format!("<{WRITE}>::write_str"), vec![self.sink_of(g, d)]);
+        let w = self.reborrow(g, d);
+        let call = Rvalue::Call(
+            Operand::Const(f),
+            vec![Operand::Move(Place::local(w)), Operand::Const(Const::Str(text))],
+        );
+        self.debug_step(g, d, call);
+    }
+
+    /// `call?`: if what it gives is `Ok`, that's used up and the body goes
+    /// on; if not, the body returns it.
+    fn debug_step(&mut self, g: &mut G, d: &Dbg, call: Rvalue) {
+        let r = g.temp(d.result.clone());
+        g.assign(Place::local(r), call);
+        let (go_on, stop) = (g.new_block(), g.new_block());
+        g.push(StmtKind::Inspect(Place::local(r)));
+        g.terminate(Term::Match(
+            Place::local(r),
+            vec![Pat::Variant(d.ok, vec![Pat::Any]), Pat::Any],
+            vec![Bb(go_on), Bb(stop)],
+        ));
+        g.cur = stop;
+        g.assign(Place::local(RETURN), Rvalue::Use(Operand::Move(Place::local(r))));
+        g.terminate(Term::Goto(Bb(d.join)));
+        g.cur = go_on;
+        g.push(StmtKind::Consume(Place::local(r), Some(d.ok)));
     }
 }
 

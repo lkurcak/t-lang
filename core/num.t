@@ -220,7 +220,7 @@ impl<T: Int> Parse for T {
 }
 
 /// What's wrong with a string that isn't an integer of a type.
-#[derive(Copy, Discard, Eq, Send, Sync)]
+#[derive(Copy, Debug, Discard, Eq, Send, Sync)]
 export enum ParseIntError {
     /// It has no characters.
     Empty,

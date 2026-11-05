@@ -1,7 +1,7 @@
 //! Strings that grow: text in UTF-8, owned, on the heap.
 
 use core::cmp::{Ord, Ordering};
-use core::fmt::{Display, Write};
+use core::fmt::{Debug, Display, Write};
 use core::str;
 
 use crate::list::List;
@@ -165,6 +165,14 @@ impl Display for String {
     #[blame_caller]
     fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e {
         w.write_str(self.as_str())
+    }
+}
+
+/// In double quotes, escaped, as its `str`'s: `"say \"hi\"\n"`.
+impl Debug for String {
+    #[blame_caller]
+    fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e {
+        Debug::fmt(self.as_str(), w)
     }
 }
 
