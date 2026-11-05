@@ -92,7 +92,13 @@ fn text(bytes: &[u8]) -> String {
 
 /// Runs the program in `dir`, and asserts it succeeds; returns its output.
 fn runs(dir: &Path, cache: &Path) -> String {
-    let out = t(dir, cache, &["main.t"]);
+    // Interpreted on Windows, which the C backend isn't for yet.
+    let args: &[&str] = if cfg!(windows) {
+        &["--interp", "main.t"]
+    } else {
+        &["main.t"]
+    };
+    let out = t(dir, cache, args);
     assert!(
         out.status.success(),
         "stdout: {}\nstderr: {}",
