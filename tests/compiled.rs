@@ -156,9 +156,9 @@ fn differential(p: &Program, dir: &Path) -> Outcome {
         .map(|(_, s)| s.as_str())
         .collect::<Vec<_>>()
         .join("\n");
-    let input = Expectations::of(&all).input;
+    let want = Expectations::of(&all);
     let (root, src) = &files[0];
-    let run = t_lang::run_files(root, src, Some(files.clone()), Some(input.clone()));
+    let run = t_lang::run_files(root, src, Some(files.clone()), Some(want.terminal()));
     let mut want_err = run.errors.clone();
     match &run.result {
         Err(e) if e.phase != t_lang::error::Phase::Runtime => {
@@ -200,7 +200,7 @@ fn differential(p: &Program, dir: &Path) -> Outcome {
         &c,
         built,
         &exe,
-        &input,
+        &want,
         &run,
         &want_err,
         &dir.join(&name),
@@ -223,7 +223,7 @@ fn differential(p: &Program, dir: &Path) -> Outcome {
         &c,
         built,
         &exe,
-        &input,
+        &want,
         &run,
         &want_err,
         &dir.join(&name),
@@ -235,7 +235,7 @@ fn differential(p: &Program, dir: &Path) -> Outcome {
 }
 
 /// Runs `exe`, which was built (or not, `built` says) from C program `c`,
-/// with `input`: what's different from what the interpreter did, `run`,
+/// as `want` says to: what's different from what the interpreter did, `run`,
 /// its errors being `want_err`, if anything is. The C is kept beside
 /// `name` if so. A panic ends a hosted program with 101, as the
 /// interpreter; on the `freestanding` target, the platform says how it
@@ -245,7 +245,7 @@ fn same(
     c: &str,
     built: Result<(), String>,
     exe: &Path,
-    input: &[u8],
+    want: &Expectations,
     run: &t_lang::RunResult,
     want_err: &[String],
     name: &Path,
@@ -256,7 +256,14 @@ fn same(
         let _ = fs::write(&c_file, c);
         return Some(format!("{e}(the C is in {})", c_file.display()));
     }
-    let mut child = std::process::Command::new(exe)
+    let mut command = std::process::Command::new(exe);
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::arg0(&mut command, expect::PROGRAM);
+    // On top of what it inherits, such as a sanitizer's options: so a
+    // program reads only the variables its test gives.
+    let mut child = command
+        .args(&want.args)
+        .envs(want.env.iter().map(|(n, v)| (n, v)))
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -265,7 +272,7 @@ fn same(
     {
         use std::io::Write;
         let mut stdin = child.stdin.take().unwrap();
-        let _ = stdin.write_all(input);
+        let _ = stdin.write_all(&want.input);
     }
     let out = child.wait_with_output().unwrap();
     let mut diffs = Vec::new();

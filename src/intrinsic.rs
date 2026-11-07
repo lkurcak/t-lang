@@ -62,8 +62,14 @@ pub enum Intrinsic {
     OutOfMemory,
     /// A method of `alloc::arena::Slots`, where an arena keeps its values.
     Slots(SlotsOp),
-    /// The intrinsic method of one of `std::io`'s streams.
-    Stream(Stream),
+    /// An intrinsic method of `std::io::Stdin`.
+    Stdin(StdinOp),
+    /// An intrinsic method of `std::io::Stdout` or `Stderr`.
+    Output(Output, OutputOp),
+    /// A method of `std::env::Args`.
+    Args(ArgsOp),
+    /// A method of `std::env::Env`.
+    Env(EnvOp),
     /// `std::thread::start`.
     ThreadStart,
     /// `std::thread::JoinHandle::join`.
@@ -142,13 +148,41 @@ pub enum SlotsOp {
     Len,
 }
 
-/// One of `std::io`'s streams, whose one intrinsic method reads or writes
-/// a byte.
+/// An intrinsic method of `std::io::Stdin`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Stream {
-    Stdin,
+pub enum StdinOp {
+    Read,
+    IsTerminal,
+}
+
+/// One of `std::io`'s streams that are written: `Stdout` or `Stderr`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Output {
     Stdout,
     Stderr,
+}
+
+/// An intrinsic method of `std::io::Stdout` or `Stderr`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum OutputOp {
+    Write,
+    Flush,
+    IsTerminal,
+}
+
+/// A method of `std::env::Args`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ArgsOp {
+    Program,
+    Len,
+    Index,
+}
+
+/// A method of `std::env::Env`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum EnvOp {
+    Len,
+    Index,
 }
 
 impl Intrinsic {
@@ -210,9 +244,19 @@ impl Intrinsic {
             Slots(SlotsOp::New),
             Slots(SlotsOp::Alloc),
             Slots(SlotsOp::Len),
-            Stream(self::Stream::Stdin),
-            Stream(self::Stream::Stdout),
-            Stream(self::Stream::Stderr),
+            Stdin(StdinOp::Read),
+            Stdin(StdinOp::IsTerminal),
+            Output(self::Output::Stdout, OutputOp::Write),
+            Output(self::Output::Stdout, OutputOp::Flush),
+            Output(self::Output::Stdout, OutputOp::IsTerminal),
+            Output(self::Output::Stderr, OutputOp::Write),
+            Output(self::Output::Stderr, OutputOp::Flush),
+            Output(self::Output::Stderr, OutputOp::IsTerminal),
+            Args(ArgsOp::Program),
+            Args(ArgsOp::Len),
+            Args(ArgsOp::Index),
+            Env(EnvOp::Len),
+            Env(EnvOp::Index),
             ThreadStart,
             ThreadJoin,
         ]
@@ -292,10 +336,28 @@ impl Intrinsic {
                 SlotsOp::Alloc => "alloc::arena::Slots::alloc",
                 SlotsOp::Len => "alloc::arena::Slots::len",
             },
-            Stream(s) => match s {
-                self::Stream::Stdin => "std::io::Stdin::read_byte",
-                self::Stream::Stdout => "std::io::Stdout::write_byte",
-                self::Stream::Stderr => "std::io::Stderr::write_byte",
+            Stdin(op) => match op {
+                StdinOp::Read => "std::io::Stdin::os_read",
+                StdinOp::IsTerminal => "std::io::Stdin::os_is_terminal",
+            },
+            Output(self::Output::Stdout, op) => match op {
+                OutputOp::Write => "std::io::Stdout::os_write",
+                OutputOp::Flush => "std::io::Stdout::os_flush",
+                OutputOp::IsTerminal => "std::io::Stdout::os_is_terminal",
+            },
+            Output(self::Output::Stderr, op) => match op {
+                OutputOp::Write => "std::io::Stderr::os_write",
+                OutputOp::Flush => "std::io::Stderr::os_flush",
+                OutputOp::IsTerminal => "std::io::Stderr::os_is_terminal",
+            },
+            Args(op) => match op {
+                ArgsOp::Program => "std::env::Args::program",
+                ArgsOp::Len => "std::env::Args::len",
+                ArgsOp::Index => "std::env::Args::index",
+            },
+            Env(op) => match op {
+                EnvOp::Len => "std::env::Env::len",
+                EnvOp::Index => "std::env::Env::index",
             },
             ThreadStart => "std::thread::start",
             ThreadJoin => "std::thread::JoinHandle::join",
@@ -335,6 +397,10 @@ pub enum IntrinsicType {
     Stdout,
     /// `std::io::Stderr`.
     Stderr,
+    /// `std::env::Args`.
+    Args,
+    /// `std::env::Env`.
+    Env,
     /// `std::thread::Threads`.
     Threads,
     /// `std::thread::JoinHandle`.
@@ -346,7 +412,7 @@ impl IntrinsicType {
     pub const ALL: &[IntrinsicType] = {
         use IntrinsicType::*;
         &[
-            Message, Box, RawBuf, Slots, Stdin, Stdout, Stderr, Threads, JoinHandle,
+            Message, Box, RawBuf, Slots, Stdin, Stdout, Stderr, Args, Env, Threads, JoinHandle,
         ]
     };
 
@@ -361,6 +427,8 @@ impl IntrinsicType {
             Stdin => "std::io::Stdin",
             Stdout => "std::io::Stdout",
             Stderr => "std::io::Stderr",
+            Args => "std::env::Args",
+            Env => "std::env::Env",
             Threads => "std::thread::Threads",
             JoinHandle => "std::thread::JoinHandle",
         }

@@ -180,37 +180,56 @@ impl RunResult {
 /// Checks and then interprets a program of one file, as `check_source`,
 /// with no input.
 pub fn run_source(src: &str) -> RunResult {
-    run_files(Path::new("main.t"), src, Some(Vec::new()), Some(Vec::new()))
+    run_files(
+        Path::new("main.t"),
+        src,
+        Some(Vec::new()),
+        Some(interp::Captured::default()),
+    )
 }
 
 /// Checks and then interprets the program that starts at `path`, whose
 /// text is `src`, reading the files of its modules from the file system,
 /// or from `files`, by their paths, if it's given. Its streams are the
-/// process's, or if `input` is given, in memory: it reads `input`, and
-/// what it writes is in the result.
+/// process's, or if `term` is given, in memory: it reads `term`'s input,
+/// is given its arguments and environment, and what it writes is in the
+/// result.
 pub fn run_files(
     path: &Path,
     src: &str,
     files: Option<Vec<(PathBuf, String)>>,
-    input: Option<Vec<u8>>,
+    term: Option<interp::Captured>,
 ) -> RunResult {
-    run(path, src, files, input, |_, _| {})
+    run(
+        path,
+        src,
+        files,
+        term.map(Ok).unwrap_or(Err(Vec::new())),
+        |_, _| {},
+    )
 }
 
 /// Checks the program that starts at `path`, whose text is `src`, reading
 /// the files of its modules from the file system, and then, if it checked,
-/// interprets it with the process's own streams, as `t` does. Before it
-/// runs, `checked` is given its files and warnings, to show them.
-pub fn run_process(path: &Path, src: &str, checked: fn(&Sources, &[Warning])) -> RunResult {
-    run(path, src, None, None, checked)
+/// interprets it with the process's own streams and environment, and the
+/// arguments `args` after its path, as `t` does. Before it runs, `checked`
+/// is given its files and warnings, to show them.
+pub fn run_process(
+    path: &Path,
+    src: &str,
+    args: Vec<std::ffi::OsString>,
+    checked: fn(&Sources, &[Warning]),
+) -> RunResult {
+    run(path, src, None, Err(args), checked)
 }
 
-/// `run_files`, telling `checked` what checking found before it runs.
+/// `run_files`, telling `checked` what checking found before it runs: in
+/// memory, `Ok`, or with the process's streams and these arguments, `Err`.
 fn run(
     path: &Path,
     src: &str,
     files: Option<Vec<(PathBuf, String)>>,
-    input: Option<Vec<u8>>,
+    term: Result<interp::Captured, Vec<std::ffi::OsString>>,
     checked: fn(&Sources, &[Warning]),
 ) -> RunResult {
     let (path, src) = (path.to_owned(), src.to_owned());
@@ -249,9 +268,9 @@ fn run(
                 result: Err(e),
                 panicked: false,
             },
-            Ok(program) => match input {
-                None => {
-                    let mut term = Process::default();
+            Ok(program) => match term {
+                Err(args) => {
+                    let mut term = Process::new(path.as_os_str().to_owned(), args);
                     let interp::Ended { result, panicked } =
                         interp::run_entry(&program, "main", &mut term);
                     // A write may have reached only the buffer. Flush
@@ -278,11 +297,7 @@ fn run(
                         panicked,
                     }
                 }
-                Some(input) => {
-                    let mut term = interp::Captured {
-                        input: input.into(),
-                        ..interp::Captured::default()
-                    };
+                Ok(mut term) => {
                     let interp::Ended { result, panicked } =
                         interp::run_entry(&program, "main", &mut term);
                     RunResult {
@@ -588,49 +603,103 @@ fn lines(bytes: &[u8]) -> Vec<String> {
     }
 }
 
-/// The process's own streams, for a program `t` runs. Output is buffered,
-/// and written out before each read of input, so that a prompt is seen
-/// before it's answered, and before anything is written where errors go.
+/// The process's own streams, for a program `t` runs, and the arguments
+/// and environment it's given. Output is buffered, and written out before
+/// each read of input, so that a prompt is seen before it's answered, and
+/// before anything is written where errors go.
 struct Process {
     input: std::io::BufReader<std::io::Stdin>,
     out: std::io::BufWriter<std::io::Stdout>,
     err: std::io::Stderr,
+    args: Vec<String>,
+    env: Vec<(String, String)>,
+    /// What's wrong with the arguments or the environment, if one isn't
+    /// UTF-8.
+    not_unicode: Option<String>,
 }
 
-impl Default for Process {
-    fn default() -> Process {
+impl Process {
+    /// The process's streams and environment, and arguments `args` after
+    /// the program's name `program`.
+    fn new(program: std::ffi::OsString, args: Vec<std::ffi::OsString>) -> Process {
+        let mut not_unicode = None;
+        let mut text = |s: std::ffi::OsString, what: &dyn Fn() -> String| match s.into_string() {
+            Ok(s) => s,
+            Err(s) => {
+                not_unicode.get_or_insert_with(what);
+                s.to_string_lossy().into_owned()
+            }
+        };
+        let program = text(program, &|| "the program's name isn't UTF-8".to_string());
+        let args: Vec<String> = std::iter::once(program)
+            .chain(
+                (args.into_iter().enumerate())
+                    .map(|(i, a)| text(a, &|| format!("argument {i} isn't UTF-8"))),
+            )
+            .collect();
+        let env = std::env::vars_os()
+            .map(|(name, value)| {
+                let shown = name.to_string_lossy().into_owned();
+                let what = || format!("environment variable `{shown}` isn't UTF-8");
+                (text(name, &what), text(value, &what))
+            })
+            .collect();
         Process {
             input: std::io::BufReader::new(std::io::stdin()),
             out: std::io::BufWriter::new(std::io::stdout()),
             err: std::io::stderr(),
+            args,
+            env,
+            not_unicode,
         }
     }
 }
 
 impl interp::Terminal for Process {
-    fn read_byte(&mut self) -> std::io::Result<Option<u8>> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         use std::io::{Read, Write};
         self.out.flush()?;
-        let mut b = [0];
-        loop {
-            match self.input.read(&mut b) {
-                Ok(0) => return Ok(None),
-                Ok(_) => return Ok(Some(b[0])),
-                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-                Err(e) => return Err(e),
+        self.input.read(buf)
+    }
+
+    fn write(&mut self, err: bool, buf: &[u8]) -> std::io::Result<()> {
+        use std::io::Write;
+        match err {
+            false => self.out.write_all(buf),
+            // Whether the output can still be written or not, errors can.
+            true => {
+                let _ = self.out.flush();
+                self.err.write_all(buf)
             }
         }
     }
 
-    fn write_byte(&mut self, err: bool, b: u8) -> std::io::Result<()> {
+    fn flush(&mut self, err: bool) -> std::io::Result<()> {
         use std::io::Write;
         match err {
-            false => self.out.write_all(&[b]),
-            // Whether the output can still be written or not, errors can.
-            true => {
-                let _ = self.out.flush();
-                self.err.write_all(&[b])
-            }
+            false => self.out.flush(),
+            true => self.err.flush(),
         }
+    }
+
+    fn is_terminal(&self, stream: Option<bool>) -> bool {
+        use std::io::IsTerminal;
+        match stream {
+            None => std::io::stdin().is_terminal(),
+            Some(false) => std::io::stdout().is_terminal(),
+            Some(true) => std::io::stderr().is_terminal(),
+        }
+    }
+
+    fn args(&self) -> &[String] {
+        &self.args
+    }
+
+    fn env(&self) -> &[(String, String)] {
+        &self.env
+    }
+
+    fn not_unicode(&self) -> Option<&str> {
+        self.not_unicode.as_deref()
     }
 }

@@ -2,6 +2,7 @@
 
 use core::cmp::Ordering;
 use core::fmt::{Debug, Write};
+use core::io;
 use core::slice::{Iter, IterMut};
 
 use crate::raw::RawBuf;
@@ -181,4 +182,20 @@ impl<T: Debug> Debug for List<T> {
     fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e {
         Debug::fmt(self.as_slice(), w)
     }
+}
+
+/// Writing bytes to a list puts them at its end. It never fails, but it
+/// can run out of memory, as `push` can.
+impl io::Write for List<u8> {
+    effect e = alloc;
+
+    fn write_all(&mut self, buf: &[u8]) -> Result<(), io::Error> with alloc {
+        for b in buf.iter() {
+            self.push(*b);
+        }
+        Ok(())
+    }
+
+    /// Nothing waits: it's all in the list already.
+    fn flush(&mut self) -> Result<(), io::Error> { Ok(()) }
 }

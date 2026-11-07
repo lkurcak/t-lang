@@ -1,20 +1,22 @@
 use std::process::ExitCode;
 use t_lang::error::Warning;
 
-const USAGE: &str = "usage: t [run|check|mono] <file.t>\n       t build [-o <out>] [--emit-c] [--target hosted|freestanding] <file.t>\n       t test <file.t> [filter]\n       t fmt [--check] <file.t>...\n       t lsp\n       t tree-sitter [--helix] <dir>";
+const USAGE: &str = "usage: t [run] <file.t> [args...]\n       t [check|mono] <file.t>\n       t build [-o <out>] [--emit-c] [--target hosted|freestanding] <file.t>\n       t test <file.t> [filter]\n       t fmt [--check] <file.t>...\n       t lsp\n       t tree-sitter [--helix] <dir>";
 
 const HELP: &str = "\
 T: like C, but a different letter.
 
-usage: t [run|check|mono] <file.t>
+usage: t [run] <file.t> [args...]
+       t [check|mono] <file.t>
        t build [-o <out>] [--emit-c] [--target hosted|freestanding] <file.t>
        t test <file.t> [filter]
        t fmt [--check] <file.t>...
        t lsp
        t tree-sitter [--helix] <dir>
 
-  t <file.t>          type-check, compile through C, as `t build` does,
-                      and run (as `t run <file.t>`)
+  t <file.t> [args]   type-check, compile through C, as `t build` does,
+                      and run (as `t run <file.t>`), with the arguments
+                      after the file (after `--`, flags too)
   t check <file.t>    type-check only
   t test <file.t>     type-check, compile, and run each `#[test]` of the
                       program or library, each as a program of its own
@@ -40,8 +42,51 @@ usage: t [run|check|mono] <file.t>
   t --help, -h        print this
   t --version, -V     print the version";
 
+/// The commands, which a file to run isn't.
+const COMMANDS: &[&str] = &[
+    "run",
+    "check",
+    "mono",
+    "test",
+    "fmt",
+    "build",
+    "lsp",
+    "tree-sitter",
+];
+
+/// `t`'s own arguments, `args`, apart from those after the file of `t run
+/// <file.t>` or `t <file.t>`, which are the program's: all of them after
+/// a `--`, and before it, all but `--interp`.
+fn split_args(args: Vec<std::ffi::OsString>) -> (Vec<String>, Vec<std::ffi::OsString>) {
+    let words: Vec<String> = (args.iter())
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    let first = (words.iter()).position(|w| !w.starts_with('-'));
+    let file = match first.map(|i| (i, words[i].as_str())) {
+        Some((i, "run")) => {
+            (words.iter().enumerate().skip(i + 1)).find(|(_, w)| !w.starts_with('-'))
+        }
+        Some((i, w)) if !COMMANDS.contains(&w) => Some((i, &words[i])),
+        _ => None,
+    };
+    let Some((file, _)) = file else {
+        return (words, Vec::new());
+    };
+    let mut own = words[..=file].to_vec();
+    let mut program = Vec::new();
+    let mut dashes = false;
+    for (a, w) in args.into_iter().zip(words).skip(file + 1) {
+        match (dashes, w.as_str()) {
+            (false, "--") => dashes = true,
+            (false, "--interp") => own.push(w),
+            _ => program.push(a),
+        }
+    }
+    (own, program)
+}
+
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let (args, program_args) = split_args(std::env::args_os().skip(1).collect());
     if let [flag] = args.as_slice() {
         match flag.as_str() {
             "--help" | "-h" => {
@@ -160,9 +205,9 @@ fn main() -> ExitCode {
     }
 
     if !interp {
-        return run_compiled(path, &src);
+        return run_compiled(path, &src, program_args);
     }
-    let run = t_lang::run_process(path, &src, |sources, warnings| {
+    let run = t_lang::run_process(path, &src, program_args, |sources, warnings| {
         for w in Warning::render_all_in(warnings, sources) {
             eprintln!("{w}\n");
         }
@@ -187,8 +232,9 @@ const PANICKED: u8 = 101;
 
 /// `t run <file.t>`, compiled: builds the program as `t build` does, into
 /// a directory of its own that's removed after, and runs it with this
-/// process's streams, ending as it ends.
-fn run_compiled(path: &std::path::Path, src: &str) -> ExitCode {
+/// process's streams and environment, as `path`, with arguments `args`,
+/// ending as it ends.
+fn run_compiled(path: &std::path::Path, src: &str, args: Vec<std::ffi::OsString>) -> ExitCode {
     let options = t_lang::cgen::Options {
         lines: true,
         target: t_lang::Target::Hosted,
@@ -211,7 +257,11 @@ fn run_compiled(path: &std::path::Path, src: &str) -> ExitCode {
         let _ = std::fs::remove_dir_all(&dir);
         return compile_failed(&e);
     }
-    let status = std::process::Command::new(&exe).status();
+    let mut command = std::process::Command::new(&exe);
+    command.args(args);
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::arg0(&mut command, path);
+    let status = command.status();
     let _ = std::fs::remove_dir_all(&dir);
     match status {
         Ok(status) => ended(status),

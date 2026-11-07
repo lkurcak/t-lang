@@ -1,3 +1,49 @@
+/// What kind of failure an `Error` is.
+#[derive(Discard, Copy, Eq)]
+export enum core::io::ErrorKind {
+    /// What was asked for isn't there: a file, say.
+    NotFound,
+    /// The operating system doesn't let the program do it.
+    PermissionDenied,
+    /// What was to be made is there already.
+    AlreadyExists,
+    /// What's at the other end went away: a pipe's reader, say.
+    BrokenPipe,
+    /// What was read isn't what was asked for: text that isn't UTF-8.
+    InvalidData,
+    /// The input ended before what was asked for was read.
+    UnexpectedEnd,
+    /// It can't be done here: on this operating system, or this stream.
+    Unsupported,
+    /// Something else.
+    Other,
+}
+
+/// Why reading or writing failed: its kind, and the operating system's
+/// own number for it, if the operating system said so.
+#[derive(Discard, Copy, Eq)]
+export struct core::io::Error {
+    kind: core::io::ErrorKind,
+    /// The operating system's number for it (`errno`), or 0 if it didn't
+    /// come from the operating system: no failure there is 0.
+    code: i32,
+}
+
+/// Whether to go on, with a `C`, or stop early, with a `B`.
+#[derive(Discard, Copy, Eq)]
+export enum core::ops::ControlFlow::<core::result::Result<!, core::io::Error>, ()> {
+    Continue(()),
+    Break(core::result::Result::<!, core::io::Error>),
+}
+
+/// What worked, `Ok(x)`, or why it didn't, `Err(e)`.
+#[derive(Discard, Copy, Eq)]
+export enum core::result::Result::<(), core::io::Error> { Ok(()), Err(core::io::Error) }
+
+/// What worked, `Ok(x)`, or why it didn't, `Err(e)`.
+#[derive(Discard, Copy, Eq)]
+export enum core::result::Result::<!, core::io::Error> { Ok(!), Err(core::io::Error) }
+
 fn count::<bool>(_x: bool, n: i64) -> i64 with panic {
     let _0: i64;
     let _1: bool; // _x
@@ -190,7 +236,7 @@ fn flip::<bool, i64>(a: bool, b: i64, n: i64) -> i64 with panic {
     }
 }
 
-fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
+fn main(os: std::Os) -> core::result::Result::<(), core::io::Error> with panic {
     let _0: Result<(), Error>;
     let _1: Os; // os
     let mut _2: Stdout; // out
@@ -206,20 +252,18 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
     let _12: &i64;
     let _13: (); // {try}
     let _14: Result<!, Error>; // {try}
-    let _15: Result<!, Error>;
-    let _16: ();
-    let _17: ControlFlow<Result<!, Error>, ()>;
-    let _18: Result<(), Error>;
+    let _15: ();
+    let _16: ControlFlow<Result<!, Error>, ()>;
+    let _17: Result<(), Error>;
+    let _18: i64;
     let _19: i64;
-    let _20: i64;
-    let _21: bool;
-    let _22: i64;
-    let _23: &mut Stdout;
-    let _24: &i64;
-    let _25: (); // {try}
-    let _26: Result<!, Error>; // {try}
-    let _27: Result<!, Error>;
-    let _28: ();
+    let _20: bool;
+    let _21: i64;
+    let _22: &mut Stdout;
+    let _23: &i64;
+    let _24: (); // {try}
+    let _25: Result<!, Error>; // {try}
+    let _26: ();
     bb0: {
         _4 = move _1.1;
         _3 = move _4;
@@ -232,7 +276,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         _11 = &mut _2;
         _12 = &_8;
         _7 = <std::io::Stdout>::line::<i64>(move _11, move _12);
-        _6 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(move _7);
+        _6 = <core::result::Result::<(), core::io::Error> as core::ops::Try>::branch(move _7);
         inspect _6;
         inspect _6;
         match _6 { #0(_) => bb1, #1(_) => bb2 };
@@ -245,22 +289,10 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         goto bb3;
     }
     bb2: {
-        _14 = move (_6 as #1).0;
+        _14 = copy (_6 as #1).0;
         kept _6;
-        _15 = move _14;
-        _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _15);
+        _0 = <core::result::Result::<(), core::io::Error> as core::ops::Try>::from_residual(copy _14);
         dead _14;
-        dead _15;
-        dead _12;
-        dead _11;
-        dead _10;
-        dead _9;
-        dead _8;
-        dead _7;
-        goto bb9;
-    }
-    bb3: {
-        dead _15;
         dead _12;
         dead _11;
         dead _10;
@@ -269,44 +301,57 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _7;
         dead _6;
         dead _5;
-        _20 = 1_i64;
-        _21 = false;
-        _22 = 4_i64;
-        _19 = flip::<i64, bool>(move _20, move _21, move _22);
-        _23 = &mut _2;
-        _24 = &_19;
-        _18 = <std::io::Stdout>::line::<i64>(move _23, move _24);
-        _17 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::branch(move _18);
-        inspect _17;
-        inspect _17;
-        match _17 { #0(_) => bb5, #1(_) => bb6 };
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb3: {
+        dead _12;
+        dead _11;
+        dead _10;
+        dead _9;
+        dead _8;
+        dead _7;
+        dead _6;
+        dead _5;
+        _19 = 1_i64;
+        _20 = false;
+        _21 = 4_i64;
+        _18 = flip::<i64, bool>(move _19, move _20, move _21);
+        _22 = &mut _2;
+        _23 = &_18;
+        _17 = <std::io::Stdout>::line::<i64>(move _22, move _23);
+        _16 = <core::result::Result::<(), core::io::Error> as core::ops::Try>::branch(move _17);
+        inspect _16;
+        inspect _16;
+        match _16 { #0(_) => bb5, #1(_) => bb6 };
     }
     bb5: {
-        _25 = copy (_17 as #0).0;
-        kept _17;
-        _16 = copy _25;
-        dead _25;
+        _24 = copy (_16 as #0).0;
+        kept _16;
+        _15 = copy _24;
+        dead _24;
         goto bb7;
     }
     bb6: {
-        _26 = move (_17 as #1).0;
-        kept _17;
-        _27 = move _26;
-        _0 = <core::result::Result::<(), std::io::Error> as core::ops::Try>::from_residual(move _27);
-        dead _26;
-        dead _27;
-        dead _24;
+        _25 = copy (_16 as #1).0;
+        kept _16;
+        _0 = <core::result::Result::<(), core::io::Error> as core::ops::Try>::from_residual(copy _25);
+        dead _25;
         dead _23;
         dead _22;
         dead _21;
         dead _20;
         dead _19;
         dead _18;
-        goto bb12;
+        dead _17;
+        dead _16;
+        dead _15;
+        dead _2;
+        dead _1;
+        return;
     }
     bb7: {
-        dead _27;
-        dead _24;
         dead _23;
         dead _22;
         dead _21;
@@ -315,24 +360,78 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _18;
         dead _17;
         dead _16;
-        _28 = ();
-        _0 = core::result::Result::<(), std::io::Error>::Ok(move _28);
-        dead _28;
+        dead _15;
+        _26 = ();
+        _0 = core::result::Result::<(), core::io::Error>::Ok(move _26);
+        dead _26;
         dead _2;
         dead _1;
         return;
     }
-    bb9: {
+}
+
+fn <core::result::Result::<(), core::io::Error> as core::ops::Try>::branch(
+    self,
+) -> core::ops::ControlFlow::<core::result::Result<!, core::io::Error>, ()> {
+    let _0: ControlFlow<Result<!, Error>, ()>;
+    let _1: Result<(), Error>; // self
+    let _2: (); // v
+    let _3: ();
+    let _4: Error; // e
+    let _5: Result<!, Error>;
+    let _6: Error;
+    bb0: {
+        inspect _1;
+        inspect _1;
+        match _1 { #0(_) => bb1, #1(_) => bb2 };
+    }
+    bb1: {
+        _2 = move (_1 as #0).0;
+        consume _1;
+        _3 = move _2;
+        _0 = core::ops::ControlFlow::<core::result::Result<!, core::io::Error>, ()>::Continue(move _3);
+        dead _2;
+        goto bb3;
+    }
+    bb2: {
+        _4 = move (_1 as #1).0;
+        consume _1;
+        _6 = move _4;
+        _5 = core::result::Result::<!, core::io::Error>::Err(move _6);
+        _0 = core::ops::ControlFlow::<core::result::Result<!, core::io::Error>, ()>::Break(move _5);
+        dead _4;
+        goto bb3;
+    }
+    bb3: {
         dead _6;
         dead _5;
-        dead _2;
+        dead _3;
         dead _1;
         return;
     }
-    bb12: {
-        dead _17;
-        dead _16;
+}
+
+fn <core::result::Result::<(), core::io::Error> as core::ops::Try>::from_residual(
+    r: core::result::Result::<!, core::io::Error>,
+) -> core::result::Result::<(), core::io::Error> {
+    let _0: Result<(), Error>;
+    let _1: Result<!, Error>; // r
+    let _2: Error; // e
+    let _3: Error;
+    bb0: {
+        inspect _1;
+        match _1 { #1(_) => bb1 };
+    }
+    bb1: {
+        _2 = move (_1 as #1).0;
+        consume _1;
+        _3 = move _2;
+        _0 = core::result::Result::<(), core::io::Error>::Err(move _3);
         dead _2;
+        goto bb2;
+    }
+    bb2: {
+        dead _3;
         dead _1;
         return;
     }
@@ -342,7 +441,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
 fn <&str as core::fmt::Display>::fmt::<std::io::Stderr><'a>(
     &self,
     w: &mut std::io::Stderr,
-) -> core::result::Result::<(), std::io::Error> {
+) -> core::result::Result::<(), core::io::Error> {
     let _0: Result<(), Error>;
     let _1: &&str; // self
     let _2: &mut Stderr; // w

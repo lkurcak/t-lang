@@ -7,6 +7,12 @@
 //! - `// stderr: <line>` — the same, for what it writes to its `stderr`, as a
 //!   `main` that gives back `Err(e)` does.
 //! - `// stdin: <line>` — one per line of input the program reads, in order.
+//! - `// arg: <word>` — one per argument the program is started with, in
+//!   order, after its name, which is `t-program`.
+//! - `// env: <NAME>=<value>` — one per variable of the environment it's
+//!   started with: the interpreter's has no others, but a compiled
+//!   program's has those of the process that runs it too, so a program
+//!   reads only these.
 //! - `// error: <text>` — the program must fail (to parse, to type-check, or at
 //!   runtime) with an error whose rendered message contains `<text>`, not
 //!   counting the lines of source it shows, which hold the comment. Any
@@ -59,9 +65,12 @@ pub fn run(files: &Files) -> RunResult {
         };
     }
     let texts: Vec<&str> = files.iter().map(|(_, src)| src.as_str()).collect();
-    let input = Expectations::of(&texts.join("\n")).input;
-    t_lang::run_files(path, src, Some(files.clone()), Some(input))
+    let want = Expectations::of(&texts.join("\n"));
+    t_lang::run_files(path, src, Some(files.clone()), Some(want.terminal()))
 }
+
+/// What a program is started as, in tests: `argv[0]`.
+pub const PROGRAM: &str = "t-program";
 
 /// What the comments in a program say it should do.
 pub struct Expectations {
@@ -69,12 +78,26 @@ pub struct Expectations {
     pub errors: Vec<String>,
     /// The input: each `// stdin:` line, and a line break after it.
     pub input: Vec<u8>,
+    /// The arguments, each `// arg:`.
+    pub args: Vec<String>,
+    /// The environment, each `// env:`, split at its first `=`.
+    pub env: Vec<(String, String)>,
     pub error: Option<String>,
     pub warnings: Vec<String>,
     pub tests: Vec<String>,
 }
 
 impl Expectations {
+    /// The streams, arguments and environment the program is run with.
+    pub fn terminal(&self) -> t_lang::interp::Captured {
+        t_lang::interp::Captured::new(
+            self.input.clone(),
+            PROGRAM,
+            self.args.clone(),
+            self.env.clone(),
+        )
+    }
+
     pub fn of(src: &str) -> Expectations {
         let directive = |line: &str, marker: &str| -> Option<String> {
             line.find(marker)
@@ -95,6 +118,18 @@ impl Expectations {
                 .lines()
                 .filter_map(|l| l.find("// stdin:").map(|i| &l[i + "// stdin:".len()..]))
                 .flat_map(|l| l.strip_prefix(' ').unwrap_or(l).bytes().chain(*b"\n"))
+                .collect(),
+            args: src
+                .lines()
+                .filter_map(|l| directive(l, "// arg: "))
+                .collect(),
+            env: src
+                .lines()
+                .filter_map(|l| directive(l, "// env: "))
+                .map(|v| match v.split_once('=') {
+                    Some((name, value)) => (name.to_string(), value.to_string()),
+                    None => (v, String::new()),
+                })
                 .collect(),
             error: src.lines().find_map(|l| directive(l, "// error: ")),
             warnings: src

@@ -32,8 +32,8 @@
 use crate::ast::{BinOp, FnDecl, UnOp};
 use crate::error::{Error, Span};
 use crate::intrinsic::{
-    ArrayOp, AtomicOp, Intrinsic, IntrinsicType, MessageOp, RawBufOp, SliceOp, SlotsOp, Stream,
-    VolatileOp,
+    ArgsOp, ArrayOp, AtomicOp, EnvOp, Intrinsic, IntrinsicType, MessageOp, Output, OutputOp,
+    RawBufOp, SliceOp, SlotsOp, StdinOp, VolatileOp,
 };
 use crate::mir::*;
 use crate::mono::{Executable, Shape, glue_name};
@@ -495,6 +495,8 @@ impl<'e> Gen<'e> {
                         | IntrinsicType::Stdin
                         | IntrinsicType::Stdout
                         | IntrinsicType::Stderr
+                        | IntrinsicType::Args
+                        | IntrinsicType::Env
                         | IntrinsicType::Threads,
                     ) => members.push_str(" uint8_t _;"),
                     Some(IntrinsicType::Box) | None => panic!("no C struct for `{t}`"),
@@ -1537,10 +1539,40 @@ impl<'e> Gen<'e> {
                 MessageOp::PushChar => format!("    t_msg_char(a1);\n{unit}"),
                 MessageOp::Abort => "    t_end(s);\n".to_string(),
             },
-            Intrinsic::Stream(stream) => match stream {
-                Stream::Stdin => "    return t_read_byte();\n".to_string(),
-                Stream::Stdout => "    return t_write_byte(stdout, a1);\n".to_string(),
-                Stream::Stderr => "    return t_write_byte(stderr, a1);\n".to_string(),
+            Intrinsic::Stdin(op) => match op {
+                StdinOp::Read => "    return t_stdin_read(a1.ptr, a1.len);\n".to_string(),
+                StdinOp::IsTerminal => "    return isatty(0) == 1;\n".to_string(),
+            },
+            Intrinsic::Output(out, op) => {
+                let (f, fd) = match out {
+                    Output::Stdout => ("stdout", 1),
+                    Output::Stderr => ("stderr", 2),
+                };
+                match op {
+                    OutputOp::Write => format!("    return t_out_write({f}, a1.ptr, a1.len);\n"),
+                    OutputOp::Flush => format!("    return t_out_flush({f});\n"),
+                    OutputOp::IsTerminal => format!("    return isatty({fd}) == 1;\n"),
+                }
+            }
+            // What the program was started with, as `t_start_os` kept it:
+            // its name at 0, then its arguments.
+            Intrinsic::Args(op) => match op {
+                ArgsOp::Program => format!(
+                    "    {r} r;\n    r.ptr = (void *)t_argv[0];\n    r.len = strlen(t_argv[0]);\n    return r;\n"
+                ),
+                ArgsOp::Len => "    return t_argc - 1;\n".to_string(),
+                ArgsOp::Index => format!(
+                    "    char *a = t_argv[a1 + 1];\n    {r} r;\n    r.ptr = (void *)a;\n    r.len = strlen(a);\n    return r;\n"
+                ),
+            },
+            // A variable is `NAME=value`: its name is before the `=`.
+            Intrinsic::Env(op) => match op {
+                EnvOp::Len => "    return t_envc;\n".to_string(),
+                EnvOp::Index => format!(
+                    "    char *v = t_envp[a1];\n    size_t eq = t_env_eq[a1];\n    {r} r;\n    \
+                     r.f0.ptr = (void *)v;\n    r.f0.len = eq;\n    \
+                     r.f1.ptr = (void *)(v + eq + 1);\n    r.f1.len = strlen(v + eq + 1);\n    return r;\n"
+                ),
             },
             // An `Unsafe` is a struct of what's in it (lemma U5 of
             // docs/46-unsafe-cell.md).
@@ -1873,7 +1905,14 @@ impl<'e> Gen<'e> {
             out.push_str("}\n");
             return out;
         }
-        out.push_str("int main(void) {\n    t_start();\n");
+        out.push_str("int main(int argc, char **argv) {\n    t_start();\n");
+        match body.params {
+            0 => out.push_str("    (void)argc;\n    (void)argv;\n"),
+            _ => {
+                let at = self.site_id(self.decls["main"].name.span);
+                let _ = writeln!(out, "    t_start_os(argc, argv, {at});");
+            }
+        }
         out.push_str(&self.entry_body("main", &args));
         out.push_str("}\n");
         out

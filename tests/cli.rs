@@ -27,7 +27,7 @@ fn help_goes_to_stdout_and_succeeds() {
         assert_eq!(out.status.code(), Some(0));
         let stdout = String::from_utf8(out.stdout).unwrap();
         assert!(
-            stdout.contains("usage: t [run|check|mono] <file.t>"),
+            stdout.contains("usage: t [run] <file.t> [args...]"),
             "{stdout}"
         );
         assert!(stdout.contains("t --version"), "{stdout}");
@@ -411,6 +411,96 @@ fn input_that_isnt_text_fails_the_program() {
     }
 }
 
+/// What prints its name and its arguments, one a line.
+const ARGS: &str = "\
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&os.args.program())?;
+    for a in os.args.iter() {
+        out.line(&a)?;
+    }
+    Ok(())
+}
+";
+
+/// `t run <file.t>` and `t <file.t>` give the program the words after the
+/// file, all of them after `--`, and before it, all but `--interp`, which
+/// is `t`'s. The program is started as the file.
+#[test]
+fn run_passes_the_arguments_after_the_file() {
+    let dir = std::env::temp_dir().join(format!("t-cli-args-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("args.t");
+    std::fs::write(&path, ARGS).unwrap();
+    let file = path.to_str().unwrap();
+    for interp in [false, true] {
+        let mut runs = vec![
+            vec!["run", file, "a", "b c", "--interp", "--", "--interp", "-x"],
+            vec![file, "a", "b c", "--", "--interp", "-x"],
+            vec!["--interp", file, "a", "b c", "--", "--interp", "-x"],
+        ];
+        if interp || cfg!(windows) {
+            for r in &mut runs {
+                r.insert(0, "--interp");
+            }
+        }
+        for args in runs {
+            let out = t(&args);
+            assert_eq!(out.status.code(), Some(0), "{args:?}: {out:?}");
+            let want = format!("{file}\na\nb c\n--interp\n-x\n");
+            assert_eq!(String::from_utf8(out.stdout).unwrap(), want, "{args:?}");
+        }
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// An argument or a variable of the environment that isn't UTF-8 stops a
+/// program that's given the `Os` before `main`, saying which (lemma A1 of
+/// docs/47-io.md), compiled or not; one that isn't given it runs.
+#[cfg(unix)]
+#[test]
+fn arguments_that_arent_text_stop_the_program() {
+    use std::os::unix::ffi::OsStrExt;
+    let dir = std::env::temp_dir().join(format!("t-cli-bad-args-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("args.t");
+    std::fs::write(&path, ARGS).unwrap();
+    let plain = dir.join("plain.t");
+    std::fs::write(&plain, "fn main() {}\n").unwrap();
+    let bad = std::ffi::OsStr::from_bytes(b"b\xFFd");
+    for interp in [false, true] {
+        let run = |file: &std::path::Path,
+                   arg: Option<&std::ffi::OsStr>,
+                   var: Option<&std::ffi::OsStr>| {
+            let mut c = Command::new(env!("CARGO_BIN_EXE_t"));
+            if interp {
+                c.arg("--interp");
+            }
+            c.arg(file).arg("ok");
+            if let Some(a) = arg {
+                c.arg(a);
+            }
+            if let Some(v) = var {
+                c.env(v, "1");
+            }
+            c.output().unwrap()
+        };
+        let out = run(&path, Some(bad), None);
+        assert_eq!(out.status.code(), Some(1), "{out:?}");
+        assert!(out.stdout.is_empty(), "{out:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("argument 1 isn't UTF-8"), "{stderr}");
+        let out = run(&path, None, Some(bad));
+        assert_eq!(out.status.code(), Some(1), "{out:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("environment variable `b"), "{stderr}");
+        assert!(stderr.contains("d` isn't UTF-8"), "{stderr}");
+        let out = run(&plain, Some(bad), Some(bad));
+        assert_eq!(out.status.code(), Some(0), "{out:?}");
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// A small write succeeds into the interpreter's buffer, then fails when
 /// the buffer is flushed. The command must still report that failure: as
 /// a failure, 1, or, after a panic, as the panic, 101; interpreted, run
@@ -498,7 +588,7 @@ fn build_compiles_programs() {
     assert!(out.status.success(), "{out:?}");
     let c = String::from_utf8(out.stdout).unwrap();
     assert!(c.starts_with("/* Written by `t build`"), "{c}");
-    assert!(c.contains("int main(void)"), "{c}");
+    assert!(c.contains("int main(int argc, char **argv)"), "{c}");
 
     // For the freestanding target, an object exporting `t_main`, named
     // after the file, with `.o`; its C includes no hosted header.
