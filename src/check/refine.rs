@@ -35,7 +35,9 @@
 //! an operator returned, or of a struct value, which has its fields'
 //! refinements (below). A place stands for a new variable of the logic
 //! whenever it may change: when it, or what it's in, is assigned; at the
-//! start of each time round a loop that assigns it, or lends it to a call;
+//! start of each time round a loop that assigns it, or lends it to a call
+//! (though the measures the loop's frame keeps of it stay what they were:
+//! `Walk::frames`);
 //! after a branch that does, where it's whichever value the branch taken
 //! gave it; and after a call it's lent to `&mut` (`Walk::borrows`), when
 //! nothing can keep the reference after the call. A place that may change
@@ -2760,12 +2762,195 @@ impl Walk<'_> {
     }
 
     /// Each place the loop may change has a value nothing's known of but
-    /// its refinements. Keep why its entry facts cannot be assumed.
-    fn forget(&mut self, changes: &[Invalidation], loop_span: Span) {
+    /// its refinements, and the measures `frames` says the loop keeps of
+    /// it: those are what they were. Keep why its entry facts cannot be
+    /// assumed.
+    fn forget(
+        &mut self,
+        changes: &[Invalidation],
+        frames: &[(Place, Vec<String>)],
+        loop_span: Span,
+    ) {
+        let mut kept = Vec::new();
+        for (p, measures) in frames {
+            for m in measures {
+                let recv = Val::Ref(self.new_obj(), Pointee::Place(p.clone()));
+                kept.push((p.clone(), m.clone(), self.measure(m, recv)));
+            }
+        }
         for change in changes {
             self.invalidate_loop(change, loop_span);
             self.kill(change.place());
         }
+        for (p, m, before) in kept {
+            let recv = Val::Ref(self.new_obj(), Pointee::Place(p));
+            let now = self.measure(&m, recv);
+            for f in equal(&now, &before) {
+                self.fact(f);
+            }
+        }
+    }
+
+    /// The measures loop `e` keeps of each place it changes, `changed`:
+    /// its *frame*. A measure of place `p` is kept if every change in the
+    /// loop to `p`, to a place in it, or to one it's in, is a call lending
+    /// `p` itself straight to a call-scoped `&mut` whose postconditions say
+    /// the measure is as it was (`Walk::keeps`). By induction on how many
+    /// times round the loop has been, at the head, and anywhere in the
+    /// body, the measure is what it was before the loop: each change since
+    /// was such a call, which nothing else could see or write `p` during
+    /// (it's lent to the call, and stable), and a measure is of the value
+    /// alone (lemma F1 of docs/52-loop-frames.md).
+    fn frames(&mut self, e: &Expr, changed: &[Invalidation]) -> Vec<(Place, Vec<String>)> {
+        let mut changes = Vec::new();
+        self.changes(e, &mut changes);
+        let mut places: Vec<&Place> = changed.iter().map(|c| c.place()).collect();
+        places.sort();
+        places.dedup();
+        let mut frames = Vec::new();
+        for p in places {
+            if self.is_unstable(p) {
+                continue;
+            }
+            let mut kept: Option<Vec<String>> = None;
+            for (q, keeps) in &changes {
+                if !q.within(p) && !p.within(q) {
+                    continue;
+                }
+                let keeps = match keeps {
+                    Some(ms) if q == p => ms,
+                    _ => &Vec::new(),
+                };
+                kept = Some(match kept {
+                    None => keeps.clone(),
+                    Some(k) => k.into_iter().filter(|m| keeps.contains(m)).collect(),
+                });
+            }
+            if let Some(k) = kept.filter(|k| !k.is_empty()) {
+                frames.push((p.clone(), k));
+            }
+        }
+        frames
+    }
+
+    /// Each change in `e` to a place: an assignment, which keeps nothing,
+    /// or a `&mut` lent, with the measures it keeps (`Walk::keeps`) if
+    /// it's lent straight to a call.
+    fn changes(&mut self, e: &Expr, out: &mut Vec<(Place, Option<Vec<String>>)>) {
+        if let ExprKind::Assign(_, place, _) = &e.kind
+            && let Some(p) = self.place_of(place)
+        {
+            out.push((p, None));
+        }
+        if let Some(lent) = self.lent.get(&e.id).cloned() {
+            let call = match &e.kind {
+                ExprKind::Call(callee, args) => self
+                    .fn_named(callee)
+                    .map(|s| (s.to_string(), args.iter().map(|a| self.passed(a)).collect())),
+                ExprKind::MethodCall(x, _, _, args) => match self.cx.typed.methods.get(&e.id) {
+                    Some((Res::Fn(s, _), derefs, by)) => {
+                        let mut passed = vec![self.receiver(x, *derefs, *by)];
+                        passed.extend(args.iter().map(|a| self.passed(a)));
+                        Some((s.clone(), passed))
+                    }
+                    _ => None,
+                },
+                _ => None,
+            };
+            for p in lent {
+                let keeps = match &call {
+                    Some((symbol, passed)) => {
+                        let at: Vec<usize> = (passed.iter().enumerate())
+                            .filter(|(_, q)| q.as_ref() == Some(&p))
+                            .map(|(i, _)| i)
+                            .collect();
+                        match at.as_slice() {
+                            [i] => self.keeps(e, symbol, *i),
+                            _ => None,
+                        }
+                    }
+                    None => None,
+                };
+                out.push((p, keeps));
+            }
+        }
+        for c in e.children() {
+            self.changes(c, out);
+        }
+    }
+
+    /// The measures of what call `e`, of function `symbol`, lends its
+    /// argument `i` to a call-scoped `&mut` its postconditions say it
+    /// leaves as they were, for every value of its other arguments: the
+    /// postconditions are assumed of new objects for what's behind the
+    /// `&mut` before and after, and new values for the other arguments,
+    /// which nothing's known of, and each measure they ask of what's there
+    /// after must be proved equal to the one before. Those are what any
+    /// call it makes at any time keeps: what the callee proved, and the
+    /// variables here are new, so what's known here says nothing of them.
+    fn keeps(&mut self, e: &Expr, symbol: &str, i: usize) -> Option<Vec<String>> {
+        let sig = self.cx.refined.get(symbol)?.clone();
+        if !sig.scoped.get(i).copied().unwrap_or(false) || sig.ensures.is_empty() {
+            return None;
+        }
+        let targs: Vec<(String, Type)> = (sig.type_params.iter().cloned())
+            .zip(self.call_targs(e))
+            .collect();
+        let args: Vec<&Expr> = match &e.kind {
+            ExprKind::Call(_, args) => args.iter().collect(),
+            ExprKind::MethodCall(x, _, _, args) => std::iter::once(&**x).chain(args).collect(),
+            _ => return None,
+        };
+        let (before, after) = (self.new_obj(), self.new_obj());
+        let behind =
+            |w: &mut Self, o: Obj| Val::Ref(w.new_obj(), Pointee::Val(Box::new(Val::Obj(o))));
+        let mut old = Vec::new();
+        let mut now = Vec::new();
+        for (j, a) in args.iter().enumerate() {
+            if j == i {
+                old.push(behind(self, before));
+                now.push(behind(self, after));
+            } else {
+                // A method's receiver may have been borrowed: its value
+                // isn't of the expression's type.
+                let v = match (j, &e.kind) {
+                    (0, ExprKind::MethodCall(..)) => Val::Other,
+                    _ => {
+                        let t = self.ty_of(a);
+                        self.unknown(&t)
+                    }
+                };
+                old.push(v.clone());
+                now.push(v);
+            }
+        }
+        let start = self.facts.len();
+        let reachable = std::mem::replace(&mut self.reachable, true);
+        for r in &sig.ensures {
+            if let Some(f) = self.pred(r, &Val::Other, Env::Post(&old, Some(&now), &targs)) {
+                self.fact(f);
+            }
+        }
+        let asked: Vec<(String, Val)> = (self.measured.iter())
+            .filter(|((o, _), _)| *o == after)
+            .map(|((_, m), v)| (m.clone(), v.clone()))
+            .collect();
+        let mut kept = Vec::new();
+        for (m, v) in asked {
+            if self.cx.measures[&m].unsized_self {
+                continue;
+            }
+            let recv = behind(self, before);
+            let was = self.measure(&m, recv);
+            let same = equal(&v, &was);
+            if !same.is_empty() && same.iter().all(|f| self.proves(Some(f)).is_ok()) {
+                kept.push(m);
+            }
+        }
+        self.facts.truncate(start);
+        self.reachable = reachable;
+        kept.sort();
+        Some(kept)
     }
 
     /// `l op r`, an operator at node `site` on integers of type `ty`:
@@ -3761,7 +3946,8 @@ impl Walk<'_> {
             ExprKind::While(label, c, body) => {
                 let mut changed = Vec::new();
                 self.assigned(e, &mut changed);
-                self.forget(&changed, e.span);
+                let frames = self.frames(e, &changed);
+                self.forget(&changed, &frames, e.span);
                 let c = self.cond(c)?;
                 let start = self.snapshot();
                 self.loops.push(Loop {
@@ -3774,7 +3960,7 @@ impl Walk<'_> {
                 body?;
                 self.restore(&start);
                 if broke {
-                    self.forget(&changed, e.span);
+                    self.forget(&changed, &frames, e.span);
                 } else {
                     self.fact(c.not());
                 }
@@ -3783,7 +3969,8 @@ impl Walk<'_> {
             ExprKind::Loop(label, body) => {
                 let mut changed = Vec::new();
                 self.assigned(e, &mut changed);
-                self.forget(&changed, e.span);
+                let frames = self.frames(e, &changed);
+                self.forget(&changed, &frames, e.span);
                 let start = self.snapshot();
                 self.loops.push(Loop {
                     label: label.as_ref().map(|l| l.name.name.clone()),
@@ -3794,7 +3981,7 @@ impl Walk<'_> {
                 body?;
                 self.restore(&start);
                 self.reachable = start.reachable && broke;
-                self.forget(&changed, e.span);
+                self.forget(&changed, &frames, e.span);
                 let ty = self.ty_of(e);
                 Ok(self.unknown(&ty))
             }

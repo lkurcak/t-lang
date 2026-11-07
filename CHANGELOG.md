@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+Step 52: loop frames. See [docs/52-loop-frames.md](docs/52-loop-frames.md).
+
+### Added
+
+- A loop keeps what it knew of a measure of a place it only lends to
+  calls whose postconditions say the measure stays: `let n = l.len();
+  while i < n { l.set(i, v); .. }` proves `i < l.len()`, and a nested
+  loop that writes a grid keeps the outer loop's `y < g.height()`.
+
 ## 0.67.0 (2026-11-07)
 
 Step 51: products of two unknowns. See
