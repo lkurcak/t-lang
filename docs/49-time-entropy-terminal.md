@@ -288,6 +288,10 @@ key is `poll`, and the size is `TIOCGWINSZ`. The interpreter uses Rust's
 clocks, the `getrandom` crate, and the same calls, through `libc`, for `t run
 --interp`; for tests, its input and output aren't a terminal.
 
+Each rule was switched off in turn, and a test then failed, but for one:
+`unix_time`'s `None`, as no test can set the clock before 1970. It stays,
+as a machine whose clock was never set can start there.
+
 ## Design decisions worth noticing
 
 - **Every source of nondeterminism is a value** (T1). A function that's
