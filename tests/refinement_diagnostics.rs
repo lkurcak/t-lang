@@ -47,10 +47,11 @@ fn indexing_identifies_the_missing_upper_bound() {
 
 #[test]
 fn unsupported_reasoning_differs_from_solver_arithmetic_overflow() {
-    let (_, nonlinear) =
-        rejected("fn square(n: i64) -> i64 with {} { n * n }\nfn main() { let _ = square(0); }");
+    let (_, nonlinear) = rejected(
+        "fn cube(n: { n: i64 | n >= 0 && n < 10 }) -> i64 with {} { n * n * n }\nfn main() { let _ = cube(0); }",
+    );
     assert!(
-        nonlinear.contains("supported linear reasoning"),
+        nonlinear.contains("products of two unknowns"),
         "{nonlinear}"
     );
     assert!(
@@ -81,10 +82,7 @@ fn main() { let _ = huge(0); }
         rendered.contains("solver's checked integer arithmetic range"),
         "{rendered}"
     );
-    assert!(
-        !rendered.contains("supported linear reasoning"),
-        "{rendered}"
-    );
+    assert!(!rendered.contains("products of two unknowns"), "{rendered}");
 }
 
 #[test]

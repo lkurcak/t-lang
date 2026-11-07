@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased
+
+Step 51: products of two unknowns. See
+[docs/51-products.md](docs/51-products.md).
+
+### Added
+
+- Refinements can multiply two unknowns: `{ c: List<T> | c.len() == width
+  * height }`. The checker knows of a product what bounds on one factor
+  and the sign of the other say (`y < h` and `w >= 0` give `y * w <= h * w
+  - w`), so `cells[y * width + x]` is proved in range, and `x * x` fits for
+  a bounded `x`. A product of three unknowns is still an error in a
+  refinement, and unproved in code.
+- Dividing by an unknown says what the quotient is, where the signs are
+  known: for `a >= 0` and `b > 0`, `a / b * b` is at most `a` and more
+  than `a - b`. So `a <= greatest / b` proves `a * b` fits.
+- `List::filled(n, v)`, a list of `n` copies of a `Copy` value, `n` long.
+- `List::replace(i, v)` and `List::set(i, v)`: write at an index lending
+  the list only for the call, with `ensures self.len() == old(self.len())`,
+  so a list that's a refined field can be written.
+
+### Changed
+
+- `core::num::checked_mul` is written in T; it's no longer an intrinsic.
+- A struct's refinements hold of a field's new value after a loop that
+  lends the field: they were forgotten with what was known of the field.
+- The message for a condition the logic can't represent says it has
+  "linear arithmetic, and products of two unknowns".
+
 ## 0.66.0 (2026-11-07)
 
 Step 50: packages in a repository's subdirectory. See

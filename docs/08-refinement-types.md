@@ -67,7 +67,8 @@ can come later without changing what's here.
 
 Literals, names, `+`, `-`, `*` by a constant, comparisons, `&&`, `||` and
 `!`: *linear integer arithmetic*. `v * v < 10` isn't linear, and is an
-error, as is `/`. Integers in a predicate are the mathematical ones, so
+error, as is `/`. (Since step 51 a product of two unknowns is allowed:
+docs/51-products.md.) Integers in a predicate are the mathematical ones, so
 `v + 1 > v` is always true there; that a `u8` is between 0 and 255 is
 just another fact. So a predicate can compare integers of different
 types: they're all integers there (see docs/11-integers.md).
@@ -176,11 +177,12 @@ would need products of unknowns (and since step 11 `least` and
 When it can't prove an operator safe, nothing is wrong: it may panic, as
 in step 7, and its function says `with panic`. The checker isn't always
 right that it can't: `x * x` for `0 <= x < 100` can't overflow, but
-that's not linear.
+that's not linear. (Since step 51 it's proved: docs/51-products.md. A
+product of three unknowns still isn't.)
 
 ```rust,error
-fn square(x: { v: i64 | v >= 0 && v < 100 }) -> i64 with {} { x * x }
-// error: `*` may panic, but `square` doesn't say `with panic`
+fn cube(x: { v: i64 | v >= 0 && v < 100 }) -> i64 with {} { x * x * x }
+// error: `*` may panic, but `cube` doesn't say `with panic`
 ```
 
 ## Where refined values go

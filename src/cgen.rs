@@ -1449,17 +1449,6 @@ impl<'e> Gen<'e> {
         };
         let some_none = |g: &mut Gen| (g.variant(ret, "Some"), g.variant(ret, "None"));
         match which {
-            Intrinsic::CheckedMul => {
-                let i = int(&params[0]);
-                let (some, none) = some_none(self);
-                let wide = if i.signed() { "int64_t" } else { "uint64_t" };
-                format!(
-                    "    if (t_mul_ok_{s}(a0, a1)) return ({r}){{.tag = {some}, .u.v{some} = {{({t})(({wide})a0 * a1)}}}};\n    \
-                     return ({r}){{.tag = {none}}};\n",
-                    s = suffix(i),
-                    t = c_int(i),
-                )
-            }
             Intrinsic::WrappingMul => {
                 format!("    return t_wmul_{}(a0, a1);\n", suffix(int(&params[0])))
             }

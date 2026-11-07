@@ -67,7 +67,7 @@ impl Failure {
                 "the current proof procedure could not establish this condition from the available facts; this does not show that it is false"
             }
             Self::Unsupported => {
-                "the condition could not be represented by the supported linear reasoning"
+                "the condition could not be represented by the supported reasoning: linear arithmetic, and products of two unknowns"
             }
             Self::ArithmeticLimit => {
                 "the proof exceeded the solver's checked integer arithmetic range"
@@ -92,6 +92,59 @@ pub(crate) enum Kind {
     /// greatest value of a type whose size isn't known, a `usize` or a type
     /// parameter's.
     Bound(i128, i128),
+    /// The product of two other variables, integers, the lesser numbered
+    /// first: a variable as any other to the procedure, which knows of it
+    /// only what `lemmas` says, from what's known of the two.
+    Product(Var, Var),
+}
+
+/// The variable for `u · v`, made if there isn't one yet. There's one for
+/// each pair, so `w · h` and `h · w` are the same value.
+pub(crate) fn product(kinds: &mut Vec<Kind>, u: Var, v: Var) -> Var {
+    let key = Kind::Product(u.min(v), u.max(v));
+    if let Some(i) = kinds.iter().position(|k| *k == key) {
+        return i as Var;
+    }
+    kinds.push(key);
+    (kinds.len() - 1) as Var
+}
+
+/// `a · b`, if the logic has it: products of two variables, but none of
+/// three. `None` too if a number gets too big; `Product` says which.
+pub(crate) fn times(a: &Lin, b: &Lin, kinds: &mut Vec<Kind>) -> Result<Lin, Failure> {
+    if let Some(k) = a.as_constant() {
+        return b.scale(k).ok_or(Failure::ArithmeticLimit);
+    }
+    if let Some(k) = b.as_constant() {
+        return a.scale(k).ok_or(Failure::ArithmeticLimit);
+    }
+    let is_product = |kinds: &[Kind], v: Var| matches!(kinds[v as usize], Kind::Product(..));
+    if a.vars().chain(b.vars()).any(|v| is_product(kinds, v)) {
+        return Err(Failure::Unsupported);
+    }
+    // (Σ ci·xi + k)(Σ dj·yj + l) = Σ ci·dj·xi·yj + l·Σ ci·xi + k·Σ dj·yj + k·l
+    let limit = Failure::ArithmeticLimit;
+    let mut sum = Lin::constant(a.k.checked_mul(b.k).ok_or(limit)?);
+    let linear_a = Lin {
+        terms: a.terms.clone(),
+        k: 0,
+    };
+    let linear_b = Lin {
+        terms: b.terms.clone(),
+        k: 0,
+    };
+    sum = sum.add(&linear_a.scale(b.k).ok_or(limit)?).ok_or(limit)?;
+    sum = sum.add(&linear_b.scale(a.k).ok_or(limit)?).ok_or(limit)?;
+    for &(x, c) in &a.terms {
+        for &(y, d) in &b.terms {
+            let p = product(kinds, x, y);
+            let term = Lin::var(p)
+                .scale(c.checked_mul(d).ok_or(limit)?)
+                .ok_or(limit)?;
+            sum = sum.add(&term).ok_or(limit)?;
+        }
+    }
+    Ok(sum)
 }
 
 /// A linear sum, `c1·x1 + .. + cn·xn + k`, with no zero coefficients and
@@ -446,13 +499,20 @@ const MAX_CONSTRAINTS: usize = 400;
 /// Proves `goal` from `facts`, where variable `v` is of kind `kinds[v]`.
 /// Only `Ok(())` establishes it; an error never establishes its negation.
 pub(crate) fn valid(facts: &[Formula], goal: &Formula, kinds: &[Kind]) -> Result<(), Failure> {
-    let mut parts: Vec<Formula> = relevant(facts, goal).into_iter().cloned().collect();
+    let mut parts: Vec<Formula> = relevant(facts, goal, kinds).into_iter().cloned().collect();
     parts.push(goal.clone().not());
     let whole = Formula::and(parts)
         .nnf(false)
         .ok_or(Failure::ArithmeticLimit)?;
     let mut cases = 0;
-    match refuted(&mut vec![whole], &mut Vec::new(), kinds, &mut cases)? {
+    let mut kinds = kinds.to_vec();
+    match refuted(
+        &mut vec![whole],
+        &mut Vec::new(),
+        &mut kinds,
+        &mut cases,
+        false,
+    )? {
         true => Ok(()),
         false => Err(Failure::Unproved),
     }
@@ -460,18 +520,34 @@ pub(crate) fn valid(facts: &[Formula], goal: &Formula, kinds: &[Kind]) -> Result
 
 /// Facts connected to the goal by shared variables, in their original
 /// order. Used both by the proof and its explanation.
-pub(crate) fn relevant<'a>(facts: &'a [Formula], goal: &Formula) -> Vec<&'a Formula> {
+pub(crate) fn relevant<'a>(
+    facts: &'a [Formula],
+    goal: &Formula,
+    kinds: &[Kind],
+) -> Vec<&'a Formula> {
     // Only the facts that share variables with the goal, or with facts that
     // do, and so on, can matter: the rest can be made true on their own.
     // A fact with no variables at all, `false` on a path that can't be
-    // taken, matters by itself.
+    // taken, matters by itself. A product shares its factors' variables:
+    // what bounds them bounds it (`lemmas`).
+    let with_factors = |vs: &mut Vec<Var>| {
+        let mut i = 0;
+        while i < vs.len() {
+            if let Some(Kind::Product(u, v)) = kinds.get(vs[i] as usize) {
+                vs.extend([*u, *v]);
+            }
+            i += 1;
+        }
+    };
     let mut wanted = Vec::new();
     goal.vars(&mut wanted);
+    with_factors(&mut wanted);
     let mut vars_of: Vec<Vec<Var>> = facts
         .iter()
         .map(|f| {
             let mut vs = Vec::new();
             f.vars(&mut vs);
+            with_factors(&mut vs);
             vs
         })
         .collect();
@@ -501,14 +577,196 @@ pub(crate) fn relevant<'a>(facts: &'a [Formula], goal: &Formula) -> Vec<&'a Form
         .collect()
 }
 
+/// The most lemmas `lemmas` adds to one proof.
+const MAX_LEMMAS: usize = 64;
+
+/// How many lemmas deep `lemmas` goes: a product a lemma makes gets lemmas
+/// of its own, and so on, this many times.
+const MAX_DEPTH: usize = 2;
+
+/// The most factors of unknown sign `lemmas` splits a proof on.
+const MAX_SPLITS: usize = 3;
+
+/// Facts about the products in a case, a conjunction of `atoms`, each
+/// true of every integer, so adding them proves nothing false: for a
+/// product `u · v` and a bound `u <= L` among the atoms, if the atoms
+/// prove `v >= 0` then `u · v <= L · v`, and if they prove `v <= 0` then
+/// `u · v >= L · v`; the same for `u >= L`, `u == L`, the constant bounds
+/// of `u`'s type, and with `u` and `v` swapped. `L · v` is expanded, which
+/// may make products the logic hadn't had (in `kinds`), but not of three
+/// variables: those lemmas are left out. A square isn't negative. For a
+/// factor of unknown sign, the case is split on its sign, into one where
+/// it's at least 0 and one where it's at most 0, but only for the first
+/// few: each doubles the cases.
+///
+/// The bounds are the atoms', never other lemmas'. A product a lemma makes
+/// gets lemmas too, `MAX_DEPTH` deep, and there are at most `MAX_LEMMAS`:
+/// so it ends, and the answer depends on nothing but the question.
+fn lemmas(atoms: &[Formula], kinds: &mut Vec<Kind>) -> Vec<Formula> {
+    let mut vars = Vec::new();
+    for f in atoms {
+        f.vars(&mut vars);
+    }
+    // Each product, its factors, and how many lemmas deep it was made:
+    // 0 for those in the atoms.
+    let mut products: Vec<(Var, Var, Var, usize)> = Vec::new();
+    for &p in &vars {
+        if let Kind::Product(u, v) = kinds[p as usize]
+            && !products.iter().any(|&(q, ..)| q == p)
+        {
+            products.push((p, u, v, 0));
+        }
+    }
+    if products.is_empty() {
+        return Vec::new();
+    }
+    // The bounds the atoms state of each factor: (`L`, which way), with
+    // `Ordering::Less` for `u <= L`.
+    use std::cmp::Ordering::{self, Equal, Greater, Less};
+    let bounds = |u: Var, kinds: &[Kind]| -> Vec<(Lin, Ordering)> {
+        let mut out = Vec::new();
+        for a in atoms {
+            let (Formula::Le(l) | Formula::Eq(l)) = a else {
+                continue;
+            };
+            // c·u + rest <= 0, c = ±1: u <= -rest, or u >= rest.
+            let c = l.coeff(u);
+            if c != 1 && c != -1 {
+                continue;
+            }
+            let Some(rest) = Lin::var(u).scale(c).and_then(|cu| l.sub(&cu)) else {
+                continue;
+            };
+            let Some(bound) = rest.scale(-c) else {
+                continue;
+            };
+            let way = match (a, c) {
+                (Formula::Eq(_), _) => Equal,
+                (_, 1) => Less,
+                _ => Greater,
+            };
+            out.push((bound, way));
+        }
+        let range = match &kinds[u as usize] {
+            Kind::Int(lo, hi) => (lo.as_constant(), hi.as_constant()),
+            Kind::Bound(lo, hi) => (Some(*lo), Some(*hi)),
+            _ => (None, None),
+        };
+        if let Some(lo) = range.0 {
+            out.push((Lin::constant(lo), Greater));
+        }
+        if let Some(hi) = range.1 {
+            out.push((Lin::constant(hi), Less));
+        }
+        out
+    };
+    // The sign the atoms prove of a factor: `v >= 0` if they can't hold
+    // with `v <= -1`.
+    let sign = |v: Var, kinds: &[Kind]| -> Option<Ordering> {
+        let x = Lin::var(v);
+        let with = |f: Formula| {
+            let mut all = atoms.to_vec();
+            all.push(f);
+            impossible(&all, kinds) == Ok(true)
+        };
+        if with(Formula::Le(x.plus(1)?)) {
+            Some(Greater)
+        } else if with(Formula::Le(x.scale(-1)?.plus(1)?)) {
+            Some(Less)
+        } else {
+            None
+        }
+    };
+    // By the factor `b` they're about: the lemmas that hold if `b >= 0`,
+    // and those that hold if `b <= 0`. Those that hold either way are
+    // `out`.
+    let mut out = Vec::new();
+    let mut by_sign: BTreeMap<Var, (Vec<Formula>, Vec<Formula>)> = BTreeMap::new();
+    let mut count = 0;
+    let mut next = 0;
+    while let Some(&(p, u, v, depth)) = products.get(next) {
+        next += 1;
+        let pv = Lin::var(p);
+        if u == v {
+            // A square isn't negative.
+            out.extend(Formula::le(&Lin::constant(0), &pv));
+        }
+        for (a, b) in [(u, v), (v, u)] {
+            for (bound, way) in bounds(a, kinds) {
+                if count >= MAX_LEMMAS {
+                    break;
+                }
+                // a <= L and b >= 0 give a·b <= L·b; b <= 0 turns it round.
+                let Ok(lb) = times(&bound, &Lin::var(b), kinds) else {
+                    continue;
+                };
+                count += 1;
+                // A product the lemma makes, as `L · b` for an `L` that
+                // names another factor, gets lemmas too: `h.width() ==
+                // g.width()` and `g.width() == 2` say what `h.width() *
+                // h.height()` is only in two steps.
+                for w in lb.vars() {
+                    if let Kind::Product(x, y) = kinds[w as usize]
+                        && depth < MAX_DEPTH
+                        && !products.iter().any(|&(q, ..)| q == w)
+                    {
+                        products.push((w, x, y, depth + 1));
+                    }
+                }
+                let (pos, neg) = by_sign.entry(b).or_default();
+                match way {
+                    Equal => out.extend(Formula::eq(&pv, &lb)),
+                    Less => {
+                        pos.extend(Formula::le(&pv, &lb));
+                        neg.extend(Formula::le(&lb, &pv));
+                    }
+                    Greater => {
+                        pos.extend(Formula::le(&lb, &pv));
+                        neg.extend(Formula::le(&pv, &lb));
+                    }
+                }
+            }
+            if u == v {
+                break;
+            }
+        }
+    }
+    // A factor whose sign the facts don't say is split on, into the case
+    // where it's at least 0 and the one where it's at most 0, but only for
+    // the first few: each doubles the cases.
+    let mut splits = 0;
+    for (b, (pos, neg)) in by_sign {
+        match sign(b, kinds) {
+            Some(Greater) => out.extend(pos),
+            Some(_) => out.extend(neg),
+            None if splits < MAX_SPLITS => {
+                splits += 1;
+                let zero = Lin::constant(0);
+                let x = Lin::var(b);
+                let (Some(nonneg), Some(nonpos)) = (Formula::le(&zero, &x), Formula::le(&x, &zero))
+                else {
+                    continue;
+                };
+                out.push(Formula::or([
+                    Formula::and(std::iter::once(nonneg).chain(pos)),
+                    Formula::and(std::iter::once(nonpos).chain(neg)),
+                ]));
+            }
+            None => {}
+        }
+    }
+    out
+}
+
 /// Whether every case of `todo` with `atoms` is impossible: `Ok(true)`
 /// if it found that each is, `Ok(false)` if one may not be, an error if
 /// it gave up. `todo` is in negation normal form.
 fn refuted(
     todo: &mut Vec<Formula>,
     atoms: &mut Vec<Formula>,
-    kinds: &[Kind],
+    kinds: &mut Vec<Kind>,
     cases: &mut usize,
+    lemmas_added: bool,
 ) -> Result<bool, Failure> {
     // Atoms and `&&` first, so a case is as narrow as can be before it's
     // split.
@@ -521,6 +779,17 @@ fn refuted(
         }
     }
     let Some(Formula::Or(alts)) = todo.pop() else {
+        // A case: what its atoms say of the products in it, once, may
+        // refute it where the atoms alone don't.
+        if !lemmas_added {
+            let more = lemmas(atoms, kinds);
+            if !more.is_empty() {
+                if impossible(atoms, kinds) == Ok(true) {
+                    return Ok(true);
+                }
+                return refuted(&mut { more }, atoms, kinds, cases, true);
+            }
+        }
         *cases += 1;
         if *cases > MAX_CASES {
             return Err(Failure::CaseLimit);
@@ -535,7 +804,7 @@ fn refuted(
         let mut todo = todo.clone();
         todo.push(alt);
         let mut atoms = atoms.clone();
-        if !refuted(&mut todo, &mut atoms, kinds, cases)? {
+        if !refuted(&mut todo, &mut atoms, kinds, cases, lemmas_added)? {
             return Ok(false);
         }
     }
@@ -574,6 +843,8 @@ fn impossible(atoms: &[Formula], kinds: &[Kind]) -> Result<bool, Failure> {
             }
             Kind::Bool => (Lin::constant(0), Lin::constant(1)),
             Kind::Bound(lo, hi) => (Lin::constant(*lo), Lin::constant(*hi)),
+            // A product of integers is an integer, with no range of its own.
+            Kind::Product(..) => continue,
         };
         // lo - v <= 0 and v - hi <= 0
         les.push(lo.sub(&Lin::var(v)).ok_or(Failure::ArithmeticLimit)?);

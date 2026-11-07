@@ -736,12 +736,18 @@ impl Checker {
                 BinOp::Mul => {
                     want(self, l, Sort::Int)?;
                     want(self, r, Sort::Int)?;
-                    if !constant(l) && !constant(r) {
+                    let d = degree(e);
+                    if d > 2 {
                         return Err(Error::ty(
                             e.span,
                             format!(
-                                "a refinement can only multiply by a constant: `{}` isn't linear",
-                                crate::pretty::expr_text(e)
+                                "a refinement can multiply at most two unknowns: `{}` multiplies {}",
+                                crate::pretty::expr_text(e),
+                                match d {
+                                    3 => "three".to_string(),
+                                    4 => "four".to_string(),
+                                    d => d.to_string(),
+                                }
                             ),
                         ));
                     }
@@ -1087,7 +1093,7 @@ impl Checker {
                         | BinOp::BitXor
                         | BinOp::Shl
                         | BinOp::Shr
-                ) || (*op == BinOp::Mul && !constant(l) && !constant(r))
+                ) || (*op == BinOp::Mul && degree(e) > 2)
                     || self.is_ord_call(e.id)
                 {
                     return Err(bad());
@@ -1277,13 +1283,16 @@ fn each_bind(pat: &Pattern, f: &mut impl FnMut(&Pattern)) {
     }
 }
 
-/// Is `e` a constant: no names in it?
-fn constant(e: &Expr) -> bool {
+/// How many unknowns `e`, an integer term, multiplies together: 0 for a
+/// constant, 1 for a sum of names, 2 for a product of two. The logic has
+/// products of two (`logic::times`).
+fn degree(e: &Expr) -> usize {
     match &e.kind {
-        ExprKind::Int(..) => true,
-        ExprKind::Unary(UnOp::Neg, x) => constant(x),
-        ExprKind::Binary(BinOp::Add | BinOp::Sub | BinOp::Mul, l, r) => constant(l) && constant(r),
-        _ => false,
+        ExprKind::Int(..) => 0,
+        ExprKind::Unary(UnOp::Neg, x) => degree(x),
+        ExprKind::Binary(BinOp::Add | BinOp::Sub, l, r) => degree(l).max(degree(r)),
+        ExprKind::Binary(BinOp::Mul, l, r) => degree(l) + degree(r),
+        _ => 1,
     }
 }
 
@@ -1537,7 +1546,7 @@ impl Walk<'_> {
     /// Variable `v` of the logic, as a value.
     fn var(&self, v: Var) -> Val {
         match self.kinds[v as usize] {
-            Kind::Int(..) | Kind::Bound(..) => Val::Int(Lin::var(v)),
+            Kind::Int(..) | Kind::Bound(..) | Kind::Product(..) => Val::Int(Lin::var(v)),
             Kind::Bool => Val::Bool(Formula::holds(v)),
         }
     }
@@ -1851,7 +1860,7 @@ impl Walk<'_> {
             },
             ExprKind::Binary(op, l, r) => {
                 let (a, b) = (self.measure_term(l, this)?, self.measure_term(r, this)?);
-                binary(*op, a, b)?
+                binary(*op, a, b, &mut self.kinds).ok()?
             }
             _ => return None,
         })
@@ -2195,6 +2204,23 @@ impl Walk<'_> {
         if new && p.path.is_empty() {
             self.assume_invariant(p.root, &v);
         }
+        // A new value of a field, as after a loop that lends it, is one the
+        // struct's refinements hold of, with its other fields, as of every
+        // value of the struct (`fields_of`, for a field that's a scalar).
+        // Only of a stable place, whose object `fields_of` then finds: one
+        // that's new at each read isn't the same value twice.
+        if new
+            && !self.proving_fields
+            && !self.is_unstable(p)
+            && let Some((q, _)) = p.field_of()
+        {
+            let qt = self.place_ty(&q);
+            if self.refined_fields(&qt).is_some()
+                && let Some(vals) = self.fields_of(&q, &qt)
+            {
+                self.assume_fields(&qt, &vals);
+            }
+        }
         v
     }
 
@@ -2417,18 +2443,7 @@ impl Walk<'_> {
             ExprKind::Unary(UnOp::Not, x) => Val::Bool(boolean(self.term(x, binder, env)?)?.not()),
             ExprKind::Binary(op, l, r) => {
                 let (a, b) = (self.term(l, binder, env)?, self.term(r, binder, env)?);
-                let reason = match (&a, &b) {
-                    (Val::Int(a), Val::Int(b))
-                        if *op == BinOp::Mul
-                            && a.as_constant().is_none()
-                            && b.as_constant().is_none() =>
-                    {
-                        Failure::Unsupported
-                    }
-                    (Val::Int(_), Val::Int(_)) => Failure::ArithmeticLimit,
-                    _ => Failure::Unsupported,
-                };
-                binary(*op, a, b).ok_or(reason)?
+                binary(*op, a, b, &mut self.kinds)?
             }
             // `old(x)`: `x` at the call.
             ExprKind::Call(_, args) if args.len() == 1 => match env {
@@ -2772,12 +2787,17 @@ impl Walk<'_> {
             return self.unknown(ty);
         };
         let in_range = |l: &Lin| Some(Formula::and([Formula::le(&min, l)?, Formula::le(l, &max)?]));
+        // Why the value isn't in the logic, if it isn't: a product of
+        // three variables isn't, nor a number too big for it.
+        let mut missing = Failure::ArithmeticLimit;
         let (value, goal) = match op {
             BinOp::Add | BinOp::Sub | BinOp::Mul => {
                 let value = match op {
                     BinOp::Add => a.add(&b),
                     BinOp::Sub => a.sub(&b),
-                    _ => times(&a, &b),
+                    _ => logic::times(&a, &b, &mut self.kinds)
+                        .map_err(|f| missing = f)
+                        .ok(),
                 };
                 let goal = value.as_ref().and_then(in_range);
                 (value, goal)
@@ -2801,12 +2821,6 @@ impl Walk<'_> {
                 (None, goal)
             }
         };
-        let missing = if op == BinOp::Mul && a.as_constant().is_none() && b.as_constant().is_none()
-        {
-            Failure::Unsupported
-        } else {
-            Failure::ArithmeticLimit
-        };
         let condition = if matches!(op, BinOp::Div | BinOp::Rem) {
             format!("the divisor must be nonzero and `{op}` must not overflow `{ty}`")
         } else {
@@ -2827,10 +2841,64 @@ impl Walk<'_> {
                     && let Some(f) = remainder(&a, &b, q)
                 {
                     self.fact(f);
+                } else if let Val::Int(q) = &result
+                    && op == BinOp::Div
+                    && let Some(f) = self.quotient(&a, &b, q)
+                {
+                    self.fact(f);
                 }
                 result
             }
         }
+    }
+
+    /// What `q = a / b` says of `q · b`, for a divisor that isn't a
+    /// constant (`divided` has those), when the signs of `a` and `b` are
+    /// known here: it's within one `b` of `a`, on the side of zero, as
+    /// division rounds towards zero. `a = q·b + r`, where `r` has the sign
+    /// of `a` and is smaller than `b`: for `a >= 0` and `b > 0`, `q·b <= a
+    /// <= q·b + b - 1`. A product: what the logic knows of it is in
+    /// `logic::lemmas`.
+    fn quotient(&mut self, a: &Lin, b: &Lin, q: &Lin) -> Option<Formula> {
+        let zero = Lin::constant(0);
+        let a_sign = if self.proves(Formula::le(&zero, a).as_ref()).is_ok() {
+            1
+        } else if self.proves(Formula::le(a, &zero).as_ref()).is_ok() {
+            -1
+        } else {
+            return None;
+        };
+        let b_sign = if self.proves(Formula::lt(&zero, b).as_ref()).is_ok() {
+            1
+        } else if self.proves(Formula::lt(b, &zero).as_ref()).is_ok() {
+            -1
+        } else {
+            return None;
+        };
+        let qb = logic::times(q, b, &mut self.kinds).ok()?;
+        // |r| <= |b| - 1, as a sum: b - 1 when b > 0, -b - 1 when b < 0.
+        let most = b.scale(b_sign)?.plus(-1)?;
+        // q has the sign of a·b, or is 0.
+        let q_sign = if a_sign == b_sign {
+            Formula::le(&zero, q)?
+        } else {
+            Formula::le(q, &zero)?
+        };
+        Some(if a_sign > 0 {
+            // q·b <= a <= q·b + |b| - 1
+            Formula::and([
+                q_sign,
+                Formula::le(&qb, a)?,
+                Formula::le(a, &qb.add(&most)?)?,
+            ])
+        } else {
+            // q·b - |b| + 1 <= a <= q·b
+            Formula::and([
+                q_sign,
+                Formula::le(&qb.sub(&most)?, a)?,
+                Formula::le(a, &qb)?,
+            ])
+        })
     }
 
     /// `l op r` for a bitwise operator or a shift at node `site`, on
@@ -3955,18 +4023,20 @@ impl Walk<'_> {
     }
 }
 
-/// `a op b` in the logic, if it's in it.
-fn binary(op: BinOp, a: Val, b: Val) -> Option<Val> {
-    Some(match (op, a, b) {
-        (BinOp::Add, Val::Int(a), Val::Int(b)) => Val::Int(a.add(&b)?),
-        (BinOp::Sub, Val::Int(a), Val::Int(b)) => Val::Int(a.sub(&b)?),
-        (BinOp::Mul, Val::Int(a), Val::Int(b)) => Val::Int(times(&a, &b)?),
-        (op, Val::Int(a), Val::Int(b)) => Val::Bool(compare(op, &a, &b)?),
+/// `a op b` in the logic, if it's in it: why not if it isn't. A product
+/// may add a variable to `kinds` (`logic::times`).
+fn binary(op: BinOp, a: Val, b: Val, kinds: &mut Vec<Kind>) -> Result<Val, Failure> {
+    let limit = Failure::ArithmeticLimit;
+    Ok(match (op, a, b) {
+        (BinOp::Add, Val::Int(a), Val::Int(b)) => Val::Int(a.add(&b).ok_or(limit)?),
+        (BinOp::Sub, Val::Int(a), Val::Int(b)) => Val::Int(a.sub(&b).ok_or(limit)?),
+        (BinOp::Mul, Val::Int(a), Val::Int(b)) => Val::Int(logic::times(&a, &b, kinds)?),
+        (op, Val::Int(a), Val::Int(b)) => Val::Bool(compare(op, &a, &b).ok_or(limit)?),
         (BinOp::Eq, Val::Bool(a), Val::Bool(b)) => Val::Bool(Formula::iff(a, b)),
         (BinOp::Ne, Val::Bool(a), Val::Bool(b)) => Val::Bool(Formula::iff(a, b).not()),
         (BinOp::And, Val::Bool(a), Val::Bool(b)) => Val::Bool(Formula::and([a, b])),
         (BinOp::Or, Val::Bool(a), Val::Bool(b)) => Val::Bool(Formula::or([a, b])),
-        _ => return None,
+        _ => return Err(Failure::Unsupported),
     })
 }
 
@@ -3988,15 +4058,6 @@ fn equal(a: &Val, b: &Val) -> Vec<Formula> {
             a.iter().zip(b).flat_map(|(a, b)| equal(a, b)).collect()
         }
         _ => Vec::new(),
-    }
-}
-
-/// `a * b`, if one of them is a constant.
-fn times(a: &Lin, b: &Lin) -> Option<Lin> {
-    match (a.as_constant(), b.as_constant()) {
-        (Some(k), _) => b.scale(k),
-        (_, Some(k)) => a.scale(k),
-        _ => None,
     }
 }
 

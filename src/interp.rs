@@ -2137,28 +2137,6 @@ impl<'p> Interp<'p, '_> {
             Intrinsic::Volatile(VolatileOp::Read | VolatileOp::Write) => {
                 unsound("a volatile value the interpreter never made")
             }
-            Intrinsic::CheckedMul => {
-                let [a, b] =
-                    <[Value; 2]>::try_from(args).unwrap_or_else(|_| unsound("checked arity"));
-                let (Value::Int(a, t), Value::Int(b, u)) = (a, b) else {
-                    unsound("`checked_mul` of what isn't an integer")
-                };
-                if t != u {
-                    unsound("`checked_mul` of two integer types");
-                }
-                let (lo, hi) = self.range(t);
-                let result = a.checked_mul(b).filter(|n| (lo..=hi).contains(n));
-                // The copy of `Option<T>` the intrinsic returns.
-                let TypeExprKind::Named(option, _) = &self.fns[copy].ret.kind else {
-                    unsound("`checked_mul` returns an `Option<T>`")
-                };
-                Ok(match result {
-                    Some(n) => {
-                        Value::Variant(option.clone(), "Some".into(), vec![Value::Int(n, t)])
-                    }
-                    None => Value::Variant(option.clone(), "None".into(), Vec::new()),
-                })
-            }
             Intrinsic::WrappingMul => {
                 let [a, b] =
                     <[Value; 2]>::try_from(args).unwrap_or_else(|_| unsound("checked arity"));

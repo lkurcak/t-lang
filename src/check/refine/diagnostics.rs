@@ -195,6 +195,14 @@ impl Walk<'_> {
                 names.insert(v, name.clone());
             }
         }
+        // A product is named by its factors, once they all have names.
+        for (p, kind) in self.kinds.iter().enumerate() {
+            if let Kind::Product(u, v) = kind
+                && let (Some(a), Some(b)) = (names.get(u), names.get(v))
+            {
+                names.insert(p as Var, format!("{a} * {b}"));
+            }
+        }
         (names, places)
     }
 
@@ -232,7 +240,9 @@ impl Walk<'_> {
             .and_then(|g| g.text(&name))
             .unwrap_or_else(|| fallback.into());
         let all: Vec<_> = self.facts.iter().chain(&self.laws).cloned().collect();
-        let relevant = goal.map(|g| logic::relevant(&all, g)).unwrap_or_default();
+        let relevant = goal
+            .map(|g| logic::relevant(&all, g, &self.kinds))
+            .unwrap_or_default();
         let mut vars = Vec::new();
         if let Some(g) = goal {
             g.vars(&mut vars);
