@@ -1018,13 +1018,25 @@ fn status(r: std::io::Result<()>) -> Value {
 /// predicate, and the values of the other names in it, which can't change.
 #[derive(Clone)]
 struct Refined {
-    binder: String,
-    pred: Expr,
+    /// Each binder and predicate, with the ways to the parts of the value
+    /// it's of: the whole value's, and those of its enums' type arguments
+    /// (`Measures::ways`).
+    parts: Vec<RefinedPart>,
     env: Vec<(String, Value)>,
     /// What each measure the predicate calls of a name other than its
     /// binder gives, by node: found when it's made, as the predicate is
     /// about then, and what's behind a reference may change after.
     measured: HashMap<NodeId, PredValue>,
+}
+
+/// One predicate of a `Refined`.
+#[derive(Clone)]
+struct RefinedPart {
+    binder: String,
+    pred: Expr,
+    /// Through which variant and field of each enum on the way to each
+    /// part of the value it's of: one empty way for the whole value.
+    ways: Vec<Vec<(String, usize)>>,
 }
 
 /// What a predicate evaluates to: integers are the mathematical ones. A
@@ -1098,35 +1110,59 @@ fn pred_op(op: BinOp, a: PredValue, b: PredValue) -> PredValue {
 
 impl Refined {
     /// Stops the program, as the checker is wrong, unless it holds of `v`,
-    /// which is `what`.
+    /// which is `what`: each part of it, of each part of `v` it's of that
+    /// `v` has, being those variants.
     fn check(&self, i: &Interp, v: &Value, what: &str) {
-        if let PredValue::Bool(false) = self.eval(i, &self.pred, v) {
-            unsound(&format!(
-                "{what} is `{v}`, which doesn't have its refinement `{}`",
-                crate::pretty::expr_text(&self.pred)
-            ));
+        for part in &self.parts {
+            for way in &part.ways {
+                let mut at = v;
+                let mut there = true;
+                for (variant, field) in way {
+                    match at {
+                        Value::Variant(_, name, fields) if name == variant => at = &fields[*field],
+                        _ => {
+                            there = false;
+                            break;
+                        }
+                    }
+                }
+                if !there {
+                    continue;
+                }
+                if let PredValue::Bool(false) = self.eval(i, &part.pred, &part.binder, at) {
+                    let what = match way.is_empty() {
+                        true => what.to_string(),
+                        false => format!("{what}, of which a part"),
+                    };
+                    unsound(&format!(
+                        "{what} is `{at}`, which doesn't have its refinement `{}`",
+                        crate::pretty::expr_text(&part.pred)
+                    ));
+                }
+            }
         }
     }
 
-    fn eval(&self, i: &Interp, e: &Expr, v: &Value) -> PredValue {
+    fn eval(&self, i: &Interp, e: &Expr, binder: &str, v: &Value) -> PredValue {
+        let go = |e: &Expr| self.eval(i, e, binder, v);
         match &e.kind {
             ExprKind::Int(n, _) => PredValue::Int(i128::from(*n)),
             ExprKind::Bool(b) => PredValue::Bool(*b),
-            ExprKind::Var(name, _) if *name == self.binder => PredValue::of(v),
+            ExprKind::Var(name, _) if name == binder => PredValue::of(v),
             ExprKind::Var(name, _) => match self.env.iter().find(|(n, _)| n == name) {
                 Some((_, v)) => PredValue::of(v),
                 None => unsound(&format!("a refinement naming `{name}`, which isn't there")),
             },
-            ExprKind::Unary(UnOp::Neg, x) => PredValue::Int(-self.eval(i, x, v).int()),
-            ExprKind::Unary(UnOp::Not, x) => PredValue::Bool(!self.eval(i, x, v).boolean()),
-            ExprKind::Binary(op, l, r) => pred_op(*op, self.eval(i, l, v), self.eval(i, r, v)),
+            ExprKind::Unary(UnOp::Neg, x) => PredValue::Int(-go(x).int()),
+            ExprKind::Unary(UnOp::Not, x) => PredValue::Bool(!go(x).boolean()),
+            ExprKind::Binary(op, l, r) => pred_op(*op, go(l), go(r)),
             ExprKind::MethodCall(x, ..) => match self.measured.get(&e.id) {
                 Some(m) => m.clone(),
-                None => i.measure_call(e.id, self.eval(i, x, v).val()),
+                None => i.measure_call(e.id, go(x).val()),
             },
             // `old(x)` in a postcondition: its measures were found at the
             // call.
-            ExprKind::Call(_, args) if args.len() == 1 => self.eval(i, &args[0], v),
+            ExprKind::Call(_, args) if args.len() == 1 => go(&args[0]),
             _ => unsound("a refinement outside the logic"),
         }
     }
@@ -1148,36 +1184,50 @@ fn each_measure_call<'e>(e: &'e Expr, post: bool, out: &mut Vec<(NodeId, &'e Exp
 }
 
 impl<'p> Interp<'p, '_> {
-    /// The refinement `{ binder | pred }`, whose other names have the
-    /// values `env`: what the measures it calls of them give is found now.
-    fn refined(&self, binder: &str, pred: &Expr, env: Vec<(String, Value)>) -> Refined {
-        self.refined_at(binder, pred, env, false)
+    /// The refinements written in type `t`, if it has any, whose other
+    /// names have the values `env`: what the measures they call of them
+    /// give is found now, or of a postcondition (`post`), as `refined_at`.
+    fn type_refined(&self, t: &TypeExpr, env: &[(String, Value)], post: bool) -> Option<Refined> {
+        let parts: Vec<(String, &Expr)> = (t.refinements().into_iter())
+            .map(|(_, v, pred)| (v.name.clone(), pred))
+            .collect();
+        (!parts.is_empty()).then(|| self.refined_at(&parts, env.to_vec(), post))
     }
 
-    /// The same, of a postcondition (`post`): what's behind its names is
-    /// found when it's checked, at return, but for what's in `old(..)`.
+    /// The refinement with parts `parts`, each a binder and a predicate,
+    /// as `refined`; of a postcondition (`post`): what's behind its names
+    /// is found when it's checked, at return, but for what's in `old(..)`.
     fn refined_at(
         &self,
-        binder: &str,
-        pred: &Expr,
+        parts: &[(String, &Expr)],
         env: Vec<(String, Value)>,
         post: bool,
     ) -> Refined {
         let mut r = Refined {
-            binder: binder.to_string(),
-            pred: pred.clone(),
+            parts: (parts.iter())
+                .map(|(binder, pred)| RefinedPart {
+                    binder: binder.clone(),
+                    pred: (*pred).clone(),
+                    ways: match self.measures.ways.get(&pred.id) {
+                        Some(ways) => ways.clone(),
+                        None => vec![Vec::new()],
+                    },
+                })
+                .collect(),
             env,
             measured: HashMap::new(),
         };
-        let mut calls = Vec::new();
-        each_measure_call(pred, post, &mut calls);
-        for (node, x) in calls {
-            if let ExprKind::Var(name, _) = &x.kind
-                && *name != r.binder
-            {
-                let recv = r.eval(self, x, &Value::Unit).val();
-                let m = self.measure_call(node, recv);
-                r.measured.insert(node, m);
+        for (binder, pred) in parts {
+            let mut calls = Vec::new();
+            each_measure_call(pred, post, &mut calls);
+            for (node, x) in calls {
+                if let ExprKind::Var(name, _) = &x.kind
+                    && name != binder
+                {
+                    let recv = r.eval(self, x, binder, &Value::Unit).val();
+                    let m = self.measure_call(node, recv);
+                    r.measured.insert(node, m);
+                }
             }
         }
         r
@@ -1482,16 +1532,12 @@ impl<'p> Interp<'p, '_> {
                     .zip(&args)
                     .map(|(p, v)| (p.name.name.clone(), v.clone()))
                     .collect();
-                let refinement = |i: &Self, t: &TypeExpr| {
-                    t.refinement()
-                        .map(|(v, pred)| i.refined(&v.name, pred, env.clone()))
-                };
+                let refinement = |i: &Self, t: &TypeExpr| i.type_refined(t, &env, false);
                 // A result's refinement and `ensures` are about what's
                 // behind the arguments at return.
-                let ret = (decl.ret.refinement())
-                    .map(|(v, pred)| self.refined_at(&v.name, pred, env.clone(), true));
+                let ret = self.type_refined(&decl.ret, &env, true);
                 let ensures: Vec<Refined> = (decl.ensures.iter())
-                    .map(|e| self.refined_at("", e, env.clone(), true))
+                    .map(|e| self.refined_at(&[(String::new(), e)], env.clone(), true))
                     .collect();
                 let mut refined = Vec::new();
                 for (p, v) in decl.params.iter().zip(&args) {
@@ -2077,7 +2123,10 @@ impl<'p> Interp<'p, '_> {
                 (n.clone(), self.memory.get(&p).clone())
             })
             .collect();
-        let refined = self.refined(&r.binder, &r.pred, env);
+        let parts: Vec<(String, &Expr)> = (r.parts.iter())
+            .map(|(binder, pred)| (binder.clone(), pred))
+            .collect();
+        let refined = self.refined_at(&parts, env, false);
         let p = self.ptr(fr, &crate::mir::Place::local(l));
         let name = fr.body.locals[l.0].name.as_deref().unwrap_or("_");
         refined.check(self, self.memory.get(&p), &format!("`{name}`"));
@@ -3032,8 +3081,7 @@ impl<'p> Interp<'p, '_> {
             return;
         };
         for (j, f) in decl.fields.iter().enumerate() {
-            if let Some((binder, pred)) = f.ty.refinement() {
-                let r = self.refined(&binder.name, pred, fields[..j].to_vec());
+            if let Some(r) = self.type_refined(&f.ty, &fields[..j], false) {
                 r.check(
                     self,
                     &fields[j].1,

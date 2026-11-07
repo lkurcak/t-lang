@@ -1336,7 +1336,7 @@ impl Checker {
         let param_tys = f
             .params
             .iter()
-            .map(|p| self.resolve_with(p.ty.unrefined(), params, &mut lts))
+            .map(|p| self.resolve_with(&p.ty.stripped(), params, &mut lts))
             .collect::<Result<Vec<_>, _>>()?;
         let Lifetimes::Params { elided, .. } = lts else {
             unreachable!()
@@ -1372,7 +1372,7 @@ impl Checker {
             self.opaque(t, &own, &lifetimes)?;
         }
         let mut lts = Lifetimes::Return { declared, input };
-        let ret = self.resolve_with(f.ret.unrefined(), params, &mut lts)?;
+        let ret = self.resolve_with(&f.ret.stripped(), params, &mut lts)?;
         self.refined_signature(f, &param_tys, &ret, opaques)?;
         let effects = match &f.effects {
             Some(e) => {

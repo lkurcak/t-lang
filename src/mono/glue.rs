@@ -330,7 +330,7 @@ impl Cx<'_, '_, '_> {
                 .map(|v| {
                     v.fields
                         .iter()
-                        .map(|f| cx.resolved(super::unrefined(f)))
+                        .map(|f| cx.resolved(&super::unrefined(f)))
                         .collect()
                 })
                 .collect(),
