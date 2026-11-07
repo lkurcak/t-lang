@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.64.0 (2026-11-07)
 
 Step 48: files. See [docs/48-files.md](docs/48-files.md).
 
