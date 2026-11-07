@@ -93,6 +93,10 @@ pub(super) struct Refinement {
     parts: Vec<Part>,
 }
 
+/// The way to a part of a value: the variant and field of each enum on
+/// the way to it.
+type Way = Vec<(usize, usize)>;
+
 /// One predicate of a refinement, and the parts of the value it's of.
 #[derive(Debug, Clone)]
 struct Part {
@@ -100,7 +104,7 @@ struct Part {
     /// Where each part of the value it's of is, as the variant and field
     /// of each enum on the way to it: one way, `[]`, for the whole value;
     /// for the `T` of `Option<T>`, `[(1, 0)]`, the field of `Some`.
-    ways: Vec<Vec<(usize, usize)>>,
+    ways: Vec<Way>,
 }
 
 impl Part {
@@ -725,7 +729,7 @@ impl Checker {
 
     /// `ways` into a value of type `t`, with each variant by name, for the
     /// interpreter.
-    fn named_ways(&self, t: &Type, ways: &[Vec<(usize, usize)>]) -> Vec<Vec<(String, usize)>> {
+    fn named_ways(&self, t: &Type, ways: &[Way]) -> Vec<Vec<(String, usize)>> {
         let mut out = Vec::new();
         for way in ways {
             let mut ty = t.clone();
@@ -758,7 +762,7 @@ impl Checker {
         t: &TypeExpr,
         base: &Type,
         path: &[usize],
-    ) -> Result<(Type, Vec<Vec<(usize, usize)>>), Error> {
+    ) -> Result<(Type, Vec<Way>), Error> {
         fn mentions(t: &Type, p: &str) -> bool {
             matches!(t, Type::Param(q) if q == p) || t.parts().any(|u| mentions(u, p))
         }
