@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.62.0 (2026-11-07)
 
 Step 46: one cell primitive, and the intrinsics by name. See
 [docs/46-unsafe-cell.md](docs/46-unsafe-cell.md).
