@@ -114,31 +114,18 @@ impl AdtInfo {
                 }
                 // An intrinsic type has no fields to say how it holds its
                 // parameters. `RawBuf<T>` owns its `T`s, as a `Box<T>`
-                // does, so it's covariant in it. `Arena<T>` is invariant:
-                // its `alloc` puts a `T` in through a `&` (lemma R3 of
-                // docs/23-arenas.md), as a `Cell` would.
+                // does, so it's covariant in it.
                 if crate::check::INTRINSIC_TYPES.contains(&n.as_str()) {
-                    let fixed = match n.as_str() == crate::check::ARENA {
-                        true => Variance::Inv,
-                        false => Variance::Co,
-                    };
-                    let all = vec![fixed; d.lifetimes.len() + d.params.len()];
+                    let all = vec![Variance::Co; d.lifetimes.len() + d.params.len()];
                     changed |= variances.insert((*n).clone(), all.clone()) != Some(all);
                     continue;
                 }
-                // `Cell<T>`'s field is a `T`, but `replace` puts one in
-                // through a `&`, so it's invariant too (lemma K2 of
-                // docs/37-cell.md). So is `Atomic<T>`, by its `swap`,
-                // though only an integer or `bool` can be in it, and
-                // `Volatile<T>`, by its `write` (lemma V of
-                // docs/40-extern.md).
-                if [
-                    crate::check::CELL,
-                    crate::check::ATOMIC,
-                    crate::check::VOLATILE,
-                ]
-                .contains(&n.as_str())
-                {
+                // `Unsafe<T>`'s field is a `T`, but `as_mut` lends it as
+                // `&mut` through a `&`, so it's invariant (lemma U2 of
+                // docs/46-unsafe-cell.md). Every type with one in it is
+                // then invariant from its fields: `Cell`, `Atomic`,
+                // `Volatile`, `Mutex`, `Arena`, and a library's own.
+                if n.as_str() == crate::check::UNSAFE {
                     let all = vec![Variance::Inv; d.lifetimes.len() + d.params.len()];
                     changed |= variances.insert((*n).clone(), all.clone()) != Some(all);
                     continue;

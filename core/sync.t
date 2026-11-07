@@ -6,7 +6,7 @@
 //! Statics are shared by every function that names them, and so by every
 //! thread, so what's in one must be `Sync` too.
 
-use crate::cell::Cell;
+use crate::cell::Unsafe;
 use crate::num::Int;
 use crate::result::Result;
 
@@ -52,15 +52,19 @@ impl Atom for bool {}
 ///
 /// Like a `Cell`, nothing ever points into it: what's in it is only copied
 /// out, and the checker's logic never looks inside, as another thread may
-/// change it between any two steps. It's invariant in `T`, and never
-/// `Copy`: a copy would be a second atomic, which a change to the first
-/// doesn't change.
-#[derive(Discard where T: Discard, Send where T: Send, Sync where T: Sync)]
-export struct Atomic<T: Atom> { value: T }
+/// change it between any two steps. It's an `Unsafe`, so it's invariant in
+/// `T`, and never `Copy`: a copy would be a second atomic, which a change
+/// to the first doesn't change. It's `Sync`, against its field, as each
+/// change is atomic: the `unsafe impl` below is that promise, which the
+/// machine keeps (lemma Y7 of docs/38-statics.md).
+#[derive(Discard where T: Discard, Send where T: Send)]
+export struct Atomic<T: Atom> { value: Unsafe<T> }
+
+unsafe impl<T: Atom + Send> Sync for Atomic<T> {}
 
 impl<T: Atom> Atomic<T> {
     /// An atomic holding `value`.
-    export fn new(value: T) -> Atomic<T> { Atomic { value } }
+    export fn new(value: T) -> Atomic<T> { Atomic { value: Unsafe::new(value) } }
 
     /// What's in it.
     #[intrinsic]
@@ -104,11 +108,11 @@ impl<T: Atom> Atomic<T> {
     export fn fetch_xor(&self, value: T) -> T;
 
     /// What's in it, which is used up.
-    export fn into_inner(self) -> T { self.value }
+    export fn into_inner(self) -> T { self.value.into_inner() }
 
     /// A reference to what's in it, which is lent as `&mut`, so no other
     /// thread can reach it while the reference lives.
-    export fn get_mut(&mut self) -> &mut T { &mut self.value }
+    export fn get_mut(&mut self) -> &mut T { self.value.get_mut() }
 }
 
 impl<T: Atom + Int> Atomic<T> {
@@ -127,27 +131,27 @@ impl<T: Atom + Int> Atomic<T> {
 /// has it, then lends what's in it as `&mut`, for as long as the closure
 /// it's given runs.
 ///
-/// It's `Sync` if `T` is `Send`, against its fields (a `Cell<T>` isn't):
+/// It's `Sync` if `T` is `Send`, against its fields (an `Unsafe<T>` isn't):
 /// only one thread at a time reaches what's in it, so it's as if that
 /// were handed from thread to thread. The `unsafe impl` below is that
 /// promise, which the lock keeps (lemma Z2 of docs/41-threads.md).
 ///
-/// Like a `Cell`, which it holds its value in, it's invariant in `T`, and
-/// the checker's logic never looks inside. A panic while it's locked stops
+/// It holds its value in an `Unsafe`, so it's invariant in `T`, and the
+/// checker's logic never looks inside. A panic while it's locked stops
 /// the whole program, so no one ever finds it locked for good, nor what's
 /// in it half changed.
 ///
 /// Locking it again in the closure `lock` runs waits for ever: the closure
 /// already has what's in it.
 #[derive(Discard where T: Discard, Send where T: Send)]
-export struct Mutex<T> { locked: Atomic<bool>, value: Cell<T> }
+export struct Mutex<T> { locked: Atomic<bool>, value: Unsafe<T> }
 
 unsafe impl<T: Send> Sync for Mutex<T> {}
 
 impl<T> Mutex<T> {
     /// A mutex holding `value`, not locked.
     export fn new(value: T) -> Mutex<T> {
-        Mutex { locked: Atomic::new(false), value: Cell::new(value) }
+        Mutex { locked: Atomic::new(false), value: Unsafe::new(value) }
     }
 
     /// Waits until no other thread has the mutex, then calls `f` with what's
@@ -157,9 +161,9 @@ impl<T> Mutex<T> {
         while self.locked.swap(true) {
             spin();
         }
-        // SAFETY: no other `as_mut` of the cell, nor anything else, until
+        // SAFETY: no other `as_mut` of the value, nor anything else, until
         // `locked` is `false` again: it's `true` only while one thread has
-        // the lock, and only `lock` reaches the cell through a `&`.
+        // the lock, and only `lock` reaches the value through a `&`.
         let r = f(unsafe { self.value.as_mut() });
         self.locked.store(false);
         r

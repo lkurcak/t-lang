@@ -44,8 +44,8 @@ impl Checker {
             return Err(Error::ty(
                 f.ret.span,
                 format!(
-                    "a const can't be of type `{}`: a const is frozen, and a `Cell` or `Atomic` \
-                     in it could be changed through a `&`",
+                    "a const can't be of type `{}`: a const is frozen, and an `Unsafe` in it, \
+                     as in a `Cell` or `Atomic`, could be changed through a `&`",
                     f.ret
                 ),
             ));

@@ -327,8 +327,8 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         dead _47;
         dead _46;
         dead _45;
-        _59 = {closure#12715}();
-        _60 = {fn}::<{closure#121743}>;
+        _59 = {closure#12907}();
+        _60 = {fn}::<{closure#126179}>;
         _61 = true;
         _58 = main::twice::<bool>(move _60, move _61);
         _62 = &mut _2;
@@ -417,7 +417,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
         _77 = copy _78;
         dead _78;
         _81 = &_77;
-        _80 = {closure#12805}(move _81);
+        _80 = {closure#12997}(move _81);
         _79 = copy _80;
         dead _81;
         dead _80;
@@ -636,7 +636,7 @@ fn main(os: std::Os) -> core::result::Result::<(), std::io::Error> with panic {
     }
 }
 
-closure main::{closure#12715} {
+closure main::{closure#12907} {
     let _0: bool;
     let mut _1: &{closure}; // the closure
     let _2: bool; // b
@@ -648,7 +648,7 @@ closure main::{closure#12715} {
     }
 }
 
-closure main::{closure#12805} {
+closure main::{closure#12997} {
     let _0: i64;
     let mut _1: &{closure}; // the closure
     let _2: i64; // x
@@ -975,13 +975,13 @@ fn <&str as core::fmt::Display>::fmt::<std::io::Stderr><'a>(
     }
 }
 
-glue {fn}::<{closure#121743}> {
+glue {fn}::<{closure#126179}> {
     let _0: bool;
     let mut _1: bool;
     let _2: {closure};
     let _3: &{closure};
     bb0: {
-        _2 = {closure#12715}();
+        _2 = {closure#12907}();
         _3 = &_2;
         _0 = (move _3)(move _1);
         dead _3;

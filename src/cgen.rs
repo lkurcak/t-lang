@@ -480,7 +480,7 @@ impl<'e> Gen<'e> {
                         let e = self.cty(&args[0]);
                         let _ = write!(members, " {e} *ptr; uint64_t cap;");
                     }
-                    crate::check::ARENA => {
+                    crate::check::ARENA_SLOTS => {
                         members.push_str(" void **items; uint64_t len; uint64_t cap;");
                     }
                     // Where the thread's packet is: see `start`.
@@ -919,7 +919,7 @@ impl<'e> Gen<'e> {
         let Type::Adt(symbol, _, args) = t else {
             panic!("no drop glue for `{t}`")
         };
-        assert_eq!(symbol, crate::check::ARENA, "no drop glue for `{t}`");
+        assert_eq!(symbol, crate::check::ARENA_SLOTS, "no drop glue for `{t}`");
         if let Some(c) = self.fn_names.get(&name) {
             return c.clone();
         }
@@ -1532,34 +1532,33 @@ impl<'e> Gen<'e> {
                 Some("Stderr>::write_byte") => "    return t_write_byte(stderr, a1);\n".to_string(),
                 _ => panic!("unknown intrinsic `{copy}`"),
             },
-            // A cell is a struct of what's in it (lemma K3 of
-            // docs/37-cell.md).
-            "<core::cell::Cell" => match op {
-                "replace" => format!("    {r} old = a0->f0;\n    a0->f0 = a1;\n    return old;\n"),
-                "as_mut" => "    return &a0->f0;\n".to_string(),
+            // An `Unsafe` is a struct of what's in it (lemma U5 of
+            // docs/46-unsafe-cell.md).
+            "<core::cell::Unsafe" => match op {
+                "as_mut" | "as_ref" => "    return &a0->f0;\n".to_string(),
                 _ => panic!("unknown intrinsic `{copy}`"),
             },
-            // An atomic is a struct of what's in it, which the compiler's
-            // builtins change, each sequentially consistent (lemma Y7 of
-            // docs/38-statics.md). Adding to a signed integer wraps there.
+            // An atomic is a struct of an `Unsafe` of what's in it, which
+            // the compiler's builtins change, each sequentially consistent
+            // (lemma Y7 of docs/38-statics.md). Adding to a signed integer wraps there.
             // A `bool` has no `fetch_and` and the like in every compiler,
             // so it's a loop of compare-and-swaps.
             "<core::sync::Atomic" => {
                 let sc = "__ATOMIC_SEQ_CST";
                 let fetch = |f: &str, c: &str| match *ret == Type::Bool {
-                    false => format!("    return __atomic_{f}(&a0->f0, a1, {sc});\n"),
+                    false => format!("    return __atomic_{f}(&a0->f0.f0, a1, {sc});\n"),
                     true => format!(
-                        "    {r} e = __atomic_load_n(&a0->f0, {sc});\n    \
-                         while (!__atomic_compare_exchange_n(&a0->f0, &e, e {c} a1, 0, {sc}, \
+                        "    {r} e = __atomic_load_n(&a0->f0.f0, {sc});\n    \
+                         while (!__atomic_compare_exchange_n(&a0->f0.f0, &e, e {c} a1, 0, {sc}, \
                          {sc})) {{}}\n    return e;\n"
                     ),
                 };
                 match op {
-                    "load" => format!("    return __atomic_load_n(&a0->f0, {sc});\n"),
-                    "swap" => format!("    return __atomic_exchange_n(&a0->f0, a1, {sc});\n"),
+                    "load" => format!("    return __atomic_load_n(&a0->f0.f0, {sc});\n"),
+                    "swap" => format!("    return __atomic_exchange_n(&a0->f0.f0, a1, {sc});\n"),
                     "compare_swap" => format!(
                         "    {r} e = a1;\n    \
-                         __atomic_compare_exchange_n(&a0->f0, &e, a2, 0, {sc}, {sc});\n    \
+                         __atomic_compare_exchange_n(&a0->f0.f0, &e, a2, 0, {sc}, {sc});\n    \
                          return e;\n"
                     ),
                     "fetch_and" => fetch("fetch_and", "&"),
@@ -1570,8 +1569,8 @@ impl<'e> Gen<'e> {
                     _ => panic!("unknown intrinsic `{copy}`"),
                 }
             }
-            // A volatile value is a struct of what's at its address, which
-            // is where the `&` to it points: each read and write is one
+            // A volatile value is a struct of an `Unsafe` of what's at its
+            // address, which is where the `&` to it points: each read and write is one
             // volatile access of it (lemma V of docs/40-extern.md).
             "<core::volatile::Volatile" => {
                 let e = self.cty(&elem(match op {
@@ -1580,12 +1579,12 @@ impl<'e> Gen<'e> {
                 }));
                 match op {
                     "at" => format!("    return ({r})(uintptr_t)a0;\n"),
-                    "read" => format!("    return *(volatile {e} *)&a0->f0;\n"),
-                    "write" => format!("    *(volatile {e} *)&a0->f0 = a1;\n{unit}"),
+                    "read" => format!("    return *(volatile {e} *)&a0->f0.f0;\n"),
+                    "write" => format!("    *(volatile {e} *)&a0->f0.f0 = a1;\n{unit}"),
                     _ => panic!("unknown intrinsic `{copy}`"),
                 }
             }
-            "<alloc::arena::Arena" => {
+            "<alloc::arena::Slots" => {
                 let e = self.cty(&elem(&params.first().cloned().unwrap_or(ret.clone())));
                 match op {
                     "new" => format!("    return ({r}){{0}};\n"),

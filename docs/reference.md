@@ -251,13 +251,20 @@ the single input lifetime when there is exactly one. Other ambiguous
 outputs require a named lifetime. A reference to a local cannot escape
 the call that owns it.
 
-The values that change behind a `&` are a `core::cell::Cell<T>`'s and a
-`core::sync::Atomic<T>`'s. A cell's:
+The values that change behind a `&` are what's in a
+`core::cell::Unsafe<T>`, the one primitive: `as_mut(&self) -> &mut T` and
+`as_ref(&self) -> &T` lend what's in it, and are `unsafe` (nothing else may
+reach it while the reference lives); `new`, `into_inner` and `get_mut`
+(through `&mut`) are safe. `Unsafe` is invariant in `T`, not frozen, `Send`
+if `T` is and never `Sync`; a type with one in it gets all of that from its
+fields, unless it says `unsafe impl Sync`. The cells of core and alloc are
+structs over it: `core::cell::Cell<T>`, `core::sync::Atomic<T>` and
+`Mutex<T>`, `core::volatile::Volatile<T>`, `alloc::arena::Arena<T>`.
+A cell's:
 `get` copies it out (`T: Copy`), `set` replaces it and drops the old one
 (`T: Discard`), `replace` swaps it, `into_inner` and `get_mut` work as
-for any value. Nothing safe gives a reference into a cell from a
-`&Cell<T>` (`as_mut` is `unsafe`, for writing locks), and no measure or
-refinement can read one. `Cell` is invariant in `T`.
+for any value. Nothing gives a reference into a cell from a `&Cell<T>`,
+and no measure or refinement can read one.
 An atomic holds an integer or `bool` (`T: Atom`), changed by `load`,
 `store`, `swap`, `compare_exchange` and `fetch_add` and the like, each one
 sequentially consistent step.

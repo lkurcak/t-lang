@@ -710,15 +710,35 @@ impl Checker {
             ));
         }
         let markers = |b: &str| b == SEND || b == SYNC || b.starts_with('\'');
-        let bad = (d.generics.bounds.iter().flat_map(|(_, b)| b))
-            .chain(d.generics.wheres.iter().flat_map(|(_, b)| b))
-            .find(|b| !markers(&b.name.name));
+        // A bound the type declares of the parameter is no condition: every
+        // `L<..>` meets it, as `Atomic<T>` needs `T: Atom`.
+        let declared = |param: &str, b: &str| {
+            let at = args
+                .iter()
+                .position(|a| matches!(a, Type::Param(p) if p == param));
+            at.is_some_and(|j| {
+                let own = Type::Param(adt.params[j].clone());
+                (adt.preds.iter()).any(|p| p.ty == own && p.trait_name == b)
+            })
+        };
+        let bad = (d.generics.bounds.iter())
+            .flat_map(|(p, bs)| bs.iter().map(move |b| (Some(p), b)))
+            .chain(
+                d.generics
+                    .wheres
+                    .iter()
+                    .flat_map(|(_, bs)| bs.iter().map(|b| (None, b))),
+            )
+            .find(|(p, b)| {
+                !markers(&b.name.name) && !p.is_some_and(|p| declared(&p.name, &b.name.name))
+            })
+            .map(|(_, b)| b);
         if let Some(b) = bad {
             return Err(Error::ty(
                 b.span,
                 format!(
-                    "`unsafe impl` of `{short}` can only need `Send` or `Sync` of its parameters: \
-                     a proof of either needs nothing else"
+                    "`unsafe impl` of `{short}` can only need `Send` or `Sync` of its parameters, \
+                     and what `{name}` needs of them: a proof of either needs nothing else"
                 ),
             ));
         }

@@ -104,8 +104,8 @@ pub enum Value {
     RawBuf(Ptr),
     /// A `JoinHandle`: which thread it's of, by number (see `threads`).
     Thread(usize),
-    /// An `Arena`: where its values are, on the heap, as a `Slots` of a
-    /// `Box` for each, in the order they were put in.
+    /// An arena's `Slots`: where its values are, on the heap, as a `Slots`
+    /// of a `Box` for each, in the order they were put in.
     Arena(Ptr),
     /// The slots of a `RawBuf`, each a value, or `Moved` if it's
     /// uninitialised, on the heap, where a `RawBuf` points. Or an array's
@@ -1042,8 +1042,8 @@ impl<'p> Interp<'p, '_> {
 
     /// Drops `v`, of type `ty`, all of which must be there (lemma E1 of
     /// docs/32.1-drops.md): by its type's drop glue, which monomorphisation
-    /// wrote, or for an `Arena`, by freeing its values, first put in first,
-    /// each by the glue of its box.
+    /// wrote, or for an arena's `Slots`, by freeing its values, first put
+    /// in first, each by the glue of its box.
     ///
     /// Throwing away a value that isn't `Discard` is a leak: the borrow
     /// checker said this drop never happens, or happens to what's been
@@ -1901,11 +1901,8 @@ impl<'p> Interp<'p, '_> {
         if let Some(stream) = name.strip_prefix("<std::io::") {
             return Ok(self.stream(stream, args));
         }
-        if name == "<core::cell::Cell" && copy.ends_with("::as_mut") {
-            return Ok(self.cell_as_mut(args));
-        }
-        if name == "<core::cell::Cell" {
-            return Ok(self.cell_replace(copy, args));
+        if name == "<core::cell::Unsafe" {
+            return Ok(self.unsafe_cell(args));
         }
         if name == "<core::sync::Atomic" {
             // What another thread does with it can be seen here, and what
@@ -1924,7 +1921,7 @@ impl<'p> Interp<'p, '_> {
         if name == "<std::thread::JoinHandle" {
             return self.join(args, span);
         }
-        if name == "<alloc::arena::Arena" {
+        if name == "<alloc::arena::Slots" {
             let op = copy.rsplit("::").next().unwrap_or_default();
             return Ok(self.arena(op, args));
         }
@@ -2201,53 +2198,35 @@ impl<'p> Interp<'p, '_> {
         }
     }
 
-    /// Runs `Cell::replace` on `args`: a `&Cell<T>` and a `T`. The cell is
-    /// a struct whose one field is what's in it, written here through a
-    /// `&`, which only a cell's field may be (lemma K3 of docs/37-cell.md).
-    fn cell_replace(&mut self, copy: &str, args: Vec<Value>) -> Value {
-        if !copy.ends_with("::replace") {
-            unsound(&format!("unknown intrinsic `{copy}`"));
-        }
-        let [Value::Ref(p), v] = <[Value; 2]>::try_from(args).unwrap_or_else(|_| unsound("arity"))
-        else {
-            unsound("`Cell::replace` of what isn't a reference")
-        };
-        if !matches!(self.memory.get(&p), Value::Struct(ty, _) if ty.split("::<").next() == Some(crate::check::CELL))
-        {
-            unsound(&format!(
-                "`Cell::replace` of `{}`, which isn't a cell",
-                self.memory.get(&p)
-            ));
-        }
-        let old = std::mem::replace(self.memory.get_mut(&p.field(0)), v);
-        if self.taken_apart(&old) {
-            unsound("a cell whose value was moved out");
-        }
-        old
-    }
-
-    /// Runs `Cell::as_mut` on `args`, a `&Cell<T>`: a reference to its one
-    /// field, what's in it. That it's the only way there while it lives is
-    /// the caller's obligation (`unsafe`).
-    fn cell_as_mut(&mut self, args: Vec<Value>) -> Value {
+    /// Runs `Unsafe::as_mut` or `as_ref` on `args`, a `&Unsafe<T>`: a
+    /// reference to its one field, what's in it. That nothing else reaches
+    /// it while the reference lives is the caller's obligation (`unsafe`,
+    /// lemma U5 of docs/46-unsafe-cell.md).
+    fn unsafe_cell(&mut self, args: Vec<Value>) -> Value {
         let [Value::Ref(p)] = <[Value; 1]>::try_from(args).unwrap_or_else(|_| unsound("arity"))
         else {
-            unsound("`Cell::as_mut` of what isn't a reference")
+            unsound("`Unsafe::as_mut` of what isn't a reference")
         };
-        if !matches!(self.memory.get(&p), Value::Struct(ty, _) if ty.split("::<").next() == Some(crate::check::CELL))
-        {
+        if !self.is_unsafe_cell(&p) {
             unsound(&format!(
-                "`Cell::as_mut` of `{}`, which isn't a cell",
+                "`Unsafe::as_mut` of `{}`, which isn't an `Unsafe`",
                 self.memory.get(&p)
             ));
         }
         Value::Ref(p.field(0))
     }
 
+    /// Is what `p` points to an `Unsafe`: a struct of type
+    /// `core::cell::Unsafe::<..>`, by its copy's name?
+    fn is_unsafe_cell(&self, p: &Ptr) -> bool {
+        matches!(self.memory.get(p), Value::Struct(ty, _)
+            if ty.split("::<").next() == Some(crate::check::UNSAFE))
+    }
+
     /// Runs `Atomic`'s intrinsic method `op` on `args`: a `&Atomic<T>`,
-    /// and its `T`s. An atomic is a struct whose one field is what's in it,
-    /// written here through a `&`, which only a cell's or an atomic's field
-    /// may be. There's one thread, so each is one step anyway: the
+    /// and its `T`s. An atomic is a struct whose one field is an `Unsafe`
+    /// of what's in it, written here through a `&`, which only what's in an
+    /// `Unsafe` may be. There's one thread, so each is one step anyway: the
     /// orderings are a C compiler's business (lemma Y7 of
     /// docs/38-statics.md).
     fn atomic(&mut self, op: &str, args: Vec<Value>) -> Value {
@@ -2255,14 +2234,15 @@ impl<'p> Interp<'p, '_> {
         let Some(Value::Ref(p)) = args.next() else {
             unsound(&format!("`Atomic::{op}` of what isn't a reference"))
         };
-        if !matches!(self.memory.get(&p), Value::Struct(ty, _) if ty.split("::<").next() == Some(crate::check::ATOMIC))
-        {
+        // An atomic is a struct of an `Unsafe` of what's in it.
+        let cell = p.field(0);
+        if !self.is_unsafe_cell(&cell) {
             unsound(&format!(
                 "`Atomic::{op}` of `{}`, which isn't an atomic",
                 self.memory.get(&p)
             ));
         }
-        let at = p.field(0);
+        let at = cell.field(0);
         let old = self.memory.get(&at).clone();
         let args: Vec<Value> = args.collect();
         let int = |v: &Value| match v {
@@ -2309,7 +2289,7 @@ impl<'p> Interp<'p, '_> {
         old
     }
 
-    /// Runs `Arena`'s intrinsic method `op` on `args`. Each value put in
+    /// Runs an arena's `Slots`' intrinsic method `op` on `args`. Each value put in
     /// gets a heap slot of its own, which nothing frees before the arena
     /// is dropped, so a reference `alloc` hands out stays good until then
     /// (lemmas R1 and R2 of docs/23-arenas.md), and dangles after, which

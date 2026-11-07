@@ -181,7 +181,7 @@ impl Cx<'_, '_, '_> {
                 let fields = self.m.info.traits.closures[symbol].fields_at(&t);
                 fields.iter().any(|f| self.needs_drop(f))
             }
-            Type::Adt(symbol, ..) if symbol == crate::check::ARENA => true,
+            Type::Adt(symbol, ..) if symbol == crate::check::ARENA_SLOTS => true,
             Type::Adt(symbol, ..) => {
                 let traits = &self.m.info.traits;
                 match traits.implements(&t, DISCARD, &[], &[]) {
@@ -208,7 +208,7 @@ impl Cx<'_, '_, '_> {
             return name;
         }
         if let Type::Adt(symbol, _, args) = &t
-            && symbol == crate::check::ARENA
+            && symbol == crate::check::ARENA_SLOTS
         {
             // The interpreter's: each value by the glue of its box.
             self.drop_glue(&Type::Box(Box::new(args[0].clone())));

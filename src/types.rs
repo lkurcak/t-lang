@@ -433,25 +433,21 @@ pub fn all_fields(adts: &Adts, ty: &Type) -> Vec<Type> {
 }
 
 /// Is `t` *frozen*: does nothing in a value of it change through a `&` to
-/// it? Only a `Cell`, an `Atomic`, a `Volatile` and an `Arena` do (lemma K5 of
-/// docs/37-cell.md, Y1 of docs/38-statics.md), so a type is frozen if
-/// none of them is in it, but behind a reference: what a `&` in it
-/// points to isn't part of the value, as with Rust's `Freeze`. A box owns
-/// what it points to, so that's part of it. A type parameter might be a
-/// cell, so it isn't known to be frozen.
+/// it? Only what's in an `Unsafe` does (lemma U3 of
+/// docs/46-unsafe-cell.md), so a type is frozen if no `Unsafe` is in it,
+/// but behind a reference: what a `&` in it points to isn't part of the
+/// value, as with Rust's `Freeze`. A box owns what it points to, so that's
+/// part of it, as are the values of an intrinsic type's type arguments,
+/// which it holds (a `RawBuf<T>` its `T`s). A type parameter might be an
+/// `Unsafe`, so it isn't known to be frozen.
 pub fn frozen(adts: &Adts, t: &Type) -> bool {
     fn go(adts: &Adts, t: &Type, seen: &mut Vec<Type>) -> bool {
         match t {
-            Type::Adt(symbol, ..)
-                if [
-                    crate::check::CELL,
-                    crate::check::ATOMIC,
-                    crate::check::VOLATILE,
-                    crate::check::ARENA,
-                ]
-                .contains(&symbol.as_str()) =>
+            Type::Adt(symbol, ..) if symbol == crate::check::UNSAFE => false,
+            Type::Adt(symbol, _, args)
+                if crate::check::INTRINSIC_TYPES.contains(&symbol.as_str()) =>
             {
-                false
+                args.iter().all(|a| go(adts, a, seen))
             }
             Type::Adt(..) => {
                 if seen.contains(t) {
