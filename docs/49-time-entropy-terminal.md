@@ -285,7 +285,7 @@ In C, the monotonic clock is `clock_gettime(CLOCK_MONOTONIC)`, waiting
 is `nanosleep` in a loop that checks the clock again, entropy is
 `getentropy` in pieces of 256 bytes, raw mode is `termios`, waiting for a
 key is `poll`, and the size is `TIOCGWINSZ`. The interpreter uses Rust's
-clocks, `/dev/urandom`, and the same calls, through `libc`, for `t run
+clocks, the `getrandom` crate, and the same calls, through `libc`, for `t run
 --interp`; for tests, its input and output aren't a terminal.
 
 ## Design decisions worth noticing

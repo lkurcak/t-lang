@@ -27,6 +27,11 @@ cc = "1.8.0"
 tree-sitter = "0.27"
 tree-sitter-t = { path = "editors/tree-sitter-t/bindings/rust" }
 
+# The interpreter's `std::entropy`, from the operating system on every one
+# `t` runs on (docs/49-time-entropy-terminal.md).
+[dependencies.getrandom]
+version = "0.3"
+
 [target.'cfg(unix)'.dependencies]
 # For the interpreter's terminal: raw mode, waiting for a key, and the
 # terminal's size (docs/49-time-entropy-terminal.md). The tests use it too:

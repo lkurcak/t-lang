@@ -27,7 +27,8 @@ Step 49: time, entropy and the terminal. See
 
 ### Internal
 
-- `libc` is a dependency on Unix, for the interpreter's raw mode.
+- `libc` is a dependency on Unix, for the interpreter's raw mode, and
+  `getrandom` everywhere, for its entropy.
 - `tests/terminal.rs` runs programs on a pseudo-terminal, compiled and
   interpreted, and checks the terminal is put back after each way they
   stop. The interpreter fails a program that ends in raw mode.

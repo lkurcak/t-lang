@@ -849,14 +849,14 @@ pub fn monotonic_now() -> u64 {
         .saturating_add(1)
 }
 
-/// Fills `buf` with the operating system's entropy: `/dev/urandom`, where
-/// there's one, or else `Unsupported`.
+/// Fills `buf` with the operating system's entropy, as a compiled
+/// program's `getentropy` does: the operating system's own failure, or
+/// `Unsupported` where it has none to give.
 pub fn os_entropy(buf: &mut [u8]) -> std::io::Result<()> {
-    use std::io::Read;
-    match std::fs::File::open("/dev/urandom") {
-        Ok(mut f) => f.read_exact(buf),
-        Err(_) => Err(std::io::Error::from(std::io::ErrorKind::Unsupported)),
-    }
+    getrandom::fill(buf).map_err(|e| match e.raw_os_error() {
+        Some(code) => std::io::Error::from_raw_os_error(code),
+        None => std::io::Error::from(std::io::ErrorKind::Unsupported),
+    })
 }
 
 /// The failure of an operating system's that has no file at the path it
