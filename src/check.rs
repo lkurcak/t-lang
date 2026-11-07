@@ -96,89 +96,6 @@ use std::collections::{HashMap, HashSet};
 use typed::{Bind, Typed};
 use unify::Var;
 
-/// The intrinsics: functions the core and alloc libraries declare with no
-/// body, which the compiler provides (see `core/mem.t`, `alloc/raw.t`), by
-/// symbol, or for a method, its type's symbol and its name (`[T]` for a
-/// slice's). Each is checked
-/// like any function, by its signature; what it does is what the checker
-/// trusts.
-pub const INTRINSICS: &[&str] = &[
-    "core::mem::swap",
-    "core::cell::Unsafe::as_mut",
-    "core::cell::Unsafe::as_ref",
-    "core::sync::spin",
-    "core::sync::Atomic::load",
-    "core::sync::Atomic::swap",
-    "core::sync::Atomic::compare_swap",
-    "core::sync::Atomic::fetch_and",
-    "core::sync::Atomic::fetch_or",
-    "core::sync::Atomic::fetch_xor",
-    "core::sync::Atomic::fetch_add",
-    "core::sync::Atomic::fetch_sub",
-    "core::volatile::Volatile::at",
-    "core::volatile::Volatile::read",
-    "core::volatile::Volatile::write",
-    "core::panic::panic",
-    "core::panic::Message::new",
-    "core::panic::Message::push_str",
-    "core::panic::Message::push_char",
-    "core::panic::Message::abort",
-    "core::num::checked_mul",
-    "core::num::wrapping_mul",
-    "core::num::wrap",
-    "core::num::least",
-    "core::num::greatest",
-    "core::slice::empty",
-    "core::str::from_utf8_unchecked",
-    "str::as_bytes",
-    "core::slice::empty_mut",
-    "[T]::len",
-    "str::len",
-    "[T]::index",
-    "[T]::index_mut",
-    "[T]::get",
-    "[T]::get_mut",
-    "[T]::split_at",
-    "[T]::split_at_mut",
-    "[T; N]::len",
-    "[T; N]::as_slice",
-    "[T; N]::as_mut_slice",
-    "core::array::from_fn_mut",
-    "alloc::raw::RawBuf::new",
-    "alloc::raw::RawBuf::empty",
-    "alloc::raw::RawBuf::cap",
-    "alloc::raw::RawBuf::grow",
-    "alloc::raw::RawBuf::write",
-    "alloc::raw::RawBuf::read",
-    "alloc::raw::RawBuf::slice",
-    "alloc::raw::RawBuf::slice_mut",
-    "alloc::raw::RawBuf::free",
-    "alloc::raw::out_of_memory",
-    "alloc::arena::Slots::new",
-    "alloc::arena::Slots::alloc",
-    "alloc::arena::Slots::len",
-    "std::io::Stdin::read_byte",
-    "std::io::Stdout::write_byte",
-    "std::io::Stderr::write_byte",
-    "std::thread::start",
-    "std::thread::JoinHandle::join",
-];
-
-/// The intrinsic structs, by symbol: types the alloc library declares
-/// with no fields, which only the compiler makes and looks inside, by the
-/// intrinsic methods of their impls.
-pub const INTRINSIC_TYPES: &[&str] = &[
-    "core::panic::Message",
-    BOX,
-    "alloc::raw::RawBuf",
-    ARENA_SLOTS,
-    "std::io::Stdin",
-    "std::io::Stdout",
-    "std::io::Stderr",
-    "std::thread::Threads",
-    "std::thread::JoinHandle",
-];
-
 /// The symbol of the alloc library's arena `Slots`, the intrinsic type an
 /// `Arena` keeps its values in, in an `Unsafe`: it owns them, as a
 /// `RawBuf` does, and each has a box of its own, which stays where it is
@@ -1257,12 +1174,15 @@ impl Checker {
                     },
                     _ => self.fn_symbols[i].clone(),
                 };
-                if !INTRINSICS.contains(&name.as_str()) {
+                let Some(which) = crate::intrinsic::Intrinsic::from_symbol(&name) else {
                     return Err(Error::ty(
                         f.name.span,
                         format!("there's no intrinsic `{name}`"),
                     ));
-                }
+                };
+                self.info
+                    .intrinsics
+                    .insert(self.fn_symbols[i].clone(), which);
             }
             self.sig_owner = (self.fn_symbols[i].clone(), f.name.name.clone());
             self.const_decls = match method {

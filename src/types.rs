@@ -444,9 +444,7 @@ pub fn frozen(adts: &Adts, t: &Type) -> bool {
     fn go(adts: &Adts, t: &Type, seen: &mut Vec<Type>) -> bool {
         match t {
             Type::Adt(symbol, ..) if symbol == crate::check::UNSAFE => false,
-            Type::Adt(symbol, _, args)
-                if crate::check::INTRINSIC_TYPES.contains(&symbol.as_str()) =>
-            {
+            Type::Adt(symbol, _, args) if crate::intrinsic::is_intrinsic_type(symbol) => {
                 args.iter().all(|a| go(adts, a, seen))
             }
             Type::Adt(..) => {

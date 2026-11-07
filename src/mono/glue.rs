@@ -186,7 +186,7 @@ impl Cx<'_, '_, '_> {
                 let traits = &self.m.info.traits;
                 match traits.implements(&t, DISCARD, &[], &[]) {
                     Ok(Source::Impl(i, _)) if !traits.impls[i].derived => true,
-                    Ok(_) if crate::check::INTRINSIC_TYPES.contains(&symbol.as_str()) => false,
+                    Ok(_) if crate::intrinsic::is_intrinsic_type(symbol) => false,
                     Ok(_) => {
                         let fields = self.field_types(&t);
                         fields.iter().any(|f| self.needs_drop(f))
@@ -262,7 +262,7 @@ impl Cx<'_, '_, '_> {
                 }
             }
             // Not `Discard`: the interpreter stops at the leak first.
-            Type::Adt(symbol, ..) if crate::check::INTRINSIC_TYPES.contains(&symbol.as_str()) => {
+            Type::Adt(symbol, ..) if crate::intrinsic::is_intrinsic_type(symbol) => {
                 g.terminate(Term::Unreachable);
                 g.cur = g.new_block();
             }

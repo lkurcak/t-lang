@@ -31,6 +31,10 @@
 
 use crate::ast::{BinOp, FnDecl, UnOp};
 use crate::error::{Error, Span};
+use crate::intrinsic::{
+    ArrayOp, AtomicOp, Intrinsic, IntrinsicType, MessageOp, RawBufOp, SliceOp, SlotsOp, Stream,
+    VolatileOp,
+};
 use crate::mir::*;
 use crate::mono::{Executable, Shape, glue_name};
 use crate::source::Sources;
@@ -475,17 +479,25 @@ impl<'e> Gen<'e> {
                         let _ = write!(members, " union {{{union} }} u;");
                     }
                 }
-                Shape::Intrinsic => match symbol.as_str() {
-                    "alloc::raw::RawBuf" => {
+                Shape::Intrinsic => match IntrinsicType::from_symbol(symbol) {
+                    Some(IntrinsicType::RawBuf) => {
                         let e = self.cty(&args[0]);
                         let _ = write!(members, " {e} *ptr; uint64_t cap;");
                     }
-                    crate::check::ARENA_SLOTS => {
+                    Some(IntrinsicType::Slots) => {
                         members.push_str(" void **items; uint64_t len; uint64_t cap;");
                     }
                     // Where the thread's packet is: see `start`.
-                    "std::thread::JoinHandle" => members.push_str(" void *p;"),
-                    _ => members.push_str(" uint8_t _;"),
+                    Some(IntrinsicType::JoinHandle) => members.push_str(" void *p;"),
+                    // Nothing: the stream or capability is the machine's.
+                    Some(
+                        IntrinsicType::Message
+                        | IntrinsicType::Stdin
+                        | IntrinsicType::Stdout
+                        | IntrinsicType::Stderr
+                        | IntrinsicType::Threads,
+                    ) => members.push_str(" uint8_t _;"),
+                    Some(IntrinsicType::Box) | None => panic!("no C struct for `{t}`"),
                 },
             },
             t => panic!("no C struct for `{t}`"),
@@ -1405,8 +1417,8 @@ impl<'e> Gen<'e> {
         if self.decls.get(copy).is_some_and(|d| d.is_import()) {
             return self.import_body(copy, params, ret);
         }
-        let of = copy.split("::<").next().unwrap_or_default();
-        let op = copy.rsplit("::").next().unwrap_or_default();
+        let which =
+            (self.exe.intrinsic(copy)).unwrap_or_else(|| panic!("`{copy}` is no intrinsic"));
         let r = self.cty(ret);
         let unit = "    return (t_unit){0};\n".to_string();
         let int = |t: &Type| match t {
@@ -1428,8 +1440,8 @@ impl<'e> Gen<'e> {
             }
         };
         let some_none = |g: &mut Gen| (g.variant(ret, "Some"), g.variant(ret, "None"));
-        match of {
-            "core::num::checked_mul" => {
+        match which {
+            Intrinsic::CheckedMul => {
                 let i = int(&params[0]);
                 let (some, none) = some_none(self);
                 let wide = if i.signed() { "int64_t" } else { "uint64_t" };
@@ -1440,10 +1452,10 @@ impl<'e> Gen<'e> {
                     t = c_int(i),
                 )
             }
-            "core::num::wrapping_mul" => {
+            Intrinsic::WrappingMul => {
                 format!("    return t_wmul_{}(a0, a1);\n", suffix(int(&params[0])))
             }
-            "core::num::wrap" => {
+            Intrinsic::Wrap => {
                 let from = int(&params[0]);
                 let wide = if from.signed() { "int64_t" } else { "uint64_t" };
                 format!(
@@ -1451,19 +1463,19 @@ impl<'e> Gen<'e> {
                     suffix(int(ret))
                 )
             }
-            "core::num::least" | "core::num::greatest" => {
+            Intrinsic::Least | Intrinsic::Greatest => {
                 let i = int(ret);
                 let (lo, hi) = i.range_64();
-                let n = if of.ends_with("least") { lo } else { hi };
+                let n = if which == Intrinsic::Least { lo } else { hi };
                 format!("    return {};\n", int_lit(n, i))
             }
-            "core::panic::panic" => "    t_panic(a0.ptr, a0.len, s);\n".to_string(),
-            "core::sync::spin" => format!("    t_spin();\n{unit}"),
+            Intrinsic::Panic => "    t_panic(a0.ptr, a0.len, s);\n".to_string(),
+            Intrinsic::Spin => format!("    t_spin();\n{unit}"),
             // A thread's *packet*, on the heap: the thread, how big the
             // packet is, what its closure gives back, then the closure and
             // what runs it. `join` sees the first four, the same in every
             // packet whose result is the same type, and frees it.
-            "std::thread::start" => {
+            Intrinsic::ThreadStart => {
                 let rt = self.cty(&elem(ret));
                 let (f, run) = (self.cty(&params[0]), self.cty(&params[1]));
                 let k = self.fresh("t_thread");
@@ -1481,7 +1493,7 @@ impl<'e> Gen<'e> {
                      return ({r}){{k}};\n"
                 )
             }
-            _ if of == "<std::thread::JoinHandle" => {
+            Intrinsic::ThreadJoin => {
                 let rt = self.cty(ret);
                 format!(
                     "    struct {{ pthread_t th; size_t size; size_t align; {rt} r; }} *k = a0.p;\n    \
@@ -1489,20 +1501,20 @@ impl<'e> Gen<'e> {
                      t_free(k, k->size, k->align);\n    return r;\n"
                 )
             }
-            "alloc::raw::out_of_memory" => "    t_fail(\"out of memory\", s);\n".to_string(),
-            "core::str::from_utf8_unchecked" => "    return a0;\n".to_string(),
-            "core::mem::swap" => {
+            Intrinsic::OutOfMemory => "    t_fail(\"out of memory\", s);\n".to_string(),
+            Intrinsic::FromUtf8Unchecked => "    return a0;\n".to_string(),
+            Intrinsic::Swap => {
                 let Type::Ref(_, _, inner) = &params[0] else {
                     panic!("`swap` of `{}`", params[0])
                 };
                 let t = self.cty(inner);
                 format!("    {t} t = *a0;\n    *a0 = *a1;\n    *a1 = t;\n{unit}")
             }
-            "core::slice::empty" | "core::slice::empty_mut" => {
+            Intrinsic::EmptySlice { .. } => {
                 let e = self.cty(&elem(ret));
                 format!("    return ({r}){{({e} *)T_NOWHERE, 0}};\n")
             }
-            "core::array::from_fn_mut" => {
+            Intrinsic::ArrayFromFn => {
                 let Type::Array(_, n) = ret else {
                     panic!("`from_fn` of `{ret}`")
                 };
@@ -1517,33 +1529,28 @@ impl<'e> Gen<'e> {
                     "    {r} r = {{0}};\n    for (uint64_t i = 0; i < {n}; i++) r.a[i] = {call};\n    return r;\n"
                 )
             }
-            "str::as_bytes" | "<str>::as_bytes" => "    return a0;\n".to_string(),
-            "str::len" | "<str>::len" => "    return a0.len;\n".to_string(),
-            _ if of.starts_with("<core::panic::Message>::") => match op {
-                "new" => format!("    t_msg_new();\n    return ({r}){{0}};\n"),
-                "push_str" => format!("    t_msg_push(a1.ptr, a1.len);\n{unit}"),
-                "push_char" => format!("    t_msg_char(a1);\n{unit}"),
-                "abort" => "    t_end(s);\n".to_string(),
-                _ => panic!("unknown intrinsic `{copy}`"),
+            Intrinsic::StrAsBytes => "    return a0;\n".to_string(),
+            Intrinsic::StrLen => "    return a0.len;\n".to_string(),
+            Intrinsic::Message(op) => match op {
+                MessageOp::New => format!("    t_msg_new();\n    return ({r}){{0}};\n"),
+                MessageOp::PushStr => format!("    t_msg_push(a1.ptr, a1.len);\n{unit}"),
+                MessageOp::PushChar => format!("    t_msg_char(a1);\n{unit}"),
+                MessageOp::Abort => "    t_end(s);\n".to_string(),
             },
-            _ if of.starts_with("<std::io::") => match copy.strip_prefix("<std::io::") {
-                Some("Stdin>::read_byte") => "    return t_read_byte();\n".to_string(),
-                Some("Stdout>::write_byte") => "    return t_write_byte(stdout, a1);\n".to_string(),
-                Some("Stderr>::write_byte") => "    return t_write_byte(stderr, a1);\n".to_string(),
-                _ => panic!("unknown intrinsic `{copy}`"),
+            Intrinsic::Stream(stream) => match stream {
+                Stream::Stdin => "    return t_read_byte();\n".to_string(),
+                Stream::Stdout => "    return t_write_byte(stdout, a1);\n".to_string(),
+                Stream::Stderr => "    return t_write_byte(stderr, a1);\n".to_string(),
             },
             // An `Unsafe` is a struct of what's in it (lemma U5 of
             // docs/46-unsafe-cell.md).
-            "<core::cell::Unsafe" => match op {
-                "as_mut" | "as_ref" => "    return &a0->f0;\n".to_string(),
-                _ => panic!("unknown intrinsic `{copy}`"),
-            },
+            Intrinsic::UnsafeAsMut | Intrinsic::UnsafeAsRef => "    return &a0->f0;\n".to_string(),
             // An atomic is a struct of an `Unsafe` of what's in it, which
             // the compiler's builtins change, each sequentially consistent
             // (lemma Y7 of docs/38-statics.md). Adding to a signed integer wraps there.
             // A `bool` has no `fetch_and` and the like in every compiler,
             // so it's a loop of compare-and-swaps.
-            "<core::sync::Atomic" => {
+            Intrinsic::Atomic(op) => {
                 let sc = "__ATOMIC_SEQ_CST";
                 let fetch = |f: &str, c: &str| match *ret == Type::Bool {
                     false => format!("    return __atomic_{f}(&a0->f0.f0, a1, {sc});\n"),
@@ -1554,67 +1561,66 @@ impl<'e> Gen<'e> {
                     ),
                 };
                 match op {
-                    "load" => format!("    return __atomic_load_n(&a0->f0.f0, {sc});\n"),
-                    "swap" => format!("    return __atomic_exchange_n(&a0->f0.f0, a1, {sc});\n"),
-                    "compare_swap" => format!(
+                    AtomicOp::Load => format!("    return __atomic_load_n(&a0->f0.f0, {sc});\n"),
+                    AtomicOp::Swap => {
+                        format!("    return __atomic_exchange_n(&a0->f0.f0, a1, {sc});\n")
+                    }
+                    AtomicOp::CompareSwap => format!(
                         "    {r} e = a1;\n    \
                          __atomic_compare_exchange_n(&a0->f0.f0, &e, a2, 0, {sc}, {sc});\n    \
                          return e;\n"
                     ),
-                    "fetch_and" => fetch("fetch_and", "&"),
-                    "fetch_or" => fetch("fetch_or", "|"),
-                    "fetch_xor" => fetch("fetch_xor", "^"),
-                    "fetch_add" => fetch("fetch_add", "+"),
-                    "fetch_sub" => fetch("fetch_sub", "-"),
-                    _ => panic!("unknown intrinsic `{copy}`"),
+                    AtomicOp::FetchAnd => fetch("fetch_and", "&"),
+                    AtomicOp::FetchOr => fetch("fetch_or", "|"),
+                    AtomicOp::FetchXor => fetch("fetch_xor", "^"),
+                    AtomicOp::FetchAdd => fetch("fetch_add", "+"),
+                    AtomicOp::FetchSub => fetch("fetch_sub", "-"),
                 }
             }
             // A volatile value is a struct of an `Unsafe` of what's at its
             // address, which is where the `&` to it points: each read and write is one
             // volatile access of it (lemma V of docs/40-extern.md).
-            "<core::volatile::Volatile" => {
+            Intrinsic::Volatile(op) => {
                 let e = self.cty(&elem(match op {
-                    "at" => ret,
+                    VolatileOp::At => ret,
                     _ => &params[0],
                 }));
                 match op {
-                    "at" => format!("    return ({r})(uintptr_t)a0;\n"),
-                    "read" => format!("    return *(volatile {e} *)&a0->f0.f0;\n"),
-                    "write" => format!("    *(volatile {e} *)&a0->f0.f0 = a1;\n{unit}"),
-                    _ => panic!("unknown intrinsic `{copy}`"),
+                    VolatileOp::At => format!("    return ({r})(uintptr_t)a0;\n"),
+                    VolatileOp::Read => format!("    return *(volatile {e} *)&a0->f0.f0;\n"),
+                    VolatileOp::Write => format!("    *(volatile {e} *)&a0->f0.f0 = a1;\n{unit}"),
                 }
             }
-            "<alloc::arena::Slots" => {
+            Intrinsic::Slots(op) => {
                 let e = self.cty(&elem(&params.first().cloned().unwrap_or(ret.clone())));
                 match op {
-                    "new" => format!("    return ({r}){{0}};\n"),
-                    "alloc" => format!(
+                    SlotsOp::New => format!("    return ({r}){{0}};\n"),
+                    SlotsOp::Alloc => format!(
                         "    {e} *p = t_alloc(sizeof({e}), _Alignof({e}), s);\n    *p = a1;\n    \
                          t_grow_ptrs(&a0->items, &a0->cap, a0->len, s);\n    \
                          a0->items[a0->len++] = p;\n    return p;\n"
                     ),
-                    "len" => "    return a0->len;\n".to_string(),
-                    _ => panic!("unknown intrinsic `{copy}`"),
+                    SlotsOp::Len => "    return a0->len;\n".to_string(),
                 }
             }
-            "<alloc::raw::RawBuf" => {
+            Intrinsic::RawBuf(op) => {
                 let buf = match op {
-                    "new" | "empty" => ret.clone(),
+                    RawBufOp::New | RawBufOp::Empty => ret.clone(),
                     _ => params[0].clone(),
                 };
                 let e = self.cty(&elem(&buf));
                 let broken = "t_fail(\"unsafe code broke its obligation\", s)";
                 match op {
-                    "new" => format!(
+                    RawBufOp::New => format!(
                         "    if (a0 == 0) return ({r}){{({e} *)T_NOWHERE, 0}};\n    \
                          if (a0 > UINT64_MAX / sizeof({e})) t_oom_slots(a0, s);\n    \
                          {e} *p = t_platform_alloc(a0 * sizeof({e}), _Alignof({e}));\n    \
                          if (!p) t_oom_slots(a0, s);\n    \
                          return ({r}){{p, a0}};\n"
                     ),
-                    "empty" => format!("    return ({r}){{({e} *)T_NOWHERE, 0}};\n"),
-                    "cap" => "    return a0->cap;\n".to_string(),
-                    "grow" => format!(
+                    RawBufOp::Empty => format!("    return ({r}){{({e} *)T_NOWHERE, 0}};\n"),
+                    RawBufOp::Cap => "    return a0->cap;\n".to_string(),
+                    RawBufOp::Grow => format!(
                         "    uint64_t n = a0->cap + a1;\n    \
                          if (n < a0->cap || n > UINT64_MAX / sizeof({e})) t_oom_slots(n, s);\n    \
                          if (n == 0) return (t_unit){{0}};\n    \
@@ -1623,69 +1629,69 @@ impl<'e> Gen<'e> {
                          : t_platform_alloc(n * sizeof({e}), _Alignof({e}));\n    \
                          if (!p) t_oom_slots(n, s);\n    a0->ptr = p;\n    a0->cap = n;\n{unit}"
                     ),
-                    "slice" | "slice_mut" => format!(
+                    RawBufOp::Slice | RawBufOp::SliceMut => format!(
                         "    if (!(a1 <= a2 && a2 <= a0->cap)) {broken};\n    \
                          return ({r}){{a1 ? a0->ptr + a1 : a0->ptr, a2 - a1}};\n"
                     ),
-                    "write" => {
+                    RawBufOp::Write => {
                         format!("    if (a1 >= a0->cap) {broken};\n    a0->ptr[a1] = a2;\n{unit}")
                     }
-                    "read" => {
+                    RawBufOp::Read => {
                         format!("    if (a1 >= a0->cap) {broken};\n    return a0->ptr[a1];\n")
                     }
-                    "free" => format!(
+                    RawBufOp::Free => format!(
                         "    if (a0.cap) t_platform_free(a0.ptr, a0.cap * sizeof({e}), _Alignof({e}));\n{unit}"
                     ),
-                    _ => panic!("unknown intrinsic `{copy}`"),
                 }
             }
-            _ if of.starts_with("<[") => {
-                // An array's, by reference.
-                if let Type::Ref(_, _, inner) = &params[0]
-                    && let Type::Array(e, n) = &**inner
-                {
-                    let Type::Nat(n) = **n else {
-                        panic!("an array of no length")
-                    };
-                    let e = self.cty(e);
-                    return match op {
-                        "len" => format!("    (void)a0;\n    return UINT64_C({n});\n"),
-                        "as_slice" | "as_mut_slice" if n == 0 => {
-                            format!("    (void)a0;\n    return ({r}){{({e} *)T_NOWHERE, 0}};\n")
-                        }
-                        "as_slice" | "as_mut_slice" => format!("    return ({r}){{a0->a, {n}}};\n"),
-                        _ => panic!("unknown intrinsic `{copy}`"),
-                    };
-                }
+            // An array's, by reference.
+            Intrinsic::Array(op) => {
+                let Type::Ref(_, _, inner) = &params[0] else {
+                    panic!("`{copy}` of `{}`", params[0])
+                };
+                let Type::Array(e, n) = &**inner else {
+                    panic!("`{copy}` of `{inner}`")
+                };
+                let Type::Nat(n) = **n else {
+                    panic!("an array of no length")
+                };
+                let e = self.cty(e);
                 match op {
-                    "len" => "    return a0.len;\n".to_string(),
-                    "index" | "index_mut" => {
-                        "    if (a1 >= a0.len) t_bug(\"index out of range\");\n    \
-                         return a0.ptr + a1;\n"
-                            .to_string()
+                    ArrayOp::Len => format!("    (void)a0;\n    return UINT64_C({n});\n"),
+                    ArrayOp::AsSlice | ArrayOp::AsMutSlice if n == 0 => {
+                        format!("    (void)a0;\n    return ({r}){{({e} *)T_NOWHERE, 0}};\n")
                     }
-                    "get" | "get_mut" => {
-                        let (some, none) = some_none(self);
-                        format!(
-                            "    if (a1 < a0.len) return ({r}){{.tag = {some}, .u.v{some} = {{a0.ptr + a1}}}};\n    \
-                             return ({r}){{.tag = {none}}};\n"
-                        )
+                    ArrayOp::AsSlice | ArrayOp::AsMutSlice => {
+                        format!("    return ({r}){{a0->a, {n}}};\n")
                     }
-                    "split_at" | "split_at_mut" => {
-                        let (some, none) = some_none(self);
-                        let split = self.variants(ret)[some].1[0].clone();
-                        let sp = self.cty(&split);
-                        let sl = self.cty(&params[0]);
-                        format!(
-                            "    if (a1 > a0.len) return ({r}){{.tag = {none}}};\n    \
-                             {sp} v = {{({sl}){{a0.ptr, a1}}, ({sl}){{a1 ? a0.ptr + a1 : a0.ptr, a0.len - a1}}}};\n    \
-                             return ({r}){{.tag = {some}, .u.v{some} = {{v}}}};\n"
-                        )
-                    }
-                    _ => panic!("unknown intrinsic `{copy}`"),
                 }
             }
-            _ => panic!("unknown intrinsic `{copy}`"),
+            Intrinsic::Slice(op) => match op {
+                SliceOp::Len => "    return a0.len;\n".to_string(),
+                SliceOp::Index | SliceOp::IndexMut => {
+                    "    if (a1 >= a0.len) t_bug(\"index out of range\");\n    \
+                     return a0.ptr + a1;\n"
+                        .to_string()
+                }
+                SliceOp::Get | SliceOp::GetMut => {
+                    let (some, none) = some_none(self);
+                    format!(
+                        "    if (a1 < a0.len) return ({r}){{.tag = {some}, .u.v{some} = {{a0.ptr + a1}}}};\n    \
+                         return ({r}){{.tag = {none}}};\n"
+                    )
+                }
+                SliceOp::SplitAt | SliceOp::SplitAtMut => {
+                    let (some, none) = some_none(self);
+                    let split = self.variants(ret)[some].1[0].clone();
+                    let sp = self.cty(&split);
+                    let sl = self.cty(&params[0]);
+                    format!(
+                        "    if (a1 > a0.len) return ({r}){{.tag = {none}}};\n    \
+                         {sp} v = {{({sl}){{a0.ptr, a1}}, ({sl}){{a1 ? a0.ptr + a1 : a0.ptr, a0.len - a1}}}};\n    \
+                         return ({r}){{.tag = {some}, .u.v{some} = {{v}}}};\n"
+                    )
+                }
+            },
         }
     }
 

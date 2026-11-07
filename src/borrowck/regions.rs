@@ -115,7 +115,7 @@ impl AdtInfo {
                 // An intrinsic type has no fields to say how it holds its
                 // parameters. `RawBuf<T>` owns its `T`s, as a `Box<T>`
                 // does, so it's covariant in it.
-                if crate::check::INTRINSIC_TYPES.contains(&n.as_str()) {
+                if crate::intrinsic::is_intrinsic_type(n) {
                     let all = vec![Variance::Co; d.lifetimes.len() + d.params.len()];
                     changed |= variances.insert((*n).clone(), all.clone()) != Some(all);
                     continue;

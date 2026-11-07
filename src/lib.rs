@@ -18,6 +18,7 @@ pub mod error;
 pub mod exhaust;
 pub mod fmt;
 pub mod interp;
+pub mod intrinsic;
 pub mod lexer;
 pub mod lift;
 pub mod load;
