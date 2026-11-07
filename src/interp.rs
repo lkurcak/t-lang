@@ -504,6 +504,14 @@ impl<'p> Interp<'p, '_> {
                 self.memory.on_heap
             ));
         }
+        // Each `ReadFile` is dropped, and its `discard` closes it, as a box
+        // is freed: one left open is a file whose value was lost.
+        if self.term.files_open() > 0 {
+            unsound(&format!(
+                "file leak: {} files were never closed",
+                self.term.files_open()
+            ));
+        }
         Ok(result)
     }
 }
@@ -753,6 +761,9 @@ pub trait Terminal {
 
     /// Removes the file at `path`.
     fn remove(&mut self, path: &str) -> std::io::Result<()>;
+
+    /// How many files are open.
+    fn files_open(&self) -> usize;
 }
 
 /// The failure of an operating system's that has no file at the path it
@@ -873,6 +884,10 @@ impl Terminal for Captured {
 
     fn remove(&mut self, path: &str) -> std::io::Result<()> {
         self.files.remove(path).map(|_| ()).ok_or_else(not_found)
+    }
+
+    fn files_open(&self) -> usize {
+        self.open.iter().filter(|f| f.is_some()).count()
     }
 }
 

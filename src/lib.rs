@@ -747,4 +747,8 @@ impl interp::Terminal for Process {
     fn remove(&mut self, path: &str) -> std::io::Result<()> {
         std::fs::remove_file(path)
     }
+
+    fn files_open(&self) -> usize {
+        self.files.iter().filter(|f| f.is_some()).count()
+    }
 }
