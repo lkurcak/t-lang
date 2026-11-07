@@ -621,6 +621,130 @@ struct Process {
     files: Vec<Option<std::io::BufReader<std::fs::File>>>,
 }
 
+/// The interpreter's raw mode, as the compiled runtime's `t_raw_*`
+/// (src/cgen/hosted.h): the terminal as it was, and whether it's in raw
+/// mode now, which a signal's handler reads (lemma T4 of
+/// docs/49-time-entropy-terminal.md).
+#[cfg(unix)]
+mod raw {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static ON: AtomicBool = AtomicBool::new(false);
+    static mut SAVED: std::mem::MaybeUninit<libc::termios> = std::mem::MaybeUninit::uninit();
+
+    /// Is the terminal in raw mode?
+    pub fn on() -> bool {
+        ON.load(Ordering::SeqCst)
+    }
+
+    /// Puts the terminal back, if it's in raw mode. Async-signal-safe.
+    pub fn restore() {
+        if ON.swap(false, Ordering::SeqCst) {
+            // SAFETY: `SAVED` was written before `ON` was set, and isn't
+            // written again until it's clear.
+            unsafe { libc::tcsetattr(0, libc::TCSANOW, (&raw const SAVED).cast()) };
+        }
+    }
+
+    extern "C" fn on_signal(sig: libc::c_int) {
+        restore();
+        // SAFETY: both are async-signal-safe.
+        unsafe {
+            libc::signal(sig, libc::SIG_DFL);
+            libc::raise(sig);
+        }
+    }
+
+    /// Puts the terminal in raw mode, as `t_raw_enter` does.
+    pub fn enter() -> std::io::Result<()> {
+        // SAFETY: plain calls on file descriptor 0 with valid pointers;
+        // only the one holding the one `Stdin` gets here, so `SAVED` isn't
+        // being read (`ON` is clear).
+        unsafe {
+            let mut t = std::mem::MaybeUninit::<libc::termios>::uninit();
+            if libc::tcgetattr(0, t.as_mut_ptr()) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            let mut t = t.assume_init();
+            (&raw mut SAVED).cast::<libc::termios>().write(t);
+            t.c_iflag &= !(libc::BRKINT | libc::ICRNL | libc::INPCK | libc::ISTRIP | libc::IXON);
+            t.c_lflag &= !(libc::ECHO | libc::ICANON | libc::IEXTEN | libc::ISIG);
+            t.c_cflag = (t.c_cflag & !libc::CSIZE) | libc::CS8;
+            t.c_cc[libc::VMIN] = 1;
+            t.c_cc[libc::VTIME] = 0;
+            static HANDLED: AtomicBool = AtomicBool::new(false);
+            if !HANDLED.swap(true, Ordering::SeqCst) {
+                for sig in [libc::SIGHUP, libc::SIGINT, libc::SIGQUIT, libc::SIGTERM] {
+                    let mut old: libc::sigaction = std::mem::zeroed();
+                    if libc::sigaction(sig, std::ptr::null(), &mut old) == 0
+                        && old.sa_sigaction == libc::SIG_DFL
+                    {
+                        let mut sa: libc::sigaction = std::mem::zeroed();
+                        sa.sa_sigaction = on_signal as extern "C" fn(libc::c_int) as usize;
+                        libc::sigemptyset(&mut sa.sa_mask);
+                        libc::sigaction(sig, &sa, std::ptr::null_mut());
+                    }
+                }
+            }
+            ON.store(true, Ordering::SeqCst);
+            if libc::tcsetattr(0, libc::TCSANOW, &t) != 0 {
+                let e = std::io::Error::last_os_error();
+                ON.store(false, Ordering::SeqCst);
+                return Err(e);
+            }
+        }
+        Ok(())
+    }
+
+    /// Waits until file descriptor 0 has input, or `deadline`, by
+    /// `interp::monotonic_now`: whether it has.
+    pub fn wait(deadline: u64) -> std::io::Result<bool> {
+        loop {
+            let now = crate::interp::monotonic_now();
+            if now >= deadline {
+                return Ok(false);
+            }
+            let ms = (deadline - now).div_ceil(1_000_000).min(i32::MAX as u64) as i32;
+            let mut p = libc::pollfd {
+                fd: 0,
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            // SAFETY: one valid `pollfd`.
+            match unsafe { libc::poll(&mut p, 1, ms) } {
+                r if r > 0 => return Ok(true),
+                0 => {}
+                _ => {
+                    let e = std::io::Error::last_os_error();
+                    if e.kind() != std::io::ErrorKind::Interrupted {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+    }
+
+    /// The size of terminal `fd`: its columns and rows.
+    pub fn size(fd: libc::c_int) -> std::io::Result<(u16, u16)> {
+        // SAFETY: `TIOCGWINSZ` writes one `winsize`.
+        unsafe {
+            let mut w: libc::winsize = std::mem::zeroed();
+            if libc::ioctl(fd, libc::TIOCGWINSZ, &mut w) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok((w.ws_col, w.ws_row))
+        }
+    }
+}
+
+/// However the interpreter's run ends, the terminal is put back.
+impl Drop for Process {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        raw::restore();
+    }
+}
+
 impl Process {
     /// The process's streams and environment, and arguments `args` after
     /// the program's name `program`.
@@ -750,5 +874,35 @@ impl interp::Terminal for Process {
 
     fn files_open(&self) -> usize {
         self.files.iter().filter(|f| f.is_some()).count()
+    }
+
+    #[cfg(unix)]
+    fn raw_enter(&mut self) -> std::io::Result<()> {
+        raw::enter()
+    }
+
+    #[cfg(unix)]
+    fn raw_leave(&mut self) {
+        raw::restore()
+    }
+
+    #[cfg(unix)]
+    fn raw_on(&self) -> bool {
+        raw::on()
+    }
+
+    #[cfg(unix)]
+    fn wait(&mut self, deadline: u64) -> std::io::Result<bool> {
+        use std::io::Write;
+        self.out.flush()?;
+        if !self.input.buffer().is_empty() {
+            return Ok(true);
+        }
+        raw::wait(deadline)
+    }
+
+    #[cfg(unix)]
+    fn size(&self, err: bool) -> std::io::Result<(u16, u16)> {
+        raw::size(if err { 2 } else { 1 })
     }
 }

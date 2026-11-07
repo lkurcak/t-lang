@@ -237,7 +237,7 @@ anything goes to stderr, so a prompt is seen before it's answered.
 
 | Missing | Why it's missing | Step |
 |---|---|---|
-| files, arguments, the environment, clocks | each a field of `Os`, or a value one gives; files read through a `ReadFile`, written whole | 47 ✅ (arguments, the environment), 48 ✅ (files) |
+| files, arguments, the environment, clocks | each a field of `Os`, or a value one gives; files read through a `ReadFile`, written whole | 47 ✅ (arguments, the environment), 48 ✅ (files), 49 ✅ (clocks) |
 | writing bytes, `std::io::Write` | text is all a program writes yet; bytes come with files | 47 ✅ (`core::io::Write`) |
 | buffering in the program | `t` buffers; a compiled program will want a `BufWriter` written in T | — |
 | a way for linear values to leave on `?` | destructors, `defer` or `try` blocks | 20 ✅ (destructors, for what's `Discard`) |

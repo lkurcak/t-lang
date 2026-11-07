@@ -576,16 +576,19 @@ and go uses `core::io::{Read, Write}`; `core::io::Bytes` and
 from any `Read` (see [I/O](47-io.md)). Files are reached through
 `os.fs`: whole with `read`, `read_to_string`, `write` and `append`, or
 read bit by bit through the `ReadFile` that `open` gives (see
-[files](48-files.md)).
+[files](48-files.md)). The time is `os.clock`, unguessable bytes are
+`os.entropy`, and `os.stdin.raw()` puts the terminal in raw mode for as
+long as the `Raw` it gives lives (see
+[time, entropy and the terminal](49-time-entropy-terminal.md)).
 A `main` returning `Result<(), E>` reports an error to standard error
 and exits unsuccessfully when it returns `Err`; `E` must implement
 `core::fmt::Display` and `Discard`.
 
 | Library | Common items |
 |---|---|
-| [`core`](../core/lib.t) | `Option`, `Result`, `Iterator`, `cell::Cell`, `sync::Atomic`, `volatile::Volatile`, `io::{Read, Write, Error}`, numeric operations, traits, and formatting |
+| [`core`](../core/lib.t) | `Option`, `Result`, `Iterator`, `cell::Cell`, `sync::Atomic`, `volatile::Volatile`, `time::Duration`, `io::{Read, Write, Error}`, numeric operations, traits, and formatting |
 | [`alloc`](../alloc/lib.t) | `boxed::Box`, `list::List`, `string::String`, `arena::Arena`, and `io::read_line` |
-| [`std`](../std/lib.t) | `Os`, `io` streams, `env::{Args, Env}`, and `fs::{Fs, ReadFile}` |
+| [`std`](../std/lib.t) | `Os`, `io` streams and `io::Raw`, `env::{Args, Env}`, `fs::{Fs, ReadFile}`, `time::{Clock, Instant}`, and `entropy::Entropy` |
 
 The compiler embeds these libraries. Every package has `core`. A
 package with a `t.toml` beside its root has only the other libraries

@@ -239,7 +239,7 @@ run each compiled program in a new directory holding them.
 | directories, metadata, seeking | not needed yet | — |
 | capabilities for one directory | `Fs` is the whole file system (D2) | — |
 | paths that aren't UTF-8 | a `Path` type | — |
-| clocks, randomness, raw terminal mode | each its own capability in the `Os` | Os-C |
+| clocks, randomness, raw terminal mode | each its own capability in the `Os` | 49 ✅ |
 
 ## Exercises
 

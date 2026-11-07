@@ -9,8 +9,32 @@
 #include <sched.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <limits.h>
+#include <poll.h>
+#include <stdatomic.h>
+#include <termios.h>
+#include <time.h>
+#include <sys/ioctl.h>
+#include <sys/types.h>
+#include <sys/random.h>
 
 extern char **environ;
+
+/* The terminal as it was before `Stdin::raw` (docs/49-time-entropy-terminal.md),
+ * and whether it's in raw mode now. There's one slot, as there's never
+ * more than one `Raw`: it holds the one `Stdin` by `&mut` (lemma T3). The
+ * flag is atomic, and lock-free, as a signal's handler and a panicking
+ * thread read it. */
+static struct termios t_raw_saved;
+static atomic_int t_raw_on;
+
+/* Puts the terminal back as it was, if it's in raw mode: when a `Raw` is
+ * dropped, when the program halts, and when a signal stops it (lemma T4).
+ * Not when `main` returns: every `Raw` was dropped before. Safe in a
+ * signal's handler: `tcsetattr` is async-signal-safe. */
+static void t_raw_restore(void) {
+    if (atomic_exchange(&t_raw_on, 0)) (void)tcsetattr(0, TCSANOW, &t_raw_saved);
+}
 
 void t_platform_write(uint8_t byte) {
     /* What the program wrote first, as the interpreter shows it. */
@@ -20,6 +44,7 @@ void t_platform_write(uint8_t byte) {
 
 _Noreturn void t_platform_halt(void) {
     fflush(stderr);
+    t_raw_restore();
     _Exit(t_panicking ? 101 : 1);
 }
 
@@ -52,7 +77,7 @@ static uint64_t t_io_fail(int e) {
     case EACCES: case EPERM: kind = 1; break;
     case EEXIST: kind = 2; break;
     case EPIPE: kind = 3; break;
-    case ENOSYS: case ENOTSUP: kind = 6; break;
+    case ENOSYS: case ENOTSUP: case ENOTTY: kind = 6; break;
     default: kind = 8; break;
     }
     return ((uint64_t)1 << 63) | (kind << 32) | (uint32_t)e;
@@ -277,6 +302,121 @@ static void t_start_os(int argc, char **argv, uint32_t site) {
         t_env_eq[t_envc] = (size_t)(eq - v);
         t_envc++;
     }
+}
+
+/* Now, by the clock that only goes forward, in nanoseconds since some
+ * moment before the program began: what `Clock::now` tells. */
+static uint64_t t_clock_now(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) t_bug("the clock couldn't be read");
+    return (uint64_t)ts.tv_sec * 1000000000u + (uint64_t)ts.tv_nsec;
+}
+
+/* Waits until `t_clock_now()` is no less than `deadline`. A signal may
+ * wake it early, so it checks again: it never returns before. */
+static void t_clock_sleep_until(uint64_t deadline) {
+    for (;;) {
+        uint64_t now = t_clock_now();
+        if (now >= deadline) return;
+        uint64_t left = deadline - now;
+        struct timespec ts;
+        ts.tv_sec = (time_t)(left / 1000000000u);
+        ts.tv_nsec = (long)(left % 1000000000u);
+        (void)nanosleep(&ts, NULL);
+    }
+}
+
+/* The nanoseconds since 1970 by the time of day, or `UINT64_MAX` if that's
+ * before 1970 (`Clock::unix_time`); a time too far ahead to count in a
+ * `u64` is one short of that, as far as one can go. */
+static uint64_t t_unix_time(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_REALTIME, &ts) != 0) t_bug("the time of day couldn't be read");
+    if (ts.tv_sec < 0) return UINT64_MAX;
+    if ((uint64_t)ts.tv_sec > (UINT64_MAX - 1 - 999999999u) / 1000000000u) return UINT64_MAX - 1;
+    return (uint64_t)ts.tv_sec * 1000000000u + (uint64_t)ts.tv_nsec;
+}
+
+/* Fills the `n` bytes at `buf` with entropy: 0, or the failure. */
+static uint64_t t_entropy_fill(uint8_t *buf, uint64_t n) {
+    while (n > 0) {
+        size_t k = n > 256 ? 256 : (size_t)n;
+        if (getentropy(buf, k) != 0) return t_io_fail(errno);
+        buf += k;
+        n -= k;
+    }
+    return 0;
+}
+
+/* A signal that stops the program: the terminal is put back first, then it
+ * stops as it would have, by the signal (lemma T4). */
+static void t_raw_signal(int sig) {
+    t_raw_restore();
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+
+/* Puts the terminal in raw mode (`Stdin::raw`): keys come one at a time,
+ * unseen, and Ctrl-C is a key, but what's written is as before, so `\n`
+ * still starts a line. 0, or why not: `ENOTTY` if the input isn't a
+ * terminal, which is `Unsupported`. */
+static uint64_t t_raw_enter(void) {
+    struct termios t;
+    if (tcgetattr(0, &t) != 0) return t_io_fail(errno);
+    t_raw_saved = t;
+    t.c_iflag &= ~(tcflag_t)(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
+    t.c_lflag &= ~(tcflag_t)(ECHO | ICANON | IEXTEN | ISIG);
+    t.c_cflag = (t.c_cflag & ~(tcflag_t)CSIZE) | CS8;
+    t.c_cc[VMIN] = 1;
+    t.c_cc[VTIME] = 0;
+    static atomic_int handled;
+    if (!atomic_exchange(&handled, 1)) {
+        int sigs[] = {SIGHUP, SIGINT, SIGQUIT, SIGTERM};
+        for (size_t i = 0; i < sizeof sigs / sizeof *sigs; i++) {
+            struct sigaction sa, old;
+            memset(&sa, 0, sizeof sa);
+            sa.sa_handler = t_raw_signal;
+            sigemptyset(&sa.sa_mask);
+            /* Not if it's ignored: then it doesn't stop the program. */
+            if (sigaction(sigs[i], NULL, &old) == 0 && old.sa_handler == SIG_DFL)
+                (void)sigaction(sigs[i], &sa, NULL);
+        }
+    }
+    atomic_store(&t_raw_on, 1);
+    if (tcsetattr(0, TCSANOW, &t) != 0) {
+        int e = errno;
+        atomic_store(&t_raw_on, 0);
+        return t_io_fail(e);
+    }
+    return 0;
+}
+
+/* Puts the terminal back as `t_raw_enter` found it: a `Raw` dropped. */
+static void t_raw_leave(void) { t_raw_restore(); }
+
+/* Waits until there's input to read, or `t_clock_now()` is no less than
+ * `deadline` (`Raw::wait`): 1, 0, or the failure. What's in the buffer
+ * counts, and the output is written out first, as for a read. */
+static uint64_t t_stdin_wait(uint64_t deadline) {
+    if (fflush(stdout) != 0) return t_io_fail(errno);
+    if (t_in_at < t_in_len) return 1;
+    for (;;) {
+        uint64_t now = t_clock_now();
+        if (now >= deadline) return 0;
+        uint64_t ms = (deadline - now + 999999u) / 1000000u;
+        struct pollfd p = {.fd = 0, .events = POLLIN};
+        int r = poll(&p, 1, ms > INT_MAX ? INT_MAX : (int)ms);
+        if (r > 0) return 1;
+        if (r < 0 && errno != EINTR) return t_io_fail(errno);
+    }
+}
+
+/* The size of the terminal `fd` is: its columns, shifted up 16 bits, and
+ * its rows, or the failure, `ENOTTY` if it isn't one. */
+static uint64_t t_term_size(int fd) {
+    struct winsize w;
+    if (ioctl(fd, TIOCGWINSZ, &w) != 0) return t_io_fail(errno);
+    return (uint64_t)w.ws_col << 16 | w.ws_row;
 }
 
 /* Ends the program after `main` returned: flushes its output, and fails

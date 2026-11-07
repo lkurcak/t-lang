@@ -51,8 +51,8 @@
 use crate::ast::*;
 use crate::error::{Error, Span};
 use crate::intrinsic::{
-    ArgsOp, ArrayOp, AtomicOp, EnvOp, FsOp, Intrinsic, MessageOp, Output, OutputOp, RawBufOp,
-    ReadFileOp, SliceOp, SlotsOp, StdinOp, VolatileOp,
+    ArgsOp, ArrayOp, AtomicOp, ClockOp, EnvOp, FsOp, Intrinsic, MessageOp, Output, OutputOp,
+    RawBufOp, ReadFileOp, SliceOp, SlotsOp, StdinOp, VolatileOp,
 };
 use crate::mono::{glue_name, is_glue};
 use crate::types::IntTy;
@@ -446,19 +446,23 @@ impl<'p> Interp<'p, '_> {
             0 => Vec::new(),
             _ => vec![Value::Struct(
                 "std::Os".into(),
-                ["stdin", "stdout", "stderr", "args", "env", "fs", "threads"]
-                    .into_iter()
-                    .zip([
-                        "std::io::Stdin",
-                        "std::io::Stdout",
-                        "std::io::Stderr",
-                        "std::env::Args",
-                        "std::env::Env",
-                        "std::fs::Fs",
-                        "std::thread::Threads",
-                    ])
-                    .map(|(field, ty)| (field.to_string(), Value::Struct(ty.into(), Vec::new())))
-                    .collect(),
+                [
+                    "stdin", "stdout", "stderr", "args", "env", "fs", "clock", "entropy", "threads",
+                ]
+                .into_iter()
+                .zip([
+                    "std::io::Stdin",
+                    "std::io::Stdout",
+                    "std::io::Stderr",
+                    "std::env::Args",
+                    "std::env::Env",
+                    "std::fs::Fs",
+                    "std::time::Clock",
+                    "std::entropy::Entropy",
+                    "std::thread::Threads",
+                ])
+                .map(|(field, ty)| (field.to_string(), Value::Struct(ty.into(), Vec::new())))
+                .collect(),
             )],
         };
         // The interpreter's own panic, a bug's, waits for the threads to
@@ -511,6 +515,11 @@ impl<'p> Interp<'p, '_> {
                 "file leak: {} files were never closed",
                 self.term.files_open()
             ));
+        }
+        // A `Raw` is dropped, and its `discard` puts the terminal back, by
+        // the time `main` returns, as it holds the input `main` was given.
+        if self.term.raw_on() {
+            unsound("the terminal was left in raw mode");
         }
         Ok(result)
     }
@@ -764,6 +773,90 @@ pub trait Terminal {
 
     /// How many files are open.
     fn files_open(&self) -> usize;
+
+    /// Now, by a clock that only goes forward, in nanoseconds since some
+    /// moment before the program began: for `std::time::Clock::now`.
+    fn now(&self) -> u64 {
+        monotonic_now()
+    }
+
+    /// Waits until `now()` is no less than `deadline`.
+    fn sleep_until(&mut self, deadline: u64) {
+        loop {
+            let now = self.now();
+            if now >= deadline {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_nanos(deadline - now));
+        }
+    }
+
+    /// The nanoseconds since 1970 by the time of day, or `None` if that's
+    /// before 1970.
+    fn unix_time(&self) -> Option<u64> {
+        let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
+        since
+            .ok()
+            .map(|d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX - 1))
+    }
+
+    /// Fills `buf` with entropy, as the operating system's.
+    fn fill_entropy(&mut self, buf: &mut [u8]) -> std::io::Result<()> {
+        os_entropy(buf)
+    }
+
+    /// Puts the terminal the input is in raw mode, keeping how it was:
+    /// `ENOTTY` if the input isn't one.
+    fn raw_enter(&mut self) -> std::io::Result<()> {
+        Err(std::io::Error::from_raw_os_error(ENOTTY))
+    }
+
+    /// Puts the terminal back as `raw_enter` found it.
+    fn raw_leave(&mut self) {
+        unsound("raw mode left, but never entered")
+    }
+
+    /// Is the terminal in raw mode?
+    fn raw_on(&self) -> bool {
+        false
+    }
+
+    /// Waits until there's input to read, or `now()` is no less than
+    /// `deadline`: whether there's input. Only in raw mode.
+    fn wait(&mut self, _deadline: u64) -> std::io::Result<bool> {
+        unsound("a wait for input, not in raw mode")
+    }
+
+    /// The size of the terminal the output goes to, or where errors go if
+    /// `err`: its columns and rows, or `ENOTTY` if it isn't one.
+    fn size(&self, _err: bool) -> std::io::Result<(u16, u16)> {
+        Err(std::io::Error::from_raw_os_error(ENOTTY))
+    }
+}
+
+/// The failure of an operating system's asked about a terminal of
+/// something that isn't one: `ENOTTY`, which is 25 wherever T runs.
+pub const ENOTTY: i32 = 25;
+
+/// Now, by `std::time::Instant`, in nanoseconds since the first time this
+/// was asked: as a compiled program's `CLOCK_MONOTONIC`, from some moment
+/// before the program began, one past it so even the first is after it.
+pub fn monotonic_now() -> u64 {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    let start = *START.get_or_init(std::time::Instant::now);
+    u64::try_from(start.elapsed().as_nanos())
+        .unwrap_or(u64::MAX)
+        .saturating_add(1)
+}
+
+/// Fills `buf` with the operating system's entropy, as a compiled
+/// program's `getentropy` does: the operating system's own failure, or
+/// `Unsupported` where it has none to give.
+pub fn os_entropy(buf: &mut [u8]) -> std::io::Result<()> {
+    getrandom::fill(buf).map_err(|e| match e.raw_os_error() {
+        Some(code) => std::io::Error::from_raw_os_error(code),
+        None => std::io::Error::from(std::io::ErrorKind::Unsupported),
+    })
 }
 
 /// The failure of an operating system's that has no file at the path it
@@ -905,10 +998,20 @@ pub fn io_failure(e: &std::io::Error) -> u64 {
         K::InvalidData => 4,
         K::UnexpectedEof => 5,
         K::Unsupported => 6,
+        _ if e.raw_os_error() == Some(ENOTTY) => 6,
         _ => 8,
     };
     let code = e.raw_os_error().unwrap_or(0) as u32;
     (1 << 63) | (kind << 32) | u64::from(code)
+}
+
+/// What an intrinsic that gives back 0 or a failure gives back for `r`.
+fn status(r: std::io::Result<()>) -> Value {
+    let r = match r {
+        Ok(()) => 0,
+        Err(e) => io_failure(&e),
+    };
+    Value::Int(i128::from(r), IntTy::U64)
 }
 
 /// A refinement to check at run time (see `check/refine.rs`): its binder,
@@ -2091,6 +2194,8 @@ impl<'p> Interp<'p, '_> {
             Intrinsic::Env(op) => Ok(self.env(op, copy, args)),
             Intrinsic::Fs(op) => Ok(self.fs(op, copy, args)),
             Intrinsic::ReadFile(op) => Ok(self.read_file(op, args)),
+            Intrinsic::Clock(op) => Ok(self.clock(op, args)),
+            Intrinsic::EntropyFill => Ok(self.entropy(args)),
             Intrinsic::UnsafeAsMut | Intrinsic::UnsafeAsRef => Ok(self.unsafe_cell(args)),
             Intrinsic::Atomic(op) => {
                 // What another thread does with it can be seen here, and what
@@ -2231,6 +2336,24 @@ impl<'p> Interp<'p, '_> {
                 Value::Int(n as i128, IntTy::U64)
             }
             (StdinOp::IsTerminal, [_]) => Value::Bool(self.term.is_terminal(None)),
+            (StdinOp::RawEnter, [_]) => {
+                // Only one `Raw` lives at a time, as it holds the one
+                // `Stdin` by `&mut` (lemma T3 of docs/49-time-entropy-terminal.md).
+                if self.term.raw_on() {
+                    unsound("raw mode entered twice");
+                }
+                status(self.term.raw_enter())
+            }
+            (StdinOp::RawLeave, [_]) => {
+                self.term.raw_leave();
+                Value::Unit
+            }
+            (StdinOp::Wait, [_, Value::Int(deadline, _)]) => {
+                match self.term.wait(*deadline as u64) {
+                    Ok(ready) => Value::Int(i128::from(ready), IntTy::U64),
+                    Err(e) => Value::Int(i128::from(io_failure(&e)), IntTy::U64),
+                }
+            }
             _ => unsound(&format!("`Stdin`'s `{op:?}` of the wrong arguments")),
         }
     }
@@ -2246,6 +2369,13 @@ impl<'p> Interp<'p, '_> {
             }
             (OutputOp::Flush, [_]) => self.term.flush(err),
             (OutputOp::IsTerminal, [_]) => return Value::Bool(self.term.is_terminal(Some(err))),
+            (OutputOp::Size, [_]) => {
+                let r = match self.term.size(err) {
+                    Ok((cols, rows)) => u64::from(cols) << 16 | u64::from(rows),
+                    Err(e) => io_failure(&e),
+                };
+                return Value::Int(i128::from(r), IntTy::U64);
+            }
             _ => unsound(&format!("`{out:?}`'s `{op:?}` of the wrong arguments")),
         };
         let r = match done {
@@ -2255,17 +2385,54 @@ impl<'p> Interp<'p, '_> {
         Value::Int(i128::from(r), IntTy::U64)
     }
 
+    /// An intrinsic method of `std::time::Clock`, with arguments `args`.
+    fn clock(&mut self, op: ClockOp, args: Vec<Value>) -> Value {
+        match (op, args.as_slice()) {
+            (ClockOp::Now, [_]) => Value::Int(i128::from(self.term.now()), IntTy::U64),
+            (ClockOp::SleepUntil, [_, Value::Int(deadline, _)]) => {
+                self.term.sleep_until(*deadline as u64);
+                Value::Unit
+            }
+            (ClockOp::UnixTime, [_]) => Value::Int(
+                i128::from(self.term.unix_time().unwrap_or(u64::MAX)),
+                IntTy::U64,
+            ),
+            _ => unsound(&format!("`Clock`'s `{op:?}` of the wrong arguments")),
+        }
+    }
+
+    /// `std::entropy::Entropy::os_fill`, with arguments `args`.
+    fn entropy(&mut self, args: Vec<Value>) -> Value {
+        let [_, buf] = args.as_slice() else {
+            unsound("`os_fill` of the wrong arguments")
+        };
+        let Value::Ref(
+            p @ Ptr {
+                range: Some((lo, len)),
+                ..
+            },
+        ) = buf
+        else {
+            unsound("`os_fill` into something that isn't a slice")
+        };
+        let (p, lo, len) = (p.clone(), *lo, *len);
+        let mut bytes = vec![0; len];
+        if let Err(e) = self.term.fill_entropy(&mut bytes) {
+            return Value::Int(i128::from(io_failure(&e)), IntTy::U64);
+        }
+        let Value::Slots(slots) = self.memory.get_mut(&p) else {
+            unsound("a slice that isn't of slots")
+        };
+        for (i, &b) in bytes.iter().enumerate() {
+            slots[lo + i] = Value::Int(i128::from(b), IntTy::U8);
+        }
+        Value::Int(0, IntTy::U64)
+    }
+
     /// An intrinsic method of `std::fs::Fs`, whose copy is `copy`, with
     /// arguments `args`. A `ReadFile` is a struct of one field the program
     /// can't name, its number in the terminal's open files.
     fn fs(&mut self, op: FsOp, copy: &str, args: Vec<Value>) -> Value {
-        let status = |r: std::io::Result<()>| {
-            let r = match r {
-                Ok(()) => 0,
-                Err(e) => io_failure(&e),
-            };
-            Value::Int(i128::from(r), IntTy::U64)
-        };
         match (op, args.as_slice()) {
             (FsOp::Open, [_, path]) => {
                 let path = self.text(path);
