@@ -82,10 +82,7 @@ fn main() { let _ = huge(0); }
         rendered.contains("solver's checked integer arithmetic range"),
         "{rendered}"
     );
-    assert!(
-        !rendered.contains("products of two unknowns"),
-        "{rendered}"
-    );
+    assert!(!rendered.contains("products of two unknowns"), "{rendered}");
 }
 
 #[test]
