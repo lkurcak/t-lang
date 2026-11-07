@@ -31,17 +31,17 @@ impl Duration {
     export fn from_nanos(n: u64) -> Duration { Duration { nanos: n } }
 
     /// `n` microseconds, of which there are at most `MAX_MICROS`.
-    export fn from_micros(n: { n: u64 | n <= 18_446_744_073_709_551 }) -> Duration {
+    export fn from_micros(n: { n: u64 | n <= MAX_MICROS }) -> Duration {
         Duration { nanos: n * 1_000 }
     }
 
     /// `n` milliseconds, of which there are at most `MAX_MILLIS`.
-    export fn from_millis(n: { n: u64 | n <= 18_446_744_073_709 }) -> Duration {
+    export fn from_millis(n: { n: u64 | n <= MAX_MILLIS }) -> Duration {
         Duration { nanos: n * 1_000_000 }
     }
 
     /// `n` seconds, of which there are at most `MAX_SECS`.
-    export fn from_secs(n: { n: u64 | n <= 18_446_744_073 }) -> Duration {
+    export fn from_secs(n: { n: u64 | n <= MAX_SECS }) -> Duration {
         Duration { nanos: n * 1_000_000_000 }
     }
 

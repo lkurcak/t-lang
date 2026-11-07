@@ -1,13 +1,15 @@
 //! The std library: what a program running on an operating system can
 //! use, beside `core` and `alloc`. It's written in T, checked like any
-//! other code. What the checker takes on trust is the streams of `io`,
-//! intrinsic types, and the one intrinsic method of each, which reads or
-//! writes a byte (see docs/19-std-io.md), and `thread`'s, which start and
-//! join threads (docs/41-threads.md).
+//! other code. What the checker takes on trust is its intrinsic types and
+//! their intrinsic methods: the streams of `io` (docs/19-std-io.md,
+//! docs/47-io.md), with the terminal's raw mode and size; `env`'s
+//! arguments and variables; `fs`'s files (docs/48-files.md); `time`'s
+//! clock and `entropy`'s bytes (docs/49-time-entropy-terminal.md); and
+//! `thread`'s, which start and join threads (docs/41-threads.md).
 //!
-//! Nothing here is ambient: a function can read or write only through a
-//! stream it was given. They start out in the `Os` that `main` takes, and
-//! no code can make one.
+//! Nothing here is ambient: a function can read or write, tell the time,
+//! or take entropy only through what it was given. It all starts out in
+//! the `Os` that `main` takes, and no code can make any of it.
 //!
 //! Nothing here is in the prelude: a program says what it uses.
 

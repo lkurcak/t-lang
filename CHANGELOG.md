@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased
+
+Step 49: time, entropy and the terminal. See
+[docs/49-time-entropy-terminal.md](docs/49-time-entropy-terminal.md).
+
+### Added
+
+- `core::time::Duration`: a span of time, a whole number of nanoseconds.
+  `from_secs`/`from_millis`/`from_micros` take at most `MAX_SECS`/
+  `MAX_MILLIS`/`MAX_MICROS`, which the checker proves; `as_*`,
+  `subsec_nanos`, `checked_`/`saturating_` `add` and `sub`, `Eq`, `Ord`.
+- `std::time`: `Os` has `clock: Clock` (`Copy`). `now()` gives an
+  `Instant` by the monotonic clock (`since`, `checked_since`, `add`,
+  `checked_add`, `Eq`, `Ord`); `sleep_until(deadline)` waits until a
+  moment (there's no relative sleep); `unix_time()` is the time of day.
+- `std::entropy`: `Os` has `entropy: Entropy` (`Copy`), with `fill(buf)`
+  and `u64()`, each a `Result`.
+- `Stdin::raw()` gives a `Raw`: the terminal in raw mode while it lives
+  (keys as they're pressed, not shown, Ctrl-C a key; output as before).
+  It's a `Read`, with `wait(deadline)` for a key or a deadline. Dropping
+  it puts the terminal back, and so does a panic or a signal that stops
+  the program.
+- `Stdout::size()`: the terminal's columns and rows.
+- `ENOTTY` is `ErrorKind::Unsupported`.
+
+### Internal
+
+- `libc` is a dependency on Unix, for the interpreter's raw mode.
+- `tests/terminal.rs` runs programs on a pseudo-terminal, compiled and
+  interpreted, and checks the terminal is put back after each way they
+  stop. The interpreter fails a program that ends in raw mode.
+
 ## 0.64.0 (2026-11-07)
 
 Step 48: files. See [docs/48-files.md](docs/48-files.md).

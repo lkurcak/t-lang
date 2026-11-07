@@ -29,8 +29,9 @@ static struct termios t_raw_saved;
 static atomic_int t_raw_on;
 
 /* Puts the terminal back as it was, if it's in raw mode: when a `Raw` is
- * dropped, and however the program stops (lemma T4). Safe in a signal's
- * handler: `tcsetattr` is async-signal-safe. */
+ * dropped, when the program halts, and when a signal stops it (lemma T4).
+ * Not when `main` returns: every `Raw` was dropped before. Safe in a
+ * signal's handler: `tcsetattr` is async-signal-safe. */
 static void t_raw_restore(void) {
     if (atomic_exchange(&t_raw_on, 0)) (void)tcsetattr(0, TCSANOW, &t_raw_saved);
 }
@@ -422,7 +423,6 @@ static uint64_t t_term_size(int fd) {
  * if `failed`, as `t run` does; a failed flush is shown at `site`, where
  * `main` is. */
 static int t_exit(bool failed, uint32_t site) {
-    t_raw_restore();
     errno = 0;
     if (fflush(stdout) != 0) {
         int e = errno;
