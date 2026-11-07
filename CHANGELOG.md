@@ -1,5 +1,44 @@
 # Changelog
 
+## Unreleased
+
+Step 47: bytes, arguments and the environment. See
+[docs/47-io.md](docs/47-io.md).
+
+### Added
+
+- `core::io`: byte traits `Read` (`read`, `read_exact`) and `Write`
+  (`write_all`, `flush`, and text with `put`/`line`), each with an effect
+  `e`, failing with one `Error` (kind and the operating system's number,
+  shown as `not found (os error 2)`); kinds `NotFound`,
+  `PermissionDenied`, `AlreadyExists`, `UnexpectedEnd` and `Unsupported`
+  are new. `core::io::Bytes` reads bytes in memory.
+- `List<u8>` is an `io::Write`; `alloc::io::{read_line, read_to_end,
+  read_to_string}` read from any `Read`.
+- `Stdin` is a `Read`, buffered; `Stdout` and `Stderr` are `io::Write`s
+  too, with `flush()`; each stream has `is_terminal()`.
+- `Os` has `args: std::env::Args` (`program()`, `len()`, `get(i)`,
+  `index(i)`, `iter()`) and `env: std::env::Env` (`get(name)`, `vars()`):
+  `Copy`, giving `&'static str`. An argument or variable that isn't
+  UTF-8 stops a program that takes the `Os`, before `main`.
+- `t run <file.t> [args...]` and `t <file.t> [args...]` pass the words
+  after the file to the program (all of them after `--`).
+- Tests: `// arg:` and `// env:` lines give a test program its arguments
+  and environment.
+
+### Changed
+
+- `std::io::Error` and `ErrorKind` are `core::io`'s, re-exported; `Error`
+  is `Copy` and `Eq`.
+- A compiled program's C `main` takes `argc` and `argv`; standard input is
+  read with `read(2)` through the runtime's own buffer.
+
+### Internal
+
+- The interpreter's `Terminal` reads and writes buffers, flushes, says
+  whether a stream is a terminal, and gives the arguments and
+  environment; `run_files` takes an `interp::Captured`.
+
 ## 0.62.0 (2026-11-07)
 
 Step 46: one cell primitive, and the intrinsics by name. See

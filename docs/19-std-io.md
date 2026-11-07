@@ -211,6 +211,9 @@ it's dropped.
 
 Each stream has one intrinsic method, private to `std::io`: `read_byte`
 or `write_byte`, giving a number, which `std` turns into a `Result`.
+(Since step 47, a few: reading and writing buffers, flushing, and
+whether it's a terminal; and `core::io` has the traits they implement,
+see docs/47-io.md.)
 Everything else, UTF-8 encoding for `write_char`, the lines of
 `read_line` and their check that they're UTF-8, is T, checked like any
 code. `t run` flushes what's been written before each read and before
@@ -235,8 +238,8 @@ anything goes to stderr, so a prompt is seen before it's answered.
 
 | Missing | Why it's missing | Step |
 |---|---|---|
-| files, arguments, the environment, clocks | each a field of `Os`, or a value one gives; files linear, with `close` | — |
-| writing bytes, `std::io::Write` | text is all a program writes yet; bytes come with files | — |
+| files, arguments, the environment, clocks | each a field of `Os`, or a value one gives; files linear, with `close` | 47 ✅ (arguments, the environment) |
+| writing bytes, `std::io::Write` | text is all a program writes yet; bytes come with files | 47 ✅ (`core::io::Write`) |
 | buffering in the program | `t` buffers; a compiled program will want a `BufWriter` written in T | — |
 | a way for linear values to leave on `?` | destructors, `defer` or `try` blocks | 20 ✅ (destructors, for what's `Discard`) |
 | an exit status other than 0 and 1 | an `ExitCode` for `main` to give back | — |
