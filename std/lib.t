@@ -11,21 +11,26 @@
 //!
 //! Nothing here is in the prelude: a program says what it uses.
 
+export mod entropy;
 export mod env;
 export mod fs;
 export mod io;
 pub mod rt;
 export mod thread;
+export mod time;
 
+use crate::entropy::Entropy;
 use crate::env::{Args, Env};
 use crate::fs::Fs;
 use crate::io::{Stderr, Stdin, Stdout};
 use crate::thread::Threads;
+use crate::time::Clock;
 
 /// What a program can do to the world outside it, and what it's told by
 /// it: the operating system's streams, the program's arguments and
-/// environment, its files, and starting threads. `fn main(os: Os)` is given the only one there is,
-/// and passes on what each part of the program needs.
+/// environment, its files, the time, unguessable bytes, and starting
+/// threads. `fn main(os: Os)` is given the only one there is, and passes
+/// on what each part of the program needs.
 #[derive(Discard, Send, Sync)]
 export struct Os {
     /// Where input comes from: the terminal, or a file or pipe instead.
@@ -40,6 +45,10 @@ export struct Os {
     export env: Env,
     /// The files it can read and write.
     export fs: Fs,
+    /// What time it is.
+    export clock: Clock,
+    /// Bytes no one can guess.
+    export entropy: Entropy,
     /// The right to start threads.
     export threads: Threads,
 }

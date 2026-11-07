@@ -74,6 +74,10 @@ pub enum Intrinsic {
     Fs(FsOp),
     /// An intrinsic method of `std::fs::ReadFile`.
     ReadFile(ReadFileOp),
+    /// An intrinsic method of `std::time::Clock`.
+    Clock(ClockOp),
+    /// `std::entropy::Entropy::os_fill`.
+    EntropyFill,
     /// `std::thread::start`.
     ThreadStart,
     /// `std::thread::JoinHandle::join`.
@@ -157,6 +161,9 @@ pub enum SlotsOp {
 pub enum StdinOp {
     Read,
     IsTerminal,
+    RawEnter,
+    RawLeave,
+    Wait,
 }
 
 /// One of `std::io`'s streams that are written: `Stdout` or `Stderr`.
@@ -172,6 +179,8 @@ pub enum OutputOp {
     Write,
     Flush,
     IsTerminal,
+    /// `Stdout`'s only.
+    Size,
 }
 
 /// A method of `std::env::Args`.
@@ -202,6 +211,14 @@ pub enum FsOp {
 pub enum ReadFileOp {
     Read,
     Close,
+}
+
+/// An intrinsic method of `std::time::Clock`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ClockOp {
+    Now,
+    SleepUntil,
+    UnixTime,
 }
 
 impl Intrinsic {
@@ -265,9 +282,13 @@ impl Intrinsic {
             Slots(SlotsOp::Len),
             Stdin(StdinOp::Read),
             Stdin(StdinOp::IsTerminal),
+            Stdin(StdinOp::RawEnter),
+            Stdin(StdinOp::RawLeave),
+            Stdin(StdinOp::Wait),
             Output(self::Output::Stdout, OutputOp::Write),
             Output(self::Output::Stdout, OutputOp::Flush),
             Output(self::Output::Stdout, OutputOp::IsTerminal),
+            Output(self::Output::Stdout, OutputOp::Size),
             Output(self::Output::Stderr, OutputOp::Write),
             Output(self::Output::Stderr, OutputOp::Flush),
             Output(self::Output::Stderr, OutputOp::IsTerminal),
@@ -281,6 +302,10 @@ impl Intrinsic {
             Fs(FsOp::Remove),
             ReadFile(ReadFileOp::Read),
             ReadFile(ReadFileOp::Close),
+            Clock(ClockOp::Now),
+            Clock(ClockOp::SleepUntil),
+            Clock(ClockOp::UnixTime),
+            EntropyFill,
             ThreadStart,
             ThreadJoin,
         ]
@@ -363,16 +388,21 @@ impl Intrinsic {
             Stdin(op) => match op {
                 StdinOp::Read => "std::io::Stdin::os_read",
                 StdinOp::IsTerminal => "std::io::Stdin::os_is_terminal",
+                StdinOp::RawEnter => "std::io::Stdin::os_raw_enter",
+                StdinOp::RawLeave => "std::io::Stdin::os_raw_leave",
+                StdinOp::Wait => "std::io::Stdin::os_wait",
             },
             Output(self::Output::Stdout, op) => match op {
                 OutputOp::Write => "std::io::Stdout::os_write",
                 OutputOp::Flush => "std::io::Stdout::os_flush",
                 OutputOp::IsTerminal => "std::io::Stdout::os_is_terminal",
+                OutputOp::Size => "std::io::Stdout::os_size",
             },
             Output(self::Output::Stderr, op) => match op {
                 OutputOp::Write => "std::io::Stderr::os_write",
                 OutputOp::Flush => "std::io::Stderr::os_flush",
                 OutputOp::IsTerminal => "std::io::Stderr::os_is_terminal",
+                OutputOp::Size => "std::io::Stderr::os_size",
             },
             Args(op) => match op {
                 ArgsOp::Program => "std::env::Args::program",
@@ -392,6 +422,12 @@ impl Intrinsic {
                 ReadFileOp::Read => "std::fs::ReadFile::os_read",
                 ReadFileOp::Close => "std::fs::ReadFile::os_close",
             },
+            Clock(op) => match op {
+                ClockOp::Now => "std::time::Clock::os_now",
+                ClockOp::SleepUntil => "std::time::Clock::os_sleep_until",
+                ClockOp::UnixTime => "std::time::Clock::os_unix_time",
+            },
+            EntropyFill => "std::entropy::Entropy::os_fill",
             ThreadStart => "std::thread::start",
             ThreadJoin => "std::thread::JoinHandle::join",
         }
@@ -438,6 +474,10 @@ pub enum IntrinsicType {
     Fs,
     /// `std::fs::ReadFile`.
     ReadFile,
+    /// `std::time::Clock`.
+    Clock,
+    /// `std::entropy::Entropy`.
+    Entropy,
     /// `std::thread::Threads`.
     Threads,
     /// `std::thread::JoinHandle`.
@@ -449,8 +489,8 @@ impl IntrinsicType {
     pub const ALL: &[IntrinsicType] = {
         use IntrinsicType::*;
         &[
-            Message, Box, RawBuf, Slots, Stdin, Stdout, Stderr, Args, Env, Fs, ReadFile, Threads,
-            JoinHandle,
+            Message, Box, RawBuf, Slots, Stdin, Stdout, Stderr, Args, Env, Fs, ReadFile, Clock,
+            Entropy, Threads, JoinHandle,
         ]
     };
 
@@ -469,6 +509,8 @@ impl IntrinsicType {
             Env => "std::env::Env",
             Fs => "std::fs::Fs",
             ReadFile => "std::fs::ReadFile",
+            Clock => "std::time::Clock",
+            Entropy => "std::entropy::Entropy",
             Threads => "std::thread::Threads",
             JoinHandle => "std::thread::JoinHandle",
         }

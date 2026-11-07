@@ -27,6 +27,11 @@ cc = "1.8.0"
 tree-sitter = "0.27"
 tree-sitter-t = { path = "editors/tree-sitter-t/bindings/rust" }
 
+[target.'cfg(unix)'.dependencies]
+# For the interpreter's terminal: raw mode, waiting for a key, and the
+# terminal's size (docs/49-time-entropy-terminal.md).
+libc = "0.2"
+
 [target.'cfg(unix)'.dev-dependencies]
 # To start compiled test programs with few files allowed open, so one that
 # never closes them runs out (tests/compiled.rs).

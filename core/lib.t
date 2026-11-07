@@ -26,4 +26,5 @@ export mod result;
 export mod slice;
 export mod str;
 export mod sync;
+export mod time;
 export mod volatile;

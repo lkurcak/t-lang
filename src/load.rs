@@ -55,6 +55,7 @@ pub const CORE_FILES: &[(&str, &str)] = &[
     ("slice.t", include_str!("../core/slice.t")),
     ("str.t", include_str!("../core/str.t")),
     ("sync.t", include_str!("../core/sync.t")),
+    ("time.t", include_str!("../core/time.t")),
     ("volatile.t", include_str!("../core/volatile.t")),
 ];
 
@@ -86,10 +87,12 @@ pub(crate) type Library = (
 /// The files of the std library, by their paths in `std/`.
 pub const STD_FILES: &[(&str, &str)] = &[
     ("lib.t", include_str!("../std/lib.t")),
+    ("entropy.t", include_str!("../std/entropy.t")),
     ("env.t", include_str!("../std/env.t")),
     ("fs.t", include_str!("../std/fs.t")),
     ("io.t", include_str!("../std/io.t")),
     ("thread.t", include_str!("../std/thread.t")),
+    ("time.t", include_str!("../std/time.t")),
     ("rt.t", include_str!("../std/rt.t")),
 ];
 

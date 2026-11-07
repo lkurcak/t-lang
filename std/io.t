@@ -60,6 +60,21 @@ impl Stdin {
     /// file or a pipe?
     export fn is_terminal(&self) -> bool { self.os_is_terminal() }
 
+    /// Puts the terminal in raw mode, for as long as the `Raw` it gives
+    /// lives: each key comes as it's pressed, not a line at a time, and
+    /// isn't shown. Ctrl-C is a key too, the byte 3: it doesn't stop the
+    /// program. What's written is as before: a `\n` still starts a line.
+    ///
+    /// Dropping the `Raw` puts the terminal back as it was, and so does
+    /// the program's stopping, however it stops, panics included, but for
+    /// `SIGKILL`, which nothing can see coming. The `Raw` holds the
+    /// input, so it's read through the `Raw`, and there's never more than
+    /// one. If the input isn't a terminal, it's `Unsupported`.
+    export fn raw(&mut self) -> Result<Raw<'_>, Error> {
+        status(self.os_raw_enter())?;
+        Ok(Raw { stdin: self })
+    }
+
     /// Reads into `buf`, as `Read::read`: how many bytes, or an error, as
     /// `status` says.
     #[intrinsic]
@@ -67,7 +82,59 @@ impl Stdin {
 
     #[intrinsic]
     fn os_is_terminal(&self) -> bool;
+
+    /// Puts the terminal in raw mode, keeping how it was: 0, or why not.
+    #[intrinsic]
+    fn os_raw_enter(&mut self) -> u64;
+
+    /// Puts the terminal back as `os_raw_enter` found it.
+    #[intrinsic]
+    fn os_raw_leave(&mut self);
+
+    /// Waits until there's input to read, or `os_now()` of the clock is no
+    /// less than `deadline`: 1 if there's input, 0 if not, or a failure.
+    #[intrinsic]
+    fn os_wait(&mut self, deadline: u64) -> u64;
 }
+
+/// The terminal in raw mode, from `Stdin::raw`: keys come one at a time, as
+/// they're pressed. It holds the input, which is read through it. Dropping
+/// it puts the terminal back as it was.
+export struct Raw<'a> { stdin: &'a mut Stdin }
+
+impl<'a> Raw<'a> {
+    /// Waits until a key's been pressed, or `deadline` is past: `true` if
+    /// there's one to read, which `read` then gives at once, or `false` if
+    /// not. A game waits for its next key, or its next frame, whichever
+    /// comes first.
+    export fn wait(&mut self, deadline: crate::time::Instant) -> Result<bool, Error> {
+        let r = self.stdin.os_wait(deadline.nanos);
+        match failure(r) {
+            Some(e) => Err(e),
+            None => Ok(r == 1),
+        }
+    }
+}
+
+/// Puts the terminal back as it was. That can fail only if the terminal's
+/// gone, and then there's nothing to put back.
+impl<'a> Discard for Raw<'a> {
+    fn discard(self) { self.stdin.os_raw_leave() }
+}
+
+/// The keys pressed, as bytes, in UTF-8: a letter is its own, and a key
+/// such as an arrow a few, starting with escape, 27. A read waits for a key,
+/// and gives what's come.
+impl<'a> Read for Raw<'a> {
+    effect e = {};
+
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, Error> { self.stdin.read(buf) }
+}
+
+/// How big a terminal is, in characters: how many fit on a line, and how
+/// many lines fit.
+#[derive(Discard, Copy, Debug, Eq, Send, Sync)]
+export struct Size { export cols: u16, export rows: u16 }
 
 /// The program's input. It's read through a buffer, so a byte at a time
 /// is quick, and a read gives what one read of the operating system's
@@ -104,6 +171,17 @@ impl Stdout {
     /// or a pipe?
     export fn is_terminal(&self) -> bool { self.os_is_terminal() }
 
+    /// How big the terminal the output goes to is, now: it can change
+    /// while the program runs, as its window does. If the output isn't a
+    /// terminal, it's `Unsupported`.
+    export fn size(&self) -> Result<Size, Error> {
+        let r = self.os_size();
+        match failure(r) {
+            Some(e) => Err(e),
+            None => Ok(Size { cols: wrap(r >> 16), rows: wrap(r & 0xFFFF) }),
+        }
+    }
+
     /// Writes all of `buf`: 0, or an error, as `status` says.
     #[intrinsic]
     fn os_write(&mut self, buf: &[u8]) -> u64;
@@ -113,6 +191,11 @@ impl Stdout {
 
     #[intrinsic]
     fn os_is_terminal(&self) -> bool;
+
+    /// The terminal's columns, shifted up 16 bits, and its rows, or a
+    /// failure.
+    #[intrinsic]
+    fn os_size(&self) -> u64;
 }
 
 impl Stderr {

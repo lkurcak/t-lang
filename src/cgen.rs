@@ -32,8 +32,8 @@
 use crate::ast::{BinOp, FnDecl, UnOp};
 use crate::error::{Error, Span};
 use crate::intrinsic::{
-    ArgsOp, ArrayOp, AtomicOp, EnvOp, FsOp, Intrinsic, IntrinsicType, MessageOp, Output, OutputOp,
-    RawBufOp, ReadFileOp, SliceOp, SlotsOp, StdinOp, VolatileOp,
+    ArgsOp, ArrayOp, AtomicOp, ClockOp, EnvOp, FsOp, Intrinsic, IntrinsicType, MessageOp, Output,
+    OutputOp, RawBufOp, ReadFileOp, SliceOp, SlotsOp, StdinOp, VolatileOp,
 };
 use crate::mir::*;
 use crate::mono::{Executable, Shape, glue_name};
@@ -501,6 +501,8 @@ impl<'e> Gen<'e> {
                         | IntrinsicType::Args
                         | IntrinsicType::Env
                         | IntrinsicType::Fs
+                        | IntrinsicType::Clock
+                        | IntrinsicType::Entropy
                         | IntrinsicType::Threads,
                     ) => members.push_str(" uint8_t _;"),
                     Some(IntrinsicType::Box) | None => panic!("no C struct for `{t}`"),
@@ -1546,6 +1548,9 @@ impl<'e> Gen<'e> {
             Intrinsic::Stdin(op) => match op {
                 StdinOp::Read => "    return t_stdin_read(a1.ptr, a1.len);\n".to_string(),
                 StdinOp::IsTerminal => "    return isatty(0) == 1;\n".to_string(),
+                StdinOp::RawEnter => "    return t_raw_enter();\n".to_string(),
+                StdinOp::RawLeave => format!("    t_raw_leave();\n{unit}"),
+                StdinOp::Wait => "    return t_stdin_wait(a1);\n".to_string(),
             },
             Intrinsic::Output(out, op) => {
                 let (f, fd) = match out {
@@ -1556,6 +1561,7 @@ impl<'e> Gen<'e> {
                     OutputOp::Write => format!("    return t_out_write({f}, a1.ptr, a1.len);\n"),
                     OutputOp::Flush => format!("    return t_out_flush({f});\n"),
                     OutputOp::IsTerminal => format!("    return isatty({fd}) == 1;\n"),
+                    OutputOp::Size => format!("    return t_term_size({fd});\n"),
                 }
             }
             // What the program was started with, as `t_start_os` kept it:
@@ -1595,6 +1601,12 @@ impl<'e> Gen<'e> {
                 }
                 FsOp::Remove => "    return t_file_remove(a1.ptr, a1.len);\n".to_string(),
             },
+            Intrinsic::Clock(op) => match op {
+                ClockOp::Now => "    return t_clock_now();\n".to_string(),
+                ClockOp::SleepUntil => format!("    t_clock_sleep_until(a1);\n{unit}"),
+                ClockOp::UnixTime => "    return t_unix_time();\n".to_string(),
+            },
+            Intrinsic::EntropyFill => "    return t_entropy_fill(a1.ptr, a1.len);\n".to_string(),
             Intrinsic::ReadFile(op) => match op {
                 ReadFileOp::Read => "    return t_file_read(a0->p, a1.ptr, a1.len);\n".to_string(),
                 ReadFileOp::Close => format!("    t_file_close(a0.p);\n{unit}"),
@@ -1861,8 +1873,10 @@ impl<'e> Gen<'e> {
         let mut out = String::new();
         out.push_str("/* Written by `t build` (https://github.com/lkurcak/t-lang). */\n");
         if self.options.target == crate::Target::Hosted {
-            // Threads and `sched_yield`, which strict C11 leaves out.
+            // Threads and `sched_yield`, which strict C11 leaves out; and
+            // `getentropy` and the terminal's size, which POSIX does too.
             out.push_str("#define _POSIX_C_SOURCE 200809L\n");
+            out.push_str("#define _DEFAULT_SOURCE 1\n#define _DARWIN_C_SOURCE 1\n");
         }
         out.push_str(SHIM);
         out.push('\n');
