@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.67.0 (2026-11-07)
 
 Step 51: products of two unknowns. See
 [docs/51-products.md](docs/51-products.md).
