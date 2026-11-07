@@ -417,7 +417,7 @@ fn a_package_from_git_cant_link_outside_it() {
     );
     let err = fails(&app, &top.join("cache"));
     assert!(
-        err.contains("can't read `<g@") && err.contains("package `o`"),
+        err.contains("can't read `<repo@") && err.contains("package `o`"),
         "{err}"
     );
 }
@@ -540,4 +540,172 @@ fn fetching_runs_no_hooks() {
         .unwrap();
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert!(!marker.exists(), "a hook ran");
+}
+
+/// A `t.toml` line for a git dependency on the package in `sub`.
+fn dep_in(name: &str, repo: &Path, rev: &str, sub: &str) -> String {
+    format!(
+        "{name} = {{ git = \"{}\", rev = \"{rev}\", subdirectory = \"{sub}\" }}\n",
+        url(repo)
+    )
+}
+
+/// A package can be in a directory of its repository, not at its top.
+#[test]
+fn a_package_from_git_can_be_in_a_subdirectory() {
+    let top = scratch("subdirectory");
+    let rev = commit(
+        &top.join("libs"),
+        &[("README", "libraries\n"), ("deep/g/lib.t", &lib(42))],
+    );
+    let app = top.join("app");
+    write(
+        &app,
+        &[
+            ("main.t", MAIN),
+            (
+                "t.toml",
+                &manifest(&[dep_in("g", &top.join("libs"), &rev, "deep/g")]),
+            ),
+        ],
+    );
+    assert_eq!(runs(&app, &top.join("cache")), "42\n");
+}
+
+/// Packages in one repository share its checkout, and depend on each
+/// other by `path`; messages name the repository, which holds them all.
+#[test]
+fn packages_from_one_repository_share_its_checkout() {
+    let top = scratch("siblings");
+    let libs = top.join("libs");
+    let rev = commit(
+        &libs,
+        &[
+            ("base/lib.t", "export fn b() -> i64 { 41 }\n"),
+            (
+                "g/lib.t",
+                "export fn f() -> i64 with panic { base::b() + 1 }\n",
+            ),
+            (
+                "g/t.toml",
+                "[dependencies]\nbase = { path = \"../base\" }\n",
+            ),
+        ],
+    );
+    let app = top.join("app");
+    let main = "fn main(os: std::Os) -> Result<(), std::io::Error> {\n    \
+                let mut out = os.stdout;\n    \
+                out.line(&(g::f() + base::b()))?;\n    \
+                Result::Ok(())\n}\n";
+    write(
+        &app,
+        &[
+            ("main.t", main),
+            (
+                "t.toml",
+                &manifest(&[
+                    dep_in("base", &libs, &rev, "base"),
+                    dep_in("g", &libs, &rev, "g"),
+                ]),
+            ),
+        ],
+    );
+    let cache = top.join("cache");
+    assert_eq!(runs(&app, &cache), "83\n");
+    let slots: Vec<_> = std::fs::read_dir(cache.join("git")).unwrap().collect();
+    assert_eq!(slots.len(), 1, "one checkout");
+    // An error in one of them is shown by the repository's name.
+    let rev = commit(&libs, &[("base/lib.t", "export fn b() -> i64 { true }\n")]);
+    write(
+        &app,
+        &[(
+            "t.toml",
+            &manifest(&[
+                dep_in("base", &libs, &rev, "base"),
+                dep_in("g", &libs, &rev, "g"),
+            ]),
+        )],
+    );
+    let err = fails(&app, &cache);
+    assert!(
+        err.contains(&format!("<libs@{}>/base/lib.t", &rev[..7])),
+        "{err}"
+    );
+}
+
+/// All of a program's packages from one repository are of one commit: two
+/// would be two versions of whatever they share.
+#[test]
+fn packages_from_one_repository_are_of_one_rev() {
+    let top = scratch("subdirectory_revs");
+    let libs = top.join("libs");
+    let old = commit(&libs, &[("a/lib.t", &lib(1)), ("g/lib.t", &lib(2))]);
+    let new = commit(&libs, &[("g/lib.t", &lib(3))]);
+    let app = top.join("app");
+    write(
+        &app,
+        &[
+            ("main.t", MAIN),
+            (
+                "t.toml",
+                &manifest(&[dep_in("a", &libs, &old, "a"), dep_in("g", &libs, &new, "g")]),
+            ),
+        ],
+    );
+    let err = fails(&app, &top.join("cache"));
+    assert!(err.contains("two versions of"), "{err}");
+}
+
+/// A subdirectory without a `lib.t` is no package, and one with a
+/// `main.t` is a program.
+#[test]
+fn a_subdirectory_is_a_library() {
+    let top = scratch("subdirectory_not_lib");
+    let libs = top.join("libs");
+    let rev = commit(
+        &libs,
+        &[("g/lib.t", &lib(1)), ("p/main.t", "fn main() {}\n")],
+    );
+    let app = top.join("app");
+    for (sub, says) in [
+        ("h", "the first file of package `g`"),
+        ("p", "is a program"),
+    ] {
+        write(
+            &app,
+            &[
+                ("main.t", MAIN),
+                ("t.toml", &manifest(&[dep_in("g", &libs, &rev, sub)])),
+            ],
+        );
+        let err = fails(&app, &top.join("cache"));
+        assert!(err.contains(says), "{sub}: {err}");
+        assert!(
+            err.contains(&format!("<libs@{}>/{sub}", &rev[..7])),
+            "{err}"
+        );
+    }
+}
+
+/// A subdirectory that's a link is a file holding its target, in a
+/// checkout: not a way out of it.
+#[cfg(unix)]
+#[test]
+fn a_subdirectory_cant_link_outside_the_repository() {
+    let top = scratch("subdirectory_link");
+    write(&top, &[("outside/lib.t", &lib(1))]);
+    let repo = top.join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    std::os::unix::fs::symlink(top.join("outside"), repo.join("inner")).unwrap();
+    let rev = commit(&repo, &[("README", "a link\n")]);
+    let app = top.join("app");
+    write(
+        &app,
+        &[
+            ("main.t", MAIN),
+            ("t.toml", &manifest(&[dep_in("g", &repo, &rev, "inner")])),
+        ],
+    );
+    let err = fails(&app, &top.join("cache"));
+    assert!(err.contains("can't read `<repo@"), "{err}");
 }

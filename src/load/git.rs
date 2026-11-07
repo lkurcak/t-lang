@@ -67,15 +67,33 @@ pub(crate) fn is_rev(rev: &str) -> bool {
     matches!(rev.len(), 40 | 64) && rev.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
-/// The directory `url` at `rev` is checked out to, in `cache`.
-pub(crate) fn checkout(cache: &Path, url: &str, rev: &str) -> PathBuf {
-    // A name to know it by, and a hash to tell it from others of that
-    // name: FNV-1a, which is the same in every build of T.
+/// Is `sub` a directory in a checkout, as a manifest names it: names
+/// separated by `/`, and none of them `.` or `..`, so it can't lead out,
+/// and means the same on every system.
+pub(crate) fn is_subdirectory(sub: &str) -> bool {
+    sub.split('/').all(|n| {
+        !matches!(n, "" | "." | "..")
+            && !n.contains(['\\', ':'])
+            && !n.chars().any(char::is_control)
+    })
+}
+
+/// The repository's name, as `url` ends: `t-libs` for
+/// `https://github.com/lkurcak/t-libs.git`, if it has one.
+pub(crate) fn name(url: &str) -> Option<String> {
     let last = url.trim_end_matches(".git").rsplit(['/', ':']).next();
     let name: String = (last.unwrap_or("").chars())
         .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
         .take(32)
         .collect();
+    (!name.is_empty()).then_some(name)
+}
+
+/// The directory `url` at `rev` is checked out to, in `cache`.
+pub(crate) fn checkout(cache: &Path, url: &str, rev: &str) -> PathBuf {
+    // A name to know it by, and a hash to tell it from others of that
+    // name: FNV-1a, which is the same in every build of T.
+    let name = name(url).unwrap_or_default();
     let hash = url.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
         (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
     });
@@ -221,6 +239,28 @@ mod tests {
         ] {
             assert!(!is_rev(rev), "{rev}");
         }
+    }
+
+    #[test]
+    fn subdirectories_are_names_inside() {
+        for sub in ["g", "libs/grid", "a.b/c-d_e"] {
+            assert!(is_subdirectory(sub), "{sub}");
+        }
+        for sub in [
+            "", ".", "..", "../g", "a/../b", "/g", "g/", "a//b", "a\\b", "c:g", "a\nb",
+        ] {
+            assert!(!is_subdirectory(sub), "{sub}");
+        }
+    }
+
+    #[test]
+    fn repositories_are_named_as_their_urls_end() {
+        assert_eq!(
+            name("https://github.com/x/t-libs.git").as_deref(),
+            Some("t-libs")
+        );
+        assert_eq!(name("git@github.com:x/t-libs").as_deref(), Some("t-libs"));
+        assert_eq!(name("file:///"), None);
     }
 
     #[test]

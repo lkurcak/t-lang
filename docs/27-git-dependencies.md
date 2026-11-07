@@ -33,9 +33,9 @@ What isn't allowed follows from that:
 ```text
 error: a `rev` is a commit's full hash, 40 lowercase hex digits (or 64),
        not `0123abc`
-error: a dependency has only a `path`, or a `git` and a `rev`, not a
-       `branch`: a branch or tag can move, so a `git` dependency is pinned
-       by its `rev`, for now
+error: a dependency has only a `path`, or a `git`, a `rev` and maybe a
+       `subdirectory`, not a `branch`: a branch or tag can move, so a `git`
+       dependency is pinned by its `rev`, for now
 ```
 
 A short hash names one commit today and possibly two tomorrow, as the
@@ -64,12 +64,12 @@ two `t`s fetching the same commit at once both find all of it or nothing,
 and a fetch that fails leaves nothing to be taken for the package.
 
 `t check`, `t run` and the editor all fetch what's missing. In messages, a
-checkout's files are shown by the package's name and rev, not by where
+checkout's files are shown by the repository's name and rev, not by where
 the cache happens to be:
 
 ```text
 type error: expected `i64`, found `bool`
- --> <hashmap@5f0c1a2>/lib.t:1:24
+ --> <t-hashmap@5f0c1a2>/lib.t:1:24
 ```
 
 ## Fetching runs nothing
@@ -173,7 +173,6 @@ git can depend on others from git, which are fetched in turn.
 
 - `branch` and `tag`, with a lockfile and `t update`; versions and a
   registry.
-- A package in a repository's subdirectory (a `dir` key).
 - Two versions of one package in a program.
 - Cleaning the cache; fetching without checking (`t fetch`).
 - Submodules: a checkout is the commit's own files. (A filter the user's
