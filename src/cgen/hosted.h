@@ -53,7 +53,6 @@ static uint64_t t_io_fail(int e) {
     case EEXIST: kind = 2; break;
     case EPIPE: kind = 3; break;
     case ENOSYS: case ENOTSUP: kind = 6; break;
-    case EINVAL: kind = 7; break;
     default: kind = 8; break;
     }
     return ((uint64_t)1 << 63) | (kind << 32) | (uint32_t)e;

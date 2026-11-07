@@ -905,7 +905,6 @@ pub fn io_failure(e: &std::io::Error) -> u64 {
         K::InvalidData => 4,
         K::UnexpectedEof => 5,
         K::Unsupported => 6,
-        K::InvalidInput => 7,
         _ => 8,
     };
     let code = e.raw_os_error().unwrap_or(0) as u32;

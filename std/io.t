@@ -209,7 +209,6 @@ pub fn failure(r: u64) -> Option<Error> {
         4 => ErrorKind::InvalidData,
         5 => ErrorKind::UnexpectedEnd,
         6 => ErrorKind::Unsupported,
-        7 => ErrorKind::InvalidInput,
         _ => ErrorKind::Other,
     };
     Some(Error::os(kind, wrap(r & 0x7FFFFFFF)))
