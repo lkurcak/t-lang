@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.66.0 (2026-11-07)
 
 Step 50: packages in a repository's subdirectory. See
 [docs/50-git-subdirectories.md](docs/50-git-subdirectories.md).
