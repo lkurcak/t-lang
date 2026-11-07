@@ -259,6 +259,22 @@ fn same(
     let mut command = std::process::Command::new(exe);
     #[cfg(unix)]
     std::os::unix::process::CommandExt::arg0(&mut command, expect::PROGRAM);
+    // Few files open at once, so a program that never closes the ones it
+    // opens runs out, as the interpreter's oracle would say it leaks them.
+    #[cfg(unix)]
+    unsafe {
+        std::os::unix::process::CommandExt::pre_exec(&mut command, || {
+            let mut limit = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            if libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) == 0 {
+                limit.rlim_cur = limit.rlim_cur.min(256);
+                libc::setrlimit(libc::RLIMIT_NOFILE, &limit);
+            }
+            Ok(())
+        });
+    }
     // On top of what it inherits, such as a sanitizer's options: so a
     // program reads only the variables its test gives.
     // A directory of its own, holding the files it starts with.
