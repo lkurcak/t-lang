@@ -228,6 +228,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
 // error: can't prove `i < self.len()` for argument `i` of `index`
 ```
 
+So did any call given a `&mut` that isn't a place, as `f({ &mut l })`.
 Now a call by path lends as one by name does, and a call-scoped `&mut`
 argument whose place isn't known is a new value after the call, of which
 nothing's known.

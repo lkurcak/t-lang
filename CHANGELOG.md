@@ -31,9 +31,10 @@ Step 53: refinements in type arguments. See
 ### Fixed
 
 - A soundness hole since 0.43.0: a call by path that lends a `&mut`,
-  `List::push(&mut l, x)`, learned what the callee ensures of the value
-  after the call as if of the value before, `l.len() == l.len() + 1`, from
-  which anything followed.
+  `List::push(&mut l, x)`, or any call given a `&mut` that isn't a place,
+  `f({ &mut l })`, learned what the callee ensures of the value after the
+  call as if of the value before, `l.len() == l.len() + 1`, from which
+  anything followed.
 
 ## 0.68.0 (2026-11-07)
 

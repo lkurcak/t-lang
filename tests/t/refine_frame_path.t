@@ -11,10 +11,18 @@ fn ones(l: &mut List<u8>) ensures l.len() == old(l.len()) {
     }
 }
 
-fn main(os: std::Os) -> Result<(), std::io::Error> {
+// What a call by path ensures of what it's lent is known after it.
+fn last(l: &mut List<u8>) -> u8 with alloc {
+    let n = l.len();
+    List::push(&mut *l, 4u8);
+    l[n]
+}
+
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut out = os.stdout;
     let mut l: List<u8> = List::filled(3, 0u8);
     ones(&mut l);
     out.line(&l[1])?; // expect: 1
+    out.line(&last(&mut l))?; // expect: 4
     Ok(())
 }
