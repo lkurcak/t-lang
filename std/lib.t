@@ -12,17 +12,19 @@
 //! Nothing here is in the prelude: a program says what it uses.
 
 export mod env;
+export mod fs;
 export mod io;
 pub mod rt;
 export mod thread;
 
 use crate::env::{Args, Env};
+use crate::fs::Fs;
 use crate::io::{Stderr, Stdin, Stdout};
 use crate::thread::Threads;
 
 /// What a program can do to the world outside it, and what it's told by
 /// it: the operating system's streams, the program's arguments and
-/// environment, and starting threads. `fn main(os: Os)` is given the only one there is,
+/// environment, its files, and starting threads. `fn main(os: Os)` is given the only one there is,
 /// and passes on what each part of the program needs.
 #[derive(Discard, Send, Sync)]
 export struct Os {
@@ -36,6 +38,8 @@ export struct Os {
     export args: Args,
     /// The variables of its environment.
     export env: Env,
+    /// The files it can read and write.
+    export fs: Fs,
     /// The right to start threads.
     export threads: Threads,
 }

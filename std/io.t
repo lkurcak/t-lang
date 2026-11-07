@@ -13,6 +13,7 @@ use core::fmt::Display;
 use core::io::Read;
 use core::num::wrap;
 
+use alloc::list::List;
 use alloc::string::String;
 
 export use core::io::{Error, ErrorKind};
@@ -39,6 +40,20 @@ impl Stdin {
     #[blame_caller]
     export fn read_line(&mut self, line: &mut String) -> Result<bool, Error> with alloc {
         alloc::io::read_line(self, line)
+    }
+
+    /// Reads all the input that's left onto the end of `buf`, and gives
+    /// how many bytes that was: `alloc::io::read_to_end`.
+    #[blame_caller]
+    export fn read_to_end(&mut self, buf: &mut List<u8>) -> Result<usize, Error> with alloc {
+        alloc::io::read_to_end(self, buf)
+    }
+
+    /// Reads all the input that's left onto the end of `s`, which must be
+    /// UTF-8: `alloc::io::read_to_string`.
+    #[blame_caller]
+    export fn read_to_string(&mut self, s: &mut String) -> Result<usize, Error> with alloc {
+        alloc::io::read_to_string(self, s)
     }
 
     /// Is the input a terminal, that someone types into, rather than a
@@ -182,7 +197,7 @@ impl fmt::Write for Stderr {
 /// it worked, and that's how many bytes; with bit 63, it failed, with the
 /// operating system's number for why in the low 32 bits, and which
 /// `ErrorKind` that is, by its place in the enum, in the 8 above them.
-fn failure(r: u64) -> Option<Error> {
+pub fn failure(r: u64) -> Option<Error> {
     if r >> 63 == 0 {
         return None;
     }
@@ -194,13 +209,23 @@ fn failure(r: u64) -> Option<Error> {
         4 => ErrorKind::InvalidData,
         5 => ErrorKind::UnexpectedEnd,
         6 => ErrorKind::Unsupported,
+        7 => ErrorKind::InvalidInput,
         _ => ErrorKind::Other,
     };
     Some(Error::os(kind, wrap(r & 0x7FFFFFFF)))
 }
 
+/// The error `r` says, as `failure` reads it, from an intrinsic that
+/// gives back only failures.
+pub fn error(r: u64) -> Error {
+    match failure(r) {
+        Some(e) => e,
+        None => Error::new(ErrorKind::Other),
+    }
+}
+
 /// `Ok`, or the error `r` says, as `failure` reads it.
-fn status(r: u64) -> Result<(), Error> {
+pub fn status(r: u64) -> Result<(), Error> {
     match failure(r) {
         Some(e) => Err(e),
         None => Ok(()),

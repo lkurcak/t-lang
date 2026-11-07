@@ -32,8 +32,8 @@
 use crate::ast::{BinOp, FnDecl, UnOp};
 use crate::error::{Error, Span};
 use crate::intrinsic::{
-    ArgsOp, ArrayOp, AtomicOp, EnvOp, Intrinsic, IntrinsicType, MessageOp, Output, OutputOp,
-    RawBufOp, SliceOp, SlotsOp, StdinOp, VolatileOp,
+    ArgsOp, ArrayOp, AtomicOp, EnvOp, FsOp, Intrinsic, IntrinsicType, MessageOp, Output, OutputOp,
+    RawBufOp, ReadFileOp, SliceOp, SlotsOp, StdinOp, VolatileOp,
 };
 use crate::mir::*;
 use crate::mono::{Executable, Shape, glue_name};
@@ -487,8 +487,11 @@ impl<'e> Gen<'e> {
                     Some(IntrinsicType::Slots) => {
                         members.push_str(" void **items; uint64_t len; uint64_t cap;");
                     }
-                    // Where the thread's packet is: see `start`.
-                    Some(IntrinsicType::JoinHandle) => members.push_str(" void *p;"),
+                    // Where the thread's packet is: see `start`; where the
+                    // file's `struct t_file` is.
+                    Some(IntrinsicType::JoinHandle | IntrinsicType::ReadFile) => {
+                        members.push_str(" void *p;")
+                    }
                     // Nothing: the stream or capability is the machine's.
                     Some(
                         IntrinsicType::Message
@@ -497,6 +500,7 @@ impl<'e> Gen<'e> {
                         | IntrinsicType::Stderr
                         | IntrinsicType::Args
                         | IntrinsicType::Env
+                        | IntrinsicType::Fs
                         | IntrinsicType::Threads,
                     ) => members.push_str(" uint8_t _;"),
                     Some(IntrinsicType::Box) | None => panic!("no C struct for `{t}`"),
@@ -1573,6 +1577,27 @@ impl<'e> Gen<'e> {
                      r.f0.ptr = (void *)v;\n    r.f0.len = eq;\n    \
                      r.f1.ptr = (void *)(v + eq + 1);\n    r.f1.len = strlen(v + eq + 1);\n    return r;\n"
                 ),
+            },
+            Intrinsic::Fs(op) => match op {
+                FsOp::Open => {
+                    let (ok, err) = (self.variant(ret, "Ok"), self.variant(ret, "Err"));
+                    let file = self.variants(ret)[ok].1[0].clone();
+                    let f = self.cty(&file);
+                    format!(
+                        "    struct t_file *p = NULL;\n    \
+                         uint64_t e = t_file_open(a1.ptr, a1.len, &p, s);\n    \
+                         if (e != 0) return ({r}){{.tag = {err}, .u.v{err} = {{e}}}};\n    \
+                         return ({r}){{.tag = {ok}, .u.v{ok} = {{({f}){{p}}}}}};\n"
+                    )
+                }
+                FsOp::Write => {
+                    "    return t_file_write(a1.ptr, a1.len, a2.ptr, a2.len, a3);\n".to_string()
+                }
+                FsOp::Remove => "    return t_file_remove(a1.ptr, a1.len);\n".to_string(),
+            },
+            Intrinsic::ReadFile(op) => match op {
+                ReadFileOp::Read => "    return t_file_read(a0->p, a1.ptr, a1.len);\n".to_string(),
+                ReadFileOp::Close => format!("    t_file_close(a0.p);\n{unit}"),
             },
             // An `Unsafe` is a struct of what's in it (lemma U5 of
             // docs/46-unsafe-cell.md).

@@ -261,7 +261,13 @@ fn same(
     std::os::unix::process::CommandExt::arg0(&mut command, expect::PROGRAM);
     // On top of what it inherits, such as a sanitizer's options: so a
     // program reads only the variables its test gives.
+    // A directory of its own, holding the files it starts with.
+    let cwd = t_lang::scratch_dir("files");
+    for (path, bytes) in &want.files {
+        fs::write(cwd.join(path), bytes).unwrap();
+    }
     let mut child = command
+        .current_dir(&cwd)
         .args(&want.args)
         .envs(want.env.iter().map(|(n, v)| (n, v)))
         .stdin(std::process::Stdio::piped())
@@ -275,6 +281,7 @@ fn same(
         let _ = stdin.write_all(&want.input);
     }
     let out = child.wait_with_output().unwrap();
+    let _ = fs::remove_dir_all(&cwd);
     let mut diffs = Vec::new();
     let (got_out, got_err) = (lines(&out.stdout), lines(&out.stderr));
     if got_out != run.output {

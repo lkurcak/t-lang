@@ -8,6 +8,7 @@
 #include <pthread.h>
 #include <sched.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 extern char **environ;
 
@@ -52,7 +53,8 @@ static uint64_t t_io_fail(int e) {
     case EEXIST: kind = 2; break;
     case EPIPE: kind = 3; break;
     case ENOSYS: case ENOTSUP: kind = 6; break;
-    default: kind = 7; break;
+    case EINVAL: kind = 7; break;
+    default: kind = 8; break;
     }
     return ((uint64_t)1 << 63) | (kind << 32) | (uint32_t)e;
 }
@@ -100,6 +102,105 @@ static uint64_t t_out_write(FILE *f, const uint8_t *p, uint64_t n) {
 static uint64_t t_out_flush(FILE *f) {
     errno = 0;
     return fflush(f) == 0 ? 0 : t_io_fail(errno ? errno : EIO);
+}
+
+/* A file open to be read (docs/48-files.md): where a `ReadFile` points.
+ * Only the one `ReadFile` reaches it, by `&mut` to read, or by value to
+ * close, so no two threads do at once. */
+struct t_file {
+    int fd;
+    size_t at, len;
+    uint8_t buf[4096];
+};
+
+/* Copies path `p`, `n` bytes with no `\0` in them, into `into` with a `\0`
+ * after: 0, or `ENAMETOOLONG` if it doesn't fit, which no path that long
+ * would anyway, as the operating system's are shorter. */
+static int t_path(char into[4096], const uint8_t *p, uint64_t n) {
+    if (n >= 4096) return ENAMETOOLONG;
+    memcpy(into, p, n);
+    into[n] = 0;
+    return 0;
+}
+
+/* Opens the file at path `p`, `n` bytes long, to be read, into `*f`: 0, or
+ * the failure, as `t_io_fail` gives it. Its buffer is memory: if there's
+ * none, the program stops, at `site`. */
+static uint64_t t_file_open(const uint8_t *p, uint64_t n, struct t_file **f, uint32_t site) {
+    char path[4096];
+    int e = t_path(path, p, n);
+    if (e != 0) return t_io_fail(e);
+    int fd;
+    do fd = open(path, O_RDONLY | O_CLOEXEC); while (fd < 0 && errno == EINTR);
+    if (fd < 0) return t_io_fail(errno);
+    *f = t_alloc(sizeof **f, _Alignof(struct t_file), site);
+    (*f)->fd = fd;
+    (*f)->at = (*f)->len = 0;
+    return 0;
+}
+
+/* Reads into `buf`, `n` bytes long, from `f`, as `t_stdin_read` does from
+ * the input. */
+static uint64_t t_file_read(struct t_file *f, uint8_t *buf, uint64_t n) {
+    if (n == 0) return 0;
+    if (f->at == f->len) {
+        uint8_t *into = n >= sizeof f->buf ? buf : f->buf;
+        size_t len = n >= sizeof f->buf ? (size_t)n : sizeof f->buf;
+        ssize_t r;
+        do r = read(f->fd, into, len); while (r < 0 && errno == EINTR);
+        if (r < 0) return t_io_fail(errno);
+        if (into == buf) return (uint64_t)r;
+        f->at = 0;
+        f->len = (size_t)r;
+        if (r == 0) return 0;
+    }
+    size_t k = f->len - f->at;
+    if (k > n) k = (size_t)n;
+    memcpy(buf, f->buf + f->at, k);
+    f->at += k;
+    return k;
+}
+
+/* Closes `f`, and frees it. A file only read loses nothing if `close`
+ * fails, and its descriptor is gone either way: it's never closed again. */
+static void t_file_close(struct t_file *f) {
+    (void)close(f->fd);
+    t_free(f, sizeof *f, _Alignof(struct t_file));
+}
+
+/* Writes all `n` bytes at `b` to the file at path `p`, `pn` bytes long,
+ * made if there's none, after what it holds if `append`, or else instead
+ * of it: 0, or the first failure, closing it included. */
+static uint64_t t_file_write(const uint8_t *p, uint64_t pn, const uint8_t *b, uint64_t n,
+                             bool append) {
+    char path[4096];
+    int e = t_path(path, p, pn);
+    if (e != 0) return t_io_fail(e);
+    int flags = O_WRONLY | O_CREAT | O_CLOEXEC | (append ? O_APPEND : O_TRUNC);
+    int fd;
+    do fd = open(path, flags, 0666); while (fd < 0 && errno == EINTR);
+    if (fd < 0) return t_io_fail(errno);
+    uint64_t failed = 0;
+    while (n > 0) {
+        ssize_t r = write(fd, b, n);
+        if (r < 0 && errno == EINTR) continue;
+        if (r < 0) {
+            failed = t_io_fail(errno);
+            break;
+        }
+        b += r;
+        n -= (uint64_t)r;
+    }
+    if (close(fd) != 0 && failed == 0 && errno != EINTR) failed = t_io_fail(errno);
+    return failed;
+}
+
+/* Removes the file at path `p`, `n` bytes long: 0, or the failure. */
+static uint64_t t_file_remove(const uint8_t *p, uint64_t n) {
+    char path[4096];
+    int e = t_path(path, p, n);
+    if (e != 0) return t_io_fail(e);
+    return unlink(path) == 0 ? 0 : t_io_fail(errno);
 }
 
 /* What the program was started with (docs/47-io.md): its name, then its

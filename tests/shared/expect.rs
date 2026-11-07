@@ -13,6 +13,10 @@
 //!   started with: the interpreter's has no others, but a compiled
 //!   program's has those of the process that runs it too, so a program
 //!   reads only these.
+//! - `// file: <path>=<line>` — one per line of a file the program finds
+//!   when it starts, in order, each with a line break after it: the
+//!   interpreter's files are in memory, in one directory; a compiled
+//!   program is started in a new directory holding them.
 //! - `// error: <text>` — the program must fail (to parse, to type-check, or at
 //!   runtime) with an error whose rendered message contains `<text>`, not
 //!   counting the lines of source it shows, which hold the comment. Any
@@ -82,6 +86,8 @@ pub struct Expectations {
     pub args: Vec<String>,
     /// The environment, each `// env:`, split at its first `=`.
     pub env: Vec<(String, String)>,
+    /// The files, each of its `// file:` lines.
+    pub files: std::collections::BTreeMap<String, Vec<u8>>,
     pub error: Option<String>,
     pub warnings: Vec<String>,
     pub tests: Vec<String>,
@@ -90,12 +96,14 @@ pub struct Expectations {
 impl Expectations {
     /// The streams, arguments and environment the program is run with.
     pub fn terminal(&self) -> t_lang::interp::Captured {
-        t_lang::interp::Captured::new(
+        let mut term = t_lang::interp::Captured::new(
             self.input.clone(),
             PROGRAM,
             self.args.clone(),
             self.env.clone(),
-        )
+        );
+        term.files = self.files.clone();
+        term
     }
 
     pub fn of(src: &str) -> Expectations {
@@ -131,6 +139,19 @@ impl Expectations {
                     None => (v, String::new()),
                 })
                 .collect(),
+            files: src
+                .lines()
+                .filter_map(|l| l.find("// file: ").map(|i| &l[i + "// file: ".len()..]))
+                .fold(
+                    Default::default(),
+                    |mut files: std::collections::BTreeMap<_, Vec<u8>>, l| {
+                        let (path, line) = l.split_once('=').unwrap_or((l.trim(), ""));
+                        let file = files.entry(path.trim().to_string()).or_default();
+                        file.extend_from_slice(line.as_bytes());
+                        file.push(b'\n');
+                        files
+                    },
+                ),
             error: src.lines().find_map(|l| directive(l, "// error: ")),
             warnings: src
                 .lines()

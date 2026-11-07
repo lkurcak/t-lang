@@ -673,9 +673,13 @@ impl<'p> Mono<'p> {
                 .and_then(|rest| rest.split_once(">::"))
                 .filter(|(ty, _)| !ty.contains(" as "))
                 .map(|(ty, _)| ty.split("::<").next().unwrap_or(ty));
+            // A copy of a library's generic function, a trait's method of
+            // one of its generic types too: `<List::<u8> as Discard>::discard`.
+            let copy_of = self.copies.get(name).map(|c| c.of.as_str());
             builtin
                 || self.info.library_symbols.contains(name)
                 || self.info.library_symbols.contains(of)
+                || copy_of.is_some_and(|of| self.info.library_symbols.contains(of))
                 || inherent.is_some_and(|ty| self.info.library_symbols.contains(ty))
         };
         let mut used: HashSet<String> = roots.into_iter().collect();
