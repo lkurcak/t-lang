@@ -8,10 +8,11 @@ use std::os::fd::{FromRawFd, OwnedFd, RawFd};
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
-/// Reads a key in raw mode, after showing the terminal's size, and whether
-/// a key came before a deadline 50 ms off; then stops as the key says: `p`
-/// panics, `e` gives back an error, anything else returns. It says
-/// `ready` once raw, and what it read.
+/// Reads a key in raw mode, after showing the terminal's size, whether a
+/// key came before a deadline 50 ms off, and whether one came before a
+/// deadline 20 s off, which it should, as one's pressed meanwhile; then
+/// stops as the key says: `p` panics, `e` gives back an error, anything
+/// else returns. It says `ready` once raw, and what it read.
 const PROGRAM: &str = r#"
 use core::io::Read;
 use core::time::Duration;
@@ -27,6 +28,8 @@ fn main(os: std::Os) -> Result<(), Error> {
     out.line(&"ready")?;
     let early = raw.wait(clock.now().add(Duration::from_millis(50)))?;
     out.line(&f"early {early}")?;
+    let came = raw.wait(clock.now().add(Duration::from_secs(20)))?;
+    out.line(&f"came {came}")?;
     let mut b = [0u8; 1];
     let n = raw.read(b.as_mut_slice())?;
     out.line(&f"got {n} {b[0]}")?;
@@ -220,6 +223,7 @@ fn a_key_at_a_time_then_dropped() {
         for line in [
             "size 80x24",
             "early false",
+            "came true",
             "got 1 113",
             "more false",
             "done",
