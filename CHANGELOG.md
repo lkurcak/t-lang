@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.65.0 (2026-11-07)
 
 Step 49: time, entropy and the terminal. See
 [docs/49-time-entropy-terminal.md](docs/49-time-entropy-terminal.md).
