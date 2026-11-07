@@ -27,6 +27,11 @@ cc = "1.8.0"
 tree-sitter = "0.27"
 tree-sitter-t = { path = "editors/tree-sitter-t/bindings/rust" }
 
+[target.'cfg(unix)'.dev-dependencies]
+# To start compiled test programs with few files allowed open, so one that
+# never closes them runs out (tests/compiled.rs).
+libc = "0.2"
+
 # The tests check each of about a thousand programs, and the core library
 # with it: unoptimised, that's minutes. Overflow checks and debug
 # assertions stay on, as in any test build; `cargo build` stays quick.

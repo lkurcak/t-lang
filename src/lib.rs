@@ -616,6 +616,9 @@ struct Process {
     /// What's wrong with the arguments or the environment, if one isn't
     /// UTF-8.
     not_unicode: Option<String>,
+    /// The files open to be read, by number, each through a buffer, as a
+    /// compiled program's are; `None` once closed.
+    files: Vec<Option<std::io::BufReader<std::fs::File>>>,
 }
 
 impl Process {
@@ -651,6 +654,7 @@ impl Process {
             args,
             env,
             not_unicode,
+            files: Vec::new(),
         }
     }
 }
@@ -701,5 +705,50 @@ impl interp::Terminal for Process {
 
     fn not_unicode(&self) -> Option<&str> {
         self.not_unicode.as_deref()
+    }
+
+    fn open(&mut self, path: &str) -> std::io::Result<usize> {
+        let file = std::fs::File::open(path)?;
+        self.files.push(Some(std::io::BufReader::new(file)));
+        Ok(self.files.len() - 1)
+    }
+
+    fn read_file(&mut self, file: usize, buf: &mut [u8]) -> std::io::Result<usize> {
+        use std::io::Read;
+        match self.files.get_mut(file) {
+            Some(Some(f)) => loop {
+                match f.read(buf) {
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                    r => break r,
+                }
+            },
+            _ => panic!("a read of file {file}, which isn't open"),
+        }
+    }
+
+    fn close(&mut self, file: usize) {
+        match self.files.get_mut(file) {
+            Some(f @ Some(_)) => *f = None,
+            _ => panic!("file {file} closed, which isn't open"),
+        }
+    }
+
+    fn write_file(&mut self, path: &str, bytes: &[u8], append: bool) -> std::io::Result<()> {
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .append(append)
+            .truncate(!append)
+            .open(path)?;
+        file.write_all(bytes)
+    }
+
+    fn remove(&mut self, path: &str) -> std::io::Result<()> {
+        std::fs::remove_file(path)
+    }
+
+    fn files_open(&self) -> usize {
+        self.files.iter().filter(|f| f.is_some()).count()
     }
 }

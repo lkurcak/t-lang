@@ -15,6 +15,8 @@ export enum core::io::ErrorKind {
     UnexpectedEnd,
     /// It can't be done here: on this operating system, or this stream.
     Unsupported,
+    /// What it was given can't be right: a path with a `\0` in it, say.
+    InvalidInput,
     /// Something else.
     Other,
 }
@@ -299,6 +301,75 @@ fn main(os: std::Os) -> core::result::Result::<(), core::io::Error> with panic {
     }
 }
 
+/// Its values, by reference, front to back.
+export fn <[u8]>::iter(&self) -> core::slice::Iter::<u8> {
+    let _0: Iter<u8>;
+    let _1: &[u8]; // self
+    bb0: {
+        _0 = core::slice::Iter::<u8> { rest: copy _1 };
+        dead _1;
+        return;
+    }
+}
+
+fn <core::slice::Iter::<u8> as core::iter::Iterator>::next<'a>(
+    &mut self,
+) -> core::option::Option::<&u8> {
+    let _0: Option<&u8>;
+    let _1: &mut Iter<u8>; // self
+    let _2: &[u8]; // rest
+    let _3: &[u8];
+    let _4: Option<Split<u8>>;
+    let _5: usize;
+    let _6: &[u8];
+    let _7: &[u8]; // head
+    let _8: &[u8]; // tail
+    let _9: ();
+    let _10: usize;
+    let _11: &[u8];
+    bb0: {
+        _3 = copy (*_1).0;
+        _2 = copy _3;
+        dead _3;
+        _5 = 1_usize;
+        _6 = &(*_2);
+        _4 = <[u8]>::split_at(move _6, move _5);
+        inspect _4;
+        inspect _4;
+        match _4 { #1({ 0: _, 1: _ }) => bb1, #0 => bb2 };
+    }
+    bb1: {
+        _7 = copy (_4 as #1).0.0;
+        _8 = copy (_4 as #1).0.1;
+        kept (_4 as #1).0;
+        kept _4;
+        (*_1).0 = copy _8;
+        _9 = ();
+        dead _9;
+        _10 = 0_usize;
+        _11 = &(*_7);
+        _0 = <[u8]>::get(move _11, move _10);
+        dead _11;
+        dead _10;
+        dead _8;
+        dead _7;
+        goto bb3;
+    }
+    bb2: {
+        kept _4;
+        _0 = core::option::Option::<&u8>::None;
+        goto bb3;
+    }
+    bb3: {
+        dead _6;
+        dead _5;
+        dead _4;
+        dead _2;
+        dead _1;
+        return;
+    }
+}
+
 fn <core::result::Result::<(), core::io::Error> as core::ops::Try>::branch(
     self,
 ) -> core::ops::ControlFlow::<core::result::Result<!, core::io::Error>, ()> {
@@ -443,63 +514,9 @@ export fn <[u8; 3]>::iter(&self) -> core::slice::Iter::<u8> {
     }
 }
 
-fn <core::slice::Iter::<u8> as core::iter::Iterator>::next<'a>(
-    &mut self,
-) -> core::option::Option::<&u8> {
-    let _0: Option<&u8>;
-    let _1: &mut Iter<u8>; // self
-    let _2: &[u8]; // rest
-    let _3: &[u8];
-    let _4: Option<Split<u8>>;
-    let _5: usize;
-    let _6: &[u8];
-    let _7: &[u8]; // head
-    let _8: &[u8]; // tail
-    let _9: ();
-    let _10: usize;
-    let _11: &[u8];
-    bb0: {
-        _3 = copy (*_1).0;
-        _2 = copy _3;
-        dead _3;
-        _5 = 1_usize;
-        _6 = &(*_2);
-        _4 = <[u8]>::split_at(move _6, move _5);
-        inspect _4;
-        inspect _4;
-        match _4 { #1({ 0: _, 1: _ }) => bb1, #0 => bb2 };
-    }
-    bb1: {
-        _7 = copy (_4 as #1).0.0;
-        _8 = copy (_4 as #1).0.1;
-        kept (_4 as #1).0;
-        kept _4;
-        (*_1).0 = copy _8;
-        _9 = ();
-        dead _9;
-        _10 = 0_usize;
-        _11 = &(*_7);
-        _0 = <[u8]>::get(move _11, move _10);
-        dead _11;
-        dead _10;
-        dead _8;
-        dead _7;
-        goto bb3;
-    }
-    bb2: {
-        kept _4;
-        _0 = core::option::Option::<&u8>::None;
-        goto bb3;
-    }
-    bb3: {
-        dead _6;
-        dead _5;
-        dead _4;
-        dead _2;
-        dead _1;
-        return;
-    }
-}
+/// All its values, as a slice.
+#[intrinsic]
+export fn <[u8; 3]>::as_slice(&self) -> { s: &[u8] | s.len() == self.len() };
 
 /// The values before index `mid` and those from it on, or `None` if
 /// `mid` is more than `len()`.
@@ -513,18 +530,3 @@ export fn <[u8]>::split_at<'a>(
 /// `len()`.
 #[intrinsic]
 export fn <[u8]>::get(&self, i: usize) -> core::option::Option::<&u8>;
-
-/// All its values, as a slice.
-#[intrinsic]
-export fn <[u8; 3]>::as_slice(&self) -> { s: &[u8] | s.len() == self.len() };
-
-/// Its values, by reference, front to back.
-export fn <[u8]>::iter(&self) -> core::slice::Iter::<u8> {
-    let _0: Iter<u8>;
-    let _1: &[u8]; // self
-    bb0: {
-        _0 = core::slice::Iter::<u8> { rest: copy _1 };
-        dead _1;
-        return;
-    }
-}

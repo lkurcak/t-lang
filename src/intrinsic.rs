@@ -70,6 +70,10 @@ pub enum Intrinsic {
     Args(ArgsOp),
     /// A method of `std::env::Env`.
     Env(EnvOp),
+    /// An intrinsic method of `std::fs::Fs`.
+    Fs(FsOp),
+    /// An intrinsic method of `std::fs::ReadFile`.
+    ReadFile(ReadFileOp),
     /// `std::thread::start`.
     ThreadStart,
     /// `std::thread::JoinHandle::join`.
@@ -185,6 +189,21 @@ pub enum EnvOp {
     Index,
 }
 
+/// An intrinsic method of `std::fs::Fs`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FsOp {
+    Open,
+    Write,
+    Remove,
+}
+
+/// An intrinsic method of `std::fs::ReadFile`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ReadFileOp {
+    Read,
+    Close,
+}
+
 impl Intrinsic {
     /// Every intrinsic, in the order the libraries declare them.
     pub const ALL: &[Intrinsic] = {
@@ -257,6 +276,11 @@ impl Intrinsic {
             Args(ArgsOp::Index),
             Env(EnvOp::Len),
             Env(EnvOp::Index),
+            Fs(FsOp::Open),
+            Fs(FsOp::Write),
+            Fs(FsOp::Remove),
+            ReadFile(ReadFileOp::Read),
+            ReadFile(ReadFileOp::Close),
             ThreadStart,
             ThreadJoin,
         ]
@@ -359,6 +383,15 @@ impl Intrinsic {
                 EnvOp::Len => "std::env::Env::len",
                 EnvOp::Index => "std::env::Env::index",
             },
+            Fs(op) => match op {
+                FsOp::Open => "std::fs::Fs::os_open",
+                FsOp::Write => "std::fs::Fs::os_write",
+                FsOp::Remove => "std::fs::Fs::os_remove",
+            },
+            ReadFile(op) => match op {
+                ReadFileOp::Read => "std::fs::ReadFile::os_read",
+                ReadFileOp::Close => "std::fs::ReadFile::os_close",
+            },
             ThreadStart => "std::thread::start",
             ThreadJoin => "std::thread::JoinHandle::join",
         }
@@ -401,6 +434,10 @@ pub enum IntrinsicType {
     Args,
     /// `std::env::Env`.
     Env,
+    /// `std::fs::Fs`.
+    Fs,
+    /// `std::fs::ReadFile`.
+    ReadFile,
     /// `std::thread::Threads`.
     Threads,
     /// `std::thread::JoinHandle`.
@@ -412,7 +449,8 @@ impl IntrinsicType {
     pub const ALL: &[IntrinsicType] = {
         use IntrinsicType::*;
         &[
-            Message, Box, RawBuf, Slots, Stdin, Stdout, Stderr, Args, Env, Threads, JoinHandle,
+            Message, Box, RawBuf, Slots, Stdin, Stdout, Stderr, Args, Env, Fs, ReadFile, Threads,
+            JoinHandle,
         ]
     };
 
@@ -429,6 +467,8 @@ impl IntrinsicType {
             Stderr => "std::io::Stderr",
             Args => "std::env::Args",
             Env => "std::env::Env",
+            Fs => "std::fs::Fs",
+            ReadFile => "std::fs::ReadFile",
             Threads => "std::thread::Threads",
             JoinHandle => "std::thread::JoinHandle",
         }

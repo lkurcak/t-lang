@@ -51,8 +51,8 @@
 use crate::ast::*;
 use crate::error::{Error, Span};
 use crate::intrinsic::{
-    ArgsOp, ArrayOp, AtomicOp, EnvOp, Intrinsic, MessageOp, Output, OutputOp, RawBufOp, SliceOp,
-    SlotsOp, StdinOp, VolatileOp,
+    ArgsOp, ArrayOp, AtomicOp, EnvOp, FsOp, Intrinsic, MessageOp, Output, OutputOp, RawBufOp,
+    ReadFileOp, SliceOp, SlotsOp, StdinOp, VolatileOp,
 };
 use crate::mono::{glue_name, is_glue};
 use crate::types::IntTy;
@@ -446,7 +446,7 @@ impl<'p> Interp<'p, '_> {
             0 => Vec::new(),
             _ => vec![Value::Struct(
                 "std::Os".into(),
-                ["stdin", "stdout", "stderr", "args", "env", "threads"]
+                ["stdin", "stdout", "stderr", "args", "env", "fs", "threads"]
                     .into_iter()
                     .zip([
                         "std::io::Stdin",
@@ -454,6 +454,7 @@ impl<'p> Interp<'p, '_> {
                         "std::io::Stderr",
                         "std::env::Args",
                         "std::env::Env",
+                        "std::fs::Fs",
                         "std::thread::Threads",
                     ])
                     .map(|(field, ty)| (field.to_string(), Value::Struct(ty.into(), Vec::new())))
@@ -501,6 +502,14 @@ impl<'p> Interp<'p, '_> {
             unsound(&format!(
                 "memory leak: {} boxes or buffers were never freed",
                 self.memory.on_heap
+            ));
+        }
+        // Each `ReadFile` is dropped, and its `discard` closes it, as a box
+        // is freed: one left open is a file whose value was lost.
+        if self.term.files_open() > 0 {
+            unsound(&format!(
+                "file leak: {} files were never closed",
+                self.term.files_open()
             ));
         }
         Ok(result)
@@ -734,6 +743,33 @@ pub trait Terminal {
     fn not_unicode(&self) -> Option<&str> {
         None
     }
+
+    /// Opens the file at `path`, which has no `\0`, to be read, for
+    /// `std::fs::Fs::open`: its number, by which it's read and closed.
+    fn open(&mut self, path: &str) -> std::io::Result<usize>;
+
+    /// Reads into `buf` from open file `file`, as `read` does from the
+    /// input: what's buffered, or else what one read gives.
+    fn read_file(&mut self, file: usize, buf: &mut [u8]) -> std::io::Result<usize>;
+
+    /// Closes open file `file`, which isn't read again.
+    fn close(&mut self, file: usize);
+
+    /// Writes all of `bytes` to the file at `path`, made if there's none,
+    /// after what it holds if `append`, or else instead of it.
+    fn write_file(&mut self, path: &str, bytes: &[u8], append: bool) -> std::io::Result<()>;
+
+    /// Removes the file at `path`.
+    fn remove(&mut self, path: &str) -> std::io::Result<()>;
+
+    /// How many files are open.
+    fn files_open(&self) -> usize;
+}
+
+/// The failure of an operating system's that has no file at the path it
+/// was given: `ENOENT`, which is 2 wherever T runs.
+fn not_found() -> std::io::Error {
+    std::io::Error::from_raw_os_error(2)
 }
 
 /// Streams in memory: input given ahead, and what's written kept, none a
@@ -747,6 +783,12 @@ pub struct Captured {
     /// `t-program` and none.
     pub args: Vec<String>,
     pub env: Vec<(String, String)>,
+    /// The files, in memory, by path: one directory, with no others in it,
+    /// so a path with a `/` names no file.
+    pub files: std::collections::BTreeMap<String, Vec<u8>>,
+    /// The files open to be read, by number: what each held when it was
+    /// opened, and how much of that has been read. `None` once closed.
+    pub open: Vec<Option<(Vec<u8>, usize)>>,
 }
 
 impl Captured {
@@ -804,6 +846,49 @@ impl Terminal for Captured {
     fn env(&self) -> &[(String, String)] {
         &self.env
     }
+
+    fn open(&mut self, path: &str) -> std::io::Result<usize> {
+        let held = self.files.get(path).ok_or_else(not_found)?.clone();
+        self.open.push(Some((held, 0)));
+        Ok(self.open.len() - 1)
+    }
+
+    fn read_file(&mut self, file: usize, buf: &mut [u8]) -> std::io::Result<usize> {
+        let Some(Some((held, at))) = self.open.get_mut(file) else {
+            unsound("a read of a file that isn't open")
+        };
+        let n = buf.len().min(held.len() - *at);
+        buf[..n].copy_from_slice(&held[*at..*at + n]);
+        *at += n;
+        Ok(n)
+    }
+
+    fn close(&mut self, file: usize) {
+        match self.open.get_mut(file) {
+            Some(f @ Some(_)) => *f = None,
+            _ => unsound("a file closed twice, or never opened"),
+        }
+    }
+
+    fn write_file(&mut self, path: &str, bytes: &[u8], append: bool) -> std::io::Result<()> {
+        if path.is_empty() || path.contains('/') {
+            return Err(not_found());
+        }
+        let held = self.files.entry(path.to_string()).or_default();
+        if !append {
+            held.clear();
+        }
+        held.extend_from_slice(bytes);
+        Ok(())
+    }
+
+    fn remove(&mut self, path: &str) -> std::io::Result<()> {
+        self.files.remove(path).map(|_| ()).ok_or_else(not_found)
+    }
+
+    fn files_open(&self) -> usize {
+        self.open.iter().filter(|f| f.is_some()).count()
+    }
 }
 
 /// What a stream's intrinsic gives back for `e`: bit 63, the `ErrorKind`
@@ -820,7 +905,7 @@ pub fn io_failure(e: &std::io::Error) -> u64 {
         K::InvalidData => 4,
         K::UnexpectedEof => 5,
         K::Unsupported => 6,
-        _ => 7,
+        _ => 8,
     };
     let code = e.raw_os_error().unwrap_or(0) as u32;
     (1 << 63) | (kind << 32) | u64::from(code)
@@ -2004,6 +2089,8 @@ impl<'p> Interp<'p, '_> {
             Intrinsic::Output(out, op) => Ok(self.output(out, op, args)),
             Intrinsic::Args(op) => Ok(self.args(op, args)),
             Intrinsic::Env(op) => Ok(self.env(op, copy, args)),
+            Intrinsic::Fs(op) => Ok(self.fs(op, copy, args)),
+            Intrinsic::ReadFile(op) => Ok(self.read_file(op, args)),
             Intrinsic::UnsafeAsMut | Intrinsic::UnsafeAsRef => Ok(self.unsafe_cell(args)),
             Intrinsic::Atomic(op) => {
                 // What another thread does with it can be seen here, and what
@@ -2166,6 +2253,102 @@ impl<'p> Interp<'p, '_> {
             Err(e) => io_failure(&e),
         };
         Value::Int(i128::from(r), IntTy::U64)
+    }
+
+    /// An intrinsic method of `std::fs::Fs`, whose copy is `copy`, with
+    /// arguments `args`. A `ReadFile` is a struct of one field the program
+    /// can't name, its number in the terminal's open files.
+    fn fs(&mut self, op: FsOp, copy: &str, args: Vec<Value>) -> Value {
+        let status = |r: std::io::Result<()>| {
+            let r = match r {
+                Ok(()) => 0,
+                Err(e) => io_failure(&e),
+            };
+            Value::Int(i128::from(r), IntTy::U64)
+        };
+        match (op, args.as_slice()) {
+            (FsOp::Open, [_, path]) => {
+                let path = self.text(path);
+                let TypeExprKind::Named(result, _) = &self.fns[copy].ret.kind else {
+                    unsound("`Fs::os_open` gives a `Result`")
+                };
+                let result = result.clone();
+                match self.term.open(&path) {
+                    Ok(n) => {
+                        let file = Value::Struct(
+                            "std::fs::ReadFile".into(),
+                            vec![("file".into(), self.usize_of(n))],
+                        );
+                        Value::Variant(result, "Ok".into(), vec![file])
+                    }
+                    Err(e) => Value::Variant(
+                        result,
+                        "Err".into(),
+                        vec![Value::Int(i128::from(io_failure(&e)), IntTy::U64)],
+                    ),
+                }
+            }
+            (FsOp::Write, [_, path, bytes, Value::Bool(append)]) => {
+                let (path, bytes) = (self.text(path), self.bytes(bytes));
+                status(self.term.write_file(&path, &bytes, *append))
+            }
+            (FsOp::Remove, [_, path]) => {
+                let path = self.text(path);
+                status(self.term.remove(&path))
+            }
+            _ => unsound(&format!("`Fs`'s `{op:?}` of the wrong arguments")),
+        }
+    }
+
+    /// An intrinsic method of `std::fs::ReadFile`, with arguments `args`.
+    fn read_file(&mut self, op: ReadFileOp, args: Vec<Value>) -> Value {
+        // The number of the file `v` is, or a reference to one.
+        let number = |interp: &Self, v: &Value| -> usize {
+            let v = match v {
+                Value::Ref(p) => interp.memory.get(p),
+                v => v,
+            };
+            match v {
+                Value::Struct(_, fields) => match fields.as_slice() {
+                    [(_, Value::Int(n, _))] => *n as usize,
+                    _ => unsound("a `ReadFile` without its number"),
+                },
+                v => unsound(&format!("`{v}` as a `ReadFile`")),
+            }
+        };
+        match (op, args.as_slice()) {
+            (ReadFileOp::Read, [file, buf]) => {
+                let file = number(self, file);
+                let Value::Ref(
+                    p @ Ptr {
+                        range: Some((lo, len)),
+                        ..
+                    },
+                ) = buf
+                else {
+                    unsound("`os_read` into something that isn't a slice")
+                };
+                let (p, lo, len) = (p.clone(), *lo, *len);
+                let mut bytes = vec![0; len];
+                let n = match self.term.read_file(file, &mut bytes) {
+                    Ok(n) => n.min(len),
+                    Err(e) => return Value::Int(i128::from(io_failure(&e)), IntTy::U64),
+                };
+                let Value::Slots(slots) = self.memory.get_mut(&p) else {
+                    unsound("a slice that isn't of slots")
+                };
+                for (i, &b) in bytes[..n].iter().enumerate() {
+                    slots[lo + i] = Value::Int(i128::from(b), IntTy::U8);
+                }
+                Value::Int(n as i128, IntTy::U64)
+            }
+            (ReadFileOp::Close, [file]) => {
+                let file = number(self, file);
+                self.term.close(file);
+                Value::Unit
+            }
+            _ => unsound(&format!("`ReadFile`'s `{op:?}` of the wrong arguments")),
+        }
     }
 
     /// A method of `std::env::Args`, with arguments `args`.

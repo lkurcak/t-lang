@@ -32,6 +32,8 @@ export enum ErrorKind {
     UnexpectedEnd,
     /// It can't be done here: on this operating system, or this stream.
     Unsupported,
+    /// What it was given can't be right: a path with a `\0` in it, say.
+    InvalidInput,
     /// Something else.
     Other,
 }
@@ -75,6 +77,7 @@ impl Display for Error {
             ErrorKind::InvalidData => "stream did not contain valid UTF-8",
             ErrorKind::UnexpectedEnd => "unexpected end of input",
             ErrorKind::Unsupported => "unsupported",
+            ErrorKind::InvalidInput => "invalid input",
             ErrorKind::Other => "input/output error",
         })?;
         if self.code != 0 {

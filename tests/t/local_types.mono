@@ -15,6 +15,8 @@ export enum core::io::ErrorKind {
     UnexpectedEnd,
     /// It can't be done here: on this operating system, or this stream.
     Unsupported,
+    /// What it was given can't be right: a path with a `\0` in it, say.
+    InvalidInput,
     /// Something else.
     Other,
 }
