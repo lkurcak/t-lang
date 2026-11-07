@@ -95,8 +95,7 @@ stays, and says `with io`. The proof would be the same as `panic`'s
 
 - **Which, not just whether.** An effect says a function does I/O, but not
   to what: one with `io` could write any file. A value says which stream,
-  and files will be values too, linear ones closed by `close`, as the
-  README's file descriptor that can't be forgotten.
+  and files are values too (docs/48-files.md).
 - **Effects are for what isn't a value.** `panic` is control, `alloc` the
   program's own heap, `unsafe` an obligation. The world outside is a
   resource, and resources are values.
@@ -238,7 +237,7 @@ anything goes to stderr, so a prompt is seen before it's answered.
 
 | Missing | Why it's missing | Step |
 |---|---|---|
-| files, arguments, the environment, clocks | each a field of `Os`, or a value one gives; files linear, with `close` | 47 ✅ (arguments, the environment) |
+| files, arguments, the environment, clocks | each a field of `Os`, or a value one gives; files read through a `ReadFile`, written whole | 47 ✅ (arguments, the environment), 48 ✅ (files) |
 | writing bytes, `std::io::Write` | text is all a program writes yet; bytes come with files | 47 ✅ (`core::io::Write`) |
 | buffering in the program | `t` buffers; a compiled program will want a `BufWriter` written in T | — |
 | a way for linear values to leave on `?` | destructors, `defer` or `try` blocks | 20 ✅ (destructors, for what's `Discard`) |

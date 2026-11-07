@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+Step 48: files. See [docs/48-files.md](docs/48-files.md).
+
+### Added
+
+- `std::fs`: `Os` has `fs: Fs`, the right to reach files (not `Copy`;
+  methods on `&self`; `Sync`). Whole files: `read`, `read_to_string`,
+  `write`, `append` and `remove`, each one call giving back one `Result`.
+  `open` gives a `ReadFile`: a buffered `core::io::Read`, as `Stdin` is,
+  with `read_line`, `read_to_end` and `read_to_string`, closed when it's
+  dropped.
+- `Stdin::read_to_end` and `read_to_string`.
+- `core::io::ErrorKind::InvalidInput`: a path with a `\0` in it.
+- Tests: `// file: path=line` lines give a test program files to start
+  with; a compiled one runs in a new directory holding them, with at most
+  256 files open at once.
+
+### Fixed
+
+- `t mono` and the backends no longer keep copies of the libraries'
+  generic trait impls, such as `<List::<u8> as Discard>::discard`, that
+  nothing uses.
+
+### Internal
+
+- The interpreter's `Terminal` opens, reads, closes, writes and removes
+  files: in memory for tests, the file system's for `t run`. A program
+  that ends with a file still open fails its run ("file leak"), as one
+  that leaks a box does.
+
 ## 0.63.0 (2026-11-07)
 
 Step 47: bytes, arguments and the environment. See
