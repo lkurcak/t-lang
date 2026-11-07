@@ -1,0 +1,2 @@
+[dependencies]
+g = { path = "libs", subdirectory = "g" }

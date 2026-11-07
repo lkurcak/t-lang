@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+Step 50: packages in a repository's subdirectory. See
+[docs/50-git-subdirectories.md](docs/50-git-subdirectories.md).
+
+### Added
+
+- A git dependency can name the directory its package is in:
+  `{ git = "..", rev = "..", subdirectory = "hashmap" }`. A subdirectory
+  is names separated by `/`, without `.`, `..`, `\` or `:`. Packages from
+  one repository at one rev share its checkout, and depend on each other
+  by `path`.
+
+### Changed
+
+- Messages show a checkout's files by the repository's name, as its URL
+  ends (`<t-libs@92e5388>/hashmap/lib.t`), not by the first package's.
+- The message for an unknown key in a dependency mentions `subdirectory`.
+
 ## 0.65.0 (2026-11-07)
 
 Step 49: time, entropy and the terminal. See

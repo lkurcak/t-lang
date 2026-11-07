@@ -436,8 +436,13 @@ struct Entry {
 enum Source {
     /// A directory, from the `t.toml`'s.
     Path(String),
-    /// A commit of a repository.
-    Git { url: String, rev: String },
+    /// A commit of a repository, and the directory in it of the package,
+    /// if not the top.
+    Git {
+        url: String,
+        rev: String,
+        subdirectory: Option<String>,
+    },
 }
 
 impl Loader<'_> {
@@ -593,12 +598,13 @@ impl Loader<'_> {
                 let toml::de::DeValue::Table(fields) = dep.get_ref() else {
                     return Err(shape());
                 };
-                let (mut path, mut git, mut rev) = (None, None, None);
+                let (mut path, mut git, mut rev, mut sub) = (None, None, None, None);
                 for (field, value) in fields {
                     let slot = match field.get_ref().as_ref() {
                         "path" => &mut path,
                         "git" => &mut git,
                         "rev" => &mut rev,
+                        "subdirectory" => &mut sub,
                         other => {
                             let why = match other {
                                 "branch" | "tag" => {
@@ -610,8 +616,8 @@ impl Loader<'_> {
                             return Err(Error::syntax(
                                 at(field.span()),
                                 format!(
-                                    "a dependency has only a `path`, or a `git` and a `rev`, \
-                                     not a `{other}`{why}"
+                                    "a dependency has only a `path`, or a `git`, a `rev` and \
+                                     maybe a `subdirectory`, not a `{other}`{why}"
                                 ),
                             ));
                         }
@@ -620,6 +626,13 @@ impl Loader<'_> {
                         return Err(shape());
                     };
                     *slot = Some((v.to_string(), at(value.span())));
+                }
+                if let (Some((_, at)), None) = (&sub, &git) {
+                    return Err(Error::syntax(
+                        *at,
+                        "a `subdirectory` is a directory of a `git` dependency's repository, and \
+                         this has no `git`; a `path` says the whole way to its package",
+                    ));
                 }
                 let source = match (path, git, rev) {
                     (Some(_), Some(_), _) => {
@@ -665,8 +678,25 @@ impl Loader<'_> {
                                 ),
                             ));
                         }
+                        if let Some((sub, at)) = &sub
+                            && !git::is_subdirectory(sub)
+                        {
+                            return Err(Error::syntax(
+                                *at,
+                                format!(
+                                    "a `subdirectory` is a directory in the repository, as names \
+                                     separated by `/`, as in `\"hashmap\"` or `\"libs/grid\"`; \
+                                     not `{sub}`"
+                                ),
+                            ));
+                        }
                         let url = url.trim_end_matches('/').to_string();
-                        Source::Git { url, rev }
+                        let subdirectory = sub.map(|(sub, _)| sub);
+                        Source::Git {
+                            url,
+                            rev,
+                            subdirectory,
+                        }
                     }
                     (None, None, None) => return Err(shape()),
                 };
@@ -719,7 +749,17 @@ impl Loader<'_> {
         }
         let target = match &entry.source {
             Source::Path(path) => self.path(dir, entry, path)?,
-            Source::Git { url, rev } => self.fetch(dir, entry, url, rev)?,
+            Source::Git {
+                url,
+                rev,
+                subdirectory,
+            } => {
+                let root = self.fetch(dir, entry, url, rev)?;
+                match subdirectory {
+                    Some(sub) => self.inside(&root, entry, sub)?,
+                    None => root,
+                }
+            }
         };
         let id = canonical(&target);
         if let Some(i) = self.loading.iter().position(|(d, _)| canonical(d) == id) {
@@ -849,11 +889,7 @@ impl Loader<'_> {
         let Some(c) = self.checkouts.iter().find(|c| dir.starts_with(&c.root)) else {
             return Ok(target);
         };
-        // Not by a `..`, and not by a link: git writes none in a checkout,
-        // but the cache is anyone's to change.
-        let inside = target.starts_with(&c.root)
-            && (!target.exists() || canonical(&target).starts_with(canonical(&c.root)));
-        if !inside {
+        if !within(&target, &c.root) {
             return Err(Error::syntax(
                 entry.at,
                 format!(
@@ -861,6 +897,21 @@ impl Loader<'_> {
                      `path` only on packages in its own repository",
                     c.label
                 ),
+            ));
+        }
+        Ok(target)
+    }
+
+    /// The directory `sub` of the checkout at `root`, which `entry` names;
+    /// `sub` is a relative path without `..`, so only a link could lead
+    /// out of the checkout.
+    fn inside(&self, root: &Path, entry: &Entry, sub: &str) -> Result<PathBuf, Error> {
+        let target = normal(&root.join(sub));
+        if !within(&target, root) {
+            let label = self.shown(root);
+            return Err(Error::syntax(
+                entry.at,
+                format!("`{sub}` is outside the repository of `{label}`"),
             ));
         }
         Ok(target)
@@ -892,7 +943,10 @@ impl Loader<'_> {
         })?;
         let root = normal(&root);
         if !self.checkouts.iter().any(|c| c.root == root) {
-            let label = format!("<{}@{short}>", entry.name);
+            let label = format!(
+                "<{}@{short}>",
+                git::name(url).unwrap_or_else(|| entry.name.clone())
+            );
             self.sources.label(root.clone(), label.clone());
             self.checkouts.push(Checkout {
                 root: root.clone(),
@@ -923,6 +977,13 @@ impl Loader<'_> {
             false => shown.to_string_lossy().replace('\\', "/"),
         }
     }
+}
+
+/// Is `target` in the checkout at `root`? Not if a `..` leads out, nor a
+/// link: git writes none in a checkout, but the cache is anyone's to
+/// change.
+fn within(target: &Path, root: &Path) -> bool {
+    target.starts_with(root) && (!target.exists() || canonical(target).starts_with(canonical(root)))
 }
 
 /// `path` with its `.` and `..` taken out, as far as it can be without
