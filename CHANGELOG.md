@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.63.0 (2026-11-07)
 
 Step 47: bytes, arguments and the environment. See
 [docs/47-io.md](docs/47-io.md).
