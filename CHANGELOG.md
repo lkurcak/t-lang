@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.68.0 (2026-11-07)
 
 Step 52: loop frames. See [docs/52-loop-frames.md](docs/52-loop-frames.md).
 
