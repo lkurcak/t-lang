@@ -99,6 +99,20 @@ impl<T> List<T> {
         &mut self.as_mut_slice()[i]
     }
 
+    /// Puts `v` at `i`, which is less than `len()`, and gives back what was
+    /// there. Unlike `l[i] = v`, it lends the list only for the call, so it
+    /// works on a list that's a refined field, whose refinements the
+    /// checker then knows still hold: the length is the same.
+    export fn replace(&mut self, i: { i: usize | i < self.len() }, v: T) -> T
+    ensures
+        self.len() == old(self.len()),
+    {
+        // SAFETY: slots `0..len` hold values. The slice borrows `buf`, not
+        // the list, so the checker sees `len` stay as it was.
+        let s = unsafe { self.buf.slice_mut(0, self.len) };
+        core::mem::replace(&mut s[i], v)
+    }
+
     /// The value at `i`, or `None` if there's none: if `i` isn't less than
     /// `len()`.
     export fn get(&self, i: usize) -> Option<&T> { self.as_slice().get(i) }
@@ -147,7 +161,34 @@ impl<T: Discard> Discard for List<T> {
     fn discard(self) { self.free_with(|_x| {}) }
 }
 
+impl<T: Copy> List<T> {
+    /// A list of `n` copies of `v`.
+    #[blame_caller]
+    export fn filled(n: usize, v: T) -> { l: List<T> | l.len() == n } with alloc {
+        let mut f = UpTo { n, list: List::with_capacity(n) };
+        while f.list.len() < f.n {
+            f.list.push(v);
+        }
+        let UpTo { n: _, list } = f;
+        list
+    }
+}
+
+/// A list being filled up to `n` values, never past. It's a struct so that
+/// says so in a refinement, which holds all through a loop that pushes,
+/// where what's known of a local is forgotten at the loop's head.
+struct UpTo<T> { n: usize, list: { l: List<T> | l.len() <= n } }
+
 impl<T: Discard> List<T> {
+    /// Puts `v` at `i`, which is less than `len()`, dropping what was there:
+    /// `replace`, for values that can be dropped.
+    export fn set(&mut self, i: { i: usize | i < self.len() }, v: T)
+    ensures
+        self.len() == old(self.len()),
+    {
+        let _ = self.replace(i, v);
+    }
+
     /// Throws away the values from index `n` on, if there are any, so it
     /// holds at most `n`. It's `pop` until then, so safe code.
     export fn truncate(&mut self, n: usize) ensures self.len() <= n {

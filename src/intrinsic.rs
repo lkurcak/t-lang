@@ -32,8 +32,6 @@ pub enum Intrinsic {
     Panic,
     /// A method of `core::panic::Message`.
     Message(MessageOp),
-    /// `core::num::checked_mul`.
-    CheckedMul,
     /// `core::num::wrapping_mul`.
     WrappingMul,
     /// `core::num::wrap`.
@@ -246,7 +244,6 @@ impl Intrinsic {
             Message(MessageOp::PushStr),
             Message(MessageOp::PushChar),
             Message(MessageOp::Abort),
-            CheckedMul,
             WrappingMul,
             Wrap,
             Least,
@@ -343,7 +340,6 @@ impl Intrinsic {
                 MessageOp::PushChar => "core::panic::Message::push_char",
                 MessageOp::Abort => "core::panic::Message::abort",
             },
-            CheckedMul => "core::num::checked_mul",
             WrappingMul => "core::num::wrapping_mul",
             Wrap => "core::num::wrap",
             Least => "core::num::least",

@@ -11,10 +11,9 @@
 //! They're written once, for every integer type, as `T: Int`. In code like
 //! that the checker knows only what holds of all of them: that the least
 //! is at most 0 and the greatest at least 127, and what `least` and
-//! `greatest` say. Each but `checked_mul` uses the operator only where the
-//! checker proves it can't panic (see docs/08-refinement-types.md and
-//! docs/11-integers.md), so it needn't be trusted; `checked_mul` would need
-//! it to reason about products of unknowns, which it doesn't.
+//! `greatest` say. Each uses the operator only where the checker proves it
+//! can't panic (see docs/08-refinement-types.md, docs/11-integers.md and,
+//! for `checked_mul`, docs/51-products.md), so it needn't be trusted.
 
 use crate::fmt::{Display, Write};
 use crate::option::Option;
@@ -71,9 +70,29 @@ export fn checked_sub<T: Int>(a: T, b: T) -> Option<T> {
     }
 }
 
-/// `a * b`, or `None` if it doesn't fit in a `T`.
-#[intrinsic]
-export fn checked_mul<T: Int>(a: T, b: T) -> Option<T>;
+/// `a * b`, or `None` if it doesn't fit in a `T`. It fits when `a` is no
+/// further from 0 than the greatest (or least) `T` divided by `b`: what
+/// `/` gives, the checker knows, is within one `b` of what's divided, on
+/// the side of zero (docs/51-products.md).
+export fn checked_mul<T: Int>(a: T, b: T) -> Option<T> {
+    if a == 0 || b == 0 {
+        Some(0)
+    } else if a > 0 {
+        if b > 0 {
+            if a <= greatest::<T>() / b { Some(a * b) } else { None }
+        } else if b >= least::<T>() / a {
+            Some(a * b)
+        } else {
+            None
+        }
+    } else if b > 0 {
+        if a >= least::<T>() / b { Some(a * b) } else { None }
+    } else if a >= greatest::<T>() / b {
+        Some(a * b)
+    } else {
+        None
+    }
+}
 
 /// `a / b`, rounded towards zero, or `None` if `b` is zero or the result
 /// doesn't fit in a `T`, as the least `i8` divided by -1 doesn't. That's
