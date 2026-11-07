@@ -18,8 +18,9 @@ safe. This reference describes the current language; the
 
 Run a file with `t file.t`, or check it without running it with
 `t check file.t`. A program starts at `fn main`. It can take no arguments,
-or receive `std::Os`, which supplies its input and output streams and
-the right to start threads.
+or receive `std::Os`, which supplies its input and output streams, its
+arguments (`os.args`) and environment (`os.env`), and the right to start
+threads. `t file.t a b` runs it with arguments `a` and `b`.
 
 ```rust
 fn main(os: std::Os) -> Result<(), std::io::Error> {
@@ -568,16 +569,20 @@ unless turned on. `--deny-warnings` makes `t check` and `t test` fail on
 warnings.
 
 I/O requires a stream passed as a value, usually from `main`'s `std::Os`.
-It has no separate effect: stream methods report failures as `Result`s.
+It has no separate effect: stream methods report failures as `Result`s,
+with the one `core::io::Error`. Code generic over where bytes come from
+and go uses `core::io::{Read, Write}`; `core::io::Bytes` and
+`List<u8>` are those in memory, and `alloc::io::read_line` reads a line
+from any `Read` (see [I/O](47-io.md)).
 A `main` returning `Result<(), E>` reports an error to standard error
 and exits unsuccessfully when it returns `Err`; `E` must implement
 `core::fmt::Display` and `Discard`.
 
 | Library | Common items |
 |---|---|
-| [`core`](../core/lib.t) | `Option`, `Result`, `Iterator`, `cell::Cell`, `sync::Atomic`, `volatile::Volatile`, numeric operations, traits, and formatting |
-| [`alloc`](../alloc/lib.t) | `boxed::Box`, `list::List`, `string::String`, and `arena::Arena` |
-| [`std`](../std/lib.t) | `Os` and `io` streams |
+| [`core`](../core/lib.t) | `Option`, `Result`, `Iterator`, `cell::Cell`, `sync::Atomic`, `volatile::Volatile`, `io::{Read, Write, Error}`, numeric operations, traits, and formatting |
+| [`alloc`](../alloc/lib.t) | `boxed::Box`, `list::List`, `string::String`, `arena::Arena`, and `io::read_line` |
+| [`std`](../std/lib.t) | `Os`, `io` streams, and `env::{Args, Env}` |
 
 The compiler embeds these libraries. Every package has `core`. A
 package with a `t.toml` beside its root has only the other libraries

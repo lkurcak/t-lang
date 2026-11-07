@@ -15,6 +15,7 @@
 
 export mod arena;
 export mod boxed;
+export mod io;
 export mod list;
 export mod raw;
 export mod string;

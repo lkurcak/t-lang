@@ -14,6 +14,7 @@ export mod cell;
 export mod char;
 export mod cmp;
 export mod fmt;
+export mod io;
 export mod iter;
 export mod mem;
 export mod num;

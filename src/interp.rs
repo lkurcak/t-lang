@@ -51,7 +51,8 @@
 use crate::ast::*;
 use crate::error::{Error, Span};
 use crate::intrinsic::{
-    ArrayOp, AtomicOp, Intrinsic, MessageOp, RawBufOp, SliceOp, SlotsOp, Stream, VolatileOp,
+    ArgsOp, ArrayOp, AtomicOp, EnvOp, Intrinsic, MessageOp, Output, OutputOp, RawBufOp, SliceOp,
+    SlotsOp, StdinOp, VolatileOp,
 };
 use crate::mono::{glue_name, is_glue};
 use crate::types::IntTy;
@@ -433,17 +434,26 @@ impl<'p> Interp<'p, '_> {
 
     /// `run_entry`'s work.
     fn entry(&mut self, program: &crate::mono::Executable, entry: &str) -> Result<Value, Error> {
-        // `main` takes nothing, or the one `std::Os` there is.
-        let args = match self.fns[entry].params.len() {
+        // `main` takes nothing, or the one `std::Os` there is, whose
+        // arguments and environment are UTF-8.
+        let params = self.fns[entry].params.len();
+        if params > 0
+            && let Some(what) = self.term.not_unicode()
+        {
+            return Err(Error::runtime(self.fns[entry].name.span, what.to_string()));
+        }
+        let args = match params {
             0 => Vec::new(),
             _ => vec![Value::Struct(
                 "std::Os".into(),
-                ["stdin", "stdout", "stderr", "threads"]
+                ["stdin", "stdout", "stderr", "args", "env", "threads"]
                     .into_iter()
                     .zip([
                         "std::io::Stdin",
                         "std::io::Stdout",
                         "std::io::Stderr",
+                        "std::env::Args",
+                        "std::env::Env",
                         "std::thread::Threads",
                     ])
                     .map(|(field, ty)| (field.to_string(), Value::Struct(ty.into(), Vec::new())))
@@ -693,45 +703,127 @@ struct Interp<'p, 'o> {
 }
 
 /// The streams of the operating system, for the intrinsics of `std::io`'s
-/// `Stdin`, `Stdout` and `Stderr` (see docs/19-std-io.md): the process's
-/// own, for `t run`, or bytes in memory, for tests.
+/// `Stdin`, `Stdout` and `Stderr` (see docs/19-std-io.md and
+/// docs/47-io.md), and what the program was started with, for `std::env`'s:
+/// the process's own, for `t run`, or in memory, for tests.
 pub trait Terminal {
-    /// The next byte of input, or `None` at its end.
-    fn read_byte(&mut self) -> std::io::Result<Option<u8>>;
+    /// Reads into `buf`: how many bytes, at least one unless the input
+    /// has ended or `buf` is empty, without waiting for more.
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize>;
 
-    /// Writes byte `b` to the output, or to where errors go if `err`.
-    fn write_byte(&mut self, err: bool, b: u8) -> std::io::Result<()>;
+    /// Writes all of `buf` to the output, or to where errors go if `err`.
+    fn write(&mut self, err: bool, buf: &[u8]) -> std::io::Result<()>;
+
+    /// Writes out what waits in the output's buffer, or that of where
+    /// errors go if `err`.
+    fn flush(&mut self, err: bool) -> std::io::Result<()>;
+
+    /// Is the stream a terminal: the input, if `stream` is `None`, or else
+    /// the output, or where errors go if it's `Some(true)`?
+    fn is_terminal(&self, stream: Option<bool>) -> bool;
+
+    /// What the program was started as, then its arguments, each UTF-8.
+    fn args(&self) -> &[String];
+
+    /// The variables of its environment, each name with its value.
+    fn env(&self) -> &[(String, String)];
+
+    /// What isn't UTF-8 of what the program was started with, if
+    /// something isn't: then a program given the `Os` doesn't start
+    /// (docs/47-io.md, lemma A1).
+    fn not_unicode(&self) -> Option<&str> {
+        None
+    }
 }
 
-/// Streams in memory: input given ahead, and what's written kept.
+/// Streams in memory: input given ahead, and what's written kept, none a
+/// terminal; and the arguments and environment the program is given.
 #[derive(Default)]
 pub struct Captured {
     pub input: std::collections::VecDeque<u8>,
     pub out: Vec<u8>,
     pub err: Vec<u8>,
+    /// What the program was started as, then its arguments. Empty is as
+    /// `t-program` and none.
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
+}
+
+impl Captured {
+    /// Reads `input`, with the arguments `args` after the program's name
+    /// `program`, and the environment `env`.
+    pub fn new(
+        input: Vec<u8>,
+        program: &str,
+        args: Vec<String>,
+        env: Vec<(String, String)>,
+    ) -> Captured {
+        Captured {
+            input: input.into(),
+            args: std::iter::once(program.to_string()).chain(args).collect(),
+            env,
+            ..Captured::default()
+        }
+    }
 }
 
 impl Terminal for Captured {
-    fn read_byte(&mut self) -> std::io::Result<Option<u8>> {
-        Ok(self.input.pop_front())
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = buf.len().min(self.input.len());
+        for (b, i) in buf.iter_mut().zip(self.input.drain(..n)) {
+            *b = i;
+        }
+        Ok(n)
     }
 
-    fn write_byte(&mut self, err: bool, b: u8) -> std::io::Result<()> {
+    fn write(&mut self, err: bool, buf: &[u8]) -> std::io::Result<()> {
         match err {
-            true => self.err.push(b),
-            false => self.out.push(b),
+            true => self.err.extend_from_slice(buf),
+            false => self.out.extend_from_slice(buf),
         }
         Ok(())
     }
+
+    fn flush(&mut self, _err: bool) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    fn is_terminal(&self, _stream: Option<bool>) -> bool {
+        false
+    }
+
+    fn args(&self) -> &[String] {
+        static NONE: std::sync::LazyLock<[String; 1]> =
+            std::sync::LazyLock::new(|| ["t-program".to_string()]);
+        match self.args.is_empty() {
+            true => &*NONE,
+            false => &self.args,
+        }
+    }
+
+    fn env(&self) -> &[(String, String)] {
+        &self.env
+    }
 }
 
-/// What a stream's intrinsic gives back for `e`: 257 for a broken pipe,
-/// 258 for anything else, as `std::io::error` reads it.
-fn io_error(e: &std::io::Error) -> u32 {
-    match e.kind() {
-        std::io::ErrorKind::BrokenPipe => 257,
-        _ => 258,
-    }
+/// What a stream's intrinsic gives back for `e`: bit 63, the `ErrorKind`
+/// by its place in `core::io`'s enum in bits 32 to 39, and the operating
+/// system's number for it, if it has one, in the low 32 bits, as
+/// `std::io::failure` reads it.
+pub fn io_failure(e: &std::io::Error) -> u64 {
+    use std::io::ErrorKind as K;
+    let kind: u64 = match e.kind() {
+        K::NotFound => 0,
+        K::PermissionDenied => 1,
+        K::AlreadyExists => 2,
+        K::BrokenPipe => 3,
+        K::InvalidData => 4,
+        K::UnexpectedEof => 5,
+        K::Unsupported => 6,
+        _ => 7,
+    };
+    let code = e.raw_os_error().unwrap_or(0) as u32;
+    (1 << 63) | (kind << 32) | u64::from(code)
 }
 
 /// A refinement to check at run time (see `check/refine.rs`): its binder,
@@ -956,6 +1048,9 @@ impl<'p> Interp<'p, '_> {
                     },
                     other => unsound(&format!("`cap` of `{other}`")),
                 },
+                // How many there are of what the program was started with.
+                ("<Args>::len", _) => PredValue::Int(self.term.args().len() as i128 - 1),
+                ("<Env>::len", _) => PredValue::Int(self.term.env().len() as i128),
                 (_, this) => unsound(&format!("intrinsic measure `{symbol}` of `{this}`")),
             },
             None => unsound(&format!("`{symbol}` isn't a measure")),
@@ -1905,7 +2000,10 @@ impl<'p> Interp<'p, '_> {
                 ))
             }
             Intrinsic::Message(op) => self.message(op, args, span),
-            Intrinsic::Stream(stream) => Ok(self.stream(stream, args)),
+            Intrinsic::Stdin(op) => Ok(self.stdin(op, args)),
+            Intrinsic::Output(out, op) => Ok(self.output(out, op, args)),
+            Intrinsic::Args(op) => Ok(self.args(op, args)),
+            Intrinsic::Env(op) => Ok(self.env(op, copy, args)),
             Intrinsic::UnsafeAsMut | Intrinsic::UnsafeAsRef => Ok(self.unsafe_cell(args)),
             Intrinsic::Atomic(op) => {
                 // What another thread does with it can be seen here, and what
@@ -2012,25 +2110,102 @@ impl<'p> Interp<'p, '_> {
         }
     }
 
-    /// The intrinsic method of `std::io`'s stream, `stream` being its
-    /// copy's name after `<std::io::`, with arguments `args`.
-    fn stream(&mut self, stream: Stream, args: Vec<Value>) -> Value {
-        let code = match (stream, args.as_slice()) {
-            (Stream::Stdin, [_]) => match self.term.read_byte() {
-                Ok(Some(b)) => u32::from(b),
-                Ok(None) => 256,
-                Err(e) => io_error(&e),
-            },
-            (Stream::Stdout | Stream::Stderr, [_, b]) => {
-                let b = u8::try_from(int(b.clone())).unwrap_or_else(|_| unsound("a byte"));
-                match self.term.write_byte(stream == Stream::Stderr, b) {
-                    Ok(()) => 0,
-                    Err(e) => io_error(&e),
+    /// An intrinsic method of `std::io::Stdin`, with arguments `args`.
+    fn stdin(&mut self, op: StdinOp, args: Vec<Value>) -> Value {
+        match (op, args.as_slice()) {
+            (StdinOp::Read, [_, buf]) => {
+                let Value::Ref(
+                    p @ Ptr {
+                        range: Some((lo, len)),
+                        ..
+                    },
+                ) = buf
+                else {
+                    unsound("`os_read` into something that isn't a slice")
+                };
+                let mut bytes = vec![0; *len];
+                let r = loop {
+                    match self.term.read(&mut bytes) {
+                        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                        r => break r,
+                    }
+                };
+                let n = match r {
+                    Ok(n) => n.min(*len),
+                    Err(e) => return Value::Int(i128::from(io_failure(&e)), IntTy::U64),
+                };
+                let (p, lo) = (p.clone(), *lo);
+                let Value::Slots(slots) = self.memory.get_mut(&p) else {
+                    unsound("a slice that isn't of slots")
+                };
+                for (i, &b) in bytes[..n].iter().enumerate() {
+                    slots[lo + i] = Value::Int(i128::from(b), IntTy::U8);
                 }
+                Value::Int(n as i128, IntTy::U64)
             }
-            _ => unsound(&format!("`{stream:?}`'s byte of the wrong arguments")),
+            (StdinOp::IsTerminal, [_]) => Value::Bool(self.term.is_terminal(None)),
+            _ => unsound(&format!("`Stdin`'s `{op:?}` of the wrong arguments")),
+        }
+    }
+
+    /// An intrinsic method of `std::io::Stdout` or `Stderr`, `out`, with
+    /// arguments `args`.
+    fn output(&mut self, out: Output, op: OutputOp, args: Vec<Value>) -> Value {
+        let err = out == Output::Stderr;
+        let done = match (op, args.as_slice()) {
+            (OutputOp::Write, [_, buf]) => {
+                let bytes = self.bytes(buf);
+                self.term.write(err, &bytes)
+            }
+            (OutputOp::Flush, [_]) => self.term.flush(err),
+            (OutputOp::IsTerminal, [_]) => return Value::Bool(self.term.is_terminal(Some(err))),
+            _ => unsound(&format!("`{out:?}`'s `{op:?}` of the wrong arguments")),
         };
-        Value::Int(i128::from(code), IntTy::U32)
+        let r = match done {
+            Ok(()) => 0,
+            Err(e) => io_failure(&e),
+        };
+        Value::Int(i128::from(r), IntTy::U64)
+    }
+
+    /// A method of `std::env::Args`, with arguments `args`.
+    fn args(&mut self, op: ArgsOp, args: Vec<Value>) -> Value {
+        let all = self.term.args();
+        match (op, args.as_slice()) {
+            (ArgsOp::Program, [_]) => {
+                let s = all[0].clone();
+                Value::Ref(self.literal(s.as_bytes()))
+            }
+            (ArgsOp::Len, [_]) => self.usize_of(all.len() - 1),
+            (ArgsOp::Index, [_, i]) => {
+                let i = usize::try_from(int(i.clone())).unwrap_or_else(|_| unsound("an index"));
+                let s = (all.get(i + 1).cloned())
+                    .unwrap_or_else(|| unsound("an argument past the last"));
+                Value::Ref(self.literal(s.as_bytes()))
+            }
+            _ => unsound(&format!("`Args`'s `{op:?}` of the wrong arguments")),
+        }
+    }
+
+    /// A method of `std::env::Env`, whose copy is `copy`, with arguments
+    /// `args`.
+    fn env(&mut self, op: EnvOp, copy: &str, args: Vec<Value>) -> Value {
+        match (op, args.as_slice()) {
+            (EnvOp::Len, [_]) => self.usize_of(self.term.env().len()),
+            (EnvOp::Index, [_, i]) => {
+                let i = usize::try_from(int(i.clone())).unwrap_or_else(|_| unsound("an index"));
+                let (name, value) = (self.term.env().get(i).cloned())
+                    .unwrap_or_else(|| unsound("a variable past the last"));
+                let TypeExprKind::Named(var, _) = &self.fns[copy].ret.kind else {
+                    unsound("`Env::index` gives a `Var`")
+                };
+                let var = var.clone();
+                let name = Value::Ref(self.literal(name.as_bytes()));
+                let value = Value::Ref(self.literal(value.as_bytes()));
+                Value::Struct(var, vec![("name".into(), name), ("value".into(), value)])
+            }
+            _ => unsound(&format!("`Env`'s `{op:?}` of the wrong arguments")),
+        }
     }
 
     /// Where static `symbol` is, used, as it is, by a function that says

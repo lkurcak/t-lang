@@ -2644,17 +2644,18 @@ fn main() with alloc {
         ("List<", 0, "alloc", "list.t", "struct List", "List"),
         ("list;", 0, "alloc", "list.t", "", ""),
         ("push(", 0, "alloc", "list.t", "fn push", "push"),
-        ("Error,", 0, "std", "io.t", "struct Error", "Error"),
+        // Re-exported by `std::io` from `core::io`, where they're declared.
+        ("Error,", 0, "core", "io.t", "struct Error", "Error"),
         (
             "ErrorKind::Other",
             0,
-            "std",
+            "core",
             "io.t",
             "enum ErrorKind",
             "ErrorKind",
         ),
         ("io;", 0, "std", "io.t", "", ""),
-        ("kind()", 0, "std", "io.t", "fn kind", "kind"),
+        ("kind()", 0, "core", "io.t", "fn kind", "kind"),
         ("Os;", 0, "std", "lib.t", "struct Os", "Os"),
         ("core::mem::", 0, "core", "lib.t", "", ""),
         ("alloc::list::", 0, "alloc", "lib.t", "", ""),
@@ -2687,7 +2688,7 @@ fn main() with alloc {
     );
     let defs = response["result"].as_array().unwrap();
     assert_eq!(defs.len(), 1, "{response}");
-    library_location(&defs[0], "std", "io.t", "struct Error", "Error");
+    library_location(&defs[0], "core", "io.t", "struct Error", "Error");
 
     // Navigation does not make library declarations renameable from a program.
     for needle in ["exchange(", "List;", "kind()"] {
