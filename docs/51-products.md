@@ -70,8 +70,9 @@ sign:
 and the same for `u >= L` (the other way round), for `u == L` (`u * v ==
 L * v`, whatever the sign), with `u` and `v` swapped, and for the
 constant bounds of `u`'s type. `L * v` is multiplied out, so a bound
-mentioning other names gives products of those. A square is never
-negative.
+mentioning other names gives products of those, which get lemmas of
+their own, two levels deep: `v == w` makes `v * u` into `w * u`, and only
+then does `w == 2` make it `2 * u`. A square is never negative.
 
 The grid's index is three of these. `y < height` is `y <= height - 1`,
 and `width >= 0`, so `y * width <= height * width - width`; with `x <
@@ -206,10 +207,11 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
 - **Division facts are theorems of truncating division**, used only where
   the signs they need are proved at the division: `a = q·b + r`, `|r| <
   |b|`, `r` with `a`'s sign or 0.
-- **It ends.** One round of lemmas per case, from the case's comparisons
-  only, never from other lemmas, at most 64 lemmas and 3 sign splits;
-  the case and constraint budgets of step 8 still apply. The answer
-  depends only on the question.
+- **It ends.** Lemmas per case, their bounds from the case's comparisons
+  only, never from other lemmas; a product a lemma makes gets lemmas of
+  its own, two levels deep; at most 64 lemmas and 3 sign splits; the case
+  and constraint budgets of step 8 still apply. The answer depends only
+  on the question.
 - **The interpreter still checks.** Every refinement and every operator
   marked proved is checked at run time under `t run --interp`; one that
   fails is "type soundness violated".

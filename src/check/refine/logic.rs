@@ -580,6 +580,10 @@ pub(crate) fn relevant<'a>(
 /// The most lemmas `lemmas` adds to one proof.
 const MAX_LEMMAS: usize = 64;
 
+/// How many lemmas deep `lemmas` goes: a product a lemma makes gets lemmas
+/// of its own, and so on, this many times.
+const MAX_DEPTH: usize = 2;
+
 /// The most factors of unknown sign `lemmas` splits a proof on.
 const MAX_SPLITS: usize = 3;
 
@@ -595,20 +599,22 @@ const MAX_SPLITS: usize = 3;
 /// it's at least 0 and one where it's at most 0, but only for the first
 /// few: each doubles the cases.
 ///
-/// One round, from the atoms as they are, never from other lemmas, and at
-/// most `MAX_LEMMAS`: so it ends, and the answer depends on nothing but the
-/// question.
+/// The bounds are the atoms', never other lemmas'. A product a lemma makes
+/// gets lemmas too, `MAX_DEPTH` deep, and there are at most `MAX_LEMMAS`:
+/// so it ends, and the answer depends on nothing but the question.
 fn lemmas(atoms: &[Formula], kinds: &mut Vec<Kind>) -> Vec<Formula> {
     let mut vars = Vec::new();
     for f in atoms {
         f.vars(&mut vars);
     }
-    let mut products: Vec<(Var, Var, Var)> = Vec::new();
+    // Each product, its factors, and how many lemmas deep it was made:
+    // 0 for those in the atoms.
+    let mut products: Vec<(Var, Var, Var, usize)> = Vec::new();
     for &p in &vars {
         if let Kind::Product(u, v) = kinds[p as usize]
             && !products.iter().any(|&(q, ..)| q == p)
         {
-            products.push((p, u, v));
+            products.push((p, u, v, 0));
         }
     }
     if products.is_empty() {
@@ -677,7 +683,9 @@ fn lemmas(atoms: &[Formula], kinds: &mut Vec<Kind>) -> Vec<Formula> {
     let mut out = Vec::new();
     let mut by_sign: BTreeMap<Var, (Vec<Formula>, Vec<Formula>)> = BTreeMap::new();
     let mut count = 0;
-    for (p, u, v) in products {
+    let mut next = 0;
+    while let Some(&(p, u, v, depth)) = products.get(next) {
+        next += 1;
         let pv = Lin::var(p);
         if u == v {
             // A square isn't negative.
@@ -693,6 +701,18 @@ fn lemmas(atoms: &[Formula], kinds: &mut Vec<Kind>) -> Vec<Formula> {
                     continue;
                 };
                 count += 1;
+                // A product the lemma makes, as `L · b` for an `L` that
+                // names another factor, gets lemmas too: `h.width() ==
+                // g.width()` and `g.width() == 2` say what `h.width() *
+                // h.height()` is only in two steps.
+                for w in lb.vars() {
+                    if let Kind::Product(x, y) = kinds[w as usize]
+                        && depth < MAX_DEPTH
+                        && !products.iter().any(|&(q, ..)| q == w)
+                    {
+                        products.push((w, x, y, depth + 1));
+                    }
+                }
                 let (pos, neg) = by_sign.entry(b).or_default();
                 match way {
                     Equal => out.extend(Formula::eq(&pv, &lb)),
