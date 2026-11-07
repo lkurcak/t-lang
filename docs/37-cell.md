@@ -4,7 +4,10 @@ Code: `core/cell.t` (`Cell<T>`, a struct with one private field, and its
 intrinsic `replace`), `Interp::cell_replace` in `src/interp.rs`, the
 `Cell` case of `intrinsic_body` in `src/cgen.rs`, the variance of `Cell`
 in `src/borrowck/regions.rs`, and `types::frozen` in `src/types.rs`, which
-`Checker::const_type` in `src/check/consts.rs` uses.
+`Checker::const_type` in `src/check/consts.rs` uses. Since step 46,
+`Cell<T>` is a struct over `core::cell::Unsafe<T>`, and `replace` is T
+code: K1–K5 are kept by `Unsafe`'s lemmas U1–U5
+(docs/46-unsafe-cell.md).
 
 Until now, nothing behind a `&` changed while the reference lived. That's
 what the borrow checker keeps: a value is either shared, `&`, or lent to

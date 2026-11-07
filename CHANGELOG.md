@@ -1,5 +1,43 @@
 # Changelog
 
+## Unreleased
+
+Step 46: one cell primitive, and the intrinsics by name. See
+[docs/46-unsafe-cell.md](docs/46-unsafe-cell.md).
+
+### Added
+
+- `core::cell::Unsafe<T>`: the one type whose contents may change while a
+  `&` to it lives. `new`, `into_inner`, `get_mut` are safe; `as_mut(&self)
+  -> &mut T` and `as_ref(&self) -> &T` are `unsafe`. It's invariant in
+  `T`, not frozen, `Send` if `T` is, never `Sync` or `Copy`, and a type
+  with one in it gets all of that from its fields: a library can write
+  its own cell, lock or once-cell.
+- An `unsafe impl Send`/`Sync` may need, besides `Send` and `Sync`, what
+  the type itself declares of the parameter (`T: Atom` for `Atomic<T>`).
+
+### Changed
+
+- `Cell`, `Atomic`, `Mutex`, `Volatile` and `Arena` are structs over
+  `Unsafe`; the compiler no longer knows them by name. `Atomic<T>` is
+  `Sync` by an `unsafe impl` for `T: Send`. `Arena` keeps its values in
+  a private intrinsic `Slots<T>`.
+- A type whose intrinsic parts hold an `Unsafe` (a `List<Cell<i32>>`) is
+  no longer counted as frozen; the const error says `Unsafe`.
+
+### Removed
+
+- `Cell::as_mut`: use `Unsafe::as_mut` (as `Mutex` does).
+
+### Internal
+
+- `src/intrinsic.rs`: the `Intrinsic` and `IntrinsicType` enums replace
+  the lists of strings; the checker resolves each declaration once, mono
+  hands it on with each copy, and the interpreter and C backend match on
+  it exhaustively.
+- The desugar provenance tables (`?`, format strings, `if let`) check
+  that no two rewrites share a place.
+
 ## 0.61.0 (2026-11-06)
 
 Step 45: variants by their names. See

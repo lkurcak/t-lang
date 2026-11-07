@@ -1,6 +1,8 @@
 # Step 23: arenas
 
-Code: `alloc/arena.t` (`Arena<T>`, an intrinsic type), `Interp::arena` in
+Code: `alloc/arena.t` (`Arena<T>`, an intrinsic type; since step 46 a
+struct over `core::cell::Unsafe` and an intrinsic `Slots<T>`, see
+docs/46-unsafe-cell.md), `Interp::arena` in
 `src/interp.rs`, `reaches_own_discard` in `src/borrowck/moves.rs` (what
 dropping an intrinsic type reaches), and the variances of intrinsic types
 in `src/borrowck/regions.rs`.
@@ -97,7 +99,8 @@ values in through a `&`, as a `Cell` would, and a `&'b Arena<&'static
 str>` seen as a `&'b Arena<&'a str>` could have a `&'a str` put in, which
 the arena, of `&'static str`s, would hold past `'a`. An intrinsic type has
 no fields for its variance to be worked out from, so it's fixed: `Arena`'s
-is the only one that's invariant.
+is the only one that's invariant. (Since step 46 that's lemma U2: the
+arena holds an `Unsafe`, which is invariant, and so is it, by its field.)
 
 ```rust,error
 use alloc::arena::Arena;
