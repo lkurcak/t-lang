@@ -16,7 +16,7 @@ fn ones(l: &mut List<u8>) ensures l.len() == old(l.len()) {
     let n = l.len();
     let mut i: usize = 0;
     while i < n {
-        l.set(i, 1);   // needs `i < l.len()`: known, as `l.len()` is still `n`
+        l.set(i, 1); // needs `i < l.len()`: known, as `l.len()` is still `n`
         i = i + 1;
     }
 }
@@ -63,7 +63,9 @@ mod grow {
     use alloc::list::List;
 
     pub fn grow(l: &mut List<u8>, more: bool) with alloc ensures more || l.len() == old(l.len()) {
-        if more { l.push(0); }
+        if more {
+            l.push(0);
+        }
     }
 }
 
@@ -72,7 +74,7 @@ fn f(l: &mut List<u8>) with alloc {
     let mut more = false;
     let mut i: usize = 0;
     while i < n {
-        grow::grow(l, more);   // `more` is `false` only the first time round
+        grow::grow(l, more); // `more` is `false` only the first time round
         more = true;
         l.set(n - 1, 1);
         i = i + 1;

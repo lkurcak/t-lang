@@ -5,7 +5,9 @@ use alloc::list::List;
 
 struct S { l: List<u8> }
 
-fn clear(s: &mut S) { s.l.clear(); }
+fn clear(s: &mut S) {
+    s.l.clear();
+}
 
 fn f(s: &mut S) {
     let n = s.l.len();

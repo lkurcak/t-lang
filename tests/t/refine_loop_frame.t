@@ -8,12 +8,16 @@ mod board {
     use alloc::list::List;
 
     #[derive(Discard)]
-    pub struct Board { width: usize, height: usize, cells: { c: List<u8> | c.len() == width * height } }
+    pub struct Board {
+        width: usize,
+        height: usize,
+        cells: { c: List<u8> | c.len() == width * height },
+    }
 
     impl Board {
-        pub fn new(width: { w: usize | w <= 100 }, height: { h: usize | h <= 100 }) -> Board with alloc {
-            Board { width, height, cells: List::filled(width * height, 0u8) }
-        }
+        pub fn new(width: { w: usize | w <= 100 }, height: { h: usize | h <= 100 }) -> Board
+        with alloc
+        { Board { width, height, cells: List::filled(width * height, 0u8) } }
 
         #[measure]
         pub fn width(&self) -> usize { self.width }
@@ -21,12 +25,18 @@ mod board {
         #[measure]
         pub fn height(&self) -> usize { self.height }
 
-        pub fn get(&self, x: { x: usize | x < self.width() }, y: { y: usize | y < self.height() }) -> u8 {
-            self.cells[y * self.width + x]
-        }
+        pub fn get(
+            &self,
+            x: { x: usize | x < self.width() },
+            y: { y: usize | y < self.height() },
+        ) -> u8 { self.cells[y * self.width + x] }
 
-        pub fn set(&mut self, x: { x: usize | x < self.width() }, y: { y: usize | y < self.height() }, v: u8)
-        ensures self.width() == old(self.width()) && self.height() == old(self.height()) {
+        pub fn set(
+            &mut self,
+            x: { x: usize | x < self.width() },
+            y: { y: usize | y < self.height() },
+            v: u8,
+        ) ensures self.width() == old(self.width()) && self.height() == old(self.height()) {
             let i = y * self.width + x;
             self.cells.set(i, v);
         }
@@ -65,11 +75,18 @@ fn first_zero(l: &mut List<u8>) -> usize ensures l.len() == old(l.len()) {
     let n = l.len();
     let mut i: usize = 0;
     loop {
-        if i >= n { break; }
-        if l[i] == 0u8 { l.set(i, 9u8); break; }
+        if i >= n {
+            break;
+        }
+        if l[i] == 0u8 {
+            l.set(i, 9u8);
+            break;
+        }
         i = i + 1;
     }
-    if n > 0 { l.set(n - 1, 5u8); }
+    if n > 0 {
+        l.set(n - 1, 5u8);
+    }
     i
 }
 
@@ -80,8 +97,8 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&l[3])?; // expect: 1
     let mut z: List<u8> = List::filled(3, 0u8);
     out.line(&first_zero(&mut z))?; // expect: 0
-    out.line(&z[0])?; // expect: 9
-    out.line(&z[2])?; // expect: 5
+    out.line(&z[0])?;               // expect: 9
+    out.line(&z[2])?;               // expect: 5
     let mut b = Board::new(3, 2);
     fill(&mut b, 7u8);
     if b.width() == 3 && b.height() == 2 {

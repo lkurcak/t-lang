@@ -7,7 +7,9 @@ mod grow {
     use alloc::list::List;
 
     pub fn grow(l: &mut List<u8>, more: bool) with alloc ensures more || l.len() == old(l.len()) {
-        if more { l.push(0u8); }
+        if more {
+            l.push(0u8);
+        }
     }
 }
 
