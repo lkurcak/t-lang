@@ -287,7 +287,7 @@ soundness violated".
 | `List`'s `len <= cap()` as a field refinement, so `push` proves `len + 1` | an invariant kept while a field is lent `&mut`, as `buf` is to `grow` and `write` | 30 ✅ |
 | what a `&mut self` method leaves as it was, `old(self.len())` | postconditions on what's behind a `&mut`, which need to know when the borrow ends | 30 ✅ |
 | measures with arguments, `s.is_char_boundary(i)` | a function symbol of several arguments, and its congruence | — |
-| refinements in type arguments, `Option<{ s: &str \| s.len() > 0 }>` | `split_at` relating its halves to what it split | — |
+| refinements in type arguments, `Option<{ s: &str \| s.len() > 0 }>` | `split_at` relating its halves to what it split | 53 ✅ (enums') |
 | `Index` as a trait | refinements in a trait's methods | — |
 | `&s[1..3]` | a range, as an index | — |
 

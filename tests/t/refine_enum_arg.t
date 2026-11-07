@@ -2,11 +2,7 @@
 // whose type is that parameter has it (docs/53-refined-type-arguments.md).
 
 fn digit(c: u8) -> Option<{ d: u8 | d < 10 }> {
-    if c >= 48 && c <= 57 {
-        Some(c - 48)
-    } else {
-        None
-    }
+    if c >= 48 && c <= 57 { Some(c - 48) } else { None }
 }
 
 // What the payload is known to be, in the arm that matched it.
@@ -74,10 +70,7 @@ fn sum_ends(s: &[u8]) -> u16 {
 
 // A struct's field: the refinement names an earlier field.
 #[derive(Discard)]
-struct Cursor {
-    len: usize,
-    at: Option<{ i: usize | i < len }>,
-}
+struct Cursor { len: usize, at: Option<{ i: usize | i < len }> }
 
 fn cursor(len: usize) -> Cursor {
     match len {
@@ -108,20 +101,20 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&value(55))?; // expect: 7
     out.line(&value(65))?; // expect: 0
-    out.line(&tens(42))?; // expect: 4
-    out.line(&tens(4))?; // expect: 0
+    out.line(&tens(42))?;  // expect: 4
+    out.line(&tens(4))?;   // expect: 0
     let a: [u8; 4] = [5, 6, 7, 8];
-    out.line(&at(&a, Some(2)))?; // expect: 7
+    out.line(&at(&a, Some(2)))?;  // expect: 7
     out.line(&at(&a, small(3)))?; // expect: 8
-    out.line(&at(&a, None))?; // expect: 0
-    out.line(&nested(1))?; // expect: 20
-    out.line(&nested(9))?; // expect: 0
+    out.line(&at(&a, None))?;     // expect: 0
+    out.line(&nested(1))?;        // expect: 20
+    out.line(&nested(9))?;        // expect: 0
     let s: [u8; 3] = [1, 2, 3];
     out.line(&sum_ends(s.as_slice()))?; // expect: 4
     let one: [u8; 1] = [9];
     out.line(&sum_ends(one.as_slice()))?; // expect: 9
-    out.line(&last(&cursor(5)))?; // expect: 1
-    out.line(&last(&cursor(0)))?; // expect: 0
-    out.line(&third())?; // expect: 4
+    out.line(&last(&cursor(5)))?;         // expect: 1
+    out.line(&last(&cursor(0)))?;         // expect: 0
+    out.line(&third())?;                  // expect: 4
     Ok(())
 }

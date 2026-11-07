@@ -7,7 +7,7 @@ struct P { x: i64, y: i64 }
 #[derive(Discard)]
 enum Option<T> { Some(T), None }
 
-fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let P { x: mut a, y } = P { x: 1, y: 2 };
     a += y;

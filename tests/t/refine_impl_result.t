@@ -29,6 +29,24 @@ impl Size for Three {
     fn size(&self) -> { n: usize | n == 3 } { 3 }
 }
 
+// A blanket impl, found for a type it's for.
+sealed trait Small {}
+
+impl Small for u8 {}
+
+trait Digit {
+    fn digit(&self) -> u8;
+}
+
+impl<T: Small> Digit for T {
+    fn digit(&self) -> { d: u8 | d < 10 } { 3 }
+}
+
+fn square(x: u8) -> u8 {
+    let squares: [u8; 10] = [0, 1, 4, 9, 16, 25, 36, 49, 64, 81];
+    squares[x.digit() as usize]
+}
+
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let digits: [u8; 10] = [9, 8, 7, 6, 5, 4, 3, 2, 1, 0];
@@ -42,5 +60,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let t = Three {};
     let n = t.size();
     out.line(&a[n - 1])?; // expect: 3
+    out.line(&square(7))?; // expect: 9
     Ok(())
 }

@@ -1,4 +1,7 @@
-// A method taking `&mut self` borrows the field mutably too.
+// A method taking `&mut self` borrows the field mutably too. This call is
+// known to be of `i64`'s impl (step 53), whose `&mut self` is call-scoped,
+// so the field can be lent to it, and `Pos`'s refinement is proved again
+// after (step 30): which fails, as `clear` makes it 0.
 trait Clear {
     fn clear(&mut self);
 }
@@ -17,4 +20,4 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&p.n)?;
     Ok(())
 }
-// error: can't borrow `p.n` as `&mut`: field `n` of `Pos` has a refinement, which a write through the reference could break
+// error: can't prove `v > 0` for field `n` of `Pos`

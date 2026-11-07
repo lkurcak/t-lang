@@ -44,6 +44,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&diagonal(&m))?; // expect: 5
     let r = 3..7usize;
     out.line(&r.start())?; // expect: 3
-    out.line(&r.end())?; // expect: 7
+    out.line(&r.end())?;   // expect: 7
     Ok(())
 }
