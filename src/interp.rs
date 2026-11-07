@@ -50,6 +50,9 @@
 
 use crate::ast::*;
 use crate::error::{Error, Span};
+use crate::intrinsic::{
+    ArrayOp, AtomicOp, Intrinsic, MessageOp, RawBufOp, SliceOp, SlotsOp, Stream, VolatileOp,
+};
 use crate::mono::{glue_name, is_glue};
 use crate::types::IntTy;
 use std::collections::{HashMap, HashSet};
@@ -104,8 +107,8 @@ pub enum Value {
     RawBuf(Ptr),
     /// A `JoinHandle`: which thread it's of, by number (see `threads`).
     Thread(usize),
-    /// An `Arena`: where its values are, on the heap, as a `Slots` of a
-    /// `Box` for each, in the order they were put in.
+    /// An arena's `Slots`: where its values are, on the heap, as a `Slots`
+    /// of a `Box` for each, in the order they were put in.
     Arena(Ptr),
     /// The slots of a `RawBuf`, each a value, or `Moved` if it's
     /// uninitialised, on the heap, where a `RawBuf` points. Or an array's
@@ -1042,8 +1045,8 @@ impl<'p> Interp<'p, '_> {
 
     /// Drops `v`, of type `ty`, all of which must be there (lemma E1 of
     /// docs/32.1-drops.md): by its type's drop glue, which monomorphisation
-    /// wrote, or for an `Arena`, by freeing its values, first put in first,
-    /// each by the glue of its box.
+    /// wrote, or for an arena's `Slots`, by freeing its values, first put
+    /// in first, each by the glue of its box.
     ///
     /// Throwing away a value that isn't `Discard` is a leak: the borrow
     /// checker said this drop never happens, or happens to what's been
@@ -1231,8 +1234,9 @@ impl<'p> Interp<'p, '_> {
                     );
                     Err(self.panic(span, message))
                 } else if decl.intrinsic.is_some() {
-                    let of = name.split("::<").next().unwrap_or_default().to_string();
-                    self.intrinsic(&of, &name, args, span)
+                    let which = (self.exe.intrinsic(&name))
+                        .unwrap_or_else(|| unsound(&format!("`{name}` is no intrinsic")));
+                    self.intrinsic(which, &name, args, span)
                 } else {
                     let exe = self.exe;
                     let (name, body) = (exe.body_named(&name))
@@ -1828,134 +1832,110 @@ impl<'p> Interp<'p, '_> {
             (pat, v) => unsound(&format!("pattern {pat:?} can't apply to `{v}`")),
         }
     }
-    /// Runs intrinsic `name` (see `check::INTRINSICS`), whose copy is
-    /// `copy`, on `args`, called at `span`.
+    /// Runs intrinsic `which`, whose copy is `copy`, on `args`, called at
+    /// `span`.
     fn intrinsic(
         &mut self,
-        name: &str,
+        which: Intrinsic,
         copy: &str,
         args: Vec<Value>,
         span: Span,
     ) -> Result<Value, Error> {
-        // A device's memory is the machine's: there's none here
-        // (docs/40-extern.md, I). Without an address, there's nothing to
-        // read or write.
-        if name == "<core::volatile::Volatile" && copy.ends_with("::at") {
-            let message = "`Volatile::at` names an address of the machine's, which the interpreter \
-                           hasn't got: build the program, with `t build`, to run it";
-            return Err(self.panic(span, message));
-        }
-        if name == "<core::volatile::Volatile" {
-            unsound("a volatile value the interpreter never made");
-        }
-        if name == "core::num::checked_mul" {
-            let [a, b] = <[Value; 2]>::try_from(args).unwrap_or_else(|_| unsound("checked arity"));
-            let (Value::Int(a, t), Value::Int(b, u)) = (a, b) else {
-                unsound("`checked_mul` of what isn't an integer")
-            };
-            if t != u {
-                unsound("`checked_mul` of two integer types");
+        match which {
+            // A device's memory is the machine's: there's none here
+            // (docs/40-extern.md, I). Without an address, there's nothing to
+            // read or write.
+            Intrinsic::Volatile(VolatileOp::At) => {
+                let message = "`Volatile::at` names an address of the machine's, which the \
+                               interpreter hasn't got: build the program, with `t build`, to \
+                               run it";
+                Err(self.panic(span, message))
             }
-            let (lo, hi) = self.range(t);
-            let result = a.checked_mul(b).filter(|n| (lo..=hi).contains(n));
-            // The copy of `Option<T>` the intrinsic returns.
-            let TypeExprKind::Named(option, _) = &self.fns[copy].ret.kind else {
-                unsound("`checked_mul` returns an `Option<T>`")
-            };
-            return Ok(match result {
-                Some(n) => Value::Variant(option.clone(), "Some".into(), vec![Value::Int(n, t)]),
-                None => Value::Variant(option.clone(), "None".into(), Vec::new()),
-            });
-        }
-        if name == "core::num::wrapping_mul" {
-            let [a, b] = <[Value; 2]>::try_from(args).unwrap_or_else(|_| unsound("checked arity"));
-            let (Value::Int(a, t), Value::Int(b, u)) = (a, b) else {
-                unsound("`wrapping_mul` of what isn't an integer")
-            };
-            if t != u {
-                unsound("`wrapping_mul` of two integer types");
+            Intrinsic::Volatile(VolatileOp::Read | VolatileOp::Write) => {
+                unsound("a volatile value the interpreter never made")
             }
-            return Ok(self.int_of(self.wrap(a.wrapping_mul(b), t), t));
-        }
-        if name == "core::num::wrap" {
-            let [Value::Int(x, _)] =
-                <[Value; 1]>::try_from(args).unwrap_or_else(|_| unsound("checked arity"))
-            else {
-                unsound("`wrap` of what isn't an integer")
-            };
-            let u = int_ty(&self.fns[copy].ret);
-            return Ok(self.int_of(self.wrap(x, u), u));
-        }
-        if let Some(end) = name.strip_prefix("core::num::") {
-            let t = int_ty(&self.fns[copy].ret);
-            let (lo, hi) = self.range(t);
-            return Ok(match end {
-                "least" => Value::Int(lo, t),
-                "greatest" => Value::Int(hi, t),
-                _ => unsound(&format!("unknown intrinsic `{name}`")),
-            });
-        }
-        if let Some(op) = name.strip_prefix("<core::panic::Message>::") {
-            return self.message(op, args, span);
-        }
-        if let Some(stream) = name.strip_prefix("<std::io::") {
-            return Ok(self.stream(stream, args));
-        }
-        if name == "<core::cell::Cell" && copy.ends_with("::as_mut") {
-            return Ok(self.cell_as_mut(args));
-        }
-        if name == "<core::cell::Cell" {
-            return Ok(self.cell_replace(copy, args));
-        }
-        if name == "<core::sync::Atomic" {
-            // What another thread does with it can be seen here, and what
-            // this one does there.
-            self.turn()?;
-            let op = copy.rsplit("::").next().unwrap_or_default();
-            return Ok(self.atomic(op, args));
-        }
-        if name == "core::sync::spin" {
-            self.turn()?;
-            return Ok(Value::Unit);
-        }
-        if name == "std::thread::start" {
-            return self.start(args, span);
-        }
-        if name == "<std::thread::JoinHandle" {
-            return self.join(args, span);
-        }
-        if name == "<alloc::arena::Arena" {
-            let op = copy.rsplit("::").next().unwrap_or_default();
-            return Ok(self.arena(op, args));
-        }
-        if name == "<alloc::raw::RawBuf" {
-            let op = copy.rsplit("::").next().unwrap_or_default();
-            return self.raw_buf(op, args, span);
-        }
-        // A string is its bytes.
-        if name == "str::as_bytes" || name == "<str>::as_bytes" {
-            let [s] = <[Value; 1]>::try_from(args).unwrap_or_else(|_| unsound("arity"));
-            return Ok(s);
-        }
-        if name == "str::len" || name == "<str>::len" {
-            return Ok(self.slice("len", copy, args));
-        }
-        if name.starts_with("<[") {
-            let op = copy.rsplit("::").next().unwrap_or_default();
-            return Ok(self.slice(op, copy, args));
-        }
-        match name {
+            Intrinsic::CheckedMul => {
+                let [a, b] =
+                    <[Value; 2]>::try_from(args).unwrap_or_else(|_| unsound("checked arity"));
+                let (Value::Int(a, t), Value::Int(b, u)) = (a, b) else {
+                    unsound("`checked_mul` of what isn't an integer")
+                };
+                if t != u {
+                    unsound("`checked_mul` of two integer types");
+                }
+                let (lo, hi) = self.range(t);
+                let result = a.checked_mul(b).filter(|n| (lo..=hi).contains(n));
+                // The copy of `Option<T>` the intrinsic returns.
+                let TypeExprKind::Named(option, _) = &self.fns[copy].ret.kind else {
+                    unsound("`checked_mul` returns an `Option<T>`")
+                };
+                Ok(match result {
+                    Some(n) => {
+                        Value::Variant(option.clone(), "Some".into(), vec![Value::Int(n, t)])
+                    }
+                    None => Value::Variant(option.clone(), "None".into(), Vec::new()),
+                })
+            }
+            Intrinsic::WrappingMul => {
+                let [a, b] =
+                    <[Value; 2]>::try_from(args).unwrap_or_else(|_| unsound("checked arity"));
+                let (Value::Int(a, t), Value::Int(b, u)) = (a, b) else {
+                    unsound("`wrapping_mul` of what isn't an integer")
+                };
+                if t != u {
+                    unsound("`wrapping_mul` of two integer types");
+                }
+                Ok(self.int_of(self.wrap(a.wrapping_mul(b), t), t))
+            }
+            Intrinsic::Wrap => {
+                let [Value::Int(x, _)] =
+                    <[Value; 1]>::try_from(args).unwrap_or_else(|_| unsound("checked arity"))
+                else {
+                    unsound("`wrap` of what isn't an integer")
+                };
+                let u = int_ty(&self.fns[copy].ret);
+                Ok(self.int_of(self.wrap(x, u), u))
+            }
+            Intrinsic::Least | Intrinsic::Greatest => {
+                let t = int_ty(&self.fns[copy].ret);
+                let (lo, hi) = self.range(t);
+                Ok(Value::Int(
+                    if which == Intrinsic::Least { lo } else { hi },
+                    t,
+                ))
+            }
+            Intrinsic::Message(op) => self.message(op, args, span),
+            Intrinsic::Stream(stream) => Ok(self.stream(stream, args)),
+            Intrinsic::UnsafeAsMut | Intrinsic::UnsafeAsRef => Ok(self.unsafe_cell(args)),
+            Intrinsic::Atomic(op) => {
+                // What another thread does with it can be seen here, and what
+                // this one does there.
+                self.turn()?;
+                Ok(self.atomic(op, args))
+            }
+            Intrinsic::Spin => {
+                self.turn()?;
+                Ok(Value::Unit)
+            }
+            Intrinsic::ThreadStart => self.start(args, span),
+            Intrinsic::ThreadJoin => self.join(args, span),
+            Intrinsic::Slots(op) => Ok(self.arena(op, args)),
+            Intrinsic::RawBuf(op) => self.raw_buf(op, args, span),
+            // A string is its bytes.
+            Intrinsic::StrAsBytes => {
+                let [s] = <[Value; 1]>::try_from(args).unwrap_or_else(|_| unsound("arity"));
+                Ok(s)
+            }
+            Intrinsic::StrLen => Ok(self.slice(SliceOp::Len, copy, args)),
+            Intrinsic::Slice(op) => Ok(self.slice(op, copy, args)),
+            Intrinsic::Array(op) => Ok(self.array(op, args)),
             // No slots: of any type, as there's nothing there.
-            "core::slice::empty" | "core::slice::empty_mut" => {
-                Ok(Value::Ref(self.nowhere.slice(0, 0)))
-            }
-            "alloc::raw::out_of_memory" => Err(self.out_of_memory(span, "out of memory")),
-            // `f(0)`, `f(1)`, .., each made in place, as many as the copy's
-            // array type says.
+            Intrinsic::EmptySlice { .. } => Ok(Value::Ref(self.nowhere.slice(0, 0))),
+            Intrinsic::OutOfMemory => Err(self.out_of_memory(span, "out of memory")),
             // `f(0)`, `f(1)`, .., each made in place, as many as the copy's
             // array type says, calling `f` where it is. On a panic, what's
             // made is forgotten: the program is aborting.
-            "core::array::from_fn_mut" => {
+            Intrinsic::ArrayFromFn => {
                 let [f] = <[Value; 1]>::try_from(args).unwrap_or_else(|_| unsound("arity"));
                 let n = match &self.fns[copy].ret.kind {
                     TypeExprKind::Array(_, n) => match n.kind {
@@ -1971,13 +1951,13 @@ impl<'p> Interp<'p, '_> {
                 Ok(Value::Slots(values))
             }
             // Aborts, saying why.
-            "core::panic::panic" => {
+            Intrinsic::Panic => {
                 let [why] = <[Value; 1]>::try_from(args).unwrap_or_else(|_| unsound("panic arity"));
                 let why = self.text(&why);
                 Err(self.panics(span, format!("panicked: {why}")))
             }
             // The same bytes: a `str`'s are UTF-8, which is what it adds.
-            "core::str::from_utf8_unchecked" => {
+            Intrinsic::FromUtf8Unchecked => {
                 let [b] = <[Value; 1]>::try_from(args).unwrap_or_else(|_| unsound("arity"));
                 let block = self.unsafe_op();
                 if std::str::from_utf8(&self.bytes(&b)).is_err() {
@@ -1987,7 +1967,7 @@ impl<'p> Interp<'p, '_> {
                 Ok(b)
             }
             // Exchanges two values, making and throwing away none.
-            "core::mem::swap" => {
+            Intrinsic::Swap => {
                 let [a, b] = <[Value; 2]>::try_from(args).unwrap_or_else(|_| unsound("swap arity"));
                 let (Value::Ref(p), Value::Ref(q)) = (&a, &b) else {
                     unsound(&format!("`swap` of `{a}` and `{b}`"))
@@ -2000,53 +1980,55 @@ impl<'p> Interp<'p, '_> {
                 *self.memory.get_mut(p) = y;
                 Ok(Value::Unit)
             }
-            _ => unsound(&format!("unknown intrinsic `{name}`")),
         }
     }
 
     /// The intrinsic method `op` of `core::panic::Message`, the message
     /// `panic_with` writes, with arguments `args`. There's only ever one
     /// being written: `fmt` into it can't panic, so can't start another.
-    fn message(&mut self, op: &str, args: Vec<Value>, span: Span) -> Result<Value, Error> {
+    fn message(&mut self, op: MessageOp, args: Vec<Value>, span: Span) -> Result<Value, Error> {
         match (op, args.as_slice()) {
-            ("new", []) => {
+            (MessageOp::New, []) => {
                 self.message.clear();
                 Ok(Value::Struct("core::panic::Message".into(), Vec::new()))
             }
-            ("push_str", [_, s]) => {
+            (MessageOp::PushStr, [_, s]) => {
                 let s = self.text(s);
                 self.message.push_str(&s);
                 Ok(Value::Unit)
             }
-            ("push_char", [_, Value::Char(c)]) => {
+            (MessageOp::PushChar, [_, Value::Char(c)]) => {
                 self.message.push(*c);
                 Ok(Value::Unit)
             }
-            ("abort", [_]) => {
+            (MessageOp::Abort, [_]) => {
                 let why = std::mem::take(&mut self.message);
                 Err(self.panics(span, format!("panicked: {why}")))
             }
-            _ => unsound(&format!("unknown intrinsic `<core::panic::Message>::{op}`")),
+            _ => unsound(&format!(
+                "`Message::{}` of the wrong arguments",
+                Intrinsic::Message(op).name()
+            )),
         }
     }
 
     /// The intrinsic method of `std::io`'s stream, `stream` being its
     /// copy's name after `<std::io::`, with arguments `args`.
-    fn stream(&mut self, stream: &str, args: Vec<Value>) -> Value {
+    fn stream(&mut self, stream: Stream, args: Vec<Value>) -> Value {
         let code = match (stream, args.as_slice()) {
-            ("Stdin>::read_byte", [_]) => match self.term.read_byte() {
+            (Stream::Stdin, [_]) => match self.term.read_byte() {
                 Ok(Some(b)) => u32::from(b),
                 Ok(None) => 256,
                 Err(e) => io_error(&e),
             },
-            ("Stdout>::write_byte" | "Stderr>::write_byte", [_, b]) => {
+            (Stream::Stdout | Stream::Stderr, [_, b]) => {
                 let b = u8::try_from(int(b.clone())).unwrap_or_else(|_| unsound("a byte"));
-                match self.term.write_byte(stream.starts_with("Stderr"), b) {
+                match self.term.write_byte(stream == Stream::Stderr, b) {
                     Ok(()) => 0,
                     Err(e) => io_error(&e),
                 }
             }
-            _ => unsound(&format!("unknown intrinsic `<std::io::{stream}`")),
+            _ => unsound(&format!("`{stream:?}`'s byte of the wrong arguments")),
         };
         Value::Int(i128::from(code), IntTy::U32)
     }
@@ -2117,24 +2099,34 @@ impl<'p> Interp<'p, '_> {
         String::from_utf8(self.bytes(v)).unwrap_or_else(|_| unsound("a `str` that isn't UTF-8"))
     }
 
+    /// Runs an array's intrinsic method `op` on `args`: the first a
+    /// reference to its values, all of them.
+    fn array(&mut self, op: ArrayOp, args: Vec<Value>) -> Value {
+        let name = Intrinsic::Array(op).name();
+        let this = args
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| unsound("array arity"));
+        let Value::Ref(p @ Ptr { range: None, .. }) = &this else {
+            unsound(&format!("`{name}` of `{this}`, which isn't an array"))
+        };
+        let Value::Slots(values) = self.memory.get(p) else {
+            unsound(&format!("`{name}` of `{this}`, which isn't an array"))
+        };
+        let len = values.len();
+        match op {
+            ArrayOp::Len => self.usize_of(len),
+            ArrayOp::AsSlice | ArrayOp::AsMutSlice => Value::Ref(p.slice(0, len)),
+        }
+    }
+
     /// Runs a slice's intrinsic method `op`, whose copy is `copy`, on
     /// `args`. Each checks what it's given against the slice's length, so
     /// none can fail: it's what it says in `core/slice.t`.
-    fn slice(&mut self, op: &str, copy: &str, args: Vec<Value>) -> Value {
+    fn slice(&mut self, op: SliceOp, copy: &str, args: Vec<Value>) -> Value {
+        let name = Intrinsic::Slice(op).name();
         let mut args = args.into_iter();
         let this = args.next().unwrap_or_else(|| unsound("slice arity"));
-        // An array's: a reference to its values, all of them.
-        if let Value::Ref(p @ Ptr { range: None, .. }) = &this {
-            let Value::Slots(values) = self.memory.get(p) else {
-                unsound(&format!("`{op}` of `{this}`, which isn't an array"))
-            };
-            let len = values.len();
-            return match op {
-                "len" => self.usize_of(len),
-                "as_slice" | "as_mut_slice" => Value::Ref(p.slice(0, len)),
-                _ => unsound(&format!("unknown intrinsic `[T; N]::{op}`")),
-            };
-        }
         let Value::Ref(
             p @ Ptr {
                 range: Some((lo, len)),
@@ -2142,13 +2134,13 @@ impl<'p> Interp<'p, '_> {
             },
         ) = &this
         else {
-            unsound(&format!("`{op}` of `{this}`, which isn't a slice"))
+            unsound(&format!("`{name}` of `{this}`, which isn't a slice"))
         };
         let (p, lo, len) = (p.clone(), *lo, *len);
         // The copy of `Option` it returns, and what's in its `Some`.
         let option = || -> (String, Option<String>) {
             let TypeExprKind::Named(option, _) = &self.fns[copy].ret.kind else {
-                unsound(&format!("`{op}` returns an `Option`"))
+                unsound(&format!("`{name}` returns an `Option`"))
             };
             let some = self.enums[option.as_str()]
                 .variants
@@ -2165,19 +2157,19 @@ impl<'p> Interp<'p, '_> {
             usize::try_from(i).ok().filter(|i| *i <= max)
         };
         let made = match op {
-            "len" => return self.usize_of(len),
+            SliceOp::Len => return self.usize_of(len),
             // Its refinement says `i < len()`, so it's the checker's bug
             // if it isn't.
-            "index" | "index_mut" => {
+            SliceOp::Index | SliceOp::IndexMut => {
                 let Some(i) = index(args.next(), len).filter(|i| *i < len) else {
-                    unsound(&format!("`{op}` out of range of a slice of {len}"))
+                    unsound(&format!("`{name}` out of range of a slice of {len}"))
                 };
                 return Value::Ref(Ptr {
                     range: None,
                     ..p.field(lo + i)
                 });
             }
-            "get" | "get_mut" => {
+            SliceOp::Get | SliceOp::GetMut => {
                 let i = index(args.next(), len).filter(|i| *i < len);
                 i.map(|i| {
                     Value::Ref(Ptr {
@@ -2186,13 +2178,12 @@ impl<'p> Interp<'p, '_> {
                     })
                 })
             }
-            "split_at" | "split_at_mut" => index(args.next(), len).map(|mid| {
+            SliceOp::SplitAt | SliceOp::SplitAtMut => index(args.next(), len).map(|mid| {
                 let split = option().1.unwrap_or_else(|| unsound("a split's struct"));
                 let head = Value::Ref(p.slice(lo, mid));
                 let tail = Value::Ref(p.slice(lo + mid, len - mid));
                 Value::Struct(split, vec![("head".into(), head), ("tail".into(), tail)])
             }),
-            _ => unsound(&format!("unknown intrinsic `[T]::{op}`")),
         };
         let option = option().0;
         match made {
@@ -2201,106 +2192,99 @@ impl<'p> Interp<'p, '_> {
         }
     }
 
-    /// Runs `Cell::replace` on `args`: a `&Cell<T>` and a `T`. The cell is
-    /// a struct whose one field is what's in it, written here through a
-    /// `&`, which only a cell's field may be (lemma K3 of docs/37-cell.md).
-    fn cell_replace(&mut self, copy: &str, args: Vec<Value>) -> Value {
-        if !copy.ends_with("::replace") {
-            unsound(&format!("unknown intrinsic `{copy}`"));
-        }
-        let [Value::Ref(p), v] = <[Value; 2]>::try_from(args).unwrap_or_else(|_| unsound("arity"))
-        else {
-            unsound("`Cell::replace` of what isn't a reference")
-        };
-        if !matches!(self.memory.get(&p), Value::Struct(ty, _) if ty.split("::<").next() == Some(crate::check::CELL))
-        {
-            unsound(&format!(
-                "`Cell::replace` of `{}`, which isn't a cell",
-                self.memory.get(&p)
-            ));
-        }
-        let old = std::mem::replace(self.memory.get_mut(&p.field(0)), v);
-        if self.taken_apart(&old) {
-            unsound("a cell whose value was moved out");
-        }
-        old
-    }
-
-    /// Runs `Cell::as_mut` on `args`, a `&Cell<T>`: a reference to its one
-    /// field, what's in it. That it's the only way there while it lives is
-    /// the caller's obligation (`unsafe`).
-    fn cell_as_mut(&mut self, args: Vec<Value>) -> Value {
+    /// Runs `Unsafe::as_mut` or `as_ref` on `args`, a `&Unsafe<T>`: a
+    /// reference to its one field, what's in it. That nothing else reaches
+    /// it while the reference lives is the caller's obligation (`unsafe`,
+    /// lemma U5 of docs/46-unsafe-cell.md).
+    fn unsafe_cell(&mut self, args: Vec<Value>) -> Value {
         let [Value::Ref(p)] = <[Value; 1]>::try_from(args).unwrap_or_else(|_| unsound("arity"))
         else {
-            unsound("`Cell::as_mut` of what isn't a reference")
+            unsound("`Unsafe::as_mut` of what isn't a reference")
         };
-        if !matches!(self.memory.get(&p), Value::Struct(ty, _) if ty.split("::<").next() == Some(crate::check::CELL))
-        {
+        if !self.is_unsafe_cell(&p) {
             unsound(&format!(
-                "`Cell::as_mut` of `{}`, which isn't a cell",
+                "`Unsafe::as_mut` of `{}`, which isn't an `Unsafe`",
                 self.memory.get(&p)
             ));
         }
         Value::Ref(p.field(0))
     }
 
+    /// Is what `p` points to an `Unsafe`: a struct of type
+    /// `core::cell::Unsafe::<..>`, by its copy's name?
+    fn is_unsafe_cell(&self, p: &Ptr) -> bool {
+        matches!(self.memory.get(p), Value::Struct(ty, _)
+            if ty.split("::<").next() == Some(crate::check::UNSAFE))
+    }
+
     /// Runs `Atomic`'s intrinsic method `op` on `args`: a `&Atomic<T>`,
-    /// and its `T`s. An atomic is a struct whose one field is what's in it,
-    /// written here through a `&`, which only a cell's or an atomic's field
-    /// may be. There's one thread, so each is one step anyway: the
+    /// and its `T`s. An atomic is a struct whose one field is an `Unsafe`
+    /// of what's in it, written here through a `&`, which only what's in an
+    /// `Unsafe` may be. There's one thread, so each is one step anyway: the
     /// orderings are a C compiler's business (lemma Y7 of
     /// docs/38-statics.md).
-    fn atomic(&mut self, op: &str, args: Vec<Value>) -> Value {
+    fn atomic(&mut self, op: AtomicOp, args: Vec<Value>) -> Value {
+        let name = Intrinsic::Atomic(op).name();
         let mut args = args.into_iter();
         let Some(Value::Ref(p)) = args.next() else {
-            unsound(&format!("`Atomic::{op}` of what isn't a reference"))
+            unsound(&format!("`Atomic::{name}` of what isn't a reference"))
         };
-        if !matches!(self.memory.get(&p), Value::Struct(ty, _) if ty.split("::<").next() == Some(crate::check::ATOMIC))
-        {
+        // An atomic is a struct of an `Unsafe` of what's in it.
+        let cell = p.field(0);
+        if !self.is_unsafe_cell(&cell) {
             unsound(&format!(
-                "`Atomic::{op}` of `{}`, which isn't an atomic",
+                "`Atomic::{name}` of `{}`, which isn't an atomic",
                 self.memory.get(&p)
             ));
         }
-        let at = p.field(0);
+        let at = cell.field(0);
         let old = self.memory.get(&at).clone();
         let args: Vec<Value> = args.collect();
         let int = |v: &Value| match v {
             Value::Int(n, t) => (*n, *t),
-            _ => unsound(&format!("`Atomic::{op}` of `{v}`, which isn't an integer")),
+            _ => unsound(&format!(
+                "`Atomic::{name}` of `{v}`, which isn't an integer"
+            )),
         };
         let new = match (op, args.as_slice()) {
-            ("load", []) => return old,
-            ("swap", [v]) => v.clone(),
-            ("compare_swap", [current, new]) => match old == *current {
+            (AtomicOp::Load, []) => return old,
+            (AtomicOp::Swap, [v]) => v.clone(),
+            (AtomicOp::CompareSwap, [current, new]) => match old == *current {
                 true => new.clone(),
                 false => return old,
             },
-            ("fetch_and" | "fetch_or" | "fetch_xor", [Value::Bool(b)]) => {
+            (AtomicOp::FetchAnd | AtomicOp::FetchOr | AtomicOp::FetchXor, [Value::Bool(b)]) => {
                 let Value::Bool(a) = old else {
                     unsound("`Atomic<bool>` of what isn't a `bool`")
                 };
                 Value::Bool(match op {
-                    "fetch_and" => a & b,
-                    "fetch_or" => a | b,
+                    AtomicOp::FetchAnd => a & b,
+                    AtomicOp::FetchOr => a | b,
                     _ => a ^ b,
                 })
             }
-            ("fetch_and" | "fetch_or" | "fetch_xor" | "fetch_add" | "fetch_sub", [v]) => {
+            (
+                AtomicOp::FetchAnd
+                | AtomicOp::FetchOr
+                | AtomicOp::FetchXor
+                | AtomicOp::FetchAdd
+                | AtomicOp::FetchSub,
+                [v],
+            ) => {
                 let ((a, t), (b, u)) = (int(&old), int(v));
                 if t != u {
                     unsound("`Atomic` of two integer types");
                 }
                 let n = match op {
-                    "fetch_and" => a & b,
-                    "fetch_or" => a | b,
-                    "fetch_xor" => a ^ b,
-                    "fetch_add" => self.wrap(a + b, t),
+                    AtomicOp::FetchAnd => a & b,
+                    AtomicOp::FetchOr => a | b,
+                    AtomicOp::FetchXor => a ^ b,
+                    AtomicOp::FetchAdd => self.wrap(a + b, t),
                     _ => self.wrap(a - b, t),
                 };
                 self.int_of(n, t)
             }
-            _ => unsound(&format!("unknown intrinsic `Atomic::{op}`")),
+            _ => unsound(&format!("`Atomic::{name}` of {} arguments", args.len())),
         };
         if self.taken_apart(&old) {
             unsound("an atomic whose value was moved out");
@@ -2309,27 +2293,28 @@ impl<'p> Interp<'p, '_> {
         old
     }
 
-    /// Runs `Arena`'s intrinsic method `op` on `args`. Each value put in
+    /// Runs an arena's `Slots`' intrinsic method `op` on `args`. Each value put in
     /// gets a heap slot of its own, which nothing frees before the arena
     /// is dropped, so a reference `alloc` hands out stays good until then
     /// (lemmas R1 and R2 of docs/23-arenas.md), and dangles after, which
     /// the generations of slots catch.
-    fn arena(&mut self, op: &str, args: Vec<Value>) -> Value {
+    fn arena(&mut self, op: SlotsOp, args: Vec<Value>) -> Value {
+        let name = Intrinsic::Slots(op).name();
         // Where the boxes of the arena that `self`, a `&Arena`, points to are.
         let boxes = |this: &Interp, v: &Value| -> Ptr {
             let Value::Ref(p) = v else {
-                unsound(&format!("`Arena::{op}` of `{v}`"))
+                unsound(&format!("`Slots::{name}` of `{v}`"))
             };
             match this.memory.get(p) {
                 Value::Arena(q) => q.clone(),
-                other => unsound(&format!("`Arena::{op}` of `{other}`")),
+                other => unsound(&format!("`Slots::{name}` of `{other}`")),
             }
         };
         let mut args = args.into_iter();
         let mut arg = || args.next().unwrap_or_else(|| unsound("`Arena` arity"));
         match op {
-            "new" => Value::Arena(self.memory.alloc(Value::Slots(Vec::new()), true)),
-            "alloc" => {
+            SlotsOp::New => Value::Arena(self.memory.alloc(Value::Slots(Vec::new()), true)),
+            SlotsOp::Alloc => {
                 let q = boxes(self, &arg());
                 let v = arg();
                 self.effect("alloc");
@@ -2340,14 +2325,13 @@ impl<'p> Interp<'p, '_> {
                 }
                 Value::Ref(p)
             }
-            "len" => {
+            SlotsOp::Len => {
                 let q = boxes(self, &arg());
                 match self.memory.get(&q) {
                     Value::Slots(values) => self.usize_of(values.len()),
                     other => unsound(&format!("an `Arena` of `{other}`")),
                 }
             }
-            _ => unsound(&format!("unknown intrinsic `Arena::{op}`")),
         }
     }
 
@@ -2357,17 +2341,18 @@ impl<'p> Interp<'p, '_> {
     /// compiled program's. Each unsafe one checks its obligations, as
     /// `alloc/raw.t` says them, and stops the program if they're broken,
     /// blaming the `unsafe` block that said they were kept.
-    fn raw_buf(&mut self, op: &str, args: Vec<Value>, span: Span) -> Result<Value, Error> {
+    fn raw_buf(&mut self, op: RawBufOp, args: Vec<Value>, span: Span) -> Result<Value, Error> {
+        let name = Intrinsic::RawBuf(op).name();
         /// More slots than this is running out of memory.
         const MAX_SLOTS: i128 = 1 << 20;
         // The buffer that `self`, a `&RawBuf` or `&mut RawBuf`, points to.
         let buf = |this: &Interp, v: &Value| -> Ptr {
             let Value::Ref(p) = v else {
-                unsound(&format!("`RawBuf::{op}` of `{v}`"))
+                unsound(&format!("`RawBuf::{name}` of `{v}`"))
             };
             match this.memory.get(p) {
                 Value::RawBuf(q) => q.clone(),
-                other => unsound(&format!("`RawBuf::{op}` of `{other}`")),
+                other => unsound(&format!("`RawBuf::{name}` of `{other}`")),
             }
         };
         let slots = |this: &Interp, q: &Ptr| -> usize {
@@ -2379,7 +2364,7 @@ impl<'p> Interp<'p, '_> {
         let mut args = args.into_iter();
         let mut arg = || args.next().unwrap_or_else(|| unsound("`RawBuf` arity"));
         match op {
-            "new" => {
+            RawBufOp::New => {
                 let cap = int(arg());
                 self.effect("alloc");
                 if cap > MAX_SLOTS {
@@ -2391,14 +2376,14 @@ impl<'p> Interp<'p, '_> {
             // No slots, so nothing to allocate: a compiled program's would
             // be a dangling pointer. It's on the heap here only so that
             // the leak check sees it freed, as every buffer must be.
-            "empty" => Ok(Value::RawBuf(
+            RawBufOp::Empty => Ok(Value::RawBuf(
                 self.memory.alloc(Value::Slots(Vec::new()), true),
             )),
-            "cap" => {
+            RawBufOp::Cap => {
                 let q = buf(self, &arg());
                 Ok(self.usize_of(slots(self, &q)))
             }
-            "grow" => {
+            RawBufOp::Grow => {
                 let this = arg();
                 let (q, extra) = (buf(self, &this), int(arg()));
                 // Both are `usize`s, so their sum fits in an `i128`.
@@ -2421,12 +2406,12 @@ impl<'p> Interp<'p, '_> {
                 *self.memory.get_mut(&p) = Value::RawBuf(moved);
                 Ok(Value::Unit)
             }
-            "slice" | "slice_mut" => {
+            RawBufOp::Slice | RawBufOp::SliceMut => {
                 let block = self.unsafe_op();
                 let q = buf(self, &arg());
                 let (lo, hi) = (int(arg()), int(arg()));
                 let cap = slots(self, &q);
-                let what = format!("`RawBuf::{op}` of slots {lo}..{hi}");
+                let what = format!("`RawBuf::{name}` of slots {lo}..{hi}");
                 // That half is its type's, `{ l: i64 | l >= 0 }`.
                 if lo < 0 {
                     unsound(&format!("{what}, but {lo} isn't `>= 0`"));
@@ -2448,12 +2433,12 @@ impl<'p> Interp<'p, '_> {
                 }
                 Ok(Value::Ref(q.slice(lo, hi - lo)))
             }
-            "write" | "read" => {
+            RawBufOp::Write | RawBufOp::Read => {
                 let block = self.unsafe_op();
                 let this = arg();
                 let (q, i) = (buf(self, &this), int(arg()));
                 let cap = slots(self, &q);
-                let what = format!("`RawBuf::{op}` of slot {i}");
+                let what = format!("`RawBuf::{name}` of slot {i}");
                 // That half is its type's, `{ i: i64 | i >= 0 }`.
                 if i < 0 {
                     unsound(&format!("{what}, which isn't `>= 0`"));
@@ -2465,10 +2450,10 @@ impl<'p> Interp<'p, '_> {
                 let slot = q.field(i as usize);
                 let filled = !matches!(self.memory.get(&slot), Value::Moved);
                 match (op, filled) {
-                    ("write", true) => {
+                    (RawBufOp::Write, true) => {
                         Err(self.broken(span, block, format!("{what}, which is initialised")))
                     }
-                    ("write", false) => {
+                    (RawBufOp::Write, false) => {
                         *self.memory.get_mut(&slot) = arg();
                         Ok(Value::Unit)
                     }
@@ -2478,7 +2463,7 @@ impl<'p> Interp<'p, '_> {
                     _ => Ok(std::mem::replace(self.memory.get_mut(&slot), Value::Moved)),
                 }
             }
-            "free" => {
+            RawBufOp::Free => {
                 let block = self.unsafe_op();
                 let Value::RawBuf(q) = arg() else {
                     unsound("`RawBuf::free` of something else")
@@ -2493,7 +2478,6 @@ impl<'p> Interp<'p, '_> {
                 self.memory.free(&q, true);
                 Ok(Value::Unit)
             }
-            _ => unsound(&format!("unknown intrinsic `RawBuf::{op}`")),
         }
     }
 

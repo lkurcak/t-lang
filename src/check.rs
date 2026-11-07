@@ -96,110 +96,20 @@ use std::collections::{HashMap, HashSet};
 use typed::{Bind, Typed};
 use unify::Var;
 
-/// The intrinsics: functions the core and alloc libraries declare with no
-/// body, which the compiler provides (see `core/mem.t`, `alloc/raw.t`), by
-/// symbol, or for a method, its type's symbol and its name (`[T]` for a
-/// slice's). Each is checked
-/// like any function, by its signature; what it does is what the checker
-/// trusts.
-pub const INTRINSICS: &[&str] = &[
-    "core::mem::swap",
-    "core::cell::Cell::replace",
-    "core::cell::Cell::as_mut",
-    "core::sync::spin",
-    "core::sync::Atomic::load",
-    "core::sync::Atomic::swap",
-    "core::sync::Atomic::compare_swap",
-    "core::sync::Atomic::fetch_and",
-    "core::sync::Atomic::fetch_or",
-    "core::sync::Atomic::fetch_xor",
-    "core::sync::Atomic::fetch_add",
-    "core::sync::Atomic::fetch_sub",
-    "core::volatile::Volatile::at",
-    "core::volatile::Volatile::read",
-    "core::volatile::Volatile::write",
-    "core::panic::panic",
-    "core::panic::Message::new",
-    "core::panic::Message::push_str",
-    "core::panic::Message::push_char",
-    "core::panic::Message::abort",
-    "core::num::checked_mul",
-    "core::num::wrapping_mul",
-    "core::num::wrap",
-    "core::num::least",
-    "core::num::greatest",
-    "core::slice::empty",
-    "core::str::from_utf8_unchecked",
-    "str::as_bytes",
-    "core::slice::empty_mut",
-    "[T]::len",
-    "str::len",
-    "[T]::index",
-    "[T]::index_mut",
-    "[T]::get",
-    "[T]::get_mut",
-    "[T]::split_at",
-    "[T]::split_at_mut",
-    "[T; N]::len",
-    "[T; N]::as_slice",
-    "[T; N]::as_mut_slice",
-    "core::array::from_fn_mut",
-    "alloc::raw::RawBuf::new",
-    "alloc::raw::RawBuf::empty",
-    "alloc::raw::RawBuf::cap",
-    "alloc::raw::RawBuf::grow",
-    "alloc::raw::RawBuf::write",
-    "alloc::raw::RawBuf::read",
-    "alloc::raw::RawBuf::slice",
-    "alloc::raw::RawBuf::slice_mut",
-    "alloc::raw::RawBuf::free",
-    "alloc::raw::out_of_memory",
-    "alloc::arena::Arena::new",
-    "alloc::arena::Arena::alloc",
-    "alloc::arena::Arena::len",
-    "std::io::Stdin::read_byte",
-    "std::io::Stdout::write_byte",
-    "std::io::Stderr::write_byte",
-    "std::thread::start",
-    "std::thread::JoinHandle::join",
-];
+/// The symbol of the alloc library's arena `Slots`, the intrinsic type an
+/// `Arena` keeps its values in, in an `Unsafe`: it owns them, as a
+/// `RawBuf` does, and each has a box of its own, which stays where it is
+/// as more are put in (lemma U6 of docs/46-unsafe-cell.md).
+pub const ARENA_SLOTS: &str = "alloc::arena::Slots";
 
-/// The intrinsic structs, by symbol: types the alloc library declares
-/// with no fields, which only the compiler makes and looks inside, by the
-/// intrinsic methods of their impls.
-pub const INTRINSIC_TYPES: &[&str] = &[
-    "core::panic::Message",
-    BOX,
-    "alloc::raw::RawBuf",
-    ARENA,
-    "std::io::Stdin",
-    "std::io::Stdout",
-    "std::io::Stderr",
-    "std::thread::Threads",
-    "std::thread::JoinHandle",
-];
-
-/// The symbol of the alloc library's `Arena`, the one intrinsic type
-/// that's invariant in its parameter (lemma R3 of docs/23-arenas.md).
-pub const ARENA: &str = "alloc::arena::Arena";
-
-/// The symbol of the core library's `Cell`: a struct, whose one field is
-/// private to `core::cell`, but invariant in its parameter, which its field
-/// doesn't show, as its intrinsic `replace` puts a `T` in through a `&`
-/// (lemma K2 of docs/37-cell.md). It's what isn't *frozen* (lemma K5).
-pub const CELL: &str = "core::cell::Cell";
-
-/// The symbol of the core library's `Atomic`: a struct like `Cell`, its one
-/// field private to `core::sync`, invariant in its parameter, and not
-/// frozen, as its intrinsics write through a `&`, atomically (lemma Y7 of
-/// docs/38-statics.md).
-pub const ATOMIC: &str = "core::sync::Atomic";
-
-/// The symbol of the core library's `Volatile`: a struct like `Atomic`, its
-/// one field private to `core::volatile`, invariant in its parameter, and
-/// not frozen, as a device changes it, and its intrinsics write through a
-/// `&` (lemma V of docs/40-extern.md).
-pub const VOLATILE: &str = "core::volatile::Volatile";
+/// The symbol of the core library's `Unsafe`: the one type whose contents
+/// may change while a `&` to it lives. A struct, whose one field is private
+/// to `core::cell`, but invariant in its parameter, which its field doesn't
+/// show, as its intrinsic `as_mut` lends a `&mut T` from a `&` (lemma U2 of
+/// docs/46-unsafe-cell.md), and what isn't *frozen* (U3). Every other type
+/// that changes through a `&`, `Cell`, `Atomic`, `Volatile`, `Mutex`,
+/// `Arena` or a library's own, has one in it, and so is too.
+pub const UNSAFE: &str = "core::cell::Unsafe";
 
 /// The sink type parameter of a derived `Debug`'s `fmt`, in the graph of
 /// what monomorphisation copies: a name no program can write.
@@ -1264,12 +1174,15 @@ impl Checker {
                     },
                     _ => self.fn_symbols[i].clone(),
                 };
-                if !INTRINSICS.contains(&name.as_str()) {
+                let Some(which) = crate::intrinsic::Intrinsic::from_symbol(&name) else {
                     return Err(Error::ty(
                         f.name.span,
                         format!("there's no intrinsic `{name}`"),
                     ));
-                }
+                };
+                self.info
+                    .intrinsics
+                    .insert(self.fn_symbols[i].clone(), which);
             }
             self.sig_owner = (self.fn_symbols[i].clone(), f.name.name.clone());
             self.const_decls = match method {

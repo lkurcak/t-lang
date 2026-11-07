@@ -100,6 +100,14 @@ pub(crate) struct Module {
     pub(crate) values: HashMap<String, Binding>,
 }
 
+/// Which rewrite made a node, for `Rewrite::made_at`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Made {
+    Try,
+    Format,
+    Else,
+}
+
 /// Which `let` an `else` arm made up by `Rewrite::if_let` is for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ElseOf {
@@ -155,6 +163,13 @@ pub(crate) struct Modules {
     /// Where each `?` is, which is where the calls it means are
     /// (`Rewrite::try_expr`), for saying what's wrong with them in terms of
     /// the `?`.
+    ///
+    /// This, `formats` and `elses` say which nodes a rewrite made by where
+    /// they are, not by node: what asks is often the borrow checker, which
+    /// has only where a drop or move is. That's sound as no two of them,
+    /// nor anything written, share a place: a `?`'s is empty, at the `?`;
+    /// a format string's is its hole's or its own, inside the string; an
+    /// `else`'s is its `let`'s. `Rewrite::made_at` checks that.
     pub(crate) tries: HashSet<Span>,
     /// Where each hole of a format string is, which is where the call of
     /// `core::fmt::display` or `debug` it means is named, and where each
@@ -2188,6 +2203,7 @@ impl Rewrite<'_> {
             // A hole's call is named where the hole is, so that what's
             // wrong with it is there; `cat`'s, where the whole string is.
             let named = span;
+            cx.made_at(named, Made::Format);
             cx.r.m.formats.insert(named);
             let callee = Expr {
                 kind: ExprKind::Var(format!("core::fmt::{f}"), Vec::new()),
@@ -2416,11 +2432,27 @@ impl Rewrite<'_> {
     /// named by their symbols, so a program's own `Try` doesn't change it.
     /// The calls are at the `?`, which is where an error about them is: what
     /// `x` is (`branch`), or what the function returns (`from_residual`).
+    /// Checks that no other rewrite's nodes are at `span`, where one of
+    /// kind `kind` is about to say its are (see `Modules::tries`).
+    fn made_at(&self, span: Span, kind: Made) {
+        let m = &self.r.m;
+        let taken = [
+            (Made::Try, m.tries.contains(&span)),
+            (Made::Format, m.formats.contains(&span)),
+            (Made::Else, m.elses.contains_key(&span)),
+        ];
+        debug_assert!(
+            taken.iter().all(|&(k, at)| k == kind || !at),
+            "two rewrites at {span:?}"
+        );
+    }
+
     fn try_expr(&mut self, x: Expr, q: Span) -> ExprKind {
         // The names it's made of are at an empty span, at the `?`: where
         // errors about them are, and as names the program doesn't have, with
         // nothing to show or rename (`info::unwritten`).
         let at = Span::new(q.start, q.start);
+        self.made_at(at, Made::Try);
         self.r.m.tries.insert(at);
         let try_trait = &self.symbols[match self.core_item("ops", "Try") {
             Item::Trait(k) => k,
@@ -2513,6 +2545,7 @@ impl Rewrite<'_> {
     /// what was written (`Modules::elses`).
     fn if_let(&mut self, c: LetCond, then: Expr, els: Expr, of: ElseOf) -> ExprKind {
         let at = c.let_span;
+        self.made_at(at, Made::Else);
         self.r.m.elses.entry(at).or_insert(of);
         let other = self.else_pattern(&c.pat, at);
         ExprKind::Match(
@@ -2611,6 +2644,7 @@ impl Rewrite<'_> {
             .partition(|s| matches!(s, Stmt::Fn(_) | Stmt::Type(_)));
         stmts.extend(items);
         let let_span = Span::new(at.start, at.start + 3);
+        self.made_at(let_span, Made::Else);
         self.r.m.elses.insert(let_span, ElseOf::LetElse);
         let after = Expr {
             kind: ExprKind::Block(after, tail.take()),

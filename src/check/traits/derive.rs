@@ -305,15 +305,6 @@ impl Checker {
                 let of = if tr == SEND && *mutable { SEND } else { SYNC };
                 return self.needs(inner, of, params, out);
             }
-            Type::Adt(symbol, ..)
-                if tr == SYNC
-                    && (symbol == crate::check::CELL || symbol == crate::check::ARENA) =>
-            {
-                return Err(Pred {
-                    ty: t.clone(),
-                    trait_name: tr.to_string(),
-                });
-            }
             // An array is its values, for all of them.
             Type::Array(inner, _) => return self.needs(inner, tr, params, out),
             // Core's and alloc's impls of `Debug` for these are picked, as

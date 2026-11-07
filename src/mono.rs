@@ -81,8 +81,10 @@ pub struct Executable {
     /// backend calls, where the interpreter looks at the closure's value.
     closure_bodies: HashMap<String, String>,
     /// The types of the parameters and result of each copy of an
-    /// intrinsic, by name: what a backend implements.
+    /// intrinsic or import, by name: what a backend implements.
     intrinsic_sigs: HashMap<String, (Vec<Type>, Type)>,
+    /// Which intrinsic each copy of one is, by name.
+    intrinsics: HashMap<String, crate::intrinsic::Intrinsic>,
 }
 
 /// What a struct, enum or closure type holds, at a copy's types, for a
@@ -141,6 +143,11 @@ impl Executable {
     /// The types of the parameters and result of intrinsic copy `name`.
     pub(crate) fn intrinsic_sig(&self, name: &str) -> Option<&(Vec<Type>, Type)> {
         self.intrinsic_sigs.get(name)
+    }
+
+    /// Which intrinsic copy `name` is a copy of, if it's one.
+    pub(crate) fn intrinsic(&self, name: &str) -> Option<crate::intrinsic::Intrinsic> {
+        self.intrinsics.get(name).copied()
     }
 
     /// The body closure type `t` runs, if a value of it is ever made.
@@ -261,6 +268,7 @@ pub fn monomorphise(prog: crate::lift::Lifted<'_>) -> Executable {
         shapes,
         closure_bodies: mono.closure_bodies,
         intrinsic_sigs: mono.intrinsic_sigs,
+        intrinsics: mono.intrinsics,
     }
 }
 
@@ -287,6 +295,7 @@ pub(crate) fn rooted(
         shapes,
         closure_bodies: mono.closure_bodies,
         intrinsic_sigs: mono.intrinsic_sigs,
+        intrinsics: mono.intrinsics,
     };
     (exe, missing)
 }
@@ -388,6 +397,8 @@ struct Mono<'p> {
     closure_bodies: HashMap<String, String>,
     /// `Executable::intrinsic_sigs`.
     intrinsic_sigs: HashMap<String, (Vec<Type>, Type)>,
+    /// `Executable::intrinsics`.
+    intrinsics: HashMap<String, crate::intrinsic::Intrinsic>,
     /// What to start from, if it's not everything that isn't generic: to
     /// work out a const's value, only what it needs (`crate::consts`).
     /// Then everything is copied only where it's needed.
@@ -435,7 +446,7 @@ impl<'p> Mono<'p> {
             };
             let shape = if crate::types::is_closure(name) {
                 Shape::Closure(cx.m.info.traits.closures[name].fields_at(&t))
-            } else if name == check::BOX || check::INTRINSIC_TYPES.contains(&name.as_str()) {
+            } else if crate::intrinsic::is_intrinsic_type(name) {
                 Shape::Intrinsic
             } else if let Some(variants) = cx.variant_types(&t) {
                 let TypeDecl::Enum(e) = cx.m.types[name.as_str()] else {
@@ -524,6 +535,7 @@ impl<'p> Mono<'p> {
             bodies: HashMap::new(),
             closure_bodies: HashMap::new(),
             intrinsic_sigs: HashMap::new(),
+            intrinsics: HashMap::new(),
             roots: None,
             missing: Default::default(),
         }
@@ -771,6 +783,11 @@ impl<'p> Mono<'p> {
                 .collect();
             let ret = cx.resolved(unrefined(&f.ret)).erased();
             cx.m.intrinsic_sigs.insert(copy.clone(), (ps, ret));
+            if !f.is_import() {
+                let which = (cx.m.info.intrinsics.get(&f.name.name).copied())
+                    .unwrap_or_else(|| panic!("`{}` is no intrinsic", f.name.name));
+                cx.m.intrinsics.insert(copy.clone(), which);
+            }
         }
         FnDecl {
             doc: f.doc.clone(),

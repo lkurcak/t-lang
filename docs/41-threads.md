@@ -1,7 +1,8 @@
 # Step 41: threads, `Mutex` and `unsafe impl`
 
 Code: `std/thread.t` (`Threads`, `JoinHandle`, `spawn`, `join`),
-`core/sync.t` (`Mutex<T>`), `Cell::as_mut` in `core/cell.t`,
+`core/sync.t` (`Mutex<T>`), `Cell::as_mut` in `core/cell.t` (since step
+46, `Unsafe::as_mut`),
 `Checker::unsafe_impl` in `src/check/traits/collect.rs`, the threads of
 the interpreter in `src/interp/threads.rs`, and the `std::thread` and
 `spin` cases of `intrinsic_body` in `src/cgen.rs`, with
@@ -202,22 +203,26 @@ as nothing else changes:
 Without `unsafe`, `impl Sync for ..` is still refused: those are derived.
 
 What a lock does with its cell needs one more thing: a `&mut` to what's in
-the cell, from a `&` to it. That's `Cell::as_mut(&self) -> &mut T`, which
+the cell, from a `&` to it. That was `Cell::as_mut(&self) -> &mut T`, which
 is `unsafe`: its caller must make sure nothing else reaches what's in the
-cell while the reference lives. With it, a library can write a lock of its
-own, as `Mutex` is written:
+cell while the reference lives. Since step 46 it's
+`core::cell::Unsafe::as_mut`, of the one primitive every cell is built on
+(docs/46-unsafe-cell.md), and a `Cell` lends nothing out. With it, a
+library can write a lock of its own, as `Mutex` is written:
 
 ```rust
-use core::cell::Cell;
+use core::cell::Unsafe;
 use core::sync::Atomic;
 
 #[derive(Discard where T: Discard, Send where T: Send)]
-struct Flagged<T> { busy: Atomic<bool>, value: Cell<T> }
+struct Flagged<T> { busy: Atomic<bool>, value: Unsafe<T> }
 
 unsafe impl<T: Send> Sync for Flagged<T> {}
 
 impl<T> Flagged<T> {
-    fn new(value: T) -> Flagged<T> { Flagged { busy: Atomic::new(false), value: Cell::new(value) } }
+    fn new(value: T) -> Flagged<T> {
+        Flagged { busy: Atomic::new(false), value: Unsafe::new(value) }
+    }
 
     // Runs `f` if no other thread is, or gives back `false`.
     fn try_with<F: FnOnce(&mut T)>(&self, f: F) -> bool where F: Discard {
@@ -239,8 +244,8 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let f = Flagged::new(1u64);
     let ran = f.try_with(|x: &mut u64| *x = core::num::wrapping_add(*x, 41));
     let mut out = os.stdout;
-    out.line(&ran)?;           // expect: true
-    out.line(&f.value.get())?; // expect: 42
+    out.line(&ran)?;                  // expect: true
+    out.line(&f.value.into_inner())?; // expect: 42
     Result::Ok(())
 }
 ```

@@ -20,6 +20,9 @@ pub struct Info {
     pub proved: std::collections::HashSet<NodeId>,
     /// The measures, for the interpreter (see `ast::Measures`).
     pub measures: crate::ast::Measures,
+    /// Which intrinsic each function the libraries declare with
+    /// `#[intrinsic]` is, by symbol (see `intrinsic.rs`).
+    pub intrinsics: HashMap<String, crate::intrinsic::Intrinsic>,
     /// The type of each integer literal, by node, which in a generic
     /// function can be a type parameter, for monomorphisation to write.
     pub literals: HashMap<NodeId, Type>,

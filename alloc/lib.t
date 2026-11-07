@@ -6,9 +6,10 @@
 //! interface over it (see docs/09.1-list.md), and `string::String` one over
 //! a list of bytes (see docs/13.1-string.md).
 //!
-//! `boxed::Box` is intrinsic too: the checker knows what a box is. So is
-//! `arena::Arena`, which hands out references to the values put in it
-//! (see docs/23-arenas.md).
+//! `boxed::Box` is intrinsic too: the checker knows what a box is.
+//! So are an arena's slots, which `arena::Arena`, which hands out references
+//! to the values put in it, keeps in a `core::cell::Unsafe` (see
+//! docs/23-arenas.md).
 //!
 //! Nothing here is in the prelude: a program says what it uses.
 

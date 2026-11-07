@@ -745,7 +745,7 @@ pub struct StructDecl {
     /// Where its `#[intrinsic]` is, if it's one: a type a built-in library
     /// declares with no fields, whose values only the compiler makes and
     /// looks inside, by the intrinsic methods of its impl (see
-    /// `check::INTRINSICS`).
+    /// `intrinsic::IntrinsicType`).
     pub intrinsic: Option<Span>,
 }
 

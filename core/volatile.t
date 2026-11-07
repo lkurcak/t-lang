@@ -2,6 +2,7 @@
 //! addresses, which change on their own and do something when they're
 //! read or written (see docs/40-extern.md).
 
+use crate::cell::Unsafe;
 use crate::sync::Atom;
 
 /// A value at a fixed address that isn't the program's: a device's
@@ -15,10 +16,11 @@ use crate::sync::Atom;
 /// out, nothing points into it, and the checker's logic never looks
 /// inside, as it may change between any two reads.
 ///
-/// It's invariant in `T`, never `Copy`, and neither `Send` nor `Sync`: a
-/// device shared by two threads, or by a program and its interrupts, needs
-/// more than volatile accesses to be used safely.
-export struct Volatile<T: Atom> { value: T }
+/// It's an `Unsafe`, so it's invariant in `T`, never `Copy`, and neither
+/// `Send` nor `Sync`, which it doesn't say it is: a device shared by two
+/// threads, or by a program and its interrupts, needs more than volatile
+/// accesses to be used safely.
+export struct Volatile<T: Atom> { value: Unsafe<T> }
 
 impl<T: Atom> Volatile<T> {
     /// The `T` at `address`, for the whole run.

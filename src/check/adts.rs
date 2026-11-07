@@ -66,7 +66,7 @@ impl Checker {
                 if !self.modules.in_library(d.module()) {
                     return Err(super::not_library(at));
                 }
-                if !super::INTRINSIC_TYPES.contains(&def.symbol.as_str()) {
+                if !crate::intrinsic::is_intrinsic_type(&def.symbol) {
                     let message = format!("there's no intrinsic type `{}`", def.symbol);
                     return Err(Error::ty(name.span, message));
                 }

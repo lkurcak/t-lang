@@ -844,7 +844,7 @@ fn reaches_own_discard(b: &Builder, t: &Type, seen: &mut Vec<Type>) -> bool {
         // An intrinsic type has no fields to say what it holds, but it
         // holds values of its type arguments, which dropping it drops: an
         // `Arena<T>` its `T`s (lemma R4 of docs/23-arenas.md).
-        Type::Adt(symbol, _, args) if crate::check::INTRINSIC_TYPES.contains(&symbol.as_str()) => {
+        Type::Adt(symbol, _, args) if crate::intrinsic::is_intrinsic_type(symbol) => {
             args.iter().any(|a| reaches_own_discard(b, a, seen))
         }
         Type::Adt(..) => {

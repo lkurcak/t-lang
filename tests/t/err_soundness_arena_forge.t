@@ -4,4 +4,4 @@ use alloc::arena::Arena;
 fn main() {
     let _a: Arena<i64> = Arena {};
 }
-// error: `Arena` is intrinsic
+// error: missing field `slots` in `Arena`

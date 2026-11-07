@@ -672,13 +672,6 @@ impl Traits {
                 return Ok(Source::Builtin);
             }
             (SEND, Type::Ref(_, true, inner)) => return all(&[inner]),
-            // A cell or an arena changes through a `&`, not atomically: never
-            // `Sync`, whatever their libraries derive (lemma Y1).
-            (SYNC, Type::Adt(symbol, ..))
-                if symbol == crate::check::CELL || symbol == crate::check::ARENA =>
-            {
-                return Err(fail());
-            }
             _ => {}
         }
         // A closure is what it captures: it may be thrown away, copied,
