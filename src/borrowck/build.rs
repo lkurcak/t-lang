@@ -587,12 +587,14 @@ impl<'a> Builder<'a> {
                 self.goto(join);
                 self.block = join;
             }
-            ExprKind::While(label, c, body) => {
-                self.loop_into(label, Some(c), body, None);
+            ExprKind::While(label, c, inv, body) => {
+                self.loop_into(label, Some(c), inv.as_deref(), body, None);
                 let unit = Rvalue::Use(Operand::Const(Const::Unit));
                 self.assign(dest, unit, &Type::Unit, span, false);
             }
-            ExprKind::Loop(label, body) => self.loop_into(label, None, body, Some(dest)),
+            ExprKind::Loop(label, inv, body) => {
+                self.loop_into(label, None, inv.as_deref(), body, Some(dest))
+            }
             // The value goes where the function's result does, then
             // everything in scope goes away, the parameters too.
             ExprKind::Return(value) => {
@@ -887,6 +889,7 @@ impl<'a> Builder<'a> {
         &mut self,
         label: &Option<Label>,
         c: Option<&'a Expr>,
+        inv: Option<&'a Expr>,
         body: &'a Expr,
         dest: Option<&Place>,
     ) {
@@ -894,6 +897,9 @@ impl<'a> Builder<'a> {
         self.body.heads.push(head);
         self.goto(head);
         self.block = head;
+        if let Some(p) = inv {
+            self.holds(p);
+        }
         if let Some(c) = c {
             let test = self.condition(c);
             let inside = self.new_block();
@@ -916,6 +922,28 @@ impl<'a> Builder<'a> {
         self.goto(head);
         self.loops.pop();
         self.block = after;
+    }
+
+    /// Loop invariant `p`, at the head of its loop: each variable it names
+    /// is read there (`Inspect`), so the borrow checker sees that it's
+    /// there, and not lent `&mut` across the head (decision D4 of
+    /// docs/54-loop-invariants.md); then only the interpreter checks that
+    /// it holds (`Holds`).
+    fn holds(&mut self, p: &Expr) {
+        let mut names = Vec::new();
+        pred_names(p, "", &mut names);
+        let env: Vec<(String, Place)> = (names.into_iter())
+            .filter_map(|n| Some((n.to_string(), self.named(n)?)))
+            .collect();
+        for (_, place) in &env {
+            self.push(StmtKind::Inspect(place.clone()), p.span);
+        }
+        self.body.refinements.push(Refinement {
+            parts: vec![(String::new(), p.clone())],
+            env,
+        });
+        let r = self.body.refinements.len() - 1;
+        self.push(StmtKind::Holds(r), p.span);
     }
 
     /// The loop a `break` or `continue` with `label` goes to: the innermost,

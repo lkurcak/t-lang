@@ -926,6 +926,7 @@ impl<'e> Gen<'e> {
             | StmtKind::Dead(_)
             | StmtKind::Consume(..)
             | StmtKind::Refine(..)
+            | StmtKind::Holds(_)
             | StmtKind::Kept(_) => {}
         }
     }

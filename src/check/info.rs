@@ -870,10 +870,10 @@ fn each_annotation(e: &Expr, f: &mut impl FnMut(&TypeExpr)) {
         }
         ExprKind::Unary(_, x)
         | ExprKind::Field(x, _)
-        | ExprKind::Loop(_, x)
+        | ExprKind::Loop(_, _, x)
         | ExprKind::Unsafe(x) => each_annotation(x, f),
         ExprKind::Return(x) | ExprKind::Break(_, x) => x.iter().for_each(|x| each_annotation(x, f)),
-        ExprKind::Binary(_, l, r) | ExprKind::Assign(_, l, r) | ExprKind::While(_, l, r) => {
+        ExprKind::Binary(_, l, r) | ExprKind::Assign(_, l, r) | ExprKind::While(_, l, _, r) => {
             each_annotation(l, f);
             each_annotation(r, f);
         }

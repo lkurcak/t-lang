@@ -533,7 +533,11 @@ fn step(b: &Builder, state: &mut MovedAt, s: &Statement, point: Point) -> Result
             state.retain(|m, _| !m.within(&p));
             state.insert(p, here);
         }
-        StmtKind::Refine(..) | StmtKind::Kept(_) | StmtKind::Drop(..) | StmtKind::Free(_) => {}
+        StmtKind::Refine(..)
+        | StmtKind::Holds(_)
+        | StmtKind::Kept(_)
+        | StmtKind::Drop(..)
+        | StmtKind::Free(_) => {}
     }
     Ok(())
 }
@@ -915,6 +919,7 @@ fn gone(b: &Builder, state: &mut Gone, s: &Statement, check: bool) -> Result<(),
         }
         StmtKind::Inspect(_)
         | StmtKind::Refine(..)
+        | StmtKind::Holds(_)
         | StmtKind::Kept(_)
         | StmtKind::Drop(..)
         | StmtKind::Free(_) => {}

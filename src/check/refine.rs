@@ -696,6 +696,60 @@ impl Checker {
         Ok(())
     }
 
+    /// What the predicate being checked is, for messages: "a refinement",
+    /// or "an invariant".
+    fn pred_a(&self) -> &'static str {
+        match self.pred_invariant {
+            true => "an invariant",
+            false => "a refinement",
+        }
+    }
+
+    /// The same, after "this".
+    fn pred_noun(&self) -> &'static str {
+        match self.pred_invariant {
+            true => "invariant",
+            false => "refinement",
+        }
+    }
+
+    /// Checks loop invariant `p`, in the scope of the locals at the loop:
+    /// a predicate, as a refinement's, but of `mut` variables too, as it's
+    /// of their values each time the loop is about to go round, where the
+    /// walk reads them (docs/54-loop-invariants.md). Measures behind a
+    /// `&mut` too, for the same reason.
+    pub(super) fn loop_invariant(&mut self, p: &Expr) -> Result<(), Error> {
+        let locals: Vec<(String, Type, NodeId, Span)> = self.locals[self.barrier..]
+            .iter()
+            .map(|l| (l.name.clone(), l.ty.clone(), l.id(), l.def()))
+            .collect();
+        let scope = |name: &str| {
+            (locals.iter().rev().find(|l| l.0 == name))
+                .map(|l| Named::Value(l.1.clone(), PredName::Local(l.2), l.3))
+        };
+        self.pred_owner = self.current;
+        self.pred_invariant = true;
+        let got = self.pred_type(p, &scope);
+        self.pred_invariant = false;
+        let got = got?;
+        if got != Sort::Bool {
+            return Err(Error::ty(p.span, format!("expected `bool`, found {got}")));
+        }
+        // What it names, it uses.
+        let mut named = HashSet::new();
+        each_expr(p, &mut |e| {
+            if let Some(PredName::Local(id)) = self.pred_names.get(&e.id) {
+                named.insert(*id);
+            }
+        });
+        for l in &mut self.locals[self.barrier..] {
+            if named.contains(&l.id()) {
+                l.used = true;
+            }
+        }
+        Ok(())
+    }
+
     /// The refinements written in `t`, whose base type is `base`, if there
     /// are any, checked: each of the whole value or of a type argument of
     /// an enum (`refined_arg`), with a predicate that's a `bool` in the
@@ -879,8 +933,9 @@ impl Checker {
                             return Err(Error::ty(
                                 e.span,
                                 format!(
-                                    "a refinement can only name `{name}`, of type `{t}`, by its \
-                                     measures: `{name}.m()`, where `m` is a `#[measure]`"
+                                    "{} can only name `{name}`, of type `{t}`, by its measures: \
+                                     `{name}.m()`, where `m` is a `#[measure]`",
+                                    self.pred_a()
                                 ),
                             ));
                         }
@@ -901,8 +956,9 @@ impl Checker {
                 Some(Named::Mut) => Err(Error::ty(
                     e.span,
                     format!(
-                        "a refinement can't name `{name}`, which is `mut`: it would be unclear \
-                         which of its values it meant"
+                        "{} can't name `{name}`, which is `mut`: it would be unclear which of \
+                         its values it meant",
+                        self.pred_a()
                     ),
                 )),
                 // A const, of an integer type or `bool`.
@@ -914,8 +970,9 @@ impl Checker {
                             return Err(Error::ty(
                                 e.span,
                                 format!(
-                                    "a refinement can't name `{name}`, a const of type `{}`: only \
-                                     integers and `bool`s are in its logic",
+                                    "{} can't name `{name}`, a const of type `{}`: only integers \
+                                     and `bool`s are in its logic",
+                                    self.pred_a(),
                                     t.erased()
                                 ),
                             ));
@@ -929,7 +986,7 @@ impl Checker {
                 }
                 None => Err(Error::ty(
                     e.span,
-                    format!("cannot find value `{name}` in this refinement"),
+                    format!("cannot find value `{name}` in this {}", self.pred_noun()),
                 )),
             },
             ExprKind::Unary(UnOp::Neg, x) => want(self, x, Sort::Int).map(|()| Sort::Int),
@@ -948,7 +1005,8 @@ impl Checker {
                         return Err(Error::ty(
                             e.span,
                             format!(
-                                "a refinement can multiply at most two unknowns: `{}` multiplies {}",
+                                "{} can multiply at most two unknowns: `{}` multiplies {}",
+                                self.pred_a(),
                                 crate::pretty::expr_text(e),
                                 match d {
                                     3 => "three".to_string(),
@@ -969,7 +1027,8 @@ impl Checker {
                 | BinOp::Shr => Err(Error::ty(
                     e.span,
                     format!(
-                        "a refinement can't use `{op}` yet: only `+`, `-` and `*` by a constant"
+                        "{} can't use `{op}` yet: only `+`, `-` and `*` by a constant",
+                        self.pred_a()
                     ),
                 )),
                 BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
@@ -1011,7 +1070,10 @@ impl Checker {
                 let ExprKind::Var(name, targs) = &x.kind else {
                     return Err(Error::ty(
                         x.span,
-                        "a refinement can only call a measure of a name: `s.len()`",
+                        format!(
+                            "{} can only call a measure of a name: `s.len()`",
+                            self.pred_a()
+                        ),
                     ));
                 };
                 let (ty, named) = match scope(name) {
@@ -1079,8 +1141,11 @@ impl Checker {
             }
             _ => Err(Error::ty(
                 e.span,
-                "a refinement can only use literals, names, measures, `+`, `-`, `*` by a \
-                 constant, comparisons, `&&`, `||` and `!`",
+                format!(
+                    "{} can only use literals, names, measures, `+`, `-`, `*` by a constant, \
+                     comparisons, `&&`, `||` and `!`",
+                    self.pred_a()
+                ),
             )),
         }
     }
@@ -1135,8 +1200,9 @@ impl Checker {
         Err(Error::ty(
             m.span,
             format!(
-                "`{}` isn't a measure: a refinement can only call methods marked `#[measure]`",
-                m.name
+                "`{}` isn't a measure: {} can only call methods marked `#[measure]`",
+                m.name,
+                self.pred_a()
             ),
         ))
     }
@@ -1648,11 +1714,15 @@ struct Outcome {
     invalidated: Vec<Invalidation>,
 }
 
-/// A loop around what's being walked: its label, and whether a `break`
-/// leaves it.
+/// A loop around what's being walked: its label, its invariant, if it
+/// has one, which each `continue` for it must prove, and the ways out of
+/// it so far: each `break` for it, as it ended, from `head` (the facts
+/// there), as a branch is from where it starts.
 struct Loop {
     label: Option<String>,
-    broke: bool,
+    invariant: Option<Expr>,
+    head: usize,
+    exits: Vec<Outcome>,
 }
 
 /// The pass over one body (see `Checker::refine`).
@@ -3207,6 +3277,50 @@ impl Walk<'_> {
         }
     }
 
+    /// The head of loop `e`, with invariant `inv`, as the walk gets to it:
+    /// the invariant holds as the loop starts; then each place the loop
+    /// may change is forgotten, but for what its frame keeps (`frames`),
+    /// and the invariant is assumed of them.
+    fn loop_head(&mut self, e: &Expr, inv: Option<&Expr>) -> Result<(), Error> {
+        let mut changed = Vec::new();
+        self.assigned(e, &mut changed);
+        let frames = self.frames(e, &changed);
+        let inv = inv.map(|p| Refinement::whole(p.clone()));
+        if let Some(r) = &inv {
+            let span = r.parts[0].pred.span;
+            let what = "the loop's invariant, as the loop starts".to_string();
+            self.need(r, &Val::Other, Env::Here, span, what)?;
+        }
+        self.forget(&changed, &frames, e.span);
+        if let Some(r) = &inv
+            && let Some(f) = self.pred(r, &Val::Other, Env::Here)
+        {
+            self.fact(f);
+        }
+        Ok(())
+    }
+
+    /// At the end of a loop's body, at `span`, if it gets there: the loop's
+    /// invariant `inv`, if it has one, must hold, for the next time round.
+    fn again(&mut self, inv: Option<&Expr>, span: Span) -> Result<(), Error> {
+        let Some(p) = inv else {
+            return Ok(());
+        };
+        let r = Refinement::whole(p.clone());
+        let what = "the loop's invariant, at the end of its body".to_string();
+        let end = Span::new(span.end.saturating_sub(1), span.end);
+        self.need(&r, &Val::Other, Env::Here, end, what)
+    }
+
+    /// The loop a `break` or `continue` with `label` is for, by its index
+    /// in `loops`: the one with that label, or the innermost.
+    fn target(&self, label: &Option<Ident>) -> Option<usize> {
+        match label {
+            Some(l) => (self.loops.iter()).rposition(|lp| lp.label.as_deref() == Some(&l.name)),
+            None => self.loops.len().checked_sub(1),
+        }
+    }
+
     /// The places assigned anywhere in `e`, or lent `&mut` to a call,
     /// together with the source operations that may change them.
     fn assigned(&self, e: &Expr, out: &mut Vec<Invalidation>) {
@@ -4494,47 +4608,58 @@ impl Walk<'_> {
                 }
                 Ok(Val::Other)
             }
-            ExprKind::While(label, c, body) => {
-                let mut changed = Vec::new();
-                self.assigned(e, &mut changed);
-                let frames = self.frames(e, &changed);
-                self.forget(&changed, &frames, e.span);
+            // The Hoare rule, with what a loop's frame keeps (lemma I1 of
+            // docs/54-loop-invariants.md): the invariant holds as the loop
+            // starts; at its head each place it may change is a value
+            // nothing's known of but its refinements, its frame and the
+            // invariant; the body, from there, must make it hold again for
+            // the next time round, at its end and at each `continue`. Its
+            // exits, the condition false at the head and each `break`, meet
+            // after it as branches do (lemma I2).
+            ExprKind::While(label, c, inv, body) => {
+                self.loop_head(e, inv.as_deref())?;
                 let c = self.cond(c)?;
                 let start = self.snapshot();
                 self.loops.push(Loop {
                     label: label.as_ref().map(|l| l.name.name.clone()),
-                    broke: false,
+                    invariant: inv.as_deref().cloned(),
+                    head: start.facts,
+                    exits: Vec::new(),
                 });
                 self.fact(c.clone());
-                let body = self.expr(body);
-                let broke = self.loops.pop().expect("pushed").broke;
+                let body = self
+                    .expr(body)
+                    .and_then(|_| self.again(inv.as_deref(), body.span));
+                let lp = self.loops.pop().expect("pushed");
                 body?;
-                self.restore(&start);
-                if broke {
-                    self.forget(&changed, &frames, e.span);
-                } else {
-                    self.fact(c.not());
-                }
+                let done = Outcome {
+                    facts: vec![c.not()],
+                    cur: start.cur.clone(),
+                    objs: start.objs.clone(),
+                    reachable: start.reachable,
+                    val: Val::Other,
+                    invalidated: start.invalidated.clone(),
+                };
+                let exits = std::iter::once(done).chain(lp.exits).collect();
+                self.join(&start, exits, &Type::Unit);
                 Ok(Val::Other)
             }
-            ExprKind::Loop(label, body) => {
-                let mut changed = Vec::new();
-                self.assigned(e, &mut changed);
-                let frames = self.frames(e, &changed);
-                self.forget(&changed, &frames, e.span);
+            ExprKind::Loop(label, inv, body) => {
+                self.loop_head(e, inv.as_deref())?;
                 let start = self.snapshot();
                 self.loops.push(Loop {
                     label: label.as_ref().map(|l| l.name.name.clone()),
-                    broke: false,
+                    invariant: inv.as_deref().cloned(),
+                    head: start.facts,
+                    exits: Vec::new(),
                 });
-                let body = self.expr(body);
-                let broke = self.loops.pop().expect("pushed").broke;
+                let body = self
+                    .expr(body)
+                    .and_then(|_| self.again(inv.as_deref(), body.span));
+                let lp = self.loops.pop().expect("pushed");
                 body?;
-                self.restore(&start);
-                self.reachable = start.reachable && broke;
-                self.forget(&changed, &frames, e.span);
                 let ty = self.ty_of(e);
-                Ok(self.unknown(&ty))
+                Ok(self.join(&start, lp.exits, &ty))
             }
             ExprKind::Return(x) => {
                 let v = match x {
@@ -4546,25 +4671,39 @@ impl Walk<'_> {
                 self.reachable = false;
                 Ok(Val::Other)
             }
+            // A way out of the loop it's for: how things are here is one of
+            // the ways they may be after it.
             ExprKind::Break(label, x) => {
-                if let Some(x) = x {
-                    self.expr(x)?;
-                }
-                let target = match label {
-                    Some(l) => self
-                        .loops
-                        .iter_mut()
-                        .rev()
-                        .find(|lp| lp.label.as_deref() == Some(l.name.as_str())),
-                    None => self.loops.last_mut(),
+                let val = match x {
+                    Some(x) => self.expr(x)?,
+                    None => Val::Other,
                 };
-                if let Some(lp) = target {
-                    lp.broke = true;
+                if let Some(i) = self.target(label)
+                    && self.reachable
+                {
+                    let head = self.loops[i].head;
+                    let exit = Outcome {
+                        facts: self.facts[head..].to_vec(),
+                        cur: self.cur.clone(),
+                        objs: self.objs.clone(),
+                        reachable: true,
+                        val,
+                        invalidated: self.invalidated.clone(),
+                    };
+                    self.loops[i].exits.push(exit);
                 }
                 self.reachable = false;
                 Ok(Val::Other)
             }
-            ExprKind::Continue(_) => {
+            // Round again: the loop's invariant must hold here.
+            ExprKind::Continue(label) => {
+                if let Some(i) = self.target(label)
+                    && let Some(p) = self.loops[i].invariant.clone()
+                {
+                    let r = Refinement::whole(p);
+                    let what = "the loop's invariant, at this `continue`".to_string();
+                    self.need(&r, &Val::Other, Env::Here, e.span, what)?;
+                }
                 self.reachable = false;
                 Ok(Val::Other)
             }

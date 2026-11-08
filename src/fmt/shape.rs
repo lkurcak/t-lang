@@ -138,7 +138,7 @@ structs! {
     Ident { name, span, id };
     TypeExpr { kind, span, id };
     Expr { kind, span, id };
-    ForLoop { label, pat, in_span, iter, body };
+    ForLoop { label, pat, in_span, iter, invariant, body };
     Label { name, head };
     LetCond { let_span, pat, expr };
     Lambda { id, moves, params, ret, body, captures };
@@ -183,8 +183,8 @@ enums! {
         IfLet(cond, then, otherwise), Array(elems),
         Repeat(value, len), Block(stmts, tail), Unsafe(block), StructLit(name, types, fields),
         Field(expr, name), Variant(ty, types, name, args, called), Match(expr, arms), Lambda(lambda),
-        Assign(op, place, value), While(label, cond, body), WhileLet(label, cond, body),
-        Loop(label, body), For(loop_),
+        Assign(op, place, value), While(label, cond, invariant, body),
+        WhileLet(label, cond, invariant, body), Loop(label, invariant, body), For(loop_),
         Range(start, end), Index(expr, index, span, mutable), Try(expr, span), Return(expr),
         Break(label, expr), Continue(label),
     };

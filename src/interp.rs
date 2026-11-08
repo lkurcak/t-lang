@@ -1737,6 +1737,10 @@ impl<'p> Interp<'p, '_> {
                         self.refine(&fr, *l, &body.refinements[*r]);
                         Ok(())
                     }
+                    StmtKind::Holds(r) => {
+                        self.holds(&fr, &body.refinements[*r]);
+                        Ok(())
+                    }
                     // The checker leaves only what it knew to be `Discard`,
                     // which a type parameter is only if every type it can
                     // be is.
@@ -2131,6 +2135,31 @@ impl<'p> Interp<'p, '_> {
         let name = fr.body.locals[l.0].name.as_deref().unwrap_or("_");
         refined.check(self, self.memory.get(&p), &format!("`{name}`"));
         self.refined.insert((p.slot, p.generation), refined);
+    }
+
+    /// Stops the program, as the checker is wrong, unless loop invariant
+    /// `r` holds of the variables it names, now, at the loop's head.
+    fn holds(&mut self, fr: &Frame, r: &crate::mir::Refinement) {
+        let env = (r.env.iter())
+            .map(|(n, place)| {
+                let p = self.ptr(fr, place);
+                (n.clone(), self.memory.get(&p).clone())
+            })
+            .collect();
+        let parts: Vec<(String, &Expr)> = (r.parts.iter())
+            .map(|(binder, pred)| (binder.clone(), pred))
+            .collect();
+        let refined = self.refined_at(&parts, env, false);
+        for part in &refined.parts {
+            if let PredValue::Bool(false) =
+                refined.eval(self, &part.pred, &part.binder, &Value::Unit)
+            {
+                unsound(&format!(
+                    "a loop's invariant `{}` doesn't hold at its head",
+                    crate::pretty::expr_text(&part.pred)
+                ));
+            }
+        }
     }
 
     /// Does the value at `v` match `pat`?

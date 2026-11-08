@@ -72,7 +72,8 @@ pub(crate) struct Body {
     /// there, the drop uses the value (see `moves::drop_uses`).
     pub(crate) drop_uses: std::collections::HashSet<Point>,
     /// The refinements its `let`s give their variables, which
-    /// `StmtKind::Refine` checks as it runs.
+    /// `StmtKind::Refine` checks as it runs, and its loops' invariants,
+    /// which `StmtKind::Holds` does.
     pub(crate) refinements: Vec<Refinement>,
     /// Where its `unsafe` blocks are: an unsafe operation called from
     /// inside one is in it.
@@ -82,7 +83,8 @@ pub(crate) struct Body {
 /// A refinement a `let` gives its variable, `{ binder: T | pred }`, and
 /// those of its type's enums' type arguments (`parts`, each a binder and a
 /// predicate), and for each other variable named in them, where it is
-/// there.
+/// there. A loop's invariant is one part, whose binder is `""`, as it's of
+/// no value but the variables'.
 #[derive(Clone)]
 pub(crate) struct Refinement {
     pub(crate) parts: Vec<(String, Expr)>,
@@ -178,6 +180,12 @@ pub(crate) enum StmtKind {
     /// `.1` of `Body::refinements`, and keep it whenever it's assigned to.
     /// Only the interpreter looks: it's what the refinement checker proved.
     Refine(Local, usize),
+    /// A loop's invariant, refinement `.0` of `Body::refinements`, holds of
+    /// the variables it names: at the loop's head, each time round. The
+    /// `Inspect`s just before it read them, for the borrow checker; only
+    /// the interpreter looks at this, at what the refinement checker
+    /// proved.
+    Holds(usize),
     /// A pattern has taken apart the value at the place, by value, and
     /// left it there, not used up, as the borrow checker knew its type to
     /// be `Discard`. Only the interpreter looks: it checks that it is, at
@@ -466,6 +474,7 @@ impl fmt::Display for Body {
                     StmtKind::Dead(l) => writeln!(f, "    dead _{}", l.0)?,
                     StmtKind::Consume(p, v) => writeln!(f, "    consume {p:?} {v:?}")?,
                     StmtKind::Refine(l, r) => writeln!(f, "    refine _{} {r}", l.0)?,
+                    StmtKind::Holds(r) => writeln!(f, "    holds {r}")?,
                     StmtKind::Kept(p) => writeln!(f, "    kept {p:?}")?,
                     StmtKind::Drop(p, t) => writeln!(f, "    drop {p:?}: {t}")?,
                     StmtKind::Free(p) => writeln!(f, "    free {p:?}")?,
@@ -544,6 +553,10 @@ impl Body {
                     StmtKind::Kept(p) => format!("kept {}", show_place(p)),
                     StmtKind::Drop(p, _) => format!("drop {}", show_place(p)),
                     StmtKind::Free(p) => format!("free {}", show_place(p)),
+                    StmtKind::Holds(r) => {
+                        let (_, pred) = &self.refinements[*r].parts[0];
+                        format!("holds {}", crate::pretty::expr_text(pred))
+                    }
                     StmtKind::Refine(l, r) => {
                         let r = &self.refinements[*r];
                         let parts: Vec<String> = (r.parts.iter())
