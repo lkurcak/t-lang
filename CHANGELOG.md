@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.69.0 (2026-11-08)
 
 Step 53: refinements in type arguments. See
 [docs/53-refined-type-arguments.md](docs/53-refined-type-arguments.md).
