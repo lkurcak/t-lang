@@ -527,7 +527,13 @@ Guards, refined signatures, assignments, patterns, and type ranges supply
 facts. In `for x in a..b`, `x < b` is known.
 Mutation, mutable lending, and loop iterations can invalidate facts
 about a previous value. Capture a current value and check it again when
-needed. Diagnostics explain the required condition, relevant known
+needed. At a loop's head, what the loop changes is forgotten except what
+its calls ensure stays the same and what its `invariant p` says (`while
+lo < hi invariant hi <= a.len() { .. }`, also on `loop`, `for` and `while
+let`): `p` must hold as the loop starts, at the end of its body and at
+each `continue`. After a loop, what held at one of its exits (its
+condition false, or a `break`) holds. See [loop frames](52-loop-frames.md)
+and [loop invariants](54-loop-invariants.md). Diagnostics explain the required condition, relevant known
 facts, and mutations that caused facts to be forgotten.
 
 Proof search is bounded and incomplete. A failed proof may mean a missing

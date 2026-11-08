@@ -165,19 +165,13 @@ impl<T: Copy> List<T> {
     /// A list of `n` copies of `v`.
     #[blame_caller]
     export fn filled(n: usize, v: T) -> { l: List<T> | l.len() == n } with alloc {
-        let mut f = UpTo { n, list: List::with_capacity(n) };
-        while f.list.len() < f.n {
-            f.list.push(v);
+        let mut list = List::with_capacity(n);
+        while list.len() < n invariant list.len() <= n {
+            list.push(v);
         }
-        let UpTo { n: _, list } = f;
         list
     }
 }
-
-/// A list being filled up to `n` values, never past. It's a struct so that
-/// says so in a refinement, which holds all through a loop that pushes,
-/// where what's known of a local is forgotten at the loop's head.
-struct UpTo<T> { n: usize, list: { l: List<T> | l.len() <= n } }
 
 impl<T: Discard> List<T> {
     /// Puts `v` at `i`, which is less than `len()`, dropping what was there:

@@ -915,7 +915,15 @@ module.exports = grammar({
       optional(seq(field('label', $.lifetime), ':')),
       'while',
       field('condition', choice($._expression, $.let_condition)),
+      optional($.invariant_clause),
       field('body', $.block),
+    ),
+
+    // `invariant lo <= hi`, between a loop's head and its body: what holds
+    // each time round.
+    invariant_clause: $ => seq(
+      'invariant',
+      field('predicate', $._expression),
     ),
 
     // `for x in 0..n { .. }`, maybe with a label.
@@ -925,6 +933,7 @@ module.exports = grammar({
       field('pattern', $._pattern),
       'in',
       field('value', $._expression),
+      optional($.invariant_clause),
       field('body', $.block),
     ),
 
@@ -939,6 +948,7 @@ module.exports = grammar({
     loop_expression: $ => seq(
       optional(seq(field('label', $.lifetime), ':')),
       'loop',
+      optional($.invariant_clause),
       field('body', $.block),
     ),
 

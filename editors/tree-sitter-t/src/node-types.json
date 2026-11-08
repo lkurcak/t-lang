@@ -1537,6 +1537,16 @@
           }
         ]
       }
+    },
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "invariant_clause",
+          "named": true
+        }
+      ]
     }
   },
   {
@@ -2045,6 +2055,22 @@
     }
   },
   {
+    "type": "invariant_clause",
+    "named": true,
+    "fields": {
+      "predicate": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "_expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "let_condition",
     "named": true,
     "fields": {
@@ -2181,6 +2207,16 @@
           }
         ]
       }
+    },
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "invariant_clause",
+          "named": true
+        }
+      ]
     }
   },
   {
@@ -3870,6 +3906,16 @@
           }
         ]
       }
+    },
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "invariant_clause",
+          "named": true
+        }
+      ]
     }
   },
   {
@@ -4165,6 +4211,10 @@
   {
     "type": "integer_literal",
     "named": true
+  },
+  {
+    "type": "invariant",
+    "named": false
   },
   {
     "type": "let",

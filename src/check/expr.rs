@@ -33,7 +33,9 @@ impl Checker {
             ExprKind::Block(stmts, tail) => self.block(stmts, tail.as_deref(), Some(want))?,
             ExprKind::Unsafe(block) => self.unsafe_block(e, block, Some(want))?,
             ExprKind::Match(scrutinee, arms) => self.match_expr(e, scrutinee, arms, Some(want))?,
-            ExprKind::Loop(label, body) => self.loop_expr(label, None, body, Some(want))?,
+            ExprKind::Loop(label, inv, body) => {
+                self.loop_expr(label, None, inv.as_deref(), body, Some(want))?
+            }
             ExprKind::If(c, then, Some(els)) => self.if_else(e, c, then, els, Some(want))?,
             ExprKind::Array(items) => match self.shallow(want) {
                 Type::Array(elem, _) => self.array(e, items, Some(*elem))?,
@@ -740,9 +742,13 @@ impl Checker {
             //
             // The body may not run at all, so whether it diverges doesn't
             // matter to what comes after, and nor does a `break` in it.
-            ExprKind::While(label, c, body) => self.loop_expr(label, Some(c), body, None),
+            ExprKind::While(label, c, inv, body) => {
+                self.loop_expr(label, Some(c), inv.as_deref(), body, None)
+            }
 
-            ExprKind::Loop(label, body) => self.loop_expr(label, None, body, None),
+            ExprKind::Loop(label, inv, body) => {
+                self.loop_expr(label, None, inv.as_deref(), body, None)
+            }
 
             //   Γ ⊢ e : R    R is what the function returns
             //  -------------------------------------------- (T-Return)
@@ -1393,6 +1399,8 @@ impl Checker {
     // give it. With none, it never ends.
     //
     // `loop_expr` checks a `while` too, with its condition `cond`: T-While.
+    // An `invariant p`, `inv`, isn't an expression: it's never run, and is
+    // checked as the predicate it is (`Checker::loop_invariant`).
     // A `break` in the condition is for a loop around the `while`, as the
     // condition isn't part of its body. A loop's label can't be one a loop
     // around it has, which `break` couldn't get to past it, and one that
@@ -1401,9 +1409,13 @@ impl Checker {
         &mut self,
         label: &Option<Label>,
         cond: Option<&Expr>,
+        inv: Option<&Expr>,
         body: &Expr,
         want: Option<&Type>,
     ) -> Result<Type, Error> {
+        if let Some(p) = inv {
+            self.loop_invariant(p)?;
+        }
         if let Some(c) = cond {
             self.check(c, &Type::Bool)?;
         }

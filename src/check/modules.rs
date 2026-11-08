@@ -1824,8 +1824,15 @@ impl Rewrite<'_> {
             }
             self.let_else(stmts, tail, i, e.span);
         }
-        if let ExprKind::IfLet(c, ..) | ExprKind::WhileLet(_, c, _) = &mut e.kind {
+        if let ExprKind::IfLet(c, ..) | ExprKind::WhileLet(_, c, ..) = &mut e.kind {
             self.pattern(&mut c.pat)?;
+        }
+        // A loop's invariant names what any expression can. Not as a
+        // refinement's predicate does: `old(x)` means nothing in it. A
+        // `while let`'s goes onto the `loop` it's rewritten as, and is seen
+        // there; a `for`'s is seen with its other parts, below.
+        if let ExprKind::While(_, _, Some(inv), _) | ExprKind::Loop(_, Some(inv), _) = &mut e.kind {
+            self.expr(inv)?;
         }
         match &mut e.kind {
             ExprKind::IfLet(..) => {
@@ -1842,19 +1849,22 @@ impl Rewrite<'_> {
                 e.kind = self.if_let(*c, *then, els, of);
                 return self.expr(e);
             }
-            ExprKind::WhileLet(label, _, body) => {
+            ExprKind::WhileLet(label, _, _, body) => {
                 no_break_value(body, "`while let`", label.as_ref().map(|l| &l.name.name), 0)?;
-                let ExprKind::WhileLet(label, c, body) =
+                let ExprKind::WhileLet(label, c, inv, body) =
                     std::mem::replace(&mut e.kind, ExprKind::Unit)
                 else {
                     unreachable!("matched above");
                 };
-                e.kind = self.while_let(label, *c, *body, e.span);
+                e.kind = self.while_let(label, *c, inv, *body, e.span);
                 return self.expr(e);
             }
             ExprKind::For(f) => {
                 self.pattern(&mut f.pat)?;
                 self.expr(&mut f.iter)?;
+                if let Some(inv) = &mut f.invariant {
+                    self.expr(inv)?;
+                }
                 self.expr(&mut f.body)?;
                 no_break_value(&f.body, "`for`", f.label.as_ref().map(|l| &l.name.name), 0)?;
                 let ExprKind::For(f) = std::mem::replace(&mut e.kind, ExprKind::Unit) else {
@@ -2283,15 +2293,15 @@ impl Rewrite<'_> {
     /// }
     /// ```
     ///
-    /// with the `for`'s label on the `loop`, and `it` a name no program can
-    /// write. So `it` is thrown away when the loop ends, which it can only
-    /// be if it's `Discard`, and each value `pat` binds is the body's to use
-    /// up, by the rules for any variable. `iter` is a `match`'s scrutinee,
-    /// not a `let`'s initializer, so its temporaries (a const's value, a
-    /// call's result that `.iter()` borrows) go at the end of the statement
-    /// the `for` is in, after the loop and after `it` (lemma F1 of
-    /// docs/42-patterns-and-loops.md). Nothing about a `for` needs a rule of
-    /// its own.
+    /// with the `for`'s label and invariant on the `loop`, and `it` a name
+    /// no program can write. So `it` is thrown away when the loop ends,
+    /// which it can only be if it's `Discard`, and each value `pat` binds is
+    /// the body's to use up, by the rules for any variable. `iter` is a
+    /// `match`'s scrutinee, not a `let`'s initializer, so its temporaries
+    /// (a const's value, a call's result that `.iter()` borrows) go at the
+    /// end of the statement the `for` is in, after the loop and after `it`
+    /// (lemma F1 of docs/42-patterns-and-loops.md). Nothing about a `for`
+    /// needs a rule of its own.
     ///
     /// Each node made here gets an id of its own, which is what the checker
     /// files what it learns about it by. Its span is only where messages
@@ -2406,7 +2416,7 @@ impl Rewrite<'_> {
             id: self.id(),
         };
         let looped = Expr {
-            kind: ExprKind::Loop(f.label, Box::new(body)),
+            kind: ExprKind::Loop(f.label, f.invariant, Box::new(body)),
             span: at(k, k + 3),
             id: self.id(),
         };
@@ -2574,9 +2584,17 @@ impl Rewrite<'_> {
     /// }
     /// ```
     ///
-    /// with `other` as in `Rewrite::if_let`. Its body can't `break` with a
-    /// value, as a `while`'s can't, which the caller checks.
-    fn while_let(&mut self, label: Option<Label>, c: LetCond, body: Expr, span: Span) -> ExprKind {
+    /// with `other` as in `Rewrite::if_let`, and the invariant on the
+    /// `loop`. Its body can't `break` with a value, as a `while`'s can't,
+    /// which the caller checks.
+    fn while_let(
+        &mut self,
+        label: Option<Label>,
+        c: LetCond,
+        inv: Invariant,
+        body: Expr,
+        span: Span,
+    ) -> ExprKind {
         let at = Span::new(c.let_span.start, c.let_span.start);
         let stop = Expr {
             kind: ExprKind::Break(None, None),
@@ -2593,7 +2611,7 @@ impl Rewrite<'_> {
             span,
             id: self.id(),
         };
-        ExprKind::Loop(label, Box::new(body))
+        ExprKind::Loop(label, inv, Box::new(body))
     }
 
     /// Rewrites the `let .. else` that's statement `i` of a block, at
@@ -3147,12 +3165,12 @@ pub(crate) fn children_mut(e: &mut Expr) -> Vec<&mut Expr> {
         ExprKind::Unary(_, x)
         | ExprKind::As(x, _)
         | ExprKind::Field(x, _)
-        | ExprKind::Loop(_, x)
+        | ExprKind::Loop(_, _, x)
         | ExprKind::Unsafe(x) => vec![&mut **x],
         ExprKind::Return(x) | ExprKind::Break(_, x) => x.iter_mut().map(|x| &mut **x).collect(),
         ExprKind::Binary(_, l, r)
         | ExprKind::Assign(_, l, r)
-        | ExprKind::While(_, l, r)
+        | ExprKind::While(_, l, _, r)
         | ExprKind::Range(l, r)
         | ExprKind::Index(l, r, ..) => {
             vec![&mut **l, &mut **r]
@@ -3162,7 +3180,7 @@ pub(crate) fn children_mut(e: &mut Expr) -> Vec<&mut Expr> {
             .into_iter()
             .chain(els.as_deref_mut())
             .collect(),
-        ExprKind::WhileLet(_, c, body) => vec![&mut c.expr, &mut **body],
+        ExprKind::WhileLet(_, c, _, body) => vec![&mut c.expr, &mut **body],
         ExprKind::Try(e, _) => vec![e],
         ExprKind::Call(f, args) | ExprKind::MethodCall(f, _, _, args) => {
             std::iter::once(&mut **f).chain(args.iter_mut()).collect()

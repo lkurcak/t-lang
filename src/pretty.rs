@@ -1158,14 +1158,22 @@ impl Printer<'_> {
                     + self.args(end, args)
             }
             ExprKind::If(..) | ExprKind::IfLet(..) => self.if_chain(e),
-            ExprKind::While(label, c, body) => {
-                group(label_doc(label) + "while " + self.head(c) + self.block_or_expr(body))
-            }
-            ExprKind::WhileLet(label, c, body) => {
-                group(label_doc(label) + "while " + self.let_cond(c) + self.block_or_expr(body))
-            }
-            ExprKind::Loop(label, body) => {
-                group(label_doc(label) + "loop " + self.block_or_expr(body))
+            ExprKind::While(label, c, inv, body) => group(
+                label_doc(label)
+                    + "while "
+                    + self.head(c)
+                    + self.invariant(inv)
+                    + self.block_or_expr(body),
+            ),
+            ExprKind::WhileLet(label, c, inv, body) => group(
+                label_doc(label)
+                    + "while "
+                    + self.let_cond(c)
+                    + self.invariant(inv)
+                    + self.block_or_expr(body),
+            ),
+            ExprKind::Loop(label, inv, body) => {
+                group(label_doc(label) + "loop " + self.invariant(inv) + self.block_or_expr(body))
             }
             ExprKind::For(f) => group(
                 label_doc(&f.label)
@@ -1173,6 +1181,7 @@ impl Printer<'_> {
                     + self.pattern(&f.pat)
                     + " in "
                     + self.head(&f.iter)
+                    + self.invariant(&f.invariant)
                     + self.block_or_expr(&f.body),
             ),
             // Its ends bind more tightly than it, whatever they are but an
@@ -1459,6 +1468,15 @@ impl Printer<'_> {
         ) {
             Doc::Group { doc, .. } => group(*doc + Doc::Line),
             doc => doc + " ",
+        }
+    }
+
+    /// A loop's `invariant p `, with the space before the `{`, if it has
+    /// one.
+    fn invariant(&mut self, inv: &Invariant) -> Doc {
+        match inv {
+            Some(p) => text("invariant ") + self.head(p),
+            None => text(""),
         }
     }
 

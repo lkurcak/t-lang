@@ -70,9 +70,10 @@
 //! lambda   = "move"? ("||" | "|" (lparam ("," lparam)* ","?)? "|") ("->" type block | expr)
 //! lparam   = "mut"? IDENT (":" type)?
 //! if       = "if" expr block ("else" (block | if))?
-//! while    = "while" expr block
-//! loop     = "loop" block
-//! for      = "for" pattern "in" expr block
+//! while    = "while" ("let" pattern "=")? expr invariant? block
+//! loop     = "loop" invariant? block
+//! for      = "for" pattern "in" expr invariant? block
+//! invariant = "invariant" expr                               -- a predicate, never run
 //! match    = "match" expr "{" (pattern "=>" expr ","?)* "}"  -- `,` optional after a block/if/match
 //! field_init = IDENT (":" expr)?                             -- `x` is short for `x: x`
 //!
@@ -2809,6 +2810,7 @@ impl Parser {
             let pat = self.pattern()?;
             let in_span = self.expect(Tok::In)?;
             let iter = self.structs(false, Self::expr)?;
+            let invariant = self.invariant()?;
             let body = self.block()?;
             let span = start.to(body.span);
             let f = ForLoop {
@@ -2816,6 +2818,7 @@ impl Parser {
                 pat,
                 in_span,
                 iter,
+                invariant,
                 body,
             };
             return Ok(Expr {
@@ -2824,37 +2827,48 @@ impl Parser {
                 id: self.id(),
             });
         }
-        let (cond, body) = match self.peek() {
+        let (cond, inv, body) = match self.peek() {
             Tok::While if *self.peek2() == Tok::Let => {
                 self.bump();
                 let c = self.let_cond("a `while let`")?;
+                let inv = self.invariant()?;
                 let body = self.block()?;
                 return Ok(Expr {
                     span: start.to(body.span),
-                    kind: ExprKind::WhileLet(label, Box::new(c), Box::new(body)),
+                    kind: ExprKind::WhileLet(label, Box::new(c), inv, Box::new(body)),
                     id: self.id(),
                 });
             }
             Tok::While => {
                 self.bump();
-                (Some(self.structs(false, Self::expr)?), self.block()?)
+                let c = self.structs(false, Self::expr)?;
+                (Some(c), self.invariant()?, self.block()?)
             }
             Tok::Loop => {
                 self.bump();
-                (None, self.block()?)
+                (None, self.invariant()?, self.block()?)
             }
             _ => return Err(self.unexpected("`loop`, `while` or `for` after a label")),
         };
         let span = start.to(body.span);
         let kind = match cond {
-            Some(c) => ExprKind::While(label, Box::new(c), Box::new(body)),
-            None => ExprKind::Loop(label, Box::new(body)),
+            Some(c) => ExprKind::While(label, Box::new(c), inv, Box::new(body)),
+            None => ExprKind::Loop(label, inv, Box::new(body)),
         };
         Ok(Expr {
             kind,
             span,
             id: self.id(),
         })
+    }
+
+    /// A loop's `invariant p`, between its head and its body, if it has
+    /// one: an expression, as a condition is, with no struct literal.
+    fn invariant(&mut self) -> Result<Invariant, Error> {
+        if !self.eat(&Tok::Invariant) {
+            return Ok(None);
+        }
+        Ok(Some(Box::new(self.structs(false, Self::expr)?)))
     }
 
     /// `return e`, `break 'a e` or `continue 'a`, where the label is there

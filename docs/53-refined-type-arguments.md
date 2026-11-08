@@ -286,7 +286,9 @@ nothing's known.
 - Not of a struct's, a `Box`'s, a reference's or a `List`'s type
   arguments.
 - `for x in a..b` knows `x < b`, but not `a <= x`: that's a fact of every
-  iteration, which only a loop invariant would say.
+  iteration, which only a loop invariant would say. (Step 54's can't name
+  `x`, which is bound after the head; a `while` with its own counter can
+  say it: docs/54-loop-invariants.md.)
 - Trait methods still can't have refinements.
 
 ## Decisions

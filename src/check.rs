@@ -618,6 +618,8 @@ pub(crate) struct Checker {
     pred_post: Option<(&'static str, Vec<bool>)>,
     /// Inside `old(..)` in a postcondition.
     pred_in_old: bool,
+    /// In a loop's invariant, not a refinement: what messages call it.
+    pred_invariant: bool,
     /// The refinements to check once every impl is collected.
     pending_refined: Vec<refine::Pending>,
     /// The function whose refinement is being checked, which uses the
@@ -961,6 +963,7 @@ impl Checker {
             pred_measures: HashMap::new(),
             pred_again: None,
             pred_post: None,
+            pred_invariant: false,
             pred_in_old: false,
             pending_refined: Vec::new(),
             pred_owner: None,

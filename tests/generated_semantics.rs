@@ -281,3 +281,79 @@ fn generated_borrowed_closure_results_and_early_returns() {
         }
     }
 }
+
+/// Every way the language has of lending a list to code that changes it,
+/// one per line: what's known of `l.len()` before must be forgotten after
+/// each, whatever its syntax. Step 53 found a call by path,
+/// `List::push(&mut l, x)`, that learned what `push` ensures of the list
+/// before the call (in every release since 0.43.0); the walk derives its
+/// places and lends from the syntax, so each form is a separate way in.
+const LEND_FORMS: &[&str] = &[
+    "l.push(1u8);",
+    "List::push(&mut l, 1u8);",
+    "(&mut l).push(1u8);",
+    "({ &mut l }).push(1u8);",
+    "List::push({ &mut l }, 1u8);",
+    "let r: &mut List<u8> = &mut l; List::push(r, 1u8);",
+    "(if c { &mut l } else { &mut m }).push(1u8);",
+    "grow(&mut l);",
+    "grow_w(W { r: &mut l });",
+    "match &mut l { r => r.push(1u8) }",
+    "(|| l.push(1u8))();",
+    "let mut f = || l.push(1u8); f();",
+    "let g = |x: &mut List<u8>| x.push(1u8); g(&mut l);",
+    "let s = f\"{ { l.push(1u8); 0u8 } }\"; let _ = s;",
+    "let mut a = [&mut l]; a[0].push(1u8);",
+    "pick(c, &mut l, &mut m).push(1u8);",
+    "let r = &mut l; let q = &mut *r; q.push(1u8);",
+    "let t = &mut l; let u = t; u.push(1u8);",
+    "let mut w = W { r: &mut l }; w.r.push(1u8);",
+    "let _ = core::mem::replace(&mut l, List::filled(1, 0u8));",
+    "core::mem::swap(&mut l, &mut List::filled(1, 0u8));",
+    "let mut o = Some(&mut l); if let Some(r) = &mut o { r.push(1u8); }",
+    "for _ in 0..1u8 { l.push(1u8); }",
+    "let mut k: u8 = 0; while k < 1 { List::push(&mut l, 1u8); k = k + 1; }",
+    "let mut k: u8 = 0; loop { if k > 0 { break; } l.push(1u8); k = k + 1; }",
+    "let mut k: u8 = 0; while let Some(_) = Some(k) { if k > 0 { break; } l.push(1u8); k = k + 1; }",
+];
+
+fn lend_program(change: &str) -> String {
+    format!(
+        "use alloc::list::List;\n\
+         #[derive(Discard)]\n\
+         struct W<'a> {{ r: &'a mut List<u8> }}\n\
+         fn grow(l: &mut List<u8>) with alloc {{ l.push(1u8); }}\n\
+         fn grow_w(w: W) with alloc {{ w.r.push(1u8); }}\n\
+         fn pick<'a>(c: bool, x: &'a mut List<u8>, y: &'a mut List<u8>) -> &'a mut List<u8> {{\n\
+         if c {{ x }} else {{ y }}\n}}\n\
+         fn read(c: bool) -> u8 with alloc {{\n\
+         let mut l: List<u8> = List::new();\n\
+         let mut m: List<u8> = List::new();\n\
+         let b: [u8; 1] = [7];\n\
+         if l.len() == 0 && m.len() == 0 {{\n{change}\nb[l.len()]\n}} else {{ 0 }}\n}}\n\
+         fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {{\n\
+         let mut out = os.stdout;\nout.line(&read(true))?;\nOk(())\n}}\n"
+    )
+}
+
+#[test]
+fn generated_lend_forms_forget_measures() {
+    // Controls: what doesn't touch `l` keeps `l.len() == 0`.
+    for keep in ["", "m.push(1u8);", "grow(&mut m);", "let _ = m.len();"] {
+        let src = lend_program(keep);
+        case(&format!("keep `{keep}`"), &src, || accepted(&src, "7\n"));
+    }
+    for form in LEND_FORMS {
+        // Straight, in one arm of a branch, and in a loop's body.
+        for change in [
+            form.to_string(),
+            format!("if c {{ {form} }}"),
+            format!("let mut n: u8 = 0; while n < 1 {{ {form} n = n + 1; }}"),
+        ] {
+            let src = lend_program(&change);
+            case(&format!("lend `{change}`"), &src, || {
+                rejected(&src, "can't prove `i < self.len()`")
+            });
+        }
+    }
+}

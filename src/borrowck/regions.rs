@@ -855,6 +855,7 @@ pub(crate) fn liveness(body: &Body) -> HashMap<Point, Vec<bool>> {
                 }
                 StmtKind::Inspect(p) | StmtKind::Consume(p, _) => live[p.local.0] = true,
                 StmtKind::Refine(..)
+                | StmtKind::Holds(_)
                 | StmtKind::Kept(_)
                 | StmtKind::Drop(..)
                 | StmtKind::Free(_) => {}

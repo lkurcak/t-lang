@@ -1287,7 +1287,7 @@ impl Expr {
             ExprKind::Unary(_, x)
             | ExprKind::As(x, _)
             | ExprKind::Field(x, _)
-            | ExprKind::Loop(_, x)
+            | ExprKind::Loop(_, _, x)
             | ExprKind::Unsafe(x) => vec![x],
             ExprKind::Return(x) | ExprKind::Break(_, x) => x.iter().map(|x| &**x).collect(),
             ExprKind::Binary(_, l, r) => vec![l, r],
@@ -1298,7 +1298,7 @@ impl Expr {
             ExprKind::IfLet(c, then, els) => {
                 [&c.expr, then].into_iter().chain(els.as_deref()).collect()
             }
-            ExprKind::WhileLet(_, c, body) => vec![&c.expr, body],
+            ExprKind::WhileLet(_, c, _, body) => vec![&c.expr, body],
             ExprKind::Block(stmts, tail) => stmts
                 .iter()
                 .flat_map(|s| match s {
@@ -1318,7 +1318,7 @@ impl Expr {
                 .collect(),
             ExprKind::Lambda(l) => vec![&l.body],
             ExprKind::Assign(_, l, r)
-            | ExprKind::While(_, l, r)
+            | ExprKind::While(_, l, _, r)
             | ExprKind::Range(l, r)
             | ExprKind::Index(l, r, ..) => vec![l, r],
             ExprKind::For(f) => vec![&f.iter, &f.body],
@@ -1644,14 +1644,15 @@ pub enum ExprKind {
     /// `place = value`, or `place += value` and the like with an operator.
     /// The place is a variable, a field or a `*`.
     Assign(Option<BinOp>, Box<Expr>, Box<Expr>),
-    /// `while c { .. }`, or `'a: while c { .. }` with a label.
-    While(Option<Label>, Box<Expr>, Box<Expr>),
-    /// `while let pat = e { .. }`, maybe with a label. Only until paths
-    /// are resolved, which rewrites it as the `loop` it means (see
-    /// `check/modules.rs`).
-    WhileLet(Option<Label>, Box<LetCond>, Box<Expr>),
+    /// `while c { .. }`, or `'a: while c { .. }` with a label, maybe with
+    /// an `invariant`.
+    While(Option<Label>, Box<Expr>, Invariant, Box<Expr>),
+    /// `while let pat = e { .. }`, maybe with a label and an `invariant`.
+    /// Only until paths are resolved, which rewrites it as the `loop` it
+    /// means (see `check/modules.rs`).
+    WhileLet(Option<Label>, Box<LetCond>, Invariant, Box<Expr>),
     /// `loop { .. }`: runs its body again and again, until a `break`.
-    Loop(Option<Label>, Box<Expr>),
+    Loop(Option<Label>, Invariant, Box<Expr>),
     /// `for p in it { .. }`. Only until paths are resolved, which rewrites
     /// it as the `loop` it means (see `check/modules.rs`).
     For(Box<ForLoop>),
@@ -1694,8 +1695,17 @@ pub struct ForLoop {
     /// Where the `in` is.
     pub in_span: Span,
     pub iter: Expr,
+    pub invariant: Invariant,
     pub body: Expr,
 }
+
+/// A loop's `invariant p`, after its condition (`while c invariant p
+/// { .. }`, `loop invariant p { .. }`): a predicate, in the language of
+/// refinements, of the variables in scope at the loop, which holds each
+/// time the loop is about to go round (docs/54-loop-invariants.md). It's
+/// never run, so it isn't among the loop's `children`: like a type's
+/// predicate, only what checks predicates, and tools, look at it.
+pub type Invariant = Option<Box<Expr>>;
 
 /// `'a:` before a `loop` or `while`, for a `break` or `continue` in it to
 /// say which loop it's for.
@@ -1793,8 +1803,13 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
         ExprKind::Unary(_, x)
         | ExprKind::As(x, _)
         | ExprKind::Field(x, _)
-        | ExprKind::Loop(_, x)
         | ExprKind::Unsafe(x) => go(x, bound),
+        // An invariant reads what it names, each time round (in checking
+        // mode): a closure around the loop captures it, as for any read.
+        ExprKind::Loop(_, inv, x) => {
+            inv.iter().for_each(|p| go(p, bound));
+            go(x, bound);
+        }
         ExprKind::Return(x) | ExprKind::Break(_, x) => x.iter().for_each(|x| go(x, bound)),
         ExprKind::Binary(_, l, r) => {
             go(l, bound);
@@ -1817,7 +1832,8 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
             bound.truncate(scope);
             els.iter().for_each(|e| go(e, bound));
         }
-        ExprKind::WhileLet(_, c, body) => {
+        ExprKind::WhileLet(_, c, inv, body) => {
+            inv.iter().for_each(|p| go(p, bound));
             go(&c.expr, bound);
             let scope = bound.len();
             pattern_binds(&c.pat, bound);
@@ -1876,14 +1892,17 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
             go(&l.body, bound);
             bound.truncate(scope);
         }
-        ExprKind::Assign(_, l, r)
-        | ExprKind::While(_, l, r)
-        | ExprKind::Range(l, r)
-        | ExprKind::Index(l, r, ..) => {
+        ExprKind::While(_, l, inv, r) => {
+            inv.iter().for_each(|p| go(p, bound));
+            go(l, bound);
+            go(r, bound);
+        }
+        ExprKind::Assign(_, l, r) | ExprKind::Range(l, r) | ExprKind::Index(l, r, ..) => {
             go(l, bound);
             go(r, bound);
         }
         ExprKind::For(f) => {
+            f.invariant.iter().for_each(|p| go(p, bound));
             go(&f.iter, bound);
             let scope = bound.len();
             pattern_binds(&f.pat, bound);
