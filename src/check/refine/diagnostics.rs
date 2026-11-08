@@ -299,7 +299,8 @@ impl Walk<'_> {
                     if loops.insert(span) {
                         invalidated.push((
                             span,
-                            "facts from before this loop are not assumed for every iteration"
+                            "facts from before this loop are not assumed for every iteration; \
+                             an `invariant` on the loop can say what stays true each time round"
                                 .into(),
                         ));
                     }

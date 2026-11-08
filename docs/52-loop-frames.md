@@ -143,7 +143,7 @@ equals what it was before the loop.
 
 - A place assigned in the loop keeps nothing, even an assignment that
   leaves it as it was. Explicit loop invariants could say more; they
-  aren't in T.
+  aren't in T. (Since step 54 they are: docs/54-loop-invariants.md.)
 - A call by path, `List::set(l, i, v)`, lends through its argument
   expression, not straight to the call, so it keeps nothing; write
   `l.set(i, v)`. (Since step 53, `List::set(&mut l, i, v)` keeps what it

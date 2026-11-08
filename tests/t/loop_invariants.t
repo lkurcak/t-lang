@@ -61,7 +61,7 @@ fn count_up(n: { n: usize | n <= LIMIT }) -> { v: usize | v <= LIMIT } with {} {
 
 // A `for`'s invariant can't name its pattern's variables, but holds after
 // it: its end is a `break` at the head.
-fn sum_small(a: &[u8]) -> u64 with {} {
+fn sum_small(a: &[u8]) -> { v: u64 | v <= 255000 } with {} {
     let mut s: u64 = 0;
     let mut k: u64 = 0;
     for b in a.iter() invariant s <= 255 * k && k <= 1000 {

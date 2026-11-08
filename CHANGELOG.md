@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased
+
+Step 54: loop invariants. See
+[docs/54-loop-invariants.md](docs/54-loop-invariants.md).
+
+### Added
+
+- `invariant p` on a loop, between its head and its body: `while lo < hi
+  invariant lo <= hi && hi <= a.len() { .. }`, and on `loop`, `for` and
+  `while let`. `p` is a predicate in the language of refinements of the
+  variables in scope at the loop, `mut` ones too (not a `for`'s or `while
+  let`'s pattern's). It must hold as the loop starts, at the end of the
+  body and at each `continue` for the loop; at the head it's assumed of
+  what the loop changes. It's never compiled; `t run --interp` checks it
+  at each head.
+- After a loop, what held at one of its exits is known: its condition
+  false at the head, or any `break` for it, joined as branches are. A
+  `loop`'s value is one of what its `break`s give.
+- The note for a fact a loop forgot says an `invariant` can keep it.
+- Tests: a generated family of 26 ways of lending a list, straight, in a
+  branch and in a loop, each of which must forget its length
+  (retrospective 5, K4).
+
+### Changed
+
+- `invariant` is a keyword.
+- A loop that has a `break` no longer forgets, after it, what it changed:
+  some programs that needed `with panic` or a check after a loop don't.
+
 ## 0.69.0 (2026-11-08)
 
 Step 53: refinements in type arguments. See

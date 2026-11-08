@@ -1510,6 +1510,38 @@ fn main() {
     stop(child, c);
 }
 
+/// A variable named in a loop's invariant is renamed there, as anywhere
+/// it's used.
+#[test]
+fn renames_in_loop_invariants() {
+    let (child, mut c) = start();
+    let src = "\
+fn count(n: usize) -> usize {
+    let mut i: usize = 0;
+    while i < n invariant i <= n {
+        i = i + 1;
+    }
+    i
+}
+fn main() {
+    let _c = count(3);
+}
+";
+    let (mut d, diags) = Doc::open(&mut c, "file:///tmp/invariants.t", src);
+    assert_eq!(diags, Vec::<Value>::new());
+    assert_eq!(
+        d.rename(&mut c, "i: usize = 0", 0, "k").unwrap(),
+        src.replace("mut i:", "mut k:")
+            .replace(
+                "while i < n invariant i <= n",
+                "while k < n invariant k <= n"
+            )
+            .replace("i = i + 1", "k = k + 1")
+            .replace("    i\n}", "    k\n}")
+    );
+    stop(child, c);
+}
+
 /// A parameter named in `ensures`, in `old(..)` too, is renamed there,
 /// and a measure named there is found.
 #[test]
