@@ -4,6 +4,10 @@
 //! several files is a directory, `tests/t/<name>/main.t` and its modules'
 //! files.
 //!
+//! The tests here that check only what a program's text means, not how
+//! it runs, are run on Linux alone: they'd find the same on any platform,
+//! and CI's other platforms are the slowest.
+//!
 //! A `tests/t/<name>.mono` file next to a test holds what `t mono` prints
 //! for it: the program after monomorphisation. Run with `BLESS=1` to rewrite
 //! those files from what it prints now.
@@ -133,6 +137,10 @@ fn examples() {
 
 /// What monomorphisation makes of each program with a `.mono` file.
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "the same on every platform: run on Linux"
+)]
 fn mono() {
     let bless = std::env::var_os("BLESS").is_some();
     let mut failures = Vec::new();
@@ -218,6 +226,10 @@ fn without_std(exe: &t_lang::mono::Executable) -> String {
 /// checker has rewritten the program (paths resolved, `for` loops and
 /// ranges written out), in programs that check and programs that don't.
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "the same on every platform: run on Linux"
+)]
 fn node_ids_are_unique() {
     let results = on_all_cores(&programs(), |path| {
         let files = expect::files_of(path);
@@ -331,8 +343,13 @@ fn node_ids(debug: &str, next_id: u32) -> Result<usize, String> {
 /// accepted, and leaves a program that does the same. So every name for
 /// it is found, and nothing else is touched.
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "the same on every platform: run on Linux"
+)]
 fn renaming_keeps_meaning() {
-    // Every rename checks a program again, the core library and all.
+    // Every batch of renames checks a program again, the core library and
+    // all.
     let results = on_all_cores(&programs(), renames_in);
     let failures: Vec<String> = results.iter().flat_map(|(f, _)| f.clone()).collect();
     let renamed: usize = results.iter().map(|(_, n)| n).sum();
@@ -340,11 +357,24 @@ fn renaming_keeps_meaning() {
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
 
-/// Renames each thing declared in the program at `path` in turn: what went
-/// wrong, and how many renames there were.
+/// One rename of a program's: what's declared where, what it was, the
+/// name it gets, and every place it's named.
+struct Rename {
+    def: t_lang::error::Span,
+    old: String,
+    new: String,
+    spans: Vec<t_lang::error::Span>,
+}
+
+/// Renames each thing declared in the program at `path`, each to a name of
+/// its own, as many at once as don't edit the same text (a trait's method
+/// and an impl's of it rename together, so they're in different batches),
+/// with `rename_all`, which checks once what `rename` would check of each:
+/// what went wrong, and how many renames there were. A batch that can't be
+/// made, or changes what the program does, is tried again one rename at a
+/// time, to say which.
 fn renames_in(path: &Path) -> (Vec<String>, usize) {
     let mut failures = Vec::new();
-    let mut renamed = 0;
     let name = name(path);
     let files = expect::files_of(path);
     let read = |p: &Path| match files.iter().find(|(f, _)| f == p) {
@@ -352,7 +382,7 @@ fn renames_in(path: &Path) -> (Vec<String>, usize) {
         None => t_lang::no_files(p),
     };
     let Ok((sources, prog, info)) = t_lang::rename::checked(path, &files[0].1, &read) else {
-        return (failures, renamed);
+        return (failures, 0);
     };
     let src = sources.text();
     let before = expect::run(&files);
@@ -363,54 +393,124 @@ fn renames_in(path: &Path) -> (Vec<String>, usize) {
         .collect();
     defs.sort_by_key(|n| n.span.start);
     defs.dedup_by_key(|n| n.span);
+    let mut renames = Vec::new();
     for n in defs {
         if t_lang::rename::target(&sources, &prog, &info, n.span.start).is_err() {
             continue;
         }
-        let new = match n.kind {
+        let upper = match n.kind {
             // An effect parameter too: its kind is declared, so the case of
             // its name doesn't matter.
-            NoteKind::Struct(_) | NoteKind::Enum(_) | NoteKind::TypeParam(_) => "Renamed",
-            NoteKind::EffectParam(_) => "Renamed",
-            NoteKind::Variant(..) => "Renamed",
-            _ => "renamed",
+            NoteKind::Struct(_) | NoteKind::Enum(_) | NoteKind::TypeParam(_) => true,
+            NoteKind::EffectParam(_) | NoteKind::Variant(..) => true,
+            _ => false,
         };
-        let old = &src[n.span.start..n.span.end];
-        let edits = match t_lang::rename::rename(&sources, &prog, &info, n.span, new) {
-            Ok(edits) => edits,
-            Err(why) => {
-                failures.push(format!("{name}: renaming `{old}` failed: {why}"));
-                continue;
-            }
-        };
-        renamed += 1;
+        renames.push(Rename {
+            def: n.span,
+            old: src[n.span.start..n.span.end].to_string(),
+            new: fresh(renames.len(), upper),
+            spans: info.occurrences(n.span),
+        });
+    }
+    // Printed values and messages show the names of functions, types,
+    // fields and variants.
+    let shown = |run: t_lang::RunResult, renamed: &[&Rename]| {
+        let mut out = run.output;
+        out.push(match run.result {
+            Ok(v) => v.to_string(),
+            Err(e) => e.message,
+        });
+        for r in renamed {
+            out.iter_mut().for_each(|l| *l = l.replace(&r.new, &r.old));
+        }
+        out
+    };
+    let want = shown(before, &[]);
+    // The program with `edits` made, `batch`'s, and whether it does the same.
+    let run = |edits: &[t_lang::error::Edit], batch: &[&Rename]| {
         let paths = sources.program_files().iter().map(|f| f.path.clone());
-        let mut after: expect::Files = paths.zip(sources.edited(&edits)).collect();
+        let mut after: expect::Files = paths.zip(sources.edited(edits)).collect();
         // Its `t.toml` and dependencies, which a rename leaves as they are.
         let others = (sources.files().iter())
             .filter(|f| !f.is_library() && f.kind != t_lang::source::Kind::Program);
         after.extend(others.map(|f| (f.path.clone(), sources.src(f).to_string())));
-        // Printed values and messages show the names of functions,
-        // types, fields and variants.
-        let shown = |run: t_lang::RunResult, renamed: bool| {
-            let mut out = run.output;
-            out.push(match run.result {
-                Ok(v) => v.to_string(),
-                Err(e) => e.message,
-            });
-            if renamed {
-                out.iter_mut().for_each(|l| *l = l.replace(new, old));
+        let same = shown(expect::run(&after), batch) == want;
+        (same, after)
+    };
+    for batch in batches(&renames) {
+        let all: Vec<_> = batch.iter().map(|r| (r.def, r.new.as_str())).collect();
+        if let Ok(edits) = t_lang::rename::rename_all(&sources, &prog, &info, &all)
+            && run(&edits, &batch).0
+        {
+            continue;
+        }
+        let mut alone = false;
+        for r in &batch {
+            let edits = match t_lang::rename::rename(&sources, &prog, &info, r.def, &r.new) {
+                Ok(edits) => edits,
+                Err(why) => {
+                    alone = true;
+                    failures.push(format!("{name}: renaming `{}` failed: {why}", r.old));
+                    continue;
+                }
+            };
+            let (same, after) = run(&edits, &[*r]);
+            if !same {
+                alone = true;
+                let after: String = after.iter().map(|(_, src)| src.as_str()).collect();
+                failures.push(format!(
+                    "{name}: renaming `{}` changed what it does:\n{after}",
+                    r.old
+                ));
             }
-            out
-        };
-        if shown(before.clone(), false) != shown(expect::run(&after), true) {
-            let after: String = after.iter().map(|(_, src)| src.as_str()).collect();
+        }
+        if !alone {
+            let names: Vec<&str> = batch.iter().map(|r| r.old.as_str()).collect();
             failures.push(format!(
-                "{name}: renaming `{old}` changed what it does:\n{after}"
+                "{name}: renaming `{}` at once fails, though each alone doesn't",
+                names.join("`, `")
             ));
         }
     }
-    (failures, renamed)
+    (failures, renames.len())
+}
+
+/// The `k`th new name: each its own, and all as long as each other, so none
+/// is a part of another, and as long as `renamed`, which some programs that
+/// print a value's text count on.
+fn fresh(k: usize, upper: bool) -> String {
+    const DIGITS: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let base = DIGITS.len();
+    assert!(k < base * base, "too many renames for two digits");
+    let head = if upper { "Renam" } else { "renam" };
+    format!(
+        "{head}{}{}",
+        DIGITS[k / base] as char,
+        DIGITS[k % base] as char
+    )
+}
+
+/// `renames` in batches that name nothing in the same place: each goes in
+/// the first batch it doesn't overlap.
+fn batches(renames: &[Rename]) -> Vec<Vec<&Rename>> {
+    let overlap = |a: &t_lang::error::Span, b: &t_lang::error::Span| {
+        a.start == b.start || (a.start < b.end && b.start < a.end)
+    };
+    let mut out: Vec<Vec<&Rename>> = Vec::new();
+    for r in renames {
+        let fits = |batch: &Vec<&Rename>| {
+            !(batch.iter()).any(|o| {
+                o.spans
+                    .iter()
+                    .any(|a| r.spans.iter().any(|b| overlap(a, b)))
+            })
+        };
+        match out.iter_mut().find(|b| fits(b)) {
+            Some(b) => b.push(r),
+            None => out.push(vec![r]),
+        }
+    }
+    out
 }
 
 /// A package checks the same on its own as it does in any program that
@@ -418,6 +518,10 @@ fn renames_in(path: &Path) -> (Vec<String>, usize) {
 /// each program in `tests/t` checks alone, unless the program's error is
 /// in it, and then alone it has the same one.
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "the same on every platform: run on Linux"
+)]
 fn dependencies_check_as_they_do_alone() {
     use t_lang::source::Kind;
     let mut failures = Vec::new();
