@@ -14,4 +14,4 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&call(4))?;
     Ok(())
 }
-// error: refinements can't be in a trait's methods yet
+// error: an impl's method of a trait can't have refined parameters

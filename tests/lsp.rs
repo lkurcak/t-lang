@@ -1482,6 +1482,34 @@ fn main() {
     stop(child, c);
 }
 
+/// A refinement of a type argument's binder is renamed with its uses, and
+/// a parameter it names with the parameter.
+#[test]
+fn renames_in_refined_type_arguments() {
+    let (child, mut c) = start();
+    let src = "\
+fn below(n: u8) -> Option<{ v: u8 | v < n }> {
+    if n > 0 { Some(n - 1) } else { None }
+}
+fn main() {
+    let _o = below(3);
+}
+";
+    let (mut d, diags) = Doc::open(&mut c, "file:///tmp/type-args.t", src);
+    assert_eq!(diags, Vec::<Value>::new());
+    assert_eq!(
+        d.rename(&mut c, "v:", 0, "w").unwrap(),
+        src.replace("{ v: u8 | v < n }", "{ w: u8 | w < n }")
+    );
+    assert_eq!(
+        d.rename(&mut c, "n: u8", 0, "m").unwrap(),
+        src.replace("n: u8)", "m: u8)")
+            .replace("v < n", "v < m")
+            .replace("if n > 0 { Some(n - 1)", "if m > 0 { Some(m - 1)")
+    );
+    stop(child, c);
+}
+
 /// A parameter named in `ensures`, in `old(..)` too, is renamed there,
 /// and a measure named there is found.
 #[test]

@@ -783,9 +783,9 @@ impl<'p> Mono<'p> {
         }
         if f.bodiless() {
             let ps = (f.params.iter())
-                .map(|p| cx.resolved(unrefined(&p.ty)).erased())
+                .map(|p| cx.resolved(&unrefined(&p.ty)).erased())
                 .collect();
-            let ret = cx.resolved(unrefined(&f.ret)).erased();
+            let ret = cx.resolved(&unrefined(&f.ret)).erased();
             cx.m.intrinsic_sigs.insert(copy.clone(), (ps, ret));
             if !f.is_import() {
                 let which = (cx.m.info.intrinsics.get(&f.name.name).copied())
@@ -1030,7 +1030,22 @@ struct Cx<'m, 'p, 's> {
 impl Cx<'_, '_, '_> {
     /// A type written in the original, as written in the copy.
     fn ty(&mut self, t: &TypeExpr) -> TypeExpr {
-        // A refinement is kept, for the interpreter to check.
+        // A refinement is kept, for the interpreter to check. Those of type
+        // arguments go around the whole type, as its copy has no type
+        // arguments to be in: which parts of the value each is of, the
+        // checker says (`Measures::ways`).
+        let all = t.refinements();
+        if all.iter().any(|(path, ..)| !path.is_empty()) {
+            let mut out = self.ty(&t.stripped());
+            for (_, v, pred) in all.into_iter().rev() {
+                out = TypeExpr {
+                    kind: TypeExprKind::Refined(v.clone(), Box::new(out), self.pred(pred)),
+                    span: t.span,
+                    id: t.id,
+                };
+            }
+            return out;
+        }
         if let TypeExprKind::Refined(v, base, pred) = &t.kind {
             return TypeExpr {
                 kind: TypeExprKind::Refined(v.clone(), Box::new(self.ty(base)), self.pred(pred)),
@@ -1200,7 +1215,7 @@ impl Cx<'_, '_, '_> {
         };
         written
             .into_iter()
-            .map(|f| cx.resolved(unrefined(f)))
+            .map(|f| cx.resolved(&unrefined(f)))
             .collect()
     }
 
@@ -1702,7 +1717,9 @@ impl Cx<'_, '_, '_> {
         }
         out.blocks = blocks;
         for r in &mut out.refinements {
-            r.pred = *self.pred(&r.pred);
+            for (_, pred) in &mut r.parts {
+                *pred = *self.pred(pred);
+            }
         }
         tidy(&mut out);
         out
@@ -1938,11 +1955,8 @@ fn tidy(body: &mut crate::mir::Body) {
 }
 
 /// `t` without its refinement, if it has one: the type it refines.
-pub(crate) fn unrefined(t: &TypeExpr) -> &TypeExpr {
-    match &t.kind {
-        TypeExprKind::Refined(_, inner, _) => inner,
-        _ => t,
-    }
+pub(crate) fn unrefined(t: &TypeExpr) -> TypeExpr {
+    t.stripped()
 }
 
 /// How region `r` is written: `'a`, or `'_` for one nobody named.

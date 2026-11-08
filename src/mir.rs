@@ -80,11 +80,12 @@ pub(crate) struct Body {
 }
 
 /// A refinement a `let` gives its variable, `{ binder: T | pred }`, and
-/// for each other variable named in `pred`, where it is there.
+/// those of its type's enums' type arguments (`parts`, each a binder and a
+/// predicate), and for each other variable named in them, where it is
+/// there.
 #[derive(Clone)]
 pub(crate) struct Refinement {
-    pub(crate) binder: String,
-    pub(crate) pred: Expr,
+    pub(crate) parts: Vec<(String, Expr)>,
     pub(crate) env: Vec<(String, Place)>,
 }
 
@@ -545,8 +546,13 @@ impl Body {
                     StmtKind::Free(p) => format!("free {}", show_place(p)),
                     StmtKind::Refine(l, r) => {
                         let r = &self.refinements[*r];
-                        let pred = crate::pretty::expr_text(&r.pred);
-                        format!("refine _{} {{ {} | {pred} }}", l.0, r.binder)
+                        let parts: Vec<String> = (r.parts.iter())
+                            .map(|(binder, pred)| {
+                                let pred = crate::pretty::expr_text(pred);
+                                format!("{{ {binder} | {pred} }}")
+                            })
+                            .collect();
+                        format!("refine _{} {}", l.0, parts.join(" "))
                     }
                 };
                 out.push_str(&format!("{inner}{line};\n"));

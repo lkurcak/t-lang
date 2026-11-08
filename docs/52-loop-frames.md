@@ -146,13 +146,14 @@ equals what it was before the loop.
   aren't in T.
 - A call by path, `List::set(l, i, v)`, lends through its argument
   expression, not straight to the call, so it keeps nothing; write
-  `l.set(i, v)`.
+  `l.set(i, v)`. (Since step 53, `List::set(&mut l, i, v)` keeps what it
+  ensures: an explicit `&mut` argument lends straight to the call.)
 - Inside the module that defines a measure, the measure is its body, of
   the struct's fields, and those are forgotten with the place; the frame
   helps the module's users.
 - `for x in 0..n` still doesn't say `x < n`: `Range::next` gives an
   `Option<T>`, which can't. That's the next step's: refinements inside
-  type arguments.
+  type arguments (done in step 53, docs/53-refined-type-arguments.md).
 
 ## Decisions
 

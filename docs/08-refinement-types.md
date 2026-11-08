@@ -49,8 +49,11 @@ the parameters, as `clamp`'s names `hi`; a parameter's, those before it;
 a `let`'s, the variables in scope. None can name a `mut` variable: which
 of its values would it mean?
 
-Not inside another type (`Option<{ v: i64 | v > 0 }>`), not a closure's
-parameter, and not in a trait's methods, nor an impl's of a trait:
+Not inside another type (`Option<{ v: i64 | v > 0 }>`: since step 53, a
+type argument of an enum can be one, see
+docs/53-refined-type-arguments.md), not a closure's parameter, and not in
+a trait's methods, nor an impl's of a trait (since step 53, an impl's
+method's result can be refined):
 
 ```rust,error
 trait Half {
@@ -299,8 +302,8 @@ the checker proved, which must not panic. Either failing stops it with
 | Missing | Why it's missing | Step |
 |---|---|---|
 | refinements on struct fields, facts through field reads | needs facts about places, not just variables | 8.1 ([docs](08.1-field-refinements.md)) |
-| refinements inside other types, `Option<{ v: i64 \| v > 0 }>` | needs subtyping inside type constructors, and refinements on type parameters | — |
-| refined trait methods | an impl's must ask no more and promise no less | — |
+| refinements inside other types, `Option<{ v: i64 \| v > 0 }>` | needs subtyping inside type constructors, and refinements on type parameters | 53 ✅ (enums' type arguments; [docs](53-refined-type-arguments.md)) |
+| refined trait methods | an impl's must ask no more and promise no less | — (53: an impl's results) |
 | `&mut` to a refined value | writes through it must keep the refinement | — |
 | functions in predicates (`r.start() <= r.end()`) | needs pure functions, *measures* | 21 ✅ |
 | inferring loop invariants | Liquid types' fixed point | — |

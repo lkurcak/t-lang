@@ -482,10 +482,15 @@ See [visibility](24-visibility.md), [module names](06d-modules.md), and
 
 `{ v: T | condition }` restricts a value of type `T`. Refinements can be
 the whole type of a function parameter, result, single-variable `let`,
-or struct field. They can refine any type, using integers, booleans,
-and measures in their conditions. They cannot be nested inside another
-type such as `Option<{ v: i64 | v > 0 }>`, or appear on closure parameters
-or trait methods.
+or struct field, or a type argument of an enum there, at any depth, such
+as `Option<{ v: i64 | v > 0 }>`: each field of a variant whose type is
+that parameter satisfies it, when the value is that variant. They can
+refine any type, using integers, booleans, and measures in their
+conditions. They cannot be type arguments of structs, boxes, references
+or lists, or appear on closure parameters or trait methods. An impl's
+method of a trait can refine its result and add `ensures`, which calls
+the checker knows are of that impl (their `Self` type has no type
+parameters) can rely on; its parameters cannot be refined.
 
 Predicates support linear arithmetic, comparisons, and boolean
 combinations. Multiplication by a constant is supported; multiplication
@@ -500,8 +505,8 @@ preserve every affected field refinement. A refined variable, or a field
 that a field refinement constrains, cannot be borrowed mutably.
 
 A measure is a method marked `#[measure]` that takes only `&self`, returns
-an integer or boolean, has no effects, and has a body accepted by the
-refinement logic. Measures such as a slice's `len()` connect values to
+an integer (or a type parameter `T: Int`) or boolean, has no effects, and
+has a body accepted by the refinement logic. Measures such as a slice's `len()` connect values to
 proofs. Indexing calls `index` or `index_mut`; the standard containers
 require the checker to prove that the `usize` index is in range.
 
@@ -518,7 +523,8 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
 }
 ```
 
-Guards, refined signatures, assignments, and type ranges supply facts.
+Guards, refined signatures, assignments, patterns, and type ranges supply
+facts. In `for x in a..b`, `x < b` is known.
 Mutation, mutable lending, and loop iterations can invalidate facts
 about a previous value. Capture a current value and check it again when
 needed. Diagnostics explain the required condition, relevant known

@@ -1370,15 +1370,25 @@ impl<'a> Builder<'a> {
             PatternKind::Bind(..) => {
                 // What the refinement names is what's in scope before the
                 // variable is.
-                let refinement = ann.and_then(|t| t.refinement()).map(|(v, pred)| {
+                let refinement = ann.map(|t| t.refinements()).filter(|r| !r.is_empty());
+                let refinement = refinement.map(|all| {
                     let mut names = Vec::new();
-                    pred_names(pred, &v.name, &mut names);
+                    for (_, v, pred) in &all {
+                        let mut more = Vec::new();
+                        pred_names(pred, &v.name, &mut more);
+                        for n in more {
+                            if !names.contains(&n) {
+                                names.push(n);
+                            }
+                        }
+                    }
                     let env = (names.into_iter())
                         .filter_map(|n| Some((n.to_string(), self.named(n)?)))
                         .collect();
                     Refinement {
-                        binder: v.name.clone(),
-                        pred: pred.clone(),
+                        parts: (all.iter())
+                            .map(|(_, v, pred)| (v.name.clone(), (*pred).clone()))
+                            .collect(),
                         env,
                     }
                 });

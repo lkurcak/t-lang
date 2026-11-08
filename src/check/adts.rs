@@ -115,7 +115,7 @@ impl Checker {
                             ));
                         }
                         // A refinement is checked once every type is known.
-                        let t = self.resolve_with(f.ty.unrefined(), &params, &mut lts)?;
+                        let t = self.resolve_with(&f.ty.stripped(), &params, &mut lts)?;
                         field_types.push((symbol.as_str(), f.ty.span, t.clone()));
                         fields.push((f.name.name.clone(), t));
                     }

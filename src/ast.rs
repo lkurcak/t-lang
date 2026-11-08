@@ -62,6 +62,12 @@ pub struct Measures {
     pub calls: std::collections::HashMap<NodeId, (String, usize, Option<bool>)>,
     /// By symbol: its body, or `None` for an intrinsic.
     pub bodies: std::collections::HashMap<String, Option<Expr>>,
+    /// By the node of a refinement's predicate that's of a type argument
+    /// of an enum: the ways to each part of the value it's of, as the
+    /// variant and field of each enum on the way (see
+    /// docs/53-refined-type-arguments.md). One of the whole value isn't
+    /// in it.
+    pub ways: std::collections::HashMap<NodeId, Vec<Vec<(String, usize)>>>,
 }
 
 impl Program {
@@ -1407,7 +1413,8 @@ pub enum TypeExprKind {
     /// type `.1` that make the predicate `.2` true of `.0`, the name it
     /// gives the value (see docs/08-refinement-types.md). Only as the whole
     /// type of a parameter, a result, a `let` or a struct's field
-    /// (docs/08.1-field-refinements.md).
+    /// (docs/08.1-field-refinements.md), or as a type argument of an enum
+    /// there (docs/53-refined-type-arguments.md).
     Refined(Ident, Box<TypeExpr>, Box<Expr>),
 }
 
@@ -1456,6 +1463,59 @@ impl TypeExpr {
         match &self.kind {
             TypeExprKind::Refined(v, _, p) => Some((v, p)),
             _ => None,
+        }
+    }
+
+    /// Every refinement in it that's itself or in its type arguments, at
+    /// any depth, with where: the type arguments' indices from the top,
+    /// `[]` for its own, `[0, 1]` for the `E` of `Option<Result<T, E>>`.
+    /// Those are the places a refinement can be, in a type that can have
+    /// one (see docs/53-refined-type-arguments.md).
+    pub fn refinements(&self) -> Vec<(Vec<usize>, &Ident, &Expr)> {
+        fn go<'t>(
+            t: &'t TypeExpr,
+            at: &mut Vec<usize>,
+            out: &mut Vec<(Vec<usize>, &'t Ident, &'t Expr)>,
+        ) {
+            // Monomorphisation puts those of type arguments around the
+            // type, as the copy it names has none (`mono::Cx::ty`).
+            let mut t = t;
+            while let TypeExprKind::Refined(v, base, p) = &t.kind {
+                out.push((at.clone(), v, p));
+                t = base;
+            }
+            if let TypeExprKind::Named(_, args) = &t.kind {
+                for (i, a) in args.iter().enumerate() {
+                    at.push(i);
+                    go(a, at, out);
+                    at.pop();
+                }
+            }
+        }
+        let mut out = Vec::new();
+        go(self, &mut Vec::new(), &mut out);
+        out
+    }
+
+    /// It without the refinements `refinements` finds: the type they
+    /// refine.
+    pub fn stripped(&self) -> TypeExpr {
+        let mut t = self;
+        while let TypeExprKind::Refined(_, base, _) = &t.kind {
+            t = base;
+        }
+        match &t.kind {
+            TypeExprKind::Named(name, args) if args.iter().any(|a| !a.refinements().is_empty()) => {
+                TypeExpr {
+                    kind: TypeExprKind::Named(
+                        name.clone(),
+                        args.iter().map(TypeExpr::stripped).collect(),
+                    ),
+                    span: t.span,
+                    id: t.id,
+                }
+            }
+            _ => t.clone(),
         }
     }
 }

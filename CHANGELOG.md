@@ -1,5 +1,41 @@
 # Changelog
 
+## Unreleased
+
+Step 53: refinements in type arguments. See
+[docs/53-refined-type-arguments.md](docs/53-refined-type-arguments.md).
+
+### Added
+
+- A type argument of an enum can be a refinement, at any depth, wherever
+  a refinement can be: `fn digit(c: u8) -> Option<{ d: u8 | d < 10 }>`,
+  `Result<{ v: u8 | v < 10 }, E>`, a struct's field `at: Option<{ i:
+  usize | i < len }>`. Each field of a variant whose type is that
+  parameter has it, if the value is that variant.
+- The checker knows which variant an enum's value is, and its fields:
+  `let o = Some(3); match o { Some(i) => t[i], .. }` is proved.
+- An impl's method of a trait can refine its result and `ensures` more
+  than the trait; a call whose `Self` type the checker knows (no type
+  parameters in it) learns it. Its parameters still can't be refined.
+- `for x in a..b` knows `x < b`: `Range::next` gives `Option<{ v: T | v <
+  self.end() }>` and keeps the end. `Range::start`/`end` are measures,
+  `Range::new` says what they are. A measure can give a `T: Int`.
+- A call by path, `List::set(&mut l, i, v)`, keeps in a loop's frame what
+  it ensures, as `l.set(i, v)` does.
+
+### Changed
+
+- `Range` is of integers only: `Range::new`, `start` and `end` need `T:
+  Int`, so `'a'..'z'` is an error.
+
+### Fixed
+
+- A soundness hole since 0.43.0: a call by path that lends a `&mut`,
+  `List::push(&mut l, x)`, or any call given a `&mut` that isn't a place,
+  `f({ &mut l })`, learned what the callee ensures of the value after the
+  call as if of the value before, `l.len() == l.len() + 1`, from which
+  anything followed.
+
 ## 0.68.0 (2026-11-07)
 
 Step 52: loop frames. See [docs/52-loop-frames.md](docs/52-loop-frames.md).

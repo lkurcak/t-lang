@@ -30,27 +30,31 @@ export trait Fn: FnMut {}
 )]
 export struct Range<T> { start: T, end: T }
 
-impl<T> Range<T> {
+impl<T: Int> Range<T> {
     /// `start..end`.
-    export fn new(start: T, end: T) -> Range<T> { Range { start, end } }
-}
+    export fn new(start: T, end: T) -> { r: Range<T> | r.start() == start && r.end() == end } {
+        Range { start, end }
+    }
 
-impl<T: Copy> Range<T> {
     /// Where it starts: where an iterator over it is up to.
+    #[measure]
     export fn start(&self) -> T { self.start }
 
     /// Where it ends, not included.
+    #[measure]
     export fn end(&self) -> T { self.end }
 }
 
 /// Counts up, and can't panic: it adds one only to what's less than the
 /// end, which can't overflow, even at the end of its type, as the checker
-/// proves of every integer type (see docs/08-refinement-types.md).
+/// proves of every integer type (see docs/08-refinement-types.md). What it
+/// gives is less than the end, which it keeps: so `for x in a..b` knows
+/// `x < b` (see docs/53-refined-type-arguments.md).
 impl<T: Int> Iterator for Range<T> {
     type Item = T;
     effect e = {};
 
-    fn next(&mut self) -> Option<T> {
+    fn next(&mut self) -> Option<{ v: T | v < self.end() }> ensures self.end() == old(self.end()) {
         if self.start < self.end {
             let n = self.start;
             self.start = self.start + 1;

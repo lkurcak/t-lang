@@ -1,9 +1,12 @@
 //! Refinement types: `{ d: i64 | d != 0 }`, the `i64`s that aren't 0 (see
-//! docs/08-refinement-types.md and docs/08.1-field-refinements.md).
+//! docs/08-refinement-types.md, docs/08.1-field-refinements.md and
+//! docs/53-refined-type-arguments.md).
 //!
 //! A refinement is the whole type of a parameter, a result, a `let` or a
-//! struct's field, never part of another type, and only of an `i64` or a
-//! `bool`. It isn't in `Type` at all: unification, traits and
+//! struct's field, or a type argument of an enum there, at any depth
+//! (`Option<{ d: u8 | d < 10 }>`: of each field of a variant whose type is
+//! that parameter, if the value is that variant; `Checker::refined_arg`),
+//! never part of any other type. It isn't in `Type` at all: unification, traits and
 //! monomorphisation never see one. What it says is checked by a pass of its
 //! own over each body, once its types are known (`Checker::refine`), which
 //! keeps track of what's known at each point (*facts*) and proves from them
@@ -67,8 +70,17 @@
 //! names only what can't change. What a call returns has its function's
 //! refinement by induction on how deep the calls go, as for effects: a call
 //! that never returns gives nothing to count on. And what's called through
-//! a value can't have refined parameters, nor a trait's method, so every
-//! call that skips a check is of a function with nothing to check.
+//! a value can't have refined parameters, nor a trait's method, nor an
+//! impl's of one, so every call that skips a check is of a function with
+//! nothing to check. An impl's method of a trait can refine its result and
+//! ensure more, which a call learns only where it's known to be of that
+//! impl (`Walk::callee`): monomorphisation picks the same one.
+//!
+//! An enum's value has *parts* (`Parts`): which variant it is and each
+//! variant's fields, functions of the value as measures are; a refinement
+//! of a type argument is a fact about a field under the condition that the
+//! value is that variant (`Walk::part`), so one that can't hold of a
+//! variant that isn't there says nothing.
 
 mod diagnostics;
 mod logic;
@@ -84,15 +96,49 @@ pub(super) use diagnostics::ProofFailure;
 use logic::{Failure, Formula, Kind, Lin, Var};
 use std::collections::{HashMap, HashSet};
 
-/// The predicate of a refinement, whose names are in `Checker::pred_names`.
+/// The refinements written in a type that can have them, the whole
+/// value's and those of its enums' type arguments (see
+/// docs/53-refined-type-arguments.md), whose names are in
+/// `Checker::pred_names`.
 #[derive(Debug, Clone)]
 pub(super) struct Refinement {
+    parts: Vec<Part>,
+}
+
+/// The way to a part of a value: the variant and field of each enum on
+/// the way to it.
+type Way = Vec<(usize, usize)>;
+
+/// One predicate of a refinement, and the parts of the value it's of.
+#[derive(Debug, Clone)]
+struct Part {
     pred: Expr,
+    /// Where each part of the value it's of is, as the variant and field
+    /// of each enum on the way to it: one way, `[]`, for the whole value;
+    /// for the `T` of `Option<T>`, `[(1, 0)]`, the field of `Some`.
+    ways: Vec<Way>,
+}
+
+impl Part {
+    fn text(&self) -> String {
+        crate::pretty::expr_text(&self.pred)
+    }
 }
 
 impl Refinement {
-    fn text(&self) -> String {
-        crate::pretty::expr_text(&self.pred)
+    /// One of the whole value: a postcondition's, say.
+    fn whole(pred: Expr) -> Refinement {
+        Refinement {
+            parts: vec![Part {
+                pred,
+                ways: vec![Vec::new()],
+            }],
+        }
+    }
+
+    /// Its predicates.
+    fn preds(&self) -> impl Iterator<Item = &Expr> {
+        self.parts.iter().map(|p| &p.pred)
     }
 }
 
@@ -203,7 +249,11 @@ pub(super) enum Pending {
         f: Box<FnDecl>,
         params: Vec<Type>,
         ret: Type,
+        /// May its parameters have refinements? Not in a trait's methods,
+        /// nor an impl's of one.
         allowed: bool,
+        /// May its result, and `ensures`? Not in a trait's methods.
+        results: bool,
         owner: (String, String),
         /// Its const parameters, and its impl's, as declared.
         consts: Vec<Ident>,
@@ -266,7 +316,7 @@ impl Checker {
             self.measure_signature(f, params, ret)?;
         }
         let written = f.params.iter().map(|p| &p.ty).chain([&f.ret]);
-        if written.clone().all(|t| t.refinement().is_none()) && f.ensures.is_empty() {
+        if written.clone().all(|t| t.refinements().is_empty()) && f.ensures.is_empty() {
             return Ok(());
         }
         // Its predicates may call measures of impls not collected yet, so
@@ -279,11 +329,15 @@ impl Checker {
                 .filter(|p| f.generics.is_const(p))
                 .cloned(),
         );
+        // An impl's method of a trait can say more of what it gives than
+        // the trait does, for the calls known to be of it.
+        let results = allowed || self.sig_self.is_some();
         self.pending_refined.push(Pending::Sig {
             f: Box::new(f.clone()),
             params: params.to_vec(),
             ret: ret.clone(),
             allowed,
+            results,
             owner: self.sig_owner.clone(),
             consts,
         });
@@ -318,11 +372,13 @@ impl Checker {
             .flatten()
             .chain(&sig.ensures)
         {
-            each_expr(&r.pred, &mut |e| {
-                if let Some(PredName::Param(j)) = self.pred_names.get(&e.id) {
-                    out.push(*j);
-                }
-            });
+            for pred in r.preds() {
+                each_expr(pred, &mut |e| {
+                    if let Some(PredName::Param(j)) = self.pred_names.get(&e.id) {
+                        out.push(*j);
+                    }
+                });
+            }
         }
         out
     }
@@ -337,6 +393,7 @@ impl Checker {
                     params,
                     ret,
                     allowed,
+                    results,
                     owner,
                     consts,
                 } => {
@@ -344,7 +401,17 @@ impl Checker {
                     self.pred_owner = id.map(super::scope::FnId);
                     self.sig_owner = owner;
                     self.module = f.module;
-                    self.sig_refinements(&f, &params, &ret, allowed, &consts)?;
+                    // What its type parameters implement: a `T: Int`'s
+                    // values are integers to a predicate.
+                    let env = match id {
+                        Some(id) => self.fns[id].scheme.preds.clone(),
+                        None => Vec::new(),
+                    };
+                    let outer = std::mem::replace(&mut self.env, env);
+                    let checked =
+                        self.sig_refinements(&f, &params, &ret, (allowed, results), &consts);
+                    self.env = outer;
+                    checked?;
                 }
                 Pending::Fields { s, symbol } => {
                     self.pred_owner = None;
@@ -356,31 +423,44 @@ impl Checker {
         Ok(())
     }
 
+    /// Checks the refinements of `f`'s signature, and keeps them: of its
+    /// parameters only if `allowed.0`, and of its result, and what it
+    /// ensures, only if `allowed.1` (see `Pending::Sig`).
     fn sig_refinements(
         &mut self,
         f: &FnDecl,
         params: &[Type],
         ret: &Type,
-        allowed: bool,
+        allowed: (bool, bool),
         consts: &[Ident],
     ) -> Result<(), Error> {
-        if !allowed && let Some(e) = f.ensures.first() {
+        if !allowed.1
+            && let Some(e) = f.ensures.first()
+        {
             return Err(Error::ty(
                 e.span,
                 "`ensures` can't be on a trait's methods yet: an impl's would have to promise no \
                  less",
             ));
         }
-        let written = f.params.iter().map(|p| &p.ty).chain([&f.ret]);
-        let first = written.clone().find(|t| t.refinement().is_some());
-        if first.is_none() && f.ensures.is_empty() {
+        let refined = |t: &&TypeExpr| !t.refinements().is_empty();
+        let param = f.params.iter().map(|p| &p.ty).find(refined);
+        let result = Some(&f.ret).filter(refined);
+        if param.is_none() && result.is_none() && f.ensures.is_empty() {
             return Ok(());
         }
-        if let (false, Some(first)) = (allowed, first) {
+        if let (false, Some(first)) = (allowed.1, param.or(result)) {
             return Err(Error::ty(
                 first.span,
                 "refinements can't be in a trait's methods yet: an impl's would have to ask no \
                  more than the trait's, and promise no less",
+            ));
+        }
+        if let (false, Some(first)) = (allowed.0, param) {
+            return Err(Error::ty(
+                first.span,
+                "an impl's method of a trait can't have refined parameters: a call through the \
+                 trait wouldn't check them (its result can say more, and it can ensure more)",
             ));
         }
         let type_params = match self.pred_owner {
@@ -460,7 +540,7 @@ impl Checker {
                     format!("expected `bool`, found {}", Sort::Int),
                 ));
             }
-            sig.ensures.push(Refinement { pred: e.clone() });
+            sig.ensures.push(Refinement::whole(e.clone()));
         }
         let symbol = self.sig_owner.0.clone();
         self.refined.insert(symbol, sig);
@@ -471,7 +551,7 @@ impl Checker {
     /// is `symbol`, and keeps them. A field's names the fields before it,
     /// as visible as it is.
     pub(super) fn field_refinements(&mut self, s: &StructDecl, symbol: &str) -> Result<(), Error> {
-        if s.fields.iter().all(|f| f.ty.refinement().is_none()) {
+        if s.fields.iter().all(|f| f.ty.refinements().is_empty()) {
             return Ok(());
         }
         self.pending_refined.push(Pending::Fields {
@@ -510,7 +590,7 @@ impl Checker {
                     Level::Package => "is `pub`",
                     Level::Export => "is exported",
                 };
-                let (binder, _) = f.ty.refinement()?;
+                let (_, binder, _) = f.ty.refinements().into_iter().next()?;
                 Some(if j == i {
                     Named::Not(format!(
                         "a field's refinement names the field's own value by its binder, `{}`, \
@@ -540,8 +620,8 @@ impl Checker {
             self.pred_again = None;
             let r = r?;
             let mut named = Vec::new();
-            if let Some(r) = &r {
-                each_expr(&r.pred, &mut |e| {
+            for pred in r.iter().flat_map(Refinement::preds) {
+                each_expr(pred, &mut |e| {
                     if let Some(PredName::Field(j)) = self.pred_names.get(&e.id) {
                         named.push(*j);
                     }
@@ -563,7 +643,7 @@ impl Checker {
         t: &Type,
         init: bool,
     ) -> Result<(), Error> {
-        if ann.refinement().is_none() {
+        if ann.refinements().is_empty() {
             return Ok(());
         }
         if !matches!(pat.kind, PatternKind::Bind(..)) {
@@ -616,33 +696,150 @@ impl Checker {
         Ok(())
     }
 
-    /// The refinement written as `t`, whose base type is `base`, if it's
-    /// one, checked: its base is an `i64` or a `bool`, and its predicate a
-    /// `bool` in the logic, naming what `scope` says.
+    /// The refinements written in `t`, whose base type is `base`, if there
+    /// are any, checked: each of the whole value or of a type argument of
+    /// an enum (`refined_arg`), with a predicate that's a `bool` in the
+    /// logic, naming what `scope` says.
     fn refinement(
         &mut self,
         t: &TypeExpr,
         base: &Type,
         scope: &dyn Fn(&str) -> Option<Named>,
     ) -> Result<Option<Refinement>, Error> {
-        let Some((binder, pred)) = t.refinement() else {
+        let written = t.refinements();
+        if written.is_empty() {
             return Ok(None);
-        };
-        let base = self.solved(base);
-        let kind = super::NoteKind::Var(binder.name.clone());
-        self.note(binder.span, kind, Some(base.clone()), Some(binder.span));
-        let scope = |name: &str| match name == binder.name {
-            true => Some(Named::Value(base.clone(), PredName::Binder, binder.span)),
-            false => scope(name),
-        };
-        let got = self.pred_type(pred, &scope)?;
-        if got != Sort::Bool {
-            return Err(Error::ty(
-                pred.span,
-                format!("expected `bool`, found {got}"),
-            ));
         }
-        Ok(Some(Refinement { pred: pred.clone() }))
+        let base = self.solved(base);
+        let mut parts = Vec::new();
+        for (path, binder, pred) in written {
+            let (of, ways) = self.refined_arg(t, &base, &path)?;
+            let kind = super::NoteKind::Var(binder.name.clone());
+            self.note(binder.span, kind, Some(of.clone()), Some(binder.span));
+            let scope = |name: &str| match name == binder.name {
+                true => Some(Named::Value(of.clone(), PredName::Binder, binder.span)),
+                false => scope(name),
+            };
+            let got = self.pred_type(pred, &scope)?;
+            if got != Sort::Bool {
+                return Err(Error::ty(
+                    pred.span,
+                    format!("expected `bool`, found {got}"),
+                ));
+            }
+            if !path.is_empty() {
+                let named = self.named_ways(&base, &ways);
+                self.info.measures.ways.insert(pred.id, named);
+            }
+            parts.push(Part {
+                pred: pred.clone(),
+                ways,
+            });
+        }
+        Ok(Some(Refinement { parts }))
+    }
+
+    /// `ways` into a value of type `t`, with each variant by name, for the
+    /// interpreter.
+    fn named_ways(&self, t: &Type, ways: &[Way]) -> Vec<Vec<(String, usize)>> {
+        let mut out = Vec::new();
+        for way in ways {
+            let mut ty = t.clone();
+            let mut named = Vec::new();
+            for &(v, f) in way {
+                let Type::Adt(symbol, ..) = &ty else {
+                    unreachable!("a way is through enums")
+                };
+                let crate::types::AdtKind::Enum(variants) = &self.adts[symbol].kind else {
+                    unreachable!("a way is through enums")
+                };
+                named.push((variants[v].0.clone(), f));
+                ty = self.solved(&crate::types::variant_fields(&self.adts, &ty, v)[f]);
+            }
+            out.push(named);
+        }
+        out
+    }
+
+    /// What the refinement at `path` in `t`, a type written whose base is
+    /// `base`, is of: the type there, and the ways to each part of a value
+    /// of `base` that has it. Each step of `path` is a type argument of an
+    /// enum, whose variants have the parameter it's for only as whole
+    /// fields: so the parts it's of are fields, which every value of the
+    /// enum is made with and every pattern reads, and the refinement is
+    /// what each of them is, whatever the enum's methods do (lemma E2 of
+    /// docs/53-refined-type-arguments.md).
+    fn refined_arg(
+        &self,
+        t: &TypeExpr,
+        base: &Type,
+        path: &[usize],
+    ) -> Result<(Type, Vec<Way>), Error> {
+        fn mentions(t: &Type, p: &str) -> bool {
+            matches!(t, Type::Param(q) if q == p) || t.parts().any(|u| mentions(u, p))
+        }
+        let mut ways = vec![Vec::new()];
+        let mut ty = base.clone();
+        let mut written = t.unrefined();
+        for &k in path {
+            let TypeExprKind::Named(_, args) = &written.kind else {
+                unreachable!("a type argument's refinement is in a named type")
+            };
+            let arg = &args[k];
+            let not = |why: String| Error::ty(arg.span, why);
+            let def = match &ty {
+                Type::Adt(symbol, _, _) => self.adts.get(symbol).map(|d| (symbol, d)),
+                _ => None,
+            };
+            let Some((symbol, def)) = def else {
+                return Err(not(format!(
+                    "a refinement can only be a type argument of an enum, not of `{ty}`"
+                )));
+            };
+            let crate::types::AdtKind::Enum(variants) = &def.kind else {
+                return Err(not(format!(
+                    "a refinement can only be a type argument of an enum, not of `{ty}`, a \
+                     struct"
+                )));
+            };
+            // Which type argument it is: lifetimes are written among them.
+            let j = (args[..k].iter())
+                .filter(|a| !matches!(a.kind, TypeExprKind::Lifetime(_)))
+                .count();
+            let param = def.params.as_slice()[j].clone();
+            let name = symbol.rsplit("::").next().unwrap_or(symbol);
+            let mut steps = Vec::new();
+            for (v, (variant, fields)) in variants.iter().enumerate() {
+                for (f, ft) in fields.iter().enumerate() {
+                    match ft {
+                        Type::Param(p) if *p == param => steps.push((v, f)),
+                        ft if mentions(ft, &param) => {
+                            return Err(not(format!(
+                                "`{param}` is in a field of variant `{variant}` of `{name}` \
+                                 other than as its whole type, `{ft}`, where a refinement of it \
+                                 couldn't be checked"
+                            )));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            ways = (ways.iter())
+                .flat_map(|w| {
+                    steps.iter().map(move |s| {
+                        let mut w = w.clone();
+                        w.push(*s);
+                        w
+                    })
+                })
+                .collect();
+            let Type::Adt(_, _, targs) = &ty else {
+                unreachable!("an enum")
+            };
+            ty = self.solved(&targs[j]);
+            written = arg.unrefined();
+        }
+        Ok((ty, ways))
     }
 
     /// The sort of predicate (part) `e`, which must be in the logic:
@@ -669,6 +866,14 @@ impl Checker {
                         // An integer of a type not known yet.
                         _ if self.int_var(&t) => Sort::Int,
                         Type::Int(_) => Sort::Int,
+                        // One of some integer type, `T: Int`.
+                        t @ Type::Param(_)
+                            if (self.traits)
+                                .implements(&t, INT, &self.env, &self.adts.proj.local)
+                                .is_ok() =>
+                        {
+                            Sort::Int
+                        }
                         Type::Bool => Sort::Bool,
                         t => {
                             return Err(Error::ty(
@@ -958,7 +1163,12 @@ impl Checker {
             ));
         }
         let ret = self.solved(ret);
-        if !matches!(ret, Type::Int(_) | Type::Bool) {
+        // An integer of a type parameter's is one of some integer type's.
+        let int_param = matches!(ret, Type::Param(_))
+            && (self.traits)
+                .implements(&ret, INT, &self.env, &self.adts.proj.local)
+                .is_ok();
+        if !matches!(ret, Type::Int(_) | Type::Bool) && !int_param {
             return Err(Error::ty(
                 f.ret.span,
                 format!("a measure gives an integer or a `bool`, not `{ret}`"),
@@ -1054,7 +1264,17 @@ impl Checker {
             )
         };
         let ty = self.typed.exprs.get(&e.id).map(|t| self.solved(t));
-        let scalar = matches!(ty, Some(Type::Int(_) | Type::Bool));
+        let scalar = match &ty {
+            Some(Type::Int(_) | Type::Bool) => true,
+            // One of some integer type, `T: Int`.
+            Some(t @ Type::Param(_)) => {
+                (self
+                    .traits
+                    .implements(t, INT, &self.env, &self.adts.proj.local))
+                .is_ok()
+            }
+            _ => false,
+        };
         if !receiver && !scalar {
             return Err(bad());
         }
@@ -1126,6 +1346,7 @@ impl Checker {
             objs: HashMap::new(),
             next_obj: 0,
             measured: HashMap::new(),
+            parts: HashMap::new(),
             module: self.fns[id.0].module,
             invariants: HashMap::new(),
             unstable: HashSet::new(),
@@ -1342,6 +1563,19 @@ enum Pointee {
     Unknown,
 }
 
+/// What's known of a value of an enum (`Walk::parts`): which of its
+/// variants it is, by number, and the values of every variant's fields, of
+/// which only those of the variant it is mean anything. Each is a function
+/// of the value, as a measure is, so an object's are the same however it's
+/// got at (lemma E1 of docs/53-refined-type-arguments.md).
+#[derive(Debug, Clone)]
+struct Parts {
+    /// The enum's symbol.
+    symbol: String,
+    tag: Lin,
+    fields: Vec<Vec<Val>>,
+}
+
 /// Where a value is, a *place*: a local variable, and the fields and `*`s
 /// from it to there. `self.start`, in a method taking `&mut self`, is the
 /// field `start` of `*self`.
@@ -1443,6 +1677,9 @@ struct Walk<'c> {
     /// the object and the measure's symbol. An object is one value, so a
     /// measure of it is one value too.
     measured: HashMap<(Obj, String), Val>,
+    /// What's known of each object that's an enum's value: its variant
+    /// and fields (see `Parts`).
+    parts: HashMap<Obj, Parts>,
     /// The module of the function walked, where its measures are their
     /// bodies.
     module: usize,
@@ -1682,7 +1919,11 @@ impl Walk<'_> {
                     self.assume_fields(t, &vals);
                     Val::Struct(self.new_obj(), vals)
                 }
-                None => Val::Obj(self.new_obj()),
+                None => {
+                    let o = self.new_obj();
+                    self.enum_parts(o, t, None);
+                    Val::Obj(o)
+                }
             },
             // What its type says of an array, its length, holds behind any
             // reference to it: nothing can change it.
@@ -1697,6 +1938,67 @@ impl Walk<'_> {
             Type::Ref(..) | Type::Box(_) => Val::Ref(self.new_obj(), Pointee::Unknown),
             t if has_obj(t) => Val::Obj(self.new_obj()),
             _ => Val::Other,
+        }
+    }
+
+    /// Gives object `o`, a value of type `t`, its `Parts` if `t` is an
+    /// enum and it has none yet: those of `known`, a variant and its
+    /// fields' values, if that's what's known, or else new ones nothing's
+    /// known of. Each field of a variant it isn't, too, so that a
+    /// refinement of it can be said, under the condition that it is.
+    fn enum_parts(&mut self, o: Obj, t: &Type, known: Option<(usize, Vec<Val>)>) {
+        if self.parts.contains_key(&o) {
+            return;
+        }
+        let Type::Adt(symbol, ..) = t else {
+            return;
+        };
+        let Some(crate::types::AdtKind::Enum(variants)) = self.cx.adts.get(symbol).map(|d| &d.kind)
+        else {
+            return;
+        };
+        let n = variants.len();
+        let mut fields = Vec::new();
+        let mut known = known;
+        for v in 0..n {
+            if let Some((k, vals)) = &mut known
+                && *k == v
+            {
+                fields.push(std::mem::take(vals));
+                continue;
+            }
+            let types = crate::types::variant_fields(&self.cx.adts, t, v);
+            let vals = (types.iter())
+                .map(|ft| {
+                    let ft = self.cx.solved(ft);
+                    self.unknown(&ft)
+                })
+                .collect();
+            fields.push(vals);
+        }
+        let tag = match known {
+            Some((k, _)) => Lin::constant(i128::try_from(k).expect("few variants")),
+            None => {
+                let last = i128::try_from(n).expect("few variants") - 1;
+                Lin::var(self.fresh(Kind::Int(Lin::constant(0), Lin::constant(last.max(0)))))
+            }
+        };
+        let symbol = symbol.clone();
+        self.parts.insert(
+            o,
+            Parts {
+                symbol,
+                tag,
+                fields,
+            },
+        );
+    }
+
+    /// The index of variant `name` of the enum `symbol`.
+    fn variant_index(&self, symbol: &str, name: &str) -> Option<usize> {
+        match &self.cx.adts.get(symbol)?.kind {
+            crate::types::AdtKind::Enum(variants) => variants.iter().position(|(v, _)| v == name),
+            crate::types::AdtKind::Struct(_) => None,
         }
     }
 
@@ -1746,6 +2048,65 @@ impl Walk<'_> {
         }
     }
 
+    /// Whether `pat` matches `s`, exactly, if the logic can say: so it
+    /// doesn't for the arms after one that has it.
+    fn pattern_formula(&mut self, pat: &Pattern, s: &Val) -> Option<Formula> {
+        match (&pat.kind, s) {
+            (PatternKind::Wild | PatternKind::Bind(..), _) => Some(Formula::True),
+            (PatternKind::Int(n, _), Val::Int(l)) => Formula::eq(l, &Lin::constant(*n)),
+            (PatternKind::Range(lo, hi, ..), Val::Int(l)) => Some(Formula::and([
+                match lo {
+                    Some(lo) => Formula::le(&Lin::constant(*lo), l)?,
+                    None => Formula::True,
+                },
+                match hi {
+                    Some(hi) => Formula::le(l, &Lin::constant(*hi))?,
+                    None => Formula::True,
+                },
+            ])),
+            (PatternKind::Bool(b), Val::Bool(f)) => {
+                Some(if *b { f.clone() } else { f.clone().not() })
+            }
+            (PatternKind::Or(alts), _) => {
+                let mut each = Vec::new();
+                for p in alts {
+                    each.push(self.pattern_formula(p, s)?);
+                }
+                Some(Formula::or(each))
+            }
+            // That variant, with fields each matching exactly.
+            (PatternKind::Variant(_, _, member, pats), _) => {
+                let s = self.peeled(pat, s);
+                let (tag, fields) = self.variant_parts(&s, &member.name)?;
+                let mut all = vec![tag];
+                for (p, f) in pats.iter().zip(fields) {
+                    all.push(self.pattern_formula(p, &f)?);
+                }
+                Some(Formula::and(all))
+            }
+            _ => None,
+        }
+    }
+
+    /// What pattern `pat` matches, of value `s`: what's behind the
+    /// references match ergonomics looked through.
+    fn peeled(&mut self, pat: &Pattern, s: &Val) -> Val {
+        let peels = self.cx.typed.peels.get(&pat.id).copied().unwrap_or(0);
+        (0..peels).fold(s.clone(), |v, _| self.pointee(v))
+    }
+
+    /// That `s`, an enum's value, is variant `name`, and its fields' values
+    /// then, if what it is is known.
+    fn variant_parts(&self, s: &Val, name: &str) -> Option<(Formula, Vec<Val>)> {
+        let Val::Obj(o) = s else {
+            return None;
+        };
+        let parts = self.parts.get(o)?;
+        let v = self.variant_index(&parts.symbol, name)?;
+        let tag = Formula::eq(&parts.tag, &Lin::constant(i128::try_from(v).ok()?))?;
+        Some((tag, parts.fields[v].clone()))
+    }
+
     /// What it says of `s` that `pat` matches it, beyond `pattern_formula`
     /// (which is exactly when it matches): a string pattern of `n` bytes
     /// matches only a `&str` whose `len()` is `n`, but not every such
@@ -1753,6 +2114,17 @@ impl Walk<'_> {
     /// never where it didn't (lemma S1 of docs/42-patterns-and-loops.md).
     fn pattern_implies(&mut self, pat: &Pattern, s: &Val) -> Option<Formula> {
         match &pat.kind {
+            // It's that variant, and each field matches what it has.
+            PatternKind::Variant(_, _, member, pats) => {
+                let s = self.peeled(pat, s);
+                let (tag, fields) = self.variant_parts(&s, &member.name)?;
+                let mut all = vec![tag];
+                for (p, f) in pats.iter().zip(fields) {
+                    all.extend(self.pattern_formula(p, &f));
+                    all.extend(self.pattern_implies(p, &f));
+                }
+                Some(Formula::and(all))
+            }
             PatternKind::Str(text) => {
                 const LEN: &str = "<str>::len";
                 if !self.cx.measures.contains_key(LEN) {
@@ -1815,14 +2187,30 @@ impl Walk<'_> {
             }
         };
         let Some(o) = of else {
-            return self.unknown(&m.ret);
+            return self.measure_value(&m.ret);
         };
         if let Some(v) = self.measured.get(&(o, symbol.to_string())) {
             return v.clone();
         }
-        let v = self.unknown(&m.ret);
+        let v = self.measure_value(&m.ret);
         self.measured.insert((o, symbol.to_string()), v.clone());
         v
+    }
+
+    /// A value of what a measure gives, `ret`, nothing's known of. One of
+    /// a type parameter's, `T: Int` in the measure's impl, is of whichever
+    /// integer type that is where it's called: so an integer every
+    /// integer type has room for.
+    fn measure_value(&mut self, ret: &Type) -> Val {
+        match ret {
+            Type::Param(_) => {
+                let (lo, _) = IntTy::I64.range_64();
+                let (_, hi) = IntTy::U64.range_64();
+                let k = Kind::Int(Lin::constant(lo), Lin::constant(hi));
+                Val::Int(Lin::var(self.fresh(k)))
+            }
+            t => self.unknown(t),
+        }
     }
 
     /// The value of term `e` of a measure's body, whose `self` is `this`,
@@ -2027,6 +2415,17 @@ impl Walk<'_> {
                 self.unstable_in(place, true);
                 self.unstable_in(value, false);
             }
+            ExprKind::Variant(.., args, true) if self.fn_named(e).is_some() => {
+                let passed: Vec<Option<Place>> = args.iter().map(|a| self.passed(a)).collect();
+                self.borrows(e, &passed);
+                for (a, p) in args.iter().zip(&passed) {
+                    match (&a.kind, p) {
+                        (ExprKind::Unary(UnOp::RefMut, x), Some(_)) => self.unstable_in(x, true),
+                        (_, Some(_)) => self.unstable_in(a, true),
+                        (_, None) => self.unstable_in(a, false),
+                    }
+                }
+            }
             ExprKind::Call(callee, args) => {
                 let passed: Vec<Option<Place>> = args.iter().map(|a| self.passed(a)).collect();
                 self.borrows(e, &passed);
@@ -2193,7 +2592,10 @@ impl Walk<'_> {
         let v = match t {
             Type::Adt(..) => match self.fields_of(p, t) {
                 Some(vals) => Val::Struct(o, vals),
-                None => Val::Obj(o),
+                None => {
+                    self.enum_parts(o, t, None);
+                    Val::Obj(o)
+                }
             },
             Type::Ref(..) | Type::Box(_) => Val::Ref(o, Pointee::Place(self.deref(p.clone()))),
             // Its length is its type's, whatever's been done to it.
@@ -2383,10 +2785,40 @@ impl Walk<'_> {
     }
 
     fn predicate(&mut self, r: &Refinement, val: &Val, env: Env) -> Result<Formula, Failure> {
-        match self.term(&r.pred, val, env)? {
-            Val::Bool(f) => Ok(f),
-            _ => Err(Failure::Unsupported),
+        let mut all = Vec::new();
+        for part in &r.parts {
+            all.push(self.part(part, val, env)?);
         }
+        Ok(Formula::and(all))
+    }
+
+    /// Refinement part `part`'s predicate, of each part of `val` it's of:
+    /// of a variant's field, if `val` is that variant.
+    fn part(&mut self, part: &Part, val: &Val, env: Env) -> Result<Formula, Failure> {
+        let mut all = Vec::new();
+        for way in &part.ways {
+            let mut guards = Vec::new();
+            let mut v = val.clone();
+            for &(variant, field) in way {
+                let Val::Obj(o) = v else {
+                    return Err(Failure::Unsupported);
+                };
+                let parts = self.parts.get(&o).ok_or(Failure::Unsupported)?;
+                let n = i128::try_from(variant).expect("few variants");
+                guards
+                    .push(Formula::eq(&parts.tag, &Lin::constant(n)).ok_or(Failure::Unsupported)?);
+                v = parts.fields[variant][field].clone();
+            }
+            let f = match self.term(&part.pred, &v, env)? {
+                Val::Bool(f) => f,
+                _ => return Err(Failure::Unsupported),
+            };
+            all.push(match guards.is_empty() {
+                true => f,
+                false => Formula::or([Formula::and(guards).not(), f]),
+            });
+        }
+        Ok(Formula::and(all))
     }
 
     fn term(&mut self, e: &Expr, binder: &Val, env: Env) -> Result<Val, Failure> {
@@ -2470,7 +2902,7 @@ impl Walk<'_> {
     }
 
     /// Fails with `what` at `span` unless refinement `r` holds of `val`,
-    /// with names from `env`.
+    /// with names from `env`: each of its parts, which the error names.
     fn need(
         &mut self,
         r: &Refinement,
@@ -2479,23 +2911,26 @@ impl Walk<'_> {
         span: Span,
         what: String,
     ) -> Result<(), Error> {
-        let goal = self.predicate(r, val, env);
-        let outcome = if !self.reachable {
-            Ok(())
-        } else {
-            match &goal {
-                Ok(g) => self.proves(Some(g)),
-                Err(reason) => Err(*reason),
-            }
-        };
-        let Err(reason) = outcome else {
-            return Ok(());
-        };
-        let failure = self.proof_failure(reason, goal.as_ref().ok(), Some(val), &r.text());
-        Err(failure.attach(Error::ty(
-            span,
-            format!("can't prove `{}` for {what}", r.text()),
-        )))
+        for part in &r.parts {
+            let goal = self.part(part, val, env);
+            let outcome = if !self.reachable {
+                Ok(())
+            } else {
+                match &goal {
+                    Ok(g) => self.proves(Some(g)),
+                    Err(reason) => Err(*reason),
+                }
+            };
+            let Err(reason) = outcome else {
+                continue;
+            };
+            let failure = self.proof_failure(reason, goal.as_ref().ok(), Some(val), &part.text());
+            return Err(failure.attach(Error::ty(
+                span,
+                format!("can't prove `{}` for {what}", part.text()),
+            )));
+        }
+        Ok(())
     }
 
     /// Fails at `span` unless the fields `vals` of a value of struct `t`
@@ -2701,9 +3136,16 @@ impl Walk<'_> {
                     continue;
                 }
                 let ret = self.cx.measures[&m].ret.clone();
-                let v = self.unknown(&ret);
+                let v = self.measure_value(&ret);
                 self.measured.insert((o, m), v.clone());
                 joined.push((v, vals));
+            }
+            // An enum's parts are what they were in each branch's.
+            if each.iter().all(|b| self.parts.contains_key(b)) {
+                let t = self.place_ty(p);
+                self.enum_parts(o, &t, None);
+                let vals = each.iter().map(|b| Val::Obj(*b)).collect();
+                joined.push((Val::Obj(o), vals));
             }
             objs.insert(p.clone(), o);
         }
@@ -2716,14 +3158,14 @@ impl Walk<'_> {
                 }
             }
             let mut parts = o.facts;
-            parts.extend(equal(&result, &o.val));
+            parts.extend(self.same(&result, &o.val));
             for (n, vars) in &new {
                 if let Some(v) = vars[i] {
                     parts.extend(equal(&self.var(*n), &self.var(v)));
                 }
             }
             for (v, vals) in &joined {
-                parts.extend(equal(v, &vals[i]));
+                parts.extend(self.same(v, &vals[i]));
             }
             cases.push(Formula::and(parts));
         }
@@ -2731,6 +3173,30 @@ impl Walk<'_> {
         self.cur = cur;
         self.objs = objs;
         result
+    }
+
+    /// That `a` and `b` are equal, as far as the logic can say: `equal`,
+    /// and of enums' values, their parts (see `Parts`), which are
+    /// functions of the value.
+    fn same(&self, a: &Val, b: &Val) -> Vec<Formula> {
+        match (a, b) {
+            (Val::Obj(x), Val::Obj(y)) => {
+                let (Some(p), Some(q)) = (self.parts.get(x), self.parts.get(y)) else {
+                    return Vec::new();
+                };
+                let mut out: Vec<Formula> = Formula::eq(&p.tag, &q.tag).into_iter().collect();
+                for (f, g) in p.fields.iter().zip(&q.fields) {
+                    for (a, b) in f.iter().zip(g) {
+                        out.extend(self.same(a, b));
+                    }
+                }
+                out
+            }
+            (Val::Struct(_, a), Val::Struct(_, b)) => {
+                a.iter().zip(b).flat_map(|(a, b)| self.same(a, b)).collect()
+            }
+            _ => equal(a, b),
+        }
     }
 
     /// `e` has been evaluated: what it lent `&mut` may have changed.
@@ -2847,6 +3313,9 @@ impl Walk<'_> {
                 ExprKind::Call(callee, args) => self
                     .fn_named(callee)
                     .map(|s| (s.to_string(), args.iter().map(|a| self.passed(a)).collect())),
+                ExprKind::Variant(.., args, true) => self
+                    .fn_named(e)
+                    .map(|s| (s.to_string(), args.iter().map(|a| self.passed(a)).collect())),
                 ExprKind::MethodCall(x, _, _, args) => match self.cx.typed.methods.get(&e.id) {
                     Some((Res::Fn(s, _), derefs, by)) => {
                         let mut passed = vec![self.receiver(x, *derefs, *by)];
@@ -2889,15 +3358,14 @@ impl Walk<'_> {
     /// call it makes at any time keeps: what the callee proved, and the
     /// variables here are new, so what's known here says nothing of them.
     fn keeps(&mut self, e: &Expr, symbol: &str, i: usize) -> Option<Vec<String>> {
-        let sig = self.cx.refined.get(symbol)?.clone();
+        let (symbol, targs) = self.callee(e, symbol);
+        let sig = self.cx.refined.get(&symbol)?.clone();
         if !sig.scoped.get(i).copied().unwrap_or(false) || sig.ensures.is_empty() {
             return None;
         }
-        let targs: Vec<(String, Type)> = (sig.type_params.iter().cloned())
-            .zip(self.call_targs(e))
-            .collect();
+        let targs: Vec<(String, Type)> = (sig.type_params.iter().cloned()).zip(targs).collect();
         let args: Vec<&Expr> = match &e.kind {
-            ExprKind::Call(_, args) => args.iter().collect(),
+            ExprKind::Call(_, args) | ExprKind::Variant(.., args, true) => args.iter().collect(),
             ExprKind::MethodCall(x, _, _, args) => std::iter::once(&**x).chain(args).collect(),
             _ => return None,
         };
@@ -3147,6 +3615,57 @@ impl Walk<'_> {
 
     /// What function `callee` names, if it names one: its symbol.
     /// The type arguments of the function call `e` calls, solved.
+    /// The function call `e` of `symbol` runs, if the checker knows it:
+    /// for a method of a trait, the method of the impl for the type its
+    /// `Self` is, if that type has no type parameters, nor anything else
+    /// that could be any type, in it. Then monomorphisation finds that
+    /// impl, by the same `select` of the same type, and coherence makes it
+    /// the only one; so an impl's method can say more of what it gives, or
+    /// ensure more, than its trait does, for the calls known to be of it
+    /// (lemma R1 of docs/53-refined-type-arguments.md). Gives too the type
+    /// arguments of the call, as the function's are: an impl's method's
+    /// are its impl's and then its own.
+    fn callee(&self, e: &Expr, symbol: &str) -> (String, Vec<Type>) {
+        let targs = self.call_targs(e);
+        let fallback = || (symbol.to_string(), targs.clone());
+        let cx = self.cx;
+        let Some((tr, m)) = (cx.traits.traits.iter())
+            .find_map(|(tr, d)| Some((tr, d.methods.iter().find(|m| m.symbol == symbol)?)))
+        else {
+            return fallback();
+        };
+        let Some(self_ty) = targs.first() else {
+            return fallback();
+        };
+        fn open(t: &Type) -> bool {
+            matches!(
+                t,
+                Type::Param(_)
+                    | Type::Var(_)
+                    | Type::Proj(..)
+                    | Type::Opaque(..)
+                    | Type::Inferred(..)
+            ) || t.parts().any(open)
+        }
+        if open(self_ty) {
+            return fallback();
+        }
+        let Some((i, args)) = cx.traits.select(self_ty, Some(tr), &[]) else {
+            return fallback();
+        };
+        let Some((_, method)) = cx.traits.impls[i]
+            .methods
+            .iter()
+            .find(|(n, _)| *n == m.name)
+        else {
+            // The trait's default body, which says what the trait says.
+            return fallback();
+        };
+        let mut all = args;
+        all.extend(targs.iter().skip(1).cloned());
+        (method.clone(), all)
+    }
+
     fn call_targs(&self, e: &Expr) -> Vec<Type> {
         let res = match &e.kind {
             ExprKind::MethodCall(..) => self.cx.typed.methods.get(&e.id).map(|m| &m.0),
@@ -3267,15 +3786,14 @@ impl Walk<'_> {
         places: Vec<Option<Place>>,
     ) -> Result<Val, Error> {
         let ty = self.ty_of(e);
+        let resolved = symbol.map(|s| self.callee(e, s));
+        let symbol = resolved.as_ref().map(|(s, _)| s.as_str());
         let sig = symbol.and_then(|s| self.cx.refined.get(s)).cloned();
-        let targs: Vec<(String, Type)> = match &sig {
-            Some(sig) => sig
-                .type_params
-                .iter()
-                .cloned()
-                .zip(self.call_targs(e))
-                .collect(),
-            None => Vec::new(),
+        let targs: Vec<(String, Type)> = match (&sig, &resolved) {
+            (Some(sig), Some((_, targs))) => {
+                sig.type_params.iter().cloned().zip(targs.clone()).collect()
+            }
+            _ => Vec::new(),
         };
         if let Some(sig) = &sig {
             for (i, r) in sig.params.iter().enumerate() {
@@ -3354,9 +3872,15 @@ impl Walk<'_> {
             return Ok(());
         };
         if let Some(sig) = &post.sig {
-            let now: Vec<Val> = (post.old.iter().zip(&post.scoped))
-                .map(|(v, p)| match p {
+            // What's behind a call-scoped `&mut` is what the call left
+            // there: at the place lent, or, if that isn't known, a value
+            // nothing's known of, never the one before.
+            let now: Vec<Val> = (post.old.iter().zip(&post.scoped).enumerate())
+                .map(|(i, (v, p))| match p {
                     Some(p) => Val::Ref(self.new_obj(), Pointee::Place(p.clone())),
+                    None if sig.scoped.get(i) == Some(&true) => {
+                        Val::Ref(self.new_obj(), Pointee::Unknown)
+                    }
                     None => v.clone(),
                 })
                 .collect();
@@ -3720,7 +4244,7 @@ impl Walk<'_> {
                     self.expr(callee)?;
                 }
                 let scoped = match &symbol {
-                    Some(s) => self.cx.scoped_params(s),
+                    Some(s) => self.cx.scoped_params(&self.callee(e, s).0),
                     None => Vec::new(),
                 };
                 for (a, _) in args.iter().zip(&scoped).filter(|(_, s)| **s) {
@@ -3741,7 +4265,7 @@ impl Walk<'_> {
                     _ => None,
                 };
                 let scoped = match &symbol {
-                    Some(s) => self.cx.scoped_params(s),
+                    Some(s) => self.cx.scoped_params(&self.callee(e, s).0),
                     None => Vec::new(),
                 };
                 if let Some((_, 0, Some(true))) = method {
@@ -3776,6 +4300,14 @@ impl Walk<'_> {
                 {
                     self.as_value(s, e.span)?;
                 }
+                // A call by path, `List::push(&mut l, x)`, lends as one by
+                // name does.
+                if let (Some(s), true) = (&symbol, *parens) {
+                    let scoped = self.cx.scoped_params(&self.callee(e, s).0);
+                    for (a, _) in args.iter().zip(&scoped).filter(|(_, s)| **s) {
+                        self.scoped_args.insert(a.id);
+                    }
+                }
                 let vals = args
                     .iter()
                     .map(|a| self.expr(a))
@@ -3783,8 +4315,27 @@ impl Walk<'_> {
                 let args: Vec<&Expr> = args.iter().collect();
                 match &symbol {
                     Some(_) if *parens => {
-                        let places = vec![None; args.len()];
+                        let places = args.iter().map(|a| self.passed(a)).collect();
                         self.call(e, symbol.as_deref(), &args, vals, places)
+                    }
+                    // A variant's value: which it is, and its fields.
+                    None => {
+                        let ty = self.ty_of(e);
+                        let ExprKind::Variant(_, _, member, ..) = &e.kind else {
+                            unreachable!("matched above")
+                        };
+                        let v = match &ty {
+                            Type::Adt(symbol, ..) => self.variant_index(symbol, &member.name),
+                            _ => None,
+                        };
+                        match v {
+                            Some(v) => {
+                                let o = self.new_obj();
+                                self.enum_parts(o, &ty, Some((v, vals)));
+                                Ok(Val::Obj(o))
+                            }
+                            None => Ok(self.unknown(&ty)),
+                        }
                     }
                     _ => {
                         let ty = self.ty_of(e);
@@ -3820,7 +4371,7 @@ impl Walk<'_> {
                 let mut before: Vec<Formula> = Vec::new();
                 let mut outcomes = Vec::new();
                 for arm in arms {
-                    let this = pattern_formula(&arm.pat, &s);
+                    let this = self.pattern_formula(&arm.pat, &s);
                     // What matching implies but isn't the same as: true of
                     // this arm, so assumed in it, but not false of the arms
                     // after, so not in `before`.
@@ -4093,6 +4644,7 @@ impl Walk<'_> {
         of: Option<(&Type, usize)>,
     ) -> Result<(), Error> {
         let mut s = s.filter(|v| !matches!(v, Val::Other)).cloned();
+        let unpeeled = s.clone();
         let peels = self.cx.typed.peels.get(&pat.id).copied().unwrap_or(0);
         if peels > 0 {
             s = None;
@@ -4123,9 +4675,17 @@ impl Walk<'_> {
                                 ),
                             ));
                         }
-                        self.bind(id, None);
-                        if let (false, Some(p)) = (m, place) {
-                            self.alias.insert(id, p);
+                        match (m, place, unpeeled) {
+                            (false, Some(p), _) => {
+                                self.bind(id, None);
+                                self.alias.insert(id, p);
+                            }
+                            // A `&` to a value known, a variant's field.
+                            (false, None, Some(v)) => {
+                                let o = self.new_obj();
+                                self.bind(id, Some(Val::Ref(o, Pointee::Val(Box::new(v)))));
+                            }
+                            _ => self.bind(id, None),
                         }
                     }
                 }
@@ -4154,8 +4714,23 @@ impl Walk<'_> {
                     self.bind_pattern(&f.pat, val, at, i.map(|i| (&t, i)))?;
                 }
             }
+            // A variant's fields are what's known of them, if anything is:
+            // what's behind the references match ergonomics looked through,
+            // a value, which can't change while the borrow lasts.
+            PatternKind::Variant(_, _, member, pats) => {
+                let whole = match (unpeeled, &place) {
+                    (Some(v), _) => Some(self.peeled(pat, &v)),
+                    (None, Some(p)) => Some(self.read_place(p)),
+                    (None, None) => None,
+                };
+                let fields = whole.and_then(|w| self.variant_parts(&w, &member.name));
+                for (j, p) in pats.iter().enumerate() {
+                    let f = fields.as_ref().map(|(_, f)| f[j].clone());
+                    self.bind_pattern(p, f.as_ref(), None, None)?;
+                }
+            }
             // What an array's values are isn't followed.
-            PatternKind::Variant(_, _, _, pats) | PatternKind::Array(pats) => {
+            PatternKind::Array(pats) => {
                 for p in pats {
                     self.bind_pattern(p, None, None, None)?;
                 }
@@ -4416,30 +4991,4 @@ fn remainder(a: &Lin, b: &Lin, q: &Lin) -> Option<Formula> {
         parts.push(when(a_neg.clone(), [le(&lo, q)?, le(q, &zero)?, le(a, q)?]));
     }
     Some(Formula::and(parts))
-}
-
-/// That `pat` matches `s`, if that can be said: `None` for a pattern of a
-/// struct or enum, which nothing's known of.
-fn pattern_formula(pat: &Pattern, s: &Val) -> Option<Formula> {
-    match (&pat.kind, s) {
-        (PatternKind::Wild | PatternKind::Bind(..), _) => Some(Formula::True),
-        (PatternKind::Int(n, _), Val::Int(l)) => Formula::eq(l, &Lin::constant(*n)),
-        (PatternKind::Range(lo, hi, ..), Val::Int(l)) => Some(Formula::and([
-            match lo {
-                Some(lo) => Formula::le(&Lin::constant(*lo), l)?,
-                None => Formula::True,
-            },
-            match hi {
-                Some(hi) => Formula::le(l, &Lin::constant(*hi))?,
-                None => Formula::True,
-            },
-        ])),
-        (PatternKind::Bool(b), Val::Bool(f)) => Some(if *b { f.clone() } else { f.clone().not() }),
-        (PatternKind::Or(alts), _) => Some(Formula::or(
-            alts.iter()
-                .map(|p| pattern_formula(p, s))
-                .collect::<Option<Vec<_>>>()?,
-        )),
-        _ => None,
-    }
 }
