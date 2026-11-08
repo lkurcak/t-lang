@@ -222,6 +222,8 @@ pub fn check(prog: &mut Program, warnings: &mut Vec<Warning>) -> (Info, Result<(
         .map(|(s, _)| s.clone())
         .collect();
     cx.info.projections = cx.proj_traits.take();
+    // What the interpreter checks of each call: its free theorems.
+    cx.info.measures.free = cx.free_table();
     cx.info.mir = cx.mir.take();
     // Resolving can fail before every function has a symbol.
     cx.info.lengths = (cx.modules.lengths.iter())

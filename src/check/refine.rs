@@ -1,6 +1,6 @@
 //! Refinement types: `{ d: i64 | d != 0 }`, the `i64`s that aren't 0 (see
-//! docs/08-refinement-types.md, docs/08.1-field-refinements.md and
-//! docs/53-refined-type-arguments.md).
+//! docs/08-refinement-types.md, docs/08.1-field-refinements.md,
+//! docs/53-refined-type-arguments.md and docs/55-free-theorems.md).
 //!
 //! A refinement is the whole type of a parameter, a result, a `let` or a
 //! struct's field, or a type argument of an enum there, at any depth
@@ -81,8 +81,16 @@
 //! of a type argument is a fact about a field under the condition that the
 //! value is that variant (`Walk::part`), so one that can't hold of a
 //! variant that isn't there says nothing.
+//!
+//! A call of a generic function says, of each of its *free* type
+//! parameters (only markers bound one, and it's only whole or in enums'
+//! fields in the signature: `refine/free.rs`), that each value of it in the
+//! result is one of those in the arguments, of the variants they're of
+//! (`Walk::free_theorems`): it can't make one (parametricity, lemma P1 of
+//! docs/55-free-theorems.md), which the interpreter checks at each call.
 
 mod diagnostics;
+mod free;
 mod logic;
 
 use super::Checker;
@@ -426,6 +434,36 @@ impl Checker {
     /// Checks the refinements of `f`'s signature, and keeps them: of its
     /// parameters only if `allowed.0`, and of its result, and what it
     /// ensures, only if `allowed.1` (see `Pending::Sig`).
+    /// The free type parameters of function `symbol` (see
+    /// `free::free_params`): of its scheme, and if it's a method of an impl
+    /// of a trait, the impl's.
+    pub(super) fn free_of(&self, symbol: &str) -> Vec<crate::ast::Free> {
+        let own = (self.traits.impls.iter())
+            .find(|d| d.methods.iter().any(|(_, s)| s == symbol))
+            .and_then(|d| Some((&d.self_ty, d.trait_name.as_deref()?)));
+        free::free_params(&self.adts, self.scheme(symbol), own)
+    }
+
+    /// The free type parameters of every function that has any, by the
+    /// node of its name: what the interpreter checks at each call.
+    pub(super) fn free_table(&self) -> HashMap<NodeId, Vec<crate::ast::Free>> {
+        let own: HashMap<&str, (&Type, &str)> = (self.traits.impls.iter())
+            .filter_map(|d| Some((d, d.trait_name.as_deref()?)))
+            .flat_map(|(d, tr)| {
+                d.methods
+                    .iter()
+                    .map(move |(_, s)| (s.as_str(), (&d.self_ty, tr)))
+            })
+            .collect();
+        (self.fns.iter())
+            .map(|f| {
+                let own = own.get(f.symbol.as_str()).copied();
+                (f.name.id, free::free_params(&self.adts, &f.scheme, own))
+            })
+            .filter(|(_, free)| !free.is_empty())
+            .collect()
+    }
+
     fn sig_refinements(
         &mut self,
         f: &FnDecl,
@@ -3927,7 +3965,12 @@ impl Walk<'_> {
         {
             return Ok(self.measure(s, recv.clone()));
         }
-        let result = self.unknown(&ty);
+        let mut result = self.unknown(&ty);
+        if let Some(s) = symbol
+            && self.reachable
+        {
+            result = self.free_theorems(s, &vals, result);
+        }
         // What the two intrinsics that say how big an integer type is give.
         if let (Some(f @ ("core::num::least" | "core::num::greatest")), Val::Int(v)) =
             (symbol, &result)
@@ -3974,6 +4017,122 @@ impl Walk<'_> {
         };
         self.posts.insert(e.id, post);
         Ok(result)
+    }
+
+    /// `result`, what a call of function `symbol` with arguments `vals`
+    /// gives, with what its free type parameters say of it (lemma P1 of
+    /// docs/55-free-theorems.md): each value of one in it is one of those
+    /// in the arguments, of the variants they're of. So each part of
+    /// `result` a way gets to, if it's there, is one of the parts the
+    /// arguments' ways get to that are there: the one, if there's one,
+    /// which it then is, as an object is one value; and none if there's
+    /// none, so it isn't there. If a part of an argument can't be followed,
+    /// nothing is said of the parts of the result it could be.
+    fn free_theorems(&mut self, symbol: &str, vals: &[Val], mut result: Val) -> Val {
+        let free = self.cx.free_of(symbol);
+        for p in &free {
+            let candidates: Option<Vec<(Vec<Formula>, Val)>> = (p.params.iter())
+                .map(|(i, way)| self.follow(vals.get(*i)?, way))
+                .collect();
+            let Some(candidates) = candidates else {
+                continue;
+            };
+            for way in &p.result {
+                self.free_part(&mut result, way, &candidates);
+            }
+        }
+        result
+    }
+
+    /// The part of `v` that `way` gets to, with the conditions that it's
+    /// there: that each enum on the way is that variant. `None` if it isn't
+    /// known what `v` is made of.
+    fn follow(&self, v: &Val, way: &[(String, usize)]) -> Option<(Vec<Formula>, Val)> {
+        let mut guards = Vec::new();
+        let mut v = v.clone();
+        for (variant, field) in way {
+            let Val::Obj(o) = v else {
+                return None;
+            };
+            let parts = self.parts.get(&o)?;
+            let k = self.variant_index(&parts.symbol, variant)?;
+            let n = i128::try_from(k).expect("few variants");
+            guards.push(Formula::eq(&parts.tag, &Lin::constant(n))?);
+            v = parts.fields[k].get(*field)?.clone();
+        }
+        Some((guards, v))
+    }
+
+    /// What a free theorem says of the part of `result` that `way` gets to,
+    /// whose value is one of `candidates`, each with the conditions that
+    /// it's there (see `free_theorems`).
+    fn free_part(
+        &mut self,
+        result: &mut Val,
+        way: &[(String, usize)],
+        candidates: &[(Vec<Formula>, Val)],
+    ) {
+        let Some((last, rest)) = way.split_last() else {
+            // The whole result: the call returns, so it's one of them.
+            match candidates {
+                [] => self.reachable = false,
+                [(guards, v)] => {
+                    for g in guards {
+                        self.fact(g.clone());
+                    }
+                    *result = v.clone();
+                }
+                _ => {
+                    let f = self.one_of(result, candidates);
+                    self.fact(f);
+                }
+            }
+            return;
+        };
+        // The enum the part is a field of, and the conditions it's there.
+        let Some((mut guards, Val::Obj(o))) = self.follow(result, rest) else {
+            return;
+        };
+        let Some(parts) = self.parts.get(&o) else {
+            return;
+        };
+        let (variant, field) = last;
+        let Some(k) = self.variant_index(&parts.symbol, variant) else {
+            return;
+        };
+        let n = i128::try_from(k).expect("few variants");
+        let Some(tag) = Formula::eq(&parts.tag, &Lin::constant(n)) else {
+            return;
+        };
+        guards.push(tag);
+        let Some(part) = parts.fields[k].get(*field).cloned() else {
+            return;
+        };
+        let there = Formula::and(guards);
+        let f = match candidates {
+            // It can't be there.
+            [] => there.not(),
+            // It's that value, whenever it's there: an object is one value,
+            // what isn't there is no value, and so can be any.
+            [(g, v)] => {
+                if let Some(p) = self.parts.get_mut(&o) {
+                    p.fields[k][*field] = v.clone();
+                }
+                Formula::or([there.not(), Formula::and(g.clone())])
+            }
+            _ => Formula::or([there.not(), self.one_of(&part, candidates)]),
+        };
+        self.fact(f);
+    }
+
+    /// That `v` is one of `candidates`, there: the disjunction of each's
+    /// conditions with its equality to `v`.
+    fn one_of(&self, v: &Val, candidates: &[(Vec<Formula>, Val)]) -> Formula {
+        Formula::or(candidates.iter().map(|(g, c)| {
+            let mut all = g.clone();
+            all.extend(self.same(v, c));
+            Formula::and(all)
+        }))
     }
 
     /// What call `e` gives once what it's lent is forgotten (see `call`):

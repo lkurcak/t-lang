@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased
+
+Step 55: free theorems. See
+[docs/55-free-theorems.md](docs/55-free-theorems.md).
+
+### Added
+
+- Refinements go through generic functions: at a call, each value of a
+  *free* type parameter in the result (one only `Copy`, `Discard`, `Send`
+  or `Sync` bound, in no other bound, and only whole or as an enum's
+  variant's field in the signature) is one of the values of it in the
+  arguments, of the variants they're of. So `small(n).unwrap()` keeps
+  `small`'s refinement, and `o` is known to have been a `Some` after;
+  `unwrap_or(d)` is it or `d`; `ok`, `err`, `into_ok`, `ok_or`, and a
+  program's own generic functions the same.
+- `?` keeps what's known of what's in the `Some` or `Ok`, and of the
+  `Err`'s error it returns; a function whose result is a refined `Option`
+  or `Result` can use `?` (before, its early return couldn't be proved to
+  have the refinement).
+- `Option::ok_or`.
+- `checked_add`, `checked_sub`, `checked_mul`, `checked_neg` and
+  `checked_abs` say what's in their `Some`: `Option<{ v: T | v == a + b
+  }>`.
+- `t run --interp` checks each call of a function with a free type
+  parameter: what it gives of it must be one of its arguments' values.
+- Tests: a generated family of call forms that must keep a refinement or
+  must not, and lending forms through `unwrap`, `ok_or` and generic
+  functions.
+
 ## 0.70.0 (2026-11-08)
 
 Step 54: loop invariants. See

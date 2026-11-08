@@ -315,6 +315,16 @@ const LEND_FORMS: &[&str] = &[
     "let mut k: u8 = 0; while k < 1 { List::push(&mut l, 1u8); k = k + 1; }",
     "let mut k: u8 = 0; loop { if k > 0 { break; } l.push(1u8); k = k + 1; }",
     "let mut k: u8 = 0; while let Some(_) = Some(k) { if k > 0 { break; } l.push(1u8); k = k + 1; }",
+    // Through generic functions, whose free theorems give back the
+    // reference given (docs/55-free-theorems.md).
+    "Some(&mut l).unwrap().push(1u8);",
+    "let r = Some(&mut l).expect(\"l\"); r.push(1u8);",
+    "Some(&mut l).unwrap_or(&mut m).push(1u8);",
+    "Some(&mut l).ok_or(0u8).unwrap().push(1u8);",
+    "let o: Result<&mut List<u8>, u8> = Ok(&mut l); o.ok().unwrap().push(1u8);",
+    "pick_t(c, &mut l, &mut m).push(1u8);",
+    "id_t(&mut l).push(1u8);",
+    "id_t(Some(&mut l)).unwrap().push(1u8);",
 ];
 
 fn lend_program(change: &str) -> String {
@@ -324,14 +334,16 @@ fn lend_program(change: &str) -> String {
          struct W<'a> {{ r: &'a mut List<u8> }}\n\
          fn grow(l: &mut List<u8>) with alloc {{ l.push(1u8); }}\n\
          fn grow_w(w: W) with alloc {{ w.r.push(1u8); }}\n\
+         fn pick_t<T: Discard>(c: bool, a: T, b: T) -> T {{ if c {{ a }} else {{ b }} }}\n\
+         fn id_t<T>(x: T) -> T {{ x }}\n\
          fn pick<'a>(c: bool, x: &'a mut List<u8>, y: &'a mut List<u8>) -> &'a mut List<u8> {{\n\
          if c {{ x }} else {{ y }}\n}}\n\
-         fn read(c: bool) -> u8 with alloc {{\n\
+         fn read(c: bool) -> u8 with {{alloc, panic}} {{\n\
          let mut l: List<u8> = List::new();\n\
          let mut m: List<u8> = List::new();\n\
          let b: [u8; 1] = [7];\n\
          if l.len() == 0 && m.len() == 0 {{\n{change}\nb[l.len()]\n}} else {{ 0 }}\n}}\n\
-         fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {{\n\
+         fn main(os: std::Os) -> Result<(), std::io::Error> with {{alloc, panic}} {{\n\
          let mut out = os.stdout;\nout.line(&read(true))?;\nOk(())\n}}\n"
     )
 }
@@ -355,5 +367,98 @@ fn generated_lend_forms_forget_measures() {
                 rejected(&src, "can't prove `i < self.len()`")
             });
         }
+    }
+}
+
+/// What a generic function gives of a type parameter only marker traits
+/// bound is one of the values of it it was given (docs/55-free-theorems.md):
+/// so each of these is `small(n)`'s value, less than 4, or another that is.
+const FREE_FORMS: &[&str] = &[
+    "small(n).unwrap()",
+    "small(n).expect(\"small\")",
+    "Option::unwrap(small(n))",
+    "small(n).unwrap_or(3)",
+    "sorted(n).unwrap()",
+    "sorted(n).expect(\"sorted\")",
+    "sorted(n).ok().unwrap()",
+    "sorted(n).ok().unwrap_or(1)",
+    "small(n).ok_or(0u8).unwrap()",
+    "small(n).ok_or(0u8).unwrap_or(3)",
+    "id(small(n)).unwrap()",
+    "id(small(n).unwrap())",
+    "pick(c, small(n).unwrap_or(1), 3)",
+    "pick(c, small(n), small(1)).unwrap()",
+    "either(small(n), small(1)).unwrap()",
+    "{ let o = small(n); let i = o.unwrap(); i }",
+    "match Some(small(n).unwrap()) { Some(i) => i, None => 0 }",
+    "match left(small(n).unwrap()) { Either::Left(i) => i, Either::Right(_) => 0 }",
+];
+
+/// The same with `?`, in a function giving back an `Option`.
+const FREE_TRY_FORMS: &[&str] = &[
+    "small(n)?",
+    "id(small(n))?",
+    "pick(c, small(n), small(1))?",
+    "small(n).ok_or(0u8).ok()?",
+    "sorted(n).ok()?",
+];
+
+/// And what could be something else: a default, a value a closure or an
+/// `Int` makes, a refinement the argument doesn't have.
+const NOT_FREE_FORMS: &[&str] = &[
+    "small(n).unwrap_or(4)",
+    "plain(n).unwrap()",
+    "id(plain(n)).unwrap()",
+    "nine(small(n).unwrap())",
+    "pick(c, small(n).unwrap_or(1), 4)",
+    "pick(c, small(n), plain(1)).unwrap()",
+    "either(small(n), plain(1)).unwrap()",
+    "small(n).map(|x| x).unwrap()",
+    "sorted(n).err().unwrap() as usize",
+    "match right(small(n).unwrap()) { Either::Left(i) => i, Either::Right(_) => 9 }",
+];
+
+fn free_program(head: &str, body: &str) -> String {
+    format!(
+        "#[derive(Copy, Discard)]\n\
+         enum Either<L, R> {{ Left(L), Right(R) }}\n\
+         fn left<T: Copy>(x: T) -> Either<T, bool> {{ Either::Left(x) }}\n\
+         fn right<T: Copy>(x: T) -> Either<T, T> {{ Either::Right(x) }}\n\
+         fn small(n: usize) -> Option<{{ v: usize | v < 4 }}> {{ if n < 4 {{ Some(n) }} else {{ None }} }}\n\
+         fn sorted(n: usize) -> Result<{{ v: usize | v < 4 }}, u8> {{\n\
+         if n < 4 {{ Ok(n) }} else {{ Err(0) }}\n}}\n\
+         fn plain(n: usize) -> Option<usize> {{ Some(n) }}\n\
+         fn pick<T: Copy>(c: bool, a: T, b: T) -> T {{ if c {{ a }} else {{ b }} }}\n\
+         fn id<T>(x: T) -> T {{ x }}\n\
+         fn either<T: Copy>(a: Option<T>, b: Option<T>) -> Option<T> {{\n\
+         match a {{ Some(_) => a, None => b }}\n}}\n\
+         fn nine<T: Int>(x: T) -> T {{\nlet _ = x;\n9\n}}\n\
+         {head} {{\nlet b: [u8; 4] = [5, 6, 7, 8];\n{body}\n}}\n\
+         fn main(os: std::Os) -> Result<(), std::io::Error> with panic {{\n\
+         let mut out = os.stdout;\nout.line(&at(true, 2))?;\nOk(())\n}}\n"
+    )
+}
+
+#[test]
+fn generated_free_theorem_forms() {
+    let head = "#[allow(unused_variables)] fn at(c: bool, n: usize) -> u8 with panic";
+    for form in FREE_FORMS {
+        let src = free_program(head, &format!("b[{form}]"));
+        case(&format!("free `{form}`"), &src, || accepted(&src, "7\n"));
+    }
+    let head = "#[allow(unused_variables)] fn at_or(c: bool, n: usize) -> Option<u8>";
+    for form in FREE_TRY_FORMS {
+        let body = format!(
+            "Some(b[{form}])\n}}\nfn at(c: bool, n: usize) -> u8 {{\nat_or(c, n).unwrap_or(0)"
+        );
+        let src = free_program(head, &body);
+        case(&format!("free `{form}`"), &src, || accepted(&src, "7\n"));
+    }
+    let head = "#[allow(unused_variables)] fn at(c: bool, n: usize) -> u8 with panic";
+    for form in NOT_FREE_FORMS {
+        let src = free_program(head, &format!("b[{form}]"));
+        case(&format!("not free `{form}`"), &src, || {
+            rejected(&src, "can't prove `i < self.len()`")
+        });
     }
 }
