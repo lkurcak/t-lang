@@ -1031,20 +1031,9 @@ impl Checker {
             ExprKind::Bool(_) => Ok(Sort::Bool),
             ExprKind::Var(name, targs) if targs.is_empty() => match scope(name) {
                 Some(Named::Value(t, what, def)) => {
-                    let sort = match self.solved(&t) {
-                        // An integer of a type not known yet.
-                        _ if self.int_var(&t) => Sort::Int,
-                        Type::Int(_) => Sort::Int,
-                        // One of some integer type, `T: Int`.
-                        t @ Type::Param(_)
-                            if (self.traits)
-                                .implements(&t, INT, &self.env, &self.adts.proj.local)
-                                .is_ok() =>
-                        {
-                            Sort::Int
-                        }
-                        Type::Bool => Sort::Bool,
-                        t => return Err(self.not_scalar(e, name, &t)),
+                    let sort = match self.scalar_sort(&t) {
+                        Some(sort) => sort,
+                        None => return Err(self.not_scalar(e, name, &self.solved(&t))),
                     };
                     if let PredName::Const(c) = &what {
                         self.info.consts.insert(e.id, c.clone());
@@ -1226,14 +1215,15 @@ impl Checker {
     }
 
     /// The sort of a value of type `t` in the logic, if it's in it: an
-    /// integer, of any integer type or a `T: Int`'s, or a `bool`.
+    /// integer, of any integer type, one not known yet or a `T: Int`'s, or
+    /// a `bool`.
     fn scalar_sort(&self, t: &Type) -> Option<Sort> {
-        match t {
+        match self.solved(t) {
             _ if self.int_var(t) => Some(Sort::Int),
             Type::Int(_) => Some(Sort::Int),
             t @ Type::Param(_)
                 if (self.traits)
-                    .implements(t, INT, &self.env, &self.adts.proj.local)
+                    .implements(&t, INT, &self.env, &self.adts.proj.local)
                     .is_ok() =>
             {
                 Some(Sort::Int)
