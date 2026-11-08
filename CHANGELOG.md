@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.70.0 (2026-11-08)
 
 Step 54: loop invariants. See
 [docs/54-loop-invariants.md](docs/54-loop-invariants.md).
