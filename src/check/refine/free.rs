@@ -54,7 +54,10 @@ pub(crate) fn free_params(adts: &Adts, s: &Scheme, own: Option<(&Type, &str)>) -
             true => MARKERS.contains(&p.trait_name.as_str()),
             false => !mentions(&p.ty, name),
         });
-        let is_own = |a: &Type| matches!((a, own), (Type::Proj(base, tr, _), Some((ty, t))) if **base == *ty && tr == t);
+        let is_own = |a: &Type| match (a, own) {
+            (Type::Proj(base, tr, _), Some((ty, t))) => **base == *ty && tr == t,
+            _ => false,
+        };
         let equal = (s.eqs.iter())
             .filter(|(a, _)| !is_own(a))
             .any(|(a, b)| mentions(a, name) || mentions(b, name));

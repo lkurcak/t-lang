@@ -431,9 +431,6 @@ impl Checker {
         Ok(())
     }
 
-    /// Checks the refinements of `f`'s signature, and keeps them: of its
-    /// parameters only if `allowed.0`, and of its result, and what it
-    /// ensures, only if `allowed.1` (see `Pending::Sig`).
     /// The free type parameters of function `symbol` (see
     /// `free::free_params`): of its scheme, and if it's a method of an impl
     /// of a trait, the impl's.
@@ -464,6 +461,9 @@ impl Checker {
             .collect()
     }
 
+    /// Checks the refinements of `f`'s signature, and keeps them: of its
+    /// parameters only if `allowed.0`, and of its result, and what it
+    /// ensures, only if `allowed.1` (see `Pending::Sig`).
     fn sig_refinements(
         &mut self,
         f: &FnDecl,
