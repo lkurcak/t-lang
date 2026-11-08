@@ -48,6 +48,15 @@ impl<T> Option<T> {
     /// Takes what's in it out, leaving `None`.
     export fn take(&mut self) -> Option<T> { crate::mem::replace(self, None) }
 
+    /// What's in the `Some`, as an `Ok`, or else `err`, as the `Err`: so
+    /// `?` can give an error where there's nothing.
+    export fn ok_or<E: Discard>(self, err: E) -> Result<T, E> {
+        match self {
+            Some(x) => Ok(x),
+            None => Err(err),
+        }
+    }
+
     /// `f` of what's in it, if anything. On `None`, `f` is thrown away
     /// uncalled, so it must be `Discard`.
     export fn map<U, effect e, F: FnOnce(T) -> U with e + Discard>(self, f: F) -> Option<U> with e {

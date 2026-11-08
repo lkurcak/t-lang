@@ -68,6 +68,27 @@ pub struct Measures {
     /// docs/53-refined-type-arguments.md). One of the whole value isn't
     /// in it.
     pub ways: std::collections::HashMap<NodeId, Vec<Vec<(String, usize)>>>,
+    /// By the node of a function's name: its free type parameters, of
+    /// which what it gives is what it was given (see `Free` and
+    /// docs/55-free-theorems.md), for the interpreter to check.
+    pub free: std::collections::HashMap<NodeId, Vec<Free>>,
+}
+
+/// A *free* type parameter of a function: one that only marker traits
+/// bound, and that its parameters and result have only whole or as a
+/// variant's field of an enum, so the function can't make a value of it,
+/// only move, copy and drop those it's given (docs/55-free-theorems.md).
+/// Each way to a value of it is the variant and field of each enum on the
+/// way, as `Measures::ways` are; none for the whole value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Free {
+    pub name: String,
+    /// The ways to its values in the parameters, each with its parameter's
+    /// index (the receiver's is 0).
+    pub params: Vec<(usize, Vec<(String, usize)>)>,
+    /// The ways to its values in the result: each is one of the values
+    /// the parameters' ways get to, of the variants they're of.
+    pub result: Vec<Vec<(String, usize)>>,
 }
 
 impl Program {

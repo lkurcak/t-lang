@@ -493,8 +493,8 @@ the checker knows are of that impl (their `Self` type has no type
 parameters) can rely on; its parameters cannot be refined.
 
 Predicates support linear arithmetic, comparisons, and boolean
-combinations. Multiplication by a constant is supported; multiplication
-of two unknown values and division in a predicate are not. Predicates
+combinations. Multiplication of at most two unknown values is supported;
+division in a predicate is not. Predicates
 reason about mathematical integers, without overflow. Actual program
 arithmetic still has to fit its integer type.
 
@@ -524,7 +524,13 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
 ```
 
 Guards, refined signatures, assignments, patterns, and type ranges supply
-facts. In `for x in a..b`, `x < b` is known.
+facts. In `for x in a..b`, `x < b` is known. A call of a generic function
+keeps what's known of its arguments' values of a *free* type parameter,
+one only marker traits (`Copy`, `Discard`, `Send`, `Sync`) bound, in no
+other bound, and only whole or in enums' fields in the signature: each in
+the result is one of those (`o.unwrap()` is what's in `o`, and `?` gives
+what's in the `Some` or `Ok`, so a function with a refined result can use
+it). See [free theorems](55-free-theorems.md).
 Mutation, mutable lending, and loop iterations can invalidate facts
 about a previous value. Capture a current value and check it again when
 needed. At a loop's head, what the loop changes is forgotten except what

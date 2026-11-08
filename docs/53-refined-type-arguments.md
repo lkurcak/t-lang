@@ -282,7 +282,8 @@ nothing's known.
   is a `usize` nothing's known of, and so is what `?` gives. That would
   take instantiating `T` with the refined type, which is sound only for a
   type parameter generic code can't make new values of: not a `T: Int`,
-  whose `+` would, nor a `T: Default`.
+  whose `+` would, nor a `T: Default`. (Step 55 does it for those, by
+  their free theorems: docs/55-free-theorems.md.)
 - Not of a struct's, a `Box`'s, a reference's or a `List`'s type
   arguments.
 - `for x in a..b` knows `x < b`, but not `a <= x`: that's a fact of every

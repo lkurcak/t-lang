@@ -48,8 +48,9 @@ export fn least<T: Int>() -> T;
 #[intrinsic]
 export fn greatest<T: Int>() -> T;
 
-/// `a + b`, or `None` if it doesn't fit in a `T`.
-export fn checked_add<T: Int>(a: T, b: T) -> Option<T> {
+/// `a + b`, or `None` if it doesn't fit in a `T`: what's in the `Some` is
+/// known to be `a + b`, so it can be used where that's needed.
+export fn checked_add<T: Int>(a: T, b: T) -> Option<{ v: T | v == a + b }> {
     if b > 0 {
         if a <= greatest::<T>() - b { Some(a + b) } else { None }
     } else if a >= least::<T>() - b {
@@ -60,7 +61,7 @@ export fn checked_add<T: Int>(a: T, b: T) -> Option<T> {
 }
 
 /// `a - b`, or `None` if it doesn't fit in a `T`.
-export fn checked_sub<T: Int>(a: T, b: T) -> Option<T> {
+export fn checked_sub<T: Int>(a: T, b: T) -> Option<{ v: T | v == a - b }> {
     if b < 0 {
         if a <= greatest::<T>() + b { Some(a - b) } else { None }
     } else if a >= least::<T>() + b {
@@ -74,7 +75,7 @@ export fn checked_sub<T: Int>(a: T, b: T) -> Option<T> {
 /// further from 0 than the greatest (or least) `T` divided by `b`: what
 /// `/` gives, the checker knows, is within one `b` of what's divided, on
 /// the side of zero (docs/51-products.md).
-export fn checked_mul<T: Int>(a: T, b: T) -> Option<T> {
+export fn checked_mul<T: Int>(a: T, b: T) -> Option<{ v: T | v == a * b }> {
     if a == 0 || b == 0 {
         Some(0)
     } else if a > 0 {
@@ -109,7 +110,7 @@ export fn checked_rem<T: Int>(a: T, b: T) -> Option<T> {
 
 /// `-a`, or `None` if it doesn't fit in a `T`: for the least value of a
 /// signed type, and for all but 0 of an unsigned one.
-export fn checked_neg<T: Int>(a: T) -> Option<T> {
+export fn checked_neg<T: Int>(a: T) -> Option<{ v: T | v == -a }> {
     if a > 0 {
         if a + least::<T>() <= 0 { Some(-a) } else { None }
     } else if a + greatest::<T>() >= 0 {
@@ -180,7 +181,7 @@ export fn abs<T: Signed>(x: T) -> T with panic {
 }
 
 /// How far `x` is from 0, or `None` at the least value.
-export fn checked_abs<T: Signed>(x: T) -> Option<T> {
+export fn checked_abs<T: Signed>(x: T) -> Option<{ v: T | v >= 0 && (v == x || v == -x) }> {
     if x < 0 { checked_neg(x) } else { Some(x) }
 }
 

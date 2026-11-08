@@ -525,6 +525,46 @@ impl<'p> Interp<'p, '_> {
     }
 }
 
+/// Checks what free theorems say of a call of `f` with arguments `given`
+/// that gave `result` (lemma P1 of docs/55-free-theorems.md): each part of
+/// the result a free type parameter's way gets to, if it's there, is one of
+/// the parts of the arguments its ways get to that are there. The checker
+/// counts on it; nothing in T should be able to break it.
+fn free_theorems(free: &[crate::ast::Free], given: &[Value], result: &Value, f: &str) {
+    for p in free {
+        let candidates: Vec<&Value> = (p.params.iter())
+            .filter_map(|(i, way)| part(given.get(*i)?, way))
+            .collect();
+        for way in &p.result {
+            if let Some(v) = part(result, way)
+                && !candidates.contains(&v)
+            {
+                unsound(&format!(
+                    "what `{f}` gave of its free type parameter `{}`, `{v}`, isn't one of \
+                     its arguments' values of it",
+                    p.name
+                ));
+            }
+        }
+    }
+}
+
+/// The part of `v` that `way` gets to, if it's there: each enum on the way
+/// is the variant the way goes through.
+fn part<'v>(v: &'v Value, way: &[(String, usize)]) -> Option<&'v Value> {
+    let mut v = v;
+    for (variant, field) in way {
+        match v {
+            Value::Variant(_, name, fields) if name == variant => v = fields.get(*field)?,
+            Value::Variant(..) => return None,
+            _ => unsound(&format!(
+                "a free theorem's way into `{v}`, which isn't an enum's value"
+            )),
+        }
+    }
+    Some(v)
+}
+
 #[track_caller]
 fn unsound(what: &str) -> ! {
     unreachable!("type soundness violated: {what}. This is a bug in the type checker.")
@@ -1539,6 +1579,10 @@ impl<'p> Interp<'p, '_> {
                 let ensures: Vec<Refined> = (decl.ensures.iter())
                     .map(|e| self.refined_at(&[(String::new(), e)], env.clone(), true))
                     .collect();
+                // The arguments as they're given, if a free theorem says
+                // what the result is of them.
+                let free = self.measures.free.get(&decl.name.id);
+                let given = free.map(|_| args.clone());
                 let mut refined = Vec::new();
                 for (p, v) in decl.params.iter().zip(&args) {
                     let r = refinement(self, &p.ty);
@@ -1577,6 +1621,9 @@ impl<'p> Interp<'p, '_> {
                 };
                 if let (Ok(v), Some(r)) = (&result, ret) {
                     r.check(self, v, &format!("the result of `{}`", decl.name.name));
+                }
+                if let (Ok(v), Some(free), Some(given)) = (&result, free, &given) {
+                    free_theorems(free, given, v, &decl.name.name);
                 }
                 if result.is_ok() {
                     for r in &ensures {
