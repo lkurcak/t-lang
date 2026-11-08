@@ -42,7 +42,10 @@ impl str {
 
     /// The bytes before `mid` and those from it on, or `None` if no
     /// character starts at `mid` and it isn't the end.
-    export fn split_at<'a>(&'a self, mid: usize) -> Option<StrSplit<'a>> {
+    export fn split_at<'a>(
+        &'a self,
+        mid: usize,
+    ) -> Option<{ s: StrSplit<'a> | s.head.len() == mid && s.tail.len() + mid == self.len() }> {
         if !self.is_char_boundary(mid) {
             return None;
         }
@@ -59,7 +62,11 @@ impl str {
 
     /// Bytes `lo` up to, not including, `hi`, or `None` if they aren't
     /// where characters start, or the end, or `lo` is past `hi`.
-    export fn get<'a>(&'a self, lo: usize, hi: usize) -> Option<&'a str> {
+    export fn get<'a>(
+        &'a self,
+        lo: usize,
+        hi: usize,
+    ) -> Option<{ s: &'a str | s.len() + lo == hi }> {
         if lo > hi {
             return None;
         }
@@ -96,10 +103,12 @@ impl str {
 
     /// Without the whitespace at its start and its end, which
     /// `char::is_whitespace` says.
-    export fn trim<'a>(&'a self) -> &'a str { self.trim_start().trim_end() }
+    export fn trim<'a>(&'a self) -> { t: &'a str | t.len() <= self.len() } {
+        self.trim_start().trim_end()
+    }
 
     /// Without the whitespace at its start.
-    export fn trim_start<'a>(&'a self) -> &'a str {
+    export fn trim_start<'a>(&'a self) -> { t: &'a str | t.len() <= self.len() } {
         let b = self.as_bytes();
         let mut at = 0usize;
         loop {
@@ -114,7 +123,7 @@ impl str {
     }
 
     /// Without the whitespace at its end.
-    export fn trim_end<'a>(&'a self) -> &'a str {
+    export fn trim_end<'a>(&'a self) -> { t: &'a str | t.len() <= self.len() } {
         let b = self.as_bytes();
         let mut at = 0usize;
         let mut end = 0usize;
@@ -138,7 +147,10 @@ impl str {
     export fn ends_with<P: Pattern>(&self, pat: P) -> bool { pat.suffix_of(self).is_some() }
 
     /// What follows `pat`, if it starts with it, or `None`.
-    export fn strip_prefix<'a, P: Pattern>(&'a self, pat: P) -> Option<&'a str> {
+    export fn strip_prefix<'a, P: Pattern>(
+        &'a self,
+        pat: P,
+    ) -> Option<{ t: &'a str | t.len() <= self.len() }> {
         match pat.prefix_of(self) {
             Some(n) => Some(after(self, n)),
             None => None,
@@ -146,7 +158,10 @@ impl str {
     }
 
     /// What comes before `pat`, if it ends with it, or `None`.
-    export fn strip_suffix<'a, P: Pattern>(&'a self, pat: P) -> Option<&'a str> {
+    export fn strip_suffix<'a, P: Pattern>(
+        &'a self,
+        pat: P,
+    ) -> Option<{ t: &'a str | t.len() <= self.len() }> {
         let Some(n) = pat.suffix_of(self) else { return None };
         if n > self.len() {
             return None;
@@ -172,7 +187,7 @@ impl str {
 
 /// The bytes of `s` from `at` on. `at` is where a character starts, or the
 /// end, wherever it's used; were it not, it would be the empty string.
-fn after<'a>(s: &'a str, at: usize) -> &'a str {
+fn after<'a>(s: &'a str, at: usize) -> { t: &'a str | t.len() <= s.len() } {
     match s.split_at(at) {
         Some(cut) => cut.tail,
         None => "",
@@ -181,7 +196,7 @@ fn after<'a>(s: &'a str, at: usize) -> &'a str {
 
 /// The bytes of `s` before `at`, which is where a character starts or the
 /// end, as for `after`.
-fn before<'a>(s: &'a str, at: usize) -> &'a str {
+fn before<'a>(s: &'a str, at: usize) -> { t: &'a str | t.len() <= s.len() } {
     match s.split_at(at) {
         Some(cut) => cut.head,
         None => "",

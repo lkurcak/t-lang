@@ -202,12 +202,14 @@ fn at(a: [u8; 4], i: { v: usize | v < 4 }) -> u8 { a[nine(i)] }
 - `?` on an `Option<T>` in generic code: which impl it is can't be known
   where the type has a type parameter (R1), so it says nothing there.
 - Where several values could be the one, what's known of them besides
-  their integers and enums' parts (a measure) isn't carried over.
+  their integers and enums' parts (a measure) wasn't carried over; since
+  step 56 it is (lemma S2 of docs/56-field-paths-and-slices.md).
 - A dead `match` arm is still only found by a goal that shares a variable
   with what makes it dead: `None => a[9]`, after `o.unwrap()`, is still
   an error.
-- `split_at`, `str::get` and `find` don't yet say how long what they give
-  is: that needs a refinement that can name a struct's fields.
+- `split_at`, `str::get` and `find` didn't say how long what they give
+  is: that needed a refinement that can name a struct's fields, which
+  step 56 added, and with it the lengths of the first two.
 
 ## Decisions
 

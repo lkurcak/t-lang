@@ -76,6 +76,16 @@
 //! ensure more, which a call learns only where it's known to be of that
 //! impl (`Walk::callee`): monomorphisation picks the same one.
 //!
+//! A predicate can name a struct's field, of anything it names, at any
+//! depth (`s.head.len()`; `Checker::pred_place`): to the logic a struct's
+//! value is its fields' values, so a field is a function of the value, as a
+//! measure is, read as the value it's of is. Behind a `&mut` it follows a
+//! measure's rules (`Checker::pred_mutable`); in a signature or a field's
+//! refinement it's seen as far as that is (`Checker::field_reach`), so no
+//! proof outside a module hangs on what the module keeps to itself. Equal
+//! values have equal measures (`Walk::same_measures`), where branches meet
+//! and where a free theorem says which value a result is.
+//!
 //! An enum's value has *parts* (`Parts`): which variant it is and each
 //! variant's fields, functions of the value as measures are; a refinement
 //! of a type argument is a fact about a field under the condition that the
@@ -149,6 +159,9 @@ impl Refinement {
         self.parts.iter().map(|p| &p.pred)
     }
 }
+
+/// The symbol of `str::len`, the measure.
+const STR_LEN: &str = "<str>::len";
 
 /// What a predicate's part is, in the logic: an integer, of ℤ, whatever
 /// the integer types of what it names, or a `bool`.
@@ -297,6 +310,16 @@ enum Named {
     Mut,
     /// One it can't name, and why.
     Not(String),
+}
+
+/// What a path in a predicate names (`Checker::pred_place`): of what type,
+/// from which name, written `name`, and whether it's behind a `&mut` on
+/// the way, so that what's there can change.
+struct PredPlace {
+    ty: Type,
+    named: PredName,
+    name: String,
+    through_mut: bool,
 }
 
 impl Checker {
@@ -529,6 +552,49 @@ impl Checker {
                 }
             }
         }
+        // What it's seen as far as, which the fields its refinements name
+        // must be too: its own visibility, or for an impl's method of a
+        // trait, everywhere, as an impl is seen wherever its trait and type
+        // are named.
+        self.pred_reach = match allowed.0 {
+            true => match f.vis {
+                Vis::Private => None,
+                Vis::Pub(_) => Some((
+                    format!("`{}` is public, but its refinement names", f.name.name),
+                    Level::Package,
+                )),
+                Vis::Export(_) => Some((
+                    format!("`{}` is exported, but its refinement names", f.name.name),
+                    Level::Export,
+                )),
+            },
+            false => Some((
+                format!(
+                    "`{}` is an impl's method of a trait, seen wherever the impl is, but its \
+                     refinement names",
+                    f.name.name
+                ),
+                Level::Export,
+            )),
+        };
+        let checked = self.sig_refinements_reached(f, params, ret, consts, &mut sig);
+        self.pred_reach = None;
+        checked?;
+        let symbol = self.sig_owner.0.clone();
+        self.refined.insert(symbol, sig);
+        Ok(())
+    }
+
+    /// The rest of `sig_refinements`, with `pred_reach` set: checks the
+    /// refinements of `f`'s parameters, result and `ensures` into `sig`.
+    fn sig_refinements_reached(
+        &mut self,
+        f: &FnDecl,
+        params: &[Type],
+        ret: &Type,
+        consts: &[Ident],
+        sig: &mut RefinedSig,
+    ) -> Result<(), Error> {
         for (i, p) in f.params.iter().enumerate() {
             let scope = |name: &str| {
                 f.params[..i]
@@ -580,8 +646,6 @@ impl Checker {
             }
             sig.ensures.push(Refinement::whole(e.clone()));
         }
-        let symbol = self.sig_owner.0.clone();
-        self.refined.insert(symbol, sig);
         Ok(())
     }
 
@@ -654,8 +718,21 @@ impl Checker {
                 })
             };
             self.pred_again = Some("a field");
+            let what = format!("field `{}` of `{}` is", f.name.name, s.name.name);
+            self.pred_reach = match f.vis {
+                Vis::Private => None,
+                Vis::Pub(_) => Some((
+                    format!("{what} public, but its refinement names"),
+                    Level::Package,
+                )),
+                Vis::Export(_) => Some((
+                    format!("{what} exported, but its refinement names"),
+                    Level::Export,
+                )),
+            };
             let r = self.refinement(&f.ty, &types[i], &scope);
             self.pred_again = None;
+            self.pred_reach = None;
             let r = r?;
             let mut named = Vec::new();
             for pred in r.iter().flat_map(Refinement::preds) {
@@ -954,29 +1031,9 @@ impl Checker {
             ExprKind::Bool(_) => Ok(Sort::Bool),
             ExprKind::Var(name, targs) if targs.is_empty() => match scope(name) {
                 Some(Named::Value(t, what, def)) => {
-                    let sort = match self.solved(&t) {
-                        // An integer of a type not known yet.
-                        _ if self.int_var(&t) => Sort::Int,
-                        Type::Int(_) => Sort::Int,
-                        // One of some integer type, `T: Int`.
-                        t @ Type::Param(_)
-                            if (self.traits)
-                                .implements(&t, INT, &self.env, &self.adts.proj.local)
-                                .is_ok() =>
-                        {
-                            Sort::Int
-                        }
-                        Type::Bool => Sort::Bool,
-                        t => {
-                            return Err(Error::ty(
-                                e.span,
-                                format!(
-                                    "{} can only name `{name}`, of type `{t}`, by its measures: \
-                                     `{name}.m()`, where `m` is a `#[measure]`",
-                                    self.pred_a()
-                                ),
-                            ));
-                        }
+                    let sort = match self.scalar_sort(&t) {
+                        Some(sort) => sort,
+                        None => return Err(self.not_scalar(e, name, &self.solved(&t))),
                     };
                     if let PredName::Const(c) = &what {
                         self.info.consts.insert(e.id, c.clone());
@@ -1104,57 +1161,26 @@ impl Checker {
                 self.pred_in_old = false;
                 got
             }
-            ExprKind::MethodCall(x, m, targs, args) if targs.is_empty() && args.is_empty() => {
-                let ExprKind::Var(name, targs) = &x.kind else {
-                    return Err(Error::ty(
-                        x.span,
-                        format!(
-                            "{} can only call a measure of a name: `s.len()`",
-                            self.pred_a()
-                        ),
-                    ));
+            ExprKind::Field(..) => {
+                let at = self.pred_place(e, scope)?;
+                let t = self.solved(&at.ty);
+                let sort = match self.scalar_sort(&t) {
+                    Some(sort) => sort,
+                    None => return Err(self.not_scalar(e, &crate::pretty::expr_text(e), &t)),
                 };
-                let (ty, named) = match scope(name) {
-                    Some(Named::Value(t, what, def)) if targs.is_empty() => {
-                        self.pred_names.insert(x.id, what.clone());
-                        let kind = match what {
-                            PredName::Field(_) => super::NoteKind::Field(name.clone()),
-                            PredName::Const(_) => super::NoteKind::ConstParam(name.clone()),
-                            _ => super::NoteKind::Var(name.clone()),
-                        };
-                        self.note(x.span, kind, Some(self.solved(&t)), Some(def));
-                        (t, what)
-                    }
-                    // A name that isn't a value: the error it is alone.
-                    _ => {
-                        self.pred_type(x, scope)?;
-                        unreachable!("a name that isn't a value is an error")
-                    }
-                };
-                let (symbol, derefs, through_mut) = self.find_measure(&ty, m)?;
-                if through_mut && let Some(what) = self.pred_again {
-                    return Err(Error::ty(
-                        x.span,
-                        format!(
-                            "the refinement of {what} can't name a measure of what's behind \
-                             `&mut` `{name}`, which can change"
-                        ),
-                    ));
+                self.pred_mutable(e.span, &at, "a field")?;
+                if at.through_mut {
+                    self.info.measures.behind_mut.insert(e.id);
                 }
-                if through_mut
-                    && !self.pred_in_old
-                    && let Some((what, scoped)) = &self.pred_post
-                    && !matches!(named, PredName::Param(j) if scoped[j])
-                    && !matches!(named, PredName::Binder)
-                {
-                    return Err(Error::ty(
-                        x.span,
-                        format!(
-                            "{what} can't name `{name}` at return: the borrow it's lent can \
-                             outlive the call, as the lifetime of `{name}` is in the signature \
-                             elsewhere; write `old(..)`"
-                        ),
-                    ));
+                Ok(sort)
+            }
+            ExprKind::MethodCall(x, m, targs, args) if targs.is_empty() && args.is_empty() => {
+                let mut at = self.pred_place(x, scope)?;
+                let (symbol, derefs, through_mut) = self.find_measure(&at.ty, m)?;
+                at.through_mut |= through_mut;
+                self.pred_mutable(x.span, &at, "a measure")?;
+                if at.through_mut {
+                    self.info.measures.behind_mut.insert(e.id);
                 }
                 let ret = self.measures[&symbol].ret.clone();
                 if let Some(i) = self.fns.iter().position(|f| f.symbol == symbol) {
@@ -1180,12 +1206,205 @@ impl Checker {
             _ => Err(Error::ty(
                 e.span,
                 format!(
-                    "{} can only use literals, names, measures, `+`, `-`, `*` by a constant, \
-                     comparisons, `&&`, `||` and `!`",
+                    "{} can only use literals, names, fields, measures, `+`, `-`, `*` by a \
+                     constant, comparisons, `&&`, `||` and `!`",
                     self.pred_a()
                 ),
             )),
         }
+    }
+
+    /// The sort of a value of type `t` in the logic, if it's in it: an
+    /// integer, of any integer type, one not known yet or a `T: Int`'s, or
+    /// a `bool`.
+    fn scalar_sort(&self, t: &Type) -> Option<Sort> {
+        match self.solved(t) {
+            _ if self.int_var(t) => Some(Sort::Int),
+            Type::Int(_) => Some(Sort::Int),
+            t @ Type::Param(_)
+                if (self.traits)
+                    .implements(&t, INT, &self.env, &self.adts.proj.local)
+                    .is_ok() =>
+            {
+                Some(Sort::Int)
+            }
+            Type::Bool => Some(Sort::Bool),
+            _ => None,
+        }
+    }
+
+    /// The error for `e`, written `text`, of type `t`, which isn't an
+    /// integer or a `bool`, named whole in a predicate.
+    fn not_scalar(&self, e: &Expr, text: &str, t: &Type) -> Error {
+        let mut peeled = t;
+        while let Type::Ref(_, _, inner) | Type::Box(inner) = peeled {
+            peeled = inner;
+        }
+        let by = match struct_fields(&self.adts, peeled) {
+            Some(_) => format!(
+                "by its fields and measures: `{text}.f`, or `{text}.m()`, where `m` is a \
+                 `#[measure]`"
+            ),
+            None => format!("by its measures: `{text}.m()`, where `m` is a `#[measure]`"),
+        };
+        Error::ty(
+            e.span,
+            format!(
+                "{} can only name `{text}`, of type `{t}`, {by}",
+                self.pred_a()
+            ),
+        )
+    }
+
+    /// What a path in a predicate names: a name, or a field of what one
+    /// is or points to, at any depth, `s.head` (see `PredPlace`).
+    fn pred_place(
+        &mut self,
+        e: &Expr,
+        scope: &dyn Fn(&str) -> Option<Named>,
+    ) -> Result<PredPlace, Error> {
+        match &e.kind {
+            ExprKind::Var(name, targs) if targs.is_empty() => match scope(name) {
+                Some(Named::Value(t, what, def)) => {
+                    self.pred_names.insert(e.id, what.clone());
+                    let kind = match what {
+                        PredName::Field(_) => super::NoteKind::Field(name.clone()),
+                        PredName::Const(_) => super::NoteKind::ConstParam(name.clone()),
+                        _ => super::NoteKind::Var(name.clone()),
+                    };
+                    self.note(e.span, kind, Some(self.solved(&t)), Some(def));
+                    Ok(PredPlace {
+                        ty: t,
+                        named: what,
+                        name: name.clone(),
+                        through_mut: false,
+                    })
+                }
+                // A name that isn't a value: the error it is alone; or a
+                // const, an integer or a `bool`, which has neither.
+                _ => {
+                    self.pred_type(e, scope)?;
+                    let t = match self.pred_const(name, e.id) {
+                        Some((_, t, _)) => t.erased().to_string(),
+                        None => "an integer or `bool`".to_string(),
+                    };
+                    Err(Error::ty(
+                        e.span,
+                        format!(
+                            "`{name}` is a const of type `{t}`, which has no fields or measures"
+                        ),
+                    ))
+                }
+            },
+            ExprKind::Field(x, field) => {
+                let mut at = self.pred_place(x, scope)?;
+                let mut t = self.solved(&at.ty);
+                let mut derefs = 0;
+                loop {
+                    t = match t {
+                        Type::Ref(_, mutable, inner) => {
+                            at.through_mut |= mutable;
+                            self.solved(&inner)
+                        }
+                        Type::Box(inner) => self.solved(&inner),
+                        _ => break,
+                    };
+                    derefs += 1;
+                }
+                let fields = struct_fields(&self.adts, &t).unwrap_or_default();
+                let Some((i, (_, ft))) =
+                    (fields.into_iter().enumerate()).find(|(_, (f, _))| *f == field.name)
+                else {
+                    return Err(Error::ty(
+                        field.span,
+                        format!("`{t}` has no field `{}`", field.name),
+                    ));
+                };
+                let Type::Adt(symbol, ..) = &t else {
+                    unreachable!("a struct has fields")
+                };
+                self.field_visible(symbol, field)?;
+                self.field_reach(symbol, field)?;
+                self.note_field(&symbol.clone(), field, &ft);
+                self.pred_fields.insert(e.id, (derefs, i));
+                at.ty = ft;
+                Ok(at)
+            }
+            _ => Err(Error::ty(
+                e.span,
+                format!(
+                    "{} can only call a measure of a name, or of a field of one: `s.len()`, \
+                     `s.head.len()`",
+                    self.pred_a()
+                ),
+            )),
+        }
+    }
+
+    /// Fails if field `field` of struct `symbol`, named in a refinement of
+    /// a signature or a field, isn't seen as far as that is (`pred_reach`):
+    /// what callers prove can't hang on what they can't see.
+    fn field_reach(&self, symbol: &str, field: &Ident) -> Result<(), Error> {
+        let Some((what, want)) = &self.pred_reach else {
+            return Ok(());
+        };
+        let Some(def) = self.types.iter().find(|d| d.symbol == symbol) else {
+            return Ok(());
+        };
+        let Some(&(_, level)) = def.fields.iter().find(|(name, _)| *name == field.name) else {
+            return Ok(());
+        };
+        if level >= *want {
+            return Ok(());
+        }
+        let why = match level {
+            Level::Module => format!("which is private to {}", self.modules.describe(def.module)),
+            _ => "which isn't exported".to_string(),
+        };
+        Err(Error::ty(
+            field.span,
+            format!(
+                "{what} field `{}` of `{}`, {why}",
+                field.name,
+                super::source_name(symbol)
+            ),
+        ))
+    }
+
+    /// Fails if what `at`, a path of a predicate at `span` that `noun`
+    /// ("a field", "a measure") is of, is behind a `&mut`, where what's
+    /// there may have changed by when the predicate is about: when it's
+    /// checked again (`pred_again`), or at return in a postcondition, but
+    /// of the binder or a call-scoped parameter.
+    fn pred_mutable(&self, span: Span, at: &PredPlace, noun: &str) -> Result<(), Error> {
+        if !at.through_mut {
+            return Ok(());
+        }
+        let name = &at.name;
+        if let Some(what) = self.pred_again {
+            return Err(Error::ty(
+                span,
+                format!(
+                    "the refinement of {what} can't name {noun} of what's behind `&mut` \
+                     `{name}`, which can change"
+                ),
+            ));
+        }
+        if !self.pred_in_old
+            && let Some((what, scoped)) = &self.pred_post
+            && !matches!(at.named, PredName::Param(j) if scoped[j])
+            && !matches!(at.named, PredName::Binder)
+        {
+            return Err(Error::ty(
+                span,
+                format!(
+                    "{what} can't name `{name}` at return: the borrow it's lent can outlive the \
+                     call, as the lifetime of `{name}` is in the signature elsewhere; write \
+                     `old(..)`"
+                ),
+            ));
+        }
+        Ok(())
     }
 
     /// The measure `m` of a value of type `ty`, or of what it points to,
@@ -1536,7 +1755,38 @@ impl Checker {
         self.effect_sites.retain(|s| keep(s.node));
         self.withins.retain(|w| keep(w.node));
         self.info.proved.extend(proved);
+        self.implicit_panics();
         Ok(())
+    }
+
+    /// Warns of each operator of the body just walked, its closures' too,
+    /// whose check wasn't proved to pass, so that it may panic
+    /// (`implicit_panics`, off unless asked for), with why the proof
+    /// failed.
+    fn implicit_panics(&mut self) {
+        let sites = (self.effect_sites.iter())
+            .filter(|s| s.node.is_some())
+            .map(|s| (s.span, s.what.clone()));
+        let closures = (self.withins.iter()).filter_map(|w| match (&w.why, w.node) {
+            (super::effects::Why::Closure(what), Some(_)) => Some((w.span, what.clone())),
+            _ => None,
+        });
+        let mut found: Vec<(Span, String)> = sites.chain(closures).collect();
+        found.sort_by_key(|(span, _)| (span.start, span.end));
+        found.dedup_by_key(|(span, _)| *span);
+        for (span, what) in found {
+            let notes = match self.proof_failures.get(&span) {
+                Some(failure) => failure.notes(),
+                None => Vec::new(),
+            };
+            self.warnings.push(crate::error::Warning {
+                lint: crate::error::Lint::ImplicitPanics,
+                span,
+                message: format!("{what} may panic: it wasn't proved not to"),
+                fixes: Vec::new(),
+                notes,
+            });
+        }
     }
 }
 
@@ -2234,7 +2484,7 @@ impl Walk<'_> {
                 Some(Formula::and(all))
             }
             PatternKind::Str(text) => {
-                const LEN: &str = "<str>::len";
+                const LEN: &str = STR_LEN;
                 if !self.cx.measures.contains_key(LEN) {
                     return None;
                 }
@@ -2992,6 +3242,20 @@ impl Walk<'_> {
                 Env::Post(old, _, targs) => self.term(&args[0], binder, Env::Call(old, targs))?,
                 _ => return Err(Failure::Unsupported),
             },
+            // A field of what's named, through the `*`s the checker found:
+            // of a struct, as every value of one is, in the logic, its
+            // fields' values.
+            ExprKind::Field(x, _) => {
+                let (derefs, i) = *self.cx.pred_fields.get(&e.id).ok_or(Failure::Unsupported)?;
+                let mut v = self.term(x, binder, env)?;
+                for _ in 0..derefs {
+                    v = self.pointee(v);
+                }
+                match v {
+                    Val::Struct(_, mut vals) if i < vals.len() => vals.swap_remove(i),
+                    _ => return Err(Failure::Unsupported),
+                }
+            }
             // A measure of what's named, through the `*`s the checker
             // found: the `&self` it's given is the last reference.
             ExprKind::MethodCall(x, ..) => {
@@ -3286,11 +3550,12 @@ impl Walk<'_> {
     /// That `a` and `b` are equal, as far as the logic can say: `equal`,
     /// and of enums' values, their parts (see `Parts`), which are
     /// functions of the value.
-    fn same(&self, a: &Val, b: &Val) -> Vec<Formula> {
-        match (a, b) {
+    fn same(&mut self, a: &Val, b: &Val) -> Vec<Formula> {
+        let mut out = match (a, b) {
             (Val::Obj(x), Val::Obj(y)) => {
-                let (Some(p), Some(q)) = (self.parts.get(x), self.parts.get(y)) else {
-                    return Vec::new();
+                let (Some(p), Some(q)) = (self.parts.get(x).cloned(), self.parts.get(y).cloned())
+                else {
+                    return self.same_measures(*x, *y);
                 };
                 let mut out: Vec<Formula> = Formula::eq(&p.tag, &q.tag).into_iter().collect();
                 for (f, g) in p.fields.iter().zip(&q.fields) {
@@ -3301,10 +3566,51 @@ impl Walk<'_> {
                 out
             }
             (Val::Struct(_, a), Val::Struct(_, b)) => {
-                a.iter().zip(b).flat_map(|(a, b)| self.same(a, b)).collect()
+                let mut out = Vec::new();
+                for (a, b) in a.iter().zip(b) {
+                    out.extend(self.same(a, b));
+                }
+                out
             }
             _ => equal(a, b),
+        };
+        if let (
+            Val::Obj(x) | Val::Struct(x, _) | Val::Ref(x, _),
+            Val::Obj(y) | Val::Struct(y, _) | Val::Ref(y, _),
+        ) = (a, b)
+        {
+            out.extend(self.same_measures(*x, *y));
         }
+        out
+    }
+
+    /// That objects `x` and `y`, which are equal, have the same measures:
+    /// each `y` has, which `x` then has, as a measure is a function of the
+    /// value (a slice's, of the reference).
+    fn same_measures(&mut self, x: Obj, y: Obj) -> Vec<Formula> {
+        if x == y {
+            return Vec::new();
+        }
+        let mut symbols: Vec<String> = (self.measured.keys())
+            .filter(|(o, _)| *o == y)
+            .map(|(_, m)| m.clone())
+            .collect();
+        symbols.sort();
+        let mut out = Vec::new();
+        for m in symbols {
+            let w = self.measured[&(y, m.clone())].clone();
+            let v = match self.measured.get(&(x, m.clone())) {
+                Some(v) => v.clone(),
+                None => {
+                    let ret = self.cx.measures[&m].ret.clone();
+                    let v = self.measure_value(&ret);
+                    self.measured.insert((x, m), v.clone());
+                    v
+                }
+            };
+            out.extend(equal(&v, &w));
+        }
+        out
     }
 
     /// `e` has been evaluated: what it lent `&mut` may have changed.
@@ -4127,12 +4433,14 @@ impl Walk<'_> {
 
     /// That `v` is one of `candidates`, there: the disjunction of each's
     /// conditions with its equality to `v`.
-    fn one_of(&self, v: &Val, candidates: &[(Vec<Formula>, Val)]) -> Formula {
-        Formula::or(candidates.iter().map(|(g, c)| {
+    fn one_of(&mut self, v: &Val, candidates: &[(Vec<Formula>, Val)]) -> Formula {
+        let mut cases = Vec::new();
+        for (g, c) in candidates {
             let mut all = g.clone();
             all.extend(self.same(v, c));
-            Formula::and(all)
-        }))
+            cases.push(Formula::and(all));
+        }
+        Formula::or(cases)
     }
 
     /// What call `e` gives once what it's lent is forgotten (see `call`):
@@ -4147,14 +4455,20 @@ impl Walk<'_> {
         if let Some(sig) = &post.sig {
             // What's behind a call-scoped `&mut` is what the call left
             // there: at the place lent, or, if that isn't known, a value
-            // nothing's known of, never the one before.
+            // nothing's known of, never the one before. The reference is
+            // the one it was, the same object: so what it says of what it
+            // points to, a slice's length, is too.
             let now: Vec<Val> = (post.old.iter().zip(&post.scoped).enumerate())
-                .map(|(i, (v, p))| match p {
-                    Some(p) => Val::Ref(self.new_obj(), Pointee::Place(p.clone())),
-                    None if sig.scoped.get(i) == Some(&true) => {
-                        Val::Ref(self.new_obj(), Pointee::Unknown)
+                .map(|(i, (v, p))| {
+                    let o = match v {
+                        Val::Ref(o, _) => *o,
+                        _ => self.new_obj(),
+                    };
+                    match p {
+                        Some(p) => Val::Ref(o, Pointee::Place(p.clone())),
+                        None if sig.scoped.get(i) == Some(&true) => Val::Ref(o, Pointee::Unknown),
+                        None => v.clone(),
                     }
-                    None => v.clone(),
                 })
                 .collect();
             let env = Env::Post(&post.old, Some(&now), &post.targs);
@@ -4344,7 +4658,21 @@ impl Walk<'_> {
             ExprKind::Int(n, _) => Ok(Val::Int(Lin::constant(i128::from(*n)))),
             ExprKind::Char(c) => Ok(Val::Int(Lin::constant(i128::from(u32::from(*c))))),
             ExprKind::Bool(b) => Ok(Val::Bool(if *b { Formula::True } else { Formula::False })),
-            ExprKind::Unit | ExprKind::Str(_) | ExprKind::ByteStr(_) => Ok(Val::Other),
+            ExprKind::Unit | ExprKind::ByteStr(_) => Ok(Val::Other),
+            // A string literal: a reference no one else has, as long as
+            // its text is.
+            ExprKind::Str(text) => {
+                let o = self.new_obj();
+                let v = Val::Ref(o, Pointee::Unknown);
+                if self.cx.measures.contains_key(STR_LEN)
+                    && let Ok(n) = i128::try_from(text.len())
+                    && let Val::Int(len) = self.measure(STR_LEN, v.clone())
+                    && let Some(f) = Formula::eq(&len, &Lin::constant(n))
+                {
+                    self.fact(f);
+                }
+                Ok(v)
+            }
             ExprKind::Var(..) => match self.cx.typed.vars.get(&e.id) {
                 Some(Res::Local(id)) => Ok(self.read_place(&Place::local(*id))),
                 Some(Res::Fn(symbol, _)) => {

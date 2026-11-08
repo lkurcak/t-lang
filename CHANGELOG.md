@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.72.0 (2026-11-09)
+
+Step 56: field paths and proved sub-slices. See
+[docs/56-field-paths-and-slices.md](docs/56-field-paths-and-slices.md).
+
+### Added
+
+- A refinement's predicate, an `ensures` and a loop's invariant can name
+  a field of a struct, at any depth, through `&`, `&mut` and boxes:
+  `v == p.x`, `s.head.len() == mid`. A field behind a `&mut` follows the
+  rules a measure of what's behind one does. A field named in a
+  signature's refinement must be seen at least as far as the function
+  (an impl's method of a trait: exported), and a struct's field's
+  refinement as far as that field.
+- `s.slice(a..b)` and `slice_mut`, of slices, arrays and lists: the
+  values from `a` up to `b`, for a range proved in it, as long as it is.
+- `split_at` and `split_at_mut`, of slices and strings, say how long the
+  halves are; `str::get(lo, hi)` how long what it gives is; `trim`,
+  `trim_start`, `trim_end`, `strip_prefix` and `strip_suffix` that it's no
+  longer than the string. A string literal's length is known.
+- The lint `implicit_panics`, off unless asked for: a warning for each
+  operator whose check wasn't proved to pass, with what the proof was
+  missing in its notes. With `#![warn(implicit_panics)]` and
+  `--deny-warnings`, a program is checked to have none.
+- `use shapes::Shape::{self, Dot}`: `self` in a group under an enum names
+  the enum.
+- A method of a trait called on a struct or enum whose type isn't known
+  whole yet is of the one impl of the trait that could be for it, which
+  says the rest: `let mut l = List::new(); l.write_all(b"hi")?;` makes a
+  `List<u8>`.
+- Warnings can have notes.
+
+### Changed
+
+- `split_at` and `split_at_mut` of slices are safe T over a private
+  intrinsic, `cut`, which takes an index proved in range: the trusted
+  code is the same size.
+- Where branches meet, and where a free theorem says a result is one of
+  its arguments, equal values have equal measures: a slice's length is
+  carried over.
+- After a call lent a call-scoped `&mut` to a slice, what it ensures of
+  the slice's length is learned of the slice.
+- `t run --interp` finds a postcondition's fields and measures that
+  aren't behind a `&mut` at the call, before an owned box it names is
+  dropped at return.
+
+### Fixed
+
+- `C.len()` in a predicate, of a const `C`, crashed the checker; it's an
+  error now.
+
 ## 0.71.0 (2026-11-08)
 
 Step 55: free theorems. See

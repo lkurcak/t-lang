@@ -1,5 +1,6 @@
 //! Arrays: a number of values fixed by their type, inline.
 
+use crate::ops::Range;
 use crate::option::Option;
 use crate::slice::{Iter, IterMut};
 
@@ -43,6 +44,20 @@ impl<T, const N: usize> [T; N] {
         let s = self.as_mut_slice();
         &mut s[i]
     }
+
+    /// Its values from index `r.start()` up to, not including, `r.end()`,
+    /// as a slice: `a.slice(1..3)`. The range is in it, so they're there.
+    export fn slice<'a>(
+        &'a self,
+        r: { r: Range<usize> | r.start() <= r.end() && r.end() <= self.len() },
+    ) -> { t: &'a [T] | t.len() + r.start() == r.end() } { self.as_slice().slice(r) }
+
+    /// Its values from index `r.start()` up to, not including, `r.end()`,
+    /// as a slice to change them through.
+    export fn slice_mut<'a>(
+        &'a mut self,
+        r: { r: Range<usize> | r.start() <= r.end() && r.end() <= self.len() },
+    ) -> { t: &'a mut [T] | t.len() + r.start() == r.end() } { self.as_mut_slice().slice_mut(r) }
 
     /// The value at `i`, or `None` if there's none: if `i` isn't less than
     /// `len()`.

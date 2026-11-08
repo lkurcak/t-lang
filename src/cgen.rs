@@ -1739,15 +1739,11 @@ impl<'e> Gen<'e> {
                          return ({r}){{.tag = {none}}};\n"
                     )
                 }
-                SliceOp::SplitAt | SliceOp::SplitAtMut => {
-                    let (some, none) = some_none(self);
-                    let split = self.variants(ret)[some].1[0].clone();
-                    let sp = self.cty(&split);
+                SliceOp::Cut | SliceOp::CutMut => {
                     let sl = self.cty(&params[0]);
                     format!(
-                        "    if (a1 > a0.len) return ({r}){{.tag = {none}}};\n    \
-                         {sp} v = {{({sl}){{a0.ptr, a1}}, ({sl}){{a1 ? a0.ptr + a1 : a0.ptr, a0.len - a1}}}};\n    \
-                         return ({r}){{.tag = {some}, .u.v{some} = {{v}}}};\n"
+                        "    if (a1 > a0.len) t_bug(\"split out of range\");\n    \
+                         return ({r}){{({sl}){{a0.ptr, a1}}, ({sl}){{a1 ? a0.ptr + a1 : a0.ptr, a0.len - a1}}}};\n"
                     )
                 }
             },

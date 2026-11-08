@@ -120,8 +120,8 @@ pub enum SliceOp {
     IndexMut,
     Get,
     GetMut,
-    SplitAt,
-    SplitAtMut,
+    Cut,
+    CutMut,
 }
 
 /// A method of an array.
@@ -258,8 +258,8 @@ impl Intrinsic {
             Slice(SliceOp::IndexMut),
             Slice(SliceOp::Get),
             Slice(SliceOp::GetMut),
-            Slice(SliceOp::SplitAt),
-            Slice(SliceOp::SplitAtMut),
+            Slice(SliceOp::Cut),
+            Slice(SliceOp::CutMut),
             Array(ArrayOp::Len),
             Array(ArrayOp::AsSlice),
             Array(ArrayOp::AsMutSlice),
@@ -355,8 +355,8 @@ impl Intrinsic {
                 SliceOp::IndexMut => "[T]::index_mut",
                 SliceOp::Get => "[T]::get",
                 SliceOp::GetMut => "[T]::get_mut",
-                SliceOp::SplitAt => "[T]::split_at",
-                SliceOp::SplitAtMut => "[T]::split_at_mut",
+                SliceOp::Cut => "[T]::cut",
+                SliceOp::CutMut => "[T]::cut_mut",
             },
             Array(op) => match op {
                 ArrayOp::Len => "[T; N]::len",

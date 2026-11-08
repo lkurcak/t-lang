@@ -30,6 +30,7 @@ pub(super) fn unused(local: &Local) -> Warning {
         })
         .collect();
     Warning {
+        notes: Vec::new(),
         lint: Lint::UnusedVariables,
         span: local.sites[0].span,
         message: format!("unused variable `{name}`"),
@@ -69,6 +70,7 @@ pub(super) fn unwrap_infallible(call: &Unwrap) -> Warning {
         _ => "the function is never called".to_string(),
     };
     Warning {
+        notes: Vec::new(),
         lint: Lint::UnwrapInfallible,
         span: call.span,
         message: format!(
@@ -92,6 +94,7 @@ pub(super) fn unwrap_infallible(call: &Unwrap) -> Warning {
 /// `!`: then there's no error to lose.
 pub(super) fn unused_results(span: Span) -> Warning {
     Warning {
+        notes: Vec::new(),
         lint: Lint::UnusedResults,
         span,
         message: "this `Result` is thrown away, and any error in it unseen: handle it, pass it on \
@@ -108,6 +111,7 @@ pub(super) fn unused_results(span: Span) -> Warning {
 /// never finishes.
 pub(super) fn unreachable_code(span: Span) -> Warning {
     Warning {
+        notes: Vec::new(),
         lint: Lint::UnreachableCode,
         span,
         message: "unreachable code: what comes before it never finishes, so this never runs".into(),
@@ -120,6 +124,7 @@ pub(super) fn unreachable_code(span: Span) -> Warning {
 pub(super) fn unused_import(import: &super::modules::Import) -> Warning {
     let name = &import.name.name;
     Warning {
+        notes: Vec::new(),
         lint: Lint::UnusedImports,
         span: import.name.span,
         message: format!("unused import `{name}`"),
@@ -135,6 +140,7 @@ pub(super) fn unused_import(import: &super::modules::Import) -> Warning {
 pub(super) fn unused_label(label: &Label) -> Warning {
     let name = &label.name.name;
     Warning {
+        notes: Vec::new(),
         lint: Lint::UnusedLabels,
         span: label.name.span,
         message: format!("unused label `{name}`: no `break` or `continue` names it"),
@@ -160,6 +166,7 @@ pub(super) fn unreachable_arm(arms: &[Arm], i: usize) -> Warning {
         None
     };
     Warning {
+        notes: Vec::new(),
         lint: Lint::UnreachablePatterns,
         span,
         message: "unreachable pattern: the arms above already match everything it would".into(),
@@ -179,6 +186,7 @@ pub(super) fn irrefutable_let(span: Span, of: ElseOf) -> Warning {
         ElseOf::LetElse => "so the `else` never runs: use `let`",
     };
     Warning {
+        notes: Vec::new(),
         lint: Lint::UnreachablePatterns,
         span,
         message: format!("this pattern always matches, {message}"),
@@ -203,6 +211,7 @@ pub(super) fn unreachable_alt(span: Span, pats: &[Pattern]) -> Warning {
             )
         });
     Warning {
+        notes: Vec::new(),
         lint: Lint::UnreachablePatterns,
         span,
         message:
@@ -242,6 +251,7 @@ pub(super) fn narrowable(
         .unwrap_or((true, Lit::Int));
     let range = exhaust::show_range(lo, hi, inclusive, lit);
     Warning {
+        notes: Vec::new(),
         lint: Lint::OverlappingRanges,
         span,
         message: format!(
@@ -307,6 +317,7 @@ pub(super) fn mergeable(p: &Pattern, alts: &[Pattern]) -> Vec<Warning> {
                     .map(|&k| Edit::delete(Span::new(alts[k - 1].span.end, alts[k].span.end))),
             );
             Warning {
+                notes: Vec::new(),
                 lint: Lint::MergeableRanges,
                 span: p.span,
                 message: format!(
@@ -344,6 +355,7 @@ pub(super) fn unused_doc(doc: &DocComment) -> Warning {
         .map(|l| Edit::delete(Span::new(l.span.start + 2, l.span.start + 3)))
         .collect();
     Warning {
+        notes: Vec::new(),
         lint: Lint::UnusedDocComments,
         span: doc.span(),
         message: match doc.inner {
@@ -373,6 +385,7 @@ pub(super) struct Uses {
 
 fn dead(span: Span, message: String) -> Warning {
     Warning {
+        notes: Vec::new(),
         lint: Lint::DeadCode,
         span,
         message,
@@ -562,6 +575,7 @@ impl Checker {
             self.warnings
                 .retain(|w| !(w.lint == Lint::DeadCode && spans.contains(&w.span)));
             self.warnings.push(Warning {
+                notes: Vec::new(),
                 lint: Lint::InfiniteTypes,
                 span: name.span,
                 message: format!(

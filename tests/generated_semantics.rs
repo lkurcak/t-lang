@@ -462,6 +462,10 @@ fn free_program(head: &str, body: &str) -> String {
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "the same on every platform: run on Linux"
+)]
 fn generated_free_theorem_forms() {
     let head = "#[allow(unused_variables)] fn at(c: bool, n: usize) -> u8 with panic";
     for form in FREE_FORMS {
@@ -480,6 +484,72 @@ fn generated_free_theorem_forms() {
     for form in NOT_FREE_FORMS {
         let src = free_program(head, &format!("b[{form}]"));
         case(&format!("not free `{form}`"), &src, || {
+            rejected(&src, "can't prove `i < self.len()`")
+        });
+    }
+}
+
+/// Ways of getting to a field a refinement says is small, each of which
+/// must keep what it says (docs/56-field-paths-and-slices.md).
+const FIELD_FORMS: &[&str] = &[
+    "small(p).x",
+    "{ let q = small(p); q.x }",
+    "{ let q = small(p); let r = &q; r.x }",
+    "pair(p).a.x",
+    "pair(p).b.x",
+    "{ let q = pair(p); q.b.x }",
+    "{ let q = pair(p); let r = &q.a; r.x }",
+    "{ let q = small(p); by_ref(&q) }",
+    "match Some(small(p)) { Some(q) => q.x, None => 0 }",
+    "{ let q = small(p); let Pt { x, .. } = q; x }",
+    "{ let mut q = small(p); q.y = 9; q.x }",
+    "{ let mut q = small(p); keep(&mut q); q.x }",
+];
+
+/// And ways that lose it: a field nothing says is small, or one changed
+/// after it was.
+const NOT_FIELD_FORMS: &[&str] = &[
+    "p.x",
+    "pair(p).b.y",
+    "{ let q = small(p); by_ref(&p) }",
+    "{ let mut q = small(p); q.x = q.y; q.x }",
+    "{ let mut q = small(p); bump(&mut q); q.x }",
+    "{ let mut q = small(p); q = p; q.x }",
+    "match Some(p) { Some(q) => q.x, None => 0 }",
+];
+
+fn field_program(form: &str) -> String {
+    format!(
+        "#[derive(Copy, Discard)]\n\
+         struct Pt {{ x: usize, y: usize }}\n\
+         #[derive(Copy, Discard)]\n\
+         struct Pair {{ a: Pt, b: Pt }}\n\
+         fn small(p: Pt) -> {{ q: Pt | q.x < 4 }} {{ if p.x < 4 {{ p }} else {{ Pt {{ x: 0, y: p.y }} }} }}\n\
+         fn pair(p: Pt) -> {{ r: Pair | r.a.x < 4 && r.b.x == r.a.x }} {{\n\
+         let s = small(p);\nPair {{ a: s, b: s }}\n}}\n\
+         fn by_ref(r: &Pt) -> {{ v: usize | v == r.x }} {{ r.x }}\n\
+         fn keep(q: &mut Pt) ensures q.x == old(q.x) {{ q.y = 0; }}\n\
+         fn bump(q: &mut Pt) {{ q.x = 9; }}\n\
+         #[allow(unused_variables, unused_mut)]\n\
+         fn at(p: Pt) -> u8 with panic {{\nlet b: [u8; 4] = [5, 6, 7, 8];\nb[{form}]\n}}\n\
+         fn main(os: std::Os) -> Result<(), std::io::Error> with panic {{\n\
+         let mut out = os.stdout;\nout.line(&at(Pt {{ x: 2, y: 1 }}))?;\nOk(())\n}}\n"
+    )
+}
+
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "the same on every platform: run on Linux"
+)]
+fn generated_field_path_forms() {
+    for form in FIELD_FORMS {
+        let src = field_program(form);
+        case(&format!("field `{form}`"), &src, || accepted(&src, "7\n"));
+    }
+    for form in NOT_FIELD_FORMS {
+        let src = field_program(form);
+        case(&format!("not field `{form}`"), &src, || {
             rejected(&src, "can't prove `i < self.len()`")
         });
     }

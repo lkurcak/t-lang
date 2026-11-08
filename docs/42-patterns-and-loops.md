@@ -270,7 +270,9 @@ It brings in what `use crate::line;` would, the module, and only that: if
 would with `use crate::line;`. `{self as l}` names it `l`. Outside a
 group, `use crate::line::self;` is still an error, as in Rust: it says
 nothing `use crate::line;` doesn't. `use crate::{self}` is an error too:
-the crate root has no name to bring in.
+the crate root has no name to bring in. Under an enum, since step 56, it
+names the enum, whose variants the rest of the group are
+(docs/56-field-paths-and-slices.md).
 
 While here: `use crate::line;` in the module that already has `line` used
 to say "these imports go round in a circle". It said that because looking

@@ -18,6 +18,7 @@ pub fn warnings(sources: &Sources, prog: &Program) -> Vec<Warning> {
         .into_iter()
         .filter(|&at| !sources.in_library(at) && !said_why(text, at))
         .map(|at| Warning {
+            notes: Vec::new(),
             lint: Lint::MissingSafetyComments,
             span: Span::new(at, at + "unsafe".len()),
             message: "this `unsafe` block has no `// SAFETY:` comment saying why its \

@@ -504,6 +504,16 @@ with exactly the same visibility. Construction and assignment must
 preserve every affected field refinement. A refined variable, or a field
 that a field refinement constrains, cannot be borrowed mutably.
 
+A predicate can read a struct's field from anything it names, at any
+depth and through references and boxes: `v == p.x`, `s.head.len() ==
+mid`. The field must be visible there, and one named in a signature's
+refinement must be visible at least as far as the function (exported for
+an impl's method of a trait); one behind a `&mut` follows the same rules
+as a measure of what's behind it. `s.slice(a..b)` and `slice_mut` give a
+sub-slice of a slice, an array or a list for a range proved in it, and
+`split_at` and `str::get` say how long what they give is. See
+[field paths and sub-slices](56-field-paths-and-slices.md).
+
 A measure is a method marked `#[measure]` that takes only `&self`, returns
 an integer (or a type parameter `T: Int`) or boolean, has no effects, and
 has a body accepted by the refinement logic. Measures such as a slice's `len()` connect values to
@@ -546,7 +556,9 @@ Proof search is bounded and incomplete. A failed proof may mean a missing
 fact, unsupported reasoning, or an arithmetic or complexity limit; it
 does not establish that the condition is false. `with panic` permits an
 unproved arithmetic operation to panic, but does not bypass a refinement
-on an argument or the proof required by indexing. Use `get`, which returns
+on an argument or the proof required by indexing. The lint
+`implicit_panics`, off unless `#[warn(implicit_panics)]` turns it on,
+warns of each operation whose check wasn't proved. Use `get`, which returns
 an `Option`, when an index cannot be proved valid.
 
 See [refinements](08-refinement-types.md),
@@ -582,8 +594,8 @@ that fails, with 1 (see [44-runs-and-holes.md](44-runs-and-holes.md)).
 Lints are warnings, which `#[allow(..)]` turns off and `#[warn(..)]` on,
 on an item, field, variant or `mod`, or, as `#![allow(..)]` and
 `#![warn(..)]` at the top of a module, in all of it; the innermost
-decides. `format_hole_expressions` and `format_hole_effects` are off
-unless turned on. `--deny-warnings` makes `t check` and `t test` fail on
+decides. `format_hole_expressions`, `format_hole_effects` and
+`implicit_panics` are off unless turned on. `--deny-warnings` makes `t check` and `t test` fail on
 warnings.
 
 I/O requires a stream passed as a value, usually from `main`'s `std::Os`.
