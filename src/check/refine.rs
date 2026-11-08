@@ -76,6 +76,16 @@
 //! ensure more, which a call learns only where it's known to be of that
 //! impl (`Walk::callee`): monomorphisation picks the same one.
 //!
+//! A predicate can name a struct's field, of anything it names, at any
+//! depth (`s.head.len()`; `Checker::pred_place`): to the logic a struct's
+//! value is its fields' values, so a field is a function of the value, as a
+//! measure is, read as the value it's of is. Behind a `&mut` it follows a
+//! measure's rules (`Checker::pred_mutable`); in a signature or a field's
+//! refinement it's seen as far as that is (`Checker::field_reach`), so no
+//! proof outside a module hangs on what the module keeps to itself. Equal
+//! values have equal measures (`Walk::same_measures`), where branches meet
+//! and where a free theorem says which value a result is.
+//!
 //! An enum's value has *parts* (`Parts`): which variant it is and each
 //! variant's fields, functions of the value as measures are; a refinement
 //! of a type argument is a fact about a field under the condition that the

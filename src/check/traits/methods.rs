@@ -302,18 +302,29 @@ impl Checker {
             return;
         };
         let d = d.clone();
-        let args: Vec<Type> = (d.params.iter())
-            .map(|p| {
-                self.fresh_param(
-                    &d.params,
-                    p,
+        // Each of the impl's parameters in its head is what `ty` has
+        // there, or, where that isn't known yet, a new variable. One that
+        // isn't in the head isn't decided by it, so it's left alone.
+        let mut found = HashMap::new();
+        bind_params(&d.self_ty, ty, &d.params, &mut found);
+        let mut names = Vec::new();
+        let mut types = Vec::new();
+        for p in d.params.iter().filter(|p| mentions(&d.self_ty, p)) {
+            let t = match found.remove(p.as_str()) {
+                Some(t) => t,
+                None if d.params.is_effect(p) => {
+                    self.fresh_effects(span, format!("`{p}` of the impl of `{tr}`"))
+                }
+                None => self.fresh(
                     span,
                     format!("`{p}` of the impl of `{tr}` for `{}`", d.self_ty),
                     "annotate the type".into(),
-                )
-            })
-            .collect();
-        let head = Subst::new(&d.params, &args).apply(&d.self_ty);
+                ),
+            };
+            names.push(p.clone());
+            types.push(t);
+        }
+        let head = Subst::new(&names, &types).apply(&d.self_ty);
         self.unify(&head, ty)
             .unwrap_or_else(|_| unreachable!("it could match"));
     }
@@ -450,6 +461,28 @@ fn could_match_in(
             .all(|(p, q)| could_match_in(p, q, params, found)),
         _ => false,
     }
+}
+
+/// What each of `params` is in `t`, where `pat`, which mentions them, has
+/// it, and `t` is known there: `t` could be `pat` (`could_match`).
+fn bind_params(pat: &Type, t: &Type, params: &[String], found: &mut HashMap<String, Type>) {
+    match (pat, t) {
+        (Type::Param(p), _) if params.contains(p) => {
+            found.entry(p.clone()).or_insert_with(|| t.clone());
+        }
+        (_, Type::Var(_)) => {}
+        _ if pat.same_shape(t) => {
+            for (p, q) in pat.parts().zip(t.parts()) {
+                bind_params(p, q, params, found);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Is type parameter `p` in `t`?
+fn mentions(t: &Type, p: &str) -> bool {
+    matches!(t, Type::Param(q) if q == p) || t.parts().any(|u| mentions(u, p))
 }
 
 /// Does `t` implement `Eq` by a built-in impl, whatever it holds?

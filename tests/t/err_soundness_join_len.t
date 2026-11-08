@@ -4,7 +4,9 @@ fn f(s: &[u8], c: bool) -> usize {
     if s.len() < 4 {
         return 0;
     }
-    let t = if c { s.slice(0..2) } else { s.slice(0..3) };
+    let a = s.slice(0..2);
+    let b = s.slice(0..3);
+    let t = if c { a } else { b };
     let n: { n: usize | n == 2 } = t.len();
     n
 }
