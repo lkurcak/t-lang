@@ -1,9 +1,12 @@
 //! Refinement types: `{ d: i64 | d != 0 }`, the `i64`s that aren't 0 (see
-//! docs/08-refinement-types.md and docs/08.1-field-refinements.md).
+//! docs/08-refinement-types.md, docs/08.1-field-refinements.md and
+//! docs/53-refined-type-arguments.md).
 //!
 //! A refinement is the whole type of a parameter, a result, a `let` or a
-//! struct's field, never part of another type, and only of an `i64` or a
-//! `bool`. It isn't in `Type` at all: unification, traits and
+//! struct's field, or a type argument of an enum there, at any depth
+//! (`Option<{ d: u8 | d < 10 }>`: of each field of a variant whose type is
+//! that parameter, if the value is that variant; `Checker::refined_arg`),
+//! never part of any other type. It isn't in `Type` at all: unification, traits and
 //! monomorphisation never see one. What it says is checked by a pass of its
 //! own over each body, once its types are known (`Checker::refine`), which
 //! keeps track of what's known at each point (*facts*) and proves from them
@@ -67,8 +70,17 @@
 //! names only what can't change. What a call returns has its function's
 //! refinement by induction on how deep the calls go, as for effects: a call
 //! that never returns gives nothing to count on. And what's called through
-//! a value can't have refined parameters, nor a trait's method, so every
-//! call that skips a check is of a function with nothing to check.
+//! a value can't have refined parameters, nor a trait's method, nor an
+//! impl's of one, so every call that skips a check is of a function with
+//! nothing to check. An impl's method of a trait can refine its result and
+//! ensure more, which a call learns only where it's known to be of that
+//! impl (`Walk::callee`): monomorphisation picks the same one.
+//!
+//! An enum's value has *parts* (`Parts`): which variant it is and each
+//! variant's fields, functions of the value as measures are; a refinement
+//! of a type argument is a fact about a field under the condition that the
+//! value is that variant (`Walk::part`), so one that can't hold of a
+//! variant that isn't there says nothing.
 
 mod diagnostics;
 mod logic;
