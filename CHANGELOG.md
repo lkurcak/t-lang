@@ -26,6 +26,8 @@ Step 54: loop invariants. See
 ### Changed
 
 - `invariant` is a keyword.
+- `List::filled` says how long its list stays with an invariant, not
+  with a struct whose refinement held through the loop.
 - A loop that has a `break` no longer forgets, after it, what it changed:
   some programs that needed `with panic` or a check after a loop don't.
 
