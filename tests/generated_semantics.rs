@@ -1,5 +1,7 @@
 //! Deterministic program families with known results, paired rejection
 //! cases, and declaration permutations. No external fuzz runner is needed.
+//! They're about what programs mean, the same on every platform, so they
+//! run on Linux alone (CI's other platforms are the slowest).
 
 use std::panic::{UnwindSafe, catch_unwind};
 use t_lang::error::Phase;
@@ -46,6 +48,10 @@ fn rejected(src: &str, message: &str) {
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "the same on every platform: run on Linux"
+)]
 fn generated_integer_boundary_guards() {
     // Host i128 arithmetic is an independent oracle for all eight T
     // integer types here, including u64's upper half and signed minima.
@@ -130,6 +136,10 @@ fn declaration_orders() -> Vec<[usize; 4]> {
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "the same on every platform: run on Linux"
+)]
 fn generated_mutation_refinement_and_declaration_orders() {
     // Each route can set the previously positive divisor to zero. A
     // fresh guard must recover the proof; omitting it must be rejected.
@@ -201,6 +211,10 @@ fn generated_mutation_refinement_and_declaration_orders() {
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "the same on every platform: run on Linux"
+)]
 fn generated_closure_facts_do_not_escape_early_returns() {
     for initial in [0, -1, 2] {
         for positive in [false, true] {
@@ -243,6 +257,10 @@ fn generated_closure_facts_do_not_escape_early_returns() {
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "the same on every platform: run on Linux"
+)]
 fn generated_borrowed_closure_results_and_early_returns() {
     for initial in [-1, 0, 2] {
         for depth in 0..=2 {
@@ -349,6 +367,10 @@ fn lend_program(change: &str) -> String {
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "the same on every platform: run on Linux"
+)]
 fn generated_lend_forms_forget_measures() {
     // Controls: what doesn't touch `l` keeps `l.len() == 0`.
     for keep in ["", "m.push(1u8);", "grow(&mut m);", "let _ = m.len();"] {

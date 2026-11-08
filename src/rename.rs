@@ -135,58 +135,92 @@ pub fn rename(
     def: Span,
     new: &str,
 ) -> Result<Vec<Edit>, String> {
-    // Its declaration: in a shorthand pattern `P { x }`, the variable, as
-    // the field is declared elsewhere.
-    let decl = info
-        .notes
-        .iter()
-        .find(|n| n.span == def && n.def == Some(def))
-        .ok_or("there's nothing here to rename")?;
-    if let NoteKind::Module(m) = &decl.kind {
-        return Err(format!(
-            "`{m}` is a module, and modules can't be renamed yet"
-        ));
+    rename_all(sources, prog, info, &[(def, new)])
+}
+
+/// The edits that make each of `renames`, what's declared at a span and its
+/// new name, at once, as `rename` makes one: the program, with them all
+/// made, must check, and each name in it refer to what it did. Two that
+/// would edit the same text (a field and a variable in one shorthand)
+/// can't be made at once.
+pub fn rename_all(
+    sources: &Sources,
+    prog: &Program,
+    info: &Info,
+    renames: &[(Span, &str)],
+) -> Result<Vec<Edit>, String> {
+    let shorthands = shorthands(prog);
+    let mut renamed: Vec<Renamed> = Vec::new();
+    // What each renames: its declaration, as a variable or not, and its old
+    // and new names.
+    let mut targets: Vec<(Span, bool, &str, &str)> = Vec::new();
+    for &(def, new) in renames {
+        // Its declaration: in a shorthand pattern `P { x }`, the variable,
+        // as the field is declared elsewhere.
+        let decl = info
+            .notes
+            .iter()
+            .find(|n| n.span == def && n.def == Some(def))
+            .ok_or("there's nothing here to rename")?;
+        if let NoteKind::Module(m) = &decl.kind {
+            return Err(format!(
+                "`{m}` is a module, and modules can't be renamed yet"
+            ));
+        }
+        let old = name(&decl.kind);
+        let is_type = matches!(
+            decl.kind,
+            NoteKind::Struct(_) | NoteKind::Enum(_) | NoteKind::TypeParam(_)
+        );
+        valid(new, is_type)?;
+        if matches!(decl.kind, NoteKind::EffectParam(_)) && ["panic", "alloc"].contains(&new) {
+            return Err(format!("`{new}` is a built-in effect"));
+        }
+        if new == old {
+            continue;
+        }
+        let is_field = matches!(decl.kind, NoteKind::Field(_));
+        renamed.extend(
+            info.occurrences(def)
+                .into_iter()
+                // A use through another name, given by `use .. as`, keeps it.
+                .filter(|span| sources.text().get(span.start..span.end) == Some(old))
+                .map(|span| match (shorthands.contains(&span), is_field) {
+                    (false, _) => Renamed {
+                        edit: Edit::replace(span, new),
+                        field: (0, new.len()),
+                        var: (0, new.len()),
+                    },
+                    (true, true) => Renamed {
+                        edit: Edit::replace(span, format!("{new}: {old}")),
+                        field: (0, new.len()),
+                        var: (new.len() + 2, old.len()),
+                    },
+                    (true, false) => Renamed {
+                        edit: Edit::replace(span, format!("{old}: {new}")),
+                        field: (0, old.len()),
+                        var: (old.len() + 2, new.len()),
+                    },
+                }),
+        );
+        targets.push((def, is_var(decl), old, new));
     }
-    let old = name(&decl.kind);
-    let is_type = matches!(
-        decl.kind,
-        NoteKind::Struct(_) | NoteKind::Enum(_) | NoteKind::TypeParam(_)
-    );
-    valid(new, is_type)?;
-    if matches!(decl.kind, NoteKind::EffectParam(_)) && ["panic", "alloc"].contains(&new) {
-        return Err(format!("`{new}` is a built-in effect"));
-    }
-    if new == old {
+    if targets.is_empty() {
         return Ok(Vec::new());
     }
-
-    let is_field = matches!(decl.kind, NoteKind::Field(_));
-    let shorthands = shorthands(prog);
-    let renamed: Vec<Renamed> = info
-        .occurrences(def)
-        .into_iter()
-        // A use through another name, given by `use .. as`, keeps it.
-        .filter(|span| sources.text().get(span.start..span.end) == Some(old))
-        .map(|span| match (shorthands.contains(&span), is_field) {
-            (false, _) => Renamed {
-                edit: Edit::replace(span, new),
-                field: (0, new.len()),
-                var: (0, new.len()),
-            },
-            (true, true) => Renamed {
-                edit: Edit::replace(span, format!("{new}: {old}")),
-                field: (0, new.len()),
-                var: (new.len() + 2, old.len()),
-            },
-            (true, false) => Renamed {
-                edit: Edit::replace(span, format!("{old}: {new}")),
-                field: (0, old.len()),
-                var: (old.len() + 2, new.len()),
-            },
-        })
-        .collect();
+    // In order, as `moved` counts on.
+    renamed.sort_by_key(|r| r.edit.span.start);
+    if renamed
+        .windows(2)
+        .any(|w| w[0].edit.span.end > w[1].edit.span.start || w[0].edit.span == w[1].edit.span)
+    {
+        return Err("two of the renames would edit the same text".to_string());
+    }
     let edits: Vec<Edit> = renamed.iter().map(|r| r.edit.clone()).collect();
-    let cant = |why: String| format!("can't rename `{old}` to `{new}`: {why}");
+    let cant = |why: String| match targets.as_slice() {
+        [(_, _, old, new)] => format!("can't rename `{old}` to `{new}`: {why}"),
+        _ => format!("can't make these renames: {why}"),
+    };
     let (sources_after, prog_after) = reparsed(sources, &sources.edited(&edits));
     let mut prog_after = prog_after.map_err(|e| cant(e.message))?;
     let after = sources_after.text();
@@ -208,7 +242,10 @@ pub fn rename(
         .iter()
         .map(|n| ((n.span, is_var(n)), n.def))
         .collect();
-    let target = moved(&renamed, def, is_var(decl));
+    let moved_targets: Vec<Span> = (targets.iter())
+        .map(|&(def, var, ..)| moved(&renamed, def, var))
+        .collect();
+    let is_target = |d: Option<Span>| d.is_some_and(|d| moved_targets.contains(&d));
     let describe = |def: Option<Span>, name: &str| match def {
         None => format!("the built-in `{name}`"),
         Some(d) => {
@@ -236,11 +273,11 @@ pub fn rename(
         let line = line(at.start);
         let why = match now {
             None => format!("`{name}` on line {line} would no longer mean anything"),
-            Some(now) if was == Some(target) => format!(
+            Some(now) if is_target(was) => format!(
                 "`{name}` on line {line} would refer to {} instead",
                 describe(now, name)
             ),
-            Some(now) if now == Some(target) => format!(
+            Some(now) if is_target(now) => format!(
                 "it would shadow {}, used on line {line}",
                 describe(was, name)
             ),
