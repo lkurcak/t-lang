@@ -63,6 +63,7 @@ pub fn warnings(sources: &Sources, prog: &Program, info: Option<&Info>) -> Vec<W
                 false => String::new(),
             };
             Some(Warning {
+                notes: Vec::new(),
                 lint,
                 span: d.span,
                 message: format!(

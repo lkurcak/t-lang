@@ -939,17 +939,19 @@ impl Resolver {
             true => None,
             false => self.lookup(module, &last.name, Ns::Values)?,
         };
-        if module_only
-            && !matches!(
-                types,
-                Some(Binding {
-                    item: Item::Mod(_),
-                    ..
-                })
-            )
-        {
+        // `{self}` in a group names the module the group is in, or the
+        // enum, whose variants the rest of the group are.
+        let group_of = |b: &Binding| match b.item {
+            Item::Mod(_) => true,
+            Item::Type(k) => self.m.enums[k].1.is_some(),
+            _ => false,
+        };
+        if module_only && !types.as_ref().is_some_and(group_of) {
             return Err(match types {
-                Some(_) => Error::ty(last.span, format!("`{}` isn't a module", last.name)),
+                Some(_) => Error::ty(
+                    last.span,
+                    format!("`{}` isn't a module or an enum", last.name),
+                ),
                 None => no_item(&self.m, module, last),
             });
         }
@@ -1912,6 +1914,7 @@ impl Rewrite<'_> {
                             self.r.m.holes.push(value.span);
                             if !is_place(value) {
                                 self.r.m.warnings.push(Warning {
+                                    notes: Vec::new(),
                                     lint: Lint::FormatHoleExpressions,
                                     span: *span,
                                     message: "this hole holds more than a name or a field of \
@@ -1939,6 +1942,7 @@ impl Rewrite<'_> {
                     && !self.r.m.in_library(self.module)
                 {
                     self.r.m.warnings.push(Warning {
+                        notes: Vec::new(),
                         lint: Lint::EmptyRanges,
                         span: e.span,
                         message: format!(

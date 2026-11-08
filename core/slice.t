@@ -3,6 +3,7 @@
 use crate::cmp::{Ord, Ordering};
 use crate::iter::Iterator;
 use crate::mem;
+use crate::ops::Range;
 use crate::option::Option;
 
 /// `[T]`: some number of `T`s one after another, seen through a reference,
@@ -53,16 +54,62 @@ impl<T> [T] {
         if n == 0 { None } else { self.get(n - 1) }
     }
 
+    /// The values before index `mid`, which is at most `len()`, and those
+    /// from it on: `split_at` and `slice` are safe code over it.
+    #[intrinsic]
+    fn cut<'a>(
+        &'a self,
+        mid: { m: usize | m <= self.len() },
+    ) -> { s: Split<'a, T> | s.head.len() == mid && s.tail.len() + mid == self.len() };
+
+    /// The values before index `mid`, which is at most `len()`, and those
+    /// from it on, each to change. They share no values, so both can be
+    /// changed at once.
+    #[intrinsic]
+    fn cut_mut<'a>(
+        &'a mut self,
+        mid: { m: usize | m <= self.len() },
+    ) -> { s: SplitMut<'a, T> | s.head.len() == mid && s.tail.len() + mid == self.len() };
+
     /// The values before index `mid` and those from it on, or `None` if
     /// `mid` is more than `len()`.
-    #[intrinsic]
-    export fn split_at<'a>(&'a self, mid: usize) -> Option<Split<'a, T>>;
+    export fn split_at<'a>(
+        &'a self,
+        mid: usize,
+    ) -> Option<{ s: Split<'a, T> | s.head.len() == mid && s.tail.len() + mid == self.len() }> {
+        if mid <= self.len() { Some(self.cut(mid)) } else { None }
+    }
 
     /// The values before index `mid` and those from it on, each to change,
     /// or `None` if `mid` is more than `len()`. They share no values, so
     /// both can be changed at once.
-    #[intrinsic]
-    export fn split_at_mut<'a>(&'a mut self, mid: usize) -> Option<SplitMut<'a, T>>;
+    export fn split_at_mut<'a>(
+        &'a mut self,
+        mid: usize,
+    ) -> Option<{ s: SplitMut<'a, T> | s.head.len() == mid && s.tail.len() + mid == self.len() }> {
+        if mid <= self.len() { Some(self.cut_mut(mid)) } else { None }
+    }
+
+    /// The values from index `r.start()` up to, not including, `r.end()`:
+    /// `s.slice(1..3)` is the second and the third. The range is in it, so
+    /// they're there.
+    export fn slice<'a>(
+        &'a self,
+        r: { r: Range<usize> | r.start() <= r.end() && r.end() <= self.len() },
+    ) -> { t: &'a [T] | t.len() + r.start() == r.end() } {
+        let head: &'a [T] = self.cut(r.end()).head;
+        head.cut(r.start()).tail
+    }
+
+    /// The values from index `r.start()` up to, not including, `r.end()`,
+    /// to change.
+    export fn slice_mut<'a>(
+        &'a mut self,
+        r: { r: Range<usize> | r.start() <= r.end() && r.end() <= self.len() },
+    ) -> { t: &'a mut [T] | t.len() + r.start() == r.end() } {
+        let head: &'a mut [T] = self.cut_mut(r.end()).head;
+        head.cut_mut(r.start()).tail
+    }
 
     /// Swaps the values at `i` and `j`, if there are values there, and says
     /// whether it did. It's `split_at_mut` between them, so safe code.

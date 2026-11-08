@@ -161,6 +161,8 @@ pub struct Warning {
     pub span: Span,
     pub message: String,
     pub fixes: Vec<Fix>,
+    /// More it has to say, each a `= note:` line: why a proof failed, say.
+    pub notes: Vec<String>,
 }
 
 impl Warning {
@@ -175,9 +177,16 @@ impl Warning {
     /// Renders the warning rustc-style. With `note`, it ends by saying how
     /// to turn its lint off, as it should the first time the lint comes up.
     pub fn render(&self, path: &str, src: &str, note: bool) -> String {
-        let note = note.then(|| self.lint.off());
+        let note = self.note(note);
         let (span, fixes) = (self.span, &self.fixes);
         render("warning", span, &self.message, fixes, note, path, src)
+    }
+
+    /// Its notes, and with `off`, how to turn its lint off, one a line.
+    fn note(&self, off: bool) -> Option<String> {
+        let mut lines = self.notes.clone();
+        lines.extend(off.then(|| self.lint.off()));
+        (!lines.is_empty()).then(|| lines.join("\n"))
     }
 
     /// Renders each of `warnings`, each in the file of the program it's in,
@@ -190,7 +199,7 @@ impl Warning {
                 let first = !seen.contains(&w.lint);
                 seen.push(w.lint);
                 let (path, src, span) = in_file(sources, w.span);
-                let note = first.then(|| w.lint.off());
+                let note = w.note(first);
                 render("warning", span, &w.message, &w.fixes, note, &path, src)
             })
             .collect()
@@ -275,6 +284,10 @@ pub enum Lint {
     /// A hole of a format string that may have an effect, as `{f(x)}`
     /// for an `f` that may panic. Off unless `#[warn(..)]` turns it on.
     FormatHoleEffects,
+    /// An operator whose check wasn't proved to pass, so it may panic: an
+    /// overflow, a division by zero, an `as` that doesn't fit. Off unless
+    /// `#[warn(..)]` turns it on.
+    ImplicitPanics,
 }
 
 impl Lint {
@@ -304,10 +317,11 @@ impl Lint {
             Lint::UnusedDependencies => "unused_dependencies",
             Lint::FormatHoleExpressions => "format_hole_expressions",
             Lint::FormatHoleEffects => "format_hole_effects",
+            Lint::ImplicitPanics => "implicit_panics",
         }
     }
 
-    pub const ALL: [Lint; 24] = [
+    pub const ALL: [Lint; 25] = [
         Lint::UnreachablePatterns,
         Lint::OverlappingRanges,
         Lint::MergeableRanges,
@@ -332,13 +346,17 @@ impl Lint {
         Lint::UnusedDependencies,
         Lint::FormatHoleExpressions,
         Lint::FormatHoleEffects,
+        Lint::ImplicitPanics,
     ];
 
     /// Is it on where no `#[allow(..)]` or `#[warn(..)]` says? The lints
     /// that are off say what one may want of a program, not what's likely
     /// a mistake in it.
     pub fn on_by_default(self) -> bool {
-        !matches!(self, Lint::FormatHoleExpressions | Lint::FormatHoleEffects)
+        !matches!(
+            self,
+            Lint::FormatHoleExpressions | Lint::FormatHoleEffects | Lint::ImplicitPanics
+        )
     }
 
     /// How to turn the lint off, as a warning's note says. One about a

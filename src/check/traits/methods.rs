@@ -243,6 +243,8 @@ impl Checker {
             }
         };
         self.modules.use_trait(self.module, &tr);
+        self.only_impl(&ty, &tr, name.span);
+        let ty = self.solved(&ty);
         let def = self.traits.method(&tr, m).expect("it has it").clone();
         let own = def.scheme.params.skip(1);
         let mut args = vec![ty.clone()];
@@ -269,6 +271,51 @@ impl Checker {
             def: def.span,
             receiver: def.receiver,
         })
+    }
+
+    /// `ty`, a method's receiver whose type isn't known whole yet, is of
+    /// the one impl of trait `tr` whose head it could be, if there's one:
+    /// what the impl's head says of it is then known (`List<_>` and
+    /// `io::Write` make it `List<u8>`). Every impl of `tr` for `ty`'s head
+    /// is seen wherever both are named, as an impl is in the package of
+    /// its trait or of its head (lemma O of
+    /// docs/29-closed-and-sealed-traits.md), so a dependency can't add
+    /// another; and the obligation that `ty` implements `tr` stays, which
+    /// that impl then meets.
+    fn only_impl(&mut self, ty: &Type, tr: &str, span: Span) {
+        // A struct's or an enum's, whose impls are all written: the
+        // language's own types and closures have built-in ones.
+        let Type::Adt(symbol, ..) = ty else {
+            return;
+        };
+        if crate::types::is_closure(symbol) || !crate::check::unify::has_vars(ty) {
+            return;
+        }
+        // A bound in scope may be what it implements it by.
+        if (self.env.iter()).any(|p| p.trait_name == tr && could_match(&p.ty, ty, &[])) {
+            return;
+        }
+        let mut found = (self.traits.impls.iter())
+            .filter(|d| d.trait_name.as_deref() == Some(tr))
+            .filter(|d| could_match(&d.self_ty, ty, &d.params));
+        let (Some(d), None) = (found.next(), found.next()) else {
+            return;
+        };
+        let d = d.clone();
+        let args: Vec<Type> = (d.params.iter())
+            .map(|p| {
+                self.fresh_param(
+                    &d.params,
+                    p,
+                    span,
+                    format!("`{p}` of the impl of `{tr}` for `{}`", d.self_ty),
+                    "annotate the type".into(),
+                )
+            })
+            .collect();
+        let head = Subst::new(&d.params, &args).apply(&d.self_ty);
+        self.unify(&head, ty)
+            .unwrap_or_else(|_| unreachable!("it could match"));
     }
 
     /// Method `name` of inherent impl `i`, for type `ty`.

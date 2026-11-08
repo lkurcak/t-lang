@@ -257,6 +257,7 @@ impl Checker {
             }
             let keyword = Span::new(block.start, block.start + "unsafe ".len());
             self.warnings.push(Warning {
+                notes: Vec::new(),
                 lint: Lint::UnusedUnsafe,
                 span: Span::new(block.start, block.start + "unsafe".len()),
                 message: "this `unsafe` block has nothing unsafe in it".into(),
@@ -626,6 +627,7 @@ impl Checker {
                 }],
             );
             self.warnings.push(Warning {
+                notes: Vec::new(),
                 lint: Lint::UnusedEffects,
                 span: item.span,
                 message,
@@ -661,6 +663,7 @@ impl Checker {
                 continue;
             }
             self.warnings.push(Warning {
+                notes: Vec::new(),
                 lint: Lint::FormatHoleEffects,
                 span: s.span,
                 message: format!(

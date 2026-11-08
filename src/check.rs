@@ -610,6 +610,14 @@ pub(crate) struct Checker {
     /// The measure each `x.m()` in a refinement's predicate is, by node,
     /// with how many `*`s it's through.
     pred_measures: HashMap<NodeId, (String, usize)>,
+    /// The field each `x.f` in a refinement's predicate is, by node: how
+    /// many `*`s it's through, and its index.
+    pred_fields: HashMap<NodeId, (usize, usize)>,
+    /// While a signature's or a field's refinements are checked: how far
+    /// what it's part of is seen, which a field it names must be seen at
+    /// least as far as, and what to say of one that isn't ("`f` is
+    /// exported, but its refinement names").
+    pred_reach: Option<(String, Level)>,
     /// What the refinement being checked is of, if it's checked more than
     /// once, so it can't name what's behind a `&mut`, which can change in
     /// between: "a result", say.
@@ -963,6 +971,8 @@ impl Checker {
             pred_names: HashMap::new(),
             measures: HashMap::new(),
             pred_measures: HashMap::new(),
+            pred_fields: HashMap::new(),
+            pred_reach: None,
             pred_again: None,
             pred_post: None,
             pred_invariant: false,
@@ -1064,6 +1074,7 @@ impl Checker {
                     ),
                 };
                 self.warnings.push(Warning {
+                    notes: Vec::new(),
                     lint: crate::error::Lint::UnusedDependencies,
                     span: *at,
                     message,

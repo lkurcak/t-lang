@@ -453,6 +453,7 @@ fn analyze(
     }
     for (name, span) in moves::unused_mut(b, &needed) {
         warnings.push(Warning {
+            notes: Vec::new(),
             lint: Lint::UnusedMut,
             span,
             message: format!("variable `{name}` doesn't need to be mutable"),

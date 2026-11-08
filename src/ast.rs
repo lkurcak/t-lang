@@ -72,6 +72,10 @@ pub struct Measures {
     /// which what it gives is what it was given (see `Free` and
     /// docs/55-free-theorems.md), for the interpreter to check.
     pub free: std::collections::HashMap<NodeId, Vec<Free>>,
+    /// The nodes of the fields and measure calls in predicates that are of
+    /// what's behind a `&mut`, which may change: in a postcondition, only
+    /// those are found at return; the rest are what they were at the call.
+    pub behind_mut: std::collections::HashSet<NodeId>,
 }
 
 /// A *free* type parameter of a function: one that only marker traits

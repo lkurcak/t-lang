@@ -12,6 +12,19 @@ pub(in crate::check) struct ProofFailure {
 }
 
 impl ProofFailure {
+    /// What it says, a line each, without where: for a warning's notes.
+    pub(super) fn notes(&self) -> Vec<String> {
+        let mut notes = vec![
+            format!("required condition: {}", self.condition),
+            self.reason.explanation().to_string(),
+        ];
+        if !self.facts.is_empty() {
+            notes.push(format!("known here: {}", self.facts.join("; ")));
+        }
+        notes.extend(self.invalidated.iter().map(|(_, note)| note.clone()));
+        notes
+    }
+
     pub(super) fn attach(&self, mut error: Error) -> Error {
         let span = error.span;
         error = error.with_note(span, format!("required condition: {}", self.condition));

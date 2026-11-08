@@ -1200,6 +1200,10 @@ impl Refined {
                 Some(m) => m.clone(),
                 None => i.measure_call(e.id, go(x).val()),
             },
+            ExprKind::Field(x, name) => match self.measured.get(&e.id) {
+                Some(m) => m.clone(),
+                None => i.pred_field(go(x).val(), &name.name),
+            },
             // `old(x)` in a postcondition: its measures were found at the
             // call.
             ExprKind::Call(_, args) if args.len() == 1 => go(&args[0]),
@@ -1208,18 +1212,38 @@ impl Refined {
     }
 }
 
-/// Each measure call in predicate `e`, by node, with its receiver: in a
-/// postcondition (`post`), only those inside `old(..)`.
-fn each_measure_call<'e>(e: &'e Expr, post: bool, out: &mut Vec<(NodeId, &'e Expr)>) {
+/// Each measure call and field in predicate `e`, with the name its path
+/// is from (`s` of `s.head.len()`): in a postcondition (`post`), only those
+/// inside `old(..)` and those not of what's behind a `&mut` (`at_return`
+/// has those), which are the same at the call as at return.
+fn each_measure_call<'e>(
+    e: &'e Expr,
+    post: bool,
+    at_return: &HashSet<NodeId>,
+    out: &mut Vec<(&'e Expr, &'e str)>,
+) {
     match &e.kind {
-        ExprKind::MethodCall(x, ..) if !post => out.push((e.id, x)),
+        ExprKind::MethodCall(..) | ExprKind::Field(..) if !post || !at_return.contains(&e.id) => {
+            if let Some(root) = path_root(e) {
+                out.push((e, root));
+            }
+        }
         ExprKind::Call(_, args) if args.len() == 1 => {
-            return each_measure_call(&args[0], false, out);
+            return each_measure_call(&args[0], false, at_return, out);
         }
         _ => {}
     }
     for c in e.children() {
-        each_measure_call(c, post, out);
+        each_measure_call(c, post, at_return, out);
+    }
+}
+
+/// The name path `e` of a predicate is from: `s` of `s.head.len()`.
+fn path_root(e: &Expr) -> Option<&str> {
+    match &e.kind {
+        ExprKind::Var(name, _) => Some(name),
+        ExprKind::Field(x, _) | ExprKind::MethodCall(x, ..) => path_root(x),
+        _ => None,
     }
 }
 
@@ -1259,14 +1283,11 @@ impl<'p> Interp<'p, '_> {
         };
         for (binder, pred) in parts {
             let mut calls = Vec::new();
-            each_measure_call(pred, post, &mut calls);
-            for (node, x) in calls {
-                if let ExprKind::Var(name, _) = &x.kind
-                    && name != binder
-                {
-                    let recv = r.eval(self, x, binder, &Value::Unit).val();
-                    let m = self.measure_call(node, recv);
-                    r.measured.insert(node, m);
+            each_measure_call(pred, post, &self.measures.behind_mut, &mut calls);
+            for (e, root) in calls {
+                if root != binder {
+                    let m = r.eval(self, e, binder, &Value::Unit);
+                    r.measured.insert(e.id, m);
                 }
             }
         }
@@ -1335,6 +1356,23 @@ impl<'p> Interp<'p, '_> {
         }
     }
 
+    /// Field `name` of `v`, or of what it points to, through references
+    /// and boxes: of a predicate's path, or a measure's body.
+    fn pred_field(&self, mut v: Value, name: &str) -> PredValue {
+        while let Value::Ref(p) | Value::Box(p) = &v
+            && p.range.is_none()
+        {
+            v = self.pred_deref(v);
+        }
+        match &v {
+            Value::Struct(_, fields) => match fields.iter().find(|(n, _)| *n == name) {
+                Some((_, f)) => PredValue::of(f),
+                None => unsound(&format!("no field `{name}` in `{v}`")),
+            },
+            _ => unsound(&format!("field `{name}` of `{v}`")),
+        }
+    }
+
     /// The value of term `e` of a measure's body, whose `self` is `this`.
     fn measure_term(&self, e: &Expr, this: &Value) -> PredValue {
         match &e.kind {
@@ -1342,21 +1380,7 @@ impl<'p> Interp<'p, '_> {
             ExprKind::Bool(b) => PredValue::Bool(*b),
             ExprKind::Var(..) => PredValue::Val(this.clone()),
             ExprKind::Field(x, name) => {
-                let mut v = self.measure_term(x, this).val();
-                while let Value::Ref(p) | Value::Box(p) = &v
-                    && p.range.is_none()
-                {
-                    v = self.pred_deref(v);
-                }
-                match &v {
-                    Value::Struct(_, fields) => {
-                        match fields.iter().find(|(n, _)| *n == name.name) {
-                            Some((_, f)) => PredValue::of(f),
-                            None => unsound(&format!("no field `{}` in `{v}`", name.name)),
-                        }
-                    }
-                    _ => unsound(&format!("field `{}` of `{v}`", name.name)),
-                }
+                self.pred_field(self.measure_term(x, this).val(), &name.name)
             }
             ExprKind::MethodCall(x, ..) => {
                 let recv = self.measure_term(x, this).val();
@@ -2765,20 +2789,12 @@ impl<'p> Interp<'p, '_> {
             unsound(&format!("`{name}` of `{this}`, which isn't a slice"))
         };
         let (p, lo, len) = (p.clone(), *lo, *len);
-        // The copy of `Option` it returns, and what's in its `Some`.
-        let option = || -> (String, Option<String>) {
+        // The copy of `Option` it returns.
+        let option = || -> String {
             let TypeExprKind::Named(option, _) = &self.fns[copy].ret.kind else {
                 unsound(&format!("`{name}` returns an `Option`"))
             };
-            let some = self.enums[option.as_str()]
-                .variants
-                .iter()
-                .find(|v| v.name.name == "Some")
-                .and_then(|v| match &v.fields[0].kind {
-                    TypeExprKind::Named(name, _) => Some(name.clone()),
-                    _ => None,
-                });
-            (option.clone(), some)
+            option.clone()
         };
         let index = |v: Option<Value>, max: usize| {
             let i = int(v.unwrap_or_else(|| unsound("slice arity")));
@@ -2806,14 +2822,21 @@ impl<'p> Interp<'p, '_> {
                     })
                 })
             }
-            SliceOp::SplitAt | SliceOp::SplitAtMut => index(args.next(), len).map(|mid| {
-                let split = option().1.unwrap_or_else(|| unsound("a split's struct"));
+            // Its refinement says `mid <= len()`.
+            SliceOp::Cut | SliceOp::CutMut => {
+                let Some(mid) = index(args.next(), len) else {
+                    unsound(&format!("`{name}` out of range of a slice of {len}"))
+                };
+                let TypeExprKind::Named(split, _) = &self.fns[copy].ret.unrefined().kind else {
+                    unsound(&format!("`{name}` returns a struct"))
+                };
                 let head = Value::Ref(p.slice(lo, mid));
                 let tail = Value::Ref(p.slice(lo + mid, len - mid));
-                Value::Struct(split, vec![("head".into(), head), ("tail".into(), tail)])
-            }),
+                let fields = vec![("head".into(), head), ("tail".into(), tail)];
+                return Value::Struct(split.clone(), fields);
+            }
         };
-        let option = option().0;
+        let option = option();
         match made {
             Some(v) => Value::Variant(option, "Some".into(), vec![v]),
             None => Value::Variant(option, "None".into(), Vec::new()),

@@ -130,6 +130,7 @@ fn unknown(name: &Ident) -> Warning {
         .into_iter()
         .collect();
     Warning {
+        notes: Vec::new(),
         lint: Lint::UnknownLints,
         span: name.span,
         message: format!("unknown lint `{}`", name.name),

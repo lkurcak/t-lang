@@ -301,6 +301,13 @@ fn main(os: std::Os) -> core::result::Result::<(), core::io::Error> with panic {
     }
 }
 
+/// How many values it has. It's a measure, so refinements can say it:
+/// `i: { i: usize | i < s.len() }`. It's of the reference, which knows
+/// it, so nothing written through a `&mut [T]` changes it.
+#[intrinsic]
+#[measure]
+export fn <[u8]>::len(&self) -> usize;
+
 /// Its values, by reference, front to back.
 export fn <[u8]>::iter(&self) -> core::slice::Iter::<u8> {
     let _0: Iter<u8>;
@@ -520,13 +527,55 @@ export fn <[u8; 3]>::as_slice(&self) -> { s: &[u8] | s.len() == self.len() };
 
 /// The values before index `mid` and those from it on, or `None` if
 /// `mid` is more than `len()`.
-#[intrinsic]
 export fn <[u8]>::split_at<'a>(
     &'a self,
     mid: usize,
-) -> core::option::Option::<core::slice::Split<u8>>;
+) -> { s: core::option::Option::<core::slice::Split<u8>> | s.head.len() == mid && s.tail.len() + mid == self.len() } {
+    let _0: Option<Split<u8>>;
+    let _1: &[u8]; // self
+    let _2: usize; // mid
+    let _3: bool;
+    let _4: usize;
+    let _5: &[u8];
+    let _6: Split<u8>;
+    let _7: &[u8];
+    bb0: {
+        _5 = &(*_1);
+        _4 = <[u8]>::len(move _5);
+        _3 = copy _2 <= copy _4;
+        dead _5;
+        dead _4;
+        if copy _3 { bb1 } else { bb2 };
+    }
+    bb1: {
+        _7 = &(*_1);
+        _6 = <[u8]>::cut(move _7, copy _2);
+        _0 = core::option::Option::<core::slice::Split<u8>>::Some(move _6);
+        dead _7;
+        dead _6;
+        goto bb3;
+    }
+    bb2: {
+        _0 = core::option::Option::<core::slice::Split<u8>>::None;
+        goto bb3;
+    }
+    bb3: {
+        dead _3;
+        dead _2;
+        dead _1;
+        return;
+    }
+}
 
 /// The value at `i`, or `None` if there's none: if `i` isn't less than
 /// `len()`.
 #[intrinsic]
 export fn <[u8]>::get(&self, i: usize) -> core::option::Option::<&u8>;
+
+/// The values before index `mid`, which is at most `len()`, and those
+/// from it on: `split_at` and `slice` are safe code over it.
+#[intrinsic]
+fn <[u8]>::cut<'a>(
+    &'a self,
+    mid: { m: usize | m <= self.len() },
+) -> { s: core::slice::Split::<u8><'a> | s.head.len() == mid && s.tail.len() + mid == self.len() };
