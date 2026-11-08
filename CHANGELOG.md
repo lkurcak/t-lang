@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.71.0 (2026-11-08)
 
 Step 55: free theorems. See
 [docs/55-free-theorems.md](docs/55-free-theorems.md).
