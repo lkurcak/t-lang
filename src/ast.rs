@@ -68,6 +68,11 @@ pub struct Measures {
     /// docs/53-refined-type-arguments.md). One of the whole value isn't
     /// in it.
     pub ways: std::collections::HashMap<NodeId, Vec<Vec<(String, usize)>>>,
+    /// By the node of a refinement's predicate that's *carried*, of every
+    /// value at a position no way through enums gets to: how to get from a
+    /// value of the type it's in to each of those values (see `Reach` and
+    /// docs/60-refined-type-arguments.md).
+    pub reach: std::collections::HashMap<NodeId, Vec<Reach>>,
     /// By the node of a function's name: its free type parameters, of
     /// which what it gives is what it was given (see `Free` and
     /// docs/55-free-theorems.md), for the interpreter to check.
@@ -76,6 +81,33 @@ pub struct Measures {
     /// what's behind a `&mut`, which may change: in a postcondition, only
     /// those are found at return; the rest are what they were at the call.
     pub behind_mut: std::collections::HashSet<NodeId>,
+}
+
+/// One node of the way to the values at a position of a value (see
+/// `Measures::reach`): whether a value got to here is one, and the steps
+/// from here, each to another node. A recursive type's is a cycle.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Reach {
+    pub here: bool,
+    pub steps: Vec<(ReachStep, usize)>,
+}
+
+/// A step from a value to values in it (see `Reach`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReachStep {
+    /// A struct's or a tuple's field, by name.
+    Field(String),
+    /// A variant's field, if it's that variant.
+    Variant(String, usize),
+    /// What a reference or a box points to; of a slice's or a string's,
+    /// its values.
+    Deref,
+    /// Each of an array's or a slice's values.
+    Elems,
+    /// Each value a `RawBuf`'s slots hold.
+    Slots,
+    /// Each value an arena holds.
+    Arena,
 }
 
 /// A *free* type parameter of a function: one that only marker traits

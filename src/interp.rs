@@ -1077,6 +1077,9 @@ struct RefinedPart {
     /// Through which variant and field of each enum on the way to each
     /// part of the value it's of: one empty way for the whole value.
     ways: Vec<Vec<(String, usize)>>,
+    /// Of a carried one, of every value at a position, the way to each
+    /// (`Measures::reach`), instead.
+    reach: Option<Vec<crate::ast::Reach>>,
 }
 
 /// What a predicate evaluates to: integers are the mathematical ones. A
@@ -1154,6 +1157,21 @@ impl Refined {
     /// `v` has, being those variants.
     fn check(&self, i: &Interp, v: &Value, what: &str) {
         for part in &self.parts {
+            // Each value at its position, wherever in `v` that is.
+            if let Some(reach) = &part.reach {
+                let mut found = Vec::new();
+                i.reach(v, reach, 0, &mut found, &mut HashSet::new());
+                for at in found {
+                    if let PredValue::Bool(false) = self.eval(i, &part.pred, &part.binder, &at) {
+                        unsound(&format!(
+                            "{what} has `{at}` in it where its type's refinement `{}` is, which it \
+                             doesn't have",
+                            crate::pretty::expr_text(&part.pred)
+                        ));
+                    }
+                }
+                continue;
+            }
             for way in &part.ways {
                 let mut at = v;
                 let mut there = true;
@@ -1267,14 +1285,7 @@ impl<'p> Interp<'p, '_> {
         env: Vec<(String, Value)>,
         post: bool,
     ) -> Refined {
-        // One of what every value at a position is, which no way gets to
-        // (`Measures::ways` has none), is checked by `Reach` (see
-        // docs/60-refined-type-arguments.md), not here.
-        let parts: Vec<(String, &Expr)> = (parts.iter())
-            .filter(|(_, pred)| !self.measures.ways.get(&pred.id).is_some_and(Vec::is_empty))
-            .cloned()
-            .collect();
-        let parts = &parts[..];
+
         let mut r = Refined {
             parts: (parts.iter())
                 .map(|(binder, pred)| RefinedPart {
@@ -1284,6 +1295,7 @@ impl<'p> Interp<'p, '_> {
                         Some(ways) => ways.clone(),
                         None => vec![Vec::new()],
                     },
+                    reach: self.measures.reach.get(&pred.id).cloned(),
                 })
                 .collect(),
             env,
@@ -3228,6 +3240,89 @@ impl<'p> Interp<'p, '_> {
             )
     }
 
+    /// The values `reach` gets to from `v`, from its node `n`, into `out`:
+    /// following each step a value has, each reference once.
+    fn reach(
+        &self,
+        v: &Value,
+        reach: &[crate::ast::Reach],
+        n: usize,
+        out: &mut Vec<Value>,
+        seen: &mut HashSet<(usize, usize, u64, usize)>,
+    ) {
+        use crate::ast::ReachStep;
+        let Some(node) = reach.get(n) else {
+            return;
+        };
+        if node.here && !matches!(v, Value::Moved) {
+            out.push(v.clone());
+        }
+        let each = |vals: &[Value], next: usize, out: &mut Vec<Value>, seen: &mut HashSet<_>| {
+            for w in vals {
+                if !matches!(w, Value::Moved) {
+                    self.reach(w, reach, next, out, seen);
+                }
+            }
+        };
+        for (step, next) in &node.steps {
+            match (step, v) {
+                (ReachStep::Field(name), Value::Struct(_, fields)) => {
+                    if let Some((_, w)) = fields.iter().find(|(f, _)| f == name) {
+                        self.reach(w, reach, *next, out, seen);
+                    }
+                }
+                (ReachStep::Variant(name, j), Value::Variant(_, variant, fields))
+                    if variant == name =>
+                {
+                    if let Some(w) = fields.get(*j) {
+                        self.reach(w, reach, *next, out, seen);
+                    }
+                }
+                (ReachStep::Deref, Value::Ref(p) | Value::Box(p)) => {
+                    if !seen.insert((*next, p.slot, p.generation, p.path.len())) {
+                        continue;
+                    }
+                    match p.range {
+                        // A slice's: those values of the slots it's in.
+                        Some((lo, len)) => {
+                            let whole = Ptr {
+                                range: None,
+                                ..p.clone()
+                            };
+                            if let Value::Slots(vals) = self.memory.get(&whole)
+                                && let Some(part) = vals.get(lo..lo + len)
+                            {
+                                let part = Value::Slots(part.to_vec());
+                                self.reach(&part, reach, *next, out, seen);
+                            }
+                        }
+                        None => {
+                            let w = self.memory.get(p).clone();
+                            self.reach(&w, reach, *next, out, seen);
+                        }
+                    }
+                }
+                (ReachStep::Elems, Value::Slots(vals)) => each(vals, *next, out, seen),
+                (ReachStep::Slots, Value::RawBuf(p)) => {
+                    if let Value::Slots(vals) = self.memory.get(p).clone() {
+                        each(&vals, *next, out, seen);
+                    }
+                }
+                (ReachStep::Arena, Value::Arena(p)) => {
+                    if let Value::Slots(boxes) = self.memory.get(p).clone() {
+                        for b in boxes {
+                            if let Value::Box(q) = b {
+                                let w = self.memory.get(&q).clone();
+                                self.reach(&w, reach, *next, out, seen);
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// Stops the program, as the checker is wrong, unless struct value
     /// `v`, just `what`, has the refinements of its fields.
     fn check_fields(&self, v: &Value, what: &str) {
@@ -3245,7 +3340,9 @@ impl<'p> Interp<'p, '_> {
             if fields[..=j].iter().any(|(_, v)| matches!(v, Value::Moved)) {
                 continue;
             }
-            if let Some(r) = self.type_refined(&f.ty, &fields[..j], false) {
+            // A refinement of what's in a field can name the field itself
+            // (docs/60-refined-type-arguments.md).
+            if let Some(r) = self.type_refined(&f.ty, &fields[..=j], false) {
                 r.check(
                     self,
                     &fields[j].1,

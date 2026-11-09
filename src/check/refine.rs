@@ -991,6 +991,10 @@ impl Checker {
                 };
                 self.info.measures.ways.insert(pred.id, named);
             }
+            if carried {
+                let reach = targs::reach(&self.adts, &base, &path);
+                self.info.measures.reach.insert(pred.id, reach);
+            }
             parts.push(Part {
                 pred: pred.clone(),
                 ways,

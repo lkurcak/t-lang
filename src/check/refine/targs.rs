@@ -1892,3 +1892,132 @@ impl Walk<'_> {
         out
     }
 }
+
+/// The way from a value of type `t` to each value at position `pos` of it,
+/// for the interpreter to check what's said of them (`Measures::reach`):
+/// through each field the type parameter there is in, as its type has it.
+pub(super) fn reach(adts: &crate::types::Adts, t: &Type, pos: &[usize]) -> Vec<crate::ast::Reach> {
+    use crate::ast::{Reach, ReachStep};
+    fn node(
+        adts: &crate::types::Adts,
+        t: &Type,
+        pos: &[usize],
+        memo: &mut HashMap<(Type, Pos), usize>,
+        out: &mut Vec<Reach>,
+    ) -> usize {
+        let key = (t.clone(), pos.to_vec());
+        if let Some(&i) = memo.get(&key) {
+            return i;
+        }
+        let i = out.len();
+        out.push(Reach::default());
+        memo.insert(key, i);
+        if out.len() > 256 {
+            return i;
+        }
+        let Some((&k, rest)) = pos.split_first() else {
+            out[i].here = true;
+            return i;
+        };
+        let mut steps = Vec::new();
+        let mut go = |step: ReachStep, t: &Type, p: Vec<usize>, out: &mut Vec<Reach>| {
+            let n = node(adts, t, &p, memo, out);
+            steps.push((step, n));
+        };
+        match t {
+            Type::Tuple(ts) => {
+                if let Some(e) = ts.get(k) {
+                    go(ReachStep::Field(k.to_string()), e, rest.to_vec(), out);
+                }
+            }
+            Type::Box(inner) | Type::Ref(_, _, inner) if k == 0 => {
+                go(ReachStep::Deref, inner, rest.to_vec(), out);
+            }
+            Type::Slice(e) | Type::Array(e, _) if k == 0 => {
+                go(ReachStep::Elems, e, rest.to_vec(), out);
+            }
+            Type::Adt(symbol, _, args) if crate::intrinsic::is_intrinsic_type(symbol) => {
+                if let Some(a) = args.get(k) {
+                    let step = match symbol.rsplit("::").next() {
+                        Some("RawBuf") => Some(ReachStep::Slots),
+                        Some("Slots") => Some(ReachStep::Arena),
+                        _ => None,
+                    };
+                    if let Some(step) = step {
+                        go(step, a, rest.to_vec(), out);
+                    }
+                }
+            }
+            Type::Adt(symbol, ..) => {
+                let Some(def) = adts.get(symbol) else {
+                    return i;
+                };
+                let Some(param) = def.params.as_slice().get(k).cloned() else {
+                    return i;
+                };
+                let variants: Vec<(Option<String>, Vec<(String, Type)>, Vec<Type>)> = match &def.kind {
+                    crate::types::AdtKind::Struct(fields) => vec![(
+                        None,
+                        fields.clone(),
+                        struct_fields(adts, t).unwrap_or_default().into_iter().map(|(_, t)| t).collect(),
+                    )],
+                    crate::types::AdtKind::Enum(vs) => (vs.iter().enumerate())
+                        .map(|(v, (name, ts))| {
+                            (
+                                Some(name.clone()),
+                                ts.iter().enumerate().map(|(j, t)| (j.to_string(), t.clone())).collect(),
+                                crate::types::variant_fields(adts, t, v),
+                            )
+                        })
+                        .collect(),
+                };
+                for (variant, generic, inst) in variants {
+                    for (j, ((fname, g), ft)) in generic.iter().zip(&inst).enumerate() {
+                        for rho in param_paths(g, &param) {
+                            let mut p = rho;
+                            p.extend_from_slice(rest);
+                            let step = match &variant {
+                                Some(v) => ReachStep::Variant(v.clone(), j),
+                                None => ReachStep::Field(fname.clone()),
+                            };
+                            go(step, ft, p, out);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        out[i].steps = steps;
+        i
+    }
+    let mut out = Vec::new();
+    node(adts, t, pos, &mut HashMap::new(), &mut out);
+    out
+}
+
+/// The positions of type parameter `x` in `t`, a type as declared.
+fn param_paths(t: &Type, x: &str) -> Vec<Pos> {
+    fn go(t: &Type, x: &str, at: &mut Pos, out: &mut Vec<Pos>) {
+        if matches!(t, Type::Param(p, _) if p == x) {
+            out.push(at.clone());
+            return;
+        }
+        if at.len() >= DEPTH || !free::mentions(t, x) {
+            return;
+        }
+        let kids: Vec<&Type> = match t {
+            Type::Adt(_, _, args) => args.iter().collect(),
+            Type::Box(i) | Type::Ref(_, _, i) | Type::Slice(i) | Type::Array(i, _) => vec![&**i],
+            Type::Tuple(ts) => ts.iter().collect(),
+            _ => Vec::new(),
+        };
+        for (k, c) in kids.into_iter().enumerate() {
+            at.push(k);
+            go(c, x, at, out);
+            at.pop();
+        }
+    }
+    let mut out = Vec::new();
+    go(t, x, &mut Vec::new(), &mut out);
+    out
+}
