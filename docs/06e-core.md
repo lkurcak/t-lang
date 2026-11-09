@@ -34,7 +34,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     // expect: 2
     // expect: 1
     let total = (0..4i64).map(|x| x * x).fold(0, |a, b| a + b);
-    out.line(&total)?;       // expect: 14
+    out.line(&total)?;                   // expect: 14
     out.line(&core::cmp::max(5i64, 9))?; // expect: 9
     Result::Ok(())
 }

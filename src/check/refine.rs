@@ -1,11 +1,16 @@
 //! Refinement types: `{ d: i64 | d != 0 }`, the `i64`s that aren't 0 (see
 //! docs/08-refinement-types.md, docs/08.1-field-refinements.md,
-//! docs/53-refined-type-arguments.md and docs/55-free-theorems.md).
+//! docs/53-refined-type-arguments.md, docs/55-free-theorems.md and
+//! docs/60-refined-type-arguments.md).
 //!
 //! A refinement is the whole type of a parameter, a result, a `let` or a
-//! struct's field, or a type argument of an enum there, at any depth
+//! struct's field, or a type argument there, at any depth: of an enum's
 //! (`Option<{ d: u8 | d < 10 }>`: of each field of a variant whose type is
 //! that parameter, if the value is that variant; `Checker::refined_arg`),
+//! or of anything else, *carried*: what every value at that position is,
+//! which code generic in the parameter keeps by parametricity (`targs`:
+//! each value's objects and each place say it of their positions, and each
+//! call works out what its type parameters are from its arguments). It's
 //! never part of any other type. It isn't in `Type` at all: unification, traits and
 //! monomorphisation never see one. What it says is checked by a pass of its
 //! own over each body, once its types are known (`Checker::refine`), which
@@ -524,7 +529,10 @@ impl Checker {
             .map(|f| {
                 let own = own.get(f.symbol.as_str()).copied();
                 let consumer = |t: &str| targs::consumer(&self.traits, t, &mut Vec::new());
-                (f.name.id, free::free_params(&self.adts, &f.scheme, own, &consumer))
+                (
+                    f.name.id,
+                    free::free_params(&self.adts, &f.scheme, own, &consumer),
+                )
             })
             .filter(|(_, free)| !free.is_empty())
             .collect()
@@ -3542,9 +3550,7 @@ impl Walk<'_> {
             boxed[i + 1] = by_box;
             q = q.then(*step);
         }
-        let around = |q: &Place| {
-            p.within(q) && (q.path.len()..p.path.len()).all(|i| boxed[i + 1])
-        };
+        let around = |q: &Place| p.within(q) && (q.path.len()..p.path.len()).all(|i| boxed[i + 1]);
         self.objs.retain(|q, _| !q.within(p) && !around(q));
     }
 
@@ -3592,8 +3598,10 @@ impl Walk<'_> {
                 // What a box owns is a place in it, which has its value; and
                 // what a shared reference points to is one that can't change
                 // while it's borrowed.
-                if let (Type::Box(inner) | Type::Ref(_, false, inner), Some(Val::Ref(_, Pointee::Val(w)))) =
-                    (t, &val)
+                if let (
+                    Type::Box(inner) | Type::Ref(_, false, inner),
+                    Some(Val::Ref(_, Pointee::Val(w))),
+                ) = (t, &val)
                 {
                     let inner = self.cx.solved(inner);
                     self.set(&p.then(Proj::Deref), &inner, Some((**w).clone()));
@@ -3692,7 +3700,10 @@ impl Walk<'_> {
         }
         let names: Vec<String> = targs.iter().map(|(n, _)| n.clone()).collect();
         let args: Vec<Type> = targs.iter().map(|(_, t)| t.clone()).collect();
-        Some(self.cx.solved(&crate::types::Subst::new(&names, &args).apply(&base)))
+        Some(
+            self.cx
+                .solved(&crate::types::Subst::new(&names, &args).apply(&base)),
+        )
     }
 
     /// Refinement part `part`'s predicate, of each part of `val` it's of:
@@ -3916,7 +3927,9 @@ impl Walk<'_> {
         {
             let ret = self.cx.solved(&sig.ret);
             let declared = match &self.ret {
-                Some((r, _)) if r.has_carried() => self.carried_tree(&r.clone(), Env::Post(&entry, None, &[])),
+                Some((r, _)) if r.has_carried() => {
+                    self.carried_tree(&r.clone(), Env::Post(&entry, None, &[]))
+                }
                 _ => Vec::new(),
             };
             let what = format!("the result of `{}`", self.cx.fns[id.0].name.name);
@@ -4058,9 +4071,15 @@ impl Walk<'_> {
         // the condition the branch was taken, of the one after (`targs`):
         // of a reference, what may be written through it is whichever
         // place's that branch's points to.
-        let guards: Vec<Formula> = reached.iter().map(|o| Formula::and(o.facts.clone())).collect();
+        let guards: Vec<Formula> = reached
+            .iter()
+            .map(|o| Formula::and(o.facts.clone()))
+            .collect();
         let mut tree_joins: Vec<(Option<Obj>, Vec<Option<Obj>>)> = Vec::new();
-        tree_joins.push((None, reached.iter().map(|o| targs::obj_of(&o.val)).collect()));
+        tree_joins.push((
+            None,
+            reached.iter().map(|o| targs::obj_of(&o.val)).collect(),
+        ));
         // A place each branch left a different object at is a new one, of
         // which each measure every branch knows of its object is, in each
         // case, what it was of that branch's: a measure is a function of
@@ -5264,7 +5283,10 @@ impl Walk<'_> {
         let d = self.place_decl(p);
         let what = match (self.boxes_only(p), self.cx.typed.binds.get(&p.root)) {
             (true, Some(b)) => format!("`{}`", b.name),
-            _ => format!("what's written through `{}`", crate::pretty::expr_text(place)),
+            _ => format!(
+                "what's written through `{}`",
+                crate::pretty::expr_text(place)
+            ),
         };
         let written = self.written_tree(new, ty);
         self.need_tree(new, ty, &d, Some(&written), span, &what)
@@ -5718,7 +5740,11 @@ impl Walk<'_> {
                         match v {
                             Some(v) => {
                                 let spans: Vec<Span> = args.iter().map(|a| a.span).collect();
-                                let spans = if spans.is_empty() { vec![e.span] } else { spans };
+                                let spans = if spans.is_empty() {
+                                    vec![e.span]
+                                } else {
+                                    spans
+                                };
                                 self.keep_fields_inv(&ty, Some(v), &vals, &[], &spans)?;
                                 let o = self.new_obj();
                                 self.enum_parts(o, &ty, Some((v, vals)));
@@ -6286,10 +6312,12 @@ impl Walk<'_> {
                 };
                 let fields = whole.and_then(|w| self.variant_parts(&w, &member.name));
                 let ftys = match &ty {
-                    Some(t @ Type::Adt(symbol, ..)) => match self.variant_index(symbol, &member.name) {
-                        Some(v) => crate::types::variant_fields(&self.cx.adts, t, v),
-                        None => Vec::new(),
-                    },
+                    Some(t @ Type::Adt(symbol, ..)) => {
+                        match self.variant_index(symbol, &member.name) {
+                            Some(v) => crate::types::variant_fields(&self.cx.adts, t, v),
+                            None => Vec::new(),
+                        }
+                    }
                     _ => Vec::new(),
                 };
                 for (j, p) in pats.iter().enumerate() {

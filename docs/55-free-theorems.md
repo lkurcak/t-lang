@@ -217,7 +217,9 @@ fn at(a: [u8; 4], i: { v: usize | v < 4 }) -> u8 { a[nine(i)] }
   bound, on ways through enums. Rather than also through structs' fields
   (callers' proofs would depend on a library's private fields), or bounds
   like `Eq` whose methods can't make a `T` (each trait would need to be
-  checked for that, and `Ord`'s `max` and `min` can).
+  checked for that, and `Ord`'s `max` and `min` can). Step 60 checks each
+  trait for that, and moved `max` and `min` out of `Ord`: consumer bounds
+  count as markers now (docs/60-refined-type-arguments.md).
 - D2, a part with no candidate isn't there, rather than nothing being
   known of it: that's what lets a function with a refined result use `?`.
 - D3, `checked_*` say what they give, and `Option::ok_or` is new;

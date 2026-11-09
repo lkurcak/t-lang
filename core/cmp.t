@@ -61,7 +61,6 @@ export trait Ord: Eq {
             _ => true,
         }
     }
-
 }
 
 /// The greater of `a` and `b`, `b` if they're equal. The other one is

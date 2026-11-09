@@ -1285,7 +1285,6 @@ impl<'p> Interp<'p, '_> {
         env: Vec<(String, Value)>,
         post: bool,
     ) -> Refined {
-
         let mut r = Refined {
             parts: (parts.iter())
                 .map(|(binder, pred)| RefinedPart {

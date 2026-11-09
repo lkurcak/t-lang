@@ -134,7 +134,12 @@ impl Inst {
             return Disj::any();
         }
         match self.at.iter().find(|(p, _)| p == pos) {
-            Some((_, cases)) => Disj(cases.iter().map(|(_, g, c)| (g.clone(), c.clone())).collect()),
+            Some((_, cases)) => Disj(
+                cases
+                    .iter()
+                    .map(|(_, g, c)| (g.clone(), c.clone()))
+                    .collect(),
+            ),
             None => Disj::default(),
         }
     }
@@ -144,7 +149,10 @@ impl Inst {
         if self.any.is_some() {
             return Vec::new();
         }
-        self.at.iter().map(|(p, _)| (p.clone(), self.disj(p))).collect()
+        self.at
+            .iter()
+            .map(|(p, _)| (p.clone(), self.disj(p)))
+            .collect()
     }
 }
 
@@ -153,9 +161,8 @@ impl Inst {
 /// position below `at` in the parameter, has what the place must keep.
 struct Behind {
     arg: usize,
-    /// The position in the argument.
-    at: Pos,
-    /// What's declared there, at each position below `at`.
+    /// What's declared at each position of what the parameter's type
+    /// parameter is there.
     declared: Tree,
 }
 
@@ -212,7 +219,9 @@ impl Walk<'_> {
     /// says (`borrowck::regions::AdtInfo`).
     fn variances(&mut self, symbol: &str) -> Vec<Variance> {
         let info = self.cx.adt_info();
-        info.variances(symbol).map(<[Variance]>::to_vec).unwrap_or_default()
+        info.variances(symbol)
+            .map(<[Variance]>::to_vec)
+            .unwrap_or_default()
     }
 
     /// The type at child `k` of `t` (a position's step), and how `t`
@@ -319,7 +328,15 @@ impl Walk<'_> {
         }
         let mut out = Vec::new();
         let mut hidden = false;
-        go(self, t, x, &mut Vec::new(), Variance::Co, &mut out, &mut hidden);
+        go(
+            self,
+            t,
+            x,
+            &mut Vec::new(),
+            Variance::Co,
+            &mut out,
+            &mut hidden,
+        );
         (out, hidden)
     }
 
@@ -358,7 +375,8 @@ impl Walk<'_> {
                 None => Vec::new(),
             },
             Type::Adt(symbol, ..)
-                if symbol == crate::check::UNSAFE || crate::intrinsic::is_intrinsic_type(symbol) =>
+                if symbol == crate::check::UNSAFE
+                    || crate::intrinsic::is_intrinsic_type(symbol) =>
             {
                 Vec::new()
             }
@@ -373,7 +391,9 @@ impl Walk<'_> {
                     crate::types::AdtKind::Struct(fields) => {
                         vec![fields.iter().map(|(_, t)| t.clone()).collect()]
                     }
-                    crate::types::AdtKind::Enum(vs) => vs.iter().map(|(_, ts)| ts.clone()).collect(),
+                    crate::types::AdtKind::Enum(vs) => {
+                        vs.iter().map(|(_, ts)| ts.clone()).collect()
+                    }
                 };
                 let mut out = Vec::new();
                 for (v, fields) in variants.iter().enumerate() {
@@ -423,7 +443,12 @@ impl Walk<'_> {
     /// knows (a tuple's or a struct's, an enum's of the variant it is), and
     /// of what a reference points to, what's there now; and what's been said
     /// of the positions of each object on the way.
-    pub(super) fn values_at(&mut self, v: &Val, t: &Type, pos: &[usize]) -> Vec<(Vec<Formula>, Cand)> {
+    pub(super) fn values_at(
+        &mut self,
+        v: &Val,
+        t: &Type,
+        pos: &[usize],
+    ) -> Vec<(Vec<Formula>, Cand)> {
         self.values_at_depth(v, t, pos, 0)
     }
 
@@ -597,7 +622,12 @@ impl Walk<'_> {
                     if k == 0 =>
                 {
                     let (w, inner) = ((**w).clone(), self.cx.solved(inner));
-                    self.assume_tree_depth(&w, &inner, &vec![(rest.to_vec(), d.clone())], depth + 1);
+                    self.assume_tree_depth(
+                        &w,
+                        &inner,
+                        &vec![(rest.to_vec(), d.clone())],
+                        depth + 1,
+                    );
                 }
                 _ => {}
             }
@@ -788,10 +818,9 @@ impl Walk<'_> {
             if let Err(reason) = self.implies(&cases, d, &pt) {
                 let text = d.text().unwrap_or_default();
                 let failure = self.proof_failure(reason, None, None, &text);
-                return Err(failure.attach(Error::ty(
-                    span,
-                    format!("can't prove `{text}` for {what}"),
-                )));
+                return Err(
+                    failure.attach(Error::ty(span, format!("can't prove `{text}` for {what}")))
+                );
             }
             if var == Variance::Inv {
                 let declared: Vec<Disj> = (decl.into_iter().flatten())
@@ -999,7 +1028,8 @@ fn parametric_impl(traits: &crate::traits::Traits, t: &Type, tr: &str) -> bool {
             || consumer(traits, &p.trait_name, &mut Vec::new())
     }) && def.eqs.iter().all(|(a, b)| {
         let mentions = |t: &Type| seen.iter().any(|q| free::mentions(t, q));
-        matches!(a, Type::Proj(base, ..) if !matches!(**base, Type::Param(..))) || !mentions(a) && !mentions(b)
+        matches!(a, Type::Proj(base, ..) if !matches!(**base, Type::Param(..)))
+            || !mentions(a) && !mentions(b)
     })
 }
 
@@ -1142,7 +1172,9 @@ impl Walk<'_> {
             };
             let (occ, hidden) = self.occurrences(a, x);
             if hidden && inst.any.is_none() {
-                inst.any = Some(format!("`{a}`, which `{x}` is in as more than a type argument"));
+                inst.any = Some(format!(
+                    "`{a}`, which `{x}` is in as more than a type argument"
+                ));
             }
             if occ.is_empty() {
                 continue;
@@ -1151,11 +1183,39 @@ impl Walk<'_> {
             for (rho, var) in occ {
                 match var {
                     Variance::Co | Variance::Bi => {
+                        // Where `x`'s own type is invariant, behind a `&mut`
+                        // in it, what's there is typed by what's declared
+                        // of it, not what's known of the values there now
+                        // (lemma A4).
+                        let mut written_here: Option<Tree> = None;
                         for pos in &all {
                             let mut p = rho.clone();
                             p.extend_from_slice(pos);
+                            if let Some((_, Variance::Inv)) = self.type_at(&ty, pos) {
+                                let w = match &written_here {
+                                    Some(w) => w.clone(),
+                                    None => {
+                                        let w = self.arg_written(j, &v, &at);
+                                        let w = self.arg_tree(j, w);
+                                        written_here = Some(w.clone());
+                                        w
+                                    }
+                                };
+                                let here: Vec<Disj> = (w.iter())
+                                    .filter(|(q, _)| *q == p)
+                                    .map(|(_, d)| d.clone())
+                                    .collect();
+                                let c = match here.is_empty() {
+                                    true => Cand::Any,
+                                    false => Cand::All(here),
+                                };
+                                let src = Source { arg: j, behind: true };
+                                push(&mut inst, pos, (src, Vec::new(), c));
+                                continue;
+                            }
                             for (g, c) in self.arg_values_at(j, &v, &at, &p) {
-                                push(&mut inst, pos, (Source { arg: j, behind: false }, g, c));
+                                let src = Source { arg: j, behind: false };
+                                push(&mut inst, pos, (src, g, c));
                             }
                         }
                     }
@@ -1179,16 +1239,23 @@ impl Walk<'_> {
                                 true => Cand::Any,
                                 false => Cand::All(here.clone()),
                             };
-                            push(&mut inst, pos, (Source { arg: j, behind: true }, Vec::new(), c));
+                            push(
+                                &mut inst,
+                                pos,
+                                (
+                                    Source {
+                                        arg: j,
+                                        behind: true,
+                                    },
+                                    Vec::new(),
+                                    c,
+                                ),
+                            );
                             for d in here {
                                 declared.push((pos.clone(), d));
                             }
                         }
-                        behind.push(Behind {
-                            arg: j,
-                            at: rho,
-                            declared,
-                        });
+                        behind.push(Behind { arg: j, declared });
                     }
                     Variance::Contra => {}
                 }
@@ -1234,7 +1301,13 @@ impl Walk<'_> {
     /// `v`, of parameter type `t`: through the references and boxes a
     /// coercion looked through (`&Box<T>` given as a `&T`), the position
     /// is further in the argument's own type.
-    fn arg_values_at(&mut self, j: usize, v: &Val, t: &Type, pos: &[usize]) -> Vec<(Vec<Formula>, Cand)> {
+    fn arg_values_at(
+        &mut self,
+        j: usize,
+        v: &Val,
+        t: &Type,
+        pos: &[usize],
+    ) -> Vec<(Vec<Formula>, Cand)> {
         if let Some(Some((n, actual))) = self.coerced_args.get(j).cloned()
             && pos.first() == Some(&0)
         {
@@ -1276,14 +1349,9 @@ impl Walk<'_> {
         spans: &[Span],
         at: Span,
     ) -> Result<CallTrees, Error> {
-        let debug = std::env::var("T60").is_ok_and(|w| {
-            self.cx.current.is_some_and(|id| self.cx.fns[id.0].symbol.contains(&w))
-        });
-        if debug {
-            eprintln!("call_trees {symbol} {targs:?} vals={vals:?}");
-        }
         let known = self.cx.fns.iter().any(|f| f.symbol == symbol)
-            || (self.cx.traits.traits.values()).any(|t| t.methods.iter().any(|m| m.symbol == symbol));
+            || (self.cx.traits.traits.values())
+                .any(|t| t.methods.iter().any(|m| m.symbol == symbol));
         if !known {
             return Ok(CallTrees::default());
         }
@@ -1298,7 +1366,10 @@ impl Walk<'_> {
         let subst = crate::types::Subst::new(&names, targs);
         let (fname, pnames) = match self.cx.fns.iter().find(|f| f.symbol == symbol) {
             Some(f) => (f.name.name.clone(), f.params.clone()),
-            None => (symbol.rsplit("::").next().unwrap_or(symbol).to_string(), Vec::new()),
+            None => (
+                symbol.rsplit("::").next().unwrap_or(symbol).to_string(),
+                Vec::new(),
+            ),
         };
         let pname = |j: usize| match pnames.get(j) {
             Some(n) => n.clone(),
@@ -1358,12 +1429,6 @@ impl Walk<'_> {
             let mut behind = Vec::new();
             let inst = self.instantiate_one(&s, x, &subst, vals, &written, &mut behind);
             insts.push((x.clone(), inst, behind));
-        }
-        if debug {
-            for (x, inst, _) in &insts {
-                eprintln!("  inst {x} = {:?}", inst);
-            }
-            eprintln!("  written {:?}", written);
         }
         for (x, inst, behind) in &insts {
             let xt = self.cx.solved(&subst.apply(&s.params.ty(x)));
@@ -1467,9 +1532,6 @@ impl Walk<'_> {
                     let mut p = rho.clone();
                     p.extend(pos);
                     out.result.push((p, d));
-                }
-                if inst.any.is_none() && inst.at.iter().all(|(p, _)| !p.is_empty()) {
-                    out.result.push((rho.clone(), inst.disj(&[])));
                 }
             }
         }
@@ -1667,10 +1729,17 @@ impl Walk<'_> {
         let (generic, inst): (Vec<Type>, Vec<Type>) = match (&def.kind, variant) {
             (crate::types::AdtKind::Struct(fields), None) => (
                 fields.iter().map(|(_, t)| t.clone()).collect(),
-                struct_fields(&self.cx.adts, t).unwrap_or_default().into_iter().map(|(_, t)| t).collect(),
+                struct_fields(&self.cx.adts, t)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(_, t)| t)
+                    .collect(),
             ),
             (crate::types::AdtKind::Enum(vs), Some(v)) => match vs.get(v) {
-                Some((_, ts)) => (ts.clone(), crate::types::variant_fields(&self.cx.adts, t, v)),
+                Some((_, ts)) => (
+                    ts.clone(),
+                    crate::types::variant_fields(&self.cx.adts, t, v),
+                ),
                 None => return Ok(()),
             },
             _ => return Ok(()),
@@ -1821,10 +1890,8 @@ impl Walk<'_> {
     ) -> HashMap<usize, Vec<Tree>> {
         let mut out = HashMap::new();
         let known = self.cx.fns.iter().any(|f| f.symbol == symbol)
-            || (self.cx.traits.traits.values()).any(|t| t.methods.iter().any(|m| m.symbol == symbol));
-        if std::env::var("T60").is_ok() {
-            eprintln!("closure_trees {symbol} known={known} closures={closures:?} targs={targs:?}");
-        }
+            || (self.cx.traits.traits.values())
+                .any(|t| t.methods.iter().any(|m| m.symbol == symbol));
         if !known || closures.is_empty() {
             return out;
         }
@@ -1870,7 +1937,8 @@ impl Walk<'_> {
             }
             let sig = (s.eqs.iter()).find_map(|(a, b)| match (a, b) {
                 (Type::Proj(base, _, n), Type::Fn(sig))
-                    if n == crate::traits::SIG && matches!(&**base, Type::Param(g, _) if g == f) =>
+                    if n == crate::traits::SIG
+                        && matches!(&**base, Type::Param(g, _) if g == f) =>
                 {
                     Some(sig.clone())
                 }
@@ -1882,9 +1950,6 @@ impl Walk<'_> {
             let trees: Vec<Tree> = (sig.params.iter())
                 .map(|p| self.subst_tree(p, &insts, &subst, 0))
                 .collect();
-            if std::env::var("T60").is_ok() {
-                eprintln!("  sig {sig:?} insts={insts:?} trees={trees:?}");
-            }
             if trees.iter().any(|t| !t.is_empty()) {
                 out.insert(j, trees);
             }
@@ -1955,22 +2020,30 @@ pub(super) fn reach(adts: &crate::types::Adts, t: &Type, pos: &[usize]) -> Vec<c
                 let Some(param) = def.params.as_slice().get(k).cloned() else {
                     return i;
                 };
-                let variants: Vec<(Option<String>, Vec<(String, Type)>, Vec<Type>)> = match &def.kind {
-                    crate::types::AdtKind::Struct(fields) => vec![(
-                        None,
-                        fields.clone(),
-                        struct_fields(adts, t).unwrap_or_default().into_iter().map(|(_, t)| t).collect(),
-                    )],
-                    crate::types::AdtKind::Enum(vs) => (vs.iter().enumerate())
-                        .map(|(v, (name, ts))| {
-                            (
-                                Some(name.clone()),
-                                ts.iter().enumerate().map(|(j, t)| (j.to_string(), t.clone())).collect(),
-                                crate::types::variant_fields(adts, t, v),
-                            )
-                        })
-                        .collect(),
-                };
+                let variants: Vec<(Option<String>, Vec<(String, Type)>, Vec<Type>)> =
+                    match &def.kind {
+                        crate::types::AdtKind::Struct(fields) => vec![(
+                            None,
+                            fields.clone(),
+                            struct_fields(adts, t)
+                                .unwrap_or_default()
+                                .into_iter()
+                                .map(|(_, t)| t)
+                                .collect(),
+                        )],
+                        crate::types::AdtKind::Enum(vs) => (vs.iter().enumerate())
+                            .map(|(v, (name, ts))| {
+                                (
+                                    Some(name.clone()),
+                                    ts.iter()
+                                        .enumerate()
+                                        .map(|(j, t)| (j.to_string(), t.clone()))
+                                        .collect(),
+                                    crate::types::variant_fields(adts, t, v),
+                                )
+                            })
+                            .collect(),
+                    };
                 for (variant, generic, inst) in variants {
                     for (j, ((fname, g), ft)) in generic.iter().zip(&inst).enumerate() {
                         for rho in param_paths(g, &param) {
