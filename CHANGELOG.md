@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.76.0 (2026-11-09)
 
 Step 60: refinements in any type argument. See
 [docs/60-refined-type-arguments.md](docs/60-refined-type-arguments.md).
