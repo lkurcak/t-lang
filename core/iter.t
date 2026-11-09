@@ -157,10 +157,7 @@ export struct Zip<A, B> { a: A, b: B }
 
 /// `next` throws away a value of `a`'s when `b` has run out, so those must
 /// be `Discard`.
-impl<A: Iterator, B: Iterator> Iterator for Zip<A, B>
-where
-    A::Item: Discard,
-{
+impl<A: Iterator, B: Iterator> Iterator for Zip<A, B> where A::Item: Discard {
     type Item = (A::Item, B::Item);
     effect e = {A::e, B::e};
 

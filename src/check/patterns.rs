@@ -350,7 +350,9 @@ impl Checker {
                             .collect();
                         let found = Type::Tuple(elems.clone());
                         self.unify_or(&found, ty, p.span, |_, ty| {
-                            format!("this pattern is for a tuple of {k} values, but the value is `{ty}`")
+                            format!(
+                                "this pattern is for a tuple of {k} values, but the value is `{ty}`"
+                            )
                         })?;
                         elems
                     }

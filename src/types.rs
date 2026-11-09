@@ -433,7 +433,10 @@ pub fn struct_fields(adts: &Adts, ty: &Type) -> Option<Vec<(String, Type)>> {
 
 /// A tuple's fields, of types `ts`: `0`, `1`, .., as a struct's.
 pub fn tuple_fields(ts: &[Type]) -> Vec<(String, Type)> {
-    ts.iter().enumerate().map(|(i, t)| (i.to_string(), t.clone())).collect()
+    ts.iter()
+        .enumerate()
+        .map(|(i, t)| (i.to_string(), t.clone()))
+        .collect()
 }
 
 /// The fields of variant `i` of `ty`, which must be an enum.

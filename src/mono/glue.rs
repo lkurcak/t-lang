@@ -458,7 +458,13 @@ impl Cx<'_, '_, '_> {
             }
             Type::Tuple(ts) => {
                 let pairs = (ts.iter().enumerate())
-                    .map(|(i, f)| (f.clone(), a.project(Proj::Field(i)), b.project(Proj::Field(i))))
+                    .map(|(i, f)| {
+                        (
+                            f.clone(),
+                            a.project(Proj::Field(i)),
+                            b.project(Proj::Field(i)),
+                        )
+                    })
                     .collect();
                 self.all_equal(&mut g, pairs, join);
             }
@@ -607,7 +613,10 @@ impl Cx<'_, '_, '_> {
                 vec![Bb(next), Bb(differ)],
             ));
             g.cur = differ;
-            g.assign(Place::local(RETURN), Rvalue::Use(Operand::Move(Place::local(r))));
+            g.assign(
+                Place::local(RETURN),
+                Rvalue::Use(Operand::Move(Place::local(r))),
+            );
             g.terminate(Term::Goto(Bb(join)));
             g.cur = next;
         }
@@ -626,7 +635,13 @@ impl Cx<'_, '_, '_> {
         match (t, variants) {
             (Type::Tuple(ts), _) => {
                 let pairs = (ts.iter().enumerate())
-                    .map(|(i, f)| (f.clone(), a.project(Proj::Field(i)), b.project(Proj::Field(i))))
+                    .map(|(i, f)| {
+                        (
+                            f.clone(),
+                            a.project(Proj::Field(i)),
+                            b.project(Proj::Field(i)),
+                        )
+                    })
                     .collect();
                 self.all_cmp(&mut g, pairs, join);
             }

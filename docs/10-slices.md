@@ -121,9 +121,10 @@ None is `unsafe`, and none panics: each checks the index it's given
 against the length the slice carries. The rest, `is_empty`, `first`,
 `last`, `swap`, `iter` and `iter_mut`, are safe code over these.
 
-`split_at` and `split_at_mut` give a `Split` or `SplitMut`, a struct of
+`split_at` and `split_at_mut` gave a `Split` or `SplitMut`, a struct of
 two slices, `head` and `tail`, with public fields, taken apart by a
-pattern: T has no tuples yet.
+pattern: T had no tuples yet. Since step 58 they give a tuple of the two,
+`(head, tail)` (docs/58-tuples.md).
 
 ## Two values at once
 
@@ -148,14 +149,12 @@ borrow of a run of values can be split into unique borrows of its parts.
 half, then `core::mem::swap`.
 
 ```rust
-use core::slice::SplitMut;
-
 fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     let mut out = os.stdout;
     let mut l: alloc::list::List<i64> = alloc::list::List::new();
     l.push(1);
     l.push(2);
-    let SplitMut { head, tail } = l.as_mut_slice().split_at_mut(1).unwrap();
+    let (head, tail) = l.as_mut_slice().split_at_mut(1).unwrap();
     let a = head.get_mut(0).unwrap();
     let b = tail.get_mut(0).unwrap();
     *a = *a + *b;
@@ -181,7 +180,7 @@ pub struct IterMut<'a, T> { rest: &'a mut [T] }
 fn next(&mut self) -> Option<&'a mut T> {
     let rest: &'a mut [T] = mem::replace(&mut self.rest, empty_mut());
     match rest.split_at_mut(1) {
-        Option::Some(SplitMut { head, tail }) => {
+        Option::Some((head, tail)) => {
             self.rest = tail;
             head.get_mut(0)
         }
@@ -362,7 +361,7 @@ checks as the program runs.
 | `Box<[T]>`, `Box<str>` | values whose size is known only as the program runs, owned | — |
 | arrays, `[T; N]` | a length in the type: const generics | — |
 | `for x in s` | `IntoIterator`, which still needs negative reasoning (docs/09.1-list.md) | — |
-| tuples | `Split` and `SplitMut` are structs until there are | — |
+| tuples | `Split` and `SplitMut` are structs until there are | 58 ✅ |
 
 ## Exercises
 

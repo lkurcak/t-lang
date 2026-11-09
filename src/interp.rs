@@ -1509,7 +1509,9 @@ impl<'p> Interp<'p, '_> {
             Value::Struct(ty, fields) if is_tuple(ty) => {
                 fields.iter().find_map(|(_, v)| self.not_discard(v))
             }
-            Value::Struct(ty, _) | Value::Variant(ty, ..) if !self.discard.contains(ty.as_str()) => {
+            Value::Struct(ty, _) | Value::Variant(ty, ..)
+                if !self.discard.contains(ty.as_str()) =>
+            {
                 Some(ty.clone())
             }
             _ => None,

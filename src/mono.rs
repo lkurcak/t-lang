@@ -1288,7 +1288,9 @@ impl Cx<'_, '_, '_> {
                 TypeExprKind::Named(crate::check::BOX.into(), vec![self.written(inner, span)])
             }
             Type::Slice(inner) => TypeExprKind::Slice(Box::new(self.written(inner, span))),
-            Type::Tuple(ts) => TypeExprKind::Tuple(ts.iter().map(|t| self.written(t, span)).collect()),
+            Type::Tuple(ts) => {
+                TypeExprKind::Tuple(ts.iter().map(|t| self.written(t, span)).collect())
+            }
             Type::Array(inner, n) => TypeExprKind::Array(
                 Box::new(self.written(inner, span)),
                 Box::new(self.written(n, span)),

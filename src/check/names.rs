@@ -414,7 +414,10 @@ impl Walk<'_> {
             }
             ExprKind::Lambda(l) => {
                 l.params.iter().flat_map(|p| &p.ty).for_each(|t| self.ty(t));
-                l.params.iter().flat_map(|p| &p.pat).for_each(|p| self.pattern(p));
+                l.params
+                    .iter()
+                    .flat_map(|p| &p.pat)
+                    .for_each(|p| self.pattern(p));
                 l.ret.iter().for_each(|t| self.ty(t));
             }
             _ => {}

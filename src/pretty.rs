@@ -1310,10 +1310,15 @@ impl Printer<'_> {
                                 let name = match (&param.pat, param.mutable) {
                                     // Alternatives in parentheses, so their
                                     // `|` isn't the closure's.
-                                    (Some(pat @ Pattern {
-                                        kind: PatternKind::Or(_),
-                                        ..
-                                    }), _) => text("(") + p.pattern(pat) + ")",
+                                    (
+                                        Some(
+                                            pat @ Pattern {
+                                                kind: PatternKind::Or(_),
+                                                ..
+                                            },
+                                        ),
+                                        _,
+                                    ) => text("(") + p.pattern(pat) + ")",
                                     (Some(pat), _) => p.pattern(pat),
                                     (None, Some(_)) => text(format!("mut {}", param.name.name)),
                                     (None, None) => text(&param.name.name),

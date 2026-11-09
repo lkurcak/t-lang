@@ -2674,7 +2674,7 @@ impl Parser {
                 if let Tok::Int(n, suffix) = *self.peek() {
                     let at = self.bump().span;
                     let digits = n.to_string();
-                    if suffix.is_some() || (at.end - at.start) as usize != digits.len() {
+                    if suffix.is_some() || at.end - at.start != digits.len() {
                         return Err(Error::syntax(
                             at,
                             "a tuple's field is written as plain digits, as in `.0`",
@@ -2790,8 +2790,7 @@ impl Parser {
             },
             Tok::LParen => {
                 let open = self.bump().span;
-                let (mut items, tuple, end) =
-                    self.structs(true, |p| p.parens(open, Self::expr))?;
+                let (mut items, tuple, end) = self.structs(true, |p| p.parens(open, Self::expr))?;
                 let kind = match items.pop() {
                     None => ExprKind::Unit,
                     Some(last) if tuple => {

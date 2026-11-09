@@ -1373,9 +1373,9 @@ impl Expr {
                 .chain(tail.as_deref())
                 .collect(),
             ExprKind::StructLit(_, _, inits) => inits.iter().map(|i| &i.value).collect(),
-            ExprKind::Variant(_, _, _, args, ..) | ExprKind::Array(args) | ExprKind::Tuple(args) => {
-                args.iter().collect()
-            }
+            ExprKind::Variant(_, _, _, args, ..)
+            | ExprKind::Array(args)
+            | ExprKind::Tuple(args) => args.iter().collect(),
             ExprKind::Repeat(v, n) => vec![v, n],
             ExprKind::Match(scrutinee, arms) => std::iter::once(&**scrutinee)
                 .chain(arms.iter().map(|a| &a.body))

@@ -71,13 +71,21 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
 | `u8`, `u16`, `u32`, `u64` | Unsigned integers of the stated width |
 | `isize`, `usize` | Signed and unsigned integers of the machine's width |
 | `bool`, `char`, `()` | Booleans, Unicode scalar values, and the unit value |
+| `(A, B)`, `(A, B, C)`, .. | A tuple: two or more values of these types |
 | `&T`, `&mut T` | Shared and exclusive references |
 | `[T; N]` | An array with a length in its type |
 | `&[T]`, `&mut [T]`, `&str` | Borrowed slices and UTF-8 text |
 | `fn(T) -> U` | A function pointer, with any effects written after `U` |
 
 Structs have named fields; enums have named variants that may carry
-values. Declare type parameters with `<T>`, effect parameters with
+values. A tuple is a struct no one declared, with exported fields `0`,
+`1`, ..: `(a, b)` makes one, `t.0` reads a field, and `(x, y)` matches
+one, in any pattern and as a closure's parameter, `|(i, x)| ..`. Two
+tuple types are equal when their types are, in order. A tuple is
+`Copy`, `Discard`, `Eq`, `Ord` (in order, field by field), `Debug`,
+`Send` or `Sync` when all its values are. `()` is the tuple with none;
+there are no tuples of one, and `(e)` only groups. See
+[tuples](58-tuples.md). Declare type parameters with `<T>`, effect parameters with
 `<effect e>`, and array lengths with `<const N: usize>`. Slices and `str`
 are used behind references. Owned containers such as
 `alloc::boxed::Box<T>`, `alloc::list::List<T>`, and
@@ -104,7 +112,7 @@ machines. A literal of either type must fit on both. See
 
 A `const` item names a value fixed while compiling. Its type is written,
 and is plain data: integers, `bool`, `char`, `()`, `&str`, `&[u8]`, and
-arrays, structs and enums of those, with no `Cell` or `Atomic` in them
+arrays, tuples, structs and enums of those, with no `Cell` or `Atomic` in them
 (they're *frozen*). The initializer may call functions
 and loop, but may only panic: no allocation and no `unsafe`. It runs on a
 32-bit and a 64-bit machine, which must agree, and a panic there is a
@@ -227,8 +235,9 @@ The ticket is consumed before either I/O call can return early through
 
 For ordinary data, `#[derive(Discard)]` allows dropping all fields.
 `#[derive(Copy, Discard)]` also permits copying when the fields support it.
-`#[derive(Eq)]` compares field by field, and `#[derive(Debug)]` writes
-the value for debugging, `Point { x: 1, y: -2 }`. A bare name in
+`#[derive(Eq)]` compares field by field, `#[derive(Ord)]` orders field by
+field (an enum by its variants first) and needs `Eq`, and
+`#[derive(Debug)]` writes the value for debugging, `Point { x: 1, y: -2 }`. A bare name in
 `#[derive(..)]` is always core's trait.
 Derive requirements on generic parameters follow from the fields; exported
 types with hidden fields must state the promised bounds explicitly.
@@ -505,7 +514,7 @@ preserve every affected field refinement. A refined variable, or a field
 that a field refinement constrains, cannot be borrowed mutably.
 
 A predicate can read a struct's field from anything it names, at any
-depth and through references and boxes: `v == p.x`, `s.head.len() ==
+depth and through references and boxes: `v == p.x`, `s.0.len() ==
 mid`. The field must be visible there, and one named in a signature's
 refinement must be visible at least as far as the function (exported for
 an impl's method of a trait); one behind a `&mut` follows the same rules
