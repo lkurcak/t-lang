@@ -410,9 +410,11 @@ Now a write through a box gives the box, and what it's in, new values.
   instantiation.
 - **The interpreter checks.** `t run --interp` checks each carried
   refinement wherever it checks one of the whole value (a parameter, a
-  result, a `let`, a field, an assignment): of every value at its position,
-  which it finds through the fields, variants, references, boxes, arrays,
-  slices and buffers the checker says lead there (`Measures::reach`).
+  result, a `let`, a field, an assignment), and a refined variable's each
+  time it's used, as a call it's lent to can change what's in it: of every
+  value at its position, which it finds through the fields, variants,
+  references, boxes, arrays, slices and buffers the checker says lead
+  there (`Measures::reach`).
 
 The adversarial tests are `tests/t/err_soundness_targ_*.t` and
 `err_soundness_box_write_measure.t`.

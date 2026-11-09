@@ -1207,7 +1207,12 @@ impl Refined {
             return;
         }
         let carried = Refined {
-            parts: self.parts.iter().filter(|p| p.reach.is_some()).cloned().collect(),
+            parts: self
+                .parts
+                .iter()
+                .filter(|p| p.reach.is_some())
+                .cloned()
+                .collect(),
             env: self.env.clone(),
             measured: self.measured.clone(),
         };

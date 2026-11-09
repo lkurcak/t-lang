@@ -4,7 +4,9 @@
 //!
 //! A function generic in `T` can do with a `T` only what its bounds let
 //! it. A marker trait (`Copy`, `Discard`, `Send`, `Sync`) lets it copy one,
-//! drop one, or send one to another thread, never make one; nor can it make
+//! drop one, or send one to another thread, never make one; a consumer
+//! trait (`Ord`, `Eq`, `Debug`: `refine::targs::consumer`) lets it look at
+//! one, and give back no `T` (docs/60-refined-type-arguments.md); nor can it make
 //! one by `match`ing on `T` (there's no such thing), nor by an intrinsic:
 //! each of those generic in a `T` with only markers moves, copies, drops
 //! or stores the values it's given, and the one that reads a value from an

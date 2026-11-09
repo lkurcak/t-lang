@@ -1473,7 +1473,6 @@ impl Walk<'_> {
                                     pname(src.arg)
                                 ),
                             };
-                            let _ = x;
                             return Err(Error::ty(span, msg));
                         }
                     }
