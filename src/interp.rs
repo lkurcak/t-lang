@@ -1201,24 +1201,6 @@ impl Refined {
         }
     }
 
-    /// `check`, of only its carried parts (`RefinedPart::reach`).
-    fn check_carried(&self, i: &Interp, v: &Value, what: &str) {
-        if self.parts.iter().all(|p| p.reach.is_none()) {
-            return;
-        }
-        let carried = Refined {
-            parts: self
-                .parts
-                .iter()
-                .filter(|p| p.reach.is_some())
-                .cloned()
-                .collect(),
-            env: self.env.clone(),
-            measured: self.measured.clone(),
-        };
-        carried.check(i, v, what);
-    }
-
     fn eval(&self, i: &Interp, e: &Expr, binder: &str, v: &Value) -> PredValue {
         let go = |e: &Expr| self.eval(i, e, binder, v);
         match &e.kind {
@@ -1958,10 +1940,11 @@ impl<'p> Interp<'p, '_> {
             unsound("use of a local with no value")
         };
         // What's in a refined variable can change through a call it's lent
-        // to, which no assignment says: what's said of every value at a
-        // position of it is checked again each time it's used.
+        // to, which no assignment says: its refinement, and what's said of
+        // every value at a position of it, is checked again each time it's
+        // used.
         if let Some(r) = self.refined.get(&(p.slot, p.generation)) {
-            r.check_carried(self, self.memory.get(&p), "a refined variable used");
+            r.check(self, self.memory.get(&p), "a refined variable used");
         }
         for proj in &place.proj {
             p = match (proj, self.memory.get(&p)) {

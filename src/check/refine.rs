@@ -54,15 +54,17 @@
 //! is known of it but its refinements, which every assignment, inside a
 //! closure too, must keep (`Walk::unstable_in`). A `&` can't change what it
 //! points to, as nothing in T can be changed through one, so `*r` for a
-//! `let r = &p;` is `p` (`Walk::alias`). A refined variable can't be
-//! borrowed `&mut` at all, nor a field a refinement is about, or a place in
-//! one (through fields and boxes), but straight to a call-scoped parameter
-//! (`call_scoped`), after which the struct's refinements about it are
-//! proved again (`Walk::post`); so the refinements of a struct's fields
-//! hold of every value of it whenever it can be read: every way of making
-//! or changing one checks them, a call lent one of its fields runs while
-//! nothing can read it (and nothing unwinds), and anything else, generic
-//! code included, only moves whole values.
+//! `let r = &p;` is `p` (`Walk::alias`). A refined variable, a field a
+//! refinement is about, and what a refined reference points to can't be
+//! borrowed `&mut` but straight to a call-scoped parameter (`call_scoped`),
+//! after which their refinements, and the struct's about the field, are
+//! proved again, of what the call left, before anything assumes them
+//! (`Walk::post`, `Walk::reproving`); a place in a refined variable
+//! (through fields and boxes) can't be at all. So the refinements of a
+//! place hold of its value whenever it can be read: every way of making or
+//! changing one checks them, a call lent one runs while nothing can read it
+//! (and nothing unwinds), and anything else, generic code included, only
+//! moves whole values.
 //!
 //! Postconditions (`ensures`, a result's refinement) are proved by the
 //! callee at each return, of what's behind its call-scoped `&mut`s then,
@@ -1892,6 +1894,7 @@ impl Checker {
             posts: HashMap::new(),
             scoped_args: HashSet::new(),
             proving_fields: false,
+            reproving: Vec::new(),
             closures: 0,
             loops: Vec::new(),
             size: None,
@@ -2483,6 +2486,11 @@ struct Walk<'c> {
     /// Reading a struct's fields doesn't assume its refinements: they're
     /// being proved.
     proving_fields: bool,
+    /// Places lent straight to a call-scoped `&mut` whose own refinement
+    /// (a refined local's, or what a refined reference points to) is
+    /// proved again after the call (`Walk::post`): until it is, a value
+    /// read there doesn't have it.
+    reproving: Vec<Place>,
     /// How many closures deep this is.
     closures: usize,
     loops: Vec<Loop>,
@@ -2510,6 +2518,8 @@ struct Walk<'c> {
 
 /// A call's postconditions, to learn once what it's lent is forgotten.
 struct Post {
+    /// The callee's name, for messages.
+    name: String,
     sig: Option<RefinedSig>,
     /// The arguments' values at the call, what's behind references
     /// included.
@@ -3512,6 +3522,17 @@ impl Walk<'_> {
         if fresh && !self.proving_fields {
             self.assume_fields(t, &vals);
         }
+        // And what's declared of the struct where it is, as `read_obj` says
+        // of one it reads whole: a field read through a reference a
+        // pattern took out of an enum is of a struct whose refinement only
+        // the reference says (`place_decl`).
+        if fresh && !self.proving_fields && !self.objs.contains_key(q) {
+            let tree = self.place_read(q);
+            if !tree.is_empty() {
+                let (o, _) = self.obj_at(q);
+                self.assume_tree(&Val::Struct(o, vals.clone()), t, &tree);
+            }
+        }
         Some(vals)
     }
 
@@ -3664,6 +3685,9 @@ impl Walk<'_> {
     }
 
     fn assume_invariant(&mut self, id: NodeId, val: &Val) {
+        if self.reproving.contains(&Place::local(id)) {
+            return;
+        }
         if let Some((r, _)) = self.invariants.get(&id).cloned()
             && let Some(f) = self.pred(&r, val, Env::Here)
         {
@@ -3859,6 +3883,19 @@ impl Walk<'_> {
         {
             let decl = self.written_tree(val, &base);
             self.need_carried(r, val, &base, env, Some(&decl), span, &what)?;
+            // Proved of the values at each position where nothing can
+            // write, which never change: so it's known of them from here on,
+            // as an empty list's elements, which have every refinement, do
+            // once the list's declared as having one. Not where something
+            // can (behind a `&mut`): there it would say what may be written.
+            let mut proved = self.carried_tree(r, env);
+            proved.retain(|(pos, _)| {
+                !matches!(
+                    self.type_at(&base, pos),
+                    Some((_, crate::borrowck::regions::Variance::Inv)) | None
+                )
+            });
+            self.assume_tree(val, &base, &proved);
         }
         for part in &r.parts {
             if part.carried {
@@ -4080,7 +4117,7 @@ impl Walk<'_> {
             .iter()
             .map(|o| Formula::and(o.facts.clone()))
             .collect();
-        let mut tree_joins: Vec<(Option<Obj>, Vec<Option<Obj>>)> = Vec::new();
+        let mut tree_joins: Vec<(Obj, Type, Vec<Option<Obj>>)> = Vec::new();
         let branch_vals: Vec<Val> = reached.iter().map(|o| o.val.clone()).collect();
         // A place each branch left a different object at is a new one, of
         // which each measure every branch knows of its object is, in each
@@ -4123,14 +4160,13 @@ impl Walk<'_> {
                 let vals = each.iter().map(|b| Val::Obj(*b)).collect();
                 joined.push((Val::Obj(o), vals));
             }
-            tree_joins.push((Some(o), each.iter().map(|b| Some(*b)).collect()));
+            let t = self.place_ty(p);
+            tree_joins.push((o, t, each.iter().map(|b| Some(*b)).collect()));
             objs.insert(p.clone(), o);
         }
         let result = self.unknown(ty);
-        for (o, each) in tree_joins {
-            if let Some(o) = o {
-                self.join_trees(o, &each, &guards);
-            }
+        for (o, t, each) in tree_joins {
+            self.join_trees(o, &t, &each, &guards);
         }
         self.join_values(&result, ty, &branch_vals, &guards);
         let mut cases = Vec::new();
@@ -4971,7 +5007,12 @@ impl Walk<'_> {
                 .collect(),
             false => Vec::new(),
         };
+        let name = match symbol {
+            Some(s) => s.rsplit("::").next().unwrap_or(s).to_string(),
+            None => "the function".to_string(),
+        };
         let post = Post {
+            name,
             sig,
             old,
             scoped,
@@ -5113,6 +5154,28 @@ impl Walk<'_> {
         for (p, tree) in &post.lent {
             self.lent_trees.insert(p.clone(), tree.clone());
         }
+        // Each place lent whose own refinement is proved again below: a
+        // refined local's, or what's declared of it where it is (what a
+        // refined `&mut` points to). Until then, reading it, as for what
+        // the call ensures, doesn't assume it.
+        let mut reprove: Vec<(Place, Option<Refinement>, Vec<targs::Disj>)> = Vec::new();
+        for p in post.scoped.iter().flatten() {
+            let local = (p.path.is_empty())
+                .then(|| self.invariants.get(&p.root).map(|(r, _)| r.clone()))
+                .flatten();
+            // Without the field refinements of a struct it's in, which
+            // would read the struct's fields, assuming them before
+            // `prove_fields` proves them: what's declared of the place
+            // itself comes through a `*` only.
+            let own: Vec<targs::Disj> = (self.place_decl_own(p).into_iter())
+                .filter(|(pos, d)| pos.is_empty() && !d.is_any())
+                .map(|(_, d)| d)
+                .collect();
+            if local.is_some() || !own.is_empty() {
+                self.reproving.push(p.clone());
+                reprove.push((p.clone(), local, own));
+            }
+        }
         if let Some(sig) = &post.sig {
             // What's behind a call-scoped `&mut` is what the call left
             // there: at the place lent, or, if that isn't known, a value
@@ -5161,6 +5224,27 @@ impl Walk<'_> {
                 self.prove_fields(&q, i, e.span)?;
             }
         }
+        for (p, local, own) in reprove {
+            let t = self.place_ty(&p);
+            let v = self.read_place(&p);
+            let name = self.place_name(&p).unwrap_or_default();
+            let name = match name.strip_prefix('(').and_then(|n| n.strip_suffix(')')) {
+                Some(inner) => inner.to_string(),
+                None => name,
+            };
+            let what = format!("`{name}` after the call to `{}`", post.name);
+            if let Some(r) = &local {
+                self.need(r, &v, Env::Here, e.span, what.clone())?;
+            }
+            let tree: targs::Tree = own.into_iter().map(|d| (Vec::new(), d)).collect();
+            self.need_tree(&v, &t, &tree, None, e.span, &what)?;
+            self.reproving.retain(|q| *q != p);
+            // Proved: so it's known of what's there now.
+            if p.path.is_empty() {
+                self.assume_invariant(p.root, &v);
+            }
+            self.assume_tree(&v, &t, &tree);
+        }
         Ok(())
     }
 
@@ -5173,6 +5257,7 @@ impl Walk<'_> {
         if let (ExprKind::Var(name, _), Some(Res::Local(id))) =
             (&x.kind, self.cx.typed.vars.get(&x.id))
             && self.invariants.contains_key(id)
+            && !scoped
         {
             return Err(Error::ty(
                 span,

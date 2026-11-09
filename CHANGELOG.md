@@ -1,5 +1,57 @@
 # Changelog
 
+## Unreleased
+
+Step 61: proofs that don't blow up, and what step 60 missed, from the
+t-maze game. See [docs/61-proof-search.md](docs/61-proof-search.md).
+
+### Fixed
+
+- Checking took time exponential in the number of disjunctions known,
+  even ones a proof didn't need: a struct with fields refined by a product
+  and a loop that could `break` took 5, 21 and 94 seconds for one, two and
+  three such fields. The solver now says each fact once, folds atoms
+  without variables (`0 == 0`) into `true` or `false`, and skips the cases
+  of a split that a refutation found without it (backjumping): a quarter
+  of a second, whatever the number.
+- A list of an enum of refined pairs needed more than the solver's 512
+  cases, or two minutes: now a fraction of a second.
+- What's carried of a value's type arguments (step 60) grew with each read
+  and call, to hundreds of thousands of nodes in a loop of `f"..."`
+  writes: it's flattened, and each thing said once.
+- A product of two unknowns known in scope (`n == width * height`) made
+  unrelated proofs fail with "the proof exceeded the solver's checked
+  integer arithmetic range": a constraint whose numbers don't fit is left
+  out of the proof now, not the end of it.
+- A reference a pattern takes out of an enum (`Some(f)` of an
+  `Option<&{ f: Found | f.squares == n }>`) forgot the refinement of what
+  it points to when a field was read through it.
+- `None`, and an empty list, have no values: joined with a refined one,
+  the result has its refinements (`if b { Some(l) } else { None }`), and a
+  `let` declaring a refinement of an empty list's elements knows it of them
+  after.
+- `t fmt --check | head`, and every command of `t` that writes to standard
+  output, no longer panics when what reads it stops.
+
+### Added
+
+- What a refined `&mut` points to (`l: &mut { l: List<u8> | l.len() == n
+  }`) can be lent straight to a call-scoped `&mut` (`l.set(i, x)`,
+  `l[i] = x`, `l.swap(i, j)`): the refinement is proved again after, from
+  what the call ensures, as a field's has been since 0.43.0.
+- A refined `let` can be lent straight to a call-scoped `&mut` too, proved
+  again after the call; other `&mut` borrows of one are still rejected.
+- `Iterator::skip(n)`.
+- `core::num::saturating_add` and `saturating_sub`.
+- `t_lang::check::work`: how much proving has been done on a thread,
+  counted; `tests/proof_work.rs` bounds it for the programs that once blew
+  up.
+
+### Changed
+
+- `t run --interp` checks a refined variable's whole refinement each time
+  it's used, not only what's carried in it.
+
 ## 0.76.0 (2026-11-09)
 
 Step 60: refinements in any type argument. See

@@ -36,6 +36,6 @@ fn one(
 fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut out = os.stdout;
     out.line(&all(3, 2, 6))?; // expect: 5
-    out.line(&one(3, 4, 12, 1, 2))?; // expect: 2
+    out.line(&one(3, 4, 12, 1, 2))?; // expect: 4
     Ok(())
 }

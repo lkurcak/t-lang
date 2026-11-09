@@ -7,7 +7,7 @@ use alloc::list::List;
 fn mark(n: usize, l: &mut { l: List<u8> | l.len() == n }, v: { v: usize | v < n }) {
     l.set(v, 1);
     let _ = l.replace(v, 2);
-    l[v] = l[v] + 1;
+    l[v] = core::num::wrapping_add(l[v], 1);
     if n >= 2 {
         l.swap(0, 1);
     }
@@ -19,6 +19,17 @@ fn marked(n: usize, v: { v: usize | v < n }) -> { l: List<u8> | l.len() == n } w
     mark(n, &mut l, v);
     l[v] = 9;
     l
+}
+
+// A `&mut` to a list whose type says nothing of its length can be given
+// where one is needed, and pushed to after: what the call needed of it
+// isn't what's declared of it.
+fn mark_then_push(l: &mut List<u8>) with alloc {
+    let n = l.len();
+    if n > 0 {
+        mark(n, l, 0);
+    }
+    l.push(7);
 }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
@@ -37,5 +48,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     }
     // expect: 5
     // expect: 3
+    mark_then_push(&mut k);
+    out.line(&k.len())?; // expect: 3
     Ok(())
 }

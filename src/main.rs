@@ -85,16 +85,28 @@ fn split_args(args: Vec<std::ffi::OsString>) -> (Vec<String>, Vec<std::ffi::OsSt
     (own, program)
 }
 
+/// Writes `s` to standard output. If what reads it has stopped, as `head`
+/// does once it has its lines, the rest isn't written, quietly: `print!`
+/// would panic.
+fn print_out(s: &str) {
+    use std::io::Write;
+    if let Err(e) = std::io::stdout().lock().write_all(s.as_bytes())
+        && e.kind() != std::io::ErrorKind::BrokenPipe
+    {
+        eprintln!("error: cannot write to standard output: {e}");
+    }
+}
+
 fn main() -> ExitCode {
     let (args, program_args) = split_args(std::env::args_os().skip(1).collect());
     if let [flag] = args.as_slice() {
         match flag.as_str() {
             "--help" | "-h" => {
-                println!("{HELP}");
+                print_out(&format!("{HELP}\n"));
                 return ExitCode::SUCCESS;
             }
             "--version" | "-V" => {
-                println!("t {}", env!("CARGO_PKG_VERSION"));
+                print_out(&format!("t {}\n", env!("CARGO_PKG_VERSION")));
                 return ExitCode::SUCCESS;
             }
             _ => {}
@@ -193,7 +205,7 @@ fn main() -> ExitCode {
                 // The program with every generic function and type replaced
                 // by its copies, as the interpreter runs it.
                 if cmd == "mono" {
-                    print!("{}", program.lower());
+                    print_out(&program.lower().to_string());
                 }
                 ExitCode::SUCCESS
             }
@@ -361,7 +373,7 @@ fn build(args: &[String]) -> ExitCode {
         }
     };
     if emit {
-        print!("{c}");
+        print_out(&c);
         return ExitCode::SUCCESS;
     }
     // Named after the file, or its directory for a `main.t`, here; an
@@ -430,15 +442,19 @@ fn test(path: &str, filter: Option<&str>, deny: bool, interp: bool) -> ExitCode 
     };
     for t in tests {
         let how = if t.failure.is_some() { "FAILED" } else { "ok" };
-        println!("test {} ... {how}", t.name);
+        print_out(&format!("test {} ... {how}\n", t.name));
     }
     let failed: Vec<_> = tests.iter().filter(|t| t.failure.is_some()).collect();
     for t in &failed {
         let e = t.failure.as_ref().expect("a failure");
-        println!("\n--- {}\n{}", t.name, e.render_in(&run.sources));
+        print_out(&format!(
+            "\n--- {}\n{}\n",
+            t.name,
+            e.render_in(&run.sources)
+        ));
     }
     let passed = tests.len() - failed.len();
-    println!("\n{passed} passed; {} failed", failed.len());
+    print_out(&format!("\n{passed} passed; {} failed\n", failed.len()));
     if deny && !run.warnings.is_empty() {
         eprintln!("{}", denied(run.warnings.len()));
         return ExitCode::FAILURE;
@@ -479,7 +495,7 @@ fn fmt(args: &[String]) -> ExitCode {
             continue;
         }
         if check {
-            print!("{}", t_lang::fmt::diff(path, &src, &formatted));
+            print_out(&t_lang::fmt::diff(path, &src, &formatted));
             ok = false;
         } else if let Err(e) = std::fs::write(path, &formatted) {
             eprintln!("error: cannot write `{path}`: {e}");

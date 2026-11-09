@@ -37,9 +37,19 @@
 //! which no integer solution notices, so a contradiction it finds is a
 //! real one. Some contradictions only integers have, it misses.
 //!
+//! Each case's atoms remember which splits they come from, and so does
+//! each constraint Fourier–Motzkin derives from them: a case refuted
+//! without the alternative its last split took refutes the split's other
+//! cases too, which are skipped (*backjumping*, `refuted`). And a fact said
+//! twice is split once, and an atom with no variables is `true` or `false`
+//! where it's made. So a disjunction a proof doesn't need costs one case,
+//! not a doubling (docs/61-proof-search.md).
+//!
 //! Every step is bounded: cases, constraints and the size of numbers (with
-//! checked `i128` arithmetic). Going past a bound gives up, which is a
-//! "maybe", so the answer never depends on anything but the question.
+//! checked `i128` arithmetic). A constraint whose numbers don't fit is left
+//! out, which only weakens what's known; going past another bound gives up,
+//! which is a "maybe". Either way the answer never depends on anything but
+//! the question.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -299,10 +309,30 @@ impl Formula {
         }
     }
 
+    /// What it is, if it's an atom with no variables: `0 == 0` is true.
+    fn constant(&self) -> Option<bool> {
+        match self {
+            Formula::Le(l) => Some(l.as_constant()? <= 0),
+            Formula::Eq(l) => Some(l.as_constant()? == 0),
+            _ => None,
+        }
+    }
+
+    /// `true` or `false` for an atom with no variables, as `and` and `or`
+    /// take them: a case that can't be taken is `false`, which the proof
+    /// then needs no other fact to see (`relevant`).
+    fn folded(self) -> Formula {
+        match self.constant() {
+            Some(true) => Formula::True,
+            Some(false) => Formula::False,
+            None => self,
+        }
+    }
+
     pub(crate) fn and(fs: impl IntoIterator<Item = Formula>) -> Formula {
         let mut out = Vec::new();
         for f in fs {
-            match f {
+            match f.folded() {
                 Formula::True => {}
                 Formula::False => return Formula::False,
                 Formula::And(gs) => out.extend(gs),
@@ -319,7 +349,7 @@ impl Formula {
     pub(crate) fn or(fs: impl IntoIterator<Item = Formula>) -> Formula {
         let mut out = Vec::new();
         for f in fs {
-            match f {
+            match f.folded() {
                 Formula::False => {}
                 Formula::True => return Formula::True,
                 Formula::Or(gs) => out.extend(gs),
@@ -1223,9 +1253,21 @@ mod tests {
 
     /// Runs `valid`, and says how many cases it looked at.
     fn cases_of(facts: &[Formula], goal: &Formula, kinds: &[Kind]) -> (Result<(), Failure>, u64) {
-        let before = work().cases;
+        let (r, w) = work_of(facts, goal, kinds);
+        (r, w.cases)
+    }
+
+    /// Runs `valid`, and says how much it did.
+    fn work_of(facts: &[Formula], goal: &Formula, kinds: &[Kind]) -> (Result<(), Failure>, Work) {
+        let before = work();
         let r = valid(facts, goal, kinds);
-        (r, work().cases - before)
+        let after = work();
+        let w = Work {
+            refutations: after.refutations - before.refutations,
+            cases: after.cases - before.cases,
+            carried: 0,
+        };
+        (r, w)
     }
 
     #[test]
@@ -1256,6 +1298,19 @@ mod tests {
     }
 
     #[test]
+    fn a_case_that_cant_be_taken_needs_no_other_fact() {
+        // y == 3 && 0 == 1 can't hold, whatever y is: so anything follows,
+        // x == 5 too, though x isn't in it (`relevant` keeps a fact with no
+        // variables, which it is once `and` has folded `0 == 1`).
+        let f = Formula::and([
+            Formula::eq(&y(), &c(3)).unwrap(),
+            Formula::Eq(c(1)),
+        ]);
+        let g = Formula::eq(&x(), &c(5)).unwrap();
+        assert_eq!(valid(&[f], &g, &ints()), Ok(()));
+    }
+
+    #[test]
     fn disjunctions_a_proof_doesnt_use_cost_a_case_each() {
         // x == 5, and 40 disjunctions about x and other numbers that have
         // nothing to do with why x == 5 (x <= y_i || x >= y_i + 3): proving
@@ -1276,9 +1331,37 @@ mod tests {
             .collect();
         facts.insert(n / 2, Formula::eq(&x(), &c(5)).unwrap());
         let g = Formula::eq(&x(), &c(5)).unwrap();
-        let (r, cases) = cases_of(&facts, &g, &kinds);
+        let (r, w) = work_of(&facts, &g, &kinds);
         assert_eq!(r, Ok(()));
-        assert!(cases <= 4, "{cases} cases");
+        // Each split is refuted by its first case: two runs of
+        // Fourier–Motzkin a split, not two to the number of splits.
+        assert!(w.cases <= 4 && w.refutations <= 4 * n as u64, "{w:?}");
+    }
+
+    #[test]
+    fn a_split_inside_an_alternative_depends_on_it() {
+        // x == 0, and (z == 1 && (x == 1 || x == 2)) || y == 5: the first
+        // alternative can't hold, but the second can, so y != 5 doesn't
+        // follow. Refuting the first's cases uses x == 1 and x == 2, which
+        // are there only because the first was taken: so the split on it
+        // isn't skipped past.
+        let z = || Lin::var(2);
+        let f = Formula::or([
+            Formula::and([
+                Formula::eq(&z(), &c(1)).unwrap(),
+                Formula::or([
+                    Formula::eq(&x(), &c(1)).unwrap(),
+                    Formula::eq(&x(), &c(2)).unwrap(),
+                ]),
+            ]),
+            Formula::eq(&y(), &c(5)).unwrap(),
+        ]);
+        let facts = [Formula::eq(&x(), &c(0)).unwrap(), f];
+        let g = Formula::eq(&y(), &c(5)).unwrap().not();
+        assert_eq!(valid(&facts, &g, &ints()), Err(Failure::Unproved));
+        // And y == 5 does.
+        let g = Formula::eq(&y(), &c(5)).unwrap();
+        assert_eq!(valid(&facts, &g, &ints()), Ok(()));
     }
 
     #[test]

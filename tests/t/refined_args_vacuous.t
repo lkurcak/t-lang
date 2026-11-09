@@ -26,9 +26,26 @@ fn way(n: usize, b: bool) -> List<{ v: usize | v < n }> with alloc {
     }
 }
 
+fn below(n: usize) -> List<{ v: usize | v < n }> with alloc {
+    let mut l: List<{ v: usize | v < n }> = List::new();
+    if n > 0 {
+        l.push(n - 1);
+    }
+    l
+}
+
+// A place that's `None`, or `Some` of what has them.
+fn kept(n: usize, b: bool) -> Option<List<{ v: usize | v < n }>> with alloc {
+    let mut found = None;
+    if b {
+        found = Some(below(n));
+    }
+    found
+}
+
 fn need(w: usize, x: { x: usize | x + 1 < w }) -> usize { x }
 
-fn none_pushed(w: usize) -> usize with alloc {
+fn none_pushed(w: usize) -> usize {
     let l: List<{ x: usize | x + 1 < w }> = List::new();
     let mut s = 0;
     for x in l.iter() {
@@ -45,5 +62,10 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     }
     out.line(&way(3, false).len())?; // expect: 0
     out.line(&none_pushed(4))?; // expect: 0
+    if let Some(l) = kept(3, true) {
+        for v in l.iter() {
+            out.line(&a[*v])?; // expect: 7
+        }
+    }
     Ok(())
 }
