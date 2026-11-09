@@ -4,7 +4,9 @@
 //!
 //! A function generic in `T` can do with a `T` only what its bounds let
 //! it. A marker trait (`Copy`, `Discard`, `Send`, `Sync`) lets it copy one,
-//! drop one, or send one to another thread, never make one; nor can it make
+//! drop one, or send one to another thread, never make one; a consumer
+//! trait (`Ord`, `Eq`, `Debug`: `refine::targs::consumer`) lets it look at
+//! one, and give back no `T` (docs/60-refined-type-arguments.md); nor can it make
 //! one by `match`ing on `T` (there's no such thing), nor by an intrinsic:
 //! each of those generic in a `T` with only markers moves, copies, drops
 //! or stores the values it's given, and the one that reads a value from an
@@ -40,13 +42,22 @@ const DEPTH: usize = 16;
 /// `Output` is `T`, is in its methods' equalities, but is no bound. A value
 /// of such a type is made only by a method of the impl, which can make a
 /// `T` no more than this one can.
-pub(crate) fn free_params(adts: &Adts, s: &Scheme, own: Option<(&Type, &str)>) -> Vec<Free> {
+///
+/// A bound by a trait `consumer` says takes values and gives none back (see
+/// `refine::targs::consumer`), as `Ord` or `Debug`, makes none either: so it
+/// counts as a marker here (docs/60-refined-type-arguments.md).
+pub(crate) fn free_params(
+    adts: &Adts,
+    s: &Scheme,
+    own: Option<(&Type, &str)>,
+    consumer: &dyn Fn(&str) -> bool,
+) -> Vec<Free> {
     let Type::Fn(sig) = &s.ty else {
         return Vec::new();
     };
     let mut out = Vec::new();
     for name in s.params.as_slice() {
-        if !is_free(s, name, own) {
+        if !is_free_with(s, name, own, consumer) {
             continue;
         }
         let mut params = Vec::new();
@@ -82,6 +93,17 @@ pub(crate) fn free_params(adts: &Adts, s: &Scheme, own: Option<(&Type, &str)>) -
 /// docs/55-free-theorems.md), and only to places it got as of that type
 /// (lemma L1 of docs/59-lends.md).
 pub(crate) fn is_free(s: &Scheme, name: &str, own: Option<(&Type, &str)>) -> bool {
+    is_free_with(s, name, own, &|_| false)
+}
+
+/// `is_free`, but a bound by a trait `consumer` says is one counts as a
+/// marker (see `free_params`).
+pub(crate) fn is_free_with(
+    s: &Scheme,
+    name: &str,
+    own: Option<(&Type, &str)>,
+    consumer: &dyn Fn(&str) -> bool,
+) -> bool {
     let Type::Fn(sig) = &s.ty else {
         return false;
     };
@@ -90,7 +112,7 @@ pub(crate) fn is_free(s: &Scheme, name: &str, own: Option<(&Type, &str)>) -> boo
     }
     let this = s.params.ty(name);
     let bounded = s.preds.iter().all(|p| match p.ty == this {
-        true => MARKERS.contains(&p.trait_name.as_str()),
+        true => MARKERS.contains(&p.trait_name.as_str()) || consumer(&p.trait_name),
         false => !mentions(&p.ty, name),
     });
     let is_own = |a: &Type| match (a, own) {

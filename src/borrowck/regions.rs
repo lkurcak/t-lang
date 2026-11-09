@@ -45,7 +45,7 @@ pub(crate) enum Variance {
 impl Variance {
     /// The variance of something used with variance `inner`, in a place
     /// with variance `self`.
-    fn then(self, inner: Variance) -> Variance {
+    pub(crate) fn then(self, inner: Variance) -> Variance {
         match (self, inner) {
             (Variance::Bi, _) | (_, Variance::Bi) => Variance::Bi,
             (Variance::Co, v) => v,
@@ -86,6 +86,12 @@ pub(crate) struct AdtInfo {
 }
 
 impl AdtInfo {
+    /// How struct or enum `symbol` varies with each of its lifetime
+    /// parameters, then each of its type parameters.
+    pub(crate) fn variances(&self, symbol: &str) -> Option<&[Variance]> {
+        self.variances.get(symbol).map(Vec::as_slice)
+    }
+
     pub(crate) fn new(adts: &Adts) -> AdtInfo {
         let mut names: Vec<&String> = adts.keys().collect();
         names.sort();

@@ -34,6 +34,8 @@ pub(super) struct FnId(pub(super) usize);
 pub(super) struct FnDef {
     /// Its name, as written.
     pub(super) name: Ident,
+    /// Its parameters' names, for messages.
+    pub(super) params: Vec<String>,
     pub(super) symbol: String,
     pub(super) scheme: Scheme,
     /// The function it's nested in, if it is.

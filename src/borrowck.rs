@@ -32,7 +32,7 @@ mod drops;
 mod loans;
 
 mod moves;
-mod regions;
+pub(crate) mod regions;
 
 use crate::ast::*;
 use crate::check::{Checker, is_result_lifetime, result_span};

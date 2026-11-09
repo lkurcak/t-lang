@@ -61,16 +61,8 @@ type.
 Only an enum's, and only a parameter its variants have as whole fields. A
 `Box<T>`'s `T` is behind a pointer, a struct's fields may be private, and a
 `List<T>`'s are in memory the logic doesn't see: there'd be no way to check
-it of every way such a value is made. Nor a `T` inside a field:
-
-```rust,error
-use alloc::boxed::Box;
-
-enum Tree<T> { Leaf, Node(Box<Tree<T>>, Box<T>) }
-
-fn f(t: Tree<{ v: u8 | v < 3 }>) {}
-// error: `T` is in a field of variant `Node` of `Tree` other than as its whole type
-```
+it of every way such a value is made. (Step 60 does it another way, by
+parametricity: docs/60-refined-type-arguments.md.)
 
 What's said of the payload holds only if the value is that variant. So a
 refinement that can't hold, as `v < n` with `n` 0, says nothing of a
@@ -285,7 +277,7 @@ nothing's known.
   whose `+` would, nor a `T: Default`. (Step 55 does it for those, by
   their free theorems: docs/55-free-theorems.md.)
 - Not of a struct's, a `Box`'s, a reference's or a `List`'s type
-  arguments.
+  arguments. (Step 60 does those: docs/60-refined-type-arguments.md.)
 - `for x in a..b` knows `x < b`, but not `a <= x`: that's a fact of every
   iteration, which only a loop invariant would say. (Step 54's can't name
   `x`, which is bound after the head; a `while` with its own counter can

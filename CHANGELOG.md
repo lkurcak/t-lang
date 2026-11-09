@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.76.0 (2026-11-09)
+
+Step 60: refinements in any type argument. See
+[docs/60-refined-type-arguments.md](docs/60-refined-type-arguments.md).
+
+### Added
+
+- A refinement can be any type argument, at any depth: a struct's
+  (`List<{ t: usize | t < n }>`), a tuple's element (`(u64, { v: usize | v
+  < n })`), what a reference or a box points to, a slice's or an array's
+  elements. Each call of a generic function works out what its type
+  parameters are from its arguments, by parametricity: what `push` takes
+  must have the refinement, and what `index`, `pop`, `get`, `first` and the
+  iterator give has it.
+- A type parameter bounded only by markers and *consumer* traits (whose
+  methods take `Self` only as `self`, `&self` or `&Self` and give none
+  back: `Eq`, `Ord`, `Debug`, `Display`, a program's own) can be a refined
+  type; so can one bounded by a trait whose impl for the type is generic
+  in all its type arguments (`Iter<'_, T>: Iterator`). Free theorems
+  (step 55) count consumer bounds as markers.
+- A field's type argument's refinement can name the fields before it and
+  the field itself (`nodes: List<Node<{ t: usize | t < nodes.len() }>>`),
+  proved again whenever they change.
+- A closure literal given to a generic function counts on what the call's
+  other arguments say of its parameters, when its type is in no other
+  parameter nor the result (`fold`, not `map`).
+- A call of a trait's method inside generic code is known to be of the
+  impl `select` finds when its `Self` type has type parameters only inside
+  it (`Iter<'_, (usize, E)>`): a `for` loop in an `impl<E>` gets what the
+  list holds.
+- `Box::new(x)` is known to hold `x`.
+- `t run --interp` checks each refinement of a type argument of every
+  value at its position (`Measures::reach`).
+
+### Changed
+
+- `Ord`'s `max` and `min` are functions, `core::cmp::max` and
+  `core::cmp::min`: `a.max(b)` is `max(a, b)`.
+- A `&mut` to a place whose type has refinements of type arguments must be
+  given where the type says exactly them (`&mut` and `Cell` are invariant):
+  not to a `fn(&mut List<usize>)`, nor a call through a function value or
+  a closure.
+- A refinement that couldn't be a type argument before is no longer an
+  error: `err_enum_arg_*` tests became `refined_args_structs.t`.
+
+### Fixed
+
+- A write through a box didn't give the box, and the struct it's in, a new
+  value, so what a measure of that struct had been was kept after (every
+  release before this one).
+
 ## 0.75.0 (2026-11-09)
 
 Step 59: lends past the call. See [docs/59-lends.md](docs/59-lends.md).

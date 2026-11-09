@@ -1,6 +1,8 @@
 // `Ord` comes from `core`, through the prelude; `Ordering` needs a `use`.
 // `i64` and `bool` implement it, `false` before `true`.
 
+use core::cmp::{max, min};
+
 use core::cmp::Ordering;
 
 fn show(o: Ordering) -> i64 {
@@ -24,7 +26,7 @@ impl Ord for Version {
 }
 
 fn largest<T: Ord + Discard>(a: T, b: T, c: T) -> T {
-    a.max(b).max(c)
+    max(max(a, b), c)
 }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> {
@@ -36,7 +38,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&3i64.le(&3))?;            // expect: true
     out.line(&3i64.gt(&4))?;            // expect: false
     out.line(&4i64.ge(&3))?;            // expect: true
-    out.line(&5i64.min(2))?;                 // expect: 2
+    out.line(&min(5i64, 2))?;                // expect: 2
     out.line(&largest(3i64, 9, 4))?;         // expect: 9
     let v = largest(
         Version { major: 1, minor: 2 },
