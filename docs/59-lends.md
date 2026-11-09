@@ -369,6 +369,13 @@ refinements proved, and then assumed.
   of the value (lemma E1 of docs/53), and the arms say a term of it for
   each: a measure as any other. The interpreter evaluates it at every
   refinement it checks.
+- **Belt and braces.** Two of the checks can't be told apart by a test
+  today, as others catch what they would: that a named measure is free
+  (a measure's body reads only fields and measures, so the one bound it
+  could use is `Int`, which no type with a free parameter in it has), and
+  that the result isn't an `impl` type (one carries every lifetime of the
+  signature, so `writes` rejects it already). They're kept, so the rule
+  stays what the lemmas need if measures or `impl` types change.
 - **The hole.** A struct's refinements are facts about every value of it
   that can be read; a lent field's value isn't one until they're proved
   again, so nothing about it may be assumed from them before. Reading it
