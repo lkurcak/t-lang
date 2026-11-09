@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.77.0 (2026-11-09)
 
 Step 61: proofs that don't blow up, and what step 60 missed, from the
 t-maze game. See [docs/61-proof-search.md](docs/61-proof-search.md).

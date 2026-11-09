@@ -1302,10 +1302,7 @@ mod tests {
         // y == 3 && 0 == 1 can't hold, whatever y is: so anything follows,
         // x == 5 too, though x isn't in it (`relevant` keeps a fact with no
         // variables, which it is once `and` has folded `0 == 1`).
-        let f = Formula::and([
-            Formula::eq(&y(), &c(3)).unwrap(),
-            Formula::Eq(c(1)),
-        ]);
+        let f = Formula::and([Formula::eq(&y(), &c(3)).unwrap(), Formula::Eq(c(1))]);
         let g = Formula::eq(&x(), &c(5)).unwrap();
         assert_eq!(valid(&[f], &g, &ints()), Ok(()));
     }
