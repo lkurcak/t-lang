@@ -4,7 +4,7 @@
 // generic code with them can't make one. `max` and `min` are functions of
 // `core::cmp` now, not `Ord`'s methods an impl could make a value in.
 use alloc::list::List;
-use core::num::wrapping_add;
+use core::num::{wrapping_add, wrapping_mul};
 use core::cmp::{max, min};
 
 fn split(n: { n: u8 | n >= 2 }) -> (u8, { v: u8 | v < n }) { (1, n - 1) }
@@ -17,6 +17,7 @@ fn larger(a: (u64, { v: usize | v < 4 }), b: (u64, { v: usize | v < 4 })) -> { v
 fn smaller(a: { v: usize | v < 4 }, b: { v: usize | v < 4 }) -> { v: usize | v < 4 } { min(a, b) }
 
 // Least last, so `pop` gives the least.
+#[derive(Discard where T: Discard)]
 struct Sorted<T> { items: List<T> }
 
 impl<T: Ord + Discard> Sorted<T> {

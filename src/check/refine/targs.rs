@@ -969,6 +969,40 @@ pub(super) fn widen(tree: &Tree) -> Tree {
         .collect()
 }
 
+/// Is the impl of trait `tr` for `t` (as `select` finds it) generic in
+/// every type argument of `t`, each a type parameter of its own, which only
+/// markers and consumers bound? Then its methods can't make or change a
+/// value at a position of `t` but as code generic in them can (lemma A2):
+/// so `T: Iterator`, of a `T` that's an `Iter<'_, U>`, keeps what's said of
+/// its `U`s, and what `<T as Iterator>::Item` is says what it gives
+/// (`Walk::subst_tree`).
+fn parametric_impl(traits: &crate::traits::Traits, t: &Type, tr: &str) -> bool {
+    let Some((i, _)) = traits.select(t, Some(tr), &[]) else {
+        return false;
+    };
+    let def = &traits.impls[i];
+    let Type::Adt(_, _, args) = &def.self_ty else {
+        return false;
+    };
+    let mut seen: Vec<&str> = Vec::new();
+    for a in args {
+        let Type::Param(p, _) = a else {
+            return false;
+        };
+        if seen.contains(&p.as_str()) {
+            return false;
+        }
+        seen.push(p);
+    }
+    def.preds.iter().all(|p| {
+        !matches!(&p.ty, Type::Param(q, _) if seen.contains(&q.as_str()))
+            || consumer(traits, &p.trait_name, &mut Vec::new())
+    }) && def.eqs.iter().all(|(a, b)| {
+        let mentions = |t: &Type| seen.iter().any(|q| free::mentions(t, q));
+        matches!(a, Type::Proj(base, ..) if !matches!(**base, Type::Param(..))) || !mentions(a) && !mentions(b)
+    })
+}
+
 /// Where a type parameter's values come from that a call can't follow: a
 /// bound on it that makes values (`consumer`), or another that might,
 /// or a closure's result. `None` if there's none (lemma A2).
@@ -976,11 +1010,14 @@ pub(super) fn makes(
     traits: &crate::traits::Traits,
     s: &crate::types::Scheme,
     x: &str,
+    ty: Option<&Type>,
 ) -> Option<String> {
     let this = s.params.ty(x);
     for p in &s.preds {
         if p.ty == this {
-            if !consumer(traits, &p.trait_name, &mut Vec::new()) {
+            if !consumer(traits, &p.trait_name, &mut Vec::new())
+                && !ty.is_some_and(|t| parametric_impl(traits, t, &p.trait_name))
+            {
                 let name = traits.shorten(&p.trait_name);
                 return Some(format!("`{x}: {name}`"));
             }
@@ -1092,7 +1129,7 @@ impl Walk<'_> {
         all.extend(self.positions(&ty));
         let mut inst = Inst {
             at: all.iter().map(|p| (p.clone(), Vec::new())).collect(),
-            any: makes(&self.cx.traits, s, x),
+            any: makes(&self.cx.traits, s, x, Some(&ty)),
         };
         let push = |inst: &mut Inst, pos: &[usize], c: (Source, Vec<Formula>, Cand)| {
             if let Some((_, cases)) = inst.at.iter_mut().find(|(p, _)| p == pos) {
@@ -1661,5 +1698,197 @@ impl Walk<'_> {
             self.keep_inv(v, &ft, &declared, &skip, at, &what)?;
         }
         Ok(())
+    }
+}
+
+impl Walk<'_> {
+    /// The positions of each projection in `t`, a type as declared, with
+    /// the projection.
+    fn projections(&mut self, t: &Type) -> Vec<(Pos, Type)> {
+        fn go(w: &mut Walk, t: &Type, at: &mut Pos, out: &mut Vec<(Pos, Type)>) {
+            if let Type::Proj(..) = t {
+                out.push((at.clone(), t.clone()));
+                return;
+            }
+            if at.len() >= DEPTH {
+                return;
+            }
+            for k in 0..Walk::arity(t) {
+                let Some((c, _)) = w.child_declared(t, k) else {
+                    continue;
+                };
+                at.push(k);
+                go(w, &c, at, out);
+                at.pop();
+            }
+        }
+        let mut out = Vec::new();
+        go(self, t, &mut Vec::new(), &mut out);
+        out
+    }
+
+    /// What `insts`, each type parameter's instantiation, say of a value of
+    /// type `a` (as declared in a scheme, whose type arguments are
+    /// `subst`): at each position a parameter is at, what it is; and
+    /// through a projection on one, `<X as Tr>::A`, what the impl `select`
+    /// finds for what `X` is there says `A` is, of what's at the positions
+    /// of the impl's type parameters in `X` (lemma A7).
+    pub(super) fn subst_tree(
+        &mut self,
+        a: &Type,
+        insts: &[(String, Inst)],
+        subst: &crate::types::Subst,
+        depth: usize,
+    ) -> Tree {
+        let mut out = Vec::new();
+        if depth > DEPTH {
+            return out;
+        }
+        for (x, inst) in insts {
+            if inst.any.is_some() {
+                continue;
+            }
+            let (occ, _) = self.occurrences(a, x);
+            for (rho, _) in occ {
+                for (pos, d) in inst.tree() {
+                    let mut p = rho.clone();
+                    p.extend(pos);
+                    out.push((p, d));
+                }
+            }
+        }
+        for (rho, proj) in self.projections(a) {
+            let Type::Proj(base, tr, name) = &proj else {
+                continue;
+            };
+            let Type::Param(x, _) = &**base else {
+                continue;
+            };
+            let Some((_, inst)) = insts.iter().find(|(y, _)| y == x) else {
+                continue;
+            };
+            if inst.any.is_some() {
+                continue;
+            }
+            let base_ty = self.cx.solved(&subst.apply(base));
+            let Some((i, impl_args)) = self.cx.traits.select(&base_ty, Some(tr), &[]) else {
+                continue;
+            };
+            let def = self.cx.traits.impls[i].clone();
+            let Some((_, assoc)) = def.assoc.iter().find(|(n, _)| n == name) else {
+                continue;
+            };
+            let names = def.params.as_slice().to_vec();
+            if names.len() != impl_args.len() {
+                continue;
+            }
+            // Each impl parameter is what's at its position in `X`.
+            let mut subs = Vec::new();
+            for p in &names {
+                let (occ, _) = self.occurrences(&def.self_ty, p);
+                let Some((sigma, _)) = occ.into_iter().next() else {
+                    continue;
+                };
+                let at: Vec<(Pos, Vec<(Source, Vec<Formula>, Cand)>)> = (inst.at.iter())
+                    .filter(|(q, _)| q.starts_with(&sigma))
+                    .map(|(q, c)| (q[sigma.len()..].to_vec(), c.clone()))
+                    .collect();
+                subs.push((p.clone(), Inst { at, any: None }));
+            }
+            let impl_subst = crate::types::Subst::new(&names, &impl_args);
+            for (q, d) in self.subst_tree(assoc, &subs, &impl_subst, depth + 1) {
+                let mut p = rho.clone();
+                p.extend(q);
+                out.push((p, d));
+            }
+        }
+        out
+    }
+
+    /// What each closure literal given to a call of function `symbol`
+    /// (resolved, with type arguments `targs`) can count on of each of its
+    /// parameters, by its argument's index: of a type parameter no closure
+    /// gives back, nor a bound can make (`makes`), what the call's other
+    /// arguments, `vals`, have of it (lemma A2: generic code can only give
+    /// it those).
+    pub(super) fn closure_trees(
+        &mut self,
+        symbol: &str,
+        targs: &[Type],
+        vals: &[Val],
+        places: &[Option<Place>],
+        closures: &[usize],
+    ) -> HashMap<usize, Vec<Tree>> {
+        let mut out = HashMap::new();
+        let known = self.cx.fns.iter().any(|f| f.symbol == symbol)
+            || (self.cx.traits.traits.values()).any(|t| t.methods.iter().any(|m| m.symbol == symbol));
+        if std::env::var("T60").is_ok() {
+            eprintln!("closure_trees {symbol} known={known} closures={closures:?} targs={targs:?}");
+        }
+        if !known || closures.is_empty() {
+            return out;
+        }
+        let s = self.cx.scheme(symbol).clone();
+        let Type::Fn(fsig) = &s.ty else {
+            return out;
+        };
+        let names = s.params.as_slice().to_vec();
+        if names.len() != targs.len() {
+            return out;
+        }
+        let subst = crate::types::Subst::new(&names, targs);
+        let mut written: Vec<Option<Tree>> = Vec::new();
+        for p in places.iter().take(vals.len()) {
+            written.push(p.as_ref().map(|p| under(&self.place_decl(p), 0)));
+        }
+        written.resize(vals.len(), None);
+        let mut insts = Vec::new();
+        for x in &names {
+            if !s.params.is_type(x) {
+                continue;
+            }
+            let mut behind = Vec::new();
+            let inst = self.instantiate_one(&s, x, &subst, vals, &written, &mut behind);
+            insts.push((x.clone(), inst));
+        }
+        fn has_opaque(t: &Type) -> bool {
+            matches!(t, Type::Opaque(..)) || t.parts().any(has_opaque)
+        }
+        for &j in closures {
+            let Some(Type::Param(f, _)) = fsig.params.get(j) else {
+                continue;
+            };
+            // Only one the callee can't give back, or keep anywhere the
+            // caller can call it from after: its type nowhere else in the
+            // signature. Else it could be called with anything later.
+            let elsewhere = (fsig.params.iter().enumerate())
+                .any(|(i, p)| i != j && free::mentions(p, f))
+                || free::mentions(&fsig.ret, f)
+                || has_opaque(&fsig.ret);
+            if elsewhere {
+                continue;
+            }
+            let sig = (s.eqs.iter()).find_map(|(a, b)| match (a, b) {
+                (Type::Proj(base, _, n), Type::Fn(sig))
+                    if n == crate::traits::SIG && matches!(&**base, Type::Param(g, _) if g == f) =>
+                {
+                    Some(sig.clone())
+                }
+                _ => None,
+            });
+            let Some(sig) = sig else {
+                continue;
+            };
+            let trees: Vec<Tree> = (sig.params.iter())
+                .map(|p| self.subst_tree(p, &insts, &subst, 0))
+                .collect();
+            if std::env::var("T60").is_ok() {
+                eprintln!("  sig {sig:?} insts={insts:?} trees={trees:?}");
+            }
+            if trees.iter().any(|t| !t.is_empty()) {
+                out.insert(j, trees);
+            }
+        }
+        out
     }
 }

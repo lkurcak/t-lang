@@ -204,7 +204,7 @@ enum Rank { Low, Mid(u8), High(u8, bool) }
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let v = Version { major: 1, minor: 9 };
-    out.line(&f"{v.max(Version { major: 2, minor: 0 }):?}")?; // expect: Version { major: 2, minor: 0 }
+    out.line(&f"{core::cmp::max(v, Version { major: 2, minor: 0 }):?}")?; // expect: Version { major: 2, minor: 0 }
     out.line(&(Rank::Low < Rank::Mid(0)))?;              // expect: true
     out.line(&(Rank::Mid(5) < Rank::Mid(4)))?;           // expect: false
     out.line(&(Rank::High(0, false) > Rank::Mid(200)))?; // expect: true

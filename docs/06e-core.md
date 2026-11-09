@@ -35,7 +35,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     // expect: 1
     let total = (0..4i64).map(|x| x * x).fold(0, |a, b| a + b);
     out.line(&total)?;       // expect: 14
-    out.line(&5i64.max(9))?; // expect: 9
+    out.line(&core::cmp::max(5i64, 9))?; // expect: 9
     Result::Ok(())
 }
 ```
@@ -50,7 +50,7 @@ can be anywhere T can, down to bare metal.
 |---|---|---|
 | `core::option` | `Option<T>`: `is_some`, `is_none`, `as_ref`, `as_mut`, `take`, `map`, `and_then`, `or_else`, `unwrap_or`, `unwrap_or_else` | `Option` |
 | `core::result` | `Result<T, E>`: `is_ok`, `is_err`, `as_ref`, `map`, `and_then`, `map_err`, `or_else`, `ok`, `err`, `unwrap_or`, `unwrap_or_else` | `Result` |
-| `core::cmp` | `Ordering`, and `Ord`: `cmp`, `lt`, `le`, `gt`, `ge`, `max`, `min`, for `i64` and `bool` | `Ord` |
+| `core::cmp` | `Ordering`, and `Ord`: `cmp`, `lt`, `le`, `gt`, `ge`, for `i64` and `bool`; `max`, `min` (functions since 0.76.0) | `Ord` |
 | `core::iter` | `Iterator`: `next`, `map`, `filter` (6e.1), `fold`, `count`; `Map`, `Filter` | `Iterator` |
 | `core::ops` | `Range<T>`, what `a..b` makes, an `Iterator` for `i64`s; since step 15, `Try` and `ControlFlow`, what `?` means | — |
 | `core::mem` | `swap` and `replace` | — |

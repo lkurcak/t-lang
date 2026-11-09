@@ -16,7 +16,7 @@ impl<effect f, F: Fn(i64) -> i64 with f> Twice<F> {
     }
 }
 
-fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&apply(|| 1))?; // expect: 1
     out.line(&pair(|x: i64| x * 2, 3))?; // expect: 6

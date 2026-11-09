@@ -505,7 +505,8 @@ impl Checker {
         let own = (self.traits.impls.iter())
             .find(|d| d.methods.iter().any(|(_, s)| s == symbol))
             .and_then(|d| Some((&d.self_ty, d.trait_name.as_deref()?)));
-        free::free_params(&self.adts, self.scheme(symbol), own)
+        let consumer = |t: &str| targs::consumer(&self.traits, t, &mut Vec::new());
+        free::free_params(&self.adts, self.scheme(symbol), own, &consumer)
     }
 
     /// The free type parameters of every function that has any, by the
@@ -522,7 +523,8 @@ impl Checker {
         (self.fns.iter())
             .map(|f| {
                 let own = own.get(f.symbol.as_str()).copied();
-                (f.name.id, free::free_params(&self.adts, &f.scheme, own))
+                let consumer = |t: &str| targs::consumer(&self.traits, t, &mut Vec::new());
+                (f.name.id, free::free_params(&self.adts, &f.scheme, own, &consumer))
             })
             .filter(|(_, free)| !free.is_empty())
             .collect()
@@ -1861,6 +1863,7 @@ impl Checker {
             decl: HashMap::new(),
             lent_trees: HashMap::new(),
             coerced_args: Vec::new(),
+            closure_params: HashMap::new(),
             module: self.fns[id.0].module,
             invariants: HashMap::new(),
             unstable: HashSet::new(),
@@ -2419,6 +2422,10 @@ struct Walk<'c> {
     /// What the call that last lent each place `&mut` left at its
     /// positions, for when it's read next (`Walk::place_read`).
     lent_trees: HashMap<Place, targs::Tree>,
+    /// What each closure literal can count on of each of its parameters, by
+    /// the closure's node, as the call it's given to says
+    /// (`targs::closure_trees`).
+    closure_params: HashMap<NodeId, Vec<targs::Tree>>,
     /// For each argument of the call being checked, how many more
     /// references or boxes a coercion looked through, and its own type
     /// (`Walk::call_trees`).
@@ -3601,9 +3608,17 @@ impl Walk<'_> {
         if !self.is_unstable(p) {
             self.cur.insert(p.clone(), v);
         }
-        if let Some(val) = val {
-            for f in equal(&self.var(v), &val) {
-                self.fact(f);
+        match val {
+            Some(val) => {
+                for f in equal(&self.var(v), &val) {
+                    self.fact(f);
+                }
+            }
+            // A value nothing's known of has what's declared there.
+            None => {
+                let tree = self.place_read(p);
+                let now = self.var(v);
+                self.assume_tree(&now, t, &tree);
             }
         }
         if p.path.is_empty() {
@@ -5611,10 +5626,8 @@ impl Walk<'_> {
                 for (a, _) in args.iter().zip(&scoped).filter(|(_, s)| **s) {
                     self.scoped_args.insert(a.id);
                 }
-                let vals = args
-                    .iter()
-                    .map(|a| self.expr(a))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let all: Vec<&Expr> = args.iter().collect();
+                let vals = self.call_args(e, symbol.as_deref(), &all, Vec::new(), Vec::new())?;
                 let places = args.iter().map(|a| self.passed(a)).collect();
                 let args: Vec<&Expr> = args.iter().collect();
                 self.call(e, symbol.as_deref(), &args, vals, places)
@@ -5642,10 +5655,13 @@ impl Walk<'_> {
                     }
                     None => self.expr(x)?,
                 };
-                let mut vals = vec![recv];
-                for a in args {
-                    vals.push(self.expr(a)?);
-                }
+                let recv_place = match method {
+                    Some((_, derefs, by)) => self.receiver(x, *derefs, *by),
+                    None => None,
+                };
+                let rest: Vec<&Expr> = args.iter().collect();
+                let vals =
+                    self.call_args(e, symbol.as_deref(), &rest, vec![recv], vec![recv_place])?;
                 let mut places = vec![match method {
                     Some((_, derefs, by)) => self.receiver(x, *derefs, *by),
                     None => None,
@@ -5669,10 +5685,9 @@ impl Walk<'_> {
                         self.scoped_args.insert(a.id);
                     }
                 }
-                let vals = args
-                    .iter()
-                    .map(|a| self.expr(a))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let all: Vec<&Expr> = args.iter().collect();
+                let callee = symbol.as_deref().filter(|_| *parens);
+                let vals = self.call_args(e, callee, &all, Vec::new(), Vec::new())?;
                 let args: Vec<&Expr> = args.iter().collect();
                 match &symbol {
                     Some(_) if *parens => {
@@ -5767,7 +5782,11 @@ impl Walk<'_> {
                 let start = self.snapshot();
                 let loops = std::mem::take(&mut self.loops);
                 self.closures += 1;
-                for p in &l.params {
+                let assumed = self.closure_params.remove(&l.id).unwrap_or_default();
+                for (i, p) in l.params.iter().enumerate() {
+                    if let Some(tree) = assumed.get(i).filter(|t| !t.is_empty()) {
+                        self.decl.insert(p.name.id, tree.clone());
+                    }
                     self.bind(p.name.id, None);
                 }
                 let result = self.expr(&l.body);
@@ -6072,6 +6091,48 @@ impl Walk<'_> {
                 unreachable!("rewritten when paths are resolved")
             }
         }
+    }
+
+    /// The values of a call `e`'s arguments `args`, after `first` (a
+    /// method's receiver, whose places are `first_places`), of function
+    /// `symbol` if it's one: each closure literal walked after the rest,
+    /// counting on what they say of its parameters
+    /// (`targs::closure_trees`). Making a closure runs nothing, so it's
+    /// the same as walking it where it is.
+    fn call_args(
+        &mut self,
+        e: &Expr,
+        symbol: Option<&str>,
+        args: &[&Expr],
+        first: Vec<Val>,
+        first_places: Vec<Option<Place>>,
+    ) -> Result<Vec<Val>, Error> {
+        let offset = first.len();
+        let mut vals = first;
+        let mut closures = Vec::new();
+        for (i, a) in args.iter().enumerate() {
+            match (&a.kind, symbol) {
+                (ExprKind::Lambda(_), Some(_)) => {
+                    vals.push(Val::Other);
+                    closures.push(i + offset);
+                }
+                _ => vals.push(self.expr(a)?),
+            }
+        }
+        if let (Some(symbol), false) = (symbol, closures.is_empty()) {
+            let (s, targs) = self.callee(e, symbol);
+            let mut places = first_places;
+            places.extend(args.iter().map(|a| self.passed(a)));
+            let trees = self.closure_trees(&s, &targs, &vals, &places, &closures);
+            for j in closures {
+                let a = args[j - offset];
+                if let (ExprKind::Lambda(l), Some(t)) = (&a.kind, trees.get(&j)) {
+                    self.closure_params.insert(l.id, t.clone());
+                }
+                vals[j] = self.expr(a)?;
+            }
+        }
+        Ok(vals)
     }
 
     /// Binds the variables of `pat`, which matched `s` if it's known, at

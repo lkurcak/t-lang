@@ -62,17 +62,23 @@ export trait Ord: Eq {
         }
     }
 
-    /// The greater of the two, `other` if they're equal. The other one is
-    /// thrown away.
-    fn max(self, other: Self) -> Self where Self: Discard {
-        if other.lt(&self) { self } else { other }
-    }
+}
 
-    /// The lesser of the two, `self` if they're equal. The other one is
-    /// thrown away.
-    fn min(self, other: Self) -> Self where Self: Discard {
-        if other.lt(&self) { other } else { self }
-    }
+/// The greater of `a` and `b`, `b` if they're equal. The other one is
+/// thrown away.
+///
+/// A function, not a method of `Ord`: an impl could make a value in a
+/// method of its own, and `Ord`'s methods only take values and give back
+/// none, so a type parameter `Ord` bounds can be a refined type (see
+/// docs/60-refined-type-arguments.md). What it gives is `a` or `b`.
+export fn max<T: Ord + Discard>(a: T, b: T) -> T {
+    if b.lt(&a) { a } else { b }
+}
+
+/// The lesser of `a` and `b`, `a` if they're equal. The other one is
+/// thrown away.
+export fn min<T: Ord + Discard>(a: T, b: T) -> T {
+    if b.lt(&a) { b } else { a }
 }
 
 /// Integers in their order, which `<` says.
