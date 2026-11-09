@@ -94,15 +94,9 @@ impl Ord for char {
 }
 
 /// References by what they point to, as `==` compares them: so `a < b` of
-/// two `&str`s compares the strings.
-impl<'a, T: Ord> Ord for &'a T {
+/// two `&str`s compares the strings, and of two `&[T]`s the slices.
+impl<'a, unsized T: Ord> Ord for &'a T {
     fn cmp(&self, other: &&'a T) -> Ordering { (**self).cmp(*other) }
-}
-
-/// String slices by the strings, which `&'a T` can't say, as `T` can't be
-/// `str`.
-impl<'a> Ord for &'a str {
-    fn cmp(&self, other: &&'a str) -> Ordering { (**self).cmp(*other) }
 }
 
 /// `false` before `true`: the order in which `a <= b` means `a` implies `b`.

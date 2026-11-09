@@ -522,12 +522,12 @@ impl Cx<'_, '_, '_> {
     fn slice_eq(&mut self, g: &mut G, elem: &Type, a: Operand, b: Operand, join: usize) {
         let usize_t = Type::Int(crate::types::IntTy::Usize);
         let len = self.inherent(
-            &Type::Slice(Box::new(Type::Param("T".into()))),
+            &Type::Slice(Box::new(Type::Param("T".into(), false))),
             "len",
             vec![elem.clone()],
         );
         let index = self.inherent(
-            &Type::Slice(Box::new(Type::Param("T".into()))),
+            &Type::Slice(Box::new(Type::Param("T".into(), false))),
             "index",
             vec![elem.clone()],
         );

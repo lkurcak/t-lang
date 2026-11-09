@@ -36,7 +36,7 @@ impl Checker {
             .iter()
             .filter(|d| d.trait_name.is_some())
         {
-            let part = |t: &Type| matches!(t, Type::Param(p) if mentions(&d.self_ty, p));
+            let part = |t: &Type| matches!(t, Type::Param(p, _) if mentions(&d.self_ty, p));
             let open = |p: &&crate::traits::Pred| {
                 !part(&p.ty) && !crate::traits::CLOSED_TRAITS.contains(&p.trait_name.as_str())
             };
@@ -81,7 +81,7 @@ impl Checker {
     pub(super) fn assoc_termination(&self) -> Result<(), Error> {
         let mut edges: Vec<(&str, &str, &ImplDef)> = Vec::new();
         for d in &self.traits.impls {
-            let (Some(tr), Type::Param(_)) = (&d.trait_name, &d.self_ty) else {
+            let (Some(tr), Type::Param(_, _)) = (&d.trait_name, &d.self_ty) else {
                 continue;
             };
             // What a bound decides a parameter is, is worked out when the
@@ -200,10 +200,10 @@ impl Checker {
         // An edge from each trait a blanket impl is of to each it needs.
         let mut edges: Vec<(&str, &str, &ImplDef)> = Vec::new();
         for d in &self.traits.impls {
-            let (Some(tr), Type::Param(p)) = (&d.trait_name, &d.self_ty) else {
+            let (Some(tr), Type::Param(p, _)) = (&d.trait_name, &d.self_ty) else {
                 continue;
             };
-            for pred in d.preds.iter().filter(|q| q.ty == Type::Param(p.clone())) {
+            for pred in d.preds.iter().filter(|q| q.ty == d.params.ty(p)) {
                 edges.push((tr, &pred.trait_name, d));
             }
         }
@@ -298,7 +298,7 @@ pub(super) fn terminates(
     span: Span,
 ) -> Result<(), Error> {
     if let Type::Proj(s, tr, name) = t {
-        let blanket = matches!(self_ty, Type::Param(_)) && **s == *self_ty;
+        let blanket = matches!(self_ty, Type::Param(_, _)) && **s == *self_ty;
         let ok = blanket
             || (!has_proj(s)
                 && size(s) < size(self_ty)

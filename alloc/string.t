@@ -41,7 +41,7 @@ impl String {
 
     /// `x` as text: what its `Display` writes.
     #[blame_caller]
-    export fn of<D: Display>(x: &D) -> String with alloc {
+    export fn of<unsized D: Display>(x: &D) -> String with alloc {
         let mut out = String::new();
         out.put(x);
         out

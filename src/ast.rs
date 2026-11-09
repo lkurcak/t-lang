@@ -563,6 +563,11 @@ pub struct Generics {
     /// Which of `types` are effect parameters, by id: those declared with
     /// `effect`. The keyword says the kind, never the case of the name.
     pub effects: Vec<NodeId>,
+    /// Which of `types` are `unsized`, by id: those declared `unsized D`,
+    /// which may stand for a type with no size known when compiled, `str`
+    /// or a slice, as well as any other. Such a parameter is only ever
+    /// behind a reference (see docs/57-unsized-parameters.md).
+    pub unsized_: Vec<NodeId>,
     /// Which of `types` are const parameters, by id, each with the type
     /// written after its `:`: those declared `const N: usize`, which stand
     /// for a length, a `Type::Nat`.
@@ -581,6 +586,17 @@ pub struct Generics {
     pub where_span: Option<Span>,
 }
 
+/// What a type argument for a parameter is, by the parameter's kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArgKind {
+    /// A type with a size: what a plain type parameter stands for.
+    Sized,
+    /// Any type, `str` and slices too: for an `unsized` parameter.
+    Unsized,
+    /// A length, for a const parameter.
+    Length,
+}
+
 impl Generics {
     pub fn is_empty(&self) -> bool {
         self.lifetimes.is_empty() && self.types.is_empty()
@@ -591,14 +607,35 @@ impl Generics {
         self.effects.contains(&p.id)
     }
 
+    /// Is `p`, one of `types`, an `unsized` type parameter?
+    pub fn is_unsized(&self, p: &Ident) -> bool {
+        self.unsized_.contains(&p.id)
+    }
+
+    /// The names of the `unsized` type parameters.
+    pub fn unsized_names(&self) -> Vec<String> {
+        self.types
+            .iter()
+            .filter(|p| self.is_unsized(p))
+            .map(|p| p.name.clone())
+            .collect()
+    }
+
     /// Is `p`, one of `types`, a const parameter?
     pub fn is_const(&self, p: &Ident) -> bool {
         self.consts.iter().any(|(id, _)| *id == p.id)
     }
 
-    /// For each of `types`, is it a const parameter?
-    pub fn lengths(&self) -> Vec<bool> {
-        self.types.iter().map(|p| self.is_const(p)).collect()
+    /// For each of `types`, what a type argument for it is: a type with a
+    /// size, any type (for an `unsized` one), or a length.
+    pub fn arg_kinds(&self) -> Vec<ArgKind> {
+        (self.types.iter())
+            .map(|p| match (self.is_const(p), self.is_unsized(p)) {
+                (true, _) => ArgKind::Length,
+                (_, true) => ArgKind::Unsized,
+                _ => ArgKind::Sized,
+            })
+            .collect()
     }
 
     /// The names of the const parameters.

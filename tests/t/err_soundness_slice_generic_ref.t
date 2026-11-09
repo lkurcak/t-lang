@@ -6,4 +6,4 @@ fn main() {
     let s: &[i64] = core::slice::empty();
     id(s);
 }
-// error: a type parameter can't stand for the slice `[i64]`: it's only ever behind a reference
+// error: a type parameter that isn't `unsized` can't stand for the slice `[i64]`, which is only ever behind a reference

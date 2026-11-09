@@ -58,14 +58,19 @@ impl Checker {
             // `&x` where a `&T` is wanted: `x` should be a `T`.
             ExprKind::Unary(op @ (UnOp::Ref | UnOp::RefMut), x) => match self.shallow(want) {
                 Type::Ref(_, m, inner) if m == (*op == UnOp::RefMut) => {
-                    match self.shallow(&inner) {
-                        Type::Slice(_) | Type::Str => {
+                    // What may be unsized is only ever a place, borrowed.
+                    let place = match self.shallow(&inner) {
+                        Type::Var(v) => self.vars[v as usize].unsized_ok,
+                        t => t.is_unsized(),
+                    };
+                    match place {
+                        true => {
                             let t = self.synth_pointee(x)?;
                             self.unify_or(&t, &inner, x.span, |a, b| {
                                 format!("expected `{b}`, found `{a}`")
                             })?;
                         }
-                        _ => self.check(x, &inner)?,
+                        false => self.check(x, &inner)?,
                     }
                     Type::Ref(Region::Erased, m, inner)
                 }
@@ -153,7 +158,7 @@ impl Checker {
         match t {
             Type::Int(_) => true,
             t @ Type::Var(_) => self.int_var(t),
-            Type::Param(_) | Type::Opaque(..) | Type::Proj(..) => {
+            Type::Param(_, _) | Type::Opaque(..) | Type::Proj(..) => {
                 !crate::check::unify::has_vars(t)
                     && (self.traits)
                         .implements(t, INT, &self.env, &self.adts.proj.local)
@@ -182,14 +187,14 @@ impl Checker {
         // A type parameter or opaque type is one only if it's `Int`: say
         // so here, rather than where the obligation fails.
         let t = self.solved(t);
-        if matches!(t, Type::Param(_) | Type::Opaque(..) | Type::Proj(..))
+        if matches!(t, Type::Param(_, _) | Type::Opaque(..) | Type::Proj(..))
             && !crate::check::unify::has_vars(&t)
             && (self.traits)
                 .implements(&t, INT, &self.env, &self.adts.proj.local)
                 .is_err()
         {
             let fix = match &t {
-                Type::Param(p) => format!("; add a bound: `{p}: {INT}`"),
+                Type::Param(p, _) => format!("; add a bound: `{p}: {INT}`"),
                 _ => String::new(),
             };
             return Err(Error::ty(
@@ -234,7 +239,7 @@ impl Checker {
     /// variable for one?
     fn is_integer(&self, t: &Type) -> bool {
         match self.shallow(t) {
-            Type::Int(_) | Type::Param(_) | Type::Opaque(..) | Type::Proj(..) => true,
+            Type::Int(_) | Type::Param(_, _) | Type::Opaque(..) | Type::Proj(..) => true,
             t @ Type::Var(_) => self.int_var(&t),
             _ => false,
         }
@@ -503,7 +508,7 @@ impl Checker {
                             && self.binding(name).is_none()
                             && self.type_params.is_const(name) =>
                     {
-                        Type::Param(name.clone())
+                        self.type_params.ty(name)
                     }
                     ExprKind::Var(name, targs)
                         if targs.is_empty()
@@ -1213,7 +1218,7 @@ impl Checker {
                 );
                 let Type::Fn(sig) = self.shallow(&sig) else {
                     let hint = match &t {
-                        Type::Param(p) => format!(
+                        Type::Param(p, _) => format!(
                             "; to call it, say what it takes and gives with a bound, \
                              like `{p}: Fn(i64) -> i64`"
                         ),
@@ -1330,6 +1335,11 @@ impl Checker {
             Type::Ref(_, m, _) => Some(m),
             _ => None,
         };
+        // A method taking `self` by value takes a value: not of a type
+        // that may have no size, which is only ever a place (lemma U4).
+        if autoref.is_none() && base.is_unsized() {
+            return Err(generics::unsized_slice(x.span, &base));
+        }
         let receiver = match autoref {
             Some(m) => Type::Ref(Region::Erased, m, Box::new(base.clone())),
             None => base.clone(),

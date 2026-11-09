@@ -473,7 +473,7 @@ impl Cx<'_> {
             // anything.
             // Nor about an opaque type's, outside the function that picks it.
             Type::Fn(..)
-            | Type::Param(_)
+            | Type::Param(_, _)
             | Type::Nat(_)
             | Type::Const(_)
             | Type::Proj(..)

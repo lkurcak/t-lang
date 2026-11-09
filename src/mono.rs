@@ -356,7 +356,7 @@ enum Target {
 struct Mono<'p> {
     prog: &'p Program,
     info: &'p Info,
-    arities: HashMap<String, (usize, Vec<bool>)>,
+    arities: HashMap<String, (usize, Vec<crate::ast::ArgKind>)>,
     /// What each type alias stands for, by symbol: a use of one is a use
     /// of that.
     aliases: HashMap<String, std::sync::Arc<check::AliasDef>>,
@@ -501,7 +501,7 @@ impl<'p> Mono<'p> {
                 .iter()
                 .filter(|d| !matches!(d, TypeDecl::Alias(_)))
                 .map(|d| {
-                    let arity = (d.generics().lifetimes.len(), d.generics().lengths());
+                    let arity = (d.generics().lifetimes.len(), d.generics().arg_kinds());
                     (d.name().name.clone(), arity)
                 })
                 .collect(),
@@ -946,6 +946,7 @@ fn names(g: &Generics) -> Params {
         g.effect_names(),
     )
     .with_consts(g.const_names())
+    .with_unsized(g.unsized_names())
 }
 
 /// Every function of `prog`, which checked with `info` and was lifted, by
@@ -1005,6 +1006,7 @@ fn lifetimes_only(g: &Generics) -> Generics {
         lifetimes: g.lifetimes.clone(),
         types: Vec::new(),
         effects: Vec::new(),
+        unsized_: Vec::new(),
         consts: Vec::new(),
         bounds: g
             .bounds
@@ -1065,7 +1067,7 @@ impl Cx<'_, '_, '_> {
     fn pred(&self, e: &Expr) -> Box<Expr> {
         fn go(cx: &Cx, e: &mut Expr) {
             if let Some(name) = cx.m.info.consts.get(&e.id) {
-                if let Type::Nat(n) = cx.subst(&Type::Param(name.clone())) {
+                if let Type::Nat(n) = cx.subst(&Type::Param(name.clone(), false)) {
                     e.kind = ExprKind::Int(n, Some(crate::types::IntTy::Usize));
                 }
                 return;
@@ -1285,7 +1287,11 @@ impl Cx<'_, '_, '_> {
                 Box::new(self.written(n, span)),
             ),
             Type::Nat(n) => TypeExprKind::Nat(*n),
-            Type::Param(_) | Type::Const(_) | Type::Var(_) | Type::Proj(..) | Type::Opaque(..) => {
+            Type::Param(_, _)
+            | Type::Const(_)
+            | Type::Var(_)
+            | Type::Proj(..)
+            | Type::Opaque(..) => {
                 unreachable!("`{t}` left after monomorphising")
             }
             Type::Effects(_)
@@ -1809,13 +1815,15 @@ impl Cx<'_, '_, '_> {
                 };
                 Operand::Const(Const::Static(symbol))
             }
-            Operand::Const(Const::Param(name)) => match self.subst(&Type::Param(name.clone())) {
-                Type::Nat(n) => Operand::Const(Const::Int(
-                    i128::from(n),
-                    Type::Int(crate::types::IntTy::Usize),
-                )),
-                t => unreachable!("const parameter `{name}` as `{t}`"),
-            },
+            Operand::Const(Const::Param(name)) => {
+                match self.subst(&Type::Param(name.clone(), false)) {
+                    Type::Nat(n) => Operand::Const(Const::Int(
+                        i128::from(n),
+                        Type::Int(crate::types::IntTy::Usize),
+                    )),
+                    t => unreachable!("const parameter `{name}` as `{t}`"),
+                }
+            }
             o => o.clone(),
         }
     }

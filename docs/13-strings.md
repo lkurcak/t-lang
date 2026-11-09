@@ -243,7 +243,10 @@ variable is solved to (`Clash::Unsized`): so no value of unknown size is
 ever moved, stored or dropped. The one place this is relaxed is that the
 built-in libraries may implement a trait for `str`, as `core` does `Ord`.
 Its methods with `Self` by value, `max` and `min`, need `Self: Discard`,
-which `str` isn't, so they're never made for it.
+which `str` isn't, so they're never made for it. (Since step 57, a type
+parameter declared `unsized` may stand for `str`, and is then a type only
+behind `&` itself; and no method with `self` by value is called on a
+`str`, whatever its bounds: lemma U4 of docs/57-unsized-parameters.md.)
 
 Decoding is safe code: where a `str`'s bytes being UTF-8 makes a case
 impossible, the code still handles it (`chars` stops), so nothing trusts

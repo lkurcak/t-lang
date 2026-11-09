@@ -1195,7 +1195,7 @@ impl<'a> Builder<'a> {
                     self.regions.require(&[b], span);
                 }
                 crate::types::Bound::Param(p, r) => {
-                    let arg = s.apply(&Type::Param(p.clone()));
+                    let arg = s.apply(p);
                     self.regions.type_outlives(&arg, &s.region(r), span);
                 }
                 crate::types::Bound::Proj(p, r) => {

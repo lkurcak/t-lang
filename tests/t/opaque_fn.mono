@@ -46,17 +46,17 @@ export enum core::result::Result::<(), core::io::Error> { Ok(()), Err(core::io::
 #[derive(Discard, Copy, Eq)]
 export enum core::result::Result::<!, core::io::Error> { Ok(!), Err(core::io::Error) }
 
-fn adder(n: i64) -> {closure#166412} {
+fn adder(n: i64) -> {closure#165423} {
     let _0: {closure};
     let _1: i64; // n
     bb0: {
-        _0 = {closure#17096}(copy _1);
+        _0 = {closure#16882}(copy _1);
         dead _1;
         return;
     }
 }
 
-closure adder::{closure#17096} {
+closure adder::{closure#16882} {
     let _0: i64;
     let mut _1: &{closure}; // the closure
     let _2: i64; // x
@@ -68,7 +68,7 @@ closure adder::{closure#17096} {
     }
 }
 
-fn counter() -> {closure#166511} {
+fn counter() -> {closure#165522} {
     let _0: {closure};
     let mut _1: i64; // n
     let _2: i64;
@@ -76,13 +76,13 @@ fn counter() -> {closure#166511} {
         _2 = 0_i64;
         _1 = copy _2;
         dead _2;
-        _0 = {closure#17116}(copy _1);
+        _0 = {closure#16902}(copy _1);
         dead _1;
         return;
     }
 }
 
-closure counter::{closure#17116} {
+closure counter::{closure#16902} {
     let _0: i64;
     let mut _1: &mut {closure}; // the closure
     let _2: ();
@@ -99,10 +99,10 @@ closure counter::{closure#17116} {
     }
 }
 
-fn compose::<{panic}, {closure#166412}, {closure#166412}>(
-    f: {closure#166412},
-    g: {closure#166412},
-) -> {closure#166719}::<{panic}, {closure#166412}, {closure#166412}> {
+fn compose::<{panic}, {closure#165423}, {closure#165423}>(
+    f: {closure#165423},
+    g: {closure#165423},
+) -> {closure#165730}::<{panic}, {closure#165423}, {closure#165423}> {
     let _0: {closure};
     let _1: {closure}; // f
     let _2: {closure}; // g
@@ -111,7 +111,7 @@ fn compose::<{panic}, {closure#166412}, {closure#166412}>(
     bb0: {
         _3 = move _2;
         _4 = move _1;
-        _0 = {closure#17163}(move _3, move _4);
+        _0 = {closure#16949}(move _3, move _4);
         dead _4;
         dead _3;
         dead _2;
@@ -120,7 +120,7 @@ fn compose::<{panic}, {closure#166412}, {closure#166412}>(
     }
 }
 
-closure compose::<{panic}, {closure#166412}, {closure#166412}>::{closure#17163} {
+closure compose::<{panic}, {closure#165423}, {closure#165423}>::{closure#16949} {
     let _0: i64;
     let mut _1: &{closure}; // the closure
     let _2: i64; // x
@@ -141,7 +141,7 @@ closure compose::<{panic}, {closure#166412}, {closure#166412}>::{closure#17163} 
     }
 }
 
-fn pick(c: bool) -> {closure#166412} {
+fn pick(c: bool) -> {closure#165423} {
     let _0: {closure};
     let _1: bool; // c
     let _2: {closure}; // a
@@ -425,7 +425,7 @@ fn main(os: std::Os) -> core::result::Result::<(), core::io::Error> with panic {
         _40 = adder(move _41);
         _43 = 10_i64;
         _42 = adder(move _43);
-        _39 = compose::<{panic}, {closure#166412}, {closure#166412}>(move _40, move _42);
+        _39 = compose::<{panic}, {closure#165423}, {closure#165423}>(move _40, move _42);
         _38 = move _39;
         dead _43;
         dead _42;
@@ -673,9 +673,12 @@ fn <&str as core::fmt::Display>::fmt::<std::io::Stderr><'a>(
     let _1: &&str; // self
     let _2: &mut Stderr; // w
     let _3: &mut Stderr;
+    let _4: &str;
     bb0: {
         _3 = &mut (*_2);
-        _0 = <std::io::Stderr as core::fmt::Write>::write_str(move _3, copy (*_1));
+        _4 = &(*(*_1));
+        _0 = <str as core::fmt::Display>::fmt::<std::io::Stderr>(move _4, move _3);
+        dead _4;
         dead _3;
         dead _2;
         dead _1;

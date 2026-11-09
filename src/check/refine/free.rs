@@ -49,7 +49,7 @@ pub(crate) fn free_params(adts: &Adts, s: &Scheme, own: Option<(&Type, &str)>) -
         if !s.params.is_type(name) {
             continue;
         }
-        let this = Type::Param(name.clone());
+        let this = s.params.ty(name);
         let bounded = s.preds.iter().all(|p| match p.ty == this {
             true => MARKERS.contains(&p.trait_name.as_str()),
             false => !mentions(&p.ty, name),
@@ -93,14 +93,14 @@ pub(crate) fn free_params(adts: &Adts, s: &Scheme, own: Option<(&Type, &str)>) -
 
 /// Is type parameter `name` in `t`?
 fn mentions(t: &Type, name: &str) -> bool {
-    matches!(t, Type::Param(n) if n == name) || t.parts().any(|p| mentions(p, name))
+    matches!(t, Type::Param(n, _) if n == name) || t.parts().any(|p| mentions(p, name))
 }
 
 /// The ways to the values of type parameter `name` in a value of type `t`,
 /// or `None` if it's somewhere in `t` that isn't one: inside a reference, a
 /// box, a struct, an array, a function or anything but an enum's field.
 fn ways(adts: &Adts, t: &Type, name: &str, depth: usize) -> Option<Vec<Vec<(String, usize)>>> {
-    if matches!(t, Type::Param(n) if n == name) {
+    if matches!(t, Type::Param(n, _) if n == name) {
         return Some(vec![Vec::new()]);
     }
     if !mentions(t, name) {

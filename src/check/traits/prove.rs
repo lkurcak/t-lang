@@ -37,7 +37,7 @@ impl Checker {
             .implements(t, DISCARD, &self.env, &self.adts.proj.local)
             .err()?;
         let Type::Adt(symbol, ..) = &bad.ty else {
-            return matches!(bad.ty, Type::Param(_) | Type::Proj(..)).then_some(bad.ty);
+            return matches!(bad.ty, Type::Param(_, _) | Type::Proj(..)).then_some(bad.ty);
         };
         if self.traits.select(&bad.ty, Some(DISCARD), &[]).is_some() {
             return None;
@@ -49,7 +49,7 @@ impl Checker {
             .params
             .iter()
             .map(|p| Pred {
-                ty: Type::Param(p.clone()),
+                ty: adt.params.ty(p),
                 trait_name: DISCARD.into(),
             })
             .collect();
@@ -120,7 +120,7 @@ impl Checker {
         // How to fix what doesn't hold, if it's simple, or why it can't be.
         let at_bottom = bad == o.pred;
         let fix = |p: &Pred| match (&p.ty, p.trait_name.as_str()) {
-            (Type::Param(t), tr) => format!("; add a bound: `{t}: {}`", tr),
+            (Type::Param(t, _), tr) => format!("; add a bound: `{t}: {}`", tr),
             (Type::Fn(_), EQ) if at_bottom => ": functions can't be compared".to_string(),
             (Type::Fn(_), EQ) => ", and functions can't be compared".to_string(),
             (Type::Adt(s, ..), _) if crate::types::is_closure(s) => String::new(),
@@ -157,7 +157,7 @@ impl Checker {
                 (Type::Adt(s, ..), _) if crate::types::is_closure(s) => {
                     format!("cannot compare closures with `{op}`")
                 }
-                (Type::Param(p), true) => format!(
+                (Type::Param(p, _), true) => format!(
                     "cannot compare values of type `{p}` with `{op}`: `{p}` doesn't implement \
                      `{tr}`{}",
                     fix(&bad)

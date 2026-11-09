@@ -489,7 +489,9 @@ impl Checker {
                 None => Type::Adt(
                     symbol.clone(),
                     Vec::new(),
-                    params.iter().map(|p| Type::Param(p.name.clone())).collect(),
+                    (params.iter())
+                        .map(|p| Type::Param(p.name.clone(), d.generics().is_unsized(p)))
+                        .collect(),
                 ),
             };
             let (kind, ty) = match d {

@@ -262,7 +262,7 @@ impl OpaqueDef {
         Type::Opaque(
             symbol.to_string(),
             self.lifetimes.iter().cloned().map(Region::Named).collect(),
-            self.params.iter().cloned().map(Type::Param).collect(),
+            self.params.iter().map(|p| self.params.ty(p)).collect(),
         )
     }
 
@@ -699,7 +699,7 @@ impl Traits {
         if let Some(Source::Assumed) = self.opaque_implements(ty, tr) {
             return Ok(Source::Assumed);
         }
-        if let Type::Param(_) | Type::Proj(..) = ty {
+        if let Type::Param(_, _) | Type::Proj(..) = ty {
             let implied = |t: &str| self.implied(t).iter().any(|t| t == tr);
             let assumed = env.iter().any(|p| p.ty == *ty && implied(&p.trait_name));
             let declared = match ty {
@@ -861,7 +861,7 @@ fn impl_args(
         if found.contains_key(p) || !d.params.is_effect(p) {
             continue;
         }
-        let me = Type::Param(p.clone());
+        let me = d.params.ty(p);
         let mut items = Vec::new();
         for (lhs, rhs) in &d.eqs {
             let Type::Fn(want) = rhs else { continue };
@@ -897,7 +897,7 @@ pub fn decider(self_ty: &Type, params: &[String], eqs: &[(Type, Type)], p: &str)
     let header = outside_fns(self_ty);
     eqs.iter().position(|(lhs, rhs)| {
         matches!(lhs, Type::Proj(s, ..)
-            if matches!(&**s, Type::Param(q) if params.contains(q) && header.contains(q)))
+            if matches!(&**s, Type::Param(q, _) if params.contains(q) && header.contains(q)))
             && decidable(rhs, p, is_sig(lhs))
     })
 }
@@ -906,7 +906,7 @@ pub fn decider(self_ty: &Type, params: &[String], eqs: &[(Type, Type)], p: &str)
 pub fn outside_fns(t: &Type) -> Vec<String> {
     match t {
         Type::Fn(_) => Vec::new(),
-        Type::Param(p) => vec![p.clone()],
+        Type::Param(p, _) => vec![p.clone()],
         t => t.parts().flat_map(outside_fns).collect(),
     }
 }
@@ -917,7 +917,7 @@ pub fn outside_fns(t: &Type) -> Vec<String> {
 /// function type, but for a signature's (`sig`) parameters and result.
 fn decidable(pat: &Type, p: &str, sig: bool) -> bool {
     match pat {
-        Type::Param(q) => q == p,
+        Type::Param(q, _) => q == p,
         Type::Proj(..) | Type::Effects(_) => false,
         Type::Fn(f) if sig => f
             .params
@@ -933,7 +933,7 @@ fn decidable(pat: &Type, p: &str, sig: bool) -> bool {
 /// shape `pat` has on the way there (see `decidable`).
 fn part_at(pat: &Type, t: &Type, p: &str, sig: bool) -> Option<Type> {
     match (pat, t) {
-        (Type::Param(q), t) if q == p => Some(t.clone()),
+        (Type::Param(q, _), t) if q == p => Some(t.clone()),
         (Type::Proj(..) | Type::Effects(_), _) => None,
         (Type::Fn(f), Type::Fn(g)) if sig && pat.same_shape(t) => {
             let pairs = f.params.iter().zip(&g.params).chain([(&*f.ret, &*g.ret)]);
@@ -1074,7 +1074,7 @@ pub fn project(
     tr: &str,
     name: &str,
 ) -> Option<Type> {
-    if let Type::Param(_) | Type::Var(_) | Type::Proj(..) = s {
+    if let Type::Param(_, _) | Type::Var(_) | Type::Proj(..) = s {
         return None;
     }
     // What an opaque type's equality bounds say; or else what a blanket
@@ -1100,7 +1100,7 @@ pub fn project(
             Type::Fn(_) => Some(s.clone()),
             Type::Adt(symbol, ..) => Some(anon.closures.get(symbol)?.sig_at(s)),
             Type::Ref(_, _, inner) => match &**inner {
-                Type::Param(_) | Type::Var(_) | Type::Proj(..) => {
+                Type::Param(_, _) | Type::Var(_) | Type::Proj(..) => {
                     Some(Type::Proj(inner.clone(), FN_ONCE.into(), SIG.into()))
                 }
                 inner => project(impls, anon, local, inner, tr, name),
@@ -1237,10 +1237,11 @@ pub(crate) fn eq_subject(t: &Type) -> &Type {
 ///   found at most, the same one by the checker as by monomorphisation.
 pub fn matches(pat: &Type, t: &Type, params: &[String], found: &mut HashMap<String, Type>) -> bool {
     match pat {
-        // A parameter never stands for a slice or `str` (see `Type::Slice`).
-        Type::Param(p) if params.contains(p) => match found.get(p) {
+        // A parameter stands for a slice, `str` or an `unsized` parameter
+        // only if it's `unsized` itself (see `Type::Param`).
+        Type::Param(p, unsized_) if params.contains(p) => match found.get(p) {
             Some(prev) => prev.erased() == t.erased(),
-            None if t.is_unsized() => false,
+            None if t.is_unsized() && !unsized_ => false,
             None => {
                 found.insert(p.clone(), t.clone());
                 true
@@ -1272,7 +1273,7 @@ pub fn unifier(a: &Type, b: &Type, params: &[String]) -> Option<HashMap<String, 
 /// `t` with what `unifier` found each parameter stands for, all the way.
 pub fn unified(t: &Type, s: &HashMap<String, Type>) -> Type {
     match t {
-        Type::Param(p) => match s.get(p) {
+        Type::Param(p, _) => match s.get(p) {
             Some(u) => unified(u, s),
             None => t.clone(),
         },
@@ -1293,7 +1294,7 @@ pub fn unified(t: &Type, s: &HashMap<String, Type>) -> Type {
 /// with `ty`, none unifies with any type `ty` can become either.
 pub fn refuted(impls: &[ImplDef], ty: &Type, tr: &str) -> bool {
     match (tr, ty) {
-        (_, Type::Param(_) | Type::Var(_) | Type::Proj(..) | Type::Opaque(..)) => return false,
+        (_, Type::Param(_, _) | Type::Var(_) | Type::Proj(..) | Type::Opaque(..)) => return false,
         (INT, Type::Int(_)) => return false,
         (SIGNED, Type::Int(t)) => return !t.signed(),
         (UNSIGNED, Type::Int(t)) => return t.signed(),
@@ -1307,9 +1308,7 @@ pub fn refuted(impls: &[ImplDef], ty: &Type, tr: &str) -> bool {
         .any(|d| {
             // Renamed apart from `ty`'s, which may be primed already, by
             // coherence: no written name has a `~`.
-            let renamed: Vec<Type> = (d.params.iter())
-                .map(|p| Type::Param(format!("{p}~")))
-                .collect();
+            let renamed: Vec<Type> = d.params.tys_renamed(|p| format!("{p}~"));
             let header = Subst::new(&d.params, &renamed).apply(&d.self_ty);
             let mut params = vars.clone();
             params.extend(d.params.iter().map(|p| format!("{p}~")));
@@ -1334,7 +1333,7 @@ pub fn sealed_refutes(
 /// Each type parameter `t` mentions, added to `out`.
 fn params_in(t: &Type, out: &mut Vec<String>) {
     match t {
-        Type::Param(p) if !out.contains(p) => out.push(p.clone()),
+        Type::Param(p, _) if !out.contains(p) => out.push(p.clone()),
         t => t.parts().for_each(|p| params_in(p, out)),
     }
 }
@@ -1342,7 +1341,7 @@ fn params_in(t: &Type, out: &mut Vec<String>) {
 fn unify(a: &Type, b: &Type, params: &[String], s: &mut HashMap<String, Type>) -> bool {
     let walk = |t: &Type, s: &HashMap<String, Type>| {
         let mut t = t.clone();
-        while let Type::Param(p) = &t {
+        while let Type::Param(p, _) = &t {
             match s.get(p) {
                 Some(u) => t = u.clone(),
                 None => break,
@@ -1351,16 +1350,28 @@ fn unify(a: &Type, b: &Type, params: &[String], s: &mut HashMap<String, Type>) -
         t
     };
     let (a, b) = (walk(a, s), walk(b, s));
-    let var = |t: &Type| matches!(t, Type::Param(p) if params.contains(p));
+    let var = |t: &Type| matches!(t, Type::Param(p, _) if params.contains(p));
     match (&a, &b) {
-        (Type::Param(p), Type::Param(q)) if p == q => true,
+        (Type::Param(p, _), Type::Param(q, _)) if p == q => true,
         // A const item, as a length, is equal only to itself, but may one
         // day be equal to its value: so it could be any length, for two
         // impls not to overlap then either (lemma C6 of docs/36-consts.md).
-        (Type::Const(_), Type::Nat(_) | Type::Const(_) | Type::Param(_))
-        | (Type::Nat(_) | Type::Param(_), Type::Const(_)) => true,
-        (Type::Param(p), t) | (t, Type::Param(p)) if var(&Type::Param(p.clone())) => {
-            if occurs(p, t, s) || t.is_unsized() {
+        (Type::Const(_), Type::Nat(_) | Type::Const(_) | Type::Param(_, _))
+        | (Type::Nat(_) | Type::Param(_, _), Type::Const(_)) => true,
+        // Two of them: the one that may be unsized becomes the other, so
+        // what they both are has a size if either must. A sized one and an
+        // `unsized` one are the same type wherever that's a sized type.
+        (Type::Param(p, true), sized @ Type::Param(_, false))
+        | (sized @ Type::Param(_, false), Type::Param(p, true))
+            if var(&a) && var(&b) =>
+        {
+            s.insert(p.clone(), sized.clone());
+            true
+        }
+        (v @ Type::Param(p, unsized_), t) | (t, v @ Type::Param(p, unsized_)) if var(v) => {
+            // `t` may be a variable too here only if `v` may be unsized or
+            // `t` must be sized, as above: then `t` has a size if `v` must.
+            if occurs(p, t, s) || (t.is_unsized() && !unsized_ && !var(t)) {
                 return false;
             }
             s.insert(p.clone(), t.clone());
@@ -1376,8 +1387,8 @@ fn unify(a: &Type, b: &Type, params: &[String], s: &mut HashMap<String, Type>) -
 
 fn occurs(p: &str, t: &Type, s: &HashMap<String, Type>) -> bool {
     match t {
-        Type::Param(q) if q == p => true,
-        Type::Param(q) => s.get(q).is_some_and(|u| occurs(p, u, s)),
+        Type::Param(q, _) if q == p => true,
+        Type::Param(q, _) => s.get(q).is_some_and(|u| occurs(p, u, s)),
         t => t.parts().any(|u| occurs(p, u, s)),
     }
 }

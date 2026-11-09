@@ -68,7 +68,7 @@ impl Checker {
     /// nothing (lemma D5 of docs/20-destructors.md).
     fn written_discard(&self, def: &ImplDef) -> Result<(), Error> {
         for p in &def.preds {
-            if p.trait_name != DISCARD || !matches!(p.ty, Type::Param(_)) {
+            if p.trait_name != DISCARD || !matches!(p.ty, Type::Param(_, _)) {
                 return Err(Error::ty(
                     def.span,
                     format!(
@@ -374,6 +374,19 @@ impl Checker {
                     kind(b)
                 )));
             }
+            // An `unsized` one may stand for `str` where the trait's
+            // callers make it so, and one that isn't may be a value in the
+            // body: so neither can be the other (lemma U4).
+            let (a, b) = (got.params.is_unsized(p), want.scheme.params.is_unsized(q));
+            if a != b {
+                let (is, isnt) = match b {
+                    true => ("is", "isn't"),
+                    false => ("isn't", "is"),
+                };
+                return Err(mismatch(format!(
+                    "its `{p}` {isnt} `unsized`, where the trait's `{q}` {is}"
+                )));
+            }
         }
         // The trait's, at `Self` = the impl's type and with this one's
         // type parameter names.
@@ -464,7 +477,7 @@ impl Checker {
                 .map(|b| match b {
                     Bound::Region(x, y) => format!("{}: {}", c.region(x), c.region(y)),
                     Bound::Param(p, y) => {
-                        let p = s.apply(&Type::Param(p.clone()));
+                        let p = s.apply(p);
                         format!("{p}: {}", c.region(y))
                     }
                     Bound::Proj(p, y) => format!("{}: {}", s.apply(p), c.region(y)),
@@ -528,11 +541,7 @@ impl Checker {
                     continue;
                 }
                 // `b`'s parameters, renamed apart from `a`'s.
-                let renamed: Vec<Type> = b
-                    .params
-                    .iter()
-                    .map(|p| Type::Param(format!("{p}'")))
-                    .collect();
+                let renamed: Vec<Type> = b.params.tys_renamed(|p| format!("{p}'"));
                 let b_ty = Subst::new(&b.params, &renamed).apply(&b.self_ty);
                 let mut params = a.params.to_vec();
                 params.extend(b.params.iter().map(|p| format!("{p}'")));
@@ -654,7 +663,7 @@ impl<'a> Canon<'a> {
 /// on one: one with no impl to work it out by.
 fn rigid_on_type(t: &Type) -> Option<Type> {
     match t {
-        Type::Proj(s, ..) if !matches!(**s, Type::Param(_) | Type::Proj(..)) => Some(t.clone()),
+        Type::Proj(s, ..) if !matches!(**s, Type::Param(_, _) | Type::Proj(..)) => Some(t.clone()),
         t => t.parts().find_map(rigid_on_type),
     }
 }

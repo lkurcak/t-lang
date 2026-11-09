@@ -179,13 +179,13 @@ export trait Write {
 
     /// Writes `x` as text, in UTF-8: as `core::fmt::Write::put` does.
     #[blame_caller]
-    fn put<D: Display>(&mut self, x: &D) -> Result<(), Error> with Self::e {
+    fn put<unsized D: Display>(&mut self, x: &D) -> Result<(), Error> with Self::e {
         x.fmt(&mut Text { sink: self })
     }
 
     /// Writes `x` as text, then a line break.
     #[blame_caller]
-    fn line<D: Display>(&mut self, x: &D) -> Result<(), Error> with Self::e {
+    fn line<unsized D: Display>(&mut self, x: &D) -> Result<(), Error> with Self::e {
         x.fmt(&mut Text { sink: self })?;
         self.write_all("\n".as_bytes())
     }

@@ -21,13 +21,17 @@ pub(super) struct Var {
     /// type or projection that implements `Int`, which an obligation made
     /// with it says (`Checker::fresh_int`).
     pub(super) int: bool,
-    /// May it be a slice or `str`? Only `Self` of a path to a trait's
-    /// method, `Debug::fmt(s, w)` with `s: &str`: as `s.fmt(w)` would find
-    /// it, with its receiver's type. Sound as that is: only the libraries
-    /// implement traits for unsized types; their impls' methods have `Self`
-    /// only behind references (`collect_impls`); and none of those traits
-    /// has a method giving a `Self` without taking one by value, which no
-    /// expression can be (see docs/43.1-formatting.md).
+    /// May it be a slice, `str` or an `unsized` type parameter? For what an
+    /// `unsized` parameter stands for (`fresh_param`), and `Self` of a path
+    /// to a trait's method, `Debug::fmt(s, w)` with `s: &str`: as `s.fmt(w)`
+    /// would find it, with its receiver's type. Sound as that is: only the
+    /// libraries implement traits for unsized types; their impls' methods
+    /// have `Self` only behind references (`collect_impls`); and none of
+    /// those traits has a method giving a `Self` without taking one by
+    /// value, which no expression can be (see docs/43.1-formatting.md).
+    /// A variable that may be unsized is the type of no value: what's made
+    /// equal to one is (`unify`), and the MIR's operands are checked to
+    /// have sizes, after inference (lemma U3 of docs/57-unsized-parameters.md).
     pub(super) unsized_ok: bool,
     /// Where it came from, for when it's never solved: the span, what it's
     /// the type of ("the type of `x`") and how to fix that.
@@ -114,7 +118,7 @@ fn opaques<'t>(t: &'t Type, out: &mut Vec<&'t str>) {
 /// infinite type, which is easier with a name for the type that repeats.
 fn name_var(t: &Type, v: u32, name: &str) -> Type {
     match t {
-        Type::Var(w) if *w == v => Type::Param(name.to_string()),
+        Type::Var(w) if *w == v => Type::Param(name.to_string(), false),
         t => t.map(|p| name_var(p, v, name)),
     }
 }
@@ -163,7 +167,7 @@ impl Checker {
     /// shown as `{integer}`, for a message.
     pub(super) fn shown(&self, t: &Type) -> Type {
         match self.shallow(t) {
-            Type::Var(v) if self.vars[v as usize].int => Type::Param("{integer}".into()),
+            Type::Var(v) if self.vars[v as usize].int => Type::Param("{integer}".into(), false),
             t => t.map(|p| self.shown(p)),
         }
     }
@@ -235,7 +239,7 @@ impl Checker {
                 // which implements what it does without saying what its
                 // associated types are.
                 if let Type::Proj(s, ..) = &p
-                    && !matches!(**s, Type::Param(_) | Type::Proj(..) | Type::Opaque(..))
+                    && !matches!(**s, Type::Param(_, _) | Type::Proj(..) | Type::Opaque(..))
                 {
                     continue;
                 }
@@ -263,7 +267,7 @@ impl Checker {
                     // Rigid: nothing says what it is.
                     Some(who) if *a == proj => {
                         let fix = match &proj {
-                            Type::Proj(s, tr, n) if matches!(**s, Type::Param(_)) => {
+                            Type::Proj(s, tr, n) if matches!(**s, Type::Param(_, _)) => {
                                 format!("; say it is with a bound: `{s}: {tr}<{n} = {b}>`")
                             }
                             _ => String::new(),
@@ -353,8 +357,8 @@ impl Checker {
                     return Err(Clash::Infinite(v, t));
                 }
                 match &t {
-                    Type::Slice(_) | Type::Str if !self.vars[v as usize].unsized_ok => {
-                        return Err(Clash::Unsized(v, t));
+                    t if t.is_unsized() && !self.vars[v as usize].unsized_ok => {
+                        return Err(Clash::Unsized(v, t.clone()));
                     }
                     Type::Var(w) => {
                         let (param, int) = (self.vars[v as usize].param, self.vars[v as usize].int);
@@ -365,7 +369,7 @@ impl Checker {
                         w.unsized_ok &= unsized_ok;
                     }
                     // Its obligation, `Int`, says whether these may be.
-                    Type::Int(_) | Type::Param(_) | Type::Opaque(..) | Type::Proj(..) => {}
+                    Type::Int(_) | Type::Param(_, _) | Type::Opaque(..) | Type::Proj(..) => {}
                     _ if self.vars[v as usize].int => return Err(Clash::Mismatch),
                     _ => {}
                 }
@@ -419,19 +423,27 @@ impl Checker {
     /// (`Clash::Unsized`).
     pub(super) fn unsized_var(&self, v: u32, t: &Type, span: Span) -> Error {
         let t = self.solved(t);
-        match self.vars[v as usize].param {
-            true if t == Type::Str => Error::ty(
+        match (self.vars[v as usize].param, &t) {
+            (true, Type::Str) => Error::ty(
                 span,
-                "a type parameter can't stand for `str`: it's only ever behind a reference",
+                "a type parameter that isn't `unsized` can't stand for `str`, which is only ever \
+                 behind a reference",
             ),
-            true => Error::ty(
+            (true, Type::Param(..)) => Error::ty(
                 span,
                 format!(
-                    "a type parameter can't stand for the slice `{t}`: it's only ever behind a \
-                     reference"
+                    "a type parameter that isn't `unsized` can't stand for `{t}`, which is; \
+                     declare that one `unsized` too, if it's only ever behind a reference"
                 ),
             ),
-            false => super::generics::unsized_slice(span, t),
+            (true, _) => Error::ty(
+                span,
+                format!(
+                    "a type parameter that isn't `unsized` can't stand for the slice `{t}`, which \
+                     is only ever behind a reference"
+                ),
+            ),
+            (false, _) => super::generics::unsized_slice(span, t),
         }
     }
 
@@ -520,7 +532,7 @@ impl Checker {
         } = &self.vars[v];
         let message = match t {
             Type::Var(_) => format!("cannot infer {what}; {hint}"),
-            Type::Param(p) if p == "{integer}" => format!("cannot infer {what}; {hint}"),
+            Type::Param(p, _) if p == "{integer}" => format!("cannot infer {what}; {hint}"),
             t => format!("cannot fully infer {what}, only that it's `{t}`; {hint}"),
         };
         Error::ty(*span, message)

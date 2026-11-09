@@ -14,7 +14,7 @@ export fn panic(why: &str) -> ! with panic;
 /// writes it. Writing it can't fail, panic or allocate: the sink it's
 /// written into can't, and `fmt` does only what its sink does.
 #[blame_caller]
-export fn panic_with<D: Display>(why: &D) -> ! with panic {
+export fn panic_with<unsized D: Display>(why: &D) -> ! with panic {
     let mut m = Message::new();
     why.fmt(&mut m).into_ok();
     m.abort()
@@ -29,24 +29,24 @@ export fn assert(ok: bool) with panic ensures ok {
 
 /// Panics unless `left == right`, saying what each is, by its `Debug`.
 #[blame_caller]
-export fn assert_eq<T: Eq + Debug>(left: &T, right: &T) with panic {
+export fn assert_eq<unsized T: Eq + Debug>(left: &T, right: &T) with panic {
     if !(left == right) { panic_with(&Mismatch { op: "==", left, right }) }
 }
 
 /// Panics unless `left != right`, saying what they are, by their `Debug`.
 #[blame_caller]
-export fn assert_ne<T: Eq + Debug>(left: &T, right: &T) with panic {
+export fn assert_ne<unsized T: Eq + Debug>(left: &T, right: &T) with panic {
     if left == right { panic_with(&Mismatch { op: "!=", left, right }) }
 }
 
 /// What a failed `assert_eq` or `assert_ne` says: what it compared, and
 /// the values on each side.
 #[derive(Discard)]
-struct Mismatch<'a, T> { op: &'a str, left: &'a T, right: &'a T }
+struct Mismatch<'a, unsized T> { op: &'a str, left: &'a T, right: &'a T }
 
 /// `assertion `left == right` failed`, then each side on a line of its
 /// own, by its `Debug`.
-impl<'a, T: Debug> Display for Mismatch<'a, T> {
+impl<'a, unsized T: Debug> Display for Mismatch<'a, T> {
     #[blame_caller]
     fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e {
         w.put(

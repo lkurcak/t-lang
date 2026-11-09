@@ -195,6 +195,7 @@ impl Checker {
                 let t = self.fresh(span, what, hint);
                 if let Type::Var(v) = t {
                     self.vars[v as usize].param = true;
+                    self.vars[v as usize].unsized_ok = params.is_unsized(p);
                 }
                 t
             }

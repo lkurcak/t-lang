@@ -239,6 +239,7 @@ impl Describe for Generics {
             lifetimes,
             types,
             effects,
+            unsized_,
             consts,
             bounds,
             span,
@@ -249,11 +250,13 @@ impl Describe for Generics {
         // names, not its source node number (nor just the number of ids).
         let parameter = |id: &NodeId| types.iter().position(|p| p.id == *id);
         let effects: Vec<_> = effects.iter().map(parameter).collect();
+        let unsized_: Vec<_> = unsized_.iter().map(parameter).collect();
         let consts: Vec<_> = consts.iter().map(|(id, ty)| (parameter(id), ty)).collect();
         f.debug_struct("Generics")
             .field("lifetimes", &Shape(lifetimes))
             .field("types", &Shape(types))
             .field("effects", &Shape(&effects))
+            .field("unsized", &Shape(&unsized_))
             .field("consts", &Shape(&consts))
             .field("bounds", &Shape(bounds))
             .field("span", &Shape(span))

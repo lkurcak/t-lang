@@ -106,9 +106,9 @@ fn flip::<i64, bool>(p: Pair::<i64, bool>) -> Pair::<bool, i64> {
     }
 }
 
-fn map::<{panic}, i64, i64, {closure#167919}>(
+fn map::<{panic}, i64, i64, {closure#166930}>(
     o: Option::<i64>,
-    f: {closure#167919},
+    f: {closure#166930},
 ) -> Option::<i64> with panic {
     let _0: Option<i64>;
     let _1: Option<i64>; // o
@@ -157,9 +157,9 @@ fn map::<{panic}, i64, i64, {closure#167919}>(
     }
 }
 
-fn map::<{panic}, i64, i64, {closure#168078}>(
+fn map::<{panic}, i64, i64, {closure#167089}>(
     o: Option::<i64>,
-    f: {closure#168078},
+    f: {closure#167089},
 ) -> Option::<i64> with panic {
     let _0: Option<i64>;
     let _1: Option<i64>; // o
@@ -208,7 +208,7 @@ fn map::<{panic}, i64, i64, {closure#168078}>(
     }
 }
 
-fn map::<{}, i64, bool, {closure#168163}>(o: Option::<i64>, f: {closure#168163}) -> Option::<bool> {
+fn map::<{}, i64, bool, {closure#167174}>(o: Option::<i64>, f: {closure#167174}) -> Option::<bool> {
     let _0: Option<bool>;
     let _1: Option<i64>; // o
     let _2: {closure}; // f
@@ -756,8 +756,8 @@ fn main(os: std::Os) -> core::result::Result::<(), core::io::Error> with panic {
         _47 = 4_i64;
         _46 = Option::<i64>::Some(move _47);
         _49 = &_42;
-        _48 = {closure#17366}(move _49);
-        _45 = map::<{panic}, i64, i64, {closure#167919}>(move _46, move _48);
+        _48 = {closure#17152}(move _49);
+        _45 = map::<{panic}, i64, i64, {closure#166930}>(move _46, move _48);
         _44 = move _45;
         dead _49;
         dead _48;
@@ -815,8 +815,8 @@ fn main(os: std::Os) -> core::result::Result::<(), core::io::Error> with panic {
         _60 = move _61;
         dead _61;
         _67 = move _60;
-        _68 = {closure#17396}();
-        _66 = map::<{panic}, i64, i64, {closure#168078}>(move _67, move _68);
+        _68 = {closure#17182}();
+        _66 = map::<{panic}, i64, i64, {closure#167089}>(move _67, move _68);
         _69 = -1_i64;
         _65 = unwrap_or::<i64>(move _66, move _69);
         _70 = &mut _2;
@@ -870,8 +870,8 @@ fn main(os: std::Os) -> core::result::Result::<(), core::io::Error> with panic {
         dead _62;
         _80 = 3_i64;
         _79 = Option::<i64>::Some(move _80);
-        _81 = {closure#17417}();
-        _78 = map::<{}, i64, bool, {closure#168163}>(move _79, move _81);
+        _81 = {closure#17203}();
+        _78 = map::<{}, i64, bool, {closure#167174}>(move _79, move _81);
         _82 = false;
         _77 = unwrap_or::<bool>(move _78, move _82);
         _83 = &mut _2;
@@ -970,8 +970,8 @@ fn main(os: std::Os) -> core::result::Result::<(), core::io::Error> with panic {
         dead _89;
         dead _88;
         dead _87;
-        _100 = {closure#17441}();
-        _101 = {fn}::<{closure#168292}>;
+        _100 = {closure#17227}();
+        _101 = {fn}::<{closure#167303}>;
         _102 = 1_i64;
         _103 = 10_i64;
         _99 = repeat::<i64>(move _101, move _102, move _103);
@@ -1200,7 +1200,7 @@ fn main(os: std::Os) -> core::result::Result::<(), core::io::Error> with panic {
     }
 }
 
-closure main::{closure#17366} {
+closure main::{closure#17152} {
     let _0: i64;
     let mut _1: &{closure}; // the closure
     let _2: i64; // x
@@ -1212,7 +1212,7 @@ closure main::{closure#17366} {
     }
 }
 
-closure main::{closure#17396} {
+closure main::{closure#17182} {
     let _0: i64;
     let mut _1: &{closure}; // the closure
     let _2: i64; // x
@@ -1227,7 +1227,7 @@ closure main::{closure#17396} {
     }
 }
 
-closure main::{closure#17417} {
+closure main::{closure#17203} {
     let _0: bool;
     let mut _1: &{closure}; // the closure
     let _2: i64; // x
@@ -1242,7 +1242,7 @@ closure main::{closure#17417} {
     }
 }
 
-closure main::{closure#17441} {
+closure main::{closure#17227} {
     let _0: i64;
     let mut _1: &{closure}; // the closure
     let _2: i64; // x
@@ -1333,9 +1333,12 @@ fn <&str as core::fmt::Display>::fmt::<std::io::Stderr><'a>(
     let _1: &&str; // self
     let _2: &mut Stderr; // w
     let _3: &mut Stderr;
+    let _4: &str;
     bb0: {
         _3 = &mut (*_2);
-        _0 = <std::io::Stderr as core::fmt::Write>::write_str(move _3, copy (*_1));
+        _4 = &(*(*_1));
+        _0 = <str as core::fmt::Display>::fmt::<std::io::Stderr>(move _4, move _3);
+        dead _4;
         dead _3;
         dead _2;
         dead _1;
@@ -1343,13 +1346,13 @@ fn <&str as core::fmt::Display>::fmt::<std::io::Stderr><'a>(
     }
 }
 
-glue {fn}::<{closure#168292}> {
+glue {fn}::<{closure#167303}> {
     let _0: i64;
     let mut _1: i64;
     let _2: {closure};
     let _3: &{closure};
     bb0: {
-        _2 = {closure#17441}();
+        _2 = {closure#17227}();
         _3 = &_2;
         _0 = (move _3)(move _1);
         dead _3;

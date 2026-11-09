@@ -52,14 +52,14 @@ pub(super) fn fields(kind: &AdtKind) -> Vec<(String, Type)> {
 /// How many times `t` mentions type parameter `p`.
 fn occurrences(t: &Type, p: &str) -> usize {
     match t {
-        Type::Param(q) if q == p => 1,
+        Type::Param(q, _) if q == p => 1,
         t => t.parts().map(|t| occurrences(t, p)).sum(),
     }
 }
 
 /// Does `t` mention type parameter `p`?
 fn mentions(t: &Type, p: &str) -> bool {
-    matches!(t, Type::Param(q) if q == p) || t.parts().any(|t| mentions(t, p))
+    matches!(t, Type::Param(q, _) if q == p) || t.parts().any(|t| mentions(t, p))
 }
 
 /// Calls `f` with the type and trait of each projection in `t`.

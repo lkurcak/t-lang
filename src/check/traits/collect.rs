@@ -175,7 +175,7 @@ impl Checker {
                     ));
                 }
                 let this = Pred {
-                    ty: Type::Param("Self".into()),
+                    ty: Type::Param("Self".into(), false),
                     trait_name: t.name.name.clone(),
                 };
                 let mut scheme = self.method_scheme(f, &Outer::default(), Some(this), None)?;
@@ -183,7 +183,7 @@ impl Checker {
                 scheme.preds.insert(
                     0,
                     Pred {
-                        ty: Type::Param("Self".into()),
+                        ty: Type::Param("Self".into(), false),
                         trait_name: t.name.name.clone(),
                     },
                 );
@@ -687,7 +687,7 @@ impl Checker {
         let generic = args.len() == adt.params.len()
             && regions.len() == adt.lifetimes.len()
             && args.iter().all(|a| {
-                let fresh = matches!(a, Type::Param(_)) && !seen.contains(&a);
+                let fresh = matches!(a, Type::Param(_, _)) && !seen.contains(&a);
                 seen.push(a);
                 fresh
             })
@@ -715,9 +715,9 @@ impl Checker {
         let declared = |param: &str, b: &str| {
             let at = args
                 .iter()
-                .position(|a| matches!(a, Type::Param(p) if p == param));
+                .position(|a| matches!(a, Type::Param(p, _) if p == param));
             at.is_some_and(|j| {
-                let own = Type::Param(adt.params[j].clone());
+                let own = adt.params.ty(&adt.params[j]);
                 (adt.preds.iter()).any(|p| p.ty == own && p.trait_name == b)
             })
         };
@@ -844,7 +844,7 @@ impl Checker {
             };
             self.env = preds.to_vec();
             self.env.push(Pred {
-                ty: Type::Param("Self".into()),
+                ty: Type::Param("Self".into(), false),
                 trait_name: tr.to_string(),
             });
             self.adts.proj.local = eqs.to_vec();
@@ -888,7 +888,7 @@ impl Checker {
             };
             self.env = preds.to_vec();
             self.env.push(Pred {
-                ty: Type::Param("Self".into()),
+                ty: Type::Param("Self".into(), false),
                 trait_name: tr.to_string(),
             });
             self.adts.proj.local = eqs.to_vec();
@@ -1090,7 +1090,7 @@ fn decided_effects(
     span: Span,
 ) -> Result<(), Error> {
     for e in t.effect_items() {
-        let Type::Param(p) = e else { continue };
+        let Type::Param(p, _) = e else { continue };
         let in_bound = eqs.iter().any(|(lhs, rhs)| {
             crate::traits::is_sig(lhs)
                 && matches!(rhs, Type::Fn(f) if f.effects.effect_items().contains(e))
@@ -1142,7 +1142,7 @@ fn constrained(t: &Type, self_ty: &Type, params: &[String], span: Span) -> Resul
     fn outside(t: &Type, types: &mut Vec<String>, regions: &mut Vec<Region>) {
         match t {
             Type::Fn(_) => {}
-            Type::Param(p) => types.push(p.clone()),
+            Type::Param(p, _) => types.push(p.clone()),
             t => {
                 match t {
                     Type::Ref(r, ..) => regions.push(r.clone()),
