@@ -1,8 +1,12 @@
 name: Release
 
+# A step PR carries the version bump; when it lands on main, the shared
+# workflow tags it and releases from the tag (forge's rust-release.yml).
 on:
   push:
     tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+    branches: [main]
+  workflow_dispatch:
 
 jobs:
   release:
@@ -10,6 +14,7 @@ jobs:
     permissions:
       contents: write
       id-token: write
+      actions: write
     secrets: inherit
     with:
       crates-io: true
