@@ -117,12 +117,16 @@ struct Source {
     behind: bool,
 }
 
+/// One case of an instantiation's at a position: the argument it's of, its
+/// conditions, and what the value is.
+type Case = (Source, Vec<Formula>, Cand);
+
 /// What a call's type parameter `X` is (`Walk::instantiate`): at each
 /// position of the type it's given, the cases, each from an argument, and
 /// why it may be anything, if it may.
 #[derive(Debug, Clone, Default)]
 pub(super) struct Inst {
-    at: Vec<(Pos, Vec<(Source, Vec<Formula>, Cand)>)>,
+    at: Vec<(Pos, Vec<Case>)>,
     /// Why nothing's known of it: a bound that can make one.
     any: Option<String>,
 }
@@ -268,12 +272,11 @@ impl Walk<'_> {
         Some((ty, v))
     }
 
-    /// Every position of `t` but the whole value's, as deep as `DEPTH`.
+    /// Every position of `t` but the whole value's. A type is a finite
+    /// tree, so there are as many as it has nodes: none is left out, as an
+    /// obligation at one left out wouldn't be checked.
     fn positions(&mut self, t: &Type) -> Vec<Pos> {
         fn go(w: &mut Walk, t: &Type, at: &mut Pos, out: &mut Vec<Pos>) {
-            if at.len() >= DEPTH {
-                return;
-            }
             for k in 0..Walk::arity(t) {
                 let Some((c, _)) = w.child(t, k) else {
                     continue;
@@ -569,10 +572,10 @@ impl Walk<'_> {
             if d.is_any() {
                 continue;
             }
-            if pos.is_empty() {
-                if let Some(f) = self.disj_formula(d, v, false) {
-                    self.fact(f);
-                }
+            if pos.is_empty()
+                && let Some(f) = self.disj_formula(d, v, false)
+            {
+                self.fact(f);
             }
             if let Some(o) = Self::obj_of(v) {
                 let tree = self.trees.entry(o).or_default();
@@ -885,9 +888,6 @@ impl Walk<'_> {
     }
 
     fn place_decl_depth(&mut self, p: &Place, depth: usize, fields: bool) -> Tree {
-        if depth > 2 * DEPTH {
-            return Vec::new();
-        }
         let Some((last, init)) = p.path.split_last() else {
             return self.decl.get(&p.root).cloned().unwrap_or_default();
         };
@@ -903,11 +903,11 @@ impl Walk<'_> {
                 // What the reference itself says; or what's said of the box:
                 // a write through a box gives it a new value, so it's what's
                 // in it now (`Walk::kill`).
-                if let Type::Ref(..) | Type::Box(_) = qt {
-                    if let Some(&o) = self.objs.get(&q) {
-                        let reg = self.trees.get(&o).cloned().unwrap_or_default();
-                        out.extend(below(&reg, 0));
-                    }
+                if let Type::Ref(..) | Type::Box(_) = qt
+                    && let Some(&o) = self.objs.get(&q)
+                {
+                    let reg = self.trees.get(&o).cloned().unwrap_or_default();
+                    out.extend(below(&reg, 0));
                 }
                 out
             }
@@ -1209,12 +1209,18 @@ impl Walk<'_> {
                                     true => Cand::Any,
                                     false => Cand::All(here),
                                 };
-                                let src = Source { arg: j, behind: true };
+                                let src = Source {
+                                    arg: j,
+                                    behind: true,
+                                };
                                 push(&mut inst, pos, (src, Vec::new(), c));
                                 continue;
                             }
                             for (g, c) in self.arg_values_at(j, &v, &at, &p) {
-                                let src = Source { arg: j, behind: false };
+                                let src = Source {
+                                    arg: j,
+                                    behind: false,
+                                };
                                 push(&mut inst, pos, (src, g, c));
                             }
                         }
@@ -1858,7 +1864,7 @@ impl Walk<'_> {
                 let Some((sigma, _)) = occ.into_iter().next() else {
                     continue;
                 };
-                let at: Vec<(Pos, Vec<(Source, Vec<Formula>, Cand)>)> = (inst.at.iter())
+                let at: Vec<(Pos, Vec<Case>)> = (inst.at.iter())
                     .filter(|(q, _)| q.starts_with(&sigma))
                     .map(|(q, c)| (q[sigma.len()..].to_vec(), c.clone()))
                     .collect();
@@ -2020,30 +2026,34 @@ pub(super) fn reach(adts: &crate::types::Adts, t: &Type, pos: &[usize]) -> Vec<c
                 let Some(param) = def.params.as_slice().get(k).cloned() else {
                     return i;
                 };
-                let variants: Vec<(Option<String>, Vec<(String, Type)>, Vec<Type>)> =
-                    match &def.kind {
-                        crate::types::AdtKind::Struct(fields) => vec![(
-                            None,
-                            fields.clone(),
-                            struct_fields(adts, t)
-                                .unwrap_or_default()
-                                .into_iter()
-                                .map(|(_, t)| t)
-                                .collect(),
-                        )],
-                        crate::types::AdtKind::Enum(vs) => (vs.iter().enumerate())
-                            .map(|(v, (name, ts))| {
-                                (
-                                    Some(name.clone()),
-                                    ts.iter()
-                                        .enumerate()
-                                        .map(|(j, t)| (j.to_string(), t.clone()))
-                                        .collect(),
-                                    crate::types::variant_fields(adts, t, v),
-                                )
-                            })
+                #[allow(clippy::type_complexity)]
+                let variants: Vec<(
+                    Option<String>,
+                    Vec<(String, Type)>,
+                    Vec<Type>,
+                )> = match &def.kind {
+                    crate::types::AdtKind::Struct(fields) => vec![(
+                        None,
+                        fields.clone(),
+                        struct_fields(adts, t)
+                            .unwrap_or_default()
+                            .into_iter()
+                            .map(|(_, t)| t)
                             .collect(),
-                    };
+                    )],
+                    crate::types::AdtKind::Enum(vs) => (vs.iter().enumerate())
+                        .map(|(v, (name, ts))| {
+                            (
+                                Some(name.clone()),
+                                ts.iter()
+                                    .enumerate()
+                                    .map(|(j, t)| (j.to_string(), t.clone()))
+                                    .collect(),
+                                crate::types::variant_fields(adts, t, v),
+                            )
+                        })
+                        .collect(),
+                };
                 for (variant, generic, inst) in variants {
                     for (j, ((fname, g), ft)) in generic.iter().zip(&inst).enumerate() {
                         for rho in param_paths(g, &param) {
@@ -2101,7 +2111,13 @@ impl Walk<'_> {
     /// that branch's values there, under that condition. The places as the
     /// branches left them aren't here any more, so what a reference points
     /// to isn't read.
-    pub(super) fn join_values(&mut self, result: &Val, ty: &Type, vals: &[Val], guards: &[Formula]) {
+    pub(super) fn join_values(
+        &mut self,
+        result: &Val,
+        ty: &Type,
+        vals: &[Val],
+        guards: &[Formula],
+    ) {
         let Some(o) = obj_of(result) else {
             return;
         };

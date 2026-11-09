@@ -1099,7 +1099,7 @@ impl Checker {
             // Through an enum whose variants have the parameter only as
             // whole fields, it's still of parts: of those fields.
             let enum_steps = match &ty {
-                Type::Adt(symbol, ..) if !carried => match self.adts.get(symbol).map(|d| d) {
+                Type::Adt(symbol, ..) if !carried => match self.adts.get(symbol) {
                     Some(def) => match &def.kind {
                         crate::types::AdtKind::Enum(variants) => {
                             let param = def.params.as_slice()[j].clone();
@@ -1136,7 +1136,7 @@ impl Checker {
                 }
                 None => {
                     carried = true;
-                    ways = Vec::new();
+                    ways.clear();
                 }
             }
             ty = self.solved(&next);
