@@ -593,25 +593,6 @@ fn <core::result::Result::<(), core::io::Error> as core::ops::Try>::from_residua
     }
 }
 
-#[blame_caller]
-fn <&str as core::fmt::Display>::fmt::<std::io::Stderr><'a>(
-    &self,
-    w: &mut std::io::Stderr,
-) -> core::result::Result::<(), core::io::Error> {
-    let _0: Result<(), Error>;
-    let _1: &&str; // self
-    let _2: &mut Stderr; // w
-    let _3: &mut Stderr;
-    bb0: {
-        _3 = &mut (*_2);
-        _0 = <std::io::Stderr as core::fmt::Write>::write_str(move _3, copy (*_1));
-        dead _3;
-        dead _2;
-        dead _1;
-        return;
-    }
-}
-
 fn <A as Tr>::out(&self) -> i64 {
     let _0: i64;
     let _1: &A; // self

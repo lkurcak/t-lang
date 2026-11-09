@@ -258,9 +258,11 @@ fn main() {
 A type parameter never stands for `str`, as it's only ever behind a
 reference (docs/10-slices.md). So `put("text")` doesn't check: `put`'s
 `D` would be `str`. `impl Display for &str` is there for that, so
-`w.put(&"text")` works, as does `w.write_str("text")`. It doesn't overlap
+`w.put("text")` works, as does `w.write_str("text")`. It doesn't overlap
 `impl<T: Display> Display for &T`, because the overlap check knows `T`
-can't be `str`.
+can't be `str`. (Since step 57, `put`'s `D` is `unsized`, so `w.put("text")`
+works, and one `impl<'a, unsized T: Display> Display for &'a T` covers
+`&str`: docs/57-unsized-parameters.md.)
 
 ## Design decisions worth noticing
 

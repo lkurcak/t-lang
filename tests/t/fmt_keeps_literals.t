@@ -3,7 +3,7 @@
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&('\u{10FFFF}' as u32))?; // expect: 1114111
-    out.line(&"\u{41}\t\"")?;    // expect: A	"
+    out.line("\u{41}\t\"")?;    // expect: A	"
     out.line(&b"\xFF\x0a".len())?;   // expect: 2
     out.line(&b'\x7F')?;             // expect: 127
     match 'é' {

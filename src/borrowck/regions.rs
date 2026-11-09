@@ -201,7 +201,7 @@ fn vary(
         }
     };
     match t {
-        Type::Param(p) => {
+        Type::Param(p, _) => {
             if let Some(i) = d.params.iter().position(|q| q == p) {
                 let i = d.lifetimes.len() + i;
                 out[i] = out[i].join(v);
@@ -300,9 +300,7 @@ fn wf_into(t: &Type, adts: &Adts, outlives: &HashMap<String, Vec<Bound>>, out: &
             for b in outlives.get(name).into_iter().flatten() {
                 match b {
                     Bound::Region(a, b) => push(out, Bound::Region(s.region(a), s.region(b))),
-                    Bound::Param(p, r) => {
-                        type_outlives(&s.apply(&Type::Param(p.clone())), &s.region(r), out)
-                    }
+                    Bound::Param(p, r) => type_outlives(&s.apply(p), &s.region(r), out),
                     Bound::Proj(p, r) => {
                         type_outlives(&adts.normalise(&s.apply(p)), &s.region(r), out)
                     }
@@ -336,7 +334,7 @@ fn wf_into(t: &Type, adts: &Adts, outlives: &HashMap<String, Vec<Bound>>, out: &
         | Type::Bool
         | Type::Unit
         | Type::Never
-        | Type::Param(_)
+        | Type::Param(_, _)
         | Type::Var(_) => {}
     }
 }
@@ -366,12 +364,12 @@ pub(crate) fn type_outlives(t: &Type, r: &Region, out: &mut Vec<Bound>) {
                 type_outlives(a, r, out);
             }
         }
-        Type::Param(p) => push(out, Bound::Param(p.clone(), r.clone())),
+        Type::Param(..) => push(out, Bound::Param(t.clone(), r.clone())),
         // A rigid projection's regions are its type's and `'static` (its
         // impl's associated type can only mention the impl's parameters and
         // `'static`), so it outlives what its type does; or what a bound
         // says it does: a test of its own (see `Regions::subject`).
-        Type::Proj(inner, ..) if matches!(**inner, Type::Param(_) | Type::Proj(..)) => {
+        Type::Proj(inner, ..) if matches!(**inner, Type::Param(_, _) | Type::Proj(..)) => {
             push(out, Bound::Proj(t.clone(), r.clone()))
         }
         Type::Proj(inner, ..) => type_outlives(inner, r, out),
@@ -471,10 +469,7 @@ impl Regions {
                 }
                 Bound::Param(p, b) => {
                     let b = r.universal_var(b);
-                    r.known_params
-                        .entry(Type::Param(p.clone()))
-                        .or_default()
-                        .push(b);
+                    r.known_params.entry(p.clone()).or_default().push(b);
                 }
                 Bound::Proj(p, b) => {
                     let b = r.universal_var(b);
@@ -601,7 +596,7 @@ impl Regions {
         for b in bounds {
             match b {
                 Bound::Region(a, b) => self.outlives(a, b, span),
-                Bound::Param(p, r) => self.type_tests.push((Type::Param(p.clone()), var(r), span)),
+                Bound::Param(p, r) => self.type_tests.push((p.clone(), var(r), span)),
                 Bound::Proj(p, r) => self.type_tests.push((p.clone(), var(r), span)),
             }
         }
@@ -675,7 +670,7 @@ impl Regions {
             | (Type::Const(_), Type::Const(_))
             | (Type::Never, _)
             | (_, Type::Never) => {}
-            (Type::Param(p), Type::Param(q)) if p == q => {}
+            (Type::Param(p, _), Type::Param(q, _)) if p == q => {}
             // Effects are no values, and borrow nothing: the checker saw
             // that one set fits in the other, which is all there is to it.
             (Type::Effects(_), Type::Effects(_)) => {}

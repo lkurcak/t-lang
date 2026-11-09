@@ -12,14 +12,14 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let n = read_to_string(&mut input, &mut all)?;
     out.line(&n)?;           // expect: 9
     out.put(&all.as_str())?; // expect: [one
-    out.line(&"]")?;         // expect: twö
+    out.line("]")?;         // expect: twö
     // expect: ]
     all.discard();
 
     let bad = [0x61u8, 0xFF, 0x62];
     let mut s = String::from("kept");
     match read_to_string(&mut Bytes::new(bad.as_slice()), &mut s) {
-        Ok(_) => out.line(&"read")?,
+        Ok(_) => out.line("read")?,
         Err(e) => out.line(&(e.kind() == ErrorKind::InvalidData))?, // expect: true
     }
     out.line(&s.as_str())?; // expect: kept

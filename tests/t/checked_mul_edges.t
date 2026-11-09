@@ -6,7 +6,7 @@ use core::num::{greatest, least};
 fn show<T: Int + Display>(out: &mut std::io::Stdout, r: Option<T>) -> Result<(), std::io::Error> {
     match r {
         Some(n) => out.line(&n),
-        None => out.line(&"none"),
+        None => out.line("none"),
     }
 }
 

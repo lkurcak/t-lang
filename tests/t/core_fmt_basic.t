@@ -13,7 +13,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     s.write_char(' ');
     s.put(&'é');
     s.write_char(' ');
-    s.put(&"str");
+    s.put("str");
     s.write_str(" ");
     let t = String::from("String");
     s.put(&t);

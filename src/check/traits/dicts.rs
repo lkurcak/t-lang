@@ -265,7 +265,7 @@ impl Checker {
                 true => Site::types(ix, &ix.type_dicts[k], d.span, &mut out),
                 false => Site::new(ix, &ix.dicts[k], d.span, &mut out),
             };
-            let own: Vec<Type> = d.params.iter().map(|p| Type::Param(p.clone())).collect();
+            let own: Vec<Type> = d.params.iter().map(|p| d.params.ty(p)).collect();
             let def = &self.traits.traits[tr];
             for (_, _, node) in assoc.iter().filter(|(j, ..)| *j == k) {
                 site.push(node, own.clone(), None);
@@ -312,7 +312,7 @@ impl Checker {
             let n = scheme.params.as_slice().len();
             if n > skip {
                 let mut args = vec![Type::Unit; skip];
-                args.extend((skip..n).map(|_| Type::Param(UNKNOWN_PARAM.into())));
+                args.extend((skip..n).map(|_| Type::Param(UNKNOWN_PARAM.into(), false)));
                 Site::new(ix, UNKNOWN, span, &mut out).push(to, args, None);
             }
         };
@@ -420,9 +420,7 @@ impl Checker {
                 continue;
             };
             let generic = def.generic(name);
-            let renamed: Vec<Type> = (d.params.iter())
-                .map(|p| Type::Param(format!("{p}'")))
-                .collect();
+            let renamed: Vec<Type> = d.params.tys_renamed(|p| format!("{p}'"));
             let header = Subst::new(&d.params, &renamed).apply(&d.self_ty);
             let mut vars: Vec<String> = def.params.iter().cloned().collect();
             vars.extend(d.params.iter().map(|p| format!("{p}'")));
@@ -433,10 +431,10 @@ impl Checker {
                 .map(|p| {
                     let p = format!("{p}'");
                     let within = def.params.iter().find(|q| {
-                        let t = crate::traits::unified(&Type::Param((*q).clone()), &mgu);
+                        let t = crate::traits::unified(&def.params.ty(q), &mgu);
                         mentions(&t, &p)
                     });
-                    within.map_or(Type::Unit, |q| Type::Param(q.clone()))
+                    within.map_or(Type::Unit, |q| def.params.ty(q))
                 })
                 .collect();
             if let Some(to) = self.fns.iter().find(|f| f.symbol == *discard) {
@@ -538,6 +536,6 @@ impl<'a, 'o> Site<'a, 'o> {
 fn headless(t: &Type) -> bool {
     matches!(
         t,
-        Type::Param(_) | Type::Proj(..) | Type::Opaque(..) | Type::Var(_)
+        Type::Param(_, _) | Type::Proj(..) | Type::Opaque(..) | Type::Var(_)
     )
 }

@@ -32,8 +32,8 @@ pub(super) fn arity_error(what: &str, arity: usize, given: usize, span: Span) ->
 pub(crate) enum TypeName {
     /// A struct or enum, by its symbol (see `check/names.rs`), with how
     /// many lifetime arguments it takes, and for each type argument
-    /// whether it's a length, for a const parameter.
-    Adt(String, usize, Vec<bool>),
+    /// what it is: a type, maybe unsized, or a length.
+    Adt(String, usize, Vec<ArgKind>),
     /// A type parameter of a function that what it's written in is nested
     /// in, which it can't use. With the keyword and name of what it's
     /// written in: `("fn", "helper")`.
@@ -59,8 +59,8 @@ pub(crate) struct AliasDef {
     pub(crate) lifetimes: Vec<String>,
     /// Its type and const parameters, in order.
     pub(crate) params: Vec<String>,
-    /// For each of `params`, whether it's a const parameter.
-    pub(crate) lengths: Vec<bool>,
+    /// For each of `params`, what its argument is.
+    pub(crate) kinds: Vec<ArgKind>,
     /// What it stands for, as written. Its names are looked up by their
     /// nodes, so they mean what they do where the alias is declared.
     pub(crate) body: TypeExpr,
@@ -77,18 +77,21 @@ impl AliasDef {
                 .map(|l| l.name.clone())
                 .collect(),
             params: d.generics.types.iter().map(|p| p.name.clone()).collect(),
-            lengths: d.generics.lengths(),
+            kinds: d.generics.arg_kinds(),
             body: d.ty.clone(),
         }
     }
 
     /// Its parameters, as in scope in what it stands for.
     pub(crate) fn params(&self) -> Params {
-        let consts = (self.params.iter().zip(&self.lengths))
-            .filter(|(_, l)| **l)
-            .map(|(p, _)| p.clone())
-            .collect();
-        Params::new(self.params.clone(), Vec::new()).with_consts(consts)
+        let of = |kind: ArgKind| {
+            (self.params.iter().zip(&self.kinds))
+                .filter(|(_, k)| **k == kind)
+                .map(|(p, _)| p.clone())
+                .collect()
+        };
+        (Params::new(self.params.clone(), Vec::new()).with_consts(of(ArgKind::Length)))
+            .with_unsized(of(ArgKind::Unsized))
     }
 
     /// What a use of it with `regions` and `args` means: what it stands
@@ -129,6 +132,7 @@ impl AliasDef {
             &Params::new(Vec::new(), Vec::new()),
             &mut lts,
             None,
+            false,
         )
     }
 }
@@ -289,9 +293,14 @@ pub(crate) fn unsized_slice(span: Span, t: impl std::fmt::Display) -> Error {
             span,
             "`str` can only be behind a shared reference, as in `&str`",
         ),
-        t => Error::ty(
+        t if t.starts_with('[') => Error::ty(
             span,
             format!("a slice `{t}` can only be behind a reference, as in `&{t}`"),
+        ),
+        // An `unsized` parameter.
+        t => Error::ty(
+            span,
+            format!("`{t}` is `unsized`, so it can only be behind a reference, as in `&{t}`"),
         ),
     }
 }
@@ -314,7 +323,19 @@ pub(crate) fn resolve(
     params: &Params,
     lifetimes: &mut Lifetimes,
 ) -> Result<Type, Error> {
-    resolve_in(t, names, proj, params, lifetimes, None)
+    resolve_in(t, names, proj, params, lifetimes, None, false)
+}
+
+/// As `resolve`, but where any type may be, sized or not: the subject of a
+/// bound, as in `where D: Display` for an `unsized D`.
+pub(crate) fn resolve_unsized(
+    t: &TypeExpr,
+    names: &dyn Fn(&str, &TypeExpr) -> Option<TypeName>,
+    proj: &ProjNames,
+    params: &Params,
+    lifetimes: &mut Lifetimes,
+) -> Result<Type, Error> {
+    resolve_in(t, names, proj, params, lifetimes, None, true)
 }
 
 /// The lifetimes a function type being resolved is generic over: those
@@ -357,6 +378,12 @@ fn region(
     }
 }
 
+/// Resolves `t` (see `resolve`). `unsized_ok` says whether it's where any
+/// type may be, sized or not: right behind a reference, as the argument for
+/// an `unsized` parameter, or as what a projection is of. Anywhere else a
+/// type is that of values, so it has a size: not `str`, a slice or an
+/// `unsized` parameter (the kinding rule, lemma U1 of
+/// docs/57-unsized-parameters.md).
 fn resolve_in(
     t: &TypeExpr,
     names: &dyn Fn(&str, &TypeExpr) -> Option<TypeName>,
@@ -364,10 +391,24 @@ fn resolve_in(
     params: &Params,
     lifetimes: &mut Lifetimes,
     mut binder: Option<&mut Binder>,
+    unsized_ok: bool,
 ) -> Result<Type, Error> {
     let go = |t: &TypeExpr, lifetimes: &mut Lifetimes, binder: Option<&mut Binder>| {
-        resolve_in(t, names, proj, params, lifetimes, binder)
+        resolve_in(t, names, proj, params, lifetimes, binder, false)
     };
+    // Where any type may be.
+    let go_any = |t: &TypeExpr, lifetimes: &mut Lifetimes, binder: Option<&mut Binder>| {
+        resolve_in(t, names, proj, params, lifetimes, binder, true)
+    };
+    if unsized_ok {
+        match &t.kind {
+            TypeExprKind::Slice(elem) => {
+                return Ok(Type::Slice(Box::new(go(elem, lifetimes, binder)?)));
+            }
+            _ if is_str(t, names) => return Ok(Type::Str),
+            _ => {}
+        }
+    }
     // A length: in what an alias stands for, maybe one of its arguments.
     let arg = |t: &TypeExpr| match &t.kind {
         TypeExprKind::Named(n, a) if a.is_empty() => match names(n, t) {
@@ -383,7 +424,7 @@ fn resolve_in(
     };
     match &t.kind {
         TypeExprKind::Proj(inner, tr, name) => {
-            let inner = go(inner, lifetimes, binder)?;
+            let inner = go_any(inner, lifetimes, binder)?;
             proj(inner, tr.as_ref(), name, t, Kind::Type)
         }
         // The places a refinement can be take it off first (see
@@ -404,20 +445,18 @@ fn resolve_in(
             let span = Span::new(t.span.start, t.span.start + 1);
             let l = l.as_ref().map(|l| l.name.as_str());
             let region = region(l, span, lifetimes, binder.as_deref_mut())?;
-            // The one place a slice can be, and, if it's shared, a `str`.
+            // Where a slice or an `unsized` parameter can be, and, if it's
+            // shared, a `str`.
             let inner = match &inner.kind {
-                TypeExprKind::Slice(elem) => Type::Slice(Box::new(go(elem, lifetimes, binder)?)),
-                _ if is_str(inner, names) && !*mutable => Type::Str,
-                _ => go(inner, lifetimes, binder)?,
+                _ if is_str(inner, names) && *mutable => go(inner, lifetimes, binder)?,
+                _ => go_any(inner, lifetimes, binder)?,
             };
             Ok(Type::Ref(region, *mutable, Box::new(inner)))
         }
         TypeExprKind::Slice(_) => Err(unsized_slice(t.span, t)),
         TypeExprKind::Array(elem, n) => {
+            // Of a size, as `go` resolves where values are.
             let elem = go(elem, lifetimes, binder)?;
-            if let Some(u) = elem.unsized_part() {
-                return Err(unsized_slice(t.span, u));
-            }
             Ok(Type::Array(Box::new(elem), Box::new(len(n)?)))
         }
         TypeExprKind::Nat(n) => Err(Error::ty(t.span, format!("`{n}` is a length, not a type"))),
@@ -438,7 +477,12 @@ fn resolve_in(
                 ));
             }
             let mut alias = None;
-            let (ty, lt_arity, lengths) = match names(name, t) {
+            let (ty, lt_arity, kinds) = match names(name, t) {
+                // An alias's argument, in what it stands for: where any
+                // type may be, or else one with a size.
+                Some(TypeName::Arg(ty)) if !unsized_ok && ty.is_unsized() => {
+                    return Err(unsized_slice(t.span, ty));
+                }
                 Some(TypeName::Arg(ty)) => return Ok(ty),
                 Some(TypeName::Const(_)) => {
                     return Err(Error::ty(
@@ -447,13 +491,13 @@ fn resolve_in(
                     ));
                 }
                 Some(TypeName::Alias(def)) => {
-                    let arity = (def.lifetimes.len(), def.lengths.clone());
+                    let arity = (def.lifetimes.len(), def.kinds.clone());
                     alias = Some(def);
                     (Type::Unit, arity.0, arity.1)
                 }
                 // The alloc library's `Box`, which the checker knows.
                 Some(TypeName::Adt(symbol, ..)) if symbol == super::BOX => {
-                    (Type::Box(Box::new(Type::Unit)), 0, vec![false])
+                    (Type::Box(Box::new(Type::Unit)), 0, vec![ArgKind::Sized])
                 }
                 Some(TypeName::Adt(symbol, l, n)) => {
                     (Type::Adt(symbol, Vec::new(), Vec::new()), l, n)
@@ -482,7 +526,10 @@ fn resolve_in(
                         format!("`{name}` is a const parameter, not a type"),
                     ));
                 }
-                None if params.contains(name) => (Type::Param(name.clone()), 0, Vec::new()),
+                None if params.is_unsized(name) && !unsized_ok => {
+                    return Err(unsized_slice(t.span, name));
+                }
+                None if params.contains(name) => (params.ty(name), 0, Vec::new()),
                 None if let Some(t) = crate::types::IntTy::named(name) => {
                     (Type::Int(t), 0, Vec::new())
                 }
@@ -491,10 +538,10 @@ fn resolve_in(
                 None if name == "str" => return Err(unsized_slice(t.span, "str")),
                 None => return Err(Error::ty(t.span, format!("unknown type `{name}`"))),
             };
-            let arity = lengths.len();
+            let arity = kinds.len();
             if args.len() != arity {
                 let what = match ty {
-                    Type::Param(_) => format!("type parameter `{name}`"),
+                    Type::Param(_, _) => format!("type parameter `{name}`"),
                     _ => format!("`{name}`"),
                 };
                 return Err(arity_error(&what, arity, args.len(), t.span));
@@ -523,7 +570,7 @@ fn resolve_in(
                 }
             };
             let mut resolved = Vec::new();
-            for (a, &length) in args.iter().zip(&lengths) {
+            for (a, &kind) in args.iter().zip(&kinds) {
                 let lengthy = |a: &TypeExpr| match &a.kind {
                     TypeExprKind::Nat(_) => true,
                     TypeExprKind::Named(n, args) => {
@@ -531,17 +578,19 @@ fn resolve_in(
                     }
                     _ => false,
                 };
-                resolved.push(match length {
-                    true if !lengthy(a)
-                        && !matches!(&a.kind, TypeExprKind::Named(n, _) if n.starts_with('?')) =>
+                resolved.push(match kind {
+                    ArgKind::Length
+                        if !lengthy(a)
+                            && !matches!(&a.kind, TypeExprKind::Named(n, _) if n.starts_with('?')) =>
                     {
                         return Err(length_arg(name, a.span));
                     }
-                    true => len(a)?,
-                    false if matches!(a.kind, TypeExprKind::Nat(_)) => {
+                    ArgKind::Length => len(a)?,
+                    _ if matches!(a.kind, TypeExprKind::Nat(_)) => {
                         return Err(type_arg_not_length(name, a.span));
                     }
-                    false => go(a, lifetimes, binder.as_deref_mut())?,
+                    ArgKind::Unsized => go_any(a, lifetimes, binder.as_deref_mut())?,
+                    ArgKind::Sized => go(a, lifetimes, binder.as_deref_mut())?,
                 });
             }
             let args = resolved;
@@ -561,7 +610,7 @@ fn resolve_in(
             Some(TypeName::Opaque(symbol, lifetimes, params)) => Ok(Type::Opaque(
                 symbol,
                 lifetimes.into_iter().map(Region::Named).collect(),
-                params.iter().cloned().map(Type::Param).collect(),
+                params.iter().map(|p| params.ty(p)).collect(),
             )),
             _ => Err(Error::ty(
                 t.span,
@@ -621,7 +670,7 @@ pub(crate) fn resolve_effects(
                 "alloc" => Type::Alloc,
                 "unsafe" => Type::Unsafe,
                 "global" => Type::Global,
-                name if params.is_effect(name) => Type::Param(name.to_string()),
+                name if params.is_effect(name) => params.ty(name),
                 name if params.contains(&name.to_string()) => {
                     return Err(Error::ty(
                         n.span,
@@ -642,7 +691,7 @@ pub(crate) fn resolve_effects(
                     span: item.span,
                     id: item.id,
                 };
-                let base = resolve_in(base, names, proj, params, lifetimes, None)?;
+                let base = resolve_in(base, names, proj, params, lifetimes, None, true)?;
                 proj(base, tr.as_ref(), name, &written, Kind::Effects)?
             }
         });
@@ -675,10 +724,10 @@ fn len(t: &TypeExpr, params: &Params) -> Result<Type, Error> {
     match &t.kind {
         TypeExprKind::Nat(n) => Ok(Type::Nat(*n)),
         TypeExprKind::Named(name, args) if args.is_empty() && params.is_const(name) => {
-            Ok(Type::Param(name.clone()))
+            Ok(params.ty(name))
         }
         TypeExprKind::Named(name, args) if args.is_empty() && name.starts_with('?') => {
-            Ok(Type::Param(name.clone()))
+            Ok(Type::Param(name.clone(), false))
         }
         TypeExprKind::Named(name, args) if args.is_empty() && params.is_type(name) => {
             Err(Error::ty(
@@ -791,7 +840,10 @@ pub(super) fn declare(g: &Generics) -> Result<Params, Error> {
             return Err(Error::ty(p.span, "a const parameter needs a name"));
         }
     }
-    Ok(Params::new(names, g.effect_names()).with_consts(g.const_names()))
+    Ok(
+        (Params::new(names, g.effect_names()).with_consts(g.const_names()))
+            .with_unsized(g.unsized_names()),
+    )
 }
 
 /// Checks the lifetime parameters declared by a function, struct or enum,
@@ -840,7 +892,7 @@ pub(super) fn bounds(
                 let s = l.region(Some(&subject.name), subject.span)?;
                 out.push(Bound::Region(s, r));
             } else if params.contains(&subject.name) {
-                out.push(Bound::Param(subject.name.clone(), r));
+                out.push(Bound::Param(params.ty(&subject.name), r));
             }
         }
     }
@@ -854,7 +906,7 @@ pub(super) fn bounds(
 /// mustn't depend on which impls there are.
 fn depth_of(t: &Type, p: &str) -> Option<i64> {
     match t {
-        Type::Param(q) if q == p => Some(0),
+        Type::Param(q, _) if q == p => Some(0),
         Type::Proj(s, ..) => depth_of(s, p).map(|_| UNBOUNDED),
         t => t
             .parts()
@@ -1034,7 +1086,7 @@ mod tests {
     /// fault, and the error is there.
     #[test]
     fn a_cycle_through_a_library_is_the_programs_fault() {
-        let t = |p: &str| Type::Param(p.into());
+        let t = |p: &str| Type::Param(p.into(), false);
         let option = |a: Type| Type::Adt("core::option::Option".into(), Vec::new(), vec![a]);
         let library = Use {
             from: "lib::g",

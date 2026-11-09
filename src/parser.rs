@@ -1681,6 +1681,16 @@ impl Parser {
                     g.types.push(t);
                     return Ok(());
                 }
+                Tok::Unsized => {
+                    p.bump();
+                    if !matches!(p.peek(), Tok::Ident(_)) {
+                        return Err(p.unexpected("a type parameter after `unsized`"));
+                    }
+                    let t = p.ident()?;
+                    g.unsized_.push(t.id);
+                    g.types.push(t.clone());
+                    t
+                }
                 Tok::Effect => {
                     p.bump();
                     let t = p.ident()?;

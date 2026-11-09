@@ -11,9 +11,9 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&args.program())?; // expect: t-program
     out.line(&args.len())?;     // expect: 3
     for a in args.iter() {
-        out.put(&"[")?;
+        out.put("[")?;
         out.put(&a)?;
-        out.line(&"]")?;
+        out.line("]")?;
     }
     // expect: [hello]
     // expect: [wörld]

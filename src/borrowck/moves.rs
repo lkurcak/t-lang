@@ -875,7 +875,7 @@ fn reaches_own_discard(b: &Builder, t: &Type, seen: &mut Vec<Type>) -> bool {
             seen.push(erased);
             d.hidden.is_none() || reaches_own_discard(b, &d.hidden_at(t), seen)
         }
-        Type::Param(_) | Type::Proj(..) => true,
+        Type::Param(_, _) | Type::Proj(..) => true,
         _ => false,
     }
 }
@@ -1017,16 +1017,16 @@ fn dropped(
     let decl = &b.body.locals[q.local.0];
     let what = describe(b, &q);
     let hint = match b.cx.missing_discard(&t) {
-        Some(Type::Param(p)) if p == "Self" => {
+        Some(Type::Param(p, _)) if p == "Self" => {
             format!("; to let it be thrown away, make `{DISCARD}` a supertrait of the trait")
         }
-        Some(Type::Param(p)) => {
+        Some(Type::Param(p, _)) => {
             format!("; to let it be thrown away, add a bound: `{p}: {DISCARD}`")
         }
         // A function's bound can say it of a projection on its parameter;
         // otherwise only the trait can.
         Some(Type::Proj(s, tr, a)) => match *s {
-            Type::Param(p) if p != "Self" => {
+            Type::Param(p, _) if p != "Self" => {
                 format!("; to let it be thrown away, add a bound: `{p}: {tr}<{a}: {DISCARD}>`")
             }
             _ => format!(

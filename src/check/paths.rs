@@ -201,7 +201,7 @@ impl Checker {
                         "write it out instead".into(),
                     ),
                     TypeExprKind::Named(n, a) if a.is_empty() && self.type_params.is_const(n) => {
-                        Type::Param(n.clone())
+                        self.type_params.ty(n)
                     }
                     _ if let Some(&(i, _)) = self.modules.lengths.get(&t.id) => {
                         Type::Const(self.fn_symbols[i].clone())
@@ -211,7 +211,7 @@ impl Checker {
                 false if matches!(t.kind, TypeExprKind::Nat(_)) => {
                     return Err(generics::type_arg_not_length(name, t.span));
                 }
-                false => self.type_arg(t)?,
+                false => self.type_arg(t, params.is_unsized(p))?,
             });
         }
         Ok(args)
@@ -223,7 +223,11 @@ impl Checker {
     /// `resolve` can't make type variables, so each `_` is renamed to a
     /// type parameter no source program can name, resolved like any other,
     /// and then replaced by a fresh variable.
-    fn type_arg(&mut self, t: &TypeExpr) -> Result<Type, Error> {
+    ///
+    /// For an `unsized` parameter (`unsized_ok`), it may be any type, `str`
+    /// too, and so may a `_` that's all of it.
+    fn type_arg(&mut self, t: &TypeExpr, unsized_ok: bool) -> Result<Type, Error> {
+        let whole_hole = matches!(&t.kind, TypeExprKind::Named(n, a) if n == "_" && a.is_empty());
         let mut holes = Vec::new();
         let t = generics::name_holes(t, &mut holes);
         let mut params = self.type_params.clone();
@@ -233,12 +237,18 @@ impl Checker {
         let mut lts = Lifetimes::Body {
             declared: &self.lifetimes,
         };
-        let ty = self.resolve_with(&t, &params, &mut lts)?;
+        let ty = match unsized_ok {
+            true => self.resolve_unsized_with(&t, &params, &mut lts)?,
+            false => self.resolve_with(&t, &params, &mut lts)?,
+        };
         let (names, vars): (Vec<String>, Vec<Type>) = holes
             .into_iter()
             .map(|(name, span)| {
                 let what = "the type `_` stands for here".to_string();
                 let var = self.fresh(span, what, "write it out instead".into());
+                if let Type::Var(v) = var {
+                    self.vars[v as usize].unsized_ok = unsized_ok && whole_hole;
+                }
                 (name, var)
             })
             .unzip();
@@ -408,7 +418,7 @@ impl Checker {
             }
             "bool" => Some(Type::Bool),
             "char" => Some(Type::Char),
-            n if self.type_params.iter().any(|p| p == n) => Some(Type::Param(n.into())),
+            n if self.type_params.iter().any(|p| p == n) => Some(self.type_params.ty(n)),
             n if self.traits.traits.contains_key(n) => Some(Type::Unit),
             _ => None,
         }
@@ -610,7 +620,7 @@ impl Checker {
         let t = match targs {
             [] => self.synth(arg)?,
             [t] => {
-                let t = self.type_arg(t)?;
+                let t = self.type_arg(t, false)?;
                 self.check(arg, &t)?;
                 t
             }

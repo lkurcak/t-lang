@@ -35,7 +35,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     for w in WORDS.iter() {
         match command(*w) {
-            Command::Unknown => out.line(&"?")?,
+            Command::Unknown => out.line("?")?,
             _ => out.line(w)?,
         }
     }

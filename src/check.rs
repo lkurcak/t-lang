@@ -74,7 +74,7 @@ mod unify;
 pub(crate) use closures::is_result_lifetime;
 pub(crate) use expr::{first_use, result_span};
 pub(crate) use generics::{
-    AliasDef, Kind, Lifetimes, ProjNames, TypeName, resolve, resolve_effects,
+    AliasDef, Kind, Lifetimes, ProjNames, TypeName, resolve, resolve_effects, unsized_slice,
 };
 pub use info::{Info, Instance, Note, NoteKind, Test};
 pub(crate) use refine::Known;
@@ -423,7 +423,7 @@ pub(crate) struct Checker {
     adts: Adts,
     /// How many lifetime and type arguments each struct and enum takes, by
     /// symbol.
-    arities: HashMap<String, (usize, Vec<bool>)>,
+    arities: HashMap<String, (usize, Vec<crate::ast::ArgKind>)>,
     /// What each type alias stands for, by symbol.
     aliases: HashMap<String, std::sync::Arc<AliasDef>>,
     /// Every struct and enum, top-level and local, in the order of
@@ -874,7 +874,7 @@ impl Checker {
             let aborts = (effects.effect_items().iter()).any(|e| {
                 matches!(
                     e,
-                    Type::Panic | Type::Alloc | Type::Param(_) | Type::Proj(..) | Type::Var(_)
+                    Type::Panic | Type::Alloc | Type::Param(_, _) | Type::Proj(..) | Type::Var(_)
                 )
             });
             if !aborts {
@@ -1216,7 +1216,7 @@ impl Checker {
                         eqs: d.local_eqs(),
                     };
                     let this = d.trait_name.clone().map(|tr| Pred {
-                        ty: Type::Param("Self".into()),
+                        ty: Type::Param("Self".into(), false),
                         trait_name: tr,
                     });
                     self.method_scheme(f, &outer, this, Some(&d.self_ty))?
@@ -1799,6 +1799,23 @@ impl Checker {
         )
     }
 
+    /// As `resolve_with`, but where any type may be, sized or not: the
+    /// subject of a bound, or a type argument for an `unsized` parameter.
+    fn resolve_unsized_with(
+        &self,
+        t: &TypeExpr,
+        params: &Params,
+        lts: &mut Lifetimes,
+    ) -> Result<Type, Error> {
+        generics::resolve_unsized(
+            t,
+            &|_, t| self.type_name(t),
+            &|s, tr, name, t, k| self.projection(s, tr, name, t, k),
+            params,
+            lts,
+        )
+    }
+
     /// Effects written where type and effect parameters `params` are in
     /// scope, and lifetimes mean what `lts` says.
     fn resolve_effects_with(
@@ -1894,7 +1911,7 @@ impl Checker {
             for (_, f) in traits::fields(&self.adts[symbol].kind) {
                 match (debug, fmt) {
                     (true, Some(fmt)) => {
-                        let sink = Type::Param(DERIVED_SINK.into());
+                        let sink = Type::Param(DERIVED_SINK.into(), false);
                         self.call_uses(&ix, (from, d.span), fmt, &[f, sink], &mut uses);
                     }
                     _ => self.call_uses(&ix, (from, d.span), eq, &[f], &mut uses),

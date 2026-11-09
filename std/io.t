@@ -154,10 +154,10 @@ impl Read for Stdin {
 impl Stdout {
     /// Writes `x` as text: what `Write::put` does, without needing `Write`
     /// in scope.
-    export fn put<D: Display>(&mut self, x: &D) -> Result<(), Error> { x.fmt(self) }
+    export fn put<unsized D: Display>(&mut self, x: &D) -> Result<(), Error> { x.fmt(self) }
 
     /// Writes `x` as text, then a line break.
-    export fn line<D: Display>(&mut self, x: &D) -> Result<(), Error> {
+    export fn line<unsized D: Display>(&mut self, x: &D) -> Result<(), Error> {
         x.fmt(self)?;
         fmt::Write::write_char(self, '\n')
     }
@@ -201,10 +201,10 @@ impl Stdout {
 impl Stderr {
     /// Writes `x` as text: what `Write::put` does, without needing `Write`
     /// in scope.
-    export fn put<D: Display>(&mut self, x: &D) -> Result<(), Error> { x.fmt(self) }
+    export fn put<unsized D: Display>(&mut self, x: &D) -> Result<(), Error> { x.fmt(self) }
 
     /// Writes `x` as text, then a line break.
-    export fn line<D: Display>(&mut self, x: &D) -> Result<(), Error> {
+    export fn line<unsized D: Display>(&mut self, x: &D) -> Result<(), Error> {
         x.fmt(self)?;
         fmt::Write::write_char(self, '\n')
     }

@@ -9,7 +9,7 @@ they matter.
 ```rust
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
-    out.line(&"Hello, T!") // expect: Hello, T!
+    out.line("Hello, T!") // expect: Hello, T!
 }
 ```
 
@@ -456,6 +456,7 @@ combine features in ways nobody planned for.
 | 54 | Loop invariants: `while lo < hi invariant lo <= hi && hi <= a.len() { .. }`, also on `loop`, `for` and `while let`, so a binary search proves its indexes; a loop's exits (its condition false, each `break`) are joined after it as branches are, so `break v` values and what held at each `break` are known | Hoare's rule: proved as the loop starts and wherever it goes round again, assumed at the head of what the loop changes; an invariant is never compiled, but the borrow checker sees what it names read at the head and the interpreter checks it there | [docs/54-loop-invariants.md](docs/54-loop-invariants.md) |
 | 55 | Free theorems: a generic function's type parameter bounded only by markers, on enum ways in its signature, gives back one of the values of it it was given, so refinements go through `unwrap`, `expect`, `unwrap_or`, `ok`, `ok_or` and functions of the program's own, `?` keeps them both ways, and a function with a refined result can use `?`; `checked_add`/`sub`/`mul`/`neg`/`abs` say what they give; `Option::ok_or` | Reynolds' abstraction theorem: nothing in T makes a value of a type it knows nothing of (no type case, transmute or specialisation; intrinsics only move what they're given), so each result part is an argument's part that's there; the interpreter checks it at every call | [docs/55-free-theorems.md](docs/55-free-theorems.md) |
 | 56 | Field paths in predicates (`p.x`, `s.head.len()`), seen as far as the signature; `s.slice(a..b)` and `slice_mut` proved in range; `split_at`, `str::get`, `trim`, `strip_prefix` say how long what they give is; off-by-default lint `implicit_panics`; `use Enum::{self, A}`; a trait method's receiver of unknown type arguments decided by the only impl that could be its | a field is a function of the value, read through `&` as it can't change, through `&mut` only where a measure could be; callers' proofs never name fields they can't see; `split_at` safe T over a total intrinsic, so the trusted code stays as big; equal values have equal measures; every impl for a head is in its trait's or type's package, so the only one stays the only one | [docs/56-field-paths-and-slices.md](docs/56-field-paths-and-slices.md) |
+| 57 | Unsized parameters: `unsized D` stands for any type, `str` and slices too, only ever behind a reference or as another `unsized` parameter's argument; `out.line("hello")`; one `Display`/`Debug`/`Ord` impl for `&T` in `core`; impls for possibly unsized types stay the libraries' | kinds ★ ⊆ ★?, checked where types are written; a sized parameter never stands for, nor an impl's matches, an unsized type; the kind is part of the parameter's type, so every check that kept `str` out of values covers it; every MIR value checked to have a size after inference; `&mut str` has no values | [docs/57-unsized-parameters.md](docs/57-unsized-parameters.md) |
 
 ## License
 

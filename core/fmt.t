@@ -42,11 +42,13 @@ export trait Write {
     /// Writes `x` as text: `x.fmt(self)`, with the sink first, so that
     /// `w.put(&x)?` reads in the order things go.
     #[blame_caller]
-    fn put<D: Display>(&mut self, x: &D) -> Result<(), Self::Error> with Self::e { x.fmt(self) }
+    fn put<unsized D: Display>(&mut self, x: &D) -> Result<(), Self::Error> with Self::e {
+        x.fmt(self)
+    }
 
     /// Writes `x` as text, then a line break.
     #[blame_caller]
-    fn line<D: Display>(&mut self, x: &D) -> Result<(), Self::Error> with Self::e {
+    fn line<unsized D: Display>(&mut self, x: &D) -> Result<(), Self::Error> with Self::e {
         x.fmt(self)?;
         self.write_char('\n')
     }
@@ -92,21 +94,14 @@ impl Display for str {
     fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { w.write_str(self) }
 }
 
-/// Its characters: as `str`'s, which a type parameter can't stand for,
-/// so `&T`'s doesn't cover it.
-impl<'a> Display for &'a str {
-    #[blame_caller]
-    fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { w.write_str(*self) }
-}
-
-/// What it points to.
-impl<'a, T: Display> Display for &'a T {
+/// What it points to: a `&str` its characters, as `str`'s.
+impl<'a, unsized T: Display> Display for &'a T {
     #[blame_caller]
     fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { (**self).fmt(w) }
 }
 
 /// What it points to.
-impl<'a, T: Display> Display for &'a mut T {
+impl<'a, unsized T: Display> Display for &'a mut T {
     #[blame_caller]
     fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { (**self).fmt(w) }
 }
@@ -190,46 +185,27 @@ impl Debug for str {
     fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { quoted(self, w) }
 }
 
-/// As `str`'s, which a type parameter can't stand for, so `&T`'s doesn't
-/// cover it.
-impl<'a> Debug for &'a str {
-    #[blame_caller]
-    fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { quoted(*self, w) }
-}
-
 /// `()`.
 impl Debug for () {
     #[blame_caller]
     fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { w.write_str("()") }
 }
 
-/// What it points to.
-impl<'a, T: Debug> Debug for &'a T {
+/// What it points to: a `&str` in double quotes, as `str`'s, and a `&[T]`
+/// its values, as `[T]`'s.
+impl<'a, unsized T: Debug> Debug for &'a T {
     #[blame_caller]
     fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { Debug::fmt(*self, w) }
 }
 
 /// What it points to.
-impl<'a, T: Debug> Debug for &'a mut T {
+impl<'a, unsized T: Debug> Debug for &'a mut T {
     #[blame_caller]
     fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { Debug::fmt(&**self, w) }
 }
 
 /// Its values, in brackets: `[1, 2, 3]`.
 impl<T: Debug> Debug for [T] {
-    #[blame_caller]
-    fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { items(self.iter(), w) }
-}
-
-/// Its values, as `[T]`'s, which a type parameter can't stand for, so
-/// `&T`'s doesn't cover it.
-impl<'a, T: Debug> Debug for &'a [T] {
-    #[blame_caller]
-    fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { items(self.iter(), w) }
-}
-
-/// Its values, as `&[T]`'s.
-impl<'a, T: Debug> Debug for &'a mut [T] {
     #[blame_caller]
     fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { items(self.iter(), w) }
 }
@@ -322,18 +298,18 @@ impl<A: Display, B: Display> Display for Cat<A, B> {
 }
 
 /// `x` as itself: a `{x}` of an `f".."`, which must be `Display`.
-export fn display<'a, T: Display>(x: &'a T) -> &'a T { x }
+export fn display<'a, unsized T: Display>(x: &'a T) -> &'a T { x }
 
 /// A value written by its `Debug`: a `{x:?}` of an `f".."`, made with
 /// `debug`.
 #[derive(Copy, Discard)]
-export struct Dbg<'a, T> { x: &'a T }
+export struct Dbg<'a, unsized T> { x: &'a T }
 
 /// `x`, to be written by its `Debug`.
-export fn debug<'a, T: Debug>(x: &'a T) -> Dbg<'a, T> { Dbg { x } }
+export fn debug<'a, unsized T: Debug>(x: &'a T) -> Dbg<'a, T> { Dbg { x } }
 
 /// `x`'s `Debug`.
-impl<'a, T: Debug> Display for Dbg<'a, T> {
+impl<'a, unsized T: Debug> Display for Dbg<'a, T> {
     #[blame_caller]
     fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { Debug::fmt(self.x, w) }
 }

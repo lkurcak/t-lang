@@ -76,7 +76,7 @@ impl Checker {
                 self.aliases.insert(def.symbol.clone(), alias);
                 continue;
             }
-            let arity = (d.generics().lifetimes.len(), d.generics().lengths());
+            let arity = (d.generics().lifetimes.len(), d.generics().arg_kinds());
             self.arities.insert(def.symbol.clone(), arity);
         }
         self.alias_cycles(&decls)?;
@@ -307,7 +307,7 @@ impl Checker {
             let ty = self.alias_body(&self.aliases[&def.symbol])?;
             let mut used: HashSet<&str> = HashSet::new();
             fn params<'t>(t: &'t Type, used: &mut HashSet<&'t str>) {
-                if let Type::Param(p) = t {
+                if let Type::Param(p, _) = t {
                     used.insert(p);
                 }
                 t.parts().for_each(|p| params(p, used));

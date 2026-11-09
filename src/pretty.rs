@@ -750,6 +750,7 @@ impl Printer<'_> {
                 let mut out = match g.consts.iter().find(|(id, _)| *id == p.id) {
                     Some((_, t)) => text("const ") + text(&p.name) + ": " + pp.ty(t),
                     None if g.is_effect(p) => text("effect ") + text(&p.name),
+                    None if g.is_unsized(p) => text("unsized ") + text(&p.name),
                     None => text(&p.name),
                 };
                 for (i, b) in g.bounds_of(&p.name).into_iter().enumerate() {

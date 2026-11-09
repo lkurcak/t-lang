@@ -38,7 +38,14 @@ pub enum Type {
     /// function or type that declares it. There it stands for a type the
     /// caller picks, so nothing is known about it: it's equal only to itself
     /// (see docs/04-generics.md).
-    Param(String),
+    ///
+    /// The `bool` says whether it was declared `unsized` (`unsized D`): then
+    /// it may stand for a type with no size known when compiled, `str` or a
+    /// slice, so like those it's only ever behind a reference, and never a
+    /// value (see docs/57-unsized-parameters.md). Its kind is part of it, so
+    /// every check that keeps `str` out of values keeps it out too
+    /// (`is_unsized`).
+    Param(String, bool),
     /// A type not known yet: a *type variable*, standing for some type the
     /// checker will work out from how the value is used (see docs/03-inference.md).
     /// The number indexes the checker's table of what each one has turned out
@@ -55,8 +62,9 @@ pub enum Type {
     /// how many known only as the program runs. So it's never a value of
     /// its own, only what a reference points to, `&'a [T]` or `&'a mut
     /// [T]`, which carries the length (see docs/10-slices.md): nor is it
-    /// what a type parameter stands for, so generic code never has one by
-    /// value either (`Checker::sized`).
+    /// what a type parameter stands for, unless it's `unsized`, which is
+    /// only behind references itself, so generic code never has one by
+    /// value either (`is_unsized`, docs/57-unsized-parameters.md).
     Slice(Box<Type>),
     /// `[T; N]`: an *array*, exactly `N` values of type `T`, one after
     /// another, inline: unlike a slice, a value of its own (see
@@ -77,7 +85,9 @@ pub enum Type {
     /// `str`: a *string*, bytes that are UTF-8, how many known only as the
     /// program runs. Like a slice, it's only ever what a reference points
     /// to, and only a shared one, `&'a str`: changing its bytes could make
-    /// them not UTF-8 (see docs/13-strings.md).
+    /// them not UTF-8 (see docs/13-strings.md). An `unsized` parameter `D`
+    /// may stand for it, and `&mut D` is then a type with no values (lemma
+    /// U6 of docs/57-unsized-parameters.md).
     Str,
     /// `<T as Iter>::Item`: a *projection*, the type that the impl of trait
     /// `.1` for type `.0` picks for its associated type `.2` (see
@@ -174,7 +184,8 @@ impl fmt::Display for Region {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Bound {
     Region(Region, Region),
-    Param(String, Region),
+    /// `T: 'b`, of a type parameter: the `Type::Param`, with its kind.
+    Param(Type, Region),
     /// `T::Item: 'b`, of a rigid projection.
     Proj(Type, Region),
 }
@@ -256,7 +267,7 @@ fn effect_key(t: &Type) -> (u8, String) {
         Type::Global => (1, String::new()),
         Type::Panic => (2, String::new()),
         Type::Unsafe => (3, String::new()),
-        Type::Param(p) => (4, p.clone()),
+        Type::Param(p, _) => (4, p.clone()),
         Type::Proj(..) => (5, format!("{t:?}")),
         Type::Var(v) => (6, format!("{v:010}")),
         t => (7, format!("{t:?}")),
@@ -321,7 +332,7 @@ impl AdtDef {
         Type::Adt(
             symbol.to_string(),
             self.lifetimes.iter().cloned().map(Region::Named).collect(),
-            self.params.iter().cloned().map(Type::Param).collect(),
+            self.params.iter().map(|p| self.params.ty(p)).collect(),
         )
     }
 }
@@ -455,7 +466,7 @@ pub fn frozen(adts: &Adts, t: &Type) -> bool {
                 all_fields(adts, t).iter().all(|f| go(adts, f, seen))
             }
             Type::Box(inner) | Type::Array(inner, _) => go(adts, inner, seen),
-            Type::Param(_) => false,
+            Type::Param(_, _) => false,
             _ => true,
         }
     }
@@ -500,7 +511,7 @@ impl Subst {
     /// `t`, with every parameter this substitution knows replaced.
     pub fn apply(&self, t: &Type) -> Type {
         match t {
-            Type::Param(p) => self.types.get(p).cloned().unwrap_or_else(|| t.clone()),
+            Type::Param(p, _) => self.types.get(p).cloned().unwrap_or_else(|| t.clone()),
             Type::Ref(r, m, inner) => Type::Ref(self.region(r), *m, Box::new(self.apply(inner))),
             Type::Adt(name, regions, args) => Type::Adt(
                 name.clone(),
@@ -549,7 +560,7 @@ impl Type {
             | Type::Str
             | Type::Unit
             | Type::Never
-            | Type::Param(_)
+            | Type::Param(_, _)
             | Type::Var(_)
             | Type::Alloc
             | Type::Panic
@@ -559,23 +570,41 @@ impl Type {
         params.iter().chain(ret).chain(effects)
     }
 
-    /// Is it a slice or `str`: a type whose values' size is known only as
-    /// the program runs, so it's only ever behind a reference?
+    /// Is it a slice, `str` or an `unsized` type parameter: a type whose
+    /// values' size may be known only as the program runs, so it's only
+    /// ever behind a reference?
     pub fn is_unsized(&self) -> bool {
-        matches!(self, Type::Slice(_) | Type::Str)
+        matches!(self, Type::Slice(_) | Type::Str | Type::Param(_, true))
     }
 
-    /// A slice or `str` in this type that isn't right behind a reference
-    /// (a shared one, for `str`), if there's one: where it would be a value
-    /// of its own.
-    pub fn unsized_part(&self) -> Option<&Type> {
-        match self {
-            Type::Slice(_) | Type::Str => Some(self),
-            Type::Ref(_, _, inner) if matches!(**inner, Type::Slice(_)) => {
-                inner.parts().find_map(Type::unsized_part)
+    /// A slice, `str` or `unsized` parameter in this type where it would be
+    /// a value of its own, if there's one: anywhere but right behind a
+    /// reference (a shared one, for `str`), as the argument for an
+    /// `unsized` parameter of a struct or enum (the `i`th of `symbol`'s, if
+    /// `unsized_arg(symbol, i)`), or as what a projection is of.
+    pub fn unsized_part(&self, unsized_arg: &dyn Fn(&str, usize) -> bool) -> Option<&Type> {
+        // Where any type may be: only its parts must have sizes.
+        fn any<'t>(t: &'t Type, unsized_arg: &dyn Fn(&str, usize) -> bool) -> Option<&'t Type> {
+            match t.is_unsized() {
+                true => t.parts().find_map(|p| p.unsized_part(unsized_arg)),
+                false => t.unsized_part(unsized_arg),
             }
-            Type::Ref(_, false, inner) if matches!(**inner, Type::Str) => None,
-            t => t.parts().find_map(Type::unsized_part),
+        }
+        match self {
+            t if t.is_unsized() => Some(self),
+            Type::Ref(_, true, inner) if matches!(**inner, Type::Str) => Some(inner),
+            Type::Ref(_, _, inner) => any(inner, unsized_arg),
+            Type::Adt(symbol, _, args) => {
+                (args.iter().enumerate()).find_map(|(i, a)| match unsized_arg(symbol, i) {
+                    true => any(a, unsized_arg),
+                    false => a.unsized_part(unsized_arg),
+                })
+            }
+            // Its arguments are the function's own parameters, or what they
+            // stand for, already of their kinds.
+            Type::Opaque(_, _, args) => args.iter().find_map(|a| any(a, unsized_arg)),
+            Type::Proj(base, ..) => any(base, unsized_arg),
+            t => t.parts().find_map(|p| p.unsized_part(unsized_arg)),
         }
     }
 
@@ -612,7 +641,7 @@ impl Type {
             | Type::Str
             | Type::Unit
             | Type::Never
-            | Type::Param(_)
+            | Type::Param(_, _)
             | Type::Var(_)
             | Type::Alloc
             | Type::Panic
@@ -741,7 +770,7 @@ impl Type {
     /// over: `fn(&i64) -> i64` takes references of any lifetime.
     pub fn may_borrow(&self) -> bool {
         fn has_param(t: &Type) -> bool {
-            matches!(t, Type::Param(_) | Type::Proj(..)) || t.parts().any(has_param)
+            matches!(t, Type::Param(_, _) | Type::Proj(..)) || t.parts().any(has_param)
         }
         !self.regions().is_empty() || has_param(self)
     }
@@ -970,9 +999,9 @@ impl fmt::Display for Type {
             Type::Nat(n) => write!(f, "{n}"),
             Type::Const(symbol) => f.write_str(&crate::check::source_name(symbol)),
             // `T::Item` is what's written, and says enough in a message.
-            Type::Proj(t, _, name) if matches!(**t, Type::Param(_)) => write!(f, "{t}::{name}"),
+            Type::Proj(t, _, name) if matches!(**t, Type::Param(_, _)) => write!(f, "{t}::{name}"),
             Type::Proj(t, tr, name) => write!(f, "<{t} as {tr}>::{name}"),
-            Type::Param(name) => f.write_str(name),
+            Type::Param(name, _) => f.write_str(name),
             // As written, which is where it's from: what it's at says little.
             Type::Opaque(name, ..) => f.write_str(opaque_text(name)),
             // Like Rust: "some type, not known yet".
@@ -992,6 +1021,9 @@ pub struct Params {
     effects: Vec<String>,
     /// Which of `names` are const parameters, standing for a length.
     consts: Vec<String>,
+    /// Which of `names` are `unsized` type parameters, which may stand for
+    /// `str` or a slice (see `Type::Param`).
+    unsized_: Vec<String>,
 }
 
 impl Params {
@@ -1002,6 +1034,7 @@ impl Params {
             names,
             effects,
             consts: Vec::new(),
+            unsized_: Vec::new(),
         }
     }
 
@@ -1009,6 +1042,13 @@ impl Params {
     pub fn with_consts(mut self, consts: Vec<String>) -> Params {
         debug_assert!(consts.iter().all(|c| self.names.contains(c)));
         self.consts = consts;
+        self
+    }
+
+    /// These, of which `unsized_` are `unsized` type parameters too.
+    pub fn with_unsized(mut self, unsized_: Vec<String>) -> Params {
+        debug_assert!(unsized_.iter().all(|c| self.is_type(c)));
+        self.unsized_ = unsized_;
         self
     }
 
@@ -1027,6 +1067,11 @@ impl Params {
         self.consts.iter().any(|c| c == name)
     }
 
+    /// Is `name` one of them, and an `unsized` type parameter?
+    pub fn is_unsized(&self, name: &str) -> bool {
+        self.unsized_.iter().any(|c| c == name)
+    }
+
     /// Is `name` one of them, and a type parameter?
     pub fn is_type(&self, name: &str) -> bool {
         self.names.iter().any(|n| n == name) && !self.is_effect(name) && !self.is_const(name)
@@ -1038,6 +1083,7 @@ impl Params {
         p.names.extend(more.names.iter().cloned());
         p.effects.extend(more.effects.iter().cloned());
         p.consts.extend(more.consts.iter().cloned());
+        p.unsized_.extend(more.unsized_.iter().cloned());
         p
     }
 
@@ -1063,6 +1109,7 @@ impl Params {
             names: self.names.iter().filter(keep).cloned().collect(),
             effects: self.effects.iter().filter(keep).cloned().collect(),
             consts: self.consts.iter().filter(keep).cloned().collect(),
+            unsized_: self.unsized_.iter().filter(keep).cloned().collect(),
         }
     }
 
@@ -1070,11 +1117,12 @@ impl Params {
     pub fn skip(&self, n: usize) -> Params {
         let names = self.names[n..].to_vec();
         let of = |kind: &[String]| kind.iter().filter(|e| names.contains(e)).cloned().collect();
-        let (effects, consts) = (of(&self.effects), of(&self.consts));
+        let (effects, consts, unsized_) = (of(&self.effects), of(&self.consts), of(&self.unsized_));
         Params {
             names,
             effects,
             consts,
+            unsized_,
         }
     }
 
@@ -1083,9 +1131,22 @@ impl Params {
     /// sets.
     pub fn arg(&self, name: &str) -> Type {
         match self.is_effect(name) {
-            true => Type::Effects(vec![Type::Param(name.to_string())]),
-            false => Type::Param(name.to_string()),
+            true => Type::Effects(vec![self.ty(name)]),
+            false => self.ty(name),
         }
+    }
+
+    /// Parameter `name` as a type, `Type::Param`, of the kind it was
+    /// declared: `unsized` or not.
+    pub fn ty(&self, name: &str) -> Type {
+        Type::Param(name.to_string(), self.is_unsized(name))
+    }
+
+    /// `ty` of each of them, renamed by `rename`, keeping its kind.
+    pub fn tys_renamed(&self, rename: impl Fn(&str) -> String) -> Vec<Type> {
+        (self.names.iter())
+            .map(|p| Type::Param(rename(p), self.is_unsized(p)))
+            .collect()
     }
 
     /// Each as a type argument, which makes something generic over them

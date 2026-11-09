@@ -22,7 +22,7 @@ fn main(os: Os) -> Result<(), Error> with alloc {
     let mut out = os.stdout;
     let mut line = String::new();
     while input.read_line(&mut line)? {
-        out.put(&"> ")?;
+        out.put("> ")?;
         out.line(&line.as_str())?;
     }
     Result::Ok(())
@@ -111,7 +111,7 @@ fn count(out: &mut std::io::Stdout, n: u8) -> Result<(), std::io::Error> {
     for i in 0..n {
         out.put(&i)?;
     }
-    out.line(&"")
+    out.line("")
 }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> {
@@ -138,7 +138,7 @@ struct Oops { n: i64 }
 
 impl core::fmt::Display for Oops {
     fn fmt<W: core::fmt::Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e {
-        w.put(&"oops ")?;
+        w.put("oops ")?;
         w.put(&self.n)
     }
 }

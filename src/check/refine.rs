@@ -945,7 +945,7 @@ impl Checker {
         path: &[usize],
     ) -> Result<(Type, Vec<Way>), Error> {
         fn mentions(t: &Type, p: &str) -> bool {
-            matches!(t, Type::Param(q) if q == p) || t.parts().any(|u| mentions(u, p))
+            matches!(t, Type::Param(q, _) if q == p) || t.parts().any(|u| mentions(u, p))
         }
         let mut ways = vec![Vec::new()];
         let mut ty = base.clone();
@@ -981,7 +981,7 @@ impl Checker {
             for (v, (variant, fields)) in variants.iter().enumerate() {
                 for (f, ft) in fields.iter().enumerate() {
                     match ft {
-                        Type::Param(p) if *p == param => steps.push((v, f)),
+                        Type::Param(p, _) if *p == param => steps.push((v, f)),
                         ft if mentions(ft, &param) => {
                             return Err(not(format!(
                                 "`{param}` is in a field of variant `{variant}` of `{name}` \
@@ -1221,7 +1221,7 @@ impl Checker {
         match self.solved(t) {
             _ if self.int_var(t) => Some(Sort::Int),
             Type::Int(_) => Some(Sort::Int),
-            t @ Type::Param(_)
+            t @ Type::Param(_, _)
                 if (self.traits)
                     .implements(&t, INT, &self.env, &self.adts.proj.local)
                     .is_ok() =>
@@ -1487,7 +1487,7 @@ impl Checker {
         }
         let ret = self.solved(ret);
         // An integer of a type parameter's is one of some integer type's.
-        let int_param = matches!(ret, Type::Param(_))
+        let int_param = matches!(ret, Type::Param(_, _))
             && (self.traits)
                 .implements(&ret, INT, &self.env, &self.adts.proj.local)
                 .is_ok();
@@ -1590,7 +1590,7 @@ impl Checker {
         let scalar = match &ty {
             Some(Type::Int(_) | Type::Bool) => true,
             // One of some integer type, `T: Int`.
-            Some(t @ Type::Param(_)) => {
+            Some(t @ Type::Param(_, _)) => {
                 (self
                     .traits
                     .implements(t, INT, &self.env, &self.adts.proj.local))
@@ -2177,7 +2177,7 @@ impl Walk<'_> {
             }
             // But for the surrogates, in between: see `scalar`.
             Type::Char => Some((Lin::constant(0), Lin::constant(0x10FFFF))),
-            Type::Param(p) if self.is_int(t) => {
+            Type::Param(p, _) if self.is_int(t) => {
                 if let Some(b) = self.bounds.get(p) {
                     return Some(b.clone());
                 }
@@ -2236,7 +2236,7 @@ impl Walk<'_> {
     fn is_int(&self, t: &Type) -> bool {
         match t {
             Type::Int(_) => true,
-            Type::Param(_) => self.implements(t, INT),
+            Type::Param(_, _) => self.implements(t, INT),
             _ => false,
         }
     }
@@ -2260,10 +2260,12 @@ impl Walk<'_> {
     /// struct, its fields have its refinements.
     fn unknown(&mut self, t: &Type) -> Val {
         match t {
-            Type::Int(_) | Type::Param(_) | Type::Char if self.is_scalar(t) => match self.kind(t) {
-                Some(k) => Val::Int(Lin::var(self.fresh(k))),
-                None => Val::Other,
-            },
+            Type::Int(_) | Type::Param(_, _) | Type::Char if self.is_scalar(t) => {
+                match self.kind(t) {
+                    Some(k) => Val::Int(Lin::var(self.fresh(k))),
+                    None => Val::Other,
+                }
+            }
             Type::Bool => Val::Bool(Formula::holds(self.fresh(Kind::Bool))),
             Type::Adt(..) => match struct_fields(&self.cx.adts, t) {
                 Some(fields) => {
@@ -2561,7 +2563,7 @@ impl Walk<'_> {
     /// integer type has room for.
     fn measure_value(&mut self, ret: &Type) -> Val {
         match ret {
-            Type::Param(_) => {
+            Type::Param(_, _) => {
                 let (lo, _) = IntTy::I64.range_64();
                 let (_, hi) = IntTy::U64.range_64();
                 let k = Kind::Int(Lin::constant(lo), Lin::constant(hi));
@@ -3219,9 +3221,11 @@ impl Walk<'_> {
                     Env::Call(_, args) | Env::Fields(_, args) | Env::Post(_, _, args),
                 ) => match args.iter().find(|(p, _)| p == name) {
                     Some((_, t)) => self.length(&t.clone()),
-                    None => self.length(&Type::Param(name.clone())),
+                    None => self.length(&Type::Param(name.clone(), false)),
                 },
-                (PredName::Const(name), Env::Here) => self.length(&Type::Param(name.clone())),
+                (PredName::Const(name), Env::Here) => {
+                    self.length(&Type::Param(name.clone(), false))
+                }
                 (PredName::Item(symbol), _) => {
                     let symbol = symbol.clone();
                     self.const_item(&symbol)
@@ -4098,7 +4102,7 @@ impl Walk<'_> {
         fn open(t: &Type) -> bool {
             matches!(
                 t,
-                Type::Param(_)
+                Type::Param(_, _)
                     | Type::Var(_)
                     | Type::Proj(..)
                     | Type::Opaque(..)
@@ -4145,7 +4149,7 @@ impl Walk<'_> {
         match n {
             Type::Nat(k) => Val::Int(Lin::constant(i128::from(*k))),
             Type::Const(symbol) => self.const_item(symbol),
-            Type::Param(name) => {
+            Type::Param(name, _) => {
                 if let Some(v) = self.consts.get(name) {
                     return v.clone();
                 }
@@ -4679,7 +4683,7 @@ impl Walk<'_> {
                     self.as_value(symbol, e.span)?;
                     Ok(Val::Other)
                 }
-                Some(Res::Const(name)) => Ok(self.length(&Type::Param(name.clone()))),
+                Some(Res::Const(name)) => Ok(self.length(&Type::Param(name.clone(), false))),
                 // A const: what's known of its value, or else what its type
                 // says, as of a call of a function with no parameters.
                 Some(Res::Item(symbol)) => {

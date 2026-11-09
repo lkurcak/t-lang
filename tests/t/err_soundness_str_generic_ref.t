@@ -5,4 +5,4 @@ fn id<T>(x: &T) -> &T { x }
 fn main() {
     id("hello");
 }
-// error: a type parameter can't stand for `str`: it's only ever behind a reference
+// error: a type parameter that isn't `unsized` can't stand for `str`, which is only ever behind a reference

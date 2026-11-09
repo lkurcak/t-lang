@@ -2,7 +2,7 @@
 fn show(out: &mut std::io::Stdout, o: Option<&str>) -> Result<(), std::io::Error> {
     match o {
         Some(s) => out.line(&s),
-        None => out.line(&"none"),
+        None => out.line("none"),
     }
 }
 

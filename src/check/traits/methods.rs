@@ -86,7 +86,7 @@ impl Checker {
         }
         let traits: Vec<String> = match (tr, &ty) {
             (Some(tr), _) => vec![tr.to_string()],
-            (None, Type::Param(_) | Type::Proj(..)) => {
+            (None, Type::Param(_, _) | Type::Proj(..)) => {
                 let mut bounds: Vec<String> = self
                     .env
                     .iter()
@@ -192,7 +192,7 @@ impl Checker {
             [] => {
                 let message = match (tr, &ty) {
                     (Some(tr), _) => format!("trait `{tr}` has no method `{m}`"),
-                    (None, Type::Param(p)) => {
+                    (None, Type::Param(p, _)) => {
                         let mut with: Vec<&String> = self
                             .traits
                             .traits
@@ -445,7 +445,7 @@ fn could_match_in(
 ) -> bool {
     match (pat, t) {
         (_, Type::Var(_)) => true,
-        (Type::Param(p), _) if params.contains(p) => match found.get(p) {
+        (Type::Param(p, _), _) if params.contains(p) => match found.get(p) {
             Some(prev) => {
                 let prev = prev.clone();
                 could_match_in(&prev, t, &[], &mut HashMap::new())
@@ -467,7 +467,7 @@ fn could_match_in(
 /// it, and `t` is known there: `t` could be `pat` (`could_match`).
 fn bind_params(pat: &Type, t: &Type, params: &[String], found: &mut HashMap<String, Type>) {
     match (pat, t) {
-        (Type::Param(p), _) if params.contains(p) => {
+        (Type::Param(p, _), _) if params.contains(p) => {
             found.entry(p.clone()).or_insert_with(|| t.clone());
         }
         (_, Type::Var(_)) => {}
@@ -482,7 +482,7 @@ fn bind_params(pat: &Type, t: &Type, params: &[String], found: &mut HashMap<Stri
 
 /// Is type parameter `p` in `t`?
 fn mentions(t: &Type, p: &str) -> bool {
-    matches!(t, Type::Param(q) if q == p) || t.parts().any(|u| mentions(u, p))
+    matches!(t, Type::Param(q, _) if q == p) || t.parts().any(|u| mentions(u, p))
 }
 
 /// Does `t` implement `Eq` by a built-in impl, whatever it holds?

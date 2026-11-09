@@ -80,7 +80,7 @@ fn main() {
     let b: &mut [i64] = core::slice::empty_mut();
     swap(a, b);
 }
-// error: a type parameter can't stand for the slice `[i64]`: it's only ever behind a reference
+// error: a type parameter that isn't `unsized` can't stand for the slice `[i64]`, which is only ever behind a reference
 ```
 
 So the rule is one of *kinds*: types split into those a value can have,
@@ -334,6 +334,8 @@ checks as the program runs.
   `?Sized` lets generic code take `&T` for an unsized `T`; T has nothing
   that needs it yet, and each `?Sized` function is one more to get right.
   Kept out, generic code is all sized, and `&[T]` is just a reference.
+  (Since step 57, a parameter declared `unsized` may stand for a slice,
+  the same kind the other way round: docs/57-unsized-parameters.md.)
 - **The type parameter rule is in unification, not in signatures.**
   Looking at whether `T` is only behind references in a signature isn't
   enough: the body can do anything with a `T`, so the rule is about what

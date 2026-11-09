@@ -260,7 +260,7 @@ impl Checker {
     /// The placeholder for the effects of `id`, inferred: at its own
     /// parameters, in its own signature.
     pub(super) fn placeholder(&self, symbol: &str, params: &crate::types::Params) -> Type {
-        let args = params.as_slice().iter().map(|p| Type::Param(p.clone()));
+        let args = params.as_slice().iter().map(|p| params.ty(p));
         Type::effects([Type::Inferred(symbol.to_string(), args.collect())])
     }
 

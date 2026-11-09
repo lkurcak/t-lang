@@ -16,7 +16,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&r.read(buf.as_mut_slice())?)?; // expect: 0
     let mut more = Bytes::new("ab".as_bytes());
     match more.read_exact(buf.as_mut_slice()) {
-        Ok(()) => out.line(&"read"),
+        Ok(()) => out.line("read"),
         Err(e) => out.line(&(e.kind() == ErrorKind::UnexpectedEnd)), // expect: true
     }
 }

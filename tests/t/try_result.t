@@ -27,8 +27,8 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     show(&mut out, quarter(6))?; // expect: true
     show(&mut out, quarter(-3))?; // expect: false
     match check(4) {
-        Ok(()) => out.line(&"ok")?, // expect: ok
-        Err(_) => out.line(&"err")?,
+        Ok(()) => out.line("ok")?, // expect: ok
+        Err(_) => out.line("err")?,
     }
     Ok(())
 }

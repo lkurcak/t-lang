@@ -304,7 +304,11 @@ impl Checker {
         );
         self.adts.proj.closures.insert(symbol.clone(), def.clone());
         self.traits.closures.insert(symbol.clone(), def);
-        let args = self.type_params.iter().cloned().map(Type::Param).collect();
+        let args = self
+            .type_params
+            .iter()
+            .map(|p| self.type_params.ty(p))
+            .collect();
         let ty = Type::Adt(symbol.clone(), Vec::new(), args);
         self.closures.push(Pending {
             symbol,
@@ -704,7 +708,7 @@ impl Checker {
             }
             Type::Adt(symbol, ..) => Some((0, self.traits.closures.get(&symbol)?.kind?)),
             // What its bounds say: the strongest of the `Fn` traits they do.
-            t @ (Type::Param(_) | Type::Proj(..) | Type::Opaque(..)) => {
+            t @ (Type::Param(_, _) | Type::Proj(..) | Type::Opaque(..)) => {
                 let env = (&self.env, &self.adts.proj.local);
                 [FnKind::Fn, FnKind::FnMut, FnKind::FnOnce]
                     .into_iter()

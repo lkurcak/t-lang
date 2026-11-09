@@ -34,7 +34,7 @@ impl Checker {
                     && let Ok(tr) = self.trait_named(&b.name)
                 {
                     self.env.push(Pred {
-                        ty: Type::Param(p.name.clone()),
+                        ty: params.ty(&p.name),
                         trait_name: tr,
                     });
                 }
@@ -66,9 +66,7 @@ impl Checker {
             .bounds
             .iter()
             .map(|(p, after)| {
-                let ty = params
-                    .contains(&p.name)
-                    .then(|| Type::Param(p.name.clone()));
+                let ty = params.contains(&p.name).then(|| params.ty(&p.name));
                 (ty, p.name.clone(), after)
             })
             .collect();
@@ -76,7 +74,7 @@ impl Checker {
             let mut lts = Lifetimes::Assoc {
                 declared: lifetimes,
             };
-            let ty = self.resolve_with(subject, params, &mut lts)?;
+            let ty = self.resolve_unsized_with(subject, params, &mut lts)?;
             if !bounded(&ty) {
                 return Err(Error::ty(
                     subject.span,
@@ -284,7 +282,7 @@ impl Checker {
             }
             out
         };
-        let hole = matches!(&s, Type::Param(p) if p.starts_with('?'));
+        let hole = matches!(&s, Type::Param(p, _) if p.starts_with('?'));
         let tr = match tr {
             Some(tr) => {
                 let Some(def) = self.traits.traits.get(&tr.name) else {
@@ -303,7 +301,7 @@ impl Checker {
                     }
                 }
             }
-            None if !matches!(s, Type::Param(_) | Type::Proj(..)) || hole => {
+            None if !matches!(s, Type::Param(_, _) | Type::Proj(..)) || hole => {
                 let mut with: Vec<&String> = self
                     .traits
                     .traits
@@ -373,7 +371,7 @@ impl Checker {
         }
         if !hole {
             let known = match &s {
-                Type::Param(_) | Type::Proj(..) => traits_of(&s).contains(&tr),
+                Type::Param(_, _) | Type::Proj(..) => traits_of(&s).contains(&tr),
                 s => {
                     let local = &self.adts.proj.local;
                     self.collecting
@@ -383,7 +381,7 @@ impl Checker {
             };
             if !known {
                 let fix = match &s {
-                    Type::Param(p) => format!("; add a bound: `{p}: {tr}`"),
+                    Type::Param(p, _) => format!("; add a bound: `{p}: {tr}`"),
                     _ => String::new(),
                 };
                 return Err(Error::ty(
@@ -406,7 +404,7 @@ pub(in crate::check) type Equality = (Type, Type);
 /// projection on one? Others' bounds are already true or false.
 fn bounded(t: &Type) -> bool {
     match t {
-        Type::Param(_) => true,
+        Type::Param(_, _) => true,
         Type::Proj(s, ..) => bounded(s),
         _ => false,
     }

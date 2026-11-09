@@ -374,7 +374,10 @@ module.exports = grammar({
       optional(field('bounds', $.lifetime_bounds)),
     ),
 
+    // `T: Show`, or `unsized D: Show` for one that may stand for `str` or
+    // a slice, so is only ever behind a reference.
     constrained_type_parameter: $ => seq(
+      optional('unsized'),
       field('name', alias($.identifier, $.type_parameter)),
       optional(field('bounds', $.trait_bounds)),
     ),

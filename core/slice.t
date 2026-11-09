@@ -174,12 +174,6 @@ impl<T: Ord> Ord for [T] {
     }
 }
 
-/// References to slices by the slices, which `&'a T` can't say, as `T`
-/// can't be `[T]`.
-impl<'a, T: Ord> Ord for &'a [T] {
-    fn cmp(&self, other: &&'a [T]) -> Ordering { (**self).cmp(*other) }
-}
-
 /// A slice with no values, of any lifetime: it points at nothing.
 #[intrinsic]
 export fn empty<'a, T>() -> &'a [T];

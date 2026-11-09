@@ -29,7 +29,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
         Err(l) => {
             let n = l.len();
             l.discard();
-            out.line(&"not UTF-8")?; // expect: not UTF-8
+            out.line("not UTF-8")?; // expect: not UTF-8
             out.line(&n)?; // expect: 4
         },
     }

@@ -168,11 +168,7 @@ impl Checker {
                 }
                 // In a fixed order, so that a round that adds none changes
                 // nothing.
-                let position = |p: &Pred| {
-                    def.params
-                        .iter()
-                        .position(|q| p.ty == Type::Param(q.clone()))
-                };
+                let position = |p: &Pred| def.params.iter().position(|q| p.ty == def.params.ty(q));
                 needed.sort_by(|a, b| {
                     (position(a), &a.trait_name).cmp(&(position(b), &b.trait_name))
                 });
@@ -281,7 +277,7 @@ impl Checker {
         out: &mut Vec<Pred>,
     ) -> Result<(), Pred> {
         match t {
-            Type::Param(p) if params.contains(p) => {
+            Type::Param(p, _) if params.contains(p) => {
                 let pred = Pred {
                     ty: t.clone(),
                     trait_name: tr.to_string(),

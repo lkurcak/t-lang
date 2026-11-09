@@ -6,7 +6,7 @@ mod file {
 
     impl<'a> Discard for File<'a> {
         fn discard(self) {
-            let _ = self.out.line(&"discarded");
+            let _ = self.out.line("discarded");
         }
     }
 

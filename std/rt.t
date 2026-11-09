@@ -10,6 +10,6 @@ use crate::io::Stderr;
 /// status that says it failed. If writing fails, there's nowhere left to
 /// say so.
 pub fn report<E: Display>(e: &E, mut err: Stderr) {
-    let _ = err.put(&"error: ");
+    let _ = err.put("error: ");
     let _ = err.line(e);
 }

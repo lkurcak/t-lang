@@ -14,7 +14,7 @@ with {alloc, R::e, W::e}
     let mut n = 0u32;
     while read_line(input, &mut line)? {
         n = checked_add(n, 1).unwrap_or(n);
-        out.put(&"> ")?;
+        out.put("> ")?;
         out.put(&line.as_str())?;
         out.line(&'!')?;
     }

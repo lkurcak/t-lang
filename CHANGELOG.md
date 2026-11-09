@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.73.0 (2026-11-09)
+
+Step 57: unsized parameters. See
+[docs/57-unsized-parameters.md](docs/57-unsized-parameters.md).
+
+### Added
+
+- `unsized D`: a type parameter that may stand for any type, `str` and
+  slices too, in the `<..>` of a function, method, impl, struct, enum or
+  type alias. Like `str`, it's only ever behind a reference (`&D`,
+  `&mut D`), the type argument of another `unsized` parameter, what a
+  projection is of, or before a bound's `:`; never a value. `unsized` is a
+  keyword.
+- `out.line("hello")`: `put` and `line` of `Stdout`, `Stderr`,
+  `fmt::Write` and `io::Write`, `String::of`, `panic_with`, `assert_eq`,
+  `assert_ne`, `fmt::display` and `fmt::debug` take an `unsized`
+  parameter, so a `&str` or a `&[T]` is passed as itself.
+
+### Changed
+
+- `core` has one impl each of `Display`, `Debug` and `Ord` for `&'a T`
+  (and of `Display` and `Debug` for `&'a mut T`) with `T` `unsized`,
+  covering `&str`, `&[T]` and `&mut [T]`; their own six impls are gone.
+- A method that takes `self` by value can't be called on what a
+  reference to `str`, a slice or an `unsized` parameter points to: that
+  would be a value with no size. (Before, only bounds that `str` and
+  slices never meet kept it from being called.)
+- A type parameter that isn't `unsized` "can't stand for" `str` says so:
+  the error says it isn't `unsized`.
+- An impl's method must declare each type parameter `unsized` exactly
+  where the trait's method does.
+
 ## 0.72.0 (2026-11-09)
 
 Step 56: field paths and proved sub-slices. See
