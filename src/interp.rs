@@ -3212,6 +3212,13 @@ impl<'p> Interp<'p, '_> {
             return;
         };
         for (j, f) in decl.fields.iter().enumerate() {
+            // A field moved out leaves the struct partly there: a
+            // refinement of a field that's gone, or about one, says
+            // nothing until the struct is whole again (and the checker
+            // proves it again when a field is put back).
+            if fields[..=j].iter().any(|(_, v)| matches!(v, Value::Moved)) {
+                continue;
+            }
             if let Some(r) = self.type_refined(&f.ty, &fields[..j], false) {
                 r.check(
                     self,
