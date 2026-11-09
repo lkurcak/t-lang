@@ -4,6 +4,7 @@
 // given, so what `push` takes must have it, and what `index`, `pop`, `get`,
 // `first` and the iterator give does.
 use alloc::list::List;
+use core::num::wrapping_add;
 
 // The numbers below `n`.
 fn below(n: usize) -> List<{ t: usize | t < n }> with alloc {
@@ -24,7 +25,7 @@ fn total(a: [u64; 4], l: &List<{ t: usize | t < 4 }>) -> u64 {
 }
 
 // By index, by `pop`, by `get` and by `first`.
-fn ends(a: [u64; 4], mut l: List<{ t: usize | t < 4 }>) -> u64 with alloc {
+fn ends(a: [u64; 4], mut l: List<{ t: usize | t < 4 }>) -> u64 {
     let mut s: u64 = 0;
     if l.len() > 0 {
         s = wrapping_add(s, a[l[0]]);

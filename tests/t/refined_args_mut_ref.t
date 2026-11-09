@@ -2,6 +2,7 @@
 // borrowed `&mut` into a variable: the reference's type has them, so what's
 // written through it must have them too (docs/60-refined-type-arguments.md).
 use alloc::list::List;
+use core::num::wrapping_add;
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut out = os.stdout;

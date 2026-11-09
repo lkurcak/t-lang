@@ -3,6 +3,7 @@
 // function's other arguments' refinements say of it: the function can only
 // pass it values it was given (docs/60-refined-type-arguments.md).
 use alloc::list::List;
+use core::num::wrapping_add;
 
 fn each<T: Copy, F: FnMut(T) + Discard>(l: &List<T>, mut f: F) {
     for x in l.iter() {

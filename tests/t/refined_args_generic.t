@@ -4,6 +4,7 @@
 // they stand for, it's that impl, as another would overlap it
 // (docs/60-refined-type-arguments.md). So `for` gives what the list holds.
 use alloc::list::List;
+use core::num::wrapping_add;
 
 #[derive(Discard where E: Discard)]
 struct Edges<E> { out: List<({ t: usize | t < 4 }, E)> }

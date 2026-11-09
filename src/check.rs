@@ -396,6 +396,20 @@ fn plural(n: usize, what: &str) -> String {
     format!("{n} {what}{}", if n == 1 { "" } else { "s" })
 }
 
+/// `Checker::adt_info`'s: how many structs and enums there were, and how
+/// each varies with its parameters then.
+#[derive(Default)]
+struct AdtInfoCache(
+    std::sync::Mutex<Option<(usize, std::sync::Arc<crate::borrowck::regions::AdtInfo>)>>,
+);
+
+impl Clone for AdtInfoCache {
+    fn clone(&self) -> AdtInfoCache {
+        let inner = self.0.lock().expect("not poisoned").clone();
+        AdtInfoCache(std::sync::Mutex::new(inner))
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct Checker {
     /// `Program::next_id`, while checking: the nodes the checker makes up
@@ -603,6 +617,10 @@ pub(crate) struct Checker {
     field_refined: HashMap<String, refine::RefinedFields>,
     /// The refinement of each refined `let`'s variable, by id.
     refined_lets: HashMap<NodeId, refine::Refinement>,
+    /// How each struct and enum varies with its parameters, as the borrow
+    /// checker says, once asked, for as many as there were then
+    /// (`Checker::adt_info`).
+    adt_info: AdtInfoCache,
     /// What each name in a refinement's predicate is, by node.
     pred_names: HashMap<NodeId, refine::PredName>,
     /// The measures, by symbol (see docs/21-measures.md).
@@ -972,6 +990,7 @@ impl Checker {
             refined: HashMap::new(),
             const_values: HashMap::new(),
             refined_lets: HashMap::new(),
+            adt_info: AdtInfoCache::default(),
             field_refined: HashMap::new(),
             pred_names: HashMap::new(),
             measures: HashMap::new(),
@@ -1293,6 +1312,7 @@ impl Checker {
             self.info.symbols.insert(f.name.id, symbol.clone());
             self.fns.push(FnDef {
                 name: f.name.clone(),
+                params: f.params.iter().map(|p| p.name.name.clone()).collect(),
                 symbol,
                 scheme,
                 parent,
@@ -1711,6 +1731,21 @@ impl Checker {
     }
 
     /// The type of function `symbol`, which may be a method of a trait.
+    /// How each struct and enum varies with its parameters (see
+    /// `borrowck::regions::AdtInfo`): worked out again once there are more.
+    pub(crate) fn adt_info(&self) -> std::sync::Arc<crate::borrowck::regions::AdtInfo> {
+        let n = self.adts.keys().count();
+        let mut cache = self.adt_info.0.lock().expect("not poisoned");
+        if let Some((m, info)) = &*cache
+            && *m == n
+        {
+            return info.clone();
+        }
+        let info = std::sync::Arc::new(crate::borrowck::regions::AdtInfo::new(&self.adts));
+        *cache = Some((n, info.clone()));
+        info
+    }
+
     pub(crate) fn scheme(&self, symbol: &str) -> &Scheme {
         if let Some(f) = self.fns.iter().find(|f| f.symbol == symbol) {
             return &f.scheme;

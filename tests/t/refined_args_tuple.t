@@ -4,6 +4,7 @@
 // generic code with them can't make one. `max` and `min` are functions of
 // `core::cmp` now, not `Ord`'s methods an impl could make a value in.
 use alloc::list::List;
+use core::num::wrapping_add;
 use core::cmp::{max, min};
 
 fn split(n: { n: u8 | n >= 2 }) -> (u8, { v: u8 | v < n }) { (1, n - 1) }

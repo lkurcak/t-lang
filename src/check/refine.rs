@@ -102,6 +102,7 @@
 mod diagnostics;
 mod free;
 mod logic;
+mod targs;
 
 use super::Checker;
 use super::typed::Res;
@@ -115,12 +116,14 @@ use logic::{Failure, Formula, Kind, Lin, Var};
 use std::collections::{HashMap, HashSet};
 
 /// The refinements written in a type that can have them, the whole
-/// value's and those of its enums' type arguments (see
-/// docs/53-refined-type-arguments.md), whose names are in
-/// `Checker::pred_names`.
+/// value's and those of its type arguments (see
+/// docs/53-refined-type-arguments.md and docs/60-refined-type-arguments.md),
+/// whose names are in `Checker::pred_names`.
 #[derive(Debug, Clone)]
 pub(super) struct Refinement {
     parts: Vec<Part>,
+    /// The type it refines, without them, if it's of a value.
+    base: Option<Type>,
 }
 
 /// The way to a part of a value: the variant and field of each enum on
@@ -137,8 +140,17 @@ struct Part {
     pred: Expr,
     /// Where each part of the value it's of is, as the variant and field
     /// of each enum on the way to it: one way, `[]`, for the whole value;
-    /// for the `T` of `Option<T>`, `[(1, 0)]`, the field of `Some`.
+    /// for the `T` of `Option<T>`, `[(1, 0)]`, the field of `Some`. None
+    /// if it's `carried`.
     ways: Vec<Way>,
+    /// Where it is in the type, as `TypeExpr::refinements` says, but with
+    /// a type's lifetime arguments not counted: a position (`targs::Pos`).
+    path: Vec<usize>,
+    /// Is it somewhere a way through enums doesn't get to: in a struct's
+    /// type arguments, a tuple's, behind a reference or a box, or a slice's
+    /// or array's elements? Then it's what every value there has, which
+    /// generic code keeps by parametricity (`targs`).
+    carried: bool,
 }
 
 impl Part {
@@ -154,8 +166,31 @@ impl Refinement {
             parts: vec![Part {
                 pred,
                 ways: vec![Vec::new()],
+                path: Vec::new(),
+                carried: false,
             }],
+            base: None,
         }
+    }
+
+    /// Does it say anything a way through enums gets to: of the whole
+    /// value, or a type argument of an enum's?
+    fn has_ways(&self) -> bool {
+        self.parts.iter().any(|p| !p.carried)
+    }
+
+    /// Does it say anything of what every value somewhere a way doesn't
+    /// get to is (`Part::carried`)?
+    fn has_carried(&self) -> bool {
+        self.parts.iter().any(|p| p.carried)
+    }
+
+    /// It without its carried parts, if it has any others.
+    fn ways_only(&self) -> Option<Refinement> {
+        self.has_ways().then(|| Refinement {
+            parts: self.parts.iter().filter(|p| !p.carried).cloned().collect(),
+            base: self.base.clone(),
+        })
     }
 
     /// Its predicates.
@@ -913,8 +948,8 @@ impl Checker {
         }
         let base = self.solved(base);
         let mut parts = Vec::new();
-        for (path, binder, pred) in written {
-            let (of, ways) = self.refined_arg(t, &base, &path)?;
+        for (written_path, binder, pred) in written {
+            let (of, ways, path, carried) = self.refined_arg(t, &base, &written_path)?;
             let kind = super::NoteKind::Var(binder.name.clone());
             self.note(binder.span, kind, Some(of.clone()), Some(binder.span));
             let scope = |name: &str| match name == binder.name {
@@ -928,16 +963,26 @@ impl Checker {
                     format!("expected `bool`, found {got}"),
                 ));
             }
+            // A carried one isn't of any part a way gets to: the
+            // interpreter checks it of every value there (`Measures::reach`).
             if !path.is_empty() {
-                let named = self.named_ways(&base, &ways);
+                let named = match carried {
+                    false => self.named_ways(&base, &ways),
+                    true => Vec::new(),
+                };
                 self.info.measures.ways.insert(pred.id, named);
             }
             parts.push(Part {
                 pred: pred.clone(),
                 ways,
+                path,
+                carried,
             });
         }
-        Ok(Some(Refinement { parts }))
+        Ok(Some(Refinement {
+            parts,
+            base: Some(base),
+        }))
     }
 
     /// `ways` into a value of type `t`, with each variant by name, for the
@@ -963,84 +1008,110 @@ impl Checker {
     }
 
     /// What the refinement at `path` in `t`, a type written whose base is
-    /// `base`, is of: the type there, and the ways to each part of a value
-    /// of `base` that has it. Each step of `path` is a type argument of an
-    /// enum, whose variants have the parameter it's for only as whole
-    /// fields: so the parts it's of are fields, which every value of the
-    /// enum is made with and every pattern reads, and the refinement is
-    /// what each of them is, whatever the enum's methods do (lemma E2 of
-    /// docs/53-refined-type-arguments.md).
+    /// `base`, is of: the type there; the ways to each part of a value of
+    /// `base` that has it, if each step of `path` is a type argument of an
+    /// enum whose variants have the parameter it's for only as whole fields
+    /// (so the parts it's of are fields, which every value of the enum is
+    /// made with and every pattern reads, and the refinement is what each of
+    /// them is, whatever the enum's methods do: lemma E2 of
+    /// docs/53-refined-type-arguments.md); the position (`targs::Pos`); and
+    /// whether it's *carried*: somewhere else, a struct's type argument, a
+    /// tuple's element, what a reference or a box points to, a slice's or an
+    /// array's elements. Then it's what every value there is, kept by
+    /// parametricity (lemma A2 of docs/60-refined-type-arguments.md).
     fn refined_arg(
         &self,
         t: &TypeExpr,
         base: &Type,
         path: &[usize],
-    ) -> Result<(Type, Vec<Way>), Error> {
+    ) -> Result<(Type, Vec<Way>, Vec<usize>, bool), Error> {
         fn mentions(t: &Type, p: &str) -> bool {
             matches!(t, Type::Param(q, _) if q == p) || t.parts().any(|u| mentions(u, p))
         }
         let mut ways = vec![Vec::new()];
+        let mut carried = false;
+        let mut pos = Vec::new();
         let mut ty = base.clone();
         let mut written = t.unrefined();
         for &k in path {
-            let TypeExprKind::Named(_, args) = &written.kind else {
-                unreachable!("a type argument's refinement is in a named type")
-            };
-            let arg = &args[k];
+            let arg = written.refinable()[k];
             let not = |why: String| Error::ty(arg.span, why);
-            let def = match &ty {
-                Type::Adt(symbol, _, _) => self.adts.get(symbol).map(|d| (symbol, d)),
-                _ => None,
-            };
-            let Some((symbol, def)) = def else {
-                return Err(not(format!(
-                    "a refinement can only be a type argument of an enum, not of `{ty}`"
-                )));
-            };
-            let crate::types::AdtKind::Enum(variants) = &def.kind else {
-                return Err(not(format!(
-                    "a refinement can only be a type argument of an enum, not of `{ty}`, a \
-                     struct"
-                )));
-            };
-            // Which type argument it is: lifetimes are written among them.
-            let j = (args[..k].iter())
-                .filter(|a| !matches!(a.kind, TypeExprKind::Lifetime(_)))
-                .count();
-            let param = def.params.as_slice()[j].clone();
-            let name = symbol.rsplit("::").next().unwrap_or(symbol);
-            let mut steps = Vec::new();
-            for (v, (variant, fields)) in variants.iter().enumerate() {
-                for (f, ft) in fields.iter().enumerate() {
-                    match ft {
-                        Type::Param(p, _) if *p == param => steps.push((v, f)),
-                        ft if mentions(ft, &param) => {
-                            return Err(not(format!(
-                                "`{param}` is in a field of variant `{variant}` of `{name}` \
-                                 other than as its whole type, `{ft}`, where a refinement of it \
-                                 couldn't be checked"
-                            )));
-                        }
-                        _ => {}
+            // Which of the type's positions it is: a named type's lifetime
+            // arguments are written among its type arguments.
+            let (j, next) = match (&written.kind, &ty) {
+                (TypeExprKind::Named(_, args), Type::Adt(_, _, targs)) => {
+                    let j = (args[..k].iter())
+                        .filter(|a| !matches!(a.kind, TypeExprKind::Lifetime(_)))
+                        .count();
+                    match targs.get(j) {
+                        Some(next) => (j, next.clone()),
+                        None => return Err(not(format!("`{ty}` has no type argument here"))),
                     }
                 }
-            }
-            ways = (ways.iter())
-                .flat_map(|w| {
-                    steps.iter().map(move |s| {
-                        let mut w = w.clone();
-                        w.push(*s);
-                        w
-                    })
-                })
-                .collect();
-            let Type::Adt(_, _, targs) = &ty else {
-                unreachable!("an enum")
+                (TypeExprKind::Named(..), Type::Box(inner))
+                | (TypeExprKind::Ref(..), Type::Ref(_, _, inner))
+                | (TypeExprKind::Slice(_), Type::Slice(inner))
+                | (TypeExprKind::Array(..), Type::Array(inner, _))
+                    if k == 0 =>
+                {
+                    (0, (**inner).clone())
+                }
+                (TypeExprKind::Tuple(_), Type::Tuple(ts)) if k < ts.len() => (k, ts[k].clone()),
+                _ => {
+                    return Err(not(format!(
+                        "a refinement can't be a type argument of `{ty}`, which isn't a struct, \
+                         an enum, a tuple, a reference, a box, a slice or an array"
+                    )));
+                }
             };
-            ty = self.solved(&targs[j]);
+            pos.push(j);
+            // Through an enum whose variants have the parameter only as
+            // whole fields, it's still of parts: of those fields.
+            let enum_steps = match &ty {
+                Type::Adt(symbol, ..) if !carried => match self.adts.get(symbol).map(|d| d) {
+                    Some(def) => match &def.kind {
+                        crate::types::AdtKind::Enum(variants) => {
+                            let param = def.params.as_slice()[j].clone();
+                            let mut steps = Vec::new();
+                            let mut whole = true;
+                            for (v, (_, fields)) in variants.iter().enumerate() {
+                                for (f, ft) in fields.iter().enumerate() {
+                                    match ft {
+                                        Type::Param(p, _) if *p == param => steps.push((v, f)),
+                                        ft if mentions(ft, &param) => whole = false,
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            whole.then_some(steps)
+                        }
+                        crate::types::AdtKind::Struct(_) => None,
+                    },
+                    None => None,
+                },
+                _ => None,
+            };
+            match enum_steps {
+                Some(steps) => {
+                    ways = (ways.iter())
+                        .flat_map(|w| {
+                            steps.iter().map(move |s| {
+                                let mut w = w.clone();
+                                w.push(*s);
+                                w
+                            })
+                        })
+                        .collect();
+                }
+                None => {
+                    carried = true;
+                    ways = Vec::new();
+                }
+            }
+            ty = self.solved(&next);
             written = arg.unrefined();
         }
-        Ok((ty, ways))
+        Ok((ty, ways, pos, carried))
     }
 
     /// The sort of predicate (part) `e`, which must be in the logic:
@@ -1769,6 +1840,9 @@ impl Checker {
             next_obj: 0,
             measured: HashMap::new(),
             parts: HashMap::new(),
+            trees: HashMap::new(),
+            decl: HashMap::new(),
+            lent_trees: HashMap::new(),
             module: self.fns[id.0].module,
             invariants: HashMap::new(),
             unstable: HashSet::new(),
@@ -1795,7 +1869,7 @@ impl Checker {
         let mut ret = None;
         for (i, p) in f.params.iter().enumerate() {
             if let Some(r) = sig.as_ref().and_then(|s| s.params[i].clone()) {
-                w.invariants.insert(p.name.id, (r, p.name.name.clone()));
+                w.declare(p.name.id, &r, &p.name.name);
             }
             w.bind(p.name.id, None);
         }
@@ -2175,8 +2249,9 @@ enum Val {
     Bool(Formula),
     Struct(Obj, Vec<Val>),
     /// An array, known by its length, which its type says: what its
-    /// values are isn't followed.
-    Array(Lin),
+    /// values are isn't followed, but what's said of them is, of its object
+    /// (`Walk::trees`).
+    Array(Obj, Lin),
     Ref(Obj, Pointee),
     Obj(Obj),
     Other,
@@ -2317,6 +2392,15 @@ struct Walk<'c> {
     /// What's known of each object that's an enum's value: its variant
     /// and fields (see `Parts`).
     parts: HashMap<Obj, Parts>,
+    /// What's said of the values at positions of each object: refinements
+    /// of type arguments (`targs`).
+    trees: HashMap<Obj, targs::Tree>,
+    /// What's declared of each local's value's positions, which each
+    /// write must keep (`Walk::place_decl`).
+    decl: HashMap<NodeId, targs::Tree>,
+    /// What the call that last lent each place `&mut` left at its
+    /// positions, for when it's read next (`Walk::place_read`).
+    lent_trees: HashMap<Place, targs::Tree>,
     /// The module of the function walked, where its measures are their
     /// bodies.
     module: usize,
@@ -2388,6 +2472,8 @@ struct Post {
     scoped: Vec<Option<Place>>,
     targs: Vec<(String, Type)>,
     result: Val,
+    /// What it leaves at the positions of each place it's lent `&mut`.
+    lent: Vec<(Place, targs::Tree)>,
 }
 
 /// How many references deep what a function's parameters point to is kept
@@ -2411,6 +2497,9 @@ enum Env<'a> {
     /// and at return, or `None` for the function being walked, whose
     /// parameters are read where it returns; and the type arguments.
     Post(&'a [Val], Option<&'a [Val]>, &'a [(String, Type)]),
+    /// A refinement of a type argument's, with the value of each name in
+    /// it by node, as it was where it was said (`targs::Closed`).
+    Closed(&'a HashMap<NodeId, Val>),
 }
 
 impl Walk<'_> {
@@ -2569,7 +2658,7 @@ impl Walk<'_> {
             // What its type says of an array, its length, holds behind any
             // reference to it: nothing can change it.
             Type::Array(_, n) => match self.length(n) {
-                Val::Int(l) => Val::Array(l),
+                Val::Int(l) => Val::Array(self.new_obj(), l),
                 _ => Val::Obj(self.new_obj()),
             },
             Type::Ref(_, _, inner) | Type::Box(inner) if matches!(**inner, Type::Array(..)) => {
@@ -2812,7 +2901,7 @@ impl Walk<'_> {
         }
         // An array's is its length.
         if m.of_array
-            && let Val::Array(l) = self.pointee(recv.clone())
+            && let Val::Array(_, l) = self.pointee(recv.clone())
         {
             return Val::Int(l);
         }
@@ -3306,13 +3395,18 @@ impl Walk<'_> {
             Type::Ref(..) | Type::Box(_) => Val::Ref(o, Pointee::Place(self.deref(p.clone()))),
             // Its length is its type's, whatever's been done to it.
             Type::Array(_, n) => match self.length(n) {
-                Val::Int(l) => Val::Array(l),
+                Val::Int(l) => Val::Array(o, l),
                 _ => Val::Obj(o),
             },
             _ => Val::Obj(o),
         };
         if new && p.path.is_empty() {
             self.assume_invariant(p.root, &v);
+        }
+        // What's declared there, and what a call it was lent to left.
+        if new {
+            let tree = self.place_read(p);
+            self.assume_tree(&v, t, &tree);
         }
         // A new value of a field, as after a loop that lends it, is one the
         // struct's refinements hold of, with its other fields, as of every
@@ -3358,6 +3452,9 @@ impl Walk<'_> {
                 _ => {
                     fresh = true;
                     let v = self.fresh(kind);
+                    let tree = self.place_read(&p);
+                    let val = self.var(v);
+                    self.assume_tree(&val, &ft, &tree);
                     if stable {
                         self.cur.insert(p, v);
                     }
@@ -3392,6 +3489,8 @@ impl Walk<'_> {
         if p.path.is_empty() {
             self.assume_invariant(p.root, &v);
         }
+        let tree = self.place_read(p);
+        self.assume_tree(&v, t, &tree);
         v
     }
 
@@ -3400,7 +3499,19 @@ impl Walk<'_> {
     /// one whatever's written through it.
     fn kill(&mut self, p: &Place) {
         self.cur.retain(|q, _| !q.within(p));
-        let around = |q: &Place| p.within(q) && !p.path[q.path.len()..].contains(&Proj::Deref);
+        self.lent_trees.retain(|q, _| !q.within(p));
+        // What a box owns is part of its value, as a field is: so the box,
+        // and what it's in, change with it too.
+        let mut boxed = vec![true; p.path.len() + 1];
+        let mut q = Place::local(p.root);
+        for (i, step) in p.path.iter().enumerate() {
+            let by_box = *step != Proj::Deref || matches!(self.place_ty(&q), Type::Box(_));
+            boxed[i + 1] = by_box;
+            q = q.then(*step);
+        }
+        let around = |q: &Place| {
+            p.within(q) && (q.path.len()..p.path.len()).all(|i| boxed[i + 1])
+        };
         self.objs.retain(|q, _| !q.within(p) && !around(q));
     }
 
@@ -3445,6 +3556,11 @@ impl Walk<'_> {
                 if let (Some(Val::Ref(o, _) | Val::Obj(o)), true) = (&val, stable) {
                     self.objs.insert(p.clone(), *o);
                 }
+                // What a box owns is a place in it, which has its value.
+                if let (Type::Box(inner), Some(Val::Ref(_, Pointee::Val(w)))) = (t, &val) {
+                    let inner = self.cx.solved(inner);
+                    self.set(&p.then(Proj::Deref), &inner, Some((**w).clone()));
+                }
                 if let (Some(v), true) = (&val, p.path.is_empty()) {
                     self.assume_invariant(p.root, v);
                 }
@@ -3476,6 +3592,19 @@ impl Walk<'_> {
         self.write(&Place::local(id), val, None);
     }
 
+    /// Local `id`, named `name`, is declared with refinement `r`: of its
+    /// whole value and enums' parts, an invariant; what's carried, what's
+    /// declared of the values at its positions (`decl`), of its names now.
+    fn declare(&mut self, id: NodeId, r: &Refinement, name: &str) {
+        if let Some(ways) = r.ways_only() {
+            self.invariants.insert(id, (ways, name.to_string()));
+        }
+        if r.has_carried() {
+            let tree = self.carried_tree(r, Env::Here);
+            self.decl.insert(id, tree);
+        }
+    }
+
     fn assume_invariant(&mut self, id: NodeId, val: &Val) {
         if let Some((r, _)) = self.invariants.get(&id).cloned()
             && let Some(f) = self.pred(&r, val, Env::Here)
@@ -3495,12 +3624,40 @@ impl Walk<'_> {
         for part in &r.parts {
             all.push(self.part(part, val, env)?);
         }
+        // What its carried parts say of the values at their positions is
+        // said of `val`'s objects (lemma A6).
+        if r.has_carried()
+            && let Some(base) = self.base_in(r, env)
+        {
+            let tree = self.carried_tree(r, env);
+            self.assume_tree(val, &base, &tree);
+        }
         Ok(Formula::and(all))
+    }
+
+    /// The type refinement `r` refines, with the type arguments `env` has.
+    fn base_in(&self, r: &Refinement, env: Env) -> Option<Type> {
+        let base = r.base.clone()?;
+        let targs = match env {
+            Env::Call(_, t) | Env::Fields(_, t) | Env::Post(_, _, t) => t,
+            Env::Here | Env::Closed(_) => &[][..],
+        };
+        if targs.is_empty() {
+            return Some(base);
+        }
+        let names: Vec<String> = targs.iter().map(|(n, _)| n.clone()).collect();
+        let args: Vec<Type> = targs.iter().map(|(_, t)| t.clone()).collect();
+        Some(self.cx.solved(&crate::types::Subst::new(&names, &args).apply(&base)))
     }
 
     /// Refinement part `part`'s predicate, of each part of `val` it's of:
     /// of a variant's field, if `val` is that variant.
     fn part(&mut self, part: &Part, val: &Val, env: Env) -> Result<Formula, Failure> {
+        // What every value at a position is (`targs`), which isn't a
+        // formula of `val`'s parts: `predicate` and `need` say it.
+        if part.carried {
+            return Ok(Formula::True);
+        }
         let mut all = Vec::new();
         for way in &part.ways {
             let mut guards = Vec::new();
@@ -3545,6 +3702,7 @@ impl Walk<'_> {
                 env,
             ) {
                 (PredName::Binder, _) => binder.clone(),
+                (_, Env::Closed(names)) => names.get(&e.id).ok_or(Failure::Unsupported)?.clone(),
                 (PredName::Param(i), Env::Call(args, _)) => {
                     args.get(*i).ok_or(Failure::Unsupported)?.clone()
                 }
@@ -3587,9 +3745,11 @@ impl Walk<'_> {
                 let (a, b) = (self.term(l, binder, env)?, self.term(r, binder, env)?);
                 binary(*op, a, b, &mut self.kinds)?
             }
-            // `old(x)`: `x` at the call.
+            // `old(x)`: `x` at the call; of a closed refinement, what its
+            // names were then.
             ExprKind::Call(_, args) if args.len() == 1 => match env {
                 Env::Post(old, _, targs) => self.term(&args[0], binder, Env::Call(old, targs))?,
+                Env::Closed(_) => self.term(&args[0], binder, env)?,
                 _ => return Err(Failure::Unsupported),
             },
             // A field of what's named, through the `*`s the checker found:
@@ -3633,7 +3793,16 @@ impl Walk<'_> {
         span: Span,
         what: String,
     ) -> Result<(), Error> {
+        if r.has_carried()
+            && let Some(base) = self.base_in(r, env)
+        {
+            let decl = self.written_tree(val, &base);
+            self.need_carried(r, val, &base, env, Some(&decl), span, &what)?;
+        }
         for part in &r.parts {
+            if part.carried {
+                continue;
+            }
             let goal = self.part(part, val, env);
             let outcome = if !self.reachable {
                 Ok(())
@@ -4605,12 +4774,23 @@ impl Walk<'_> {
         };
         if let Some(sig) = &sig {
             for (i, r) in sig.params.iter().enumerate() {
-                if let (Some(r), Some(arg)) = (r, args.get(i)) {
+                if let (Some(r), Some(arg)) = (r, args.get(i))
+                    && let Some(r) = r.ways_only()
+                {
                     let what = format!("argument `{}` of `{}`", sig.names[i], sig.name);
-                    self.need(r, &vals[i], Env::Call(&vals, &targs), arg.span, what)?;
+                    self.need(&r, &vals[i], Env::Call(&vals, &targs), arg.span, what)?;
                 }
             }
         }
+        // Refinements of type arguments: what the call needs of them, and
+        // says of its result and of what it's lent (`targs`).
+        let trees = match &resolved {
+            Some((s, t)) if self.reachable => {
+                let spans: Vec<Span> = args.iter().map(|a| a.span).collect();
+                self.call_trees(s, t, sig.as_ref(), &vals, &places, &spans, e.span)?
+            }
+            _ => targs::CallTrees::default(),
+        };
         if ty == Type::Never {
             self.reachable = false;
         }
@@ -4627,6 +4807,7 @@ impl Walk<'_> {
         {
             result = self.free_theorems(s, &vals, result);
         }
+        self.assume_tree(&result, &ty, &trees.result);
         // What the two intrinsics that say how big an integer type is give.
         if let (Some(f @ ("core::num::least" | "core::num::greatest")), Val::Int(v)) =
             (symbol, &result)
@@ -4670,6 +4851,7 @@ impl Walk<'_> {
             scoped,
             targs,
             result: result.clone(),
+            lent: trees.lent,
         };
         self.posts.insert(e.id, post);
         Ok(result)
@@ -4802,6 +4984,9 @@ impl Walk<'_> {
         let Some(post) = self.posts.remove(&e.id) else {
             return Ok(());
         };
+        for (p, tree) in &post.lent {
+            self.lent_trees.insert(p.clone(), tree.clone());
+        }
         if let Some(sig) = &post.sig {
             // What's behind a call-scoped `&mut` is what the call left
             // there: at the place lent, or, if that isn't known, a value
@@ -4957,6 +5142,30 @@ impl Walk<'_> {
             },
         };
         self.need(&r, &whole, Env::Here, span, format!("`{name}`"))
+    }
+
+    /// Before `new`, of type `ty`, is written to place `p`, written
+    /// `place`: it must have what's declared there (lemma A6), of what's
+    /// in a local through fields and boxes, the local's, and through a
+    /// reference, what the reference says.
+    fn keep_declared(
+        &mut self,
+        p: &Place,
+        place: &Expr,
+        new: &Val,
+        ty: &Type,
+        span: Span,
+    ) -> Result<(), Error> {
+        let d = self.place_decl(p);
+        if d.is_empty() {
+            return Ok(());
+        }
+        let what = match (self.boxes_only(p), self.cx.typed.binds.get(&p.root)) {
+            (true, Some(b)) => format!("`{}`", b.name),
+            _ => format!("what's written through `{}`", crate::pretty::expr_text(place)),
+        };
+        let written = self.written_tree(new, ty);
+        self.need_tree(new, ty, &d, Some(&written), span, &what)
     }
 
     /// Is every `*` on the way from `p`'s local to it of a box?
@@ -5137,16 +5346,23 @@ impl Walk<'_> {
                 }
                 _ => Ok(Val::Other),
             },
+            // What's known of its elements is what's known of the values
+            // it's made of.
             ExprKind::Array(items) => {
+                let mut vals = Vec::new();
                 for item in items {
-                    self.expr(item)?;
+                    vals.push(self.expr(item)?);
                 }
-                Ok(Val::Array(Lin::constant(items.len() as i128)))
+                let v = Val::Array(self.new_obj(), Lin::constant(items.len() as i128));
+                self.elements(&v, &self.ty_of(e), &vals);
+                Ok(v)
             }
-            ExprKind::Repeat(v, _) => {
-                self.expr(v)?;
+            ExprKind::Repeat(x, _) => {
+                let item = self.expr(x)?;
                 let ty = self.ty_of(e);
-                Ok(self.unknown(&ty))
+                let v = self.unknown(&ty);
+                self.elements(&v, &ty, &[item]);
+                Ok(v)
             }
             ExprKind::Unary(UnOp::Neg, x) => {
                 let v = self.expr(x)?;
@@ -5218,13 +5434,18 @@ impl Walk<'_> {
                 Some(p) => Ok(self.read_place(&p)),
                 None => {
                     let v = self.expr(x)?;
-                    Ok(match self.pointee(v) {
-                        Val::Other => {
-                            let ty = self.ty_of(e);
-                            self.unknown(&ty)
-                        }
+                    let ty = self.ty_of(e);
+                    let got = match self.pointee(v.clone()) {
+                        Val::Other => self.unknown(&ty),
                         v => v,
-                    })
+                    };
+                    // What the reference says of what it points to.
+                    if let Val::Ref(o, _) = &v
+                        && let Some(tree) = self.trees.get(o).cloned()
+                    {
+                        self.assume_tree(&got, &ty, &targs::below(&tree, 0));
+                    }
+                    Ok(got)
                 }
             },
             // A reference to a place, or to a value. One to what a
@@ -5246,7 +5467,14 @@ impl Walk<'_> {
                                 return Ok(self.read_place(&outer));
                             }
                         }
-                        Ok(Val::Ref(self.new_obj(), Pointee::Place(p)))
+                        // What may be written through it is what's
+                        // declared of the place, which it says.
+                        let o = self.new_obj();
+                        let tree = targs::under(&self.place_decl(&p), 0);
+                        if !tree.is_empty() {
+                            self.trees.insert(o, tree);
+                        }
+                        Ok(Val::Ref(o, Pointee::Place(p)))
                     }
                     None => {
                         let v = self.expr(x)?;
@@ -5368,6 +5596,13 @@ impl Walk<'_> {
                         let places = args.iter().map(|a| self.passed(a)).collect();
                         self.call(e, symbol.as_deref(), &args, vals, places)
                     }
+                    // `Box::new(x)`: a box of `x` (`Checker::box_new`).
+                    None if *parens
+                        && let Type::Box(_) = self.ty_of(e)
+                        && let [v] = &vals[..] =>
+                    {
+                        Ok(Val::Ref(self.new_obj(), Pointee::Val(Box::new(v.clone()))))
+                    }
                     // A variant's value: which it is, and its fields.
                     None => {
                         let ty = self.ty_of(e);
@@ -5477,6 +5712,11 @@ impl Walk<'_> {
                             let what = format!("`{name}`");
                             self.need(&r, &new, Env::Here, value.span, what)?;
                         }
+                        if let Some(d) = self.decl.get(&id).cloned() {
+                            let what = format!("`{name}`");
+                            let written = self.written_tree(&new, &ty);
+                            self.need_tree(&new, &ty, &d, Some(&written), value.span, &what)?;
+                        }
                         self.write(&Place::local(id), Some(new), Some(e.span));
                     }
                     (ExprKind::Field(base, _), _) => {
@@ -5514,6 +5754,9 @@ impl Walk<'_> {
                                 self.arith(e.id, *op, old, v, &ty)
                             }
                         };
+                        if let Some(p) = &target {
+                            self.keep_declared(p, place, &new, &ty, value.span)?;
+                        }
                         if i < vals.len() {
                             vals[i] = new.clone();
                             self.need_fields(&t, &vals, Some(i), value.span)?;
@@ -5526,8 +5769,19 @@ impl Walk<'_> {
                         }
                     }
                     _ => {
+                        // Through a reference that isn't a place's: what
+                        // it says of what it points to, what's written
+                        // must have.
+                        let mut through = None;
                         if target.is_none() {
-                            self.expr(place)?;
+                            match &place.kind {
+                                ExprKind::Unary(UnOp::Deref, inner) => {
+                                    through = Some(self.expr(inner)?);
+                                }
+                                _ => {
+                                    self.expr(place)?;
+                                }
+                            }
                         }
                         let new = match op {
                             None => v,
@@ -5536,6 +5790,20 @@ impl Walk<'_> {
                                 self.arith(e.id, *op, old, v, &ty)
                             }
                         };
+                        if let Some(Val::Ref(o, _)) = &through
+                            && let Some(tree) = self.trees.get(o).cloned()
+                        {
+                            let d = targs::below(&tree, 0);
+                            let what = format!(
+                                "what's written through `{}`",
+                                crate::pretty::expr_text(place)
+                            );
+                            let written = self.written_tree(&new, &ty);
+                            self.need_tree(&new, &ty, &d, Some(&written), value.span, &what)?;
+                        }
+                        if let Some(p) = &target {
+                            self.keep_declared(p, place, &new, &ty, value.span)?;
+                        }
                         if let Some(p) = &target {
                             self.around_before(p);
                             self.write(p, Some(new), Some(e.span));
@@ -5748,6 +6016,18 @@ impl Walk<'_> {
                             (None, Some(p)) => Some(self.read_place(p)),
                             (None, None) => None,
                         };
+                        // Without a refinement, it declares what its
+                        // value's type has (`targs::widen`).
+                        if let Some(v) = &val
+                            && !self.decl.contains_key(&id)
+                        {
+                            let t = self.ty_of_bind(id);
+                            let known = self.knowledge(v, &t);
+                            let tree = targs::widen(&known);
+                            if !tree.is_empty() {
+                                self.decl.insert(id, tree);
+                            }
+                        }
                         self.bind(id, val);
                     }
                     Some(m) => {
@@ -5870,7 +6150,7 @@ impl Walk<'_> {
                     let v = v.clone().unwrap_or(Val::Other);
                     let span = init.as_ref().map_or(pat.span, |i| i.span);
                     self.need(&r, &v, Env::Here, span, format!("`{name}`"))?;
-                    self.invariants.insert(pat.id, (r, name));
+                    self.declare(pat.id, &r, &name);
                 }
                 let place = init.as_ref().and_then(|i| self.place_of(i));
                 match init {

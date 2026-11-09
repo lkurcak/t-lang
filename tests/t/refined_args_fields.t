@@ -4,6 +4,7 @@
 // proved again: after a node is added, every target below the old count
 // is below the new one.
 use alloc::list::List;
+use core::num::wrapping_add;
 
 #[derive(Discard)]
 struct Node<I> { out: List<I> }
