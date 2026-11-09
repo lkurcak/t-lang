@@ -5,7 +5,7 @@ use alloc::string::String;
 use core::io::Write;
 
 fn greet<W: Write>(w: &mut W, name: &str) -> Result<(), std::io::Error> with W::e {
-    w.put(&"héllo, ")?;
+    w.put("héllo, ")?;
     w.put(&name)?;
     w.line(&'!')?;
     w.write_all("bye".as_bytes())?;
@@ -24,8 +24,8 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
         },
         Err(_) => {},
     }
-    out.line(&"")?; // expect: bye
+    out.line("")?; // expect: bye
     // Stdout is a byte sink too: `Write::put` through `&mut`.
     greet(&mut &mut out, "stdout")?; // expect: héllo, stdout!
-    out.line(&"")                    // expect: bye
+    out.line("")                    // expect: bye
 }

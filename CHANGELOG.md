@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.73.0 (2026-11-09)
 
 Step 57: unsized parameters. See
 [docs/57-unsized-parameters.md](docs/57-unsized-parameters.md).

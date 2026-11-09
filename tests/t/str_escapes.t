@@ -2,8 +2,8 @@
 // UTF-8; `\x..` is a byte, only in byte literals.
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
-    out.line(&"tab:\tend")?; // expect: tab:	end
-    out.line(&"quote: \" and \\ and \'")?; // expect: quote: " and \ and '
+    out.line("tab:\tend")?; // expect: tab:	end
+    out.line("quote: \" and \\ and \'")?; // expect: quote: " and \ and '
     out.line(&"\u{20AC}".len())?; // expect: 3
     out.line(&"€".len())?; // expect: 3
     out.line(&"\0".len())?; // expect: 1

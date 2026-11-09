@@ -6,7 +6,7 @@ struct Oops { n: i64 }
 
 impl core::fmt::Display for Oops {
     fn fmt<W: core::fmt::Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e {
-        w.put(&"oops ")?;
+        w.put("oops ")?;
         w.put(&self.n)
     }
 }

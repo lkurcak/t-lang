@@ -77,8 +77,8 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         Option::None => {},
     }
     match core::str::from_utf8(b"\xED\xA0\x80") {
-        Option::Some(_) => out.line(&"UTF-8")?,
-        Option::None => out.line(&"not UTF-8")?, // expect: not UTF-8
+        Option::Some(_) => out.line("UTF-8")?,
+        Option::None => out.line("not UTF-8")?, // expect: not UTF-8
     }
     Result::Ok(())
 }

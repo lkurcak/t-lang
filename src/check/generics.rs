@@ -455,10 +455,8 @@ fn resolve_in(
         }
         TypeExprKind::Slice(_) => Err(unsized_slice(t.span, t)),
         TypeExprKind::Array(elem, n) => {
+            // Of a size, as `go` resolves where values are.
             let elem = go(elem, lifetimes, binder)?;
-            if let Some(u) = elem.unsized_part() {
-                return Err(unsized_slice(t.span, u));
-            }
             Ok(Type::Array(Box::new(elem), Box::new(len(n)?)))
         }
         TypeExprKind::Nat(n) => Err(Error::ty(t.span, format!("`{n}` is a length, not a type"))),

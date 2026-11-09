@@ -62,8 +62,9 @@ pub enum Type {
     /// how many known only as the program runs. So it's never a value of
     /// its own, only what a reference points to, `&'a [T]` or `&'a mut
     /// [T]`, which carries the length (see docs/10-slices.md): nor is it
-    /// what a type parameter stands for, so generic code never has one by
-    /// value either (`Checker::sized`).
+    /// what a type parameter stands for, unless it's `unsized`, which is
+    /// only behind references itself, so generic code never has one by
+    /// value either (`is_unsized`, docs/57-unsized-parameters.md).
     Slice(Box<Type>),
     /// `[T; N]`: an *array*, exactly `N` values of type `T`, one after
     /// another, inline: unlike a slice, a value of its own (see
@@ -84,7 +85,9 @@ pub enum Type {
     /// `str`: a *string*, bytes that are UTF-8, how many known only as the
     /// program runs. Like a slice, it's only ever what a reference points
     /// to, and only a shared one, `&'a str`: changing its bytes could make
-    /// them not UTF-8 (see docs/13-strings.md).
+    /// them not UTF-8 (see docs/13-strings.md). An `unsized` parameter `D`
+    /// may stand for it, and `&mut D` is then a type with no values (lemma
+    /// U6 of docs/57-unsized-parameters.md).
     Str,
     /// `<T as Iter>::Item`: a *projection*, the type that the impl of trait
     /// `.1` for type `.0` picks for its associated type `.2` (see
@@ -574,17 +577,34 @@ impl Type {
         matches!(self, Type::Slice(_) | Type::Str | Type::Param(_, true))
     }
 
-    /// A slice or `str` in this type that isn't right behind a reference
-    /// (a shared one, for `str`), if there's one: where it would be a value
-    /// of its own.
-    pub fn unsized_part(&self) -> Option<&Type> {
-        match self {
-            Type::Slice(_) | Type::Str => Some(self),
-            Type::Ref(_, _, inner) if matches!(**inner, Type::Slice(_)) => {
-                inner.parts().find_map(Type::unsized_part)
+    /// A slice, `str` or `unsized` parameter in this type where it would be
+    /// a value of its own, if there's one: anywhere but right behind a
+    /// reference (a shared one, for `str`), as the argument for an
+    /// `unsized` parameter of a struct or enum (the `i`th of `symbol`'s, if
+    /// `unsized_arg(symbol, i)`), or as what a projection is of.
+    pub fn unsized_part(&self, unsized_arg: &dyn Fn(&str, usize) -> bool) -> Option<&Type> {
+        // Where any type may be: only its parts must have sizes.
+        fn any<'t>(t: &'t Type, unsized_arg: &dyn Fn(&str, usize) -> bool) -> Option<&'t Type> {
+            match t.is_unsized() {
+                true => t.parts().find_map(|p| p.unsized_part(unsized_arg)),
+                false => t.unsized_part(unsized_arg),
             }
-            Type::Ref(_, false, inner) if matches!(**inner, Type::Str) => None,
-            t => t.parts().find_map(Type::unsized_part),
+        }
+        match self {
+            t if t.is_unsized() => Some(self),
+            Type::Ref(_, true, inner) if matches!(**inner, Type::Str) => Some(inner),
+            Type::Ref(_, _, inner) => any(inner, unsized_arg),
+            Type::Adt(symbol, _, args) => {
+                (args.iter().enumerate()).find_map(|(i, a)| match unsized_arg(symbol, i) {
+                    true => any(a, unsized_arg),
+                    false => a.unsized_part(unsized_arg),
+                })
+            }
+            // Its arguments are the function's own parameters, or what they
+            // stand for, already of their kinds.
+            Type::Opaque(_, _, args) => args.iter().find_map(|a| any(a, unsized_arg)),
+            Type::Proj(base, ..) => any(base, unsized_arg),
+            t => t.parts().find_map(|p| p.unsized_part(unsized_arg)),
         }
     }
 

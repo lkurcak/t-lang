@@ -281,7 +281,12 @@ impl Checker {
             ty = self.adts.normalise(&s.apply(&ty));
             // `Self` is `[T]` in a slice's own methods, which take it by
             // reference.
-            if let Some(u) = ty.unsized_part() {
+            let adts = &self.adts;
+            let unsized_arg = |symbol: &str, i: usize| {
+                (adts.get(symbol))
+                    .is_some_and(|d| d.params.get(i).is_some_and(|p| d.params.is_unsized(p)))
+            };
+            if let Some(u) = ty.unsized_part(&unsized_arg) {
                 return Err(generics::unsized_slice(f.name.span, u));
             }
             // What its opaque types' bounds say of `Self` is of the impl's

@@ -35,7 +35,7 @@ fn main(os: std::Os) -> Result<(), Error> {
     out.line(&there)?; // expect: true
     match clock.unix_time() {
         Some(d) => out.line(&(d.as_secs() > 1_700_000_000))?, // expect: true
-        None => out.line(&"before 1970")?,
+        None => out.line("before 1970")?,
     }
     Ok(())
 }

@@ -9,9 +9,9 @@ fn echo(input: &mut Stdin, out: &mut Stdout, line: &mut String) -> Result<i64, E
     let mut n = 0;
     while input.read_line(line)? {
         n = checked_add(n, 1).unwrap_or(n);
-        out.put(&"[")?;
+        out.put("[")?;
         out.put(&line.as_str())?;
-        out.line(&"]")?;
+        out.line("]")?;
     }
     Ok(n)
 }

@@ -482,28 +482,6 @@ fn <core::result::Result::<(), core::io::Error> as core::ops::Try>::from_residua
     }
 }
 
-#[blame_caller]
-fn <&str as core::fmt::Display>::fmt::<std::io::Stderr><'a>(
-    &self,
-    w: &mut std::io::Stderr,
-) -> core::result::Result::<(), core::io::Error> {
-    let _0: Result<(), Error>;
-    let _1: &&str; // self
-    let _2: &mut Stderr; // w
-    let _3: &mut Stderr;
-    let _4: &str;
-    bb0: {
-        _3 = &mut (*_2);
-        _4 = &(*(*_1));
-        _0 = <str as core::fmt::Display>::fmt::<std::io::Stderr>(move _4, move _3);
-        dead _4;
-        dead _3;
-        dead _2;
-        dead _1;
-        return;
-    }
-}
-
 glue {drop}::<Box<i64>> {
     let _0: ();
     let mut _1: Box<i64>;

@@ -1218,11 +1218,13 @@ pub(crate) fn eq_subject(t: &Type) -> &Type {
 ///   bounds (`Checker::hide`), so the same blanket impl is found for that,
 ///   and, by coherence, no other impl of the trait exists: monomorphisation,
 ///   which only sees the hidden type, finds the impl the checker did.
-/// - A parameter never matches a slice, `[T]`, or `str`, as no type
-///   parameter stands for one (`Type::Slice`): an impl's methods could have its `T`
-///   by value. `overlap` agrees, so `impl<T> Tr for &T` and `impl Tr for
-///   &[i64]` don't overlap, and the checker and monomorphisation find the
-///   same one.
+/// - A parameter that isn't `unsized` never matches a slice, `[T]`, `str`
+///   or an `unsized` parameter of where the impl is used, as it stands for
+///   a type with a size (`Type::Param`): an impl's methods could have its
+///   `T` by value. `overlap` agrees, so `impl<T> Tr for &T` and `impl Tr
+///   for &[i64]` don't overlap, and the checker and monomorphisation find
+///   the same one. An `unsized` parameter matches any type (lemma U5 of
+///   docs/57-unsized-parameters.md).
 /// - A const parameter only ever meets a length, a `Type::Nat`, a const
 ///   item (`Type::Const`) or another const parameter, as kinds keep types
 ///   and lengths apart
@@ -1358,19 +1360,11 @@ fn unify(a: &Type, b: &Type, params: &[String], s: &mut HashMap<String, Type>) -
         // impls not to overlap then either (lemma C6 of docs/36-consts.md).
         (Type::Const(_), Type::Nat(_) | Type::Const(_) | Type::Param(_, _))
         | (Type::Nat(_) | Type::Param(_, _), Type::Const(_)) => true,
-        // Two of them: the one that may be unsized becomes the other, so
-        // what they both are has a size if either must. A sized one and an
-        // `unsized` one are the same type wherever that's a sized type.
-        (Type::Param(p, true), sized @ Type::Param(_, false))
-        | (sized @ Type::Param(_, false), Type::Param(p, true))
-            if var(&a) && var(&b) =>
-        {
-            s.insert(p.clone(), sized.clone());
-            true
-        }
+        // A parameter that isn't `unsized` can't be a type that is; but it
+        // can be the other impl's `unsized` parameter, which may be a sized
+        // type too. Each parameter is in its impl's type once (headers are
+        // linear, docs/06a), so it meets nothing else that could ask more.
         (v @ Type::Param(p, unsized_), t) | (t, v @ Type::Param(p, unsized_)) if var(v) => {
-            // `t` may be a variable too here only if `v` may be unsized or
-            // `t` must be sized, as above: then `t` has a size if `v` must.
             if occurs(p, t, s) || (t.is_unsized() && !unsized_ && !var(t)) {
                 return false;
             }

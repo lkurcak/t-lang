@@ -29,9 +29,11 @@ pub(super) struct Var {
     /// have `Self` only behind references (`collect_impls`); and none of
     /// those traits has a method giving a `Self` without taking one by
     /// value, which no expression can be (see docs/43.1-formatting.md).
-    /// A variable that may be unsized is the type of no value: what's made
-    /// equal to one is (`unify`), and the MIR's operands are checked to
-    /// have sizes, after inference (lemma U3 of docs/57-unsized-parameters.md).
+    /// A variable that may be unsized is the type of no value: one that's
+    /// made equal to a value's type can't be unsized either (`unify`), and
+    /// once inference is done, every local of the MIR is checked to have a
+    /// size (`borrowck::sized`; lemmas U3 and U4 of
+    /// docs/57-unsized-parameters.md).
     pub(super) unsized_ok: bool,
     /// Where it came from, for when it's never solved: the span, what it's
     /// the type of ("the type of `x`") and how to fix that.

@@ -297,8 +297,6 @@ fn closures_in(b: &mut Builder) -> (Vec<Warning>, Vec<Error>, Vec<NodeId>) {
     (warnings, errors, muts)
 }
 
-/// Checks a lowered body, its closures first. For a closure, `propagate`:
-/// what it needs of its universal regions is returned rather than an error.
 /// Every value has a size: no local, parameter or temporary is of a type
 /// that may not, `str`, a slice or an `unsized` parameter (lemma U4 of
 /// docs/57-unsized-parameters.md). The checker keeps those types out of
@@ -312,6 +310,8 @@ fn sized(b: &Builder) -> Result<(), Error> {
     }
 }
 
+/// Checks a lowered body, its closures first. For a closure, `propagate`:
+/// what it needs of its universal regions is returned rather than an error.
 fn analyze(
     b: &mut Builder,
     names: &Names,

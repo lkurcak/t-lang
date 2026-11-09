@@ -28,7 +28,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     out.line(&(*n == Nothing {}))?;               // expect: true
     let o = One::Only;
     match o {
-        One::Only => out.line(&"only")?,          // expect: only
+        One::Only => out.line("only")?,          // expect: only
     }
     out.line(&"".len())?;                         // expect: 0
     out.line(&b"".len())?;                        // expect: 0
@@ -47,7 +47,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     let s = core::slice::empty::<i64>();
     match s.split_at(0) {
         Some(parts) => out.line(&(parts.head.len() + parts.tail.len()))?, // expect: 0
-        None => out.line(&"none")?,
+        None => out.line("none")?,
     }
     Ok(())
 }

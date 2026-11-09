@@ -5,15 +5,15 @@ fn show<'a, I: Iterator<Item = &'a str>>(
     it: I,
 ) -> Result<(), std::io::Error> where I: Discard {
     let mut first = true;
-    out.put(&"[")?;
+    out.put("[")?;
     for w in it {
         if !first {
-            out.put(&"|")?;
+            out.put("|")?;
         }
         first = false;
         out.put(&w)?;
     }
-    out.line(&"]")
+    out.line("]")
 }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> {

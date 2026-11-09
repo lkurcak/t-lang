@@ -13,7 +13,7 @@ and `core/cmp.t`.
 A type parameter has stood for a type with a size, one whose values a
 function can hold, move and drop without knowing more. `str` and slices
 have none known when compiled (docs/10, docs/13), so no type parameter
-could be one: `out.line(&"hello")` was how to write a line, as `line<D:
+could be one: `out.line("hello")` was how to write a line, as `line<D:
 Display>(x: &D)` couldn't take a `&str` for `x`, only a `&&str`. And
 `core` had two impls for each of `Display`, `Debug` and `Ord` on
 references: `&'a T`'s, which couldn't cover `&'a str`, and `&'a str`'s
@@ -167,15 +167,23 @@ ADT's argument has the kind of its parameter.
   parameter, variable and temporary: every value there is one) is
   checked to have a size (`sized` in `src/borrowck.rs`). With U2, no
   instance makes a value of unknown size: lemma S4 of docs/13 holds of
-  generic code too.
+  generic code too, and monomorphisation checks that it does. (In T as it
+  is, such a value would also need copying, from a type that's `Copy`,
+  which no unsized type is, or moving out of a reference, which the
+  borrow checker forbids; so the check is what keeps generic code
+  well-kinded, not the last thing between a program and memory it can't
+  size.)
 - **Lemma U5 (impls).** Matching an impl's type against a type puts
   each of the impl's parameters for a part: one of kind ★ only for a
   part of kind ★ (`traits::matches`). So an impl found for a type is an
   instance of the impl at well-kinded arguments, and U2 makes its methods
   well-kinded there. Two impls overlap if some well-kinded type matches
-  both: unifying their types, an `unsized` parameter met by one that
-  isn't becomes that one, which is then of kind ★, so they overlap
-  exactly where both could be the same sized type.
+  both: unifying their types, a parameter that isn't `unsized` may be
+  the other impl's `unsized` parameter (both are then that sized type),
+  but not `str`, a slice, or an `unsized` parameter of where the impl is
+  used. Each parameter is in its impl's type once (impl headers are
+  linear, docs/06a), so it meets nothing else that could need more of
+  it.
 - **Lemma U6 (no `&mut str`).** A `&mut D` at `D = str` is the type of
   no value. A `&mut str` could only be made by `&mut` of a place of type
   `str`, and every such place is `*r` of an `r: &str` (or of a
@@ -239,9 +247,10 @@ ill-kinded type, if the rule it's named for were taken out.
    program that then makes an `Option<str>`, as
    `err_soundness_unsized_impl_select.t` would, and see what monomorphisation
    says.
-3. Why does coherence's `unify` make an `unsized` parameter equal to a
-   sized one, rather than refuse, as it does for `str`? Write the two
-   impls that would otherwise both be found for `&i64`.
+3. Why does coherence's `unify` let a sized parameter be the other
+   impl's `unsized` one, rather than refuse, as it does for `str`? Write
+   the two impls that would otherwise both be found for `&i64`. Would
+   it still be enough if an impl's type could name a parameter twice?
 4. Remove `sized` from `analyze`. Which test now runs, and what does the
    interpreter say?
 5. Why is `fn f<unsized D>(x: &mut D, y: &mut D) { core::mem::swap(x, y) }`

@@ -473,28 +473,6 @@ export fn <[bool; 2]>::index(&self, i: { i: usize | i < self.len() }) -> &bool {
     }
 }
 
-#[blame_caller]
-fn <&str as core::fmt::Display>::fmt::<std::io::Stderr><'a>(
-    &self,
-    w: &mut std::io::Stderr,
-) -> core::result::Result::<(), core::io::Error> {
-    let _0: Result<(), Error>;
-    let _1: &&str; // self
-    let _2: &mut Stderr; // w
-    let _3: &mut Stderr;
-    let _4: &str;
-    bb0: {
-        _3 = &mut (*_2);
-        _4 = &(*(*_1));
-        _0 = <str as core::fmt::Display>::fmt::<std::io::Stderr>(move _4, move _3);
-        dead _4;
-        dead _3;
-        dead _2;
-        dead _1;
-        return;
-    }
-}
-
 /// All its values, as a slice.
 #[intrinsic]
 export fn <[bool; 2]>::as_slice(&self) -> { s: &[bool] | s.len() == self.len() };

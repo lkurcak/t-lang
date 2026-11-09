@@ -35,6 +35,6 @@ fn encode(out: &mut std::io::Stdout, buf: &mut List<u8>) -> Result<(), std::io::
     }
     match '😀'.encode_utf8(buf.as_mut_slice()) {
         Some(s) => out.line(&s),
-        None => out.line(&"too short"), // expect: too short
+        None => out.line("too short"), // expect: too short
     }
 }

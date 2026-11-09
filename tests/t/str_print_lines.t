@@ -2,8 +2,8 @@
 // prints two.
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
-    out.line(&"one\ntwo")?; // expect: one
+    out.line("one\ntwo")?; // expect: one
     // expect: two
-    out.line(&"")?; // expect: 
+    out.line("")?; // expect: 
     Ok(())
 }

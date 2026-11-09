@@ -8,7 +8,7 @@ fn main(os: std::Os) -> Result<(), Error> {
     match input.raw() {
         Ok(r) => {
             r.discard();
-            out.line(&"raw")?
+            out.line("raw")?
         },
         Err(e) => {
             out.line(&(e.kind() == ErrorKind::Unsupported))?; // expect: true

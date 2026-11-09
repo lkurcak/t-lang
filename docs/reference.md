@@ -25,7 +25,7 @@ threads. `t file.t a b` runs it with arguments `a` and `b`.
 ```rust
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
-    out.line(&"Hello, T!") // expect: Hello, T!
+    out.line("Hello, T!") // expect: Hello, T!
 }
 ```
 

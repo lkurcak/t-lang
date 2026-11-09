@@ -376,7 +376,8 @@ impl Checker {
             }
             // An `unsized` one may stand for `str` where the trait's
             // callers make it so, and one that isn't may be a value in the
-            // body: so neither can be the other (lemma U4).
+            // body: so neither can be the other (lemma U7 of
+            // docs/57-unsized-parameters.md).
             let (a, b) = (got.params.is_unsized(p), want.scheme.params.is_unsized(q));
             if a != b {
                 let (is, isnt) = match b {

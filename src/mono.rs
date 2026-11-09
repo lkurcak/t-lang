@@ -1440,6 +1440,15 @@ impl Cx<'_, '_, '_> {
         let mut out = b.clone();
         for l in &mut out.locals {
             l.ty = self.subst_inferred(&l.ty).erased();
+            // No value of a copy has a type with no size: the generic
+            // body's values have sizes (`borrowck::sized`), and so do the
+            // types its parameters stand for here, those that aren't
+            // `unsized` (lemmas U2 and U4 of docs/57-unsized-parameters.md).
+            assert!(
+                !l.ty.is_unsized(),
+                "type soundness violated: a value of `{}`, which has no size, in `{root}`",
+                l.ty
+            );
             self.copies_in(&l.ty.clone());
         }
         let mut blocks = Vec::new();

@@ -3,5 +3,5 @@ extern fn on_reset() {}
 
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
-    out.line(&"no warning") // expect: no warning
+    out.line("no warning") // expect: no warning
 }
