@@ -871,7 +871,7 @@ impl Walk<'_> {
     /// reference, what the reference says, which is what its place had
     /// declared when it was made.
     pub(super) fn place_decl(&mut self, p: &Place) -> Tree {
-        self.place_decl_depth(p, 0, true)
+        self.place_decl_depth(p, true)
     }
 
     /// What's said of a value read at place `p` that's new: what's
@@ -880,14 +880,14 @@ impl Walk<'_> {
     /// would read this one again); and what the call that last lent it left
     /// there (`lent_trees`).
     pub(super) fn place_read(&mut self, p: &Place) -> Tree {
-        let mut tree = self.place_decl_depth(p, 0, false);
+        let mut tree = self.place_decl_depth(p, false);
         if let Some(t) = self.lent_trees.get(p) {
             tree.extend(t.iter().cloned());
         }
         tree
     }
 
-    fn place_decl_depth(&mut self, p: &Place, depth: usize, fields: bool) -> Tree {
+    fn place_decl_depth(&mut self, p: &Place, fields: bool) -> Tree {
         let Some((last, init)) = p.path.split_last() else {
             return self.decl.get(&p.root).cloned().unwrap_or_default();
         };
@@ -896,7 +896,7 @@ impl Walk<'_> {
             path: init.to_vec(),
         };
         let qt = self.place_ty(&q);
-        let outer = self.place_decl_depth(&q, depth + 1, fields);
+        let outer = self.place_decl_depth(&q, fields);
         match last {
             Proj::Deref => {
                 let mut out = below(&outer, 0);
