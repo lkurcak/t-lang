@@ -371,7 +371,7 @@ fn main(os: std::Os) -> core::result::Result::<(), core::io::Error> with panic {
         dead _42;
         dead _41;
         _54 = {closure#17287}();
-        _55 = {fn}::<{closure#167503}>;
+        _55 = {fn}::<{closure#167498}>;
         _56 = true;
         _53 = main::twice::<bool>(move _55, move _56);
         _57 = &mut _2;
@@ -1001,7 +1001,7 @@ fn <core::result::Result::<(), core::io::Error> as core::ops::Try>::from_residua
     }
 }
 
-glue {fn}::<{closure#167503}> {
+glue {fn}::<{closure#167498}> {
     let _0: bool;
     let mut _1: bool;
     let _2: {closure};

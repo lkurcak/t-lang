@@ -82,7 +82,7 @@ pub use scope::source_name;
 
 use crate::ast::*;
 use crate::error::{Error, Fix, Span, Warning};
-use crate::traits::{DEBUG, EQ};
+use crate::traits::{DEBUG, EQ, ORD};
 use crate::traits::{Pred, Traits};
 use crate::types::{Adts, Params, Region, Scheme, Type};
 use adts::{adt_names, each_adt};
@@ -1881,10 +1881,11 @@ impl Checker {
     /// What a closure's body uses is in the function it's in, by where it
     /// is, and is copied with it.
     fn no_polymorphic_recursion(&self) -> Result<(), Error> {
-        // The `eq` of each derived `Eq`, and the `fmt` of each derived
-        // `Debug`: not functions of the program, but each does what one
-        // would, `==` or `Debug::fmt` on each field, so each is a node of
-        // its own. `fmt`'s sink is a parameter no program can name.
+        // The `eq` of each derived `Eq`, the `cmp` of each derived `Ord`,
+        // and the `fmt` of each derived `Debug`: not functions of the
+        // program, but each does what one would, `==`, `Ord::cmp` or
+        // `Debug::fmt` on each field, so each is a node of its own. `fmt`'s
+        // sink is a parameter no program can name.
         let derived_eq: Vec<Option<(String, Vec<String>)>> = self
             .traits
             .impls
@@ -1892,6 +1893,7 @@ impl Checker {
             .map(|d| {
                 let (name, own) = match d.trait_name.as_deref() {
                     Some(EQ) if d.derived => ("Eq>::eq", None),
+                    Some(ORD) if d.derived => ("Ord>::cmp", None),
                     Some(DEBUG) if d.derived => ("Debug>::fmt", Some(DERIVED_SINK.to_string())),
                     _ => return None,
                 };
@@ -1905,17 +1907,22 @@ impl Checker {
         let eq = ix.method_symbol(&traits::trait_method_symbol(EQ, "eq"));
         let fmt = (self.traits.traits.contains_key(DEBUG))
             .then(|| ix.method_symbol(&traits::trait_method_symbol(DEBUG, "fmt")));
+        let cmp = (self.traits.traits.contains_key(ORD))
+            .then(|| ix.method_symbol(&traits::trait_method_symbol(ORD, "cmp")));
         let mut uses = Vec::new();
         for (k, d) in self.traits.impls.iter().enumerate() {
             let (Some((from, _)), Type::Adt(symbol, ..)) = (&derived_eq[k], &d.self_ty) else {
                 continue;
             };
-            let debug = d.trait_name.as_deref() == Some(DEBUG);
+            let tr = d.trait_name.as_deref();
             for (_, f) in traits::fields(&self.adts[symbol].kind) {
-                match (debug, fmt) {
-                    (true, Some(fmt)) => {
+                match (tr, fmt, cmp) {
+                    (Some(DEBUG), Some(fmt), _) => {
                         let sink = Type::Param(DERIVED_SINK.into(), false);
                         self.call_uses(&ix, (from, d.span), fmt, &[f, sink], &mut uses);
+                    }
+                    (Some(ORD), _, Some(cmp)) => {
+                        self.call_uses(&ix, (from, d.span), cmp, &[f], &mut uses)
                     }
                     _ => self.call_uses(&ix, (from, d.span), eq, &[f], &mut uses),
                 }

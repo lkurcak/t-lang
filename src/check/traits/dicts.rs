@@ -218,13 +218,16 @@ impl Checker {
             Some((k, impl_args)) => {
                 let d = &self.traits.impls[k];
                 let derived: Option<&'a str> = ix.derived_eq[k].as_ref().map(|(n, _)| n.as_str());
+                // A derived `Ord`'s node is its `cmp`; its other methods are
+                // the trait's defaults, which call that.
+                let derived = derived.filter(|_| tr != ORD || m.name == "cmp");
                 let target: Option<(&'a str, Vec<Type>)> =
                     match (d.methods.iter().find(|(n, _)| *n == m.name), derived) {
                         (Some((_, symbol)), _) => {
                             ix.fn_symbol(symbol).map(|to| (to, impl_args.clone()))
                         }
                         (None, Some(eq)) => Some((eq, impl_args.clone())),
-                        (None, None) if !d.derived && m.provided => {
+                        (None, None) if (!d.derived || tr == ORD) && m.provided => {
                             Some((m.symbol.as_str(), vec![self_ty.clone()]))
                         }
                         _ => None,
@@ -281,14 +284,18 @@ impl Checker {
             if !types {
                 for m in &def.methods {
                     let written = d.methods.iter().find(|(n, _)| *n == m.name);
-                    match (written, &ix.derived_eq[k]) {
+                    // As at a use: a derived `Ord`'s `cmp` is its node, its
+                    // other methods the trait's defaults.
+                    let derived =
+                        (ix.derived_eq[k].as_ref()).filter(|_| tr != ORD || m.name == "cmp");
+                    match (written, derived) {
                         (Some((_, symbol)), _) => {
                             if let Some(to) = ix.fn_symbol(symbol) {
                                 site.push(to, own.clone(), None);
                             }
                         }
                         (None, Some((eq, _))) => site.push(eq, own.clone(), None),
-                        (None, None) if !d.derived && m.provided => {
+                        (None, None) if (!d.derived || tr == ORD) && m.provided => {
                             site.push(&m.symbol, vec![d.self_ty.clone()], None)
                         }
                         _ => {}

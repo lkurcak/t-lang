@@ -46,7 +46,7 @@ export enum core::result::Result::<(), core::io::Error> { Ok(()), Err(core::io::
 #[derive(Discard, Copy, Eq)]
 export enum core::result::Result::<!, core::io::Error> { Ok(!), Err(core::io::Error) }
 
-fn adder(n: i64) -> {closure#166611} {
+fn adder(n: i64) -> {closure#166606} {
     let _0: {closure};
     let _1: i64; // n
     bb0: {
@@ -68,7 +68,7 @@ closure adder::{closure#17126} {
     }
 }
 
-fn counter() -> {closure#166710} {
+fn counter() -> {closure#166705} {
     let _0: {closure};
     let mut _1: i64; // n
     let _2: i64;
@@ -99,10 +99,10 @@ closure counter::{closure#17146} {
     }
 }
 
-fn compose::<{panic}, {closure#166611}, {closure#166611}>(
-    f: {closure#166611},
-    g: {closure#166611},
-) -> {closure#166918}::<{panic}, {closure#166611}, {closure#166611}> {
+fn compose::<{panic}, {closure#166606}, {closure#166606}>(
+    f: {closure#166606},
+    g: {closure#166606},
+) -> {closure#166913}::<{panic}, {closure#166606}, {closure#166606}> {
     let _0: {closure};
     let _1: {closure}; // f
     let _2: {closure}; // g
@@ -120,7 +120,7 @@ fn compose::<{panic}, {closure#166611}, {closure#166611}>(
     }
 }
 
-closure compose::<{panic}, {closure#166611}, {closure#166611}>::{closure#17193} {
+closure compose::<{panic}, {closure#166606}, {closure#166606}>::{closure#17193} {
     let _0: i64;
     let mut _1: &{closure}; // the closure
     let _2: i64; // x
@@ -141,7 +141,7 @@ closure compose::<{panic}, {closure#166611}, {closure#166611}>::{closure#17193} 
     }
 }
 
-fn pick(c: bool) -> {closure#166611} {
+fn pick(c: bool) -> {closure#166606} {
     let _0: {closure};
     let _1: bool; // c
     let _2: {closure}; // a
@@ -425,7 +425,7 @@ fn main(os: std::Os) -> core::result::Result::<(), core::io::Error> with panic {
         _40 = adder(move _41);
         _43 = 10_i64;
         _42 = adder(move _43);
-        _39 = compose::<{panic}, {closure#166611}, {closure#166611}>(move _40, move _42);
+        _39 = compose::<{panic}, {closure#166606}, {closure#166606}>(move _40, move _42);
         _38 = move _39;
         dead _43;
         dead _42;

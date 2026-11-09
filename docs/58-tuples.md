@@ -347,7 +347,10 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
   `Discard`: each `Ai: Copy` gives `Ai: Discard`, so the tuple's holds.
   `Ord` needs `Eq` likewise. The rule can't overlap an impl: only core
   could write one for a tuple of a core trait (the orphan rule), and it
-  writes none.
+  writes none. A proof that a tuple implements a trait is the proofs for
+  its values, so the check against polymorphic recursion (docs/29)
+  follows it to their impls: a `cmp` that compares a tuple holding its
+  own type at a bigger one is caught (`err_soundness_tuple_poly_rec.t`).
 - **Lemma T5 (refinements).** To the logic a tuple's value is a
   struct's, its fields' values, each a function of the value (lemma M1
   of docs/21): `p.0` is a field path. Every field is exported, so a
@@ -365,7 +368,12 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
   which is total and effect-free, as the trait's signature says; so it
   is too. A derived `Ord` needs an `Eq` (`trait Ord: Eq`), checked as a
   written impl's supertraits are: otherwise generic code over `T: Ord`
-  could call an `==` that monomorphisation can't find.
+  could call an `==` that monomorphisation can't find. And each derived
+  `cmp` is a node of the graph the check against polymorphic recursion
+  walks, as each derived `eq` and `fmt` is, with an edge to each field's
+  `cmp`: without it, a `cmp` comparing a derived struct that holds its
+  own type at a bigger one would make copies without end
+  (`err_soundness_derive_ord_poly_rec.t`).
 - **Lemma P1 (closure parameters).** A pattern parameter is a fresh
   name the body's first `let` takes apart, so it's checked as that `let`
   is: it must match every value (exhaustiveness, else "refutable pattern
