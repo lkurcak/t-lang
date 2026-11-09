@@ -1359,7 +1359,9 @@ impl Checker {
         );
         self.resolved(&ident, &found, true);
         let res = Res::Fn(found.symbol.clone(), found.args.clone());
-        self.typed.methods.insert(call.id, (res, derefs, Some(true)));
+        self.typed
+            .methods
+            .insert(call.id, (res, derefs, Some(true)));
         let resolved = Resolved {
             symbol: found.symbol.clone(),
             derefs,

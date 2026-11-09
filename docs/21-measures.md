@@ -175,6 +175,7 @@ What an assignment assigns is evaluated before the place, as in Rust, so
 
 A method called on `x[i]` that takes `&mut self` would need `index_mut`,
 which only the syntax around `x[i]` picks: write `(&mut x[i]).m()`.
+(Since step 59 the checker picks it there too: docs/59-lends.md.)
 
 ## What's behind a `&mut`
 
@@ -231,7 +232,7 @@ know what's left behind a `&mut` at return too, when no borrow of it
 outlives the call.) It also means a
 function can't say what it did to what's behind a `&mut`: after `l[2] =
 7`, nothing's known of `l.len()`, as `index_mut` doesn't say it leaves it
-as it was. A slice can: `let s = l.as_mut_slice();` is as long as `l` was,
+as it was (until step 59, docs/59-lends.md). A slice can: `let s = l.as_mut_slice();` is as long as `l` was,
 and writing through `s` can't change that.
 
 ## Why it's sound

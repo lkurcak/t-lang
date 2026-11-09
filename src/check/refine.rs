@@ -127,6 +127,10 @@ pub(super) struct Refinement {
 /// the way to it.
 type Way = Vec<(usize, usize)>;
 
+/// For each parameter of a function, if it's lend-framed (`lend_framed`),
+/// the type parameters its result can write values of.
+pub(super) type Framed = Vec<Option<Vec<String>>>;
+
 /// One predicate of a refinement, and the parts of the value it's of.
 #[derive(Debug, Clone)]
 struct Part {
@@ -201,7 +205,7 @@ pub(super) struct RefinedSig {
     scoped: Vec<bool>,
     /// The lend-framed parameters (`lend_framed`), each with the type
     /// parameters its result can write values of.
-    framed: Vec<Option<Vec<String>>>,
+    framed: Framed,
 }
 
 /// The refinements of a struct's fields, by the struct's symbol
@@ -1707,6 +1711,22 @@ impl Checker {
                 self.measure_term(x, true, uses)
             }
             ExprKind::Unary(UnOp::Neg | UnOp::Not, x) => self.measure_term(x, false, uses),
+            // Which variant `self`, or a field of it, is (docs/59-lends.md):
+            // its tag, a function of the value, as a field is.
+            ExprKind::Match(x, arms) => {
+                self.measure_term(x, true, uses)?;
+                for a in arms {
+                    if variant_test(&a.pat).is_none() {
+                        return Err(Error::ty(
+                            a.pat.span,
+                            "a measure's `match` can only say which variant a value is: its \
+                             patterns can't bind or test what's in one",
+                        ));
+                    }
+                    self.measure_term(&a.body, false, uses)?;
+                }
+                Ok(())
+            }
             ExprKind::Binary(op, l, r) => {
                 if matches!(
                     op,
@@ -1925,7 +1945,7 @@ pub(super) fn lend_framed(
     s: &crate::types::Scheme,
     own: Option<(&Type, &str)>,
     scoped: &[bool],
-) -> Vec<Option<Vec<String>>> {
+) -> Framed {
     let Type::Fn(sig) = &s.ty else {
         return Vec::new();
     };
@@ -2015,7 +2035,9 @@ fn writes(
                 return true;
             }
             seen.push(t.clone());
-            all_fields(adts, t).iter().all(|f| writes(adts, f, r, w, seen))
+            all_fields(adts, t)
+                .iter()
+                .all(|f| writes(adts, f, r, w, seen))
         }
         // A function value can't hold a reference.
         Type::Fn(_) => true,
@@ -2053,6 +2075,32 @@ fn params_in(t: &Type, out: &mut Vec<String>) {
     }
     for p in t.parts() {
         params_in(p, out);
+    }
+}
+
+/// The variants pattern `p` matches, if it only says which variant a
+/// value is: `V`, `V(_, ..)`, `V { .. }`, `_` (every variant: `[]` with
+/// `true`), or several of those with `|`. The `bool` says it matches every
+/// variant.
+fn variant_test(p: &Pattern) -> Option<(Vec<String>, bool)> {
+    match &p.kind {
+        PatternKind::Wild => Some((Vec::new(), true)),
+        PatternKind::Variant(_, _, v, subs)
+            if subs.iter().all(|s| matches!(s.kind, PatternKind::Wild)) =>
+        {
+            Some((vec![v.name.clone()], false))
+        }
+        PatternKind::Or(alts) => {
+            let mut names = Vec::new();
+            let mut all = false;
+            for a in alts {
+                let (n, every) = variant_test(a)?;
+                names.extend(n);
+                all |= every;
+            }
+            Some((names, all))
+        }
+        _ => None,
     }
 }
 
@@ -2844,6 +2892,71 @@ impl Walk<'_> {
             ExprKind::Binary(op, l, r) => {
                 let (a, b) = (self.measure_term(l, this)?, self.measure_term(r, this)?);
                 binary(*op, a, b, &mut self.kinds).ok()?
+            }
+            // Which variant it is: the arm whose variant the tag says, the
+            // first that does (lemma L5 of docs/59-lends.md).
+            ExprKind::Match(x, arms) => {
+                let mut v = self.measure_term(x, this)?;
+                while let Val::Ref(..) = v {
+                    v = self.pointee(v);
+                }
+                let Val::Obj(o) = v else {
+                    return None;
+                };
+                let parts = self.parts.get(&o)?.clone();
+                let mut earlier: Vec<Formula> = Vec::new();
+                let mut cases: Vec<(Formula, Val)> = Vec::new();
+                for a in arms {
+                    let (names, every) = variant_test(&a.pat)?;
+                    let here = match every {
+                        true => Formula::True,
+                        false => {
+                            let mut tests = Vec::new();
+                            for n in &names {
+                                let k = self.variant_index(&parts.symbol, n)?;
+                                let k = i128::try_from(k).ok()?;
+                                tests.push(Formula::eq(&parts.tag, &Lin::constant(k))?);
+                            }
+                            Formula::or(tests)
+                        }
+                    };
+                    let first = Formula::and(
+                        earlier
+                            .iter()
+                            .map(|f| f.clone().not())
+                            .chain([here.clone()])
+                            .collect::<Vec<_>>(),
+                    );
+                    earlier.push(here);
+                    cases.push((first, self.measure_term(&a.body, this)?));
+                }
+                match cases.first().map(|(_, v)| v.clone()) {
+                    Some(Val::Bool(_)) => {
+                        let mut any = Vec::new();
+                        for (c, v) in cases {
+                            let Val::Bool(f) = v else {
+                                return None;
+                            };
+                            any.push(Formula::and([c, f]));
+                        }
+                        Val::Bool(Formula::or(any))
+                    }
+                    Some(Val::Int(_)) => {
+                        let r = Lin::var(self.fresh(Kind::Int(
+                            Lin::constant(i128::from(i64::MIN)),
+                            Lin::constant(i128::from(u64::MAX)),
+                        )));
+                        for (c, v) in cases {
+                            let Val::Int(n) = v else {
+                                return None;
+                            };
+                            let f = Formula::or([c.not(), Formula::eq(&r, &n)?]);
+                            self.fact(f);
+                        }
+                        Val::Int(r)
+                    }
+                    _ => return None,
+                }
             }
             _ => return None,
         })
@@ -4712,8 +4825,8 @@ impl Walk<'_> {
             // A field lent here is a new value, which the struct's
             // refinements are proved of below, not assumed: so reading it
             // for what the call ensures assumes nothing of it but that.
-            let lent_field = (post.scoped.iter().flatten())
-                .any(|p| !self.constrained_around(p).is_empty());
+            let lent_field =
+                (post.scoped.iter().flatten()).any(|p| !self.constrained_around(p).is_empty());
             let was = self.proving_fields;
             self.proving_fields |= lent_field;
             let mut facts = Vec::new();

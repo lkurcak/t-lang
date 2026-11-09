@@ -65,7 +65,7 @@ impl<T> List<T> {
     }
 
     /// Takes the last value out, or `None` if it's empty.
-    export fn pop(&mut self) -> Option<T>
+    export fn pop(&mut self) -> { r: Option<T> | r.is_some() == (old(self.len()) > 0) }
     ensures
         self.len() + 1 == old(self.len()) || (self.len() == 0 && old(self.len()) == 0),
     {
@@ -104,9 +104,7 @@ impl<T> List<T> {
     export fn index_mut(&mut self, i: { i: usize | i < self.len() }) -> &mut T
     ensures
         self.len() == old(self.len()),
-    {
-        &mut self.as_mut_slice()[i]
-    }
+    { &mut self.as_mut_slice()[i] }
 
     /// Puts `v` at `i`, which is less than `len()`, and gives back what was
     /// there. Unlike `l[i] = v`, it lends the list only for the call, so it
@@ -134,10 +132,7 @@ impl<T> List<T> {
     export fn slice_mut<'a>(
         &'a mut self,
         r: { r: Range<usize> | r.start() <= r.end() && r.end() <= self.len() },
-    ) -> { t: &'a mut [T] | t.len() + r.start() == r.end() }
-    ensures
-        self.len() == old(self.len()),
-    {
+    ) -> { t: &'a mut [T] | t.len() + r.start() == r.end() } ensures self.len() == old(self.len()) {
         self.as_mut_slice().slice_mut(r)
     }
 
@@ -164,14 +159,12 @@ impl<T> List<T> {
         self.as_mut_slice().iter_mut()
     }
 
-    /// Swaps the values at `i` and `j`, if there are values there, and
-    /// says whether it did.
-    export fn swap(&mut self, i: usize, j: usize) -> bool ensures self.len() == old(self.len()) {
-        // SAFETY: slots `0..len` hold values. The slice borrows `buf`, not
-        // the list, so the checker sees `len` stay as it was.
-        let s = unsafe { self.buf.slice_mut(0, self.len) };
-        s.swap(i, j)
-    }
+    /// Swaps the values at `i` and `j`, which are less than `len()`, as
+    /// `l[i]` is.
+    export fn swap(&mut self, i: { i: usize | i < self.len() }, j: { j: usize | j < self.len() })
+    ensures
+        self.len() == old(self.len()),
+    { self.as_mut_slice().swap(i, j) }
 
     /// Gives each value, front to back, to `f`, and then the buffer back.
     export fn free_with<effect e, F: FnMut(T) with e + Discard>(mut self, mut f: F) with e {

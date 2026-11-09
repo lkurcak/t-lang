@@ -25,8 +25,9 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     bump(s);
     bump(s);
     *s.get_mut(0).unwrap() = 100;
-    out.line(&s.swap(0, 3)); // expect: true
-    out.line(&s.swap(1, 4)); // expect: false
+    if s.len() == 4 {
+        s.swap(0, 3);
+    }
     let (head, tail) = s.split_at_mut(2).unwrap();
     *head.get_mut(1).unwrap() = *tail.get_mut(0).unwrap();
     *tail.get_mut(1).unwrap() = 7;

@@ -627,7 +627,7 @@ pub(crate) struct Checker {
     /// return it can name (see `refine::call_scoped`), and which are
     /// lend-framed, of whose values at return it can name the measures free
     /// in the type parameters given (see `refine::lend_framed`).
-    pred_post: Option<(&'static str, Vec<bool>, Vec<Option<Vec<String>>>)>,
+    pred_post: Option<(&'static str, Vec<bool>, refine::Framed)>,
     /// Inside `old(..)` in a postcondition.
     pred_in_old: bool,
     /// In a loop's invariant, not a refinement: what messages call it.

@@ -5,7 +5,8 @@
 export enum Option<T> { None, Some(T) }
 
 impl<T> Option<T> {
-    /// Is it `Some`?
+    /// Is it `Some`? A measure: a refinement can say which it is.
+    #[measure]
     export fn is_some(&self) -> bool {
         match self {
             Some(_) => true,
@@ -14,6 +15,7 @@ impl<T> Option<T> {
     }
 
     /// Is it `None`?
+    #[measure]
     export fn is_none(&self) -> bool { !self.is_some() }
 
     /// A reference to what's in it, if anything.
