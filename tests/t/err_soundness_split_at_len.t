@@ -2,7 +2,7 @@
 fn f(s: &[u8]) -> usize {
     match s.split_at(2) {
         Some(sp) => {
-            let n: { n: usize | n == 3 } = sp.head.len();
+            let n: { n: usize | n == 3 } = sp.0.len();
             n
         },
         None => 0,

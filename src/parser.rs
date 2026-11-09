@@ -1081,6 +1081,45 @@ impl Parser {
         Ok((items, end))
     }
 
+    /// What's in `( .. )`, after the `(`, and the span of the `)`:
+    /// nothing, for `()`; one item and no comma, which the parentheses only
+    /// group; or two or more, a tuple's, the `bool` set. `(x,)` is an
+    /// error: a tuple has no elements or at least two (D1 of
+    /// docs/58-tuples.md).
+    fn parens<T>(
+        &mut self,
+        open: Span,
+        mut item: impl FnMut(&mut Self) -> Result<T, Error>,
+    ) -> Result<(Vec<T>, bool, Span), Error> {
+        let mut items = Vec::new();
+        let mut commas = Vec::new();
+        while *self.peek() != Tok::RParen {
+            items.push(item(self)?);
+            if *self.peek() != Tok::Comma {
+                break;
+            }
+            commas.push(self.bump().span);
+        }
+        let close = self.expect(Tok::RParen)?;
+        if items.len() == 1 && !commas.is_empty() {
+            return Err(Error::syntax(
+                commas[0],
+                "a tuple has no elements or at least two; for one value, leave out the \
+                 parentheses",
+            )
+            .with_fix(Fix::new(
+                "leave out the parentheses and the comma",
+                vec![
+                    Edit::replace(open, ""),
+                    Edit::replace(commas[0], ""),
+                    Edit::replace(close, ""),
+                ],
+            )));
+        }
+        let tuple = items.len() >= 2;
+        Ok((items, tuple, close))
+    }
+
     /// `comma_list`, but leaving `close` for the caller to take.
     fn comma_list_open<T>(
         &mut self,
@@ -2037,12 +2076,26 @@ impl Parser {
                 Ok(t)
             }
             Tok::LParen => {
-                self.bump();
-                let end = self.expect(Tok::RParen)?;
-                Ok(TypeExpr {
-                    kind: TypeExprKind::Unit,
-                    span: start.to(end),
-                    id: self.id(),
+                let open = self.bump().span;
+                let (mut ts, tuple, end) = self.parens(open, Self::ty)?;
+                Ok(match ts.pop() {
+                    None => TypeExpr {
+                        kind: TypeExprKind::Unit,
+                        span: start.to(end),
+                        id: self.id(),
+                    },
+                    Some(last) if tuple => {
+                        ts.push(last);
+                        TypeExpr {
+                            kind: TypeExprKind::Tuple(ts),
+                            span: start.to(end),
+                            id: self.id(),
+                        }
+                    }
+                    Some(inner) => TypeExpr {
+                        span: start.to(end),
+                        ..inner
+                    },
                 })
             }
             Tok::Fn => {
@@ -2617,6 +2670,29 @@ impl Parser {
                     id: self.id(),
                 };
             } else if self.eat(&Tok::Dot) {
+                // `t.0`: a tuple's field, by its index, in plain digits.
+                if let Tok::Int(n, suffix) = *self.peek() {
+                    let at = self.bump().span;
+                    let digits = n.to_string();
+                    if suffix.is_some() || at.end - at.start != digits.len() {
+                        return Err(Error::syntax(
+                            at,
+                            "a tuple's field is written as plain digits, as in `.0`",
+                        ));
+                    }
+                    let span = e.span.to(at);
+                    let name = Ident {
+                        name: digits,
+                        span: at,
+                        id: self.id(),
+                    };
+                    e = Expr {
+                        kind: ExprKind::Field(Box::new(e), name),
+                        span,
+                        id: self.id(),
+                    };
+                    continue;
+                }
                 let name = self.ident()?;
                 let (targs, _) = self.turbofish()?;
                 e = match self.eat(&Tok::LParen) {
@@ -2713,19 +2789,18 @@ impl Parser {
                 _ => ExprKind::Var(name, Vec::new()),
             },
             Tok::LParen => {
-                self.bump();
-                if *self.peek() == Tok::RParen {
-                    let end = self.bump().span;
-                    return Ok(Expr {
-                        kind: ExprKind::Unit,
-                        span: span.to(end),
-                        id: self.id(),
-                    });
-                }
-                let inner = self.structs(true, Self::expr)?;
-                let end = self.expect(Tok::RParen)?;
+                let open = self.bump().span;
+                let (mut items, tuple, end) = self.structs(true, |p| p.parens(open, Self::expr))?;
+                let kind = match items.pop() {
+                    None => ExprKind::Unit,
+                    Some(last) if tuple => {
+                        items.push(last);
+                        ExprKind::Tuple(items)
+                    }
+                    Some(inner) => inner.kind,
+                };
                 return Ok(Expr {
-                    kind: inner.kind,
+                    kind,
                     span: span.to(end),
                     id: self.id(),
                 });
@@ -3031,15 +3106,46 @@ impl Parser {
             Vec::new()
         } else {
             self.expect(Tok::Pipe)?;
+            let mut n = 0;
             self.comma_list(Tok::Pipe, |p| {
-                let mutable = (*p.peek() == Tok::Mut).then(|| p.bump().span);
-                let name = p.variable()?;
+                // A pattern, if it's other than a name: `(a, b)`,
+                // `Point { x, y }`, `[a, b]` (D4 of docs/58-tuples.md).
+                // A name alone is a name, uppercase or not, so that `|X|`
+                // gets the error a variable named so does.
+                let named = match p.peek() {
+                    Tok::Mut => true,
+                    Tok::Ident(_) => {
+                        !matches!(p.peek2(), Tok::ColonColon | Tok::LBrace | Tok::LParen)
+                    }
+                    _ => false,
+                };
+                let (mutable, name, pat) = match named {
+                    true => {
+                        let mutable = (*p.peek() == Tok::Mut).then(|| p.bump().span);
+                        (mutable, p.variable()?, None)
+                    }
+                    false => {
+                        let pat = p.pat_atom()?;
+                        let name = Ident {
+                            name: format!("{{param {n}}}"),
+                            span: pat.span,
+                            id: p.id(),
+                        };
+                        (None, name, Some(pat))
+                    }
+                };
+                n += 1;
                 let ty = if p.eat(&Tok::Colon) {
                     Some(p.ty()?)
                 } else {
                     None
                 };
-                Ok(LambdaParam { mutable, name, ty })
+                Ok(LambdaParam {
+                    mutable,
+                    name,
+                    ty,
+                    pat,
+                })
             })?
             .0
         };
@@ -3153,12 +3259,27 @@ impl Parser {
                 });
             }
             Tok::LParen => {
-                self.bump();
-                let end = self.expect(Tok::RParen)?;
-                return Ok(Pattern {
-                    kind: PatternKind::Unit,
-                    span: start.to(end),
-                    id: self.id(),
+                let open = self.bump().span;
+                let (mut pats, tuple, end) = self.parens(open, Self::pattern)?;
+                return Ok(match pats.pop() {
+                    None => Pattern {
+                        kind: PatternKind::Unit,
+                        span: start.to(end),
+                        id: self.id(),
+                    },
+                    Some(last) if tuple => {
+                        pats.push(last);
+                        Pattern {
+                            kind: PatternKind::Tuple(pats),
+                            span: start.to(end),
+                            id: self.id(),
+                        }
+                    }
+                    // Only grouped: `(a | b)`.
+                    Some(inner) => Pattern {
+                        span: start.to(end),
+                        ..inner
+                    },
                 });
             }
             Tok::LBracket => {

@@ -265,6 +265,7 @@ impl<'p> Cx<'p> {
                 TypeExprKind::Ref(lifetime.clone(), *mutable, Box::new(self.ty(inner)))
             }
             TypeExprKind::Slice(inner) => TypeExprKind::Slice(Box::new(self.ty(inner))),
+            TypeExprKind::Tuple(ts) => TypeExprKind::Tuple(self.types(ts)),
             TypeExprKind::Array(inner, n) => {
                 TypeExprKind::Array(Box::new(self.ty(inner)), Box::new(self.ty(n)))
             }

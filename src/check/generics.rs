@@ -459,6 +459,14 @@ fn resolve_in(
             let elem = go(elem, lifetimes, binder)?;
             Ok(Type::Array(Box::new(elem), Box::new(len(n)?)))
         }
+        // Each of a size too (lemma T2 of docs/58-tuples.md).
+        TypeExprKind::Tuple(ts) => {
+            let mut out = Vec::new();
+            for e in ts {
+                out.push(go(e, lifetimes, binder.as_deref_mut())?);
+            }
+            Ok(Type::Tuple(out))
+        }
         TypeExprKind::Nat(n) => Err(Error::ty(t.span, format!("`{n}` is a length, not a type"))),
         TypeExprKind::Named(name, args) => {
             // Lifetime arguments come first.
@@ -759,6 +767,9 @@ pub(super) fn name_holes(t: &TypeExpr, holes: &mut Vec<(String, Span)>) -> TypeE
             args.iter().map(|a| name_holes(a, holes)).collect(),
         ),
         TypeExprKind::Unit | TypeExprKind::Never | TypeExprKind::Lifetime(_) => t.kind.clone(),
+        TypeExprKind::Tuple(ts) => {
+            TypeExprKind::Tuple(ts.iter().map(|t| name_holes(t, holes)).collect())
+        }
         TypeExprKind::Fn(params, ret, effects) => TypeExprKind::Fn(
             params.iter().map(|p| name_holes(p, holes)).collect(),
             Box::new(name_holes(ret, holes)),

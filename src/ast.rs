@@ -1373,7 +1373,9 @@ impl Expr {
                 .chain(tail.as_deref())
                 .collect(),
             ExprKind::StructLit(_, _, inits) => inits.iter().map(|i| &i.value).collect(),
-            ExprKind::Variant(_, _, _, args, ..) | ExprKind::Array(args) => args.iter().collect(),
+            ExprKind::Variant(_, _, _, args, ..)
+            | ExprKind::Array(args)
+            | ExprKind::Tuple(args) => args.iter().collect(),
             ExprKind::Repeat(v, n) => vec![v, n],
             ExprKind::Match(scrutinee, arms) => std::iter::once(&**scrutinee)
                 .chain(arms.iter().map(|a| &a.body))
@@ -1443,6 +1445,9 @@ pub enum TypeExprKind {
     Named(String, Vec<TypeExpr>),
     /// `()`
     Unit,
+    /// `(i64, bool)`: a *tuple*, of two or more types (see
+    /// docs/58-tuples.md). `()` is the one with none, `Unit`.
+    Tuple(Vec<TypeExpr>),
     /// `fn(i64, bool) -> i64`, or `fn(i64) -> i64 with panic` with the
     /// effects its calls may have.
     Fn(Vec<TypeExpr>, Box<TypeExpr>, Option<EffectSet>),
@@ -1493,6 +1498,7 @@ impl TypeExpr {
             | TypeExprKind::Never
             | TypeExprKind::Lifetime(_)
             | TypeExprKind::Nat(_) => {}
+            TypeExprKind::Tuple(ts) => ts.iter().for_each(|t| t.each_named(f)),
             TypeExprKind::Fn(params, ret, effects) => {
                 params.iter().for_each(|p| p.each_named(f));
                 ret.each_named(f);
@@ -1607,6 +1613,10 @@ impl fmt::Display for TypeExpr {
                 write!(f, "{t}")
             }
             TypeExprKind::Slice(t) => write!(f, "[{t}]"),
+            TypeExprKind::Tuple(ts) => {
+                let ts: Vec<String> = ts.iter().map(TypeExpr::to_string).collect();
+                write!(f, "({})", ts.join(", "))
+            }
             TypeExprKind::Array(t, n) => write!(f, "[{t}; {n}]"),
             TypeExprKind::Nat(n) => write!(f, "{n}"),
             TypeExprKind::Lifetime(name) => f.write_str(name),
@@ -1678,6 +1688,10 @@ pub enum ExprKind {
     IfLet(Box<LetCond>, Box<Expr>, Option<Box<Expr>>),
     /// `[a, b, c]`: an array of these values, in order.
     Array(Vec<Expr>),
+    /// `(a, b)`: a tuple of these values, two or more, in order (see
+    /// docs/58-tuples.md). Its fields are read as `t.0`, `t.1`, a `Field`
+    /// with the index as its name.
+    Tuple(Vec<Expr>),
     /// `[v; n]`: an array of `n` copies of `v`, where `n` is an integer
     /// literal or a const parameter, which the checker makes sure of.
     Repeat(Box<Expr>, Box<Expr>),
@@ -1932,7 +1946,7 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
             bound.truncate(scope);
         }
         ExprKind::StructLit(_, _, inits) => inits.iter().for_each(|i| go(&i.value, bound)),
-        ExprKind::Variant(_, _, _, args, ..) | ExprKind::Array(args) => {
+        ExprKind::Variant(_, _, _, args, ..) | ExprKind::Array(args) | ExprKind::Tuple(args) => {
             args.iter().for_each(|a| go(a, bound))
         }
         ExprKind::Repeat(v, n) => {
@@ -1951,6 +1965,9 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
         ExprKind::Lambda(l) => {
             let scope = bound.len();
             bound.extend(l.params.iter().map(|p| p.name.name.clone()));
+            for p in &l.params {
+                p.pat.iter().for_each(|p| pattern_binds(p, bound));
+            }
             go(&l.body, bound);
             bound.truncate(scope);
         }
@@ -1982,7 +1999,8 @@ fn pattern_binds(p: &Pattern, out: &mut Vec<String>) {
         PatternKind::Variant(_, _, _, pats)
         | PatternKind::Path(_, pats, _)
         | PatternKind::Or(pats)
-        | PatternKind::Array(pats) => {
+        | PatternKind::Array(pats)
+        | PatternKind::Tuple(pats) => {
             pats.iter().for_each(|p| pattern_binds(p, out));
         }
         PatternKind::Struct(_, _, fields, _) => {
@@ -2001,8 +2019,15 @@ fn pattern_binds(p: &Pattern, out: &mut Vec<String>) {
 pub struct LambdaParam {
     /// Where the `mut` is, if it's `mut`.
     pub mutable: Option<Span>,
+    /// The parameter's name; for one written as a pattern, a name no
+    /// program can write, which the body's first `let` takes apart.
     pub name: Ident,
     pub ty: Option<TypeExpr>,
+    /// `|(a, b)| ..`: the pattern, if the parameter is written as one
+    /// other than a name, which must match every value (see
+    /// docs/58-tuples.md). Only until paths are resolved, which rewrites
+    /// the body as `{ let (a, b) = name; .. }` (see `check/modules.rs`).
+    pub pat: Option<Pattern>,
 }
 
 #[derive(Debug, Clone)]
@@ -2151,6 +2176,9 @@ pub enum PatternKind {
     /// `[a, b, c]`: matches an array of exactly as many values, each
     /// matched by the pattern in its place.
     Array(Vec<Pattern>),
+    /// `(a, b)`: matches a tuple of as many values, each matched by the
+    /// pattern in its place.
+    Tuple(Vec<Pattern>),
     /// `Shape::Circle(r) | Shape::Rect(r, _)`: matches if any alternative
     /// does. Every alternative must bind the same variables, at the same types.
     Or(Vec<Pattern>),

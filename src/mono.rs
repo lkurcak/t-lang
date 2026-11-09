@@ -53,7 +53,7 @@
 use crate::ast::*;
 use crate::check::{self, Info, Instance};
 use crate::error::Span;
-use crate::traits::{COPY, DEBUG, DISCARD, EQ, FnKind};
+use crate::traits::{COPY, DEBUG, DISCARD, EQ, FnKind, ORD};
 use crate::traits::{Projections, Source};
 use crate::types::{Params, Region, Subst, Type};
 use std::collections::{HashMap, HashSet};
@@ -351,6 +351,8 @@ enum Target {
     /// The `fmt` of a derived `Debug`, of the type, into a sink of the
     /// second type.
     Debug(Type, Type),
+    /// The `cmp` of a derived `Ord`, of the type.
+    Cmp(Type),
 }
 
 struct Mono<'p> {
@@ -1199,6 +1201,10 @@ impl Cx<'_, '_, '_> {
     /// The type of each field of struct or enum type `t`, which has no
     /// type parameters left in it.
     fn field_types(&mut self, t: &Type) -> Vec<Type> {
+        // A tuple's fields are its values (lemma T1 of docs/58-tuples.md).
+        if let Type::Tuple(ts) = t {
+            return ts.clone();
+        }
         let Type::Adt(name, _, args) = t else {
             unreachable!("fields of `{t}`")
         };
@@ -1282,6 +1288,9 @@ impl Cx<'_, '_, '_> {
                 TypeExprKind::Named(crate::check::BOX.into(), vec![self.written(inner, span)])
             }
             Type::Slice(inner) => TypeExprKind::Slice(Box::new(self.written(inner, span))),
+            Type::Tuple(ts) => {
+                TypeExprKind::Tuple(ts.iter().map(|t| self.written(t, span)).collect())
+            }
             Type::Array(inner, n) => TypeExprKind::Array(
                 Box::new(self.written(inner, span)),
                 Box::new(self.written(n, span)),
@@ -1397,10 +1406,16 @@ impl Cx<'_, '_, '_> {
                 }
             }
             Ok(Source::Impl(..) | Source::Builtin) if tr == DISCARD => Target::Discard(self_ty),
-            Ok(Source::Impl(..)) if tr == DEBUG => {
+            Ok(Source::Impl(..) | Source::Builtin) if tr == DEBUG => {
                 let w = own.first().expect("`fmt`'s sink").clone();
                 Target::Debug(self_ty, w)
             }
+            // A derived `Ord`'s `cmp` is glue; its other methods are the
+            // trait's defaults, which call it.
+            Ok(Source::Impl(..) | Source::Builtin) if tr == ORD => match method.as_str() {
+                "cmp" => Target::Cmp(self_ty),
+                _ => Target::Fn(name.to_string(), args, copy),
+            },
             Ok(Source::Impl(..) | Source::Builtin) => Target::Eq(self_ty),
             r => unreachable!("`{self_ty}: {tr}` in a copy: {r:?}"),
         }
@@ -1861,6 +1876,7 @@ impl Cx<'_, '_, '_> {
             Target::Eq(t) => Const::Fn(self.eq_glue(&t), Vec::new()),
             Target::Discard(t) => Const::Fn(self.drop_glue(&t), Vec::new()),
             Target::Debug(t, w) => Const::Fn(self.debug_glue(&t, &w), Vec::new()),
+            Target::Cmp(t) => Const::Fn(self.cmp_glue(&t), Vec::new()),
         }
     }
 }
@@ -2061,6 +2077,7 @@ mod used {
                     .for_each(|t| in_type(t, out));
             }
             TypeExprKind::Ref(_, _, inner) | TypeExprKind::Slice(inner) => in_type(inner, out),
+            TypeExprKind::Tuple(ts) => ts.iter().for_each(|t| in_type(t, out)),
             TypeExprKind::Proj(inner, ..) | TypeExprKind::Refined(_, inner, _) => {
                 in_type(inner, out)
             }

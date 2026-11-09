@@ -717,6 +717,27 @@ impl<'a> Builder<'a> {
                     false,
                 );
             }
+            // A struct literal of the struct a tuple is taken for, its
+            // fields in order (lemma T1 of docs/58-tuples.md).
+            ExprKind::Tuple(items) => {
+                let t = self.ty(e);
+                let Type::Tuple(ts) = &t else {
+                    unreachable!("a tuple literal makes a tuple")
+                };
+                let mut ops = Vec::new();
+                for (a, et) in items.iter().zip(ts) {
+                    let (o, ot) = self.operand(a);
+                    self.regions.subtype(self.info, &ot, et, a.span);
+                    ops.push(o);
+                }
+                self.assign(
+                    dest,
+                    Rvalue::Aggregate(Agg::Struct, t.erased(), ops),
+                    &t,
+                    span,
+                    false,
+                );
+            }
             ExprKind::Array(items) => {
                 let t = self.ty(e);
                 let Type::Array(elem, _) = &t else {
@@ -1505,7 +1526,7 @@ impl<'a> Builder<'a> {
                     self.inspect(&fp.pat, &place.project(Proj::Field(j)));
                 }
             }
-            PatternKind::Array(pats) => {
+            PatternKind::Array(pats) | PatternKind::Tuple(pats) => {
                 for (j, q) in pats.iter().enumerate() {
                     self.inspect(q, &place.project(Proj::Field(j)));
                 }
@@ -1552,6 +1573,13 @@ impl<'a> Builder<'a> {
                     .map(|(j, q)| self.pat(q, &place.project(Proj::Field(j))))
                     .collect(),
             ),
+            // A tuple is a struct, its fields in order (lemma T1 of
+            // docs/58-tuples.md).
+            PatternKind::Tuple(pats) => Pat::Struct(
+                (pats.iter().enumerate())
+                    .map(|(j, q)| (j, self.pat(q, &place.project(Proj::Field(j)))))
+                    .collect(),
+            ),
             PatternKind::Or(alts) => Pat::Or(alts.iter().map(|a| self.pat(a, &place)).collect()),
         };
         (0..peels).fold(pat, |pat, _| Pat::Deref(Box::new(pat)))
@@ -1563,9 +1591,9 @@ impl<'a> Builder<'a> {
             PatternKind::Bind(..) => {
                 self.declare_var(p, None);
             }
-            PatternKind::Variant(_, _, _, pats) | PatternKind::Array(pats) => {
-                pats.iter().for_each(|q| self.declare(q))
-            }
+            PatternKind::Variant(_, _, _, pats)
+            | PatternKind::Array(pats)
+            | PatternKind::Tuple(pats) => pats.iter().for_each(|q| self.declare(q)),
             PatternKind::Struct(_, _, fields, _) => {
                 fields.iter().for_each(|f| self.declare(&f.pat))
             }
@@ -1644,7 +1672,7 @@ impl<'a> Builder<'a> {
                 }
                 self.consume(&place, None, p);
             }
-            PatternKind::Array(pats) => {
+            PatternKind::Array(pats) | PatternKind::Tuple(pats) => {
                 for (j, q) in pats.iter().enumerate() {
                     self.bind(q, &place.project(Proj::Field(j)));
                 }

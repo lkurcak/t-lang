@@ -22,6 +22,12 @@
 //!   gives a `Result`, and the first `Err` is what it gives (lemma G1 of
 //!   docs/43.1-formatting.md).
 //!
+//! - `{cmp}::<T>(a: &T, b: &T) -> Ordering` is the `cmp` of a derived
+//!   `Ord`: field by field, each by its type's `Ord::cmp`, the first that
+//!   isn't `Equal` deciding; of an enum, by the variants' order first,
+//!   then the fields of the one both are. A tuple's is its fields' (lemma
+//!   T4 of docs/58-tuples.md).
+//!
 //! - `{fn}::<C>(..) -> ..` is closure type `C`, which captures nothing,
 //!   used as a function (*reified*, see `Checker::reify`): it makes the
 //!   closure, which has nothing in it, and calls its body with it, by `&`.
@@ -33,7 +39,7 @@ use super::{Cx, Target};
 use crate::ast::BinOp;
 use crate::error::Span;
 use crate::mir::*;
-use crate::traits::{DEBUG, DISCARD, EQ, FnKind, Source, WRITE};
+use crate::traits::{DEBUG, DISCARD, EQ, FnKind, ORD, Source, WRITE};
 use crate::types::{Region, Type};
 
 /// The name of glue `kind`, `{drop}` or `{eq}`, for type `t`, which has no
@@ -46,10 +52,11 @@ pub(crate) const DROP: &str = "{drop}";
 pub(crate) const EQ_GLUE: &str = "{eq}";
 pub(crate) const FN_GLUE: &str = "{fn}";
 pub(crate) const DEBUG_GLUE: &str = "{debug}";
+pub(crate) const CMP_GLUE: &str = "{cmp}";
 
 /// Is glue `name` one of these, which have bodies but no declarations?
 pub(crate) fn is_glue(name: &str) -> bool {
-    ["{drop}::<", "{eq}::<", "{fn}::<", "{debug}::<"]
+    ["{drop}::<", "{eq}::<", "{fn}::<", "{debug}::<", "{cmp}::<"]
         .iter()
         .any(|g| name.starts_with(g))
 }
@@ -177,6 +184,7 @@ impl Cx<'_, '_, '_> {
         let needs = match &t {
             Type::Box(_) => true,
             Type::Array(elem, n) => **n != Type::Nat(0) && self.needs_drop(elem),
+            Type::Tuple(ts) => ts.iter().any(|t| self.needs_drop(t)),
             Type::Adt(symbol, ..) if crate::types::is_closure(symbol) => {
                 let fields = self.m.info.traits.closures[symbol].fields_at(&t);
                 fields.iter().any(|f| self.needs_drop(f))
@@ -259,6 +267,12 @@ impl Cx<'_, '_, '_> {
                 };
                 for i in 0..n as usize {
                     self.drop_part(&mut g, x.project(Proj::Field(i)), elem);
+                }
+            }
+            // As a struct's fields, in order (lemma T1 of docs/58-tuples.md).
+            Type::Tuple(ts) => {
+                for (i, f) in ts.iter().enumerate() {
+                    self.drop_part(&mut g, x.project(Proj::Field(i)), f);
                 }
             }
             // Not `Discard`: the interpreter stops at the leak first.
@@ -348,7 +362,9 @@ impl Cx<'_, '_, '_> {
         Some(match self.target(&format!("<{EQ}>::eq"), vec![t.clone()]) {
             Target::Fn(of, args, copy) => self.m.named_copy(&of, args, copy),
             Target::Eq(t) => self.eq_glue(&t),
-            Target::Discard(_) | Target::Debug(..) => unreachable!("`eq` of `Eq`"),
+            Target::Discard(_) | Target::Debug(..) | Target::Cmp(_) => {
+                unreachable!("`eq` of `Eq`")
+            }
         })
     }
 
@@ -440,6 +456,18 @@ impl Cx<'_, '_, '_> {
                     .collect();
                 self.all_equal(&mut g, pairs, join);
             }
+            Type::Tuple(ts) => {
+                let pairs = (ts.iter().enumerate())
+                    .map(|(i, f)| {
+                        (
+                            f.clone(),
+                            a.project(Proj::Field(i)),
+                            b.project(Proj::Field(i)),
+                        )
+                    })
+                    .collect();
+                self.all_equal(&mut g, pairs, join);
+            }
             Type::Slice(elem) => self.slice_eq(
                 &mut g,
                 elem,
@@ -512,6 +540,165 @@ impl Cx<'_, '_, '_> {
                 }
             },
             t => unreachable!("`==` glue of `{t}`"),
+        }
+        g.cur = join;
+        g.finish()
+    }
+
+    /// The `cmp` of `t`'s `Ord`: its own, by name, or else its glue.
+    fn cmp_fn(&mut self, t: &Type) -> String {
+        let t = t.erased();
+        match self.target(&format!("<{ORD}>::cmp"), vec![t.clone()]) {
+            Target::Fn(of, args, copy) => self.m.named_copy(&of, args, copy),
+            Target::Cmp(t) => self.cmp_glue(&t),
+            Target::Eq(_) | Target::Discard(_) | Target::Debug(..) => {
+                unreachable!("`cmp` of `Ord`")
+            }
+        }
+    }
+
+    /// The name of the `cmp` glue of `t`, a derived `Ord`'s, made if it
+    /// isn't yet.
+    pub(super) fn cmp_glue(&mut self, t: &Type) -> String {
+        let t = t.erased();
+        let name = glue_name(CMP_GLUE, &t);
+        if self.m.glue_made.insert(name.clone()) {
+            let body = self.cmp_body(&t);
+            self.m.bodies.insert(name.clone(), body);
+        }
+        name
+    }
+
+    /// `Ordering`'s type, and its variants' indices: `Less`, `Equal` and
+    /// `Greater`.
+    fn ordering(&self) -> (Type, [usize; 3]) {
+        let ordering = crate::check::ORDERING;
+        let crate::ast::TypeDecl::Enum(e) = self.m.types[ordering] else {
+            unreachable!("`Ordering` is an enum")
+        };
+        let at = |name: &str| {
+            (e.variants.iter())
+                .position(|v| v.name.name == name)
+                .expect("`Ordering`'s variants")
+        };
+        let ty = Type::Adt(ordering.into(), Vec::new(), Vec::new());
+        (ty, [at("Less"), at("Equal"), at("Greater")])
+    }
+
+    /// Compares the pairs of places, each of its type, in order: the
+    /// result is the first `cmp` that isn't `Equal`, else `Equal`.
+    fn all_cmp(&mut self, g: &mut G, pairs: Vec<(Type, Place, Place)>, join: usize) {
+        let (ordering, [_, equal, _]) = self.ordering();
+        for (t, a, b) in pairs {
+            let f = self.cmp_fn(&t);
+            let (ra, rb) = (g.temp(shared(&t)), g.temp(shared(&t)));
+            g.assign(Place::local(ra), Rvalue::Ref(0, false, a));
+            g.assign(Place::local(rb), Rvalue::Ref(0, false, b));
+            let r = g.temp(ordering.clone());
+            let call = Rvalue::Call(
+                Operand::Const(Const::Fn(f, Vec::new())),
+                vec![
+                    Operand::Move(Place::local(ra)),
+                    Operand::Move(Place::local(rb)),
+                ],
+            );
+            g.assign(Place::local(r), call);
+            g.push(StmtKind::Dead(rb));
+            g.push(StmtKind::Dead(ra));
+            let (next, differ) = (g.new_block(), g.new_block());
+            g.push(StmtKind::Inspect(Place::local(r)));
+            g.terminate(Term::Match(
+                Place::local(r),
+                vec![Pat::Variant(equal, Vec::new()), Pat::Any],
+                vec![Bb(next), Bb(differ)],
+            ));
+            g.cur = differ;
+            g.assign(
+                Place::local(RETURN),
+                Rvalue::Use(Operand::Move(Place::local(r))),
+            );
+            g.terminate(Term::Goto(Bb(join)));
+            g.cur = next;
+        }
+        let eq = Rvalue::Aggregate(Agg::Variant(equal), ordering, Vec::new());
+        g.assign(Place::local(RETURN), eq);
+        g.terminate(Term::Goto(Bb(join)));
+    }
+
+    fn cmp_body(&mut self, t: &Type) -> Body {
+        let (ordering, [less, _, greater]) = self.ordering();
+        let mut g = G::new(ordering.clone(), vec![shared(t), shared(t)]);
+        let a = Place::local(Local(1)).project(Proj::Deref);
+        let b = Place::local(Local(2)).project(Proj::Deref);
+        let join = g.new_block();
+        let variants = self.variant_types(t);
+        match (t, variants) {
+            (Type::Tuple(ts), _) => {
+                let pairs = (ts.iter().enumerate())
+                    .map(|(i, f)| {
+                        (
+                            f.clone(),
+                            a.project(Proj::Field(i)),
+                            b.project(Proj::Field(i)),
+                        )
+                    })
+                    .collect();
+                self.all_cmp(&mut g, pairs, join);
+            }
+            (Type::Adt(..), None) => {
+                let pairs = (self.field_types(t).into_iter().enumerate())
+                    .map(|(i, f)| (f, a.project(Proj::Field(i)), b.project(Proj::Field(i))))
+                    .collect();
+                self.all_cmp(&mut g, pairs, join);
+            }
+            // Which variant `a` is, then which `b` is: an earlier one is
+            // less, a later one greater, and the same one compares fields.
+            (Type::Adt(..), Some(variants)) => {
+                let by = |g: &mut G, v: usize| {
+                    let block = g.new_block();
+                    let saved = g.cur;
+                    g.cur = block;
+                    let r = Rvalue::Aggregate(Agg::Variant(v), ordering.clone(), Vec::new());
+                    g.assign(Place::local(RETURN), r);
+                    g.terminate(Term::Goto(Bb(join)));
+                    g.cur = saved;
+                    Bb(block)
+                };
+                let (is_less, is_greater) = (by(&mut g, less), by(&mut g, greater));
+                let start = g.cur;
+                let mut pats = Vec::new();
+                let mut targets = Vec::new();
+                for (v, fields) in variants.iter().enumerate() {
+                    g.cur = g.new_block();
+                    targets.push(Bb(g.cur));
+                    pats.push(Pat::Variant(v, vec![Pat::Any; fields.len()]));
+                    let same = g.new_block();
+                    let bpats = (variants.iter().enumerate())
+                        .map(|(w, fs)| Pat::Variant(w, vec![Pat::Any; fs.len()]))
+                        .collect();
+                    let btargets = (0..variants.len())
+                        .map(|w| match w.cmp(&v) {
+                            std::cmp::Ordering::Less => is_greater,
+                            std::cmp::Ordering::Equal => Bb(same),
+                            std::cmp::Ordering::Greater => is_less,
+                        })
+                        .collect();
+                    g.push(StmtKind::Inspect(b.clone()));
+                    g.terminate(Term::Match(b.clone(), bpats, btargets));
+                    g.cur = same;
+                    let pairs = (fields.iter().enumerate())
+                        .map(|(i, f)| {
+                            let p = Proj::Variant(v, i);
+                            (f.clone(), a.project(p), b.project(p))
+                        })
+                        .collect();
+                    self.all_cmp(&mut g, pairs, join);
+                }
+                g.cur = start;
+                g.push(StmtKind::Inspect(a.clone()));
+                g.terminate(Term::Match(a.clone(), pats, targets));
+            }
+            (t, _) => unreachable!("`cmp` glue of `{t}`"),
         }
         g.cur = join;
         g.finish()
@@ -735,6 +922,15 @@ impl Cx<'_, '_, '_> {
             join,
         };
         let x = Place::local(Local(1)).project(Proj::Deref);
+        // `(1, 'a')`: its values in parentheses, with no name.
+        if let Type::Tuple(ts) = t {
+            let parts = (ts.iter().enumerate())
+                .map(|(i, f)| (None, f.clone(), x.project(Proj::Field(i))))
+                .collect();
+            self.debug_parts(&mut g, &d, "", parts, false);
+            g.cur = join;
+            return g.finish();
+        }
         let Type::Adt(symbol, ..) = t else {
             unreachable!("a derived `Debug` is of a struct or enum")
         };

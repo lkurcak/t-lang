@@ -142,7 +142,7 @@ structs! {
     Label { name, head };
     LetCond { let_span, pat, expr };
     Lambda { id, moves, params, ret, body, captures };
-    LambdaParam { mutable, name, ty };
+    LambdaParam { mutable, name, ty, pat };
     FieldInit { name, value };
     Arm { pat, body };
     Pattern { kind, span, id };
@@ -173,14 +173,14 @@ enums! {
     EffectKind { Named(name), Proj(ty, tr, name) };
     TypeExprKind {
         Named(name, args), Unit, Fn(params, ret, effects), Ref(lifetime, mutable, ty),
-        Slice(ty), Array(ty, len), Nat(n), Lifetime(name), Never, Proj(ty, tr, name),
+        Tuple(elems), Slice(ty), Array(ty, len), Nat(n), Lifetime(name), Never, Proj(ty, tr, name),
         Impl(bounds), Refined(name, ty, pred),
     };
     ExprKind {
         Int(n, ty), Bool(b), Char(c), Str(s), ByteStr(bytes), Format(pieces), Unit, Var(name, args),
         Unary(op, expr), As(expr, ty), Binary(op, left, right), Call(callee, args),
         MethodCall(receiver, name, types, args), If(cond, then, otherwise),
-        IfLet(cond, then, otherwise), Array(elems),
+        IfLet(cond, then, otherwise), Array(elems), Tuple(elems),
         Repeat(value, len), Block(stmts, tail), Unsafe(block), StructLit(name, types, fields),
         Field(expr, name), Variant(ty, types, name, args, called), Match(expr, arms), Lambda(lambda),
         Assign(op, place, value), While(label, cond, invariant, body),
@@ -190,7 +190,7 @@ enums! {
     };
     PatternKind {
         Wild, Bind(name, mutable), Int(n, kind), Range(start, end, inclusive, kind), Bool(b), Unit, Str(s),
-        Variant(ty, types, name, fields), Path(name, fields, called), Struct(ty, types, fields, rest), Array(elems), Or(alts),
+        Variant(ty, types, name, fields), Path(name, fields, called), Struct(ty, types, fields, rest), Array(elems), Tuple(elems), Or(alts),
     };
 }
 

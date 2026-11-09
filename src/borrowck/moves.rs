@@ -862,6 +862,7 @@ fn reaches_own_discard(b: &Builder, t: &Type, seen: &mut Vec<Type>) -> bool {
                 .any(|f| reaches_own_discard(b, f, seen))
         }
         Type::Box(inner) => reaches_own_discard(b, inner, seen),
+        Type::Tuple(ts) => ts.iter().any(|t| reaches_own_discard(b, t, seen)),
         // An opaque type is the type it stands for, which is what's dropped:
         // so whether that has one shows through, as whether it's `Discard`
         // doesn't. Unknown yet, it might. One that holds itself is an error
@@ -971,7 +972,7 @@ fn leftover(
                 .collect(),
             _ => return Some(place.clone()),
         },
-        Type::Adt(..) => match struct_fields(b.adts(), &t) {
+        Type::Adt(..) | Type::Tuple(_) => match struct_fields(b.adts(), &t) {
             Some(fields) => (0..fields.len())
                 .map(|i| place.project(Proj::Field(i)))
                 .collect(),

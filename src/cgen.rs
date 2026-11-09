@@ -375,7 +375,7 @@ impl<'e> Gen<'e> {
                 self.fn_ptrs.insert(key, name.clone());
                 name
             }
-            Type::Array(..) | Type::Adt(..) => self.named(&t),
+            Type::Array(..) | Type::Adt(..) | Type::Tuple(_) => self.named(&t),
             t => panic!("no C type for `{t}`"),
         }
     }
@@ -401,8 +401,11 @@ impl<'e> Gen<'e> {
         (exe.shape(t)).unwrap_or_else(|| panic!("no shape for `{t}`"))
     }
 
-    /// The types of the fields of struct or closure `t`.
+    /// The types of the fields of struct, closure or tuple `t`.
     fn fields(&self, t: &Type) -> Vec<Type> {
+        if let Type::Tuple(ts) = t {
+            return ts.iter().map(Type::erased).collect();
+        }
         match self.shape(t) {
             Shape::Struct(fs) | Shape::Closure(fs) => fs.iter().map(Type::erased).collect(),
             s => panic!("fields of `{t}`, a {s:?}"),
@@ -451,6 +454,13 @@ impl<'e> Gen<'e> {
                 }
                 ref n => panic!("an array of length `{n}`"),
             },
+            // A struct, its fields `f0`, `f1`, .. in order (lemma T7 of
+            // docs/58-tuples.md).
+            Type::Tuple(ts) => {
+                for (i, f) in ts.iter().enumerate() {
+                    member(self, &f.erased(), &format!("f{i}"), &mut members);
+                }
+            }
             Type::Adt(symbol, _, args) => match self.shape(t) {
                 Shape::Struct(_) | Shape::Closure(_) => {
                     let fs = self.fields(t);

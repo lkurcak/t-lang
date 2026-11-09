@@ -31,15 +31,15 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let r = row(cells.as_slice(), 3, 1);
     out.line(&r[2])?; // expect: 6
     match cells.as_slice().split_at(4) {
-        Some(s) => out.line(&s.tail[1])?, // expect: 6
+        Some(s) => out.line(&s.1[1])?, // expect: 6
         None => {},
     }
     Ok(())
 }
 ```
 
-`r[2]` needs `2 < r.len()`, which `row`'s result says; `s.tail[1]` needs
-`1 < s.tail.len()`, which `split_at` says now: `s.tail.len() + 4` is the
+`r[2]` needs `2 < r.len()`, which `row`'s result says; `s.1[1]` needs
+`1 < s.1.len()`, which `split_at` says now: `s.1.len() + 4` is the
 slice's length, 6.
 
 ## Fields in predicates
@@ -49,7 +49,7 @@ A predicate can name a field of a struct it can name: a parameter's, a
 through `&`, `&mut` and boxes, as `p.x` reads one in code. Then an
 integer or a `bool` field is a value, and a field that's a struct or a
 reference has fields and measures of its own: `l.from.x`,
-`s.head.len()`.
+`s.0.len()`.
 
 ```rust
 #[derive(Copy, Discard)]
@@ -141,8 +141,8 @@ names must be exported.
 What core gives now says how long it is:
 
 - `s.split_at(mid)` and `split_at_mut`, of a slice or a `str`:
-  `Option<{ s: Split<T> | s.head.len() == mid && s.tail.len() + mid ==
-  self.len() }>`;
+  `Option<{ s: (&[T], &[T]) | s.0.len() == mid && s.1.len() + mid ==
+  self.len() }>` (a `Split { head, tail }` until step 58's tuples);
 - `s.get(lo, hi)` of a `str`: `Option<{ t: &str | t.len() + lo == hi
   }>`;
 - `trim`, `trim_start`, `trim_end`, `strip_prefix`, `strip_suffix` of a
@@ -159,11 +159,11 @@ index proved in range and gives the two halves, with their lengths:
 ```text
 #[intrinsic]
 fn cut<'a>(&'a self, mid: { m: usize | m <= self.len() }) -> {
-    s: Split<'a, T> | s.head.len() == mid && s.tail.len() + mid == self.len()
+    s: (&'a [T], &'a [T]) | s.0.len() == mid && s.1.len() + mid == self.len()
 };
 
 export fn split_at<'a>(&'a self, mid: usize) -> Option<
-    { s: Split<'a, T> | s.head.len() == mid && s.tail.len() + mid == self.len() },
+    { s: (&'a [T], &'a [T]) | s.0.len() == mid && s.1.len() + mid == self.len() },
 > {
     if mid <= self.len() { Some(self.cut(mid)) } else { None }
 }
@@ -183,8 +183,8 @@ export fn slice<'a>(
     &'a self,
     r: { r: Range<usize> | r.start() <= r.end() && r.end() <= self.len() },
 ) -> { t: &'a [T] | t.len() + r.start() == r.end() } {
-    let head: &'a [T] = self.cut(r.end()).head;
-    head.cut(r.start()).tail
+    let head: &'a [T] = self.cut(r.end()).0;
+    head.cut(r.start()).1
 }
 ```
 

@@ -7,4 +7,4 @@ trait Eq {}
 struct S {}
 
 fn main() {}
-// error: only `core`'s `Copy`, `Debug`, `Discard`, `Eq`, `Send` and `Sync` can be derived, and `crate::Eq` here is `crate::Eq`
+// error: only `core`'s `Copy`, `Debug`, `Discard`, `Eq`, `Ord`, `Send` and `Sync` can be derived, and `crate::Eq` here is `crate::Eq`

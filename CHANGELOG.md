@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.74.0 (2026-11-09)
+
+Step 58: tuples. See [docs/58-tuples.md](docs/58-tuples.md).
+
+### Added
+
+- Tuples: types `(A, B, ..)`, values `(a, b)`, fields `t.0`, `t.1`, and
+  patterns `(x, y)` in every pattern position. A tuple has two or more
+  values; `()` is the one with none, and `(x,)` is an error with a fix.
+  Types are equal when their values' types are, in order. A tuple is
+  `Copy`, `Discard`, `Eq`, `Ord` (field by field), `Debug` (`(1, 'a')`),
+  `Send` and `Sync` when all its values are, and plain data in a `const`
+  when they are. Predicates name its fields: `{ p: (u8, u8) | p.0 < p.1 }`.
+- `#[derive(Ord)]` for structs (field by field, in order) and enums (by
+  variant, then fields); it needs an `Eq`, derived or written.
+- A closure's parameter can be an irrefutable pattern: `|(i, x)| ..`,
+  `|Point { x, y }| ..`.
+- `Iterator::enumerate` (`(index, value)`, counting past the greatest
+  `usize` panics) and `Iterator::zip` (needs the first iterator's values
+  to be `Discard`).
+
+### Changed
+
+- `split_at` and `split_at_mut` of a slice and `split_at` of a `str` give
+  a tuple of the halves, refined by `s.0.len() == mid && s.1.len() + mid
+  == self.len()`; `core::slice::Split`, `core::slice::SplitMut` and
+  `core::str::StrSplit` are gone.
+- `Env::vars` gives each variable as a `(name, value)` tuple;
+  `std::env::Var` is gone.
+- `(T)` in a type only groups, as `(e)` does in an expression.
+
+### Fixed
+
+- Soundness: a write to a field (or through a box) of a refined `let mut`
+  wasn't checked against its refinement, and a field of one could be
+  lent `&mut`, so later code could trust a refinement that no longer
+  held (since 0.34.0, refinements of any type). Each such write now
+  proves the refinement again, and no part of a refined variable can be
+  lent `&mut`.
+
 ## 0.73.0 (2026-11-09)
 
 Step 57: unsized parameters. See

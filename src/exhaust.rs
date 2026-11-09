@@ -469,6 +469,9 @@ impl Cx<'_> {
             // pattern but `_` and variables.
             Type::Array(_, n) if matches!(**n, Type::Nat(_)) => Some(vec![Ctor::Struct]),
             Type::Array(..) => None,
+            // A struct, its fields `0`, `1`, .. (lemma T1 of
+            // docs/58-tuples.md).
+            Type::Tuple(_) => Some(vec![Ctor::Struct]),
             // Nothing is known about a type parameter's values: it could be
             // anything.
             // Nor about an opaque type's, outside the function that picks it.
@@ -595,6 +598,7 @@ impl Cx<'_> {
             }
             (Ctor::Int(lo, hi), _) => show_range(Some(*lo), Some(*hi), true, Lit::Int),
             (Ctor::Struct, Type::Array(..)) => format!("[{}]", args.join(", ")),
+            (Ctor::Struct, Type::Tuple(_)) => format!("({})", args.join(", ")),
             (Ctor::Struct, Type::Adt(symbol, ..)) => {
                 let name = crate::check::source_name(symbol);
                 let fields = struct_fields(self.adts, ty).expect("a struct");

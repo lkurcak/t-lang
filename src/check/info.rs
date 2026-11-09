@@ -784,6 +784,11 @@ impl Checker {
                 }
             }
             TypeExprKind::Unit | TypeExprKind::Never | TypeExprKind::Lifetime(_) => {}
+            TypeExprKind::Tuple(ts) => {
+                for t in ts {
+                    self.type_expr_notes(t, params);
+                }
+            }
             TypeExprKind::Fn(ps, r, effects) => {
                 for p in ps {
                     self.type_expr_notes(p, params);
@@ -861,7 +866,9 @@ fn each_annotation(e: &Expr, f: &mut impl FnMut(&TypeExpr)) {
         | ExprKind::Unit
         | ExprKind::Continue(_) => {}
         ExprKind::Var(_, targs) => targs.iter().for_each(&mut *f),
-        ExprKind::Array(items) => items.iter().for_each(|x| each_annotation(x, f)),
+        ExprKind::Array(items) | ExprKind::Tuple(items) => {
+            items.iter().for_each(|x| each_annotation(x, f))
+        }
         ExprKind::Repeat(v, n) => {
             each_annotation(v, f);
             each_annotation(n, f);
@@ -952,7 +959,7 @@ fn pattern_annotations(p: &Pattern, f: &mut impl FnMut(&TypeExpr)) {
             targs.iter().for_each(&mut *f);
             fields.iter().for_each(|fp| pattern_annotations(&fp.pat, f));
         }
-        PatternKind::Or(alts) | PatternKind::Array(alts) => {
+        PatternKind::Or(alts) | PatternKind::Array(alts) | PatternKind::Tuple(alts) => {
             alts.iter().for_each(|p| pattern_annotations(p, f))
         }
         PatternKind::Wild

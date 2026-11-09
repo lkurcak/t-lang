@@ -478,6 +478,7 @@ module.exports = grammar({
       $._type_identifier,
       $.generic_type,
       $.unit_type,
+      $.tuple_type,
       $.function_type,
       $.reference_type,
       $.slice_type,
@@ -585,6 +586,9 @@ module.exports = grammar({
 
     unit_type: _ => seq('(', ')'),
 
+    // `(i64, bool)`: a tuple, of two or more types.
+    tuple_type: $ => seq('(', $._type, repeat1(seq(',', $._type)), optional(','), ')'),
+
     never_type: _ => '!',
 
     function_type: $ => prec.right(seq(
@@ -663,6 +667,7 @@ module.exports = grammar({
       $.index_expression,
       $.try_expression,
       $.parenthesized_expression,
+      $.tuple_expression,
       $.struct_expression,
       $.variant_expression,
       $.array_expression,
@@ -744,6 +749,15 @@ module.exports = grammar({
 
     parenthesized_expression: $ => seq('(', $._expression, ')'),
 
+    // `(a, b)`: a tuple, of two or more values.
+    tuple_expression: $ => seq(
+      '(',
+      $._expression,
+      repeat1(seq(',', $._expression)),
+      optional(','),
+      ')',
+    ),
+
     unary_expression: $ => prec(PREC.unary, seq(
       field('operator', choice('-', '!', '*')),
       field('operand', $._expression),
@@ -811,10 +825,11 @@ module.exports = grammar({
       field('arguments', $.arguments),
     )),
 
+    // `p.x`, or `t.0`, a tuple's field by its index.
     field_expression: $ => prec(PREC.field, seq(
       field('value', $._expression),
       '.',
-      field('field', $._field_identifier),
+      field('field', choice($._field_identifier, alias($.integer_literal, $.field_identifier))),
     )),
 
     // `s[i]`: binds as tightly as a call
@@ -891,9 +906,17 @@ module.exports = grammar({
       seq('|', commaSep($.closure_parameter), '|'),
     ),
 
+    // `x`, `mut x`, or a pattern that always matches, `(a, b)`.
     closure_parameter: $ => seq(
-      optional($.mutable_specifier),
-      field('pattern', $.identifier),
+      choice(
+        seq(optional($.mutable_specifier), field('pattern', $.identifier)),
+        field('pattern', choice(
+          $.tuple_pattern,
+          $.struct_pattern,
+          $.array_pattern,
+          $.variant_pattern,
+        )),
+      ),
       optional(seq(':', field('type', $._type))),
     ),
 
@@ -994,6 +1017,7 @@ module.exports = grammar({
       $.boolean_literal,
       $.string_literal,
       $.unit_pattern,
+      $.tuple_pattern,
       $.variant_pattern,
       $.struct_pattern,
       $.array_pattern,
@@ -1018,6 +1042,9 @@ module.exports = grammar({
     )),
 
     unit_pattern: _ => seq('(', ')'),
+
+    // `(a, b)`: a tuple's values, two or more.
+    tuple_pattern: $ => seq('(', $._pattern, repeat1(seq(',', $._pattern)), optional(','), ')'),
 
     // `Shape::Dot(p)`, or `Dot(p)` by itself: a name that starts with an
     // uppercase letter is a path in a pattern, never a variable, so a bare

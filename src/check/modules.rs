@@ -183,6 +183,10 @@ pub(crate) struct Modules {
     /// else` means, by where its pattern is, the `let` (`Rewrite::if_let`):
     /// for saying what's wrong with it in terms of what was written.
     pub(crate) elses: HashMap<Span, ElseOf>,
+    /// The pattern of each closure parameter written as one, by its node,
+    /// which the `let` `Rewrite::param_patterns` makes takes apart: for
+    /// saying what's wrong with it as what was written.
+    pub(crate) closure_params: HashSet<NodeId>,
     /// The pattern, `_`, of the `let _: ! = ..` each `let .. else` puts its
     /// `else` in, for saying what's wrong if it can finish.
     pub(crate) must_leave: HashSet<NodeId>,
@@ -1606,7 +1610,7 @@ impl Rewrite<'_> {
                 return Ok(());
             }
         };
-        // Each derived trait by its symbol: only core's six can be, and a
+        // Each derived trait by its symbol: only core's seven can be, and a
         // name without a path is one of them, whatever's in scope, so
         // deriving needs no import (lemma F4 of docs/43.1-formatting.md).
         for name in derives.iter_mut().flat_map(|d| &mut d.names) {
@@ -1632,12 +1636,12 @@ impl Rewrite<'_> {
             if !DERIVABLE.contains(&name.name.as_str()) {
                 let message = match !a_trait {
                     true => format!(
-                        "can't derive `{written}`; only `Copy`, `Debug`, `Discard`, `Eq`, `Send` \
-                         and `Sync` can be derived"
+                        "can't derive `{written}`; only `Copy`, `Debug`, `Discard`, `Eq`, `Ord`, \
+                         `Send` and `Sync` can be derived"
                     ),
                     false => format!(
-                        "only `core`'s `Copy`, `Debug`, `Discard`, `Eq`, `Send` and `Sync` can be \
-                         derived, and `{written}` here is `{}`",
+                        "only `core`'s `Copy`, `Debug`, `Discard`, `Eq`, `Ord`, `Send` and `Sync` \
+                         can be derived, and `{written}` here is `{}`",
                         match is_library_symbol(&name.name) {
                             true => name.name.clone(),
                             false => format!("crate::{}", name.name),
@@ -1756,6 +1760,11 @@ impl Rewrite<'_> {
             TypeExprKind::Array(inner, n) => {
                 self.ty(inner)?;
                 self.ty(n)?;
+            }
+            TypeExprKind::Tuple(ts) => {
+                for t in ts {
+                    self.ty(t)?;
+                }
             }
             TypeExprKind::Nat(_) => {}
             TypeExprKind::Proj(..) => {
@@ -2103,6 +2112,7 @@ impl Rewrite<'_> {
                 if let Some(t) = &mut l.ret {
                     self.ty(t)?;
                 }
+                self.param_patterns(l);
             }
             _ => {}
         }
@@ -2311,6 +2321,47 @@ impl Rewrite<'_> {
     /// files what it learns about it by. Its span is only where messages
     /// and editors point: one in the `for` or `in`. The variable's is the
     /// iterator's, where an error about it should be.
+    /// `|(a, b)| body` is `|p| { let (a, b) = p; body }`, `p` the name the
+    /// parser gave the parameter, which no program can write (D4 of
+    /// docs/58-tuples.md). The `let`s are walked with the body, after.
+    fn param_patterns(&mut self, l: &mut Lambda) {
+        let mut lets = Vec::new();
+        for p in &mut l.params {
+            let Some(pat) = p.pat.take() else {
+                continue;
+            };
+            self.r.m.closure_params.insert(pat.id);
+            let at = Span::new(pat.span.start, pat.span.start);
+            let init = Expr {
+                kind: ExprKind::Var(p.name.name.clone(), Vec::new()),
+                span: at,
+                id: self.id(),
+            };
+            lets.push(Stmt::Let {
+                pat,
+                ty: None,
+                init: Some(Box::new(init)),
+                els: None,
+                span: at,
+            });
+        }
+        if lets.is_empty() {
+            return;
+        }
+        let span = l.body.span;
+        let unit = Expr {
+            kind: ExprKind::Unit,
+            span,
+            id: self.id(),
+        };
+        let body = std::mem::replace(&mut l.body, unit);
+        l.body = Expr {
+            kind: ExprKind::Block(lets, Some(Box::new(body))),
+            span,
+            id: self.id(),
+        };
+    }
+
     fn for_loop(&mut self, f: ForLoop, span: Span) -> ExprKind {
         let k = f.label.as_ref().map_or(span.start, |l| l.head.end);
         let i = f.in_span.start;
@@ -2780,6 +2831,9 @@ impl Rewrite<'_> {
             PatternKind::Array(pats) if alts.len() == 1 && self.refutable(p) => {
                 kind = PatternKind::Array(pats.iter().map(|_| self.wild(at)).collect());
             }
+            PatternKind::Tuple(pats) if alts.len() == 1 && self.refutable(p) => {
+                kind = PatternKind::Tuple(pats.iter().map(|_| self.wild(at)).collect());
+            }
             _ => {}
         }
         Pattern {
@@ -2951,7 +3005,9 @@ impl Rewrite<'_> {
                     || pats.iter().any(|p| self.refutable(p))
             }
             PatternKind::Struct(_, _, fields, _) => fields.iter().any(|f| self.refutable(&f.pat)),
-            PatternKind::Array(pats) => pats.iter().any(|p| self.refutable(p)),
+            PatternKind::Array(pats) | PatternKind::Tuple(pats) => {
+                pats.iter().any(|p| self.refutable(p))
+            }
             PatternKind::Or(alts) => alts.iter().all(|p| self.refutable(p)),
         }
     }
@@ -3008,7 +3064,7 @@ impl Rewrite<'_> {
                     self.pattern(&mut f.pat)?;
                 }
             }
-            PatternKind::Or(alts) | PatternKind::Array(alts) => {
+            PatternKind::Or(alts) | PatternKind::Array(alts) | PatternKind::Tuple(alts) => {
                 for p in alts {
                     self.pattern(p)?;
                 }
@@ -3207,7 +3263,9 @@ pub(crate) fn children_mut(e: &mut Expr) -> Vec<&mut Expr> {
             .chain(tail.as_deref_mut())
             .collect(),
         ExprKind::StructLit(_, _, inits) => inits.iter_mut().map(|i| &mut i.value).collect(),
-        ExprKind::Variant(_, _, _, args, ..) | ExprKind::Array(args) => args.iter_mut().collect(),
+        ExprKind::Variant(_, _, _, args, ..) | ExprKind::Array(args) | ExprKind::Tuple(args) => {
+            args.iter_mut().collect()
+        }
         ExprKind::Repeat(v, n) => vec![&mut **v, &mut **n],
         ExprKind::Match(scrutinee, arms) => std::iter::once(&mut **scrutinee)
             .chain(arms.iter_mut().map(|a| &mut a.body))

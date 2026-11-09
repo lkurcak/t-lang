@@ -1253,6 +1253,14 @@ impl Printer<'_> {
                 None,
                 |p, a| p.expr(a, 0, Ctx::default()),
             ),
+            ExprKind::Tuple(items) => self.list(
+                PARENS,
+                e.span.end - 1,
+                items,
+                |a| (a.span.start, a.span.end),
+                None,
+                |p, a| p.expr(a, 0, Ctx::default()),
+            ),
             ExprKind::Repeat(v, n) => group(
                 text("[")
                     + self.expr(v, 0, Ctx::default())
@@ -1299,13 +1307,25 @@ impl Printer<'_> {
                             },
                             None,
                             |p, param| {
-                                let name = match param.mutable {
-                                    Some(_) => format!("mut {}", param.name.name),
-                                    None => param.name.name.clone(),
+                                let name = match (&param.pat, param.mutable) {
+                                    // Alternatives in parentheses, so their
+                                    // `|` isn't the closure's.
+                                    (
+                                        Some(
+                                            pat @ Pattern {
+                                                kind: PatternKind::Or(_),
+                                                ..
+                                            },
+                                        ),
+                                        _,
+                                    ) => text("(") + p.pattern(pat) + ")",
+                                    (Some(pat), _) => p.pattern(pat),
+                                    (None, Some(_)) => text(format!("mut {}", param.name.name)),
+                                    (None, None) => text(&param.name.name),
                                 };
                                 match &param.ty {
-                                    Some(t) => text(name) + ": " + p.ty(t),
-                                    None => text(name),
+                                    Some(t) => name + ": " + p.ty(t),
+                                    None => name,
                                 }
                             },
                         )
@@ -1635,6 +1655,7 @@ impl Printer<'_> {
                 text(name) + self.types(ANGLES, close, args)
             }
             TypeExprKind::Unit => text("()"),
+            TypeExprKind::Tuple(ts) => self.types(PARENS, t.span.end - 1, ts),
             TypeExprKind::Never => text("!"),
             TypeExprKind::Lifetime(name) => text(name),
             TypeExprKind::Ref(lifetime, mutable, inner) => {
@@ -1743,6 +1764,14 @@ impl Printer<'_> {
             }
             PatternKind::Array(pats) => self.list(
                 BRACKETS,
+                p.span.end - 1,
+                pats,
+                |a| (a.span.start, a.span.end),
+                None,
+                |p, a| p.pattern(a),
+            ),
+            PatternKind::Tuple(pats) => self.list(
+                PARENS,
                 p.span.end - 1,
                 pats,
                 |a| (a.span.start, a.span.end),

@@ -1419,6 +1419,11 @@ impl<'p> Interp<'p, '_> {
     fn copyable(&self, v: &Value) -> bool {
         match v {
             Value::Box(_) | Value::RawBuf(_) | Value::Arena(_) => false,
+            // A tuple is `Copy` if its values are (lemma T4 of
+            // docs/58-tuples.md).
+            Value::Struct(ty, fields) if is_tuple(ty) => {
+                fields.iter().all(|(_, v)| self.copyable(v))
+            }
             Value::Struct(ty, _) | Value::Variant(ty, ..) => self.copy.contains(ty.as_str()),
             // A closure is `Copy` if what it holds is.
             Value::Closure(c) => c.env.iter().all(|(_, v)| self.copyable(v)),
@@ -1458,6 +1463,7 @@ impl<'p> Interp<'p, '_> {
             unsound("a `RawBuf` was thrown away, and it isn't `Discard`: a leak");
         }
         if let Value::Struct(ty, _) | Value::Variant(ty, ..) = &v
+            && !is_tuple(ty)
             && !self.discard.contains(ty.as_str())
         {
             unsound(&format!(
@@ -1495,6 +1501,23 @@ impl<'p> Interp<'p, '_> {
     ///
     /// Relies on monomorphisation having made a copy of it for every type
     /// that has one (`Mono::type_decl`).
+    /// The type of what in `v`, a struct's or enum's value that's there,
+    /// isn't `Discard`, if something is: `v`, or for a tuple, which is if
+    /// its values are, one of them.
+    fn not_discard(&self, v: &Value) -> Option<String> {
+        match v {
+            Value::Struct(ty, fields) if is_tuple(ty) => {
+                fields.iter().find_map(|(_, v)| self.not_discard(v))
+            }
+            Value::Struct(ty, _) | Value::Variant(ty, ..)
+                if !self.discard.contains(ty.as_str()) =>
+            {
+                Some(ty.clone())
+            }
+            _ => None,
+        }
+    }
+
     fn user_discard(&self, ty: &str) -> Option<String> {
         let name = format!("<{ty} as {}>::discard", crate::traits::DISCARD);
         self.fns.contains_key(name.as_str()).then_some(name)
@@ -1817,12 +1840,10 @@ impl<'p> Interp<'p, '_> {
                     // be is.
                     StmtKind::Kept(place) => {
                         let p = self.ptr(&fr, place);
-                        if let Value::Struct(ty, _) | Value::Variant(ty, ..) = self.memory.get(&p)
-                            && !self.discard.contains(ty.as_str())
-                        {
+                        if let Some(ty) = self.not_discard(self.memory.get(&p)) {
                             unsound(&format!(
                                 "a `{}`, which isn't `Discard`, taken apart and not used up",
-                                crate::check::source_name(ty)
+                                crate::check::source_name(&ty)
                             ));
                         }
                         Ok(())
@@ -2031,6 +2052,14 @@ impl<'p> Interp<'p, '_> {
                     })
                     .collect();
                 match (k, t) {
+                    // Its fields `0`, `1`, .., by its type (lemma T1 of
+                    // docs/58-tuples.md).
+                    (Agg::Struct, t @ Type::Tuple(_)) => {
+                        let fields = (values.into_iter().enumerate())
+                            .map(|(i, v)| (i.to_string(), v))
+                            .collect();
+                        Value::Struct(t.symbols(), fields)
+                    }
                     (Agg::Struct, Type::Adt(name, _, args)) => {
                         let name = crate::mono::mangle(name, args);
                         let decl = self.structs[name.as_str()];
@@ -2176,7 +2205,8 @@ impl<'p> Interp<'p, '_> {
         match v {
             Value::Box(_) | Value::RawBuf(_) | Value::Arena(_) => true,
             Value::Struct(ty, _) | Value::Variant(ty, ..)
-                if !self.taken_apart(v)
+                if !is_tuple(ty)
+                    && !self.taken_apart(v)
                     && (!self.discard.contains(ty.as_str()) || self.user_discard(ty).is_some()) =>
             {
                 true
@@ -2673,13 +2703,14 @@ impl<'p> Interp<'p, '_> {
                 let i = usize::try_from(int(i.clone())).unwrap_or_else(|_| unsound("an index"));
                 let (name, value) = (self.term.env().get(i).cloned())
                     .unwrap_or_else(|| unsound("a variable past the last"));
-                let TypeExprKind::Named(var, _) = &self.fns[copy].ret.kind else {
-                    unsound("`Env::index` gives a `Var`")
+                let pair = &self.fns[copy].ret;
+                let TypeExprKind::Tuple(_) = &pair.kind else {
+                    unsound("`Env::index` gives a pair")
                 };
-                let var = var.clone();
+                let pair = pair.to_string();
                 let name = Value::Ref(self.literal(name.as_bytes()));
                 let value = Value::Ref(self.literal(value.as_bytes()));
-                Value::Struct(var, vec![("name".into(), name), ("value".into(), value)])
+                Value::Struct(pair, vec![("0".into(), name), ("1".into(), value)])
             }
             _ => unsound(&format!("`Env`'s `{op:?}` of the wrong arguments")),
         }
@@ -2827,13 +2858,14 @@ impl<'p> Interp<'p, '_> {
                 let Some(mid) = index(args.next(), len) else {
                     unsound(&format!("`{name}` out of range of a slice of {len}"))
                 };
-                let TypeExprKind::Named(split, _) = &self.fns[copy].ret.unrefined().kind else {
-                    unsound(&format!("`{name}` returns a struct"))
+                let pair = self.fns[copy].ret.unrefined();
+                let TypeExprKind::Tuple(_) = &pair.kind else {
+                    unsound(&format!("`{name}` returns a pair"))
                 };
                 let head = Value::Ref(p.slice(lo, mid));
                 let tail = Value::Ref(p.slice(lo + mid, len - mid));
-                let fields = vec![("head".into(), head), ("tail".into(), tail)];
-                return Value::Struct(split.clone(), fields);
+                let fields = vec![("0".into(), head), ("1".into(), tail)];
+                return Value::Struct(pair.to_string(), fields);
             }
         };
         let option = option();
@@ -3271,4 +3303,9 @@ impl<'p> Interp<'p, '_> {
             }
         }
     }
+}
+
+/// Is `name`, a struct value's type, a tuple's: `(i64, bool)`?
+fn is_tuple(name: &str) -> bool {
+    name.starts_with('(')
 }

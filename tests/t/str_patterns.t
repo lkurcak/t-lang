@@ -69,7 +69,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&odd("e\n"))?;
     let line = "fill 3";
     let Some(parts) = line.split_at(4) else { return Ok(()) };
-    out.line(&code(command(parts.head)))?;
+    out.line(&code(command(parts.0)))?;
     Ok(())
 }
 // expect: 1

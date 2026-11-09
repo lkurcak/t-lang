@@ -354,6 +354,7 @@ impl Walk<'_> {
                 self.ty(inner);
                 self.ty(n);
             }
+            TypeExprKind::Tuple(ts) => ts.iter().for_each(|t| self.ty(t)),
             TypeExprKind::Fn(params, ret, effects) => {
                 params.iter().for_each(|p| self.ty(p));
                 self.ty(ret);
@@ -413,6 +414,10 @@ impl Walk<'_> {
             }
             ExprKind::Lambda(l) => {
                 l.params.iter().flat_map(|p| &p.ty).for_each(|t| self.ty(t));
+                l.params
+                    .iter()
+                    .flat_map(|p| &p.pat)
+                    .for_each(|p| self.pattern(p));
                 l.ret.iter().for_each(|t| self.ty(t));
             }
             _ => {}
@@ -435,7 +440,7 @@ impl Walk<'_> {
                 targs.iter().for_each(|t| self.ty(t));
                 fields.iter().for_each(|f| self.pattern(&f.pat));
             }
-            PatternKind::Or(alts) | PatternKind::Array(alts) => {
+            PatternKind::Or(alts) | PatternKind::Array(alts) | PatternKind::Tuple(alts) => {
                 alts.iter().for_each(|p| self.pattern(p))
             }
             PatternKind::Wild

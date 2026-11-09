@@ -13,9 +13,9 @@ fn row(
 // The halves `split_at` gives say how long they are.
 fn first_of_tail(s: &[u8], mid: usize) -> u8 {
     match s.split_at(mid) {
-        Some(sp) => match sp.tail.len() {
+        Some(sp) => match sp.1.len() {
             0 => 0,
-            _ => sp.tail[0],
+            _ => sp.1[0],
         },
         None => 0,
     }
@@ -69,8 +69,8 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
         out.line(&m)?; // expect: ell
     }
     if let Some(sp) = word.split_at(2) {
-        let h: { h: usize | h == 2 } = sp.head.len();
-        let r: { r: usize | r == 3 } = sp.tail.len();
+        let h: { h: usize | h == 2 } = sp.0.len();
+        let r: { r: usize | r == 3 } = sp.1.len();
         out.line(&(h + r))?; // expect: 5
     }
     // What `trim` and `strip_prefix` give is no longer.

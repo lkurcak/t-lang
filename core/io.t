@@ -13,7 +13,6 @@ use crate::fmt;
 use crate::fmt::Display;
 use crate::option::Option;
 use crate::result::Result;
-use crate::slice::{Split, SplitMut};
 
 /// What kind of failure an `Error` is.
 #[derive(Discard, Copy, Debug, Eq, Send, Sync)]
@@ -114,7 +113,7 @@ export trait Read {
             }
             let all = rest;
             match all.split_at_mut(n) {
-                Option::Some(SplitMut { tail, .. }) => rest = tail,
+                Option::Some((_, tail)) => rest = tail,
                 // `read` broke its promise.
                 Option::None => return Result::Err(Error::new(ErrorKind::Other)),
             }
@@ -155,7 +154,7 @@ impl<'a> Read for Bytes<'a> {
             buf[i] = all[i];
             i = i + 1;
         }
-        if let Option::Some(Split { tail, .. }) = all.split_at(n) {
+        if let Option::Some((_, tail)) = all.split_at(n) {
             self.rest = tail;
         }
         Result::Ok(n)
