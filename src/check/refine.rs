@@ -107,6 +107,7 @@
 mod diagnostics;
 mod free;
 mod logic;
+pub use logic::{Work, work};
 mod targs;
 
 use super::Checker;
@@ -2277,7 +2278,7 @@ pub(crate) enum Known {
     Bool(bool),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 enum Val {
     Int(Lin),
     Bool(Formula),
@@ -2298,7 +2299,7 @@ type Obj = u32;
 
 /// What a reference or a box points to: a place, which is read when it's
 /// needed, a value, or what isn't known.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 enum Pointee {
     Place(Place),
     Val(Box<Val>),

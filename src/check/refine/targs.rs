@@ -54,8 +54,21 @@ pub(super) enum Cand {
 
 /// What each value at a position is: one of the cases, each where its
 /// conditions hold. With none, there are no values there.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub(super) struct Disj(pub(super) Vec<(Vec<Formula>, Cand)>);
+
+impl PartialEq for Cand {
+    /// The same, as far as is cheap to tell: predicates by identity.
+    fn eq(&self, other: &Cand) -> bool {
+        match (self, other) {
+            (Cand::Exact(a), Cand::Exact(b)) => a == b,
+            (Cand::Pred(a), Cand::Pred(b)) => Rc::ptr_eq(a, b),
+            (Cand::All(a), Cand::All(b)) => a == b,
+            (Cand::Any, Cand::Any) => true,
+            _ => false,
+        }
+    }
+}
 
 impl Disj {
     fn any() -> Disj {
@@ -83,9 +96,49 @@ impl Disj {
     fn text(&self) -> Option<String> {
         self.0.iter().find_map(|(_, c)| c.text())
     }
+
+    /// How many cases and conditions it has, at every depth.
+    fn size(&self) -> u64 {
+        let cand = |c: &Cand| match c {
+            Cand::All(ds) => ds.iter().map(Disj::size).sum(),
+            _ => 1,
+        };
+        (self.0.iter()).map(|(g, c)| g.len() as u64 + cand(c)).sum()
+    }
 }
 
 impl Cand {
+    /// What all of `ds` say, flattened: an `All` in an `All` is spliced
+    /// in, what says nothing is left out, and each is said once.
+    pub(super) fn all(ds: Vec<Disj>) -> Cand {
+        let mut out: Vec<Disj> = Vec::new();
+        let push = |out: &mut Vec<Disj>, d: Disj| {
+            if !d.is_any() && !out.contains(&d) {
+                out.push(d);
+            }
+        };
+        for d in ds {
+            match <[_; 1]>::try_from(d.0) {
+                Ok([(g, Cand::All(es))]) if g.is_empty() => {
+                    for e in es {
+                        push(&mut out, e);
+                    }
+                }
+                Ok([one]) => push(&mut out, Disj(vec![one])),
+                Err(cases) => push(&mut out, Disj(cases)),
+            }
+        }
+        match <[_; 1]>::try_from(out) {
+            Ok([d]) => match <[_; 1]>::try_from(d.0) {
+                Ok([(g, c)]) if g.is_empty() => c,
+                Ok([one]) => Cand::All(vec![Disj(vec![one])]),
+                Err(cases) => Cand::All(vec![Disj(cases)]),
+            },
+            Err(out) if out.is_empty() => Cand::Any,
+            Err(out) => Cand::All(out),
+        }
+    }
+
     fn is_any(&self) -> bool {
         match self {
             Cand::Any => true,
@@ -471,7 +524,7 @@ impl Walk<'_> {
                 .map(|(g, c)| {
                     let mut all = reg.clone();
                     all.push(Disj::one(c));
-                    (g, Cand::All(all))
+                    (g, Cand::all(all))
                 })
                 .collect()
         };
@@ -551,7 +604,7 @@ impl Walk<'_> {
         if opaque {
             return match reg.is_empty() {
                 true => vec![(Vec::new(), Cand::Any)],
-                false => vec![(Vec::new(), Cand::All(reg))],
+                false => vec![(Vec::new(), Cand::all(reg))],
             };
         }
         with(cases)
@@ -579,7 +632,8 @@ impl Walk<'_> {
             }
             if let Some(o) = Self::obj_of(v) {
                 let tree = self.trees.entry(o).or_default();
-                if !tree.iter().any(|(p, e)| p == pos && std::ptr::eq(e, d)) {
+                if !tree.iter().any(|(p, e)| p == pos && e == d) {
+                    logic::count(|w| w.carried += d.size());
                     tree.push((pos.clone(), d.clone()));
                 }
             }
@@ -980,7 +1034,7 @@ pub(super) fn widen(tree: &Tree) -> Tree {
         match c {
             Cand::Exact(_) | Cand::Any => Cand::Any,
             Cand::Pred(p) => Cand::Pred(p.clone()),
-            Cand::All(ds) => Cand::All(ds.iter().map(disj).collect()),
+            Cand::All(ds) => Cand::all(ds.iter().map(disj).collect()),
         }
     }
     fn disj(d: &Disj) -> Disj {
@@ -1207,7 +1261,7 @@ impl Walk<'_> {
                                     .collect();
                                 let c = match here.is_empty() {
                                     true => Cand::Any,
-                                    false => Cand::All(here),
+                                    false => Cand::all(here),
                                 };
                                 let src = Source {
                                     arg: j,
@@ -1243,7 +1297,7 @@ impl Walk<'_> {
                                 .collect();
                             let c = match here.is_empty() {
                                 true => Cand::Any,
-                                false => Cand::All(here.clone()),
+                                false => Cand::all(here.clone()),
                             };
                             push(
                                 &mut inst,
@@ -1508,7 +1562,7 @@ impl Walk<'_> {
                 };
                 let have: Vec<(Vec<Formula>, Cand)> = (param_trees[j].iter())
                     .filter(|(p, _)| p == pos)
-                    .map(|(_, d)| (Vec::new(), Cand::All(vec![d.clone()])))
+                    .map(|(_, d)| (Vec::new(), Cand::all(vec![d.clone()])))
                     .collect();
                 let have = match have.is_empty() {
                     true => vec![(Vec::new(), Cand::Any)],
@@ -1639,7 +1693,7 @@ impl Walk<'_> {
                 let reg = self.registered(*b, &pos);
                 let c = match reg.is_empty() {
                     true => Cand::Any,
-                    false => Cand::All(reg),
+                    false => Cand::all(reg),
                 };
                 cases.push((vec![g.clone()], c));
             }
@@ -1685,7 +1739,7 @@ impl Walk<'_> {
             };
             let have: Vec<(Vec<Formula>, Cand)> = (declared.iter())
                 .filter(|(p, _)| p == pos)
-                .map(|(_, d)| (Vec::new(), Cand::All(vec![d.clone()])))
+                .map(|(_, d)| (Vec::new(), Cand::all(vec![d.clone()])))
                 .collect();
             let have = match have.is_empty() {
                 true => vec![(Vec::new(), Cand::Any)],

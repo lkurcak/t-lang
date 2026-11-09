@@ -66,6 +66,7 @@ mod opaque;
 mod paths;
 mod patterns;
 mod refine;
+pub use refine::{Work, work};
 mod scope;
 mod traits;
 pub(crate) mod typed;
