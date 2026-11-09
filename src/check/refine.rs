@@ -3891,6 +3891,18 @@ impl Walk<'_> {
             return Ok(());
         }
         let entry = self.entry.clone();
+        // What may be written through it must be what its type declares.
+        if let Some(id) = self.cx.current
+            && let Type::Fn(sig) = &self.cx.fns[id.0].scheme.ty
+        {
+            let ret = self.cx.solved(&sig.ret);
+            let declared = match &self.ret {
+                Some((r, _)) if r.has_carried() => self.carried_tree(&r.clone(), Env::Post(&entry, None, &[])),
+                _ => Vec::new(),
+            };
+            let what = format!("the result of `{}`", self.cx.fns[id.0].name.name);
+            self.keep_inv(&v, &ret, &declared, &[], span, &what)?;
+        }
         if let Some((r, name)) = self.ret.clone() {
             let what = match self.cx.current.is_some_and(|id| self.cx.fns[id.0].konst) {
                 true => format!("the value of const `{name}`"),
@@ -5231,9 +5243,6 @@ impl Walk<'_> {
         span: Span,
     ) -> Result<(), Error> {
         let d = self.place_decl(p);
-        if d.is_empty() {
-            return Ok(());
-        }
         let what = match (self.boxes_only(p), self.cx.typed.binds.get(&p.root)) {
             (true, Some(b)) => format!("`{}`", b.name),
             _ => format!("what's written through `{}`", crate::pretty::expr_text(place)),
@@ -5689,6 +5698,9 @@ impl Walk<'_> {
                         };
                         match v {
                             Some(v) => {
+                                let spans: Vec<Span> = args.iter().map(|a| a.span).collect();
+                                let spans = if spans.is_empty() { vec![e.span] } else { spans };
+                                self.keep_fields_inv(&ty, Some(v), &vals, &[], &spans)?;
                                 let o = self.new_obj();
                                 self.enum_parts(o, &ty, Some((v, vals)));
                                 Ok(Val::Obj(o))
@@ -5787,11 +5799,10 @@ impl Walk<'_> {
                             let what = format!("`{name}`");
                             self.need(&r, &new, Env::Here, value.span, what)?;
                         }
-                        if let Some(d) = self.decl.get(&id).cloned() {
-                            let what = format!("`{name}`");
-                            let written = self.written_tree(&new, &ty);
-                            self.need_tree(&new, &ty, &d, Some(&written), value.span, &what)?;
-                        }
+                        let d = self.decl.get(&id).cloned().unwrap_or_default();
+                        let what = format!("`{name}`");
+                        let written = self.written_tree(&new, &ty);
+                        self.need_tree(&new, &ty, &d, Some(&written), value.span, &what)?;
                         self.write(&Place::local(id), Some(new), Some(e.span));
                     }
                     (ExprKind::Field(base, _), _) => {
@@ -6009,6 +6020,8 @@ impl Walk<'_> {
                         }
                     }
                 }
+                let field_names: Vec<String> = names.iter().map(|(n, _)| n.clone()).collect();
+                self.keep_fields_inv(&ty, None, &vals, &field_names, &spans)?;
                 Ok(Val::Struct(self.new_obj(), vals))
             }
             // A struct's value, its fields what the values are (lemma T5 of

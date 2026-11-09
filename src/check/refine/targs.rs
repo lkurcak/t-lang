@@ -1555,3 +1555,111 @@ impl Walk<'_> {
         }
     }
 }
+
+impl Walk<'_> {
+    /// Checks that what may be written at each invariant position of `v`,
+    /// given as a value of type `t` of which `declared` is what's declared,
+    /// is declared there too (lemma A4): or else what's given it could
+    /// write past it. Not under the positions `skip`, of the type's own
+    /// type parameters, which say it themselves.
+    pub(super) fn keep_inv(
+        &mut self,
+        v: &Val,
+        t: &Type,
+        declared: &Tree,
+        skip: &[Pos],
+        span: Span,
+        what: &str,
+    ) -> Result<(), Error> {
+        let written = self.written_tree(v, t);
+        for (pos, want) in &written {
+            if want.is_any() || skip.iter().any(|s| pos.starts_with(s)) {
+                continue;
+            }
+            let Some((pt, Variance::Inv)) = self.type_at(t, pos) else {
+                continue;
+            };
+            let have: Vec<(Vec<Formula>, Cand)> = (declared.iter())
+                .filter(|(p, _)| p == pos)
+                .map(|(_, d)| (Vec::new(), Cand::All(vec![d.clone()])))
+                .collect();
+            let have = match have.is_empty() {
+                true => vec![(Vec::new(), Cand::Any)],
+                false => have,
+            };
+            if self.implies(&have, want, &pt).is_err() {
+                let text = want.text().unwrap_or_default();
+                return Err(Error::ty(
+                    span,
+                    format!("can't prove `{text}` of what may be written through {what}"),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// The positions in `generic`, a field's type as declared, of the
+    /// type parameters `params` of what it's a field of.
+    pub(super) fn param_positions(&mut self, generic: &Type, params: &[String]) -> Vec<Pos> {
+        let mut out = Vec::new();
+        for x in params {
+            let (occ, _) = self.occurrences(generic, x);
+            out.extend(occ.into_iter().map(|(p, _)| p));
+        }
+        out
+    }
+
+    /// Checks the fields `vals` of a value of struct or enum `t` (variant
+    /// `variant`), made here, as `keep_inv` says, of each field's type but
+    /// where it's a type parameter of `t`'s.
+    pub(super) fn keep_fields_inv(
+        &mut self,
+        t: &Type,
+        variant: Option<usize>,
+        vals: &[Val],
+        names: &[String],
+        span: &[Span],
+    ) -> Result<(), Error> {
+        let Type::Adt(symbol, ..) = t else {
+            return Ok(());
+        };
+        let Some(def) = self.cx.adts.get(symbol).cloned() else {
+            return Ok(());
+        };
+        let params = def.params.as_slice().to_vec();
+        let (generic, inst): (Vec<Type>, Vec<Type>) = match (&def.kind, variant) {
+            (crate::types::AdtKind::Struct(fields), None) => (
+                fields.iter().map(|(_, t)| t.clone()).collect(),
+                struct_fields(&self.cx.adts, t).unwrap_or_default().into_iter().map(|(_, t)| t).collect(),
+            ),
+            (crate::types::AdtKind::Enum(vs), Some(v)) => match vs.get(v) {
+                Some((_, ts)) => (ts.clone(), crate::types::variant_fields(&self.cx.adts, t, v)),
+                None => return Ok(()),
+            },
+            _ => return Ok(()),
+        };
+        let name = symbol.rsplit("::").next().unwrap_or(symbol).to_string();
+        for (j, v) in vals.iter().enumerate() {
+            let (Some(g), Some(ft)) = (generic.get(j), inst.get(j)) else {
+                continue;
+            };
+            let ft = self.cx.solved(ft);
+            let skip = self.param_positions(g, &params);
+            let declared = match (variant, self.refined_fields(t).cloned()) {
+                (None, Some(fields)) => match fields.refs.get(j).cloned().flatten() {
+                    Some(r) if r.has_carried() => {
+                        let args = self.adt_args(t);
+                        self.carried_tree(&r, Env::Fields(vals, &args))
+                    }
+                    _ => Vec::new(),
+                },
+                _ => Vec::new(),
+            };
+            let field = names.get(j).cloned().unwrap_or_else(|| j.to_string());
+            let what = format!("field `{field}` of `{name}`");
+            let at = span.get(j).copied().unwrap_or_else(|| span[0]);
+            self.keep_inv(v, &ft, &declared, &skip, at, &what)?;
+        }
+        Ok(())
+    }
+}
