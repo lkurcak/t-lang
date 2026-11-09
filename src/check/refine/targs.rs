@@ -403,10 +403,7 @@ impl Walk<'_> {
 
     /// The object value `v` is, if it has one.
     fn obj_of(v: &Val) -> Option<Obj> {
-        match v {
-            Val::Struct(o, _) | Val::Ref(o, _) | Val::Obj(o) | Val::Array(o, _) => Some(*o),
-            _ => None,
-        }
+        obj_of(v)
     }
 
     /// What's been said of the values at position `pos` of object `o`.
@@ -874,8 +871,10 @@ impl Walk<'_> {
         match last {
             Proj::Deref => {
                 let mut out = below(&outer, 0);
-                if let Type::Ref(..) = qt {
-                    // What the reference itself says.
+                // What the reference itself says; or what's said of the box:
+                // a write through a box gives it a new value, so it's what's
+                // in it now (`Walk::kill`).
+                if let Type::Ref(..) | Type::Box(_) = qt {
                     if let Some(&o) = self.objs.get(&q) {
                         let reg = self.trees.get(&o).cloned().unwrap_or_default();
                         out.extend(below(&reg, 0));
@@ -956,10 +955,13 @@ pub(super) fn widen(tree: &Tree) -> Tree {
         }
     }
     fn disj(d: &Disj) -> Disj {
-        if d.0.is_empty() {
+        let cases: Vec<(Vec<Formula>, Cand)> =
+            d.0.iter().map(|(g, c)| (g.clone(), cand(c))).collect();
+        // Nothing said in any case, or no values: nothing declared.
+        if cases.iter().all(|(_, c)| c.is_any()) {
             return Disj::any();
         }
-        Disj(d.0.iter().map(|(g, c)| (g.clone(), cand(c))).collect())
+        Disj(cases)
     }
     (tree.iter())
         .map(|(p, d)| (p.clone(), disj(d)))
@@ -1040,9 +1042,21 @@ impl Walk<'_> {
     /// to, which it says (`trees`); or, of a value that isn't a reference,
     /// what its values there are.
     pub(super) fn written_tree(&mut self, v: &Val, t: &Type) -> Tree {
-        if let (Type::Ref(..), Some(o)) = (t, Self::obj_of(v)) {
-            return self.trees.get(&o).cloned().unwrap_or_default();
+        if let (Type::Ref(_, _, inner), Some(o)) = (t, Self::obj_of(v)) {
+            let mut tree = self.trees.get(&o).cloned().unwrap_or_default();
+            // A reference to a value that isn't a place's, as a method's
+            // receiver made of a field of what a call gave: what may be
+            // written there is at most what's known of it, which came from
+            // what said what may be written where it is.
+            if let Val::Ref(_, Pointee::Val(w)) = v {
+                let (w, inner) = ((**w).clone(), self.cx.solved(inner));
+                let known = self.knowledge(&w, &inner);
+                tree.extend(under(&widen(&known), 0));
+            }
+            return tree;
         }
+        // What's declared of what's in it there is what refinements said,
+        // not the values there now (`widen`).
         let mut out = Vec::new();
         for pos in self.positions(t) {
             if let Some((_, Variance::Inv)) = self.type_at(t, &pos) {
@@ -1050,7 +1064,7 @@ impl Walk<'_> {
                 out.push((pos, Disj(cases)));
             }
         }
-        out
+        widen(&out)
     }
 
     /// What a call's type parameter `x`, of a function of scheme `s`,
@@ -1103,7 +1117,7 @@ impl Walk<'_> {
                         for pos in &all {
                             let mut p = rho.clone();
                             p.extend_from_slice(pos);
-                            for (g, c) in self.values_at(&v, &at, &p) {
+                            for (g, c) in self.arg_values_at(j, &v, &at, &p) {
                                 push(&mut inst, pos, (Source { arg: j, behind: false }, g, c));
                             }
                         }
@@ -1111,7 +1125,10 @@ impl Walk<'_> {
                     Variance::Inv => {
                         let decl = match &written[j] {
                             Some(t) => t.clone(),
-                            None => self.written_tree(&v, &at),
+                            None => {
+                                let w = self.arg_written(j, &v, &at);
+                                self.arg_tree(j, w)
+                            }
                         };
                         let mut declared = Vec::new();
                         for pos in &all {
@@ -1167,6 +1184,59 @@ impl Walk<'_> {
         vals: &[Val],
         places: &[Option<Place>],
         spans: &[Span],
+        coerced: &[Option<(usize, Type)>],
+        at: Span,
+    ) -> Result<CallTrees, Error> {
+        self.coerced_args = coerced.to_vec();
+        let out = self.call_trees_now(symbol, targs, sig, vals, places, spans, at);
+        self.coerced_args.clear();
+        out
+    }
+
+    /// What's known of the values at position `pos` of argument `j`,
+    /// `v`, of parameter type `t`: through the references and boxes a
+    /// coercion looked through (`&Box<T>` given as a `&T`), the position
+    /// is further in the argument's own type.
+    fn arg_values_at(&mut self, j: usize, v: &Val, t: &Type, pos: &[usize]) -> Vec<(Vec<Formula>, Cand)> {
+        if let Some(Some((n, actual))) = self.coerced_args.get(j).cloned()
+            && pos.first() == Some(&0)
+        {
+            let mut p = vec![0; n + 1];
+            p.extend_from_slice(&pos[1..]);
+            return self.values_at(v, &actual, &p);
+        }
+        self.values_at(v, t, pos)
+    }
+
+    /// `tree`, of argument `j`'s own type, as of the parameter's: the
+    /// positions a coercion looked through left out.
+    fn arg_tree(&self, j: usize, tree: Tree) -> Tree {
+        match self.coerced_args.get(j) {
+            Some(Some((n, _))) => (tree.into_iter())
+                .filter_map(|(p, d)| {
+                    let n = *n;
+                    if p.len() > n && p[..=n].iter().all(|k| *k == 0) {
+                        let mut q = vec![0];
+                        q.extend_from_slice(&p[n + 1..]);
+                        Some((q, d))
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+            _ => tree,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn call_trees_now(
+        &mut self,
+        symbol: &str,
+        targs: &[Type],
+        sig: Option<&RefinedSig>,
+        vals: &[Val],
+        places: &[Option<Place>],
+        spans: &[Span],
         at: Span,
     ) -> Result<CallTrees, Error> {
         let debug = std::env::var("T60").is_ok_and(|w| {
@@ -1199,8 +1269,9 @@ impl Walk<'_> {
         };
         // What's declared of each place lent `&mut`, as of the argument.
         let mut written: Vec<Option<Tree>> = Vec::new();
-        for p in places.iter().take(vals.len()) {
-            written.push(p.as_ref().map(|p| under(&self.place_decl(p), 0)));
+        for (j, p) in places.iter().take(vals.len()).enumerate() {
+            let w = p.as_ref().map(|p| under(&self.place_decl(p), 0));
+            written.push(w.map(|w| self.arg_tree(j, w)));
         }
         written.resize(vals.len(), None);
         // The parameters' types there, and what's written of them.
@@ -1225,7 +1296,20 @@ impl Walk<'_> {
             };
             let what = format!("argument `{}` of `{fname}`", pname(j));
             let span = spans.get(j).copied().unwrap_or(at);
-            self.need_tree(v, t, tree, None, span, &what)?;
+            match self.coerced_args.get(j).cloned().flatten() {
+                Some((n, actual)) => {
+                    let mut moved = Vec::new();
+                    for (p, d) in tree {
+                        if p.first() == Some(&0) {
+                            let mut q = vec![0; n + 1];
+                            q.extend_from_slice(&p[1..]);
+                            moved.push((q, d.clone()));
+                        }
+                    }
+                    self.need_tree(v, &actual, &moved, None, span, &what)?;
+                }
+                None => self.need_tree(v, t, tree, None, span, &what)?,
+            }
         }
         // Each type parameter's instantiation, and what it needs of what's
         // behind each `&mut`.
@@ -1303,7 +1387,10 @@ impl Walk<'_> {
             }
             let decl = match &written[j] {
                 Some(d) => d.clone(),
-                None => self.written_tree(&v, &t),
+                None => {
+                    let w = self.arg_written(j, &v, &t);
+                    self.arg_tree(j, w)
+                }
             };
             for (pos, want) in &decl {
                 if want.is_any() || inside.iter().any(|p| pos.starts_with(p)) {
@@ -1397,5 +1484,74 @@ impl Walk<'_> {
             tree.push((under(&vec![(pos, Disj(cases))], 0)).remove(0));
         }
         self.assume_tree(v, t, &tree);
+    }
+}
+
+impl Walk<'_> {
+    /// Does `tree`, of a value of type `t`, say anything where `t` is
+    /// invariant?
+    pub(super) fn declared_inv(&mut self, t: &Type, tree: &Tree) -> bool {
+        for (pos, d) in tree {
+            if d.is_any() {
+                continue;
+            }
+            if let Some((_, Variance::Inv)) = self.type_at(t, pos) {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+/// The object value `v` is, if it has one.
+pub(super) fn obj_of(v: &Val) -> Option<Obj> {
+    match v {
+        Val::Struct(o, _) | Val::Ref(o, _) | Val::Obj(o) | Val::Array(o, _) => Some(*o),
+        _ => None,
+    }
+}
+
+impl Walk<'_> {
+    /// Object `o` is, where branches meet, branch `i`'s object `each[i]`
+    /// where `guards[i]` holds: at each position any of them has something
+    /// said of, that's said of it, under that condition, and nothing under
+    /// the others'.
+    pub(super) fn join_trees(&mut self, o: Obj, each: &[Option<Obj>], guards: &[Formula]) {
+        let mut positions: Vec<Pos> = Vec::new();
+        for b in each.iter().flatten() {
+            for (p, _) in self.trees.get(b).into_iter().flatten() {
+                if !positions.contains(p) {
+                    positions.push(p.clone());
+                }
+            }
+        }
+        if positions.is_empty() {
+            return;
+        }
+        let mut tree = Vec::new();
+        for pos in positions {
+            let mut cases = Vec::new();
+            for (b, g) in each.iter().zip(guards) {
+                let reg = self.registered(*b, &pos);
+                let c = match reg.is_empty() {
+                    true => Cand::Any,
+                    false => Cand::All(reg),
+                };
+                cases.push((vec![g.clone()], c));
+            }
+            tree.push((pos, Disj(cases)));
+        }
+        self.trees.entry(o).or_default().extend(tree);
+    }
+}
+
+impl Walk<'_> {
+    /// What may be written at the positions of argument `j`, `v`, in its
+    /// own type (`written_tree`), coerced or not.
+    fn arg_written(&mut self, j: usize, v: &Val, t: &Type) -> Tree {
+        match self.coerced_args.get(j).cloned().flatten() {
+            Some((_, actual)) => self.written_tree(v, &actual),
+            None => self.written_tree(v, t),
+        }
     }
 }

@@ -13,7 +13,7 @@ fn consume(b: Box<i64>) -> i64 { *b }
 fn pair(a: Box<i64>, b: i64) -> i64 with panic { *a + b }
 
 // Both boxes are in scope at the `return`.
-fn early(c: bool) -> i64 with {alloc, panic} {
+fn early(c: bool) -> i64 with alloc {
     let x = Box::new(1);
     let y = Box::new(2);
     if c { return *x; }
@@ -36,7 +36,7 @@ fn half_made(c: bool) -> i64 with {panic, alloc} {
 }
 
 // Out of a struct literal: `a` is made, `b` never is.
-fn half_struct(c: bool) -> i64 with {alloc, panic} {
+fn half_struct(c: bool) -> i64 with alloc {
     let t = Two { a: Box::new(1), b: if c { return 7; } else { Box::new(2) } };
     *t.a + *t.b
 }

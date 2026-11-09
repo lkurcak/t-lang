@@ -1267,6 +1267,14 @@ impl<'p> Interp<'p, '_> {
         env: Vec<(String, Value)>,
         post: bool,
     ) -> Refined {
+        // One of what every value at a position is, which no way gets to
+        // (`Measures::ways` has none), is checked by `Reach` (see
+        // docs/60-refined-type-arguments.md), not here.
+        let parts: Vec<(String, &Expr)> = (parts.iter())
+            .filter(|(_, pred)| !self.measures.ways.get(&pred.id).is_some_and(Vec::is_empty))
+            .cloned()
+            .collect();
+        let parts = &parts[..];
         let mut r = Refined {
             parts: (parts.iter())
                 .map(|(binder, pred)| RefinedPart {

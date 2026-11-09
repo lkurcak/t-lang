@@ -7,7 +7,7 @@ use alloc::boxed::Box;
 #[derive(Discard)]
 struct Pair { a: Box<i64>, b: i64 }
 
-fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut out = os.stdout;
     let x: i64 = 1;
     let y = 2;

@@ -759,14 +759,7 @@ impl Checker {
                     Level::Package => "is `pub`",
                     Level::Export => "is exported",
                 };
-                let (_, binder, _) = f.ty.refinements().into_iter().next()?;
-                Some(if j == i {
-                    Named::Not(format!(
-                        "a field's refinement names the field's own value by its binder, `{}`, \
-                         not `{name}`",
-                        binder.name
-                    ))
-                } else if j > i {
+                Some(if j > i {
                     Named::Not(format!(
                         "a field's refinement can only name the fields before it, and `{name}` \
                          comes after `{}`",
@@ -801,6 +794,30 @@ impl Checker {
             self.pred_again = None;
             self.pred_reach = None;
             let r = r?;
+            // A field's own value is its binder, to a refinement of it; one
+            // of what's at a position in it (carried) can name the field,
+            // the whole value those are in (lemma A6).
+            for part in r.iter().flat_map(|r| &r.parts).filter(|p| !p.carried) {
+                let mut own = None;
+                each_expr(&part.pred, &mut |e| {
+                    if let Some(PredName::Field(j)) = self.pred_names.get(&e.id)
+                        && *j == i
+                    {
+                        own = Some(e.span);
+                    }
+                });
+                if let Some(span) = own {
+                    let (_, binder, _) = f.ty.refinements().into_iter().next().expect("refined");
+                    return Err(Error::ty(
+                        span,
+                        format!(
+                            "a field's refinement names the field's own value by its binder, \
+                             `{}`, not `{}`",
+                            binder.name, f.name.name
+                        ),
+                    ));
+                }
+            }
             let mut named = Vec::new();
             for pred in r.iter().flat_map(Refinement::preds) {
                 each_expr(pred, &mut |e| {
@@ -1843,6 +1860,7 @@ impl Checker {
             trees: HashMap::new(),
             decl: HashMap::new(),
             lent_trees: HashMap::new(),
+            coerced_args: Vec::new(),
             module: self.fns[id.0].module,
             invariants: HashMap::new(),
             unstable: HashSet::new(),
@@ -2401,6 +2419,10 @@ struct Walk<'c> {
     /// What the call that last lent each place `&mut` left at its
     /// positions, for when it's read next (`Walk::place_read`).
     lent_trees: HashMap<Place, targs::Tree>,
+    /// For each argument of the call being checked, how many more
+    /// references or boxes a coercion looked through, and its own type
+    /// (`Walk::call_trees`).
+    coerced_args: Vec<Option<(usize, Type)>>,
     /// The module of the function walked, where its measures are their
     /// bodies.
     module: usize,
@@ -3556,8 +3578,12 @@ impl Walk<'_> {
                 if let (Some(Val::Ref(o, _) | Val::Obj(o)), true) = (&val, stable) {
                     self.objs.insert(p.clone(), *o);
                 }
-                // What a box owns is a place in it, which has its value.
-                if let (Type::Box(inner), Some(Val::Ref(_, Pointee::Val(w)))) = (t, &val) {
+                // What a box owns is a place in it, which has its value; and
+                // what a shared reference points to is one that can't change
+                // while it's borrowed.
+                if let (Type::Box(inner) | Type::Ref(_, false, inner), Some(Val::Ref(_, Pointee::Val(w)))) =
+                    (t, &val)
+                {
                     let inner = self.cx.solved(inner);
                     self.set(&p.then(Proj::Deref), &inner, Some((**w).clone()));
                 }
@@ -3997,6 +4023,13 @@ impl Walk<'_> {
                 }
             }
         }
+        // What's said of positions of each branch's objects is said, under
+        // the condition the branch was taken, of the one after (`targs`):
+        // of a reference, what may be written through it is whichever
+        // place's that branch's points to.
+        let guards: Vec<Formula> = reached.iter().map(|o| Formula::and(o.facts.clone())).collect();
+        let mut tree_joins: Vec<(Option<Obj>, Vec<Option<Obj>>)> = Vec::new();
+        tree_joins.push((None, reached.iter().map(|o| targs::obj_of(&o.val)).collect()));
         // A place each branch left a different object at is a new one, of
         // which each measure every branch knows of its object is, in each
         // case, what it was of that branch's: a measure is a function of
@@ -4038,9 +4071,16 @@ impl Walk<'_> {
                 let vals = each.iter().map(|b| Val::Obj(*b)).collect();
                 joined.push((Val::Obj(o), vals));
             }
+            tree_joins.push((Some(o), each.iter().map(|b| Some(*b)).collect()));
             objs.insert(p.clone(), o);
         }
         let result = self.unknown(ty);
+        for (o, each) in tree_joins {
+            let o = o.or_else(|| targs::obj_of(&result));
+            if let Some(o) = o {
+                self.join_trees(o, &each, &guards);
+            }
+        }
         let mut cases = Vec::new();
         for (i, o) in reached.into_iter().enumerate() {
             for event in o.invalidated {
@@ -4614,17 +4654,21 @@ impl Walk<'_> {
         let Some(self_ty) = targs.first() else {
             return fallback();
         };
-        fn open(t: &Type) -> bool {
-            matches!(
-                t,
-                Type::Param(_, _)
-                    | Type::Var(_)
-                    | Type::Proj(..)
-                    | Type::Opaque(..)
-                    | Type::Inferred(..)
-            ) || t.parts().any(open)
+        // Its type parameters, and projections and `impl` types, are rigid
+        // to `select`, so the impl it finds for a type that's one of those
+        // inside one that isn't is the one for every type they can be: any
+        // other would overlap it, which the overlap check, and the orphan
+        // rule across packages, rule out (lemma A7 of
+        // docs/60-refined-type-arguments.md). A type not yet worked out
+        // could be anything.
+        fn unknown(t: &Type) -> bool {
+            matches!(t, Type::Var(_) | Type::Inferred(..)) || t.parts().any(unknown)
         }
-        if open(self_ty) {
+        let head_open = matches!(
+            self_ty,
+            Type::Param(_, _) | Type::Proj(..) | Type::Opaque(..)
+        );
+        if head_open || unknown(self_ty) {
             return fallback();
         }
         let Some((i, args)) = cx.traits.select(self_ty, Some(tr), &[]) else {
@@ -4782,12 +4826,42 @@ impl Walk<'_> {
                 }
             }
         }
+        // A call through a value: nothing keeps what's at an invariant
+        // position of what it's given, so nothing may be declared there.
+        if resolved.is_none() && self.reachable {
+            for (j, a) in args.iter().enumerate() {
+                let t = self.ty_of(a);
+                let (Some(v), p) = (vals.get(j), places.get(j).cloned().flatten()) else {
+                    continue;
+                };
+                let written = match &p {
+                    Some(p) => targs::under(&self.place_decl(p), 0),
+                    None => self.written_tree(v, &t),
+                };
+                if self.declared_inv(&t, &written) {
+                    return Err(Error::ty(
+                        a.span,
+                        format!(
+                            "can't give `{}` to a call through a value: what's behind it has \
+                             refinements of type arguments, which the call could write past",
+                            crate::pretty::expr_text(a)
+                        ),
+                    ));
+                }
+            }
+        }
         // Refinements of type arguments: what the call needs of them, and
         // says of its result and of what it's lent (`targs`).
         let trees = match &resolved {
             Some((s, t)) if self.reachable => {
                 let spans: Vec<Span> = args.iter().map(|a| a.span).collect();
-                self.call_trees(s, t, sig.as_ref(), &vals, &places, &spans, e.span)?
+                let coerced: Vec<Option<(usize, Type)>> = (args.iter())
+                    .map(|a| match self.cx.typed.coerced.get(&a.id) {
+                        Some((n, _)) if *n > 0 => Some((*n, self.ty_of(a))),
+                        _ => None,
+                    })
+                    .collect();
+                self.call_trees(s, t, sig.as_ref(), &vals, &places, &spans, &coerced, e.span)?
             }
             _ => targs::CallTrees::default(),
         };
@@ -5651,6 +5725,7 @@ impl Walk<'_> {
             ExprKind::Unsafe(block) => self.expr(block),
             ExprKind::Match(scrutinee, arms) => {
                 let s = self.expr(scrutinee)?;
+                let sty = self.ty_of(scrutinee);
                 let place = self.place_of(scrutinee);
                 let start = self.snapshot();
                 let mut before: Vec<Formula> = Vec::new();
@@ -5667,7 +5742,7 @@ impl Walk<'_> {
                             .chain(implied),
                     );
                     let o = self.branch(&start, Some(assume), |w| {
-                        w.bind_pattern(&arm.pat, Some(&s), place.clone(), None)?;
+                        w.bind_pattern(&arm.pat, Some(&s), place.clone(), None, Some(&sty))?;
                         w.expr(&arm.body)
                     })?;
                     outcomes.push(o);
@@ -5997,12 +6072,43 @@ impl Walk<'_> {
         s: Option<&Val>,
         mut place: Option<Place>,
         of: Option<(&Type, usize)>,
+        ty: Option<&Type>,
     ) -> Result<(), Error> {
         let mut s = s.filter(|v| !matches!(v, Val::Other)).cloned();
         let unpeeled = s.clone();
         let peels = self.cx.typed.peels.get(&pat.id).copied().unwrap_or(0);
+        let mut ty = ty.map(|t| self.cx.solved(t));
         if peels > 0 {
-            s = None;
+            // Through a shared reference a call gave, of which the walk
+            // knows only what it says of what it points to: a value that
+            // can't change while it's borrowed, which has that (`targs`).
+            let mut through = match place {
+                Some(_) => None,
+                None => s.clone(),
+            };
+            for _ in 0..peels {
+                let next = match (&through, &ty) {
+                    (Some(Val::Ref(_, Pointee::Val(w))), Some(Type::Ref(_, _, inner))) => {
+                        Some(((**w).clone(), self.cx.solved(inner)))
+                    }
+                    (Some(Val::Ref(o, Pointee::Unknown)), Some(Type::Ref(_, false, inner))) => {
+                        let inner = self.cx.solved(inner);
+                        let w = self.unknown(&inner);
+                        if let Some(tree) = self.trees.get(o).cloned() {
+                            self.assume_tree(&w, &inner, &targs::below(&tree, 0));
+                        }
+                        Some((w, inner))
+                    }
+                    _ => None,
+                };
+                through = next.as_ref().map(|(w, _)| w.clone());
+                ty = match (next, &ty) {
+                    (Some((_, inner)), _) => Some(inner),
+                    (None, Some(Type::Ref(_, _, inner))) => Some(self.cx.solved(inner)),
+                    _ => None,
+                };
+            }
+            s = through;
             place = place.map(|p| (0..peels).fold(p, |p, _| self.deref(p)));
         }
         match &pat.kind {
@@ -6050,7 +6156,16 @@ impl Walk<'_> {
                             // A `&` to a value known, a variant's field.
                             (false, None, Some(v)) => {
                                 let o = self.new_obj();
-                                self.bind(id, Some(Val::Ref(o, Pointee::Val(Box::new(v)))));
+                                let r = Val::Ref(o, Pointee::Val(Box::new(v)));
+                                if !self.decl.contains_key(&id) {
+                                    let t = self.ty_of_bind(id);
+                                    let known = self.knowledge(&r, &t);
+                                    let tree = targs::widen(&known);
+                                    if !tree.is_empty() {
+                                        self.decl.insert(id, tree);
+                                    }
+                                }
+                                self.bind(id, Some(r));
                             }
                             _ => self.bind(id, None),
                         }
@@ -6078,7 +6193,8 @@ impl Walk<'_> {
                     let i = names.iter().position(|(n, _)| *n == f.name.name);
                     let val = i.and_then(|i| vals.get(i));
                     let at = i.and_then(|i| Some(place.as_ref()?.then(Proj::Field(i))));
-                    self.bind_pattern(&f.pat, val, at, i.map(|i| (&t, i)))?;
+                    let ft = i.and_then(|i| names.get(i)).map(|(_, ft)| ft.clone());
+                    self.bind_pattern(&f.pat, val, at, i.map(|i| (&t, i)), ft.as_ref())?;
                 }
             }
             // A variant's fields are what's known of them, if anything is:
@@ -6091,17 +6207,29 @@ impl Walk<'_> {
                     (None, None) => None,
                 };
                 let fields = whole.and_then(|w| self.variant_parts(&w, &member.name));
+                let ftys = match &ty {
+                    Some(t @ Type::Adt(symbol, ..)) => match self.variant_index(symbol, &member.name) {
+                        Some(v) => crate::types::variant_fields(&self.cx.adts, t, v),
+                        None => Vec::new(),
+                    },
+                    _ => Vec::new(),
+                };
                 for (j, p) in pats.iter().enumerate() {
                     let f = fields.as_ref().map(|(_, f)| f[j].clone());
-                    self.bind_pattern(p, f.as_ref(), None, None)?;
+                    self.bind_pattern(p, f.as_ref(), None, None, ftys.get(j))?;
                 }
             }
             // As a struct pattern mentioning every field, in order (lemma
             // T5 of docs/58-tuples.md).
             PatternKind::Tuple(pats) => {
-                let t = match (&place, &s) {
+                let t = match (&place, &ty) {
                     (Some(p), _) => self.place_ty(p),
+                    (None, Some(t)) => t.clone(),
                     _ => Type::Unit,
+                };
+                let elems = match &t {
+                    Type::Tuple(ts) => ts.iter().map(|e| self.cx.solved(e)).collect(),
+                    _ => Vec::new(),
                 };
                 let vals = match (s, &place) {
                     (Some(Val::Struct(_, vals)), _) => vals,
@@ -6114,18 +6242,22 @@ impl Walk<'_> {
                 for (i, q) in pats.iter().enumerate() {
                     let at = place.as_ref().map(|p| p.then(Proj::Field(i)));
                     let of = matches!(t, Type::Tuple(_)).then_some((&t, i));
-                    self.bind_pattern(q, vals.get(i), at, of)?;
+                    self.bind_pattern(q, vals.get(i), at, of, elems.get(i))?;
                 }
             }
             // What an array's values are isn't followed.
             PatternKind::Array(pats) => {
+                let elem = match &ty {
+                    Some(Type::Array(e, _)) => Some(self.cx.solved(e)),
+                    _ => None,
+                };
                 for p in pats {
-                    self.bind_pattern(p, None, None, None)?;
+                    self.bind_pattern(p, None, None, None, elem.as_ref())?;
                 }
             }
             PatternKind::Or(pats) => {
                 for p in pats {
-                    self.bind_pattern(p, None, None, of)?;
+                    self.bind_pattern(p, None, None, of, ty.as_ref())?;
                 }
             }
             PatternKind::Wild
@@ -6154,8 +6286,11 @@ impl Walk<'_> {
                 }
                 let place = init.as_ref().and_then(|i| self.place_of(i));
                 match init {
-                    Some(_) => self.bind_pattern(pat, v.as_ref(), place, None)?,
-                    None => self.bind_pattern(pat, None, None, None)?,
+                    Some(init) => {
+                        let t = self.ty_of(init);
+                        self.bind_pattern(pat, v.as_ref(), place, None, Some(&t))?
+                    }
+                    None => self.bind_pattern(pat, None, None, None, None)?,
                 }
                 // `let r = &p;`: `*r` is `p`, while `r` can be used.
                 if let (Some(init), PatternKind::Bind(_, false)) = (init, &pat.kind)

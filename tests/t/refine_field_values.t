@@ -6,7 +6,7 @@ use alloc::boxed::Box;
 #[derive(Copy, Discard)]
 struct P { x: i64 }
 
-fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut out = os.stdout;
     let mut p = P { x: 4 };
     let q = p;
