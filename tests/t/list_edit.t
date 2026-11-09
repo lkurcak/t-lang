@@ -1,4 +1,4 @@
-// `swap` exchanges two values, and says if both indices were in range;
+// `swap` exchanges two values, at indices proved in range;
 // `truncate` and `clear` throw values away from the end, and keep the
 // buffer.
 
@@ -19,9 +19,10 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     for i in 0..4 {
         l.push(i);
     }
-    out.line(&l.swap(0, 3)); // expect: true
-    out.line(&l.swap(1, 1)); // expect: true
-    out.line(&l.swap(2, 4)); // expect: false
+    if l.len() == 4 {
+        l.swap(0, 3);
+        l.swap(1, 1);
+    }
     show(&mut out, &l);
     // expect: 3
     // expect: 1

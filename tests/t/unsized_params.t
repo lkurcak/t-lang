@@ -69,7 +69,9 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(first(s, "right"))?; // expect: left
     let mut a = [3i64, 1, 2];
     let m = again(a.as_mut_slice());
-    m.swap(0, 1);
+    if m.len() == 3 {
+        m.swap(0, 1);
+    }
     out.line(&f"{a:?}")?; // expect: [1, 3, 2]
     let r = Ref { r: "in a struct" };
     let r2 = r;

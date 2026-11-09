@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.75.0 (2026-11-09)
+
+Step 59: lends past the call. See [docs/59-lends.md](docs/59-lends.md).
+
+### Added
+
+- A `&mut` parameter whose borrow only the result keeps, when the result
+  can write nothing but values of free type parameters (`&mut T`, `&mut
+  [T]`, `Option<&mut T>`, structs of those such as `IterMut<T>`), can be
+  named at return in `ensures` by measures free in those parameters and
+  by fields; the caller learns it when the borrow ends. `List`'s
+  `index_mut`, `get_mut`, `as_mut_slice`, `slice_mut` and `iter_mut`
+  ensure the length stays, so `l[0] = 3; l[1] = 4;` proves, and a refined
+  field can be written as `self.cells[i] = v`.
+- A measure can be a `match` that says which variant `self` (or a field
+  of it) is. `Option::is_some`/`is_none` and `Result::is_ok`/`is_err` are
+  measures; `List::pop` says `r.is_some() == (old(self.len()) > 0)`.
+
+### Changed
+
+- A method that takes `&mut self` called on `x[i]` (or a field of it)
+  uses `index_mut`: `l[i].push(x)` works.
+- `swap` of a slice or a list takes indices proved less than `len()`, as
+  `s[i]` does, and gives `()`; the checking one that gave a `bool` is
+  gone.
+
+### Fixed
+
+- Soundness: a field a refinement is about, lent to a call that ensured
+  anything, had the struct's refinements assumed of its new value while
+  they were being proved again, so a call could break them unnoticed
+  (since 0.43.0). They're proved first now.
+- `t run --interp`: dropping the rest of a partly moved struct checked a
+  refinement about the moved field, and stopped with a false "type
+  soundness violated".
+
 ## 0.74.0 (2026-11-09)
 
 Step 58: tuples. See [docs/58-tuples.md](docs/58-tuples.md).

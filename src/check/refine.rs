@@ -127,6 +127,10 @@ pub(super) struct Refinement {
 /// the way to it.
 type Way = Vec<(usize, usize)>;
 
+/// For each parameter of a function, if it's lend-framed (`lend_framed`),
+/// the type parameters its result can write values of.
+pub(super) type Framed = Vec<Option<Vec<String>>>;
+
 /// One predicate of a refinement, and the parts of the value it's of.
 #[derive(Debug, Clone)]
 struct Part {
@@ -195,8 +199,13 @@ pub(super) struct RefinedSig {
     ensures: Vec<Refinement>,
     /// Which parameters are call-scoped `&mut`s (`call_scoped`): a call
     /// lending a place to one can learn what `ensures` says of it, and a
-    /// field a refinement is about can be lent to one.
+    /// field a refinement is about can be lent to one. Lend-framed ones
+    /// count, once the signature's checked: what they ensure is true when
+    /// the borrow ends.
     scoped: Vec<bool>,
+    /// The lend-framed parameters (`lend_framed`), each with the type
+    /// parameters its result can write values of.
+    framed: Framed,
 }
 
 /// The refinements of a struct's fields, by the struct's symbol
@@ -540,6 +549,7 @@ impl Checker {
             ret: None,
             ensures: Vec::new(),
             scoped: call_scoped(params, ret, &bounds),
+            framed: Vec::new(),
         };
         // An intrinsic's postconditions are trusted, and may say what's
         // behind a `&mut` whose borrow outlives the call: what it is when
@@ -551,6 +561,19 @@ impl Checker {
                     sig.scoped[i] = true;
                 }
             }
+        }
+        // Another function's may say so of what its parameters' types and
+        // its result's show nothing done through the result can change:
+        // the measures free in what it can write (`lend_framed`), which is
+        // proved, not trusted.
+        if f.intrinsic.is_none()
+            && let Some(id) = self.pred_owner
+        {
+            let symbol = self.fns[id.0].symbol.clone();
+            let own = (self.traits.impls.iter())
+                .find(|d| d.methods.iter().any(|(_, s)| *s == symbol))
+                .and_then(|d| Some((&d.self_ty, d.trait_name.as_deref()?)));
+            sig.framed = lend_framed(&self.adts, &self.fns[id.0].scheme, own, &sig.scoped);
         }
         // What it's seen as far as, which the fields its refinements name
         // must be too: its own visibility, or for an impl's method of a
@@ -630,12 +653,13 @@ impl Checker {
         // A result's refinement and `ensures` are postconditions: what's
         // behind a call-scoped `&mut` is its value at return, and `old(..)`
         // what it was at the call.
-        self.pred_post = Some(("the result's refinement", sig.scoped.clone()));
+        let post = |what| Some((what, sig.scoped.clone(), sig.framed.clone()));
+        self.pred_post = post("the result's refinement");
         let r = self.refinement(&f.ret, ret, &scope);
         self.pred_post = None;
         sig.ret = r?;
         for e in &f.ensures {
-            self.pred_post = Some(("`ensures`", sig.scoped.clone()));
+            self.pred_post = post("`ensures`");
             let got = self.pred_type(e, &scope);
             self.pred_post = None;
             if got? != Sort::Bool {
@@ -645,6 +669,14 @@ impl Checker {
                 ));
             }
             sig.ensures.push(Refinement::whole(e.clone()));
+        }
+        // What's ensured of a lend-framed parameter is true when its
+        // borrow ends, which is when the caller next reads it: as of a
+        // call-scoped one at return.
+        for (i, w) in sig.framed.iter().enumerate() {
+            if w.is_some() {
+                sig.scoped[i] = true;
+            }
         }
         Ok(())
     }
@@ -1168,7 +1200,7 @@ impl Checker {
                     Some(sort) => sort,
                     None => return Err(self.not_scalar(e, &crate::pretty::expr_text(e), &t)),
                 };
-                self.pred_mutable(e.span, &at, "a field")?;
+                self.pred_mutable(e.span, &at, "a field", None)?;
                 if at.through_mut {
                     self.info.measures.behind_mut.insert(e.id);
                 }
@@ -1178,7 +1210,7 @@ impl Checker {
                 let mut at = self.pred_place(x, scope)?;
                 let (symbol, derefs, through_mut) = self.find_measure(&at.ty, m)?;
                 at.through_mut |= through_mut;
-                self.pred_mutable(x.span, &at, "a measure")?;
+                self.pred_mutable(x.span, &at, "a measure", Some(&symbol))?;
                 if at.through_mut {
                     self.info.measures.behind_mut.insert(e.id);
                 }
@@ -1376,8 +1408,17 @@ impl Checker {
     /// ("a field", "a measure") is of, is behind a `&mut`, where what's
     /// there may have changed by when the predicate is about: when it's
     /// checked again (`pred_again`), or at return in a postcondition, but
-    /// of the binder or a call-scoped parameter.
-    fn pred_mutable(&self, span: Span, at: &PredPlace, noun: &str) -> Result<(), Error> {
+    /// of the binder or a call-scoped parameter, or a lend-framed one if
+    /// it's a field (a scalar, which can't be of a free type parameter) or
+    /// `measure` is free in what the result can write
+    /// (`Checker::measure_free_in`).
+    fn pred_mutable(
+        &self,
+        span: Span,
+        at: &PredPlace,
+        noun: &str,
+        measure: Option<&str>,
+    ) -> Result<(), Error> {
         if !at.through_mut {
             return Ok(());
         }
@@ -1391,9 +1432,17 @@ impl Checker {
                 ),
             ));
         }
+        let framed = |j: usize| match (self.pred_post.as_ref(), measure) {
+            (Some((_, _, framed)), m) => match (framed.get(j), m) {
+                (Some(Some(_)), None) => true,
+                (Some(Some(w)), Some(m)) => self.measure_free_in(m, &at.ty, w),
+                _ => false,
+            },
+            _ => false,
+        };
         if !self.pred_in_old
-            && let Some((what, scoped)) = &self.pred_post
-            && !matches!(at.named, PredName::Param(j) if scoped[j])
+            && let Some((what, scoped, _)) = &self.pred_post
+            && !matches!(at.named, PredName::Param(j) if scoped[j] || framed(j))
             && !matches!(at.named, PredName::Binder)
         {
             return Err(Error::ty(
@@ -1406,6 +1455,39 @@ impl Checker {
             ));
         }
         Ok(())
+    }
+
+    /// Is measure `symbol`, of a value of type `ty` (or what it points
+    /// to), free in type parameters `w`: is each of its own type
+    /// parameters that `ty` has one of `w` in free in its scheme? Then its
+    /// value is the same whatever values of `w`'s types are in the value
+    /// (lemma L2 of docs/59-lends.md): parametricity, as the measure can
+    /// make, compare or look into none.
+    fn measure_free_in(&self, symbol: &str, ty: &Type, w: &[String]) -> bool {
+        let Some(f) = self.fns.iter().find(|f| f.symbol == symbol) else {
+            return false;
+        };
+        let Type::Fn(sig) = &f.scheme.ty else {
+            return false;
+        };
+        let Some(Type::Ref(_, false, pat)) = sig.params.first() else {
+            return false;
+        };
+        let mut t = self.solved(ty);
+        while let Type::Ref(_, _, inner) | Type::Box(inner) = t {
+            t = self.solved(&inner);
+        }
+        let params: Vec<String> = (f.scheme.params.as_slice().iter())
+            .filter(|p| f.scheme.params.is_type(p))
+            .cloned()
+            .collect();
+        let mut found = HashMap::new();
+        if !crate::traits::matches(pat, &t, &params, &mut found) {
+            return false;
+        }
+        found.iter().all(|(p, u)| {
+            !w.iter().any(|x| free::mentions(u, x)) || free::is_free(&f.scheme, p, None)
+        })
     }
 
     /// The measure `m` of a value of type `ty`, or of what it points to,
@@ -1629,6 +1711,22 @@ impl Checker {
                 self.measure_term(x, true, uses)
             }
             ExprKind::Unary(UnOp::Neg | UnOp::Not, x) => self.measure_term(x, false, uses),
+            // Which variant `self`, or a field of it, is (docs/59-lends.md):
+            // its tag, a function of the value, as a field is.
+            ExprKind::Match(x, arms) => {
+                self.measure_term(x, true, uses)?;
+                for a in arms {
+                    if variant_test(&a.pat).is_none() {
+                        return Err(Error::ty(
+                            a.pat.span,
+                            "a measure's `match` can only say which variant a value is: its \
+                             patterns can't bind or test what's in one",
+                        ));
+                    }
+                    self.measure_term(&a.body, false, uses)?;
+                }
+                Ok(())
+            }
             ExprKind::Binary(op, l, r) => {
                 if matches!(
                     op,
@@ -1825,6 +1923,185 @@ fn call_scoped(params: &[Type], ret: &Type, bounds: &[crate::types::Bound]) -> V
             !opaque && !elsewhere && !in_bounds(r)
         })
         .collect()
+}
+
+/// Which of the parameters `params` that aren't call-scoped are
+/// *lend-framed* `&mut`s, of a function of scheme `s` with result `ret`
+/// (`own` as in `free::free_params`), and the type parameters `W` its
+/// result can write values of (see docs/59-lends.md). Parameter `i` is one
+/// if it's `&'a mut U`, with `'a` in no other parameter, not in `U` nor in
+/// a bound, the result has no `impl` type, and every way the result can
+/// write is to values of a type parameter, each free (`free::is_free`):
+/// its parts that hold `'a` are `&'a mut X` and `&'a mut [X]`, or `&'a V`
+/// with no `Unsafe` in `V` but in its type parameters, through enums,
+/// tuples, structs, boxes, arrays and slices. Then by parametricity
+/// (lemma L1) what's written through the result, until its borrow ends,
+/// is values of `W` in places of those types, which a measure free in
+/// `W` can't see (lemma L2): so what the function ensures of such a
+/// measure at return is still true when the borrow ends, which is when the
+/// caller next reads the place (lemma L3).
+pub(super) fn lend_framed(
+    adts: &crate::types::Adts,
+    s: &crate::types::Scheme,
+    own: Option<(&Type, &str)>,
+    scoped: &[bool],
+) -> Framed {
+    let Type::Fn(sig) = &s.ty else {
+        return Vec::new();
+    };
+    let (params, ret) = (&sig.params, &*sig.ret);
+    fn has_opaque(t: &Type) -> bool {
+        matches!(t, Type::Opaque(..)) || t.parts().any(has_opaque)
+    }
+    let in_bounds = |r: &crate::types::Region| {
+        s.bounds.iter().any(|b| match b {
+            crate::types::Bound::Region(a, b) => a == r || b == r,
+            crate::types::Bound::Param(_, a) | crate::types::Bound::Proj(_, a) => a == r,
+        })
+    };
+    (0..params.len())
+        .map(|i| {
+            if scoped.get(i).copied().unwrap_or(false) || has_opaque(ret) {
+                return None;
+            }
+            let Type::Ref(r @ crate::types::Region::Named(_), true, inner) = &params[i] else {
+                return None;
+            };
+            let elsewhere = (params.iter().enumerate())
+                .any(|(j, t)| j != i && t.regions().contains(&r))
+                || inner.regions().contains(&r);
+            if elsewhere || in_bounds(r) {
+                return None;
+            }
+            let mut w = Vec::new();
+            if !writes(adts, ret, r, &mut w, &mut Vec::new()) {
+                return None;
+            }
+            w.sort();
+            w.dedup();
+            w.iter().all(|x| free::is_free(s, x, own)).then_some(w)
+        })
+        .collect()
+}
+
+/// Does what a value of type `t` can write through its references of
+/// region `r` go only to values of type parameters, which it adds to `w`?
+/// (See `lend_framed`.)
+fn writes(
+    adts: &crate::types::Adts,
+    t: &Type,
+    r: &crate::types::Region,
+    w: &mut Vec<String>,
+    seen: &mut Vec<Type>,
+) -> bool {
+    if !t.regions().contains(&r) {
+        return true;
+    }
+    let param = |t: &Type| match t {
+        Type::Param(x, _) => Some(x.clone()),
+        Type::Slice(inner) => match &**inner {
+            Type::Param(x, _) => Some(x.clone()),
+            _ => None,
+        },
+        _ => None,
+    };
+    match t {
+        Type::Ref(q, true, inner) if q == r => match param(inner) {
+            Some(x) => {
+                w.push(x);
+                true
+            }
+            None => false,
+        },
+        Type::Ref(q, false, inner) if q == r => {
+            // Nothing's written through a `&` but what's in an `Unsafe`,
+            // or might be, in a type parameter.
+            if !frozen_but_params(adts, inner) {
+                return false;
+            }
+            params_in(inner, w);
+            writes(adts, inner, r, w, seen)
+        }
+        Type::Ref(_, _, inner) | Type::Box(inner) | Type::Array(inner, _) | Type::Slice(inner) => {
+            writes(adts, inner, r, w, seen)
+        }
+        Type::Tuple(ts) => ts.iter().all(|t| writes(adts, t, r, w, seen)),
+        Type::Adt(symbol, ..) if symbol == crate::check::UNSAFE => false,
+        Type::Adt(symbol, _, args) if crate::intrinsic::is_intrinsic_type(symbol) => {
+            args.iter().all(|t| writes(adts, t, r, w, seen))
+        }
+        Type::Adt(..) => {
+            if seen.contains(t) {
+                return true;
+            }
+            seen.push(t.clone());
+            all_fields(adts, t)
+                .iter()
+                .all(|f| writes(adts, f, r, w, seen))
+        }
+        // A function value can't hold a reference.
+        Type::Fn(_) => true,
+        _ => false,
+    }
+}
+
+/// Is `t` frozen (`types::frozen`) but for its type parameters?
+fn frozen_but_params(adts: &crate::types::Adts, t: &Type) -> bool {
+    fn go(adts: &crate::types::Adts, t: &Type, seen: &mut Vec<Type>) -> bool {
+        match t {
+            Type::Adt(symbol, ..) if symbol == crate::check::UNSAFE => false,
+            Type::Adt(symbol, _, args) if crate::intrinsic::is_intrinsic_type(symbol) => {
+                args.iter().all(|a| go(adts, a, seen))
+            }
+            Type::Adt(..) => {
+                if seen.contains(t) {
+                    return true;
+                }
+                seen.push(t.clone());
+                all_fields(adts, t).iter().all(|f| go(adts, f, seen))
+            }
+            Type::Box(inner) | Type::Array(inner, _) | Type::Slice(inner) => go(adts, inner, seen),
+            Type::Tuple(ts) => ts.iter().all(|t| go(adts, t, seen)),
+            _ => true,
+        }
+    }
+    go(adts, t, &mut Vec::new())
+}
+
+/// The type parameters in `t`, into `out`.
+fn params_in(t: &Type, out: &mut Vec<String>) {
+    if let Type::Param(x, _) = t {
+        out.push(x.clone());
+    }
+    for p in t.parts() {
+        params_in(p, out);
+    }
+}
+
+/// The variants pattern `p` matches, if it only says which variant a
+/// value is: `V`, `V(_, ..)`, `V { .. }`, `_` (every variant: `[]` with
+/// `true`), or several of those with `|`. The `bool` says it matches every
+/// variant.
+fn variant_test(p: &Pattern) -> Option<(Vec<String>, bool)> {
+    match &p.kind {
+        PatternKind::Wild => Some((Vec::new(), true)),
+        PatternKind::Variant(_, _, v, subs)
+            if subs.iter().all(|s| matches!(s.kind, PatternKind::Wild)) =>
+        {
+            Some((vec![v.name.clone()], false))
+        }
+        PatternKind::Or(alts) => {
+            let mut names = Vec::new();
+            let mut all = false;
+            for a in alts {
+                let (n, every) = variant_test(a)?;
+                names.extend(n);
+                all |= every;
+            }
+            Some((names, all))
+        }
+        _ => None,
+    }
 }
 
 /// What `name` names in a predicate, if it's one of the const parameters
@@ -2615,6 +2892,71 @@ impl Walk<'_> {
             ExprKind::Binary(op, l, r) => {
                 let (a, b) = (self.measure_term(l, this)?, self.measure_term(r, this)?);
                 binary(*op, a, b, &mut self.kinds).ok()?
+            }
+            // Which variant it is: the arm whose variant the tag says, the
+            // first that does (lemma L5 of docs/59-lends.md).
+            ExprKind::Match(x, arms) => {
+                let mut v = self.measure_term(x, this)?;
+                while let Val::Ref(..) = v {
+                    v = self.pointee(v);
+                }
+                let Val::Obj(o) = v else {
+                    return None;
+                };
+                let parts = self.parts.get(&o)?.clone();
+                let mut earlier: Vec<Formula> = Vec::new();
+                let mut cases: Vec<(Formula, Val)> = Vec::new();
+                for a in arms {
+                    let (names, every) = variant_test(&a.pat)?;
+                    let here = match every {
+                        true => Formula::True,
+                        false => {
+                            let mut tests = Vec::new();
+                            for n in &names {
+                                let k = self.variant_index(&parts.symbol, n)?;
+                                let k = i128::try_from(k).ok()?;
+                                tests.push(Formula::eq(&parts.tag, &Lin::constant(k))?);
+                            }
+                            Formula::or(tests)
+                        }
+                    };
+                    let first = Formula::and(
+                        earlier
+                            .iter()
+                            .map(|f| f.clone().not())
+                            .chain([here.clone()])
+                            .collect::<Vec<_>>(),
+                    );
+                    earlier.push(here);
+                    cases.push((first, self.measure_term(&a.body, this)?));
+                }
+                match cases.first().map(|(_, v)| v.clone()) {
+                    Some(Val::Bool(_)) => {
+                        let mut any = Vec::new();
+                        for (c, v) in cases {
+                            let Val::Bool(f) = v else {
+                                return None;
+                            };
+                            any.push(Formula::and([c, f]));
+                        }
+                        Val::Bool(Formula::or(any))
+                    }
+                    Some(Val::Int(_)) => {
+                        let r = Lin::var(self.fresh(Kind::Int(
+                            Lin::constant(i128::from(i64::MIN)),
+                            Lin::constant(i128::from(u64::MAX)),
+                        )));
+                        for (c, v) in cases {
+                            let Val::Int(n) = v else {
+                                return None;
+                            };
+                            let f = Formula::or([c.not(), Formula::eq(&r, &n)?]);
+                            self.fact(f);
+                        }
+                        Val::Int(r)
+                    }
+                    _ => return None,
+                }
             }
             _ => return None,
         })
@@ -4480,15 +4822,27 @@ impl Walk<'_> {
                 })
                 .collect();
             let env = Env::Post(&post.old, Some(&now), &post.targs);
+            // A field lent here is a new value, which the struct's
+            // refinements are proved of below, not assumed: so reading it
+            // for what the call ensures assumes nothing of it but that.
+            let lent_field =
+                (post.scoped.iter().flatten()).any(|p| !self.constrained_around(p).is_empty());
+            let was = self.proving_fields;
+            self.proving_fields |= lent_field;
+            let mut facts = Vec::new();
             if let Some(r) = &sig.ret
                 && let Some(f) = self.pred(r, &post.result, env)
             {
-                self.fact(f);
+                facts.push(f);
             }
             for r in &sig.ensures {
                 if let Some(f) = self.pred(r, &Val::Other, env) {
-                    self.fact(f);
+                    facts.push(f);
                 }
+            }
+            self.proving_fields = was;
+            for f in facts {
+                self.fact(f);
             }
         }
         for p in post.scoped.iter().flatten() {

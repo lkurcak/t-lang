@@ -65,7 +65,7 @@ impl<T> List<T> {
     }
 
     /// Takes the last value out, or `None` if it's empty.
-    export fn pop(&mut self) -> Option<T>
+    export fn pop(&mut self) -> { r: Option<T> | r.is_some() == (old(self.len()) > 0) }
     ensures
         self.len() + 1 == old(self.len()) || (self.len() == 0 && old(self.len()) == 0),
     {
@@ -84,8 +84,12 @@ impl<T> List<T> {
         unsafe { self.buf.slice(0, self.len) }
     }
 
-    /// Its values, as a slice to change, as many as it holds.
-    export fn as_mut_slice(&mut self) -> { s: &mut [T] | s.len() == old(self.len()) } {
+    /// Its values, as a slice to change, as many as it holds. What's
+    /// written through it is `T`s, so the list is as long after (docs/59).
+    export fn as_mut_slice(&mut self) -> { s: &mut [T] | s.len() == old(self.len()) }
+    ensures
+        self.len() == old(self.len()),
+    {
         // SAFETY: slots `0..len` hold values.
         unsafe { self.buf.slice_mut(0, self.len) }
     }
@@ -95,10 +99,12 @@ impl<T> List<T> {
     export fn index(&self, i: { i: usize | i < self.len() }) -> &T { &self.as_slice()[i] }
 
     /// The value at `i`, which is less than `len()`, to change: `l[i] = v`
-    /// is `*l.index_mut(i) = v`.
-    export fn index_mut(&mut self, i: { i: usize | i < self.len() }) -> &mut T {
-        &mut self.as_mut_slice()[i]
-    }
+    /// is `*l.index_mut(i) = v`. The list is as long after, whatever's
+    /// written there.
+    export fn index_mut(&mut self, i: { i: usize | i < self.len() }) -> &mut T
+    ensures
+        self.len() == old(self.len()),
+    { &mut self.as_mut_slice()[i] }
 
     /// Puts `v` at `i`, which is less than `len()`, and gives back what was
     /// there. Unlike `l[i] = v`, it lends the list only for the call, so it
@@ -126,14 +132,18 @@ impl<T> List<T> {
     export fn slice_mut<'a>(
         &'a mut self,
         r: { r: Range<usize> | r.start() <= r.end() && r.end() <= self.len() },
-    ) -> { t: &'a mut [T] | t.len() + r.start() == r.end() } { self.as_mut_slice().slice_mut(r) }
+    ) -> { t: &'a mut [T] | t.len() + r.start() == r.end() } ensures self.len() == old(self.len()) {
+        self.as_mut_slice().slice_mut(r)
+    }
 
     /// The value at `i`, or `None` if there's none: if `i` isn't less than
     /// `len()`.
     export fn get(&self, i: usize) -> Option<&T> { self.as_slice().get(i) }
 
     /// The value at `i`, to change, or `None` if there's none.
-    export fn get_mut(&mut self, i: usize) -> Option<&mut T> { self.as_mut_slice().get_mut(i) }
+    export fn get_mut(&mut self, i: usize) -> Option<&mut T> ensures self.len() == old(self.len()) {
+        self.as_mut_slice().get_mut(i)
+    }
 
     /// The first value, or `None` if it's empty.
     export fn first(&self) -> Option<&T> { self.as_slice().first() }
@@ -145,16 +155,16 @@ impl<T> List<T> {
     export fn iter(&self) -> Iter<T> { self.as_slice().iter() }
 
     /// Its values, to change, front to back.
-    export fn iter_mut(&mut self) -> IterMut<T> { self.as_mut_slice().iter_mut() }
-
-    /// Swaps the values at `i` and `j`, if there are values there, and
-    /// says whether it did.
-    export fn swap(&mut self, i: usize, j: usize) -> bool ensures self.len() == old(self.len()) {
-        // SAFETY: slots `0..len` hold values. The slice borrows `buf`, not
-        // the list, so the checker sees `len` stay as it was.
-        let s = unsafe { self.buf.slice_mut(0, self.len) };
-        s.swap(i, j)
+    export fn iter_mut(&mut self) -> IterMut<T> ensures self.len() == old(self.len()) {
+        self.as_mut_slice().iter_mut()
     }
+
+    /// Swaps the values at `i` and `j`, which are less than `len()`, as
+    /// `l[i]` is.
+    export fn swap(&mut self, i: { i: usize | i < self.len() }, j: { j: usize | j < self.len() })
+    ensures
+        self.len() == old(self.len()),
+    { self.as_mut_slice().swap(i, j) }
 
     /// Gives each value, front to back, to `f`, and then the buffer back.
     export fn free_with<effect e, F: FnMut(T) with e + Discard>(mut self, mut f: F) with e {

@@ -623,9 +623,11 @@ pub(crate) struct Checker {
     /// between: "a result", say.
     pred_again: Option<&'static str>,
     /// In a postcondition (`ensures`, or a result's refinement), which
-    /// it is, and which parameters are call-scoped `&mut`s, whose values
-    /// at return it can name (see `refine::call_scoped`).
-    pred_post: Option<(&'static str, Vec<bool>)>,
+    /// it is, which parameters are call-scoped `&mut`s, whose values at
+    /// return it can name (see `refine::call_scoped`), and which are
+    /// lend-framed, of whose values at return it can name the measures free
+    /// in the type parameters given (see `refine::lend_framed`).
+    pred_post: Option<(&'static str, Vec<bool>, refine::Framed)>,
     /// Inside `old(..)` in a postcondition.
     pred_in_old: bool,
     /// In a loop's invariant, not a refinement: what messages call it.

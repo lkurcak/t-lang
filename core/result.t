@@ -7,7 +7,8 @@ use crate::option::Option;
 export enum Result<T, E> { Ok(T), Err(E) }
 
 impl<T, E> Result<T, E> {
-    /// Is it `Ok`?
+    /// Is it `Ok`? A measure: a refinement can say which it is.
+    #[measure]
     export fn is_ok(&self) -> bool {
         match self {
             Ok(_) => true,
@@ -16,6 +17,7 @@ impl<T, E> Result<T, E> {
     }
 
     /// Is it `Err`?
+    #[measure]
     export fn is_err(&self) -> bool { !self.is_ok() }
 
     /// References to what's in it.

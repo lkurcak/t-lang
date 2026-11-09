@@ -113,30 +113,16 @@ impl<T> [T] {
         head.cut_mut(r.start()).1
     }
 
-    /// Swaps the values at `i` and `j`, if there are values there, and says
-    /// whether it did. It's `split_at_mut` between them, so safe code.
-    export fn swap(&mut self, i: usize, j: usize) -> bool {
-        if i >= self.len() || j >= self.len() {
-            return false;
-        }
+    /// Swaps the values at `i` and `j`, which are less than `len()`, as
+    /// `s[i]` is. It's `cut_mut` between them, so safe code.
+    export fn swap(&mut self, i: { i: usize | i < self.len() }, j: { j: usize | j < self.len() }) {
         if i == j {
-            return true;
+            return;
         }
         let lo = if i < j { i } else { j };
         let hi = if i < j { j } else { i };
-        match self.split_at_mut(hi) {
-            Some((head, tail)) => match head.get_mut(lo) {
-                Some(a) => match tail.get_mut(0) {
-                    Some(b) => {
-                        mem::swap(a, b);
-                        true
-                    },
-                    None => false,
-                },
-                None => false,
-            },
-            None => false,
-        }
+        let (head, tail) = self.cut_mut(hi);
+        mem::swap(&mut head[lo], &mut tail[0]);
     }
 
     /// Its values, by reference, front to back.

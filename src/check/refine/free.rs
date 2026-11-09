@@ -46,24 +46,7 @@ pub(crate) fn free_params(adts: &Adts, s: &Scheme, own: Option<(&Type, &str)>) -
     };
     let mut out = Vec::new();
     for name in s.params.as_slice() {
-        if !s.params.is_type(name) {
-            continue;
-        }
-        let this = s.params.ty(name);
-        let bounded = s.preds.iter().all(|p| match p.ty == this {
-            true => MARKERS.contains(&p.trait_name.as_str()),
-            false => !mentions(&p.ty, name),
-        });
-        let is_own = |a: &Type| match (a, own) {
-            (Type::Proj(base, tr, _), Some((ty, t))) => **base == *ty && tr == t,
-            _ => false,
-        };
-        let equal = (s.eqs.iter())
-            .filter(|(a, _)| !is_own(a))
-            .any(|(a, b)| mentions(a, name) || mentions(b, name));
-        let projected =
-            (s.bounds.iter()).any(|b| matches!(b, Bound::Proj(t, _) if mentions(t, name)));
-        if !bounded || equal || projected || mentions(&sig.effects, name) {
+        if !is_free(s, name, own) {
             continue;
         }
         let mut params = Vec::new();
@@ -91,8 +74,44 @@ pub(crate) fn free_params(adts: &Adts, s: &Scheme, own: Option<(&Type, &str)>) -
     out
 }
 
+/// Can a function of scheme `s` make no value of its type parameter
+/// `name`, nor a reference to one: is each trait bound on it a marker, and
+/// is it in no other bound, equality or effect? (`own` as in
+/// `free_params`.) Then what the function does with values of it, it does
+/// with values it's given, whatever type it is (lemma P1 of
+/// docs/55-free-theorems.md), and only to places it got as of that type
+/// (lemma L1 of docs/59-lends.md).
+pub(crate) fn is_free(s: &Scheme, name: &str, own: Option<(&Type, &str)>) -> bool {
+    let Type::Fn(sig) = &s.ty else {
+        return false;
+    };
+    if !s.params.is_type(name) {
+        return false;
+    }
+    let this = s.params.ty(name);
+    let bounded = s.preds.iter().all(|p| match p.ty == this {
+        true => MARKERS.contains(&p.trait_name.as_str()),
+        false => !mentions(&p.ty, name),
+    });
+    let is_own = |a: &Type| match (a, own) {
+        (Type::Proj(base, tr, _), Some((ty, t))) => **base == *ty && tr == t,
+        _ => false,
+    };
+    let equal = (s.eqs.iter())
+        .filter(|(a, _)| !is_own(a))
+        .any(|(a, b)| mentions(a, name) || mentions(b, name));
+    let projected = (s.bounds.iter()).any(|b| matches!(b, Bound::Proj(t, _) if mentions(t, name)));
+    // Effects make no values. One still to be inferred, the function's own
+    // (`Type::Inferred`), names all its type parameters; it's only there
+    // while its package's signatures are checked.
+    let effects = (sig.effects.effect_items().iter())
+        .filter(|e| !matches!(e, Type::Inferred(..)))
+        .any(|e| mentions(e, name));
+    bounded && !equal && !projected && !effects
+}
+
 /// Is type parameter `name` in `t`?
-fn mentions(t: &Type, name: &str) -> bool {
+pub(crate) fn mentions(t: &Type, name: &str) -> bool {
     matches!(t, Type::Param(n, _) if n == name) || t.parts().any(|p| mentions(p, name))
 }
 

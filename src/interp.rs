@@ -1391,6 +1391,24 @@ impl<'p> Interp<'p, '_> {
             ExprKind::Binary(op, l, r) => {
                 pred_op(*op, self.measure_term(l, this), self.measure_term(r, this))
             }
+            // Which variant it is (docs/59-lends.md).
+            ExprKind::Match(x, arms) => {
+                let mut v = self.measure_term(x, this).val();
+                while let Value::Ref(p) | Value::Box(p) = &v
+                    && p.range.is_none()
+                {
+                    v = self.pred_deref(v);
+                }
+                let Value::Variant(_, variant, _) = &v else {
+                    unsound(&format!("a measure's `match` of `{v}`"))
+                };
+                for a in arms {
+                    if variant_matches(&a.pat, variant) {
+                        return self.measure_term(&a.body, this);
+                    }
+                }
+                unsound("a measure's `match` that no arm matches")
+            }
             _ => unsound("a measure's body outside the logic"),
         }
     }
@@ -3212,6 +3230,13 @@ impl<'p> Interp<'p, '_> {
             return;
         };
         for (j, f) in decl.fields.iter().enumerate() {
+            // A field moved out leaves the struct partly there: a
+            // refinement of a field that's gone, or about one, says
+            // nothing until the struct is whole again (and the checker
+            // proves it again when a field is put back).
+            if fields[..=j].iter().any(|(_, v)| matches!(v, Value::Moved)) {
+                continue;
+            }
             if let Some(r) = self.type_refined(&f.ty, &fields[..j], false) {
                 r.check(
                     self,
@@ -3308,4 +3333,16 @@ impl<'p> Interp<'p, '_> {
 /// Is `name`, a struct value's type, a tuple's: `(i64, bool)`?
 fn is_tuple(name: &str) -> bool {
     name.starts_with('(')
+}
+
+/// Does pattern `p`, of a measure's `match`, which only says which variant
+/// a value is, match variant `variant`?
+fn variant_matches(p: &crate::ast::Pattern, variant: &str) -> bool {
+    use crate::ast::PatternKind;
+    match &p.kind {
+        PatternKind::Wild => true,
+        PatternKind::Variant(_, _, v, _) => v.name == variant,
+        PatternKind::Or(alts) => alts.iter().any(|a| variant_matches(a, variant)),
+        _ => false,
+    }
 }

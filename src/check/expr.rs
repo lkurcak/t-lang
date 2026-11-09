@@ -1292,6 +1292,84 @@ impl Checker {
     //
     // Which method `m` is depends on S, so S must be known here, as
     // for a field. See `lookup_method` for how it's found.
+    /// Makes each `x[i]` that place `e` is, or is in through fields and
+    /// `*`s, `index_mut`'s rather than `index`'s: `e` is written through,
+    /// as the receiver of a method that takes `&mut self`. The parser
+    /// decides it for `x[i] = v` and `&mut x[i]` (`parser::written`); a
+    /// method's receiver needs the method's type first. Only an `x[i]`
+    /// rewritten as `*x.index(i)`, whose method's name has no text of its
+    /// own, is changed (see docs/59-lends.md).
+    fn written_receiver(&mut self, e: &Expr) {
+        match &e.kind {
+            ExprKind::Field(x, _) => self.written_receiver(x),
+            ExprKind::Unary(UnOp::Deref, inner) => {
+                if let ExprKind::MethodCall(x, name, targs, args) = &inner.kind
+                    && name.name == "index"
+                    && name.span.start == name.span.end
+                    && targs.is_empty()
+                    && let [i] = args.as_slice()
+                {
+                    self.index_mut_instead(inner, x, name, i);
+                    self.written_receiver(x);
+                } else {
+                    self.written_receiver(inner);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Resolves call `call`, `x.index(i)` from `x[i]`, as `x.index_mut(i)`
+    /// instead, if `x`'s type has one: the same index, a `&mut` result.
+    fn index_mut_instead(&mut self, call: &Expr, x: &Expr, name: &Ident, i: &Expr) {
+        let Some(t) = self.typed.exprs.get(&x.id).cloned() else {
+            return;
+        };
+        let mut base = self.solved(&t);
+        let mut derefs = 0;
+        while let Type::Ref(_, _, inner) | Type::Box(inner) = base {
+            base = self.solved(&inner);
+            derefs += 1;
+        }
+        let ident = Ident {
+            name: "index_mut".into(),
+            span: name.span,
+            id: name.id,
+        };
+        let Ok(found) = self.method_of(&base, &ident, &[]) else {
+            return;
+        };
+        let Type::Fn(sig) = &found.ty else {
+            return;
+        };
+        let receiver = Type::Ref(Region::Erased, true, Box::new(base));
+        let index = self.typed.exprs.get(&i.id).cloned();
+        let fits = sig.params.len() == 2
+            && self.unify(&receiver, &sig.params[0]).is_ok()
+            && index.is_some_and(|t| self.unify(&t, &sig.params[1]).is_ok());
+        if !fits {
+            return;
+        }
+        self.typed.exprs.insert(call.id, (*sig.ret).clone());
+        self.call_effect(
+            call.span,
+            "`index_mut`".to_string(),
+            (*sig.effects).clone(),
+            Some(found.symbol.clone()),
+        );
+        self.resolved(&ident, &found, true);
+        let res = Res::Fn(found.symbol.clone(), found.args.clone());
+        self.typed
+            .methods
+            .insert(call.id, (res, derefs, Some(true)));
+        let resolved = Resolved {
+            symbol: found.symbol.clone(),
+            derefs,
+            autoref: Some(true),
+        };
+        self.info.methods.insert(name.id, resolved);
+    }
+
     fn method_call(
         &mut self,
         e: &Expr,
@@ -1365,6 +1443,11 @@ impl Checker {
         // that may have no size, which is only ever a place (lemma U4).
         if autoref.is_none() && base.is_unsized() {
             return Err(generics::unsized_slice(x.span, &base));
+        }
+        // A method that takes `&mut self` writes through its receiver: an
+        // `x[i]` it is, or is in, is `index_mut`'s, as for `x[i] = v`.
+        if autoref == Some(true) {
+            self.written_receiver(x);
         }
         let receiver = match autoref {
             Some(m) => Type::Ref(Region::Erased, m, Box::new(base.clone())),

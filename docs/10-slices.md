@@ -29,12 +29,14 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     }
     let sum = total(l.as_slice());
     let last = *l.as_slice().last().unwrap();
-    let swapped = l.as_mut_slice().swap(0, 3);
+    let s = l.as_mut_slice();
+    if s.len() == 4 {
+        s.swap(0, 3); // indices proved in range, since step 59
+    }
     let first = *l.get(0).unwrap();
-    out.line(&sum)?;     // expect: 100
-    out.line(&last)?;    // expect: 40
-    out.line(&swapped)?; // expect: true
-    out.line(&first)     // expect: 40
+    out.line(&sum)?;  // expect: 100
+    out.line(&last)?; // expect: 40
+    out.line(&first)  // expect: 40
 }
 ```
 
