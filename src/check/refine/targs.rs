@@ -536,7 +536,7 @@ impl Walk<'_> {
                 false
             }
             (Val::Ref(_, Pointee::Place(p)), Type::Ref(_, _, inner) | Type::Box(inner))
-                if k == 0 =>
+                if k == 0 && !self.no_place_reads =>
             {
                 let inner = self.cx.solved(inner);
                 let w = self.read_place(&p.clone());
@@ -2093,4 +2093,38 @@ fn param_paths(t: &Type, x: &str) -> Vec<Pos> {
     let mut out = Vec::new();
     go(t, x, &mut Vec::new(), &mut out);
     out
+}
+
+impl Walk<'_> {
+    /// `result`, of type `ty`, is, where branches meet, branch `i`'s value
+    /// `vals[i]` where `guards[i]` holds: at each position, what's known of
+    /// that branch's values there, under that condition. The places as the
+    /// branches left them aren't here any more, so what a reference points
+    /// to isn't read.
+    pub(super) fn join_values(&mut self, result: &Val, ty: &Type, vals: &[Val], guards: &[Formula]) {
+        let Some(o) = obj_of(result) else {
+            return;
+        };
+        let positions = self.positions(ty);
+        if positions.is_empty() {
+            return;
+        }
+        let was = std::mem::replace(&mut self.no_place_reads, true);
+        let mut tree = Vec::new();
+        for pos in positions {
+            let mut cases = Vec::new();
+            for (v, g) in vals.iter().zip(guards) {
+                for (mut cg, c) in self.values_at(v, ty, &pos) {
+                    cg.insert(0, g.clone());
+                    cases.push((cg, c));
+                }
+            }
+            if cases.iter().all(|(_, c)| c.is_any()) {
+                continue;
+            }
+            tree.push((pos, Disj(cases)));
+        }
+        self.no_place_reads = was;
+        self.trees.entry(o).or_default().extend(tree);
+    }
 }

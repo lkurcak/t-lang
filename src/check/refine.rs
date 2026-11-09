@@ -1875,6 +1875,7 @@ impl Checker {
             decl: HashMap::new(),
             lent_trees: HashMap::new(),
             coerced_args: Vec::new(),
+            no_place_reads: false,
             closure_params: HashMap::new(),
             module: self.fns[id.0].module,
             invariants: HashMap::new(),
@@ -2438,6 +2439,9 @@ struct Walk<'c> {
     /// the closure's node, as the call it's given to says
     /// (`targs::closure_trees`).
     closure_params: HashMap<NodeId, Vec<targs::Tree>>,
+    /// While working out what's known where branches meet: what a
+    /// reference points to isn't read (`Walk::join_values`).
+    no_place_reads: bool,
     /// For each argument of the call being checked, how many more
     /// references or boxes a coercion looked through, and its own type
     /// (`Walk::call_trees`).
@@ -4076,10 +4080,7 @@ impl Walk<'_> {
             .map(|o| Formula::and(o.facts.clone()))
             .collect();
         let mut tree_joins: Vec<(Option<Obj>, Vec<Option<Obj>>)> = Vec::new();
-        tree_joins.push((
-            None,
-            reached.iter().map(|o| targs::obj_of(&o.val)).collect(),
-        ));
+        let branch_vals: Vec<Val> = reached.iter().map(|o| o.val.clone()).collect();
         // A place each branch left a different object at is a new one, of
         // which each measure every branch knows of its object is, in each
         // case, what it was of that branch's: a measure is a function of
@@ -4126,11 +4127,11 @@ impl Walk<'_> {
         }
         let result = self.unknown(ty);
         for (o, each) in tree_joins {
-            let o = o.or_else(|| targs::obj_of(&result));
             if let Some(o) = o {
                 self.join_trees(o, &each, &guards);
             }
         }
+        self.join_values(&result, ty, &branch_vals, &guards);
         let mut cases = Vec::new();
         for (i, o) in reached.into_iter().enumerate() {
             for event in o.invalidated {
