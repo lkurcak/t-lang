@@ -54,8 +54,21 @@ pub(super) enum Cand {
 
 /// What each value at a position is: one of the cases, each where its
 /// conditions hold. With none, there are no values there.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub(super) struct Disj(pub(super) Vec<(Vec<Formula>, Cand)>);
+
+impl PartialEq for Cand {
+    /// The same, as far as is cheap to tell: predicates by identity.
+    fn eq(&self, other: &Cand) -> bool {
+        match (self, other) {
+            (Cand::Exact(a), Cand::Exact(b)) => a == b,
+            (Cand::Pred(a), Cand::Pred(b)) => Rc::ptr_eq(a, b),
+            (Cand::All(a), Cand::All(b)) => a == b,
+            (Cand::Any, Cand::Any) => true,
+            _ => false,
+        }
+    }
+}
 
 impl Disj {
     fn any() -> Disj {
@@ -67,7 +80,7 @@ impl Disj {
     }
 
     /// Does it say nothing, so that any value has it?
-    fn is_any(&self) -> bool {
+    pub(super) fn is_any(&self) -> bool {
         self.0.iter().any(|(g, c)| g.is_empty() && c.is_any())
     }
 
@@ -83,9 +96,58 @@ impl Disj {
     fn text(&self) -> Option<String> {
         self.0.iter().find_map(|(_, c)| c.text())
     }
+
+    /// How many cases and conditions it has, at every depth.
+    fn size(&self) -> u64 {
+        let cand = |c: &Cand| match c {
+            Cand::All(ds) => ds.iter().map(Disj::size).sum(),
+            _ => 1,
+        };
+        (self.0.iter()).map(|(g, c)| g.len() as u64 + cand(c)).sum()
+    }
 }
 
 impl Cand {
+    /// What all of `ds` say, flattened: an `All` in an `All` is spliced
+    /// in, what says nothing is left out, and each is said once.
+    pub(super) fn all(ds: Vec<Disj>) -> Cand {
+        let mut out: Vec<Disj> = Vec::new();
+        let push = |out: &mut Vec<Disj>, d: Disj| {
+            if !d.is_any() && !out.contains(&d) {
+                out.push(d);
+            }
+        };
+        for d in ds {
+            match <[_; 1]>::try_from(d.0) {
+                Ok([(g, Cand::All(es))]) if g.is_empty() => {
+                    for e in es {
+                        push(&mut out, e);
+                    }
+                }
+                Ok([one]) => push(&mut out, Disj(vec![one])),
+                Err(cases) => push(&mut out, Disj(cases)),
+            }
+        }
+        match <[_; 1]>::try_from(out) {
+            Ok([d]) => match <[_; 1]>::try_from(d.0) {
+                Ok([(g, c)]) if g.is_empty() => c,
+                Ok([one]) => Cand::All(vec![Disj(vec![one])]),
+                Err(cases) => Cand::All(vec![Disj(cases)]),
+            },
+            Err(out) if out.is_empty() => Cand::Any,
+            Err(out) => Cand::All(out),
+        }
+    }
+
+    /// Is it of no value, as what's in `None`'s `Some` or an empty list's
+    /// elements: one of a `Disj` with no cases?
+    fn is_none(&self) -> bool {
+        match self {
+            Cand::All(ds) => ds.iter().any(|d| d.0.iter().all(|(_, c)| c.is_none())),
+            _ => false,
+        }
+    }
+
     fn is_any(&self) -> bool {
         match self {
             Cand::Any => true,
@@ -471,7 +533,7 @@ impl Walk<'_> {
                 .map(|(g, c)| {
                     let mut all = reg.clone();
                     all.push(Disj::one(c));
-                    (g, Cand::All(all))
+                    (g, Cand::all(all))
                 })
                 .collect()
         };
@@ -551,7 +613,7 @@ impl Walk<'_> {
         if opaque {
             return match reg.is_empty() {
                 true => vec![(Vec::new(), Cand::Any)],
-                false => vec![(Vec::new(), Cand::All(reg))],
+                false => vec![(Vec::new(), Cand::all(reg))],
             };
         }
         with(cases)
@@ -579,7 +641,8 @@ impl Walk<'_> {
             }
             if let Some(o) = Self::obj_of(v) {
                 let tree = self.trees.entry(o).or_default();
-                if !tree.iter().any(|(p, e)| p == pos && std::ptr::eq(e, d)) {
+                if !tree.iter().any(|(p, e)| p == pos && e == d) {
+                    logic::count(|w| w.carried += d.size());
                     tree.push((pos.clone(), d.clone()));
                 }
             }
@@ -879,8 +942,20 @@ impl Walk<'_> {
     /// `assume_fields` says of all the fields' values (as reading them here
     /// would read this one again); and what the call that last lent it left
     /// there (`lent_trees`).
+    /// What's declared of the value at place `p`, but for the field
+    /// refinements of the structs it's in, which `place_decl` reads the
+    /// structs' fields for: so reading nothing.
+    pub(super) fn place_decl_own(&mut self, p: &Place) -> Tree {
+        self.place_decl_depth(p, false)
+    }
+
     pub(super) fn place_read(&mut self, p: &Place) -> Tree {
         let mut tree = self.place_decl_depth(p, false);
+        // What's declared of the value itself there isn't known of it until
+        // it's proved again (`Walk::post`).
+        if self.reproving.contains(p) {
+            tree.retain(|(pos, _)| !pos.is_empty());
+        }
         if let Some(t) = self.lent_trees.get(p) {
             tree.extend(t.iter().cloned());
         }
@@ -980,12 +1055,18 @@ pub(super) fn widen(tree: &Tree) -> Tree {
         match c {
             Cand::Exact(_) | Cand::Any => Cand::Any,
             Cand::Pred(p) => Cand::Pred(p.clone()),
-            Cand::All(ds) => Cand::All(ds.iter().map(disj).collect()),
+            Cand::All(ds) => Cand::all(ds.iter().map(disj).collect()),
         }
     }
     fn disj(d: &Disj) -> Disj {
-        let cases: Vec<(Vec<Formula>, Cand)> =
-            d.0.iter().map(|(g, c)| (g.clone(), cand(c))).collect();
+        // A case with no values in it adds none: it's left out, as it would
+        // be of the disjunction it's in (`Cand::is_none`), while another is
+        // there. With none other, what each says is kept.
+        let some = d.0.iter().any(|(_, c)| !c.is_none());
+        let cases: Vec<(Vec<Formula>, Cand)> = (d.0.iter())
+            .filter(|(_, c)| !some || !c.is_none())
+            .map(|(g, c)| (g.clone(), cand(c)))
+            .collect();
         // Nothing said in any case, or no values: nothing declared.
         if cases.iter().all(|(_, c)| c.is_any()) {
             return Disj::any();
@@ -1095,11 +1176,12 @@ impl Walk<'_> {
     pub(super) fn knowledge(&mut self, v: &Val, t: &Type) -> Tree {
         let mut out = Vec::new();
         for pos in self.positions(t) {
-            let cases = self.values_at(v, t, &pos);
-            if cases.iter().all(|(g, c)| g.is_empty() && c.is_any()) {
+            // With no cases, there are no values there: that's known too.
+            let cases = Disj(self.values_at(v, t, &pos));
+            if cases.is_any() {
                 continue;
             }
-            out.push((pos, Disj(cases)));
+            out.push((pos, cases));
         }
         out
     }
@@ -1207,7 +1289,7 @@ impl Walk<'_> {
                                     .collect();
                                 let c = match here.is_empty() {
                                     true => Cand::Any,
-                                    false => Cand::All(here),
+                                    false => Cand::all(here),
                                 };
                                 let src = Source {
                                     arg: j,
@@ -1243,7 +1325,7 @@ impl Walk<'_> {
                                 .collect();
                             let c = match here.is_empty() {
                                 true => Cand::Any,
-                                false => Cand::All(here.clone()),
+                                false => Cand::all(here.clone()),
                             };
                             push(
                                 &mut inst,
@@ -1483,6 +1565,7 @@ impl Walk<'_> {
         // parameter's, what's written there must be exactly what's declared
         // of the argument there: what the callee may write is what its own
         // type says.
+        let scoped = self.cx.scoped_params(symbol);
         for (j, a) in fsig.params.iter().enumerate() {
             let (Some(v), Some(t)) = (vals.get(j).cloned(), ptys.get(j).cloned()) else {
                 continue;
@@ -1503,12 +1586,22 @@ impl Walk<'_> {
                 if want.is_any() || inside.iter().any(|p| pos.starts_with(p)) {
                     continue;
                 }
+                // What a place lent straight to a call-scoped `&mut` is
+                // declared to be itself is proved again after the call, of
+                // what the call left there, as its postconditions say
+                // (`Walk::post`): nothing reads it until then.
+                if pos.as_slice() == [0]
+                    && places.get(j).is_some_and(Option::is_some)
+                    && scoped.get(j) == Some(&true)
+                {
+                    continue;
+                }
                 let Some((pt, Variance::Inv)) = self.type_at(&t, pos) else {
                     continue;
                 };
                 let have: Vec<(Vec<Formula>, Cand)> = (param_trees[j].iter())
                     .filter(|(p, _)| p == pos)
-                    .map(|(_, d)| (Vec::new(), Cand::All(vec![d.clone()])))
+                    .map(|(_, d)| (Vec::new(), Cand::all(vec![d.clone()])))
                     .collect();
                 let have = match have.is_empty() {
                     true => vec![(Vec::new(), Cand::Any)],
@@ -1616,36 +1709,68 @@ pub(super) fn obj_of(v: &Val) -> Option<Obj> {
 }
 
 impl Walk<'_> {
-    /// Object `o` is, where branches meet, branch `i`'s object `each[i]`
-    /// where `guards[i]` holds: at each position any of them has something
-    /// said of, that's said of it, under that condition, and nothing under
-    /// the others'.
-    pub(super) fn join_trees(&mut self, o: Obj, each: &[Option<Obj>], guards: &[Formula]) {
+    /// Object `o`, of type `t`, is, where branches meet, branch `i`'s
+    /// object `each[i]` where `guards[i]` holds: at each position, what's
+    /// known of that one's values there, under that condition. Of an
+    /// enum's, that's what's said of it and of its variants' fields, each
+    /// where it's that variant: so `None` has no values in its `Some`, and
+    /// joined with a `Some`, what's known is that one's.
+    pub(super) fn join_trees(
+        &mut self,
+        o: Obj,
+        t: &Type,
+        each: &[Option<Obj>],
+        guards: &[Formula],
+    ) {
+        let enums = each
+            .iter()
+            .all(|b| b.is_some_and(|b| self.parts.contains_key(&b)));
         let mut positions: Vec<Pos> = Vec::new();
-        for b in each.iter().flatten() {
-            for (p, _) in self.trees.get(b).into_iter().flatten() {
-                if !positions.contains(p) {
-                    positions.push(p.clone());
+        if enums {
+            positions = self.positions(t);
+        } else {
+            for b in each.iter().flatten() {
+                for (p, _) in self.trees.get(b).into_iter().flatten() {
+                    if !positions.contains(p) {
+                        positions.push(p.clone());
+                    }
                 }
             }
         }
         if positions.is_empty() {
             return;
         }
+        let was = std::mem::replace(&mut self.no_place_reads, true);
         let mut tree = Vec::new();
         for pos in positions {
             let mut cases = Vec::new();
             for (b, g) in each.iter().zip(guards) {
-                let reg = self.registered(*b, &pos);
-                let c = match reg.is_empty() {
-                    true => Cand::Any,
-                    false => Cand::All(reg),
+                let here = match b {
+                    Some(b) if enums => self.values_at(&Val::Obj(*b), t, &pos),
+                    _ => {
+                        let reg = self.registered(*b, &pos);
+                        match reg.is_empty() {
+                            true => vec![(Vec::new(), Cand::Any)],
+                            false => vec![(Vec::new(), Cand::all(reg))],
+                        }
+                    }
                 };
-                cases.push((vec![g.clone()], c));
+                for (mut cg, c) in here {
+                    cg.insert(0, g.clone());
+                    cases.push((cg, c));
+                }
             }
-            tree.push((pos, Disj(cases)));
+            let d = Disj(cases);
+            if !d.is_any() {
+                tree.push((pos, d));
+            }
         }
-        self.trees.entry(o).or_default().extend(tree);
+        self.no_place_reads = was;
+        match enums {
+            // Of its variants' fields too, as a pattern reads them.
+            true => self.assume_tree(&Val::Obj(o), t, &tree),
+            false => self.trees.entry(o).or_default().extend(tree),
+        }
     }
 }
 
@@ -1685,7 +1810,7 @@ impl Walk<'_> {
             };
             let have: Vec<(Vec<Formula>, Cand)> = (declared.iter())
                 .filter(|(p, _)| p == pos)
-                .map(|(_, d)| (Vec::new(), Cand::All(vec![d.clone()])))
+                .map(|(_, d)| (Vec::new(), Cand::all(vec![d.clone()])))
                 .collect();
             let have = match have.is_empty() {
                 true => vec![(Vec::new(), Cand::Any)],
@@ -2117,9 +2242,9 @@ impl Walk<'_> {
         vals: &[Val],
         guards: &[Formula],
     ) {
-        let Some(o) = obj_of(result) else {
+        if obj_of(result).is_none() {
             return;
-        };
+        }
         let positions = self.positions(ty);
         if positions.is_empty() {
             return;
@@ -2140,6 +2265,8 @@ impl Walk<'_> {
             tree.push((pos, Disj(cases)));
         }
         self.no_place_reads = was;
-        self.trees.entry(o).or_default().extend(tree);
+        // Of the value, and of what's in its fields, of each variant of an
+        // enum's where it's that variant, as a pattern reads them.
+        self.assume_tree(result, ty, &tree);
     }
 }

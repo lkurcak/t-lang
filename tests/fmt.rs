@@ -773,6 +773,27 @@ fn cli_rewrites_or_checks() {
     assert_eq!(fs::read_to_string(&path).unwrap(), "fn main() {");
 }
 
+/// `t fmt --check | head`: once what reads the diff stops, `t` stops
+/// writing it, with no panic, and still says it isn't formatted.
+#[test]
+fn cli_check_into_a_closed_pipe() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("fmt_pipe");
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("messy.t");
+    fs::write(&path, "fn main()   {print(1)}\n").unwrap();
+    let (reader, writer) = std::io::pipe().unwrap();
+    drop(reader);
+    let out = Command::new(env!("CARGO_BIN_EXE_t"))
+        .args(["fmt", "--check"])
+        .arg(&path)
+        .stdout(writer)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.is_empty(), "{stderr}");
+    assert_eq!(out.status.code(), Some(1));
+}
+
 #[test]
 fn prints_try_as_tightly_as_a_call() {
     let src = "fn f() { let a = - x ?; let b = ( - x ) ?; let c = ( a . b ) ?; let d = (a?)?.c()?; let e = (*r)?; let f = (if c { a } else { b })?; }\n";

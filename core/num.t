@@ -138,6 +138,31 @@ export fn wrapping_add<T: Int>(a: T, b: T) -> T {
     }
 }
 
+/// `a + b`, or the greatest value of `T` if it's more, or the least if it's
+/// less: `saturating_add(250u8, 10)` is 255. It's at least `a` when `b`
+/// isn't negative, and at most `a` when `b` isn't positive.
+export fn saturating_add<T: Int>(a: T, b: T) -> { v: T | (b < 0 || v >= a) && (b > 0 || v <= a) } {
+    if b > 0 {
+        if a <= greatest::<T>() - b { a + b } else { greatest::<T>() }
+    } else if a >= least::<T>() - b {
+        a + b
+    } else {
+        least::<T>()
+    }
+}
+
+/// `a - b`, or the greatest value of `T` if it's more, or the least if it's
+/// less: `saturating_sub(3u8, 4)` is 0.
+export fn saturating_sub<T: Int>(a: T, b: T) -> { v: T | (b > 0 || v >= a) && (b < 0 || v <= a) } {
+    if b < 0 {
+        if a <= greatest::<T>() + b { a - b } else { greatest::<T>() }
+    } else if a >= least::<T>() + b {
+        a - b
+    } else {
+        least::<T>()
+    }
+}
+
 /// `-a`, modulo 2^w: `wrapping_neg(1u8)` is 255, and the least value of a
 /// signed type is its own negation.
 export fn wrapping_neg<T: Int>(a: T) -> T {

@@ -53,6 +53,10 @@ export trait Iterator {
         Zip { a: self, b: other }
     }
 
+    /// The values after the first `n`, which are thrown away, so they must
+    /// be `Discard`.
+    fn skip(self, n: usize) -> Skip<Self> where Self::Item: Discard { Skip { iter: self, n } }
+
     /// How many values there are, throwing each away. Counting past the
     /// greatest `usize` panics.
     #[blame_caller]
@@ -170,5 +174,26 @@ impl<A: Iterator, B: Iterator> Iterator for Zip<A, B> where A::Item: Discard {
             },
             None => None,
         }
+    }
+}
+
+/// What `Iterator::skip` gives: the values of `iter` after the first `n`
+/// left to skip.
+#[derive(Discard where I: Discard, Send where I: Send, Sync where I: Sync)]
+export struct Skip<I> { iter: I, n: usize }
+
+impl<I: Iterator> Iterator for Skip<I> where I::Item: Discard {
+    type Item = I::Item;
+    effect e = I::e;
+
+    #[blame_caller]
+    fn next(&mut self) -> Option<I::Item> with I::e {
+        while self.n > 0 {
+            self.n = self.n - 1;
+            if self.iter.next().is_none() {
+                return None;
+            }
+        }
+        self.iter.next()
     }
 }

@@ -131,7 +131,7 @@ impl Walk<'_> {
         }
     }
 
-    fn place_name(&self, p: &Place) -> Option<String> {
+    pub(super) fn place_name(&self, p: &Place) -> Option<String> {
         let bind = self.cx.typed.binds.get(&p.root)?;
         let mut name = bind.name.clone();
         let mut ty = self.cx.solved(&bind.ty);

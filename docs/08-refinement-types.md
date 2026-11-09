@@ -157,7 +157,9 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
 
 `i + 1` can't overflow, as `i < n`, and `n` is an `i64`; it's at least 0,
 as `i` is. A refined variable can't be borrowed `&mut`: a write through
-the reference could break its refinement, and nothing would check.
+the reference could break its refinement, and nothing would check. (But
+for a call that can't keep the reference, after which the refinement is
+proved again, from what the call ensures: step 61, docs/61-proof-search.md.)
 
 What a closure's body knows is what's known where it's made, which still
 holds when it runs, as facts are about values that can't change: a
@@ -234,7 +236,10 @@ it can miss. That's the right way round to be wrong: a weaker procedure
 rejects more programs and never accepts a wrong one, so making it smarter
 later (with the Omega test, which is complete) can only accept more.
 Every step is bounded, with checked `i128` arithmetic, and going past a
-bound is a "don't know": the answer depends only on the question.
+bound is a "don't know": the answer depends only on the question. (Since
+step 61, a constraint whose numbers don't fit is left out instead, and a
+case split a refutation didn't use isn't explored further: see
+docs/61-proof-search.md.)
 
 A failed refinement check, or an arithmetic operation whose `panic` is
 not allowed, explains the required condition and the relevant facts it
