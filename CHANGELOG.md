@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.75.0 (2026-11-09)
 
 Step 59: lends past the call. See [docs/59-lends.md](docs/59-lends.md).
 
