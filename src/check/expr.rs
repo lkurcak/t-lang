@@ -41,6 +41,17 @@ impl Checker {
                 Type::Array(elem, _) => self.array(e, items, Some(*elem))?,
                 _ => self.synth(e)?,
             },
+            // Each value against what's wanted of it, so a closure in a
+            // tuple gets its parameters' types.
+            ExprKind::Tuple(items) => match self.shallow(want) {
+                Type::Tuple(ts) if ts.len() == items.len() => {
+                    for (item, t) in items.iter().zip(&ts) {
+                        self.check(item, t)?;
+                    }
+                    Type::Tuple(ts)
+                }
+                _ => self.synth(e)?,
+            },
             ExprKind::Lambda(l) => {
                 let sig = match self.shallow(want) {
                     // A function type is wanted: the closure takes and gives
@@ -492,6 +503,21 @@ impl Checker {
             // As many values as it lists: its length is in its type, so no
             // value of the type has another (lemma A1 of docs/22-arrays.md).
             ExprKind::Array(items) => self.array(e, items, None),
+            //   Γ ⊢ e1 : T1  ..  Γ ⊢ en : Tn    n ≥ 2
+            //  ---------------------------------------- (T-Tuple)
+            //       Γ ⊢ (e1, .., en) : (T1, .., Tn)
+            //
+            // The product's introduction: a struct literal of the struct a
+            // tuple is taken for, its fields `0` to `n - 1` (lemma T1 of
+            // docs/58-tuples.md). Its eliminators are `t.0` (T-Field) and
+            // patterns.
+            ExprKind::Tuple(items) => {
+                let mut ts = Vec::new();
+                for item in items {
+                    ts.push(self.synth(item)?);
+                }
+                Ok(Type::Tuple(ts))
+            }
 
             //   Γ ⊢ v : τ   τ: Copy   n a literal or const parameter
             //  ------------------------------------------------------ (T-Repeat)
@@ -1662,12 +1688,16 @@ impl Checker {
                         }
                     }
                     if let Some(missing) = exhaust::missing(&self.adts, &t, &p) {
-                        return Err(Error::ty(
-                            pat.span,
-                            format!(
+                        let message = match self.modules.closure_params.contains(&pat.id) {
+                            true => format!(
+                                "refutable pattern in closure parameter: `{missing}` not covered; \
+                                 take a name, and `match` on it"
+                            ),
+                            false => format!(
                                 "refutable pattern in `let`: `{missing}` not covered; use `match` instead"
                             ),
-                        ));
+                        };
+                        return Err(Error::ty(pat.span, message));
                     }
                     self.locals.extend(binds);
                 }

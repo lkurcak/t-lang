@@ -417,6 +417,9 @@ fn shorthand_exprs(e: &Expr, out: &mut HashSet<Span>) {
             }
         }
         ExprKind::Match(_, arms) => arms.iter().for_each(|a| shorthand_pats(&a.pat, out)),
+        ExprKind::Lambda(l) => {
+            (l.params.iter().flat_map(|p| &p.pat)).for_each(|p| shorthand_pats(p, out));
+        }
         _ => {}
     }
     for c in e.children() {
@@ -437,7 +440,8 @@ fn shorthand_pats(p: &Pattern, out: &mut HashSet<Span>) {
         PatternKind::Variant(_, _, _, pats)
         | PatternKind::Path(_, pats, _)
         | PatternKind::Or(pats)
-        | PatternKind::Array(pats) => {
+        | PatternKind::Array(pats)
+        | PatternKind::Tuple(pats) => {
             pats.iter().for_each(|p| shorthand_pats(p, out));
         }
         PatternKind::Wild

@@ -711,6 +711,9 @@ pub(crate) const DISPLAY: &str = "core::fmt::Display";
 /// The symbol of the core library's `Result`.
 pub(crate) const RESULT: &str = "core::result::Result";
 
+/// The symbol of the core library's `Ordering`, what `Ord::cmp` gives.
+pub(crate) const ORDERING: &str = "core::cmp::Ordering";
+
 impl Checker {
     /// Checks what `main`, `f`, of type `sig`, takes and gives back. It
     /// takes nothing, or the `std::Os`, which the program starts with: so

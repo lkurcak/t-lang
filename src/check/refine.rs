@@ -1320,12 +1320,13 @@ impl Checker {
                         format!("`{t}` has no field `{}`", field.name),
                     ));
                 };
-                let Type::Adt(symbol, ..) = &t else {
-                    unreachable!("a struct has fields")
-                };
-                self.field_visible(symbol, field)?;
-                self.field_reach(symbol, field)?;
-                self.note_field(&symbol.clone(), field, &ft);
+                // A tuple's fields are all exported (lemma T1 of
+                // docs/58-tuples.md): seen wherever it is.
+                if let Type::Adt(symbol, ..) = &t {
+                    self.field_visible(symbol, field)?;
+                    self.field_reach(symbol, field)?;
+                    self.note_field(&symbol.clone(), field, &ft);
+                }
                 self.pred_fields.insert(e.id, (derefs, i));
                 at.ty = ft;
                 Ok(at)
@@ -1849,7 +1850,8 @@ fn each_bind(pat: &Pattern, f: &mut impl FnMut(&Pattern)) {
         PatternKind::Variant(_, _, _, pats)
         | PatternKind::Path(_, pats, _)
         | PatternKind::Or(pats)
-        | PatternKind::Array(pats) => pats.iter().for_each(|p| each_bind(p, f)),
+        | PatternKind::Array(pats)
+        | PatternKind::Tuple(pats) => pats.iter().for_each(|p| each_bind(p, f)),
         PatternKind::Struct(_, _, fields, _) => fields.iter().for_each(|fp| each_bind(&fp.pat, f)),
         PatternKind::Wild
         | PatternKind::Int(..)
@@ -2267,7 +2269,9 @@ impl Walk<'_> {
                 }
             }
             Type::Bool => Val::Bool(Formula::holds(self.fresh(Kind::Bool))),
-            Type::Adt(..) => match struct_fields(&self.cx.adts, t) {
+            // A tuple is a struct, its fields `0`, `1`, .. (lemma T5 of
+            // docs/58-tuples.md).
+            Type::Adt(..) | Type::Tuple(_) => match struct_fields(&self.cx.adts, t) {
                 Some(fields) => {
                     let vals: Vec<Val> = fields
                         .iter()
@@ -2921,7 +2925,7 @@ impl Walk<'_> {
             Type::Int(_) | Type::Bool | Type::Unit | Type::Never | Type::Fn(_) => false,
             Type::Ref(_, m, _) => *m,
             Type::Box(inner) => self.has_mut_ref(&self.cx.solved(inner), seen),
-            Type::Adt(..) => {
+            Type::Adt(..) | Type::Tuple(_) => {
                 if !seen.insert(t.clone()) {
                     return false;
                 }
@@ -2939,7 +2943,7 @@ impl Walk<'_> {
         match t {
             Type::Bool => self.leaf(p, &t),
             _ if self.is_scalar(&t) => self.leaf(p, &t),
-            Type::Adt(..) | Type::Ref(..) | Type::Box(_) => self.read_obj(p, &t),
+            Type::Adt(..) | Type::Tuple(_) | Type::Ref(..) | Type::Box(_) => self.read_obj(p, &t),
             t if has_obj(&t) => self.read_obj(p, &t),
             _ => Val::Other,
         }
@@ -2950,7 +2954,7 @@ impl Walk<'_> {
     fn read_obj(&mut self, p: &Place, t: &Type) -> Val {
         let (o, new) = self.obj_at(p);
         let v = match t {
-            Type::Adt(..) => match self.fields_of(p, t) {
+            Type::Adt(..) | Type::Tuple(_) => match self.fields_of(p, t) {
                 Some(vals) => Val::Struct(o, vals),
                 None => {
                     self.enum_parts(o, t, None);
@@ -3075,7 +3079,7 @@ impl Walk<'_> {
     fn set(&mut self, p: &Place, t: &Type, val: Option<Val>) {
         let stable = !self.is_unstable(p);
         let kind = match t {
-            Type::Adt(..) => {
+            Type::Adt(..) | Type::Tuple(_) => {
                 if let (Some(Val::Struct(o, vals)), Some(fields)) =
                     (&val, struct_fields(&self.cx.adts, t))
                 {
@@ -4513,6 +4517,17 @@ impl Walk<'_> {
                 ),
             ));
         }
+        // Nor a part of one: a write to the part is a write to it.
+        if let Some(name) = self.in_refined_local(x) {
+            return Err(Error::ty(
+                span,
+                format!(
+                    "can't borrow `{}` as `&mut`: it's in `{name}`, whose type has a refinement, \
+                     which a write through the reference could break",
+                    crate::pretty::expr_text(x)
+                ),
+            ));
+        }
         if !scoped && let Some(why) = self.constrained_field(x) {
             return Err(Error::ty(
                 span,
@@ -4524,6 +4539,82 @@ impl Walk<'_> {
             ));
         }
         Ok(())
+    }
+
+    /// The name of the refined local `x` is a part of, through fields and
+    /// boxes, if it's one: not the local itself, nor through a reference,
+    /// as what's behind one isn't part of its value (and no refinement of a
+    /// `mut` variable names what's behind a `&mut`).
+    fn in_refined_local(&self, x: &Expr) -> Option<String> {
+        let mut x = match &x.kind {
+            ExprKind::Field(..) | ExprKind::Unary(UnOp::Deref, _) => x,
+            _ => return None,
+        };
+        loop {
+            match &x.kind {
+                ExprKind::Field(base, _) => {
+                    let (derefs, _) = *self.cx.typed.fields.get(&x.id)?;
+                    let mut t = self.ty_of(base);
+                    for _ in 0..derefs {
+                        t = match t {
+                            Type::Box(inner) => self.cx.solved(&inner),
+                            _ => return None,
+                        };
+                    }
+                    x = base;
+                }
+                ExprKind::Unary(UnOp::Deref, base) if matches!(self.ty_of(base), Type::Box(_)) => {
+                    x = base;
+                }
+                ExprKind::Var(_, _) => {
+                    let Some(Res::Local(id)) = self.cx.typed.vars.get(&x.id) else {
+                        return None;
+                    };
+                    return self.invariants.get(id).map(|(_, name)| name.clone());
+                }
+                _ => return None,
+            }
+        }
+    }
+
+    /// After a write to `p`, a part of a refined local, at `span`: the
+    /// local's refinement, an invariant, must still hold of its whole value
+    /// (step 8; the write to a part used to go unchecked, which tuples'
+    /// `t.0 = ..` made easy to write, docs/58-tuples.md).
+    fn keep_invariant(&mut self, p: &Place, span: Span) -> Result<(), Error> {
+        if p.path.is_empty() || p.path.contains(&Proj::Deref) && !self.boxes_only(p) {
+            return Ok(());
+        }
+        let Some((r, name)) = self.invariants.get(&p.root).cloned() else {
+            return Ok(());
+        };
+        // Its fields as they are now: reading the local whole would be a
+        // new value of it, which has its refinement, assumed.
+        let root = Place::local(p.root);
+        let t = self.place_ty(&root);
+        let whole = match self.fields_of(&root, &t) {
+            Some(vals) => Val::Struct(self.new_obj(), vals),
+            None => match self.read_place(&root) {
+                Val::Ref(_, Pointee::Place(q)) => {
+                    let o = self.new_obj();
+                    Val::Ref(o, Pointee::Val(Box::new(self.read_place(&q))))
+                }
+                _ => Val::Other,
+            },
+        };
+        self.need(&r, &whole, Env::Here, span, format!("`{name}`"))
+    }
+
+    /// Is every `*` on the way from `p`'s local to it of a box?
+    fn boxes_only(&mut self, p: &Place) -> bool {
+        let mut q = Place::local(p.root);
+        for step in &p.path {
+            if *step == Proj::Deref && !matches!(self.place_ty(&q), Type::Box(_)) {
+                return false;
+            }
+            q = q.then(*step);
+        }
+        true
     }
 
     /// If `x` is a field a refinement is about, why it can't be borrowed
@@ -5077,6 +5168,7 @@ impl Walk<'_> {
                             self.around_before(p);
                             self.write(p, Some(new), Some(e.span));
                             self.around_after(p, value.span)?;
+                            self.keep_invariant(p, value.span)?;
                         }
                     }
                     _ => {
@@ -5094,6 +5186,7 @@ impl Walk<'_> {
                             self.around_before(p);
                             self.write(p, Some(new), Some(e.span));
                             self.around_after(p, value.span)?;
+                            self.keep_invariant(p, value.span)?;
                         }
                     }
                 }
@@ -5218,6 +5311,16 @@ impl Walk<'_> {
                             self.need(r, &vals[j], Env::Fields(&vals, &args), spans[j], what)?;
                         }
                     }
+                }
+                Ok(Val::Struct(self.new_obj(), vals))
+            }
+            // A struct's value, its fields what the values are (lemma T5 of
+            // docs/58-tuples.md). No field of one has a refinement of its
+            // own to check.
+            ExprKind::Tuple(items) => {
+                let mut vals = Vec::new();
+                for item in items {
+                    vals.push(self.expr(item)?);
                 }
                 Ok(Val::Struct(self.new_obj(), vals))
             }
@@ -5357,6 +5460,27 @@ impl Walk<'_> {
                 for (j, p) in pats.iter().enumerate() {
                     let f = fields.as_ref().map(|(_, f)| f[j].clone());
                     self.bind_pattern(p, f.as_ref(), None, None)?;
+                }
+            }
+            // As a struct pattern mentioning every field, in order (lemma
+            // T5 of docs/58-tuples.md).
+            PatternKind::Tuple(pats) => {
+                let t = match (&place, &s) {
+                    (Some(p), _) => self.place_ty(p),
+                    _ => Type::Unit,
+                };
+                let vals = match (s, &place) {
+                    (Some(Val::Struct(_, vals)), _) => vals,
+                    (_, Some(p)) => match self.read_place(p) {
+                        Val::Struct(_, vals) => vals,
+                        _ => Vec::new(),
+                    },
+                    _ => Vec::new(),
+                };
+                for (i, q) in pats.iter().enumerate() {
+                    let at = place.as_ref().map(|p| p.then(Proj::Field(i)));
+                    let of = matches!(t, Type::Tuple(_)).then_some((&t, i));
+                    self.bind_pattern(q, vals.get(i), at, of)?;
                 }
             }
             // What an array's values are isn't followed.

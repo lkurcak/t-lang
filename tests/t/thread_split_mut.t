@@ -11,7 +11,7 @@ fn bump(xs: &mut [u32]) {
 fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut data = [1u32, 2, 3, 4];
     if let Some(halves) = data.as_mut_slice().split_at_mut(2) {
-        let core::slice::SplitMut { head, tail } = halves;
+        let (head, tail) = halves;
         let h = os.threads.spawn(move || bump(head));
         bump(tail);
         h.join();

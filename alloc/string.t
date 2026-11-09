@@ -92,8 +92,8 @@ impl String {
             i = i + 1;
         }
         match self.bytes.as_mut_slice().split_at_mut(at) {
-            Some(split) => {
-                c.encode_utf8(split.tail);
+            Some((_, tail)) => {
+                c.encode_utf8(tail);
             },
             None => {},
         }

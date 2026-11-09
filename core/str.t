@@ -45,7 +45,7 @@ impl str {
     export fn split_at<'a>(
         &'a self,
         mid: usize,
-    ) -> Option<{ s: StrSplit<'a> | s.head.len() == mid && s.tail.len() + mid == self.len() }> {
+    ) -> Option<{ s: (&'a str, &'a str) | s.0.len() == mid && s.1.len() + mid == self.len() }> {
         if !self.is_char_boundary(mid) {
             return None;
         }
@@ -53,8 +53,8 @@ impl str {
         match bytes.split_at(mid) {
             // SAFETY: UTF-8 cut where a character starts is UTF-8 on
             // either side.
-            Some(slice::Split { head, tail }) => unsafe {
-                Some(StrSplit { head: from_utf8_unchecked(head), tail: from_utf8_unchecked(tail) })
+            Some((head, tail)) => unsafe {
+                Some((from_utf8_unchecked(head), from_utf8_unchecked(tail)))
             },
             None => None,
         }
@@ -71,11 +71,11 @@ impl str {
             return None;
         }
         let head: &'a str = match self.split_at(hi) {
-            Some(s) => s.head,
+            Some((head, _)) => head,
             None => return None,
         };
         match head.split_at(lo) {
-            Some(s) => Some(s.tail),
+            Some((_, tail)) => Some(tail),
             None => None,
         }
     }
@@ -189,7 +189,7 @@ impl str {
 /// end, wherever it's used; were it not, it would be the empty string.
 fn after<'a>(s: &'a str, at: usize) -> { t: &'a str | t.len() <= s.len() } {
     match s.split_at(at) {
-        Some(cut) => cut.tail,
+        Some((_, tail)) => tail,
         None => "",
     }
 }
@@ -198,7 +198,7 @@ fn after<'a>(s: &'a str, at: usize) -> { t: &'a str | t.len() <= s.len() } {
 /// end, as for `after`.
 fn before<'a>(s: &'a str, at: usize) -> { t: &'a str | t.len() <= s.len() } {
     match s.split_at(at) {
-        Some(cut) => cut.head,
+        Some((head, _)) => head,
         None => "",
     }
 }
@@ -484,11 +484,6 @@ export fn from_utf8(b: &[u8]) -> Option<&str> {
 /// They're UTF-8.
 #[intrinsic]
 export fn from_utf8_unchecked(b: &[u8]) -> { s: &str | s.len() == b.len() } with unsafe;
-
-/// What `split_at` gives: the string before the index it's given, and
-/// from it on.
-#[derive(Copy, Discard, Send, Sync)]
-export struct StrSplit<'a> { export head: &'a str, export tail: &'a str }
 
 /// What `chars` gives: each character of `bytes` from `at` on.
 #[derive(Discard, Send, Sync)]

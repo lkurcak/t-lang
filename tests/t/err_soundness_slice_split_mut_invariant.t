@@ -1,8 +1,10 @@
-// A struct holding a `&mut [T]` is invariant in `T`, as the slice is:
-// `SplitMut`'s halves could be written through.
-use core::slice::SplitMut;
-
-fn shorter<'a, 'b>(s: SplitMut<'b, &'static i64>) -> SplitMut<'b, &'a i64> { s }
+// A tuple holding a `&mut [T]` is invariant in `T`, as the slice is:
+// `split_at_mut`'s halves could be written through.
+fn shorter<'a, 'b>(
+    s: (&'b mut [&'static i64], &'b mut [&'static i64]),
+) -> (&'b mut [&'a i64], &'b mut [&'a i64]) {
+    s
+}
 
 fn main() {}
 // error: lifetime may not live long enough

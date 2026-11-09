@@ -42,6 +42,17 @@ export trait Iterator {
         }
     }
 
+    /// Each value with its index, counting from 0: `(0, a)`, `(1, b)`, ..
+    /// Counting past the greatest `usize` panics.
+    fn enumerate(self) -> Enumerate<Self> { Enumerate { iter: self, next: 0 } }
+
+    /// A value of each, in pairs, `(a, x)`, `(b, y)`, .., until either runs
+    /// out. A value of `self`'s with none of `other`'s to go with it is
+    /// thrown away, so those must be `Discard`.
+    fn zip<J: Iterator>(self, other: J) -> Zip<Self, J> where Self::Item: Discard {
+        Zip { a: self, b: other }
+    }
+
     /// How many values there are, throwing each away. Counting past the
     /// greatest `usize` panics.
     #[blame_caller]
@@ -110,6 +121,57 @@ where
                 },
                 None => return None,
             }
+        }
+    }
+}
+
+/// What `Iterator::enumerate` gives: each value of `iter`, with its index,
+/// `next` the one after the last.
+#[derive(Discard where I: Discard, Send where I: Send, Sync where I: Sync)]
+export struct Enumerate<I> { iter: I, next: usize }
+
+impl<I: Iterator> Iterator for Enumerate<I> {
+    type Item = (usize, I::Item);
+    effect e = {I::e, panic};
+
+    #[blame_caller]
+    fn next(&mut self) -> Option<(usize, I::Item)> with {I::e, panic} {
+        match self.iter.next() {
+            Some(x) => {
+                let i = self.next;
+                self.next = i + 1;
+                Some((i, x))
+            },
+            None => None,
+        }
+    }
+}
+
+/// What `Iterator::zip` gives: a value of `a` and one of `b`, in pairs.
+#[derive(
+    Discard where A: Discard, B: Discard,
+    Send where A: Send, B: Send,
+    Sync where A: Sync, B: Sync,
+)]
+export struct Zip<A, B> { a: A, b: B }
+
+/// `next` throws away a value of `a`'s when `b` has run out, so those must
+/// be `Discard`.
+impl<A: Iterator, B: Iterator> Iterator for Zip<A, B>
+where
+    A::Item: Discard,
+{
+    type Item = (A::Item, B::Item);
+    effect e = {A::e, B::e};
+
+    #[blame_caller]
+    fn next(&mut self) -> Option<(A::Item, B::Item)> with {A::e, B::e} {
+        match self.a.next() {
+            Some(x) => match self.b.next() {
+                Some(y) => Some((x, y)),
+                None => None,
+            },
+            None => None,
         }
     }
 }

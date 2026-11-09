@@ -1,6 +1,6 @@
 // A predicate names a field of a struct it can name, at any depth and
 // through references and boxes, as it names a variable: `p.x`,
-// `s.head.len()` (docs/56-field-paths-and-slices.md).
+// `s.0.len()` (docs/56-field-paths-and-slices.md).
 
 use alloc::boxed::Box;
 
@@ -42,12 +42,12 @@ struct Box2 { corner: Point, w: { w: u8 | w <= 255 - corner.x } }
 
 fn right(b: Box2) -> u8 { b.corner.x + b.w }
 
-// A field and a measure of it: `head` of a slice's `Split`.
+// A field and a measure of it: the first half of a slice's `split_at`.
 fn halves(s: &[u8], mid: usize) -> usize {
     match s.split_at(mid) {
         Some(sp) => {
-            let n: { n: usize | n == mid } = sp.head.len();
-            let all: { a: usize | a == s.len() } = n + sp.tail.len();
+            let n: { n: usize | n == mid } = sp.0.len();
+            let all: { a: usize | a == s.len() } = n + sp.1.len();
             all
         },
         None => 0,

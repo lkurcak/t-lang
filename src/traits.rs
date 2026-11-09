@@ -87,7 +87,7 @@ pub const BUILTIN_TRAITS: &[&str] = &[
 /// The traits `#[derive(..)]` can write an impl of. `Discard`, `Copy`,
 /// `Send` and `Sync` can only be derived, never written, so whether a
 /// type has one follows from its fields alone (the *markers*, `MARKERS`).
-pub const DERIVABLE: &[&str] = &[COPY, DEBUG, DISCARD, EQ, SEND, SYNC];
+pub const DERIVABLE: &[&str] = &[COPY, DEBUG, DISCARD, EQ, ORD, SEND, SYNC];
 
 /// The traits that are only ever derived or built in: what a proof of one
 /// needs is only more of them, of the parts of the type (lemma D1 of
@@ -593,6 +593,13 @@ impl Traits {
         // that. A box holds what it points to, so it may be if that may,
         // and an array its values.
         match (tr, ty) {
+            // A tuple is a struct that derives every trait that can be
+            // (lemma T4 of docs/58-tuples.md): it implements one if all its
+            // values do, the fixed point of the derive with fields that
+            // are exactly its parameters.
+            (DISCARD | COPY | EQ | ORD | DEBUG | SEND | SYNC, Type::Tuple(ts)) => {
+                return all(&ts.iter().collect::<Vec<_>>());
+            }
             (
                 DISCARD,
                 Type::Int(_)

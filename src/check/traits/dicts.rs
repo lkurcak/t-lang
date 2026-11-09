@@ -29,7 +29,7 @@ use super::{each_proj, fields, mentions};
 use crate::check::Checker;
 use crate::check::generics::Use;
 use crate::error::Span;
-use crate::traits::{COPY, DISCARD, EQ, ImplDef, eq_subject};
+use crate::traits::{COPY, DEBUG, DISCARD, EQ, ImplDef, ORD, eq_subject};
 use crate::types::{Subst, Type};
 use std::collections::{HashMap, HashSet};
 
@@ -140,6 +140,14 @@ impl Checker {
             | (DISCARD, Type::Box(inner))
             | (DISCARD | COPY | EQ, Type::Array(inner, _)) => {
                 return self.proof_uses(site, inner, tr);
+            }
+            // A tuple's, of each of its values (lemma T4 of
+            // docs/58-tuples.md).
+            (DISCARD | COPY | EQ | ORD | DEBUG, Type::Tuple(ts)) => {
+                for t in ts {
+                    self.proof_uses(site, t, tr);
+                }
+                return;
             }
             _ => {}
         }

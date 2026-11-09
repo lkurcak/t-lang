@@ -5,8 +5,8 @@ use std::env::Env;
 
 fn count(env: Env) -> u32 {
     let mut n = 0u32;
-    for v in env.vars() {
-        if v.name.starts_with("T_TEST_") {
+    for (name, _) in env.vars() {
+        if name.starts_with("T_TEST_") {
             n = checked_add(n, 1).unwrap_or(n);
         }
     }

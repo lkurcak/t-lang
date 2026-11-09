@@ -25,7 +25,7 @@ impl char {
     export fn encode_utf8(self, out: &mut [u8]) -> Option<&str> {
         let n = self as u32;
         let bytes: &mut [u8] = match out.split_at_mut(self.len_utf8()) {
-            Some(split) => split.head,
+            Some((head, _)) => head,
             None => return None,
         };
         if n < 0x80 {

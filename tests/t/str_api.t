@@ -21,8 +21,8 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     show(&mut out, s.get(3, 9))?; // expect: none
     match s.split_at(3) {
         Some(p) => {
-            out.line(&p.head)?; // expect: añ
-            out.line(&p.tail)?; // expect: b€
+            out.line(&p.0)?; // expect: añ
+            out.line(&p.1)?; // expect: b€
         },
         None => {},
     }

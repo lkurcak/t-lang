@@ -216,6 +216,9 @@ fn vary(
         Type::Box(inner) | Type::Slice(inner) | Type::Array(inner, _) => {
             vary(inner, v, d, variances, out)
         }
+        // A tuple holds its values, as a struct does its fields: covariant
+        // in each (lemma T3 of docs/58-tuples.md).
+        Type::Tuple(ts) => ts.iter().for_each(|t| vary(t, v, d, variances, out)),
         Type::Fn(sig) => {
             for p in &sig.params {
                 vary(p, v.then(Variance::Contra), d, variances, out);
@@ -294,6 +297,7 @@ fn wf_into(t: &Type, adts: &Adts, outlives: &HashMap<String, Vec<Bound>>, out: &
         Type::Box(inner) | Type::Slice(inner) | Type::Array(inner, _) => {
             wf_into(inner, adts, outlives, out)
         }
+        Type::Tuple(ts) => ts.iter().for_each(|t| wf_into(t, adts, outlives, out)),
         Type::Adt(name, regions, args) => {
             let d = &adts[name];
             let s = Subst::new(&d.params, args).with_regions(&d.lifetimes, regions);
@@ -377,6 +381,7 @@ pub(crate) fn type_outlives(t: &Type, r: &Region, out: &mut Vec<Bound>) {
         Type::Box(inner) | Type::Slice(inner) | Type::Array(inner, _) => {
             type_outlives(inner, r, out)
         }
+        Type::Tuple(ts) => ts.iter().for_each(|t| type_outlives(t, r, out)),
         // Nor do effects, as an argument of a closure's type.
         Type::Fn(_)
         | Type::Effects(_)
@@ -642,6 +647,12 @@ impl Regions {
                 }
                 Variance::Bi => {}
             },
+            // Covariant in each value (lemma T3 of docs/58-tuples.md).
+            (Type::Tuple(tas), Type::Tuple(tbs)) if tas.len() == tbs.len() => {
+                for (ta, tb) in tas.iter().zip(tbs) {
+                    self.relate(adts, ta, tb, v, span);
+                }
+            }
             (Type::Adt(name, ras, tas), Type::Adt(_, rbs, tbs)) => {
                 let vs = adts.variances[name].clone();
                 for (i, (ra, rb)) in ras.iter().zip(rbs).enumerate() {

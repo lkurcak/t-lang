@@ -4,7 +4,7 @@ use super::fields;
 use crate::ast::*;
 use crate::check::Checker;
 use crate::error::{Edit, Error, Fix, Span};
-use crate::traits::{COPY, DEBUG, DERIVABLE, DISCARD, EQ, MARKERS, SEND, SYNC};
+use crate::traits::{COPY, DEBUG, DERIVABLE, DISCARD, EQ, MARKERS, ORD, SEND, SYNC};
 use crate::traits::{ImplDef, Pred};
 use crate::types::{Subst, Type};
 use std::collections::HashMap;
@@ -263,6 +263,35 @@ impl Checker {
                 )),
             });
         }
+        // `trait Ord: Eq`: a derived `Ord`, as a written one, needs an `Eq`,
+        // derived or written, which generic code over `T: Ord` may call.
+        for &(k, i, span, tr) in &derived {
+            let def = &self.traits.impls[k];
+            if tr != ORD
+                || self
+                    .traits
+                    .implements(&def.self_ty, EQ, &def.preds, &def.eqs)
+                    .is_ok()
+            {
+                continue;
+            }
+            let (d, _) = decls[i];
+            let e = Error::ty(
+                span,
+                format!(
+                    "`{}` doesn't implement `Eq`, which `Ord` needs, as it's `trait Ord: Eq`",
+                    d.name().name
+                ),
+            );
+            let ord = d.derive_of(ORD).expect("derived");
+            return Err(match d.derive_of(EQ) {
+                Some(_) => e,
+                None => e.with_fix(Fix::new(
+                    "derive `Eq` too",
+                    vec![Edit::insert(ord.span.start, "Eq, ")],
+                )),
+            });
+        }
         Ok(())
     }
 
@@ -303,6 +332,14 @@ impl Checker {
             }
             // An array is its values, for all of them.
             Type::Array(inner, _) => return self.needs(inner, tr, params, out),
+            // And a tuple its values, for every trait it derives (lemma T4
+            // of docs/58-tuples.md).
+            Type::Tuple(ts) => {
+                for t in ts {
+                    self.needs(t, tr, params, out)?;
+                }
+                return Ok(());
+            }
             // Core's and alloc's impls of `Debug` for these are picked, as
             // a struct's are, and need what they need.
             Type::Ref(..) | Type::Box(_) | Type::Slice(_) if tr == DEBUG => {}

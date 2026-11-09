@@ -331,6 +331,36 @@ impl Checker {
             // An array of exactly as many values as there are patterns: a
             // length that's a const parameter isn't one (lemma A6 of
             // docs/22-arrays.md).
+            // A tuple's fields, each by the pattern in its place: a struct
+            // pattern of the struct it's taken for, every field mentioned
+            // (lemma T1 of docs/58-tuples.md).
+            PatternKind::Tuple(pats) => {
+                let k = pats.len();
+                let elems = match self.shallow(ty) {
+                    Type::Tuple(ts) if ts.len() == k => ts,
+                    _ => {
+                        let elems: Vec<Type> = (0..k)
+                            .map(|_| {
+                                self.fresh(
+                                    p.span,
+                                    "the type of this tuple's value".into(),
+                                    "say what it is".into(),
+                                )
+                            })
+                            .collect();
+                        let found = Type::Tuple(elems.clone());
+                        self.unify_or(&found, ty, p.span, |_, ty| {
+                            format!("this pattern is for a tuple of {k} values, but the value is `{ty}`")
+                        })?;
+                        elems
+                    }
+                };
+                let mut args = Vec::new();
+                for (q, t) in pats.iter().zip(&elems) {
+                    args.push(self.pattern(q, t, by_ref, binds)?);
+                }
+                Pat::Ctor(Ctor::Struct, args)
+            }
             PatternKind::Array(pats) => {
                 let k = pats.len();
                 let elem = self.fresh(

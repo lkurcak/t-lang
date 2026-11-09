@@ -133,6 +133,7 @@ impl Checker {
                 matches!(**to, Type::Str) || **to == Type::Slice(Box::new(Type::Int(IntTy::U8)))
             }
             Type::Array(elem, _) => self.plain(elem, seen),
+            Type::Tuple(ts) => ts.iter().all(|t| self.plain(t, seen)),
             Type::Adt(symbol, ..) => {
                 let intrinsic =
                     (self.types.iter()).any(|d| d.symbol == *symbol && d.intrinsic.is_some());

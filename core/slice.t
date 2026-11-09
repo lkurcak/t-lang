@@ -60,7 +60,7 @@ impl<T> [T] {
     fn cut<'a>(
         &'a self,
         mid: { m: usize | m <= self.len() },
-    ) -> { s: Split<'a, T> | s.head.len() == mid && s.tail.len() + mid == self.len() };
+    ) -> { s: (&'a [T], &'a [T]) | s.0.len() == mid && s.1.len() + mid == self.len() };
 
     /// The values before index `mid`, which is at most `len()`, and those
     /// from it on, each to change. They share no values, so both can be
@@ -69,14 +69,14 @@ impl<T> [T] {
     fn cut_mut<'a>(
         &'a mut self,
         mid: { m: usize | m <= self.len() },
-    ) -> { s: SplitMut<'a, T> | s.head.len() == mid && s.tail.len() + mid == self.len() };
+    ) -> { s: (&'a mut [T], &'a mut [T]) | s.0.len() == mid && s.1.len() + mid == self.len() };
 
     /// The values before index `mid` and those from it on, or `None` if
     /// `mid` is more than `len()`.
     export fn split_at<'a>(
         &'a self,
         mid: usize,
-    ) -> Option<{ s: Split<'a, T> | s.head.len() == mid && s.tail.len() + mid == self.len() }> {
+    ) -> Option<{ s: (&'a [T], &'a [T]) | s.0.len() == mid && s.1.len() + mid == self.len() }> {
         if mid <= self.len() { Some(self.cut(mid)) } else { None }
     }
 
@@ -86,7 +86,9 @@ impl<T> [T] {
     export fn split_at_mut<'a>(
         &'a mut self,
         mid: usize,
-    ) -> Option<{ s: SplitMut<'a, T> | s.head.len() == mid && s.tail.len() + mid == self.len() }> {
+    ) -> Option<
+        { s: (&'a mut [T], &'a mut [T]) | s.0.len() == mid && s.1.len() + mid == self.len() },
+    > {
         if mid <= self.len() { Some(self.cut_mut(mid)) } else { None }
     }
 
@@ -97,8 +99,8 @@ impl<T> [T] {
         &'a self,
         r: { r: Range<usize> | r.start() <= r.end() && r.end() <= self.len() },
     ) -> { t: &'a [T] | t.len() + r.start() == r.end() } {
-        let head: &'a [T] = self.cut(r.end()).head;
-        head.cut(r.start()).tail
+        let head: &'a [T] = self.cut(r.end()).0;
+        head.cut(r.start()).1
     }
 
     /// The values from index `r.start()` up to, not including, `r.end()`,
@@ -107,8 +109,8 @@ impl<T> [T] {
         &'a mut self,
         r: { r: Range<usize> | r.start() <= r.end() && r.end() <= self.len() },
     ) -> { t: &'a mut [T] | t.len() + r.start() == r.end() } {
-        let head: &'a mut [T] = self.cut_mut(r.end()).head;
-        head.cut_mut(r.start()).tail
+        let head: &'a mut [T] = self.cut_mut(r.end()).0;
+        head.cut_mut(r.start()).1
     }
 
     /// Swaps the values at `i` and `j`, if there are values there, and says
@@ -123,7 +125,7 @@ impl<T> [T] {
         let lo = if i < j { i } else { j };
         let hi = if i < j { j } else { i };
         match self.split_at_mut(hi) {
-            Some(SplitMut { head, tail }) => match head.get_mut(lo) {
+            Some((head, tail)) => match head.get_mut(lo) {
                 Some(a) => match tail.get_mut(0) {
                     Some(b) => {
                         mem::swap(a, b);
@@ -183,16 +185,6 @@ export fn empty<'a, T>() -> &'a [T];
 #[intrinsic]
 export fn empty_mut<'a, T>() -> &'a mut [T];
 
-/// What `split_at` gives: the values before the index it's given, and
-/// those from it on.
-#[derive(Copy, Discard, Send, Sync)]
-export struct Split<'a, T> { export head: &'a [T], export tail: &'a [T] }
-
-/// What `split_at_mut` gives: the values before the index it's given, and
-/// those from it on, each to change.
-#[derive(Discard, Send, Sync)]
-export struct SplitMut<'a, T> { export head: &'a mut [T], export tail: &'a mut [T] }
-
 /// What `iter` gives: a reference to each value of `rest`, front to back.
 #[derive(Discard, Send where T: Sync, Sync where T: Sync)]
 export struct Iter<'a, T> { rest: &'a [T] }
@@ -205,7 +197,7 @@ impl<'a, T> Iterator for Iter<'a, T> {
     fn next(&mut self) -> Option<&'a T> {
         let rest: &'a [T] = self.rest;
         match rest.split_at(1) {
-            Some(Split { head, tail }) => {
+            Some((head, tail)) => {
                 self.rest = tail;
                 head.get(0)
             },
@@ -230,7 +222,7 @@ impl<'a, T> Iterator for IterMut<'a, T> {
     fn next(&mut self) -> Option<&'a mut T> {
         let rest: &'a mut [T] = mem::replace(&mut self.rest, empty_mut());
         match rest.split_at_mut(1) {
-            Some(SplitMut { head, tail }) => {
+            Some((head, tail)) => {
                 self.rest = tail;
                 head.get_mut(0)
             },

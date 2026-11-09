@@ -3,7 +3,6 @@
 use alloc::list::List;
 use alloc::string::String;
 use core::fmt::Write;
-use core::slice::Split;
 
 fn sum(s: &[i64]) -> i64 with panic {
     let mut total = 0;
@@ -28,11 +27,11 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     out.line(&(*s.last().unwrap()));       // expect: 40
     out.line(&s.get(4).is_none());  // expect: true
     out.line(&sum(s));                   // expect: 100
-    let Split { head, tail } = s.split_at(1).unwrap();
+    let (head, tail) = s.split_at(1).unwrap();
     out.line(&head.len());                        // expect: 1
     out.line(&sum(tail));                         // expect: 90
     out.line(&s.split_at(5).is_none());      // expect: true
-    out.line(&s.split_at(4).unwrap().tail.len()); // expect: 0
+    out.line(&s.split_at(4).unwrap().1.len()); // expect: 0
     out.line(&sum(s));                            // expect: 100
     l.discard();
     let mut stdout = os.stdout;

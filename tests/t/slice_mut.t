@@ -3,7 +3,6 @@
 use alloc::list::List;
 use alloc::string::String;
 use core::fmt::Write;
-use core::slice::SplitMut;
 
 fn bump(s: &mut [i64]) with panic {
     let mut i = 0;
@@ -28,7 +27,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     *s.get_mut(0).unwrap() = 100;
     out.line(&s.swap(0, 3)); // expect: true
     out.line(&s.swap(1, 4)); // expect: false
-    let SplitMut { head, tail } = s.split_at_mut(2).unwrap();
+    let (head, tail) = s.split_at_mut(2).unwrap();
     *head.get_mut(1).unwrap() = *tail.get_mut(0).unwrap();
     *tail.get_mut(1).unwrap() = 7;
     for x in l.iter() {

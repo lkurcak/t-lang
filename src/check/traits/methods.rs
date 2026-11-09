@@ -5,7 +5,7 @@ use crate::ast::*;
 use crate::check::Checker;
 use crate::error::{Edit, Error, Fix, Span};
 use crate::traits::Pred;
-use crate::traits::{DISCARD, EQ};
+use crate::traits::{DEBUG, DISCARD, EQ, ORD};
 use crate::types::{Subst, Type};
 use std::collections::HashMap;
 
@@ -126,6 +126,12 @@ impl Checker {
                 }
                 if builtin_discard(&ty) {
                     out.push(DISCARD.into());
+                }
+                // A tuple derives every trait that can be (lemma T4 of
+                // docs/58-tuples.md); whether its values do is the
+                // obligation's to say.
+                if let Type::Tuple(_) = ty {
+                    out.extend([EQ, DISCARD, ORD, DEBUG].map(String::from));
                 }
                 // What an opaque type's bounds say it implements.
                 if let Type::Opaque(symbol, ..) = &ty {

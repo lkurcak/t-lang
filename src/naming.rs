@@ -255,11 +255,12 @@ fn variables<'a>(e: &'a Expr, out: &mut Vec<Decl<'a>>) {
         }
         ExprKind::Match(_, arms) => arms.iter().for_each(|a| bindings(&a.pat, out)),
         ExprKind::Lambda(l) => {
-            out.extend(
-                l.params
-                    .iter()
-                    .map(|p| ident(&p.name, "variable", Case::Snake)),
-            );
+            for p in &l.params {
+                match &p.pat {
+                    Some(pat) => bindings(pat, out),
+                    None => out.push(ident(&p.name, "variable", Case::Snake)),
+                }
+            }
         }
         _ => {}
     }
@@ -280,7 +281,8 @@ fn bindings<'a>(p: &'a Pattern, out: &mut Vec<Decl<'a>>) {
         PatternKind::Or(alts) => alts.iter().take(1).for_each(|p| bindings(p, out)),
         PatternKind::Variant(_, _, _, pats)
         | PatternKind::Path(_, pats, _)
-        | PatternKind::Array(pats) => pats.iter().for_each(|p| bindings(p, out)),
+        | PatternKind::Array(pats)
+        | PatternKind::Tuple(pats) => pats.iter().for_each(|p| bindings(p, out)),
         PatternKind::Struct(_, _, fields, _) => fields.iter().for_each(|f| bindings(&f.pat, out)),
         PatternKind::Wild
         | PatternKind::Int(..)

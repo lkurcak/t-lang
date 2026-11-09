@@ -574,6 +574,12 @@ impl<'b, 'a> Elaborator<'b, 'a> {
                     part(self, out, place.project(Proj::Field(i)));
                 }
             }
+            // As a struct's fields, in order (lemma T1 of docs/58-tuples.md).
+            Type::Tuple(ts) => {
+                for i in 0..ts.len() {
+                    part(self, out, place.project(Proj::Field(i)));
+                }
+            }
             Type::Adt(symbol, ..) => match &self.b.adts()[symbol].kind {
                 AdtKind::Struct(fields) => {
                     for i in 0..fields.len() {

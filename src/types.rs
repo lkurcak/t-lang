@@ -16,7 +16,16 @@ pub enum Type {
     /// no arithmetic, and `as` converts it to and from one.
     Char,
     /// The type with exactly one value, `()`. "Nothing interesting to return."
+    /// It's the tuple with no values.
     Unit,
+    /// `(A, B)`: a *tuple*, two or more values side by side, of these
+    /// types, in order: the product `A × B` of type theory (see
+    /// docs/58-tuples.md). Compared by what's inside (*structural*), unlike
+    /// a struct: every judgment treats one as a struct declared in core
+    /// with exported fields `0`, `1`, .. of these types, that derives
+    /// every trait that can be (lemma T1), so what holds of structs holds
+    /// of tuples. `struct_fields` gives its fields so.
+    Tuple(Vec<Type>),
     /// `!`, the type with no values at all: *never*. It's the type of what
     /// never finishes, like `return x` or a `loop` with no `break`, so a
     /// value of it can be used as any type, since there won't be one (see
@@ -409,15 +418,22 @@ fn instantiate(adts: &Adts, name: &str, regions: &[Region], args: &[Type]) -> Ad
     }
 }
 
-/// The fields of `ty`, if it's a struct.
+/// The fields of `ty`, if it's a struct, or a tuple, whose are `0`, `1`,
+/// .. (lemma T1 of docs/58-tuples.md).
 pub fn struct_fields(adts: &Adts, ty: &Type) -> Option<Vec<(String, Type)>> {
     match ty {
+        Type::Tuple(ts) => Some(tuple_fields(ts)),
         Type::Adt(name, regions, args) => match instantiate(adts, name, regions, args) {
             AdtKind::Struct(fields) => Some(fields),
             AdtKind::Enum(_) => None,
         },
         _ => None,
     }
+}
+
+/// A tuple's fields, of types `ts`: `0`, `1`, .., as a struct's.
+pub fn tuple_fields(ts: &[Type]) -> Vec<(String, Type)> {
+    ts.iter().enumerate().map(|(i, t)| (i.to_string(), t.clone())).collect()
 }
 
 /// The fields of variant `i` of `ty`, which must be an enum.
@@ -435,6 +451,7 @@ pub fn variant_fields(adts: &Adts, ty: &Type, i: usize) -> Vec<Type> {
 /// struct or enum.
 pub fn all_fields(adts: &Adts, ty: &Type) -> Vec<Type> {
     match ty {
+        Type::Tuple(ts) => ts.clone(),
         Type::Adt(name, regions, args) => match instantiate(adts, name, regions, args) {
             AdtKind::Struct(fields) => fields.into_iter().map(|(_, t)| t).collect(),
             AdtKind::Enum(variants) => variants.into_iter().flat_map(|(_, ts)| ts).collect(),
@@ -466,6 +483,7 @@ pub fn frozen(adts: &Adts, t: &Type) -> bool {
                 all_fields(adts, t).iter().all(|f| go(adts, f, seen))
             }
             Type::Box(inner) | Type::Array(inner, _) => go(adts, inner, seen),
+            Type::Tuple(ts) => ts.iter().all(|t| go(adts, t, seen)),
             Type::Param(_, _) => false,
             _ => true,
         }
@@ -547,6 +565,7 @@ impl Type {
             Type::Adt(_, _, args)
             | Type::Opaque(_, _, args)
             | Type::Effects(args)
+            | Type::Tuple(args)
             | Type::Inferred(_, args) => (args, None, None),
             Type::Ref(_, _, t) | Type::Box(t) | Type::Slice(t) | Type::Proj(t, ..) => {
                 (&[], Some(t), None)
@@ -632,6 +651,7 @@ impl Type {
             Type::Box(t) => Type::Box(Box::new(f(t))),
             Type::Slice(t) => Type::Slice(Box::new(f(t))),
             Type::Array(t, n) => Type::Array(Box::new(f(t)), Box::new(f(n))),
+            Type::Tuple(ts) => Type::Tuple(ts.iter().map(f).collect()),
             Type::Proj(t, tr, name) => Type::Proj(Box::new(f(t)), tr.clone(), name.clone()),
             Type::Int(_)
             | Type::Nat(_)
@@ -661,6 +681,7 @@ impl Type {
             (Type::Adt(a, _, xs), Type::Adt(b, _, ys))
             | (Type::Opaque(a, _, xs), Type::Opaque(b, _, ys)) => a == b && xs.len() == ys.len(),
             (Type::Ref(_, m, _), Type::Ref(_, n, _)) => m == n,
+            (Type::Tuple(xs), Type::Tuple(ys)) => xs.len() == ys.len(),
             (Type::Box(_), Type::Box(_))
             | (Type::Slice(_), Type::Slice(_))
             | (Type::Array(..), Type::Array(..)) => true,
@@ -817,6 +838,10 @@ impl Type {
             Type::Box(t) => format!("Box<{}>", t.symbols()),
             Type::Slice(t) => format!("[{}]", t.symbols()),
             Type::Array(t, n) => format!("[{}; {}]", t.symbols(), n.symbols()),
+            Type::Tuple(ts) => {
+                let ts: Vec<String> = ts.iter().map(Type::symbols).collect();
+                format!("({})", ts.join(", "))
+            }
             Type::Proj(t, tr, name) => format!("<{} as {tr}>::{name}", t.symbols()),
             Type::Opaque(name, _, args) => {
                 let args: Vec<String> = args.iter().map(Type::symbols).collect();
@@ -996,6 +1021,7 @@ impl fmt::Display for Type {
             Type::Box(t) => write!(f, "Box<{t}>"),
             Type::Slice(t) => write!(f, "[{t}]"),
             Type::Array(t, n) => write!(f, "[{t}; {n}]"),
+            Type::Tuple(ts) => write!(f, "({})", comma_list(ts)),
             Type::Nat(n) => write!(f, "{n}"),
             Type::Const(symbol) => f.write_str(&crate::check::source_name(symbol)),
             // `T::Item` is what's written, and says enough in a message.

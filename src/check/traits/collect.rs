@@ -1048,7 +1048,9 @@ fn parametric(
 fn mentions_self(t: &TypeExpr) -> Option<Span> {
     match &t.kind {
         TypeExprKind::Named(n, _) if n == "Self" => Some(t.span),
-        TypeExprKind::Named(_, args) => args.iter().find_map(mentions_self),
+        TypeExprKind::Named(_, args) | TypeExprKind::Tuple(args) => {
+            args.iter().find_map(mentions_self)
+        }
         TypeExprKind::Fn(ps, r, e) => ps
             .iter()
             .find_map(mentions_self)
@@ -1116,7 +1118,7 @@ fn decided_effects(
 fn proj_in(t: &TypeExpr) -> Option<Span> {
     match &t.kind {
         TypeExprKind::Proj(..) => Some(t.span),
-        TypeExprKind::Named(_, args) => args.iter().find_map(proj_in),
+        TypeExprKind::Named(_, args) | TypeExprKind::Tuple(args) => args.iter().find_map(proj_in),
         TypeExprKind::Fn(ps, r, e) => {
             ps.iter()
                 .find_map(proj_in)
