@@ -3,6 +3,7 @@
 // that takes `&self` is still `index`'s.
 use alloc::list::List;
 
+#[derive(Discard)]
 struct Row {
     items: List<u8>,
 }
@@ -21,9 +22,9 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     rows.push(Row { items: List::new() });
     rows[0].items.push(9);
     let shared = &l;
-    out.line(&shared[1].len())?;    // expect: 2
-    out.line(&l[0][0])?;            // expect: 5
-    out.line(&a[0][0])?;            // expect: 8
-    out.line(&rows[0].items[0])?;   // expect: 9
+    out.line(&shared[1].len())?;            // expect: 2
+    out.line(&f"{l[0].first():?}")?;        // expect: Some(5)
+    out.line(&a[0].len())?;                 // expect: 1
+    out.line(&f"{rows[0].items.last():?}")?; // expect: Some(9)
     Ok(())
 }

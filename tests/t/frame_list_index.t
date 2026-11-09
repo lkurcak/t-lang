@@ -4,7 +4,7 @@
 // keeps `l.len()` while the borrow lives and after (docs/59).
 use alloc::list::List;
 
-fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
+fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     let mut out = os.stdout;
     let mut l: List<u64> = List::filled(3, 0);
     l[0] = 3;

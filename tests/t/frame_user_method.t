@@ -3,6 +3,7 @@
 // of a type parameter, which the measures it names can't see (docs/59).
 use alloc::list::List;
 
+#[derive(Discard where T: Discard)]
 struct Bag<T> {
     items: List<T>,
     label: u8,
@@ -23,7 +24,7 @@ impl<T> Bag<T> {
     /// All of them: a slice, which writes only `T`s too.
     fn all(&mut self) -> { s: &mut [T] | s.len() == old(self.size()) }
     ensures
-        self.size() == old(self.size()),
+        self.size() == old(self.size()) && self.label == old(self.label),
     {
         self.items.as_mut_slice()
     }
@@ -31,6 +32,7 @@ impl<T> Bag<T> {
 
 /// Two type parameters: the result writes only `A`s, so a measure of the
 /// `B` part is kept, whatever its bounds.
+#[derive(Discard where A: Discard, B: Discard)]
 struct Pair<A, B> {
     a: A,
     b: B,
@@ -45,16 +47,19 @@ impl<A, B: Int> Pair<A, B> {
 
 /// A struct whose field is refined by another's measure can lend it to
 /// such a method: what it ensures proves the refinement again.
+#[derive(Discard)]
 struct Table {
     width: usize,
     cells: { c: List<u32> | c.len() == width },
 }
 
 impl Table {
-    fn put(&mut self, i: { i: usize | i < self.width }, v: u32) { self.cells[i] = v; }
+    fn put(&mut self, i: { i: usize | i < self.width }, v: u32) ensures self.width == old(self.width) {
+        self.cells[i] = v;
+    }
 }
 
-fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
+fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     let mut out = os.stdout;
     let mut b = Bag { items: List::filled(2, 7u32), label: 1 };
     if b.size() == 2 && b.label == 1 {
