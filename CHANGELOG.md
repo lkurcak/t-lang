@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.79.0 (2026-11-10)
 
 Step 63: what's declared behind every reference, from retrospective 6.
 See [docs/63-what-is-declared.md](docs/63-what-is-declared.md).
@@ -25,7 +25,8 @@ See [docs/63-what-is-declared.md](docs/63-what-is-declared.md).
   - a closure made before a call, or a function, given to `fold`, `any` or
     a function of one's own that calls it with a `&mut` to each element;
     and `map`'s closure, which `map` keeps;
-  - a `&` to an element that's a `Cell`.
+  - a `&` to an element that's a `Cell`;
+  - a method that takes `&mut self` called on an element, `a[0].poke()`.
 - A soundness hole since 0.43.0: a refined field of a temporary lent
   `&mut` to a call (`bad(&mut make().f)`) wasn't proved again after it,
   as there's no place to; it's refused.
