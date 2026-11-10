@@ -91,7 +91,7 @@ fn golden() {
         let want = Expectations::of(&all);
         if want.output.is_empty()
             && want.errors.is_empty()
-            && want.error.is_none()
+            && want.error.is_empty()
             && want.warnings.is_empty()
             && want.tests.is_empty()
         {

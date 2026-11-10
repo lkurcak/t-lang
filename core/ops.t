@@ -65,6 +65,24 @@ impl<T: Int> Iterator for Range<T> {
     }
 }
 
+/// Counts down from the end, as `next` counts up from the start: what it
+/// gives is at least the start, which it keeps, and less than the end it
+/// had. Neither can panic: it takes one only from what's more than the
+/// start.
+impl<T: Int> DoubleEndedIterator for Range<T> {
+    fn next_back(&mut self) -> Option<{ v: T | v >= self.start() }>
+    ensures
+        self.start() == old(self.start()),
+    {
+        if self.start < self.end {
+            self.end = self.end - 1;
+            Some(self.end)
+        } else {
+            None
+        }
+    }
+}
+
 /// Whether to go on, with a `C`, or stop early, with a `B`.
 #[derive(
     Discard where B: Discard, C: Discard,

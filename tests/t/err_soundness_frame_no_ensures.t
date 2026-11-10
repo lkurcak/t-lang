@@ -2,6 +2,7 @@
 // knows nothing of the list after, though the result writes only `T`s.
 use alloc::list::List;
 
+#[derive(Discard where T: Discard)]
 struct Bag<T> {
     items: List<T>,
 }

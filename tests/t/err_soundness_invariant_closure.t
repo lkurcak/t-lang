@@ -15,3 +15,6 @@ fn f() -> u8 with {} {
 
 fn main() {}
 // error: can't prove `i < 50` for the loop's invariant, as the loop starts
+// error: can't prove `i < self.len()` for argument `i` of `index`
+// error: can't prove `i < 50` for the loop's invariant, at the end of its body
+// error: `bump` may panic, but `f` doesn't say `with panic`

@@ -575,6 +575,11 @@ impl Checker {
         let Some(written) = &f.effects else {
             return Ok(());
         };
+        // Nor once a proof has failed, which is assumed after: what's left
+        // to panic, say, may be what follows from it.
+        if !self.proof_errors.is_empty() {
+            return Ok(());
+        }
         let default = self.self_ty.is_none() && self.type_params.iter().any(|p| p == "Self");
         let of_trait = default || self.in_trait_impl;
         if f.vis.is_export() || of_trait {

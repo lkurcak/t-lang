@@ -491,15 +491,16 @@ See [visibility](24-visibility.md), [module names](06d-modules.md), and
 
 `{ v: T | condition }` restricts a value of type `T`. Refinements can be
 the whole type of a function parameter, result, single-variable `let`,
-or struct field, or a type argument of an enum there, at any depth, such
-as `Option<{ v: i64 | v > 0 }>`: each field of a variant whose type is
-that parameter satisfies it, when the value is that variant. They can
-refine any type, using integers, booleans, and measures in their
-conditions. They cannot be type arguments of structs, boxes, references
-or lists, or appear on closure parameters or trait methods. An impl's
-method of a trait can refine its result and add `ensures`, which calls
-the checker knows are of that impl (their `Self` type has no type
-parameters) can rely on; its parameters cannot be refined.
+or struct field, or a type argument there of any type, at any depth, such
+as `Option<{ v: i64 | v > 0 }>` or `List<{ s: u8 | s < 64 }>`: each value
+at that position satisfies it (each field of a variant whose type is that
+parameter, when the value is that variant). See [refined type
+arguments](60-refined-type-arguments.md). They can refine any type, using
+integers, booleans, and measures in their conditions. They cannot appear
+on closure parameters or trait methods. An impl's method of a trait can
+refine its result and add `ensures`, which calls the checker knows are of
+that impl (their `Self` type has no type parameters) can rely on; its
+parameters cannot be refined.
 
 Predicates support linear arithmetic, comparisons, and boolean
 combinations. Multiplication of at most two unknown values is supported;
@@ -511,7 +512,12 @@ Parameter predicates may mention earlier parameters; result predicates
 may mention parameters. A field predicate may mention earlier fields
 with exactly the same visibility. Construction and assignment must
 preserve every affected field refinement. A refined variable, or a field
-that a field refinement constrains, cannot be borrowed mutably.
+that a field refinement constrains, cannot be borrowed mutably, except
+straight into a call that can't keep the reference: then the refinement
+is proved again after the call. A pattern cannot bind by `&mut` a
+variant's field, an array's element or what an or-pattern's alternative
+binds (as match ergonomics would in `match o { Some(x) => .. }` for an `o:
+&mut Option<..>`) where anything is declared of the value it's in.
 
 A predicate can read a struct's field from anything it names, at any
 depth and through references and boxes: `v == p.x`, `s.0.len() ==
@@ -561,9 +567,16 @@ condition false, or a `break`) holds. See [loop frames](52-loop-frames.md)
 and [loop invariants](54-loop-invariants.md). Diagnostics explain the required condition, relevant known
 facts, and mutations that caused facts to be forgotten.
 
+`<` of two `char`s compares their numbers, so a guard such as `c < 'a'`
+is a fact about `c as u32`. A tuple or struct pattern says which variants
+its parts are, so `(Some(a), Some(b))` knows what the options' types say
+of `a` and `b`.
+
 Proof search is bounded and incomplete. A failed proof may mean a missing
 fact, unsupported reasoning, or an arithmetic or complexity limit; it
-does not establish that the condition is false. `with panic` permits an
+does not establish that the condition is false. Every proof that fails is
+reported, not only the first: after reporting one, checking assumes it
+held. Any other error stops checking. `with panic` permits an
 unproved arithmetic operation to panic, but does not bypass a refinement
 on an argument or the proof required by indexing. The lint
 `implicit_panics`, off unless `#[warn(implicit_panics)]` turns it on,

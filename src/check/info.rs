@@ -454,9 +454,11 @@ impl Checker {
             n.args = args;
         }
         for (id, span, instance) in std::mem::take(&mut self.pending) {
-            // A comparison of integers is the machine's, not a call.
+            // A comparison of integers or characters is the machine's, not
+            // a call.
             if let Some(t) = self.compares.remove(&id) {
-                if self.int_like(&self.solved(&t)) {
+                let t = self.solved(&t);
+                if t == Type::Char || self.int_like(&t) {
                     continue;
                 }
                 self.info.ord_calls.insert(id);

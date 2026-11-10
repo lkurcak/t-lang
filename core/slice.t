@@ -1,7 +1,7 @@
 //! Slices: values one after another in memory, seen through a reference.
 
 use crate::cmp::{Ord, Ordering};
-use crate::iter::Iterator;
+use crate::iter::{DoubleEndedIterator, Iterator};
 use crate::mem;
 use crate::ops::Range;
 use crate::option::Option;
@@ -192,6 +192,24 @@ impl<'a, T> Iterator for Iter<'a, T> {
     }
 }
 
+/// From the back: each value is the tail of what's left.
+impl<'a, T> DoubleEndedIterator for Iter<'a, T> {
+    fn next_back(&mut self) -> Option<&'a T> {
+        let rest: &'a [T] = self.rest;
+        let n = rest.len();
+        if n == 0 {
+            return None;
+        }
+        match rest.split_at(n - 1) {
+            Some((head, tail)) => {
+                self.rest = head;
+                tail.get(0)
+            },
+            None => None,
+        }
+    }
+}
+
 /// What `iter_mut` gives: a reference to change each value of `rest`,
 /// front to back.
 #[derive(Discard, Send where T: Send, Sync where T: Sync)]
@@ -215,4 +233,43 @@ impl<'a, T> Iterator for IterMut<'a, T> {
             None => None,
         }
     }
+}
+
+/// From the back, as `next` from the front: what it gives is in no slice
+/// it keeps.
+impl<'a, T> DoubleEndedIterator for IterMut<'a, T> {
+    fn next_back(&mut self) -> Option<&'a mut T> {
+        let rest: &'a mut [T] = mem::replace(&mut self.rest, empty_mut());
+        let n = rest.len();
+        if n == 0 {
+            return None;
+        }
+        match rest.split_at_mut(n - 1) {
+            Some((head, tail)) => {
+                self.rest = head;
+                tail.get_mut(0)
+            },
+            None => None,
+        }
+    }
+}
+
+impl<'a, T: Copy> Iter<'a, T> {
+    /// Its values copied, not references to them: `a.iter().copied()`.
+    export fn copied(self) -> Copied<'a, T> { Copied { iter: self } }
+}
+
+/// What `Iter::copied` gives: a copy of each value of `iter`.
+#[derive(Discard, Send where T: Sync, Sync where T: Sync)]
+export struct Copied<'a, T> { iter: Iter<'a, T> }
+
+impl<'a, T: Copy> Iterator for Copied<'a, T> {
+    type Item = T;
+    effect e = {};
+
+    fn next(&mut self) -> Option<T> { self.iter.next().copied() }
+}
+
+impl<'a, T: Copy> DoubleEndedIterator for Copied<'a, T> {
+    fn next_back(&mut self) -> Option<T> { self.iter.next_back().copied() }
 }

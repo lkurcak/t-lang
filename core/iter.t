@@ -63,6 +63,54 @@ export trait Iterator {
     fn count(self) -> usize with {Self::e, panic} where Self: Discard, Self::Item: Discard {
         self.fold(0, |n, _x| n + 1)
     }
+
+    /// Whether `p` says `true` of any value. It stops at the first it does,
+    /// leaving the rest to iterate, and is `false` of none.
+    #[blame_caller]
+    fn any<effect px, P: FnMut(Self::Item) -> bool with px + Discard>(&mut self, mut p: P) -> bool
+    with {Self::e, px}
+    {
+        loop {
+            match self.next() {
+                Some(x) => {
+                    if p(x) {
+                        return true;
+                    }
+                },
+                None => return false,
+            }
+        }
+    }
+
+    /// Whether `p` says `true` of every value. It stops at the first it
+    /// doesn't, leaving the rest to iterate, and is `true` of none.
+    #[blame_caller]
+    fn all<effect px, P: FnMut(Self::Item) -> bool with px + Discard>(&mut self, mut p: P) -> bool
+    with {Self::e, px}
+    {
+        loop {
+            match self.next() {
+                Some(x) => {
+                    if !p(x) {
+                        return false;
+                    }
+                },
+                None => return true,
+            }
+        }
+    }
+
+    /// Its values back to front, of an iterator that can give them from
+    /// the back (`DoubleEndedIterator`).
+    fn rev(self) -> Rev<Self> where Self: DoubleEndedIterator { Rev { iter: self } }
+}
+
+/// An iterator that can also give its values from the back: what's left
+/// is what's between the two ends, and each value is given once, from
+/// whichever end gets to it first.
+export trait DoubleEndedIterator: Iterator {
+    /// The last value left, or `None` when there are no more.
+    fn next_back(&mut self) -> Option<Self::Item> with Self::e;
 }
 
 /// Iterating through a mutable reference iterates what it points to, which
@@ -91,6 +139,22 @@ impl<U, effect fx, I: Iterator, F: FnMut(I::Item) -> U with fx> Iterator for Map
     #[blame_caller]
     fn next(&mut self) -> Option<U> with {I::e, fx} {
         match self.iter.next() {
+            Some(x) => Some((self.f)(x)),
+            None => None,
+        }
+    }
+}
+
+/// From the back too, `f` of each of what `iter` gives from there.
+impl<
+    U,
+    effect fx,
+    I: DoubleEndedIterator,
+    F: FnMut(I::Item) -> U with fx,
+> DoubleEndedIterator for Map<I, F> {
+    #[blame_caller]
+    fn next_back(&mut self) -> Option<U> with {I::e, fx} {
+        match self.iter.next_back() {
             Some(x) => Some((self.f)(x)),
             None => None,
         }
@@ -196,4 +260,21 @@ impl<I: Iterator> Iterator for Skip<I> where I::Item: Discard {
         }
         self.iter.next()
     }
+}
+
+/// What `Iterator::rev` gives: the values of `iter`, back to front.
+#[derive(Discard where I: Discard, Send where I: Send, Sync where I: Sync)]
+export struct Rev<I> { iter: I }
+
+impl<I: DoubleEndedIterator> Iterator for Rev<I> {
+    type Item = I::Item;
+    effect e = I::e;
+
+    #[blame_caller]
+    fn next(&mut self) -> Option<I::Item> with I::e { self.iter.next_back() }
+}
+
+impl<I: DoubleEndedIterator> DoubleEndedIterator for Rev<I> {
+    #[blame_caller]
+    fn next_back(&mut self) -> Option<I::Item> with I::e { self.iter.next() }
 }

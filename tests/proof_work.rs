@@ -289,3 +289,52 @@ fn lines_written_in_a_loop() {
     };
     bounded(&[1, 3, 5], lines, limit, 6);
 }
+
+/// t-chess's `apply`: `k` statements `if from == c || to == c { .. }`, a
+/// branch that lends `g` to a call, and then `to + 16`, which `to <= 63`
+/// alone proves. With 0.77.0, three of them took 512 cases and failed:
+/// the facts' disjunctions were split before the goal's, and backjumping
+/// counted splits an equation had been substituted from as needed.
+fn corners(k: usize) -> String {
+    let fields: String = (0..k).map(|i| format!("c{i}: bool, ")).collect();
+    let inits: String = (0..k).map(|i| format!("c{i}: true, ")).collect();
+    let ifs: String = (0..k)
+        .map(|i| {
+            let c = [7, 56, 63, 0, 9, 54, 15, 48][i % 8];
+            format!("    if from == {c} || to == {c} {{\n        g.c{i} = false;\n    }}\n")
+        })
+        .collect();
+    format!(
+        "#[derive(Discard)]
+struct Game {{ {fields}n: u8, ep: Option<u8> }}
+
+fn put(g: &mut Game, s: {{ s: u8 | s < 64 }}) {{ g.n = s }}
+
+fn apply(g: &mut Game, from: {{ s: u8 | s < 64 }}, to: {{ s: u8 | s < 64 }}, pawn: bool) with {{}} {{
+{ifs}    if from == 4 || from == 60 {{
+        if to == from + 2 {{
+            put(g, from + 3);
+        }} else if to + 2 == from {{
+            g.n = from - 4;
+        }}
+    }}
+    g.ep = if pawn && (to == from + 16 || from == to + 16) {{ Some((from + to) / 2) }} else {{ None }};
+}}
+
+fn main() {{
+    let mut g = Game {{ {inits}n: 0, ep: None }};
+    apply(&mut g, 12, 28, true);
+}}
+"
+    )
+}
+
+#[test]
+fn disjunctions_the_goal_doesnt_need() {
+    let limit = Work {
+        refutations: 400,
+        cases: 60,
+        carried: 100,
+    };
+    bounded(&[1, 3, 5, 7], corners, limit, 3);
+}

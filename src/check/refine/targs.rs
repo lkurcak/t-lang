@@ -858,10 +858,11 @@ impl Walk<'_> {
         let missing = r.parts.iter().filter(|p| p.carried).count() != tree.len();
         if missing {
             let part = r.parts.iter().find(|p| p.carried).expect("carried");
-            return Err(Error::ty(
+            self.failed(Error::ty(
                 span,
                 format!("can't prove `{}` for {what}", part.text()),
             ));
+            return Ok(());
         }
         self.need_tree(v, t, &tree, decl, span, what)
     }
@@ -884,9 +885,12 @@ impl Walk<'_> {
             if let Err(reason) = self.implies(&cases, d, &pt) {
                 let text = d.text().unwrap_or_default();
                 let failure = self.proof_failure(reason, None, None, &text);
-                return Err(
-                    failure.attach(Error::ty(span, format!("can't prove `{text}` for {what}")))
+                self.failed(
+                    failure.attach(Error::ty(span, format!("can't prove `{text}` for {what}"))),
                 );
+                // Assumed from here on, as if it had been proved.
+                self.assume_tree(v, t, tree);
+                return Ok(());
             }
             if var == Variance::Inv {
                 let declared: Vec<Disj> = (decl.into_iter().flatten())
@@ -897,10 +901,11 @@ impl Walk<'_> {
                     let cases = d.0.clone();
                     if self.implies(&cases, &want, &pt).is_err() {
                         let text = want.text().unwrap_or_default();
-                        return Err(Error::ty(
+                        self.failed(Error::ty(
                             span,
                             format!("can't prove `{text}` of what may be written through {what}"),
                         ));
+                        return Ok(());
                     }
                 }
             }
@@ -916,10 +921,11 @@ impl Walk<'_> {
             };
             if self.implies(&[(Vec::new(), Cand::Any)], want, &pt).is_err() {
                 let text = want.text().unwrap_or_default();
-                return Err(Error::ty(
+                self.failed(Error::ty(
                     span,
                     format!("can't prove `{text}` of what may be written through {what}"),
                 ));
+                return Ok(());
             }
         }
         Ok(())
@@ -1535,10 +1541,11 @@ impl Walk<'_> {
                         pname(b.arg)
                     );
                     if let Some(why) = &inst.any {
-                        return Err(Error::ty(
+                        self.failed(Error::ty(
                             span,
                             format!("{behind_msg}: {why} can make or change a value of it"),
                         ));
+                        continue;
                     }
                     let cases = (inst.at.iter())
                         .find(|(p, _)| p == pos)
@@ -1555,7 +1562,8 @@ impl Walk<'_> {
                                     pname(src.arg)
                                 ),
                             };
-                            return Err(Error::ty(span, msg));
+                            self.failed(Error::ty(span, msg));
+                            break;
                         }
                     }
                 }
@@ -1610,7 +1618,7 @@ impl Walk<'_> {
                 if self.implies(&have, want, &pt).is_err() {
                     let text = want.text().unwrap_or_default();
                     let span = spans.get(j).copied().unwrap_or(at);
-                    return Err(Error::ty(
+                    self.failed(Error::ty(
                         span,
                         format!(
                             "can't prove `{text}` of what `{fname}` may write behind argument `{}`",
@@ -1818,7 +1826,7 @@ impl Walk<'_> {
             };
             if self.implies(&have, want, &pt).is_err() {
                 let text = want.text().unwrap_or_default();
-                return Err(Error::ty(
+                self.failed(Error::ty(
                     span,
                     format!("can't prove `{text}` of what may be written through {what}"),
                 ));

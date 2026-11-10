@@ -70,6 +70,22 @@ impl char {
         }
     }
 
+    /// `a` to `z` as `A` to `Z`; anything else as it is.
+    export fn to_ascii_uppercase(self) -> char {
+        match self {
+            'a'..='z' => (self as u32 - 32) as char,
+            _ => self,
+        }
+    }
+
+    /// `A` to `Z` as `a` to `z`; anything else as it is.
+    export fn to_ascii_lowercase(self) -> char {
+        match self {
+            'A'..='Z' => (self as u32 + 32) as char,
+            _ => self,
+        }
+    }
+
     /// Is it `0` to `9`?
     export fn is_ascii_digit(self) -> bool {
         match self {
