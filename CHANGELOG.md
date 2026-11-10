@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.79.1 (2026-11-10)
+
+Step 64: types, borrows, then proofs and effects. No program is accepted
+or refused that wasn't before. See
+[docs/64-phase-order.md](docs/64-phase-order.md).
+
+### Changed
+
+- Each function's closures, its trait obligations and the borrow checker,
+  which builds its MIR, run before its refinements and effects are
+  checked, rather than after, so that a refinement checker on MIR can run
+  where the one on the AST does (step 65). The effects in the MIR's types
+  and in closures' signatures are filled in once they're settled.
+- A program with several errors may get another of them first: borrow
+  errors now come before refinement and effect errors.
+- A derived `Discard`, `Copy`, `Send` or `Sync` takes its type's equality
+  bounds for granted, as they hold wherever the type is made: `struct H<F:
+  Fn() -> i64>` is `Discard` if its `F` is, whatever the closure's effects
+  turn out to be (lemma D1 of docs/17-retrospective-1.md, which missed
+  them).
+
 ## 0.79.0 (2026-11-10)
 
 Step 63: what's declared behind every reference, from retrospective 6.

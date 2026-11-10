@@ -1,5 +1,6 @@
 // A struct's type parameter bounded by `Fn` with no `with` holds only
 // closures that can't panic.
+#[derive(Discard where F: Discard)]
 struct Holder<F: Fn() -> i64> { f: F }
 
 fn call<F: Fn() -> i64>(h: &Holder<F>) -> i64 { (h.f)() }

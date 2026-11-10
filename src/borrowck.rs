@@ -5,7 +5,8 @@
 //! nothing points into: docs/37-cell.md), and no reference outlives what
 //! it points to. See docs/05-ownership.md.
 //!
-//! It runs on each function once its types are known (`check`), and works
+//! It runs on each function once its types are known (`check`), before its
+//! refinements and effects are checked (docs/64-phase-order.md), and works
 //! on a lowered form of its body, MIR (`mir.rs`, `build.rs`), the way
 //! rustc's does: as dataflow over a control-flow graph, so that a borrow
 //! lasts only as long as it's used, not to the end of its block
@@ -46,7 +47,10 @@ use std::collections::{HashMap, HashSet};
 
 /// Checks function `f`, whose type is `scheme`, and returns the warnings
 /// about it.
-/// Its MIR, once checked, is kept, by `symbol`, for running (`Checker::mir`).
+/// Its MIR, once checked, is kept, by `symbol`, for running (`Checker::mir`),
+/// once the checker has settled its effects (`Checker::keep_mir`): until
+/// then, the effects in its types may be variables, which are no values and
+/// hold no references, so they're nothing to the borrow checker.
 pub(crate) fn check(
     cx: &Checker,
     f: &FnDecl,
@@ -105,7 +109,7 @@ pub(crate) fn check(
     let key = crate::mir::Key::Fn(symbol.to_string());
     let mut kept = b.body.erased();
     drops::elaborate(&b, &mut kept);
-    cx.mir.borrow_mut().insert(key, std::sync::Arc::new(kept));
+    cx.fresh_mir.borrow_mut().push((key, kept));
     Ok(warnings)
 }
 
@@ -730,7 +734,7 @@ fn closure_body(
         let key = crate::mir::Key::Closure(c.lambda.id);
         let mut kept = b.body.erased();
         drops::elaborate(&b, &mut kept);
-        cx.mir.borrow_mut().insert(key, std::sync::Arc::new(kept));
+        cx.fresh_mir.borrow_mut().push((key, kept));
         return Ok(Outcome::Checked(warnings, reqs));
     }
     closures_in(&mut b);

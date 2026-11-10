@@ -13,7 +13,8 @@
 //! call works out what its type parameters are from its arguments). It's
 //! never part of any other type. It isn't in `Type` at all: unification, traits and
 //! monomorphisation never see one. What it says is checked by a pass of its
-//! own over each body, once its types are known (`Checker::refine`), which
+//! own over each body, once its types are known and the borrow checker has
+//! checked it (`Checker::refine`, see docs/64-phase-order.md), which
 //! keeps track of what's known at each point (*facts*) and proves from them
 //! what each refinement needs, with the procedure in `refine/logic.rs`:
 //!

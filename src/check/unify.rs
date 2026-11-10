@@ -59,6 +59,20 @@ pub(super) fn has_vars(t: &Type) -> bool {
     matches!(t, Type::Var(_)) || t.parts().any(has_vars)
 }
 
+/// Does `t` have variables in it but in its effects: is it a type not yet
+/// known, but for what its effects are, which are settled after the rest
+/// (see `solve_types`)? An effect variable is only ever in an effect set
+/// (`Checker::fresh_effects`).
+pub(super) fn has_type_vars(t: &Type) -> bool {
+    match t {
+        Type::Var(_) => true,
+        Type::Effects(items) => {
+            (items.iter()).any(|e| !matches!(e, Type::Var(_)) && has_type_vars(e))
+        }
+        t => t.parts().any(has_type_vars),
+    }
+}
+
 /// If `a` and `b` mention two different types of the same name, which look
 /// the same in a message, the rest of the message, which says so.
 fn same_name(a: &Type, b: &Type) -> String {
@@ -127,7 +141,7 @@ fn name_var(t: &Type, v: u32, name: &str) -> Type {
 
 impl Checker {
     /// A new type variable, for the type of something at `span`. `what` and
-    /// `hint` explain it if it's never solved, see `solve_all`.
+    /// `hint` explain it if it's never solved, see `solve_types`.
     pub(super) fn fresh(&mut self, span: Span, what: String, hint: String) -> Type {
         self.vars.push(Var {
             solution: None,
@@ -479,17 +493,21 @@ impl Checker {
         }
     }
 
-    /// At the end of a function: every variable made since `vars` must be
-    /// solved (including those for the type arguments of generic things it
-    /// uses), every obligation must hold, and no closure that captures may
-    /// leave the frame that made it.
+    /// At the end of a function, first its types: every variable made
+    /// since `vars` but those of its effects must be solved (including
+    /// those for the type arguments of generic things it uses), and how its
+    /// closures capture what they do is worked out, so that the borrow
+    /// checker can check it, and build its MIR, which the refinement
+    /// checker will check. Its effects are settled after that
+    /// (`solve_effects`), as proofs decide which operators can't panic.
+    /// It returns its closures' symbols.
     ///
     /// Leaving a variable unsolved would be harmless to the interpreter, which
     /// never looks at types. But a compiler has to know how big a value is
     /// and how to pass it, so like Rust, T asks for an annotation.
     ///
     /// A type a `!` was wanted as that nothing decided is `!` (see `fits`).
-    pub(super) fn solve_all(&mut self, vars: usize, f: &crate::ast::FnDecl) -> Result<(), Error> {
+    pub(super) fn solve_types(&mut self, vars: usize) -> Result<Vec<String>, Error> {
         self.settle_goals()?;
         self.nots()?;
         self.literals()?;
@@ -510,19 +528,41 @@ impl Checker {
                 return Err(self.unsolved(v));
             }
         }
+        // Its effects left out, which wait for proofs.
+        let closures = self.settle_closures()?;
+        self.prove_all(true)?;
+        for v in vars..self.vars.len() {
+            if !self.effect_vars.contains(&(v as u32))
+                && has_type_vars(&self.solved(&Type::Var(v as u32)))
+            {
+                return Err(self.unsolved(v));
+            }
+        }
+        self.settle_unused();
+        Ok(closures)
+    }
+
+    /// Then, once the borrow checker has checked it, its effects: which
+    /// operators can't panic, as proofs say, and then the least effects of
+    /// its closures; then every obligation must hold, which may be of
+    /// their types, effects and all.
+    pub(super) fn solve_effects(
+        &mut self,
+        vars: usize,
+        f: &crate::ast::FnDecl,
+        closures: &[String],
+    ) -> Result<(), Error> {
         // Which operators can't panic, before effects are settled.
         self.refine(f)?;
-        // Before what's worked out of the closures, which needs their
-        // types without variables, effects and all.
         self.settle_effects(vars)?;
-        self.settle_closures()?;
-        self.prove_all()?;
+        self.resettle_closures(closures);
+        self.keep_mir();
+        self.prove_all(false)?;
         for v in vars..self.vars.len() {
             if has_vars(&self.solved(&Type::Var(v as u32))) {
                 return Err(self.unsolved(v));
             }
         }
-        self.settle_unused();
         Ok(())
     }
 
@@ -546,7 +586,7 @@ impl Checker {
     fn settle_unused(&mut self) {
         for (i, t) in std::mem::take(&mut self.unused) {
             let t = self.solved(&t);
-            if has_vars(&t) || self.is_discard(&t) {
+            if has_type_vars(&t) || self.is_discard(&t) {
                 continue;
             }
             let w = &mut self.warnings[i];

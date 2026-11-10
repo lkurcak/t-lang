@@ -362,7 +362,16 @@ impl Checker {
     /// of each closure's result left to work out are, which a closure's body
     /// needs all of those to say. Innermost first, as an outer closure
     /// captures what an inner one does, and calls it.
-    pub(super) fn settle_closures(&mut self) -> Result<(), Error> {
+    ///
+    /// Their effects aren't settled yet, as proofs decide those of
+    /// operators (see `refine`): until they are, a closure's signature, and
+    /// the types of what it captures, may have effect variables in them,
+    /// which `resettle_closures` replaces with what they turn out to be.
+    /// Nothing here depends on effects: a closure's captures and which `Fn`
+    /// traits it implements are of what its body does with values, and its
+    /// result's lifetimes of the borrow checker's regions, which effects
+    /// don't have. It returns the closures' symbols.
+    pub(super) fn settle_closures(&mut self) -> Result<Vec<String>, Error> {
         let pending = std::mem::take(&mut self.closures);
         for p in &pending {
             self.settle_closure(&p.symbol, p)?;
@@ -373,7 +382,24 @@ impl Checker {
                 self.settle_result(p)?;
             }
         }
-        Ok(())
+        Ok(pending.into_iter().map(|p| p.symbol).collect())
+    }
+
+    /// Once the function's effects are settled, the closures `symbols`
+    /// with them in their signatures and the types of what they capture
+    /// (see `settle_closures`).
+    pub(super) fn resettle_closures(&mut self, symbols: &[String]) {
+        for symbol in symbols {
+            let mut def = self.traits.closures[symbol].clone();
+            let Type::Fn(sig) = self.solved(&Type::Fn(def.sig.clone())) else {
+                unreachable!("a signature is a function type")
+            };
+            def.sig = sig;
+            for (_, t) in &mut def.fields {
+                *t = self.solved(t);
+            }
+            self.define_closure(symbol, &def);
+        }
     }
 
     fn settle_closure(&mut self, symbol: &String, p: &Pending) -> Result<(), Error> {
@@ -724,7 +750,7 @@ impl Checker {
     pub(super) fn settle_calls(&mut self) -> Result<(), Error> {
         for (e, t, span) in std::mem::take(&mut self.calls) {
             let t = self.solved(&t);
-            if super::unify::has_vars(&t) {
+            if super::unify::has_type_vars(&t) {
                 continue;
             }
             let Some(call) = self.call_kind(&t) else {

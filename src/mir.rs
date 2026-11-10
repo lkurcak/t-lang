@@ -400,6 +400,56 @@ impl Body {
         }
     }
 
+    /// Replaces every type in the body, `t`, with `f(t)`: the effect
+    /// variables the checker had left in them with the sets it settled on
+    /// (see `Checker::keep_mir`).
+    pub(crate) fn map_types(&mut self, f: &mut impl FnMut(&Type) -> Type) {
+        fn operand(o: &mut Operand, f: &mut impl FnMut(&Type) -> Type) {
+            match o {
+                Operand::Const(Const::Int(_, t)) => *t = f(t),
+                Operand::Const(Const::Fn(_, args)) => args.iter_mut().for_each(|t| *t = f(t)),
+                _ => {}
+            }
+        }
+        for l in &mut self.locals {
+            l.ty = f(&l.ty);
+        }
+        for block in &mut self.blocks {
+            for s in &mut block.stmts {
+                match &mut s.kind {
+                    StmtKind::Assign { value, .. } => {
+                        match value {
+                            Rvalue::Cast(_, t, _) | Rvalue::Aggregate(_, t, _) => *t = f(t),
+                            _ => {}
+                        }
+                        match value {
+                            Rvalue::Use(o) | Rvalue::Unary(_, o, _) | Rvalue::Cast(o, ..) => {
+                                operand(o, f)
+                            }
+                            Rvalue::Ref(..) => {}
+                            Rvalue::Binary(_, a, b, _) => {
+                                operand(a, f);
+                                operand(b, f);
+                            }
+                            Rvalue::Aggregate(_, _, os) => {
+                                os.iter_mut().for_each(|o| operand(o, f))
+                            }
+                            Rvalue::Call(c, args) => {
+                                operand(c, f);
+                                args.iter_mut().for_each(|o| operand(o, f));
+                            }
+                        }
+                    }
+                    StmtKind::Drop(_, t) => *t = f(t),
+                    _ => {}
+                }
+            }
+            if let Some(Term::Branch(o, ..)) = &mut block.term {
+                operand(o, f);
+            }
+        }
+    }
+
     /// Every point, in order: each block's statements and terminator.
     pub(crate) fn points(&self) -> impl Iterator<Item = Point> + '_ {
         self.blocks.iter().enumerate().flat_map(|(b, block)| {

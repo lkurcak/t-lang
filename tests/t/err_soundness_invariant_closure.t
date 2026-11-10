@@ -1,14 +1,17 @@
-// A closure that changes a variable the invariant names, called in the
-// loop: what it captured `&mut` is a place the checker knows nothing of,
-// so the invariant can't be proved even as the loop starts.
+// A closure that changes a variable the invariant names: what it captured
+// `&mut` is a place the checker knows nothing of, so the invariant can't be
+// proved even as the loop starts. (Called in the loop, it would hold `i`
+// borrowed while the loop reads it, which the borrow checker refuses
+// first.)
 
 fn f() -> u8 with {} {
     let a: [u8; 50] = [0; 50];
     let mut i: usize = 0;
     let mut bump = || i = i + 100;
+    bump();
     while i < 10 invariant i < 50 {
-        bump();
         a[i];
+        i = i + 1;
     }
     0
 }
