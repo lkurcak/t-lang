@@ -48,14 +48,15 @@ fn returned(a: &mut [{ t: usize | t < 5 }; 2]) -> &mut usize {
     &mut a[0]
 }
 
-fn to_a_closure(a: &mut [{ t: usize | t < 5 }; 2]) {
-    let f = |r: &mut usize| *r = 99;
-    f(&mut a[0]);
-}
-
 fn a_cell(cs: &[Cell<{ t: usize | t < 5 }>; 1]) {
     let c: &Cell<usize> = &cs[0];
     c.set(99);
+}
+
+// A call through a closure value can't be given one at all (docs/60).
+fn to_a_closure(a: &mut [{ t: usize | t < 5 }; 2]) {
+    let f = |r: &mut usize| *r = 99;
+    f(&mut a[0]);
 }
 
 fn main() {}
@@ -67,4 +68,4 @@ fn main() {}
 // error: can't prove `t < 5`
 // error: can't prove `t < 5`
 // error: can't prove `t < 5`
-// error: can't prove `t < 5`
+// error: can't give `&mut *a.index_mut(0)` to a call through a value

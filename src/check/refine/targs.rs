@@ -962,6 +962,32 @@ impl Walk<'_> {
         if self.reproving.contains(p) {
             tree.retain(|(pos, _)| !pos.is_empty());
         }
+        // Nor, of what it's in, what's declared at the positions it's at:
+        // reading the tuple a lent element is in would say it again
+        // (lemma W3 of docs/63-what-is-declared.md).
+        let pt = self.place_ty(p);
+        let mut toward: Vec<usize> = Vec::new();
+        for r in self.reproving.clone() {
+            if r.root != p.root
+                || r.path.len() <= p.path.len()
+                || r.path[..p.path.len()] != p.path[..]
+            {
+                continue;
+            }
+            match r.path[p.path.len()] {
+                Proj::Deref => toward.push(0),
+                Proj::Field(j) => {
+                    for k in 0..Self::arity(&pt) {
+                        if self.fields_with(&pt, k).iter().any(|(_, f, ..)| *f == j) {
+                            toward.push(k);
+                        }
+                    }
+                }
+            }
+        }
+        if !toward.is_empty() {
+            tree.retain(|(pos, _)| pos.first().is_none_or(|k| !toward.contains(k)));
+        }
         if let Some(t) = self.lent_trees.get(p) {
             tree.extend(t.iter().cloned());
         }
@@ -993,32 +1019,50 @@ impl Walk<'_> {
                 out
             }
             Proj::Field(j) => {
-                let mut out = Vec::new();
-                for (pos, d) in &outer {
-                    let Some((&k, rest)) = pos.split_first() else {
-                        continue;
-                    };
-                    for (_, f, rho, _) in self.fields_with(&qt, k) {
-                        if f == *j {
-                            let mut at = rho;
-                            at.extend_from_slice(rest);
-                            out.push((at, d.clone()));
-                        }
-                    }
-                }
-                // The field's own refinements, of what it's in.
-                if fields
-                    && let Some(fields) = self.refined_fields(&qt).cloned()
-                    && let Some(Some(r)) = fields.refs.get(*j)
-                    && r.has_carried()
-                {
-                    let vals = self.fields_of(&q, &qt).unwrap_or_default();
-                    let args = self.adt_args(&qt);
-                    out.extend(self.carried_tree(r, Env::Fields(&vals, &args)));
-                }
-                out
+                let vals = match fields {
+                    true => Some(self.fields_of(&q, &qt).unwrap_or_default()),
+                    false => None,
+                };
+                self.field_decl(&outer, &qt, *j, vals.as_deref())
             }
         }
+    }
+
+    /// What's declared of field `j` of a struct of type `qt`, of which
+    /// `outer` is what's declared: at the field's positions, what's
+    /// declared of the struct's type arguments there; and, given the
+    /// struct's fields' values `vals`, the carried parts of the field's own
+    /// refinements, of them.
+    pub(super) fn field_decl(
+        &mut self,
+        outer: &Tree,
+        qt: &Type,
+        j: usize,
+        vals: Option<&[Val]>,
+    ) -> Tree {
+        let mut out = Vec::new();
+        for (pos, d) in outer {
+            let Some((&k, rest)) = pos.split_first() else {
+                continue;
+            };
+            for (_, f, rho, _) in self.fields_with(qt, k) {
+                if f == j {
+                    let mut at = rho;
+                    at.extend_from_slice(rest);
+                    out.push((at, d.clone()));
+                }
+            }
+        }
+        // The field's own refinements, of what it's in.
+        if let Some(vals) = vals
+            && let Some(fields) = self.refined_fields(qt).cloned()
+            && let Some(Some(r)) = fields.refs.get(j)
+            && r.has_carried()
+        {
+            let args = self.adt_args(qt);
+            out.extend(self.carried_tree(r, Env::Fields(vals, &args)));
+        }
+        out
     }
 }
 
