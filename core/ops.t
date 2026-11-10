@@ -71,7 +71,8 @@ impl<T: Int> Iterator for Range<T> {
 /// start.
 impl<T: Int> DoubleEndedIterator for Range<T> {
     fn next_back(&mut self) -> Option<{ v: T | v >= self.start() }>
-        ensures self.start() == old(self.start())
+    ensures
+        self.start() == old(self.start()),
     {
         if self.start < self.end {
             self.end = self.end - 1;

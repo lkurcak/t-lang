@@ -134,11 +134,15 @@ types; but a variant's field isn't a place the checker follows, so `a`
 carried nothing, and `*a = 99` was checked against nothing. The option
 `poke` was lent then held 99 where its type says something below 64, and
 the interpreter stopped on it. The same happened through a field of a
-refined `let` (`match &mut t.0`) and through a `&mut` a call gave back.
+refined `let` (`match &mut t.0`), through a `&mut` a call gave back, and
+for what an or-pattern's alternative binds (`E::A(a) | E::B(a)`), an
+array pattern's element (`[a, _]`) and a tuple's field when the tuple
+isn't at a place (`match get(&mut t) { (a, _) => .. }`): none of them has
+a place the checker follows.
 
-A pattern now can't bind a variant's field by `&mut` where anything is
-said of the value it's in: what's declared of the place, a refined local,
-a struct field a refinement is about, or what's carried of the value. That
+A pattern now can't bind any of those by `&mut` where anything is said of
+the value it's in: what's declared of the place, a refined local, a
+struct field a refinement is about, or what's carried of the value. That
 is the rule fields of structs already had. Where nothing is said, as in an
 `Option<u8>`, it binds as before, and what was known of the value is
 forgotten after the write. A binding by `&mut` of something that has a
@@ -264,9 +268,10 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
   (`tests/t/err_soundness_tuple_pattern_partial.t`). A `&t` matched is
   `t`, as `let r = &t; match r` always was.
 - **Lemma P2 (`&mut` bindings).** A write through a reference must keep
-  what's declared of where it writes (step 60's A6). A variant's field has
-  no place the walk can check a write to, so a `&mut` to one can only be
-  made where nothing is declared of it: nothing is declared of the field
+  what's declared of where it writes (step 60's A6). A variant's field, an
+  array's element, an or-pattern's binding and a field of what's at no
+  place have no place the walk can check a write to, so a `&mut` to one
+  can only be made where nothing is declared of it: nothing is declared of the field
   unless something is said of the value it's in, which `said_of` asks of
   the place (what it declares, the refined local and the constrained
   struct fields around it) and of the value (what's carried of it). A
@@ -282,7 +287,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
   which later failures are reported.
 
 The adversarial tests are `tests/t/err_soundness_tuple_pattern_*.t`,
-`err_soundness_variant_mut_binding*.t` and `err_char_compare_bound.t`.
+`err_soundness_*_mut_binding*.t` and `err_char_compare_bound.t`.
 
 ## What it doesn't do
 

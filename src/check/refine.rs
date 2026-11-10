@@ -6389,6 +6389,28 @@ impl Walk<'_> {
             s = through;
             place = place.map(|p| (0..left).fold(p, |p, _| self.deref(p)));
         }
+        // A variant's field, an array's element and what an alternative of
+        // an or-pattern binds have no place of their own here, nor has a
+        // field of what isn't at a place, so one bound by `&mut` could be
+        // written through unchecked: not where anything is declared or
+        // carried of the value (lemma P2 of docs/62-t-chess-findings.md).
+        let placeless = match &pat.kind {
+            PatternKind::Variant(..) | PatternKind::Array(_) | PatternKind::Or(_) => true,
+            PatternKind::Tuple(_) | PatternKind::Struct(..) => place.is_none(),
+            _ => false,
+        };
+        if placeless
+            && let Some(name) = self.bound_mut(pat)
+            && self.said_of(place.as_ref(), unpeeled.as_ref())
+        {
+            return Err(Error::ty(
+                pat.span,
+                format!(
+                    "can't bind `{name}` by `&mut`: what it's in has a refinement, which a write \
+                     through the reference could break"
+                ),
+            ));
+        }
         match &pat.kind {
             PatternKind::Path(..) => unreachable!("resolved into a variant (`check::modules`)"),
             PatternKind::Bind(name, _) => {
@@ -6495,21 +6517,6 @@ impl Walk<'_> {
             // what's behind the references match ergonomics looked through,
             // a value, which can't change while the borrow lasts.
             PatternKind::Variant(_, _, member, pats) => {
-                // A variant's field has no place of its own here, so one
-                // bound by `&mut` could be written through unchecked: not
-                // where anything is declared or carried of the value
-                // (lemma P2 of docs/62-t-chess-findings.md).
-                if let Some(name) = pats.iter().find_map(|p| self.bound_mut(p))
-                    && self.said_of(place.as_ref(), unpeeled.as_ref())
-                {
-                    return Err(Error::ty(
-                        pat.span,
-                        format!(
-                            "can't bind `{name}` by `&mut`: what it's in has a refinement, which \
-                             a write through the reference could break"
-                        ),
-                    ));
-                }
                 let whole = match (unpeeled, &place) {
                     (Some(v), _) => Some(self.peeled(pat, &v)),
                     (None, Some(p)) => Some(self.read_place(p)),

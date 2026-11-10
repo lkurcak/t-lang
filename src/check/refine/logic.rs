@@ -43,7 +43,10 @@
 //! cases too, which are skipped (*backjumping*, `refuted`). And a fact said
 //! twice is split once, and an atom with no variables is `true` or `false`
 //! where it's made. So a disjunction a proof doesn't need costs one case,
-//! not a doubling (docs/61-proof-search.md).
+//! not a doubling (docs/61-proof-search.md). The goal's negation is split
+//! first, then what's known of its variables, then of theirs, and so on:
+//! a goal the facts without disjunctions prove is proved before any of
+//! the facts' disjunctions is split (`valid`, docs/62-t-chess-findings.md).
 //!
 //! Every step is bounded: cases, constraints and the size of numbers (with
 //! checked `i128` arithmetic). A constraint whose numbers don't fit is left

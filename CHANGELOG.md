@@ -11,9 +11,11 @@ Step 62: what the t-chess port found. See
   through match ergonomics (`match o { Some(a) => *a = 99, .. }` of an `o:
   &mut Option<{ s: u8 | s < 64 }>`, or through a field of a refined `let`,
   or a `&mut` a call gave) could be written through with nothing checking
-  the refinement. Such a binding is refused where anything is said of the
-  value it's in; a `&mut` binding of a tuple's or struct's field is
-  checked as `let r = &mut p` is.
+  the refinement; so could what an or-pattern or an array pattern binds by
+  `&mut`, and a tuple's field through a call's `&mut`. Such a binding is
+  refused where anything is said of the value it's in; a `&mut` binding of
+  a tuple's or struct's field at a place is checked as `let r = &mut p`
+  is.
 - A goal that facts without disjunctions prove could need more than the
   solver's 512 cases: three `if a == c || b == c { .. }` statements and a
   branch lending to a call made `to + 16` of a `to <= 63` fail after

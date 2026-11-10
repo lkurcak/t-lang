@@ -514,9 +514,10 @@ with exactly the same visibility. Construction and assignment must
 preserve every affected field refinement. A refined variable, or a field
 that a field refinement constrains, cannot be borrowed mutably, except
 straight into a call that can't keep the reference: then the refinement
-is proved again after the call. A pattern cannot bind a variant's field
-by `&mut` (as match ergonomics would in `match o { Some(x) => .. }` for an
-`o: &mut Option<..>`) where anything is declared of the value it's in.
+is proved again after the call. A pattern cannot bind by `&mut` a
+variant's field, an array's element or what an or-pattern's alternative
+binds (as match ergonomics would in `match o { Some(x) => .. }` for an `o:
+&mut Option<..>`) where anything is declared of the value it's in.
 
 A predicate can read a struct's field from anything it names, at any
 depth and through references and boxes: `v == p.x`, `s.0.len() ==

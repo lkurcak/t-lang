@@ -67,10 +67,9 @@ export trait Iterator {
     /// Whether `p` says `true` of any value. It stops at the first it does,
     /// leaving the rest to iterate, and is `false` of none.
     #[blame_caller]
-    fn any<effect px, P: FnMut(Self::Item) -> bool with px + Discard>(
-        &mut self,
-        mut p: P,
-    ) -> bool with {Self::e, px} {
+    fn any<effect px, P: FnMut(Self::Item) -> bool with px + Discard>(&mut self, mut p: P) -> bool
+    with {Self::e, px}
+    {
         loop {
             match self.next() {
                 Some(x) => {
@@ -86,10 +85,9 @@ export trait Iterator {
     /// Whether `p` says `true` of every value. It stops at the first it
     /// doesn't, leaving the rest to iterate, and is `true` of none.
     #[blame_caller]
-    fn all<effect px, P: FnMut(Self::Item) -> bool with px + Discard>(
-        &mut self,
-        mut p: P,
-    ) -> bool with {Self::e, px} {
+    fn all<effect px, P: FnMut(Self::Item) -> bool with px + Discard>(&mut self, mut p: P) -> bool
+    with {Self::e, px}
+    {
         loop {
             match self.next() {
                 Some(x) => {
@@ -148,9 +146,12 @@ impl<U, effect fx, I: Iterator, F: FnMut(I::Item) -> U with fx> Iterator for Map
 }
 
 /// From the back too, `f` of each of what `iter` gives from there.
-impl<U, effect fx, I: DoubleEndedIterator, F: FnMut(I::Item) -> U with fx> DoubleEndedIterator
-    for Map<I, F>
-{
+impl<
+    U,
+    effect fx,
+    I: DoubleEndedIterator,
+    F: FnMut(I::Item) -> U with fx,
+> DoubleEndedIterator for Map<I, F> {
     #[blame_caller]
     fn next_back(&mut self) -> Option<U> with {I::e, fx} {
         match self.iter.next_back() {
