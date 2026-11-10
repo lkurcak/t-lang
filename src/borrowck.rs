@@ -46,7 +46,10 @@ use std::collections::{HashMap, HashSet};
 
 /// Checks function `f`, whose type is `scheme`, and returns the warnings
 /// about it.
-/// Its MIR, once checked, is kept, by `symbol`, for running (`Checker::mir`).
+/// Its MIR, once checked, is kept, by `symbol`, for running (`Checker::mir`),
+/// once the checker has settled its effects (`Checker::keep_mir`): until
+/// then, the effects in its types may be variables, which are no values and
+/// hold no references, so they're nothing to the borrow checker.
 pub(crate) fn check(
     cx: &Checker,
     f: &FnDecl,
@@ -105,7 +108,7 @@ pub(crate) fn check(
     let key = crate::mir::Key::Fn(symbol.to_string());
     let mut kept = b.body.erased();
     drops::elaborate(&b, &mut kept);
-    cx.mir.borrow_mut().insert(key, std::sync::Arc::new(kept));
+    cx.fresh_mir.borrow_mut().push((key, kept));
     Ok(warnings)
 }
 
@@ -730,7 +733,7 @@ fn closure_body(
         let key = crate::mir::Key::Closure(c.lambda.id);
         let mut kept = b.body.erased();
         drops::elaborate(&b, &mut kept);
-        cx.mir.borrow_mut().insert(key, std::sync::Arc::new(kept));
+        cx.fresh_mir.borrow_mut().push((key, kept));
         return Ok(Outcome::Checked(warnings, reqs));
     }
     closures_in(&mut b);

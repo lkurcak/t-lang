@@ -242,10 +242,19 @@ impl Checker {
     /// cause: one that fails itself, rather than by what it needs; else one
     /// of a hole of an `f".."`, where the value was written, rather than of
     /// the call the whole string is passed to; else the first.
-    pub(in crate::check) fn prove_all(&mut self) -> Result<(), Error> {
+    ///
+    /// It's done twice: once its types are known (`early`), before the
+    /// borrow checker, which can take for granted what they say, for all
+    /// but those that wait for its effects; and once those are settled,
+    /// for the rest (see `waits_for_effects`).
+    pub(in crate::check) fn prove_all(&mut self, early: bool) -> Result<(), Error> {
         let mut found: Option<(u8, Error)> = None;
         for mut o in std::mem::take(&mut self.obligations) {
             o.pred.ty = self.solved(&o.pred.ty);
+            if early && self.waits_for_effects(&o.pred.ty) {
+                self.obligations.push(o);
+                continue;
+            }
             // If it's still not fully known, that's reported later.
             if crate::check::unify::has_vars(&o.pred.ty) {
                 continue;
@@ -268,6 +277,24 @@ impl Checker {
             }
         }
         found.map_or(Ok(()), |(_, e)| Err(e))
+    }
+
+    /// Does whether `t` implements a trait wait for the function's effects
+    /// to be settled: has it an effect variable in it, or a variable at
+    /// all, which may turn out to be or have one, or a closure whose
+    /// signature or fields' types have? An impl may be of a type with some
+    /// effects and not others, `fn() -> i64`, which can't panic, or need
+    /// of one that its calls are, `F: Fn() -> U`.
+    fn waits_for_effects(&self, t: &Type) -> bool {
+        use crate::check::unify::has_vars;
+        let mut waits = has_vars(t);
+        crate::check::each_adt(t, &mut |name, _| {
+            waits |= (self.traits.closures.get(name)).is_some_and(|c| {
+                has_vars(&self.solved(&Type::Fn(c.sig.clone())))
+                    || (c.fields.iter()).any(|(_, f)| has_vars(&self.solved(f)))
+            });
+        });
+        waits
     }
 
     /// Requires what struct or enum types in `t` need of their type

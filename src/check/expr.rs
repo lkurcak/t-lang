@@ -139,7 +139,7 @@ impl Checker {
 
     /// Like `unify_or`, but `got` fits if it's `!`, by T-Never, whatever
     /// `want` is. If `want` is a type not known yet, it's noted, to be `!`
-    /// if nothing else decides it (see `solve_all`): in `let x = id(return);`
+    /// if nothing else decides it (see `solve_types`): in `let x = id(return);`
     /// the type argument of `id` is `!`.
     pub(super) fn fits(
         &mut self,

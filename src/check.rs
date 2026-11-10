@@ -558,6 +558,10 @@ pub(crate) struct Checker {
     /// Each body's MIR, once the borrow checker has checked it, for
     /// running (see `Info::mir`).
     pub(crate) mir: std::cell::RefCell<HashMap<crate::mir::Key, std::sync::Arc<crate::mir::Body>>>,
+    /// The MIR of the function being checked, and of its closures, once
+    /// the borrow checker has checked it, but before its effects are
+    /// settled: kept in `mir` once they are (`Checker::keep_mir`).
+    pub(crate) fresh_mir: std::cell::RefCell<Vec<(crate::mir::Key, crate::mir::Body)>>,
     /// Whether impls are being collected: then what a projection on a type
     /// that isn't a parameter stands for isn't known yet, nor whether the
     /// type implements the trait, which `check_impls` sees to.
@@ -974,6 +978,7 @@ impl Checker {
             diverging: Vec::new(),
             proj_traits: Default::default(),
             mir: Default::default(),
+            fresh_mir: Default::default(),
             collecting: false,
             here: Span::new(0, 0),
             goals: Vec::new(),
@@ -1592,7 +1597,12 @@ impl Checker {
         self.diverges = None;
         self.check(&f.body, &ret)?;
         self.end_scope(scope);
-        self.solve_all(vars, f)?;
+        let closures = self.solve_types(vars)?;
+        self.fresh_mir.borrow_mut().clear();
+        self.reveal_hidden(f, &hidden, true)?;
+        let borrowed = crate::borrowck::check(self, f, &symbol, &scheme)?;
+        self.solve_effects(vars, f, &closures)?;
+        self.reveal_hidden(f, &hidden, false)?;
         for (call, err) in std::mem::take(&mut self.unwraps) {
             if self.solved(&err) == Type::Never {
                 self.warnings.push(lints::unwrap_infallible(&call));
@@ -1611,10 +1621,24 @@ impl Checker {
             }
         }
         self.body_effects(f, &sig.effects)?;
-        for (s, var) in &hidden {
+        self.warnings.extend(borrowed);
+        Ok(())
+    }
+
+    /// What the opaque types function `f` returns stand for, `hidden`, by
+    /// the variables they were in its body: first, for the borrow checker,
+    /// with effects that may not be settled yet, and then (not `first`)
+    /// once they are.
+    fn reveal_hidden(
+        &mut self,
+        f: &FnDecl,
+        hidden: &[(String, Type)],
+        first: bool,
+    ) -> Result<(), Error> {
+        for (s, var) in hidden {
             let t = self.solution(var);
             let span = self.traits.opaques[s].span;
-            if t == Type::Never {
+            if first && t == Type::Never {
                 return Err(Error::ty(
                     span,
                     format!(
@@ -1627,10 +1651,19 @@ impl Checker {
             self.traits.opaques.get_mut(s).expect("defined").hidden = Some(t.clone());
             self.adts.proj.opaques.get_mut(s).expect("defined").hidden = Some(t);
         }
-        let symbol = self.fns[id.0].symbol.clone();
-        let warnings = crate::borrowck::check(self, f, &symbol, &scheme)?;
-        self.warnings.extend(warnings);
         Ok(())
+    }
+
+    /// Keeps the MIR the borrow checker built of the function being
+    /// checked, and of its closures, for running, once its effects are
+    /// settled: with them in its types (see `borrowck::check`).
+    fn keep_mir(&mut self) {
+        let fresh = std::mem::take(&mut *self.fresh_mir.borrow_mut());
+        let mut mir = self.mir.borrow_mut();
+        for (key, mut body) in fresh {
+            body.map_types(&mut |t| self.solved(t));
+            mir.insert(key, std::sync::Arc::new(body));
+        }
     }
 
     /// What every struct and enum is made of, by symbol.

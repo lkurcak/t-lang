@@ -740,7 +740,11 @@ impl Traits {
             let t = normalise(&self.impls, &self.anon(), eqs, &s.apply(&p.ty));
             self.implements_at(&t, &p.trait_name, env, eqs, depth + 1)?;
         }
-        for (lhs, rhs) in &d.eqs {
+        // A derived marker's equality bounds are its type's, which hold of
+        // every type that's well-formed: it needs nothing but more of the
+        // same trait (lemma D1 of docs/17-retrospective-1.md).
+        let implied = d.derived && MARKERS.contains(&tr);
+        for (lhs, rhs) in d.eqs.iter().filter(|_| !implied) {
             let (l, r) = (s.apply(lhs), s.apply(rhs));
             let normal = |t: &Type| normalise(&self.impls, &self.anon(), eqs, t).erased();
             if !fits(&normal(&l), &normal(&r), is_sig(lhs)) {
