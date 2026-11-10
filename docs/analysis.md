@@ -2,7 +2,10 @@
 
 `check_source` and `check_files` return `Checked`: sources, warnings,
 semantic information (including what checking learned before an error),
-and either the first error or a `CheckedProgram`. Analysis includes type,
+and either the first error or a `CheckedProgram`. The first error holds
+the errors found after it in `more`: checking goes on past a proof that
+fails, so each failed proof is reported, and the language server shows
+each. Analysis includes type,
 effect, refinement and borrow checking, along with the warning passes.
 It leaves nested functions, local types and generics in the checked AST.
 

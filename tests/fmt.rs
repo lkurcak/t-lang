@@ -875,6 +875,48 @@ fn f() {
 }
 
 #[test]
+fn breaks_a_long_use_list_one_name_to_a_line() {
+    let src = "\
+mod board {
+    pub const BISHOP: u8 = 0;
+    pub const KNIGHT_JUMPS_AND_THEN_SOME_MORE: u8 = 1;
+    pub mod moves { pub fn apply() {} pub fn checked() {} pub fn forward() {} }
+    pub fn initial_position() {}
+}
+use board::{BISHOP, KNIGHT_JUMPS_AND_THEN_SOME_MORE, initial_position, moves::{apply, checked, forward}};
+use board::{BISHOP as B, // the bishop
+initial_position as start};
+fn main() {}
+";
+    assert_eq!(
+        fmt(src),
+        "\
+mod board {
+    pub const BISHOP: u8 = 0;
+    pub const KNIGHT_JUMPS_AND_THEN_SOME_MORE: u8 = 1;
+    pub mod moves {
+        pub fn apply() {}
+        pub fn checked() {}
+        pub fn forward() {}
+    }
+    pub fn initial_position() {}
+}
+use board::{
+    BISHOP,
+    KNIGHT_JUMPS_AND_THEN_SOME_MORE,
+    initial_position,
+    moves::{apply, checked, forward},
+};
+use board::{
+    BISHOP as B, // the bishop
+    initial_position as start,
+};
+fn main() {}
+"
+    );
+}
+
+#[test]
 fn one_effect_in_braces_loses_them() {
     let src = "\
 trait W {

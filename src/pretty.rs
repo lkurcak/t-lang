@@ -287,6 +287,8 @@ const PARENS: Delims = Delims("(", ")", false);
 const ANGLES: Delims = Delims("<", ">", false);
 const BRACES: Delims = Delims("{", "}", true);
 const BRACKETS: Delims = Delims("[", "]", false);
+/// A `use` list's, which has no spaces inside: `a::{b, c}`.
+const USE: Delims = Delims("{", "}", false);
 const PIPES: Delims = Delims("|", "|", false);
 
 impl Printer<'_> {
@@ -497,6 +499,26 @@ impl Printer<'_> {
         group(text(open) + nest(inner) + line() + close)
     }
 
+    /// `a::{b, c as d}` in a `use`: a list that doesn't fit breaks as any
+    /// other does, one name to a line.
+    fn use_tree(&mut self, t: &UseTree) -> Doc {
+        let path: Vec<&str> = t.path.iter().map(|s| s.name.as_str()).collect();
+        let path = path.join("::");
+        match &t.kind {
+            UseKind::Name(None) => text(path),
+            UseKind::Name(Some(alias)) => text(format!("{path} as {}", alias.name)),
+            UseKind::Group(trees) => {
+                let head = match path.is_empty() {
+                    true => Doc::nil(),
+                    false => text(format!("{path}::")),
+                };
+                let close = t.span.end.saturating_sub(1);
+                let span = |t: &UseTree| (t.span.start, t.span.end);
+                head + self.list(USE, close, trees, span, None, |p, t| p.use_tree(t))
+            }
+        }
+    }
+
     /// The items of module `module`, for `t fmt`, and whether it has none.
     fn items(&mut self, program: &Program, module: usize) -> (Doc, bool) {
         let items = items_of(program, module, true);
@@ -611,7 +633,7 @@ impl Printer<'_> {
             Item::Trait(t) => self.trait_decl(t),
             Item::Impl(d) => self.impl_decl(d),
             Item::Fn(f) => self.fn_decl(f),
-            Item::Use(u) => vis(u.vis) + "use " + use_tree(&u.tree) + ";",
+            Item::Use(u) => vis(u.vis) + "use " + self.use_tree(&u.tree) + ";",
             Item::Mod(..) => unreachable!("printed by `items` or `plain_items`"),
         }
     }
@@ -1880,23 +1902,6 @@ fn vis(v: Vis) -> Doc {
     match v {
         Vis::Private => Doc::nil(),
         v => text(v.keyword()),
-    }
-}
-
-/// `a::{b, c as d}` in a `use`.
-fn use_tree(t: &UseTree) -> String {
-    let path: Vec<&str> = t.path.iter().map(|s| s.name.as_str()).collect();
-    let path = path.join("::");
-    match &t.kind {
-        UseKind::Name(None) => path,
-        UseKind::Name(Some(alias)) => format!("{path} as {}", alias.name),
-        UseKind::Group(trees) => {
-            let trees: Vec<String> = trees.iter().map(use_tree).collect();
-            match path.is_empty() {
-                true => format!("{{{}}}", trees.join(", ")),
-                false => format!("{path}::{{{}}}", trees.join(", ")),
-            }
-        }
     }
 }
 

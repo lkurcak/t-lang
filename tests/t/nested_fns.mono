@@ -370,8 +370,8 @@ fn main(os: std::Os) -> core::result::Result::<(), core::io::Error> with panic {
         dead _43;
         dead _42;
         dead _41;
-        _54 = {closure#17579}();
-        _55 = {fn}::<{closure#169445}>;
+        _54 = {closure#18248}();
+        _55 = {fn}::<{closure#174779}>;
         _56 = true;
         _53 = main::twice::<bool>(move _55, move _56);
         _57 = &mut _2;
@@ -462,7 +462,7 @@ fn main(os: std::Os) -> core::result::Result::<(), core::io::Error> with panic {
         _70 = copy _71;
         dead _71;
         _74 = &_70;
-        _73 = {closure#17669}(move _74);
+        _73 = {closure#18338}(move _74);
         _72 = copy _73;
         dead _74;
         dead _73;
@@ -614,7 +614,7 @@ fn main(os: std::Os) -> core::result::Result::<(), core::io::Error> with panic {
     }
 }
 
-closure main::{closure#17579} {
+closure main::{closure#18248} {
     let _0: bool;
     let mut _1: &{closure}; // the closure
     let _2: bool; // b
@@ -626,7 +626,7 @@ closure main::{closure#17579} {
     }
 }
 
-closure main::{closure#17669} {
+closure main::{closure#18338} {
     let _0: i64;
     let mut _1: &{closure}; // the closure
     let _2: i64; // x
@@ -1001,13 +1001,13 @@ fn <core::result::Result::<(), core::io::Error> as core::ops::Try>::from_residua
     }
 }
 
-glue {fn}::<{closure#169445}> {
+glue {fn}::<{closure#174779}> {
     let _0: bool;
     let mut _1: bool;
     let _2: {closure};
     let _3: &{closure};
     bb0: {
-        _2 = {closure#17579}();
+        _2 = {closure#18248}();
         _3 = &_2;
         _0 = (move _3)(move _1);
         dead _3;

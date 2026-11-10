@@ -1,5 +1,50 @@
 # Changelog
 
+## Unreleased
+
+Step 62: what the t-chess port found. See
+[docs/62-t-chess-findings.md](docs/62-t-chess-findings.md).
+
+### Fixed
+
+- A soundness hole since 0.76.0: a variant's field bound by `&mut`
+  through match ergonomics (`match o { Some(a) => *a = 99, .. }` of an `o:
+  &mut Option<{ s: u8 | s < 64 }>`, or through a field of a refined `let`,
+  or a `&mut` a call gave) could be written through with nothing checking
+  the refinement. Such a binding is refused where anything is said of the
+  value it's in; a `&mut` binding of a tuple's or struct's field is
+  checked as `let r = &mut p` is.
+- A goal that facts without disjunctions prove could need more than the
+  solver's 512 cases: three `if a == c || b == c { .. }` statements and a
+  branch lending to a call made `to + 16` of a `to <= 63` fail after
+  seconds. The goal's negation is now split first, then the facts nearest
+  it.
+- A tuple or struct pattern said nothing of which variants its parts are,
+  so `let (Some(x), Some(y)) = (square(a), square(b)) else { .. }` forgot
+  what `square`'s result type says of `x` and `y`. Through `match &t`
+  too.
+- `t fmt` wrote a `use` list on one line however long: one that doesn't
+  fit breaks a name to a line.
+- docs/reference.md said refinements can't be type arguments of structs,
+  boxes, references or lists, which they can since 0.76.0.
+
+### Changed
+
+- Every proof that fails is reported, not only the first: checking goes
+  on as if it had held. `Error` has the errors after it in `more`, which
+  `t` prints and the language server shows; a test's `// error:` lines
+  are one per error, in order.
+- `<`, `<=`, `>` and `>=` of `char`s are comparisons of their numbers,
+  which the checker knows: `c < 'a'` says `(c as u32) < 97`.
+
+### Added
+
+- `DoubleEndedIterator` (`next_back`), in the prelude, for ranges, slices'
+  `iter` and `iter_mut`, and what `map`, `rev` and `copied` make of them;
+  `Iterator::rev`, `Iterator::any` and `Iterator::all`.
+- `copied` of a slice's iterator: `a.iter().copied()`.
+- `char::to_ascii_uppercase` and `char::to_ascii_lowercase`.
+
 ## 0.77.0 (2026-11-09)
 
 Step 61: proofs that don't blow up, and what step 60 missed, from the
