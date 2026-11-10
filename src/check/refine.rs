@@ -2948,7 +2948,45 @@ impl Walk<'_> {
                 };
                 Ok((fv, decl))
             }
-            _ => {
+            // A value, not a place: a temporary. Each kind of expression
+            // is here by name, so that a new one can't be taken for one
+            // without saying so (a variable that's no local's is a
+            // function, a const or a static's reference).
+            ExprKind::Var(..)
+            | ExprKind::Unary(..)
+            | ExprKind::Int(..)
+            | ExprKind::Bool(..)
+            | ExprKind::Char(..)
+            | ExprKind::Str(..)
+            | ExprKind::ByteStr(..)
+            | ExprKind::Format(..)
+            | ExprKind::Unit
+            | ExprKind::As(..)
+            | ExprKind::Binary(..)
+            | ExprKind::Call(..)
+            | ExprKind::MethodCall(..)
+            | ExprKind::If(..)
+            | ExprKind::IfLet(..)
+            | ExprKind::Array(..)
+            | ExprKind::Tuple(..)
+            | ExprKind::Repeat(..)
+            | ExprKind::Block(..)
+            | ExprKind::Unsafe(..)
+            | ExprKind::StructLit(..)
+            | ExprKind::Variant(..)
+            | ExprKind::Match(..)
+            | ExprKind::Lambda(..)
+            | ExprKind::Assign(..)
+            | ExprKind::While(..)
+            | ExprKind::WhileLet(..)
+            | ExprKind::Loop(..)
+            | ExprKind::For(..)
+            | ExprKind::Range(..)
+            | ExprKind::Index(..)
+            | ExprKind::Try(..)
+            | ExprKind::Return(..)
+            | ExprKind::Break(..)
+            | ExprKind::Continue(..) => {
                 let v = self.expr(x)?;
                 let t = self.ty_of(x);
                 let known = self.knowledge(&v, &t);

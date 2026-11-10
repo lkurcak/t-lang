@@ -1165,8 +1165,12 @@ fn parametric_impl_depth(traits: &crate::traits::Traits, t: &Type, tr: &str, dep
     }
     let names = def.params.as_slice();
     def.preds.iter().all(|p| {
+        // A bound on a type with a parameter in it, `I::Item: Int`, can
+        // make values of it unless it's a consumer, as `makes` says.
         let Type::Param(q, _) = &p.ty else {
-            return true;
+            return !seen.iter().any(|q| free::mentions(&p.ty, q))
+                || consumer(traits, &p.trait_name, &mut Vec::new())
+                || crate::traits::FN_TRAITS.contains(&p.trait_name.as_str());
         };
         if !seen.contains(&q.as_str()) || consumer(traits, &p.trait_name, &mut Vec::new()) {
             return true;

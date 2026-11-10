@@ -519,6 +519,19 @@ variant's field, an array's element or what an or-pattern's alternative
 binds (as match ergonomics would in `match o { Some(x) => .. }` for an `o:
 &mut Option<..>`) where anything is declared of the value it's in.
 
+Every reference says what's declared of what it points to, whatever it's
+made from (an element, `&mut l[0]`; a field of one; what a call's
+reference points to) and however it's kept or passed on: what's written
+through it must have that, and where it's given to a function, the
+function's type must say exactly that behind it (`&mut T`, `IterMut<'_,
+T>` and `Cell<T>` are invariant in `T`). A refined field of a temporary
+can't be lent `&mut`, even to a call. What an iterator adapter gives
+(`skip`, `rev`, `enumerate`, `zip`, `copied`) has what its iterator's
+type says of its values. A closure or function given where the callee
+will pass it a `&mut` to something refined must be a closure written in
+the call, which the callee doesn't keep (not `map`'s). See [what's
+declared](63-what-is-declared.md).
+
 A predicate can read a struct's field from anything it names, at any
 depth and through references and boxes: `v == p.x`, `s.0.len() ==
 mid`. The field must be visible there, and one named in a signature's
