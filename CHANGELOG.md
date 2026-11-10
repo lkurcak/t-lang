@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.78.0 (2026-11-10)
 
 Step 62: what the t-chess port found. See
 [docs/62-t-chess-findings.md](docs/62-t-chess-findings.md).
