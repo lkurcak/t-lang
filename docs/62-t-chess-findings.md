@@ -115,8 +115,8 @@ fields. Through a reference too: `match &t { (Some(a), _) => .. }`.
 
 ## A hole: writing through a `&mut` match made
 
-Making tuple patterns say more made a test fail that should have failed
-all along:
+Making tuple patterns say more exposed a hole that had been there since
+step 60. This was accepted, and now isn't:
 
 ```rust,error
 fn poke(o: &mut Option<{ s: u8 | s < 64 }>) {
