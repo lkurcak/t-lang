@@ -589,21 +589,34 @@ const MAX_CONSTRAINTS: usize = 400;
 /// Proves `goal` from `facts`, where variable `v` is of kind `kinds[v]`.
 /// Only `Ok(())` establishes it; an error never establishes its negation.
 pub(crate) fn valid(facts: &[Formula], goal: &Formula, kinds: &[Kind]) -> Result<(), Failure> {
-    let mut parts: Vec<Formula> = relevant(facts, goal, kinds).into_iter().cloned().collect();
-    parts.push(goal.clone().not());
-    let whole = Formula::and(parts)
+    let (parts, layer) = connected(facts, goal, kinds);
+    let known = Formula::and(parts.into_iter().cloned())
         .nnf(false)
         .ok_or(Failure::ArithmeticLimit)?;
+    let denied = goal.nnf(true).ok_or(Failure::ArithmeticLimit)?;
+    // What's split on first is what the goal says, then what's said of its
+    // variables, then of theirs, and so on (`refuted` splits the last
+    // disjunction first): a proof that needs none of the facts'
+    // disjunctions needs none of their cases.
+    let mut known = match known {
+        Formula::And(fs) => fs,
+        f => vec![f],
+    };
+    let distance = |f: &Formula| {
+        let mut vs = Vec::new();
+        f.vars(&mut vs);
+        vs.iter()
+            .filter_map(|v| layer.get(v))
+            .min()
+            .copied()
+            .unwrap_or(0)
+    };
+    known.sort_by_key(|f| std::cmp::Reverse(distance(f)));
+    let mut todo: Vec<(Formula, Deps)> = known.into_iter().map(|f| (f, 0)).collect();
+    todo.push((denied, 0));
     let mut cases = 0;
     let mut kinds = kinds.to_vec();
-    match refuted(
-        &mut vec![(whole, 0)],
-        &mut Vec::new(),
-        &mut kinds,
-        &mut cases,
-        0,
-        false,
-    )? {
+    match refuted(&mut todo, &mut Vec::new(), &mut kinds, &mut cases, 0, false)? {
         Some(_) => Ok(()),
         None => Err(Failure::Unproved),
     }
@@ -616,6 +629,17 @@ pub(crate) fn relevant<'a>(
     goal: &Formula,
     kinds: &[Kind],
 ) -> Vec<&'a Formula> {
+    connected(facts, goal, kinds).0
+}
+
+/// The facts `relevant` gives, and how far each variable they mention is
+/// from the goal: 0 if the goal mentions it, 1 if a fact mentioning one
+/// of those does, and so on.
+fn connected<'a>(
+    facts: &'a [Formula],
+    goal: &Formula,
+    kinds: &[Kind],
+) -> (Vec<&'a Formula>, HashMap<Var, usize>) {
     // Only the facts that share variables with the goal, or with facts that
     // do, and so on, can matter: the rest can be made true on their own.
     // A fact with no variables at all, `false` on a path that can't be
@@ -633,7 +657,7 @@ pub(crate) fn relevant<'a>(
     let mut wanted = Vec::new();
     goal.vars(&mut wanted);
     with_factors(&mut wanted);
-    let mut vars_of: Vec<Vec<Var>> = facts
+    let vars_of: Vec<Vec<Var>> = facts
         .iter()
         .map(|f| {
             let mut vs = Vec::new();
@@ -643,29 +667,33 @@ pub(crate) fn relevant<'a>(
         })
         .collect();
     let mut taken = vec![false; facts.len()];
-    let mut seen: std::collections::HashSet<Var> = wanted.iter().copied().collect();
-    loop {
-        let mut changed = false;
-        for (i, vs) in vars_of.iter_mut().enumerate() {
-            if taken[i] {
-                continue;
-            }
-            if vs.is_empty() || vs.iter().any(|v| seen.contains(v)) {
+    let mut layer: HashMap<Var, usize> = wanted.iter().map(|&v| (v, 0)).collect();
+    // Layer by layer: the facts that mention a variable of the layers so
+    // far give the next one.
+    for depth in 1.. {
+        let mut next = Vec::new();
+        let mut took = false;
+        for (i, vs) in vars_of.iter().enumerate() {
+            if !taken[i] && (vs.is_empty() || vs.iter().any(|v| layer.contains_key(v))) {
                 taken[i] = true;
-                changed = true;
-                seen.extend(vs.iter().copied());
+                took = true;
+                next.extend(vs.iter().copied());
             }
         }
-        if !changed {
+        if !took {
             break;
         }
+        for v in next {
+            layer.entry(v).or_insert(depth);
+        }
     }
-    facts
+    let facts = facts
         .iter()
         .zip(&taken)
         .filter(|&(_, &t)| t)
         .map(|(f, _)| f)
-        .collect()
+        .collect();
+    (facts, layer)
 }
 
 /// The most lemmas `lemmas` adds to one proof.
@@ -880,7 +908,7 @@ fn refuted(
     // Atoms and `&&` first, so a case is as narrow as can be before it's
     // split.
     while let Some(i) = todo.iter().position(|(f, _)| !matches!(f, Formula::Or(_))) {
-        match todo.swap_remove(i) {
+        match todo.remove(i) {
             (Formula::True, _) => {}
             (Formula::False, d) => return Ok(Some(d)),
             (Formula::And(fs), d) => todo.extend(fs.into_iter().map(|f| (f, d))),

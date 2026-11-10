@@ -182,7 +182,10 @@ impl Checker {
     /// Is comparison `id` a call of an `Ord` method, rather than the
     /// machine's comparison of integers? Asked before `finish_notes`.
     pub(super) fn is_ord_call(&self, id: NodeId) -> bool {
-        (self.compares.get(&id)).is_some_and(|t| !self.int_like(&self.solved(t)))
+        (self.compares.get(&id)).is_some_and(|t| {
+            let t = self.solved(t);
+            t != Type::Char && !self.int_like(&t)
+        })
     }
 
     /// `integer`, saying that what `what` works on is `these`.
@@ -1116,13 +1119,18 @@ impl Checker {
             // refinement checker reasons about. That's the same answer:
             // core's `Ord` for each integer type compares with it, and no
             // program can say otherwise, as both are core's (lemma L3 of
-            // docs/17.1-library-items.md).
+            // docs/17.1-library-items.md). Of `char`s too: core's `Ord`
+            // for `char` compares their numbers, `c as u32` (lemma C1 of
+            // docs/62-t-chess-findings.md).
             //
             // If T isn't known yet, the obligation waits, and so does
             // which it is: an integer type then makes it the machine's.
             BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
                 let t = self.synth(l)?;
                 self.check(r, &t)?;
+                if self.solved(&t) == Type::Char {
+                    return Ok(Type::Bool);
+                }
                 if self.int_like(&self.solved(&t)) {
                     self.integer(&t, l.span, &format!("`{op}`"))?;
                     return Ok(Type::Bool);

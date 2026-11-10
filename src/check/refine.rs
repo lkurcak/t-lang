@@ -2870,6 +2870,39 @@ impl Walk<'_> {
                 }
                 Some(Formula::and(all))
             }
+            // Each field matching exactly, of the values a tuple's or a
+            // struct's fields are (lemma P1 of docs/62-t-chess-findings.md).
+            (PatternKind::Tuple(_) | PatternKind::Struct(..), _) => {
+                let mut all = Vec::new();
+                for (p, f) in self.field_patterns(pat, s)? {
+                    all.push(self.pattern_formula(p, &f)?);
+                }
+                Some(Formula::and(all))
+            }
+            _ => None,
+        }
+    }
+
+    /// The patterns of the fields of `pat`, a tuple or struct pattern, each
+    /// with the value of the field it matches, of `s`, if that's known.
+    fn field_patterns<'p>(&mut self, pat: &'p Pattern, s: &Val) -> Option<Vec<(&'p Pattern, Val)>> {
+        let Val::Struct(_, vals) = self.peeled(pat, s) else {
+            return None;
+        };
+        match &pat.kind {
+            PatternKind::Tuple(pats) if pats.len() == vals.len() => {
+                Some(pats.iter().zip(vals).collect())
+            }
+            PatternKind::Struct(_, _, fields, _) => {
+                let t = self.cx.solved(self.cx.typed.struct_pats.get(&pat.id)?);
+                let names = struct_fields(&self.cx.adts, &t)?;
+                let mut out = Vec::new();
+                for f in fields {
+                    let i = names.iter().position(|(n, _)| *n == f.name.name)?;
+                    out.push((&f.pat, vals.get(i)?.clone()));
+                }
+                Some(out)
+            }
             _ => None,
         }
     }
@@ -2906,6 +2939,15 @@ impl Walk<'_> {
                 let (tag, fields) = self.variant_parts(&s, &member.name)?;
                 let mut all = vec![tag];
                 for (p, f) in pats.iter().zip(fields) {
+                    all.extend(self.pattern_formula(p, &f));
+                    all.extend(self.pattern_implies(p, &f));
+                }
+                Some(Formula::and(all))
+            }
+            // Each field matches, and what that implies.
+            PatternKind::Tuple(_) | PatternKind::Struct(..) => {
+                let mut all = Vec::new();
+                for (p, f) in self.field_patterns(pat, s)? {
                     all.extend(self.pattern_formula(p, &f));
                     all.extend(self.pattern_implies(p, &f));
                 }
@@ -6277,7 +6319,19 @@ impl Walk<'_> {
                 Some(_) => None,
                 None => s.clone(),
             };
-            for _ in 0..peels {
+            // The derefs left for `place` to take, once it's the place a
+            // reference given as a value points to (`match &t { .. }`).
+            let mut left = peels;
+            for k in 0..peels {
+                if let (Some(Val::Ref(_, Pointee::Place(p))), Some(Type::Ref(_, _, inner))) =
+                    (&through, &ty)
+                {
+                    place = Some(p.clone());
+                    ty = Some(self.cx.solved(inner));
+                    through = None;
+                    left = peels - k - 1;
+                    continue;
+                }
                 let next = match (&through, &ty) {
                     (Some(Val::Ref(_, Pointee::Val(w))), Some(Type::Ref(_, _, inner))) => {
                         Some(((**w).clone(), self.cx.solved(inner)))
@@ -6300,7 +6354,7 @@ impl Walk<'_> {
                 };
             }
             s = through;
-            place = place.map(|p| (0..peels).fold(p, |p, _| self.deref(p)));
+            place = place.map(|p| (0..left).fold(p, |p, _| self.deref(p)));
         }
         match &pat.kind {
             PatternKind::Path(..) => unreachable!("resolved into a variant (`check::modules`)"),

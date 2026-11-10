@@ -2057,7 +2057,17 @@ impl<'p> Interp<'p, '_> {
             Rvalue::Binary(op, l, r, id) => {
                 let l = self.operand(fr, l);
                 let r = self.operand(fr, r);
-                self.arith(*op, l, r, *id, span)?
+                match (&l, &r) {
+                    // Characters by their numbers, as core's `Ord` says.
+                    (Value::Char(a), Value::Char(b)) => Value::Bool(match op {
+                        BinOp::Lt => a < b,
+                        BinOp::Le => a <= b,
+                        BinOp::Gt => a > b,
+                        BinOp::Ge => a >= b,
+                        _ => unsound(&format!("`{op}` of `{l}` and `{r}`")),
+                    }),
+                    _ => self.arith(*op, l, r, *id, span)?,
+                }
             }
             Rvalue::Cast(o, t, id) => {
                 let n = match self.operand(fr, o) {
