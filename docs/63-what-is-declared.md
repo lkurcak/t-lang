@@ -78,7 +78,7 @@ use alloc::list::List;
 
 fn set<T: Discard>(r: &mut T, v: T) { *r = v }
 
-fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut out = os.stdout;
     let mut l: List<{ t: usize | t < 5 }> = List::new();
     l.push(1);
@@ -249,9 +249,11 @@ as `map`.
   `A`, its parameters what's at their positions in `X`. The impl's
   methods give values of a parameter only from what they're given, by
   parametricity (A2), unless a bound of the impl's can make one, which
-  `makes` asks of the impl as of a function; a bound that isn't a consumer
-  can't, if the impl of it for what the parameter is is parametric too
-  (by induction on how deep the impls go). A parameter at two positions
+  `makes` asks of the impl as of a function (a bound on a projection of
+  the parameter counts, `where I::Item: Int`, whose literals make one); a
+  bound that isn't a consumer can't, if the impl of it for what the
+  parameter is is parametric too (by induction on how deep the impls
+  go). A parameter at two positions
   in `X` that say different things, or at none, is unknown: so is the
   projection, and where a reference could be written through it, the
   call is refused rather than taken to declare nothing.
@@ -269,12 +271,33 @@ as `map`.
 
 The adversarial tests are `tests/t/err_soundness_element_*.t`,
 `err_soundness_tuple_element_binding.t`, `err_soundness_adapter_writes.t`,
-`err_soundness_item_equality_bound.t`, `err_soundness_closure_values.t`
-and `err_soundness_temporary_field_lent.t`, and the generated family
+`err_soundness_adapter_makes.t`, `err_soundness_item_equality_bound.t`,
+`err_soundness_closure_values.t`, `err_soundness_receiver_element.t` and
+`err_soundness_temporary_field_lent.t`, and the generated family
 `generated_writes_through_refined_places` in `tests/generated_semantics.rs`:
 six places a type argument refines, twenty ways of getting a `&mut` to
 one, each written through six ways that must keep the refinement (good)
 or be refused (bad), and given four ways to code that may write anything.
+
+Each rule was switched off in turn, and a test failed for each, but for
+those that only back others up:
+
+- W6's refusal of a projection it can't say is reached only where
+  `makes` has already said its base's values are made, so W5 refuses the
+  call first;
+- W6's check of an impl's own bounds and `parametric_impl`'s are one
+  condition, asked at two points: switched off together, a test fails;
+- a parameter at two positions of an impl's type is one
+  `parametric_impl` already says isn't parametric;
+- what a reference a `*` of a temporary makes says is said by what the
+  temporary declares too;
+- W7's other direction, that what a closure counts on holds of what it's
+  given: a closure walked with something declared is one written in a
+  call that doesn't keep it, so it's only ever given what it was walked
+  with.
+
+They stay, so that each lemma is checked where it's used, not only where
+it's first true.
 
 ## What it doesn't do
 
