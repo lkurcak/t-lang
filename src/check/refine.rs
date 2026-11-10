@@ -1857,6 +1857,15 @@ impl Checker {
     /// Checks what the refinements in body `f` need, and works out which
     /// of its operators can't panic, taking those out of its effects.
     pub(super) fn refine(&mut self, f: &FnDecl) -> Result<(), Error> {
+        let mut failed = Vec::new();
+        let result = self.refine_walk(f, &mut failed);
+        self.proof_errors.append(&mut failed);
+        result
+    }
+
+    /// `refine`, leaving in `failed` the proofs that failed, which don't
+    /// stop it (`Walk::failed`).
+    fn refine_walk(&mut self, f: &FnDecl, failed: &mut Vec<Error>) -> Result<(), Error> {
         let id = self.current.expect("in a function");
         let symbol = self.fns[id.0].symbol.clone();
         let sig = self.refined.get(&symbol).cloned();
@@ -1902,6 +1911,7 @@ impl Checker {
             consts: HashMap::new(),
             failures: HashMap::new(),
             invalidated: Vec::new(),
+            errors: Vec::new(),
         };
         w.unstable_in(&f.body, false);
         let mut ret = None;
@@ -1929,7 +1939,9 @@ impl Checker {
         {
             w.ensures = Some((sig.ensures.clone(), sig.name.clone()));
         }
-        let v = w.expr(&f.body)?;
+        let v = w.expr(&f.body);
+        failed.append(&mut w.errors);
+        let v = v?;
         let mut known = None;
         if f.is_const() && w.reachable {
             known = match &v {
@@ -1939,7 +1951,9 @@ impl Checker {
                 _ => None,
             };
         }
-        w.result(v, super::expr::result_span(&f.body))?;
+        let done = w.result(v, super::expr::result_span(&f.body));
+        failed.append(&mut w.errors);
+        done?;
         let proved = std::mem::take(&mut w.proved);
         let failures = std::mem::take(&mut w.failures);
         if let Some(k) = known {
@@ -2408,6 +2422,8 @@ struct Loop {
 /// The pass over one body (see `Checker::refine`).
 struct Walk<'c> {
     cx: &'c Checker,
+    /// The proofs that failed, which checking goes on past (`failed`).
+    errors: Vec<Error>,
     /// What each variable of the logic stands for, by number.
     kinds: Vec<Kind>,
     /// What's known here, on this path.
@@ -3956,12 +3972,29 @@ impl Walk<'_> {
                 continue;
             };
             let failure = self.proof_failure(reason, goal.as_ref().ok(), Some(val), &part.text());
-            return Err(failure.attach(Error::ty(
+            self.failed(failure.attach(Error::ty(
                 span,
                 format!("can't prove `{}` for {what}", part.text()),
             )));
+            // Assumed from here on, as if it had been proved.
+            for part in &r.parts {
+                if !part.carried
+                    && let Ok(g) = self.part(part, val, env)
+                {
+                    self.fact(g);
+                }
+            }
+            return Ok(());
         }
         Ok(())
+    }
+
+    /// `e`, that a refinement couldn't be proved, is reported, but checking
+    /// goes on as if it had been: it's assumed from here on, as if proved,
+    /// so no later failure is a consequence of this one, and each is worth
+    /// saying (D1 of docs/62-t-chess-findings.md).
+    pub(super) fn failed(&mut self, e: Error) {
+        self.errors.push(e);
     }
 
     /// Fails at `span` unless the fields `vals` of a value of struct `t`
@@ -6398,6 +6431,22 @@ impl Walk<'_> {
                                 self.bind(id, None);
                                 self.alias.insert(id, p);
                             }
+                            // As `let r = &mut p;`: what's written through it
+                            // must be what's declared of `p` (lemma P2 of
+                            // docs/62-t-chess-findings.md).
+                            (true, Some(p), _) => {
+                                let o = self.new_obj();
+                                let r = Val::Ref(o, Pointee::Place(p));
+                                if !self.decl.contains_key(&id) {
+                                    let t = self.ty_of_bind(id);
+                                    let known = self.knowledge(&r, &t);
+                                    let tree = targs::widen(&known);
+                                    if !tree.is_empty() {
+                                        self.decl.insert(id, tree);
+                                    }
+                                }
+                                self.bind(id, Some(r));
+                            }
                             // A `&` to a value known, a variant's field.
                             (false, None, Some(v)) => {
                                 let o = self.new_obj();
@@ -6446,6 +6495,21 @@ impl Walk<'_> {
             // what's behind the references match ergonomics looked through,
             // a value, which can't change while the borrow lasts.
             PatternKind::Variant(_, _, member, pats) => {
+                // A variant's field has no place of its own here, so one
+                // bound by `&mut` could be written through unchecked: not
+                // where anything is declared or carried of the value
+                // (lemma P2 of docs/62-t-chess-findings.md).
+                if let Some(name) = pats.iter().find_map(|p| self.bound_mut(p))
+                    && self.said_of(place.as_ref(), unpeeled.as_ref())
+                {
+                    return Err(Error::ty(
+                        pat.span,
+                        format!(
+                            "can't bind `{name}` by `&mut`: what it's in has a refinement, which \
+                             a write through the reference could break"
+                        ),
+                    ));
+                }
                 let whole = match (unpeeled, &place) {
                     (Some(v), _) => Some(self.peeled(pat, &v)),
                     (None, Some(p)) => Some(self.read_place(p)),
@@ -6515,6 +6579,57 @@ impl Walk<'_> {
             | PatternKind::Unit => {}
         }
         Ok(())
+    }
+
+    /// The name of a variable `pat` binds by `&mut`, if it binds one.
+    fn bound_mut(&self, pat: &Pattern) -> Option<String> {
+        match &pat.kind {
+            PatternKind::Bind(name, _) => {
+                let id = self.cx.typed.sites.get(&pat.id).copied().unwrap_or(pat.id);
+                let by_ref = self.cx.typed.binds.get(&id).and_then(|b| b.by_ref);
+                (by_ref == Some(true)).then(|| name.clone())
+            }
+            PatternKind::Variant(.., pats)
+            | PatternKind::Tuple(pats)
+            | PatternKind::Array(pats)
+            | PatternKind::Or(pats)
+            | PatternKind::Path(_, pats, _) => pats.iter().find_map(|p| self.bound_mut(p)),
+            PatternKind::Struct(_, _, fields, _) => {
+                fields.iter().find_map(|f| self.bound_mut(&f.pat))
+            }
+            PatternKind::Wild
+            | PatternKind::Int(..)
+            | PatternKind::Range(..)
+            | PatternKind::Bool(_)
+            | PatternKind::Str(_)
+            | PatternKind::Unit => None,
+        }
+    }
+
+    /// Whether anything is declared of the value at `place`, if it's one,
+    /// or carried of `v`, if it's known: a refinement of the local it's in,
+    /// of a struct field it's in, or of a type argument at any depth.
+    fn said_of(&mut self, place: Option<&Place>, v: Option<&Val>) -> bool {
+        if let Some(p) = place {
+            let through_ref = p.path.iter().enumerate().any(|(k, proj)| {
+                *proj == Proj::Deref && {
+                    let q = Place {
+                        root: p.root,
+                        path: p.path[..k].to_vec(),
+                    };
+                    matches!(self.place_ty(&q), Type::Ref(..))
+                }
+            });
+            if (!through_ref && self.invariants.contains_key(&p.root))
+                || !self.constrained_around(p).is_empty()
+                || self.place_decl_own(p).iter().any(|(_, d)| !d.is_any())
+            {
+                return true;
+            }
+        }
+        v.and_then(targs::obj_of)
+            .and_then(|o| self.trees.get(&o))
+            .is_some_and(|t| t.iter().any(|(_, d)| !d.is_any()))
     }
 
     fn stmt(&mut self, s: &Stmt) -> Result<(), Error> {

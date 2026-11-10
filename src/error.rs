@@ -46,6 +46,10 @@ pub struct Error {
     /// Other places that explain it, each with what happens there: "`x`
     /// is borrowed here".
     pub notes: Vec<(Span, String)>,
+    /// The errors found after it, in order: checking goes on past a proof
+    /// that fails, as if it hadn't, so that each failed proof is reported
+    /// (see docs/62-t-chess-findings.md). Every other error stops it.
+    pub more: Vec<Error>,
 }
 
 impl Error {
@@ -58,6 +62,14 @@ impl Error {
         for fix in &mut self.fixes {
             fix.map(f);
         }
+        for e in &mut self.more {
+            e.map_text(f);
+        }
+    }
+
+    /// It, and each error found after it.
+    pub fn all(&self) -> impl Iterator<Item = &Error> {
+        std::iter::once(self).chain(&self.more)
     }
 
     pub fn syntax(span: Span, message: impl Into<String>) -> Error {
@@ -79,6 +91,7 @@ impl Error {
             message: message.into(),
             fixes: Vec::new(),
             notes: Vec::new(),
+            more: Vec::new(),
         }
     }
 
@@ -104,8 +117,18 @@ impl Error {
     }
 
     /// Renders the error rustc-style, with the offending line underlined,
-    /// in whichever of the program's files it's in.
+    /// in whichever of the program's files it's in, and then each error
+    /// found after it.
     pub fn render_in(&self, sources: &Sources) -> String {
+        self.render_each_in(sources).join("\n\n")
+    }
+
+    /// Renders it and each error found after it, each on its own.
+    pub fn render_each_in(&self, sources: &Sources) -> Vec<String> {
+        self.all().map(|e| e.render_one_in(sources)).collect()
+    }
+
+    fn render_one_in(&self, sources: &Sources) -> String {
         let (label, mut out) = (self.label(), String::new());
         let (path, src, span) = in_file(sources, self.span);
         out.push_str(&render(
@@ -147,6 +170,10 @@ impl Error {
         for (span, note) in self.notes.iter().filter(|(span, _)| *span != self.span) {
             out.push('\n');
             out.push_str(&render("note", *span, note, &[], None, path, src));
+        }
+        for e in &self.more {
+            out.push_str("\n\n");
+            out.push_str(&e.render(path, src));
         }
         out
     }

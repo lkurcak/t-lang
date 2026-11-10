@@ -845,9 +845,9 @@ fn diagnose(a: &Analysis, uri: &Uri) -> Vec<(Diagnostic, Vec<Fix>)> {
         .iter()
         .filter_map(|w| Some((warning_diagnostic(a, uri, w)?, w.fixes.clone())))
         .collect();
-    let errors: &[_] = match &a.checked.result {
-        Err(e) if a.syntax_errors.is_empty() => std::slice::from_ref(e),
-        _ => &a.syntax_errors,
+    let errors: Vec<&Error> = match &a.checked.result {
+        Err(e) if a.syntax_errors.is_empty() => e.all().collect(),
+        _ => a.syntax_errors.iter().collect(),
     };
     for e in errors {
         if let Some(d) = error_diagnostic(a, uri, e) {

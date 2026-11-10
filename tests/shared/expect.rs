@@ -20,7 +20,9 @@
 //! - `// error: <text>` — the program must fail (to parse, to type-check, or at
 //!   runtime) with an error whose rendered message contains `<text>`, not
 //!   counting the lines of source it shows, which hold the comment. Any
-//!   `expect` lines must then match what was printed before the error.
+//!   `expect` lines must then match what was printed before the error. One
+//!   per error, in order, when there are several: each proof that fails is
+//!   reported.
 //! - `// warning: <text>` — one per warning, in order, each contained in the
 //!   rendered warning, not counting its lines of source. A warning without
 //!   one is a failure.
@@ -88,7 +90,8 @@ pub struct Expectations {
     pub env: Vec<(String, String)>,
     /// The files, each of its `// file:` lines.
     pub files: std::collections::BTreeMap<String, Vec<u8>>,
-    pub error: Option<String>,
+    /// Each `// error:`, in order.
+    pub error: Vec<String>,
     pub warnings: Vec<String>,
     pub tests: Vec<String>,
 }
@@ -152,7 +155,10 @@ impl Expectations {
                         files
                     },
                 ),
-            error: src.lines().find_map(|l| directive(l, "// error: ")),
+            error: src
+                .lines()
+                .filter_map(|l| directive(l, "// error: "))
+                .collect(),
             warnings: src
                 .lines()
                 .filter_map(|l| directive(l, "// warning: "))
@@ -199,21 +205,28 @@ pub fn check_files(files: &Files) -> Result<(), String> {
     check_fixes(files, &run)?;
 
     let actual = run.output;
-    match (run.result, want.error) {
-        (Ok(_), None) => {}
-        (Ok(_), Some(want)) => {
+    match (run.result, want.error.is_empty()) {
+        (Ok(_), true) => {}
+        (Ok(_), false) => {
             return Err(format!(
-                "expected an error containing {want:?}, but it ran fine"
+                "expected an error containing {:?}, but it ran fine",
+                want.error[0]
             ));
         }
-        (Err(e), None) => {
+        (Err(e), true) => {
             return Err(format!("unexpected error\n{}", e.render_in(&run.sources)));
         }
-        (Err(e), Some(want)) => {
-            let rendered = e.render_in(&run.sources);
-            if !without_source(&rendered).contains(&want) {
+        (Err(e), false) => {
+            let rendered = e.render_each_in(&run.sources);
+            let matches = rendered.len() == want.error.len()
+                && (rendered.iter())
+                    .zip(&want.error)
+                    .all(|(r, want)| without_source(r).contains(want));
+            if !matches {
                 return Err(format!(
-                    "expected an error containing {want:?}, got\n{rendered}"
+                    "expected errors containing {:?}, got\n{}",
+                    want.error,
+                    rendered.join("\n\n")
                 ));
             }
         }

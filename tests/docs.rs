@@ -157,7 +157,7 @@ fn check(block: &Block) -> Result<(), String> {
     let src = "\n".repeat(lines_before) + &src;
     let has_main = src.contains("fn main(");
     if block.is("error") {
-        if expect::Expectations::of(&src).error.is_none() {
+        if expect::Expectations::of(&src).error.is_empty() {
             return Err("marked `error`, but has no `// error:` comment".to_string());
         }
         // After the code, so the error stays where it is.

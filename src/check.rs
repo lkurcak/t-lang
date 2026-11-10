@@ -581,6 +581,9 @@ pub(crate) struct Checker {
     effect_sites: Vec<effects::Site>,
     /// Why an operator could not be proved total, at its effect site.
     proof_failures: HashMap<Span, refine::ProofFailure>,
+    /// The refinements that couldn't be proved, in the order they were
+    /// found: checking goes on as if they had been (`Walk::failed`).
+    proof_errors: Vec<Error>,
     /// Calls of `Result`'s methods for an `Err`, with the error type, to
     /// see once it's solved whether there can be one (see
     /// `lints::unwrap_infallible`).
@@ -979,6 +982,7 @@ impl Checker {
             sig_self: None,
             effect_sites: Vec::new(),
             proof_failures: HashMap::new(),
+            proof_errors: Vec::new(),
             unwraps: Vec::new(),
             dropped: Vec::new(),
             withins: Vec::new(),
@@ -1028,6 +1032,37 @@ impl Checker {
     /// those before it left. Resolving its paths first rewrites them, as
     /// `check/modules.rs` says.
     fn package(&mut self, prog: &mut Program, root: usize, from: Counts) -> Result<(), Error> {
+        let result = self.package_passes(prog, root, from);
+        // The proofs that failed, which didn't stop checking, come before
+        // what did, if anything did: each is said once.
+        let mut failed: Vec<Error> = Vec::new();
+        for e in std::mem::take(&mut self.proof_errors)
+            .into_iter()
+            .chain(result.err())
+        {
+            let same = |f: &Error| f.span == e.span && f.message == e.message;
+            if !failed.iter().any(same) {
+                failed.push(e);
+            }
+        }
+        let mut failed = failed.into_iter();
+        match failed.next() {
+            None => Ok(()),
+            Some(mut first) => {
+                first.more = failed.collect();
+                Err(first)
+            }
+        }
+    }
+
+    /// `package`'s passes, which stop at an error, but not at a failed
+    /// proof, which they leave in `proof_errors`.
+    fn package_passes(
+        &mut self,
+        prog: &mut Program,
+        root: usize,
+        from: Counts,
+    ) -> Result<(), Error> {
         self.from = from;
         self.leaves_from = self.modules.leaf_items.len();
         self.imports_from = self.modules.imports.len();
@@ -1128,6 +1163,11 @@ impl Checker {
         self.check_impls(prog)?;
         self.info.traits = self.traits.clone();
         self.bodies(prog)?;
+        // What comes after is about the whole program, which doesn't check
+        // if a proof failed: so it isn't done, as after any other error.
+        if !self.proof_errors.is_empty() {
+            return Ok(());
+        }
         self.zonk_inferred();
         self.hole_effects();
         self.tests_known(root)?;

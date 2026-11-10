@@ -17,3 +17,4 @@ fn f(c: bool) -> u8 with {} {
 
 fn main() {}
 // error: can't prove `i < self.len()` for argument `i` of `index`
+// error: `+` may panic, but `f` doesn't say `with panic`
