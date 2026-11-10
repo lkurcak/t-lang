@@ -1908,6 +1908,8 @@ impl Checker {
             coerced_args: Vec::new(),
             no_place_reads: false,
             closure_params: HashMap::new(),
+            closure_decls: HashMap::new(),
+            closures_refused: HashSet::new(),
             module: self.fns[id.0].module,
             invariants: HashMap::new(),
             unstable: HashSet::new(),
@@ -2478,6 +2480,16 @@ struct Walk<'c> {
     /// the closure's node, as the call it's given to says
     /// (`targs::closure_trees`).
     closure_params: HashMap<NodeId, Vec<targs::Tree>>,
+    /// What each closure literal walked here was walked with of its
+    /// parameters, by the closure's type's symbol: what it can count on of
+    /// them, and what it keeps of what's written through them. A call that
+    /// gives one, for a type parameter the callee calls with a `&mut` to
+    /// something refined, needs it to be exactly that (lemma W7 of
+    /// docs/63-what-is-declared.md).
+    closure_decls: HashMap<String, Vec<targs::Tree>>,
+    /// The closures a call was refused for so (`targs::closures_given`):
+    /// once is enough to say so.
+    closures_refused: HashSet<String>,
     /// While working out what's known where branches meet: what a
     /// reference points to isn't read (`Walk::join_values`).
     no_place_reads: bool,
@@ -6125,6 +6137,9 @@ impl Walk<'_> {
                 let loops = std::mem::take(&mut self.loops);
                 self.closures += 1;
                 let assumed = self.closure_params.remove(&l.id).unwrap_or_default();
+                if let Type::Adt(symbol, ..) = self.ty_of(e) {
+                    self.closure_decls.insert(symbol, assumed.clone());
+                }
                 for (i, p) in l.params.iter().enumerate() {
                     if let Some(tree) = assumed.get(i).filter(|t| !t.is_empty()) {
                         self.decl.insert(p.name.id, tree.clone());

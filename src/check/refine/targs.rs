@@ -1137,7 +1137,16 @@ pub(super) fn widen(tree: &Tree) -> Tree {
 /// its `U`s, and what `<T as Iterator>::Item` is says what it gives
 /// (`Walk::subst_tree`).
 fn parametric_impl(traits: &crate::traits::Traits, t: &Type, tr: &str) -> bool {
-    let Some((i, _)) = traits.select(t, Some(tr), &[]) else {
+    parametric_impl_depth(traits, t, tr, 0)
+}
+
+/// `parametric_impl`, as deep as `depth`: a bound of the impl's on one of
+/// its parameters that isn't a consumer is as good, if the impl of it for
+/// what the parameter is there is parametric too (`Rev<I>`'s `I:
+/// DoubleEndedIterator`, of an `Iter<'_, T>`): its methods can make no more
+/// than code generic in the parameter can, so neither can these.
+fn parametric_impl_depth(traits: &crate::traits::Traits, t: &Type, tr: &str, depth: usize) -> bool {
+    let Some((i, impl_args)) = traits.select(t, Some(tr), &[]) else {
         return false;
     };
     let def = &traits.impls[i];
@@ -1154,9 +1163,20 @@ fn parametric_impl(traits: &crate::traits::Traits, t: &Type, tr: &str) -> bool {
         }
         seen.push(p);
     }
+    let names = def.params.as_slice();
     def.preds.iter().all(|p| {
-        !matches!(&p.ty, Type::Param(q, _) if seen.contains(&q.as_str()))
-            || consumer(traits, &p.trait_name, &mut Vec::new())
+        let Type::Param(q, _) = &p.ty else {
+            return true;
+        };
+        if !seen.contains(&q.as_str()) || consumer(traits, &p.trait_name, &mut Vec::new()) {
+            return true;
+        }
+        let arg = names
+            .iter()
+            .position(|n| n == q)
+            .and_then(|k| impl_args.get(k));
+        depth < DEPTH
+            && arg.is_some_and(|a| parametric_impl_depth(traits, a, &p.trait_name, depth + 1))
     }) && def.eqs.iter().all(|(a, b)| {
         let mentions = |t: &Type| seen.iter().any(|q| free::mentions(t, q));
         matches!(a, Type::Proj(base, ..) if !matches!(**base, Type::Param(..)))
@@ -1318,7 +1338,12 @@ impl Walk<'_> {
                         // Where `x`'s own type is invariant, behind a `&mut`
                         // in it, what's there is typed by what's declared
                         // of it, not what's known of the values there now
-                        // (lemma A4).
+                        // (lemma A4); and, as for an invariant occurrence,
+                        // what the callee may write there must have it: an
+                        // `IterMut<'_, T>` given whole lets the callee write
+                        // `T`s through what it gives (lemma W5 of
+                        // docs/63-what-is-declared.md).
+                        let mut declared: Tree = Vec::new();
                         let mut written_here: Option<Tree> = None;
                         for pos in &all {
                             let mut p = rho.clone();
@@ -1337,6 +1362,9 @@ impl Walk<'_> {
                                     .filter(|(q, _)| *q == p)
                                     .map(|(_, d)| d.clone())
                                     .collect();
+                                for d in &here {
+                                    declared.push((pos.clone(), d.clone()));
+                                }
                                 let c = match here.is_empty() {
                                     true => Cand::Any,
                                     false => Cand::all(here),
@@ -1355,6 +1383,17 @@ impl Walk<'_> {
                                 };
                                 push(&mut inst, pos, (src, g, c));
                             }
+                        }
+                        // Of a value, not a place, what's said behind it is
+                        // what was known of what it points to when it was
+                        // made (an empty slice's elements, none): what's
+                        // declared there is what a `let` of it would say.
+                        let declared = match written[j] {
+                            Some(_) => declared,
+                            None => widen(&declared),
+                        };
+                        if !declared.is_empty() {
+                            behind.push(Behind { arg: j, declared });
                         }
                     }
                     Variance::Inv => {
@@ -1454,6 +1493,102 @@ impl Walk<'_> {
             return self.values_at(v, &actual, &p);
         }
         self.values_at(v, t, pos)
+    }
+
+    /// Checks each closure or function a call gives for a type parameter
+    /// `F` the callee calls (`F::SIG = fn(A, ..) -> R`): where what it may
+    /// give `F` in an `A` has something declared behind a `&mut` (or in an
+    /// `Unsafe`), `F` must be a closure walked with exactly that of its
+    /// parameter (`Walk::closure_decls`), so that what it writes there keeps
+    /// it, and what it counts on there holds (lemma W7 of
+    /// docs/63-what-is-declared.md). A closure written in the call that
+    /// the callee doesn't keep is (`closure_trees`); one made before, or
+    /// kept to be called later, or a function, says nothing of its
+    /// parameters, so it can't be given one.
+    #[allow(clippy::too_many_arguments)]
+    fn closures_given(
+        &mut self,
+        s: &crate::types::Scheme,
+        fsig: &crate::types::FnType,
+        insts: &[(String, Inst)],
+        subst: &crate::types::Subst,
+        spans: &[Span],
+        at: Span,
+        fname: &str,
+    ) {
+        for (a, b) in &s.eqs {
+            let (Type::Proj(base, _, n), Type::Fn(sig)) = (a, b) else {
+                continue;
+            };
+            let Type::Param(f, _) = &**base else {
+                continue;
+            };
+            if n != crate::traits::SIG {
+                continue;
+            }
+            let fty = self.cx.solved(&subst.apply(base));
+            let closure = match &fty {
+                Type::Adt(symbol, ..) if self.cx.traits.closures.contains_key(symbol) => {
+                    Some(symbol.clone())
+                }
+                _ => None,
+            };
+            if closure
+                .as_ref()
+                .is_some_and(|c| self.closures_refused.contains(c))
+            {
+                continue;
+            }
+            let have: Vec<Tree> = (closure.as_ref())
+                .and_then(|c| self.closure_decls.get(c).cloned())
+                .unwrap_or_default();
+            let span = (fsig.params.iter().position(|p| free::mentions(p, f)))
+                .and_then(|j| spans.get(j).copied())
+                .unwrap_or(at);
+            for (i, p) in sig.params.iter().enumerate() {
+                let want = self.subst_tree(p, insts, subst, 0);
+                let pt = self.cx.solved(&subst.apply(p));
+                let have_i = have.get(i).cloned().unwrap_or_default();
+                for (pos, d) in &want {
+                    if d.is_any() {
+                        continue;
+                    }
+                    let Some((t, Variance::Inv)) = self.type_at(&pt, pos) else {
+                        continue;
+                    };
+                    let here: Vec<&Disj> = (have_i.iter())
+                        .filter(|(q, _)| q == pos)
+                        .map(|(_, h)| h)
+                        .collect();
+                    let cases = match here.is_empty() {
+                        true => vec![(Vec::new(), Cand::Any)],
+                        false => vec![(
+                            Vec::new(),
+                            Cand::all(here.iter().map(|h| (*h).clone()).collect()),
+                        )],
+                    };
+                    let writes = self.implies(&cases, d, &t).is_ok();
+                    let given = [(Vec::new(), Cand::all(vec![d.clone()]))];
+                    let reads = here.iter().all(|h| self.implies(&given, h, &t).is_ok());
+                    if !(writes && reads) {
+                        let text = d.text().unwrap_or_default();
+                        self.failed(Error::ty(
+                            span,
+                            format!(
+                                "can't prove `{text}` of what this may write: `{fname}` gives \
+                                 it a `&mut` to what's declared so, and only a closure written \
+                                 in the call, which `{fname}` doesn't keep, is checked with what \
+                                 it's given"
+                            ),
+                        ));
+                        if let Some(c) = closure {
+                            self.closures_refused.insert(c);
+                        }
+                        return;
+                    }
+                }
+            }
+        }
     }
 
     /// `tree`, of argument `j`'s own type, as of the parameter's: the
@@ -1672,17 +1807,34 @@ impl Walk<'_> {
                 }
             }
         }
-        // What it gives, and leaves behind what it's lent.
+        let plain: Vec<(String, Inst)> = (insts.iter())
+            .map(|(x, inst, _)| (x.clone(), inst.clone()))
+            .collect();
+        self.closures_given(&s, fsig, &plain, &subst, spans, at, &fname);
+        // What it gives, and leaves behind what it's lent: of each type
+        // parameter, its instantiation; of each projection on one, what
+        // the impl says it is (lemma W6 of docs/63-what-is-declared.md).
         let mut out = CallTrees::default();
         let ret = (*fsig.ret).clone();
-        for (x, inst, _) in &insts {
-            let (occ, _) = self.occurrences(&ret, x);
-            for (rho, _) in occ {
-                for (pos, d) in inst.tree() {
-                    let mut p = rho.clone();
-                    p.extend(pos);
-                    out.result.push((p, d));
-                }
+        let mut unknown = Vec::new();
+        out.result = self.subst_tree_unknown(&ret, &plain, &subst, 0, &mut unknown);
+        // Where what's declared isn't known, nothing may be written: a
+        // `&mut` there, or an `Unsafe`, would say nothing's declared.
+        let rt = self.cx.solved(&subst.apply(&ret));
+        for (rho, why) in unknown {
+            let Some((t, _)) = self.type_at(&rt, &rho) else {
+                continue;
+            };
+            let writable = (self.positions(&t).iter())
+                .any(|p| matches!(self.type_at(&t, p), Some((_, Variance::Inv))));
+            if writable {
+                self.failed(Error::ty(
+                    at,
+                    format!(
+                        "can't tell what's declared behind what `{fname}` gives: it's {why}, \
+                         which what it's of doesn't say"
+                    ),
+                ));
             }
         }
         for (j, p) in places.iter().enumerate() {
@@ -1991,6 +2143,25 @@ impl Walk<'_> {
         subst: &crate::types::Subst,
         depth: usize,
     ) -> Tree {
+        self.subst_tree_unknown(a, insts, subst, depth, &mut Vec::new())
+    }
+
+    /// `subst_tree`, and in `unknown` each position of `a` that's a
+    /// projection whose values it can't say, though something is said of
+    /// what it's a projection of, with why (lemma W6 of
+    /// docs/63-what-is-declared.md): what's declared there isn't known,
+    /// so it mustn't be taken to be nothing. An impl's type parameter is
+    /// what's at its position in `X` only if it has one position there, or
+    /// each says the same; one that isn't in `X` at all (`Map`'s `B`, which
+    /// a bound decides) isn't anything `X` says.
+    pub(super) fn subst_tree_unknown(
+        &mut self,
+        a: &Type,
+        insts: &[(String, Inst)],
+        subst: &crate::types::Subst,
+        depth: usize,
+        unknown: &mut Vec<(Pos, String)>,
+    ) -> Tree {
         let mut out = Vec::new();
         if depth > DEPTH {
             return out;
@@ -2012,45 +2183,96 @@ impl Walk<'_> {
             let Type::Proj(base, tr, name) = &proj else {
                 continue;
             };
+            // What's said of the parameters the projection is of.
+            let said = |insts: &[(String, Inst)]| {
+                (insts.iter()).any(|(y, i)| free::mentions(base, y) && !i.tree().is_empty())
+            };
             let Type::Param(x, _) = &**base else {
+                if said(insts) {
+                    unknown.push((rho, format!("`{proj}`, of a projection")));
+                }
                 continue;
             };
             let Some((_, inst)) = insts.iter().find(|(y, _)| y == x) else {
                 continue;
             };
-            if inst.any.is_some() {
+            if inst.any.is_some() || inst.tree().is_empty() {
                 continue;
             }
             let base_ty = self.cx.solved(&subst.apply(base));
             let Some((i, impl_args)) = self.cx.traits.select(&base_ty, Some(tr), &[]) else {
+                unknown.push((rho, format!("`{proj}`, which no impl says")));
                 continue;
             };
             let def = self.cx.traits.impls[i].clone();
             let Some((_, assoc)) = def.assoc.iter().find(|(n, _)| n == name) else {
+                unknown.push((rho, format!("`{proj}`, which no impl says")));
                 continue;
             };
             let names = def.params.as_slice().to_vec();
             if names.len() != impl_args.len() {
+                unknown.push((rho, format!("`{proj}`")));
                 continue;
             }
-            // Each impl parameter is what's at its position in `X`.
+            // Each impl parameter is what's at its position in `X`; but not
+            // one a bound of the impl's can make values of, as for a call's
+            // (`makes`): its methods could give those.
+            let as_scheme = crate::types::Scheme {
+                params: def.params.clone(),
+                lifetimes: def.lifetimes.clone(),
+                bounds: Vec::new(),
+                preds: def.preds.clone(),
+                eqs: def.eqs.clone(),
+                ty: Type::Unit,
+            };
             let mut subs = Vec::new();
-            for p in &names {
+            let mut unsaid = Vec::new();
+            for (k, p) in names.iter().enumerate() {
+                if !def.params.is_type(p) {
+                    continue;
+                }
+                let arg = impl_args.get(k).cloned();
+                if makes(&self.cx.traits, &as_scheme, p, arg.as_ref()).is_some() {
+                    unsaid.push(p.clone());
+                    continue;
+                }
                 let (occ, _) = self.occurrences(&def.self_ty, p);
-                let Some((sigma, _)) = occ.into_iter().next() else {
+                let mut each = (occ.into_iter()).map(|(sigma, _)| {
+                    let at: Vec<(Pos, Vec<Case>)> = (inst.at.iter())
+                        .filter(|(q, _)| q.starts_with(&sigma))
+                        .map(|(q, c)| (q[sigma.len()..].to_vec(), c.clone()))
+                        .collect();
+                    Inst { at, any: None }
+                });
+                let Some(first) = each.next() else {
+                    unsaid.push(p.clone());
                     continue;
                 };
-                let at: Vec<(Pos, Vec<Case>)> = (inst.at.iter())
-                    .filter(|(q, _)| q.starts_with(&sigma))
-                    .map(|(q, c)| (q[sigma.len()..].to_vec(), c.clone()))
-                    .collect();
-                subs.push((p.clone(), Inst { at, any: None }));
+                let tree = first.tree();
+                if each.any(|other| other.tree() != tree) {
+                    unsaid.push(p.clone());
+                    continue;
+                }
+                subs.push((p.clone(), first));
+            }
+            // A parameter nothing in `X` says is unknown where it's in `A`.
+            for p in &unsaid {
+                if free::mentions(assoc, p) {
+                    unknown.push((rho.clone(), format!("`{proj}`, which is `{assoc}`")));
+                }
             }
             let impl_subst = crate::types::Subst::new(&names, &impl_args);
-            for (q, d) in self.subst_tree(assoc, &subs, &impl_subst, depth + 1) {
+            let mut inner = Vec::new();
+            for (q, d) in self.subst_tree_unknown(assoc, &subs, &impl_subst, depth + 1, &mut inner)
+            {
                 let mut p = rho.clone();
                 p.extend(q);
                 out.push((p, d));
+            }
+            for (q, why) in inner {
+                let mut p = rho.clone();
+                p.extend(q);
+                unknown.push((p, why));
             }
         }
         out
