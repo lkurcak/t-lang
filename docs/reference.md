@@ -240,7 +240,10 @@ field (an enum by its variants first) and needs `Eq`, and
 `#[derive(Debug)]` writes the value for debugging, `Point { x: 1, y: -2 }`. A bare name in
 `#[derive(..)]` is always core's trait.
 Derive requirements on generic parameters follow from the fields; exported
-types with hidden fields must state the promised bounds explicitly.
+types with hidden fields must state the promised bounds explicitly. A
+derived `Discard`, `Copy`, `Send` or `Sync` needs only the same trait of
+the fields: the type's own bounds, such as `F: Fn() -> i64`, hold
+wherever a value of it is made, and aren't asked again.
 `Copy` is derived, rather than implemented by hand. A custom
 `impl Discard for T` can define `fn discard(self)`; that method must return
 `()` and have no effects. Variables drop in reverse declaration order;

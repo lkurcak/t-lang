@@ -741,8 +741,12 @@ impl Traits {
             self.implements_at(&t, &p.trait_name, env, eqs, depth + 1)?;
         }
         // A derived marker's equality bounds are its type's, which hold of
-        // every type that's well-formed: it needs nothing but more of the
-        // same trait (lemma D1 of docs/17-retrospective-1.md).
+        // every type that's well-formed, wherever it's made: so they're
+        // taken for granted, and it needs nothing but more of the same
+        // trait (lemma D1 of docs/17-retrospective-1.md). They'd say what
+        // a closure's calls are, effects and all, `F: Fn() -> i64`, and
+        // whether a value is copied or thrown away mustn't wait for its
+        // effects, which proofs decide (lemma P2 of docs/64-phase-order.md).
         let implied = d.derived && MARKERS.contains(&tr);
         for (lhs, rhs) in d.eqs.iter().filter(|_| !implied) {
             let (l, r) = (s.apply(lhs), s.apply(rhs));

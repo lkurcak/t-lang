@@ -1,6 +1,7 @@
 //! The T compiler. Pipeline: source → `lexer` → `parser` (for each file of
 //! the program, as `load` reads them) → `check` (and `borrowck`, once each
-//! function's types are known) → `lift` → `mono` → `interp`.
+//! function's types are known, before its refinements and effects: see
+//! docs/64-phase-order.md) → `lift` → `mono` → `interp`.
 //!
 //! The libraries built into the compiler, core, alloc and std, are read and
 //! checked once, before any program (`check::libraries`), and each

@@ -1597,6 +1597,11 @@ impl Checker {
         self.diverges = None;
         self.check(&f.body, &ret)?;
         self.end_scope(scope);
+        // Its types first, then the borrow checker, which builds its MIR,
+        // then its refinements, and then its effects, which proofs decide
+        // of operators: nothing before them depends on what they are (see
+        // docs/64-phase-order.md). The borrow checker's warnings come last,
+        // as they always did.
         let closures = self.solve_types(vars)?;
         self.fresh_mir.borrow_mut().clear();
         self.reveal_hidden(f, &hidden, true)?;

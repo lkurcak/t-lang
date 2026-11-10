@@ -60,6 +60,9 @@ impl Checker {
                     bounds: def.bounds.clone(),
                     self_ty: def.generic(symbol),
                     preds: Vec::new(),
+                    // The type's own, to normalise its fields' types with;
+                    // a marker's are taken for granted where it's matched
+                    // (`Traits::implements`).
                     eqs: def.eqs.clone(),
                     assoc: Vec::new(),
                     methods: Vec::new(),

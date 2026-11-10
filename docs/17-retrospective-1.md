@@ -140,6 +140,14 @@ docs/20-destructors.md.)
 > same trait, so the derive's bounds, the least fixed point, are bounds of
 > that trait on the type's parameters.
 
+(Step 64 found a step the induction missed: a derived impl also checked
+its type's own equality bounds where it was matched, and `struct H<F:
+Fn() -> i64>` has one, that calls of `F` are `fn() -> i64`, effects and
+all. So whether `H<{closure}>` was `Discard` waited for what the
+closure's effects turned out to be. They're taken for granted now, as
+they hold of every type that's well-formed, and the lemma holds as
+stated. See docs/64-phase-order.md.)
+
 So proving `Discard` never reaches `Iterator`, or any trait a program
 declares, and the cycle through core above can't be made. What a derived
 impl says it needs, in a `where`, can only be the same trait too, as

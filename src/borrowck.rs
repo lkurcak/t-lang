@@ -5,7 +5,8 @@
 //! nothing points into: docs/37-cell.md), and no reference outlives what
 //! it points to. See docs/05-ownership.md.
 //!
-//! It runs on each function once its types are known (`check`), and works
+//! It runs on each function once its types are known (`check`), before its
+//! refinements and effects are checked (docs/64-phase-order.md), and works
 //! on a lowered form of its body, MIR (`mir.rs`, `build.rs`), the way
 //! rustc's does: as dataflow over a control-flow graph, so that a borrow
 //! lasts only as long as it's used, not to the end of its block

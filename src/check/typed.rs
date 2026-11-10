@@ -6,7 +6,8 @@
 //!
 //! The types may still have type variables in them while the body is being
 //! checked; the borrow checker runs once they're all solved, and asks the
-//! checker for their solutions.
+//! checker for their solutions. Those of effects may still be variables
+//! then, which it has no use for (see `Checker::keep_mir`).
 
 use crate::ast::{Capture, NodeId};
 use crate::error::Span;
