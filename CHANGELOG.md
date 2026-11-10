@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.79.0 (2026-11-10)
+
+Step 63: what's declared behind every reference, from retrospective 6.
+See [docs/63-what-is-declared.md](docs/63-what-is-declared.md).
+
+### Fixed
+
+- Soundness holes since 0.76.0, where a write could go past what a type
+  argument says of a list's, an array's or a tuple's values, with nothing
+  checking it:
+  - a reference to an element, `let r = &mut l[0]; *r = 99;` of a `List<{
+    t: usize | t < 5 }>`, kept, passed on (`let q: &mut usize = r`),
+    returned, or given to a function that takes a `&mut usize`, to a
+    generic one (`core::mem::swap(&mut x, &mut a[0])`), or inside an
+    `Option` or a tuple;
+  - a field of an element, `lp[0].1 = 99`, and a tuple's element bound by
+    a pattern where the tuple's type refines it;
+  - what `iter_mut`'s adapters give, `l.iter_mut().skip(1)`, `rev`,
+    `enumerate`, `zip` and `map`;
+  - an iterator given whole to a generic function whose bound says what
+    its items are (`I: Iterator<Item = &'a mut usize>`), or two iterators
+    of differently refined lists given as one type parameter;
+  - a closure made before a call, or a function, given to `fold`, `any` or
+    a function of one's own that calls it with a `&mut` to each element;
+    and `map`'s closure, which `map` keeps;
+  - a `&` to an element that's a `Cell`;
+  - a method that takes `&mut self` called on an element, `a[0].poke()`.
+- A soundness hole since 0.43.0: a refined field of a temporary lent
+  `&mut` to a call (`bad(&mut make().f)`) wasn't proved again after it,
+  as there's no place to; it's refused.
+- A place lent to a call and proved again after it, a tuple's element
+  whose refinement is the tuple type's, was assumed to have it while it
+  was proved, through the tuple it's in.
+
+### Added
+
+- Iterator adapters carry what a type argument says of their items: `for
+  i in l.iter().rev()`, `skip`, `enumerate`, `zip` and `copied` of a
+  `List<{ t: usize | t < 8 }>` give values known to be below 8.
+- `tests/generated_semantics.rs`: a generated family of 320 writes
+  through references to refined values.
+
+### Changed
+
+- A closure the callee keeps (`map`'s), a closure made before the call,
+  and a function, can't be given where the callee will give it a `&mut`
+  to what's refined: write the closure in the call, to something that
+  doesn't keep it.
+- Two iterators of lists whose types say different things of their
+  elements can't be given as one type parameter: `IterMut<'_, T>` is
+  invariant in `T`, as `&mut T` is.
+
 ## 0.78.0 (2026-11-10)
 
 Step 62: what the t-chess port found. See

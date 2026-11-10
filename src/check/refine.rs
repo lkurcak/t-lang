@@ -275,7 +275,26 @@ impl RefinedFields {
     /// Why field `i` can't be borrowed `&mut`, if it can't.
     fn constrained(&self, i: usize) -> Option<String> {
         let j = self.about(i).next()?;
-        Some(match j == i {
+        Some(self.why(i, j))
+    }
+
+    /// Why field `i` of a struct at no place, a temporary's, can't be lent
+    /// `&mut` even to a call, if it can't: a refinement about it would
+    /// have to be proved again after the call, of the struct, which is
+    /// nowhere (lemma W4 of docs/63-what-is-declared.md). Not its own
+    /// refinement if that's all carried and names no field: what's written
+    /// through the reference keeps it, as the reference says it.
+    fn constrained_unplaced(&self, i: usize) -> Option<String> {
+        let j = self.about(i).find(|&j| {
+            j != i
+                || !self.named[j].is_empty()
+                || self.refs[j].as_ref().is_some_and(Refinement::has_ways)
+        })?;
+        Some(self.why(i, j))
+    }
+
+    fn why(&self, i: usize, j: usize) -> String {
+        match j == i {
             true => format!(
                 "field `{}` of `{}` has a refinement",
                 self.names[i], self.name
@@ -284,7 +303,7 @@ impl RefinedFields {
                 "the refinement of field `{}` of `{}` names it",
                 self.names[j], self.name
             ),
-        })
+        }
     }
 }
 
@@ -1889,6 +1908,8 @@ impl Checker {
             coerced_args: Vec::new(),
             no_place_reads: false,
             closure_params: HashMap::new(),
+            closure_decls: HashMap::new(),
+            closures_refused: HashSet::new(),
             module: self.fns[id.0].module,
             invariants: HashMap::new(),
             unstable: HashSet::new(),
@@ -2459,6 +2480,16 @@ struct Walk<'c> {
     /// the closure's node, as the call it's given to says
     /// (`targs::closure_trees`).
     closure_params: HashMap<NodeId, Vec<targs::Tree>>,
+    /// What each closure literal walked here was walked with of its
+    /// parameters, by the closure's type's symbol: what it can count on of
+    /// them, and what it keeps of what's written through them. A call that
+    /// gives one, for a type parameter the callee calls with a `&mut` to
+    /// something refined, needs it to be exactly that (lemma W7 of
+    /// docs/63-what-is-declared.md).
+    closure_decls: HashMap<String, Vec<targs::Tree>>,
+    /// The closures a call was refused for so (`targs::closures_given`):
+    /// once is enough to say so.
+    closures_refused: HashSet<String>,
     /// While working out what's known where branches meet: what a
     /// reference points to isn't read (`Walk::join_values`).
     no_place_reads: bool,
@@ -2831,6 +2862,180 @@ impl Walk<'_> {
             Val::Ref(_, Pointee::Val(v)) => *v,
             _ => Val::Other,
         }
+    }
+
+    /// A `&` or `&mut` of `x`: a reference that says what's declared of
+    /// the value it points to, which each write through it must keep
+    /// (lemma W1 of docs/63-what-is-declared.md). To a place a local is
+    /// the root of, what `place_decl` says; to what a reference points to,
+    /// that reference, the same object, saying what it says; to any other
+    /// place (what a reference or a box a call gave points to, a field of
+    /// that), what `lvalue` says. None of these says nothing for want of a
+    /// case: a value that's no place is a temporary, an anonymous `let`,
+    /// which declares what a `let` of it would.
+    fn borrow(&mut self, x: &Expr) -> Result<Val, Error> {
+        if let Some(p) = self.place_of(x) {
+            if p.path.last() == Some(&Proj::Deref) {
+                let outer = Place {
+                    root: p.root,
+                    path: p.path[..p.path.len() - 1].to_vec(),
+                };
+                if let Type::Ref(..) = self.place_ty(&outer) {
+                    return Ok(self.read_place(&outer));
+                }
+            }
+            // What may be written through it is what's declared of the
+            // place, which it says.
+            let o = self.new_obj();
+            let tree = targs::under(&self.place_decl(&p), 0);
+            if !tree.is_empty() {
+                self.trees.insert(o, tree);
+            }
+            return Ok(Val::Ref(o, Pointee::Place(p)));
+        }
+        if let ExprKind::Unary(UnOp::Deref, y) = &x.kind
+            && let Type::Ref(..) = self.ty_of(y)
+        {
+            return self.expr(y);
+        }
+        let (v, decl) = self.lvalue(x)?;
+        let o = self.new_obj();
+        let tree = targs::under(&decl, 0);
+        if !tree.is_empty() {
+            self.trees.insert(o, tree);
+        }
+        Ok(Val::Ref(o, Pointee::Val(Box::new(v))))
+    }
+
+    /// The value at `x`, and what's declared of it there: what each write
+    /// there must keep (lemma W1 of docs/63-what-is-declared.md). By cases
+    /// on what `x` is, each case saying it: a place a local is the root of,
+    /// `place_decl`; what a reference or a box points to, what's declared
+    /// below the top of what it's in, and what the reference says
+    /// (`deref_lvalue`); a field, what's declared of what it's in at the
+    /// field's positions (`field_decl`); and a value that isn't a place, a
+    /// temporary nothing else can name, what a `let` of it would declare:
+    /// what its value's type says (`widen`).
+    fn lvalue(&mut self, x: &Expr) -> Result<(Val, targs::Tree), Error> {
+        if let Some(p) = self.place_of(x) {
+            let v = self.read_place(&p);
+            let decl = self.place_decl(&p);
+            return Ok((v, decl));
+        }
+        match &x.kind {
+            ExprKind::Unary(UnOp::Deref, y) => {
+                let (r, decl) = self.lvalue(y)?;
+                let t = self.ty_of(y);
+                Ok(self.deref_lvalue(r, &decl, &t))
+            }
+            ExprKind::Field(base, _) => {
+                let (derefs, i) = self.cx.typed.fields[&x.id];
+                let (v, decl, t) = self.lvalue_derefs(base, derefs)?;
+                let vals = match v {
+                    Val::Struct(_, vals) => vals,
+                    _ => match self.unknown(&t) {
+                        Val::Struct(_, vals) => vals,
+                        _ => Vec::new(),
+                    },
+                };
+                let decl = self.field_decl(&decl, &t, i, Some(&vals));
+                let fv = match vals.get(i) {
+                    Some(v) => v.clone(),
+                    None => {
+                        let ft = self.ty_of(x);
+                        self.unknown(&ft)
+                    }
+                };
+                Ok((fv, decl))
+            }
+            // A value, not a place: a temporary. Each kind of expression
+            // is here by name, so that a new one can't be taken for one
+            // without saying so (a variable that's no local's is a
+            // function, a const or a static's reference).
+            ExprKind::Var(..)
+            | ExprKind::Unary(..)
+            | ExprKind::Int(..)
+            | ExprKind::Bool(..)
+            | ExprKind::Char(..)
+            | ExprKind::Str(..)
+            | ExprKind::ByteStr(..)
+            | ExprKind::Format(..)
+            | ExprKind::Unit
+            | ExprKind::As(..)
+            | ExprKind::Binary(..)
+            | ExprKind::Call(..)
+            | ExprKind::MethodCall(..)
+            | ExprKind::If(..)
+            | ExprKind::IfLet(..)
+            | ExprKind::Array(..)
+            | ExprKind::Tuple(..)
+            | ExprKind::Repeat(..)
+            | ExprKind::Block(..)
+            | ExprKind::Unsafe(..)
+            | ExprKind::StructLit(..)
+            | ExprKind::Variant(..)
+            | ExprKind::Match(..)
+            | ExprKind::Lambda(..)
+            | ExprKind::Assign(..)
+            | ExprKind::While(..)
+            | ExprKind::WhileLet(..)
+            | ExprKind::Loop(..)
+            | ExprKind::For(..)
+            | ExprKind::Range(..)
+            | ExprKind::Index(..)
+            | ExprKind::Try(..)
+            | ExprKind::Return(..)
+            | ExprKind::Break(..)
+            | ExprKind::Continue(..) => {
+                let v = self.expr(x)?;
+                let t = self.ty_of(x);
+                let known = self.knowledge(&v, &t);
+                Ok((v, targs::widen(&known)))
+            }
+        }
+    }
+
+    /// `lvalue` of `base`, then through `derefs` `*`s: the value there,
+    /// what's declared of it, and its type.
+    fn lvalue_derefs(
+        &mut self,
+        base: &Expr,
+        derefs: usize,
+    ) -> Result<(Val, targs::Tree, Type), Error> {
+        let (mut v, mut decl) = self.lvalue(base)?;
+        let mut t = self.ty_of(base);
+        for _ in 0..derefs {
+            (v, decl) = self.deref_lvalue(v, &decl, &t);
+            if let Type::Ref(_, _, inner) | Type::Box(inner) = t {
+                t = self.cx.solved(&inner);
+            }
+        }
+        Ok((v, decl, t))
+    }
+
+    /// What reference or box `r`, of type `t`, of which `decl` is what's
+    /// declared, points to, and what's declared of it: below the top of
+    /// `decl`, and what `r` itself says (as `place_decl` does through a
+    /// `*`). What it says is known of what it points to.
+    fn deref_lvalue(&mut self, r: Val, decl: &targs::Tree, t: &Type) -> (Val, targs::Tree) {
+        let mut out = targs::below(decl, 0);
+        let said = (targs::obj_of(&r))
+            .and_then(|o| self.trees.get(&o))
+            .map(|tree| targs::below(tree, 0))
+            .unwrap_or_default();
+        out.extend(said.iter().cloned());
+        let inner = match t {
+            Type::Ref(_, _, inner) | Type::Box(inner) => self.cx.solved(inner),
+            _ => return (Val::Other, out),
+        };
+        let got = match self.pointee(r) {
+            Val::Other => self.unknown(&inner),
+            v => v,
+        };
+        if !said.is_empty() {
+            self.assume_tree(&got, &inner, &said);
+        }
+        (got, out)
     }
 
     /// The receiver `v` is, after `derefs` `*`s, and then a `&` or `&mut`
@@ -5353,7 +5558,16 @@ impl Walk<'_> {
                 ),
             ));
         }
-        if !scoped && let Some(why) = self.constrained_field(x) {
+        // A field lent straight to a call-scoped `&mut` is proved again
+        // after the call, at its place (`Walk::post`): one with no place, of
+        // a temporary, has nowhere to be, and its destructor may count on
+        // it.
+        let why = match (scoped, self.place_of(x)) {
+            (false, _) => self.constrained_field(x, false),
+            (true, None) => self.constrained_field(x, true),
+            (true, Some(_)) => None,
+        };
+        if let Some(why) = why {
             return Err(Error::ty(
                 span,
                 format!(
@@ -5474,8 +5688,9 @@ impl Walk<'_> {
     /// part of the value, and no refinement can name what's behind a
     /// `&mut`, nor anything write through a `&`: only a cell's `replace`
     /// does, and no refinement can name what's in a cell (lemma K1 of
-    /// docs/37-cell.md).
-    fn constrained_field(&self, x: &Expr) -> Option<String> {
+    /// docs/37-cell.md). `unplaced`: of a struct at no place, lent to a
+    /// call (`RefinedFields::constrained_unplaced`).
+    fn constrained_field(&self, x: &Expr, unplaced: bool) -> Option<String> {
         let (outer, mut x) = (x, x);
         loop {
             match &x.kind {
@@ -5493,7 +5708,11 @@ impl Walk<'_> {
                             _ => return None,
                         };
                     }
-                    if let Some(why) = self.refined_fields(&t).and_then(|f| f.constrained(i)) {
+                    let why = self.refined_fields(&t).and_then(|f| match unplaced {
+                        true => f.constrained_unplaced(i),
+                        false => f.constrained(i),
+                    });
+                    if let Some(why) = why {
                         return Some(match std::ptr::eq(x, outer) {
                             true => why,
                             false => format!("it's in `{}`: {why}", crate::pretty::expr_text(x)),
@@ -5742,31 +5961,7 @@ impl Walk<'_> {
                     let scoped = self.scoped_args.contains(&e.id);
                     self.no_mut_borrow(x, e.span, scoped)?;
                 }
-                match self.place_of(x) {
-                    Some(p) => {
-                        if p.path.last() == Some(&Proj::Deref) {
-                            let outer = Place {
-                                root: p.root,
-                                path: p.path[..p.path.len() - 1].to_vec(),
-                            };
-                            if let Type::Ref(..) = self.place_ty(&outer) {
-                                return Ok(self.read_place(&outer));
-                            }
-                        }
-                        // What may be written through it is what's
-                        // declared of the place, which it says.
-                        let o = self.new_obj();
-                        let tree = targs::under(&self.place_decl(&p), 0);
-                        if !tree.is_empty() {
-                            self.trees.insert(o, tree);
-                        }
-                        Ok(Val::Ref(o, Pointee::Place(p)))
-                    }
-                    None => {
-                        let v = self.expr(x)?;
-                        Ok(Val::Ref(self.new_obj(), Pointee::Val(Box::new(v))))
-                    }
-                }
+                self.borrow(x)
             }
             ExprKind::Binary(op @ (BinOp::And | BinOp::Or), l, r) => {
                 let c = self.cond(l)?;
@@ -5837,6 +6032,11 @@ impl Walk<'_> {
                     self.scoped_args.insert(a.id);
                 }
                 let recv = match method.cloned() {
+                    // A `&` or `&mut` of a receiver at no place a local is
+                    // the root of says what's declared there, as `&x` does.
+                    Some((_, 0, by @ Some(_))) if self.receiver(x, 0, by).is_none() => {
+                        self.borrow(x)?
+                    }
                     Some((_, derefs, by)) => {
                         let v = self.expr(x)?;
                         self.autoref(v, derefs, by)
@@ -5975,6 +6175,9 @@ impl Walk<'_> {
                 let loops = std::mem::take(&mut self.loops);
                 self.closures += 1;
                 let assumed = self.closure_params.remove(&l.id).unwrap_or_default();
+                if let Type::Adt(symbol, ..) = self.ty_of(e) {
+                    self.closure_decls.insert(symbol, assumed.clone());
+                }
                 for (i, p) in l.params.iter().enumerate() {
                     if let Some(tree) = assumed.get(i).filter(|t| !t.is_empty()) {
                         self.decl.insert(p.name.id, tree.clone());
@@ -6018,30 +6221,27 @@ impl Walk<'_> {
                     }
                     (ExprKind::Field(base, _), _) => {
                         let (derefs, i) = self.cx.typed.fields[&place.id];
-                        // The struct the field is of, and its fields' values.
-                        let (t, mut vals) = match &target {
+                        // The struct the field is of, and its fields' values;
+                        // and, of one that isn't at a place a local is the
+                        // root of, what's declared of the field (`lvalue`).
+                        let (t, mut vals, declared) = match &target {
                             Some(p) => {
                                 let (q, _) = p.field_of().expect("a field");
                                 let t = self.place_ty(&q);
                                 let vals = self.fields_of(&q, &t).unwrap_or_default();
-                                (t, vals)
+                                (t, vals, None)
                             }
                             None => {
-                                let v = self.expr(base)?;
-                                let mut t = self.ty_of(base);
-                                for _ in 0..derefs {
-                                    if let Type::Ref(_, _, inner) | Type::Box(inner) = t {
-                                        t = self.cx.solved(&inner);
-                                    }
-                                }
+                                let (v, decl, t) = self.lvalue_derefs(base, derefs)?;
                                 let vals = match v {
-                                    Val::Struct(_, vals) if derefs == 0 => vals,
+                                    Val::Struct(_, vals) => vals,
                                     _ => match self.unknown(&t) {
                                         Val::Struct(_, vals) => vals,
                                         _ => Vec::new(),
                                     },
                                 };
-                                (t, vals)
+                                let declared = self.field_decl(&decl, &t, i, None);
+                                (t, vals, Some(declared))
                             }
                         };
                         let new = match op {
@@ -6051,6 +6251,12 @@ impl Walk<'_> {
                                 self.arith(e.id, *op, old, v, &ty)
                             }
                         };
+                        if let Some(d) = &declared {
+                            let what =
+                                format!("what's written to `{}`", crate::pretty::expr_text(place));
+                            let written = self.written_tree(&new, &ty);
+                            self.need_tree(&new, &ty, d, Some(&written), value.span, &what)?;
+                        }
                         if let Some(p) = &target {
                             self.keep_declared(p, place, &new, &ty, value.span)?;
                         }
@@ -6458,6 +6664,10 @@ impl Walk<'_> {
                             // docs/62-t-chess-findings.md).
                             (true, Some(p), _) => {
                                 let o = self.new_obj();
+                                let tree = targs::under(&self.place_decl(&p), 0);
+                                if !tree.is_empty() {
+                                    self.trees.insert(o, tree);
+                                }
                                 let r = Val::Ref(o, Pointee::Place(p));
                                 if !self.decl.contains_key(&id) {
                                     let t = self.ty_of_bind(id);

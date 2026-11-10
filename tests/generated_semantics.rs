@@ -554,3 +554,126 @@ fn generated_field_path_forms() {
         });
     }
 }
+
+/// Places whose values a type argument refines, each with an expression
+/// naming one of them (docs/63-what-is-declared.md).
+const REFINED_PLACES: &[&str] = &["arr[0]", "l[0]", "lp[0].1", "tp.1", "g.l[0]", "bx.1"];
+
+/// Ways of getting a `&mut` to such a value: of any place, a borrow of
+/// it, kept or not; of the list's and the array's, what their methods and
+/// iterators give, through adapters too.
+fn refined_refs(place: &str) -> Vec<String> {
+    let mut out = vec![
+        format!("&mut {place}"),
+        format!("{{ let q = &mut {place}; q }}"),
+    ];
+    if place == "l[0]" {
+        for e in [
+            "l.get_mut(0).unwrap()",
+            "l.iter_mut().next().unwrap()",
+            "l.iter_mut().skip(0).next().unwrap()",
+            "l.iter_mut().rev().next().unwrap()",
+            "l.iter_mut().enumerate().next().unwrap().1",
+            "&mut l.as_mut_slice()[0]",
+        ] {
+            out.push(e.to_string());
+        }
+    }
+    if place == "arr[0]" {
+        out.push("arr.iter_mut().next().unwrap()".to_string());
+        out.push("&mut arr.as_mut_slice()[0]".to_string());
+    }
+    out
+}
+
+/// Ways of writing through `r`, a `&mut` to a value declared below 5, as
+/// pairs: one that keeps that, and one that doesn't, which must be
+/// refused, whatever the reference is kept as or given to.
+fn refined_writes(r: &str) -> Vec<(String, String)> {
+    let both = |f: &dyn Fn(&str) -> String| (f("3"), f("99"));
+    vec![
+        both(&|v| format!("*{r} = {v};")),
+        both(&|v| format!("let q: &mut usize = {r}; *q = {v};")),
+        both(&|v| format!("set({r}, {v});")),
+        both(&|v| format!("let _ = core::mem::replace({r}, {v});")),
+        both(&|v| format!("apply({r}, |q| *q = {v});")),
+        // What's swapped in must be declared so, not just be so now: a
+        // `&mut` is invariant.
+        (
+            format!(
+                "let mut y: [{{ t: usize | t < 5 }}; 1] = [3]; core::mem::swap({r}, &mut y[0]);"
+            ),
+            format!("let mut y: [usize; 1] = [3]; core::mem::swap({r}, &mut y[0]);"),
+        ),
+    ]
+}
+
+/// Ways of giving `r` to a function whose type says nothing of what's
+/// behind it, which may write anything there: each is refused, whatever
+/// it writes.
+fn refined_gives(r: &str) -> Vec<String> {
+    vec![
+        format!("put({r}, 3);"),
+        format!("put_o(Some({r}), 3);"),
+        format!("put_t(({r}, 0u8), 3);"),
+        format!("let f = |q: &mut usize| *q = 3; apply({r}, f);"),
+    ]
+}
+
+fn refined_write_program(write: &str, place: &str) -> String {
+    format!(
+        "use alloc::boxed::Box;\n\
+         use alloc::list::List;\n\
+         #[derive(Discard)]\n\
+         struct G {{ l: List<{{ t: usize | t < 5 }}> }}\n\
+         fn put(r: &mut usize, v: usize) {{ *r = v }}\n\
+         fn put_o(o: Option<&mut usize>, v: usize) {{ if let Some(r) = o {{ *r = v }} }}\n\
+         fn put_t(t: (&mut usize, u8), v: usize) {{ *t.0 = v }}\n\
+         fn set<T: Discard>(r: &mut T, v: T) {{ *r = v }}\n\
+         fn apply<T, F: FnMut(&mut T) + Discard>(r: &mut T, mut f: F) {{ f(r) }}\n\
+         fn main(os: std::Os) -> Result<(), std::io::Error> with {{alloc, panic}} {{\n\
+         let mut out = os.stdout;\n\
+         let g5: [u8; 5] = [10, 11, 12, 13, 14];\n\
+         let mut arr: [{{ t: usize | t < 5 }}; 2] = [1, 2];\n\
+         let mut l: List<{{ t: usize | t < 5 }}> = List::new();\n\
+         l.push(1);\n\
+         let mut lp: List<(u8, {{ t: usize | t < 5 }})> = List::new();\n\
+         lp.push((0, 1));\n\
+         let mut tp: (u8, {{ t: usize | t < 5 }}) = (0, 1);\n\
+         let mut g = G {{ l: List::new() }};\n\
+         g.l.push(1);\n\
+         let mut bx: Box<(u8, {{ t: usize | t < 5 }})> = Box::new((0, 1));\n\
+         if l.len() > 0 && lp.len() > 0 && g.l.len() > 0 {{\n\
+         {write}\n\
+         out.line(&g5[{place}])?;\n\
+         }}\n\
+         let _ = (arr, tp);\n\
+         Ok(())\n}}\n"
+    )
+}
+
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "the same on every platform: run on Linux"
+)]
+fn generated_writes_through_refined_places() {
+    for place in REFINED_PLACES {
+        for r in refined_refs(place) {
+            for (good, bad) in refined_writes(&r) {
+                let src = refined_write_program(&good, place);
+                case(&format!("write `{good}`"), &src, || accepted(&src, "13\n"));
+                let src = refined_write_program(&bad, place);
+                case(&format!("write `{bad}`"), &src, || {
+                    rejected(&src, "can't prove `t < 5`")
+                });
+            }
+            for give in refined_gives(&r) {
+                let src = refined_write_program(&give, place);
+                case(&format!("give `{give}`"), &src, || {
+                    rejected(&src, "can't prove `t < 5`")
+                });
+            }
+        }
+    }
+}
