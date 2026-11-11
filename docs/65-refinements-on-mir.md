@@ -154,7 +154,7 @@ sound by itself.
 ## Parity, checked
 
 `tests/refine_mir.rs` checks every program in `tests/t` and `examples`
-(2,280) and the libraries with both walks over every body, and they must
+(2,281) and the libraries with both walks over every body, and they must
 agree: the same errors, with the same messages, at the same places, with
 the same notes; the same operators proved not to panic; the same consts'
 values; and the walk over MIR may not take more than twice the work. They
