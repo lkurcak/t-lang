@@ -165,6 +165,23 @@ fn prec(op: BinOp) -> u8 {
 
 const CMP: u8 = 3;
 
+/// `x[i]`, if `e` is what resolving paths rewrote it as, `*x.index(i)` or
+/// `*x.index_mut(i)`, whose method has no text of its own (see
+/// `ExprKind::Index`): so a message about it says what was written.
+fn index_of(e: &Expr) -> Option<(&Expr, &Expr)> {
+    let ExprKind::Unary(UnOp::Deref, call) = &e.kind else {
+        return None;
+    };
+    let ExprKind::MethodCall(x, m, targs, args) = &call.kind else {
+        return None;
+    };
+    let rewritten = m.span.start == m.span.end
+        && (m.name == "index" || m.name == "index_mut")
+        && targs.is_empty()
+        && args.len() == 1;
+    rewritten.then(|| (&**x, &args[0]))
+}
+
 /// What `min` an operand `e` of `op` needs: more than any, so
 /// parentheses, if it's an operator that can't be `op`'s operand without
 /// them (`BinOp::nests_in`).
@@ -1154,6 +1171,9 @@ impl Printer<'_> {
             ExprKind::Format(pieces) => self.spelled(e.span, format_literal(pieces)),
             ExprKind::Unit => text("()"),
             ExprKind::Var(name, targs) => text(name) + self.turbofish(targs),
+            ExprKind::Unary(..) if let Some((x, i)) = index_of(e) => {
+                self.receiver(x, ctx) + "[" + self.expr(i, 0, Ctx::default()) + "]"
+            }
             ExprKind::Unary(op, x) => text(op.to_string()) + self.expr(x, UNARY, ctx.inner()),
             ExprKind::As(x, t) => self.expr(x, AS, ctx.inner()) + " as " + self.ty(t),
             ExprKind::Binary(..) => self.binary(e, ctx),
@@ -1416,6 +1436,7 @@ impl Printer<'_> {
     /// them: `(*r).x`, `(a + b).len()`, `(P { x: 1 }).x`.
     fn receiver(&mut self, x: &Expr, ctx: Ctx) -> Doc {
         let min = match x.kind {
+            ExprKind::Unary(..) if index_of(x).is_some() => UNARY,
             ExprKind::Unary(..)
             | ExprKind::StructLit(..)
             | ExprKind::Block(..)

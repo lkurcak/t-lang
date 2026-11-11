@@ -92,9 +92,6 @@ pub(crate) struct Builder<'a> {
     live: Vec<bool>,
     /// What the refinement checker needs to know of the body besides.
     pub(crate) notes: Notes,
-    /// The patterns around the one being bound (`bind`), outermost first
-    /// (`StmtNote::BindMut`).
-    outer: Vec<(Span, Place, usize, Shape)>,
 }
 
 /// A scope's locals, and how many statements were being lowered when it
@@ -162,7 +159,6 @@ impl<'a> Builder<'a> {
             loops: Vec::new(),
             live: vec![true],
             notes: Notes::default(),
-            outer: Vec::new(),
         }
     }
 
@@ -1705,13 +1701,11 @@ impl<'a> Builder<'a> {
     /// from it if they bind by reference. A value that isn't `Discard`,
     /// taken apart by value, is then used up (`consume`).
     fn bind(&mut self, p: &Pattern, place: &Place) {
-        let unpeeled = place.clone();
         let peels = self.peels(p);
         let mut place = place.clone();
         for _ in 0..peels {
             place = place.project(Proj::Deref);
         }
-        let around = |shape| (p.span, unpeeled.clone(), peels, shape);
         match &p.kind {
             PatternKind::Bind(..) => {
                 let typed = self.cx.typed();
@@ -1729,15 +1723,6 @@ impl<'a> Builder<'a> {
                     }
                     Some(m) => {
                         let (r, t) = self.borrow(&place, m, p.span);
-                        if m {
-                            let of_struct = (self.outer.last())
-                                .is_some_and(|(_, _, _, shape)| *shape == Shape::Fields);
-                            let note = StmtNote::BindMut {
-                                outer: self.outer.clone(),
-                                of_struct,
-                            };
-                            self.notes.stmts.insert(self.point(), note);
-                        }
                         self.assign(&dest, Rvalue::Ref(r, m, place), &t, p.span, true);
                     }
                 }
@@ -1745,33 +1730,23 @@ impl<'a> Builder<'a> {
             PatternKind::Variant(_, _, v, pats) => {
                 let t = self.place_ty(&place);
                 let i = variant_index(self.adts(), &t, &v.name);
-                self.outer.push(around(Shape::Variant));
                 for (j, q) in pats.iter().enumerate() {
                     self.bind(q, &place.project(Proj::Variant(i, j)));
                 }
-                self.outer.pop();
                 self.consume(&place, Some(i), p);
             }
             PatternKind::Struct(_, _, fields, _) => {
                 let t = self.place_ty(&place);
-                self.outer.push(around(Shape::Fields));
                 for fp in fields {
                     let j = field_index(self.adts(), &t, &fp.name.name);
                     self.bind(&fp.pat, &place.project(Proj::Field(j)));
                 }
-                self.outer.pop();
                 self.consume(&place, None, p);
             }
             PatternKind::Array(pats) | PatternKind::Tuple(pats) => {
-                let shape = match &p.kind {
-                    PatternKind::Array(_) => Shape::Array,
-                    _ => Shape::Fields,
-                };
-                self.outer.push(around(shape));
                 for (j, q) in pats.iter().enumerate() {
                     self.bind(q, &place.project(Proj::Field(j)));
                 }
-                self.outer.pop();
                 self.consume(&place, None, p);
             }
             // Whichever alternative matched binds the variables, and uses up
@@ -1783,13 +1758,11 @@ impl<'a> Builder<'a> {
                 let join = self.new_block();
                 let pats = alts.iter().map(|alt| self.pat(alt, &place)).collect();
                 self.terminate(Term::Match(place.clone(), pats, blocks.clone()));
-                self.outer.push(around(Shape::Or));
                 for (alt, b) in alts.iter().zip(blocks) {
                     self.block = b;
                     self.bind(alt, &place);
                     self.goto(join);
                 }
-                self.outer.pop();
                 self.block = join;
             }
             _ => {}

@@ -1,6 +1,5 @@
-// A tuple's field bound by `&mut` through a `&mut` a call gave has no
-// place either: what the call's type says of the tuple would be broken
-// by `*a = Some(99)`.
+// A tuple's field bound by `&mut` through a `&mut` a call gave: what the
+// call's type says of the tuple, `*a = Some(99)` must keep.
 fn square(n: u8) -> Option<{ s: u8 | s < 64 }> { if n < 64 { Some(n) } else { None } }
 
 fn get<'a>(t: &'a mut (Option<{ s: u8 | s < 64 }>, u8)) -> &'a mut (Option<{ s: u8 | s < 64 }>, u8) {
@@ -14,4 +13,4 @@ fn main() {
     }
     let _ = t;
 }
-// error: can't bind `a` by `&mut`: what it's in has a refinement, which a write through the reference could break
+// error: can't prove `s < 64` for what's written through `*a`

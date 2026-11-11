@@ -1040,19 +1040,7 @@ impl Walk<'_> {
         j: usize,
         vals: Option<&[Val]>,
     ) -> Tree {
-        let mut out = Vec::new();
-        for (pos, d) in outer {
-            let Some((&k, rest)) = pos.split_first() else {
-                continue;
-            };
-            for (_, f, rho, _) in self.fields_with(qt, k) {
-                if f == j {
-                    let mut at = rho;
-                    at.extend_from_slice(rest);
-                    out.push((at, d.clone()));
-                }
-            }
-        }
+        let mut out = self.variant_decl(outer, qt, 0, j);
         // The field's own refinements, of what it's in.
         if let Some(vals) = vals
             && let Some(fields) = self.refined_fields(qt).cloned()
@@ -1061,6 +1049,31 @@ impl Walk<'_> {
         {
             let args = self.adt_args(qt);
             out.extend(self.carried_tree(r, Env::Fields(vals, &args)));
+        }
+        out
+    }
+
+    /// What's declared of field `j` of variant `v` (of a struct, `0`) of a
+    /// value of type `qt`, of which `outer` is what's declared: at the
+    /// field's positions, what's declared of the type's arguments there.
+    /// Not what's declared of the whole value (position `[]`): that's of
+    /// the value the field is in, which a write to it changes
+    /// (`Walk::keep_wholes`), and of an enum's, only its variant is
+    /// anything to a refinement (by its measures), which no write to its
+    /// field changes.
+    pub(super) fn variant_decl(&mut self, outer: &Tree, qt: &Type, v: usize, j: usize) -> Tree {
+        let mut out = Vec::new();
+        for (pos, d) in outer {
+            let Some((&k, rest)) = pos.split_first() else {
+                continue;
+            };
+            for (w, f, rho, _) in self.fields_with(qt, k) {
+                if w == v && f == j {
+                    let mut at = rho;
+                    at.extend_from_slice(rest);
+                    out.push((at, d.clone()));
+                }
+            }
         }
         out
     }

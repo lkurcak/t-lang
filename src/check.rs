@@ -66,7 +66,7 @@ mod opaque;
 mod paths;
 mod patterns;
 mod refine;
-pub use refine::{Difference, Differs, Refiner, Work, differences, refiner, set_refiner, work};
+pub use refine::{Work, work};
 mod scope;
 mod traits;
 pub(crate) mod typed;
@@ -563,8 +563,7 @@ pub(crate) struct Checker {
     /// settled: kept in `mir` once they are (`Checker::keep_mir`).
     pub(crate) fresh_mir: std::cell::RefCell<Vec<(crate::mir::Key, crate::mir::Body)>>,
     /// The same bodies as the borrow checker built them, before drops are
-    /// elaborated, with their `Notes`: for the refinement checker on MIR,
-    /// when it's asked for (`refine::Refiner`).
+    /// elaborated, with their `Notes`: for the refinement checker.
     pub(crate) refine_mir:
         std::cell::RefCell<Vec<(crate::mir::Key, crate::mir::Body, crate::mir::Notes)>>,
     /// Whether impls are being collected: then what a projection on a type

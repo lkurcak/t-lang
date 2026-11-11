@@ -401,3 +401,15 @@ fn main() { let a: [i64; 1] = [41]; let _ = inc(41); let _ = at(a.as_slice(), 0)
     );
     assert!(run.result.is_ok(), "{:?}", run.result);
 }
+
+#[test]
+fn what_is_known_names_only_what_is_in_scope() {
+    // The value `?` takes apart is bound only in its `match`'s arm: once
+    // the arms meet, it's out of scope, and the explanation doesn't list
+    // it among what's known.
+    let (_, rendered) = rejected(
+        "fn small(n: usize) -> Option<{ v: usize | v < 4 }> {\n    if n < 4 { Some(n) } else { None }\n}\nfn next(n: usize) -> Option<{ v: usize | v < 4 }> {\n    let i = small(n)?;\n    Some(i + 1)\n}\nfn main() {}",
+    );
+    assert!(rendered.contains("known here: 0 <= i"), "{rendered}");
+    assert!(!rendered.contains("{try}"), "{rendered}");
+}

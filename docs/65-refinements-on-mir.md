@@ -13,7 +13,9 @@ desugaring (`for`, `?`, `if let`, `let else`, indexing, autoref) has been
 done once, the way it runs. Step 64 moved the borrow checker, which builds
 the MIR, before refinements. This step adds a second refinement checker,
 on MIR, with the same rules, beside the walk over the AST, and checks that
-they agree. Step 66 makes it the only one.
+they agree. Step 66 makes it the only one (docs/66-one-walk.md), and
+removes the walk over the AST, `T_LANG_REFINE` and the comparison: what
+follows is how it was in 0.79.2.
 
 So nothing changes for a program. The walk over the AST still decides
 what's accepted and which operators can't panic. Set `T_LANG_REFINE=mir`
@@ -200,10 +202,9 @@ so on), and each time the harness found the walks differ.
 
 ## Exercises
 
-1. Run `T_LANG_REFINE=compare t check` on a program of yours. Then change
-   `join_states` in `src/check/refine/mir.rs` to keep only the first
-   path's facts, and run it again. Which programs in `tests/t` would that
-   make the walk over MIR accept that it shouldn't?
+1. Change `join_states` in `src/check/refine/mir.rs` to keep only the
+   first path's facts, and run the tests in `tests/t`. Which programs does
+   the walk then accept that it shouldn't?
 2. Why does the walk at a loop's head forget what the loop changes before
    it assumes the invariant, but prove the invariant before it forgets?
 3. A `&mut` given straight to a call is forgotten after the call, any

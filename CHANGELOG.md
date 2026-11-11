@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.80.0 (2026-11-11)
+
+Step 66: one walk. The refinement checker on MIR is the only one. See
+[docs/66-one-walk.md](docs/66-one-walk.md).
+
+### Changed
+
+- The walk over each body's MIR checks refinements; the walk over its AST
+  is gone, and so are `T_LANG_REFINE` and the comparison of the two. An
+  explanation of a failed proof can list terms in another order than
+  0.79 did.
+- A `&mut` a pattern binds into a variant's field, an array's element or
+  what an or-pattern's alternatives bind (`match o { Some(a) => *a = 5 }`
+  for an `o: &mut Option<{ s: u8 | s < 64 }>`) is a `&mut` of that place:
+  what's written through it must have what's declared there, where 0.78
+  refused the binding. It's still refused where a `&mut` of that place
+  would be, and where a struct field's own refinement says something of
+  the variant's field it's in.
+- A message about `x[i]` says `x[i]`, not `*x.index(i)`.
+
+### Fixed
+
+- A soundness hole since 0.76.0: a field written in a value whose
+  refinement is about the whole of it, where only a type argument reaches
+  it, wasn't checked against that refinement: `t.1.a = 100` of a `(u8, {
+  s: S | s.a < s.b })`, `l[0].a = 100` of a list of them, `arr[0].a`, `b.a`
+  of a `Box` of one, and since 0.77.0, `(*o).a = 100` of an `o: &mut { s:
+  S | s.a < s.b }`, directly or through a reborrow, a closure or `+=`. Now
+  each write keeps what's declared of each value it's in, up to what a
+  reference points to; and such a field can't be borrowed `&mut` (`&mut
+  (*o).a`, `o.x.bump()`), nor bound by `&mut` by a pattern.
+
 ## 0.79.2 (2026-11-11)
 
 Step 65: refinements on MIR, beside the walk over the AST. No program is

@@ -1,39 +1,41 @@
-//! The refinement checker on MIR (docs/65-refinements-on-mir.md): the
-//! walk of `Walk`, over each body's MIR, as the borrow checker built it,
-//! rather than over its AST. What it knows, proves and assumes is what the
-//! walk over the AST does, by the same functions; only how it gets around
-//! the body differs, and how it finds places:
+//! The refinement checker's walk over each body's MIR, as the borrow
+//! checker built it (docs/65-refinements-on-mir.md, docs/66-one-walk.md):
+//! what's known and how it's proved is `Walk`'s (`refine.rs`, `targs`,
+//! `logic`); this is how it gets around a body, and finds places:
 //!
-//! - A variable or parameter is the place of its binding, as on the AST,
-//!   so predicates name it the same way; a temporary, or the result, is no
-//!   place but a value (`Slot`), as an expression's is on the AST, whatever
-//!   borrows or projections of it MIR takes (`Walk::locate`).
+//! - A variable or parameter is the place of its binding, so predicates
+//!   name it by its binding's id; a temporary, or the result, is no place
+//!   but a value (`Slot`), whatever borrows or projections of it MIR takes
+//!   (`Walk::locate`).
 //! - The blocks are walked in reverse postorder, the first of two branches
-//!   first. Where blocks meet, what's known is what the AST's `join` says
-//!   of branches: what all of them knew (the facts they share, from where
-//!   they parted), and that one of them was taken. A branch's condition,
-//!   or the pattern of a `match`'s arm, is what's known along its edge.
+//!   first. Where blocks meet, what's known is what all of them knew (the
+//!   facts they share, from where they parted), and that one of them was
+//!   taken (`Walk::join_with`). A branch's condition, or the pattern of a
+//!   `match`'s arm and the negation of those before it, is what's known
+//!   along its edge.
 //! - At a loop's head (`Body::heads`), from the edges into it from
-//!   outside: what it changes is forgotten, but for its frame, and its
-//!   invariant is proved, then assumed; along each edge back to it, its
-//!   invariant is proved (lemma I1 of docs/54-loop-invariants.md).
+//!   outside: its invariant is proved; what it changes is forgotten, but
+//!   for its frame; and its invariant is assumed. Along each edge back to
+//!   it, its invariant is proved (lemma I1 of docs/54-loop-invariants.md).
 //! - A `&mut` given straight to a call (an operand of it) is lent to the
 //!   call: what's known of the place is forgotten once it returns, when
 //!   its postconditions are learned. Any other `&mut` forgets it where
 //!   it's made.
-//! - A closure is walked where it's made, from what's known there, as on
-//!   the AST, or, if it's given straight to a function, at the call, after
-//!   the other arguments, counting on what they say of its parameters.
+//! - A pattern's binding by `&mut` is a `&mut` of the place it binds, a
+//!   variant's field or an array's element too: what's written through it
+//!   must have what's declared there (`Walk::bind_ref`).
+//! - A closure is walked where it's made, from what's known there, or, if
+//!   it's given straight to a function, at the call, after the other
+//!   arguments, counting on what they say of its parameters.
 
 use super::*;
 use crate::mir::{
     Agg, Bb, Body, Const, Key, Local, LocalKind, LoopNote, Notes, Operand, Pat, Point, Rvalue,
-    Shape, Statement, StmtKind, StmtNote, Term,
+    Statement, StmtKind, StmtNote, Term,
 };
 
-/// What a local that's no variable holds, on MIR: a temporary's value,
-/// as an expression's is on the AST, and, if it's a borrow, `&mut` or not,
-/// of a place, which place.
+/// What a local that's no variable holds: a temporary's value, and, if
+/// it's a borrow, `&mut` or not, of a place, which place.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct Slot {
     val: Val,
@@ -158,7 +160,7 @@ fn outer_text(text: &str, n: usize) -> &str {
 /// The blocks of `body` control gets to, in reverse postorder: each
 /// before those it goes on to, but along an edge back to a loop's head;
 /// of a block's successors, the first first (an `if`'s `then` before its
-/// `else`, a `match`'s arms in order), as the AST's walk takes them.
+/// `else`, a `match`'s arms in order), as they're written.
 fn reverse_postorder(body: &Body) -> Vec<Bb> {
     let n = body.blocks.len();
     let mut seen = vec![false; n];
@@ -209,7 +211,6 @@ enum Loc {
 impl Checker {
     /// The walk over the MIR of the body of `f`, and its closures'.
     pub(super) fn walk_mir(&self, f: &FnDecl) -> Walked {
-        let before = work();
         let mut failed = Vec::new();
         let mut known = None;
         let (result, (proved, failures)) = match self.mir_walk(f, &mut failed, &mut known) {
@@ -222,11 +223,13 @@ impl Checker {
             known,
             proved,
             failures,
-            work: since(before),
         }
     }
 
-    /// `refine_walk`, over MIR.
+    /// The walk, leaving in `failed` the proofs that failed, which don't
+    /// stop it (`Walk::failed`), and in `known` the const's value, if it's
+    /// one whose value it worked out; giving the operators proved not to
+    /// panic, and why each other one wasn't.
     fn mir_walk(
         &self,
         f: &FnDecl,
@@ -239,7 +242,7 @@ impl Checker {
         let bodies = self.refine_mir.borrow();
         let key = Key::Fn(symbol.clone());
         let Some((_, body, notes)) = bodies.iter().find(|(k, ..)| *k == key) else {
-            return self.refine_walk(f, failed, known_value);
+            unreachable!("the borrow checker keeps the MIR of each body it passes")
         };
         let fr = Frame::new(body, notes);
         let mut w = self.new_walk(f);
@@ -276,11 +279,15 @@ impl Checker {
 }
 
 impl Walk<'_> {
-    /// Finds the places that may change other than by assignment, as
-    /// `unstable_in` does on the AST: those patterns bind by `&mut` (each
-    /// `match`'s scrutinee, or `let`'s value, that's a place), and each
-    /// variable a closure captures that's `mut` or holds a `&mut`, in this
-    /// body or its closures'.
+    /// Finds the places that may change other than by assignment, as far
+    /// as anything here knows, with all that's in them: those patterns bind
+    /// by `&mut` (each `match`'s scrutinee, or `let`'s value, that's a
+    /// place), and each variable a closure captures that's `mut` or holds a
+    /// `&mut`, in this body or its closures'. Those lent `&mut` otherwise,
+    /// by `&mut` or to a call, change only where they're lent and while the
+    /// borrow lives, when the borrow checker says no one else can read
+    /// them: so what's known of them is forgotten there (`mir_borrow`,
+    /// `mir_call`).
     fn unstable_mir(&mut self, fr: &Frame, bodies: &Bodies) {
         for mp in &fr.notes.mut_bound {
             if let Some(p) = self.static_place(fr, mp) {
@@ -376,11 +383,11 @@ impl Walk<'_> {
         Ok(())
     }
 
-    /// Where paths `states` meet: as the AST's `join` says of branches,
-    /// from the facts they all share, where they parted.
+    /// Where paths `states` meet: as `join_with` says, from the facts
+    /// they all share, where they parted.
     fn join_states(&mut self, fr: &Frame, mut states: Vec<State>) -> State {
-        // What's out of scope on any path is out of scope here, as it is
-        // where the AST's walk joins branches, one or more.
+        // What's out of scope on any path is out of scope here, even where
+        // only one path gets here.
         let dead: HashSet<NodeId> = states.iter().flat_map(|s| s.dead.iter().copied()).collect();
         for s in &mut states {
             s.cur.retain(|p, _| !dead.contains(&p.root));
@@ -455,7 +462,6 @@ impl Walk<'_> {
                 cur: s.cur,
                 objs: s.objs,
                 reachable: s.reachable,
-                val: Val::Other,
                 invalidated: s.invalidated,
             })
             .collect();
@@ -471,7 +477,9 @@ impl Walk<'_> {
         state
     }
 
-    /// The head of loop `lp`, from outside it: as `loop_head` says.
+    /// The head of loop `lp`, from outside it (`loop_start`): what it
+    /// changes is each place assigned or lent `&mut` in its blocks, and
+    /// its frame keeps what the calls it's lent to straight keep.
     fn mir_loop_start(&mut self, fr: &Frame, lp: &LoopNote) -> Result<(), Error> {
         let mut changed = Vec::new();
         let mut changes = Vec::new();
@@ -590,7 +598,7 @@ impl Walk<'_> {
     }
 
     /// Local `l` goes out of scope, or, if it's declared with no value, is
-    /// declared (`let x;`), where the AST's walk binds it to none.
+    /// declared (`let x;`), bound to none.
     fn mir_dead(&mut self, fr: &Frame, l: Local, span: Span) -> Result<(), Error> {
         let decl = &fr.body.locals[l.0];
         let Some(id) = fr.id(l) else {
@@ -649,7 +657,7 @@ impl Walk<'_> {
             && place.proj.is_empty()
             && let Some(id) = fr.id(place.local)
         {
-            return self.mir_bind(fr, at, span, place.local, id, value);
+            return self.mir_bind(fr, span, place.local, id, value);
         }
         let v = self.rvalue(fr, bodies, at, span, place, value)?;
         if slot {
@@ -666,18 +674,18 @@ impl Walk<'_> {
         self.mir_write(fr, at, span, place, v)
     }
 
-    /// A variable's first value, `value`: as `bind_pattern` binds one.
+    /// A variable's first value, `value`, by a `let` or a pattern: what
+    /// its refinement needs, and what it declares.
     fn mir_bind(
         &mut self,
         fr: &Frame,
-        at: Point,
         span: Span,
         l: Local,
         id: NodeId,
         value: &Rvalue,
     ) -> Result<(), Error> {
         if let Rvalue::Ref(_, m, q) = value {
-            return self.bind_ref(fr, at, span, id, *m, q);
+            return self.bind_ref(fr, span, id, *m, q);
         }
         let v = match value {
             Rvalue::Use(o) => self.operand(fr, o, span)?,
@@ -724,69 +732,27 @@ impl Walk<'_> {
     }
 
     /// Variable `id` bound by reference, `&mut` if `m`, to place `q`, by a
-    /// pattern (match ergonomics): as `bind_pattern` does.
+    /// pattern (match ergonomics).
     fn bind_ref(
         &mut self,
         fr: &Frame,
-        at: Point,
         span: Span,
         id: NodeId,
         m: bool,
         q: &crate::mir::Place,
     ) -> Result<(), Error> {
         let name = (self.cx.typed.binds.get(&id)).map_or(String::new(), |b| b.name.clone());
-        if let Some(StmtNote::BindMut { outer, of_struct }) = fr.notes.stmts.get(&at) {
-            // What it's in has no place of its own here, so what's written
-            // through it would go unchecked: not where anything is declared
-            // or carried of the value (lemma P2 of
-            // docs/62-t-chess-findings.md).
-            for (pspan, unpeeled, peels, shape) in outer {
-                let mut after = unpeeled.clone();
-                for _ in 0..*peels {
-                    after = after.project(crate::mir::Proj::Deref);
-                }
-                let place = match self.locate(fr, &after) {
-                    Loc::Place(p) => Some(p),
-                    Loc::Val(..) => None,
-                };
-                let placeless = match shape {
-                    Shape::Variant | Shape::Array | Shape::Or => true,
-                    Shape::Fields => place.is_none(),
-                };
-                if !placeless {
-                    continue;
-                }
-                let v = match self.locate(fr, unpeeled) {
-                    Loc::Place(p) => Some(self.read_place(&p)),
-                    Loc::Val(Val::Other, _) => None,
-                    Loc::Val(v, _) => Some(v),
-                };
-                if self.said_of(place.as_ref(), v.as_ref()) {
-                    return Err(Error::ty(
-                        *pspan,
-                        format!(
-                            "can't bind `{name}` by `&mut`: what it's in has a refinement, \
-                             which a write through the reference could break"
-                        ),
-                    ));
-                }
-            }
-            if *of_struct && let Some((crate::mir::Proj::Field(i), prefix)) = q.proj.split_last() {
-                let outer = crate::mir::Place {
-                    local: q.local,
-                    proj: prefix.to_vec(),
-                };
-                let t = self.mir_ty(fr, &outer);
-                if let Some(why) = self.refined_fields(&t).and_then(|f| f.constrained(*i)) {
-                    return Err(Error::ty(
-                        span,
-                        format!(
-                            "can't bind `{name}` by `&mut`: {why}, which a write through the \
-                             reference could break"
-                        ),
-                    ));
-                }
-            }
+        // As `&mut` of its place: refused where a write through it would
+        // need what's around it proved again (lemma V1 of
+        // docs/66-one-walk.md).
+        if m && let Some(why) = self.mut_refused(fr, q, "", false) {
+            return Err(Error::ty(
+                span,
+                format!(
+                    "can't bind `{name}` by `&mut`: {why}, which a write through the reference \
+                     could break"
+                ),
+            ));
         }
         let widen = |w: &mut Self, r: &Val| {
             if !w.decl.contains_key(&id) {
@@ -804,15 +770,21 @@ impl Walk<'_> {
                 self.alias.insert(id, p);
             }
             // As `let r = &mut p;`: what's written through it must be
-            // what's declared of `p` (lemma P2 of
-            // docs/62-t-chess-findings.md).
-            (true, Loc::Place(p)) => {
+            // what's declared at its place (lemma V1 of
+            // docs/66-one-walk.md), a variant's field's or an array's
+            // element's too (`lvalue_mir`).
+            (true, loc) => {
+                let (_, decl, _) = self.lvalue_mir(fr, q);
                 let o = self.new_obj();
-                let tree = targs::under(&self.place_decl(&p), 0);
+                let tree = targs::under(&decl, 0);
                 if !tree.is_empty() {
                     self.trees.insert(o, tree);
                 }
-                let r = Val::Ref(o, Pointee::Place(p));
+                let to = match loc {
+                    Loc::Place(p) => Pointee::Place(p),
+                    Loc::Val(..) => Pointee::Unknown,
+                };
+                let r = Val::Ref(o, to);
                 widen(self, &r);
                 self.bind(id, Some(r));
             }
@@ -828,8 +800,9 @@ impl Walk<'_> {
         Ok(())
     }
 
-    /// An assignment of `new` to `place`, which isn't a temporary's: as the
-    /// AST's walk does an `Assign`.
+    /// An assignment of `new` to `place`, which isn't a temporary's: what's
+    /// written must have what's declared there, and keep the refinements of
+    /// what it's in.
     fn mir_write(
         &mut self,
         fr: &Frame,
@@ -843,6 +816,7 @@ impl Walk<'_> {
             _ => (span, String::new()),
         };
         let ty = self.mir_ty(fr, place);
+        self.keep_wholes(fr, place, &new, &text, vspan)?;
         let target = self.static_place(fr, place);
         if let Some(p) = &target
             && p.path.is_empty()
@@ -940,8 +914,8 @@ impl Walk<'_> {
         rv: &Rvalue,
     ) -> Result<Val, Error> {
         match rv {
-            // `-n`: the same number, which must fit (as the AST's walk does
-            // `-` of a literal).
+            // `-n`: the same number, which must fit: the `-` is proved not
+            // to overflow.
             Rvalue::Use(o) if let Some(StmtNote::Negated(site)) = fr.notes.stmts.get(&at) => {
                 let v = self.operand(fr, o, span)?;
                 let ty = self.mir_ty(fr, dest);
@@ -1138,9 +1112,8 @@ impl Walk<'_> {
         }
     }
 
-    /// Walks closure `l`, of type `ty`, from what's known here, as the
-    /// AST's walk does a closure literal: then goes back to what's known
-    /// here, as making one runs nothing.
+    /// Walks closure `l`, of type `ty`, from what's known here: then goes
+    /// back to what's known here, as making one runs nothing.
     fn walk_closure(&mut self, bodies: &Bodies, l: NodeId, ty: &Type) -> Result<(), Error> {
         let key = Key::Closure(l);
         let Some((_, body, notes)) = bodies.iter().find(|(k, ..)| *k == key) else {
@@ -1174,9 +1147,9 @@ impl Walk<'_> {
         result
     }
 
-    /// A `&` or `&mut` (`m`) of `q`, made into `dest`: as the AST's walk
-    /// does `&x`, and if it's a `&mut` not given straight to a call, what's
-    /// known of the place is forgotten (`Walk::returned`).
+    /// A `&` or `&mut` (`m`) of `q`, made into `dest` (`borrow_mir`): if
+    /// it's a `&mut` not given straight to a call, what's known of the
+    /// place is forgotten here, and if it is, once the call returns.
     fn mir_borrow(
         &mut self,
         fr: &Frame,
@@ -1214,8 +1187,8 @@ impl Walk<'_> {
         self.cx.scoped_params(&symbol).get(i) == Some(&true)
     }
 
-    /// `no_mut_borrow`, of place `q`, written `text`, borrowed `&mut` at
-    /// `span`.
+    /// Fails if `q`, written `text`, borrowed `&mut` at `span`, can't be
+    /// (`mut_refused`).
     fn no_mut_borrow_mir(
         &mut self,
         fr: &Frame,
@@ -1224,19 +1197,41 @@ impl Walk<'_> {
         span: Span,
         scoped: bool,
     ) -> Result<(), Error> {
+        match self.mut_refused(fr, q, text, scoped) {
+            Some(why) => Err(Error::ty(
+                span,
+                format!(
+                    "can't borrow `{text}` as `&mut`: {why}, which a write through the reference \
+                     could break"
+                ),
+            )),
+            None => Ok(()),
+        }
+    }
+
+    /// Why `q`, written `text` (or nothing, if it's a pattern's), can't be
+    /// borrowed `&mut`, if it can't: a refined local, or a field a
+    /// refinement is about, unless it's lent straight to a call-scoped
+    /// parameter (`scoped`): then the refinements are proved again when
+    /// the call returns (`post_now`), and until then nothing can read the
+    /// struct, which the borrow is of a part of; or a part of a value
+    /// whose refinement is of the whole of it, a refined local's or what's
+    /// declared of one (`wholes_around`), which nothing proves again of
+    /// the whole when a part changes through the reference.
+    fn mut_refused(
+        &mut self,
+        fr: &Frame,
+        q: &crate::mir::Place,
+        text: &str,
+        scoped: bool,
+    ) -> Option<String> {
         let place = self.static_place(fr, q);
         if let Some(p) = &place
             && p.path.is_empty()
             && self.invariants.contains_key(&p.root)
             && !scoped
         {
-            return Err(Error::ty(
-                span,
-                format!(
-                    "can't borrow `{text}` as `&mut`: its type has a refinement, which a write \
-                     through the reference could break"
-                ),
-            ));
+            return Some("its type has a refinement".to_string());
         }
         // Nor a part of one, through fields and boxes: a write to the part
         // is a write to it.
@@ -1244,33 +1239,215 @@ impl Walk<'_> {
             && !p.path.is_empty()
             && let Some(name) = self.in_refined_place(p)
         {
-            return Err(Error::ty(
-                span,
-                format!(
-                    "can't borrow `{text}` as `&mut`: it's in `{name}`, whose type has a \
-                     refinement, which a write through the reference could break"
-                ),
-            ));
+            return Some(format!("it's in `{name}`, whose type has a refinement"));
         }
         let why = match (scoped, &place) {
             (false, _) => self.constrained_mir(fr, q, text, false),
             (true, None) => self.constrained_mir(fr, q, text, true),
             (true, Some(_)) => None,
         };
-        if let Some(why) = why {
-            return Err(Error::ty(
-                span,
-                format!(
-                    "can't borrow `{text}` as `&mut`: {why}, which a write through the reference \
-                     could break"
-                ),
-            ));
+        if why.is_some() {
+            return why;
+        }
+        if let Some(why) = self.way_into(fr, q) {
+            return Some(why);
+        }
+        let (e, n, _) = self.wholes_around(fr, q).into_iter().next()?;
+        let name = self.level_text(fr, &e, text, n);
+        Some(match name {
+            Some(name) => format!("it's in `{name}`, whose type has a refinement"),
+            None => "what it's in has a refinement".to_string(),
+        })
+    }
+
+    /// If `q` is in a variant's field (as a pattern binds one) of an enum
+    /// that's a struct's field, whose own refinement says something of
+    /// what's there (by a way into it, `Part::ways`), why it can't be
+    /// borrowed `&mut`: as the field itself can't be (`constrained_mir`),
+    /// as that refinement is of the struct, in the logic, which a write
+    /// through the reference would change. Through fields and boxes, not
+    /// references, as `constrained_mir`.
+    fn way_into(&mut self, fr: &Frame, q: &crate::mir::Place) -> Option<String> {
+        use crate::mir::Proj as P;
+        let mut k = q.proj.len();
+        while k > 0 {
+            match q.proj[k - 1] {
+                P::Variant(..) => {
+                    let end = k;
+                    while k > 0 && matches!(q.proj[k - 1], P::Variant(..)) {
+                        k -= 1;
+                    }
+                    let way: Way = (q.proj[k..end].iter())
+                        .filter_map(|p| match p {
+                            P::Variant(v, j) => Some((*v, *j)),
+                            _ => None,
+                        })
+                        .collect();
+                    if k > 0
+                        && let P::Field(i) = q.proj[k - 1]
+                    {
+                        let st = crate::mir::Place {
+                            local: q.local,
+                            proj: q.proj[..k - 1].to_vec(),
+                        };
+                        let t = self.mir_ty(fr, &st);
+                        if let Some(f) = self.refined_fields(&t)
+                            && let Some(Some(r)) = f.refs.get(i)
+                            && (r.parts.iter())
+                                .any(|p| !p.carried && p.ways.iter().any(|w| w.starts_with(&way)))
+                        {
+                            return Some(f.why(i, i));
+                        }
+                    }
+                }
+                P::Deref => {
+                    let before = crate::mir::Place {
+                        local: q.local,
+                        proj: q.proj[..k - 1].to_vec(),
+                    };
+                    if !matches!(self.mir_ty(fr, &before), Type::Box(_)) {
+                        return None;
+                    }
+                    k -= 1;
+                }
+                P::Field(_) => k -= 1,
+            }
+        }
+        None
+    }
+
+    /// The values `q` is in that a write to it changes, from the innermost
+    /// out, through fields and boxes, up to what a reference points to or a
+    /// variant's field is (what an enum's refinement says is only which
+    /// variant it is, by its measures), with what's declared of the whole
+    /// of each, of those it says something of: each as its place, how many
+    /// fields out from `q` it is, and that.
+    fn wholes_around(
+        &mut self,
+        fr: &Frame,
+        q: &crate::mir::Place,
+    ) -> Vec<(crate::mir::Place, usize, targs::Tree)> {
+        let mut out = Vec::new();
+        let mut n = 0;
+        for (e, step) in self.levels(fr, q) {
+            if let crate::mir::Proj::Field(_) = step {
+                n += 1;
+            }
+            let (_, decl, _) = self.lvalue_mir(fr, &e);
+            let whole: targs::Tree = (decl.into_iter())
+                .filter(|(pos, d)| pos.is_empty() && !d.is_any())
+                .collect();
+            if !whole.is_empty() {
+                out.push((e, n, whole));
+            }
+        }
+        out
+    }
+
+    /// The values `q` is in that a write to it changes (`wholes_around`),
+    /// innermost first, each with the step from it in.
+    fn levels(
+        &self,
+        fr: &Frame,
+        q: &crate::mir::Place,
+    ) -> Vec<(crate::mir::Place, crate::mir::Proj)> {
+        let mut out = Vec::new();
+        for k in (1..=q.proj.len()).rev() {
+            let e = crate::mir::Place {
+                local: q.local,
+                proj: q.proj[..k - 1].to_vec(),
+            };
+            let step = q.proj[k - 1];
+            let on = match step {
+                crate::mir::Proj::Field(_) => true,
+                crate::mir::Proj::Deref => matches!(self.mir_ty(fr, &e), Type::Box(_)),
+                crate::mir::Proj::Variant(..) => false,
+            };
+            if !on {
+                break;
+            }
+            out.push((e, step));
+        }
+        out
+    }
+
+    /// The text of `e`, `n` fields out from a place written `text`: from
+    /// that text, if there's one, or else its place's name, if it has one.
+    fn level_text(
+        &self,
+        fr: &Frame,
+        e: &crate::mir::Place,
+        text: &str,
+        n: usize,
+    ) -> Option<String> {
+        if !text.is_empty() {
+            return Some(outer_text(text, n).to_string());
+        }
+        let p = self.static_place(fr, e)?;
+        self.place_name(&p)
+    }
+
+    /// Before `new` is written to `place`, written `text`, at `span`: each
+    /// value it's in that the write changes, up to what a reference points
+    /// to (`levels`), must have what's declared of the whole of it after,
+    /// as it is with the part written replaced. (What's declared of the
+    /// part itself, `keep_declared` and `need_tree` check; a refined
+    /// local's own refinement, `keep_invariant`.)
+    fn keep_wholes(
+        &mut self,
+        fr: &Frame,
+        place: &crate::mir::Place,
+        new: &Val,
+        text: &str,
+        span: Span,
+    ) -> Result<(), Error> {
+        let levels = self.levels(fr, place);
+        if levels.is_empty() || self.wholes_around(fr, place).is_empty() {
+            return Ok(());
+        }
+        let mut part = new.clone();
+        let mut n = 0;
+        for (e, step) in levels {
+            let (v, decl, t) = self.lvalue_mir(fr, &e);
+            let whole: targs::Tree = (decl.into_iter())
+                .filter(|(pos, d)| pos.is_empty() && !d.is_any())
+                .collect();
+            part = match step {
+                crate::mir::Proj::Field(i) => {
+                    n += 1;
+                    let mut vals = match v {
+                        Val::Struct(_, vals) => vals,
+                        _ => match self.unknown(&t) {
+                            Val::Struct(_, vals) => vals,
+                            _ => Vec::new(),
+                        },
+                    };
+                    match vals.get_mut(i) {
+                        Some(f) => {
+                            *f = part;
+                            Val::Struct(self.new_obj(), vals)
+                        }
+                        // An array's element: what's in it isn't followed.
+                        None => Val::Other,
+                    }
+                }
+                _ => Val::Ref(self.new_obj(), Pointee::Val(Box::new(part))),
+            };
+            if !whole.is_empty() {
+                let what = match self.level_text(fr, &e, text, n) {
+                    Some(name) if !text.is_empty() => format!("`{name}`, once `{text}` is written"),
+                    _ => "the value it's written in".to_string(),
+                };
+                self.need_tree(&part, &t, &whole, None, span, &what)?;
+            }
         }
         Ok(())
     }
 
-    /// `in_refined_local`, of place `p`: the refined local it's in, through
-    /// fields and boxes.
+    /// The name of the refined local `p` is a part of, through fields and
+    /// boxes, if it's one: not the local itself, nor through a reference,
+    /// as what's behind one isn't part of its value (and no refinement of a
+    /// `mut` variable names what's behind a `&mut`).
     fn in_refined_place(&mut self, p: &Place) -> Option<String> {
         if !self.boxes_only(p) {
             return None;
@@ -1278,9 +1455,16 @@ impl Walk<'_> {
         self.invariants.get(&p.root).map(|(_, name)| name.clone())
     }
 
-    /// `constrained_field`, of MIR place `q`, written `text`: the field of
-    /// a struct a refinement is about that it is, or is in, through fields
-    /// and boxes.
+    /// If `q`, written `text`, is a field a refinement is about, why it
+    /// can't be borrowed `&mut`.
+    ///
+    /// Or a place in such a field, through fields, variants' fields and
+    /// boxes: a write to it changes the field. Not through a reference:
+    /// what's behind one isn't part of the value, and no refinement can
+    /// name what's behind a `&mut`, nor anything write through a `&`: only
+    /// a cell's `replace` does, and no refinement can name what's in a
+    /// cell (lemma K1 of docs/37-cell.md). `unplaced`: of a struct at no
+    /// place, lent to a call (`RefinedFields::constrained_unplaced`).
     fn constrained_mir(
         &mut self,
         fr: &Frame,
@@ -1349,10 +1533,13 @@ impl Walk<'_> {
         None
     }
 
-    /// The value of a `&` or `&mut` of `q`, as `borrow` says: a reborrow
-    /// of what a reference points to is that reference; one of a place
-    /// says what's declared there; one of a value at no place, what's
-    /// declared of it (`lvalue_mir`).
+    /// A `&` or `&mut` of `q`: a reference that says what's declared of
+    /// the value it points to, which each write through it must keep
+    /// (lemma W1 of docs/63-what-is-declared.md). A reborrow of what a
+    /// reference points to is that reference, the same object, saying what
+    /// it says; one of a place says what `place_decl` says; one of a value
+    /// at no place (what a reference or a box a call gave points to, a
+    /// field of that), what `lvalue_mir` says.
     fn borrow_mir(&mut self, fr: &Frame, q: &crate::mir::Place) -> Val {
         match self.locate(fr, q) {
             Loc::Place(p) => {
@@ -1393,8 +1580,17 @@ impl Walk<'_> {
         }
     }
 
-    /// The value at `q`, what's declared of it there, and its type: as
-    /// `lvalue` says.
+    /// The value at `q`, what's declared of it there, and its type: what
+    /// each write there must keep (lemma W1 of
+    /// docs/63-what-is-declared.md). By cases on what `q` is, each case
+    /// saying it: a place a local is the root of, `place_decl`; what a
+    /// reference or a box points to, what's declared below the top of what
+    /// it's in, and what the reference says (`deref_lvalue`); a field,
+    /// what's declared of what it's in at the field's positions
+    /// (`field_decl`), and a variant's field, at that variant's field's
+    /// (`variant_decl`); an array's element, what's declared of its
+    /// elements; and a temporary nothing else can name, what a `let` of it
+    /// would declare: what its value's type says (`widen`).
     fn lvalue_mir(&mut self, fr: &Frame, q: &crate::mir::Place) -> (Val, targs::Tree, Type) {
         let t = self.mir_ty(fr, q);
         if let Some(p) = self.static_place(fr, q) {
@@ -1417,6 +1613,13 @@ impl Walk<'_> {
                 let (v, decl) = self.deref_lvalue(r, &decl, &rt);
                 (v, decl, t)
             }
+            // An array's element (from a pattern): what's declared of its
+            // elements.
+            crate::mir::Proj::Field(_) if matches!(self.mir_ty(fr, &outer), Type::Array(..)) => {
+                let (_, decl, _) = self.lvalue_mir(fr, &outer);
+                let v = self.read_mir(fr, q);
+                (v, targs::below(&decl, 0), t)
+            }
             crate::mir::Proj::Field(i) => {
                 let (v, decl, st) = self.lvalue_mir(fr, &outer);
                 let vals = match v {
@@ -1433,15 +1636,18 @@ impl Walk<'_> {
                 };
                 (fv, decl, t)
             }
-            crate::mir::Proj::Variant(..) => {
+            crate::mir::Proj::Variant(v, j) => {
+                let (_, decl, et) = self.lvalue_mir(fr, &outer);
+                let decl = self.variant_decl(&decl, &et, *v, *j);
                 let v = self.read_mir(fr, q);
-                let known = self.knowledge(&v, &t);
-                (v, targs::widen(&known), t)
+                (v, decl, t)
             }
         }
     }
 
-    /// A call of `f` with `ops`, into `dest`: as the AST's walk does one.
+    /// A call of `f` with `ops`, into `dest` (`call_at`): its arguments'
+    /// refinements needed, what's lent to it forgotten, its result and
+    /// postconditions learned.
     #[allow(clippy::too_many_arguments)]
     fn mir_call(
         &mut self,
@@ -1617,8 +1823,8 @@ impl Walk<'_> {
         }
     }
 
-    /// `pattern_formula`, of MIR pattern `pat`: whether it matches `s`,
-    /// exactly, if the logic can say.
+    /// Whether pattern `pat` matches `s`, exactly, if the logic can say:
+    /// so it doesn't for the arms after one that has it.
     fn pat_formula(&mut self, pat: &Pat, s: &Val) -> Option<Formula> {
         match (pat, s) {
             (Pat::Any, _) => Some(Formula::True),
@@ -1666,7 +1872,11 @@ impl Walk<'_> {
         }
     }
 
-    /// `pattern_implies`, of MIR pattern `pat`.
+    /// What it says of `s` that `pat` matches it, beyond `pat_formula`
+    /// (which is exactly when it matches): a string pattern of `n` bytes
+    /// matches only a `&str` whose `len()` is `n`, but not every such
+    /// one. So this may be assumed where `pat` matched, and its negation
+    /// never where it didn't (lemma S1 of docs/42-patterns-and-loops.md).
     fn pat_implies(&mut self, pat: &Pat, s: &Val) -> Option<Formula> {
         match (pat, s) {
             (Pat::Variant(v, pats), _) => {
@@ -1800,7 +2010,7 @@ impl Walk<'_> {
 
     /// The place `mp` is, if it's one the walk follows, found without
     /// reading anything: a variable's (or in a closure's body, one it
-    /// captured), through fields and `*`s, as `place_of` finds one.
+    /// captured), through fields and `*`s.
     fn static_place(&self, fr: &Frame, mp: &crate::mir::Place) -> Option<Place> {
         let (mut p, from) = self.root_place(fr, mp)?;
         for proj in &mp.proj[from..] {
@@ -1890,7 +2100,7 @@ impl Walk<'_> {
                 self.variant_field(whole, &t, v, j)
             }
             // What a reference or box at no place points to, and what it
-            // says of that (as the AST's walk does `*e`).
+            // says of that.
             (Loc::Val(v, t), P::Deref) => {
                 let inner = match &t {
                     Type::Ref(_, _, inner) | Type::Box(inner) => self.cx.solved(inner),

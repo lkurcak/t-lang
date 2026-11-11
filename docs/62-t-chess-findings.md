@@ -125,7 +125,7 @@ fn poke(o: &mut Option<{ s: u8 | s < 64 }>) {
         None => {},
     }
 }
-// error: can't bind `a` by `&mut`: what it's in has a refinement, which a write through the reference could break
+// error: can't prove `s < 64` for what's written through `*a`
 ```
 
 Match ergonomics binds `a` as a `&mut u8` into the option's field. Since
@@ -149,6 +149,14 @@ forgotten after the write. A binding by `&mut` of something that has a
 place, a tuple's or a struct's field, is now bound as `let r = &mut p`
 binds `r`, so what's written through it is checked against what's declared
 of `p`.
+
+Step 66 (docs/66-one-walk.md) made the walk over MIR the only one, where a
+variant's field and an array's element are places too: so each of these
+bindings is now bound as `let r = &mut p` binds `r`, and it's `*a = 99`
+that's refused above, not the binding. What a struct field's own
+refinement says of a variant's field is still the struct's (in the logic,
+not carried), so binding into that is still refused, as `&mut` of the
+field is.
 
 ## Every failed proof
 
