@@ -16,7 +16,10 @@
 //! own over each body, once its types are known and the borrow checker has
 //! checked it (`Checker::refine`, see docs/64-phase-order.md), which
 //! keeps track of what's known at each point (*facts*) and proves from them
-//! what each refinement needs, with the procedure in `refine/logic.rs`:
+//! what each refinement needs, with the procedure in `refine/logic.rs`.
+//! The pass walks the body's AST (`Walk::expr`), or, if asked, the MIR the
+//! borrow checker built of it (`refine/mir.rs`, docs/65-refinements-on-mir.md),
+//! with the same rules, by the same functions:
 //!
 //! - an argument has its parameter's refinement, a result its function's,
 //!   and a value given to a refined `let`, or assigned to one, its;
