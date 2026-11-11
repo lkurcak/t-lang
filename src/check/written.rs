@@ -81,7 +81,10 @@ impl Checker {
         if !self.to_write_out(t, true) {
             return t.clone();
         }
-        let w = self.write_out(t, None);
+        let mut w = self.write_out(t, None);
+        // Its root is `t`'s node, not that of what an alias stands for:
+        // asked again for it, this is what it gets.
+        w.id = t.id;
         self.info.written.insert(t.id, w.clone());
         w
     }
@@ -334,4 +337,47 @@ fn pred_children(e: &mut Expr) -> Vec<&mut Expr> {
 fn ty_args(args: &[TypeExpr]) -> impl Iterator<Item = &TypeExpr> {
     args.iter()
         .filter(|a| !matches!(a.kind, TypeExprKind::Lifetime(_)))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::ast::NodeId;
+
+    /// The predicates the checker read of each written type that had an
+    /// alias written out, in order.
+    fn preds(src: &str) -> (Vec<Vec<NodeId>>, std::sync::Arc<crate::check::Info>) {
+        let checked = crate::check_source(src);
+        assert!(checked.result.is_ok(), "{src}");
+        let mut written: Vec<_> = checked.info.written.iter().collect();
+        written.sort_by_key(|(id, _)| **id);
+        let out = (written.iter())
+            .map(|(_, t)| t.refinements().iter().map(|(_, _, p)| p.id).collect())
+            .collect();
+        (out, checked.info.clone())
+    }
+
+    /// Each place a parameter is, in what an alias stands for, gets a copy
+    /// of the predicate given for it of its own, as does each use: what's
+    /// kept by a predicate's node, such as which values of a type the
+    /// interpreter checks it of, is that place's (lemma A5 of
+    /// docs/67-refinement-aliases.md).
+    #[test]
+    fn each_place_and_each_use_has_its_own_predicate() {
+        let src = "type Pair<T> = (T, T);\n\
+                   type Square = { s: u8 | s < 64 };\n\
+                   fn g(_p: Pair<{ v: u8 | v < 3 }>, _a: Square, _b: Square) {}\n\
+                   fn main() { g((1, 2), 3, 4); }\n";
+        let (preds, info) = preds(src);
+        let all: Vec<NodeId> = preds.iter().flatten().copied().collect();
+        assert_eq!(all.len(), 4, "{preds:?}");
+        let mut distinct = all.clone();
+        distinct.sort();
+        distinct.dedup();
+        assert_eq!(distinct.len(), 4, "{preds:?}");
+        let pair = preds.iter().find(|p| p.len() == 2).expect("the pair's");
+        assert_ne!(
+            info.measures.reach.get(&pair[0]),
+            info.measures.reach.get(&pair[1])
+        );
+    }
 }

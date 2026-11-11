@@ -680,7 +680,7 @@ impl Checker {
         let param = (f.params.iter().zip(&params_written))
             .find(|(_, w)| refined(w))
             .map(|(p, _)| &p.ty);
-        let result = Some(&f.ret).filter(|_| refined(&&ret_written));
+        let result = refined(&&ret_written).then_some(&f.ret);
         if param.is_none() && result.is_none() && f.ensures.is_empty() {
             return Ok(());
         }
