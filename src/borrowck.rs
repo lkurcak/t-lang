@@ -107,10 +107,20 @@ pub(crate) fn check(
     let names = Names::of(f, sig);
     let (warnings, _) = analyze(&mut b, &names, false)?;
     let key = crate::mir::Key::Fn(symbol.to_string());
+    keep_for_refine(cx, &key, &b);
     let mut kept = b.body.erased();
     drops::elaborate(&b, &mut kept);
     cx.fresh_mir.borrow_mut().push((key, kept));
     Ok(warnings)
+}
+
+/// Keeps body `key`, as `b` built it, for the refinement checker on MIR,
+/// if that's to run (`Checker::refine_mir`).
+fn keep_for_refine(cx: &Checker, key: &crate::mir::Key, b: &Builder) {
+    if crate::check::refiner() != crate::check::Refiner::Ast {
+        let kept = (key.clone(), b.body.erased(), b.notes.clone());
+        cx.refine_mir.borrow_mut().push(kept);
+    }
 }
 
 /// `t`, a function's return type, with each opaque type in it the type it
@@ -732,6 +742,7 @@ fn closure_body(
     if later == 0 {
         let (warnings, reqs) = analyze(&mut b, &names, true)?;
         let key = crate::mir::Key::Closure(c.lambda.id);
+        keep_for_refine(cx, &key, &b);
         let mut kept = b.body.erased();
         drops::elaborate(&b, &mut kept);
         cx.fresh_mir.borrow_mut().push((key, kept));

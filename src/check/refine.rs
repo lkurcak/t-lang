@@ -111,6 +111,7 @@ mod diagnostics;
 mod free;
 mod logic;
 pub use logic::{Work, work};
+mod mir;
 mod targs;
 
 use super::Checker;
@@ -1875,23 +1876,103 @@ impl Checker {
     }
 
     /// Checks what the refinements in body `f` need, and works out which
-    /// of its operators can't panic, taking those out of its effects.
+    /// of its operators can't panic, taking those out of its effects: by
+    /// the walk over its AST, or over its MIR, or both, compared, as
+    /// `refiner` says (docs/65-refinements-on-mir.md).
     pub(super) fn refine(&mut self, f: &FnDecl) -> Result<(), Error> {
-        let mut failed = Vec::new();
-        let result = self.refine_walk(f, &mut failed);
-        self.proof_errors.append(&mut failed);
-        result
-    }
-
-    /// `refine`, leaving in `failed` the proofs that failed, which don't
-    /// stop it (`Walk::failed`).
-    fn refine_walk(&mut self, f: &FnDecl, failed: &mut Vec<Error>) -> Result<(), Error> {
         let id = self.current.expect("in a function");
         let symbol = self.fns[id.0].symbol.clone();
-        let sig = self.refined.get(&symbol).cloned();
         if self.measures.contains_key(&symbol) {
             self.measure_body(&symbol, &f.body)?;
         }
+        let done = match refiner() {
+            Refiner::Ast => self.walk_ast(f),
+            Refiner::Mir => self.walk_mir(f),
+            Refiner::Compare => {
+                let ast = self.walk_ast(f);
+                let mir = self.walk_mir(f);
+                self.compare(&symbol, &ast, &mir);
+                ast
+            }
+        };
+        self.apply(&symbol, done)
+    }
+
+    /// Keeps what a walk of the body of function `symbol` found: the
+    /// proofs that failed, which don't stop checking (`Walk::failed`), the
+    /// const's value, and which operators were proved not to panic, which
+    /// are taken out of its effects.
+    fn apply(&mut self, symbol: &str, done: Walked) -> Result<(), Error> {
+        let Walked {
+            mut failed,
+            result,
+            known,
+            proved,
+            failures,
+            ..
+        } = done;
+        self.proof_errors.append(&mut failed);
+        result?;
+        if let Some(k) = known {
+            self.const_values.insert(symbol.to_string(), k);
+        }
+        for (node, failure) in failures {
+            let span = self
+                .effect_sites
+                .iter()
+                .filter(|s| s.node == Some(node))
+                .map(|s| s.span)
+                .chain(
+                    self.withins
+                        .iter()
+                        .filter(|s| s.node == Some(node))
+                        .map(|s| s.span),
+                )
+                .next();
+            if let Some(span) = span {
+                self.proof_failures.insert(span, failure);
+            }
+        }
+        let keep = |node: Option<NodeId>| node.is_none_or(|n| !proved.contains(&n));
+        self.effect_sites.retain(|s| keep(s.node));
+        self.withins.retain(|w| keep(w.node));
+        self.info.proved.extend(proved);
+        self.implicit_panics();
+        Ok(())
+    }
+
+    /// The walk over the body of `f`, its AST.
+    fn walk_ast(&self, f: &FnDecl) -> Walked {
+        let before = work();
+        let mut failed = Vec::new();
+        let mut known = None;
+        let (result, (proved, failures)) = match self.refine_walk(f, &mut failed, &mut known) {
+            Ok(found) => (Ok(()), found),
+            Err(e) => (Err(e), Default::default()),
+        };
+        Walked {
+            failed,
+            result,
+            known,
+            proved,
+            failures,
+            work: since(before),
+        }
+    }
+
+    /// The walk, leaving in `failed` the proofs that failed, which don't
+    /// stop it (`Walk::failed`), and in `known` the const's value, if it's
+    /// one whose value it worked out; giving the operators proved not to
+    /// panic, and why each other one wasn't.
+    fn refine_walk(
+        &self,
+        f: &FnDecl,
+        failed: &mut Vec<Error>,
+        known_value: &mut Option<Known>,
+    ) -> Result<Found, Error> {
+        let id = self.current.expect("in a function");
+        let symbol = self.fns[id.0].symbol.clone();
+        let sig = self.refined.get(&symbol).cloned();
         let mut w = Walk {
             cx: self,
             kinds: Vec::new(),
@@ -1976,34 +2057,97 @@ impl Checker {
         let done = w.result(v, super::expr::result_span(&f.body));
         failed.append(&mut w.errors);
         done?;
+        *known_value = known;
         let proved = std::mem::take(&mut w.proved);
         let failures = std::mem::take(&mut w.failures);
-        if let Some(k) = known {
-            self.const_values.insert(symbol.clone(), k);
+        Ok((proved, failures))
+    }
+
+    /// Records how the walks of function `symbol`'s body over its AST and
+    /// over its MIR differ, if they do (`differences`).
+    fn compare(&self, symbol: &str, ast: &Walked, mir: &Walked) {
+        let ops = self.mir_operators();
+        let text = |e: &Error| format!("{:?}: {}", (e.span.start, e.span.end), e.message);
+        let errors = |w: &Walked| {
+            let mut all: Vec<String> = w.failed.iter().map(text).collect();
+            all.extend(w.result.as_ref().err().map(text));
+            all
+        };
+        let (ea, em) = (errors(ast), errors(mir));
+        let mut found = Vec::new();
+        if ea != em {
+            let missing: Vec<&String> = ea.iter().filter(|e| !em.contains(e)).collect();
+            let extra: Vec<&String> = em.iter().filter(|e| !ea.contains(e)).collect();
+            // Only fewer proofs failed: the walk over MIR proved more.
+            let better = extra.is_empty() && missing.iter().all(|e| e.contains("can't prove"));
+            found.push((
+                format!("errors: only AST {missing:?}; only MIR {extra:?}"),
+                better,
+            ));
         }
-        for (node, failure) in failures {
-            let span = self
-                .effect_sites
-                .iter()
-                .filter(|s| s.node == Some(node))
-                .map(|s| s.span)
-                .chain(
-                    self.withins
-                        .iter()
-                        .filter(|s| s.node == Some(node))
-                        .map(|s| s.span),
-                )
-                .next();
-            if let Some(span) = span {
-                self.proof_failures.insert(span, failure);
+        let pa: HashSet<NodeId> = ast.proved.intersection(&ops).copied().collect();
+        let pm: HashSet<NodeId> = mir.proved.intersection(&ops).copied().collect();
+        if pa != pm && ast.result.is_ok() && mir.result.is_ok() {
+            let mut only_ast: Vec<u32> = pa.difference(&pm).map(|n| n.0).collect();
+            let mut only_mir: Vec<u32> = pm.difference(&pa).map(|n| n.0).collect();
+            only_ast.sort();
+            only_mir.sort();
+            let better = only_ast.is_empty();
+            found.push((
+                format!("proved: only AST {only_ast:?}; only MIR {only_mir:?}"),
+                better,
+            ));
+        }
+        if ast.known != mir.known {
+            found.push((
+                format!("value: AST {:?}, MIR {:?}", ast.known, mir.known),
+                false,
+            ));
+        }
+        let heavy = |a: u64, m: u64| m > 2 * a + 50;
+        if heavy(ast.work.refutations, mir.work.refutations)
+            || heavy(ast.work.cases, mir.work.cases)
+            || heavy(ast.work.carried, mir.work.carried)
+        {
+            found.push((
+                format!("work: AST {:?}, MIR {:?}", ast.work, mir.work),
+                false,
+            ));
+        }
+        for (what, better) in found {
+            DIFFERENCES.with(|d| {
+                d.borrow_mut().push(Difference {
+                    function: symbol.to_string(),
+                    what,
+                    better,
+                })
+            });
+        }
+    }
+
+    /// The nodes of the operators of the MIR of the body being checked,
+    /// and of its closures: those whose proofs the two walks must agree on.
+    fn mir_operators(&self) -> HashSet<NodeId> {
+        let mut out = HashSet::new();
+        for (_, body, _) in self.refine_mir.borrow().iter() {
+            for block in &body.blocks {
+                for s in &block.stmts {
+                    if let crate::mir::StmtKind::Assign { value, .. } = &s.kind {
+                        match value {
+                            crate::mir::Rvalue::Unary(_, _, n)
+                            | crate::mir::Rvalue::Binary(_, _, _, n) => {
+                                out.insert(*n);
+                            }
+                            crate::mir::Rvalue::Cast(_, t, n) if !matches!(t, Type::Fn(_)) => {
+                                out.insert(*n);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
             }
         }
-        let keep = |node: Option<NodeId>| node.is_none_or(|n| !proved.contains(&n));
-        self.effect_sites.retain(|s| keep(s.node));
-        self.withins.retain(|w| keep(w.node));
-        self.info.proved.extend(proved);
-        self.implicit_panics();
-        Ok(())
+        out
     }
 
     /// Warns of each operator of the body just walked, its closures' too,
@@ -2035,6 +2179,98 @@ impl Checker {
             });
         }
     }
+}
+
+/// What a walk of a body found (`Checker::refine`).
+struct Walked {
+    failed: Vec<Error>,
+    result: Result<(), Error>,
+    known: Option<Known>,
+    proved: HashSet<NodeId>,
+    failures: HashMap<NodeId, ProofFailure>,
+    work: Work,
+}
+
+/// The operators a walk proved can't panic, and why each other one
+/// wasn't.
+type Found = (HashSet<NodeId>, HashMap<NodeId, ProofFailure>);
+
+/// The work done on this thread since `before`.
+fn since(before: Work) -> Work {
+    let now = work();
+    Work {
+        refutations: now.refutations - before.refutations,
+        cases: now.cases - before.cases,
+        carried: now.carried - before.carried,
+    }
+}
+
+/// Which walk checks refinements (docs/65-refinements-on-mir.md): the one
+/// over each body's AST, which is the default, the one over its MIR, or
+/// both, keeping what the AST's found and recording where the MIR's
+/// differs (`differences`). Set by `T_LANG_REFINE`, `ast`, `mir` or
+/// `compare`, or by `set_refiner`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refiner {
+    Ast,
+    Mir,
+    Compare,
+}
+
+static REFINER: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(u8::MAX);
+
+/// Which walk checks refinements.
+pub fn refiner() -> Refiner {
+    use std::sync::atomic::Ordering;
+    let decode = |n: u8| match n {
+        0 => Some(Refiner::Ast),
+        1 => Some(Refiner::Mir),
+        2 => Some(Refiner::Compare),
+        _ => None,
+    };
+    if let Some(r) = decode(REFINER.load(Ordering::Relaxed)) {
+        return r;
+    }
+    let r = match std::env::var("T_LANG_REFINE").as_deref() {
+        Ok("mir") => Refiner::Mir,
+        Ok("compare") => Refiner::Compare,
+        _ => Refiner::Ast,
+    };
+    set_refiner(r);
+    r
+}
+
+/// Makes `r` the walk that checks refinements, from now on, on every
+/// thread.
+pub fn set_refiner(r: Refiner) {
+    let n = match r {
+        Refiner::Ast => 0,
+        Refiner::Mir => 1,
+        Refiner::Compare => 2,
+    };
+    REFINER.store(n, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Where the walk over a body's MIR found something else than the one
+/// over its AST did, with `Refiner::Compare`.
+#[derive(Debug, Clone)]
+pub struct Difference {
+    /// The function, by symbol.
+    pub function: String,
+    pub what: String,
+    /// Is it only that the walk over MIR proved more?
+    pub better: bool,
+}
+
+thread_local! {
+    static DIFFERENCES: std::cell::RefCell<Vec<Difference>> = const {
+        std::cell::RefCell::new(Vec::new())
+    };
+}
+
+/// The differences found on this thread since this was last asked.
+pub fn differences() -> Vec<Difference> {
+    DIFFERENCES.with(|d| std::mem::take(&mut *d.borrow_mut()))
 }
 
 /// Which of parameters `params` (of a function with result `ret` and
@@ -2562,6 +2798,20 @@ struct Walk<'c> {
     failures: HashMap<NodeId, ProofFailure>,
     /// Source events that changed a place's value along this path.
     invalidated: Vec<Invalidation>,
+}
+
+/// A call, as `Walk::call_at` needs it: its result's type, the function
+/// it calls, if it's one (resolved: `Walk::callee_at`), and of each of its
+/// arguments (a method's receiver first), where it is, its type, its
+/// text, and the references a coercion looked through.
+struct CallAt {
+    ty: Type,
+    resolved: Option<(String, Vec<Type>)>,
+    spans: Vec<Span>,
+    tys: Vec<Type>,
+    texts: Vec<String>,
+    coerced: Vec<Option<(usize, Type)>>,
+    span: Span,
 }
 
 /// A call's postconditions, to learn once what it's lent is forgotten.
@@ -4557,13 +4807,25 @@ impl Walk<'_> {
         let mut changed = Vec::new();
         self.assigned(e, &mut changed);
         let frames = self.frames(e, &changed);
+        self.loop_start(&changed, &frames, inv, e.span)
+    }
+
+    /// `loop_head`, of a loop at `span` that changes `changed`, keeping
+    /// `frames` of them.
+    fn loop_start(
+        &mut self,
+        changed: &[Invalidation],
+        frames: &[(Place, Vec<String>)],
+        inv: Option<&Expr>,
+        span: Span,
+    ) -> Result<(), Error> {
         let inv = inv.map(|p| Refinement::whole(p.clone()));
         if let Some(r) = &inv {
             let span = r.parts[0].pred.span;
             let what = "the loop's invariant, as the loop starts".to_string();
             self.need(r, &Val::Other, Env::Here, span, what)?;
         }
-        self.forget(&changed, &frames, e.span);
+        self.forget(changed, frames, span);
         if let Some(r) = &inv
             && let Some(f) = self.pred(r, &Val::Other, Env::Here)
         {
@@ -4656,6 +4918,15 @@ impl Walk<'_> {
     fn frames(&mut self, e: &Expr, changed: &[Invalidation]) -> Vec<(Place, Vec<String>)> {
         let mut changes = Vec::new();
         self.changes(e, &mut changes);
+        self.frames_of(&changes, changed)
+    }
+
+    /// `frames`, of a loop whose changes are `changes` (see `changes`).
+    fn frames_of(
+        &mut self,
+        changes: &[(Place, Option<Vec<String>>)],
+        changed: &[Invalidation],
+    ) -> Vec<(Place, Vec<String>)> {
         let mut places: Vec<&Place> = changed.iter().map(|c| c.place()).collect();
         places.sort();
         places.dedup();
@@ -4665,7 +4936,7 @@ impl Walk<'_> {
                 continue;
             }
             let mut kept: Option<Vec<String>> = None;
-            for (q, keeps) in &changes {
+            for (q, keeps) in changes {
                 if !q.within(p) && !p.within(q) {
                     continue;
                 }
@@ -4745,34 +5016,50 @@ impl Walk<'_> {
     /// variables here are new, so what's known here says nothing of them.
     fn keeps(&mut self, e: &Expr, symbol: &str, i: usize) -> Option<Vec<String>> {
         let (symbol, targs) = self.callee(e, symbol);
-        let sig = self.cx.refined.get(&symbol)?.clone();
-        if !sig.scoped.get(i).copied().unwrap_or(false) || sig.ensures.is_empty() {
-            return None;
-        }
-        let targs: Vec<(String, Type)> = (sig.type_params.iter().cloned()).zip(targs).collect();
         let args: Vec<&Expr> = match &e.kind {
             ExprKind::Call(_, args) | ExprKind::Variant(.., args, true) => args.iter().collect(),
             ExprKind::MethodCall(x, _, _, args) => std::iter::once(&**x).chain(args).collect(),
             _ => return None,
         };
+        // A method's receiver may have been borrowed: its value isn't of
+        // the expression's type.
+        let tys: Vec<Option<Type>> = (args.iter().enumerate())
+            .map(|(j, a)| match (j, &e.kind) {
+                (0, ExprKind::MethodCall(..)) => None,
+                _ => Some(self.ty_of(a)),
+            })
+            .collect();
+        self.keeps_at(&symbol, targs, &tys, i)
+    }
+
+    /// `keeps`, of a call of `symbol` (resolved) at type arguments `targs`,
+    /// with arguments of types `tys` (`None` for one whose type isn't
+    /// known).
+    fn keeps_at(
+        &mut self,
+        symbol: &str,
+        targs: Vec<Type>,
+        tys: &[Option<Type>],
+        i: usize,
+    ) -> Option<Vec<String>> {
+        let sig = self.cx.refined.get(symbol)?.clone();
+        if !sig.scoped.get(i).copied().unwrap_or(false) || sig.ensures.is_empty() {
+            return None;
+        }
+        let targs: Vec<(String, Type)> = (sig.type_params.iter().cloned()).zip(targs).collect();
         let (before, after) = (self.new_obj(), self.new_obj());
         let behind =
             |w: &mut Self, o: Obj| Val::Ref(w.new_obj(), Pointee::Val(Box::new(Val::Obj(o))));
         let mut old = Vec::new();
         let mut now = Vec::new();
-        for (j, a) in args.iter().enumerate() {
+        for (j, t) in tys.iter().enumerate() {
             if j == i {
                 old.push(behind(self, before));
                 now.push(behind(self, after));
             } else {
-                // A method's receiver may have been borrowed: its value
-                // isn't of the expression's type.
-                let v = match (j, &e.kind) {
-                    (0, ExprKind::MethodCall(..)) => Val::Other,
-                    _ => {
-                        let t = self.ty_of(a);
-                        self.unknown(&t)
-                    }
+                let v = match t {
+                    None => Val::Other,
+                    Some(t) => self.unknown(t),
                 };
                 old.push(v.clone());
                 now.push(v);
@@ -5012,7 +5299,13 @@ impl Walk<'_> {
     /// arguments of the call, as the function's are: an impl's method's
     /// are its impl's and then its own.
     fn callee(&self, e: &Expr, symbol: &str) -> (String, Vec<Type>) {
-        let targs = self.call_targs(e);
+        self.callee_at(symbol, self.call_targs(e))
+    }
+
+    /// The function a call of `symbol` at type arguments `targs` calls:
+    /// an impl's method, if it's a trait's and the impl is known
+    /// (`select`), with that impl's type arguments, then the method's.
+    fn callee_at(&self, symbol: &str, targs: Vec<Type>) -> (String, Vec<Type>) {
         let fallback = || (symbol.to_string(), targs.clone());
         let cx = self.cx;
         let Some((tr, m)) = (cx.traits.traits.iter())
@@ -5175,8 +5468,35 @@ impl Walk<'_> {
         vals: Vec<Val>,
         places: Vec<Option<Place>>,
     ) -> Result<Val, Error> {
-        let ty = self.ty_of(e);
-        let resolved = symbol.map(|s| self.callee(e, s));
+        let site = CallAt {
+            ty: self.ty_of(e),
+            resolved: symbol.map(|s| self.callee(e, s)),
+            spans: args.iter().map(|a| a.span).collect(),
+            tys: args.iter().map(|a| self.ty_of(a)).collect(),
+            texts: args.iter().map(|a| crate::pretty::expr_text(a)).collect(),
+            coerced: (args.iter())
+                .map(|a| match self.cx.typed.coerced.get(&a.id) {
+                    Some((n, _)) if *n > 0 => Some((*n, self.ty_of(a))),
+                    _ => None,
+                })
+                .collect(),
+            span: e.span,
+        };
+        let (result, post) = self.call_at(&site, vals, places)?;
+        self.posts.insert(e.id, post);
+        Ok(result)
+    }
+
+    /// `call`, at `site`: gives its result, and what it has yet to give once
+    /// what it's lent is forgotten (`post_now`).
+    fn call_at(
+        &mut self,
+        site: &CallAt,
+        vals: Vec<Val>,
+        places: Vec<Option<Place>>,
+    ) -> Result<(Val, Post), Error> {
+        let ty = site.ty.clone();
+        let resolved = site.resolved.clone();
         let symbol = resolved.as_ref().map(|(s, _)| s.as_str());
         let sig = symbol.and_then(|s| self.cx.refined.get(s)).cloned();
         let targs: Vec<(String, Type)> = match (&sig, &resolved) {
@@ -5187,33 +5507,32 @@ impl Walk<'_> {
         };
         if let Some(sig) = &sig {
             for (i, r) in sig.params.iter().enumerate() {
-                if let (Some(r), Some(arg)) = (r, args.get(i))
+                if let (Some(r), Some(span)) = (r, site.spans.get(i))
                     && let Some(r) = r.ways_only()
                 {
                     let what = format!("argument `{}` of `{}`", sig.names[i], sig.name);
-                    self.need(&r, &vals[i], Env::Call(&vals, &targs), arg.span, what)?;
+                    self.need(&r, &vals[i], Env::Call(&vals, &targs), *span, what)?;
                 }
             }
         }
         // A call through a value: nothing keeps what's at an invariant
         // position of what it's given, so nothing may be declared there.
         if resolved.is_none() && self.reachable {
-            for (j, a) in args.iter().enumerate() {
-                let t = self.ty_of(a);
+            for (j, t) in site.tys.iter().enumerate() {
                 let (Some(v), p) = (vals.get(j), places.get(j).cloned().flatten()) else {
                     continue;
                 };
                 let written = match &p {
                     Some(p) => targs::under(&self.place_decl(p), 0),
-                    None => self.written_tree(v, &t),
+                    None => self.written_tree(v, t),
                 };
-                if self.declared_inv(&t, &written) {
+                if self.declared_inv(t, &written) {
                     return Err(Error::ty(
-                        a.span,
+                        site.spans[j],
                         format!(
                             "can't give `{}` to a call through a value: what's behind it has \
                              refinements of type arguments, which the call could write past",
-                            crate::pretty::expr_text(a)
+                            site.texts.get(j).map_or("it", |t| t.as_str())
                         ),
                     ));
                 }
@@ -5222,16 +5541,16 @@ impl Walk<'_> {
         // Refinements of type arguments: what the call needs of them, and
         // says of its result and of what it's lent (`targs`).
         let trees = match &resolved {
-            Some((s, t)) if self.reachable => {
-                let spans: Vec<Span> = args.iter().map(|a| a.span).collect();
-                let coerced: Vec<Option<(usize, Type)>> = (args.iter())
-                    .map(|a| match self.cx.typed.coerced.get(&a.id) {
-                        Some((n, _)) if *n > 0 => Some((*n, self.ty_of(a))),
-                        _ => None,
-                    })
-                    .collect();
-                self.call_trees(s, t, sig.as_ref(), &vals, &places, &spans, &coerced, e.span)?
-            }
+            Some((s, t)) if self.reachable => self.call_trees(
+                s,
+                t,
+                sig.as_ref(),
+                &vals,
+                &places,
+                &site.spans,
+                &site.coerced,
+                site.span,
+            )?,
             _ => targs::CallTrees::default(),
         };
         if ty == Type::Never {
@@ -5242,7 +5561,16 @@ impl Walk<'_> {
             && self.cx.measures.contains_key(s)
             && let Some(recv) = vals.first()
         {
-            return Ok(self.measure(s, recv.clone()));
+            let post = Post {
+                name: String::new(),
+                sig: None,
+                old: Vec::new(),
+                scoped: Vec::new(),
+                targs: Vec::new(),
+                result: Val::Other,
+                lent: Vec::new(),
+            };
+            return Ok((self.measure(s, recv.clone()), post));
         }
         let mut result = self.unknown(&ty);
         if let Some(s) = symbol
@@ -5301,8 +5629,7 @@ impl Walk<'_> {
             result: result.clone(),
             lent: trees.lent,
         };
-        self.posts.insert(e.id, post);
-        Ok(result)
+        Ok((result, post))
     }
 
     /// `result`, what a call of function `symbol` with arguments `vals`
@@ -5432,6 +5759,11 @@ impl Walk<'_> {
         let Some(post) = self.posts.remove(&e.id) else {
             return Ok(());
         };
+        self.post_now(post, e.span)
+    }
+
+    /// `post`, of a call at `span`, which has yet to give `post`.
+    fn post_now(&mut self, post: Post, span: Span) -> Result<(), Error> {
         for (p, tree) in &post.lent {
             self.lent_trees.insert(p.clone(), tree.clone());
         }
@@ -5502,7 +5834,7 @@ impl Walk<'_> {
         }
         for p in post.scoped.iter().flatten() {
             for (q, i) in self.constrained_around(p) {
-                self.prove_fields(&q, i, e.span)?;
+                self.prove_fields(&q, i, span)?;
             }
         }
         for (p, local, own) in reprove {
@@ -5515,10 +5847,10 @@ impl Walk<'_> {
             };
             let what = format!("`{name}` after the call to `{}`", post.name);
             if let Some(r) = &local {
-                self.need(r, &v, Env::Here, e.span, what.clone())?;
+                self.need(r, &v, Env::Here, span, what.clone())?;
             }
             let tree: targs::Tree = own.into_iter().map(|d| (Vec::new(), d)).collect();
-            self.need_tree(&v, &t, &tree, None, e.span, &what)?;
+            self.need_tree(&v, &t, &tree, None, span, &what)?;
             self.reproving.retain(|q| *q != p);
             // Proved: so it's known of what's there now.
             if p.path.is_empty() {
@@ -5652,7 +5984,7 @@ impl Walk<'_> {
     fn keep_declared(
         &mut self,
         p: &Place,
-        place: &Expr,
+        place: &str,
         new: &Val,
         ty: &Type,
         span: Span,
@@ -5660,10 +5992,7 @@ impl Walk<'_> {
         let d = self.place_decl(p);
         let what = match (self.boxes_only(p), self.cx.typed.binds.get(&p.root)) {
             (true, Some(b)) => format!("`{}`", b.name),
-            _ => format!(
-                "what's written through `{}`",
-                crate::pretty::expr_text(place)
-            ),
+            _ => format!("what's written through `{place}`"),
         };
         let written = self.written_tree(new, ty);
         self.need_tree(new, ty, &d, Some(&written), span, &what)
@@ -6194,6 +6523,7 @@ impl Walk<'_> {
             }
             ExprKind::Assign(op, place, value) => {
                 let v = self.expr(value)?;
+                let text = crate::pretty::expr_text(place);
                 let target = self.place_of(place);
                 let ty = self.ty_of(place);
                 let old = |w: &mut Self| match &target {
@@ -6259,7 +6589,7 @@ impl Walk<'_> {
                             self.need_tree(&new, &ty, d, Some(&written), value.span, &what)?;
                         }
                         if let Some(p) = &target {
-                            self.keep_declared(p, place, &new, &ty, value.span)?;
+                            self.keep_declared(p, &text, &new, &ty, value.span)?;
                         }
                         if i < vals.len() {
                             vals[i] = new.clone();
@@ -6306,7 +6636,7 @@ impl Walk<'_> {
                             self.need_tree(&new, &ty, &d, Some(&written), value.span, &what)?;
                         }
                         if let Some(p) = &target {
-                            self.keep_declared(p, place, &new, &ty, value.span)?;
+                            self.keep_declared(p, &text, &new, &ty, value.span)?;
                         }
                         if let Some(p) = &target {
                             self.around_before(p);
