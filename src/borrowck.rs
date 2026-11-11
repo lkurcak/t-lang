@@ -114,13 +114,11 @@ pub(crate) fn check(
     Ok(warnings)
 }
 
-/// Keeps body `key`, as `b` built it, for the refinement checker on MIR,
-/// if that's to run (`Checker::refine_mir`).
+/// Keeps body `key`, as `b` built it, for the refinement checker
+/// (`Checker::refine_mir`).
 fn keep_for_refine(cx: &Checker, key: &crate::mir::Key, b: &Builder) {
-    if crate::check::refiner() != crate::check::Refiner::Ast {
-        let kept = (key.clone(), b.body.erased(), b.notes.clone());
-        cx.refine_mir.borrow_mut().push(kept);
-    }
+    let kept = (key.clone(), b.body.erased(), b.notes.clone());
+    cx.refine_mir.borrow_mut().push(kept);
 }
 
 /// `t`, a function's return type, with each opaque type in it the type it

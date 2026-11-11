@@ -209,7 +209,6 @@ enum Loc {
 impl Checker {
     /// The walk over the MIR of the body of `f`, and its closures'.
     pub(super) fn walk_mir(&self, f: &FnDecl) -> Walked {
-        let before = work();
         let mut failed = Vec::new();
         let mut known = None;
         let (result, (proved, failures)) = match self.mir_walk(f, &mut failed, &mut known) {
@@ -222,11 +221,13 @@ impl Checker {
             known,
             proved,
             failures,
-            work: since(before),
         }
     }
 
-    /// `refine_walk`, over MIR.
+    /// The walk, leaving in `failed` the proofs that failed, which don't
+    /// stop it (`Walk::failed`), and in `known` the const's value, if it's
+    /// one whose value it worked out; giving the operators proved not to
+    /// panic, and why each other one wasn't.
     fn mir_walk(
         &self,
         f: &FnDecl,
@@ -239,7 +240,7 @@ impl Checker {
         let bodies = self.refine_mir.borrow();
         let key = Key::Fn(symbol.clone());
         let Some((_, body, notes)) = bodies.iter().find(|(k, ..)| *k == key) else {
-            return self.refine_walk(f, failed, known_value);
+            unreachable!("the borrow checker keeps the MIR of each body it passes")
         };
         let fr = Frame::new(body, notes);
         let mut w = self.new_walk(f);
@@ -455,7 +456,6 @@ impl Walk<'_> {
                 cur: s.cur,
                 objs: s.objs,
                 reachable: s.reachable,
-                val: Val::Other,
                 invalidated: s.invalidated,
             })
             .collect();

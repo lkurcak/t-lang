@@ -98,21 +98,7 @@ fn print_out(s: &str) {
 }
 
 fn main() -> ExitCode {
-    let code = run();
-    // With `T_LANG_REFINE=compare`, where the refinement checker's walk over
-    // MIR found something else than the one over the AST did
-    // (docs/65-refinements-on-mir.md).
-    let differences = t_lang::check::differences();
-    for d in &differences {
-        eprintln!(
-            "t: the refinement walks differ ({:?}) in `{}`: {}",
-            d.kind, d.function, d.what
-        );
-    }
-    match differences.is_empty() {
-        true => code,
-        false => ExitCode::from(3),
-    }
+    run()
 }
 
 fn run() -> ExitCode {
