@@ -278,10 +278,31 @@ impl RefinedFields {
             .filter(move |&j| self.refs[j].is_some() && (j == i || self.named[j].contains(&i)))
     }
 
-    /// Why field `i` can't be borrowed `&mut`, if it can't.
+    /// Is field `i`'s refinement about it alone: naming no other field,
+    /// and named by no other's? Then it's what's declared of the field's
+    /// place (`targs::field_decl`), which a `&mut` to it says, so what's
+    /// written through that has it (D6 of docs/67-refinement-aliases.md).
+    fn alone(&self, i: usize) -> bool {
+        self.refs.get(i).is_some_and(Option::is_some)
+            && self.named[i].is_empty()
+            && self.about(i).all(|j| j == i)
+    }
+
+    /// Why field `i` would have to be proved again after a call it's
+    /// lent to, if it would: a refinement is about it.
     fn constrained(&self, i: usize) -> Option<String> {
         let j = self.about(i).next()?;
         Some(self.why(i, j))
+    }
+
+    /// Why field `i` can't be borrowed `&mut` but straight to a call, if
+    /// it can't: a refinement about it that isn't about it alone, which a
+    /// reference to it couldn't say.
+    fn refused(&self, i: usize) -> Option<String> {
+        match self.alone(i) {
+            true => None,
+            false => self.constrained(i),
+        }
     }
 
     /// Why field `i` of a struct at no place, a temporary's, can't be lent
@@ -310,6 +331,53 @@ impl RefinedFields {
                 self.names[j], self.name
             ),
         }
+    }
+}
+
+/// The refinements of an enum's variants' fields, by the enum's symbol
+/// (`Checker::variant_refined`): every value of a variant has its
+/// fields' (docs/67-refinement-aliases.md).
+#[derive(Debug, Clone)]
+pub(super) struct RefinedVariants {
+    /// The enum's name.
+    name: String,
+    variants: Vec<RefinedVariant>,
+}
+
+/// One variant's, of `RefinedVariants`.
+#[derive(Debug, Clone)]
+struct RefinedVariant {
+    name: String,
+    refs: Vec<Option<Refinement>>,
+    /// The fields before it each field's refinement names, by their
+    /// binders.
+    named: Vec<Vec<usize>>,
+}
+
+impl RefinedVariant {
+    /// Is field `j`'s refinement about it alone: naming no other field, and
+    /// named by no other's? Then it's what's declared of the field's place
+    /// (`targs::variant_decl`), which a `&mut` to it says.
+    fn alone(&self, j: usize) -> bool {
+        self.named.get(j).is_some_and(Vec::is_empty) && !self.named.iter().any(|n| n.contains(&j))
+    }
+
+    /// Why field `j` can't be borrowed `&mut`, if it can't: another
+    /// field's refinement names it, or its own names another, which a
+    /// write through the reference couldn't keep.
+    fn constrained(&self, enum_name: &str, j: usize) -> Option<String> {
+        if let Some(k) = (0..self.named.len()).find(|&k| self.named[k].contains(&j)) {
+            return Some(format!(
+                "the refinement of field {k} of `{enum_name}::{}` names it",
+                self.name
+            ));
+        }
+        (!self.named.get(j)?.is_empty()).then(|| {
+            format!(
+                "field {j} of `{enum_name}::{}` has a refinement that names another field",
+                self.name
+            )
+        })
     }
 }
 
@@ -358,6 +426,10 @@ pub(super) enum Pending {
     },
     Fields {
         s: Box<StructDecl>,
+        symbol: String,
+    },
+    Variants {
+        e: Box<EnumDecl>,
         symbol: String,
     },
     /// A refinement alias, by symbol: what it stands for is checked where
@@ -530,6 +602,11 @@ impl Checker {
                     self.pred_owner = None;
                     self.module = s.module;
                     self.fields_now(&s, &symbol)?;
+                }
+                Pending::Variants { e, symbol } => {
+                    self.pred_owner = None;
+                    self.module = e.module;
+                    self.variants_now(&e, &symbol)?;
                 }
                 Pending::Alias(symbol) => {
                     self.pred_owner = None;
@@ -766,6 +843,105 @@ impl Checker {
                 sig.scoped[i] = true;
             }
         }
+        Ok(())
+    }
+
+    /// Checks the refinements of the fields of enum `e`'s variants, whose
+    /// symbol is `symbol`, and keeps them, once every impl is collected. A
+    /// field's refinement names the fields before it in its variant, by
+    /// their binders, as a parameter's names the parameters before it:
+    /// positional fields have no other names.
+    pub(super) fn variant_refinements(&mut self, e: &EnumDecl, symbol: &str) {
+        let any = (e.variants.iter().flat_map(|v| &v.fields))
+            .any(|f| !self.written_out(f).refinements().is_empty());
+        if any {
+            self.pending_refined.push(Pending::Variants {
+                e: Box::new(e.clone()),
+                symbol: symbol.to_string(),
+            });
+        }
+    }
+
+    fn variants_now(&mut self, e: &EnumDecl, symbol: &str) -> Result<(), Error> {
+        let types: Vec<Vec<Type>> = match self.adts.get(symbol).map(|d| &d.kind) {
+            Some(crate::types::AdtKind::Enum(variants)) => {
+                variants.iter().map(|(_, ts)| ts.clone()).collect()
+            }
+            _ => unreachable!("enum `{symbol}` collected"),
+        };
+        let consts: Vec<Ident> = (e.generics.types.iter())
+            .filter(|p| e.generics.is_const(p))
+            .cloned()
+            .collect();
+        let mut out = RefinedVariants {
+            name: e.name.name.clone(),
+            variants: Vec::new(),
+        };
+        for (v, variant) in e.variants.iter().enumerate() {
+            let written: Vec<TypeExpr> =
+                variant.fields.iter().map(|f| self.written_out(f)).collect();
+            // Each field's binder, if its refinement is of the whole of it.
+            let binders: Vec<Option<Ident>> = (written.iter())
+                .map(|w| w.refinement().map(|(b, _)| b.clone()))
+                .collect();
+            let mut rv = RefinedVariant {
+                name: variant.name.name.clone(),
+                refs: Vec::new(),
+                named: Vec::new(),
+            };
+            for (j, f) in variant.fields.iter().enumerate() {
+                let scope = |name: &str| {
+                    let at = |k: usize| binders[k].as_ref().is_some_and(|b| b.name == name);
+                    if let Some(k) = (0..j).rev().find(|&k| at(k)) {
+                        let span = binders[k].as_ref().expect("found").span;
+                        return Some(Named::Value(types[v][k].clone(), PredName::Field(k), span));
+                    }
+                    if (j + 1..binders.len()).any(at) {
+                        return Some(Named::Not(format!(
+                            "a field's refinement can only name the fields before it, and \
+                             `{name}` comes after field {j}"
+                        )));
+                    }
+                    const_named(&consts, name)
+                };
+                self.pred_again = Some("a variant's field");
+                self.pred_reach = match e.vis {
+                    Vis::Private => None,
+                    Vis::Pub(_) => Some((
+                        format!(
+                            "`{}` is public, but the refinement of its variant's field names",
+                            e.name.name
+                        ),
+                        Level::Package,
+                    )),
+                    Vis::Export(_) => Some((
+                        format!(
+                            "`{}` is exported, but the refinement of its variant's field names",
+                            e.name.name
+                        ),
+                        Level::Export,
+                    )),
+                };
+                let r = self.refinement(f, &types[v][j], &scope);
+                self.pred_again = None;
+                self.pred_reach = None;
+                let r = r?;
+                let mut named = Vec::new();
+                for pred in r.iter().flat_map(Refinement::preds) {
+                    each_expr(pred, &mut |e| {
+                        if let Some(PredName::Field(k)) = self.pred_names.get(&e.id)
+                            && !named.contains(k)
+                        {
+                            named.push(*k);
+                        }
+                    });
+                }
+                rv.refs.push(r);
+                rv.named.push(named);
+            }
+            out.variants.push(rv);
+        }
+        self.variant_refined.insert(symbol.to_string(), out);
         Ok(())
     }
 
@@ -2903,6 +3079,9 @@ impl Walk<'_> {
             }
         };
         let symbol = symbol.clone();
+        // Every value of the enum has its variants' fields' refinements,
+        // proved where it was made.
+        self.assume_variants(t, &tag, &fields);
         self.parts.insert(
             o,
             Parts {
@@ -3168,6 +3347,62 @@ impl Walk<'_> {
         match t {
             Type::Adt(symbol, ..) => self.cx.field_refined.get(symbol),
             _ => None,
+        }
+    }
+
+    /// The refinements of enum `t`'s variants' fields, if it has any.
+    fn refined_variants(&self, t: &Type) -> Option<&RefinedVariants> {
+        match t {
+            Type::Adt(symbol, ..) => self.cx.variant_refined.get(symbol),
+            _ => None,
+        }
+    }
+
+    /// Checks that `vals`, the fields of variant `v` of enum `t` being
+    /// made, have their refinements, written at `spans`.
+    fn need_variant(
+        &mut self,
+        t: &Type,
+        v: usize,
+        vals: &[Val],
+        spans: &[Span],
+        at: Span,
+    ) -> Result<(), Error> {
+        let Some(rv) = self.refined_variants(t).cloned() else {
+            return Ok(());
+        };
+        let variant = &rv.variants[v];
+        let args = self.adt_args(t);
+        for (j, r) in variant.refs.iter().enumerate() {
+            if let Some(r) = r {
+                let what = format!("field {j} of `{}::{}`", rv.name, variant.name);
+                let span = spans.get(j).copied().unwrap_or(at);
+                self.need(r, &vals[j], Env::Fields(vals, &args), span, what)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// What's known of every value of enum `t`, whose tag is `tag` and
+    /// whose variants' fields are `fields`: if it's a variant, its fields'
+    /// refinements.
+    fn assume_variants(&mut self, t: &Type, tag: &Lin, fields: &[Vec<Val>]) {
+        let Some(rv) = self.refined_variants(t).cloned() else {
+            return;
+        };
+        let args = self.adt_args(t);
+        for (v, variant) in rv.variants.iter().enumerate() {
+            let n = i128::try_from(v).expect("few variants");
+            let Some(is) = Formula::eq(tag, &Lin::constant(n)) else {
+                continue;
+            };
+            for (j, r) in variant.refs.iter().enumerate() {
+                if let Some(r) = r
+                    && let Some(f) = self.pred(r, &fields[v][j], Env::Fields(&fields[v], &args))
+                {
+                    self.fact(Formula::or([is.clone().not(), f]));
+                }
+            }
         }
     }
 

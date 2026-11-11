@@ -12,4 +12,5 @@ fn main() {
         Key::Other => {},
     }
 }
-// error: can't prove `d < 10`
+// error: can't prove `d < 10` for argument `v` of `put`
+// error: can't prove `d < 10` for `*d` after the call to `put`

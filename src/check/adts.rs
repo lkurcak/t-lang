@@ -196,8 +196,10 @@ impl Checker {
             }
         }
         for ((d, _), symbol) in decls.iter().zip(&symbols) {
-            if let TypeDecl::Struct(s) = d {
-                self.field_refinements(s, symbol)?;
+            match d {
+                TypeDecl::Struct(s) => self.field_refinements(s, symbol)?,
+                TypeDecl::Enum(e) => self.variant_refinements(e, symbol),
+                TypeDecl::Alias(_) => {}
             }
         }
         Ok(())

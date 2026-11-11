@@ -629,6 +629,9 @@ pub(crate) struct Checker {
     const_values: HashMap<String, refine::Known>,
     /// The refinements of each struct's fields that has any, by symbol.
     field_refined: HashMap<String, refine::RefinedFields>,
+    /// The refinements of each enum's variants' fields that has any, by
+    /// symbol.
+    variant_refined: HashMap<String, refine::RefinedVariants>,
     /// The refinement of each refined `let`'s variable, by id.
     refined_lets: HashMap<NodeId, refine::Refinement>,
     /// How each struct and enum varies with its parameters, as the borrow
@@ -1021,6 +1024,7 @@ impl Checker {
             refined_lets: HashMap::new(),
             adt_info: AdtInfoCache::default(),
             field_refined: HashMap::new(),
+            variant_refined: HashMap::new(),
             pred_names: HashMap::new(),
             alias_preds: HashMap::new(),
             pred_fixed: HashMap::new(),

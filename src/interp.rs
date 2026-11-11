@@ -1955,7 +1955,10 @@ impl<'p> Interp<'p, '_> {
                     p.field(*i)
                 }
                 (Proj::Field(i), Value::Closure(_) | Value::Slots(_)) => p.field(*i),
-                (Proj::Variant(_, i), Value::Variant(..)) => p.field(*i),
+                (Proj::Variant(_, i), v @ Value::Variant(..)) => {
+                    self.check_variant(v, "read");
+                    p.field(*i)
+                }
                 (_, Value::Moved) => unsound("use of a value that was moved"),
                 (proj, other) => unsound(&format!("{proj:?} of `{other}`")),
             };
@@ -2128,7 +2131,9 @@ impl<'p> Interp<'p, '_> {
                     (Agg::Variant(i), Type::Adt(name, _, args)) => {
                         let name = crate::mono::mangle(name, args);
                         let variant = self.enums[name.as_str()].variants[*i].name.name.clone();
-                        Value::Variant(name, variant, values)
+                        let v = Value::Variant(name, variant, values);
+                        self.check_variant(&v, "made");
+                        v
                     }
                     (Agg::Box, _) => {
                         let [v] = <[Value; 1]>::try_from(values)
@@ -3364,6 +3369,42 @@ impl<'p> Interp<'p, '_> {
                     &fields[j].1,
                     &format!("field `{}` of a `{name}` {what}", f.name.name),
                 );
+            }
+        }
+    }
+
+    /// Stops the program, as the checker is wrong, unless enum value `v`,
+    /// just `what`, has the refinements of its variant's fields. A field's
+    /// can name the fields before it by their binders: those of their
+    /// refinements of the whole field, which have no ways into it.
+    fn check_variant(&self, v: &Value, what: &str) {
+        let Value::Variant(name, variant, values) = v else {
+            return;
+        };
+        let Some(decl) = self.enums.get(name.as_str()) else {
+            return;
+        };
+        let Some(vdecl) = decl.variants.iter().find(|d| d.name.name == *variant) else {
+            return;
+        };
+        let mut env: Vec<(String, Value)> = Vec::new();
+        for (j, f) in vdecl.fields.iter().enumerate() {
+            if values[..=j].iter().any(|v| matches!(v, Value::Moved)) {
+                return;
+            }
+            if let Some(r) = self.type_refined(f, &env, false) {
+                r.check(
+                    self,
+                    &values[j],
+                    &format!("field {j} of a `{name}::{variant}` {what}"),
+                );
+            }
+            for (_, binder, pred) in f.refinements() {
+                let whole = !self.measures.ways.contains_key(&pred.id)
+                    && !self.measures.reach.contains_key(&pred.id);
+                if whole {
+                    env.push((binder.name.clone(), values[j].clone()));
+                }
             }
         }
     }

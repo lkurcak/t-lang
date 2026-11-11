@@ -29,6 +29,8 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let mut k = Key::Digit(4);
     bump(&mut k);
+    let mut o = Key::Other;
+    bump(&mut o);
     match k {
         Key::Digit(d) => out.line(&d)?, // expect: 5
         Key::Other => {},

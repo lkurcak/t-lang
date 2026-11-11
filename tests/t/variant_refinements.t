@@ -70,8 +70,8 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     out.line(&width(Key::Range(3, 10)))?; // expect: 7
     out.line(&width(Key::Go(63, 0)))?; // expect: 0
     out.line(&width(Key::Other))?; // expect: 0
-    let mut l = List::new();
-    l.push(4u8);
+    let mut l: List<{ d: u8 | d < 10 }> = List::new();
+    l.push(4);
     out.line(&first(&Bag::Digits(l)))?; // expect: 4
     out.line(&first(&Bag::Empty))?; // expect: 0
     out.line(&get(&[1u8, 2, 3], At::Index(2)))?; // expect: 3
