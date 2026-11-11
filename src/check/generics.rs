@@ -56,20 +56,36 @@ pub(crate) enum TypeName {
 pub(crate) struct AliasDef {
     /// Its name, for messages.
     pub(crate) name: String,
+    /// The module it's declared in, where the names in its refinements'
+    /// predicates mean what they do, and how far it's seen.
+    pub(crate) module: usize,
+    pub(crate) vis: Vis,
     pub(crate) lifetimes: Vec<String>,
     /// Its type and const parameters, in order.
     pub(crate) params: Vec<String>,
+    /// Where each of `params` is declared.
+    pub(crate) param_spans: Vec<Span>,
     /// For each of `params`, what its argument is.
     pub(crate) kinds: Vec<ArgKind>,
     /// What it stands for, as written. Its names are looked up by their
     /// nodes, so they mean what they do where the alias is declared.
     pub(crate) body: TypeExpr,
+    /// Is there a refinement in it where one can be (`At::refined`), or
+    /// in an alias it names there? Then it's a *refinement alias*, and a
+    /// use of it can only be where a refinement can be.
+    pub(crate) refined: bool,
+    /// For each of `params`, is it a type parameter that's only where a
+    /// refinement can be in what it stands for? Then its argument can
+    /// have one, which goes where it is.
+    pub(crate) refinable: Vec<bool>,
 }
 
 impl AliasDef {
     pub(crate) fn new(d: &AliasDecl) -> AliasDef {
         AliasDef {
             name: d.name.name.clone(),
+            module: d.module,
+            vis: d.vis,
             lifetimes: d
                 .generics
                 .lifetimes
@@ -77,8 +93,11 @@ impl AliasDef {
                 .map(|l| l.name.clone())
                 .collect(),
             params: d.generics.types.iter().map(|p| p.name.clone()).collect(),
+            param_spans: d.generics.types.iter().map(|p| p.span).collect(),
             kinds: d.generics.arg_kinds(),
             body: d.ty.clone(),
+            refined: false,
+            refinable: Vec::new(),
         }
     }
 
@@ -104,6 +123,7 @@ impl AliasDef {
         args: &[Type],
         names: &dyn Fn(&str, &TypeExpr) -> Option<TypeName>,
         proj: &ProjNames,
+        refined: bool,
     ) -> Result<Type, Error> {
         let names = |n: &str, t: &TypeExpr| match &t.kind {
             TypeExprKind::Named(_, a) if a.is_empty() => {
@@ -125,6 +145,10 @@ impl AliasDef {
             declared: &self.lifetimes,
             args: Some(regions),
         };
+        let at = At {
+            unsized_ok: false,
+            refined,
+        };
         resolve_in(
             &self.body,
             &names,
@@ -132,7 +156,7 @@ impl AliasDef {
             &Params::new(Vec::new(), Vec::new()),
             &mut lts,
             None,
-            false,
+            at,
         )
     }
 }
@@ -323,7 +347,40 @@ pub(crate) fn resolve(
     params: &Params,
     lifetimes: &mut Lifetimes,
 ) -> Result<Type, Error> {
-    resolve_in(t, names, proj, params, lifetimes, None, false)
+    resolve_in(t, names, proj, params, lifetimes, None, At::PLAIN)
+}
+
+/// As `resolve`, but of a type where a refinement can be: a function's
+/// parameter's or result's, a `let`'s or a field's. It's the type without
+/// its refinements, which `check/refine.rs` reads (`At::refined`).
+pub(crate) fn resolve_refined(
+    t: &TypeExpr,
+    names: &dyn Fn(&str, &TypeExpr) -> Option<TypeName>,
+    proj: &ProjNames,
+    params: &Params,
+    lifetimes: &mut Lifetimes,
+) -> Result<Type, Error> {
+    let at = At {
+        unsized_ok: false,
+        refined: true,
+    };
+    resolve_in(t, names, proj, params, lifetimes, None, at)
+}
+
+/// What a refinement can only be in.
+const REFINABLE_IN: &str = "the type of a function's parameter or result, a `let` or a field";
+
+impl At {
+    /// Where values are: a type with a size, no refinement.
+    const PLAIN: At = At {
+        unsized_ok: false,
+        refined: false,
+    };
+    /// Where any type may be, but no refinement.
+    const ANY: At = At {
+        unsized_ok: true,
+        refined: false,
+    };
 }
 
 /// As `resolve`, but where any type may be, sized or not: the subject of a
@@ -335,7 +392,7 @@ pub(crate) fn resolve_unsized(
     params: &Params,
     lifetimes: &mut Lifetimes,
 ) -> Result<Type, Error> {
-    resolve_in(t, names, proj, params, lifetimes, None, true)
+    resolve_in(t, names, proj, params, lifetimes, None, At::ANY)
 }
 
 /// The lifetimes a function type being resolved is generic over: those
@@ -378,12 +435,28 @@ fn region(
     }
 }
 
-/// Resolves `t` (see `resolve`). `unsized_ok` says whether it's where any
-/// type may be, sized or not: right behind a reference, as the argument for
-/// an `unsized` parameter, or as what a projection is of. Anywhere else a
-/// type is that of values, so it has a size: not `str`, a slice or an
+/// Where a type being resolved is: whether any type may be there, sized or
+/// not (`unsized_ok`), and whether a refinement may be (`refined`), which
+/// resolving leaves out, as what it refines is the type.
+#[derive(Clone, Copy)]
+struct At {
+    unsized_ok: bool,
+    refined: bool,
+}
+
+/// Resolves `t` (see `resolve`). `at.unsized_ok` says whether it's where
+/// any type may be, sized or not: right behind a reference, as the argument
+/// for an `unsized` parameter, or as what a projection is of. Anywhere else
+/// a type is that of values, so it has a size: not `str`, a slice or an
 /// `unsized` parameter (the kinding rule, lemma U1 of
 /// docs/57-unsized-parameters.md).
+///
+/// `at.refined` says whether a refinement can be there: in the type of a
+/// function's parameter or result, a `let` or a field, at the top or in
+/// the types in it a refinement can be (`TypeExpr::refinable`), what
+/// `check/refine.rs` reads them from. Through an alias, too: in what it
+/// stands for, and in an argument for a parameter that's only where one
+/// can be in that (`AliasDef::refinable`).
 fn resolve_in(
     t: &TypeExpr,
     names: &dyn Fn(&str, &TypeExpr) -> Option<TypeName>,
@@ -391,19 +464,28 @@ fn resolve_in(
     params: &Params,
     lifetimes: &mut Lifetimes,
     mut binder: Option<&mut Binder>,
-    unsized_ok: bool,
+    at: At,
 ) -> Result<Type, Error> {
+    let unsized_ok = at.unsized_ok;
     let go = |t: &TypeExpr, lifetimes: &mut Lifetimes, binder: Option<&mut Binder>| {
-        resolve_in(t, names, proj, params, lifetimes, binder, false)
+        resolve_in(t, names, proj, params, lifetimes, binder, At::PLAIN)
     };
     // Where any type may be.
     let go_any = |t: &TypeExpr, lifetimes: &mut Lifetimes, binder: Option<&mut Binder>| {
-        resolve_in(t, names, proj, params, lifetimes, binder, true)
+        resolve_in(t, names, proj, params, lifetimes, binder, At::ANY)
+    };
+    // A type in it a refinement can be, if it can be here.
+    let part = |t: &TypeExpr, lifetimes: &mut Lifetimes, binder: Option<&mut Binder>, any| {
+        let at = At {
+            unsized_ok: any,
+            refined: at.refined,
+        };
+        resolve_in(t, names, proj, params, lifetimes, binder, at)
     };
     if unsized_ok {
         match &t.kind {
             TypeExprKind::Slice(elem) => {
-                return Ok(Type::Slice(Box::new(go(elem, lifetimes, binder)?)));
+                return Ok(Type::Slice(Box::new(part(elem, lifetimes, binder, false)?)));
             }
             _ if is_str(t, names) => return Ok(Type::Str),
             _ => {}
@@ -427,11 +509,14 @@ fn resolve_in(
             let inner = go_any(inner, lifetimes, binder)?;
             proj(inner, tr.as_ref(), name, t, Kind::Type)
         }
-        // The places a refinement can be take it off first (see
+        // Where a refinement can be, it's of the type it refines (see
         // `check/refine.rs`).
+        TypeExprKind::Refined(_, base, _) if at.refined => {
+            resolve_in(base, names, proj, params, lifetimes, binder, at)
+        }
         TypeExprKind::Refined(..) => Err(Error::ty(
             t.span,
-            "a refinement can only be the whole type of a parameter, a result, a `let` or a struct's field",
+            format!("a refinement can only be in {REFINABLE_IN}"),
         )),
         TypeExprKind::Named(name, _) if name == "_" => Err(Error::ty(
             t.span,
@@ -448,22 +533,22 @@ fn resolve_in(
             // Where a slice or an `unsized` parameter can be, and, if it's
             // shared, a `str`.
             let inner = match &inner.kind {
-                _ if is_str(inner, names) && *mutable => go(inner, lifetimes, binder)?,
-                _ => go_any(inner, lifetimes, binder)?,
+                _ if is_str(inner, names) && *mutable => part(inner, lifetimes, binder, false)?,
+                _ => part(inner, lifetimes, binder, true)?,
             };
             Ok(Type::Ref(region, *mutable, Box::new(inner)))
         }
         TypeExprKind::Slice(_) => Err(unsized_slice(t.span, t)),
         TypeExprKind::Array(elem, n) => {
             // Of a size, as `go` resolves where values are.
-            let elem = go(elem, lifetimes, binder)?;
+            let elem = part(elem, lifetimes, binder, false)?;
             Ok(Type::Array(Box::new(elem), Box::new(len(n)?)))
         }
         // Each of a size too (lemma T2 of docs/58-tuples.md).
         TypeExprKind::Tuple(ts) => {
             let mut out = Vec::new();
             for e in ts {
-                out.push(go(e, lifetimes, binder.as_deref_mut())?);
+                out.push(part(e, lifetimes, binder.as_deref_mut(), false)?);
             }
             Ok(Type::Tuple(out))
         }
@@ -577,8 +662,27 @@ fn resolve_in(
                     return Err(Error::ty(t.span, message));
                 }
             };
+            // A refinement can't be what an alias stands for, or in it,
+            // where it can't be written.
+            if let Some(def) = &alias
+                && !at.refined
+                && def.refined
+            {
+                return Err(Error::ty(
+                    t.span,
+                    format!(
+                        "`{name}` stands for a refinement, which can only be in {REFINABLE_IN}"
+                    ),
+                ));
+            }
             let mut resolved = Vec::new();
-            for (a, &kind) in args.iter().zip(&kinds) {
+            for (k, (a, &kind)) in args.iter().zip(&kinds).enumerate() {
+                // An argument can have one if its parameter is only where
+                // one can be in what the alias stands for.
+                let refined = match &alias {
+                    Some(def) => def.refinable.get(k).copied().unwrap_or(false),
+                    None => true,
+                };
                 let lengthy = |a: &TypeExpr| match &a.kind {
                     TypeExprKind::Nat(_) => true,
                     TypeExprKind::Named(n, args) => {
@@ -597,13 +701,15 @@ fn resolve_in(
                     _ if matches!(a.kind, TypeExprKind::Nat(_)) => {
                         return Err(type_arg_not_length(name, a.span));
                     }
+                    ArgKind::Unsized if refined => part(a, lifetimes, binder.as_deref_mut(), true)?,
                     ArgKind::Unsized => go_any(a, lifetimes, binder.as_deref_mut())?,
+                    ArgKind::Sized if refined => part(a, lifetimes, binder.as_deref_mut(), false)?,
                     ArgKind::Sized => go(a, lifetimes, binder.as_deref_mut())?,
                 });
             }
             let args = resolved;
             if let Some(def) = alias {
-                return def.expand(&regions, &args, names, proj);
+                return def.expand(&regions, &args, names, proj, at.refined);
             }
             Ok(match ty {
                 Type::Adt(symbol, ..) => Type::Adt(symbol, regions, args),
@@ -699,7 +805,7 @@ pub(crate) fn resolve_effects(
                     span: item.span,
                     id: item.id,
                 };
-                let base = resolve_in(base, names, proj, params, lifetimes, None, true)?;
+                let base = resolve_in(base, names, proj, params, lifetimes, None, At::ANY)?;
                 proj(base, tr.as_ref(), name, &written, Kind::Effects)?
             }
         });

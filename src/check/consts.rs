@@ -194,12 +194,21 @@ impl Checker {
     /// predicate, names, if it names one: its symbol, its type, and where
     /// it's declared.
     pub(super) fn pred_const(&self, name: &str, id: NodeId) -> Option<(String, Type, Span)> {
-        let i = match name.contains("::") {
-            true => match self.modules.paths.get(&id) {
+        // One an alias was given for a const parameter, written out
+        // (`Checker::written_out`): what it named where it was written.
+        let fixed = match self.pred_fixed.get(&id) {
+            Some(super::written::Fixed::Item(symbol)) => {
+                self.fns.iter().position(|f| f.symbol == *symbol)
+            }
+            _ => None,
+        };
+        let i = match (fixed, name.contains("::")) {
+            (Some(i), _) => i,
+            (None, true) => match self.modules.paths.get(self.copied.get(&id).unwrap_or(&id)) {
                 Some(super::modules::Item::Fn(i)) => *i,
                 _ => return None,
             },
-            false => self.modules.fn_named(self.module, name)?,
+            (None, false) => self.modules.fn_named(self.module, name)?,
         };
         if !self.modules.consts.contains(&i) {
             return None;

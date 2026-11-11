@@ -4,4 +4,4 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&f(1))?;
     Ok(())
 }
-// error: a refinement can only be the whole type of a parameter, a result, a `let` or a struct's field
+// error: a refinement can only be in the type of a function's parameter or result, a `let` or a field

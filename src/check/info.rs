@@ -20,6 +20,11 @@ pub struct Info {
     pub proved: std::collections::HashSet<NodeId>,
     /// The measures, for the interpreter (see `ast::Measures`).
     pub measures: crate::ast::Measures,
+    /// Each type written where a refinement can be that has an alias
+    /// written out in it, as the refinement checker read it, by its node
+    /// (see `check/written.rs`): monomorphisation and the MIR read the
+    /// refinements in it from that.
+    pub written: HashMap<NodeId, crate::ast::TypeExpr>,
     /// Which intrinsic each function the libraries declare with
     /// `#[intrinsic]` is, by symbol (see `intrinsic.rs`).
     pub intrinsics: HashMap<String, crate::intrinsic::Intrinsic>,
@@ -353,7 +358,9 @@ impl Checker {
     /// Notes what's at `span`. Its types may still have variables in them:
     /// `finish_notes` solves them once the function is checked.
     pub(super) fn note(&mut self, span: Span, kind: NoteKind, ty: Option<Type>, def: Option<Span>) {
-        if self.modules.formats.contains(&span) {
+        // A predicate written out of an alias, or copied, is where the
+        // alias is declared: that's noted once, as checked there.
+        if self.modules.formats.contains(&span) || self.copy_notes {
             return;
         }
         let (span, kind) = last_segment(span, kind);

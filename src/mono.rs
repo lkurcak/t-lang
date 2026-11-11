@@ -1034,13 +1034,20 @@ struct Cx<'m, 'p, 's> {
 impl Cx<'_, '_, '_> {
     /// A type written in the original, as written in the copy.
     fn ty(&mut self, t: &TypeExpr) -> TypeExpr {
-        // A refinement is kept, for the interpreter to check. Those of type
-        // arguments go around the whole type, as its copy has no type
-        // arguments to be in: which parts of the value each is of, the
-        // checker says (`Measures::ways`).
-        let all = t.refinements();
-        if all.iter().any(|(path, ..)| !path.is_empty()) {
-            let mut out = self.ty(&t.stripped());
+        // A refinement is kept, for the interpreter to check: each one the
+        // checker read in it, with the aliases in it written out
+        // (`Info::written`). They go around the whole type, as its copy has
+        // no type arguments to be in: which parts of the value each is of,
+        // the checker says (`Measures::ways`).
+        let written = self.m.info.written.get(&t.id);
+        let all = written.unwrap_or(t).refinements();
+        if !all.is_empty() {
+            // What an alias stands for is resolved without them.
+            let resolved = self.resolved(&t.stripped());
+            let mut out = TypeExpr {
+                id: t.id,
+                ..self.written(&resolved, t.span)
+            };
             for (_, v, pred) in all.into_iter().rev() {
                 out = TypeExpr {
                     kind: TypeExprKind::Refined(v.clone(), Box::new(out), self.pred(pred)),
@@ -1049,13 +1056,6 @@ impl Cx<'_, '_, '_> {
                 };
             }
             return out;
-        }
-        if let TypeExprKind::Refined(v, base, pred) = &t.kind {
-            return TypeExpr {
-                kind: TypeExprKind::Refined(v.clone(), Box::new(self.ty(base)), self.pred(pred)),
-                span: t.span,
-                id: t.id,
-            };
         }
         let resolved = self.resolved(t);
         TypeExpr {
@@ -1112,7 +1112,8 @@ impl Cx<'_, '_, '_> {
     /// A type written in the original, as it is in the copy.
     fn resolved(&self, t: &TypeExpr) -> Type {
         self.resolving(|names, proj, params| {
-            check::resolve(t, names, proj, params, &mut check::Lifetimes::Any)
+            // Checked: a refinement is only where one can be.
+            check::resolve_refined(t, names, proj, params, &mut check::Lifetimes::Any)
         })
     }
 

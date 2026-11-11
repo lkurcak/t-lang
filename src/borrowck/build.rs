@@ -1482,7 +1482,10 @@ impl<'a> Builder<'a> {
             PatternKind::Bind(..) => {
                 // What the refinement names is what's in scope before the
                 // variable is.
-                let refinement = ann.map(|t| t.refinements()).filter(|r| !r.is_empty());
+                // As the refinement checker read it, with aliases written
+                // out (`Info::written`).
+                let written = ann.map(|t| self.cx.as_read(t));
+                let refinement = written.map(|t| t.refinements()).filter(|r| !r.is_empty());
                 let refinement = refinement.map(|all| {
                     let mut names = Vec::new();
                     for (_, v, pred) in &all {

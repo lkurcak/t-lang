@@ -360,6 +360,9 @@ pub(super) enum Pending {
         s: Box<StructDecl>,
         symbol: String,
     },
+    /// A refinement alias, by symbol: what it stands for is checked where
+    /// it's declared, for any arguments (D1 of docs/67-refinement-aliases.md).
+    Alias(String),
 }
 
 /// What a name in a predicate is.
@@ -423,8 +426,10 @@ impl Checker {
         if f.measure.is_some() {
             self.measure_signature(f, params, ret)?;
         }
-        let written = f.params.iter().map(|p| &p.ty).chain([&f.ret]);
-        if written.clone().all(|t| t.refinements().is_empty()) && f.ensures.is_empty() {
+        let written: Vec<TypeExpr> = (f.params.iter().map(|p| &p.ty).chain([&f.ret]))
+            .map(|t| self.written_out(t))
+            .collect();
+        if written.iter().all(|t| t.refinements().is_empty()) && f.ensures.is_empty() {
             return Ok(());
         }
         // Its predicates may call measures of impls not collected yet, so
@@ -526,6 +531,10 @@ impl Checker {
                     self.module = s.module;
                     self.fields_now(&s, &symbol)?;
                 }
+                Pending::Alias(symbol) => {
+                    self.pred_owner = None;
+                    self.alias_now(&symbol)?;
+                }
             }
         }
         Ok(())
@@ -586,9 +595,15 @@ impl Checker {
                  less",
             ));
         }
+        let params_written: Vec<TypeExpr> =
+            f.params.iter().map(|p| self.written_out(&p.ty)).collect();
+        let ret_written = self.written_out(&f.ret);
         let refined = |t: &&TypeExpr| !t.refinements().is_empty();
-        let param = f.params.iter().map(|p| &p.ty).find(refined);
-        let result = Some(&f.ret).filter(refined);
+        // Where it's written, which may be an alias's use.
+        let param = (f.params.iter().zip(&params_written))
+            .find(|(_, w)| refined(w))
+            .map(|(p, _)| &p.ty);
+        let result = Some(&f.ret).filter(|_| refined(&&ret_written));
         if param.is_none() && result.is_none() && f.ensures.is_empty() {
             return Ok(());
         }
@@ -754,11 +769,43 @@ impl Checker {
         Ok(())
     }
 
+    /// Checks the refinements in what alias `symbol` stands for, where it's
+    /// declared: for every argument, as its parameters have no bounds, and
+    /// naming only their binders, its const parameters and the consts in
+    /// its module (R7 of docs/67-refinement-aliases.md), and only what's
+    /// seen as far as it is (R5). A use checks the copy it gets again
+    /// (`Checker::written_out`), as written there: which can't fail where
+    /// this didn't, as each is this with types for its parameters.
+    fn alias_now(&mut self, symbol: &str) -> Result<(), Error> {
+        let def = self.aliases[symbol].clone();
+        let base = self.alias_body(&def)?;
+        let consts: Vec<Ident> = (def.params.iter().zip(&def.param_spans).zip(&def.kinds))
+            .filter(|(_, k)| **k == ArgKind::Length)
+            .map(|((p, span), _)| Ident {
+                name: p.clone(),
+                span: *span,
+                id: NodeId(0),
+            })
+            .collect();
+        let scope = |name: &str| const_named(&consts, name);
+        let module = std::mem::replace(&mut self.module, def.module);
+        let origin = super::written::Origin {
+            alias: def.name.clone(),
+            module: def.module,
+            vis: def.vis,
+        };
+        self.pred_reach = alias_reach(&origin);
+        let r = self.refinement(&def.body, &base, &scope);
+        self.pred_reach = None;
+        self.module = module;
+        r.map(|_| ())
+    }
+
     /// Checks the refinements of the fields of struct `s`, whose symbol
     /// is `symbol`, and keeps them. A field's names the fields before it,
     /// as visible as it is.
     pub(super) fn field_refinements(&mut self, s: &StructDecl, symbol: &str) -> Result<(), Error> {
-        if s.fields.iter().all(|f| f.ty.refinements().is_empty()) {
+        if (s.fields.iter()).all(|f| self.written_out(&f.ty).refinements().is_empty()) {
             return Ok(());
         }
         self.pending_refined.push(Pending::Fields {
@@ -845,7 +892,8 @@ impl Checker {
                     }
                 });
                 if let Some(span) = own {
-                    let (_, binder, _) = f.ty.refinements().into_iter().next().expect("refined");
+                    let written = self.written_out(&f.ty);
+                    let (_, binder, _) = written.refinements().into_iter().next().expect("refined");
                     return Err(Error::ty(
                         span,
                         format!(
@@ -880,7 +928,7 @@ impl Checker {
         t: &Type,
         init: bool,
     ) -> Result<(), Error> {
-        if ann.refinements().is_empty() {
+        if self.written_out(ann).refinements().is_empty() {
             return Ok(());
         }
         if !matches!(pat.kind, PatternKind::Bind(..)) {
@@ -997,6 +1045,9 @@ impl Checker {
         base: &Type,
         scope: &dyn Fn(&str) -> Option<Named>,
     ) -> Result<Option<Refinement>, Error> {
+        // With the aliases in it written out, which it says the refinements
+        // of (`Checker::written_out`).
+        let t = &self.written_out(t);
         let written = t.refinements();
         if written.is_empty() {
             return Ok(None);
@@ -1005,13 +1056,32 @@ impl Checker {
         let mut parts = Vec::new();
         for (written_path, binder, pred) in written {
             let (of, ways, path, carried) = self.refined_arg(t, &base, &written_path)?;
+            let copy = self.copied.contains_key(&pred.id);
+            let notes = std::mem::replace(&mut self.copy_notes, copy);
             let kind = super::NoteKind::Var(binder.name.clone());
             self.note(binder.span, kind, Some(of.clone()), Some(binder.span));
+            // One written out of an alias names what it does where the
+            // alias is declared: its binder, and consts there (R7).
+            let origin = self.alias_preds.get(&pred.id).cloned();
             let scope = |name: &str| match name == binder.name {
                 true => Some(Named::Value(of.clone(), PredName::Binder, binder.span)),
+                false if origin.is_some() => None,
                 false => scope(name),
             };
-            let got = self.pred_type(pred, &scope)?;
+            let outer = origin.as_ref().map(|o| {
+                let reach = alias_reach(o);
+                (
+                    std::mem::replace(&mut self.module, o.module),
+                    std::mem::replace(&mut self.pred_reach, reach),
+                )
+            });
+            let got = self.pred_type(pred, &scope);
+            if let Some((module, reach)) = outer {
+                self.module = module;
+                self.pred_reach = reach;
+            }
+            self.copy_notes = notes;
+            let got = got?;
             if got != Sort::Bool {
                 return Err(Error::ty(
                     pred.span,
@@ -1173,6 +1243,27 @@ impl Checker {
         Ok((ty, ways, pos, carried))
     }
 
+    /// What name `name`, at `e` in a predicate, names in `scope`: but if
+    /// it's what an alias's const parameter was given, written out of the
+    /// alias (`Checker::written_out`), what that named where it was given.
+    fn pred_name(
+        &self,
+        e: &Expr,
+        name: &str,
+        scope: &dyn Fn(&str) -> Option<Named>,
+    ) -> Option<Named> {
+        match self.pred_fixed.get(&e.id) {
+            Some(super::written::Fixed::Param(m, at)) => Some(Named::Value(
+                Type::Int(crate::types::IntTy::Usize),
+                PredName::Const(m.clone()),
+                *at,
+            )),
+            // A const, which `pred_const` finds by its symbol.
+            Some(super::written::Fixed::Item(_)) => None,
+            None => scope(name),
+        }
+    }
+
     /// The sort of predicate (part) `e`, which must be in the logic:
     /// linear arithmetic on integers, of any integer types, which are all
     /// the integers in it, ℤ, compared, and `bool`s.
@@ -1191,61 +1282,63 @@ impl Checker {
         match &e.kind {
             ExprKind::Int(..) => Ok(Sort::Int),
             ExprKind::Bool(_) => Ok(Sort::Bool),
-            ExprKind::Var(name, targs) if targs.is_empty() => match scope(name) {
-                Some(Named::Value(t, what, def)) => {
-                    let sort = match self.scalar_sort(&t) {
-                        Some(sort) => sort,
-                        None => return Err(self.not_scalar(e, name, &self.solved(&t))),
-                    };
-                    if let PredName::Const(c) = &what {
-                        self.info.consts.insert(e.id, c.clone());
-                    }
-                    self.pred_names.insert(e.id, what.clone());
-                    let kind = match what {
-                        PredName::Field(_) => super::NoteKind::Field(name.clone()),
-                        PredName::Const(_) => super::NoteKind::ConstParam(name.clone()),
-                        _ => super::NoteKind::Var(name.clone()),
-                    };
-                    self.note(e.span, kind, Some(self.solved(&t)), Some(def));
-                    Ok(sort)
-                }
-                Some(Named::Not(why)) => Err(Error::ty(e.span, why)),
-                Some(Named::Mut) => Err(Error::ty(
-                    e.span,
-                    format!(
-                        "{} can't name `{name}`, which is `mut`: it would be unclear which of \
-                         its values it meant",
-                        self.pred_a()
-                    ),
-                )),
-                // A const, of an integer type or `bool`.
-                None if let Some((symbol, t, def)) = self.pred_const(name, e.id) => {
-                    let sort = match t {
-                        Type::Int(_) | Type::Char => Sort::Int,
-                        Type::Bool => Sort::Bool,
-                        t => {
-                            return Err(Error::ty(
-                                e.span,
-                                format!(
-                                    "{} can't name `{name}`, a const of type `{}`: only integers \
-                                     and `bool`s are in its logic",
-                                    self.pred_a(),
-                                    t.erased()
-                                ),
-                            ));
+            ExprKind::Var(name, targs) if targs.is_empty() => {
+                match self.pred_name(e, name, scope) {
+                    Some(Named::Value(t, what, def)) => {
+                        let sort = match self.scalar_sort(&t) {
+                            Some(sort) => sort,
+                            None => return Err(self.not_scalar(e, name, &self.solved(&t))),
+                        };
+                        if let PredName::Const(c) = &what {
+                            self.info.consts.insert(e.id, c.clone());
                         }
-                    };
-                    self.info.pred_consts.insert(e.id, symbol.clone());
-                    self.pred_names.insert(e.id, PredName::Item(symbol));
-                    let kind = super::NoteKind::Const(name.clone());
-                    self.note(e.span, kind, Some(t), Some(def));
-                    Ok(sort)
+                        self.pred_names.insert(e.id, what.clone());
+                        let kind = match what {
+                            PredName::Field(_) => super::NoteKind::Field(name.clone()),
+                            PredName::Const(_) => super::NoteKind::ConstParam(name.clone()),
+                            _ => super::NoteKind::Var(name.clone()),
+                        };
+                        self.note(e.span, kind, Some(self.solved(&t)), Some(def));
+                        Ok(sort)
+                    }
+                    Some(Named::Not(why)) => Err(Error::ty(e.span, why)),
+                    Some(Named::Mut) => Err(Error::ty(
+                        e.span,
+                        format!(
+                            "{} can't name `{name}`, which is `mut`: it would be unclear which of \
+                         its values it meant",
+                            self.pred_a()
+                        ),
+                    )),
+                    // A const, of an integer type or `bool`.
+                    None if let Some((symbol, t, def)) = self.pred_const(name, e.id) => {
+                        let sort = match t {
+                            Type::Int(_) | Type::Char => Sort::Int,
+                            Type::Bool => Sort::Bool,
+                            t => {
+                                return Err(Error::ty(
+                                    e.span,
+                                    format!(
+                                        "{} can't name `{name}`, a const of type `{}`: only integers \
+                                     and `bool`s are in its logic",
+                                        self.pred_a(),
+                                        t.erased()
+                                    ),
+                                ));
+                            }
+                        };
+                        self.info.pred_consts.insert(e.id, symbol.clone());
+                        self.pred_names.insert(e.id, PredName::Item(symbol));
+                        let kind = super::NoteKind::Const(name.clone());
+                        self.note(e.span, kind, Some(t), Some(def));
+                        Ok(sort)
+                    }
+                    None => Err(Error::ty(
+                        e.span,
+                        format!("cannot find value `{name}` in this {}", self.pred_noun()),
+                    )),
                 }
-                None => Err(Error::ty(
-                    e.span,
-                    format!("cannot find value `{name}` in this {}", self.pred_noun()),
-                )),
-            },
+            }
             ExprKind::Unary(UnOp::Neg, x) => want(self, x, Sort::Int).map(|()| Sort::Int),
             ExprKind::Unary(UnOp::Not, x) => want(self, x, Sort::Bool).map(|()| Sort::Bool),
             ExprKind::Binary(op, l, r) => match op {
@@ -1426,38 +1519,40 @@ impl Checker {
         scope: &dyn Fn(&str) -> Option<Named>,
     ) -> Result<PredPlace, Error> {
         match &e.kind {
-            ExprKind::Var(name, targs) if targs.is_empty() => match scope(name) {
-                Some(Named::Value(t, what, def)) => {
-                    self.pred_names.insert(e.id, what.clone());
-                    let kind = match what {
-                        PredName::Field(_) => super::NoteKind::Field(name.clone()),
-                        PredName::Const(_) => super::NoteKind::ConstParam(name.clone()),
-                        _ => super::NoteKind::Var(name.clone()),
-                    };
-                    self.note(e.span, kind, Some(self.solved(&t)), Some(def));
-                    Ok(PredPlace {
-                        ty: t,
-                        named: what,
-                        name: name.clone(),
-                        through_mut: false,
-                    })
+            ExprKind::Var(name, targs) if targs.is_empty() => {
+                match self.pred_name(e, name, scope) {
+                    Some(Named::Value(t, what, def)) => {
+                        self.pred_names.insert(e.id, what.clone());
+                        let kind = match what {
+                            PredName::Field(_) => super::NoteKind::Field(name.clone()),
+                            PredName::Const(_) => super::NoteKind::ConstParam(name.clone()),
+                            _ => super::NoteKind::Var(name.clone()),
+                        };
+                        self.note(e.span, kind, Some(self.solved(&t)), Some(def));
+                        Ok(PredPlace {
+                            ty: t,
+                            named: what,
+                            name: name.clone(),
+                            through_mut: false,
+                        })
+                    }
+                    // A name that isn't a value: the error it is alone; or a
+                    // const, an integer or a `bool`, which has neither.
+                    _ => {
+                        self.pred_type(e, scope)?;
+                        let t = match self.pred_const(name, e.id) {
+                            Some((_, t, _)) => t.erased().to_string(),
+                            None => "an integer or `bool`".to_string(),
+                        };
+                        Err(Error::ty(
+                            e.span,
+                            format!(
+                                "`{name}` is a const of type `{t}`, which has no fields or measures"
+                            ),
+                        ))
+                    }
                 }
-                // A name that isn't a value: the error it is alone; or a
-                // const, an integer or a `bool`, which has neither.
-                _ => {
-                    self.pred_type(e, scope)?;
-                    let t = match self.pred_const(name, e.id) {
-                        Some((_, t, _)) => t.erased().to_string(),
-                        None => "an integer or `bool`".to_string(),
-                    };
-                    Err(Error::ty(
-                        e.span,
-                        format!(
-                            "`{name}` is a const of type `{t}`, which has no fields or measures"
-                        ),
-                    ))
-                }
-            },
+            }
             ExprKind::Field(x, field) => {
                 let mut at = self.pred_place(x, scope)?;
                 let mut t = self.solved(&at.ty);
@@ -2240,6 +2335,17 @@ fn variant_test(p: &Pattern) -> Option<(Vec<String>, bool)> {
             Some((names, all))
         }
         _ => None,
+    }
+}
+
+/// How far what's in a predicate written out of an alias must be seen: as
+/// far as the alias is (R5 of docs/25-type-aliases.md).
+fn alias_reach(o: &super::written::Origin) -> Option<(String, Level)> {
+    let what = |how: &str| format!("`{}` is {how}, but its refinement names", o.alias);
+    match o.vis {
+        Vis::Private => None,
+        Vis::Pub(_) => Some((what("public"), Level::Package)),
+        Vis::Export(_) => Some((what("exported"), Level::Export)),
     }
 }
 
