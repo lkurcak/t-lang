@@ -19,6 +19,6 @@ fn take(x: m::Small) -> u8 {
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&take(m::make()))?; // expect: 9
-    out.line(&LIMIT)?; // expect: 100
+    out.line(&LIMIT)?;           // expect: 100
     Ok(())
 }

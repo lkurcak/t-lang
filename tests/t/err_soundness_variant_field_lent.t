@@ -3,7 +3,9 @@
 #[derive(Copy, Discard)]
 enum Key { Digit({ d: u8 | d < 10 }), Other }
 
-fn big(r: &mut u8) { *r = 200; }
+fn big(r: &mut u8) {
+    *r = 200;
+}
 
 fn main() {
     let mut k = Key::Digit(3);

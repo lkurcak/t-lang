@@ -782,7 +782,9 @@ impl Checker {
                         Some(crate::types::AdtKind::Enum(_)) => NoteKind::Enum(name.clone()),
                         _ => NoteKind::Struct(name.clone()),
                     };
-                    let ty = self.resolve_with(t, &names(params), &mut Lifetimes::Any);
+                    // What a refinement alias stands for is the type it
+                    // refines, wherever it's written.
+                    let ty = self.resolve_refined_with(t, &names(params), &mut Lifetimes::Any);
                     self.note(span, kind, ty.ok(), def);
                 } else if let Some(p) = params.iter().find(|p| p.name == *name) {
                     let kind = NoteKind::TypeParam(name.clone());

@@ -4,10 +4,7 @@
 // 0.80.0, a refined struct field couldn't be borrowed `&mut` but straight
 // to a call.)
 #[derive(Copy, Discard)]
-enum Key {
-    Digit({ d: u8 | d < 10 }),
-    Other,
-}
+enum Key { Digit({ d: u8 | d < 10 }), Other }
 
 #[derive(Copy, Discard)]
 struct S { a: { v: u8 | v < 3 }, b: u8 }
@@ -23,7 +20,9 @@ fn bump(k: &mut Key) {
     }
 }
 
-fn set(r: &mut { v: u8 | v < 3 }) { *r = 2; }
+fn set(r: &mut { v: u8 | v < 3 }) {
+    *r = 2;
+}
 
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;

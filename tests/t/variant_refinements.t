@@ -15,15 +15,10 @@ enum Key {
 }
 
 #[derive(Discard)]
-enum Bag {
-    Digits(List<{ d: u8 | d < 10 }>),
-    Empty,
-}
+enum Bag { Digits(List<{ d: u8 | d < 10 }>), Empty }
 
 #[derive(Copy, Discard)]
-enum At<const N: usize> {
-    Index({ i: usize | i < N }),
-}
+enum At<const N: usize> { Index({ i: usize | i < N }) }
 
 fn need_digit(_d: { d: u8 | d < 10 }) {}
 fn need_square(_s: { s: u8 | s < 64 }) {}
@@ -66,14 +61,14 @@ fn get<const N: usize>(a: &[u8; N], at: At<N>) -> u8 {
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut out = os.stdout;
-    out.line(&width(Key::Digit(7)))?; // expect: 7
+    out.line(&width(Key::Digit(7)))?;     // expect: 7
     out.line(&width(Key::Range(3, 10)))?; // expect: 7
-    out.line(&width(Key::Go(63, 0)))?; // expect: 0
-    out.line(&width(Key::Other))?; // expect: 0
+    out.line(&width(Key::Go(63, 0)))?;    // expect: 0
+    out.line(&width(Key::Other))?;        // expect: 0
     let mut l: List<{ d: u8 | d < 10 }> = List::new();
     l.push(4);
-    out.line(&first(&Bag::Digits(l)))?; // expect: 4
-    out.line(&first(&Bag::Empty))?; // expect: 0
+    out.line(&first(&Bag::Digits(l)))?;          // expect: 4
+    out.line(&first(&Bag::Empty))?;              // expect: 0
     out.line(&get(&[1u8, 2, 3], At::Index(2)))?; // expect: 3
     Ok(())
 }

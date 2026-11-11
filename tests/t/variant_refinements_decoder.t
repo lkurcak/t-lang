@@ -7,7 +7,7 @@ enum State {
     Start,
     Utf8(
         { left: u8 | left >= 1 && left <= 3 },
-        { c: u32 | left == 1 && c < 0x8000 || left == 2 && c < 0x200 || left == 3 && c < 8 },
+        { c: u32 | (left == 1 && c < 0x8000) || (left == 2 && c < 0x200) || (left == 3 && c < 8) },
     ),
 }
 

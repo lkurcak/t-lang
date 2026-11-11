@@ -178,7 +178,8 @@ that only changed which variables an explanation lists as known.
   straight to a call that can't keep it, after which the whole could be
   proved again, as a refined variable lent whole is.
 - Variants' fields can't be refined themselves, `enum Key { Char({ c: u8
-  | c < 128 }) }`; that's next, with refinement aliases.
+  | c < 128 }) }`; that's next, with refinement aliases (done in step 67,
+  docs/67-refinement-aliases.md).
 
 ## Exercises
 

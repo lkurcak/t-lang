@@ -25,7 +25,7 @@ fn g(p: Pair<{ v: u8 | v < 3 }>) -> u8 {
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&f(Ok(200)))?; // expect: 200
-    out.line(&f(Err(2)))?; // expect: 2
-    out.line(&g((1, 2)))?; // expect: 3
+    out.line(&f(Err(2)))?;  // expect: 2
+    out.line(&g((1, 2)))?;  // expect: 3
     Ok(())
 }

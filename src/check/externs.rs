@@ -83,7 +83,7 @@ impl Checker {
             unreachable!("a function's type")
         };
         for (p, t) in f.params.iter().zip(&sig.params) {
-            if let Some(at) = refined(&p.ty).filter(|_| !ext.import) {
+            if let Some(at) = self.refined_at(&p.ty).filter(|_| !ext.import) {
                 return Err(not_proved(at, ext));
             }
             if !matches!(t, Type::Int(_) | Type::Bool) {
@@ -96,7 +96,7 @@ impl Checker {
                 ));
             }
         }
-        if let Some(at) = refined(&f.ret).filter(|_| ext.import) {
+        if let Some(at) = self.refined_at(&f.ret).filter(|_| ext.import) {
             return Err(not_proved(at, ext));
         }
         if !matches!(
@@ -214,9 +214,13 @@ impl Checker {
     }
 }
 
-/// Where `t` is refined, if it is: `{ x: u32 | x > 0 }`.
-fn refined(t: &TypeExpr) -> Option<Span> {
-    matches!(t.kind, TypeExprKind::Refined(..)).then_some(t.span)
+impl Checker {
+    /// Where `t` is refined, if it is: `{ x: u32 | x > 0 }`, or an alias
+    /// of one (`Checker::written_out`).
+    fn refined_at(&mut self, t: &TypeExpr) -> Option<Span> {
+        let written = self.written_out(t);
+        matches!(written.kind, TypeExprKind::Refined(..)).then_some(t.span)
+    }
 }
 
 /// That a refinement at `at`, on `extern fn` `ext`, can't be: C proves
