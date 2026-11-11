@@ -1960,20 +1960,10 @@ impl Checker {
         }
     }
 
-    /// The walk, leaving in `failed` the proofs that failed, which don't
-    /// stop it (`Walk::failed`), and in `known` the const's value, if it's
-    /// one whose value it worked out; giving the operators proved not to
-    /// panic, and why each other one wasn't.
-    fn refine_walk(
-        &self,
-        f: &FnDecl,
-        failed: &mut Vec<Error>,
-        known_value: &mut Option<Known>,
-    ) -> Result<Found, Error> {
+    /// A walk of the body of `f`, the function being checked, at its start.
+    fn new_walk(&self, f: &FnDecl) -> Walk<'_> {
         let id = self.current.expect("in a function");
-        let symbol = self.fns[id.0].symbol.clone();
-        let sig = self.refined.get(&symbol).cloned();
-        let mut w = Walk {
+        Walk {
             cx: self,
             kinds: Vec::new(),
             facts: Vec::new(),
@@ -2015,7 +2005,28 @@ impl Checker {
             failures: HashMap::new(),
             invalidated: Vec::new(),
             errors: Vec::new(),
-        };
+            slots: HashMap::new(),
+            pinned: Vec::new(),
+            deferred: HashMap::new(),
+            known: None,
+            dead: HashSet::new(),
+        }
+    }
+
+    /// The walk, leaving in `failed` the proofs that failed, which don't
+    /// stop it (`Walk::failed`), and in `known` the const's value, if it's
+    /// one whose value it worked out; giving the operators proved not to
+    /// panic, and why each other one wasn't.
+    fn refine_walk(
+        &self,
+        f: &FnDecl,
+        failed: &mut Vec<Error>,
+        known_value: &mut Option<Known>,
+    ) -> Result<Found, Error> {
+        let id = self.current.expect("in a function");
+        let symbol = self.fns[id.0].symbol.clone();
+        let sig = self.refined.get(&symbol).cloned();
+        let mut w = self.new_walk(f);
         w.unstable_in(&f.body, false);
         let mut ret = None;
         for (i, p) in f.params.iter().enumerate() {
@@ -2066,7 +2077,10 @@ impl Checker {
     /// Records how the walks of function `symbol`'s body over its AST and
     /// over its MIR differ, if they do (`differences`).
     fn compare(&self, symbol: &str, ast: &Walked, mir: &Walked) {
-        let ops = self.mir_operators();
+        // The operators that run, and those the effects have sites of.
+        let mut ops = self.mir_operators();
+        let sites = self.effect_sites.iter().map(|s| s.node);
+        ops.extend(sites.chain(self.withins.iter().map(|w| w.node)).flatten());
         let text = |e: &Error| format!("{:?}: {}", (e.span.start, e.span.end), e.message);
         let errors = |w: &Walked| {
             let mut all: Vec<String> = w.failed.iter().map(text).collect();
@@ -2082,7 +2096,11 @@ impl Checker {
             let better = extra.is_empty() && missing.iter().all(|e| e.contains("can't prove"));
             found.push((
                 format!("errors: only AST {missing:?}; only MIR {extra:?}"),
-                better,
+                if better {
+                    Differs::Better
+                } else {
+                    Differs::Other
+                },
             ));
         }
         let pa: HashSet<NodeId> = ast.proved.intersection(&ops).copied().collect();
@@ -2095,13 +2113,45 @@ impl Checker {
             let better = only_ast.is_empty();
             found.push((
                 format!("proved: only AST {only_ast:?}; only MIR {only_mir:?}"),
-                better,
+                if better {
+                    Differs::Better
+                } else {
+                    Differs::Other
+                },
+            ));
+        }
+        // What explains them, when they're the same errors.
+        if ea == em {
+            let notes = |w: &Walked| {
+                let all = w.failed.iter().chain(w.result.as_ref().err());
+                all.map(|e| format!("{:?}", e.notes)).collect::<Vec<_>>()
+            };
+            let (na, nm) = (notes(ast), notes(mir));
+            if na != nm {
+                found.push((format!("notes: AST {na:?}; MIR {nm:?}"), Differs::Wording));
+            }
+        }
+        // Why each operator wasn't proved not to panic, which warnings and
+        // errors about its effects say.
+        let why = |w: &Walked| {
+            let mut all: Vec<(u32, Vec<String>)> = (w.failures.iter())
+                .filter(|(n, _)| ops.contains(n))
+                .map(|(n, f)| (n.0, f.notes()))
+                .collect();
+            all.sort();
+            all
+        };
+        let (wa, wm) = (why(ast), why(mir));
+        if wa != wm && pa == pm {
+            found.push((
+                format!("unproved: AST {wa:?}; MIR {wm:?}"),
+                Differs::Wording,
             ));
         }
         if ast.known != mir.known {
             found.push((
                 format!("value: AST {:?}, MIR {:?}", ast.known, mir.known),
-                false,
+                Differs::Other,
             ));
         }
         let heavy = |a: u64, m: u64| m > 2 * a + 50;
@@ -2111,15 +2161,15 @@ impl Checker {
         {
             found.push((
                 format!("work: AST {:?}, MIR {:?}", ast.work, mir.work),
-                false,
+                Differs::Other,
             ));
         }
-        for (what, better) in found {
+        for (what, kind) in found {
             DIFFERENCES.with(|d| {
                 d.borrow_mut().push(Difference {
                     function: symbol.to_string(),
                     what,
-                    better,
+                    kind,
                 })
             });
         }
@@ -2258,8 +2308,19 @@ pub struct Difference {
     /// The function, by symbol.
     pub function: String,
     pub what: String,
-    /// Is it only that the walk over MIR proved more?
-    pub better: bool,
+    pub kind: Differs,
+}
+
+/// How a `Difference` differs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Differs {
+    /// The walk over MIR proved what the AST's didn't, and nothing less.
+    Better,
+    /// Only what explains a failed proof is worded differently.
+    Wording,
+    /// Anything else: an error, a proof, a const's value, or how much work
+    /// it took.
+    Other,
 }
 
 thread_local! {
@@ -2798,6 +2859,23 @@ struct Walk<'c> {
     failures: HashMap<NodeId, ProofFailure>,
     /// Source events that changed a place's value along this path.
     invalidated: Vec<Invalidation>,
+    /// On MIR, the value of each local that's no variable's, a
+    /// temporary's or the result's, here (`mir::Slot`).
+    slots: HashMap<crate::mir::Local, mir::Slot>,
+    /// On MIR, the scrutinees whose values the patterns being bound take
+    /// apart, as they were matched (`Walk::locate`).
+    pinned: Vec<(crate::mir::Place, Val)>,
+    /// On MIR, the closures made into locals for a call to give to a
+    /// function, walked at the call (`Walk::mir_call`): by local, the
+    /// lambda's node and the closure's type.
+    deferred: HashMap<crate::mir::Local, (NodeId, Type)>,
+    /// On MIR, the value of the const being walked, if its body is known
+    /// to give a constant.
+    known: Option<Known>,
+    /// On MIR, the variables gone out of scope on this path: what's known
+    /// of them is forgotten where paths meet, as the AST's `join` forgets
+    /// what's out of scope there.
+    dead: HashSet<NodeId>,
 }
 
 /// A call, as `Walk::call_at` needs it: its result's type, the function
@@ -4182,6 +4260,7 @@ impl Walk<'_> {
     /// Local `id` is bound, to `val` if it's known.
     fn bind(&mut self, id: NodeId, val: Option<Val>) {
         self.declared.push(id);
+        self.dead.remove(&id);
         self.write(&Place::local(id), val, None);
     }
 
@@ -4594,11 +4673,32 @@ impl Walk<'_> {
     /// known of, or never read, is nothing known in that one. Gives the
     /// value, of type `ty`.
     fn join(&mut self, start: &Snap, outcomes: Vec<Outcome>, ty: &Type) -> Val {
+        let vals = outcomes.iter().map(|o| o.val.clone()).collect();
+        let mut joined = self.join_with(start, outcomes, vec![(ty.clone(), vals)]);
+        joined.pop().expect("one value")
+    }
+
+    /// `join`, of several values each branch gives, `values`: each of its
+    /// type, with the value each outcome gives, in order. Gives what each
+    /// is after.
+    fn join_with(
+        &mut self,
+        start: &Snap,
+        outcomes: Vec<Outcome>,
+        values: Vec<(Type, Vec<Val>)>,
+    ) -> Vec<Val> {
         self.restore(start);
+        let taken: Vec<bool> = outcomes.iter().map(|o| o.reachable).collect();
         let reached: Vec<Outcome> = outcomes.into_iter().filter(|o| o.reachable).collect();
+        let values: Vec<(Type, Vec<Val>)> = (values.into_iter())
+            .map(|(t, vals)| {
+                let vals = vals.into_iter().zip(&taken).filter(|(_, k)| **k);
+                (t, vals.map(|(v, _)| v).collect())
+            })
+            .collect();
         if reached.is_empty() {
             self.reachable = false;
-            return self.unknown(ty);
+            return values.iter().map(|(t, _)| self.unknown(t)).collect();
         }
         let in_scope: HashSet<NodeId> = self.declared.iter().copied().collect();
         if let [_] = &reached[..] {
@@ -4609,7 +4709,7 @@ impl Walk<'_> {
             self.objs = o.objs;
             self.objs.retain(|p, _| in_scope.contains(&p.root));
             self.invalidated = o.invalidated;
-            return o.val;
+            return values.into_iter().map(|(_, mut v)| v.remove(0)).collect();
         }
         // A place is the same object after, if every branch left it so;
         // else it's one nothing's known of.
@@ -4649,7 +4749,6 @@ impl Walk<'_> {
             .map(|o| Formula::and(o.facts.clone()))
             .collect();
         let mut tree_joins: Vec<(Obj, Type, Vec<Option<Obj>>)> = Vec::new();
-        let branch_vals: Vec<Val> = reached.iter().map(|o| o.val.clone()).collect();
         // A place each branch left a different object at is a new one, of
         // which each measure every branch knows of its object is, in each
         // case, what it was of that branch's: a measure is a function of
@@ -4695,11 +4794,13 @@ impl Walk<'_> {
             tree_joins.push((o, t, each.iter().map(|b| Some(*b)).collect()));
             objs.insert(p.clone(), o);
         }
-        let result = self.unknown(ty);
+        let results: Vec<Val> = values.iter().map(|(t, _)| self.unknown(t)).collect();
         for (o, t, each) in tree_joins {
             self.join_trees(o, &t, &each, &guards);
         }
-        self.join_values(&result, ty, &branch_vals, &guards);
+        for (result, (t, vals)) in results.iter().zip(&values) {
+            self.join_values(result, t, vals, &guards);
+        }
         let mut cases = Vec::new();
         for (i, o) in reached.into_iter().enumerate() {
             for event in o.invalidated {
@@ -4708,7 +4809,9 @@ impl Walk<'_> {
                 }
             }
             let mut parts = o.facts;
-            parts.extend(self.same(&result, &o.val));
+            for (result, (_, vals)) in results.iter().zip(&values) {
+                parts.extend(self.same(result, &vals[i]));
+            }
             for (n, vars) in &new {
                 if let Some(v) = vars[i] {
                     parts.extend(equal(&self.var(*n), &self.var(v)));
@@ -4722,7 +4825,7 @@ impl Walk<'_> {
         self.fact(Formula::or(cases));
         self.cur = cur;
         self.objs = objs;
-        result
+        results
     }
 
     /// That `a` and `b` are equal, as far as the logic can say: `equal`,

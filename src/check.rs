@@ -66,7 +66,7 @@ mod opaque;
 mod paths;
 mod patterns;
 mod refine;
-pub use refine::{Difference, Refiner, Work, differences, refiner, set_refiner, work};
+pub use refine::{Difference, Differs, Refiner, Work, differences, refiner, set_refiner, work};
 mod scope;
 mod traits;
 pub(crate) mod typed;

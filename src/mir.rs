@@ -130,20 +130,24 @@ pub(crate) struct LoopNote {
 #[derive(Clone)]
 pub(crate) enum StmtNote {
     /// A call's operands' expressions (a method's receiver first), or an
-    /// aggregate's fields' values, in order: where each is.
-    Operands(Vec<Span>),
+    /// aggregate's fields' values, in order: where each is; and of a call
+    /// through a value, its arguments' texts.
+    Operands(Vec<Span>, Vec<String>),
     /// An assignment, `place = value`: where the value is, and the place's
     /// text.
     Assign { value: Span, place: String },
+    /// A negated literal, `-1`, a constant to MIR: the `-`'s node, which
+    /// the checker proves can't overflow.
+    Negated(NodeId),
     /// A `&mut` the program writes, of the place with this text: `&mut x`,
     /// or a method's receiver borrowed as one.
     Borrow(String),
     /// A variable bound by `&mut` by a pattern: the patterns around it,
-    /// outermost first, each where it is, the place it takes apart (past
-    /// the references it looks through) and what it is; and whether the
-    /// variable is a struct's field's.
+    /// outermost first, each where it is, the place it takes apart, how
+    /// many references it looks through there (match ergonomics), and
+    /// what it is; and whether the variable is a struct's field's.
     BindMut {
-        outer: Vec<(Span, Place, Shape)>,
+        outer: Vec<(Span, Place, usize, Shape)>,
         of_struct: bool,
     },
 }
