@@ -1,12 +1,16 @@
-// `m::P` is `m`'s `Point`, not the one where it's used.
+// `m::Small`'s `LIMIT` is `m`'s, 10, though `LIMIT` is 100 where it's
+// used: 50 isn't small.
 mod m {
-    pub struct Point { pub x: i64 }
-    pub type P = Point;
+    pub const LIMIT: u8 = 10;
+    pub type Small = { v: u8 | v < LIMIT };
 }
 
-struct Point { x: bool }
+const LIMIT: u8 = 100;
+
+fn take(_x: m::Small) {}
 
 fn main() {
-    let _p: m::P = Point { x: true };
+    let _ = LIMIT;
+    take(50);
 }
-// error: expected `Point`, found `Point`; these are two different types called `Point`, one declared at the top level and one in `m`
+// error: can't prove `v < LIMIT`

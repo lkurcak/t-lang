@@ -1723,7 +1723,7 @@ impl Checker {
                     };
                     let t = match (ty, init) {
                         (Some(ann), init) => {
-                            let t = self.resolve(&ann.stripped())?;
+                            let t = self.resolve_refined(ann)?;
                             self.let_refinement(pat, ann, &t, init.is_some())?;
                             self.mention(&t);
                             match init {

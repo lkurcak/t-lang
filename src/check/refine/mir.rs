@@ -1088,6 +1088,7 @@ impl Walk<'_> {
                     true => vec![span],
                     false => (0..vals.len()).map(span_of).collect(),
                 };
+                self.need_variant(ty, v, &vals, &spans, span)?;
                 self.keep_fields_inv(ty, Some(v), &vals, &[], &spans)?;
                 let o = self.new_obj();
                 self.enum_parts(o, ty, Some((v, vals)));
@@ -1252,12 +1253,48 @@ impl Walk<'_> {
         if let Some(why) = self.way_into(fr, q) {
             return Some(why);
         }
+        if let Some(why) = self.variant_constrained(fr, q) {
+            return Some(why);
+        }
         let (e, n, _) = self.wholes_around(fr, q).into_iter().next()?;
         let name = self.level_text(fr, &e, text, n);
         Some(match name {
             Some(name) => format!("it's in `{name}`, whose type has a refinement"),
             None => "what it's in has a refinement".to_string(),
         })
+    }
+
+    /// If `q` is a variant's field, or in one, through fields and boxes,
+    /// whose refinement names another field or is named by another's, why
+    /// it can't be borrowed `&mut`: what's written through the reference
+    /// would change what that refinement is about, which the reference
+    /// can't say (as `RefinedFields::constrained` of a struct's), and
+    /// nothing proves it again after (docs/67-refinement-aliases.md, V3).
+    fn variant_constrained(&self, fr: &Frame, q: &crate::mir::Place) -> Option<String> {
+        use crate::mir::Proj as P;
+        let mut k = q.proj.len();
+        while k > 0 {
+            let e = crate::mir::Place {
+                local: q.local,
+                proj: q.proj[..k - 1].to_vec(),
+            };
+            match q.proj[k - 1] {
+                P::Variant(v, j) => {
+                    let t = self.mir_ty(fr, &e);
+                    if let Some(rv) = self.refined_variants(&t)
+                        && let Some(variant) = rv.variants.get(v)
+                        && let Some(why) = variant.constrained(&rv.name, j)
+                    {
+                        return Some(why);
+                    }
+                }
+                P::Field(_) => {}
+                P::Deref if matches!(self.mir_ty(fr, &e), Type::Box(_)) => {}
+                P::Deref => return None,
+            }
+            k -= 1;
+        }
+        None
     }
 
     /// If `q` is in a variant's field (as a pattern binds one) of an enum
@@ -1291,8 +1328,11 @@ impl Walk<'_> {
                             proj: q.proj[..k - 1].to_vec(),
                         };
                         let t = self.mir_ty(fr, &st);
+                        // Unless it's about the field alone, which a
+                        // reference into it says (`targs::field_decl`).
                         if let Some(f) = self.refined_fields(&t)
                             && let Some(Some(r)) = f.refs.get(i)
+                            && !f.alone(i)
                             && (r.parts.iter())
                                 .any(|p| !p.carried && p.ways.iter().any(|w| w.starts_with(&way)))
                         {
@@ -1501,7 +1541,7 @@ impl Walk<'_> {
                     let t = self.mir_ty(fr, &st);
                     let why = self.refined_fields(&t).and_then(|f| match unplaced {
                         true => f.constrained_unplaced(i),
-                        false => f.constrained(i),
+                        false => f.refused(i),
                     });
                     if let Some(why) = why {
                         return Some(match first {

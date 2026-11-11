@@ -178,9 +178,9 @@ that's made only of exported items.
 
 ## Deliberately missing (coming later)
 
-- Refinement aliases, `type Pos = { v: i64 | v > 0 };`: a refinement is
-  only the whole type of a parameter, result, `let` or field, and its
-  predicate's nodes would need copying for each use.
+- Refinement aliases, `type Pos = { v: i64 | v > 0 };`: done in step 67,
+  each use written out, its predicate's nodes copied (see
+  docs/67-refinement-aliases.md).
 - Effect parameters on aliases, `type Callback<effect e> = fn() with e;`.
 - Aliases of `str` and `[T]` behind a reference, `&Bytes`.
 - Aliases in struct literals, patterns and paths.

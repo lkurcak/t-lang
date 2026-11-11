@@ -1,6 +1,7 @@
 // A method taking `&mut self` whose borrow outlives the call can't be
-// lent a field a refinement is about: a write through what it gives
-// would go unchecked.
+// lent a field a refinement is about, as it may write anything through
+// what it gives. (Since 0.81.0 the reference says the field's refinement,
+// which is about it alone, and that's what's refused.)
 trait Hold {
     fn hold(&mut self) -> &mut i64;
 }
@@ -20,4 +21,4 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&p.n)?;
     Ok(())
 }
-// error: can't borrow `p.n` as `&mut`: field `n` of `Pos` has a refinement, which a write through the reference could break
+// error: can't prove `v > 0` of what `hold` may write behind argument `self`

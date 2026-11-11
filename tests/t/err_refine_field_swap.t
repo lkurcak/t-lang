@@ -1,4 +1,6 @@
-// `swap` can't break a refined field either: it's proved again after.
+// `swap` can't break a refined field either: what it may write behind
+// each argument is what the other holds, which must have it, and it's
+// proved again after.
 use core::mem::swap;
 
 #[derive(Copy, Discard)]
@@ -12,4 +14,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&p.n)?;
     Ok(())
 }
+// error: can't prove `v > 0` of what `swap` may write behind argument `a`
 // error: can't prove `v > 0` for field `n` of `Pos`

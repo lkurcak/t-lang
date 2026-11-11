@@ -494,7 +494,7 @@ See [visibility](24-visibility.md), [module names](06d-modules.md), and
 
 `{ v: T | condition }` restricts a value of type `T`. Refinements can be
 the whole type of a function parameter, result, single-variable `let`,
-or struct field, or a type argument there of any type, at any depth, such
+or struct or variant field, or a type argument there of any type, at any depth, such
 as `Option<{ v: i64 | v > 0 }>` or `List<{ s: u8 | s < 64 }>`: each value
 at that position satisfies it (each field of a variant whose type is that
 parameter, when the value is that variant). See [refined type
@@ -513,11 +513,27 @@ arithmetic still has to fit its integer type.
 
 Parameter predicates may mention earlier parameters; result predicates
 may mention parameters. A field predicate may mention earlier fields
-with exactly the same visibility. Construction and assignment must
+with exactly the same visibility. A variant's field predicate may
+mention the fields before it by their binders, `Range({ lo: u8 | lo <
+100 }, { hi: u8 | hi >= lo })`: making the variant proves them, and a
+`match` knows them. Construction and assignment must
 preserve every affected field refinement. A refined variable, or a field
 that a field refinement constrains, cannot be borrowed mutably, except
 straight into a call that can't keep the reference: then the refinement
-is proved again after the call. A field of a value whose refinement is
+is proved again after the call. A field whose refinement is about it
+alone (it names no other field, and no other field's names it), a
+struct's or a variant's, can be: the reference says the refinement, so
+what's written through it must have it.
+
+A type alias can stand for a refined type, or have one in it, `type
+Square = { s: u8 | s < 64 };`, `type Moves = List<Square>;`, and its
+predicates can name its const parameters, `type Below<const N: usize> =
+{ i: usize | i < N };`. A use means the refinement written out there,
+so it can be only where a refinement can be; an alias's argument's
+refinement goes where its parameter is. Its predicates name only their
+binders, its const parameters and consts, as they are where it's
+declared, and are checked there, for any arguments. See [refinement
+aliases](67-refinement-aliases.md). A field of a value whose refinement is
 about the whole of it (a refined variable, or what's declared of a whole
 tuple element, list or array element, box's value or `&mut`'s pointee) can
 be written only if the whole keeps its refinement, and cannot be borrowed

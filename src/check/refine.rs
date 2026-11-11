@@ -278,10 +278,31 @@ impl RefinedFields {
             .filter(move |&j| self.refs[j].is_some() && (j == i || self.named[j].contains(&i)))
     }
 
-    /// Why field `i` can't be borrowed `&mut`, if it can't.
+    /// Is field `i`'s refinement about it alone: naming no other field,
+    /// and named by no other's? Then it's what's declared of the field's
+    /// place (`targs::field_decl`), which a `&mut` to it says, so what's
+    /// written through that has it (D6 of docs/67-refinement-aliases.md).
+    fn alone(&self, i: usize) -> bool {
+        self.refs.get(i).is_some_and(Option::is_some)
+            && self.named[i].is_empty()
+            && self.about(i).all(|j| j == i)
+    }
+
+    /// Why field `i` would have to be proved again after a call it's
+    /// lent to, if it would: a refinement is about it.
     fn constrained(&self, i: usize) -> Option<String> {
         let j = self.about(i).next()?;
         Some(self.why(i, j))
+    }
+
+    /// Why field `i` can't be borrowed `&mut` but straight to a call, if
+    /// it can't: a refinement about it that isn't about it alone, which a
+    /// reference to it couldn't say.
+    fn refused(&self, i: usize) -> Option<String> {
+        match self.alone(i) {
+            true => None,
+            false => self.constrained(i),
+        }
     }
 
     /// Why field `i` of a struct at no place, a temporary's, can't be lent
@@ -310,6 +331,53 @@ impl RefinedFields {
                 self.names[j], self.name
             ),
         }
+    }
+}
+
+/// The refinements of an enum's variants' fields, by the enum's symbol
+/// (`Checker::variant_refined`): every value of a variant has its
+/// fields' (docs/67-refinement-aliases.md).
+#[derive(Debug, Clone)]
+pub(super) struct RefinedVariants {
+    /// The enum's name.
+    name: String,
+    variants: Vec<RefinedVariant>,
+}
+
+/// One variant's, of `RefinedVariants`.
+#[derive(Debug, Clone)]
+struct RefinedVariant {
+    name: String,
+    refs: Vec<Option<Refinement>>,
+    /// The fields before it each field's refinement names, by their
+    /// binders.
+    named: Vec<Vec<usize>>,
+}
+
+impl RefinedVariant {
+    /// Is field `j`'s refinement about it alone: naming no other field, and
+    /// named by no other's? Then it's what's declared of the field's place
+    /// (`targs::variant_decl`), which a `&mut` to it says.
+    fn alone(&self, j: usize) -> bool {
+        self.named.get(j).is_some_and(Vec::is_empty) && !self.named.iter().any(|n| n.contains(&j))
+    }
+
+    /// Why field `j` can't be borrowed `&mut`, if it can't: another
+    /// field's refinement names it, or its own names another, which a
+    /// write through the reference couldn't keep.
+    fn constrained(&self, enum_name: &str, j: usize) -> Option<String> {
+        if let Some(k) = (0..self.named.len()).find(|&k| self.named[k].contains(&j)) {
+            return Some(format!(
+                "the refinement of field {k} of `{enum_name}::{}` names it",
+                self.name
+            ));
+        }
+        (!self.named.get(j)?.is_empty()).then(|| {
+            format!(
+                "field {j} of `{enum_name}::{}` has a refinement that names another field",
+                self.name
+            )
+        })
     }
 }
 
@@ -360,6 +428,13 @@ pub(super) enum Pending {
         s: Box<StructDecl>,
         symbol: String,
     },
+    Variants {
+        e: Box<EnumDecl>,
+        symbol: String,
+    },
+    /// A refinement alias, by symbol: what it stands for is checked where
+    /// it's declared, for any arguments (D1 of docs/67-refinement-aliases.md).
+    Alias(String),
 }
 
 /// What a name in a predicate is.
@@ -423,8 +498,10 @@ impl Checker {
         if f.measure.is_some() {
             self.measure_signature(f, params, ret)?;
         }
-        let written = f.params.iter().map(|p| &p.ty).chain([&f.ret]);
-        if written.clone().all(|t| t.refinements().is_empty()) && f.ensures.is_empty() {
+        let written: Vec<TypeExpr> = (f.params.iter().map(|p| &p.ty).chain([&f.ret]))
+            .map(|t| self.written_out(t))
+            .collect();
+        if written.iter().all(|t| t.refinements().is_empty()) && f.ensures.is_empty() {
             return Ok(());
         }
         // Its predicates may call measures of impls not collected yet, so
@@ -526,6 +603,15 @@ impl Checker {
                     self.module = s.module;
                     self.fields_now(&s, &symbol)?;
                 }
+                Pending::Variants { e, symbol } => {
+                    self.pred_owner = None;
+                    self.module = e.module;
+                    self.variants_now(&e, &symbol)?;
+                }
+                Pending::Alias(symbol) => {
+                    self.pred_owner = None;
+                    self.alias_now(&symbol)?;
+                }
             }
         }
         Ok(())
@@ -586,9 +672,15 @@ impl Checker {
                  less",
             ));
         }
+        let params_written: Vec<TypeExpr> =
+            f.params.iter().map(|p| self.written_out(&p.ty)).collect();
+        let ret_written = self.written_out(&f.ret);
         let refined = |t: &&TypeExpr| !t.refinements().is_empty();
-        let param = f.params.iter().map(|p| &p.ty).find(refined);
-        let result = Some(&f.ret).filter(refined);
+        // Where it's written, which may be an alias's use.
+        let param = (f.params.iter().zip(&params_written))
+            .find(|(_, w)| refined(w))
+            .map(|(p, _)| &p.ty);
+        let result = refined(&&ret_written).then_some(&f.ret);
         if param.is_none() && result.is_none() && f.ensures.is_empty() {
             return Ok(());
         }
@@ -754,11 +846,142 @@ impl Checker {
         Ok(())
     }
 
+    /// Checks the refinements of the fields of enum `e`'s variants, whose
+    /// symbol is `symbol`, and keeps them, once every impl is collected. A
+    /// field's refinement names the fields before it in its variant, by
+    /// their binders, as a parameter's names the parameters before it:
+    /// positional fields have no other names.
+    pub(super) fn variant_refinements(&mut self, e: &EnumDecl, symbol: &str) {
+        let any = (e.variants.iter().flat_map(|v| &v.fields))
+            .any(|f| !self.written_out(f).refinements().is_empty());
+        if any {
+            self.pending_refined.push(Pending::Variants {
+                e: Box::new(e.clone()),
+                symbol: symbol.to_string(),
+            });
+        }
+    }
+
+    fn variants_now(&mut self, e: &EnumDecl, symbol: &str) -> Result<(), Error> {
+        let types: Vec<Vec<Type>> = match self.adts.get(symbol).map(|d| &d.kind) {
+            Some(crate::types::AdtKind::Enum(variants)) => {
+                variants.iter().map(|(_, ts)| ts.clone()).collect()
+            }
+            _ => unreachable!("enum `{symbol}` collected"),
+        };
+        let consts: Vec<Ident> = (e.generics.types.iter())
+            .filter(|p| e.generics.is_const(p))
+            .cloned()
+            .collect();
+        let mut out = RefinedVariants {
+            name: e.name.name.clone(),
+            variants: Vec::new(),
+        };
+        for (v, variant) in e.variants.iter().enumerate() {
+            let written: Vec<TypeExpr> =
+                variant.fields.iter().map(|f| self.written_out(f)).collect();
+            // Each field's binder, if its refinement is of the whole of it.
+            let binders: Vec<Option<Ident>> = (written.iter())
+                .map(|w| w.refinement().map(|(b, _)| b.clone()))
+                .collect();
+            let mut rv = RefinedVariant {
+                name: variant.name.name.clone(),
+                refs: Vec::new(),
+                named: Vec::new(),
+            };
+            for (j, f) in variant.fields.iter().enumerate() {
+                let scope = |name: &str| {
+                    let at = |k: usize| binders[k].as_ref().is_some_and(|b| b.name == name);
+                    if let Some(k) = (0..j).rev().find(|&k| at(k)) {
+                        let span = binders[k].as_ref().expect("found").span;
+                        return Some(Named::Value(types[v][k].clone(), PredName::Field(k), span));
+                    }
+                    if (j + 1..binders.len()).any(at) {
+                        return Some(Named::Not(format!(
+                            "a field's refinement can only name the fields before it, and \
+                             `{name}` comes after field {j}"
+                        )));
+                    }
+                    const_named(&consts, name)
+                };
+                self.pred_again = Some("a variant's field");
+                self.pred_reach = match e.vis {
+                    Vis::Private => None,
+                    Vis::Pub(_) => Some((
+                        format!(
+                            "`{}` is public, but the refinement of its variant's field names",
+                            e.name.name
+                        ),
+                        Level::Package,
+                    )),
+                    Vis::Export(_) => Some((
+                        format!(
+                            "`{}` is exported, but the refinement of its variant's field names",
+                            e.name.name
+                        ),
+                        Level::Export,
+                    )),
+                };
+                let r = self.refinement(f, &types[v][j], &scope);
+                self.pred_again = None;
+                self.pred_reach = None;
+                let r = r?;
+                let mut named = Vec::new();
+                for pred in r.iter().flat_map(Refinement::preds) {
+                    each_expr(pred, &mut |e| {
+                        if let Some(PredName::Field(k)) = self.pred_names.get(&e.id)
+                            && !named.contains(k)
+                        {
+                            named.push(*k);
+                        }
+                    });
+                }
+                rv.refs.push(r);
+                rv.named.push(named);
+            }
+            out.variants.push(rv);
+        }
+        self.variant_refined.insert(symbol.to_string(), out);
+        Ok(())
+    }
+
+    /// Checks the refinements in what alias `symbol` stands for, where it's
+    /// declared: for every argument, as its parameters have no bounds, and
+    /// naming only their binders, its const parameters and the consts in
+    /// its module (R7 of docs/67-refinement-aliases.md), and only what's
+    /// seen as far as it is (R5). A use checks the copy it gets again
+    /// (`Checker::written_out`), as written there: which can't fail where
+    /// this didn't, as each is this with types for its parameters.
+    fn alias_now(&mut self, symbol: &str) -> Result<(), Error> {
+        let def = self.aliases[symbol].clone();
+        let base = self.alias_body(&def)?;
+        let consts: Vec<Ident> = (def.params.iter().zip(&def.param_spans).zip(&def.kinds))
+            .filter(|(_, k)| **k == ArgKind::Length)
+            .map(|((p, span), _)| Ident {
+                name: p.clone(),
+                span: *span,
+                id: NodeId(0),
+            })
+            .collect();
+        let scope = |name: &str| const_named(&consts, name);
+        let module = std::mem::replace(&mut self.module, def.module);
+        let origin = super::written::Origin {
+            alias: def.name.clone(),
+            module: def.module,
+            vis: def.vis,
+        };
+        self.pred_reach = alias_reach(&origin);
+        let r = self.refinement(&def.body, &base, &scope);
+        self.pred_reach = None;
+        self.module = module;
+        r.map(|_| ())
+    }
+
     /// Checks the refinements of the fields of struct `s`, whose symbol
     /// is `symbol`, and keeps them. A field's names the fields before it,
     /// as visible as it is.
     pub(super) fn field_refinements(&mut self, s: &StructDecl, symbol: &str) -> Result<(), Error> {
-        if s.fields.iter().all(|f| f.ty.refinements().is_empty()) {
+        if (s.fields.iter()).all(|f| self.written_out(&f.ty).refinements().is_empty()) {
             return Ok(());
         }
         self.pending_refined.push(Pending::Fields {
@@ -845,7 +1068,8 @@ impl Checker {
                     }
                 });
                 if let Some(span) = own {
-                    let (_, binder, _) = f.ty.refinements().into_iter().next().expect("refined");
+                    let written = self.written_out(&f.ty);
+                    let (_, binder, _) = written.refinements().into_iter().next().expect("refined");
                     return Err(Error::ty(
                         span,
                         format!(
@@ -880,7 +1104,7 @@ impl Checker {
         t: &Type,
         init: bool,
     ) -> Result<(), Error> {
-        if ann.refinements().is_empty() {
+        if self.written_out(ann).refinements().is_empty() {
             return Ok(());
         }
         if !matches!(pat.kind, PatternKind::Bind(..)) {
@@ -997,6 +1221,9 @@ impl Checker {
         base: &Type,
         scope: &dyn Fn(&str) -> Option<Named>,
     ) -> Result<Option<Refinement>, Error> {
+        // With the aliases in it written out, which it says the refinements
+        // of (`Checker::written_out`).
+        let t = &self.written_out(t);
         let written = t.refinements();
         if written.is_empty() {
             return Ok(None);
@@ -1005,13 +1232,32 @@ impl Checker {
         let mut parts = Vec::new();
         for (written_path, binder, pred) in written {
             let (of, ways, path, carried) = self.refined_arg(t, &base, &written_path)?;
+            let copy = self.copied.contains_key(&pred.id);
+            let notes = std::mem::replace(&mut self.copy_notes, copy);
             let kind = super::NoteKind::Var(binder.name.clone());
             self.note(binder.span, kind, Some(of.clone()), Some(binder.span));
+            // One written out of an alias names what it does where the
+            // alias is declared: its binder, and consts there (R7).
+            let origin = self.alias_preds.get(&pred.id).cloned();
             let scope = |name: &str| match name == binder.name {
                 true => Some(Named::Value(of.clone(), PredName::Binder, binder.span)),
+                false if origin.is_some() => None,
                 false => scope(name),
             };
-            let got = self.pred_type(pred, &scope)?;
+            let outer = origin.as_ref().map(|o| {
+                let reach = alias_reach(o);
+                (
+                    std::mem::replace(&mut self.module, o.module),
+                    std::mem::replace(&mut self.pred_reach, reach),
+                )
+            });
+            let got = self.pred_type(pred, &scope);
+            if let Some((module, reach)) = outer {
+                self.module = module;
+                self.pred_reach = reach;
+            }
+            self.copy_notes = notes;
+            let got = got?;
             if got != Sort::Bool {
                 return Err(Error::ty(
                     pred.span,
@@ -1173,6 +1419,27 @@ impl Checker {
         Ok((ty, ways, pos, carried))
     }
 
+    /// What name `name`, at `e` in a predicate, names in `scope`: but if
+    /// it's what an alias's const parameter was given, written out of the
+    /// alias (`Checker::written_out`), what that named where it was given.
+    fn pred_name(
+        &self,
+        e: &Expr,
+        name: &str,
+        scope: &dyn Fn(&str) -> Option<Named>,
+    ) -> Option<Named> {
+        match self.pred_fixed.get(&e.id) {
+            Some(super::written::Fixed::Param(m, at)) => Some(Named::Value(
+                Type::Int(crate::types::IntTy::Usize),
+                PredName::Const(m.clone()),
+                *at,
+            )),
+            // A const, which `pred_const` finds by its symbol.
+            Some(super::written::Fixed::Item(_)) => None,
+            None => scope(name),
+        }
+    }
+
     /// The sort of predicate (part) `e`, which must be in the logic:
     /// linear arithmetic on integers, of any integer types, which are all
     /// the integers in it, ℤ, compared, and `bool`s.
@@ -1191,61 +1458,63 @@ impl Checker {
         match &e.kind {
             ExprKind::Int(..) => Ok(Sort::Int),
             ExprKind::Bool(_) => Ok(Sort::Bool),
-            ExprKind::Var(name, targs) if targs.is_empty() => match scope(name) {
-                Some(Named::Value(t, what, def)) => {
-                    let sort = match self.scalar_sort(&t) {
-                        Some(sort) => sort,
-                        None => return Err(self.not_scalar(e, name, &self.solved(&t))),
-                    };
-                    if let PredName::Const(c) = &what {
-                        self.info.consts.insert(e.id, c.clone());
-                    }
-                    self.pred_names.insert(e.id, what.clone());
-                    let kind = match what {
-                        PredName::Field(_) => super::NoteKind::Field(name.clone()),
-                        PredName::Const(_) => super::NoteKind::ConstParam(name.clone()),
-                        _ => super::NoteKind::Var(name.clone()),
-                    };
-                    self.note(e.span, kind, Some(self.solved(&t)), Some(def));
-                    Ok(sort)
-                }
-                Some(Named::Not(why)) => Err(Error::ty(e.span, why)),
-                Some(Named::Mut) => Err(Error::ty(
-                    e.span,
-                    format!(
-                        "{} can't name `{name}`, which is `mut`: it would be unclear which of \
-                         its values it meant",
-                        self.pred_a()
-                    ),
-                )),
-                // A const, of an integer type or `bool`.
-                None if let Some((symbol, t, def)) = self.pred_const(name, e.id) => {
-                    let sort = match t {
-                        Type::Int(_) | Type::Char => Sort::Int,
-                        Type::Bool => Sort::Bool,
-                        t => {
-                            return Err(Error::ty(
-                                e.span,
-                                format!(
-                                    "{} can't name `{name}`, a const of type `{}`: only integers \
-                                     and `bool`s are in its logic",
-                                    self.pred_a(),
-                                    t.erased()
-                                ),
-                            ));
+            ExprKind::Var(name, targs) if targs.is_empty() => {
+                match self.pred_name(e, name, scope) {
+                    Some(Named::Value(t, what, def)) => {
+                        let sort = match self.scalar_sort(&t) {
+                            Some(sort) => sort,
+                            None => return Err(self.not_scalar(e, name, &self.solved(&t))),
+                        };
+                        if let PredName::Const(c) = &what {
+                            self.info.consts.insert(e.id, c.clone());
                         }
-                    };
-                    self.info.pred_consts.insert(e.id, symbol.clone());
-                    self.pred_names.insert(e.id, PredName::Item(symbol));
-                    let kind = super::NoteKind::Const(name.clone());
-                    self.note(e.span, kind, Some(t), Some(def));
-                    Ok(sort)
+                        self.pred_names.insert(e.id, what.clone());
+                        let kind = match what {
+                            PredName::Field(_) => super::NoteKind::Field(name.clone()),
+                            PredName::Const(_) => super::NoteKind::ConstParam(name.clone()),
+                            _ => super::NoteKind::Var(name.clone()),
+                        };
+                        self.note(e.span, kind, Some(self.solved(&t)), Some(def));
+                        Ok(sort)
+                    }
+                    Some(Named::Not(why)) => Err(Error::ty(e.span, why)),
+                    Some(Named::Mut) => Err(Error::ty(
+                        e.span,
+                        format!(
+                            "{} can't name `{name}`, which is `mut`: it would be unclear which of \
+                         its values it meant",
+                            self.pred_a()
+                        ),
+                    )),
+                    // A const, of an integer type or `bool`.
+                    None if let Some((symbol, t, def)) = self.pred_const(name, e.id) => {
+                        let sort = match t {
+                            Type::Int(_) | Type::Char => Sort::Int,
+                            Type::Bool => Sort::Bool,
+                            t => {
+                                return Err(Error::ty(
+                                    e.span,
+                                    format!(
+                                        "{} can't name `{name}`, a const of type `{}`: only integers \
+                                     and `bool`s are in its logic",
+                                        self.pred_a(),
+                                        t.erased()
+                                    ),
+                                ));
+                            }
+                        };
+                        self.info.pred_consts.insert(e.id, symbol.clone());
+                        self.pred_names.insert(e.id, PredName::Item(symbol));
+                        let kind = super::NoteKind::Const(name.clone());
+                        self.note(e.span, kind, Some(t), Some(def));
+                        Ok(sort)
+                    }
+                    None => Err(Error::ty(
+                        e.span,
+                        format!("cannot find value `{name}` in this {}", self.pred_noun()),
+                    )),
                 }
-                None => Err(Error::ty(
-                    e.span,
-                    format!("cannot find value `{name}` in this {}", self.pred_noun()),
-                )),
-            },
+            }
             ExprKind::Unary(UnOp::Neg, x) => want(self, x, Sort::Int).map(|()| Sort::Int),
             ExprKind::Unary(UnOp::Not, x) => want(self, x, Sort::Bool).map(|()| Sort::Bool),
             ExprKind::Binary(op, l, r) => match op {
@@ -1426,38 +1695,40 @@ impl Checker {
         scope: &dyn Fn(&str) -> Option<Named>,
     ) -> Result<PredPlace, Error> {
         match &e.kind {
-            ExprKind::Var(name, targs) if targs.is_empty() => match scope(name) {
-                Some(Named::Value(t, what, def)) => {
-                    self.pred_names.insert(e.id, what.clone());
-                    let kind = match what {
-                        PredName::Field(_) => super::NoteKind::Field(name.clone()),
-                        PredName::Const(_) => super::NoteKind::ConstParam(name.clone()),
-                        _ => super::NoteKind::Var(name.clone()),
-                    };
-                    self.note(e.span, kind, Some(self.solved(&t)), Some(def));
-                    Ok(PredPlace {
-                        ty: t,
-                        named: what,
-                        name: name.clone(),
-                        through_mut: false,
-                    })
+            ExprKind::Var(name, targs) if targs.is_empty() => {
+                match self.pred_name(e, name, scope) {
+                    Some(Named::Value(t, what, def)) => {
+                        self.pred_names.insert(e.id, what.clone());
+                        let kind = match what {
+                            PredName::Field(_) => super::NoteKind::Field(name.clone()),
+                            PredName::Const(_) => super::NoteKind::ConstParam(name.clone()),
+                            _ => super::NoteKind::Var(name.clone()),
+                        };
+                        self.note(e.span, kind, Some(self.solved(&t)), Some(def));
+                        Ok(PredPlace {
+                            ty: t,
+                            named: what,
+                            name: name.clone(),
+                            through_mut: false,
+                        })
+                    }
+                    // A name that isn't a value: the error it is alone; or a
+                    // const, an integer or a `bool`, which has neither.
+                    _ => {
+                        self.pred_type(e, scope)?;
+                        let t = match self.pred_const(name, e.id) {
+                            Some((_, t, _)) => t.erased().to_string(),
+                            None => "an integer or `bool`".to_string(),
+                        };
+                        Err(Error::ty(
+                            e.span,
+                            format!(
+                                "`{name}` is a const of type `{t}`, which has no fields or measures"
+                            ),
+                        ))
+                    }
                 }
-                // A name that isn't a value: the error it is alone; or a
-                // const, an integer or a `bool`, which has neither.
-                _ => {
-                    self.pred_type(e, scope)?;
-                    let t = match self.pred_const(name, e.id) {
-                        Some((_, t, _)) => t.erased().to_string(),
-                        None => "an integer or `bool`".to_string(),
-                    };
-                    Err(Error::ty(
-                        e.span,
-                        format!(
-                            "`{name}` is a const of type `{t}`, which has no fields or measures"
-                        ),
-                    ))
-                }
-            },
+            }
             ExprKind::Field(x, field) => {
                 let mut at = self.pred_place(x, scope)?;
                 let mut t = self.solved(&at.ty);
@@ -2243,6 +2514,17 @@ fn variant_test(p: &Pattern) -> Option<(Vec<String>, bool)> {
     }
 }
 
+/// How far what's in a predicate written out of an alias must be seen: as
+/// far as the alias is (R5 of docs/25-type-aliases.md).
+fn alias_reach(o: &super::written::Origin) -> Option<(String, Level)> {
+    let what = |how: &str| format!("`{}` is {how}, but its refinement names", o.alias);
+    match o.vis {
+        Vis::Private => None,
+        Vis::Pub(_) => Some((what("public"), Level::Package)),
+        Vis::Export(_) => Some((what("exported"), Level::Export)),
+    }
+}
+
 /// What `name` names in a predicate, if it's one of the const parameters
 /// `consts`: a `usize`, the same all through the function or value.
 fn const_named(consts: &[Ident], name: &str) -> Option<Named> {
@@ -2797,6 +3079,9 @@ impl Walk<'_> {
             }
         };
         let symbol = symbol.clone();
+        // Every value of the enum has its variants' fields' refinements,
+        // proved where it was made.
+        self.assume_variants(t, &tag, &fields);
         self.parts.insert(
             o,
             Parts {
@@ -3062,6 +3347,62 @@ impl Walk<'_> {
         match t {
             Type::Adt(symbol, ..) => self.cx.field_refined.get(symbol),
             _ => None,
+        }
+    }
+
+    /// The refinements of enum `t`'s variants' fields, if it has any.
+    fn refined_variants(&self, t: &Type) -> Option<&RefinedVariants> {
+        match t {
+            Type::Adt(symbol, ..) => self.cx.variant_refined.get(symbol),
+            _ => None,
+        }
+    }
+
+    /// Checks that `vals`, the fields of variant `v` of enum `t` being
+    /// made, have their refinements, written at `spans`.
+    fn need_variant(
+        &mut self,
+        t: &Type,
+        v: usize,
+        vals: &[Val],
+        spans: &[Span],
+        at: Span,
+    ) -> Result<(), Error> {
+        let Some(rv) = self.refined_variants(t).cloned() else {
+            return Ok(());
+        };
+        let variant = &rv.variants[v];
+        let args = self.adt_args(t);
+        for (j, r) in variant.refs.iter().enumerate() {
+            if let Some(r) = r {
+                let what = format!("field {j} of `{}::{}`", rv.name, variant.name);
+                let span = spans.get(j).copied().unwrap_or(at);
+                self.need(r, &vals[j], Env::Fields(vals, &args), span, what)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// What's known of every value of enum `t`, whose tag is `tag` and
+    /// whose variants' fields are `fields`: if it's a variant, its fields'
+    /// refinements.
+    fn assume_variants(&mut self, t: &Type, tag: &Lin, fields: &[Vec<Val>]) {
+        let Some(rv) = self.refined_variants(t).cloned() else {
+            return;
+        };
+        let args = self.adt_args(t);
+        for (v, variant) in rv.variants.iter().enumerate() {
+            let n = i128::try_from(v).expect("few variants");
+            let Some(is) = Formula::eq(tag, &Lin::constant(n)) else {
+                continue;
+            };
+            for (j, r) in variant.refs.iter().enumerate() {
+                if let Some(r) = r
+                    && let Some(f) = self.pred(r, &fields[v][j], Env::Fields(&fields[v], &args))
+                {
+                    self.fact(Formula::or([is.clone().not(), f]));
+                }
+            }
         }
     }
 

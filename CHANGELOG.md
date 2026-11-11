@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.81.0 (2026-11-11)
+
+Step 67: refinement aliases and variants' fields. See
+[docs/67-refinement-aliases.md](docs/67-refinement-aliases.md).
+
+### Added
+
+- Refinement aliases: a type alias can stand for a refined type or have
+  one in it, `type Square = { s: u8 | s < 64 };`, `type Moves =
+  List<Square>;`, and name its const parameters in its predicates, `type
+  Below<const N: usize> = { i: usize | i < N };`. A use is the refinement
+  written out there, so it can be only where a refinement can be. Its
+  predicates name only their binders, its const parameters and consts as
+  they are where it's declared, and are checked there, for any
+  arguments.
+- A variant's field can be refined, `Digit({ d: u8 | d < 10 })`, and its
+  predicate can name the fields before it by their binders: `Range({ lo:
+  u8 | lo < 100 }, { hi: u8 | hi >= lo })`. Making the variant proves
+  them, a `match` knows them, and the interpreter checks them when one is
+  made and read.
+
+### Changed
+
+- A `&mut` to a field whose refinement is about it alone (it names no
+  other field, and no other field's names it), a struct's or a
+  variant's, is allowed anywhere: it says the refinement, so what's
+  written through it must have it, where 0.80 refused `&mut s.a` but
+  straight to a call. Programs refused for that are refused now for what
+  they write.
+- The message for a refinement where none can be says where one can:
+  "a refinement can only be in the type of a function's parameter or
+  result, a `let` or a field".
+
+### Fixed
+
+- A refinement in a type alias's argument was read at the position it was
+  written at, not where its parameter is in what the alias stands for:
+  with `type R<T> = Result<u8, T>`, `R<{ v: u8 | v < 3 }>` refined the
+  `Ok`, everywhere alike, and `type Pair<T> = (T, T)` refused one. It goes
+  where the parameter is now.
+
 ## 0.80.0 (2026-11-11)
 
 Step 66: one walk. The refinement checker on MIR is the only one. See

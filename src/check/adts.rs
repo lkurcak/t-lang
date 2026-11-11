@@ -80,6 +80,7 @@ impl Checker {
             self.arities.insert(def.symbol.clone(), arity);
         }
         self.alias_cycles(&decls)?;
+        self.alias_shapes();
 
         // No projection's known yet: `projections_known` sees to them.
         self.adts.proj = Default::default();
@@ -115,7 +116,7 @@ impl Checker {
                             ));
                         }
                         // A refinement is checked once every type is known.
-                        let t = self.resolve_with(&f.ty.stripped(), &params, &mut lts)?;
+                        let t = self.resolve_refined_with(&f.ty, &params, &mut lts)?;
                         field_types.push((symbol.as_str(), f.ty.span, t.clone()));
                         fields.push((f.name.name.clone(), t));
                     }
@@ -132,7 +133,8 @@ impl Checker {
                         }
                         let mut tys = Vec::new();
                         for f in &v.fields {
-                            let t = self.resolve_with(f, &params, &mut lts)?;
+                            // A refinement is checked once every type is known.
+                            let t = self.resolve_refined_with(f, &params, &mut lts)?;
                             field_types.push((symbol.as_str(), f.span, t.clone()));
                             tys.push(t);
                         }
@@ -194,8 +196,10 @@ impl Checker {
             }
         }
         for ((d, _), symbol) in decls.iter().zip(&symbols) {
-            if let TypeDecl::Struct(s) = d {
-                self.field_refinements(s, symbol)?;
+            match d {
+                TypeDecl::Struct(s) => self.field_refinements(s, symbol)?,
+                TypeDecl::Enum(e) => self.variant_refinements(e, symbol),
+                TypeDecl::Alias(_) => {}
             }
         }
         Ok(())
@@ -284,6 +288,135 @@ impl Checker {
         Ok(())
     }
 
+    /// Works out, for each type alias of this package, whether it's a
+    /// refinement alias and which of its parameters can take a refined
+    /// argument (`AliasDef::refined`, `AliasDef::refinable`), from those of
+    /// the aliases it names: so each after them, which ends as no alias
+    /// contains itself (R1).
+    fn alias_shapes(&mut self) {
+        let own: Vec<String> = (self.types[self.from.all_types..].iter())
+            .map(|d| d.symbol.clone())
+            .filter(|s| self.aliases.contains_key(s))
+            .collect();
+        let mut done: HashSet<String> = HashSet::new();
+        for symbol in &own {
+            self.alias_shape(symbol, &own, &mut done);
+        }
+    }
+
+    fn alias_shape(&mut self, symbol: &str, own: &[String], done: &mut HashSet<String>) {
+        if !done.insert(symbol.to_string()) {
+            return;
+        }
+        let def = self.aliases[symbol].clone();
+        // The aliases it names first.
+        let mut named = Vec::new();
+        def.body.each_named(&mut |t| {
+            if let Some(Scoped::Adt(s)) = self.type_names.get(&t.id)
+                && own.contains(s)
+            {
+                named.push(s.clone());
+            }
+        });
+        for s in named {
+            self.alias_shape(&s, own, done);
+        }
+        let mut shape = Shape {
+            refined: false,
+            bad: HashSet::new(),
+        };
+        self.shape_of(&def.body, &def.params, true, &mut shape);
+        let refinable = (def.params.iter().zip(&def.kinds))
+            .map(|(p, k)| *k != ArgKind::Length && !shape.bad.contains(p))
+            .collect();
+        if shape.refined {
+            self.pending_refined
+                .push(super::refine::Pending::Alias(symbol.to_string()));
+        }
+        let new = AliasDef {
+            name: def.name.clone(),
+            module: def.module,
+            vis: def.vis,
+            lifetimes: def.lifetimes.clone(),
+            params: def.params.clone(),
+            param_spans: def.param_spans.clone(),
+            kinds: def.kinds.clone(),
+            body: def.body.clone(),
+            refined: shape.refined,
+            refinable,
+        };
+        self.aliases
+            .insert(symbol.to_string(), std::sync::Arc::new(new));
+    }
+
+    /// Adds to `shape` what's in `t`, part of what an alias with
+    /// parameters `params` stands for, where a refinement can be if `ok`.
+    fn shape_of(&self, t: &TypeExpr, params: &[String], ok: bool, shape: &mut Shape) {
+        let ty_args = |args: &[TypeExpr]| -> Vec<usize> {
+            (0..args.len())
+                .filter(|&i| !matches!(args[i].kind, TypeExprKind::Lifetime(_)))
+                .collect()
+        };
+        match &t.kind {
+            TypeExprKind::Refined(_, base, _) => {
+                shape.refined |= ok;
+                self.shape_of(base, params, ok, shape);
+            }
+            TypeExprKind::Named(n, args) if args.is_empty() && params.contains(n) => {
+                if !ok {
+                    shape.bad.insert(n.clone());
+                }
+            }
+            TypeExprKind::Named(_, args) => {
+                let alias = match self.type_names.get(&t.id) {
+                    Some(Scoped::Adt(s)) => self.aliases.get(s).cloned(),
+                    _ => None,
+                };
+                if let Some(def) = &alias {
+                    shape.refined |= ok && def.refined;
+                }
+                for (k, i) in ty_args(args).into_iter().enumerate() {
+                    let here = match &alias {
+                        Some(def) => ok && def.refinable.get(k).copied().unwrap_or(false),
+                        None => ok,
+                    };
+                    self.shape_of(&args[i], params, here, shape);
+                }
+            }
+            TypeExprKind::Tuple(ts) => {
+                for e in ts {
+                    self.shape_of(e, params, ok, shape);
+                }
+            }
+            TypeExprKind::Ref(_, _, inner) | TypeExprKind::Slice(inner) => {
+                self.shape_of(inner, params, ok, shape);
+            }
+            TypeExprKind::Array(inner, n) => {
+                self.shape_of(inner, params, ok, shape);
+                self.shape_of(n, params, false, shape);
+            }
+            TypeExprKind::Fn(ps, ret, effects) => {
+                for p in ps {
+                    self.shape_of(p, params, false, shape);
+                }
+                self.shape_of(ret, params, false, shape);
+                for e in effects.iter().flat_map(EffectSet::types) {
+                    self.shape_of(e, params, false, shape);
+                }
+            }
+            TypeExprKind::Proj(inner, ..) => self.shape_of(inner, params, false, shape),
+            TypeExprKind::Impl(bounds) => {
+                for b in bounds.iter().flat_map(BoundItem::types) {
+                    self.shape_of(b, params, false, shape);
+                }
+            }
+            TypeExprKind::Unit
+            | TypeExprKind::Never
+            | TypeExprKind::Lifetime(_)
+            | TypeExprKind::Nat(_) => {}
+        }
+    }
+
     /// Checks what each type alias stands for, once every type and trait
     /// is known: that it's a type, with a size, whose every name means
     /// something where it's declared, which uses every parameter and
@@ -305,6 +438,7 @@ impl Checker {
                 ));
             }
             let ty = self.alias_body(&self.aliases[&def.symbol])?;
+            let g = &a.generics;
             let mut used: HashSet<&str> = HashSet::new();
             fn params<'t>(t: &'t Type, used: &mut HashSet<&'t str>) {
                 if let Type::Param(p, _) = t {
@@ -313,12 +447,25 @@ impl Checker {
                 t.parts().for_each(|p| params(p, used));
             }
             params(&ty, &mut used);
+            // A const parameter can be used in a refinement's predicate, or
+            // as an argument of an alias that names it in one.
+            for p in g.types.iter().filter(|p| g.is_const(p)) {
+                let mut named = false;
+                a.ty.each_named(&mut |t| {
+                    named |= matches!(&t.kind, TypeExprKind::Named(n, _) if *n == p.name);
+                });
+                for (_, _, pred) in a.ty.refinements() {
+                    named |= names_var(pred, &p.name);
+                }
+                if named {
+                    used.insert(p.name.as_str());
+                }
+            }
             for r in ty.regions() {
                 if let crate::types::Region::Named(l) = r {
                     used.insert(l);
                 }
             }
-            let g = &a.generics;
             if let Some(p) = g
                 .lifetimes
                 .iter()
@@ -367,7 +514,7 @@ impl Checker {
             declared: &def.lifetimes,
             args: None,
         };
-        generics::resolve(
+        generics::resolve_refined(
             &def.body,
             &|_, t| self.type_name(t),
             &proj,
@@ -375,6 +522,20 @@ impl Checker {
             &mut lts,
         )
     }
+}
+
+/// Does `e` name `name`, as a variable?
+fn names_var(e: &Expr, name: &str) -> bool {
+    matches!(&e.kind, ExprKind::Var(n, _) if n == name)
+        || e.children().into_iter().any(|c| names_var(c, name))
+}
+
+/// What `Checker::shape_of` finds in what an alias stands for: whether
+/// there's a refinement where one can be, and the parameters that are
+/// somewhere one can't.
+struct Shape {
+    refined: bool,
+    bad: HashSet<String>,
 }
 
 /// Calls `f` with the name and type arguments of every struct and enum in

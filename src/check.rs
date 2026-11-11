@@ -71,11 +71,13 @@ mod scope;
 mod traits;
 pub(crate) mod typed;
 mod unify;
+mod written;
 
 pub(crate) use closures::is_result_lifetime;
 pub(crate) use expr::{first_use, result_span};
 pub(crate) use generics::{
-    AliasDef, Kind, Lifetimes, ProjNames, TypeName, resolve, resolve_effects, unsized_slice,
+    AliasDef, Kind, Lifetimes, ProjNames, TypeName, resolve, resolve_effects, resolve_refined,
+    unsized_slice,
 };
 pub use info::{Info, Instance, Note, NoteKind, Test};
 pub(crate) use refine::Known;
@@ -627,6 +629,9 @@ pub(crate) struct Checker {
     const_values: HashMap<String, refine::Known>,
     /// The refinements of each struct's fields that has any, by symbol.
     field_refined: HashMap<String, refine::RefinedFields>,
+    /// The refinements of each enum's variants' fields that has any, by
+    /// symbol.
+    variant_refined: HashMap<String, refine::RefinedVariants>,
     /// The refinement of each refined `let`'s variable, by id.
     refined_lets: HashMap<NodeId, refine::Refinement>,
     /// How each struct and enum varies with its parameters, as the borrow
@@ -635,6 +640,18 @@ pub(crate) struct Checker {
     adt_info: AdtInfoCache,
     /// What each name in a refinement's predicate is, by node.
     pred_names: HashMap<NodeId, refine::PredName>,
+    /// The predicates written out of an alias, by node: which alias, whose
+    /// module their names mean what they do in (see `check/written.rs`).
+    alias_preds: HashMap<NodeId, written::Origin>,
+    /// The names in predicates written out of an alias that stand for what
+    /// its const parameters were given, by node.
+    pred_fixed: HashMap<NodeId, written::Fixed>,
+    /// Each node of a predicate written out, with the node it's a copy of,
+    /// whose path, if it's one, the modules pass resolved.
+    copied: HashMap<NodeId, NodeId>,
+    /// While a copy of a predicate is checked: which notes nothing, as
+    /// what it's a copy of is where it's written (`Checker::note`).
+    copy_notes: bool,
     /// The measures, by symbol (see docs/21-measures.md).
     measures: HashMap<String, refine::Measure>,
     /// The measure each `x.m()` in a refinement's predicate is, by node,
@@ -1007,7 +1024,12 @@ impl Checker {
             refined_lets: HashMap::new(),
             adt_info: AdtInfoCache::default(),
             field_refined: HashMap::new(),
+            variant_refined: HashMap::new(),
             pred_names: HashMap::new(),
+            alias_preds: HashMap::new(),
+            pred_fixed: HashMap::new(),
+            copied: HashMap::new(),
+            copy_notes: false,
             measures: HashMap::new(),
             pred_measures: HashMap::new(),
             pred_fields: HashMap::new(),
@@ -1428,7 +1450,7 @@ impl Checker {
         let param_tys = f
             .params
             .iter()
-            .map(|p| self.resolve_with(&p.ty.stripped(), params, &mut lts))
+            .map(|p| self.resolve_refined_with(&p.ty, params, &mut lts))
             .collect::<Result<Vec<_>, _>>()?;
         let Lifetimes::Params { elided, .. } = lts else {
             unreachable!()
@@ -1464,7 +1486,7 @@ impl Checker {
             self.opaque(t, &own, &lifetimes)?;
         }
         let mut lts = Lifetimes::Return { declared, input };
-        let ret = self.resolve_with(&f.ret.stripped(), params, &mut lts)?;
+        let ret = self.resolve_refined_with(&f.ret, params, &mut lts)?;
         self.refined_signature(f, &param_tys, &ret, opaques)?;
         let effects = match &f.effects {
             Some(e) => {
@@ -1779,6 +1801,12 @@ impl Checker {
         self.modules.describe(def.map_or(ROOT, |d| d.module))
     }
 
+    /// `t`, written where a refinement can be, as the refinement checker
+    /// read it: with the aliases written out (`check/written.rs`).
+    pub(crate) fn as_read<'t>(&'t self, t: &'t TypeExpr) -> &'t TypeExpr {
+        self.info.written.get(&t.id).unwrap_or(t)
+    }
+
     pub(crate) fn adts(&self) -> &Adts {
         &self.adts
     }
@@ -1924,6 +1952,24 @@ impl Checker {
         )
     }
 
+    /// As `resolve_with`, but of a type a refinement can be in: a
+    /// function's parameter's or result's, a `let`'s or a field's. It's the
+    /// type without its refinements (`generics::resolve_refined`).
+    fn resolve_refined_with(
+        &self,
+        t: &TypeExpr,
+        params: &Params,
+        lts: &mut Lifetimes,
+    ) -> Result<Type, Error> {
+        generics::resolve_refined(
+            t,
+            &|_, t| self.type_name(t),
+            &|s, tr, name, t, k| self.projection(s, tr, name, t, k),
+            params,
+            lts,
+        )
+    }
+
     /// As `resolve_with`, but where any type may be, sized or not: the
     /// subject of a bound, or a type argument for an `unsized` parameter.
     fn resolve_unsized_with(
@@ -1964,6 +2010,15 @@ impl Checker {
             declared: &self.lifetimes,
         };
         self.resolve_with(t, &self.type_params, &mut lts)
+    }
+
+    /// A type written inside the function being checked, where a
+    /// refinement can be: a `let`'s.
+    fn resolve_refined(&self, t: &TypeExpr) -> Result<Type, Error> {
+        let mut lts = Lifetimes::Body {
+            declared: &self.lifetimes,
+        };
+        self.resolve_refined_with(t, &self.type_params, &mut lts)
     }
 
     /// Rejects polymorphic recursion: see `generics::polymorphic_recursion`.

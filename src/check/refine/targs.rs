@@ -1041,14 +1041,34 @@ impl Walk<'_> {
         vals: Option<&[Val]>,
     ) -> Tree {
         let mut out = self.variant_decl(outer, qt, 0, j);
-        // The field's own refinements, of what it's in.
-        if let Some(vals) = vals
-            && let Some(fields) = self.refined_fields(qt).cloned()
+        // The field's own refinements: all of them, if they're about it
+        // alone, as a variant's field's are (D6 of
+        // docs/67-refinement-aliases.md); or else the carried parts, of
+        // what it's in.
+        if let Some(fields) = self.refined_fields(qt).cloned()
             && let Some(Some(r)) = fields.refs.get(j)
-            && r.has_carried()
         {
             let args = self.adt_args(qt);
-            out.extend(self.carried_tree(r, Env::Fields(vals, &args)));
+            if fields.alone(j) {
+                out.extend(self.own_tree(r, Env::Fields(&[], &args)));
+            } else if let Some(vals) = vals
+                && r.has_carried()
+            {
+                out.extend(self.carried_tree(r, Env::Fields(vals, &args)));
+            }
+        }
+        out
+    }
+
+    /// What refinement `r`, of a field about it alone, says of each
+    /// position of the field's value, with names as `env` says: each of its
+    /// parts at its position, the whole value's at `[]`.
+    fn own_tree(&mut self, r: &Refinement, env: Env) -> Tree {
+        let mut out = Vec::new();
+        for part in &r.parts {
+            if let Some(c) = self.close(&part.pred, env) {
+                out.push((part.path.clone(), Disj::one(Cand::Pred(c))));
+            }
         }
         out
     }
@@ -1074,6 +1094,16 @@ impl Walk<'_> {
                     out.push((at, d.clone()));
                 }
             }
+        }
+        // An enum's variant's field's own refinement, if it's about it
+        // alone: what every value there has, which nothing changes.
+        if let Some(rv) = self.refined_variants(qt).cloned()
+            && let Some(variant) = rv.variants.get(v)
+            && let Some(Some(r)) = variant.refs.get(j)
+            && variant.alone(j)
+        {
+            let args = self.adt_args(qt);
+            out.extend(self.own_tree(r, Env::Fields(&[], &args)));
         }
         out
     }
