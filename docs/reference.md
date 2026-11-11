@@ -517,10 +517,17 @@ with exactly the same visibility. Construction and assignment must
 preserve every affected field refinement. A refined variable, or a field
 that a field refinement constrains, cannot be borrowed mutably, except
 straight into a call that can't keep the reference: then the refinement
-is proved again after the call. A pattern cannot bind by `&mut` a
-variant's field, an array's element or what an or-pattern's alternative
-binds (as match ergonomics would in `match o { Some(x) => .. }` for an `o:
-&mut Option<..>`) where anything is declared of the value it's in.
+is proved again after the call. A field of a value whose refinement is
+about the whole of it (a refined variable, or what's declared of a whole
+tuple element, list or array element, box's value or `&mut`'s pointee) can
+be written only if the whole keeps its refinement, and cannot be borrowed
+mutably. A pattern's binding by `&mut` (match ergonomics, `match o {
+Some(x) => .. }` for an `o: &mut Option<..>`) is a `&mut` of the place it
+binds, a variant's field or an array's element too: what's written
+through it must have what's declared there, and it's refused where a
+`&mut` of that place would be, or where a struct field's own refinement
+says something of the variant's field it's in. See [one
+walk](66-one-walk.md).
 
 Every reference says what's declared of what it points to, whatever it's
 made from (an element, `&mut l[0]`; a field of one; what a call's
