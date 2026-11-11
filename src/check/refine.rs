@@ -17,9 +17,10 @@
 //! checked it (`Checker::refine`, see docs/64-phase-order.md), which
 //! keeps track of what's known at each point (*facts*) and proves from them
 //! what each refinement needs, with the procedure in `refine/logic.rs`.
-//! The pass walks the body's AST (`Walk::expr`), or, if asked, the MIR the
-//! borrow checker built of it (`refine/mir.rs`, docs/65-refinements-on-mir.md),
-//! with the same rules, by the same functions:
+//! The pass walks the MIR the borrow checker built of the body
+//! (`refine/mir.rs`, docs/65-refinements-on-mir.md and
+//! docs/66-one-walk.md), where every place is a local and the fields,
+//! variants' fields and `*`s from it:
 //!
 //! - an argument has its parameter's refinement, a result its function's,
 //!   and a value given to a refined `let`, or assigned to one, its;
@@ -49,21 +50,21 @@
 //! whenever it may change: when it, or what it's in, is assigned; at the
 //! start of each time round a loop that assigns it, or lends it to a call
 //! (though the measures the loop's frame keeps of it stay what they were:
-//! `Walk::frames`);
+//! `Walk::frames_of`);
 //! after a branch that does, where it's whichever value the branch taken
-//! gave it; and after a call it's lent to `&mut` (`Walk::borrows`), when
-//! nothing can keep the reference after the call. A place that may change
+//! gave it; and after a call it's lent to `&mut`, when nothing can keep
+//! the reference after the call. A place that may change
 //! some other way, through a `&mut` that may outlive where it's made, or a
 //! closure that captures it, gives a new value each time it's read: nothing
 //! is known of it but its refinements, which every assignment, inside a
-//! closure too, must keep (`Walk::unstable_in`). A `&` can't change what it
+//! closure too, must keep (`Walk::unstable_mir`). A `&` can't change what it
 //! points to, as nothing in T can be changed through one, so `*r` for a
 //! `let r = &p;` is `p` (`Walk::alias`). A refined variable, a field a
 //! refinement is about, and what a refined reference points to can't be
 //! borrowed `&mut` but straight to a call-scoped parameter (`call_scoped`),
 //! after which their refinements, and the struct's about the field, are
 //! proved again, of what the call left, before anything assumes them
-//! (`Walk::post`, `Walk::reproving`); a place in a refined variable
+//! (`Walk::post_now`, `Walk::reproving`); a place in a refined variable
 //! (through fields and boxes) can't be at all. So the refinements of a
 //! place hold of its value whenever it can be read: every way of making or
 //! changing one checks them, a call lent one runs while nothing can read it
@@ -73,7 +74,7 @@
 //! Postconditions (`ensures`, a result's refinement) are proved by the
 //! callee at each return, of what's behind its call-scoped `&mut`s then,
 //! and learned by the caller of the places it lent, once they're forgotten
-//! (`Walk::post`): nothing made from such a parameter outlives the call, so
+//! (`Walk::post_now`): nothing made from such a parameter outlives the call, so
 //! what's behind it at return is what's there when the caller next reads
 //! it. An intrinsic's may be about a `&mut` whose borrow outlives the call,
 //! its value when that ends (a prophecy, trusted), which is also when the
@@ -85,7 +86,7 @@
 //! impl's of one, so every call that skips a check is of a function with
 //! nothing to check. An impl's method of a trait can refine its result and
 //! ensure more, which a call learns only where it's known to be of that
-//! impl (`Walk::callee`): monomorphisation picks the same one.
+//! impl (`Walk::callee_at`): monomorphisation picks the same one.
 //!
 //! A predicate can name a struct's field, of anything it names, at any
 //! depth (`s.head.len()`; `Checker::pred_place`): to the logic a struct's
@@ -2027,7 +2028,6 @@ struct Walked {
 /// wasn't.
 type Found = (HashSet<NodeId>, HashMap<NodeId, ProofFailure>);
 
-
 /// Which of parameters `params` (of a function with result `ret` and
 /// lifetime bounds `bounds`) are *call-scoped* `&mut`s: `&'a mut U` where
 /// `'a` is in no other part of the signature, not in `U`, another
@@ -2524,9 +2524,8 @@ struct Walk<'c> {
     /// On MIR, the value of the const being walked, if its body is known
     /// to give a constant.
     known: Option<Known>,
-    /// On MIR, the variables gone out of scope on this path: what's known
-    /// of them is forgotten where paths meet, as the AST's `join` forgets
-    /// what's out of scope there.
+    /// The variables gone out of scope on this path: what's known of them
+    /// is forgotten where paths meet.
     dead: HashSet<NodeId>,
 }
 
@@ -3795,9 +3794,12 @@ impl Walk<'_> {
         self.invalidated = start.invalidated.clone();
     }
 
-    /// `join`, of several values each branch gives, `values`: each of its
-    /// type, with the value each outcome gives, in order. Gives what each
-    /// is after.
+    /// Where paths `outcomes`, all from `start`, meet: what's known is
+    /// that one of them was taken, and each place is whichever value the
+    /// path taken gave it. A place a path gave a new value nothing's
+    /// known of, or never read, is nothing known in that one. Of each of
+    /// `values`, a type and the value each path gives it, in order, gives
+    /// what it is after.
     fn join_with(
         &mut self,
         start: &Snap,
@@ -4011,8 +4013,11 @@ impl Walk<'_> {
         out
     }
 
-    /// `loop_head`, of a loop at `span` that changes `changed`, keeping
-    /// `frames` of them.
+    /// The head of a loop at `span` that changes `changed`, with invariant
+    /// `inv`, from the paths into it from outside: the invariant holds as
+    /// the loop starts; then each place the loop may change is forgotten,
+    /// but for the measures its frame keeps (`frames`, from `frames_of`),
+    /// and the invariant is assumed of them.
     fn loop_start(
         &mut self,
         changed: &[Invalidation],
@@ -4065,7 +4070,17 @@ impl Walk<'_> {
         }
     }
 
-    /// `frames`, of a loop whose changes are `changes` (see `changes`).
+    /// The measures a loop keeps of each place it changes, `changed`:
+    /// its *frame*. Of the loop's `changes`, each an assignment (`None`) or
+    /// a place lent straight to a call-scoped `&mut`, with the measures
+    /// the call keeps (`keeps_at`), a measure of place `p` is kept if every
+    /// change in the loop to `p`, to a place in it, or to one it's in, is
+    /// such a call lending `p` itself that keeps it. By induction on how
+    /// many times round the loop has been, at the head, and anywhere in
+    /// the body, the measure is what it was before the loop: each change
+    /// since was such a call, which nothing else could see or write `p`
+    /// during (it's lent to the call, and stable), and a measure is of the
+    /// value alone (lemma F1 of docs/52-loop-frames.md).
     fn frames_of(
         &mut self,
         changes: &[(Place, Option<Vec<String>>)],
@@ -4100,9 +4115,17 @@ impl Walk<'_> {
         frames
     }
 
-    /// `keeps`, of a call of `symbol` (resolved) at type arguments `targs`,
-    /// with arguments of types `tys` (`None` for one whose type isn't
-    /// known).
+    /// The measures of what a call of `symbol` (resolved) at type
+    /// arguments `targs`, with arguments of types `tys` (`None` for one
+    /// whose type isn't known), lends its argument `i` to a call-scoped
+    /// `&mut` its postconditions say it leaves as they were, for every
+    /// value of its other arguments: the postconditions are assumed of new
+    /// objects for what's behind the `&mut` before and after, and new
+    /// values for the other arguments, which nothing's known of, and each
+    /// measure they ask of what's there after must be proved equal to the
+    /// one before. Those are what any call it makes at any time keeps:
+    /// what the callee proved, and the variables here are new, so what's
+    /// known here says nothing of them.
     fn keeps_at(
         &mut self,
         symbol: &str,
@@ -4490,7 +4513,9 @@ impl Walk<'_> {
         Ok(())
     }
 
-    /// `call`, at `site`: gives its result, and what it has yet to give once
+    /// A call at `site`, with arguments whose values are `vals` (the
+    /// receiver first, for a method) at `places`: checks its refined
+    /// parameters, and gives its result, and what it has yet to give once
     /// what it's lent is forgotten (`post_now`).
     fn call_at(
         &mut self,
@@ -4753,7 +4778,11 @@ impl Walk<'_> {
         Formula::or(cases)
     }
 
-    /// `post`, of a call at `span`, which has yet to give `post`.
+    /// What a call at `span` gives once what it's lent is forgotten,
+    /// `post`: its postconditions, of the values behind what it lent to
+    /// call-scoped `&mut`s, which are what it left there, as nothing it
+    /// made from them outlives it; and the refinements of the struct of
+    /// each field a refinement is about it lent, proved again.
     fn post_now(&mut self, post: Post, span: Span) -> Result<(), Error> {
         for (p, tree) in &post.lent {
             self.lent_trees.insert(p.clone(), tree.clone());
@@ -4915,7 +4944,7 @@ impl Walk<'_> {
 
     /// The fields that place `p` is, or is in, that a refinement is
     /// about, innermost first, each as its struct's place and its index:
-    /// through fields and boxes, not references (see `constrained_field`).
+    /// through fields and boxes, not references (see `Walk::constrained_mir`).
     fn constrained_around(&self, p: &Place) -> Vec<(Place, usize)> {
         let mut out = Vec::new();
         for k in (1..=p.path.len()).rev() {
@@ -4980,33 +5009,6 @@ impl Walk<'_> {
         }
         Ok(())
     }
-
-    /// Whether anything is declared of the value at `place`, if it's one,
-    /// or carried of `v`, if it's known: a refinement of the local it's in,
-    /// of a struct field it's in, or of a type argument at any depth.
-    fn said_of(&mut self, place: Option<&Place>, v: Option<&Val>) -> bool {
-        if let Some(p) = place {
-            let through_ref = p.path.iter().enumerate().any(|(k, proj)| {
-                *proj == Proj::Deref && {
-                    let q = Place {
-                        root: p.root,
-                        path: p.path[..k].to_vec(),
-                    };
-                    matches!(self.place_ty(&q), Type::Ref(..))
-                }
-            });
-            if (!through_ref && self.invariants.contains_key(&p.root))
-                || !self.constrained_around(p).is_empty()
-                || self.place_decl_own(p).iter().any(|(_, d)| !d.is_any())
-            {
-                return true;
-            }
-        }
-        v.and_then(targs::obj_of)
-            .and_then(|o| self.trees.get(&o))
-            .is_some_and(|t| t.iter().any(|(_, d)| !d.is_any()))
-    }
-
 }
 
 /// `a op b` in the logic, if it's in it: why not if it isn't. A product

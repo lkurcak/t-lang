@@ -142,24 +142,6 @@ pub(crate) enum StmtNote {
     /// A `&mut` the program writes, of the place with this text: `&mut x`,
     /// or a method's receiver borrowed as one.
     Borrow(String),
-    /// A variable bound by `&mut` by a pattern: the patterns around it,
-    /// outermost first, each where it is, the place it takes apart, how
-    /// many references it looks through there (match ergonomics), and
-    /// what it is; and whether the variable is a struct's field's.
-    BindMut {
-        outer: Vec<(Span, Place, usize, Shape)>,
-        of_struct: bool,
-    },
-}
-
-/// What a pattern around a variable is (`StmtNote::BindMut`).
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Shape {
-    Variant,
-    Array,
-    Or,
-    /// A tuple's or a struct's.
-    Fields,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

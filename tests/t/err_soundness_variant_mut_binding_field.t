@@ -1,5 +1,5 @@
-// The same through a field of a tuple a `let` declares refined: `t.0`'s
-// refinement is `t`'s, which a write through `a` could break.
+// The same through a field of a tuple a `let` declares refined: what's
+// declared of `t.0` is `t`'s, which a write through `a` must keep.
 fn square(n: u8) -> Option<{ s: u8 | s < 64 }> { if n < 64 { Some(n) } else { None } }
 
 fn main() {
@@ -10,4 +10,4 @@ fn main() {
     }
     let _ = t;
 }
-// error: can't bind `a` by `&mut`: what it's in has a refinement, which a write through the reference could break
+// error: can't prove `s < 64` for what's written through `*a`

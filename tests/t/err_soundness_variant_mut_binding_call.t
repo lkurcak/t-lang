@@ -14,4 +14,4 @@ fn main() {
     }
     let _ = t;
 }
-// error: can't bind `a` by `&mut`: what it's in has a refinement, which a write through the reference could break
+// error: can't prove `s < 64` for what's written through `*a`
