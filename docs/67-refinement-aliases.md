@@ -268,6 +268,18 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
 > written to it would have to keep a fact about another field's value,
 > which the reference doesn't know.
 
+## Tested by switching rules off
+
+Each rule of this step was switched off in turn, twenty-four times, and
+the tests checked each time: every one made a test fail but one. Copying
+an argument's predicate anew for each place its parameter is (`freshen`)
+is seen only by what's kept by node, the interpreter's checks among it,
+so a unit test in `written.rs` sees it. And requiring a variant's field
+to be refined alone before what's declared at its place says its
+refinement changes nothing: V3 refuses every `&mut` into one that isn't,
+so what's declared there is only ever read, where it's true anyway. It
+stays, as it's what lemma E3 says.
+
 ## Decisions
 
 - **Checked where declared.** The alternative was checking each use as
