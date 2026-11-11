@@ -150,8 +150,10 @@ the whole argument. Its parity with the walk over the AST was checked
 over every program in the tests, the libraries and the programs using
 `t`, and the comparison goes with the walk it compared against. What
 stands in for it is mutation testing against the tests themselves: each
-rule of the walk over MIR was switched off in turn, step 65's and this
-step's, and each time a test in `tests/t` failed.
+rule of the walk over MIR was switched off in turn, step 65's nineteen and
+this step's nine, and each time a test failed. Four needed a new test to
+fail: a whole refined outside a box, two more forms of bindings, and one
+that only changed which variables an explanation lists as known.
 
 ## Decisions
 
