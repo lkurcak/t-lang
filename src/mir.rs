@@ -91,6 +91,77 @@ pub(crate) struct Refinement {
     pub(crate) env: Vec<(String, Place)>,
 }
 
+/// What the refinement checker needs of a body beyond what runs, which
+/// the borrow checker's lowering knows and MIR doesn't keep: which
+/// binding each variable is, and where things are in the source, for
+/// messages (see `check/refine/mir.rs`). Nothing that runs reads it.
+#[derive(Clone, Default)]
+pub(crate) struct Notes {
+    /// The id of the binding each local is, by local, if it's a variable
+    /// or a parameter.
+    pub(crate) ids: Vec<Option<NodeId>>,
+    /// For each block that returns: where what it returns is written, and
+    /// whether it's the end of the body, rather than a `return`.
+    pub(crate) returns: std::collections::HashMap<Bb, (Span, bool)>,
+    pub(crate) loops: Vec<LoopNote>,
+    /// The places patterns that bind something by `&mut` take apart: each
+    /// `match`'s scrutinee, or `let`'s value, that's a place.
+    pub(crate) mut_bound: Vec<Place>,
+    /// By statement, what messages about it say.
+    pub(crate) stmts: std::collections::HashMap<Point, StmtNote>,
+}
+
+/// A loop, as the refinement checker sees it.
+#[derive(Clone)]
+pub(crate) struct LoopNote {
+    pub(crate) head: Bb,
+    /// The loop, `while` to `}`.
+    pub(crate) span: Span,
+    /// Its head and every block lowered inside it, its loops' too.
+    pub(crate) blocks: Vec<Bb>,
+    /// The `}` of its body.
+    pub(crate) end: Span,
+    /// Each block that goes back to its head by a `continue`, with the
+    /// `continue`'s span.
+    pub(crate) continues: std::collections::HashMap<Bb, Span>,
+}
+
+/// What messages about a statement say of it.
+#[derive(Clone)]
+pub(crate) enum StmtNote {
+    /// A call's operands' expressions (a method's receiver first), or an
+    /// aggregate's fields' values, in order: where each is; and of a call
+    /// through a value, its arguments' texts.
+    Operands(Vec<Span>, Vec<String>),
+    /// An assignment, `place = value`: where the value is, and the place's
+    /// text.
+    Assign { value: Span, place: String },
+    /// A negated literal, `-1`, a constant to MIR: the `-`'s node, which
+    /// the checker proves can't overflow.
+    Negated(NodeId),
+    /// A `&mut` the program writes, of the place with this text: `&mut x`,
+    /// or a method's receiver borrowed as one.
+    Borrow(String),
+    /// A variable bound by `&mut` by a pattern: the patterns around it,
+    /// outermost first, each where it is, the place it takes apart, how
+    /// many references it looks through there (match ergonomics), and
+    /// what it is; and whether the variable is a struct's field's.
+    BindMut {
+        outer: Vec<(Span, Place, usize, Shape)>,
+        of_struct: bool,
+    },
+}
+
+/// What a pattern around a variable is (`StmtNote::BindMut`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Shape {
+    Variant,
+    Array,
+    Or,
+    /// A tuple's or a struct's.
+    Fields,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LocalKind {
     Return,

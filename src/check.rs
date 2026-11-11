@@ -66,7 +66,7 @@ mod opaque;
 mod paths;
 mod patterns;
 mod refine;
-pub use refine::{Work, work};
+pub use refine::{Difference, Differs, Refiner, Work, differences, refiner, set_refiner, work};
 mod scope;
 mod traits;
 pub(crate) mod typed;
@@ -562,6 +562,11 @@ pub(crate) struct Checker {
     /// the borrow checker has checked it, but before its effects are
     /// settled: kept in `mir` once they are (`Checker::keep_mir`).
     pub(crate) fresh_mir: std::cell::RefCell<Vec<(crate::mir::Key, crate::mir::Body)>>,
+    /// The same bodies as the borrow checker built them, before drops are
+    /// elaborated, with their `Notes`: for the refinement checker on MIR,
+    /// when it's asked for (`refine::Refiner`).
+    pub(crate) refine_mir:
+        std::cell::RefCell<Vec<(crate::mir::Key, crate::mir::Body, crate::mir::Notes)>>,
     /// Whether impls are being collected: then what a projection on a type
     /// that isn't a parameter stands for isn't known yet, nor whether the
     /// type implements the trait, which `check_impls` sees to.
@@ -979,6 +984,7 @@ impl Checker {
             proj_traits: Default::default(),
             mir: Default::default(),
             fresh_mir: Default::default(),
+            refine_mir: Default::default(),
             collecting: false,
             here: Span::new(0, 0),
             goals: Vec::new(),
@@ -1604,6 +1610,7 @@ impl Checker {
         // as they always did.
         let closures = self.solve_types(vars)?;
         self.fresh_mir.borrow_mut().clear();
+        self.refine_mir.borrow_mut().clear();
         self.reveal_hidden(f, &hidden, true)?;
         let borrowed = crate::borrowck::check(self, f, &symbol, &scheme)?;
         self.solve_effects(vars, f, &closures)?;

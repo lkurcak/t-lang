@@ -45,7 +45,9 @@ pub(crate) struct Loan {
 /// `*`s, `&mut` if `.1`.
 pub(crate) enum Arg {
     Value(Operand, Type, Span),
-    Borrow(Place, bool, Option<(usize, bool)>, Span),
+    /// The last is the text of the place, if the program writes the borrow
+    /// as a `&mut` (`StmtNote::Borrow`).
+    Borrow(Place, bool, Option<(usize, bool)>, Span, Option<String>),
 }
 
 /// A closure found in the body: its code, its type there, and where it is.
@@ -88,6 +90,11 @@ pub(crate) struct Builder<'a> {
     /// is lowered after every block that jumps to it but those that jump
     /// back to the start of a loop, which control gets to anyway.
     live: Vec<bool>,
+    /// What the refinement checker needs to know of the body besides.
+    pub(crate) notes: Notes,
+    /// The patterns around the one being bound (`bind`), outermost first
+    /// (`StmtNote::BindMut`).
+    outer: Vec<(Span, Place, usize, Shape)>,
 }
 
 /// A scope's locals, and how many statements were being lowered when it
@@ -108,6 +115,8 @@ struct LoopFrame {
     dest: Option<Place>,
     scopes: usize,
     temps: usize,
+    /// Its `Notes::loops`.
+    note: usize,
 }
 
 impl<'a> Builder<'a> {
@@ -152,6 +161,8 @@ impl<'a> Builder<'a> {
             captured: HashMap::new(),
             loops: Vec::new(),
             live: vec![true],
+            notes: Notes::default(),
+            outer: Vec::new(),
         }
     }
 
@@ -197,6 +208,7 @@ impl<'a> Builder<'a> {
             self.body.locals[l.0].mutable = mutable;
             self.body.locals[l.0].mut_span = mut_span;
             self.body.locals[l.0].by_ref = by_ref;
+            self.notes.ids[l.0] = Some(*id);
             self.vars.insert(*id, l);
             self.scope().push(l);
         }
@@ -215,6 +227,8 @@ impl<'a> Builder<'a> {
         for l in params.into_iter().rev() {
             self.push(StmtKind::Dead(l), end);
         }
+        let at = crate::check::result_span(body);
+        self.notes.returns.insert(self.block, (at, true));
         self.terminate(Term::Return);
         self.prune();
     }
@@ -263,6 +277,7 @@ impl<'a> Builder<'a> {
             deferred: false,
             of_static: None,
         });
+        self.notes.ids.push(None);
         Local(self.body.locals.len() - 1)
     }
 
@@ -433,6 +448,7 @@ impl<'a> Builder<'a> {
             ExprKind::Unary(UnOp::Neg, x) if let ExprKind::Int(n, _) = x.kind => {
                 let t = self.ty(e);
                 let c = Const::Int(-i128::from(n), self.erased_ty(x));
+                (self.notes.stmts).insert(self.point(), StmtNote::Negated(e.id));
                 self.assign(dest, Rvalue::Use(Operand::Const(c)), &t, span, false);
             }
             ExprKind::Var(..) | ExprKind::Field(..) | ExprKind::Unary(UnOp::Deref, _) => {
@@ -442,6 +458,12 @@ impl<'a> Builder<'a> {
             ExprKind::Unary(op @ (UnOp::Ref | UnOp::RefMut), x) => {
                 let p = self.place(x);
                 let (r, t) = self.borrow(&p, *op == UnOp::RefMut, span);
+                if *op == UnOp::RefMut {
+                    let text = crate::pretty::expr_text(x);
+                    self.notes
+                        .stmts
+                        .insert(self.point(), StmtNote::Borrow(text));
+                }
                 self.assign(
                     dest,
                     Rvalue::Ref(r, *op == UnOp::RefMut, p),
@@ -518,7 +540,7 @@ impl<'a> Builder<'a> {
                         let m = kind == FnKind::FnMut;
                         let r = Region::Var(self.regions.fresh());
                         let rt = Type::Ref(r, m, Box::new(t));
-                        (Arg::Borrow(recv, m, None, callee.span), rt)
+                        (Arg::Borrow(recv, m, None, callee.span, None), rt)
                     }
                 };
                 sig.params.insert(0, recv_ty);
@@ -549,7 +571,10 @@ impl<'a> Builder<'a> {
                     recv = recv.project(Proj::Deref);
                 }
                 let receiver = match autoref {
-                    Some(m) => Arg::Borrow(recv, m, None, x.span),
+                    Some(m) => {
+                        let text = (m && derefs == 0).then(|| crate::pretty::expr_text(x));
+                        Arg::Borrow(recv, m, None, x.span, text)
+                    }
                     None => {
                         let (o, t) = self.use_place(recv, x.span);
                         Arg::Value(o, t, x.span)
@@ -588,12 +613,12 @@ impl<'a> Builder<'a> {
                 self.block = join;
             }
             ExprKind::While(label, c, inv, body) => {
-                self.loop_into(label, Some(c), inv.as_deref(), body, None);
+                self.loop_into(label, Some(c), inv.as_deref(), body, None, span);
                 let unit = Rvalue::Use(Operand::Const(Const::Unit));
                 self.assign(dest, unit, &Type::Unit, span, false);
             }
             ExprKind::Loop(label, inv, body) => {
-                self.loop_into(label, None, inv.as_deref(), body, Some(dest))
+                self.loop_into(label, None, inv.as_deref(), body, Some(dest), span)
             }
             // The value goes where the function's result does, then
             // everything in scope goes away, the parameters too.
@@ -610,6 +635,8 @@ impl<'a> Builder<'a> {
                     ),
                 }
                 self.unwind(0, 0, span);
+                let at = value.as_ref().map_or(span, |v| v.span);
+                self.notes.returns.insert(self.block, (at, false));
                 self.diverge(Term::Return);
             }
             ExprKind::Break(label, value) => {
@@ -629,8 +656,9 @@ impl<'a> Builder<'a> {
             }
             ExprKind::Continue(label) => {
                 let lp = self.target(label);
-                let (head, scopes, temps) = (lp.head, lp.scopes, lp.temps);
+                let (head, scopes, temps, note) = (lp.head, lp.scopes, lp.temps, lp.note);
                 self.unwind(scopes, temps, span);
+                self.notes.loops[note].continues.insert(self.block, span);
                 self.diverge(Term::Goto(head));
             }
             // The value first, then the place, as in Rust.
@@ -644,6 +672,11 @@ impl<'a> Builder<'a> {
                     v = Operand::Move(Place::local(tmp));
                 }
                 let p = self.place(place);
+                let note = StmtNote::Assign {
+                    value: value.span,
+                    place: crate::pretty::expr_text(place),
+                };
+                self.notes.stmts.insert(self.point(), note);
                 match op {
                     Some(op) => {
                         let value = Rvalue::Binary(*op, Operand::Copy(p.clone()), v, e.id);
@@ -664,15 +697,19 @@ impl<'a> Builder<'a> {
                 self.regions.well_formed(self.adts(), self.info, &t, span);
                 let fields = struct_fields(self.adts(), &t).expect("a struct");
                 let mut ops: Vec<Option<Operand>> = vec![None; fields.len()];
+                let mut spans = vec![span; fields.len()];
                 for init in inits {
                     let i = fields.iter().position(|(f, _)| *f == init.name.name);
                     let i = i.expect("the checker found the field");
+                    spans[i] = init.value.span;
                     let (o, ot) = self.operand(&init.value);
                     self.regions
                         .subtype(self.info, &ot, &fields[i].1, init.value.span);
                     ops[i] = Some(o);
                 }
                 let ops = ops.into_iter().map(|o| o.expect("every field")).collect();
+                let note = StmtNote::Operands(spans, Vec::new());
+                self.notes.stmts.insert(self.point(), note);
                 self.assign(
                     dest,
                     Rvalue::Aggregate(Agg::Struct, t.erased(), ops),
@@ -709,6 +746,9 @@ impl<'a> Builder<'a> {
                     self.regions.subtype(self.info, &ot, f, a.span);
                     ops.push(o);
                 }
+                let spans = args.iter().map(|a| a.span).collect();
+                let note = StmtNote::Operands(spans, Vec::new());
+                self.notes.stmts.insert(self.point(), note);
                 self.assign(
                     dest,
                     Rvalue::Aggregate(Agg::Variant(i), t.erased(), ops),
@@ -864,14 +904,16 @@ impl<'a> Builder<'a> {
             let coerced = self.cx.typed().coerced.get(&a.id).copied();
             pending.push(match (&a.kind, coerced) {
                 (ExprKind::Unary(op @ (UnOp::Ref | UnOp::RefMut), x), _) => {
-                    Arg::Borrow(self.place(x), *op == UnOp::RefMut, coerced, a.span)
+                    let m = *op == UnOp::RefMut;
+                    let text = m.then(|| crate::pretty::expr_text(x));
+                    Arg::Borrow(self.place(x), m, coerced, a.span, text)
                 }
                 (_, Some((derefs, m))) => {
                     let mut p = self.place(a);
                     for _ in 0..=derefs {
                         p = p.project(Proj::Deref);
                     }
-                    Arg::Borrow(p, m, None, a.span)
+                    Arg::Borrow(p, m, None, a.span, None)
                 }
                 (_, None) => {
                     let (o, t) = self.operand(a);
@@ -880,12 +922,18 @@ impl<'a> Builder<'a> {
             });
         }
         let mut ops = Vec::new();
+        let mut spans = Vec::new();
         for (a, p) in pending.into_iter().zip(params.iter()) {
             let (o, t, at) = match a {
                 Arg::Value(o, t, at) => (o, t, at),
-                Arg::Borrow(place, m, coerced, at) => {
+                Arg::Borrow(place, m, coerced, at, text) => {
                     let (r, t) = self.borrow(&place, m, at);
                     let tmp = self.temp(t.clone(), at);
+                    if let Some(text) = text {
+                        self.notes
+                            .stmts
+                            .insert(self.point(), StmtNote::Borrow(text));
+                    }
                     self.assign(&Place::local(tmp), Rvalue::Ref(r, m, place), &t, at, false);
                     let (o, t) = match coerced {
                         Some((derefs, m)) => self.reborrow(&Place::local(tmp), derefs, m, at),
@@ -896,7 +944,14 @@ impl<'a> Builder<'a> {
             };
             self.regions.subtype(self.info, &t, p, at);
             ops.push(o);
+            spans.push(at);
         }
+        let texts = match &f {
+            Operand::Const(Const::Fn(..)) => Vec::new(),
+            _ => args.iter().map(crate::pretty::expr_text).collect(),
+        };
+        let note = StmtNote::Operands(spans, texts);
+        self.notes.stmts.insert(self.point(), note);
         self.assign(dest, Rvalue::Call(f, ops), &ret, span, false);
         // A function that returns a `!` never does.
         if ret == Type::Never {
@@ -913,9 +968,18 @@ impl<'a> Builder<'a> {
         inv: Option<&'a Expr>,
         body: &'a Expr,
         dest: Option<&Place>,
+        span: Span,
     ) {
         let (head, after) = (self.new_block(), self.new_block());
         self.body.heads.push(head);
+        let note = self.notes.loops.len();
+        self.notes.loops.push(LoopNote {
+            head,
+            span,
+            blocks: Vec::new(),
+            end: Span::new(body.span.end.saturating_sub(1), body.span.end),
+            continues: Default::default(),
+        });
         self.goto(head);
         self.block = head;
         if let Some(p) = inv {
@@ -934,6 +998,7 @@ impl<'a> Builder<'a> {
             dest: dest.cloned(),
             scopes: self.scopes.len(),
             temps: self.temps.len(),
+            note,
         });
         self.temps.push(Vec::new());
         let t = self.ty(body);
@@ -942,6 +1007,8 @@ impl<'a> Builder<'a> {
         self.end_temps(body.span);
         self.goto(head);
         self.loops.pop();
+        let inside = (after.0 + 1..self.body.blocks.len()).map(Bb);
+        self.notes.loops[note].blocks = std::iter::once(head).chain(inside).collect();
         self.block = after;
     }
 
@@ -1458,6 +1525,9 @@ impl<'a> Builder<'a> {
             }
             _ => {
                 let p = self.place(init);
+                if init.is_place() && self.binds_mut(pat) {
+                    self.notes.mut_bound.push(p.clone());
+                }
                 self.inspect(pat, &p);
                 self.declare(pat);
                 self.bind(pat, &p);
@@ -1471,6 +1541,9 @@ impl<'a> Builder<'a> {
     fn match_into(&mut self, scrutinee: &'a Expr, arms: &'a [Arm], dest: &Place, span: Span) {
         self.temps.push(Vec::new());
         let p = self.place(scrutinee);
+        if scrutinee.is_place() && arms.iter().any(|arm| self.binds_mut(&arm.pat)) {
+            self.notes.mut_bound.push(p.clone());
+        }
         for arm in arms {
             self.inspect(&arm.pat, &p);
         }
@@ -1621,6 +1694,7 @@ impl<'a> Builder<'a> {
         if let Some(t) = ann.and_then(|t| self.cx.written_type(t)) {
             self.body.locals[l.0].ty = self.regions.renumber(&t);
         }
+        self.notes.ids[l.0] = Some(id);
         self.vars.insert(id, l);
         self.scope().push(l);
         l
@@ -1631,10 +1705,13 @@ impl<'a> Builder<'a> {
     /// from it if they bind by reference. A value that isn't `Discard`,
     /// taken apart by value, is then used up (`consume`).
     fn bind(&mut self, p: &Pattern, place: &Place) {
+        let unpeeled = place.clone();
+        let peels = self.peels(p);
         let mut place = place.clone();
-        for _ in 0..self.peels(p) {
+        for _ in 0..peels {
             place = place.project(Proj::Deref);
         }
+        let around = |shape| (p.span, unpeeled.clone(), peels, shape);
         match &p.kind {
             PatternKind::Bind(..) => {
                 let typed = self.cx.typed();
@@ -1652,6 +1729,15 @@ impl<'a> Builder<'a> {
                     }
                     Some(m) => {
                         let (r, t) = self.borrow(&place, m, p.span);
+                        if m {
+                            let of_struct = (self.outer.last())
+                                .is_some_and(|(_, _, _, shape)| *shape == Shape::Fields);
+                            let note = StmtNote::BindMut {
+                                outer: self.outer.clone(),
+                                of_struct,
+                            };
+                            self.notes.stmts.insert(self.point(), note);
+                        }
                         self.assign(&dest, Rvalue::Ref(r, m, place), &t, p.span, true);
                     }
                 }
@@ -1659,23 +1745,33 @@ impl<'a> Builder<'a> {
             PatternKind::Variant(_, _, v, pats) => {
                 let t = self.place_ty(&place);
                 let i = variant_index(self.adts(), &t, &v.name);
+                self.outer.push(around(Shape::Variant));
                 for (j, q) in pats.iter().enumerate() {
                     self.bind(q, &place.project(Proj::Variant(i, j)));
                 }
+                self.outer.pop();
                 self.consume(&place, Some(i), p);
             }
             PatternKind::Struct(_, _, fields, _) => {
                 let t = self.place_ty(&place);
+                self.outer.push(around(Shape::Fields));
                 for fp in fields {
                     let j = field_index(self.adts(), &t, &fp.name.name);
                     self.bind(&fp.pat, &place.project(Proj::Field(j)));
                 }
+                self.outer.pop();
                 self.consume(&place, None, p);
             }
             PatternKind::Array(pats) | PatternKind::Tuple(pats) => {
+                let shape = match &p.kind {
+                    PatternKind::Array(_) => Shape::Array,
+                    _ => Shape::Fields,
+                };
+                self.outer.push(around(shape));
                 for (j, q) in pats.iter().enumerate() {
                     self.bind(q, &place.project(Proj::Field(j)));
                 }
+                self.outer.pop();
                 self.consume(&place, None, p);
             }
             // Whichever alternative matched binds the variables, and uses up
@@ -1687,11 +1783,13 @@ impl<'a> Builder<'a> {
                 let join = self.new_block();
                 let pats = alts.iter().map(|alt| self.pat(alt, &place)).collect();
                 self.terminate(Term::Match(place.clone(), pats, blocks.clone()));
+                self.outer.push(around(Shape::Or));
                 for (alt, b) in alts.iter().zip(blocks) {
                     self.block = b;
                     self.bind(alt, &place);
                     self.goto(join);
                 }
+                self.outer.pop();
                 self.block = join;
             }
             _ => {}
@@ -1773,6 +1871,25 @@ fn pred_names<'e>(e: &'e Expr, binder: &str, out: &mut Vec<&'e str>) {
     }
     for c in e.children() {
         pred_names(c, binder, out);
+    }
+}
+
+impl Builder<'_> {
+    /// Does pattern `p` bind a variable by `&mut` (match ergonomics)?
+    fn binds_mut(&self, p: &Pattern) -> bool {
+        let typed = self.cx.typed();
+        match &p.kind {
+            PatternKind::Bind(..) => {
+                let id = typed.sites.get(&p.id);
+                id.and_then(|id| typed.binds.get(id)?.by_ref) == Some(true)
+            }
+            PatternKind::Variant(.., pats)
+            | PatternKind::Tuple(pats)
+            | PatternKind::Array(pats)
+            | PatternKind::Or(pats) => pats.iter().any(|q| self.binds_mut(q)),
+            PatternKind::Struct(_, _, fields, _) => fields.iter().any(|f| self.binds_mut(&f.pat)),
+            _ => false,
+        }
     }
 }
 

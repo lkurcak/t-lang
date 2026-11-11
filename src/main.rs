@@ -98,6 +98,24 @@ fn print_out(s: &str) {
 }
 
 fn main() -> ExitCode {
+    let code = run();
+    // With `T_LANG_REFINE=compare`, where the refinement checker's walk over
+    // MIR found something else than the one over the AST did
+    // (docs/65-refinements-on-mir.md).
+    let differences = t_lang::check::differences();
+    for d in &differences {
+        eprintln!(
+            "t: the refinement walks differ ({:?}) in `{}`: {}",
+            d.kind, d.function, d.what
+        );
+    }
+    match differences.is_empty() {
+        true => code,
+        false => ExitCode::from(3),
+    }
+}
+
+fn run() -> ExitCode {
     let (args, program_args) = split_args(std::env::args_os().skip(1).collect());
     if let [flag] = args.as_slice() {
         match flag.as_str() {

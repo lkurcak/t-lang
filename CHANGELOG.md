@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.79.2 (2026-11-11)
+
+Step 65: refinements on MIR, beside the walk over the AST. No program is
+accepted or refused that wasn't before: the walk over the AST is still the
+one that counts. See
+[docs/65-refinements-on-mir.md](docs/65-refinements-on-mir.md).
+
+### Added
+
+- A refinement checker on MIR: the same rules, proved by the same
+  procedure, over the MIR the borrow checker built rather than the AST.
+  `T_LANG_REFINE=mir` makes it the one that counts, and
+  `T_LANG_REFINE=compare` runs both on every body and reports where they
+  differ (exit status 3). Both are for developing `t`, and go in step 66,
+  when the one on MIR becomes the only one.
+- `tests/refine_mir.rs`: every program in `tests/t` and `examples`, and the
+  libraries, checked with both, which must find the same errors (messages,
+  places and notes), prove the same operators and work out the same
+  consts' values.
+
 ## 0.79.1 (2026-11-10)
 
 Step 64: types, borrows, then proofs and effects. No program is accepted
