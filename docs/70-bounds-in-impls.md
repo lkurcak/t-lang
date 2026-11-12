@@ -214,11 +214,16 @@ unsound; each breaking one is refused; each fitting one runs, but where
 the position is refused whatever it's given. On 0.84.0, three broke: the
 stronger impl, for an equality, an associated effect and a closure.
 
-Each new rule switched off in turn makes a test fail: comparing
-equalities (the family, `err_soundness_impl_method_item.t`, `.._closure_effect.t`),
-comparing effect bounds (the family, `.._assoc_effect.t`, and through a
-dependency, `err_soundness_impl_method_dependency`), and the const kind
-(`err_impl_method_const_param.t`).
+Each rule of this step switched off in turn makes a test fail, all
+seven: comparing equalities (the family, `err_soundness_impl_method_item.t`,
+`err_soundness_impl_method_closure_effect.t`), comparing effect bounds
+(the family, `err_soundness_impl_method_assoc_effect.t`, and through a
+dependency, `err_soundness_impl_method_dependency`), the const kind
+(`err_impl_method_const_param.t`), ordering bounds before naming their
+lifetimes (`impl_method_same_bounds.t`, a `where` clause written in
+another order), noting a path's type parameter (the golden tests'
+renaming), the comma before `;` (`tests/fmt.rs`), and the scrutinee a
+match keeps (`refine_let_else_index.t`).
 
 ## What it doesn't do
 
