@@ -22,6 +22,10 @@ trait's method; it's refused now.
   parameter, or the other way round, is refused for that, not for the
   types its parameters make, with the trait's renamed to the impl's
   ("should be `[N; T]`").
+- Renaming a type parameter in an editor missed it in a path through it,
+  `X::f(..)`, which then named nothing.
+- `t fmt` wrote a comma before the `;` of a trait's method whose `where`
+  clause went on lines of its own.
 
 ### Changed
 

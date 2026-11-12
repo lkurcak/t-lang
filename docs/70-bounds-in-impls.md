@@ -162,6 +162,17 @@ step 69 every place's value stays what it was read as until it's changed,
 which it can't be between the match and its bindings: switching it off
 changed no test then (M12 of docs/69-loans.md), and it's gone.
 
+## Found along the way
+
+The first program in the tests to call a trait's method through a type
+parameter, `X::run(..)`, showed that renaming `X` in an editor left that
+`X` as it was: a path's first segment was noted only when it named a
+struct or an enum. It's noted when it names a type parameter too.
+
+And `t fmt` ended a trait's method whose `where` clause went on lines of
+its own with `,;`: the comma rustfmt puts after the last bound before a
+body's `{` was put before the declaration's `;` too. It isn't now.
+
 ## Why it's sound
 
 - **Lemma I1 (a call through a trait).** Code generic in `X: Tr` calls
