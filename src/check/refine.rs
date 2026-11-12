@@ -2253,7 +2253,6 @@ impl Checker {
             invalidated: Vec::new(),
             errors: Vec::new(),
             slots: HashMap::new(),
-            pinned: Vec::new(),
             deferred: HashMap::new(),
             known: None,
             dead: HashSet::new(),
@@ -2798,9 +2797,6 @@ struct Walk<'c> {
     /// On MIR, the value of each local that's no variable's, a
     /// temporary's or the result's, here (`mir::Slot`).
     slots: HashMap<crate::mir::Local, mir::Slot>,
-    /// On MIR, the scrutinees whose values the patterns being bound take
-    /// apart, as they were matched (`Walk::locate`).
-    pinned: Vec<(crate::mir::Place, Val)>,
     /// On MIR, the closures made into locals for a call to give to a
     /// function, walked at the call (`Walk::mir_call`): by local, the
     /// lambda's node and the closure's type.

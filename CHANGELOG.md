@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+Step 70: an impl's bounds are its trait's. See
+[docs/70-bounds-in-impls.md](docs/70-bounds-in-impls.md). Retrospective 8
+found an impl's method could say more of its type parameters than its
+trait's method; it's refused now.
+
+### Fixed
+
+- **Bounds of an impl's method** (since 0.7.0): an impl's method could
+  say what an associated type is, `I: Iterator<Item = u8>`, where its
+  trait's method didn't, and its body counted on it, but a call through
+  the trait never showed it: given `Chars`, it read each `char` as a
+  `u8`. So could a closure's effects, `F: FnMut() -> u8 with {}` where
+  the trait's said `with g` (since 0.8.0), and a bound on an associated
+  effect, `I: Iterator<e = {}>` (since 0.83.0): a method saying `with {}`
+  could panic. An impl's method's bounds are its trait's now, each part,
+  up to names.
+- An impl's method with a const parameter where its trait's has a type
+  parameter, or the other way round, is refused for that, not for the
+  types its parameters make, with the trait's renamed to the impl's
+  ("should be `[N; T]`").
+
+### Changed
+
+- Tests: `tests/generated_bounds.rs` builds the products of bound kinds
+  (trait, equality, associated effect, closure's effects), positions (a
+  function's, a trait's method's, an impl's method's stronger or weaker,
+  an impl's `where`, an opaque result's, a function pointer, a closure)
+  and arguments that break or meet them, and runs each it accepts; 3 of
+  64 broke on 0.84.0.
+- The refinement checker no longer keeps a `match`'s scrutinee for its
+  bindings: since 0.84.0 nothing can change it in between.
+
 ## 0.84.0 (2026-11-12)
 
 Step 69: what a loan forgets. See [docs/69-loans.md](docs/69-loans.md).

@@ -671,7 +671,22 @@ impl Checker {
             }
             self.type_expr_notes(&f.ret, params);
             self.effect_notes(f.effects.as_ref(), params);
-            each_annotation(&f.body, &mut |t| self.type_expr_notes(t, params));
+            let mut heads = Vec::new();
+            each_annotation(
+                &f.body,
+                &mut |t| self.type_expr_notes(t, params),
+                &mut heads,
+            );
+            // `X::f(..)`, a path through type parameter `X`: a struct's or
+            // an enum's name is noted where it's instantiated.
+            for head in heads {
+                if self.adt_symbol(head.id).is_none()
+                    && let Some(p) = params.iter().find(|p| p.name == head.name)
+                {
+                    let kind = NoteKind::TypeParam(head.name.clone());
+                    self.note(head.span, kind, None, Some(p.span));
+                }
+            }
         }
         for t in &prog.traits[from.traits..] {
             let kind = NoteKind::Trait(t.name.name.clone());
@@ -856,9 +871,10 @@ fn names(params: &[Ident]) -> crate::types::Params {
 }
 
 /// Calls `f` on every type written inside `e`: annotations on `let`s and
-/// closures, and type arguments, in expressions and in patterns. Not in
-/// the functions nested in it.
-fn each_annotation(e: &Expr, f: &mut impl FnMut(&TypeExpr)) {
+/// closures, and type arguments, in expressions and in patterns; and puts
+/// in `heads` the first segment of each path, `X` of `X::f(..)`, which may
+/// be a type parameter's name. Not in the functions nested in it.
+fn each_annotation<'e>(e: &'e Expr, f: &mut impl FnMut(&TypeExpr), heads: &mut Vec<&'e Ident>) {
     match &e.kind {
         ExprKind::For(_)
         | ExprKind::IfLet(..)
@@ -878,38 +894,40 @@ fn each_annotation(e: &Expr, f: &mut impl FnMut(&TypeExpr)) {
         | ExprKind::Continue(_) => {}
         ExprKind::Var(_, targs) => targs.iter().for_each(&mut *f),
         ExprKind::Array(items) | ExprKind::Tuple(items) => {
-            items.iter().for_each(|x| each_annotation(x, f))
+            items.iter().for_each(|x| each_annotation(x, f, heads))
         }
         ExprKind::Repeat(v, n) => {
-            each_annotation(v, f);
-            each_annotation(n, f);
+            each_annotation(v, f, heads);
+            each_annotation(n, f, heads);
         }
         ExprKind::As(x, t) => {
-            each_annotation(x, f);
+            each_annotation(x, f, heads);
             f(t);
         }
         ExprKind::Unary(_, x)
         | ExprKind::Field(x, _)
         | ExprKind::Loop(_, _, x)
-        | ExprKind::Unsafe(x) => each_annotation(x, f),
-        ExprKind::Return(x) | ExprKind::Break(_, x) => x.iter().for_each(|x| each_annotation(x, f)),
+        | ExprKind::Unsafe(x) => each_annotation(x, f, heads),
+        ExprKind::Return(x) | ExprKind::Break(_, x) => {
+            x.iter().for_each(|x| each_annotation(x, f, heads))
+        }
         ExprKind::Binary(_, l, r) | ExprKind::Assign(_, l, r) | ExprKind::While(_, l, _, r) => {
-            each_annotation(l, f);
-            each_annotation(r, f);
+            each_annotation(l, f, heads);
+            each_annotation(r, f, heads);
         }
         ExprKind::Call(callee, args) => {
-            each_annotation(callee, f);
-            args.iter().for_each(|a| each_annotation(a, f));
+            each_annotation(callee, f, heads);
+            args.iter().for_each(|a| each_annotation(a, f, heads));
         }
         ExprKind::MethodCall(x, _, targs, args) => {
-            each_annotation(x, f);
+            each_annotation(x, f, heads);
             targs.iter().for_each(&mut *f);
-            args.iter().for_each(|a| each_annotation(a, f));
+            args.iter().for_each(|a| each_annotation(a, f, heads));
         }
         ExprKind::If(c, then, els) => {
-            each_annotation(c, f);
-            each_annotation(then, f);
-            els.iter().for_each(|e| each_annotation(e, f));
+            each_annotation(c, f, heads);
+            each_annotation(then, f, heads);
+            els.iter().for_each(|e| each_annotation(e, f, heads));
         }
         ExprKind::Block(stmts, tail) => {
             for stmt in stmts {
@@ -919,29 +937,32 @@ fn each_annotation(e: &Expr, f: &mut impl FnMut(&TypeExpr)) {
                         if let Some(t) = ty {
                             f(t);
                         }
-                        init.iter().for_each(|e| each_annotation(e, f));
+                        init.iter().for_each(|e| each_annotation(e, f, heads));
                     }
-                    Stmt::Expr(e) | Stmt::BlockLike(e) => each_annotation(e, f),
+                    Stmt::Expr(e) | Stmt::BlockLike(e) => each_annotation(e, f, heads),
                     // A function or type of its own, with its own type
                     // parameters.
                     Stmt::Fn(_) | Stmt::Type(_) => {}
                 }
             }
-            tail.iter().for_each(|t| each_annotation(t, f));
+            tail.iter().for_each(|t| each_annotation(t, f, heads));
         }
         ExprKind::StructLit(_, targs, inits) => {
             targs.iter().for_each(&mut *f);
-            inits.iter().for_each(|i| each_annotation(&i.value, f));
+            inits
+                .iter()
+                .for_each(|i| each_annotation(&i.value, f, heads));
         }
-        ExprKind::Variant(_, targs, _, args, ..) => {
+        ExprKind::Variant(head, targs, _, args, ..) => {
+            heads.push(head);
             targs.iter().for_each(&mut *f);
-            args.iter().for_each(|a| each_annotation(a, f));
+            args.iter().for_each(|a| each_annotation(a, f, heads));
         }
         ExprKind::Match(scrutinee, arms) => {
-            each_annotation(scrutinee, f);
+            each_annotation(scrutinee, f, heads);
             for arm in arms {
                 pattern_annotations(&arm.pat, f);
-                each_annotation(&arm.body, f);
+                each_annotation(&arm.body, f, heads);
             }
         }
         ExprKind::Lambda(l) => {
@@ -953,7 +974,7 @@ fn each_annotation(e: &Expr, f: &mut impl FnMut(&TypeExpr)) {
             if let Some(t) = &l.ret {
                 f(t);
             }
-            each_annotation(&l.body, f);
+            each_annotation(&l.body, f, heads);
         }
     }
 }
