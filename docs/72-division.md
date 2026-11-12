@@ -80,11 +80,9 @@ are the mathematical ones (docs/08-refinement-types.md), so its `/` never
 overflows, even of the least `i64` by -1.
 
 ```rust
-fn seven(a: { v: i64 | v == -7 }) -> {
-    r: i64 | r / 2 == -3 && r % 2 == -1 && r / -2 == 3 && r % -2 == -1
-} {
-    a
-}
+fn seven(
+    a: { v: i64 | v == -7 },
+) -> { r: i64 | r / 2 == -3 && r % 2 == -1 && r / -2 == 3 && r % -2 == -1 } { a }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;

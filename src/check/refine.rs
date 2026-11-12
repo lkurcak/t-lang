@@ -2833,8 +2833,11 @@ struct Walk<'c> {
     /// a `usize` the caller picks, the same all through.
     consts: HashMap<String, Val>,
     /// What's true everywhere in the function, of the variables of
-    /// `size` and `bounds`, which no path forgets, as those are made once,
-    /// on whichever path first needs them.
+    /// `size`, `bounds` and `quotients`, which no path forgets, as those
+    /// are made once, on whichever path first needs them; and that a
+    /// character's value is a scalar value. Only what holds in every state
+    /// may be one: what defines a new variable (lemma Q2 of
+    /// docs/72-division.md), or what holds of a value whatever the path.
     laws: Vec<Formula>,
     /// The variable for the quotient of each sum by each constant greater
     /// than 1, whose law (`truncated`) is in `laws` (`Walk::divide`).

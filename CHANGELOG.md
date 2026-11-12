@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.87.0 (2026-11-12)
 
 Step 72: dividing by a constant. See
 [docs/72-division.md](docs/72-division.md).
