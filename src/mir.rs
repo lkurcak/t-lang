@@ -104,9 +104,6 @@ pub(crate) struct Notes {
     /// whether it's the end of the body, rather than a `return`.
     pub(crate) returns: std::collections::HashMap<Bb, (Span, bool)>,
     pub(crate) loops: Vec<LoopNote>,
-    /// The places patterns that bind something by `&mut` take apart: each
-    /// `match`'s scrutinee, or `let`'s value, that's a place.
-    pub(crate) mut_bound: Vec<Place>,
     /// By statement, what messages about it say.
     pub(crate) stmts: std::collections::HashMap<Point, StmtNote>,
     /// By statement, the places whose values may be dropped there, as drop

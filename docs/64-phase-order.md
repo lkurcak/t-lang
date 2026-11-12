@@ -234,7 +234,9 @@ A refused program is refused, maybe for another of its errors.
   for refinements to use yet. A closure that captures a variable by
   `&mut` still makes the variable unknown to the refinement checker for
   the whole function (`unstable`), rather than until the closure's borrow
-  ends.
+  ends. (Since step 69 it's forgotten where it's captured, which, as the
+  borrow checker lets nothing touch it until the borrow ends, comes to
+  the same: docs/69-loans.md.)
 
 ## Exercises
 

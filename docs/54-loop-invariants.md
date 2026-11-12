@@ -208,7 +208,8 @@ fn f(n: usize) with alloc {
   state the checker's facts describe if the head's did. They do by
   induction on how many times round the loop has been: at the head every
   place the loop may change (assigned, lent `&mut`, or captured by a
-  closure, as `Walk::assigned` and `Walk::unstable_in` find) is a new
+  closure, as `Walk::assigned` and `Walk::unstable_in` find; since step
+  69, each a loan made in the loop, docs/69-loans.md) is a new
   value, so the head's facts are of any iteration's values: the
   refinements of their types, the frame (lemma F1 of
   docs/52-loop-frames.md), which holds of every iteration, and `p`, by

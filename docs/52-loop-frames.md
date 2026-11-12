@@ -125,7 +125,10 @@ equals what it was before the loop.
   other change to `p`, nor to a place around it or inside it, and `p` is
   stable (`Walk::unstable_in`): no closure captures it and no `&mut` of
   it outlives where it's made, so nothing changes it except where the
-  body says. Each such call left `m` as it was, by what the callee
+  body says. (Since step 69 nothing is "unstable": a closure's capture
+  is a loan made in the body, or one the borrow checker lets end before
+  the loop touches `p`, docs/69-loans.md.) Each such call left `m` as it
+  was, by what the callee
   proved at its return (step 30) and the check above, which holds for
   whatever the other arguments were. So `m` is what it was before the
   loop.
