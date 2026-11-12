@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.85.0 (2026-11-12)
 
 Step 70: an impl's bounds are its trait's. See
 [docs/70-bounds-in-impls.md](docs/70-bounds-in-impls.md). Retrospective 8
