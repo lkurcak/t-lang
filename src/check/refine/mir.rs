@@ -788,14 +788,25 @@ impl Walk<'_> {
                 widen(self, &r);
                 self.bind(id, Some(r));
             }
-            // A `&` to a value known, a variant's field.
-            (false, Loc::Val(v, _)) if !matches!(v, Val::Other) => {
+            // A `&` to a value at no place, a variant's or an array's
+            // element's: what's written through it (in a `Cell`) must be
+            // what's declared there, as for a `&mut` (lemma C1 of
+            // docs/68-fail-closed.md).
+            (false, Loc::Val(v, _)) => {
+                let (_, decl, _) = self.lvalue_mir(fr, q);
                 let o = self.new_obj();
-                let r = Val::Ref(o, Pointee::Val(Box::new(v)));
+                let tree = targs::under(&decl, 0);
+                if !tree.is_empty() {
+                    self.trees.insert(o, tree);
+                }
+                let to = match v {
+                    Val::Other => Pointee::Unknown,
+                    v => Pointee::Val(Box::new(v)),
+                };
+                let r = Val::Ref(o, to);
                 widen(self, &r);
                 self.bind(id, Some(r));
             }
-            _ => self.bind(id, None),
         }
         Ok(())
     }

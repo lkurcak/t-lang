@@ -24,6 +24,7 @@
 
 use super::*;
 use crate::borrowck::regions::Variance;
+use crate::traits::{COPY, DISCARD, SEND, SYNC};
 use std::rc::Rc;
 
 /// A position in a type: which of the types in it a refinement can be in
@@ -191,12 +192,28 @@ pub(super) struct Inst {
     at: Vec<(Pos, Vec<Case>)>,
     /// Why nothing's known of it: a bound that can make one.
     any: Option<String>,
+    /// Why nothing's known of it at the positions where the type it's
+    /// given is invariant (behind a `&mut`, in an `Unsafe`): a bound whose
+    /// methods take it and give none back, but can write there (lemma A5
+    /// of docs/68-fail-closed.md); and those positions.
+    changed: Option<(String, Vec<Pos>)>,
 }
 
 impl Inst {
+    /// Why nothing's known of it at position `pos`, if nothing is.
+    fn unknown_at(&self, pos: &[usize]) -> Option<&String> {
+        if let Some(why) = &self.any {
+            return Some(why);
+        }
+        match &self.changed {
+            Some((why, inv)) if inv.iter().any(|p| pos.starts_with(p)) => Some(why),
+            _ => None,
+        }
+    }
+
     /// What it says of position `pos`.
     fn disj(&self, pos: &[usize]) -> Disj {
-        if self.any.is_some() {
+        if self.unknown_at(pos).is_some() {
             return Disj::any();
         }
         match self.at.iter().find(|(p, _)| p == pos) {
@@ -217,6 +234,7 @@ impl Inst {
         }
         self.at
             .iter()
+            .filter(|(p, _)| self.unknown_at(p).is_none())
             .map(|(p, _)| (p.clone(), self.disj(p)))
             .collect()
     }
@@ -239,7 +257,7 @@ struct Behind {
 /// `Self`, nor change one (lemma A5). Not `Int`, whose literals make values,
 /// nor `Atom`, which `Volatile::at` reads from an address.
 pub(super) fn consumer(traits: &crate::traits::Traits, name: &str, seen: &mut Vec<String>) -> bool {
-    use crate::traits::{COPY, DISCARD, FN_TRAITS, INT, SEND, SIGNED, SYNC, UNSIGNED};
+    use crate::traits::{FN_TRAITS, INT, SIGNED, UNSIGNED};
     if [COPY, DISCARD, SEND, SYNC].contains(&name) {
         return true;
     }
@@ -332,6 +350,18 @@ impl Walk<'_> {
             ty = next;
         }
         Some((ty, v))
+    }
+
+    /// Every position of `t` where it's invariant: behind a `&mut`, in an
+    /// `Unsafe`.
+    pub(super) fn inv_positions(&mut self, t: &Type) -> Vec<Pos> {
+        let mut out = Vec::new();
+        for p in self.positions(t) {
+            if let Some((_, Variance::Inv)) = self.type_at(t, &p) {
+                out.push(p);
+            }
+        }
+        out
     }
 
     /// Every position of `t` but the whole value's. A type is a finite
@@ -1179,8 +1209,8 @@ pub(super) fn widen(tree: &Tree) -> Tree {
 /// so `T: Iterator`, of a `T` that's an `Iter<'_, U>`, keeps what's said of
 /// its `U`s, and what `<T as Iterator>::Item` is says what it gives
 /// (`Walk::subst_tree`).
-fn parametric_impl(traits: &crate::traits::Traits, t: &Type, tr: &str) -> bool {
-    parametric_impl_depth(traits, t, tr, 0)
+fn parametric_impl(cx: &Checker, t: &Type, tr: &str) -> bool {
+    parametric_impl_depth(cx, t, tr, 0)
 }
 
 /// `parametric_impl`, as deep as `depth`: a bound of the impl's on one of
@@ -1188,7 +1218,8 @@ fn parametric_impl(traits: &crate::traits::Traits, t: &Type, tr: &str) -> bool {
 /// what the parameter is there is parametric too (`Rev<I>`'s `I:
 /// DoubleEndedIterator`, of an `Iter<'_, T>`): its methods can make no more
 /// than code generic in the parameter can, so neither can these.
-fn parametric_impl_depth(traits: &crate::traits::Traits, t: &Type, tr: &str, depth: usize) -> bool {
+fn parametric_impl_depth(cx: &Checker, t: &Type, tr: &str, depth: usize) -> bool {
+    let traits = &cx.traits;
     let Some((i, impl_args)) = traits.select(t, Some(tr), &[]) else {
         return false;
     };
@@ -1215,15 +1246,20 @@ fn parametric_impl_depth(traits: &crate::traits::Traits, t: &Type, tr: &str, dep
                 || consumer(traits, &p.trait_name, &mut Vec::new())
                 || crate::traits::FN_TRAITS.contains(&p.trait_name.as_str());
         };
-        if !seen.contains(&q.as_str()) || consumer(traits, &p.trait_name, &mut Vec::new()) {
-            return true;
-        }
         let arg = names
             .iter()
             .position(|n| n == q)
             .and_then(|k| impl_args.get(k));
-        depth < DEPTH
-            && arg.is_some_and(|a| parametric_impl_depth(traits, a, &p.trait_name, depth + 1))
+        if !seen.contains(&q.as_str()) {
+            return true;
+        }
+        // A consumer can't make one, but can change what's inside one
+        // where it's invariant (`changes`).
+        if consumer(traits, &p.trait_name, &mut Vec::new()) {
+            let marker = [COPY, DISCARD, SEND, SYNC].contains(&p.trait_name.as_str());
+            return marker || arg.is_some_and(|a| !writable_inside(cx, a));
+        }
+        depth < DEPTH && arg.is_some_and(|a| parametric_impl_depth(cx, a, &p.trait_name, depth + 1))
     }) && def.eqs.iter().all(|(a, b)| {
         let mentions = |t: &Type| seen.iter().any(|q| free::mentions(t, q));
         matches!(a, Type::Proj(base, ..) if !matches!(**base, Type::Param(..)))
@@ -1231,20 +1267,79 @@ fn parametric_impl_depth(traits: &crate::traits::Traits, t: &Type, tr: &str, dep
     })
 }
 
+/// Why a type parameter's values may be changed where the type it's given
+/// is invariant inside, which a call can't follow: a bound on it, or on a
+/// type it's in, by a consumer that isn't a marker. A consumer's method
+/// gives back no value of it, but an impl of it for a `&mut` can write
+/// through it, and one for a `Cell` can set it (lemma A5 of
+/// docs/68-fail-closed.md). `None` if there's none.
+pub(super) fn changes(
+    traits: &crate::traits::Traits,
+    s: &crate::types::Scheme,
+    x: &str,
+) -> Option<String> {
+    for p in &s.preds {
+        if !free::mentions(&p.ty, x) || [COPY, DISCARD, SEND, SYNC].contains(&p.trait_name.as_str())
+        {
+            continue;
+        }
+        if consumer(traits, &p.trait_name, &mut Vec::new()) {
+            let name = traits.shorten(&p.trait_name);
+            return Some(format!("`{}: {name}`", p.ty));
+        }
+    }
+    None
+}
+
+/// Can something be written at a position inside a value of type `t`: is
+/// `t` invariant in one of its positions, as behind a `&mut` or in an
+/// `Unsafe`? A type parameter, an opaque type or a projection may be
+/// anything, so yes.
+pub(super) fn writable_inside(cx: &Checker, t: &Type) -> bool {
+    fn go(cx: &Checker, t: &Type, depth: usize) -> bool {
+        if depth > DEPTH {
+            return true;
+        }
+        match t {
+            Type::Ref(_, true, _) => true,
+            Type::Ref(_, false, inner)
+            | Type::Box(inner)
+            | Type::Slice(inner)
+            | Type::Array(inner, _) => go(cx, &cx.solved(inner), depth + 1),
+            Type::Tuple(ts) => ts.iter().any(|u| go(cx, &cx.solved(u), depth + 1)),
+            Type::Adt(symbol, lts, args) => {
+                let info = cx.adt_info();
+                let vs = info.variances(symbol).map(<[Variance]>::to_vec);
+                args.iter().enumerate().any(|(k, a)| {
+                    match vs.as_ref().and_then(|vs| vs.get(lts.len() + k)) {
+                        Some(Variance::Co) => go(cx, &cx.solved(a), depth + 1),
+                        Some(Variance::Contra | Variance::Bi) => false,
+                        Some(Variance::Inv) | None => true,
+                    }
+                })
+            }
+            Type::Param(..) | Type::Opaque(..) | Type::Proj(..) | Type::Var(_) => true,
+            _ => false,
+        }
+    }
+    go(cx, t, 0)
+}
+
 /// Where a type parameter's values come from that a call can't follow: a
 /// bound on it that makes values (`consumer`), or another that might,
 /// or a closure's result. `None` if there's none (lemma A2).
 pub(super) fn makes(
-    traits: &crate::traits::Traits,
+    cx: &Checker,
     s: &crate::types::Scheme,
     x: &str,
     ty: Option<&Type>,
 ) -> Option<String> {
+    let traits = &cx.traits;
     let this = s.params.ty(x);
     for p in &s.preds {
         if p.ty == this {
             if !consumer(traits, &p.trait_name, &mut Vec::new())
-                && !ty.is_some_and(|t| parametric_impl(traits, t, &p.trait_name))
+                && !ty.is_some_and(|t| parametric_impl(cx, t, &p.trait_name))
             {
                 let name = traits.shorten(&p.trait_name);
                 return Some(format!("`{x}: {name}`"));
@@ -1356,9 +1451,11 @@ impl Walk<'_> {
         let ty = self.cx.solved(&targs.apply(&s.params.ty(x)));
         let mut all = vec![Vec::new()];
         all.extend(self.positions(&ty));
+        let changed = changes(&self.cx.traits, s, x).map(|why| (why, self.inv_positions(&ty)));
         let mut inst = Inst {
             at: all.iter().map(|p| (p.clone(), Vec::new())).collect(),
-            any: makes(&self.cx.traits, s, x, Some(&ty)),
+            any: makes(self.cx, s, x, Some(&ty)),
+            changed,
         };
         let push = |inst: &mut Inst, pos: &[usize], c: (Source, Vec<Formula>, Cand)| {
             if let Some((_, cases)) = inst.at.iter_mut().find(|(p, _)| p == pos) {
@@ -1766,7 +1863,7 @@ impl Walk<'_> {
                         "can't prove `{text}` of what `{fname}` may write behind argument `{}`",
                         pname(b.arg)
                     );
-                    if let Some(why) = &inst.any {
+                    if let Some(why) = inst.unknown_at(pos) {
                         self.failed(Error::ty(
                             span,
                             format!("{behind_msg}: {why} can make or change a value of it"),
@@ -2279,17 +2376,36 @@ impl Walk<'_> {
                     continue;
                 }
                 let arg = impl_args.get(k).cloned();
-                if makes(&self.cx.traits, &as_scheme, p, arg.as_ref()).is_some() {
+                if makes(self.cx, &as_scheme, p, arg.as_ref()).is_some() {
                     unsaid.push(p.clone());
                     continue;
                 }
+                // What the impl's bounds can change inside it (`changes`),
+                // and what the call's could.
+                let own = match (changes(&self.cx.traits, &as_scheme, p), &arg) {
+                    (Some(why), Some(a)) => Some((why, self.inv_positions(a))),
+                    _ => None,
+                };
                 let (occ, _) = self.occurrences(&def.self_ty, p);
                 let mut each = (occ.into_iter()).map(|(sigma, _)| {
                     let at: Vec<(Pos, Vec<Case>)> = (inst.at.iter())
                         .filter(|(q, _)| q.starts_with(&sigma))
                         .map(|(q, c)| (q[sigma.len()..].to_vec(), c.clone()))
                         .collect();
-                    Inst { at, any: None }
+                    let mut changed = own.clone();
+                    if let Some((why, inv)) = &inst.changed {
+                        let (_, mine) = changed.get_or_insert_with(|| (why.clone(), Vec::new()));
+                        mine.extend(
+                            (inv.iter())
+                                .filter(|q| q.starts_with(&sigma))
+                                .map(|q| q[sigma.len()..].to_vec()),
+                        );
+                    }
+                    Inst {
+                        at,
+                        any: None,
+                        changed,
+                    }
                 });
                 let Some(first) = each.next() else {
                     unsaid.push(p.clone());
