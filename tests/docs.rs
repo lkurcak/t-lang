@@ -2,7 +2,10 @@
 //! must parse and be formatted as `t fmt` would, and a whole program (one
 //! with a `fn main`) must check and run, doing what its comments say, as in
 //! `tests/t` (`// expect:`, `// error:`, `// warning:`; see
-//! `shared/expect.rs`).
+//! `shared/expect.rs`). A block of items with no `fn main` must check, with
+//! an empty one added: it's part of a program, so that its items aren't
+//! used is no warning, but any other must be in a `// warning:` comment.
+//! It isn't run, as there's nothing to run.
 //!
 //! Words after `rust`, separated by commas, say what else a block is.
 //! GitHub only reads the first word, so they don't change how it shows.
@@ -15,6 +18,9 @@
 //!   it has none, so a lone function can show its error.
 //! - `unformatted`: laid out other than as `t fmt` would, on purpose, such
 //!   as the input in docs/fmt.md.
+//! - `module`: the items of a module's file, which name what's in the
+//!   modules around it (`super::Point`): not checked, as those aren't
+//!   there.
 //!
 //! Blocks in other languages, such as ```` ```text ````, aren't checked.
 
@@ -23,9 +29,10 @@ mod expect;
 
 use std::fs;
 use std::path::Path;
+use t_lang::error::{Lint, Warning};
 use t_lang::fmt::format;
 
-const MARKERS: [&str; 3] = ["fragment", "error", "unformatted"];
+const MARKERS: [&str; 4] = ["fragment", "error", "unformatted", "module"];
 
 struct Block {
     /// `docs/fmt.md:7`: where its opening fence is.
@@ -168,8 +175,34 @@ fn check(block: &Block) -> Result<(), String> {
         expect::check(&block.path, &src)
     } else if has_main && !fragment {
         expect::check(&block.path, &src)
-    } else {
+    } else if fragment || block.is("module") {
         Ok(())
+    } else {
+        items(&block.path, &src)
+    }
+}
+
+/// Checks `src`, a block of items with no `fn main`, at `path`, as a
+/// program with an empty one after them.
+fn items(path: &str, src: &str) -> Result<(), String> {
+    let src = format!("{src}\nfn main() {{}}\n");
+    let checked = t_lang::check_files(Path::new(path), &src, &t_lang::no_files);
+    if let Err(e) = &checked.result {
+        return Err(format!("doesn't check\n{}", e.render_in(&checked.sources)));
+    }
+    let warnings: Vec<Warning> = (checked.warnings.into_iter())
+        .filter(|w| w.lint != Lint::DeadCode)
+        .collect();
+    let said = Warning::render_all_in(&warnings, &checked.sources);
+    let want = expect::Expectations::of(&src).warnings;
+    let matches = said.len() == want.len()
+        && (said.iter().zip(&want)).all(|(w, want)| expect::without_source(w).contains(want));
+    match matches {
+        true => Ok(()),
+        false => Err(format!(
+            "expected warnings {want:?}, got\n{}",
+            said.join("\n\n")
+        )),
     }
 }
 

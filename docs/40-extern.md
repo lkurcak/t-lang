@@ -149,7 +149,7 @@ fn uart() -> &'static Volatile<u8> {
 }
 
 fn put(s: &str) {
-    for b in s.as_bytes() { uart().write(*b) }
+    for b in s.as_bytes().iter() { uart().write(*b) }
 }
 ```
 

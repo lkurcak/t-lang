@@ -1,5 +1,6 @@
 // Escapes: each means one thing. `\u{..}` is a character, written as
-// UTF-8; `\x..` is a byte, only in byte literals.
+// UTF-8; `\x..` is a byte, any in byte literals, and only ASCII, a
+// character of its own, in strings and characters.
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line("tab:\tend")?; // expect: tab:	end
@@ -13,6 +14,10 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&b'\n')?; // expect: 10
     out.line(&('\u{1F600}' as u32))?; // expect: 128512
     out.line(&('\'' as u32))?; // expect: 39
+    out.line("\x41\x7e")?; // expect: A~
+    out.line(&"\x00\x7F".len())?; // expect: 2
+    out.line(&('\x08' as u32))?; // expect: 8
+    out.line(&f"\x41{1}")?; // expect: A1
     out.line(&"two
 lines".len())?; // expect: 9
     Ok(())
