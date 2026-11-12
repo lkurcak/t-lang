@@ -376,7 +376,7 @@ away: a positive cycle, found by Bellman–Ford (`generics.rs`). That lets
 | `Drop` | drop check is the hard part | — |
 | `for` loops | an `Iterator` trait, with associated types (6b) and closures (6c) | — |
 | operator traits but `Eq` (`Add`, `Ord` for `<`) | not needed yet | — |
-| traits with type parameters | not needed yet | — |
+| traits with type parameters | not needed yet; and the impls they're mostly for, like `impl<T> Borrow<T> for T`, name a parameter twice, which needs finding an impl to say what it needs of lifetimes | — |
 | `where` clauses | done for the core library's methods | 6e ✅ |
 | `impl Tr for &U` methods by `.` | the one-`&` rule | — |
 

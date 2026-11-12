@@ -141,9 +141,13 @@ fn main() {
 
 An error isn't converted: a `Result<T, i32>`'s `?` doesn't go into a
 function returning `Result<U, bool>`. Rust converts it with `From`, by
-making the residual a parameter of a second trait, `FromResidual<R>`.
-T's traits have no type parameters yet, so that waits for them. Until
-then, `.map_err(..)?` says the conversion where it happens.
+making the residual a parameter of a second trait, `FromResidual<R>`. T
+doesn't, by design: `.map_err(..)?` says the conversion where it happens.
+And a closure's error type is worked out from its `?`s, which a conversion
+would leave open: `F: From<E>` doesn't say what `F` is, and obligations
+never decide a type (docs/06-traits.md). Converting would also need an
+impl for when the two error types are the same, `impl<E> From<E> for E`,
+which names `E` twice; an impl can't, as finding one ignores lifetimes.
 
 ## Linear values
 
@@ -246,8 +250,9 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
   looked for. A type that says "go on" or "stop" says what it means.
 - **Residuals, not what's in the failure.** See lemma Q2: they keep an
   `Option` from becoming a `Result`.
-- **No conversion.** It needs traits with type parameters, and it's a
-  relaxation: a program that checks now will check then.
+- **No conversion.** What a `?` returns is what was in the `Err`, and the
+  error types of closures and functions stay inferred. It would also need
+  traits with type parameters, and impls that name one twice.
 - **`?` binds as tightly as a call.** `-x?` is `-(x?)`, and `a?.b()?` is
   `(a?.b())?`, as in Rust.
 
@@ -255,7 +260,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
 
 | Missing | Why it's missing | Step |
 |---|---|---|
-| converting the error, `From` | needs traits with type parameters | — |
 | `let p = e else { .. };`, `if let` | each needs rules of its own, as there are no tuples to rewrite them with; `?` covers most of what they'd be for | 28 ✅ ([docs](28-if-let.md)) |
 | `try { .. }` blocks | a `?` in one would stop the block, not the function: a labelled block to `break` out of, which T doesn't have (docs/05.1) | — |
 | `?` in `main` | `main` returns `()`: it would need an exit status, so an operating system | — |
