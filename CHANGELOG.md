@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.84.0 (2026-11-12)
 
 Step 69: what a loan forgets. See [docs/69-loans.md](docs/69-loans.md).
 
