@@ -360,6 +360,11 @@ See [traits](06-traits.md), [closures](06c-closures.md),
 A function's effects say what calling it may do. Write them after the
 result type: `with panic`, `with alloc`, or `with {alloc, panic}`.
 Effect parameters and associated effects can also occur in these sets.
+A bound can say what an associated effect may be at most, `I:
+Iterator<Item = u64, e = {}>` or `-> impl Iterator<Item = u64, e = panic>`:
+each use must show it, and inside, `I::e` is still only itself, replaced by
+its bound only where its effects must be within others. Not in an impl's
+bounds.
 Every caller must permit the effects of the calls it makes.
 
 | Declaration | Effect rule |
