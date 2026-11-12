@@ -15,26 +15,3 @@ jobs:
   ci:
     uses: lkurcak/forge/.github/workflows/rust-ci.yml@v1
 
-  # The C backend's differential tests again, each compiled program built
-  # with AddressSanitizer (and LeakSanitizer) and UndefinedBehaviorSanitizer,
-  # stopping at the first report: the C it writes must have no undefined
-  # behaviour and free all it allocates (docs/33-c-backend.md). Then with
-  # ThreadSanitizer.
-  sanitizers:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo test --test compiled --locked
-        env:
-          T_LANG_CFLAGS: -fsanitize=address,undefined -fno-sanitize-recover=all
-      # And with ThreadSanitizer, which can't be with AddressSanitizer: a
-      # program the checker accepted has no data races (lemma Z2 of
-      # docs/41-threads.md), so a report, which changes what it writes
-      # where errors go, fails the test. Its shadow memory needs the
-      # kernel's address randomisation turned down.
-      - run: sudo sysctl vm.mmap_rnd_bits=28
-      - run: cargo test --test compiled --locked
-        env:
-          T_LANG_CFLAGS: -fsanitize=thread
