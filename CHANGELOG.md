@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.82.0 (2026-11-12)
+
+Step 68: abstraction points, failing closed. See
+[docs/68-fail-closed.md](docs/68-fail-closed.md). Retrospective 7 found
+three ways to break a refinement that were accepted, planning this step
+three more; each is fixed, and programs that relied on one are refused.
+
+### Fixed
+
+- **Writes through a shared `&mut`** (borrow checker, since step 5): a
+  place was writable, or could be lent `&mut`, if the last reference on
+  its path was a `&mut`, whatever was before it. So `**a`, of an `a:
+  &&mut T`, `*h.r`, of an `h: &H` whose `r` is a `&mut`, and
+  `a.push(..)`, of an `a: &&mut List<T>`, were accepted: two `&`s to one
+  `&mut` were two writers, and a `push` through one could leave the
+  other's element dangling. A `&` anywhere on the path refuses now.
+- **Consumers and `&mut` instantiations** (since 0.76.0): a call bounded
+  by a consumer trait (methods take `Self` and give none back) kept its
+  argument's refinements, but an impl of one for a `&mut` writes through
+  it, and one for a `Cell` sets it. A consumer bound now changes what's
+  where the instantiation is invariant, in impls' bounds too.
+- **Opaque results** (since 0.76.0): `-> impl Iterator<Item = &'a mut
+  usize>` over a refined list's `iter_mut` let the caller write anything
+  into it. A result with opaque types in it is checked as given to code
+  generic in each, with its bounds.
+- **`&` bindings to `Cell`s** (since 0.76.0): `match &o { Some(c) =>
+  c.set(..) }`, of an `Option<Cell<{ .. }>>`, and array, or-pattern and
+  `Err` bindings like it, said nothing of what's declared there.
+- **Two places of one type parameter** (since 0.76.0): a struct, a
+  variant or an array of `&mut`s (or `&Cell`s) to places with different
+  refinements, given to generic code that swaps them. The places must
+  agree on what's declared where the parameter is invariant.
+- **Drops** (since 0.76.0): dropping a value runs its type's own
+  `discard`, which the refinement checker didn't see; one for `W<'a,
+  usize>` could write through a `&mut` to a refined place. Each drop that
+  runs a `discard` not parametric in what it holds is checked as a call
+  of it, and a `Discard` bound counts where it can write.
+
+### Changed
+
+- Where the refinement checker can't tell what's declared (a position it
+  can't follow, an opaque type whose hidden type isn't known, a type too
+  deep), it refuses rather than taking nothing to be declared. A
+  reference to a known place also says what that place declares.
+- Tests: `tests/generated_soundness.rs` builds the products of positions
+  (behind `&mut`, in `Cell`), traits (marker, consumer, maker, equality
+  bound) and abstraction points (generic function, opaque result, impl),
+  with patterns, aggregates and drops, and runs each it accepts; 25 of 62
+  broke a refinement on 0.81.0. The golden tests name a program the
+  interpreter finds unsound, instead of stopping.
+
 ## 0.81.0 (2026-11-11)
 
 Step 67: refinement aliases and variants' fields. See

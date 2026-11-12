@@ -24,6 +24,7 @@
 
 use super::*;
 use crate::borrowck::regions::Variance;
+use crate::traits::{COPY, DISCARD, SEND, SYNC};
 use std::rc::Rc;
 
 /// A position in a type: which of the types in it a refinement can be in
@@ -93,7 +94,7 @@ impl Disj {
     }
 
     /// A predicate it says, for messages.
-    fn text(&self) -> Option<String> {
+    pub(super) fn text(&self) -> Option<String> {
         self.0.iter().find_map(|(_, c)| c.text())
     }
 
@@ -191,12 +192,28 @@ pub(super) struct Inst {
     at: Vec<(Pos, Vec<Case>)>,
     /// Why nothing's known of it: a bound that can make one.
     any: Option<String>,
+    /// Why nothing's known of it at the positions where the type it's
+    /// given is invariant (behind a `&mut`, in an `Unsafe`): a bound whose
+    /// methods take it and give none back, but can write there (lemma A5
+    /// of docs/68-fail-closed.md); and those positions.
+    changed: Option<(String, Vec<Pos>)>,
 }
 
 impl Inst {
+    /// Why nothing's known of it at position `pos`, if nothing is.
+    fn unknown_at(&self, pos: &[usize]) -> Option<&String> {
+        if let Some(why) = &self.any {
+            return Some(why);
+        }
+        match &self.changed {
+            Some((why, inv)) if inv.iter().any(|p| pos.starts_with(p)) => Some(why),
+            _ => None,
+        }
+    }
+
     /// What it says of position `pos`.
     fn disj(&self, pos: &[usize]) -> Disj {
-        if self.any.is_some() {
+        if self.unknown_at(pos).is_some() {
             return Disj::any();
         }
         match self.at.iter().find(|(p, _)| p == pos) {
@@ -217,6 +234,7 @@ impl Inst {
         }
         self.at
             .iter()
+            .filter(|(p, _)| self.unknown_at(p).is_none())
             .map(|(p, _)| (p.clone(), self.disj(p)))
             .collect()
     }
@@ -239,7 +257,7 @@ struct Behind {
 /// `Self`, nor change one (lemma A5). Not `Int`, whose literals make values,
 /// nor `Atom`, which `Volatile::at` reads from an address.
 pub(super) fn consumer(traits: &crate::traits::Traits, name: &str, seen: &mut Vec<String>) -> bool {
-    use crate::traits::{COPY, DISCARD, FN_TRAITS, INT, SEND, SIGNED, SYNC, UNSIGNED};
+    use crate::traits::{FN_TRAITS, INT, SIGNED, UNSIGNED};
     if [COPY, DISCARD, SEND, SYNC].contains(&name) {
         return true;
     }
@@ -332,6 +350,39 @@ impl Walk<'_> {
             ty = next;
         }
         Some((ty, v))
+    }
+
+    /// `type_at`, of a position something is said or declared at, of a
+    /// value of type `t`, at `span`: one the walk can't follow there
+    /// would go unchecked, so it refuses (lemma F2 of
+    /// docs/68-fail-closed.md). Skipping it is never right: a missing
+    /// case refuses rather than says nothing's declared.
+    pub(super) fn followed(
+        &mut self,
+        t: &Type,
+        pos: &[usize],
+        span: Span,
+    ) -> Option<(Type, Variance)> {
+        let found = self.type_at(t, pos);
+        if found.is_none() {
+            self.failed(Error::ty(
+                span,
+                format!("can't tell what's declared inside a `{t}` here: the checker can't follow its type"),
+            ));
+        }
+        found
+    }
+
+    /// Every position of `t` where it's invariant: behind a `&mut`, in an
+    /// `Unsafe`.
+    pub(super) fn inv_positions(&mut self, t: &Type) -> Vec<Pos> {
+        let mut out = Vec::new();
+        for p in self.positions(t) {
+            if let Some((_, Variance::Inv)) = self.type_at(t, &p) {
+                out.push(p);
+            }
+        }
+        out
     }
 
     /// Every position of `t` but the whole value's. A type is a finite
@@ -878,7 +929,7 @@ impl Walk<'_> {
         what: &str,
     ) -> Result<(), Error> {
         for (pos, d) in tree {
-            let Some((pt, var)) = self.type_at(t, pos) else {
+            let Some((pt, var)) = self.followed(t, pos, span) else {
                 continue;
             };
             let cases = self.values_at(v, t, pos);
@@ -916,7 +967,7 @@ impl Walk<'_> {
             if tree.iter().any(|(p, _)| p == pos) || want.is_any() {
                 continue;
             }
-            let Some((pt, Variance::Inv)) = self.type_at(t, pos) else {
+            let Some((pt, Variance::Inv)) = self.followed(t, pos, span) else {
                 continue;
             };
             if self.implies(&[(Vec::new(), Cand::Any)], want, &pt).is_err() {
@@ -1179,8 +1230,14 @@ pub(super) fn widen(tree: &Tree) -> Tree {
 /// so `T: Iterator`, of a `T` that's an `Iter<'_, U>`, keeps what's said of
 /// its `U`s, and what `<T as Iterator>::Item` is says what it gives
 /// (`Walk::subst_tree`).
-fn parametric_impl(traits: &crate::traits::Traits, t: &Type, tr: &str) -> bool {
-    parametric_impl_depth(traits, t, tr, 0)
+fn parametric_impl(cx: &Checker, t: &Type, tr: &str) -> bool {
+    parametric_impl_seen(cx, t, tr, &mut Vec::new())
+}
+
+/// `parametric_impl`, inside `drop_changes`, which has seen the types
+/// `seen` on the way.
+fn parametric_impl_seen(cx: &Checker, t: &Type, tr: &str, seen: &mut Vec<Type>) -> bool {
+    parametric_impl_depth(cx, t, tr, 0, seen)
 }
 
 /// `parametric_impl`, as deep as `depth`: a bound of the impl's on one of
@@ -1188,7 +1245,14 @@ fn parametric_impl(traits: &crate::traits::Traits, t: &Type, tr: &str) -> bool {
 /// what the parameter is there is parametric too (`Rev<I>`'s `I:
 /// DoubleEndedIterator`, of an `Iter<'_, T>`): its methods can make no more
 /// than code generic in the parameter can, so neither can these.
-fn parametric_impl_depth(traits: &crate::traits::Traits, t: &Type, tr: &str, depth: usize) -> bool {
+fn parametric_impl_depth(
+    cx: &Checker,
+    t: &Type,
+    tr: &str,
+    depth: usize,
+    dropping: &mut Vec<Type>,
+) -> bool {
+    let traits = &cx.traits;
     let Some((i, impl_args)) = traits.select(t, Some(tr), &[]) else {
         return false;
     };
@@ -1215,15 +1279,28 @@ fn parametric_impl_depth(traits: &crate::traits::Traits, t: &Type, tr: &str, dep
                 || consumer(traits, &p.trait_name, &mut Vec::new())
                 || crate::traits::FN_TRAITS.contains(&p.trait_name.as_str());
         };
-        if !seen.contains(&q.as_str()) || consumer(traits, &p.trait_name, &mut Vec::new()) {
-            return true;
-        }
         let arg = names
             .iter()
             .position(|n| n == q)
             .and_then(|k| impl_args.get(k));
+        if !seen.contains(&q.as_str()) {
+            return true;
+        }
+        // A consumer can't make one, but can change what's inside one
+        // where it's invariant (`changes`); so can dropping one, by a
+        // `discard` that isn't parametric (`drop_changes`).
+        if consumer(traits, &p.trait_name, &mut Vec::new()) {
+            let Some(a) = arg else {
+                return false;
+            };
+            return match p.trait_name.as_str() {
+                COPY | SEND | SYNC => true,
+                DISCARD => !writable_inside(cx, a) || drop_changes_seen(cx, a, dropping).is_none(),
+                _ => !writable_inside(cx, a),
+            };
+        }
         depth < DEPTH
-            && arg.is_some_and(|a| parametric_impl_depth(traits, a, &p.trait_name, depth + 1))
+            && arg.is_some_and(|a| parametric_impl_depth(cx, a, &p.trait_name, depth + 1, dropping))
     }) && def.eqs.iter().all(|(a, b)| {
         let mentions = |t: &Type| seen.iter().any(|q| free::mentions(t, q));
         matches!(a, Type::Proj(base, ..) if !matches!(**base, Type::Param(..)))
@@ -1231,20 +1308,155 @@ fn parametric_impl_depth(traits: &crate::traits::Traits, t: &Type, tr: &str, dep
     })
 }
 
+/// Why a type parameter's values may be changed where the type it's given
+/// is invariant inside, which a call can't follow: a bound on it, or on a
+/// type it's in, by a consumer that isn't a marker. A consumer's method
+/// gives back no value of it, but an impl of it for a `&mut` can write
+/// through it, and one for a `Cell` can set it (lemma A5 of
+/// docs/68-fail-closed.md). `Discard` is such a consumer where dropping
+/// what it is runs a `discard` that can (`drop_changes`, lemma A9): `inst`
+/// says what a bound's type is at the call, if it's known. `None` if
+/// there's none.
+pub(super) fn changes(
+    cx: &Checker,
+    s: &crate::types::Scheme,
+    x: &str,
+    inst: &dyn Fn(&Type) -> Option<Type>,
+) -> Option<String> {
+    let traits = &cx.traits;
+    for p in &s.preds {
+        if !free::mentions(&p.ty, x) || [COPY, SEND, SYNC].contains(&p.trait_name.as_str()) {
+            continue;
+        }
+        if p.trait_name == DISCARD {
+            match inst(&p.ty) {
+                Some(t) => match drop_changes(cx, &t) {
+                    Some(why) => return Some(why),
+                    None => continue,
+                },
+                None => return Some(format!("dropping a `{}`", p.ty)),
+            }
+        }
+        if consumer(traits, &p.trait_name, &mut Vec::new()) {
+            let name = traits.shorten(&p.trait_name);
+            return Some(format!("`{}: {name}`", p.ty));
+        }
+    }
+    None
+}
+
+/// Why dropping a value of type `t` can change a value at one of its
+/// positions where it's invariant (behind a `&mut`, in an `Unsafe`), if it
+/// can: it runs a `discard` that's written, not derived, and isn't
+/// parametric in what's there (`parametric_impl`), which may write what it
+/// likes there (lemma A9 of docs/68-fail-closed.md). A derived `Discard`
+/// drops the parts; a type parameter's, an opaque type's, are checked where
+/// what they are is picked (`changes`).
+pub(super) fn drop_changes(cx: &Checker, t: &Type) -> Option<String> {
+    drop_changes_seen(cx, t, &mut Vec::new())
+}
+
+/// `drop_changes`, having seen the types `seen` on the way: a type that
+/// holds itself, by a box, changes nothing its parts don't.
+fn drop_changes_seen(cx: &Checker, t: &Type, seen: &mut Vec<Type>) -> Option<String> {
+    if seen.contains(t) {
+        return None;
+    }
+    if seen.len() > DEPTH {
+        return Some(format!("dropping a `{t}`"));
+    }
+    seen.push(t.clone());
+    let out = match t {
+        Type::Adt(symbol, _, args) if cx.traits.own_discard(symbol) => {
+            match parametric_impl_seen(cx, t, DISCARD, seen) {
+                true => None,
+                // The `discard` it comes to, if it's one of what's in it:
+                // `List<W>`'s drops each `W`.
+                false => (args.iter())
+                    .find_map(|a| drop_changes_seen(cx, &cx.solved(a), seen))
+                    .or_else(|| {
+                        Some(format!(
+                            "`{}`'s `discard`",
+                            cx.traits.shorten(&t.to_string())
+                        ))
+                    }),
+            }
+        }
+        Type::Adt(symbol, ..) => {
+            let parts: Vec<Type> = match cx.adts.get(symbol).map(|d| &d.kind) {
+                Some(crate::types::AdtKind::Struct(_)) => (struct_fields(&cx.adts, t))
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(_, f)| f)
+                    .collect(),
+                Some(crate::types::AdtKind::Enum(vs)) => (0..vs.len())
+                    .flat_map(|v| crate::types::variant_fields(&cx.adts, t, v))
+                    .collect(),
+                None => Vec::new(),
+            };
+            parts
+                .iter()
+                .find_map(|f| drop_changes_seen(cx, &cx.solved(f), seen))
+        }
+        Type::Box(inner) | Type::Array(inner, _) => drop_changes_seen(cx, &cx.solved(inner), seen),
+        Type::Tuple(ts) => ts
+            .iter()
+            .find_map(|u| drop_changes_seen(cx, &cx.solved(u), seen)),
+        _ => None,
+    };
+    seen.pop();
+    out
+}
+
+/// Can something be written at a position inside a value of type `t`: is
+/// `t` invariant in one of its positions, as behind a `&mut` or in an
+/// `Unsafe`? A type parameter, an opaque type or a projection may be
+/// anything, so yes.
+pub(super) fn writable_inside(cx: &Checker, t: &Type) -> bool {
+    fn go(cx: &Checker, t: &Type, depth: usize) -> bool {
+        if depth > DEPTH {
+            return true;
+        }
+        match t {
+            Type::Ref(_, true, _) => true,
+            Type::Ref(_, false, inner)
+            | Type::Box(inner)
+            | Type::Slice(inner)
+            | Type::Array(inner, _) => go(cx, &cx.solved(inner), depth + 1),
+            Type::Tuple(ts) => ts.iter().any(|u| go(cx, &cx.solved(u), depth + 1)),
+            Type::Adt(symbol, lts, args) => {
+                let info = cx.adt_info();
+                let vs = info.variances(symbol).map(<[Variance]>::to_vec);
+                args.iter().enumerate().any(|(k, a)| {
+                    match vs.as_ref().and_then(|vs| vs.get(lts.len() + k)) {
+                        Some(Variance::Co) => go(cx, &cx.solved(a), depth + 1),
+                        Some(Variance::Contra | Variance::Bi) => false,
+                        Some(Variance::Inv) | None => true,
+                    }
+                })
+            }
+            Type::Param(..) | Type::Opaque(..) | Type::Proj(..) | Type::Var(_) => true,
+            _ => false,
+        }
+    }
+    go(cx, t, 0)
+}
+
 /// Where a type parameter's values come from that a call can't follow: a
 /// bound on it that makes values (`consumer`), or another that might,
 /// or a closure's result. `None` if there's none (lemma A2).
 pub(super) fn makes(
-    traits: &crate::traits::Traits,
+    cx: &Checker,
     s: &crate::types::Scheme,
     x: &str,
     ty: Option<&Type>,
 ) -> Option<String> {
+    let traits = &cx.traits;
     let this = s.params.ty(x);
     for p in &s.preds {
         if p.ty == this {
             if !consumer(traits, &p.trait_name, &mut Vec::new())
-                && !ty.is_some_and(|t| parametric_impl(traits, t, &p.trait_name))
+                && !ty.is_some_and(|t| parametric_impl(cx, t, &p.trait_name))
             {
                 let name = traits.shorten(&p.trait_name);
                 return Some(format!("`{x}: {name}`"));
@@ -1319,6 +1531,13 @@ impl Walk<'_> {
                 let known = self.knowledge(&w, &inner);
                 tree.extend(under(&widen(&known), 0));
             }
+            // And whatever it says, what's declared of the place it's to,
+            // if that's known: what's written through it must keep that
+            // too (lemma F1 of docs/68-fail-closed.md).
+            if let Val::Ref(_, Pointee::Place(p)) = v {
+                let p = p.clone();
+                tree.extend(under(&self.place_decl(&p), 0));
+            }
             return tree;
         }
         // What's declared of what's in it there is what refinements said,
@@ -1356,9 +1575,13 @@ impl Walk<'_> {
         let ty = self.cx.solved(&targs.apply(&s.params.ty(x)));
         let mut all = vec![Vec::new()];
         all.extend(self.positions(&ty));
+        let cx = self.cx;
+        let at_call = |t: &Type| Some(cx.solved(&targs.apply(t)));
+        let changed = changes(cx, s, x, &at_call).map(|why| (why, self.inv_positions(&ty)));
         let mut inst = Inst {
             at: all.iter().map(|p| (p.clone(), Vec::new())).collect(),
-            any: makes(&self.cx.traits, s, x, Some(&ty)),
+            any: makes(self.cx, s, x, Some(&ty)),
+            changed,
         };
         let push = |inst: &mut Inst, pos: &[usize], c: (Source, Vec<Formula>, Cand)| {
             if let Some((_, cases)) = inst.at.iter_mut().find(|(p, _)| p == pos) {
@@ -1600,7 +1823,7 @@ impl Walk<'_> {
                     if d.is_any() {
                         continue;
                     }
-                    let Some((t, Variance::Inv)) = self.type_at(&pt, pos) else {
+                    let Some((t, Variance::Inv)) = self.followed(&pt, pos, span) else {
                         continue;
                     };
                     let here: Vec<&Disj> = (have_i.iter())
@@ -1750,51 +1973,19 @@ impl Walk<'_> {
             let inst = self.instantiate_one(&s, x, &subst, vals, &written, &mut behind);
             insts.push((x.clone(), inst, behind));
         }
-        for (x, inst, behind) in &insts {
-            let xt = self.cx.solved(&subst.apply(&s.params.ty(x)));
-            for b in behind {
-                for (pos, want) in &b.declared {
-                    if want.is_any() {
-                        continue;
-                    }
-                    let Some((pt, _)) = self.type_at(&xt, pos) else {
-                        continue;
-                    };
-                    let span = spans.get(b.arg).copied().unwrap_or(at);
-                    let text = want.text().unwrap_or_default();
-                    let behind_msg = format!(
-                        "can't prove `{text}` of what `{fname}` may write behind argument `{}`",
-                        pname(b.arg)
-                    );
-                    if let Some(why) = &inst.any {
-                        self.failed(Error::ty(
-                            span,
-                            format!("{behind_msg}: {why} can make or change a value of it"),
-                        ));
-                        continue;
-                    }
-                    let cases = (inst.at.iter())
-                        .find(|(p, _)| p == pos)
-                        .map(|(_, c)| c.clone())
-                        .unwrap_or_default();
-                    for (src, g, c) in cases {
-                        let one = [(g, c)];
-                        if self.implies(&one, want, &pt).is_err() {
-                            let span = spans.get(src.arg).copied().unwrap_or(at);
-                            let msg = match src.behind {
-                                true => behind_msg.clone(),
-                                false => format!(
-                                    "can't prove `{text}` for argument `{}` of `{fname}`",
-                                    pname(src.arg)
-                                ),
-                            };
-                            self.failed(Error::ty(span, msg));
-                            break;
-                        }
-                    }
-                }
-            }
-        }
+        let behind_text = |text: &str, j: usize| {
+            format!(
+                "can't prove `{text}` of what `{fname}` may write behind argument `{}`",
+                pname(j)
+            )
+        };
+        let arg_text = |text: &str, j: usize| {
+            format!(
+                "can't prove `{text}` for argument `{}` of `{fname}`",
+                pname(j)
+            )
+        };
+        self.check_behind(&s, &subst, &insts, spans, at, &behind_text, &arg_text);
         // Where a parameter's type is invariant but not as a type
         // parameter's, what's written there must be exactly what's declared
         // of the argument there: what the callee may write is what its own
@@ -1830,7 +2021,9 @@ impl Walk<'_> {
                 {
                     continue;
                 }
-                let Some((pt, Variance::Inv)) = self.type_at(&t, pos) else {
+                let Some((pt, Variance::Inv)) =
+                    self.followed(&t, pos, spans.get(j).copied().unwrap_or(at))
+                else {
                     continue;
                 };
                 let have: Vec<(Vec<Formula>, Cand)> = (param_trees[j].iter())
@@ -1911,13 +2104,196 @@ impl Walk<'_> {
 }
 
 impl Walk<'_> {
+    /// Checks what each type parameter's instantiation at a call, of a
+    /// function of scheme `s` at type arguments `subst`, needs of what's
+    /// behind each `&mut` (lemmas A3, A5 and W5): that every case of what
+    /// the callee may write there has what's declared there. Messages say
+    /// `behind_text` of what's written behind argument `j`, `arg_text` of
+    /// an argument's value that doesn't have it.
+    #[allow(clippy::too_many_arguments)]
+    fn check_behind(
+        &mut self,
+        s: &crate::types::Scheme,
+        subst: &crate::types::Subst,
+        insts: &[(String, Inst, Vec<Behind>)],
+        spans: &[Span],
+        at: Span,
+        behind_text: &dyn Fn(&str, usize) -> String,
+        arg_text: &dyn Fn(&str, usize) -> String,
+    ) {
+        for (x, inst, behind) in insts {
+            let xt = self.cx.solved(&subst.apply(&s.params.ty(x)));
+            for b in behind {
+                for (pos, want) in &b.declared {
+                    if want.is_any() {
+                        continue;
+                    }
+                    let Some((pt, _)) =
+                        self.followed(&xt, pos, spans.get(b.arg).copied().unwrap_or(at))
+                    else {
+                        continue;
+                    };
+                    let span = spans.get(b.arg).copied().unwrap_or(at);
+                    let text = want.text().unwrap_or_default();
+                    let behind_msg = behind_text(&text, b.arg);
+                    if let Some(why) = inst.unknown_at(pos) {
+                        self.failed(Error::ty(
+                            span,
+                            format!("{behind_msg}: {why} can make or change a value of it"),
+                        ));
+                        continue;
+                    }
+                    let cases = (inst.at.iter())
+                        .find(|(p, _)| p == pos)
+                        .map(|(_, c)| c.clone())
+                        .unwrap_or_default();
+                    for (src, g, c) in cases {
+                        let one = [(g, c)];
+                        if self.implies(&one, want, &pt).is_err() {
+                            let span = spans.get(src.arg).copied().unwrap_or(at);
+                            let msg = match src.behind {
+                                true => behind_msg.clone(),
+                                false => arg_text(&text, src.arg),
+                            };
+                            self.failed(Error::ty(span, msg));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Checks `v`, the result of function `name`, whose type `ret` has
+    /// opaque types in it, as what's given to code generic in each, which
+    /// knows of it only what its bounds say: the rest of the program
+    /// (lemma A10 of docs/68-fail-closed.md). So what's declared behind a
+    /// `&mut` in the type each stands for, or in an `Unsafe`, must be what
+    /// that code may write there: of what it's given, unless a bound can
+    /// make or change a value there (`makes`, `changes`), as an equality
+    /// bound `Item = &'a mut usize` can.
+    pub(super) fn opaque_result(&mut self, v: &Val, ret: &Type, span: Span, name: &str) {
+        let symbols = crate::check::opaque::opaques_of(ret);
+        if symbols.is_empty() {
+            return;
+        }
+        let mut names: Vec<String> = Vec::new();
+        let mut hidden: Vec<Type> = Vec::new();
+        let mut defs = Vec::new();
+        for s in &symbols {
+            let def = self.cx.traits.opaques[s].clone();
+            let Some(h) = def.hidden.clone() else {
+                // Fail-closed: what it stands for isn't known.
+                self.failed(Error::ty(
+                    span,
+                    format!(
+                        "can't tell what the result of `{name}` is, to check what's declared in it"
+                    ),
+                ));
+                return;
+            };
+            // The first is `Self` in messages, as it would be in its
+            // trait: `Self::Item = &'a mut usize`.
+            let mut x = match names.is_empty() {
+                true => "Self".to_string(),
+                false => crate::types::opaque_text(s).to_string(),
+            };
+            while names.contains(&x) {
+                x.push('\'');
+            }
+            names.push(x);
+            hidden.push(self.cx.solved(&h));
+            defs.push((s.clone(), def));
+        }
+        let params = crate::types::Params::new(names.clone(), Vec::new());
+        let to_param = |t: &Type| -> Type {
+            fn go(
+                t: &Type,
+                symbols: &[String],
+                params: &crate::types::Params,
+                names: &[String],
+            ) -> Type {
+                if let Type::Opaque(s, ..) = t
+                    && let Some(k) = symbols.iter().position(|o| o == s)
+                {
+                    return params.ty(&names[k]);
+                }
+                let mut parts = t
+                    .parts()
+                    .map(|p| go(p, symbols, params, names))
+                    .collect::<Vec<_>>()
+                    .into_iter();
+                t.map(|_| parts.next().expect("as many"))
+            }
+            go(t, &symbols, &params, &names)
+        };
+        let mut preds = Vec::new();
+        let mut eqs = Vec::new();
+        for (_, def) in &defs {
+            for p in &def.preds {
+                preds.push(crate::traits::Pred {
+                    ty: to_param(&p.ty),
+                    trait_name: p.trait_name.clone(),
+                });
+            }
+            for (a, b) in &def.eqs {
+                eqs.push((to_param(a), to_param(b)));
+            }
+        }
+        let scheme = crate::types::Scheme {
+            params: params.clone(),
+            lifetimes: Vec::new(),
+            bounds: Vec::new(),
+            preds,
+            eqs,
+            ty: Type::func(vec![to_param(ret)], Type::Unit),
+        };
+        let subst = crate::types::Subst::new(&names, &hidden);
+        let vals = [v.clone()];
+        let written = [None];
+        let mut insts = Vec::new();
+        for x in &names {
+            let mut behind = Vec::new();
+            let inst = self.instantiate_one(&scheme, x, &subst, &vals, &written, &mut behind);
+            insts.push((x.clone(), inst, behind));
+        }
+        let behind_text = |text: &str, _: usize| {
+            format!(
+                "can't prove `{text}` of what may be written through the result of `{name}`, `{ret}`"
+            )
+        };
+        let arg_text =
+            |text: &str, _: usize| format!("can't prove `{text}` of the result of `{name}`");
+        self.check_behind(
+            &scheme,
+            &subst,
+            &insts,
+            &[span],
+            span,
+            &behind_text,
+            &arg_text,
+        );
+    }
+}
+
+impl Walk<'_> {
     /// Says of array `v`, of type `t`, that each of its elements is one of
     /// `items`, at each of their positions.
-    pub(super) fn elements(&mut self, v: &Val, t: &Type, items: &[Val]) {
+    pub(super) fn elements(&mut self, v: &Val, t: &Type, items: &[Val], spans: &[Span], at: Span) {
         let Type::Array(elem, _) = t else {
             return;
         };
         let elem = self.cx.solved(elem);
+        let held: Vec<Held> = (items.iter().enumerate())
+            .map(|(i, item)| Held {
+                val: item,
+                ty: elem.clone(),
+                at: Vec::new(),
+                span: spans.get(i).copied().unwrap_or(at),
+                what: format!("element {i} of the array"),
+            })
+            .collect();
+        self.agree_inv(&held);
         let mut all = vec![Vec::new()];
         all.extend(self.positions(&elem));
         let mut tree = Vec::new();
@@ -1935,7 +2311,82 @@ impl Walk<'_> {
     }
 }
 
+/// One of the values a value made here holds at a type parameter's
+/// positions (`Walk::agree_inv`): the value, its type, where the parameter
+/// is in it, where it's written, and what it is, for messages.
+pub(super) struct Held<'v> {
+    pub(super) val: &'v Val,
+    pub(super) ty: Type,
+    pub(super) at: Pos,
+    pub(super) span: Span,
+    pub(super) what: String,
+}
+
 impl Walk<'_> {
+    /// Checks that `srcs`, the values a value made here holds at one of
+    /// its type parameter's positions, agree on what's declared where it's
+    /// invariant (behind a `&mut`, in an `Unsafe`): what's written through
+    /// one may be written through another, as the value's type says they're
+    /// of one type (lemma A8 of docs/68-fail-closed.md). A struct's two
+    /// `&mut T` fields, an array's `&mut T` elements.
+    pub(super) fn agree_inv(&mut self, srcs: &[Held]) {
+        if srcs.len() < 2 {
+            return;
+        }
+        // Of each source, at each position inside the parameter where it's
+        // invariant, what's declared there.
+        let mut decls: Vec<(usize, Pos, Type, Vec<Disj>)> = Vec::new();
+        for (i, src) in srcs.iter().enumerate() {
+            let Some((xt, _)) = self.type_at(&src.ty, &src.at) else {
+                continue;
+            };
+            let written = self.written_tree(src.val, &src.ty);
+            let mut qs = vec![Vec::new()];
+            qs.extend(self.positions(&xt));
+            for q in qs {
+                let mut p = src.at.clone();
+                p.extend_from_slice(&q);
+                let Some((pt, Variance::Inv)) = self.followed(&src.ty, &p, src.span) else {
+                    continue;
+                };
+                let here: Vec<Disj> = (written.iter())
+                    .filter(|(r, d)| *r == p && !d.is_any())
+                    .map(|(_, d)| d.clone())
+                    .collect();
+                decls.push((i, q, pt, here));
+            }
+        }
+        for (i, q, pt, have) in &decls {
+            for (j, r, _, want) in &decls {
+                if i == j || q != r {
+                    continue;
+                }
+                let have = match have.is_empty() {
+                    true => vec![(Vec::new(), Cand::Any)],
+                    false => vec![(Vec::new(), Cand::all(have.clone()))],
+                };
+                if let Some(d) = (want.iter()).find(|d| self.implies(&have, d, pt).is_err()) {
+                    let text = d.text().unwrap_or_default();
+                    let (mine, theirs) = (&srcs[*i], &srcs[*j]);
+                    let msg = match mine.what == theirs.what {
+                        true => format!(
+                            "can't prove `{text}` of what may be written through {}: it's of one \
+                             type in two places, and one has it",
+                            mine.what
+                        ),
+                        false => format!(
+                            "can't prove `{text}` of what may be written through {}: it's of the \
+                             same type as {}, which has it",
+                            mine.what, theirs.what
+                        ),
+                    };
+                    self.failed(Error::ty(mine.span, msg));
+                    return;
+                }
+            }
+        }
+    }
+
     /// Does `tree`, of a value of type `t`, say anything where `t` is
     /// invariant?
     pub(super) fn declared_inv(&mut self, t: &Type, tree: &Tree) -> bool {
@@ -2056,7 +2507,7 @@ impl Walk<'_> {
             if want.is_any() || skip.iter().any(|s| pos.starts_with(s)) {
                 continue;
             }
-            let Some((pt, Variance::Inv)) = self.type_at(t, pos) else {
+            let Some((pt, Variance::Inv)) = self.followed(t, pos, span) else {
                 continue;
             };
             let have: Vec<(Vec<Formula>, Cand)> = (declared.iter())
@@ -2126,6 +2577,25 @@ impl Walk<'_> {
             _ => return Ok(()),
         };
         let name = symbol.rsplit("::").next().unwrap_or(symbol).to_string();
+        let field_what = |j: usize| match names.get(j) {
+            Some(n) => format!("field `{n}` of `{name}`"),
+            None => format!("field {j} of `{name}`"),
+        };
+        for k in 0..params.len() {
+            let held: Vec<Held> = (self.fields_with(t, k).into_iter())
+                .filter(|(w, ..)| variant.is_none_or(|v| v == *w))
+                .filter_map(|(_, f, rho, ft)| {
+                    Some(Held {
+                        val: vals.get(f)?,
+                        ty: ft,
+                        at: rho,
+                        span: span.get(f).copied().unwrap_or(span[0]),
+                        what: field_what(f),
+                    })
+                })
+                .collect();
+            self.agree_inv(&held);
+        }
         for (j, v) in vals.iter().enumerate() {
             let (Some(g), Some(ft)) = (generic.get(j), inst.get(j)) else {
                 continue;
@@ -2279,17 +2749,41 @@ impl Walk<'_> {
                     continue;
                 }
                 let arg = impl_args.get(k).cloned();
-                if makes(&self.cx.traits, &as_scheme, p, arg.as_ref()).is_some() {
+                if makes(self.cx, &as_scheme, p, arg.as_ref()).is_some() {
                     unsaid.push(p.clone());
                     continue;
                 }
+                // What the impl's bounds can change inside it (`changes`),
+                // and what the call's could.
+                let cx = self.cx;
+                let at_impl = |t: &Type| {
+                    let s = crate::types::Subst::new(&names, &impl_args);
+                    Some(cx.solved(&s.apply(t)))
+                };
+                let own = match (changes(cx, &as_scheme, p, &at_impl), &arg) {
+                    (Some(why), Some(a)) => Some((why, self.inv_positions(a))),
+                    _ => None,
+                };
                 let (occ, _) = self.occurrences(&def.self_ty, p);
                 let mut each = (occ.into_iter()).map(|(sigma, _)| {
                     let at: Vec<(Pos, Vec<Case>)> = (inst.at.iter())
                         .filter(|(q, _)| q.starts_with(&sigma))
                         .map(|(q, c)| (q[sigma.len()..].to_vec(), c.clone()))
                         .collect();
-                    Inst { at, any: None }
+                    let mut changed = own.clone();
+                    if let Some((why, inv)) = &inst.changed {
+                        let (_, mine) = changed.get_or_insert_with(|| (why.clone(), Vec::new()));
+                        mine.extend(
+                            (inv.iter())
+                                .filter(|q| q.starts_with(&sigma))
+                                .map(|q| q[sigma.len()..].to_vec()),
+                        );
+                    }
+                    Inst {
+                        at,
+                        any: None,
+                        changed,
+                    }
                 });
                 let Some(first) = each.next() else {
                     unsaid.push(p.clone());

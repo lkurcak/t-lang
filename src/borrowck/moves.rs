@@ -195,8 +195,11 @@ pub(crate) fn mutability(b: &Builder) -> Result<(Vec<Local>, Vec<crate::ast::Nod
             if borrow && b.body.unique_by_closures.contains(&s.span) {
                 continue;
             }
-            // It may be changed if it's behind a `&mut`, whatever holds
-            // that; behind a `&` it may not. Otherwise, it's up to the
+            // It may be changed if each reference on the way to it is a
+            // `&mut`, whatever holds the first; behind a `&` anywhere it may
+            // not, as what the `&` points to is shared, and so is every
+            // `&mut` in it (lemma B1 of docs/68-fail-closed.md): `**a`, of
+            // an `a: &&mut T`, is behind `a`. Otherwise, it's up to the
             // local.
             // In a closure's body, the reference to the closure doesn't
             // count: what it owns is as changeable as the variable was.
@@ -209,6 +212,7 @@ pub(crate) fn mutability(b: &Builder) -> Result<(Vec<Local>, Vec<crate::ast::Nod
             for (i, p) in place.proj.iter().enumerate() {
                 if let (Proj::Deref, Type::Ref(_, m, _)) = (p, &t)
                     && i >= own
+                    && !matches!(behind, Some((false, _)))
                 {
                     behind = Some((*m, i));
                 }

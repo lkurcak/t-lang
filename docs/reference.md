@@ -250,7 +250,9 @@ wherever a value of it is made, and aren't asked again.
 fields drop in declaration order, after a custom `discard` has run.
 
 Bindings are immutable unless declared `mut`. A shared reference `&T`
-permits reading. An exclusive reference `&mut T` permits mutation while
+permits reading, of everything reached through it: a `&mut` behind a `&`
+is shared too, so `**a` of an `a: &&mut T` can't be written or lent
+`&mut`. An exclusive reference `&mut T` permits mutation while
 preventing conflicting access. Mutating through a `&mut T` does not
 require the binding holding the reference to be `mut`. Borrows last as
 long as their uses require; a destructor that reads a borrow counts as

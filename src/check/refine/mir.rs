@@ -577,6 +577,11 @@ impl Walk<'_> {
         at: Point,
         s: &Statement,
     ) -> Result<(), Error> {
+        if let Some(dropped) = fr.notes.drops.get(&at) {
+            for p in dropped {
+                self.mir_drop(fr, p, s.span);
+            }
+        }
         match &s.kind {
             StmtKind::Assign {
                 place,
@@ -594,6 +599,54 @@ impl Walk<'_> {
             | StmtKind::Kept(_)
             | StmtKind::Drop(..)
             | StmtKind::Free(_) => Ok(()),
+        }
+    }
+
+    /// The value at `place` may be dropped here (`Notes::drops`): if its
+    /// type's drop runs a `discard` that can write where the type is
+    /// invariant (`targs::drop_changes`), nothing may be declared there, as
+    /// that `discard` is a call it's given (lemma A9 of
+    /// docs/68-fail-closed.md).
+    fn mir_drop(&mut self, fr: &Frame, place: &crate::mir::Place, span: Span) {
+        let ty = self.mir_ty(fr, place);
+        let Some(why) = targs::drop_changes(self.cx, &ty) else {
+            return;
+        };
+        let (v, decl, _) = self.lvalue_mir(fr, place);
+        let mut tree = self.written_tree(&v, &ty);
+        tree.extend(decl);
+        for (pos, d) in &tree {
+            if d.is_any() {
+                continue;
+            }
+            let Some((pt, crate::borrowck::regions::Variance::Inv)) = self.followed(&ty, pos, span)
+            else {
+                continue;
+            };
+            // Anything may be written there: unless what's declared holds
+            // of anything here, as of a variant the value isn't.
+            if self
+                .implies(&[(Vec::new(), targs::Cand::Any)], d, &pt)
+                .is_ok()
+            {
+                continue;
+            }
+            let text = d.text().unwrap_or_default();
+            let what = match (place.proj.is_empty(), fr.id(place.local)) {
+                (true, Some(id)) => match self.cx.typed.binds.get(&id) {
+                    Some(b) => format!("`{}`", b.name),
+                    None => "this value".to_string(),
+                },
+                _ => "this value".to_string(),
+            };
+            self.failed(Error::ty(
+                span,
+                format!(
+                    "can't prove `{text}` of what dropping {what} may write: {why} can change a \
+                     value of it"
+                ),
+            ));
+            return;
         }
     }
 
@@ -788,14 +841,25 @@ impl Walk<'_> {
                 widen(self, &r);
                 self.bind(id, Some(r));
             }
-            // A `&` to a value known, a variant's field.
-            (false, Loc::Val(v, _)) if !matches!(v, Val::Other) => {
+            // A `&` to a value at no place, a variant's or an array's
+            // element's: what's written through it (in a `Cell`) must be
+            // what's declared there, as for a `&mut` (lemma C1 of
+            // docs/68-fail-closed.md).
+            (false, Loc::Val(v, _)) => {
+                let (_, decl, _) = self.lvalue_mir(fr, q);
                 let o = self.new_obj();
-                let r = Val::Ref(o, Pointee::Val(Box::new(v)));
+                let tree = targs::under(&decl, 0);
+                if !tree.is_empty() {
+                    self.trees.insert(o, tree);
+                }
+                let to = match v {
+                    Val::Other => Pointee::Unknown,
+                    v => Pointee::Val(Box::new(v)),
+                };
+                let r = Val::Ref(o, to);
                 widen(self, &r);
                 self.bind(id, Some(r));
             }
-            _ => self.bind(id, None),
         }
         Ok(())
     }
@@ -1101,12 +1165,13 @@ impl Walk<'_> {
             Agg::Array => {
                 let n = i128::try_from(vals.len()).expect("a length");
                 let v = Val::Array(self.new_obj(), Lin::constant(n));
-                self.elements(&v, ty, &vals);
+                let spans: Vec<Span> = (0..vals.len()).map(span_of).collect();
+                self.elements(&v, ty, &vals, &spans, span);
                 Ok(v)
             }
             Agg::Repeat => {
                 let v = self.unknown(ty);
-                self.elements(&v, ty, &vals);
+                self.elements(&v, ty, &vals, &[], span);
                 Ok(v)
             }
             Agg::Closure(_) => unreachable!("walked above"),
