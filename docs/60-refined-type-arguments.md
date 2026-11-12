@@ -392,7 +392,12 @@ Now a write through a box gives the box, and what it's in, new values.
 - **Lemma A5 (consumers).** A consumer trait's method gives back nothing
   with `Self` in it, and takes `Self` only by value or `&`: what's behind a
   `&` changes only in an `Unsafe`, which no predicate can see (measures
-  read no `Unsafe`'s value, and the walk treats one as opaque).
+  read no `Unsafe`'s value, and the walk treats one as opaque). *Wrong as
+  stated, fixed in step 68*: `Self` may be a `&mut`, which an impl writes
+  through, and a `Cell`'s refinement is seen in its `Unsafe` since step 60
+  carried it. A consumer makes no value of `Self`, but changes what's
+  where its instantiation is invariant (lemma A5 of
+  docs/68-fail-closed.md).
 - **Lemma A6 (declared trees).** What's declared of a place holds of its
   value whenever it can be read: each write is checked (an assignment
   against what's declared, a lend against the instantiation by A3, a write

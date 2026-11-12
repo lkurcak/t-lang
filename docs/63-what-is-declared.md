@@ -223,7 +223,11 @@ as `map`.
   instantiation says (step 60's A3), and through a projection, W6. No case
   falls to "nothing declared" for want of a rule: `lvalue` is a match on
   the three kinds of place expression (a variable, a field, a `*`), and
-  what isn't one is a temporary.
+  what isn't one is a temporary. *Not quite, found in retrospective 7*:
+  a pattern's `&` binding to a value at no place fell to nothing, which a
+  `Cell` there broke; step 68 gives it what's declared there (lemma C1 of
+  docs/68-fail-closed.md), and a reference to a known place says that
+  place's declaration too (F1).
 - **Lemma W2 (writes).** A write through a reference, or to a field of
   what it points to, must have what the reference says at that position
   (A6), which W1 makes what's declared there.

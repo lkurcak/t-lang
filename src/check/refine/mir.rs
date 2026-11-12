@@ -616,12 +616,16 @@ impl Walk<'_> {
         let mut tree = self.written_tree(&v, &ty);
         tree.extend(decl);
         for (pos, d) in &tree {
-            if d.is_any()
-                || !matches!(
-                    self.followed(&ty, pos, span),
-                    Some((_, crate::borrowck::regions::Variance::Inv))
-                )
-            {
+            if d.is_any() {
+                continue;
+            }
+            let Some((pt, crate::borrowck::regions::Variance::Inv)) = self.followed(&ty, pos, span)
+            else {
+                continue;
+            };
+            // Anything may be written there: unless what's declared holds
+            // of anything here, as of a variant the value isn't.
+            if self.implies(&[(Vec::new(), targs::Cand::Any)], d, &pt).is_ok() {
                 continue;
             }
             let text = d.text().unwrap_or_default();

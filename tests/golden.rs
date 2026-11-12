@@ -99,8 +99,22 @@ fn golden() {
                 "{name}: has no `// expect:`, `// error:`, `// warning:` or `// test:` lines"
             ));
         }
-        let failure = expect::check_files(&files).err()?;
-        Some(format!("{name}: {failure}"))
+        // A program the interpreter finds breaks a type (a panic of
+        // "type soundness violated") is a failure of its own, named, not
+        // the end of the run.
+        let checked = std::panic::catch_unwind(|| expect::check_files(&files));
+        match checked {
+            Ok(result) => {
+                let failure = result.err()?;
+                Some(format!("{name}: {failure}"))
+            }
+            Err(panic) => {
+                let why = (panic.downcast_ref::<String>().cloned())
+                    .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
+                    .unwrap_or_default();
+                Some(format!("{name}: panicked: {why}"))
+            }
+        }
     })
     .into_iter()
     .flatten()
