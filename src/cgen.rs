@@ -84,7 +84,8 @@ pub fn emit(exe: &Executable, sources: &Sources, options: Options) -> String {
 /// The C program that runs test `tests[i]` of `exe`, by its symbol, when
 /// its only argument is `i`, as `t test` runs each: as a program of its
 /// own, which ends as `main` would if it were the test (docs/31-tests.md,
-/// docs/44-runs-and-holes.md). Hosted only.
+/// docs/44-runs-and-holes.md). Hosted only, whatever the program is for:
+/// its exports aren't C's, so it can write the platform's functions.
 pub fn emit_tests(
     exe: &Executable,
     sources: &Sources,
@@ -123,6 +124,13 @@ fn c_scalar(t: &Type) -> &'static str {
         Type::Bool => "bool",
         t => panic!("`{t}` isn't one of C's scalars"),
     }
+}
+
+/// The C name of `extern fn` `item`, by its path: its own name, wherever
+/// it's declared, as a C name is one for the whole program (lemma E4 of
+/// docs/40-extern.md), and its path has no type arguments.
+fn c_name(item: &str) -> &str {
+    item.rsplit("::").next().unwrap_or(item)
 }
 
 /// The C result type of an `extern fn` that gives back a `t`.
@@ -862,7 +870,12 @@ impl<'e> Gen<'e> {
                 self.body_name(g);
             }
         }
-        self.exports();
+        // A test is a hosted program whose platform is the C library's:
+        // its exports are T functions, written if a test calls one, and
+        // C's names are left to it (docs/71-t-metal-findings.md).
+        if self.tests.is_empty() {
+            self.exports();
+        }
         while let Some(name) = self.todo.pop() {
             let exe: &'e Executable = self.exe;
             let (name, body) = exe.body_named(&name).expect("a body");
@@ -1768,7 +1781,7 @@ impl<'e> Gen<'e> {
     /// import's, so that no name of C's, nor any header's declaration of
     /// it, can clash (lemma E4 of docs/40-extern.md).
     fn import_body(&mut self, copy: &str, params: &[Type], ret: &Type) -> String {
-        let name = &self.decls[copy].name.name;
+        let name = c_name(&self.decls[copy].name.name);
         let c = self.fresh(&format!("c_{name}"));
         let args: Vec<String> = (0..params.len()).map(|i| format!("a{i}")).collect();
         let proto = c_prototype(&c, params, ret);
@@ -1801,10 +1814,10 @@ impl<'e> Gen<'e> {
                 .map(|i| body.locals[i].ty.clone())
                 .collect();
             let ret = body.locals[0].ty.clone();
-            let name = &d.name.name;
-            let hook = crate::check::PLATFORM_HOOKS.contains(&name.as_str());
+            let name = c_name(&d.name.name);
+            let hook = crate::check::PLATFORM_HOOKS.contains(&name);
             let c = match hook {
-                true => name.clone(),
+                true => name.to_string(),
                 false => self.fresh(&format!("x_{name}")),
             };
             let proto = c_prototype(&c, &params, &ret);

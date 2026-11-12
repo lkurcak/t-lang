@@ -1588,6 +1588,7 @@ fn main() with panic {
     print(a + b + p.x + helper());
 }
 fn c() -> i64 { 3 }
+extern fn on_tick() {}
 \nfn print<T: Int>(_x: T) {}\n";
     let (mut d, diags) = Doc::open(&mut c, "file:///tmp/bad.t", src);
     assert_eq!(diags, Vec::<Value>::new());
@@ -1614,6 +1615,12 @@ fn c() -> i64 { 3 }
         prepare(&mut c, "main", 0),
         Err(json!(
             "`main` can't be renamed: it's where the program starts"
+        ))
+    );
+    assert_eq!(
+        prepare(&mut c, "on_tick", 0),
+        Err(json!(
+            "`on_tick` can't be renamed: it's an `extern fn`, which is C's by its name"
         ))
     );
     let a = prepare(&mut c, "a", 3);

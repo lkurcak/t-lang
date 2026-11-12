@@ -17,7 +17,8 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line("\x41\x7e")?; // expect: A~
     out.line(&"\x00\x7F".len())?; // expect: 2
     out.line(&('\x08' as u32))?; // expect: 8
-    out.line(&f"\x41{1}")?; // expect: A1
+    let n = 1u8;
+    out.line(&f"\x41{n}")?; // expect: A1
     out.line(&"two
 lines".len())?; // expect: 9
     Ok(())

@@ -64,7 +64,11 @@ error: on the freestanding target, `main` gives back `()`: what reports
 
 Checking is otherwise the same on both targets, as it's the same for
 every machine (docs/11-integers.md): the target decides which libraries
-a program has, and nothing else.
+a program has, and nothing else. A program that writes the platform's
+functions in T (docs/40-extern.md) is checked the same way too, and
+tested on the hosted target; it's running it there, or building it for
+it, that fails, as the platform there is the C library's
+(docs/71-t-metal-findings.md).
 
 ## The platform
 
@@ -189,7 +193,9 @@ for it, and that each error is where it should be.
 
 - **A build flag, not a manifest field.** A package says what it needs,
   a build says where it runs. One program can be built for both, and
-  tested on the hosted one.
+  tested on the hosted one. One that writes the platform builds for the
+  freestanding target alone, but is still checked and tested as any
+  other (step 71).
 - **The platform in C, for now.** The five functions are a C interface,
   which a board's start-up code, written in C or assembly anyway,
   provides. Writing them in T needs a way to reach hardware

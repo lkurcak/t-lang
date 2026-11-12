@@ -698,11 +698,12 @@ module.exports = grammar({
       optional(/(i8|i16|i32|i64|isize|u8|u16|u32|u64|usize)/),
     )),
 
-    // `'a'`, `'\n'`, `'\u{20AC}'`: one character. Longer than a
-    // lifetime, `'a`, so the lexer takes it where both could start.
+    // `'a'`, `'\n'`, `'\x7F'`, `'\u{20AC}'`: one character; `\x` only
+    // for ASCII. Longer than a lifetime, `'a`, so the lexer takes it where
+    // both could start.
     char_literal: _ => token(seq(
       "'",
-      choice(/[^'\\\n\r\t]/, /\\[nrt\\0'"]/, /\\u\{[0-9a-fA-F]{1,6}\}/),
+      choice(/[^'\\\n\r\t]/, /\\[nrt\\0'"]/, /\\x[0-7][0-9a-fA-F]/, /\\u\{[0-9a-fA-F]{1,6}\}/),
       "'",
     )),
 
@@ -716,7 +717,7 @@ module.exports = grammar({
     // `"hi\n"`, a `&'static str`; escapes as in a character literal.
     string_literal: _ => token(seq(
       '"',
-      repeat(choice(/[^"\\]/, /\\[nrt\\0'"]/, /\\u\{[0-9a-fA-F]{1,6}\}/)),
+      repeat(choice(/[^"\\]/, /\\[nrt\\0'"]/, /\\x[0-7][0-9a-fA-F]/, /\\u\{[0-9a-fA-F]{1,6}\}/)),
       '"',
     )),
 
@@ -728,7 +729,7 @@ module.exports = grammar({
       'f"',
       repeat(choice(
         alias(token.immediate(prec(1, /[^"\\{}]+/)), $.format_text),
-        alias(token.immediate(choice(/\\[nrt\\0'"]/, /\\u\{[0-9a-fA-F]{1,6}\}/)), $.escape_sequence),
+        alias(token.immediate(choice(/\\[nrt\\0'"]/, /\\x[0-7][0-9a-fA-F]/, /\\u\{[0-9a-fA-F]{1,6}\}/)), $.escape_sequence),
         alias(token.immediate(choice('{{', '}}')), $.escape_sequence),
         $.format_hole,
       )),

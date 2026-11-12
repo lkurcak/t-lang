@@ -149,10 +149,12 @@ fn program(f: Function, e: Effect, w: Way) -> String {
             format!("fn act(b: u8) {{\n    {s}\n}}\n\n"),
             "act(b)".to_string(),
         ),
-        Way::Closure => (String::new(), format!("let f = |b: u8| {{ {s} }};\n    f(b)")),
+        Way::Closure => (
+            String::new(),
+            format!("let f = |b: u8| {{ {s} }};\n    f(b)"),
+        ),
         Way::Generic => (
-            "fn apply<effect g, F: FnOnce(u8) with g>(f: F, b: u8) with g { f(b) }\n\n"
-                .to_string(),
+            "fn apply<effect g, F: FnOnce(u8) with g>(f: F, b: u8) with g { f(b) }\n\n".to_string(),
             format!("apply(|b: u8| {{ {s} }}, b)"),
         ),
         Way::Method => (
@@ -219,4 +221,3 @@ fn exports_keep_to_what_an_interrupt_allows() {
         failures.join("\n\n")
     );
 }
-

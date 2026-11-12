@@ -21,6 +21,6 @@ fn main() {}
 fn writes_add_up() with {global, panic} {
     t_platform_write(2);
     t_platform_write(3);
-    assert_eq(WRITTEN.load(), 5);
+    assert_eq(&WRITTEN.load(), &5);
 }
 // test: writes_add_up ... ok

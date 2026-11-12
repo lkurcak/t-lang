@@ -13,6 +13,7 @@ fn main() {
     unsafe {
         let _ = c::putchar(104);
         let _ = c::putchar(events::on_event(104));
+        let _ = c::putchar(10);
     }
 }
 // prints: hi

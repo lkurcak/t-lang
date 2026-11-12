@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.86.0 (2026-11-12)
+
+Step 71: what t-metal found. See
+[docs/71-t-metal-findings.md](docs/71-t-metal-findings.md). t-metal, a
+kernel for a RISC-V board, was the first program for the freestanding
+target; five of its findings are fixed.
+
+### Fixed
+
+- An `extern fn` in a module made C that didn't compile: its C name and
+  its symbol were its path, `uart::put`. Each is its own name now,
+  wherever it's declared, as the checker always took it to be; a
+  platform's function in a module is the platform's.
+- A program that writes `t_platform_write` or `t_platform_halt` in T
+  couldn't be checked or tested for the hosted target, where `t check`,
+  `t test` and the language server check. It's checked the same for
+  either target now; running it hosted, or building it for the hosted
+  target, says it's for the freestanding one. Its tests run hosted, as
+  every test does, and call its exports as T functions.
+- Code blocks of items with no `fn main` in the docs are type-checked;
+  five didn't check.
+
+### Changed
+
+- An exported `extern fn` can't allocate: its effects, said or inferred,
+  are at most `global` and `panic`. C may call it from an interrupt, in
+  the middle of an allocation, and the allocator can't be started again
+  before it ends.
+- `\x00` to `\x7F` are escapes in strings and characters, as in byte
+  literals: `"\x1b[0m"`, `'\x08'`. Past `\x7F`, `\x` is still for bytes
+  alone, and the error says to write the character as `\u{..}`.
+- docs/40-extern.md says an import that reads or writes C's state says
+  `with global`.
+- Tests: `tests/generated_exports.rs` builds an export or the platform's
+  write, × an effect, × each way a body can get it, and checks each is
+  refused exactly when it should be, the same for both targets.
+
 ## 0.85.0 (2026-11-12)
 
 Step 70: an impl's bounds are its trait's. See

@@ -258,7 +258,7 @@ fn run(
                          `t check` checks it",
                 ))
             }
-            false => Ok(program),
+            false => hosted(&program).map(|()| program),
         });
         match result.map(|program| program.lower()) {
             Err(e) => RunResult {
@@ -343,13 +343,40 @@ pub fn build_c(path: &Path, src: &str, read: load::Read, options: cgen::Options)
                      build; `t check` checks it",
                 ))
             }
-            false => Ok(cgen::emit(&program.lower(), &sources, options)),
+            false => {
+                if options.target == Target::Hosted {
+                    hosted(&program)?;
+                }
+                Ok(cgen::emit(&program.lower(), &sources, options))
+            }
         });
         Built {
             sources,
             warnings,
             result,
         }
+    }
+}
+
+/// What's wrong with running `program` on the hosted target, or building
+/// it for it, if anything: writing the platform's functions, which are the
+/// C library's there. Checking is the same for either target, and its
+/// tests run hosted, each a program of its own, whose exports aren't C's
+/// (docs/71-t-metal-findings.md).
+fn hosted(program: &CheckedProgram) -> Result<(), Error> {
+    let writes = |f: &&ast::FnDecl| {
+        f.ext.is_some_and(|e| !e.import) && check::PLATFORM_HOOKS.contains(&f.name.name.as_str())
+    };
+    match program.program().fns.iter().find(writes) {
+        None => Ok(()),
+        Some(f) => Err(Error::ty(
+            f.name.span,
+            format!(
+                "this program writes the platform's `{}`, which on the hosted target is the C \
+                 library's: it's for the freestanding target, `t build --target freestanding`",
+                f.name.name
+            ),
+        )),
     }
 }
 
