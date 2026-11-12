@@ -109,6 +109,9 @@ pub(crate) enum Kind {
     /// first: a variable as any other to the procedure, which knows of it
     /// only what `lemmas` says, from what's known of the two.
     Product(Var, Var),
+    /// An integer with no range of its own: the quotient of a sum by a
+    /// constant (`Walk::divide`), which the law that defines it bounds.
+    Integer,
 }
 
 /// The variable for `u · v`, made if there isn't one yet. There's one for
@@ -120,6 +123,24 @@ pub(crate) fn product(kinds: &mut Vec<Kind>, u: Var, v: Var) -> Var {
     }
     kinds.push(key);
     (kinds.len() - 1) as Var
+}
+
+/// The least and greatest values `l` can have by its variables' ranges
+/// alone, which hold of every value of them, if those are constants.
+pub(crate) fn range_of(l: &Lin, kinds: &[Kind]) -> Option<(i128, i128)> {
+    let (mut lo, mut hi) = (l.k, l.k);
+    for &(v, c) in &l.terms {
+        let (vlo, vhi) = match &kinds[v as usize] {
+            Kind::Int(lo, hi) => (lo.as_constant()?, hi.as_constant()?),
+            Kind::Bound(lo, hi) => (*lo, *hi),
+            Kind::Bool => (0, 1),
+            Kind::Product(..) | Kind::Integer => return None,
+        };
+        let (a, b) = (c.checked_mul(vlo)?, c.checked_mul(vhi)?);
+        lo = lo.checked_add(a.min(b))?;
+        hi = hi.checked_add(a.max(b))?;
+    }
+    Some((lo, hi))
 }
 
 /// `a · b`, if the logic has it: products of two variables, but none of
@@ -186,6 +207,29 @@ impl Lin {
     /// Its value, if it has no variables.
     pub(crate) fn as_constant(&self) -> Option<i128> {
         self.terms.is_empty().then_some(self.k)
+    }
+
+    /// The sum, as source text, if all its variables can be named.
+    pub(crate) fn text(&self, name: &impl Fn(Var) -> Option<String>) -> Option<String> {
+        let mut out = String::new();
+        for &(v, c) in &self.terms {
+            let n = name(v)?;
+            let sign = if c < 0 { "-" } else { "+" };
+            match (out.is_empty(), c.unsigned_abs()) {
+                (true, 1) if c < 0 => out = format!("-{n}"),
+                (true, 1) => out = n,
+                (true, m) if c < 0 => out = format!("-{m} * {n}"),
+                (true, m) => out = format!("{m} * {n}"),
+                (false, 1) => out = format!("{out} {sign} {n}"),
+                (false, m) => out = format!("{out} {sign} {m} * {n}"),
+            }
+        }
+        Some(match (out.is_empty(), self.k) {
+            (true, k) => k.to_string(),
+            (false, 0) => out,
+            (false, k) if k < 0 => format!("{out} - {}", k.unsigned_abs()),
+            (false, k) => format!("{out} + {k}"),
+        })
     }
 
     pub(crate) fn as_var(&self) -> Option<Var> {
@@ -997,8 +1041,9 @@ fn impossible(atoms: &[(Formula, Deps)], kinds: &[Kind]) -> Result<Option<Deps>,
             }
             Kind::Bool => (Lin::constant(0), Lin::constant(1)),
             Kind::Bound(lo, hi) => (Lin::constant(*lo), Lin::constant(*hi)),
-            // A product of integers is an integer, with no range of its own.
-            Kind::Product(..) => continue,
+            // A product of integers is an integer, with no range of its own,
+            // as is a quotient.
+            Kind::Product(..) | Kind::Integer => continue,
         };
         // lo - v <= 0 and v - hi <= 0, which hold of every case.
         for l in [lo.sub(&Lin::var(v)), Lin::var(v).sub(&hi)] {

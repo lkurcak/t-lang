@@ -52,8 +52,8 @@ its slice is as long as the list.
 A method is a measure if it's marked `#[measure]`, and then it must be
 one: it takes only `&self`, has no type parameters of its own, gives an
 integer or a `bool`, has no effects, and its body is a term of the logic,
-of `self`'s fields, other measures, literals, `+`, `-`, `*` by a
-constant, comparisons, `&&`, `||` and `!`. Or it's an intrinsic, whose
+of `self`'s fields, other measures, literals, `+`, `-`, `*`, and `/`
+and `%` by a constant (since step 72), comparisons, `&&`, `||` and `!`. Or it's an intrinsic, whose
 value the compiler provides: a slice's or a string's `len`, a `RawBuf`'s
 `cap`.
 
