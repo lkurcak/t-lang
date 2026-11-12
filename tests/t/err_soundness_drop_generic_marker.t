@@ -1,9 +1,7 @@
 // `G: Discard` lets generic code drop a `G`, which runs its `discard`.
 use alloc::list::List;
 
-struct W<'a, T> {
-    r: &'a mut T,
-}
+struct W<'a, T> { r: &'a mut T }
 
 impl<'a> Discard for W<'a, usize> {
     fn discard(self) {

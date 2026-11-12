@@ -3,9 +3,7 @@ use alloc::list::List;
 
 fn it<'a>(
     l: &'a mut List<{ t: usize | t < 5 }>,
-) -> Option<impl Iterator<Item = &'a mut usize> + Discard> {
-    Some(l.iter_mut())
-}
+) -> Option<impl Iterator<Item = &'a mut usize> + Discard> { Some(l.iter_mut()) }
 
 fn main() {
     let mut l: List<{ t: usize | t < 5 }> = List::new();

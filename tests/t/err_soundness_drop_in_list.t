@@ -1,9 +1,7 @@
 // A list's `discard` drops its elements, each by its own.
 use alloc::list::List;
 
-struct W<'a, T> {
-    r: &'a mut T,
-}
+struct W<'a, T> { r: &'a mut T }
 
 impl<'a> Discard for W<'a, usize> {
     fn discard(self) {

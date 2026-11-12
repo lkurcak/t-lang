@@ -12,8 +12,8 @@ fn main() {
         Err(c) => {
             c.set(99);
             let _x = read(c);
-        }
-        Ok(_) => {}
+        },
+        Ok(_) => {},
     }
 }
 // error: can't prove `d < 10` for argument `value` of `set`

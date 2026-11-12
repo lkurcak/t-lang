@@ -625,7 +625,10 @@ impl Walk<'_> {
             };
             // Anything may be written there: unless what's declared holds
             // of anything here, as of a variant the value isn't.
-            if self.implies(&[(Vec::new(), targs::Cand::Any)], d, &pt).is_ok() {
+            if self
+                .implies(&[(Vec::new(), targs::Cand::Any)], d, &pt)
+                .is_ok()
+            {
                 continue;
             }
             let text = d.text().unwrap_or_default();

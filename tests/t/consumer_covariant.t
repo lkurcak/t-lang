@@ -8,14 +8,10 @@ trait Show {
 }
 
 impl Show for u64 {
-    fn show(&self) -> u64 {
-        *self
-    }
+    fn show(&self) -> u64 { *self }
 }
 
-fn seen<T: Show>(x: &T) -> u64 {
-    x.show()
-}
+fn seen<T: Show>(x: &T) -> u64 { x.show() }
 
 fn keep<T: Show>(x: T) -> T {
     let _ = x.show();
@@ -26,7 +22,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut out = os.stdout;
     let a: { v: u64 | v < 10 } = 3;
     let b: { v: u64 | v < 10 } = keep(a);
-    out.line(&b)?; // expect: 3
+    out.line(&b)?;        // expect: 3
     out.line(&seen(&b))?; // expect: 3
     let mut l: List<{ v: u64 | v < 10 }> = List::new();
     l.push(4);
@@ -35,6 +31,4 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     Result::Ok(())
 }
 
-fn keep_list<T: Show>(l: List<T>) -> List<T> {
-    l
-}
+fn keep_list<T: Show>(l: List<T>) -> List<T> { l }

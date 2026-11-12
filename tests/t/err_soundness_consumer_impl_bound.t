@@ -17,9 +17,7 @@ trait Run {
 }
 
 #[derive(Discard)]
-struct Hold<G> {
-    g: G,
-}
+struct Hold<G> { g: G }
 
 impl<G: Go> Run for Hold<G> {
     fn run(self) {

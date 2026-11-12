@@ -12,7 +12,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     let o: Option<Cell<{ d: usize | d < 10 }>> = Some(Cell::new(1));
     match &o {
         Some(c) => c.set(7),
-        None => {}
+        None => {},
     }
     if let Some(c) = &o {
         out.line(&read(c))?; // expect: 7

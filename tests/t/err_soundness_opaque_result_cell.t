@@ -7,20 +7,14 @@ trait Get {
 }
 
 #[derive(Copy, Discard)]
-struct W<'a, T> {
-    r: &'a T,
-}
+struct W<'a, T> { r: &'a T }
 
 impl<'a, T> Get for W<'a, T> {
     type Out = &'a T;
-    fn get(self) -> &'a T {
-        self.r
-    }
+    fn get(self) -> &'a T { self.r }
 }
 
-fn mk<'a>(c: &'a Cell<{ v: u8 | v < 10 }>) -> impl Get<Out = &'a Cell<u8>> {
-    W { r: c }
-}
+fn mk<'a>(c: &'a Cell<{ v: u8 | v < 10 }>) -> impl Get<Out = &'a Cell<u8>> { W { r: c } }
 
 fn main() {
     let c: Cell<{ v: u8 | v < 10 }> = Cell::new(3);

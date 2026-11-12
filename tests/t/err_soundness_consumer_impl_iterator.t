@@ -14,9 +14,7 @@ impl<'a> Go for &'a mut usize {
 }
 
 #[derive(Discard)]
-struct Once<G> {
-    g: Option<G>,
-}
+struct Once<G> { g: Option<G> }
 
 impl<G: Go + Discard> Iterator for Once<G> {
     type Item = u8;
@@ -26,16 +24,13 @@ impl<G: Go + Discard> Iterator for Once<G> {
             Some(g) => {
                 g.go();
                 Some(1)
-            }
+            },
             None => None,
         }
     }
 }
 
-fn drain<I: Iterator + Discard>(mut i: I) with I::e
-where
-    I::Item: Discard,
-{
+fn drain<I: Iterator + Discard>(mut i: I) with I::e where I::Item: Discard {
     let _ = i.next();
 }
 

@@ -3,9 +3,7 @@
 use core::cell::Cell;
 
 #[derive(Discard)]
-struct H<'a> {
-    r: &'a mut usize,
-}
+struct H<'a> { r: &'a mut usize }
 
 fn poke(h: &mut H) {
     *h.r = 5;

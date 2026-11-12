@@ -2,9 +2,7 @@
 // bind, there, which runs their `discard`.
 use alloc::list::List;
 
-struct W<'a, T> {
-    r: &'a mut T,
-}
+struct W<'a, T> { r: &'a mut T }
 
 impl<'a> Discard for W<'a, usize> {
     fn discard(self) {
@@ -12,10 +10,7 @@ impl<'a> Discard for W<'a, usize> {
     }
 }
 
-enum Two<A, B> {
-    Both(A, B),
-    Neither,
-}
+enum Two<A, B> { Both(A, B), Neither }
 
 fn main() with alloc {
     let mut l: List<{ t: usize | t < 5 }> = List::new();
@@ -27,8 +22,8 @@ fn main() with alloc {
         match t {
             Two::Both(a, _) => {
                 let _ = a;
-            }
-            Two::Neither => {}
+            },
+            Two::Neither => {},
         }
     }
     if l.len() > 0 {

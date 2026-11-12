@@ -4,10 +4,7 @@ use alloc::list::List;
 use core::mem::swap;
 
 #[derive(Discard)]
-struct W2<'a, T> {
-    a: &'a mut T,
-    b: &'a mut T,
-}
+struct W2<'a, T> { a: &'a mut T, b: &'a mut T }
 
 fn sw<'a, T>(w: W2<'a, T>) {
     swap(w.a, w.b);

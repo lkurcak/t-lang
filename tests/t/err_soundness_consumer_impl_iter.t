@@ -8,9 +8,7 @@ trait Go {
 }
 
 #[derive(Discard)]
-struct Wrap<I> {
-    i: I,
-}
+struct Wrap<I> { i: I }
 
 impl<'a, I: Iterator<Item = &'a mut usize> + Discard> Go for Wrap<I> {
     effect e = I::e;

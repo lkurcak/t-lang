@@ -14,7 +14,7 @@ fn main() {
     let o: Option<Cell<{ d: usize | d < 10 }>> = Some(Cell::new(1));
     match &o {
         Some(c) => c.set(99),
-        None => {}
+        None => {},
     }
     let _x = read(&o);
 }

@@ -8,10 +8,7 @@ fn read(c: &Cell<{ d: usize | d < 10 }>) -> u8 {
 }
 
 #[derive(Discard)]
-enum E {
-    A(Cell<{ d: usize | d < 10 }>),
-    B(Cell<usize>),
-}
+enum E { A(Cell<{ d: usize | d < 10 }>), B(Cell<usize>) }
 
 fn r2(e: &E) -> u8 {
     match e {

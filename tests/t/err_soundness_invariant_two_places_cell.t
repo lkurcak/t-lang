@@ -3,10 +3,7 @@
 use core::cell::Cell;
 
 #[derive(Copy, Discard)]
-struct P<'a, T> {
-    a: &'a T,
-    b: &'a T,
-}
+struct P<'a, T> { a: &'a T, b: &'a T }
 
 fn copy_over<'a, U: Copy>(p: P<'a, Cell<U>>) {
     p.a.set(p.b.get());

@@ -3,10 +3,7 @@
 use alloc::list::List;
 use core::cell::Cell;
 
-struct Noisy<'a, T> {
-    seen: &'a Cell<u8>,
-    held: &'a mut T,
-}
+struct Noisy<'a, T> { seen: &'a Cell<u8>, held: &'a mut T }
 
 impl<'a, T> Discard for Noisy<'a, T> {
     fn discard(self) {
@@ -14,9 +11,7 @@ impl<'a, T> Discard for Noisy<'a, T> {
     }
 }
 
-struct W<'a, T> {
-    r: &'a mut T,
-}
+struct W<'a, T> { r: &'a mut T }
 
 impl<'a> Discard for W<'a, usize> {
     fn discard(self) {
@@ -24,9 +19,7 @@ impl<'a> Discard for W<'a, usize> {
     }
 }
 
-fn keep<'a>(w: W<'a, usize>) -> W<'a, usize> {
-    w
-}
+fn keep<'a>(w: W<'a, usize>) -> W<'a, usize> { w }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut out = os.stdout;

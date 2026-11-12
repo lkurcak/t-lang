@@ -3,15 +3,12 @@ use alloc::list::List;
 use core::mem::swap;
 
 #[derive(Discard)]
-enum Two<'a, T> {
-    Both(&'a mut T, &'a mut T),
-    Neither,
-}
+enum Two<'a, T> { Both(&'a mut T, &'a mut T), Neither }
 
 fn sw<'a, T>(t: Two<'a, T>) {
     match t {
         Two::Both(a, b) => swap(a, b),
-        Two::Neither => {}
+        Two::Neither => {},
     }
 }
 

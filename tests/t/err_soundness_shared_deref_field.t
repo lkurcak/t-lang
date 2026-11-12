@@ -1,8 +1,6 @@
 // A struct's `&mut` field, through a `&` to the struct, is shared.
 #[derive(Discard)]
-struct H<'a> {
-    r: &'a mut usize,
-}
+struct H<'a> { r: &'a mut usize }
 
 fn poke(h: &H) {
     *h.r = 5;
