@@ -64,6 +64,7 @@ impl Checker {
                     // a marker's are taken for granted where it's matched
                     // (`Traits::implements`).
                     eqs: def.eqs.clone(),
+                    effect_bounds: Vec::new(),
                     assoc: Vec::new(),
                     methods: Vec::new(),
                     derived: true,
@@ -123,7 +124,13 @@ impl Checker {
                     bounds: w.bounds.clone(),
                     ..Generics::default()
                 };
-                let (preds, eqs) = self.preds(&g, &params, &lifetimes, false)?;
+                let (preds, eqs, effects) = self.preds(&g, &params, &lifetimes, false)?;
+                if !effects.is_empty() {
+                    return Err(Error::ty(
+                        w.span,
+                        "an associated effect's bound, `e = {..}`, can't be on a derived impl",
+                    ));
+                }
                 self.traits.impls[k].preds = preds;
                 self.traits.impls[k].eqs.extend(eqs);
             }

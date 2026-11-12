@@ -23,7 +23,7 @@ impl Checker {
         params: &crate::types::Params,
         lifetimes: &[String],
         on_projections: bool,
-    ) -> Result<(Vec<Pred>, Vec<Equality>), Error> {
+    ) -> Result<Bounded, Error> {
         // A type in a bound can name an associated type of a parameter,
         // as `F: Fn(I::Item)` does, which the parameter's own bounds say
         // which trait's it is: in scope while the types are worked out.
@@ -51,9 +51,10 @@ impl Checker {
         params: &crate::types::Params,
         lifetimes: &[String],
         on_projections: bool,
-    ) -> Result<(Vec<Pred>, Vec<Equality>), Error> {
+    ) -> Result<Bounded, Error> {
         let mut out: Vec<Pred> = Vec::new();
         let mut eqs: Vec<(Type, Type)> = Vec::new();
+        let mut effects: Vec<EffectBound> = Vec::new();
         let push = |out: &mut Vec<Pred>, pred: Pred| {
             if !out.contains(&pred) {
                 out.push(pred);
@@ -191,7 +192,68 @@ impl Checker {
                             ));
                         }
                     };
-                    let lhs = Type::Proj(Box::new(ty.clone()), owner, a.name.name.clone());
+                    let lhs = Type::Proj(Box::new(ty.clone()), owner.clone(), a.name.name.clone());
+                    let effect = (self.traits.traits.get(&owner))
+                        .is_some_and(|d| d.assoc.iter().any(|x| x.name == a.name.name && x.effect));
+                    // `e = {alloc}`: what the associated effect is at most,
+                    // an upper bound as every effect bound is
+                    // (docs/68.1-effect-bindings.md); `e = panic` is
+                    // written as a type until here.
+                    if effect {
+                        let set = match &a.kind {
+                            AssocBoundKind::Effects(set) => set.clone(),
+                            AssocBoundKind::Eq(t) => match as_effect(t) {
+                                Some(e) => EffectSet {
+                                    items: vec![e],
+                                    span: t.span,
+                                    with: false,
+                                },
+                                None => {
+                                    return Err(Error::ty(
+                                        t.span,
+                                        format!(
+                                            "`{0}` is an associated effect of `{1}`: say what it \
+                                             may be with effects, as in `{0} = {{alloc}}`",
+                                            a.name.name,
+                                            self.traits.shorten(&owner)
+                                        ),
+                                    ));
+                                }
+                            },
+                            AssocBoundKind::Bounds(_) => {
+                                return Err(Error::ty(
+                                    a.name.span,
+                                    format!(
+                                        "`{0}` is an associated effect: it implements no traits; \
+                                         say what it may be, as in `{0} = {{alloc}}`",
+                                        a.name.name
+                                    ),
+                                ));
+                            }
+                        };
+                        let mut lts = Lifetimes::Assoc {
+                            declared: lifetimes,
+                        };
+                        let rhs = self.resolve_effects_with(&set, params, &mut lts)?;
+                        if effects.iter().any(|(l, _)| *l == lhs) {
+                            return Err(Error::ty(
+                                a.name.span,
+                                format!("`{lhs}` is said to be something twice"),
+                            ));
+                        }
+                        effects.push((lhs, rhs));
+                        continue;
+                    }
+                    if let AssocBoundKind::Effects(set) = &a.kind {
+                        return Err(Error::ty(
+                            set.span,
+                            format!(
+                                "`{0}` is an associated type, not an effect: say what it is with \
+                                 a type, as in `{0} = i64`",
+                                a.name.name
+                            ),
+                        ));
+                    }
                     match &a.kind {
                         AssocBoundKind::Eq(t) => {
                             let mut lts = Lifetimes::Assoc {
@@ -213,6 +275,7 @@ impl Checker {
                             }
                             eqs.push((lhs, rhs));
                         }
+                        AssocBoundKind::Effects(_) => unreachable!("an effect's, above"),
                         AssocBoundKind::Bounds(traits) => {
                             if !on_projections {
                                 return Err(Error::ty(
@@ -241,7 +304,7 @@ impl Checker {
                 }
             }
         }
-        Ok((out, eqs))
+        Ok((out, eqs, effects))
     }
 
     /// The type of projection `<s as tr>::name`, written at `span`, or
@@ -399,6 +462,37 @@ impl Checker {
 
 /// What an equality bound says: projection `.0` is type `.1`.
 pub(in crate::check) type Equality = (Type, Type);
+
+/// What an associated effect may be at most: `(I::e, {alloc})` for `I:
+/// Iterator<e = {alloc}>` (docs/68.1-effect-bindings.md).
+pub(in crate::check) type EffectBound = (Type, Type);
+
+/// What bounds say: what traits types implement, what projections are,
+/// and what associated effects are at most.
+pub(in crate::check) type Bounded = (Vec<Pred>, Vec<Equality>, Vec<EffectBound>);
+
+/// The effect `t`, written where a type would be, as `e = panic` or `e =
+/// I::e` in a bound: a name, or a projection.
+fn as_effect(t: &TypeExpr) -> Option<Effect> {
+    let kind = match &t.kind {
+        TypeExprKind::Named(name, args) if args.is_empty() && !name.contains("::") => {
+            EffectKind::Named(Ident {
+                name: name.clone(),
+                span: t.span,
+                id: t.id,
+            })
+        }
+        TypeExprKind::Proj(base, tr, name) => {
+            EffectKind::Proj(base.clone(), tr.clone(), name.clone())
+        }
+        _ => return None,
+    };
+    Some(Effect {
+        kind,
+        span: t.span,
+        id: t.id,
+    })
+}
 
 /// Can a `where` clause bound `t`: a type parameter, `Self`, or a
 /// projection on one? Others' bounds are already true or false.

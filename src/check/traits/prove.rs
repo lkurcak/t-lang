@@ -63,6 +63,7 @@ impl Checker {
             self_ty: adt.generic(symbol),
             preds: assumed.clone(),
             eqs: adt.eqs.clone(),
+            effect_bounds: Vec::new(),
             assoc: Vec::new(),
             methods: Vec::new(),
             derived: true,

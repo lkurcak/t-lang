@@ -456,6 +456,52 @@
     }
   },
   {
+    "type": "associated_effect_bound",
+    "named": true,
+    "fields": {
+      "effects": {
+        "multiple": true,
+        "required": true,
+        "types": [
+          {
+            "type": ",",
+            "named": false
+          },
+          {
+            "type": "effect",
+            "named": true
+          },
+          {
+            "type": "projection_type",
+            "named": true
+          },
+          {
+            "type": "qualified_type",
+            "named": true
+          },
+          {
+            "type": "{",
+            "named": false
+          },
+          {
+            "type": "}",
+            "named": false
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "type_identifier",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "associated_equality",
     "named": true,
     "fields": {
@@ -3344,6 +3390,10 @@
       "types": [
         {
           "type": "associated_bound",
+          "named": true
+        },
+        {
+          "type": "associated_effect_bound",
           "named": true
         },
         {

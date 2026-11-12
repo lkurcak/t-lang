@@ -605,6 +605,9 @@ pub(crate) struct Checker {
     /// What must hold of effect sets once the function's variables are
     /// solved.
     withins: Vec<effects::Within>,
+    /// What the bounds of the function being checked say its associated
+    /// effects are at most (`Scheme::effect_bounds`).
+    effect_bounds: Vec<(Type, Type)>,
     /// The `unsafe` blocks in the body being checked.
     unsafe_blocks: Vec<Span>,
     /// The effects of each site in an `unsafe` block, by the block, to
@@ -1013,6 +1016,7 @@ impl Checker {
             unwraps: Vec::new(),
             dropped: Vec::new(),
             withins: Vec::new(),
+            effect_bounds: Vec::new(),
             unsafe_blocks: Vec::new(),
             unsafe_uses: Vec::new(),
             effect_owners: HashMap::new(),
@@ -1311,6 +1315,7 @@ impl Checker {
                         bounds: d.bounds.clone(),
                         preds: d.preds.clone(),
                         eqs: d.local_eqs(),
+                        effect_bounds: d.effect_bounds.clone(),
                     };
                     let this = d.trait_name.clone().map(|tr| Pred {
                         ty: Type::Param("Self".into(), false),
@@ -1405,7 +1410,7 @@ impl Checker {
         let params = generics::declare(&f.generics)?;
         let declared = generics::declare_lifetimes(&f.generics.lifetimes)?;
         let bounds = generics::bounds(&f.generics, &declared, &params)?;
-        let (preds, eqs) = self.preds(&f.generics, &params, &declared, true)?;
+        let (preds, eqs, effect_bounds) = self.preds(&f.generics, &params, &declared, true)?;
         self.env = preds.clone();
         self.adts.proj.local = eqs.clone();
         let (param_tys, ret, effects, lifetimes) = self.signature(f, &params, &declared, true)?;
@@ -1417,6 +1422,7 @@ impl Checker {
             bounds,
             preds,
             eqs,
+            effect_bounds,
             ty: Type::func_with(param_tys, ret, effects),
         })
     }
@@ -1587,6 +1593,7 @@ impl Checker {
         self.lifetimes = scheme.lifetimes.clone();
         self.env = scheme.preds.clone();
         self.adts.proj.local = scheme.eqs.clone();
+        self.effect_bounds = scheme.effect_bounds.clone();
         self.goals.clear();
         let scope = self.locals.len();
         for (i, p) in f.params.iter().enumerate() {

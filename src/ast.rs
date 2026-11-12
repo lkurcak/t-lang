@@ -721,9 +721,10 @@ impl BoundItem {
     /// `Fn` bound's calls take and give, and the types whose associated
     /// effects its effects are.
     pub fn types(&self) -> Vec<&TypeExpr> {
-        let eqs = self.assoc.iter().filter_map(|a| match &a.kind {
-            AssocBoundKind::Eq(t) => Some(t),
-            AssocBoundKind::Bounds(_) => None,
+        let eqs = self.assoc.iter().flat_map(|a| match &a.kind {
+            AssocBoundKind::Eq(t) => vec![t],
+            AssocBoundKind::Bounds(_) => Vec::new(),
+            AssocBoundKind::Effects(e) => e.types().collect(),
         });
         let sig = self
             .sig
@@ -735,9 +736,10 @@ impl BoundItem {
 
     /// `types`, to change.
     pub fn types_mut(&mut self) -> Vec<&mut TypeExpr> {
-        let eqs = self.assoc.iter_mut().filter_map(|a| match &mut a.kind {
-            AssocBoundKind::Eq(t) => Some(t),
-            AssocBoundKind::Bounds(_) => None,
+        let eqs = self.assoc.iter_mut().flat_map(|a| match &mut a.kind {
+            AssocBoundKind::Eq(t) => vec![t],
+            AssocBoundKind::Bounds(_) => Vec::new(),
+            AssocBoundKind::Effects(e) => e.types_mut().collect(),
         });
         let sig = self
             .sig
@@ -778,6 +780,7 @@ impl fmt::Display for BoundItem {
                 .iter()
                 .map(|a| match &a.kind {
                     AssocBoundKind::Eq(t) => format!("{} = {t}", a.name.name),
+                    AssocBoundKind::Effects(e) => format!("{} = {}", a.name.name, e.braced()),
                     AssocBoundKind::Bounds(ts) => {
                         let ts: Vec<&str> = ts.iter().map(|t| t.name.as_str()).collect();
                         format!("{}: {}", a.name.name, ts.join(" + "))
@@ -799,10 +802,15 @@ pub struct AssocBound {
 
 #[derive(Debug, Clone)]
 pub enum AssocBoundKind {
-    /// `Item = i64`: an *equality bound*.
+    /// `Item = i64`: an *equality bound*. Of an associated effect, `e =
+    /// panic`, what's written is a type until the checker sees `e` is an
+    /// effect.
     Eq(TypeExpr),
     /// `Item: Discard + Show`: the traits it implements.
     Bounds(Vec<Ident>),
+    /// `e = {alloc}`: what an associated effect may be at most (see
+    /// docs/68.1-effect-bindings.md).
+    Effects(EffectSet),
 }
 
 /// `#[derive(Discard, Copy, Eq)]` before a struct or enum: implementations
@@ -1158,6 +1166,15 @@ impl EffectSet {
 
 /// `with panic`, `with {alloc, e}`, or `{}` after `effect e =`: in braces
 /// unless it's one effect, however it was written, as `t fmt` prints it.
+impl EffectSet {
+    /// Its items in braces, even one: `{panic}`, as an associated effect's
+    /// binding is written, where `panic` alone would be read as a type.
+    pub fn braced(&self) -> String {
+        let items: Vec<String> = self.items.iter().map(Effect::to_string).collect();
+        format!("{{{}}}", items.join(", "))
+    }
+}
+
 impl fmt::Display for EffectSet {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if self.with {

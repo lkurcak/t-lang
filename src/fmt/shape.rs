@@ -169,7 +169,7 @@ enums! {
     Vis { Private, Pub(span), Export(span) };
     UseKind { Name(alias), Group(trees) };
     TypeDecl { Struct(decl), Enum(decl), Alias(decl) };
-    AssocBoundKind { Eq(ty), Bounds(bounds) };
+    AssocBoundKind { Eq(ty), Bounds(bounds), Effects(set) };
     EffectKind { Named(name), Proj(ty, tr, name) };
     TypeExprKind {
         Named(name, args), Unit, Fn(params, ret, effects), Ref(lifetime, mutable, ty),

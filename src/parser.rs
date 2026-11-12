@@ -287,6 +287,10 @@ impl Parser {
         &self.toks[(self.pos + 1).min(self.toks.len() - 1)].tok
     }
 
+    fn peek3(&self) -> &Tok {
+        &self.toks[(self.pos + 2).min(self.toks.len() - 1)].tok
+    }
+
     /// Runs `f` with struct literals allowed (`true`) or not, then restores the
     /// previous setting. Inside any brackets they're allowed again, since
     /// there's no ambiguity there.
@@ -1809,7 +1813,13 @@ impl Parser {
             let kind = match p.peek() {
                 Tok::Eq => {
                     p.bump();
-                    AssocBoundKind::Eq(p.ty()?)
+                    // `{alloc}`, `{}`: an associated effect's; `{ t: u8 |
+                    // .. }` is a refined type.
+                    let refined = matches!(p.peek2(), Tok::Ident(_)) && *p.peek3() == Tok::Colon;
+                    match *p.peek() == Tok::LBrace && !refined {
+                        true => AssocBoundKind::Effects(p.effect_set(None)?),
+                        false => AssocBoundKind::Eq(p.ty()?),
+                    }
                 }
                 Tok::Colon => {
                     p.bump();
