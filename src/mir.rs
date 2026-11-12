@@ -109,6 +109,10 @@ pub(crate) struct Notes {
     pub(crate) mut_bound: Vec<Place>,
     /// By statement, what messages about it say.
     pub(crate) stmts: std::collections::HashMap<Point, StmtNote>,
+    /// By statement, the places whose values may be dropped there, as drop
+    /// elaboration will drop them (`borrowck::drops::may_drop`): only in
+    /// the copy kept for the refinement checker.
+    pub(crate) drops: std::collections::HashMap<Point, Vec<Place>>,
 }
 
 /// A loop, as the refinement checker sees it.

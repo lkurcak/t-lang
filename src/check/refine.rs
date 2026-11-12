@@ -4074,8 +4074,10 @@ impl Walk<'_> {
                 }
                 _ => Vec::new(),
             };
-            let what = format!("the result of `{}`", self.cx.fns[id.0].name.name);
+            let name = self.cx.fns[id.0].name.name.clone();
+            let what = format!("the result of `{name}`");
             self.keep_inv(&v, &ret, &declared, &[], span, &what)?;
+            self.opaque_result(&v, &ret, span, &name);
         }
         if let Some((r, name)) = self.ret.clone() {
             let what = match self.cx.current.is_some_and(|id| self.cx.fns[id.0].konst) {

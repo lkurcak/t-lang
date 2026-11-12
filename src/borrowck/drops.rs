@@ -47,7 +47,7 @@
 use super::build::{Builder, project};
 use crate::mir::*;
 use crate::types::{AdtKind, Type};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// The move paths of a body.
 struct Paths {
@@ -92,6 +92,49 @@ pub(crate) fn elaborate(b: &Builder, body: &mut Body) {
     body.locals.extend(locals);
     body.blocks = blocks;
     e.initialise_flags(body);
+}
+
+/// The places whose values, all of them or what's left, may be dropped at
+/// each statement of `body`, the body `b` built and checked, as
+/// `elaborate` will drop them: an assignment's old value, a `dead`
+/// local's, what's left of a value a pattern took apart. The refinement
+/// checker checks each that runs a `discard` of a type's own as a call of
+/// it (lemma A9 of docs/68-fail-closed.md), so none may be left out: each
+/// statement `elaborate` drops at, by `drop_at`, `drop_path` or `open`, is
+/// here.
+pub(crate) fn may_drop(b: &Builder, body: &Body) -> HashMap<Point, Vec<Place>> {
+    let e = Elaborator::new(b, body);
+    let mut out: HashMap<Point, Vec<Place>> = HashMap::new();
+    for (bb, block) in body.blocks.iter().enumerate() {
+        let Some(mut st) = e.ins[bb].clone() else {
+            continue;
+        };
+        for (index, s) in block.stmts.iter().enumerate() {
+            let dropped = match &s.kind {
+                StmtKind::Assign { place, value, .. } => {
+                    let mut after = st.clone();
+                    e.moves(&mut after, value);
+                    let there = e.behind(place) || e.maybe_there(&after, e.path(place));
+                    (there && !e.is_copy(&e.place_ty(place))).then(|| place.clone())
+                }
+                StmtKind::Dead(l) => {
+                    let p = Place::local(*l);
+                    (e.maybe_there(&st, e.path(&p)) && !e.is_copy(&e.place_ty(&p))).then_some(p)
+                }
+                StmtKind::Consume(p, _) => e.maybe_there(&st, e.path(p)).then(|| p.clone()),
+                _ => None,
+            };
+            if let Some(p) = dropped {
+                let at = Point {
+                    block: Bb(bb),
+                    index,
+                };
+                out.entry(at).or_default().push(p);
+            }
+            e.effect(&mut st, &s.kind);
+        }
+    }
+    out
 }
 
 struct Elaborator<'b, 'a> {

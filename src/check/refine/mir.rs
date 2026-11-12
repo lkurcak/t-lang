@@ -577,6 +577,11 @@ impl Walk<'_> {
         at: Point,
         s: &Statement,
     ) -> Result<(), Error> {
+        if let Some(dropped) = fr.notes.drops.get(&at) {
+            for p in dropped {
+                self.mir_drop(fr, p, s.span);
+            }
+        }
         match &s.kind {
             StmtKind::Assign {
                 place,
@@ -594,6 +599,47 @@ impl Walk<'_> {
             | StmtKind::Kept(_)
             | StmtKind::Drop(..)
             | StmtKind::Free(_) => Ok(()),
+        }
+    }
+
+    /// The value at `place` may be dropped here (`Notes::drops`): if its
+    /// type's drop runs a `discard` that can write where the type is
+    /// invariant (`targs::drop_changes`), nothing may be declared there, as
+    /// that `discard` is a call it's given (lemma A9 of
+    /// docs/68-fail-closed.md).
+    fn mir_drop(&mut self, fr: &Frame, place: &crate::mir::Place, span: Span) {
+        let ty = self.mir_ty(fr, place);
+        let Some(why) = targs::drop_changes(self.cx, &ty) else {
+            return;
+        };
+        let (v, decl, _) = self.lvalue_mir(fr, place);
+        let mut tree = self.written_tree(&v, &ty);
+        tree.extend(decl);
+        for (pos, d) in &tree {
+            if d.is_any()
+                || !matches!(
+                    self.type_at(&ty, pos),
+                    Some((_, crate::borrowck::regions::Variance::Inv))
+                )
+            {
+                continue;
+            }
+            let text = d.text().unwrap_or_default();
+            let what = match (place.proj.is_empty(), fr.id(place.local)) {
+                (true, Some(id)) => match self.cx.typed.binds.get(&id) {
+                    Some(b) => format!("`{}`", b.name),
+                    None => "this value".to_string(),
+                },
+                _ => "this value".to_string(),
+            };
+            self.failed(Error::ty(
+                span,
+                format!(
+                    "can't prove `{text}` of what dropping {what} may write: {why} can change a \
+                     value of it"
+                ),
+            ));
+            return;
         }
     }
 
@@ -1112,12 +1158,13 @@ impl Walk<'_> {
             Agg::Array => {
                 let n = i128::try_from(vals.len()).expect("a length");
                 let v = Val::Array(self.new_obj(), Lin::constant(n));
-                self.elements(&v, ty, &vals);
+                let spans: Vec<Span> = (0..vals.len()).map(span_of).collect();
+                self.elements(&v, ty, &vals, &spans, span);
                 Ok(v)
             }
             Agg::Repeat => {
                 let v = self.unknown(ty);
-                self.elements(&v, ty, &vals);
+                self.elements(&v, ty, &vals, &[], span);
                 Ok(v)
             }
             Agg::Closure(_) => unreachable!("walked above"),
