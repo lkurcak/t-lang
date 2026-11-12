@@ -3140,6 +3140,12 @@ impl Walk<'_> {
             .map(|tree| targs::below(tree, 0))
             .unwrap_or_default();
         out.extend(said.iter().cloned());
+        // What's declared of the place it's to, if that's known (lemma F1
+        // of docs/68-fail-closed.md).
+        if let Val::Ref(_, Pointee::Place(p)) = &r {
+            let p = p.clone();
+            out.extend(self.place_decl(&p));
+        }
         let inner = match t {
             Type::Ref(_, _, inner) | Type::Box(inner) => self.cx.solved(inner),
             _ => return (Val::Other, out),

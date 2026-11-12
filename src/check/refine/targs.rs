@@ -352,6 +352,27 @@ impl Walk<'_> {
         Some((ty, v))
     }
 
+    /// `type_at`, of a position something is said or declared at, of a
+    /// value of type `t`, at `span`: one the walk can't follow there
+    /// would go unchecked, so it refuses (lemma F2 of
+    /// docs/68-fail-closed.md). Skipping it is never right: a missing
+    /// case refuses rather than says nothing's declared.
+    pub(super) fn followed(
+        &mut self,
+        t: &Type,
+        pos: &[usize],
+        span: Span,
+    ) -> Option<(Type, Variance)> {
+        let found = self.type_at(t, pos);
+        if found.is_none() {
+            self.failed(Error::ty(
+                span,
+                format!("can't tell what's declared inside a `{t}` here: the checker can't follow its type"),
+            ));
+        }
+        found
+    }
+
     /// Every position of `t` where it's invariant: behind a `&mut`, in an
     /// `Unsafe`.
     pub(super) fn inv_positions(&mut self, t: &Type) -> Vec<Pos> {
@@ -908,7 +929,7 @@ impl Walk<'_> {
         what: &str,
     ) -> Result<(), Error> {
         for (pos, d) in tree {
-            let Some((pt, var)) = self.type_at(t, pos) else {
+            let Some((pt, var)) = self.followed(t, pos, span) else {
                 continue;
             };
             let cases = self.values_at(v, t, pos);
@@ -946,7 +967,7 @@ impl Walk<'_> {
             if tree.iter().any(|(p, _)| p == pos) || want.is_any() {
                 continue;
             }
-            let Some((pt, Variance::Inv)) = self.type_at(t, pos) else {
+            let Some((pt, Variance::Inv)) = self.followed(t, pos, span) else {
                 continue;
             };
             if self.implies(&[(Vec::new(), Cand::Any)], want, &pt).is_err() {
@@ -1510,6 +1531,13 @@ impl Walk<'_> {
                 let known = self.knowledge(&w, &inner);
                 tree.extend(under(&widen(&known), 0));
             }
+            // And whatever it says, what's declared of the place it's to,
+            // if that's known: what's written through it must keep that
+            // too (lemma F1 of docs/68-fail-closed.md).
+            if let Val::Ref(_, Pointee::Place(p)) = v {
+                let p = p.clone();
+                tree.extend(under(&self.place_decl(&p), 0));
+            }
             return tree;
         }
         // What's declared of what's in it there is what refinements said,
@@ -1795,7 +1823,7 @@ impl Walk<'_> {
                     if d.is_any() {
                         continue;
                     }
-                    let Some((t, Variance::Inv)) = self.type_at(&pt, pos) else {
+                    let Some((t, Variance::Inv)) = self.followed(&pt, pos, span) else {
                         continue;
                     };
                     let here: Vec<&Disj> = (have_i.iter())
@@ -1993,7 +2021,9 @@ impl Walk<'_> {
                 {
                     continue;
                 }
-                let Some((pt, Variance::Inv)) = self.type_at(&t, pos) else {
+                let Some((pt, Variance::Inv)) =
+                    self.followed(&t, pos, spans.get(j).copied().unwrap_or(at))
+                else {
                     continue;
                 };
                 let have: Vec<(Vec<Formula>, Cand)> = (param_trees[j].iter())
@@ -2098,7 +2128,9 @@ impl Walk<'_> {
                     if want.is_any() {
                         continue;
                     }
-                    let Some((pt, _)) = self.type_at(&xt, pos) else {
+                    let Some((pt, _)) =
+                        self.followed(&xt, pos, spans.get(b.arg).copied().unwrap_or(at))
+                    else {
                         continue;
                     };
                     let span = spans.get(b.arg).copied().unwrap_or(at);
@@ -2314,7 +2346,7 @@ impl Walk<'_> {
             for q in qs {
                 let mut p = src.at.clone();
                 p.extend_from_slice(&q);
-                let Some((pt, Variance::Inv)) = self.type_at(&src.ty, &p) else {
+                let Some((pt, Variance::Inv)) = self.followed(&src.ty, &p, src.span) else {
                     continue;
                 };
                 let here: Vec<Disj> = (written.iter())
@@ -2475,7 +2507,7 @@ impl Walk<'_> {
             if want.is_any() || skip.iter().any(|s| pos.starts_with(s)) {
                 continue;
             }
-            let Some((pt, Variance::Inv)) = self.type_at(t, pos) else {
+            let Some((pt, Variance::Inv)) = self.followed(t, pos, span) else {
                 continue;
             };
             let have: Vec<(Vec<Formula>, Cand)> = (declared.iter())

@@ -618,7 +618,7 @@ impl Walk<'_> {
         for (pos, d) in &tree {
             if d.is_any()
                 || !matches!(
-                    self.type_at(&ty, pos),
+                    self.followed(&ty, pos, span),
                     Some((_, crate::borrowck::regions::Variance::Inv))
                 )
             {
