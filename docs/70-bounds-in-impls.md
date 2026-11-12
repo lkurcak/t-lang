@@ -103,7 +103,9 @@ trait Sum {
 struct S {}
 
 impl Sum for S {
-    fn sum<K: Iterator<Item = u8, e = {panic, alloc}> + Discard>(mut k: K) -> u8 with {panic, alloc} {
+    fn sum<K: Iterator<Item = u8, e = {panic, alloc}> + Discard>(mut k: K) -> u8
+    with {panic, alloc}
+    {
         let mut s: u8 = 0;
         while let Some(v) = k.next() {
             s = s + v;
@@ -112,9 +114,11 @@ impl Sum for S {
     }
 }
 
+fn total<X: Sum>(_x: &X) -> u8 with {alloc, panic} { X::sum(Up { n: 0 }) }
+
 fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     let mut out = os.stdout;
-    out.line(&S::sum(Up { n: 0 }))?; // expect: 6
+    out.line(&total(&S {}))?; // expect: 6
     Ok(())
 }
 ```
@@ -156,11 +160,15 @@ fn main() {}
 
 ## What a match keeps
 
-Step 65 kept, for each arm of a `match`, the value its scrutinee had when
-it was matched, for the patterns' bindings to take apart (`pinned`). Since
-step 69 every place's value stays what it was read as until it's changed,
-which it can't be between the match and its bindings: switching it off
-changed no test then (M12 of docs/69-loans.md), and it's gone.
+Step 69 found that switching off the value a `match` keeps of its
+scrutinee for its patterns' bindings (`pinned`, step 65) changed no test,
+and called it redundant (M12 of docs/69-loans.md). This step deleted it,
+and t-libs's graph stopped checking: in `let Some(p) = parent[v] else
+{ .. }`, the scrutinee is an element behind the reference `index` gives,
+at no place the walk can name, so read again for the binding it says
+nothing of what's declared there, `q < n`. What was matched does. It's
+back, with a test of its own (`refine_let_else_index.t`): a rule no test
+needs is one no test covers, not one nothing needs.
 
 ## Found along the way
 

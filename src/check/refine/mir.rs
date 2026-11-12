@@ -215,6 +215,7 @@ struct State {
     reachable: bool,
     invalidated: Vec<Invalidation>,
     slots: HashMap<Local, Slot>,
+    pinned: Vec<(crate::mir::Place, Val)>,
     dead: HashSet<NodeId>,
 }
 
@@ -304,6 +305,7 @@ impl Walk<'_> {
             reachable: self.reachable,
             invalidated: std::mem::take(&mut self.invalidated),
             slots: std::mem::take(&mut self.slots),
+            pinned: std::mem::take(&mut self.pinned),
             dead: std::mem::take(&mut self.dead),
         }
     }
@@ -316,6 +318,7 @@ impl Walk<'_> {
         self.reachable = s.reachable;
         self.invalidated = s.invalidated;
         self.slots = s.slots;
+        self.pinned = s.pinned;
         self.dead = s.dead;
     }
 
@@ -406,6 +409,13 @@ impl Walk<'_> {
                 }
             }
         }
+        let pinned: Vec<(crate::mir::Place, Val)> = match reached.first() {
+            Some(first) => (first.pinned.iter())
+                .filter(|p| reached.iter().all(|s| s.pinned.contains(p)))
+                .cloned()
+                .collect(),
+            None => Vec::new(),
+        };
         let values: Vec<(Type, Vec<Val>)> = (differ.iter())
             .map(|l| {
                 let t = self.cx.solved(&fr.body.locals[l.0].ty);
@@ -438,6 +448,7 @@ impl Walk<'_> {
         }
         let mut state = self.take_state();
         state.slots = slots;
+        state.pinned = pinned;
         state
     }
 
@@ -604,7 +615,10 @@ impl Walk<'_> {
                 value,
                 declare,
             } => self.mir_assign(fr, bodies, at, s.span, place, value, *declare),
-            StmtKind::Dead(l) => self.mir_dead(fr, *l, s.span),
+            StmtKind::Dead(l) => {
+                self.pinned.clear();
+                self.mir_dead(fr, *l, s.span)
+            }
             StmtKind::Inspect(_)
             | StmtKind::Consume(..)
             | StmtKind::Refine(..)
@@ -715,6 +729,9 @@ impl Walk<'_> {
     ) -> Result<(), Error> {
         let slot =
             place.proj.is_empty() && fr.id(place.local).is_none() && fr.env != Some(place.local);
+        if !declare && !slot {
+            self.pinned.clear();
+        }
         // A variable's first value, by a `let` or a pattern.
         if declare
             && place.proj.is_empty()
@@ -1208,6 +1225,7 @@ impl Walk<'_> {
         let declared = self.declared.len();
         let mut start = here.clone();
         start.slots = HashMap::new();
+        start.pinned = Vec::new();
         self.put_state(start);
         self.closures += 1;
         let assumed = self.closure_params.remove(&l).unwrap_or_default();
@@ -1934,6 +1952,7 @@ impl Walk<'_> {
                     if assume != Formula::True {
                         st.facts.push(assume);
                     }
+                    st.pinned.push((mp.clone(), s.clone()));
                     out.push((*b, st));
                 }
                 Ok(out)
@@ -2220,13 +2239,22 @@ impl Walk<'_> {
     /// must to find it: an enum's value, for a variant's field, and the
     /// value of a temporary.
     fn locate(&mut self, fr: &Frame, mp: &crate::mir::Place) -> Loc {
-        let (mut loc, from) = match self.root_place(fr, mp) {
-            Some((p, k)) => (Loc::Place(p), k),
-            None => {
-                let v = (self.slots.get(&mp.local)).map_or(Val::Other, |s| s.val.clone());
-                let t = self.cx.solved(&fr.body.locals[mp.local.0].ty);
-                (Loc::Val(v, t), 0)
+        let pinned = (self.pinned.iter().rev())
+            .find(|(q, _)| q.local == mp.local && mp.proj.starts_with(&q.proj))
+            .map(|(q, v)| (q.clone(), v.clone()));
+        let (mut loc, from) = match pinned {
+            Some((q, v)) => {
+                let t = self.mir_ty(fr, &q);
+                (Loc::Val(v, t), q.proj.len())
             }
+            None => match self.root_place(fr, mp) {
+                Some((p, k)) => (Loc::Place(p), k),
+                None => {
+                    let v = (self.slots.get(&mp.local)).map_or(Val::Other, |s| s.val.clone());
+                    let t = self.cx.solved(&fr.body.locals[mp.local.0].ty);
+                    (Loc::Val(v, t), 0)
+                }
+            },
         };
         for proj in &mp.proj[from..] {
             loc = self.project_loc(loc, *proj);

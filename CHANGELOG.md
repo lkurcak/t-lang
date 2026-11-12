@@ -35,8 +35,9 @@ trait's method; it's refused now.
   an impl's `where`, an opaque result's, a function pointer, a closure)
   and arguments that break or meet them, and runs each it accepts; 3 of
   64 broke on 0.84.0.
-- The refinement checker no longer keeps a `match`'s scrutinee for its
-  bindings: since 0.84.0 nothing can change it in between.
+- A test of a `match` on an element behind a reference (`let Some(p) =
+  parent[v] else ..`), whose bindings need what's declared there: the
+  value kept for them, which step 69 thought unneeded, is.
 
 ## 0.84.0 (2026-11-12)
 
