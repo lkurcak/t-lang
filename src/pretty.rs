@@ -1043,6 +1043,11 @@ impl Printer<'_> {
                 preds = preds + if j == 0 { ": " } else { " + " } + self.bound(b);
             }
         }
+        // No comma before a declaration's `;`, as for `ensures`.
+        let comma = match body || has_ensures {
+            true => comma,
+            false => Doc::nil(),
+        };
         group(effects + Doc::Line + "where" + nest(Doc::Line + preds + comma) + ensures + end)
     }
 

@@ -948,3 +948,26 @@ fn g() with {} {}
 "
     );
 }
+
+/// A declaration's `where` clause on lines of its own ends with its `;`,
+/// not with a comma before it, as an `ensures` does; one with a body keeps
+/// the comma, as rustfmt does.
+#[test]
+fn a_declaration_where_clause_ends_without_a_comma() {
+    let src = "\
+trait Run {
+    fn pair<'a, 'b, I: Discard, J: Discard>(i: I, j: J) -> u8 where I: Iterator<Item = &'a u8>, J: Iterator<Item = &'b u8>;
+}
+";
+    assert_eq!(
+        fmt(src),
+        "\
+trait Run {
+    fn pair<'a, 'b, I: Discard, J: Discard>(i: I, j: J) -> u8
+    where
+        I: Iterator<Item = &'a u8>,
+        J: Iterator<Item = &'b u8>;
+}
+"
+    );
+}

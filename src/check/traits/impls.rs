@@ -327,7 +327,12 @@ impl Checker {
     /// `want` of its trait, at the impl's type. Up to the names of their
     /// own type parameters and lifetimes: the impl's method can't take less
     /// or more than the trait says, or need more of its type parameters,
-    /// or callers going by the trait's signature would be wrong.
+    /// or callers going by the trait's signature would be wrong (lemma I1
+    /// of docs/70-bounds-in-impls.md).
+    ///
+    /// Every part of the two schemes is compared, so each is taken apart
+    /// whole: a part added to `Scheme` doesn't compile here until it's
+    /// compared too. Retrospective 8 found two that never were.
     fn same_signature(
         &self,
         f: &FnDecl,
@@ -335,6 +340,26 @@ impl Checker {
         want: &MethodDef,
         d: &ImplDef,
     ) -> Result<(), Error> {
+        // Their own lifetimes are compared where they're named, in the
+        // types and bounds, up to their names (`Canon`).
+        let Scheme {
+            params: got_params,
+            lifetimes: _,
+            bounds: got_bounds,
+            preds: got_preds,
+            eqs: got_eqs,
+            effect_bounds: got_effect_bounds,
+            ty: got_ty,
+        } = got;
+        let Scheme {
+            params: want_params,
+            lifetimes: _,
+            bounds: want_bounds,
+            preds: want_preds,
+            eqs: want_eqs,
+            effect_bounds: want_effect_bounds,
+            ty: want_ty,
+        } = &want.scheme;
         let tr = d.trait_name.as_deref().expect("a trait's impl");
         let mismatch = |what: String| {
             let decl = want.span;
@@ -350,8 +375,8 @@ impl Checker {
                 None => e,
             }
         };
-        let own = &got.params[d.params.len()..];
-        let theirs = &want.scheme.params[1..];
+        let own = &got_params[d.params.len()..];
+        let theirs = &want_params[1..];
         if own.len() != theirs.len() {
             return Err(mismatch(format!(
                 "it has {} but should have {}",
@@ -361,24 +386,27 @@ impl Checker {
         }
         // Each of the same kind, as the trait's callers give it a type
         // argument of the trait's kind.
-        let kind = |effect: bool| match effect {
-            true => "an effect parameter",
-            false => "a type parameter",
+        let kind = |params: &crate::types::Params, p: &str| {
+            if params.is_effect(p) {
+                "an effect parameter"
+            } else if params.is_const(p) {
+                "a const parameter"
+            } else {
+                "a type parameter"
+            }
         };
         for (p, q) in own.iter().zip(theirs) {
-            let (a, b) = (got.params.is_effect(p), want.scheme.params.is_effect(q));
+            let (a, b) = (kind(got_params, p), kind(want_params, q));
             if a != b {
                 return Err(mismatch(format!(
-                    "its `{p}` is {}, where the trait's `{q}` is {}",
-                    kind(a),
-                    kind(b)
+                    "its `{p}` is {a}, where the trait's `{q}` is {b}"
                 )));
             }
             // An `unsized` one may stand for `str` where the trait's
             // callers make it so, and one that isn't may be a value in the
             // body: so neither can be the other (lemma U7 of
             // docs/57-unsized-parameters.md).
-            let (a, b) = (got.params.is_unsized(p), want.scheme.params.is_unsized(q));
+            let (a, b) = (got_params.is_unsized(p), want_params.is_unsized(q));
             if a != b {
                 let (is, isnt) = match b {
                     true => ("is", "isn't"),
@@ -392,14 +420,14 @@ impl Checker {
         // The trait's, at `Self` = the impl's type and with this one's
         // type parameter names.
         let mut args = vec![d.self_ty.clone()];
-        args.extend(own.iter().map(|p| got.params.arg(p)));
-        let s = Subst::new(&want.scheme.params, &args);
+        args.extend(own.iter().map(|p| got_params.arg(p)));
+        let s = Subst::new(want_params, &args);
         // `Self::Item` in the trait's is what this impl says it is, with
         // what its bounds say, which decide its effect parameters.
         let mut proj = self.adts.proj.clone();
         proj.local = d.local_eqs();
-        let wanted = proj.normalise(&s.apply(&want.scheme.ty));
-        let (Type::Fn(g), Type::Fn(w)) = (&got.ty, &wanted) else {
+        let wanted = proj.normalise(&s.apply(want_ty));
+        let (Type::Fn(g), Type::Fn(w)) = (got_ty, &wanted) else {
             unreachable!("methods have function types")
         };
         if g.params.len() != w.params.len() {
@@ -487,8 +515,8 @@ impl Checker {
             v.sort();
             v
         };
-        let gb = show(&got.bounds[d.bounds.len()..], &mut a);
-        let wb = show(&want.scheme.bounds, &mut b);
+        let gb = show(&got_bounds[d.bounds.len()..], &mut a);
+        let wb = show(want_bounds, &mut b);
         if gb != wb {
             return Err(mismatch(format!(
                 "its lifetime bounds should be {}",
@@ -499,11 +527,11 @@ impl Checker {
             )));
         }
         // Its own trait bounds, which can't be more than the trait's.
-        let mut gp: Vec<String> = got.preds[d.preds.len()..]
+        let mut gp: Vec<String> = got_preds[d.preds.len()..]
             .iter()
             .map(|p| p.to_string())
             .collect();
-        let mut wp: Vec<String> = want.scheme.preds[1..]
+        let mut wp: Vec<String> = want_preds[1..]
             .iter()
             .map(|p| Pred {
                 ty: self.adts.normalise(&s.apply(&p.ty)),
@@ -521,6 +549,63 @@ impl Checker {
                     false => format!("`{}`", wp.join(", ")),
                 }
             )));
+        }
+        // What its own bounds say projections are (`I: Iterator<Item =
+        // u8>`, a closure's `-> u8` and `with {}`), and what they say
+        // associated effects are at most (`e = {}`): the same as the
+        // trait's. The body counts on each, and a call through the trait
+        // shows only the trait's hold (lemma I1).
+        let own_preds = &got_preds[d.preds.len()..];
+        let pairs = |list: &[(Type, Type)], s: Option<&Subst>, fns: &[Pred], c: &mut Canon| {
+            let side = |t: &Type| {
+                let t = proj.normalise(&s.map_or_else(|| t.clone(), |s| s.apply(t)));
+                match t {
+                    Type::Effects(_) => Type::effects([t]),
+                    t => t,
+                }
+            };
+            // In an order that doesn't depend on how they're written, so
+            // that a lifetime named only here is given the same name in
+            // both (`Canon` names them as it meets them).
+            let erased = |t: &Type| {
+                t.map_regions(&mut |_| Region::Named("'_".into()))
+                    .to_string()
+            };
+            let mut sides: Vec<(Type, Type)> =
+                list.iter().map(|(l, r)| (side(l), side(r))).collect();
+            sides.sort_by_key(|(l, r)| (erased(l), erased(r)));
+            let mut v: Vec<Said> = (sides.iter())
+                .map(|(l, r)| {
+                    let (l, r) = (c.ty(l), c.ty(r));
+                    let fns = fns.iter().map(|p| match s {
+                        Some(s) => (s.apply(&p.ty), p.trait_name.as_str()),
+                        None => (p.ty.clone(), p.trait_name.as_str()),
+                    });
+                    let text = bound_text(&l, &r, fns);
+                    Said {
+                        lhs: l.to_string(),
+                        both: format!("{l} = {r}"),
+                        text,
+                    }
+                })
+                .collect();
+            v.sort_by(|x, y| x.both.cmp(&y.both));
+            v
+        };
+        let ge = pairs(&got_eqs[d.local_eqs().len()..], None, own_preds, &mut a);
+        let we = pairs(want_eqs, Some(&s), &want_preds[1..], &mut b);
+        if let Some(what) = differs(&ge, &we) {
+            return Err(mismatch(what));
+        }
+        let ge = pairs(
+            &got_effect_bounds[d.effect_bounds.len()..],
+            None,
+            &[],
+            &mut a,
+        );
+        let we = pairs(want_effect_bounds, Some(&s), &[], &mut b);
+        if let Some(what) = differs(&ge, &we) {
+            return Err(mismatch(what));
         }
         Ok(())
     }
@@ -658,6 +743,61 @@ impl<'a> Canon<'a> {
     fn ty(&mut self, t: &Type) -> Type {
         t.map_regions(&mut |r| self.region(r))
     }
+}
+
+/// What a method's bound says a projection is, as `same_signature`
+/// compares it: its two sides with lifetimes canonical (`both`), and as
+/// it's written (`text`).
+struct Said {
+    lhs: String,
+    both: String,
+    text: String,
+}
+
+/// Bound `l = r`, as it's written in a bound: `I: Iterator<Item = u8>`,
+/// `I: Iterator<e = {}>`, a closure's `F: FnMut() -> u8 with {}` (the
+/// trait `fns` says `F` has, of `Fn`, `FnMut` and `FnOnce`).
+fn bound_text<'a>(l: &Type, r: &Type, fns: impl Iterator<Item = (Type, &'a str)>) -> String {
+    fn short(tr: &str) -> &str {
+        tr.rsplit("::").next().unwrap_or(tr)
+    }
+    match l {
+        Type::Proj(p, _, name) if name == crate::traits::SIG => {
+            let tr = (fns.filter(|(t, _)| t == &**p))
+                .map(|(_, tr)| short(tr))
+                .find(|tr| ["Fn", "FnMut", "FnOnce"].contains(tr))
+                .unwrap_or("FnOnce");
+            let sig = r.to_string();
+            format!("`{p}: {tr}{}`", sig.strip_prefix("fn").unwrap_or(&sig))
+        }
+        Type::Proj(p, tr, name) => format!("`{p}: {}<{name} = {r}>`", short(tr)),
+        _ => format!("`{l} = {r}`"),
+    }
+}
+
+/// How what an impl's method's bounds say, `got`, differs from what its
+/// trait's say, `want`, if it does: what it says that the trait's don't,
+/// first, as that's what a call through the trait doesn't show.
+fn differs(got: &[Said], want: &[Said]) -> Option<String> {
+    let has = |v: &[Said], x: &Said| v.iter().any(|y| y.both == x.both);
+    if let Some(x) = got.iter().find(|x| !has(want, x)) {
+        return Some(match want.iter().find(|y| y.lhs == x.lhs) {
+            Some(y) => format!(
+                "its bound says {}, where the trait's says {}",
+                x.text, y.text
+            ),
+            None => format!(
+                "its bound says {}, and the trait's doesn't: a call through the trait wouldn't \
+                 show it holds",
+                x.text
+            ),
+        });
+    }
+    let y = want.iter().find(|y| !has(got, y))?;
+    Some(format!(
+        "its bounds should say {} too, as the trait's do",
+        y.text
+    ))
 }
 
 /// A projection in `t` on a type that isn't a parameter, or a projection

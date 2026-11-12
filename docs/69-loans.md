@@ -279,9 +279,10 @@ nothing doesn't.
   closure's frame kept only of places in the capture (each place its body
   changes is in one of its captures); a call's frame applied only to the
   place itself (only a pattern reaches a part the walk can't name, and a
-  binding given to a call is lent as `*n`, which it can). And the
-  scrutinee a `match` pins for its bindings (step 65) is now kept for
-  nothing: every place's value stays what was read until it's changed.
+  binding given to a call is lent as `*n`, which it can). The scrutinee
+  a `match` pins for its bindings (step 65) changed no test switched off,
+  but it isn't redundant: a scrutinee at no place the walk can name, an
+  element behind `index`'s reference, needs it (docs/70-bounds-in-impls.md).
 
 ## What it doesn't do
 
