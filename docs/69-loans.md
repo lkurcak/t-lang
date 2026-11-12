@@ -272,7 +272,16 @@ nothing doesn't.
   refused for the read. It checks that what's read before the loan, and
   assigned after it, are known, and that closures keep their frames,
   called, given to a function, `move`, nested, in a loop.
-- Each rule switched off on purpose makes a test fail.
+- Each rule switched off on purpose makes a test fail, but for guards no
+  program reaches today, kept so the walk fails closed if that changes: a
+  loan of an array's element forgetting the place the array's in (the
+  walk never knows an element's value, only what's declared of it); a
+  closure's frame kept only of places in the capture (each place its body
+  changes is in one of its captures); a call's frame applied only to the
+  place itself (only a pattern reaches a part the walk can't name, and a
+  binding given to a call is lent as `*n`, which it can). And the
+  scrutinee a `match` pins for its bindings (step 65) is now kept for
+  nothing: every place's value stays what was read until it's changed.
 
 ## What it doesn't do
 
