@@ -317,7 +317,7 @@ fn shown(files: &Files) -> String {
 
 /// A rendered diagnostic without the lines of source it shows, `3 | ..`,
 /// and with `/` in the paths it shows.
-fn without_source(rendered: &str) -> String {
+pub fn without_source(rendered: &str) -> String {
     let is_source = |l: &str| {
         let (n, rest) = l.split_once(" | ").unwrap_or(("", ""));
         !n.is_empty() && n.trim().chars().all(|c| c.is_ascii_digit()) && !rest.is_empty()

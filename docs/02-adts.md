@@ -253,6 +253,8 @@ constructors: `_` is never useful), and since that match can never run, it
 can have *any* type:
 
 ```rust
+enum Never {}
+
 fn absurd(n: Never) -> i64 {
     match n {}
 }

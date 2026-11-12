@@ -37,10 +37,12 @@ fn directives<'a>(src: &'a str, marker: &str) -> Vec<&'a str> {
         .collect()
 }
 
-/// The names of the C functions `src` imports: `extern fn f(..);`.
+/// The names of the C functions `src` imports: `extern fn f(..);`, or
+/// `pub extern fn f(..);` in a module.
 fn imports(src: &str) -> Vec<String> {
     (src.lines())
-        .filter(|l| l.starts_with("extern fn ") && l.trim_end().ends_with(';'))
+        .map(|l| l.trim().trim_start_matches("pub "))
+        .filter(|l| l.starts_with("extern fn ") && l.ends_with(';'))
         .filter_map(|l| Some(l["extern fn ".len()..l.find('(')?].to_string()))
         .collect()
 }

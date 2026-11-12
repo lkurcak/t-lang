@@ -33,6 +33,8 @@ pub(super) struct ExternFn {
     pub fn_id: FnId,
     /// Its name, which is its C name, where it's declared.
     pub name: Ident,
+    /// Is it an import, which has no body?
+    pub import: bool,
     /// Is it one of `PLATFORM_HOOKS`?
     pub hook: bool,
 }
@@ -143,30 +145,24 @@ impl Checker {
                      obligations",
                 ));
             }
-            if let Some((params, ret)) = &hook {
-                if self.modules.target == crate::Target::Hosted {
-                    return Err(Error::ty(
-                        f.name.span,
-                        format!(
-                            "`{name}` is the platform's, and on the hosted target the platform is \
-                             the C library's: write it for the freestanding target"
-                        ),
-                    ));
-                }
-                if sig.params != *params || *sig.ret != *ret {
-                    let params: Vec<String> = params.iter().map(|t| t.to_string()).collect();
-                    let ret = match ret {
-                        Type::Unit => String::new(),
-                        t => format!(" -> {t}"),
-                    };
-                    return Err(Error::ty(
-                        f.name.span,
-                        format!(
-                            "the platform's `{name}` is a `fn({}){ret}`, as the runtime calls it",
-                            params.join(", ")
-                        ),
-                    ));
-                }
+            // Checked the same for either target (docs/71-t-metal-findings.md):
+            // a run or a build for the hosted one refuses it, as the C
+            // library's is the platform there (`crate::hosted`).
+            if let Some((params, ret)) = &hook
+                && (sig.params != *params || *sig.ret != *ret)
+            {
+                let params: Vec<String> = params.iter().map(|t| t.to_string()).collect();
+                let ret = match ret {
+                    Type::Unit => String::new(),
+                    t => format!(" -> {t}"),
+                };
+                return Err(Error::ty(
+                    f.name.span,
+                    format!(
+                        "the platform's `{name}` is a `fn({}){ret}`, as the runtime calls it",
+                        params.join(", ")
+                    ),
+                ));
             }
         }
         if let Some(other) = self.externs.iter().find(|e| e.name.name == *name) {
@@ -181,34 +177,47 @@ impl Checker {
         self.externs.push(ExternFn {
             fn_id: FnId(i),
             name: f.name.clone(),
+            import: ext.import,
             hook: hook.is_some(),
         });
         Ok(scheme)
     }
 
-    /// Checks that the platform's functions the program writes do nothing
-    /// that needs the platform (lemma P): a panic in `t_platform_write`
-    /// would write, and allocating would need memory, which may be why it's
-    /// writing. Using a static is fine: a device's state can be in one.
+    /// Checks, once effects are inferred, that what C may call when it's
+    /// in the middle of something doesn't need what it's in the middle
+    /// of. An export may be called from an interrupt, while the code it
+    /// interrupted is allocating, and the allocator can't be started again
+    /// before it ends, so it can't allocate (lemma E2); that it frees
+    /// nothing follows, as it owns nothing on the heap. The platform's
+    /// functions do nothing that needs the platform (lemma P): a panic in
+    /// `t_platform_write` would write, and allocating would need memory,
+    /// which may be why it's writing. Using a static is fine: a device's
+    /// state can be in one.
     pub(super) fn externs_known(&mut self) -> Result<(), Error> {
-        for e in &self.externs {
-            if !e.hook {
-                continue;
-            }
+        for e in self.externs.iter().filter(|e| !e.import) {
             let Type::Fn(sig) = &self.fns[e.fn_id.0].scheme.ty else {
                 continue;
             };
             let effects = self.with_inferred(&sig.effects);
-            if let Some(bad) = (effects.effect_items().iter()).find(|t| **t != Type::Global) {
-                return Err(Error::ty(
-                    e.name.span,
-                    format!(
-                        "the platform's `{}` may only use statics: the runtime calls it while it \
-                         panics, or runs out of memory, so it can't have `{bad}`",
-                        e.name.name
-                    ),
-                ));
-            }
+            let allowed = |t: &Type| match e.hook {
+                true => *t == Type::Global,
+                false => matches!(t, Type::Global | Type::Panic),
+            };
+            let Some(bad) = (effects.effect_items().iter()).find(|t| !allowed(t)) else {
+                continue;
+            };
+            let name = &e.name.name;
+            let why = match e.hook {
+                true => format!(
+                    "the platform's `{name}` may only use statics: the runtime calls it while it \
+                     panics, or runs out of memory, so it can't have `{bad}`"
+                ),
+                false => format!(
+                    "C may call `{name}` from an interrupt, in the middle of an allocation, which \
+                     can't be started again before it ends: an export can't have `{bad}`"
+                ),
+            };
+            return Err(Error::ty(e.name.span, why));
         }
         Ok(())
     }

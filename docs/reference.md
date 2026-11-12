@@ -98,7 +98,9 @@ their mathematical result or panic if it is invalid or out of range.
 They never silently wrap. Explicit wrapping operations are in `core::num`.
 Integer literals support suffixes such as `42i64`, hexadecimal `0xFF`,
 and binary `0b1010`. Text uses `"..."` and `'x'`; byte literals use
-`b"..."` and `b'x'`. A format string, `f"x = {x}, p = {p.y:?}"`, is a
+`b"..."` and `b'x'`. Escapes are `\n`, `\r`, `\t`, `\\`, `\0`, `\'` and
+`\"`; `\u{20AC}` in text; and `\xFF` in bytes, or in text up to `\x7F`,
+the ASCII characters. A format string, `f"x = {x}, p = {p.y:?}"`, is a
 value that's `Display`: its text, with each hole written by `Display`, or
 by `Debug` with `:?`. A hole holds an expression, which it borrows, as
 `&e`; it ends at the first `}` or `:` outside brackets of its own, and
@@ -428,11 +430,16 @@ See [effects](07-effects.md), [effect inference](24-visibility.md#effects-of-wha
 An `extern fn` has C's calling convention, under its own name. With no
 body it's an import, a C function: a call has the effects it declares
 and `unsafe`, and its result can't be a refinement. With a body it's an
-export, a T function C can call too: it can't say `with unsafe`, and its
-parameters can't be refinements. Only integers, `bool`, and as a result
-`()` and `!`, cross; an `extern fn` has no generic parameters, and only a
-program, not a library, can have one. The interpreter (`--interp`)
-stops at an import's call; compiled, it's called. `core::volatile::Volatile<T>` is a
+export, a T function C can call too: it can't say `with unsafe`, its
+parameters can't be refinements, and its effects are at most `global` and
+`panic`, as C may call it from an interrupt in the middle of an
+allocation. Only integers, `bool`, and as a result `()` and `!`, cross; an
+`extern fn` has no generic parameters, and only a program, not a library,
+can have one. Its C name is its own name, wherever it's declared. The
+interpreter (`--interp`) stops at an import's call; compiled, it's
+called. A program that writes the platform's `t_platform_write` or
+`t_platform_halt` is checked as any other, but runs, and builds, only for
+the freestanding target. `core::volatile::Volatile<T>` is a
 `T: Atom` at a fixed address: `Volatile::at(address)` is `unsafe`, and
 `read` and `write` on what it gives are safe volatile accesses. See
 [`extern fn`](40-extern.md).

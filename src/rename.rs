@@ -111,6 +111,14 @@ pub fn target<'i>(
     if main.is_some_and(|m| m.name.span == def) {
         return Err("`main` can't be renamed: it's where the program starts".to_string());
     }
+    // C knows it by its name: renaming it would make it another C
+    // function, or, for the platform's, not the platform's.
+    if let Some(f) = (prog.fns.iter()).find(|f| f.ext.is_some() && f.name.span == def) {
+        return Err(format!(
+            "`{}` can't be renamed: it's an `extern fn`, which is C's by its name",
+            f.name.name
+        ));
+    }
     Ok(note)
 }
 

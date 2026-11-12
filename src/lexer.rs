@@ -525,7 +525,7 @@ fn escape(src: &str, at: usize, kind: Quote, out: &mut Vec<u8>) -> Result<usize,
         return Ok(i);
     }
     match (e, kind.bytes()) {
-        ('x', true) => {
+        ('x', bytes) => {
             let hex = src
                 .get(i..i + 2)
                 .filter(|h| h.bytes().all(|b| b.is_ascii_hexdigit()));
@@ -535,14 +535,20 @@ fn escape(src: &str, at: usize, kind: Quote, out: &mut Vec<u8>) -> Result<usize,
                     "`\\x` takes two hexadecimal digits, as in `\\x7F`",
                 ));
             };
-            out.push(u8::from_str_radix(hex, 16).expect("hex digits"));
+            let b = u8::from_str_radix(hex, 16).expect("hex digits");
+            // In a string or a character, only ASCII, which is a whole
+            // character in UTF-8: a byte past it is part of one.
+            if !bytes && !b.is_ascii() {
+                return Err(Error::syntax(
+                    Span::new(esc, i + 2),
+                    format!(
+                        "`\\x{hex}` isn't ASCII, so it's a byte, not a character; write the \
+                         character as `\\u{{{hex}}}`"
+                    ),
+                ));
+            }
+            out.push(b);
             i += 2;
-        }
-        ('x', false) => {
-            return Err(Error::syntax(
-                Span::new(esc, i),
-                "`\\x` escapes are for byte literals; write a character as `\\u{..}`",
-            ));
         }
         ('u', true) => {
             return Err(Error::syntax(

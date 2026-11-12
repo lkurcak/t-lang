@@ -57,6 +57,12 @@ The interpreter has no C library and no machine, so it stops where an
 import is called, as above. `t build` compiles the call. That program
 built for the hosted target prints `h`.
 
+An import that reads or writes state that outlives the call, C's statics
+or a device's, says `with global`, as using a static of T's does: two
+calls of it may give different things, or one may change what the next
+gives. A heap's count of bytes in use, kept by the platform's C, is read
+by an `extern fn heap_used() -> usize with global;`.
+
 ## Exports
 
 ```rust
@@ -81,6 +87,22 @@ proves nothing of what it passes:
 ```rust,error
 extern fn halve(x: { x: u32 | x % 2 == 0 }) -> u32 { x / 2 }
 // error: an exported `extern fn` takes no refinement
+```
+
+Nor can it allocate. C may call it from an interrupt, which can come in
+the middle of an allocation, and the platform's allocator, as most, can't
+be started again before it's done. So an export's effects, said or
+inferred, are at most `global` and `panic` (step 71,
+docs/71-t-metal-findings.md):
+
+```rust,error
+use alloc::list::List;
+
+extern fn on_interrupt() {
+    let mut l = List::new();
+    l.push(1u8);
+}
+// error: an export can't have `alloc`
 ```
 
 ## What crosses
@@ -149,7 +171,7 @@ fn uart() -> &'static Volatile<u8> {
 }
 
 fn put(s: &str) {
-    for b in s.as_bytes() { uart().write(*b) }
+    for b in s.as_bytes().iter() { uart().write(*b) }
 }
 ```
 
@@ -228,8 +250,11 @@ error: the platform's `t_platform_write` may only use statics: the runtime calls
        while it panics, or runs out of memory, so it can't have `panic`
 ```
 
-On the hosted target the platform is the C library's, so writing either
-is an error there. The other three, the memory, stay C's: the runtime
+On the hosted target the platform is the C library's, so a program that
+writes either doesn't run there, nor build for it. It checks the same,
+though, and its tests, each a hosted program of its own, call them as the
+T functions they are (docs/71-t-metal-findings.md). The other three, the
+memory, stay C's: the runtime
 trusts the block `t_platform_alloc` gives back to be free memory of the
 right size, which is a promise no safe T function could make. Writing
 them in T needs a type for such a block, made only by `unsafe` code,
@@ -256,8 +281,13 @@ which belongs with allocators.
   1 is the platform's contract, as in docs/39-freestanding.md, F2). Its
   parameters have no refinements, and it has no `unsafe`: nothing it
   counts on is anyone's to keep. Being called from C in the middle of T,
-  from a callback or an interrupt, shares with the code it interrupts
-  only statics, which are `Sync` and change only atomically (Y1, Y3).
+  from a callback or an interrupt, it shares with the code it interrupts
+  only statics, which are `Sync` and change only atomically (Y1, Y3). The
+  heap is the runtime's one other shared state, and an export never
+  touches it: its effects are at most `global` and `panic`, so it never
+  allocates (effects bound what a body does, docs/07-effects.md), and it
+  frees nothing, as it owns nothing on the heap: it's given only scalars,
+  and statics hold only plain data (docs/38-statics.md).
 - **E3 (layout).** No reference, struct or enum crosses, so no
   representation of T's is promised to C, and the backend stays free to
   lay values out as it likes.
@@ -326,7 +356,8 @@ want of a machine.
 | `#[repr(C)]` structs, pointers across C | needs a layout promise and a story for what pointers point to | — |
 | the memory platform functions in T | needs an `unsafe`-made block type | with allocators |
 | `extern fn` in libraries | a C name is the whole program's | — |
-| interrupt handlers' own rules | `Volatile` isn't `Sync`; needs locks and threads | after threads |
+| interrupt handlers' own rules, beyond not allocating | `Volatile` isn't `Sync`; needs locks and threads | after threads |
+| allocating in an export C calls back synchronously | needs a way to say it's no interrupt's | — |
 | `Volatile` across threads | sharing a device needs a lock | after threads |
 
 ## Exercises

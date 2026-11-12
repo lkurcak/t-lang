@@ -250,12 +250,14 @@ a `dyn Trait` method can't be generic.
 
 ### Polymorphic recursion
 
-Rank 1 is necessary but not quite enough. This is rank 1, and checks fine:
+Rank 1 is necessary but not quite enough. This is rank 1, and its types
+check:
 
-```rust
-fn nest<T>(x: T, n: i64) -> i64 {
+```rust,error
+fn nest<T: Discard>(x: T, n: i64) -> i64 {
     if n == 0 { 0 } else { nest(Option::Some(x), n - 1) }
 }
+// error: polymorphic recursion
 ```
 
 But `nest::<i64>` calls `nest::<Option<i64>>`, which calls

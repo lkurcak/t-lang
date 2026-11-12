@@ -3913,6 +3913,10 @@
               },
               {
                 "type": "PATTERN",
+                "value": "\\\\x[0-7][0-9a-fA-F]"
+              },
+              {
+                "type": "PATTERN",
                 "value": "\\\\u\\{[0-9a-fA-F]{1,6}\\}"
               }
             ]
@@ -3981,6 +3985,10 @@
                 },
                 {
                   "type": "PATTERN",
+                  "value": "\\\\x[0-7][0-9a-fA-F]"
+                },
+                {
+                  "type": "PATTERN",
                   "value": "\\\\u\\{[0-9a-fA-F]{1,6}\\}"
                 }
               ]
@@ -4031,6 +4039,10 @@
                       {
                         "type": "PATTERN",
                         "value": "\\\\[nrt\\\\0'\"]"
+                      },
+                      {
+                        "type": "PATTERN",
+                        "value": "\\\\x[0-7][0-9a-fA-F]"
                       },
                       {
                         "type": "PATTERN",
