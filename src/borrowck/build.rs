@@ -1524,9 +1524,6 @@ impl<'a> Builder<'a> {
             }
             _ => {
                 let p = self.place(init);
-                if init.is_place() && self.binds_mut(pat) {
-                    self.notes.mut_bound.push(p.clone());
-                }
                 self.inspect(pat, &p);
                 self.declare(pat);
                 self.bind(pat, &p);
@@ -1540,9 +1537,6 @@ impl<'a> Builder<'a> {
     fn match_into(&mut self, scrutinee: &'a Expr, arms: &'a [Arm], dest: &Place, span: Span) {
         self.temps.push(Vec::new());
         let p = self.place(scrutinee);
-        if scrutinee.is_place() && arms.iter().any(|arm| self.binds_mut(&arm.pat)) {
-            self.notes.mut_bound.push(p.clone());
-        }
         for arm in arms {
             self.inspect(&arm.pat, &p);
         }
@@ -1847,25 +1841,6 @@ fn pred_names<'e>(e: &'e Expr, binder: &str, out: &mut Vec<&'e str>) {
     }
     for c in e.children() {
         pred_names(c, binder, out);
-    }
-}
-
-impl Builder<'_> {
-    /// Does pattern `p` bind a variable by `&mut` (match ergonomics)?
-    fn binds_mut(&self, p: &Pattern) -> bool {
-        let typed = self.cx.typed();
-        match &p.kind {
-            PatternKind::Bind(..) => {
-                let id = typed.sites.get(&p.id);
-                id.and_then(|id| typed.binds.get(id)?.by_ref) == Some(true)
-            }
-            PatternKind::Variant(.., pats)
-            | PatternKind::Tuple(pats)
-            | PatternKind::Array(pats)
-            | PatternKind::Or(pats) => pats.iter().any(|q| self.binds_mut(q)),
-            PatternKind::Struct(_, _, fields, _) => fields.iter().any(|f| self.binds_mut(&f.pat)),
-            _ => false,
-        }
     }
 }
 

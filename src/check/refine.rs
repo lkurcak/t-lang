@@ -53,11 +53,13 @@
 //! `Walk::frames_of`);
 //! after a branch that does, where it's whichever value the branch taken
 //! gave it; and after a call it's lent to `&mut`, when nothing can keep
-//! the reference after the call. A place that may change
-//! some other way, through a `&mut` that may outlive where it's made, or a
-//! closure that captures it, gives a new value each time it's read: nothing
-//! is known of it but its refinements, which every assignment, inside a
-//! closure too, must keep (`Walk::unstable_mir`). A `&` can't change what it
+//! the reference after the call. Lent `&mut` any other way, by a `&mut`
+//! that may outlive where it's made, a closure's capture or a pattern's
+//! binding, it's forgotten where it's lent: nothing can read or write it
+//! while the loan lives, so it's next read after, as a value nothing is
+//! known of but its refinements, which every write through the loan,
+//! inside a closure too, must keep, and the measures a closure's body
+//! keeps of it (docs/69-loans.md). A `&` can't change what it
 //! points to, as nothing in T can be changed through one, so `*r` for a
 //! `let r = &p;` is `p` (`Walk::alias`). A refined variable, a field a
 //! refinement is about, and what a refined reference points to can't be
@@ -147,6 +149,10 @@ type Way = Vec<(usize, usize)>;
 /// For each parameter of a function, if it's lend-framed (`lend_framed`),
 /// the type parameters its result can write values of.
 pub(super) type Framed = Vec<Option<Vec<String>>>;
+
+/// What a change to a place keeps: of each place in it, the measures it
+/// leaves as they were (`Walk::frames_of`).
+type Keeps = Vec<(Place, Vec<String>)>;
 
 /// One predicate of a refinement, and the parts of the value it's of.
 #[derive(Debug, Clone)]
@@ -2230,7 +2236,6 @@ impl Checker {
             closures_refused: HashSet::new(),
             module: self.fns[id.0].module,
             invariants: HashMap::new(),
-            unstable: HashSet::new(),
             alias: HashMap::new(),
             declared: Vec::new(),
             proved: HashSet::new(),
@@ -2745,9 +2750,6 @@ struct Walk<'c> {
     module: usize,
     /// The refinement of each refined local, with its name.
     invariants: HashMap<NodeId, (Refinement, String)>,
-    /// The places that may change other than by assignment, with all
-    /// that's in them.
-    unstable: HashSet<Place>,
     /// What each local bound to a `&` of a place points to: `*r` is that
     /// place, which can't change while `r` can be used.
     alias: HashMap<NodeId, Place>,
@@ -3109,14 +3111,11 @@ impl Walk<'_> {
     /// have changed since, or a new one.
     /// Gives too whether it's a new one.
     fn obj_at(&mut self, p: &Place) -> (Obj, bool) {
-        let stable = !self.is_unstable(p);
-        if stable && let Some(&o) = self.objs.get(p) {
+        if let Some(&o) = self.objs.get(p) {
             return (o, false);
         }
         let o = self.new_obj();
-        if stable {
-            self.objs.insert(p.clone(), o);
-        }
+        self.objs.insert(p.clone(), o);
         (o, true)
     }
 
@@ -3461,16 +3460,6 @@ impl Walk<'_> {
         p.then(Proj::Deref)
     }
 
-    /// May what's at `p` change other than by assignment?
-    fn is_unstable(&self, p: &Place) -> bool {
-        (0..=p.path.len()).any(|n| {
-            self.unstable.contains(&Place {
-                root: p.root,
-                path: p.path[..n].to_vec(),
-            })
-        })
-    }
-
     fn fact(&mut self, f: Formula) {
         if f != Formula::True {
             self.facts.push(f);
@@ -3491,25 +3480,6 @@ impl Walk<'_> {
         }
         let all: Vec<Formula> = self.facts.iter().chain(&self.laws).cloned().collect();
         logic::valid(&all, g, &self.kinds)
-    }
-
-    /// Can something be written through a value of type `t`: does it hold
-    /// a `&mut`, or might it?
-    fn has_mut_ref(&self, t: &Type, seen: &mut HashSet<Type>) -> bool {
-        match t {
-            Type::Int(_) | Type::Bool | Type::Unit | Type::Never | Type::Fn(_) => false,
-            Type::Ref(_, m, _) => *m,
-            Type::Box(inner) => self.has_mut_ref(&self.cx.solved(inner), seen),
-            Type::Adt(..) | Type::Tuple(_) => {
-                if !seen.insert(t.clone()) {
-                    return false;
-                }
-                all_fields(&self.cx.adts, t)
-                    .iter()
-                    .any(|f| self.has_mut_ref(&self.cx.solved(f), seen))
-            }
-            _ => true,
-        }
     }
 
     /// The value at place `p`.
@@ -3555,11 +3525,8 @@ impl Walk<'_> {
         // A new value of a field, as after a loop that lends it, is one the
         // struct's refinements hold of, with its other fields, as of every
         // value of the struct (`fields_of`, for a field that's a scalar).
-        // Only of a stable place, whose object `fields_of` then finds: one
-        // that's new at each read isn't the same value twice.
         if new
             && !self.proving_fields
-            && !self.is_unstable(p)
             && let Some((q, _)) = p.field_of()
         {
             let qt = self.place_ty(&q);
@@ -3584,24 +3551,21 @@ impl Walk<'_> {
             let p = q.then(Proj::Field(j));
             let Some(kind) = self.kind(&ft) else {
                 // A field that's a new object is a new value too.
-                if has_obj(&ft) && (self.is_unstable(&p) || !self.objs.contains_key(&p)) {
+                if has_obj(&ft) && !self.objs.contains_key(&p) {
                     fresh = true;
                 }
                 vals.push(self.read_place(&p));
                 continue;
             };
-            let stable = !self.is_unstable(&p);
             let v = match self.cur.get(&p) {
-                Some(&v) if stable => v,
+                Some(&v) => v,
                 _ => {
                     fresh = true;
                     let v = self.fresh(kind);
                     let tree = self.place_read(&p);
                     let val = self.var(v);
                     self.assume_tree(&val, &ft, &tree);
-                    if stable {
-                        self.cur.insert(p, v);
-                    }
+                    self.cur.insert(p, v);
                     v
                 }
             };
@@ -3632,12 +3596,11 @@ impl Walk<'_> {
                 return vals.swap_remove(i);
             }
         }
-        let stable = !self.is_unstable(p);
-        if stable && let Some(&v) = self.cur.get(p) {
+        if let Some(&v) = self.cur.get(p) {
             return self.var(v);
         }
         let v = self.unknown(t);
-        if let (true, Val::Int(_) | Val::Bool(_)) = (stable, &v) {
+        if let Val::Int(_) | Val::Bool(_) = &v {
             let var = self.kinds.len() as Var - 1;
             self.cur.insert(p.clone(), var);
         }
@@ -3683,21 +3646,18 @@ impl Walk<'_> {
     /// the logic, equal to its part of `val`, which has its local's
     /// refinement, if it has one.
     fn set(&mut self, p: &Place, t: &Type, val: Option<Val>) {
-        let stable = !self.is_unstable(p);
         let kind = match t {
             Type::Adt(..) | Type::Tuple(_) => {
                 if let (Some(Val::Struct(o, vals)), Some(fields)) =
                     (&val, struct_fields(&self.cx.adts, t))
                 {
-                    if stable {
-                        self.objs.insert(p.clone(), *o);
-                    }
+                    self.objs.insert(p.clone(), *o);
                     for (j, (v, (_, ft))) in vals.iter().zip(fields).enumerate() {
                         let ft = self.cx.solved(&ft);
                         self.set(&p.then(Proj::Field(j)), &ft, Some(v.clone()));
                     }
                 }
-                if let (Some(Val::Obj(o)), true) = (&val, stable) {
+                if let Some(Val::Obj(o)) = &val {
                     self.objs.insert(p.clone(), *o);
                 }
                 if let (Some(v), true) = (&val, p.path.is_empty()) {
@@ -3706,7 +3666,7 @@ impl Walk<'_> {
                 return;
             }
             _ if !self.is_scalar(t) && *t != Type::Bool => {
-                if let (Some(Val::Ref(o, _) | Val::Obj(o)), true) = (&val, stable) {
+                if let Some(Val::Ref(o, _) | Val::Obj(o)) = &val {
                     self.objs.insert(p.clone(), *o);
                 }
                 // What a box owns is a place in it, which has its value; and
@@ -3731,9 +3691,7 @@ impl Walk<'_> {
             },
         };
         let v = self.fresh(kind);
-        if !self.is_unstable(p) {
-            self.cur.insert(p.clone(), v);
-        }
+        self.cur.insert(p.clone(), v);
         match val {
             Some(val) => {
                 for f in equal(&self.var(v), &val) {
@@ -4399,6 +4357,17 @@ impl Walk<'_> {
         frames: &[(Place, Vec<String>)],
         loop_span: Span,
     ) {
+        let kept = self.measures_now(frames);
+        for change in changes {
+            self.invalidate_loop(change, loop_span);
+            self.kill(change.place());
+        }
+        self.measures_kept(kept);
+    }
+
+    /// The value of each measure `frames` names of its place, now: before
+    /// what changes the place, which keeps them (`measures_kept`).
+    fn measures_now(&mut self, frames: &[(Place, Vec<String>)]) -> Vec<(Place, String, Val)> {
         let mut kept = Vec::new();
         for (p, measures) in frames {
             for m in measures {
@@ -4406,10 +4375,12 @@ impl Walk<'_> {
                 kept.push((p.clone(), m.clone(), self.measure(m, recv)));
             }
         }
-        for change in changes {
-            self.invalidate_loop(change, loop_span);
-            self.kill(change.place());
-        }
+        kept
+    }
+
+    /// Each measure in `kept` of its place is what it was
+    /// (`measures_now`): what changed the place since kept it.
+    fn measures_kept(&mut self, kept: Vec<(Place, String, Val)>) {
         for (p, m, before) in kept {
             let recv = Val::Ref(self.new_obj(), Pointee::Place(p));
             let now = self.measure(&m, recv);
@@ -4420,38 +4391,38 @@ impl Walk<'_> {
     }
 
     /// The measures a loop keeps of each place it changes, `changed`:
-    /// its *frame*. Of the loop's `changes`, each an assignment (`None`) or
-    /// a place lent straight to a call-scoped `&mut`, with the measures
-    /// the call keeps (`keeps_at`), a measure of place `p` is kept if every
-    /// change in the loop to `p`, to a place in it, or to one it's in, is
-    /// such a call lending `p` itself that keeps it. By induction on how
-    /// many times round the loop has been, at the head, and anywhere in
-    /// the body, the measure is what it was before the loop: each change
-    /// since was such a call, which nothing else could see or write `p`
-    /// during (it's lent to the call, and stable), and a measure is of the
-    /// value alone (lemma F1 of docs/52-loop-frames.md).
+    /// its *frame*. Of the loop's `changes`, each a place changed with
+    /// the measures of places in it the change keeps (`Keeps`): nothing,
+    /// for an assignment; for a place lent straight to a call-scoped
+    /// `&mut`, the measures the call keeps of it (`keeps_at`); for one a
+    /// closure captures, those its body keeps of each place in it
+    /// (`closure_frames`). A measure of place `p` is kept if every change
+    /// in the loop to `p`, to a place in it, or to one it's in, keeps it
+    /// of `p`. By induction on how many times round the loop has been, at
+    /// the head, and anywhere in the body, the measure is what it was
+    /// before the loop: each change since was one keeping it, which
+    /// nothing else could see or write `p` during (it's lent, and the
+    /// borrow checker lets nothing else have it while it is), and a
+    /// measure is of the value alone (lemma F1 of docs/52-loop-frames.md).
+    /// The same of a closure's body, by induction on how many times it's
+    /// run (lemma F2 of docs/69-loans.md).
     fn frames_of(
         &mut self,
-        changes: &[(Place, Option<Vec<String>>)],
+        changes: &[(Place, Keeps)],
         changed: &[Invalidation],
     ) -> Vec<(Place, Vec<String>)> {
         let mut places: Vec<&Place> = changed.iter().map(|c| c.place()).collect();
         places.sort();
         places.dedup();
         let mut frames = Vec::new();
+        let none = Vec::new();
         for p in places {
-            if self.is_unstable(p) {
-                continue;
-            }
             let mut kept: Option<Vec<String>> = None;
             for (q, keeps) in changes {
                 if !q.within(p) && !p.within(q) {
                     continue;
                 }
-                let keeps = match keeps {
-                    Some(ms) if q == p => ms,
-                    _ => &Vec::new(),
-                };
+                let keeps = (keeps.iter().find(|(f, _)| f == p)).map_or(&none, |(_, ms)| ms);
                 kept = Some(match kept {
                     None => keeps.clone(),
                     Some(k) => k.into_iter().filter(|m| keeps.contains(m)).collect(),

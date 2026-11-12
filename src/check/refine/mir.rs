@@ -17,10 +17,14 @@
 //!   outside: its invariant is proved; what it changes is forgotten, but
 //!   for its frame; and its invariant is assumed. Along each edge back to
 //!   it, its invariant is proved (lemma I1 of docs/54-loop-invariants.md).
-//! - A `&mut` given straight to a call (an operand of it) is lent to the
-//!   call: what's known of the place is forgotten once it returns, when
-//!   its postconditions are learned. Any other `&mut` forgets it where
-//!   it's made.
+//! - A place changes but by assignment only through a `&mut` of it, a
+//!   loan, which the borrow checker lets nothing else read or write the
+//!   place while it lives (docs/69-loans.md). A `&mut` given straight to a
+//!   call (an operand of it) is lent to the call: what's known of the
+//!   place is forgotten once it returns, when its postconditions are
+//!   learned. Any other `&mut` forgets it where it's made: an explicit
+//!   one, a closure's capture (but for the measures its body keeps, its
+//!   frame: `Walk::closure_frames`), or a pattern's binding.
 //! - A pattern's binding by `&mut` is a `&mut` of the place it binds, a
 //!   variant's field or an array's element too: what's written through it
 //!   must have what's declared there (`Walk::bind_ref`).
@@ -56,6 +60,9 @@ struct Frame<'b> {
     operand_of: HashMap<Local, (Point, usize)>,
     /// Each local that a borrow is made into: `&mut` or not, of where.
     borrow_of: HashMap<Local, (bool, crate::mir::Place)>,
+    /// Each local that's an operand of a closure's making: the closure,
+    /// which captures what it holds.
+    captured_by: HashMap<Local, NodeId>,
     /// The blocks control gets to, in reverse postorder, the first of two
     /// successors first.
     rpo: Vec<Bb>,
@@ -68,6 +75,7 @@ impl<'b> Frame<'b> {
         let env = (body.locals.get(1)).and_then(|l| (l.kind == LocalKind::Env).then_some(Local(1)));
         let mut operand_of = HashMap::new();
         let mut borrow_of = HashMap::new();
+        let mut captured_by = HashMap::new();
         for (b, block) in body.blocks.iter().enumerate() {
             for (index, s) in block.stmts.iter().enumerate() {
                 let StmtKind::Assign { place, value, .. } = &s.kind else {
@@ -90,6 +98,15 @@ impl<'b> Frame<'b> {
                     Rvalue::Ref(_, m, q) if place.proj.is_empty() => {
                         borrow_of.insert(place.local, (*m, q.clone()));
                     }
+                    Rvalue::Aggregate(Agg::Closure(l), _, ops) => {
+                        for o in ops {
+                            if let Some(p) = o.place()
+                                && p.proj.is_empty()
+                            {
+                                captured_by.insert(p.local, *l);
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -105,6 +122,7 @@ impl<'b> Frame<'b> {
             env,
             operand_of,
             borrow_of,
+            captured_by,
             rpo,
             order,
         }
@@ -246,7 +264,6 @@ impl Checker {
         };
         let fr = Frame::new(body, notes);
         let mut w = self.new_walk(f);
-        w.unstable_mir(&fr, &bodies);
         for (i, p) in f.params.iter().enumerate() {
             if let Some(r) = sig.as_ref().and_then(|s| s.params[i].clone()) {
                 w.declare(p.name.id, &r, &p.name.name);
@@ -279,48 +296,6 @@ impl Checker {
 }
 
 impl Walk<'_> {
-    /// Finds the places that may change other than by assignment, as far
-    /// as anything here knows, with all that's in them: those patterns bind
-    /// by `&mut` (each `match`'s scrutinee, or `let`'s value, that's a
-    /// place), and each variable a closure captures that's `mut` or holds a
-    /// `&mut`, in this body or its closures'. Those lent `&mut` otherwise,
-    /// by `&mut` or to a call, change only where they're lent and while the
-    /// borrow lives, when the borrow checker says no one else can read
-    /// them: so what's known of them is forgotten there (`mir_borrow`,
-    /// `mir_call`).
-    fn unstable_mir(&mut self, fr: &Frame, bodies: &Bodies) {
-        for mp in &fr.notes.mut_bound {
-            if let Some(p) = self.static_place(fr, mp) {
-                self.unstable.insert(p);
-            }
-        }
-        for block in &fr.body.blocks {
-            for s in &block.stmts {
-                let StmtKind::Assign {
-                    value: Rvalue::Aggregate(Agg::Closure(l), ..),
-                    ..
-                } = &s.kind
-                else {
-                    continue;
-                };
-                for id in self.cx.typed.captures.get(l).into_iter().flatten() {
-                    let Some(b) = self.cx.typed.binds.get(id) else {
-                        continue;
-                    };
-                    let ty = self.cx.solved(&b.ty);
-                    if b.mutable || self.has_mut_ref(&ty, &mut HashSet::new()) {
-                        self.unstable.insert(Place::local(*id));
-                    }
-                }
-                let key = Key::Closure(*l);
-                if let Some((_, body, notes)) = bodies.iter().find(|(k, ..)| *k == key) {
-                    let inner = Frame::new(body, notes);
-                    self.unstable_mir(&inner, bodies);
-                }
-            }
-        }
-    }
-
     /// What's known here, taken out of the walk.
     fn take_state(&mut self) -> State {
         State {
@@ -359,7 +334,7 @@ impl Walk<'_> {
             let state = self.join_states(fr, states);
             self.put_state(state);
             if let Some(lp) = fr.loop_at(b) {
-                self.mir_loop_start(fr, lp)?;
+                self.mir_loop_start(fr, bodies, lp)?;
             }
             let block = &fr.body.blocks[b.0];
             for (index, s) in block.stmts.iter().enumerate() {
@@ -479,11 +454,29 @@ impl Walk<'_> {
 
     /// The head of loop `lp`, from outside it (`loop_start`): what it
     /// changes is each place assigned or lent `&mut` in its blocks, and
-    /// its frame keeps what the calls it's lent to straight keep.
-    fn mir_loop_start(&mut self, fr: &Frame, lp: &LoopNote) -> Result<(), Error> {
+    /// its frame keeps what the calls it's lent to straight, and the
+    /// closures it's captured by, keep.
+    fn mir_loop_start(&mut self, fr: &Frame, bodies: &Bodies, lp: &LoopNote) -> Result<(), Error> {
+        let (changed, changes) = self.changes_in(fr, bodies, &lp.blocks);
+        let frames = self.frames_of(&changes, &changed);
+        self.loop_start(&changed, &frames, fr.invariant(lp.head), lp.span)
+    }
+
+    /// What `blocks` of body `fr` change: each place assigned or lent
+    /// `&mut` in them, with where; and each change, with what it keeps
+    /// (`Walk::frames_of`): a `&mut` lent straight to a call, the measures
+    /// the call keeps of it (`lent_keeps`); one a closure captures, the
+    /// measures its body keeps of each place in it (`closure_frames`);
+    /// anything else, nothing.
+    fn changes_in(
+        &mut self,
+        fr: &Frame,
+        bodies: &Bodies,
+        blocks: &[Bb],
+    ) -> (Vec<Invalidation>, Vec<(Place, Keeps)>) {
         let mut changed = Vec::new();
         let mut changes = Vec::new();
-        for &b in &lp.blocks {
+        for &b in blocks {
             if fr.order[b.0] == usize::MAX {
                 continue;
             }
@@ -498,33 +491,67 @@ impl Walk<'_> {
                 };
                 if !*declare
                     && fr.id(place.local).is_some() | (Some(place.local) == fr.env)
-                    && let Some(p) = self.static_place(fr, place)
+                    && let Some(p) = self.lent_place(fr, place)
                 {
                     changed.push(Invalidation::new(p.clone(), s.span, "assignment"));
-                    changes.push((p, None));
+                    changes.push((p, Vec::new()));
                 }
-                if let Rvalue::Ref(_, true, q) = value
-                    && let Some(p) = self.static_place(fr, q)
-                {
-                    // Lent to a call, by the call.
-                    let call = (place.proj.is_empty())
-                        .then(|| fr.operand_of.get(&place.local))
-                        .flatten();
-                    let span = match call {
-                        Some((at, _)) => fr.body.blocks[at.block.0].stmts[at.index].span,
-                        None => s.span,
-                    };
-                    changed.push(Invalidation::new(p.clone(), span, "mutable lending"));
-                    let keeps = match place.proj.is_empty() {
-                        true => self.lent_keeps(fr, place.local, &p),
-                        false => None,
-                    };
-                    changes.push((p, keeps));
-                }
+                let Rvalue::Ref(_, true, q) = value else {
+                    continue;
+                };
+                let Some(p) = self.lent_place(fr, q) else {
+                    continue;
+                };
+                // Lent to a call, by the call.
+                let call = (place.proj.is_empty())
+                    .then(|| fr.operand_of.get(&place.local))
+                    .flatten();
+                let span = match call {
+                    Some((at, _)) => fr.body.blocks[at.block.0].stmts[at.index].span,
+                    None => s.span,
+                };
+                changed.push(Invalidation::new(p.clone(), span, "mutable lending"));
+                let captured = (place.proj.is_empty())
+                    .then(|| fr.captured_by.get(&place.local))
+                    .flatten();
+                let keeps = match captured {
+                    // Each place its frame is of changes too, keeping that.
+                    Some(&l) => {
+                        let kept = self.closure_frames(bodies, l, &p);
+                        for (f, _) in &kept {
+                            changed.push(Invalidation::new(f.clone(), span, "mutable lending"));
+                        }
+                        kept
+                    }
+                    None if place.proj.is_empty()
+                        && self.static_place(fr, q) == Some(p.clone()) =>
+                    {
+                        let kept = self.lent_keeps(fr, place.local, &p);
+                        kept.map(|ms| vec![(p.clone(), ms)]).unwrap_or_default()
+                    }
+                    None => Vec::new(),
+                };
+                changes.push((p, keeps));
             }
         }
+        (changed, changes)
+    }
+
+    /// What closure `l`'s calls keep of what's in place `q`, which it
+    /// captures by `&mut`: each place in `q` its body changes, with the
+    /// measures every change to it in the body keeps (`frames_of` over its
+    /// blocks, as a loop's), which, as nothing else can change `q` while
+    /// the closure has it, its loan keeps (lemma F2 of docs/69-loans.md).
+    fn closure_frames(&mut self, bodies: &Bodies, l: NodeId, q: &Place) -> Keeps {
+        let key = Key::Closure(l);
+        let Some((_, body, notes)) = bodies.iter().find(|(k, ..)| *k == key) else {
+            return Vec::new();
+        };
+        let fr = Frame::new(body, notes);
+        let blocks = fr.rpo.clone();
+        let (changed, changes) = self.changes_in(&fr, bodies, &blocks);
         let frames = self.frames_of(&changes, &changed);
-        self.loop_start(&changed, &frames, fr.invariant(lp.head), lp.span)
+        frames.into_iter().filter(|(f, _)| f.within(q)).collect()
     }
 
     /// The measures a call keeps of `p`, if `local`, a `&mut` of it, is
@@ -839,6 +866,14 @@ impl Walk<'_> {
                 };
                 let r = Val::Ref(o, to);
                 widen(self, &r);
+                // A loan of the place, which writes through it change:
+                // forgotten here, as a `&mut` of it is (lemma S2 of
+                // docs/69-loans.md), or the place it's in, if the walk
+                // can't name it (S4).
+                if let Some(p) = self.lent_place(fr, q) {
+                    self.invalidate(&p, span, "mutable lending");
+                    self.kill(&p);
+                }
                 self.bind(id, Some(r));
             }
             // A `&` to a value at no place, a variant's or an array's
@@ -996,7 +1031,7 @@ impl Walk<'_> {
                 Ok(v)
             }
             Rvalue::Use(o) => self.operand(fr, o, span),
-            Rvalue::Ref(_, m, q) => self.mir_borrow(fr, at, span, dest, *m, q),
+            Rvalue::Ref(_, m, q) => self.mir_borrow(fr, bodies, at, span, dest, *m, q),
             Rvalue::Unary(UnOp::Neg, o, site) => {
                 let v = self.operand(fr, o, span)?;
                 let ty = self.mir_ty(fr, dest);
@@ -1215,10 +1250,13 @@ impl Walk<'_> {
 
     /// A `&` or `&mut` (`m`) of `q`, made into `dest` (`borrow_mir`): if
     /// it's a `&mut` not given straight to a call, what's known of the
-    /// place is forgotten here, and if it is, once the call returns.
+    /// place is forgotten here, but for what a closure capturing it keeps
+    /// (its frame), and if it is, once the call returns.
+    #[allow(clippy::too_many_arguments)]
     fn mir_borrow(
         &mut self,
         fr: &Frame,
+        bodies: &Bodies,
         at: Point,
         span: Span,
         dest: &crate::mir::Place,
@@ -1234,11 +1272,23 @@ impl Walk<'_> {
             self.no_mut_borrow_mir(fr, q, text, span, scoped)?;
         }
         let v = self.borrow_mir(fr, q);
-        if m && lent_to.is_none()
-            && let Some(p) = self.static_place(fr, q)
+        // Lent to a call, it's the call that forgets it, after; but if the
+        // walk can't name it, only a place it's in, it's forgotten here.
+        let by_call = lent_to.is_some() && self.static_place(fr, q).is_some();
+        if m && !by_call
+            && let Some(p) = self.lent_place(fr, q)
         {
+            let frames = match dest.proj.is_empty() {
+                true => match fr.captured_by.get(&dest.local) {
+                    Some(&l) => self.closure_frames(bodies, l, &p),
+                    None => Vec::new(),
+                },
+                false => Vec::new(),
+            };
+            let kept = self.measures_now(&frames);
             self.invalidate(&p, span, "mutable lending");
             self.kill(&p);
+            self.measures_kept(kept);
         }
         Ok(v)
     }
@@ -2128,6 +2178,27 @@ impl Walk<'_> {
                     p.then(Proj::Field(*i))
                 }
                 crate::mir::Proj::Variant(..) => return None,
+            };
+        }
+        Some(p)
+    }
+
+    /// The place a loan of `mp` can change, as the walk names places: the
+    /// place it is (`static_place`), or, if it's in a variant's field or an
+    /// array's element, which the walk doesn't name, the place that's in
+    /// (lemma S4 of docs/69-loans.md).
+    fn lent_place(&self, fr: &Frame, mp: &crate::mir::Place) -> Option<Place> {
+        let (mut p, from) = self.root_place(fr, mp)?;
+        for proj in &mp.proj[from..] {
+            p = match proj {
+                crate::mir::Proj::Deref => self.deref(p),
+                crate::mir::Proj::Field(i) => {
+                    if let Type::Array(..) = self.place_ty(&p) {
+                        return Some(p);
+                    }
+                    p.then(Proj::Field(*i))
+                }
+                crate::mir::Proj::Variant(..) => return Some(p),
             };
         }
         Some(p)
