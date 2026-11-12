@@ -269,6 +269,8 @@ impl Checker {
         for (lhs, rhs) in &def.scheme.eqs {
             self.require_eq(s.apply(lhs), s.apply(rhs), name.span, m)?;
         }
+        let bounds = def.scheme.effect_bounds.clone();
+        self.effect_bounds_hold(&bounds, &s, name.span, m);
         Ok(Found {
             symbol: def.symbol.clone(),
             ty: fn_ty,
@@ -404,6 +406,7 @@ impl Checker {
         for (lhs, rhs) in &scheme.eqs {
             self.require_eq(s.apply(lhs), s.apply(rhs), name.span, &who)?;
         }
+        self.effect_bounds_hold(&scheme.effect_bounds, &s, name.span, &who);
         Ok(Found {
             symbol,
             ty: s.apply(&scheme.ty),

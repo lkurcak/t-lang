@@ -1242,6 +1242,11 @@ pub struct Scheme {
     /// What its equality bounds say projections are: `(T::Item, i64)` for
     /// `fn f<T: Iter<Item = i64>>`. Every use has to show they are.
     pub eqs: Vec<(Type, Type)>,
+    /// What its bounds say associated effects are at most: `(I::e,
+    /// {alloc})` for `fn f<I: Iterator<e = {alloc}>>`. Every use has to
+    /// show they are within it; inside, the projection stays itself, but
+    /// it's within that (see docs/68.1-effect-bindings.md).
+    pub effect_bounds: Vec<(Type, Type)>,
     pub ty: Type,
 }
 
@@ -1254,6 +1259,7 @@ impl Scheme {
             bounds: Vec::new(),
             preds: Vec::new(),
             eqs: Vec::new(),
+            effect_bounds: Vec::new(),
             ty,
         }
     }

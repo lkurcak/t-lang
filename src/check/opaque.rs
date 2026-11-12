@@ -35,7 +35,7 @@ impl Checker {
         };
         let mut with_it = params.clone();
         with_it.push_type(symbol.clone());
-        let (preds, eqs) = self.preds(&g, &with_it, lifetimes, true)?;
+        let (preds, eqs, effects) = self.preds(&g, &with_it, lifetimes, true)?;
         let (owner, owner_name) = self.sig_owner.clone();
         let mut def = crate::traits::OpaqueDef {
             owner,
@@ -44,6 +44,7 @@ impl Checker {
             lifetimes: lifetimes.to_vec(),
             preds: Vec::new(),
             eqs: Vec::new(),
+            effect_bounds: Vec::new(),
             hidden: None,
             span: t.span,
         };
@@ -59,6 +60,11 @@ impl Checker {
             .into_iter()
             .map(|(l, r)| (s.apply(&l), s.apply(&r)))
             .collect();
+        def.effect_bounds = effects
+            .into_iter()
+            .map(|(l, r)| (s.apply(&l), s.apply(&r)))
+            .collect();
+
         self.opaque_at.insert(t.id, symbol.clone());
         self.adts.proj.opaques.insert(symbol.clone(), def.clone());
         self.traits.opaques.insert(symbol, def);
@@ -179,6 +185,20 @@ impl Checker {
                 d.span,
                 &format!("{name}'s return type"),
             )?;
+        }
+        // What its bounds say of its associated effects holds of what it
+        // stands for (docs/68.1-effect-bindings.md).
+        for (lhs, rhs) in &d.effect_bounds {
+            let sub = Type::effects([self.adts.normalise(&swap(lhs))]);
+            let bound = match lhs {
+                Type::Proj(_, _, e) => format!("{e} = {}", crate::types::effects_text(rhs)),
+                _ => crate::types::effects_text(rhs),
+            };
+            let why = super::effects::Why::Assoc {
+                what: swap(lhs),
+                needs: format!("the type of what `{name}` returns says `{bound}`"),
+            };
+            self.within(sub, rhs.clone(), d.span, why);
         }
         hidden.push((s.clone(), var.clone()));
         Ok(var)

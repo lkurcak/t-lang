@@ -225,6 +225,7 @@ impl Checker {
             bounds: impl_bounds,
             preds: impl_preds,
             eqs: impl_eqs,
+            effect_bounds: impl_effects,
         } = outer;
         let own = generics::declare(&f.generics)?;
         if let Some(p) = f
@@ -256,9 +257,13 @@ impl Checker {
         with_self.push_type("Self".into());
         self.env = preds.iter().cloned().chain(this.clone()).collect();
         self.adts.proj.local = eqs.clone();
-        let (mut own_preds, mut own_eqs) = self.preds(&f.generics, &with_self, &lifetimes, true)?;
+        let (mut own_preds, mut own_eqs, mut own_effects) =
+            self.preds(&f.generics, &with_self, &lifetimes, true)?;
         if let Some(s) = self_ty {
             let s = Subst::new(&["Self".to_string()], std::slice::from_ref(s));
+            for (l, r) in &mut own_effects {
+                (*l, *r) = (s.apply(l), s.apply(r));
+            }
             for p in &mut own_preds {
                 p.ty = self.adts.normalise(&s.apply(&p.ty));
             }
@@ -268,6 +273,8 @@ impl Checker {
         }
         preds.extend(own_preds);
         eqs.extend(own_eqs);
+        let mut effect_bounds = impl_effects.to_vec();
+        effect_bounds.extend(own_effects);
         let opaques = this.is_none();
         self.env = preds.iter().cloned().chain(this).collect();
         self.adts.proj.local = eqs.clone();
@@ -305,6 +312,9 @@ impl Checker {
                     for (l, r) in &mut d.eqs {
                         (*l, *r) = (s.apply(l), s.apply(r));
                     }
+                    for (l, r) in &mut d.effect_bounds {
+                        (*l, *r) = (s.apply(l), s.apply(r));
+                    }
                 }
             }
         }
@@ -316,6 +326,7 @@ impl Checker {
             bounds,
             preds,
             eqs,
+            effect_bounds,
             ty,
         })
     }
@@ -386,7 +397,15 @@ impl Checker {
                      type of one, not `Self`",
                 ));
             }
-            let (preds, eqs) = self.preds(&d.generics, &params, &lifetimes, true)?;
+            let (preds, eqs, effect_bounds) = self.preds(&d.generics, &params, &lifetimes, true)?;
+            if !effect_bounds.is_empty() {
+                return Err(Error::ty(
+                    d.generics.span.unwrap_or(d.self_ty.span),
+                    "an impl's bound on an associated effect, `e = {..}`, isn't supported yet: \
+                     which impl a type has would depend on effects; give the trait an \
+                     associated effect and say `effect e = I::e;` in the impl",
+                ));
+            }
             let trait_name = match &d.trait_name {
                 Some(t) => Some(self.trait_named(t)?),
                 None => None,
@@ -618,6 +637,7 @@ impl Checker {
                 self_ty,
                 preds,
                 eqs,
+                effect_bounds,
                 assoc,
                 methods,
                 derived: false,
@@ -985,6 +1005,7 @@ pub(in crate::check) struct Outer {
     pub(in crate::check) bounds: Vec<Bound>,
     pub(in crate::check) preds: Vec<Pred>,
     pub(in crate::check) eqs: Vec<(Type, Type)>,
+    pub(in crate::check) effect_bounds: Vec<(Type, Type)>,
 }
 
 /// A trait impl must be for its type at *every* lifetime, as resolution

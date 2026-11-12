@@ -827,6 +827,16 @@ impl Printer<'_> {
             args = args + &a.name.name;
             args = match &a.kind {
                 AssocBoundKind::Eq(t) => args + " = " + self.ty(t),
+                AssocBoundKind::Effects(e) => {
+                    let mut set = text("{");
+                    for (i, item) in e.items.iter().enumerate() {
+                        if i > 0 {
+                            set = set + ", ";
+                        }
+                        set = set + self.effect(item);
+                    }
+                    args + " = " + set + "}"
+                }
                 AssocBoundKind::Bounds(ts) => {
                     let ts: Vec<&str> = ts.iter().map(|t| t.name.as_str()).collect();
                     args + ": " + ts.join(" + ")

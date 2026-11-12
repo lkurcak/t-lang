@@ -287,7 +287,7 @@ work out; that's for when there's a backend.
 | divergence as an effect, total functions | needs a termination checker | — |
 | `expect`, a message for `panic` | needs strings | 13 ✅ |
 | `Box::try_new` | fallible allocation belongs with `alloc` | — |
-| bounds on associated effects, `I: Iterator<e = {}>` | not needed yet | — |
+| bounds on associated effects, `I: Iterator<e = {}>` | upper bounds, in functions' and opaque results' bounds; not in impls' | 68.1 ✅ |
 | effect arguments in turbofish, other than `_` | not needed yet | — |
 | subtyping of function types inside other types | coercion where a whole value is used does | — |
 | catching a panic | would need more effects, as handlers | — |

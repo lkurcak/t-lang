@@ -132,6 +132,7 @@ impl Checker {
         for (lhs, rhs) in &scheme.eqs {
             self.require_eq(s.apply(lhs), s.apply(rhs), at, name)?;
         }
+        self.effect_bounds_hold(&scheme.effect_bounds, &s, at, name);
         let res = Res::Fn(symbol.clone(), args.clone());
         self.info.symbols.insert(id, symbol.clone());
         let instance = Some((id, span, Instance::Fn(symbol, args)));

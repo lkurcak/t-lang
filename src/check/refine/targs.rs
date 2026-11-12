@@ -2246,6 +2246,7 @@ impl Walk<'_> {
             bounds: Vec::new(),
             preds,
             eqs,
+            effect_bounds: Vec::new(),
             ty: Type::func(vec![to_param(ret)], Type::Unit),
         };
         let subst = crate::types::Subst::new(&names, &hidden);
@@ -2740,6 +2741,7 @@ impl Walk<'_> {
                 bounds: Vec::new(),
                 preds: def.preds.clone(),
                 eqs: def.eqs.clone(),
+                effect_bounds: def.effect_bounds.clone(),
                 ty: Type::Unit,
             };
             let mut subs = Vec::new();

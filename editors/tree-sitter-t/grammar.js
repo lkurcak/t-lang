@@ -337,11 +337,19 @@ module.exports = grammar({
     trait_with_associated: $ => seq(
       field('trait', $._path_type),
       '<',
-      commaSep1(choice($.associated_equality, $.associated_bound)),
+      commaSep1(choice($.associated_equality, $.associated_effect_bound, $.associated_bound)),
       '>',
     ),
 
     associated_equality: $ => seq(field('name', $._type_identifier), '=', field('type', $._type)),
+
+    // `e = {alloc}`: what an associated effect may be at most; `e = panic`
+    // reads as an `associated_equality`.
+    associated_effect_bound: $ => seq(
+      field('name', $._type_identifier),
+      '=',
+      field('effects', seq('{', commaSep($._effect), '}')),
+    ),
 
     associated_bound: $ => seq(field('name', $._type_identifier), field('bounds', $.trait_bounds)),
 

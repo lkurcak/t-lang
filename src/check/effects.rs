@@ -88,6 +88,9 @@ pub(super) enum Why {
     /// A site `what` in the body of function `name`, which says its
     /// effects, which the site's must be among.
     Site { what: String, name: String },
+    /// An associated effect, `what` where it's used, which a bound says
+    /// is within a set, as `needs` says (docs/68.1-effect-bindings.md).
+    Assoc { what: Type, needs: String },
 }
 
 /// A `Within` that had a placeholder for a function's inferred effects in
@@ -101,6 +104,9 @@ pub(super) struct Deferred {
     pub why: Why,
     pub subject: String,
     pub span: Span,
+    /// The bounds on associated effects where it was found
+    /// (`Checker::effect_bounds`).
+    pub bounds: Vec<(Type, Type)>,
 }
 
 impl Checker {
@@ -144,6 +150,27 @@ impl Checker {
             unsafe_block: None,
             callee: None,
         });
+    }
+
+    /// Records that what each of `bounds`, a function's (or an opaque
+    /// type's) bounds on associated effects, says holds at a use of it at
+    /// `span` by `who`, at type arguments `s`: the associated effect there,
+    /// normalised, is within the set (docs/68.1-effect-bindings.md).
+    pub(super) fn effect_bounds_hold(
+        &mut self,
+        bounds: &[(Type, Type)],
+        s: &crate::types::Subst,
+        span: Span,
+        who: &str,
+    ) {
+        for (lhs, rhs) in bounds {
+            let sub = Type::effects([self.adts.normalise(&s.apply(lhs))]);
+            let why = Why::Assoc {
+                what: s.apply(lhs),
+                needs: format!("`{who}` needs `{lhs} = {}`", effects_text(rhs)),
+            };
+            self.within(sub, s.apply(rhs), span, why);
+        }
     }
 
     /// Records that `sub ⊆ sup` must hold, because of `why`, at `span`.
@@ -361,6 +388,17 @@ impl Checker {
                     got: self.solved(&got),
                     want: self.solved(&want),
                 },
+                // The projection itself, of what's known now, not what it
+                // normalises to: `<Down as Iterator>::e`.
+                Why::Assoc { what, needs } => Why::Assoc {
+                    what: match &what {
+                        Type::Proj(base, tr, e) => {
+                            Type::Proj(Box::new(self.solved(base)), tr.clone(), e.clone())
+                        }
+                        what => self.solved(what),
+                    },
+                    needs,
+                },
                 why => why,
             };
             let d = Deferred {
@@ -369,6 +407,7 @@ impl Checker {
                 why,
                 subject,
                 span,
+                bounds: self.effect_bounds.clone(),
             };
             // A function's effects that are inferred, and not known yet,
             // wait for them.
@@ -385,12 +424,7 @@ impl Checker {
     /// or else says why it must be.
     pub(super) fn check_deferred(&self, d: &Deferred) -> Result<(), Error> {
         let (sub, sup) = (&d.sub, &d.sup);
-        let missing = Type::effects(
-            sub.effect_items()
-                .iter()
-                .filter(|e| !sup.effect_items().contains(e))
-                .cloned(),
-        );
+        let missing = Type::effects(self.missing_effects(sub, sup, &d.bounds));
         if missing.is_no_effects() {
             return Ok(());
         }
@@ -414,6 +448,7 @@ impl Checker {
                 effects_text(sup),
                 effects_text(sub)
             ),
+            Why::Assoc { what, needs } => format!("`{}` {does}, but {needs}", shown(what)),
             Why::Site { what, name } => format!(
                 "{}, but `{name}` doesn't say `with {}`",
                 says(what, &missing),
@@ -463,6 +498,7 @@ impl Checker {
                         },
                         subject: String::new(),
                         span: s.span,
+                        bounds: self.effect_bounds.clone(),
                     });
                     continue;
                 }
@@ -493,16 +529,13 @@ impl Checker {
                     },
                     subject: String::new(),
                     span: s.span,
+                    bounds: self.effect_bounds.clone(),
                 });
                 continue;
             }
-            let missing: Vec<Type> = effects
-                .effect_items()
-                .iter()
-                .filter(|e| !declared.effect_items().contains(e))
-                .cloned()
-                .collect();
+            let missing = self.missing_effects(&effects, declared, &self.effect_bounds);
             used.extend(effects.effect_items().iter().cloned());
+            used.extend(self.within_bounds(&effects, &self.effect_bounds));
             let Some(first) = missing.first() else {
                 continue;
             };
@@ -716,6 +749,76 @@ impl Checker {
             None => t,
         };
         self.solved(&t)
+    }
+}
+
+impl Checker {
+    /// What an associated effect `item` is at most, if a bound on it says
+    /// (docs/68.1-effect-bindings.md): one of `bounds`, those in scope
+    /// where it's used, or of the opaque type it's of. `I::e` stays itself
+    /// in types; only where effects must be within others is this used,
+    /// as it's an upper bound.
+    pub(super) fn effect_bound(&self, item: &Type, bounds: &[(Type, Type)]) -> Option<Type> {
+        let Type::Proj(base, tr, name) = item else {
+            return None;
+        };
+        if let Some((_, r)) = bounds.iter().find(|(l, _)| self.solved(l) == *item) {
+            return Some(self.solved(r));
+        }
+        let Type::Opaque(s, _, args) = &**base else {
+            return None;
+        };
+        let def = self.traits.opaques.get(s)?;
+        let (_, r) = (def.effect_bounds.iter())
+            .find(|(l, _)| matches!(l, Type::Proj(_, t, n) if t == tr && n == name))?;
+        let names: Vec<String> = def.params.iter().cloned().collect();
+        if names.len() != args.len() {
+            return None;
+        }
+        Some(self.solved(&crate::types::Subst::new(&names, args).apply(r)))
+    }
+
+    /// The effects of `sub` that `sup` doesn't have, with each associated
+    /// effect a bound says is within a set, `bounds` or its opaque type's,
+    /// replaced by what of that set `sup` doesn't have.
+    pub(super) fn missing_effects(
+        &self,
+        sub: &Type,
+        sup: &Type,
+        bounds: &[(Type, Type)],
+    ) -> Vec<Type> {
+        fn go(
+            c: &Checker,
+            sub: &Type,
+            sup: &Type,
+            bounds: &[(Type, Type)],
+            depth: usize,
+        ) -> Vec<Type> {
+            let mut out = Vec::new();
+            for e in sub.effect_items() {
+                if sup.effect_items().contains(e) {
+                    continue;
+                }
+                match c.effect_bound(e, bounds) {
+                    Some(b) if depth < 8 => out.extend(go(c, &b, sup, bounds, depth + 1)),
+                    _ => out.push(e.clone()),
+                }
+            }
+            out
+        }
+        go(self, sub, sup, bounds, 0)
+    }
+
+    /// What the associated effects in `effects` are at most, by `bounds`
+    /// or their opaque types': used, where a `with` says them.
+    fn within_bounds(&self, effects: &Type, bounds: &[(Type, Type)]) -> Vec<Type> {
+        let mut out = Vec::new();
+        for e in effects.effect_items() {
+            if let Some(b) = self.effect_bound(e, bounds) {
+                out.extend(b.effect_items().iter().cloned());
+            }
+        }
+        out
     }
 }
 

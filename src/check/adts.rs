@@ -99,7 +99,14 @@ impl Checker {
             let params = generics::declare(d.generics())?;
             let lifetimes = generics::declare_lifetimes(&d.generics().lifetimes)?;
             let bounds = generics::bounds(d.generics(), &lifetimes, &params)?;
-            let (preds, eqs) = self.preds(d.generics(), &params, &lifetimes, false)?;
+            let (preds, eqs, effects) = self.preds(d.generics(), &params, &lifetimes, false)?;
+            if !effects.is_empty() {
+                return Err(Error::ty(
+                    d.generics().span.unwrap_or(d.name().span),
+                    "an associated effect's bound, `e = {..}`, can only be on a function's, an \
+                     impl's or an opaque type's type parameters",
+                ));
+            }
             self.env = preds.clone();
             self.adts.proj.local = eqs.clone();
             let mut lts = Lifetimes::Fields {

@@ -246,6 +246,10 @@ pub struct OpaqueDef {
     /// What its equality bounds say, like `(<Self as Iter>::Item, i64)`,
     /// with `generic` for `Self`.
     pub eqs: Vec<(Type, Type)>,
+    /// What its bounds say its associated effects are at most, like
+    /// `(<Self as Iterator>::e, {})`, with `generic` for `Self`: what's
+    /// known of them outside (see `Scheme::effect_bounds`).
+    pub effect_bounds: Vec<(Type, Type)>,
     /// The type it stands for, mentioning `params`, once the function's
     /// body is checked. Its regions don't matter: monomorphisation
     /// ignores them, and the borrow checker of the function's body makes
@@ -351,6 +355,9 @@ pub struct ImplDef {
     pub preds: Vec<Pred>,
     /// What its equality bounds say, like `(T::Item, i64)`.
     pub eqs: Vec<(Type, Type)>,
+    /// What its bounds say associated effects are at most, like `(I::e,
+    /// {})` (see `Scheme::effect_bounds`).
+    pub effect_bounds: Vec<(Type, Type)>,
     /// What it says each of the trait's associated types is, by name, as
     /// written, mentioning `params` and `lifetimes`.
     pub assoc: Vec<(String, Type)>,

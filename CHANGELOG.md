@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.83.0 (2026-11-12)
+
+Step 68.1: what an associated effect may be. See
+[docs/68.1-effect-bindings.md](docs/68.1-effect-bindings.md).
+
+### Added
+
+- A bound can say what an associated effect may be at most: `I:
+  Iterator<Item = u64, e = {}>`, `e = panic`, `e = {alloc, panic}`, `e =
+  g` for an effect parameter, in a function's bounds and in an opaque
+  result's, `-> impl Iterator<Item = &'a u64, e = {}>`. It's an upper bound,
+  as every effect bound is: `Range`, whose `next` does nothing, meets `e =
+  {alloc}`. Each call, and each function returning an opaque type, shows it
+  holds; inside, `I::e` stays only itself, and is replaced by its bound only
+  where effects must be within others. A caller of a function returning
+  `impl Iterator<.., e = {}>` can now say its effects in its `with`, which it
+  couldn't name before.
+
+### Not done
+
+- An impl's bound on an associated effect is refused (which impl applies
+  would depend on effects).
+- Refinements in an opaque result's bindings, planned with this step, are
+  left out: they'd be of the opaque type, which the refinement checker
+  can't follow into generic code (see the doc).
+
 ## 0.82.0 (2026-11-12)
 
 Step 68: abstraction points, failing closed. See
