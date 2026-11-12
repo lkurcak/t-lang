@@ -71,7 +71,8 @@ can come later without changing what's here.
 Literals, names, `+`, `-`, `*` by a constant, comparisons, `&&`, `||` and
 `!`: *linear integer arithmetic*. `v * v < 10` isn't linear, and is an
 error, as is `/`. (Since step 51 a product of two unknowns is allowed:
-docs/51-products.md.) Integers in a predicate are the mathematical ones, so
+docs/51-products.md. Since step 72, `/` and `%` by a constant are:
+docs/72-division.md.) Integers in a predicate are the mathematical ones, so
 `v + 1 > v` is always true there; that a `u8` is between 0 and 255 is
 just another fact. So a predicate can compare integers of different
 types: they're all integers there (see docs/11-integers.md).
@@ -312,7 +313,7 @@ the checker proved, which must not panic. Either failing stops it with
 | `&mut` to a refined value | writes through it must keep the refinement | — |
 | functions in predicates (`r.start() <= r.end()`) | needs pure functions, *measures* | 21 ✅ |
 | inferring loop invariants | Liquid types' fixed point | — |
-| `/`, `%` by a constant in predicates | Presburger arithmetic, a complete procedure | — |
+| `/`, `%` by a constant in predicates | Presburger arithmetic, a complete procedure | 72 ✅ (a sound, incomplete procedure; [docs](72-division.md)) |
 | indexing that can't panic | there are no arrays yet | `alloc` |
 | `assume` | needs `unsafe` | — |
 

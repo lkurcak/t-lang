@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+Step 72: dividing by a constant. See
+[docs/72-division.md](docs/72-division.md).
+
+### Added
+
+- `/` and `%` by a constant other than 0 in refinements, `ensures`, loop
+  invariants and measures' bodies: `while shift > 0 invariant shift % 4
+  == 0`. They mean what they do in a body: `/` rounds towards zero, `%`
+  has the sign of what's divided, by a negative constant too. The
+  divisor is a constant of literals; dividing by zero, by a name or by a
+  const item is refused.
+
+### Changed
+
+- The checker knows a body's `x % k`, by a constant, exactly: it's `x`
+  less `k` times `x / k`. It knew only that it was less than `k` from 0,
+  so `if n % 2 == 0 { needs_even(n) }` wasn't proved.
+- A proof's failure names a quotient by what it divides: `(x / 4)`.
+
 ## 0.86.0 (2026-11-12)
 
 Step 71: what t-metal found. See

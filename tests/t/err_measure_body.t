@@ -9,4 +9,4 @@ impl W {
 }
 
 fn main() {}
-// error: a measure's body can only use `self`'s fields, measures, literals, `+`, `-`, `*` by a constant, comparisons, `&&`, `||` and `!`
+// error: a measure's body can only use `self`'s fields, measures, literals, `+`, `-`, `*`, `/` and `%` by a constant, comparisons, `&&`, `||` and `!`

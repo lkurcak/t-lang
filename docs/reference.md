@@ -521,7 +521,8 @@ parameters cannot be refined.
 
 Predicates support linear arithmetic, comparisons, and boolean
 combinations. Multiplication of at most two unknown values is supported;
-division in a predicate is not. Predicates
+`/` and `%` only by a constant other than 0, of literals, rounding
+towards zero as in code ([division](72-division.md)). Predicates
 reason about mathematical integers, without overflow. Actual program
 arithmetic still has to fit its integer type.
 

@@ -1446,6 +1446,23 @@ impl Checker {
         }
     }
 
+    /// Checks `r`, what a predicate or a measure divides by with `op`, is
+    /// a constant, but 0: a quotient by one is linear, but not by an
+    /// unknown (docs/72-division.md).
+    fn divisor(what: &str, op: &BinOp, r: &Expr) -> Result<(), Error> {
+        match constant(r) {
+            Some(0) => Err(Error::ty(r.span, format!("{what} can't divide by zero"))),
+            Some(_) => Ok(()),
+            None => Err(Error::ty(
+                r.span,
+                format!(
+                    "{what} can use `{op}` only by a constant: `{}` isn't one",
+                    crate::pretty::expr_text(r)
+                ),
+            )),
+        }
+    }
+
     /// The sort of predicate (part) `e`, which must be in the logic:
     /// linear arithmetic on integers, of any integer types, which are all
     /// the integers in it, ℤ, compared, and `bool`s.
@@ -1550,19 +1567,23 @@ impl Checker {
                     }
                     Ok(Sort::Int)
                 }
-                BinOp::Div
-                | BinOp::Rem
-                | BinOp::BitAnd
-                | BinOp::BitOr
-                | BinOp::BitXor
-                | BinOp::Shl
-                | BinOp::Shr => Err(Error::ty(
-                    e.span,
-                    format!(
-                        "{} can't use `{op}` yet: only `+`, `-` and `*` by a constant",
-                        self.pred_a()
-                    ),
-                )),
+                // By a constant, linear (docs/72-division.md).
+                BinOp::Div | BinOp::Rem => {
+                    want(self, l, Sort::Int)?;
+                    want(self, r, Sort::Int)?;
+                    Self::divisor(self.pred_a(), op, r)?;
+                    Ok(Sort::Int)
+                }
+                BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
+                    Err(Error::ty(
+                        e.span,
+                        format!(
+                            "{} can't use `{op}` yet: only `+`, `-`, `*`, and `/` and `%` by a \
+                             constant",
+                            self.pred_a()
+                        ),
+                    ))
+                }
                 BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
                     want(self, l, Sort::Int)?;
                     want(self, r, Sort::Int)?;
@@ -1643,8 +1664,8 @@ impl Checker {
             _ => Err(Error::ty(
                 e.span,
                 format!(
-                    "{} can only use literals, names, fields, measures, `+`, `-`, `*` by a \
-                     constant, comparisons, `&&`, `||` and `!`",
+                    "{} can only use literals, names, fields, measures, `+`, `-`, `*`, `/` and \
+                     `%` by a constant, comparisons, `&&`, `||` and `!`",
                     self.pred_a()
                 ),
             )),
@@ -2072,8 +2093,8 @@ impl Checker {
         let bad = || {
             Error::ty(
                 e.span,
-                "a measure's body can only use `self`'s fields, measures, literals, `+`, `-`, `*` \
-                 by a constant, comparisons, `&&`, `||` and `!`",
+                "a measure's body can only use `self`'s fields, measures, literals, `+`, `-`, `*`, \
+                 `/` and `%` by a constant, comparisons, `&&`, `||` and `!`",
             )
         };
         let ty = self.typed.exprs.get(&e.id).map(|t| self.solved(t));
@@ -2134,16 +2155,15 @@ impl Checker {
                 }
                 Ok(())
             }
+            ExprKind::Binary(op @ (BinOp::Div | BinOp::Rem), l, r) => {
+                Self::divisor("a measure's body", op, r)?;
+                self.measure_term(l, false, uses)?;
+                self.measure_term(r, false, uses)
+            }
             ExprKind::Binary(op, l, r) => {
                 if matches!(
                     op,
-                    BinOp::Div
-                        | BinOp::Rem
-                        | BinOp::BitAnd
-                        | BinOp::BitOr
-                        | BinOp::BitXor
-                        | BinOp::Shl
-                        | BinOp::Shr
+                    BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr
                 ) || (*op == BinOp::Mul && degree(e) > 2)
                     || self.is_ord_call(e.id)
                 {
@@ -2220,6 +2240,7 @@ impl Checker {
             kinds: Vec::new(),
             facts: Vec::new(),
             laws: Vec::new(),
+            quotients: HashMap::new(),
             reachable: true,
             cur: HashMap::new(),
             objs: HashMap::new(),
@@ -2546,6 +2567,27 @@ fn each_expr(e: &Expr, f: &mut impl FnMut(&Expr)) {
     }
 }
 
+/// The value of `e`, if it's a constant, of literals: what a predicate
+/// can divide by.
+fn constant(e: &Expr) -> Option<i128> {
+    match &e.kind {
+        ExprKind::Int(n, _) => Some(i128::from(*n)),
+        ExprKind::Unary(UnOp::Neg, x) => constant(x)?.checked_neg(),
+        ExprKind::Binary(op, l, r) => {
+            let (a, b) = (constant(l)?, constant(r)?);
+            match op {
+                BinOp::Add => a.checked_add(b),
+                BinOp::Sub => a.checked_sub(b),
+                BinOp::Mul => a.checked_mul(b),
+                BinOp::Div => a.checked_div(b),
+                BinOp::Rem => a.checked_rem(b),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 /// How many unknowns `e`, an integer term, multiplies together: 0 for a
 /// constant, 1 for a sum of names, 2 for a product of two. The logic has
 /// products of two (`logic::times`).
@@ -2555,6 +2597,9 @@ fn degree(e: &Expr) -> usize {
         ExprKind::Unary(UnOp::Neg, x) => degree(x),
         ExprKind::Binary(BinOp::Add | BinOp::Sub, l, r) => degree(l).max(degree(r)),
         ExprKind::Binary(BinOp::Mul, l, r) => degree(l) + degree(r),
+        // A quotient by a constant is an unknown of its own, unless what's
+        // divided is a constant.
+        ExprKind::Binary(BinOp::Div | BinOp::Rem, l, _) => degree(l).min(1),
         _ => 1,
     }
 }
@@ -2791,6 +2836,9 @@ struct Walk<'c> {
     /// `size` and `bounds`, which no path forgets, as those are made once,
     /// on whichever path first needs them.
     laws: Vec<Formula>,
+    /// The variable for the quotient of each sum by each constant greater
+    /// than 1, whose law (`truncated`) is in `laws` (`Walk::divide`).
+    quotients: HashMap<(Lin, i128), Var>,
     /// Explanations saved at the point each operator's proof failed.
     failures: HashMap<NodeId, ProofFailure>,
     /// Source events that changed a place's value along this path.
@@ -2879,10 +2927,56 @@ impl Walk<'_> {
         (self.kinds.len() - 1) as Var
     }
 
+    /// `a / k` or `a % k` (`op`) in the logic, for a constant `k` other
+    /// than 0, which is linear (docs/72-division.md): the quotient by
+    /// `|k|` is a variable, one for each sum `a` and `|k|`, which a law
+    /// (`truncated`) makes the integers' quotient, rounding towards zero, as
+    /// `/` does: a function of `a`, so it's the same wherever it's said,
+    /// in a body or a predicate, on any path. `a / k` is it, or its
+    /// negation if `k < 0`, and `a % k` is `a` minus `|k|` times it, as `a
+    /// == (a / k) * k + a % k`. `None` if a number gets too big.
+    fn divide(&mut self, op: BinOp, a: &Lin, k: i128) -> Option<Lin> {
+        let m = k.checked_abs().filter(|&m| m != 0)?;
+        let q = if let Some(n) = a.as_constant() {
+            Lin::constant(n.checked_div(m)?)
+        } else if m == 1 {
+            a.clone()
+        } else if let Some(&q) = self.quotients.get(&(a.clone(), m)) {
+            Lin::var(q)
+        } else {
+            let v = self.fresh(Kind::Integer);
+            let sign = logic::range_of(a, &self.kinds).map(|(lo, hi)| (lo >= 0, hi <= 0));
+            let law = truncated(a, m, &Lin::var(v), sign)?;
+            self.laws.push(law);
+            self.quotients.insert((a.clone(), m), v);
+            Lin::var(v)
+        };
+        match op {
+            BinOp::Div if k > 0 => Some(q),
+            BinOp::Div => q.scale(-1),
+            _ => a.sub(&q.scale(m)?),
+        }
+    }
+
+    /// `a op b`, in a predicate or a measure's body, if it's in the logic
+    /// (`binary`), where `/` and `%` are by a constant (`divide`).
+    fn logic_op(&mut self, op: BinOp, a: Val, b: Val) -> Result<Val, Failure> {
+        match (op, a, b) {
+            (BinOp::Div | BinOp::Rem, Val::Int(a), Val::Int(b)) => {
+                let k = b.as_constant().ok_or(Failure::Unsupported)?;
+                let v = self.divide(op, &a, k).ok_or(Failure::ArithmeticLimit)?;
+                Ok(Val::Int(v))
+            }
+            (op, a, b) => binary(op, a, b, &mut self.kinds),
+        }
+    }
+
     /// Variable `v` of the logic, as a value.
     fn var(&self, v: Var) -> Val {
         match self.kinds[v as usize] {
-            Kind::Int(..) | Kind::Bound(..) | Kind::Product(..) => Val::Int(Lin::var(v)),
+            Kind::Int(..) | Kind::Bound(..) | Kind::Product(..) | Kind::Integer => {
+                Val::Int(Lin::var(v))
+            }
             Kind::Bool => Val::Bool(Formula::holds(v)),
         }
     }
@@ -3280,7 +3374,7 @@ impl Walk<'_> {
             },
             ExprKind::Binary(op, l, r) => {
                 let (a, b) = (self.measure_term(l, this)?, self.measure_term(r, this)?);
-                binary(*op, a, b, &mut self.kinds).ok()?
+                self.logic_op(*op, a, b).ok()?
             }
             // Which variant it is: the arm whose variant the tag says, the
             // first that does (lemma L5 of docs/59-lends.md).
@@ -3879,7 +3973,7 @@ impl Walk<'_> {
             ExprKind::Unary(UnOp::Not, x) => Val::Bool(boolean(self.term(x, binder, env)?)?.not()),
             ExprKind::Binary(op, l, r) => {
                 let (a, b) = (self.term(l, binder, env)?, self.term(r, binder, env)?);
-                binary(*op, a, b, &mut self.kinds)?
+                self.logic_op(*op, a, b)?
             }
             // `old(x)`: `x` at the call; of a closed refinement, what its
             // names were then.
@@ -4570,14 +4664,13 @@ impl Walk<'_> {
         self.operator_proof(site, goal, missing, &condition);
         match value {
             Some(v) => Val::Int(v),
+            // By a constant, what a predicate's `/` or `%` is (`divide`).
+            None if let Some(v) = b.as_constant().and_then(|k| self.divide(op, &a, k)) => {
+                Val::Int(v)
+            }
             None => {
                 let result = self.unknown(ty);
-                if let (Val::Int(q), Some(k)) = (&result, b.as_constant())
-                    && k > 0
-                    && let Some(f) = divided(op, &a, k, q)
-                {
-                    self.fact(f);
-                } else if let Val::Int(q) = &result
+                if let Val::Int(q) = &result
                     && op == BinOp::Rem
                     && let Some(f) = remainder(&a, &b, q)
                 {
@@ -4594,7 +4687,7 @@ impl Walk<'_> {
     }
 
     /// What `q = a / b` says of `q · b`, for a divisor that isn't a
-    /// constant (`divided` has those), when the signs of `a` and `b` are
+    /// constant (`divide` has those), when the signs of `a` and `b` are
     /// known here: it's within one `b` of `a`, on the side of zero, as
     /// division rounds towards zero. `a = q·b + r`, where `r` has the sign
     /// of `a` and is smaller than `b`: for `a >= 0` and `b > 0`, `q·b <= a
@@ -5480,38 +5573,28 @@ fn bitwise(op: BinOp, a: &Lin, b: &Lin, q: &Lin) -> Option<Formula> {
     })
 }
 
-/// What `q`, the result of `a / k` or `a % k` (`op`) for a constant `k > 0`,
-/// is, which the logic can say, as it's linear: rounding towards zero, the
-/// quotient is the `q` with `k·q <= a <= k·q + k - 1` if `a >= 0`, and `k·q
-/// - k + 1 <= a <= k·q` if `a <= 0`; the remainder has the sign of `a`, and
-/// is less than `k` from 0. `None` if a number gets too big.
-fn divided(op: BinOp, a: &Lin, k: i128, q: &Lin) -> Option<Formula> {
+/// The law that makes `q` the quotient of `a` by a constant `m >= 1`,
+/// rounding towards zero, which the logic can say, as it's linear: `m·q <=
+/// a <= m·q + m - 1` if `a >= 0`, and `m·q - m + 1 <= a <= m·q` if `a <= 0`.
+/// Exactly one integer is that (lemma Q1 of docs/72-division.md): the
+/// greatest with `m·q <= a`, or the least with `a <= m·q`, which agree at
+/// 0. If `a`'s variables' ranges say it's never negative, or never
+/// positive (`sign`), only that half: the other then says nothing, and
+/// would be a case for the procedure to split. `None` if a number gets
+/// too big.
+fn truncated(a: &Lin, m: i128, q: &Lin, sign: Option<(bool, bool)>) -> Option<Formula> {
     let zero = Lin::constant(0);
-    let (pos, neg) = (Formula::le(&zero, a)?, Formula::le(a, &zero)?);
-    let (when_pos, when_neg) = match op {
-        BinOp::Div => {
-            let kq = q.scale(k)?;
-            (
-                Formula::and([Formula::le(&kq, a)?, Formula::le(a, &kq.plus(k - 1)?)?]),
-                Formula::and([Formula::le(&kq.plus(1 - k)?, a)?, Formula::le(a, &kq)?]),
-            )
-        }
-        BinOp::Rem => (
-            Formula::and([
-                Formula::le(&zero, q)?,
-                Formula::le(q, &Lin::constant(k - 1))?,
-            ]),
-            Formula::and([
-                Formula::le(&Lin::constant(1 - k), q)?,
-                Formula::le(q, &zero)?,
-            ]),
-        ),
-        _ => return None,
-    };
-    Some(Formula::and([
-        Formula::or([pos.not(), when_pos]),
-        Formula::or([neg.not(), when_neg]),
-    ]))
+    let mq = q.scale(m)?;
+    let when_pos = Formula::and([Formula::le(&mq, a)?, Formula::le(a, &mq.plus(m - 1)?)?]);
+    let when_neg = Formula::and([Formula::le(&mq.plus(1 - m)?, a)?, Formula::le(a, &mq)?]);
+    Some(match sign {
+        Some((true, _)) => when_pos,
+        Some((_, true)) => when_neg,
+        _ => Formula::and([
+            Formula::or([Formula::le(&zero, a)?.not(), when_pos]),
+            Formula::or([Formula::le(a, &zero)?.not(), when_neg]),
+        ]),
+    })
 }
 
 /// What the logic knows of `q = a % b`, by any `b`, which is linear in

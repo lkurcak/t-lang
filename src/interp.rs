@@ -1139,6 +1139,10 @@ fn pred_op(op: BinOp, a: PredValue, b: PredValue) -> PredValue {
                 BinOp::Add => arith(a.checked_add(b)),
                 BinOp::Sub => arith(a.checked_sub(b)),
                 BinOp::Mul => arith(a.checked_mul(b)),
+                // By a constant other than 0, rounding towards zero, as the
+                // integers' `/` does in the logic (docs/72-division.md).
+                BinOp::Div if b != 0 => arith(a.checked_div(b)),
+                BinOp::Rem if b != 0 => arith(a.checked_rem(b)),
                 BinOp::Eq => PredValue::Bool(a == b),
                 BinOp::Ne => PredValue::Bool(a != b),
                 BinOp::Lt => PredValue::Bool(a < b),

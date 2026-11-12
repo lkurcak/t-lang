@@ -208,12 +208,26 @@ impl Walk<'_> {
                 names.insert(v, name.clone());
             }
         }
-        // A product is named by its factors, once they all have names.
+        // A product is named by its factors, once they all have names, and
+        // a quotient by what it divides, in parentheses, so that `4 * (x /
+        // 4)` reads as what it is. Variables are made in order, so one's
+        // parts are named before it is.
+        let mut quotients: Vec<_> = self.quotients.iter().map(|(k, &q)| (q, k)).collect();
+        quotients.sort_by_key(|&(q, _)| q);
+        let mut quotients = quotients.into_iter().peekable();
         for (p, kind) in self.kinds.iter().enumerate() {
             if let Kind::Product(u, v) = kind
                 && let (Some(a), Some(b)) = (names.get(u), names.get(v))
             {
                 names.insert(p as Var, format!("{a} * {b}"));
+            }
+            if let Some(&(q, (a, m))) = quotients.peek()
+                && q == p as Var
+            {
+                quotients.next();
+                if let Some(a) = a.text(&|v| names.get(&v).cloned()) {
+                    names.insert(q, format!("({a} / {m})"));
+                }
             }
         }
         (names, places)
