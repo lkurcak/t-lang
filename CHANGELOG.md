@@ -33,6 +33,9 @@ target; five of its findings are fixed.
   alone, and the error says to write the character as `\u{..}`.
 - docs/40-extern.md says an import that reads or writes C's state says
   `with global`.
+- Renaming an `extern fn` in an editor is refused: its name is its C
+  name, so renaming it would make it another C function, or a platform's
+  function an ordinary export.
 - Tests: `tests/generated_exports.rs` builds an export or the platform's
   write, × an effect, × each way a body can get it, and checks each is
   refused exactly when it should be, the same for both targets.

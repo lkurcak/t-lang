@@ -176,6 +176,15 @@ reads or writes state outliving the call, C's statics or a device's, says
 give different things. It's the import's caller's promise, as all of an
 import's effects are (lemma E1).
 
+## Found along the way
+
+The tests that rename every name in every program, and check it does the
+same after, renamed `t_platform_write` in the new test of a program that
+writes it: it became an ordinary export, and the program ran. An `extern
+fn`'s name is its C name, so renaming one is never only a rename: an
+import would be another C function, an export would no longer be what C
+calls. An editor's rename refuses it now, as it refuses `main`.
+
 ## Why it's sound
 
 - **Lemma N1 (names).** The checker proves the program's `extern fn`s'
