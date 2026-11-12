@@ -188,7 +188,7 @@ so on), and each time the harness found the walks differ.
   pattern binds by `&mut`, is still unknown for the whole function, as
   on the AST. The borrow checker knows when each borrow ends, and could
   say when the place is known again, but that's a rule of its own to
-  argue, not a port.
+  argue, not a port. (Step 69's: docs/69-loans.md.)
 
 ## What it doesn't do
 

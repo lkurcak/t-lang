@@ -86,7 +86,8 @@ variable. The walk treats it as it treats `let r = &mut p`:
 > change, and the binding is refused, unless nothing's declared of the
 > whole. So every refinement of `v` holds after each write, and the place
 > the pattern took apart, which may change through `a` while `a` lives,
-> is read as unknown but for what's declared there (unstable, as before).
+> is read as unknown but for what's declared there (unstable, as before;
+> since step 69, from the binding on: docs/69-loans.md).
 
 So an or-pattern's alternatives bind references to different places, each
 saying what's declared at its own place; where the alternatives meet, the
@@ -173,7 +174,8 @@ that only changed which variables an explanation lists as known.
 
 - A place a pattern binds by `&mut`, or a closure captures, is still
   unknown for the whole function. The borrow checker knows where each
-  borrow ends, and the place could be known again there.
+  borrow ends, and the place could be known again there. (Done in step
+  69: docs/69-loans.md.)
 - A part of a value refined whole can't be borrowed `&mut` at all, even
   straight to a call that can't keep it, after which the whole could be
   proved again, as a refined variable lent whole is.

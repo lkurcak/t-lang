@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+Step 69: what a loan forgets. See [docs/69-loans.md](docs/69-loans.md).
+
+### Changed
+
+- A place a closure captures `&mut`, or a pattern binds something in by
+  `&mut`, is forgotten where the capture or binding is made, as a place lent
+  by an explicit `&mut` always was, rather than being a new value at every
+  read anywhere in the function. The borrow checker lets nothing read or
+  write it while the loan lives, so what's read of it before, and assigned
+  to it after, are known: `let y = x;` before a closure that changes `x`
+  keeps what's known of `y`, and `x = 5;` after the closure's last call is
+  known. A closure borrowing a variable by `&` sees what's known of it where
+  it's made. A loan of a variant's field or an array's element, which the
+  checker doesn't follow as places, forgets the place it's in.
+- A closure's capture keeps the measures its body keeps of what it captured
+  (its frame, inferred as a loop's is, from what the calls it lends it to
+  ensure, closures inside it included), in loops too: a closure whose only
+  change to `self` is a call keeping `len()` keeps `len()`.
+- So a `with panic` that was needed may now be warned of as unused.
+
 ## 0.83.0 (2026-11-12)
 
 Step 68.1: what an associated effect may be. See
