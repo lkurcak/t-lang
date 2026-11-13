@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.88.0 (2026-11-13)
 
 Step 73: `for` over collections. See
 [docs/73-for-over-collections.md](docs/73-for-over-collections.md).
