@@ -1597,7 +1597,7 @@ impl Checker {
         self.goals.clear();
         let scope = self.locals.len();
         for (i, p) in f.params.iter().enumerate() {
-            if f.params[..i].iter().any(|q| q.name.name == p.name.name) {
+            if p.name.name != "_" && f.params[..i].iter().any(|q| q.name.name == p.name.name) {
                 return Err(Error::ty(
                     p.name.span,
                     format!("parameter `{}` is declared twice", p.name.name),

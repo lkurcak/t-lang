@@ -1146,18 +1146,21 @@ impl Walk<'_> {
         };
         let span_of = |i: usize| spans.get(i).copied().unwrap_or(span);
         if let Agg::Closure(l) = agg {
+            // What it captures, as it is now: what it captured by value is
+            // that, whenever it's walked (lemma S3 of docs/69-loans.md).
+            let mut captured = Vec::new();
+            for (i, o) in ops.iter().enumerate() {
+                captured.push(self.operand(fr, o, span_of(i))?);
+            }
             // Given to a function: walked at the call.
             if dest.proj.is_empty()
                 && let Some((call, _)) = fr.operand_of.get(&dest.local)
                 && let Some((Operand::Const(Const::Fn(..)), _)) = fr.call_at(*call)
             {
-                self.deferred.insert(dest.local, (l, ty.clone()));
+                self.deferred.insert(dest.local, (l, ty.clone(), captured));
                 return Ok(Val::Other);
             }
-            for (i, o) in ops.iter().enumerate() {
-                self.operand(fr, o, span_of(i))?;
-            }
-            self.walk_closure(bodies, l, ty)?;
+            self.walk_closure(bodies, l, ty, &captured)?;
             return Ok(Val::Other);
         }
         let mut vals = Vec::new();
@@ -1213,9 +1216,23 @@ impl Walk<'_> {
         }
     }
 
-    /// Walks closure `l`, of type `ty`, from what's known here: then goes
-    /// back to what's known here, as making one runs nothing.
-    fn walk_closure(&mut self, bodies: &Bodies, l: NodeId, ty: &Type) -> Result<(), Error> {
+    /// Walks closure `l`, of type `ty`, from what's known here, what it
+    /// captured being `captured`, as it was made: then goes back to what's
+    /// known here, as making one runs nothing.
+    ///
+    /// The walk is of every run of its body (lemma S3 of docs/69-loans.md):
+    /// what it captured by value is the value it was made with, unless the
+    /// body changes it, when each run reads what the runs before left
+    /// there, which nothing's known of but its refinements; what it
+    /// captured `&mut` was forgotten by the capture's loan; what it
+    /// captured by `&` can't change while it lives.
+    fn walk_closure(
+        &mut self,
+        bodies: &Bodies,
+        l: NodeId,
+        ty: &Type,
+        captured: &[Val],
+    ) -> Result<(), Error> {
         let key = Key::Closure(l);
         let Some((_, body, notes)) = bodies.iter().find(|(k, ..)| *k == key) else {
             return Ok(());
@@ -1227,6 +1244,22 @@ impl Walk<'_> {
         start.slots = HashMap::new();
         start.pinned = Vec::new();
         self.put_state(start);
+        let blocks = fr.rpo.clone();
+        let (changed, _) = self.changes_in(&fr, bodies, &blocks);
+        for (i, var) in body.env.iter().enumerate() {
+            if var.capture != Capture::Value {
+                continue;
+            }
+            let p = Place::local(var.id);
+            if changed
+                .iter()
+                .any(|c| c.place().within(&p) || p.within(c.place()))
+            {
+                self.write(&p, None, None);
+            } else if let Some(v) = captured.get(i) {
+                self.write(&p, Some(v.clone()), None);
+            }
+        }
         self.closures += 1;
         let assumed = self.closure_params.remove(&l).unwrap_or_default();
         if let Type::Adt(symbol, ..) = ty {
@@ -1846,9 +1879,9 @@ impl Walk<'_> {
         let mut closures = Vec::new();
         for (i, o) in args.iter().enumerate() {
             let local = o.place().filter(|p| p.proj.is_empty()).map(|p| p.local);
-            if let Some((l, cty)) = local.and_then(|l| self.deferred.remove(&l)) {
+            if let Some((l, cty, captured)) = local.and_then(|l| self.deferred.remove(&l)) {
                 vals.push(Val::Other);
-                closures.push((i, l, cty));
+                closures.push((i, l, cty, captured));
                 continue;
             }
             vals.push(self.operand(fr, o, spans[i])?);
@@ -1871,11 +1904,11 @@ impl Walk<'_> {
                 }
                 None => HashMap::new(),
             };
-            for (i, l, cty) in closures {
+            for (i, l, cty, captured) in closures {
                 if let Some(t) = trees.get(&i) {
                     self.closure_params.insert(l, t.clone());
                 }
-                self.walk_closure(bodies, l, &cty)?;
+                self.walk_closure(bodies, l, &cty, &captured)?;
             }
         }
         let site = CallAt {

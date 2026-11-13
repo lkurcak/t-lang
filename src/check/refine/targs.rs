@@ -994,6 +994,39 @@ impl Walk<'_> {
         self.place_decl_depth(p, true)
     }
 
+    /// What's declared of place `p`, lent `&mut` straight to a call, as of
+    /// the reference: what `place_decl` says, and the place's own
+    /// refinement, of the whole value too (a refined local's, a field's of
+    /// the struct's fields now), which the call must keep, and which is
+    /// proved again after it (`Walk::post_now`).
+    pub(super) fn lent_decl(&mut self, p: &Place) -> Tree {
+        let mut tree = self.place_decl(p);
+        if p.path.is_empty() {
+            if let Some((r, _)) = self.invariants.get(&p.root).cloned() {
+                for part in r.parts.iter().filter(|q| !q.carried) {
+                    if let Some(c) = self.close(&part.pred, Env::Here) {
+                        tree.push((part.path.clone(), Disj::one(Cand::Pred(c))));
+                    }
+                }
+            }
+        } else if let Some((q, j)) = p.field_of() {
+            let qt = self.place_ty(&q);
+            if let Some(fields) = self.refined_fields(&qt).cloned()
+                && let Some(Some(r)) = fields.refs.get(j)
+                && !fields.alone(j)
+                && let Some(vals) = self.fields_of(&q, &qt)
+            {
+                let args = self.adt_args(&qt);
+                for part in r.parts.iter().filter(|q| !q.carried) {
+                    if let Some(c) = self.close(&part.pred, Env::Fields(&vals, &args)) {
+                        tree.push((part.path.clone(), Disj::one(Cand::Pred(c))));
+                    }
+                }
+            }
+        }
+        under(&tree, 0)
+    }
+
     /// What's said of a value read at place `p` that's new: what's
     /// declared there, but for its own struct field refinements, which
     /// `assume_fields` says of all the fields' values (as reading them here
@@ -1921,7 +1954,7 @@ impl Walk<'_> {
         // What's declared of each place lent `&mut`, as of the argument.
         let mut written: Vec<Option<Tree>> = Vec::new();
         for (j, p) in places.iter().take(vals.len()).enumerate() {
-            let w = p.as_ref().map(|p| under(&self.place_decl(p), 0));
+            let w = p.as_ref().map(|p| self.lent_decl(p));
             written.push(w.map(|w| self.arg_tree(j, w)));
         }
         written.resize(vals.len(), None);
@@ -2853,7 +2886,7 @@ impl Walk<'_> {
         let subst = crate::types::Subst::new(&names, targs);
         let mut written: Vec<Option<Tree>> = Vec::new();
         for p in places.iter().take(vals.len()) {
-            written.push(p.as_ref().map(|p| under(&self.place_decl(p), 0)));
+            written.push(p.as_ref().map(|p| self.lent_decl(p)));
         }
         written.resize(vals.len(), None);
         let mut insts = Vec::new();

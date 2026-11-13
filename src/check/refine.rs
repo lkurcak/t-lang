@@ -2858,8 +2858,9 @@ struct Walk<'c> {
     pinned: Vec<(crate::mir::Place, Val)>,
     /// On MIR, the closures made into locals for a call to give to a
     /// function, walked at the call (`Walk::mir_call`): by local, the
-    /// lambda's node and the closure's type.
-    deferred: HashMap<crate::mir::Local, (NodeId, Type)>,
+    /// lambda's node, the closure's type, and what it captured, as it was
+    /// when it was made (lemma S3 of docs/69-loans.md).
+    deferred: HashMap<crate::mir::Local, (NodeId, Type, Vec<Val>)>,
     /// On MIR, the value of the const being walked, if its body is known
     /// to give a constant.
     known: Option<Known>,
