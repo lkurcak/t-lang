@@ -88,6 +88,8 @@ impl Checker {
             (Some(tr), _) => vec![tr.to_string()],
             (None, Type::Param(_, _) | Type::Proj(..)) => {
                 let mut bounds: Vec<String> = self
+                    .adts
+                    .proj
                     .env
                     .iter()
                     .filter(|p| p.ty == ty)
@@ -300,7 +302,7 @@ impl Checker {
             return;
         }
         // A bound in scope may be what it implements it by.
-        if (self.env.iter()).any(|p| p.trait_name == tr && could_match(&p.ty, ty, &[])) {
+        if (self.adts.proj.env.iter()).any(|p| p.trait_name == tr && could_match(&p.ty, ty, &[])) {
             return;
         }
         let mut found = (self.traits.impls.iter())

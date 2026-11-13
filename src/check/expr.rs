@@ -77,13 +77,23 @@ impl Checker {
                     match place {
                         true => {
                             let t = self.synth_pointee(x)?;
-                            self.unify_or(&t, &inner, x.span, |a, b| {
-                                format!("expected `{b}`, found `{a}`")
-                            })?;
+                            // An array where a slice is wanted: the
+                            // reference to it is coerced, below.
+                            let (st, si) = (self.shallow(&t), self.shallow(&inner));
+                            if let (Type::Array(..), Type::Slice(_)) = (st, si) {
+                                Type::Ref(Region::Erased, m, Box::new(t))
+                            } else {
+                                self.unify_or(&t, &inner, x.span, |a, b| {
+                                    format!("expected `{b}`, found `{a}`")
+                                })?;
+                                Type::Ref(Region::Erased, m, inner)
+                            }
                         }
-                        false => self.check(x, &inner)?,
+                        false => {
+                            self.check(x, &inner)?;
+                            Type::Ref(Region::Erased, m, inner)
+                        }
                     }
-                    Type::Ref(Region::Erased, m, inner)
                 }
                 _ => self.synth(e)?,
             },
@@ -172,7 +182,7 @@ impl Checker {
             Type::Param(_, _) | Type::Opaque(..) | Type::Proj(..) => {
                 !crate::check::unify::has_vars(t)
                     && (self.traits)
-                        .implements(t, INT, &self.env, &self.adts.proj.local)
+                        .implements(t, INT, &self.adts.proj.env, &self.adts.proj.local)
                         .is_ok()
             }
             _ => false,
@@ -204,7 +214,7 @@ impl Checker {
         if matches!(t, Type::Param(_, _) | Type::Opaque(..) | Type::Proj(..))
             && !crate::check::unify::has_vars(&t)
             && (self.traits)
-                .implements(&t, INT, &self.env, &self.adts.proj.local)
+                .implements(&t, INT, &self.adts.proj.env, &self.adts.proj.local)
                 .is_err()
         {
             let fix = match &t {
@@ -386,7 +396,10 @@ impl Checker {
     /// since there's nothing a `&T` can do that a `&mut T` can't, and a
     /// `&Box<T>` or `&&T` as a `&T`, by following the box or reference to
     /// what it points to, as Rust's *deref coercion* does. Recorded for the
-    /// borrow checker, and for `lift` to write out.
+    /// borrow checker, and for `lift` to write out. And at the end of
+    /// those, an array as a slice of all its values, `&[T; N]` as `&[T]`,
+    /// which the borrow checker writes out as the call of `as_slice` that a
+    /// program could write: so what's known of the slice is what that says.
     fn coerce(&mut self, e: &Expr, got: &Type, want: &Type) -> Option<Type> {
         let (Type::Ref(_, gm, a), Type::Ref(_, wm, b)) = (self.shallow(got), self.shallow(want))
         else {
@@ -409,12 +422,39 @@ impl Checker {
             }
             derefs += 1;
         }
+        if let (Type::Array(elem, n), Type::Slice(_)) = (self.shallow(&a), self.shallow(&b)) {
+            let name = if wm { "as_mut_slice" } else { "as_slice" };
+            let method = self.array_method(name, &elem, &n)?;
+            self.typed.coerced.insert(e.id, (derefs, wm));
+            self.typed.unsized_.insert(e.id, method);
+            self.info.coercions.insert(e.id, (derefs, wm));
+            return Some(Type::Ref(Region::Erased, wm, Box::new(Type::Slice(elem))));
+        }
         if derefs == 0 && gm == wm {
             return None;
         }
         self.typed.coerced.insert(e.id, (derefs, wm));
         self.info.coercions.insert(e.id, (derefs, wm));
         Some(Type::Ref(Region::Erased, wm, Box::new(a)))
+    }
+
+    /// Method `name` of arrays, core's, with its type arguments at `[elem;
+    /// n]`, if core has it.
+    fn array_method(&mut self, name: &str, elem: &Type, n: &Type) -> Option<(String, Vec<Type>)> {
+        let t = Type::Array(Box::new(elem.clone()), Box::new(n.clone()));
+        let found = self.traits.impls.iter().find_map(|d| {
+            let (_, symbol) = d.methods.iter().find(|(m, _)| m == name)?;
+            let mut found = std::collections::HashMap::new();
+            let matched = d.trait_name.is_none()
+                && crate::traits::matches(&d.self_ty, &t, &d.params, &mut found);
+            matched.then(|| {
+                let args = d.params.iter().map(|p| found[p].clone()).collect();
+                (symbol.clone(), args)
+            })
+        })?;
+        let id = self.fns.iter().position(|f| f.symbol == found.0)?;
+        self.uses().fns.insert(crate::check::scope::FnId(id));
+        Some(found)
     }
 
     /// Computes ("synthesizes") the type of `e`.
@@ -1856,7 +1896,7 @@ impl Checker {
         if unify::has_vars(t) || self.has_unsettled_closure(t) {
             return Ok(());
         }
-        let (env, eqs) = (&self.env, &self.adts.proj.local);
+        let (env, eqs) = (&self.adts.proj.env, &self.adts.proj.local);
         let implements = |tr: &str| self.traits.implements(t, tr, env, eqs).is_ok();
         if !implements(ITERATOR) || implements(DISCARD) {
             return Ok(());

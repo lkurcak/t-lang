@@ -1,14 +1,21 @@
 // `core` already has `impl<I: Iterator> Iterator for &mut I`; a program's
-// own impl for a reference to its type would overlap it, and isn't its to
-// write anyway.
+// own impl for a reference to its type may stand beside it only while its
+// type isn't an iterator itself.
 #[derive(Discard)]
 struct Mine {}
 
-impl Iterator for &mut Mine {
+impl Iterator for Mine {
     type Item = i64;
+    effect e = {};
+
+    fn next(&mut self) -> Option<i64> { None }
+}
+
+impl<'a> Iterator for &'a mut Mine { // error: this impl of `Iterator` overlaps `impl Iterator for &'a mut I`
+    type Item = i64;
+    effect e = {};
 
     fn next(&mut self) -> Option<i64> { None }
 }
 
 fn main() {}
-// error: `Iterator` and `&mut Mine` are both `core`'s, so only `core` can implement one for the other

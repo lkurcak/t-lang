@@ -5,4 +5,4 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     }
     Ok(())
 }
-// error: `i64` doesn't implement `Iterator`
+// error: `i64` can't be iterated: it isn't an iterator, nor `IntoIterator`

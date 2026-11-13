@@ -7,7 +7,7 @@ use crate::check::generics;
 use crate::check::{BOX, Checker, plural};
 use crate::error::{Edit, Error, Fix, Span};
 use crate::traits::{COPY, DISCARD};
-use crate::traits::{ImplDef, MethodDef, Pred, refuted, unified, unifier};
+use crate::traits::{ImplDef, Knowable, MethodDef, Pred, refuted, unified, unifier};
 use crate::types::{Bound, Region, Scheme, Subst, Type};
 
 impl Checker {
@@ -100,7 +100,7 @@ impl Checker {
         self.builtin_supertraits(prog)?;
         for (k, d) in prog.impls.iter().enumerate().skip(self.from.impls) {
             let def = self.traits.impls[self.impl_ids[k]].clone();
-            self.env = def.preds.clone();
+            self.adts.proj.env = def.preds.clone();
             self.well_formed_now(&def.self_ty, d.self_ty.span)?;
             let Some(tr) = &def.trait_name else {
                 continue;
@@ -160,9 +160,9 @@ impl Checker {
                 }
             }
         }
-        self.env.clear();
+        self.adts.proj.env.clear();
         self.adts.proj.local.clear();
-        self.coherence()?;
+        self.coherence(prog)?;
         self.termination()?;
         self.closed_bounds()?;
         self.assoc_termination()?;
@@ -204,7 +204,7 @@ impl Checker {
         let Some(tr) = &def.trait_name else {
             return Ok(());
         };
-        self.env = def.preds.clone();
+        self.adts.proj.env = def.preds.clone();
         self.adts.proj.local = def.eqs.clone();
         for (name, rhs) in &def.assoc {
             let span = d
@@ -231,7 +231,7 @@ impl Checker {
                 .clone();
             for b in &decl.bounds {
                 let local = &self.adts.proj.local;
-                if let Err(bad) = self.traits.implements(&t, b, &self.env, local) {
+                if let Err(bad) = self.traits.implements(&t, b, &self.adts.proj.env, local) {
                     let needs = match bad.ty == t {
                         true => String::new(),
                         false => format!(" (that needs `{bad}`)"),
@@ -269,24 +269,8 @@ impl Checker {
     ) -> Result<(), Error> {
         let m = &self.modules;
         let package = m.package_root(d.module);
-        let core = m.core.unwrap_or(package);
-        let trait_package = prog
-            .traits
-            .iter()
-            .find(|t| t.name.name == tr)
-            .map_or(core, |t| m.package_root(t.module));
-        // A type not declared anywhere is a closure's, which is its
-        // function's package's.
-        let declared = |symbol: &str, or| {
-            (self.types.iter())
-                .find(|t| t.symbol == symbol)
-                .map_or(or, |t| m.package_root(t.module))
-        };
-        let head_package = match self_ty {
-            Type::Adt(symbol, ..) => declared(symbol, package),
-            Type::Box(_) => declared(BOX, core),
-            _ => core,
-        };
+        let trait_package = self.trait_package(prog, tr);
+        let head_package = self.head_package(self_ty, package);
         let tr_name = tr.rsplit("::").next().unwrap_or(tr);
         if self.traits.sealed.contains(tr) && trait_package != package {
             let owner = &m.mods[trait_package].path;
@@ -302,7 +286,7 @@ impl Checker {
         if trait_package == package || head_package == package {
             return Ok(());
         }
-        let head = match self_ty {
+        let head = match head_of(self_ty) {
             Type::Adt(symbol, ..) => symbol.rsplit("::").next().unwrap_or(symbol).to_string(),
             t => t.to_string(),
         };
@@ -321,6 +305,35 @@ impl Checker {
                  wrap it in a struct"
             ),
         ))
+    }
+
+    /// The root module of the package trait `tr` is declared in. The
+    /// intrinsic traits are core's.
+    fn trait_package(&self, prog: &Program, tr: &str) -> usize {
+        let m = &self.modules;
+        let core = m.core.unwrap_or(self.package);
+        (prog.traits.iter())
+            .find(|t| t.name.name == tr)
+            .map_or(core, |t| m.package_root(t.module))
+    }
+
+    /// The root module of the package type `t`'s head is declared in, under
+    /// any references (`head_of`): built-in types are core's, but a box is
+    /// alloc's, where `Box` is declared. A type not declared anywhere is a
+    /// closure's, which is its function's package's, `closures`'.
+    fn head_package(&self, t: &Type, closures: usize) -> usize {
+        let m = &self.modules;
+        let core = m.core.unwrap_or(self.package);
+        let declared = |symbol: &str, or| {
+            (self.types.iter())
+                .find(|t| t.symbol == symbol)
+                .map_or(or, |t| m.package_root(t.module))
+        };
+        match head_of(t) {
+            Type::Adt(symbol, ..) => declared(symbol, closures),
+            Type::Box(_) => declared(BOX, core),
+            _ => core,
+        }
     }
 
     /// Checks that method `f`, of type `got`, of impl `d`, is method
@@ -618,8 +631,16 @@ impl Checker {
     ///
     /// Inherent impls can overlap, as long as they don't both define a
     /// method of the same name.
-    fn coherence(&self) -> Result<(), Error> {
+    fn coherence(&self, prog: &Program) -> Result<(), Error> {
         let impls = &self.traits.impls;
+        // What may be taken as known here: goals of this package's own,
+        // by their trait or their type's head (lemma N3 of
+        // docs/73-for-over-collections.md).
+        let own = |tr: &str, head: &Type| {
+            self.trait_package(prog, tr) == self.package
+                || self.head_package(head, usize::MAX) == self.package
+        };
+        let knowable = Knowable::Owned(&own);
         // Two impls of the packages before were checked by them.
         for (i, a) in impls.iter().enumerate().skip(self.impls_from) {
             for (j, b) in impls[..i].iter().enumerate() {
@@ -634,15 +655,16 @@ impl Checker {
                 let Some(mgu) = unifier(&a.self_ty, &b_ty, &params) else {
                     continue;
                 };
-                // Where they'd overlap, one may need a sealed trait of a
-                // type that can't have it (lemma S2): then they don't.
+                // Where they'd overlap, one may need what no impl could
+                // give there, of a sealed trait (lemma S2) or a goal of
+                // this package's own (lemma N1): then they don't.
                 let b_preds = b.preds.iter().map(|p| Pred {
                     ty: Subst::new(&b.params, &renamed).apply(&p.ty),
                     trait_name: p.trait_name.clone(),
                 });
                 let refutes = |p: &Pred| {
-                    self.traits.sealed.contains(&p.trait_name)
-                        && refuted(impls, &unified(&p.ty, &mgu), &p.trait_name)
+                    let t = unified(&p.ty, &mgu);
+                    refuted(impls, &self.traits.sealed, &knowable, &t, &p.trait_name, 0)
                 };
                 if a.preds.iter().any(refutes) || b_preds.into_iter().any(|p| refutes(&p)) {
                     continue;
@@ -806,5 +828,17 @@ fn rigid_on_type(t: &Type) -> Option<Type> {
     match t {
         Type::Proj(s, ..) if !matches!(**s, Type::Param(_, _) | Type::Proj(..)) => Some(t.clone()),
         t => t.parts().find_map(rigid_on_type),
+    }
+}
+
+/// What decides which package may implement a trait for `t`, by the
+/// orphan rule: its head, under any references, which belong to whoever
+/// what they point to does, as Rust's `#[fundamental]` ones do (lemma O'
+/// of docs/73-for-over-collections.md). So `impl IntoIterator for &'a
+/// List<T>` is alloc's to write.
+pub(crate) fn head_of(t: &Type) -> &Type {
+    match t {
+        Type::Ref(_, _, inner) => head_of(inner),
+        t => t,
     }
 }

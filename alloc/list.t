@@ -181,6 +181,77 @@ impl<T> List<T> {
     }
 }
 
+/// `for x in &l`: a reference to each of its values, front to back, as
+/// `l.iter()` gives.
+impl<'a, T> IntoIterator for &'a List<T> {
+    type IntoIter = Iter<'a, T>;
+
+    fn into_iter(self) -> Iter<'a, T> { self.iter() }
+}
+
+/// `for x in &mut l`: a reference to change each of its values through,
+/// front to back, as `l.iter_mut()` gives. How many there are stays the
+/// same.
+impl<'a, T> IntoIterator for &'a mut List<T> {
+    type IntoIter = IterMut<'a, T>;
+
+    fn into_iter(self) -> IterMut<'a, T> ensures self.len() == old(self.len()) { self.iter_mut() }
+}
+
+/// `for x in l`: its values, front to back, taken out of it. What the
+/// loop leaves, by `break`, is dropped with the iterator.
+impl<T> IntoIterator for List<T> {
+    type IntoIter = IntoIter<T>;
+
+    fn into_iter(self) -> IntoIter<T> {
+        let List { buf, len } = self;
+        IntoIter { buf, len, next: 0 }
+    }
+}
+
+/// What `for x in l` goes through: the values of a list it took, front to
+/// back, each taken out of its buffer in turn.
+///
+/// # Invariant
+///
+/// Slots `next..len` of `buf` hold values, and the rest don't: those
+/// before `next` were read out, and those from `len` on never held any.
+#[derive(Send where T: Send, Sync where T: Sync)]
+export struct IntoIter<T> {
+    buf: RawBuf<T>,
+    len: { n: usize | n <= buf.cap() },
+    next: { i: usize | i <= len },
+}
+
+impl<T> Iterator for IntoIter<T> {
+    type Item = T;
+    effect e = {};
+
+    fn next(&mut self) -> Option<T> {
+        let i = self.next;
+        if i < self.len {
+            self.next = i + 1;
+            // SAFETY: slot `i` is in `next..len`, so holds a value, and
+            // `next` is past it now, so it's read only this once.
+            Some(unsafe { self.buf.read(i) })
+        } else {
+            None
+        }
+    }
+}
+
+/// Drops the values it hasn't given, front to back, and gives the buffer
+/// back.
+impl<T: Discard> Discard for IntoIter<T> {
+    fn discard(mut self) {
+        while let Some(_x) = self.next() {}
+        let IntoIter { buf, len: _, next: _ } = self;
+        // SAFETY: every value in slots `0..len` has been read out, and the
+        // slots after them never held any, so every slot is empty.
+        unsafe { buf.free() };
+    }
+}
+
 /// Drops its values, front to back, and gives the buffer back.
 impl<T: Discard> Discard for List<T> {
     fn discard(self) { self.free_with(|_x| {}) }

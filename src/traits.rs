@@ -126,6 +126,7 @@ pub const SIG: &str = "(signature)";
 /// names alone (see `Traits::shorten`).
 const PRELUDE_TRAITS: &[&str] = &[
     "core::iter::Iterator",
+    "core::iter::IntoIterator",
     COPY,
     DISCARD,
     EQ,
@@ -476,19 +477,7 @@ impl Traits {
     /// supertraits, theirs, and so on. A bound `T: Ord` gives `T` the
     /// methods of `Eq` too, if `Ord: Eq`.
     pub fn implied(&self, name: &str) -> Vec<String> {
-        let mut out = vec![name.to_string()];
-        let mut i = 0;
-        while i < out.len() {
-            if let Some(t) = self.traits.get(&out[i]) {
-                for s in &t.supers {
-                    if !out.contains(s) {
-                        out.push(s.clone());
-                    }
-                }
-            }
-            i += 1;
-        }
-        out
+        implied(&self.traits, name)
     }
 
     /// The trait among `tr` and its supertraits with an associated type
@@ -507,25 +496,15 @@ impl Traits {
     }
 
     /// The impl of `tr` (or an inherent one, for `None`) whose type matches
-    /// `ty`, and whose sealed bounds don't rule it out there, with what its
-    /// type parameters are for it to. Coherence makes that at most one.
+    /// `ty`, and that isn't ruled out there, with what its type parameters
+    /// are for it to (see `select`).
     pub fn select(
         &self,
         ty: &Type,
         tr: Option<&str>,
         local: &[(Type, Type)],
     ) -> Option<(usize, Vec<Type>)> {
-        self.impls.iter().enumerate().find_map(|(i, d)| {
-            if d.trait_name.as_deref() != tr {
-                return None;
-            }
-            let mut found = HashMap::new();
-            if !matches(&d.self_ty, ty, &d.params, &mut found) {
-                return None;
-            }
-            let args = impl_args(d, &found, &self.impls, &self.anon(), local)?;
-            (!sealed_refutes(d, &args, &self.impls, &self.sealed)).then_some((i, args))
-        })
+        select(&self.impls, &self.anon(), ty, tr, local)
     }
 
     /// Does `ty` implement `tr`, given that the bounds `env` hold? `ty`
@@ -571,230 +550,328 @@ impl Traits {
         env: &[Pred],
         eqs: &[(Type, Type)],
     ) -> Result<Source, Pred> {
-        self.implements_at(ty, tr, env, eqs, 0)
+        implements_at(&self.impls, &self.anon_in(env), eqs, ty, tr, 0)
     }
 
-    fn implements_at(
-        &self,
-        ty: &Type,
-        tr: &str,
-        env: &[Pred],
-        eqs: &[(Type, Type)],
-        depth: usize,
-    ) -> Result<Source, Pred> {
-        // Termination is checked when impls are collected, so this can only
-        // go this deep on a bug.
-        assert!(depth < 1000, "trait resolution of `{ty}: {tr}` doesn't end");
-        let fail = || Pred {
-            ty: ty.clone(),
-            trait_name: tr.to_string(),
-        };
-        let all = |ts: &[&Type]| -> Result<Source, Pred> {
-            for t in ts {
-                self.implements_at(t, tr, env, eqs, depth + 1)?;
-            }
-            Ok(Source::Builtin)
-        };
-        // The built-in impls. Plain values may be thrown away, and so may
-        // references, whatever they point to: dropping one doesn't drop
-        // that. A box holds what it points to, so it may be if that may,
-        // and an array its values.
-        match (tr, ty) {
-            // A tuple is a struct that derives every trait that can be
-            // (lemma T4 of docs/58-tuples.md): it implements one if all its
-            // values do, the fixed point of the derive with fields that
-            // are exactly its parameters.
-            (DISCARD | COPY | EQ | ORD | DEBUG | SEND | SYNC, Type::Tuple(ts)) => {
-                return all(&ts.iter().collect::<Vec<_>>());
-            }
-            (
-                DISCARD,
-                Type::Int(_)
-                | Type::Bool
-                | Type::Char
-                | Type::Unit
-                | Type::Never
-                | Type::Fn(_)
-                | Type::Ref(..),
-            ) => return Ok(Source::Builtin),
-            (DISCARD, Type::Box(inner)) => return all(&[inner]),
-            (
-                COPY,
-                Type::Int(_) | Type::Bool | Type::Char | Type::Unit | Type::Never | Type::Fn(_),
-            ) => {
-                return Ok(Source::Builtin);
-            }
-            (COPY, Type::Ref(_, false, _)) => return Ok(Source::Builtin),
-            (COPY, Type::Ref(_, true, _) | Type::Box(_)) => return Err(fail()),
-            (EQ, Type::Int(_) | Type::Bool | Type::Char | Type::Unit | Type::Never) => {
-                return Ok(Source::Builtin);
-            }
-            // A string compares by its bytes, and a slice value by value,
-            // if its values compare: the same length, and equal values at
-            // each index.
-            (EQ, Type::Str) => return Ok(Source::Builtin),
-            (EQ, Type::Slice(inner)) => return all(&[inner]),
-            // An array is its values: it may be thrown away, copied or
-            // compared if they may.
-            (DISCARD | COPY | EQ, Type::Array(inner, _)) => return all(&[inner]),
-            (INT, Type::Int(_)) => return Ok(Source::Builtin),
-            (SIGNED, Type::Int(t)) if t.signed() => return Ok(Source::Builtin),
-            (UNSIGNED, Type::Int(t)) if !t.signed() => return Ok(Source::Builtin),
-            (SIGNED | UNSIGNED, Type::Int(_)) => return Err(fail()),
-            // References and boxes compare what they point to.
-            (EQ, Type::Ref(_, _, inner) | Type::Box(inner)) => return all(&[inner]),
-            (EQ, Type::Fn(_)) => return Err(fail()),
-            // Functions can be called any number of times. A reference to
-            // what can be called through a shared reference can be too, and
-            // one to what can be through a mutable one, as long as it's
-            // mutable: calling `&F` calls `F` by `&`.
-            (FN | FN_MUT | FN_ONCE, Type::Fn(_)) => return Ok(Source::Builtin),
-            (FN | FN_MUT | FN_ONCE, Type::Ref(_, false, inner)) => {
-                self.implements_at(inner, FN, env, eqs, depth + 1)?;
-                return Ok(Source::Builtin);
-            }
-            (FN_MUT | FN_ONCE, Type::Ref(_, true, inner)) => {
-                self.implements_at(inner, FN_MUT, env, eqs, depth + 1)?;
-                return Ok(Source::Builtin);
-            }
-            (FN, Type::Ref(_, true, _)) => return Err(fail()),
-            // What has no parts, or only plain bytes, may go to another
-            // thread or be shared with one: nothing in it changes through a
-            // `&`. A function holds nothing; what it reaches of statics is
-            // `Sync` (lemma Y3 of docs/38-statics.md).
-            (
-                SEND | SYNC,
-                Type::Int(_)
-                | Type::Bool
-                | Type::Char
-                | Type::Unit
-                | Type::Never
-                | Type::Str
-                | Type::Fn(_),
-            ) => return Ok(Source::Builtin),
-            // A box owns what it points to, and an array or slice its
-            // values: they are what's handed over or shared.
-            (SEND | SYNC, Type::Box(inner) | Type::Array(inner, _) | Type::Slice(inner)) => {
-                return all(&[inner]);
-            }
-            // A `&T` handed to another thread shares the `T` with it, so it
-            // needs `T: Sync`, as does sharing it. A `&mut T` is the only
-            // way to the `T` while it lives, so handing it over is as
-            // handing over the `T`; sharing it shares the `T`, by `&`.
-            (SEND | SYNC, Type::Ref(_, false, inner)) | (SYNC, Type::Ref(_, true, inner)) => {
-                self.implements_at(inner, SYNC, env, eqs, depth + 1)?;
-                return Ok(Source::Builtin);
-            }
-            (SEND, Type::Ref(_, true, inner)) => return all(&[inner]),
-            _ => {}
-        }
-        // A closure is what it captures: it may be thrown away, copied,
-        // handed to another thread or shared with one, if all of that may
-        // be. A reference it holds always may be thrown
-        // away, and copied unless it's `&mut`.
-        if let Type::Adt(symbol, ..) = ty
-            && let Some(c) = self.closures.get(symbol)
-        {
-            let Some(kind) = c.kind else {
-                unreachable!("`{ty}: {tr}` asked before the closure's captures were known")
-            };
-            return match (tr, FnKind::of(tr)) {
-                (DISCARD | COPY | SEND | SYNC, _) => {
-                    all(&c.fields_at(ty).iter().collect::<Vec<_>>())
-                }
-                (_, Some(wanted)) if kind <= wanted => Ok(Source::Builtin),
-                _ => Err(fail()),
-            };
-        }
-        // What an opaque type's bounds say it implements, it does; or it
-        // might by a blanket impl, below. An opaque type has no impls of
-        // its own: nothing can name it. So does a projection on it that
-        // they say does.
-        if let Some(Source::Assumed) = self.opaque_implements(ty, tr) {
-            return Ok(Source::Assumed);
-        }
-        if let Type::Param(_, _) | Type::Proj(..) = ty {
-            let implied = |t: &str| self.implied(t).iter().any(|t| t == tr);
-            let assumed = env.iter().any(|p| p.ty == *ty && implied(&p.trait_name));
-            let declared = match ty {
-                Type::Proj(_, of, name) => self.traits[of]
-                    .assoc
-                    .iter()
-                    .find(|a| a.name == *name)
-                    .is_some_and(|a| a.bounds.iter().any(|b| implied(b))),
-                _ => false,
-            };
-            return match assumed || declared {
-                true => Ok(Source::Assumed),
-                false => Err(fail()),
-            };
-        }
-        // A bound on a type that isn't a parameter, from an impl's method's
-        // `where` clause at the impl's type, holds in the method: if it's
-        // false, no call can prove it, and the method never runs.
-        if env
-            .iter()
-            .any(|p| p.ty == *ty && self.implied(&p.trait_name).iter().any(|t| t == tr))
-        {
-            return Ok(Source::Assumed);
-        }
-        let Some((i, args)) = self.select(ty, Some(tr), eqs) else {
-            return Err(fail());
-        };
-        let d = &self.impls[i];
-        let s = Subst::new(&d.params, &args);
-        for p in &d.preds {
-            let t = normalise(&self.impls, &self.anon(), eqs, &s.apply(&p.ty));
-            self.implements_at(&t, &p.trait_name, env, eqs, depth + 1)?;
-        }
-        // A derived marker's equality bounds are its type's, which hold of
-        // every type that's well-formed, wherever it's made: so they're
-        // taken for granted, and it needs nothing but more of the same
-        // trait (lemma D1 of docs/17-retrospective-1.md). They'd say what
-        // a closure's calls are, effects and all, `F: Fn() -> i64`, and
-        // whether a value is copied or thrown away mustn't wait for its
-        // effects, which proofs decide (lemma P2 of docs/64-phase-order.md).
-        let implied = d.derived && MARKERS.contains(&tr);
-        for (lhs, rhs) in d.eqs.iter().filter(|_| !implied) {
-            let (l, r) = (s.apply(lhs), s.apply(rhs));
-            let normal = |t: &Type| normalise(&self.impls, &self.anon(), eqs, t).erased();
-            if !fits(&normal(&l), &normal(&r), is_sig(lhs)) {
-                return Err(fail());
-            }
-        }
-        Ok(Source::Impl(i, args))
-    }
-
-    /// `Some(Assumed)` if `ty` is an opaque type, or a projection on one,
-    /// that the opaque type's bounds say implements `tr`.
-    fn opaque_implements(&self, ty: &Type, tr: &str) -> Option<Source> {
-        let mut root = ty;
-        while let Type::Proj(inner, ..) = root {
-            root = inner;
-        }
-        let Type::Opaque(symbol, ..) = root else {
-            return None;
-        };
-        let d = self.opaques.get(symbol)?;
-        let s = d.subst(root);
-        let erased = ty.erased();
-        d.preds
-            .iter()
-            .any(|p| {
-                s.apply(&p.ty).erased() == erased
-                    && self.implied(&p.trait_name).iter().any(|t| t == tr)
-            })
-            .then_some(Source::Assumed)
-    }
-
-    /// The closures and opaque types, for normalising.
+    /// The closures, opaque types and traits, for normalising, with no
+    /// bounds in scope.
     pub fn anon(&self) -> Anon<'_> {
+        self.anon_in(&[])
+    }
+
+    /// The same, with bounds `env` in scope.
+    pub fn anon_in<'a>(&'a self, env: &'a [Pred]) -> Anon<'a> {
         Anon {
             closures: &self.closures,
             opaques: &self.opaques,
             sealed: &self.sealed,
+            defs: &self.traits,
+            env,
         }
     }
+}
+
+/// The traits that `T: name` implies, `name` first, by the traits `defs`
+/// (see `Traits::implied`).
+pub fn implied(defs: &HashMap<String, TraitDef>, name: &str) -> Vec<String> {
+    let mut out = vec![name.to_string()];
+    let mut i = 0;
+    while i < out.len() {
+        if let Some(t) = defs.get(&out[i]) {
+            for s in &t.supers {
+                if !out.contains(s) {
+                    out.push(s.clone());
+                }
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+/// The impl of `tr` (or an inherent one, for `None`) whose type matches
+/// `ty`, and that isn't ruled out there, with what its type parameters are
+/// for it to. Coherence makes that at most one: where two impls' types
+/// could be the same, one of them needs, there, what no impl could give
+/// (`refuted`), and that stays so of every type the matched one becomes
+/// (lemma N2 of docs/73-for-over-collections.md). So with two headers
+/// matching, the one ruled out is passed over. That's only looked for
+/// when two do, as it costs: one that's the only match is the impl, if
+/// any is, and proving its bounds says whether it is. A bound of a sealed
+/// trait is looked at anyway, being cheap (lemma S2 of
+/// docs/29-closed-and-sealed-traits.md). Inherent impls may overlap: the
+/// first that matches.
+///
+/// A type parameter, a projection or an opaque type matches only a header
+/// that's a bare parameter, a blanket impl's, of which a trait has one at
+/// most: two always overlap, at a parameter, which nothing is known of.
+pub fn select(
+    impls: &[ImplDef],
+    anon: &Anon,
+    ty: &Type,
+    tr: Option<&str>,
+    local: &[(Type, Type)],
+) -> Option<(usize, Vec<Type>)> {
+    let mut found: Vec<(usize, Vec<Type>)> = (impls.iter().enumerate())
+        .filter(|(_, d)| d.trait_name.as_deref() == tr)
+        .filter_map(|(i, d)| {
+            let mut found = HashMap::new();
+            if !matches(&d.self_ty, ty, &d.params, &mut found) {
+                return None;
+            }
+            let args = impl_args(d, &found, impls, anon, local)?;
+            (!sealed_refutes(d, &args, impls, anon.sealed)).then_some((i, args))
+        })
+        .collect();
+    if tr.is_some() && found.len() > 1 {
+        found.retain(|(i, args)| !refutes(&impls[*i], args, impls, anon, local));
+        // Coherence leaves one; if it didn't, none is chosen.
+        if found.len() > 1 {
+            return None;
+        }
+    }
+    found.into_iter().next()
+}
+
+/// Does impl `d` at type arguments `args` need what no impl could give
+/// (`refuted`)? Then it's not for that type.
+fn refutes(
+    d: &ImplDef,
+    args: &[Type],
+    impls: &[ImplDef],
+    anon: &Anon,
+    local: &[(Type, Type)],
+) -> bool {
+    let s = Subst::new(&d.params, args);
+    d.preds.iter().any(|p| {
+        let t = normalise(impls, anon, local, &s.apply(&p.ty));
+        refuted(impls, anon.sealed, &Knowable::Closed, &t, &p.trait_name, 0)
+    })
+}
+
+/// Does a bound say `ty: tr`: one in scope (`anon.env`), on a type
+/// parameter or a projection; one a trait declares of its associated
+/// type, `type Item: Discard;`; or an opaque type's own? Those come first:
+/// a projection on a type a bound says implements its trait stays rigid,
+/// though a blanket impl may apply (lemma R2 of
+/// docs/73-for-over-collections.md), as in Rust.
+fn assumed(anon: &Anon, ty: &Type, tr: &str) -> bool {
+    if opaque_implements(anon, ty, tr).is_some() {
+        return true;
+    }
+    let says = |t: &str| implied(anon.defs, t).iter().any(|t| t == tr);
+    let in_scope = (anon.env.iter()).any(|p| p.ty == *ty && says(&p.trait_name));
+    let declared = match ty {
+        Type::Proj(_, of, name) => (anon.defs.get(of))
+            .and_then(|d| d.assoc.iter().find(|a| a.name == *name))
+            .is_some_and(|a| a.bounds.iter().any(|b| says(b))),
+        _ => false,
+    };
+    in_scope || declared
+}
+
+/// `Traits::implements`, with the bounds in scope in `anon.env`: also
+/// what `project` asks of a blanket impl's bounds at a rigid type.
+pub(crate) fn implements_at(
+    impls: &[ImplDef],
+    anon: &Anon,
+    eqs: &[(Type, Type)],
+    ty: &Type,
+    tr: &str,
+    depth: usize,
+) -> Result<Source, Pred> {
+    // Termination is checked when impls are collected, so this can only
+    // go this deep on a bug.
+    assert!(depth < 1000, "trait resolution of `{ty}: {tr}` doesn't end");
+    let fail = || Pred {
+        ty: ty.clone(),
+        trait_name: tr.to_string(),
+    };
+    let all = |ts: &[&Type]| -> Result<Source, Pred> {
+        for t in ts {
+            implements_at(impls, anon, eqs, t, tr, depth + 1)?;
+        }
+        Ok(Source::Builtin)
+    };
+    // The built-in impls. Plain values may be thrown away, and so may
+    // references, whatever they point to: dropping one doesn't drop
+    // that. A box holds what it points to, so it may be if that may,
+    // and an array its values.
+    match (tr, ty) {
+        // A tuple is a struct that derives every trait that can be
+        // (lemma T4 of docs/58-tuples.md): it implements one if all its
+        // values do, the fixed point of the derive with fields that
+        // are exactly its parameters.
+        (DISCARD | COPY | EQ | ORD | DEBUG | SEND | SYNC, Type::Tuple(ts)) => {
+            return all(&ts.iter().collect::<Vec<_>>());
+        }
+        (
+            DISCARD,
+            Type::Int(_)
+            | Type::Bool
+            | Type::Char
+            | Type::Unit
+            | Type::Never
+            | Type::Fn(_)
+            | Type::Ref(..),
+        ) => return Ok(Source::Builtin),
+        (DISCARD, Type::Box(inner)) => return all(&[inner]),
+        (COPY, Type::Int(_) | Type::Bool | Type::Char | Type::Unit | Type::Never | Type::Fn(_)) => {
+            return Ok(Source::Builtin);
+        }
+        (COPY, Type::Ref(_, false, _)) => return Ok(Source::Builtin),
+        (COPY, Type::Ref(_, true, _) | Type::Box(_)) => return Err(fail()),
+        (EQ, Type::Int(_) | Type::Bool | Type::Char | Type::Unit | Type::Never) => {
+            return Ok(Source::Builtin);
+        }
+        // A string compares by its bytes, and a slice value by value,
+        // if its values compare: the same length, and equal values at
+        // each index.
+        (EQ, Type::Str) => return Ok(Source::Builtin),
+        (EQ, Type::Slice(inner)) => return all(&[inner]),
+        // An array is its values: it may be thrown away, copied or
+        // compared if they may.
+        (DISCARD | COPY | EQ, Type::Array(inner, _)) => return all(&[inner]),
+        (INT, Type::Int(_)) => return Ok(Source::Builtin),
+        (SIGNED, Type::Int(t)) if t.signed() => return Ok(Source::Builtin),
+        (UNSIGNED, Type::Int(t)) if !t.signed() => return Ok(Source::Builtin),
+        (SIGNED | UNSIGNED, Type::Int(_)) => return Err(fail()),
+        // References and boxes compare what they point to.
+        (EQ, Type::Ref(_, _, inner) | Type::Box(inner)) => return all(&[inner]),
+        (EQ, Type::Fn(_)) => return Err(fail()),
+        // Functions can be called any number of times. A reference to
+        // what can be called through a shared reference can be too, and
+        // one to what can be through a mutable one, as long as it's
+        // mutable: calling `&F` calls `F` by `&`.
+        (FN | FN_MUT | FN_ONCE, Type::Fn(_)) => return Ok(Source::Builtin),
+        (FN | FN_MUT | FN_ONCE, Type::Ref(_, false, inner)) => {
+            implements_at(impls, anon, eqs, inner, FN, depth + 1)?;
+            return Ok(Source::Builtin);
+        }
+        (FN_MUT | FN_ONCE, Type::Ref(_, true, inner)) => {
+            implements_at(impls, anon, eqs, inner, FN_MUT, depth + 1)?;
+            return Ok(Source::Builtin);
+        }
+        (FN, Type::Ref(_, true, _)) => return Err(fail()),
+        // What has no parts, or only plain bytes, may go to another
+        // thread or be shared with one: nothing in it changes through a
+        // `&`. A function holds nothing; what it reaches of statics is
+        // `Sync` (lemma Y3 of docs/38-statics.md).
+        (
+            SEND | SYNC,
+            Type::Int(_)
+            | Type::Bool
+            | Type::Char
+            | Type::Unit
+            | Type::Never
+            | Type::Str
+            | Type::Fn(_),
+        ) => return Ok(Source::Builtin),
+        // A box owns what it points to, and an array or slice its
+        // values: they are what's handed over or shared.
+        (SEND | SYNC, Type::Box(inner) | Type::Array(inner, _) | Type::Slice(inner)) => {
+            return all(&[inner]);
+        }
+        // A `&T` handed to another thread shares the `T` with it, so it
+        // needs `T: Sync`, as does sharing it. A `&mut T` is the only
+        // way to the `T` while it lives, so handing it over is as
+        // handing over the `T`; sharing it shares the `T`, by `&`.
+        (SEND | SYNC, Type::Ref(_, false, inner)) | (SYNC, Type::Ref(_, true, inner)) => {
+            implements_at(impls, anon, eqs, inner, SYNC, depth + 1)?;
+            return Ok(Source::Builtin);
+        }
+        (SEND, Type::Ref(_, true, inner)) => return all(&[inner]),
+        _ => {}
+    }
+    // A closure is what it captures: it may be thrown away, copied,
+    // handed to another thread or shared with one, if all of that may
+    // be. A reference it holds always may be thrown
+    // away, and copied unless it's `&mut`.
+    if let Type::Adt(symbol, ..) = ty
+        && let Some(c) = anon.closures.get(symbol)
+    {
+        let Some(kind) = c.kind else {
+            unreachable!("`{ty}: {tr}` asked before the closure's captures were known")
+        };
+        return match (tr, FnKind::of(tr)) {
+            (DISCARD | COPY | SEND | SYNC, _) => all(&c.fields_at(ty).iter().collect::<Vec<_>>()),
+            (_, Some(wanted)) if kind <= wanted => Ok(Source::Builtin),
+            _ => Err(fail()),
+        };
+    }
+    // What an opaque type's bounds say it implements, it does; or it
+    // might by a blanket impl, below. An opaque type has no impls of
+    // its own: nothing can name it. So does a projection on it that
+    // they say does.
+    if let Some(Source::Assumed) = opaque_implements(anon, ty, tr) {
+        return Ok(Source::Assumed);
+    }
+    // A type parameter or a rigid projection implements what a bound in
+    // scope says it does, and what its trait declares of it; or else what
+    // a blanket impl gives it, where that impl's bounds hold of it (rule R
+    // of docs/73-for-over-collections.md), below: a header that's a bare
+    // parameter is the only kind that matches it. If none does, it's the
+    // goal itself that fails, for saying which bound to add.
+    let rigid = matches!(ty, Type::Param(_, _) | Type::Proj(..));
+    if rigid && assumed(anon, ty, tr) {
+        return Ok(Source::Assumed);
+    }
+    // A bound on a type that isn't a parameter, from an impl's method's
+    // `where` clause at the impl's type, holds in the method: if it's
+    // false, no call can prove it, and the method never runs.
+    if (anon.env.iter())
+        .any(|p| p.ty == *ty && implied(anon.defs, &p.trait_name).iter().any(|t| t == tr))
+    {
+        return Ok(Source::Assumed);
+    }
+    let Some((i, args)) = select(impls, anon, ty, Some(tr), eqs) else {
+        return Err(fail());
+    };
+    let d = &impls[i];
+    let s = Subst::new(&d.params, &args);
+    for p in &d.preds {
+        let t = normalise(impls, anon, eqs, &s.apply(&p.ty));
+        implements_at(impls, anon, eqs, &t, &p.trait_name, depth + 1)
+            .map_err(|bad| if rigid { fail() } else { bad })?;
+    }
+    // A derived marker's equality bounds are its type's, which hold of
+    // every type that's well-formed, wherever it's made: so they're
+    // taken for granted, and it needs nothing but more of the same
+    // trait (lemma D1 of docs/17-retrospective-1.md). They'd say what
+    // a closure's calls are, effects and all, `F: Fn() -> i64`, and
+    // whether a value is copied or thrown away mustn't wait for its
+    // effects, which proofs decide (lemma P2 of docs/64-phase-order.md).
+    let implied = d.derived && MARKERS.contains(&tr);
+    for (lhs, rhs) in d.eqs.iter().filter(|_| !implied) {
+        let (l, r) = (s.apply(lhs), s.apply(rhs));
+        let normal = |t: &Type| normalise(impls, anon, eqs, t).erased();
+        if !fits(&normal(&l), &normal(&r), is_sig(lhs)) {
+            return Err(fail());
+        }
+    }
+    Ok(Source::Impl(i, args))
+}
+
+/// `Some(Assumed)` if `ty` is an opaque type, or a projection on one,
+/// that the opaque type's bounds say implements `tr`.
+fn opaque_implements(anon: &Anon, ty: &Type, tr: &str) -> Option<Source> {
+    let mut root = ty;
+    while let Type::Proj(inner, ..) = root {
+        root = inner;
+    }
+    let Type::Opaque(symbol, ..) = root else {
+        return None;
+    };
+    let d = anon.opaques.get(symbol)?;
+    let s = d.subst(root);
+    let erased = ty.erased();
+    d.preds
+        .iter()
+        .any(|p| {
+            s.apply(&p.ty).erased() == erased
+                && implied(anon.defs, &p.trait_name).iter().any(|t| t == tr)
+        })
+        .then_some(Source::Assumed)
 }
 
 /// Is `lhs`, of an equality bound, what an `Fn` bound says calls take and
@@ -970,14 +1047,23 @@ fn part_at(pat: &Type, t: &Type, p: &str, sig: bool) -> Option<Type> {
     }
 }
 
-/// The types with no names a program can write: closures' and opaque
-/// types. What a projection on one is is in their definitions rather than
-/// impls.
+/// What resolution needs besides the impls: the types with no names a
+/// program can write, closures' and opaque types, what a projection on
+/// one is being in their definitions rather than impls; the traits; and
+/// the bounds in scope, for what a blanket impl gives a type parameter, a
+/// projection or an opaque type (rule R of
+/// docs/73-for-over-collections.md).
 #[derive(Clone, Copy)]
 pub struct Anon<'a> {
     pub closures: &'a HashMap<String, ClosureDef>,
     pub opaques: &'a HashMap<String, OpaqueDef>,
     pub sealed: &'a HashSet<String>,
+    /// Every trait, by its symbol: its supertraits, and what it declares
+    /// of its associated types.
+    pub defs: &'a HashMap<String, TraitDef>,
+    /// The bounds in scope: none after monomorphisation, where there are
+    /// no type parameters.
+    pub env: &'a [Pred],
 }
 
 /// What the projections in types stand for: the associated types of every
@@ -1025,8 +1111,15 @@ pub struct Projections {
     /// What the equality bounds in scope say: `(T::Item, i64)` for
     /// `T: Iter<Item = i64>`.
     pub local: Vec<(Type, Type)>,
+    /// The other bounds in scope, `T: Iterator`: a blanket impl gives a
+    /// projection on a type parameter what it says only if its bounds
+    /// hold there. Set with `local`, as the checker goes into a function,
+    /// an impl or a type, and cleared after.
+    pub env: Vec<Pred>,
     /// The sealed traits, as `Traits::sealed`.
     sealed: HashSet<String>,
+    /// The traits, as `Traits::traits`.
+    defs: Arc<HashMap<String, TraitDef>>,
 }
 
 impl Projections {
@@ -1037,7 +1130,9 @@ impl Projections {
             closures: traits.closures.clone(),
             opaques: traits.opaques.clone(),
             local: Vec::new(),
+            env: Vec::new(),
             sealed: traits.sealed.clone(),
+            defs: Arc::new(traits.traits.clone()),
         }
     }
 
@@ -1046,6 +1141,8 @@ impl Projections {
             closures: &self.closures,
             opaques: &self.opaques,
             sealed: &self.sealed,
+            defs: &self.defs,
+            env: &self.env,
         }
     }
 
@@ -1096,7 +1193,7 @@ pub fn project(
     tr: &str,
     name: &str,
 ) -> Option<Type> {
-    if let Type::Param(_, _) | Type::Var(_) | Type::Proj(..) = s {
+    if let Type::Var(_) = s {
         return None;
     }
     // What an opaque type's equality bounds say; or else what a blanket
@@ -1130,27 +1227,36 @@ pub fn project(
             _ => None,
         };
     }
-    for d in impls.iter().filter(|d| d.trait_name.as_deref() == Some(tr)) {
-        let mut found = HashMap::new();
-        if !matches(&d.self_ty, s, &d.params, &mut found) {
-            continue;
+    // A type parameter, a projection or an opaque type: if a bound says it
+    // implements `tr`, the projection is rigid (lemma R2); or else it's a
+    // blanket impl's, if that impl's bounds hold of it (rule R of
+    // docs/73-for-over-collections.md). Whoever uses the function proved
+    // the bounds in scope, so they hold of what it's used at, and of that
+    // the blanket impl is the only impl there is (coherence, lemma R1).
+    // Unless they hold, another impl may be the one there (hole O1).
+    let (i, args) = match s {
+        Type::Param(_, _) | Type::Proj(..) | Type::Opaque(..) => {
+            if assumed(anon, s, tr) {
+                return None;
+            }
+            match implements_at(impls, anon, local, s, tr, 0) {
+                Ok(Source::Impl(i, args)) => (i, args),
+                _ => return None,
+            }
         }
-        let mut regions = HashMap::new();
-        regions_at(&d.self_ty, s, &d.lifetimes, &mut regions);
-        let (_, rhs) = d.assoc.iter().find(|(n, _)| n == name)?;
-        let args = impl_args(d, &found, impls, anon, local)?;
-        if sealed_refutes(d, &args, impls, anon.sealed) {
-            continue;
-        }
-        let regions: Vec<Region> = d
-            .lifetimes
-            .iter()
-            .map(|l| regions.get(l).cloned().unwrap_or(Region::Erased))
-            .collect();
-        let s = Subst::new(&d.params, &args).with_regions(&d.lifetimes, &regions);
-        return Some(s.apply(rhs));
-    }
-    None
+        _ => select(impls, anon, s, Some(tr), local)?,
+    };
+    let d = &impls[i];
+    let mut regions = HashMap::new();
+    regions_at(&d.self_ty, s, &d.lifetimes, &mut regions);
+    let (_, rhs) = d.assoc.iter().find(|(n, _)| n == name)?;
+    let regions: Vec<Region> = d
+        .lifetimes
+        .iter()
+        .map(|l| regions.get(l).cloned().unwrap_or(Region::Erased))
+        .collect();
+    let s = Subst::new(&d.params, &args).with_regions(&d.lifetimes, &regions);
+    Some(s.apply(rhs))
 }
 
 /// The region `t` has where `pat`, which `t` matches, has each of
@@ -1305,18 +1411,53 @@ pub fn unified(t: &Type, s: &HashMap<String, Type>) -> Type {
     }
 }
 
-/// Is `ty: tr` false however the type parameters in `ty` are chosen, for a
-/// sealed trait `tr`? So when no impl of `tr` could be for `ty`, nor a
-/// built-in rule: on a type with no head, a parameter, a projection or an
-/// opaque type, it never is. One level only: an impl whose type could be
-/// `ty` may still need what `ty` doesn't have, and that's not looked at.
+/// Which goals `refuted` may take to be false for want of an impl that
+/// says otherwise: those whose every impl, there will ever be, is known.
+pub enum Knowable<'a> {
+    /// Any whose type has a head, a struct, enum or built-in type, under
+    /// any references: an impl for it is in the trait's package or the
+    /// head's (the orphan rule), and whoever asks sees both (lemma N1 of
+    /// docs/73-for-over-collections.md). For choosing between impls.
+    Closed,
+    /// Only those that are also one package's own, by the trait or the
+    /// head (this takes both, in that order): so another package adding
+    /// an impl, of its own trait or for its own type, never breaks this
+    /// one's (lemma N3, Rust's *knowable* goals). For coherence.
+    Owned(&'a dyn Fn(&str, &Type) -> bool),
+}
+
+/// How deep `refuted` looks through the impls that could prove a goal
+/// before it gives up, saying it might hold.
+const REFUTE_DEPTH: usize = 8;
+
+/// Is `ty: tr` false however the type parameters in `ty` are chosen? So
+/// when, of every impl of `tr` whose type could be `ty`'s, some bound is
+/// itself refuted where they'd be the same, and no rule of the checker's
+/// could prove it either. Only where every impl of `tr` that could be for
+/// `ty` is known (`Knowable`), as it is for a sealed trait wherever it can
+/// be named (lemma S2 of docs/29-closed-and-sealed-traits.md). On a type
+/// with no head, a parameter, a projection or an opaque type, it never is:
+/// anything could be what it stands for. Nor is anything about an
+/// intrinsic trait, `Copy` or `Eq`, which the checker's rules prove of more
+/// types than its impls do, but for the sealed integer ones; nor `Ord` or
+/// `Debug` of a tuple, which a rule gives; nor of a closure's type, which
+/// only rules do.
 ///
-/// Sound because `tr` is sealed: every impl of it is in its own package,
-/// which every package that can name it depends on, so `impls` has all
-/// the impls of `tr` there will ever be wherever this is asked (lemma S2
-/// of docs/29-closed-and-sealed-traits.md). If no impl's type unifies
-/// with `ty`, none unifies with any type `ty` can become either.
-pub fn refuted(impls: &[ImplDef], ty: &Type, tr: &str) -> bool {
+/// Sound (lemma N1): every impl that could prove an instance of `ty: tr`
+/// is in `impls`, now and in every program with this package in it, and
+/// each one's type unifies with `ty`'s if it's for an instance of it, at
+/// an instance of the unifier, where the bound refuted there is still
+/// refuted, by induction on how deep that is. And refuted stays refuted at
+/// every instance of `ty` (lemma N2): the impls that could be for it are
+/// fewer, and their bounds instances of these.
+pub fn refuted(
+    impls: &[ImplDef],
+    sealed: &HashSet<String>,
+    knowable: &Knowable,
+    ty: &Type,
+    tr: &str,
+    depth: usize,
+) -> bool {
     match (tr, ty) {
         (_, Type::Param(_, _) | Type::Var(_) | Type::Proj(..) | Type::Opaque(..)) => return false,
         (INT, Type::Int(_)) => return false,
@@ -1324,19 +1465,53 @@ pub fn refuted(impls: &[ImplDef], ty: &Type, tr: &str) -> bool {
         (UNSIGNED, Type::Int(t)) => return t.signed(),
         _ => {}
     }
+    if depth >= REFUTE_DEPTH {
+        return false;
+    }
+    if !sealed.contains(tr) {
+        let mut head = ty;
+        while let Type::Ref(_, _, inner) = head {
+            head = inner;
+        }
+        let headless = match head {
+            Type::Param(_, _) | Type::Var(_) | Type::Proj(..) | Type::Opaque(..) => true,
+            Type::Adt(symbol, ..) => crate::types::is_closure(symbol),
+            _ => false,
+        };
+        let by_rule = BUILTIN_TRAITS.contains(&tr)
+            || (matches!(ty, Type::Tuple(_)) && [ORD, DEBUG].contains(&tr));
+        if headless || by_rule {
+            return false;
+        }
+        if let Knowable::Owned(own) = knowable
+            && !own(tr, head)
+        {
+            return false;
+        }
+    }
     let mut vars = Vec::new();
     params_in(ty, &mut vars);
+    // Renamed apart from `ty`'s, which may be primed already, by
+    // coherence, or renamed at a shallower depth: no written name has a
+    // `~`.
+    let rename = |p: &str| format!("{p}~{depth}");
     !impls
         .iter()
         .filter(|d| d.trait_name.as_deref() == Some(tr))
         .any(|d| {
-            // Renamed apart from `ty`'s, which may be primed already, by
-            // coherence: no written name has a `~`.
-            let renamed: Vec<Type> = d.params.tys_renamed(|p| format!("{p}~"));
-            let header = Subst::new(&d.params, &renamed).apply(&d.self_ty);
+            let renamed: Vec<Type> = d.params.tys_renamed(|p| rename(p));
+            let sub = Subst::new(&d.params, &renamed);
+            let header = sub.apply(&d.self_ty);
             let mut params = vars.clone();
-            params.extend(d.params.iter().map(|p| format!("{p}~")));
-            overlap(&header, ty, &params)
+            params.extend(d.params.iter().map(|p| rename(p)));
+            let Some(mgu) = unifier(&header, ty, &params) else {
+                return false;
+            };
+            // It could be for `ty`, unless what it needs can't hold there.
+            !d.preds.iter().any(|p| {
+                let t = unified(&sub.apply(&p.ty), &mgu);
+                refuted(impls, sealed, knowable, &t, &p.trait_name, depth + 1)
+            })
         })
 }
 
@@ -1351,7 +1526,16 @@ pub fn sealed_refutes(
     let s = Subst::new(&d.params, args);
     (d.preds.iter())
         .filter(|p| sealed.contains(&p.trait_name))
-        .any(|p| refuted(impls, &s.apply(&p.ty), &p.trait_name))
+        .any(|p| {
+            refuted(
+                impls,
+                sealed,
+                &Knowable::Closed,
+                &s.apply(&p.ty),
+                &p.trait_name,
+                0,
+            )
+        })
 }
 
 /// Each type parameter `t` mentions, added to `out`.

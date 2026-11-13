@@ -1,7 +1,7 @@
 //! Slices: values one after another in memory, seen through a reference.
 
 use crate::cmp::{Ord, Ordering};
-use crate::iter::{DoubleEndedIterator, Iterator};
+use crate::iter::{DoubleEndedIterator, IntoIterator, Iterator};
 use crate::mem;
 use crate::ops::Range;
 use crate::option::Option;
@@ -170,6 +170,22 @@ export fn empty<'a, T>() -> &'a [T];
 /// nothing, so nothing else can see what it does.
 #[intrinsic]
 export fn empty_mut<'a, T>() -> &'a mut [T];
+
+/// `for x in s`, for a slice `s`: a reference to each of its values,
+/// front to back, as `s.iter()` gives.
+impl<'a, T> IntoIterator for &'a [T] {
+    type IntoIter = Iter<'a, T>;
+
+    fn into_iter(self) -> Iter<'a, T> { self.iter() }
+}
+
+/// `for x in s`, for a slice `s` to change: a reference to change each of
+/// its values through, front to back, as `s.iter_mut()` gives.
+impl<'a, T> IntoIterator for &'a mut [T] {
+    type IntoIter = IterMut<'a, T>;
+
+    fn into_iter(self) -> IterMut<'a, T> { self.iter_mut() }
+}
 
 /// What `iter` gives: a reference to each value of `rest`, front to back.
 #[derive(Discard, Send where T: Sync, Sync where T: Sync)]

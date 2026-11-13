@@ -107,7 +107,7 @@ impl Checker {
                      impl's or an opaque type's type parameters",
                 ));
             }
-            self.env = preds.clone();
+            self.adts.proj.env = preds.clone();
             self.adts.proj.local = eqs.clone();
             let mut lts = Lifetimes::Fields {
                 declared: &lifetimes,
@@ -161,7 +161,7 @@ impl Checker {
             };
             adts.insert(symbol.clone(), adt);
         }
-        self.env.clear();
+        self.adts.proj.env.clear();
         self.adts.proj.local.clear();
         self.adts.extend(adts.drain());
         let adts = &self.adts;

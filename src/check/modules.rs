@@ -187,6 +187,10 @@ pub(crate) struct Modules {
     /// which the `let` `Rewrite::param_patterns` makes takes apart: for
     /// saying what's wrong with it as what was written.
     pub(crate) closure_params: HashSet<NodeId>,
+    /// The call of `core::iter::IntoIterator::into_iter` each `for` makes
+    /// of its head, by its node (`Rewrite::for_loop`): of an iterator, it
+    /// is the iterator itself, and the borrow checker leaves it out.
+    pub(crate) for_heads: HashSet<NodeId>,
     /// The pattern, `_`, of the `let _: ! = ..` each `let .. else` puts its
     /// `else` in, for saying what's wrong if it can finish.
     pub(crate) must_leave: HashSet<NodeId>,
@@ -2475,8 +2479,35 @@ impl Rewrite<'_> {
             span: at(k, k + 3),
             id: self.id(),
         };
+        // `core::iter::IntoIterator::into_iter(iter)`, at the head: where
+        // an error about it is, `iter` can't be iterated.
+        let into = &self.symbols[match self.core_item("iter", "IntoIterator") {
+            Item::Trait(k) => k,
+            _ => unreachable!("`core::iter::IntoIterator` is a trait"),
+        }];
+        let head_id = self.id();
+        self.r.m.for_heads.insert(head_id);
+        let head = Expr {
+            kind: ExprKind::Variant(
+                Ident {
+                    name: into.clone(),
+                    span: at(iter_span.start, iter_span.start),
+                    id: self.id(),
+                },
+                Vec::new(),
+                Ident {
+                    name: "into_iter".into(),
+                    span: at(iter_span.start, iter_span.start),
+                    id: self.id(),
+                },
+                vec![f.iter],
+                true,
+            ),
+            span: iter_span,
+            id: head_id,
+        };
         ExprKind::Match(
-            Box::new(f.iter),
+            Box::new(head),
             vec![Arm {
                 pat: bind,
                 body: looped,

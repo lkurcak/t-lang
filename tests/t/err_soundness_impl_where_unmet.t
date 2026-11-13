@@ -40,4 +40,4 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     }
     Ok(())
 }
-// error: `Second<Fds>` doesn't implement `Iterator`, which method `next` is of; that needs `Fd: Discard`
+// error: `Second<Fds>` can't be iterated: that needs `Fd: Discard`

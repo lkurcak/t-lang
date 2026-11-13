@@ -433,6 +433,9 @@ pub(crate) struct Checker {
     /// those before are the packages' before it, which were checked
     /// against everything they could be checked against.
     impls_from: usize,
+    /// The root module of the package being checked: what's its own, for
+    /// what coherence may take as known (`Knowable::Owned`).
+    package: usize,
     /// Where the package being checked starts in the sources: its spans
     /// are after, as each package is read after those before it.
     spans_from: usize,
@@ -505,10 +508,6 @@ pub(crate) struct Checker {
     method_ids: HashMap<NodeId, FnId>,
     /// Whether each function, by `FnId`, takes `self`: a method that does.
     receivers: Vec<bool>,
-    /// The bounds that hold in what's being checked: its own, its impl's,
-    /// and in a trait's default method, `Self: Trait`. The *environment*
-    /// obligations are proved in.
-    env: Vec<Pred>,
     /// What `Self` is in the function being checked: the type of the impl
     /// it's in, or in a trait, `Self` as a type parameter.
     self_ty: Option<Type>,
@@ -823,9 +822,9 @@ impl Checker {
                 ));
             }
         };
-        let display = self
-            .traits
-            .implements(error, DISPLAY, &self.env, &self.adts.proj.local);
+        let display =
+            self.traits
+                .implements(error, DISPLAY, &self.adts.proj.env, &self.adts.proj.local);
         if display.is_err() {
             return Err(Error::ty(
                 f.ret.span,
@@ -961,6 +960,7 @@ impl Checker {
             fn_symbols: Vec::new(),
             blocks: 0,
             impls_from: 0,
+            package: 0,
             spans_from: 0,
             from: Counts::default(),
             leaves_from: 0,
@@ -986,7 +986,6 @@ impl Checker {
             impl_ids: Vec::new(),
             method_ids: HashMap::new(),
             receivers: Vec::new(),
-            env: Vec::new(),
             self_ty: None,
             obligations: Vec::new(),
             unused: Vec::new(),
@@ -1104,6 +1103,7 @@ impl Checker {
         self.imports_from = self.modules.imports.len();
         self.refs_from = self.modules.module_refs.len();
         self.impls_from = self.traits.impls.len();
+        self.package = root;
         self.spans_from = prog.mods[root].span.start;
         let resolved = modules::resolve(prog, &mut self.modules, from);
         self.next_id = prog.next_id;
@@ -1411,10 +1411,10 @@ impl Checker {
         let declared = generics::declare_lifetimes(&f.generics.lifetimes)?;
         let bounds = generics::bounds(&f.generics, &declared, &params)?;
         let (preds, eqs, effect_bounds) = self.preds(&f.generics, &params, &declared, true)?;
-        self.env = preds.clone();
+        self.adts.proj.env = preds.clone();
         self.adts.proj.local = eqs.clone();
         let (param_tys, ret, effects, lifetimes) = self.signature(f, &params, &declared, true)?;
-        self.env.clear();
+        self.adts.proj.env.clear();
         self.adts.proj.local.clear();
         Ok(Scheme {
             params,
@@ -1591,7 +1591,7 @@ impl Checker {
         self.type_params = scheme.params.clone();
         self.const_decls.extend(consts(&f.generics));
         self.lifetimes = scheme.lifetimes.clone();
-        self.env = scheme.preds.clone();
+        self.adts.proj.env = scheme.preds.clone();
         self.adts.proj.local = scheme.eqs.clone();
         self.effect_bounds = scheme.effect_bounds.clone();
         self.goals.clear();

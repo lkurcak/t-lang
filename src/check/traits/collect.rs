@@ -255,7 +255,7 @@ impl Checker {
         // its associated types, which the trait's bound on it says.
         let mut with_self = params.clone();
         with_self.push_type("Self".into());
-        self.env = preds.iter().cloned().chain(this.clone()).collect();
+        self.adts.proj.env = preds.iter().cloned().chain(this.clone()).collect();
         self.adts.proj.local = eqs.clone();
         let (mut own_preds, mut own_eqs, mut own_effects) =
             self.preds(&f.generics, &with_self, &lifetimes, true)?;
@@ -276,7 +276,7 @@ impl Checker {
         let mut effect_bounds = impl_effects.to_vec();
         effect_bounds.extend(own_effects);
         let opaques = this.is_none();
-        self.env = preds.iter().cloned().chain(this).collect();
+        self.adts.proj.env = preds.iter().cloned().chain(this).collect();
         self.adts.proj.local = eqs.clone();
         self.sig_self = self_ty.cloned();
         let signature = self.signature(f, &with_self, &lifetimes, opaques);
@@ -318,7 +318,7 @@ impl Checker {
                 }
             }
         }
-        self.env.clear();
+        self.adts.proj.env.clear();
         self.adts.proj.local.clear();
         Ok(Scheme {
             params,
@@ -867,14 +867,14 @@ impl Checker {
             let mut lts = Lifetimes::Assoc {
                 declared: lifetimes,
             };
-            self.env = preds.to_vec();
-            self.env.push(Pred {
+            self.adts.proj.env = preds.to_vec();
+            self.adts.proj.env.push(Pred {
                 ty: Type::Param("Self".into(), false),
                 trait_name: tr.to_string(),
             });
             self.adts.proj.local = eqs.to_vec();
             let resolved = self.resolve_with(&a.ty, &with_self, &mut lts);
-            self.env.clear();
+            self.adts.proj.env.clear();
             self.adts.proj.local.clear();
             let t =
                 Subst::new(&["Self".to_string()], std::slice::from_ref(self_ty)).apply(&resolved?);
@@ -911,14 +911,14 @@ impl Checker {
             let mut lts = Lifetimes::Assoc {
                 declared: lifetimes,
             };
-            self.env = preds.to_vec();
-            self.env.push(Pred {
+            self.adts.proj.env = preds.to_vec();
+            self.adts.proj.env.push(Pred {
                 ty: Type::Param("Self".into(), false),
                 trait_name: tr.to_string(),
             });
             self.adts.proj.local = eqs.to_vec();
             let resolved = self.resolve_effects_with(&e.effects, &with_self, &mut lts);
-            self.env.clear();
+            self.adts.proj.env.clear();
             self.adts.proj.local.clear();
             let t =
                 Subst::new(&["Self".to_string()], std::slice::from_ref(self_ty)).apply(&resolved?);
