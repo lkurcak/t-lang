@@ -162,6 +162,18 @@ refuted there is passed over (`select`, `project`), with any goal whose
 impls are all in sight, the package's own or not: the pair was told apart
 where they were checked, and that stays true (lemma N2).
 
+A type that may still become another, with a type parameter in it, is a
+question of its own. `Wrap<T>` matches only `impl<X: B> Tr for X`, but
+`Wrap<Foo>`, which it may become, matches `impl Tr for Wrap<Foo>` too,
+the two kept apart as `Wrap<Foo>` can't be `B`. So what the blanket impl
+says `<Wrap<T> as Tr>::A` is holds only where `Wrap<T>: B` does. A
+match is taken as the impl everywhere only if no other impl's type
+unifies with the type, its parameters taken as variables (`alone`);
+otherwise only where its bounds are proved (lemma R1). Before this step,
+when bounds kept impls apart only for sealed traits, a match always was
+alone. The first version of this step missed it (hole W1, never
+released: `tests/t/err_soundness_blanket_partly_generic.t`).
+
 ## Blanket impls at type parameters
 
 `fn f<I: Iterator>(it: I) { for x in it {} }` needs `I: IntoIterator`.

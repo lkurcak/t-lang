@@ -498,13 +498,31 @@ impl Traits {
     /// The impl of `tr` (or an inherent one, for `None`) whose type matches
     /// `ty`, and that isn't ruled out there, with what its type parameters
     /// are for it to (see `select`).
+    ///
+    /// At a type that may yet become another, with a type parameter, a
+    /// projection or an opaque type in it, an impl whose type matches is
+    /// the one there only if no other impl's type could match what it
+    /// becomes (`alone`), or else if its bounds hold, with no bounds in
+    /// scope (lemma R1 of docs/73-for-over-collections.md): otherwise none
+    /// is said to be.
     pub fn select(
         &self,
         ty: &Type,
         tr: Option<&str>,
         local: &[(Type, Type)],
     ) -> Option<(usize, Vec<Type>)> {
-        select(&self.impls, &self.anon(), ty, tr, local)
+        let anon = self.anon();
+        let (i, args) = select(&self.impls, &anon, ty, tr, local)?;
+        match tr {
+            Some(_) if !alone(&self.impls, &anon, i, ty) && has_var(ty) => None,
+            Some(tr) if !alone(&self.impls, &anon, i, ty) => {
+                match implements_at(&self.impls, &anon, local, ty, tr, 0) {
+                    Ok(Source::Impl(i, args)) => Some((i, args)),
+                    _ => None,
+                }
+            }
+            _ => Some((i, args)),
+        }
     }
 
     /// Does `ty` implement `tr`, given that the bounds `env` hold? `ty`
@@ -638,6 +656,65 @@ pub fn select(
         }
     }
     found.into_iter().next()
+}
+
+/// Is impl `i`, whose type matches `ty`, the only impl of its trait whose
+/// type could match any type `ty` becomes? So when `ty` has no type
+/// parameter, projection or opaque type in it, which monomorphisation
+/// replaces, or when no other impl's type unifies with it, those taken as
+/// variables, but for one that needs, there, what no impl could give
+/// (`refuted`). Then it's the impl at every type `ty` becomes, whether its
+/// bounds hold or not; else only where they hold (lemma R1 of
+/// docs/73-for-over-collections.md): before step 73, when bounds never
+/// kept two impls apart but for sealed ones, a match was always alone.
+fn alone(impls: &[ImplDef], anon: &Anon, i: usize, ty: &Type) -> bool {
+    let mut vars = Vec::new();
+    let general = generalised(ty, &mut vars);
+    if vars.is_empty() {
+        return true;
+    }
+    let tr = impls[i].trait_name.as_deref();
+    (impls.iter().enumerate())
+        .filter(|(j, d)| *j != i && d.trait_name.as_deref() == tr)
+        .all(|(_, d)| {
+            let renamed: Vec<Type> = d.params.tys_renamed(|p| format!("{p}~"));
+            let sub = Subst::new(&d.params, &renamed);
+            let header = sub.apply(&d.self_ty);
+            let mut params = vars.clone();
+            params.extend(d.params.iter().map(|p| format!("{p}~")));
+            let Some(mgu) = unifier(&header, &general, &params) else {
+                return true;
+            };
+            d.preds.iter().any(|p| {
+                let t = unified(&sub.apply(&p.ty), &mgu);
+                refuted(impls, anon.sealed, &Knowable::Closed, &t, &p.trait_name, 0)
+            })
+        })
+}
+
+/// Has `t` a type variable in it, of the checker's, not yet worked out?
+fn has_var(t: &Type) -> bool {
+    matches!(t, Type::Var(_)) || t.parts().any(has_var)
+}
+
+/// `t` with each projection, opaque type and type variable in it made a
+/// type parameter of its own, `?0`, `?1`, ..: what it may become, with each
+/// of those and each of its type parameters in `vars`.
+fn generalised(t: &Type, vars: &mut Vec<String>) -> Type {
+    match t {
+        Type::Param(p, _) => {
+            if !vars.contains(p) {
+                vars.push(p.clone());
+            }
+            t.clone()
+        }
+        Type::Proj(..) | Type::Opaque(..) | Type::Var(_) => {
+            let name = format!("?{}", vars.len());
+            vars.push(name.clone());
+            Type::Param(name, t.is_unsized())
+        }
+        t => t.map(|p| generalised(p, vars)),
+    }
 }
 
 /// Does impl `d` at type arguments `args` need what no impl could give
@@ -1248,17 +1325,22 @@ pub fn project(
     // the bounds in scope, so they hold of what it's used at, and of that
     // the blanket impl is the only impl there is (coherence, lemma R1).
     // Unless they hold, another impl may be the one there (hole O1).
-    let (i, args) = match s {
-        Type::Param(_, _) | Type::Proj(..) | Type::Opaque(..) => {
-            if assumed(anon, s, tr) {
-                return None;
-            }
-            match implements_at(impls, anon, local, s, tr, 0) {
-                Ok(Source::Impl(i, args)) => (i, args),
-                _ => return None,
-            }
-        }
-        _ => select(impls, anon, s, Some(tr), local)?,
+    //
+    // So too at any type with one of those in it, `Wrap<T>`: its instances
+    // may match another impl's type, told apart from this one by a bound
+    // no impl could meet there (hole W1), unless none can (`alone`).
+    let rigid = matches!(s, Type::Param(_, _) | Type::Proj(..) | Type::Opaque(..));
+    if rigid && assumed(anon, s, tr) {
+        return None;
+    }
+    let (i, args) = match select(impls, anon, s, Some(tr), local) {
+        Some((i, args)) if !rigid && alone(impls, anon, i, s) => (i, args),
+        // Proving needs the type worked out: until it is, it waits.
+        _ if has_var(s) => return None,
+        _ => match implements_at(impls, anon, local, s, tr, 0) {
+            Ok(Source::Impl(i, args)) => (i, args),
+            _ => return None,
+        },
     };
     let d = &impls[i];
     let mut regions = HashMap::new();

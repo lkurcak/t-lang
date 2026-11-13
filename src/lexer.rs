@@ -541,7 +541,7 @@ fn escape(src: &str, at: usize, kind: Quote, out: &mut Vec<u8>) -> Result<usize,
     // string goes on to the next, without the line break or the blanks
     // that start it, as Rust's does: a long string written over lines.
     if matches!(e, '\n' | '\r') && !kind.one() {
-        if e == '\r' && src[i..].chars().next() != Some('\n') {
+        if e == '\r' && !src[i..].starts_with('\n') {
             return Err(Error::syntax(
                 Span::new(esc, i),
                 "a `\\` that ends a line goes on to the next; a `\\r` alone isn't one",
