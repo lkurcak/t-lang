@@ -14,7 +14,26 @@ impl Checker {
     /// in scope?
     pub(crate) fn is_copy(&self, t: &Type) -> bool {
         self.traits
-            .implements(t, COPY, &self.env, &self.adts.proj.local)
+            .implements(t, COPY, &self.adts.proj.env, &self.adts.proj.local)
+            .is_ok()
+    }
+
+    /// Is `call` the call of `IntoIterator::into_iter` a `for` makes of its
+    /// head? Of an iterator, it's the head itself.
+    pub(crate) fn is_for_head(&self, call: NodeId) -> bool {
+        self.modules.for_heads.contains(&call)
+    }
+
+    /// Is `t`, which has no type variables in it, an iterator, with the
+    /// bounds in scope?
+    pub(crate) fn implements_iterator(&self, t: &Type) -> bool {
+        (self.traits)
+            .implements(
+                t,
+                crate::check::ITERATOR,
+                &self.adts.proj.env,
+                &self.adts.proj.local,
+            )
             .is_ok()
     }
 
@@ -23,7 +42,7 @@ impl Checker {
     /// monomorphisation: the borrow checker asks it, and it's done by then.
     pub(crate) fn is_discard(&self, t: &Type) -> bool {
         self.traits
-            .implements(t, DISCARD, &self.env, &self.adts.proj.local)
+            .implements(t, DISCARD, &self.adts.proj.env, &self.adts.proj.local)
             .is_ok()
     }
 
@@ -34,7 +53,7 @@ impl Checker {
     pub(crate) fn missing_discard(&self, t: &Type) -> Option<Type> {
         let bad = self
             .traits
-            .implements(t, DISCARD, &self.env, &self.adts.proj.local)
+            .implements(t, DISCARD, &self.adts.proj.env, &self.adts.proj.local)
             .err()?;
         let Type::Adt(symbol, ..) = &bad.ty else {
             return matches!(bad.ty, Type::Param(_, _) | Type::Proj(..)).then_some(bad.ty);
@@ -73,7 +92,7 @@ impl Checker {
             .all(|(_, f)| traits.implements(f, DISCARD, &assumed, &[]).is_ok());
         (fields_may
             && traits
-                .implements(t, DISCARD, &self.env, &self.adts.proj.local)
+                .implements(t, DISCARD, &self.adts.proj.env, &self.adts.proj.local)
                 .is_ok())
         .then_some(bad.ty)
     }
@@ -113,7 +132,7 @@ impl Checker {
         let Pred { ty, trait_name: tr } = &o.pred;
         let bad = match self
             .traits
-            .implements(ty, tr, &self.env, &self.adts.proj.local)
+            .implements(ty, tr, &self.adts.proj.env, &self.adts.proj.local)
         {
             Ok(_) => return Ok(()),
             Err(bad) => bad,
@@ -142,6 +161,12 @@ impl Checker {
         let message = match &o.why {
             // A hole of a format string, which is a call of `display` or
             // `debug` (`modules::Rewrite::format`).
+            Why::Bound(f, _) if f == "core::fmt::hex" && self.modules.formats.contains(&o.span) => {
+                format!(
+                    "`{ty}` isn't an integer type, which a hole `{{x:x}}` of a format string \
+                     needs{needs}"
+                )
+            }
             Why::Bound(f, _) if self.modules.formats.contains(&o.span) && f != "core::fmt::cat" => {
                 let (name, hole) = match tr.as_str() {
                     DEBUG => ("Debug", "`{x:?}`"),
@@ -184,6 +209,14 @@ impl Checker {
                 fix(&bad)
             ),
             Why::Call => format!("`{ty}` can't be called{needs}"),
+            // At the bottom, it's the type itself that's neither, by the
+            // blanket impl's bound or not; else it would be, but for what's
+            // at the bottom.
+            Why::ForHead if bad.ty == *ty => format!(
+                "`{ty}` can't be iterated: it isn't an iterator, nor `IntoIterator`{}",
+                fix(&bad)
+            ),
+            Why::ForHead => format!("`{ty}` can't be iterated: that needs `{bad}`{}", fix(&bad)),
             Why::Repeat => format!(
                 "`[v; n]` copies `v`, but `{ty}` isn't `{tr}`{needs}{}",
                 fix(&bad)
@@ -263,7 +296,7 @@ impl Checker {
             if let Err(e) = self.prove(&o) {
                 let (ty, tr) = (&o.pred.ty, &o.pred.trait_name);
                 let local = &self.adts.proj.local;
-                let rank = match self.traits.implements(ty, tr, &self.env, local) {
+                let rank = match self.traits.implements(ty, tr, &self.adts.proj.env, local) {
                     Err(bad) if bad == o.pred => return Err(e),
                     _ if self.modules.formats.contains(&o.span)
                         && !matches!(&o.why, Why::Bound(f, _) if f == "core::fmt::cat") =>
@@ -358,6 +391,9 @@ pub(in crate::check) enum Why {
     TryReturn(String),
     /// What's copied by `[v; n]`.
     Repeat,
+    /// What a `for` goes through, which it calls `into_iter` of
+    /// (`modules::Rewrite::for_loop`).
+    ForHead,
 }
 
 /// An obligation the checker has to prove once the types in it are known.

@@ -7,4 +7,4 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     }
     Ok(())
 }
-// error: `Range<bool>` doesn't implement `Iterator`
+// error: `Range<bool>` can't be iterated: it isn't an iterator, nor `IntoIterator`

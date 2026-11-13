@@ -2778,9 +2778,9 @@ impl Parser {
                     .map(|p| {
                         Ok(match p {
                             FPiece::Text(t) => FmtPiece::Text(t),
-                            FPiece::Hole(toks, debug, span) => FmtPiece::Hole {
+                            FPiece::Hole(toks, spec, span) => FmtPiece::Hole {
                                 value: self.hole(toks)?,
-                                debug,
+                                spec,
                                 span,
                             },
                         })

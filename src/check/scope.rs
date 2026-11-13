@@ -349,7 +349,7 @@ impl Checker {
             const_decls: std::mem::take(&mut self.const_decls),
             lifetimes: std::mem::take(&mut self.lifetimes),
             barrier: std::mem::replace(&mut self.barrier, barrier),
-            env: std::mem::take(&mut self.env),
+            env: std::mem::take(&mut self.adts.proj.env),
             self_ty: self.self_ty.take(),
             obligations: std::mem::take(&mut self.obligations),
             closures: std::mem::take(&mut self.closures),
@@ -377,7 +377,7 @@ impl Checker {
         self.const_decls = outer.const_decls;
         self.lifetimes = outer.lifetimes;
         self.barrier = outer.barrier;
-        self.env = outer.env;
+        self.adts.proj.env = outer.env;
         self.self_ty = outer.self_ty;
         self.obligations = outer.obligations;
         self.closures = outer.closures;

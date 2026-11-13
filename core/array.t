@@ -1,5 +1,7 @@
 //! Arrays: a number of values fixed by their type, inline.
 
+use crate::iter::{IntoIterator, Iterator};
+use crate::mem::Copy;
 use crate::ops::Range;
 use crate::option::Option;
 use crate::slice::{Iter, IterMut};
@@ -71,6 +73,51 @@ impl<T, const N: usize> [T; N] {
 
     /// Its values, to change, front to back.
     export fn iter_mut(&mut self) -> IterMut<T> { self.as_mut_slice().iter_mut() }
+}
+
+/// `for x in &a`: a reference to each of its values, front to back.
+impl<'a, T, const N: usize> IntoIterator for &'a [T; N] {
+    type IntoIter = Iter<'a, T>;
+
+    fn into_iter(self) -> Iter<'a, T> { self.iter() }
+}
+
+/// `for x in &mut a`: a reference to change each of its values through,
+/// front to back.
+impl<'a, T, const N: usize> IntoIterator for &'a mut [T; N] {
+    type IntoIter = IterMut<'a, T>;
+
+    fn into_iter(self) -> IterMut<'a, T> { self.iter_mut() }
+}
+
+/// `for x in a`, for an array of copies: a copy of each of its values,
+/// front to back. Taking values out of an array one by one would leave it
+/// part full, which nothing here keeps track of, so its values must be
+/// `Copy`.
+impl<T: Copy, const N: usize> IntoIterator for [T; N] {
+    type IntoIter = IntoIter<T, N>;
+
+    fn into_iter(self) -> IntoIter<T, N> { IntoIter { values: self, next: 0 } }
+}
+
+/// What `for x in a` goes through, for an array `a` of copies: each of its
+/// values, front to back, from index `next` on.
+#[derive(Copy where T: Copy, Discard where T: Discard)]
+export struct IntoIter<T, const N: usize> { values: [T; N], next: usize }
+
+impl<T: Copy, const N: usize> Iterator for IntoIter<T, N> {
+    type Item = T;
+    effect e = {};
+
+    fn next(&mut self) -> Option<T> {
+        let i = self.next;
+        if i < self.values.len() {
+            self.next = i + 1;
+            Option::Some(self.values[i])
+        } else {
+            Option::None
+        }
+    }
 }
 
 /// An array whose value at each index `i` is `f(i)`, made front to back:

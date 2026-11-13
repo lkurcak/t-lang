@@ -27,13 +27,13 @@ impl Checker {
         // A type in a bound can name an associated type of a parameter,
         // as `F: Fn(I::Item)` does, which the parameter's own bounds say
         // which trait's it is: in scope while the types are worked out.
-        let saved = self.env.clone();
+        let saved = self.adts.proj.env.clone();
         for (p, after) in &g.bounds {
             for b in after.iter().filter(|b| !b.name.name.starts_with('\'')) {
                 if params.contains(&p.name)
                     && let Ok(tr) = self.trait_named(&b.name)
                 {
-                    self.env.push(Pred {
+                    self.adts.proj.env.push(Pred {
                         ty: params.ty(&p.name),
                         trait_name: tr,
                     });
@@ -41,7 +41,7 @@ impl Checker {
             }
         }
         let result = self.preds_in(g, params, lifetimes, on_projections);
-        self.env = saved;
+        self.adts.proj.env = saved;
         result
     }
 
@@ -326,6 +326,8 @@ impl Checker {
         let traits_of = |s: &Type| -> Vec<String> {
             let mut out: Vec<String> = Vec::new();
             let mut bounds: Vec<String> = self
+                .adts
+                .proj
                 .env
                 .iter()
                 .filter(|p| p.ty == *s)
@@ -433,13 +435,24 @@ impl Checker {
             _ => {}
         }
         if !hole {
+            // A parameter's bounds say what it implements, or else a
+            // blanket impl whose bounds they meet (rule R of
+            // docs/73-for-over-collections.md), once the impls are known.
+            let by_impl = |s: &Type| {
+                let local = &self.adts.proj.local;
+                !self.collecting
+                    && (self.traits.implements(s, &tr, &self.adts.proj.env, local)).is_ok()
+            };
             let known = match &s {
-                Type::Param(_, _) | Type::Proj(..) => traits_of(&s).contains(&tr),
+                Type::Param(_, _) | Type::Proj(..) => traits_of(&s).contains(&tr) || by_impl(&s),
                 s => {
                     let local = &self.adts.proj.local;
                     self.collecting
                         || crate::check::unify::has_vars(s)
-                        || self.traits.implements(s, &tr, &self.env, local).is_ok()
+                        || self
+                            .traits
+                            .implements(s, &tr, &self.adts.proj.env, local)
+                            .is_ok()
                 }
             };
             if !known {

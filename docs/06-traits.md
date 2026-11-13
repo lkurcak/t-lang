@@ -112,19 +112,16 @@ Ord` gives `T` the methods of both.
 their type parameters are. Then there's never a choice of impl to make,
 and what a call runs doesn't depend on which impls are in sight. Overlap is
 *unification* of the impls' types, with their parameters for variables
-(`traits::overlap`), and bounds don't count:
+(`traits::overlap`), and bounds don't count, unless nothing outside the
+program could change them:
 
 ```rust,error
-trait Show {
-    fn show(&self);
-}
-
 trait Print {
     fn print(&self);
 }
 
-impl<T: Show> Print for T {
-    fn print(&self) { self.show() }
+impl<T: Iterator> Print for T {
+    fn print(&self) {}
 }
 
 impl Print for i64 {
@@ -133,10 +130,13 @@ impl Print for i64 {
 // error: this impl of `Print` overlaps `impl Print for T`
 ```
 
-`i64` isn't `Show`, so the two can't both apply today. But if someone
-made it `Show`, the impl for `i64` would quietly stop being the only one:
-an impl far away would change what code here means. Rust decided the same,
-and has *specialization* as an unfinished way out; T has none.
+`i64` isn't an iterator, so the two can't both apply today. But core
+could make it one, and then the impl for `i64` would quietly stop being
+the only one: an impl far away would change what code here means. Rust
+decided the same, and has *specialization* as an unfinished way out; T
+has none. A bound that only the program itself could make hold, of its
+own trait or about its own type, does count, as in Rust: what no impl
+says is known not to hold (docs/73-for-over-collections.md).
 
 **Termination.** Proving a goal by an impl needs what the impl needs. Each
 impl's type parameters are parts of its type (an impl whose parameter

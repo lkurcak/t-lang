@@ -896,11 +896,37 @@ pub enum FmtPiece {
     Text(String),
     Hole {
         value: Expr,
-        /// Is it `{x:?}`, written by `Debug`?
-        debug: bool,
+        /// How it's written: `{x}`, `{x:?}`, `{x:x}` or `{x:08x}`.
+        spec: FmtSpec,
         /// From the `{` to the `}`.
         span: Span,
     },
+}
+
+/// How a hole of a format string writes its value: what follows the `:`,
+/// if anything does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FmtSpec {
+    /// `{x}`: by its `Display`.
+    Display,
+    /// `{x:?}`: by its `Debug`.
+    Debug,
+    /// `{x:x}`, or `{x:08x}` for at least 8 digits, with 0s in front: an
+    /// integer in hexadecimal, a negative one as its two's complement bits
+    /// (docs/73-for-over-collections.md).
+    Hex(usize),
+}
+
+impl FmtSpec {
+    /// What's written after the `:`, if anything.
+    pub fn suffix(self) -> String {
+        match self {
+            FmtSpec::Display => String::new(),
+            FmtSpec::Debug => ":?".into(),
+            FmtSpec::Hex(0) => ":x".into(),
+            FmtSpec::Hex(n) => format!(":0{n}x"),
+        }
+    }
 }
 
 impl FmtPiece {

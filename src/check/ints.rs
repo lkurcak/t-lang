@@ -34,7 +34,7 @@ pub(crate) const EVERY_INT: (i128, i128) = (0, 127);
 pub(crate) fn param_range(cx: &Checker, t: &Type) -> (i128, i128) {
     let is = |name| {
         (cx.traits)
-            .implements(t, name, &cx.env, &cx.adts.proj.local)
+            .implements(t, name, &cx.adts.proj.env, &cx.adts.proj.local)
             .is_ok()
     };
     if is(UNSIGNED) {

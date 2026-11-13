@@ -515,13 +515,18 @@ impl Checker {
         self.info.methods.insert(name.id, resolved);
         // What `Self` is may only be known from the arguments.
         // A call a `?` means (`modules::Rewrite::try_expr`) is the `?`'s.
+        // A `for`'s call of `into_iter` is about the whole of what it goes
+        // through, where the error is.
+        let for_head = self.modules.for_heads.contains(&e.id);
         let why = match (self.is_try(name.span), name.name.as_str()) {
+            _ if for_head => traits::Why::ForHead,
             (true, "branch") => traits::Why::TryBranch,
             (true, _) => traits::Why::TryReturn(self.returning_from()),
             (false, _) => traits::Why::Method(name.name.clone()),
         };
+        let at = if for_head { e.span } else { name.span };
         let oblige = |cx: &mut Checker| match found.of_trait.clone() {
-            Some(pred) => cx.oblige(pred, name.span, why.clone()),
+            Some(pred) => cx.oblige(pred, at, why.clone()),
             None => Ok(()),
         };
         if !parens {

@@ -598,10 +598,10 @@ impl Checker {
                         Some(id) => self.fns[id].scheme.preds.clone(),
                         None => Vec::new(),
                     };
-                    let outer = std::mem::replace(&mut self.env, env);
+                    let outer = std::mem::replace(&mut self.adts.proj.env, env);
                     let checked =
                         self.sig_refinements(&f, &params, &ret, (allowed, results), &consts);
-                    self.env = outer;
+                    self.adts.proj.env = outer;
                     checked?;
                 }
                 Pending::Fields { s, symbol } => {
@@ -1681,7 +1681,7 @@ impl Checker {
             Type::Int(_) => Some(Sort::Int),
             t @ Type::Param(_, _)
                 if (self.traits)
-                    .implements(&t, INT, &self.env, &self.adts.proj.local)
+                    .implements(&t, INT, &self.adts.proj.env, &self.adts.proj.local)
                     .is_ok() =>
             {
                 Some(Sort::Int)
@@ -2000,7 +2000,7 @@ impl Checker {
         // An integer of a type parameter's is one of some integer type's.
         let int_param = matches!(ret, Type::Param(_, _))
             && (self.traits)
-                .implements(&ret, INT, &self.env, &self.adts.proj.local)
+                .implements(&ret, INT, &self.adts.proj.env, &self.adts.proj.local)
                 .is_ok();
         if !matches!(ret, Type::Int(_) | Type::Bool) && !int_param {
             return Err(Error::ty(
@@ -2104,7 +2104,7 @@ impl Checker {
             Some(t @ Type::Param(_, _)) => {
                 (self
                     .traits
-                    .implements(t, INT, &self.env, &self.adts.proj.local))
+                    .implements(t, INT, &self.adts.proj.env, &self.adts.proj.local))
                 .is_ok()
             }
             _ => false,
@@ -3080,7 +3080,9 @@ impl Walk<'_> {
     /// Does `t` implement built-in trait `name`, where the function is?
     fn implements(&self, t: &Type, name: &str) -> bool {
         let cx = self.cx;
-        (cx.traits.implements(t, name, &cx.env, &cx.adts.proj.local)).is_ok()
+        (cx.traits
+            .implements(t, name, &cx.adts.proj.env, &cx.adts.proj.local))
+        .is_ok()
     }
 
     /// The kind of variable for a value of type `t`, if it's an integer or

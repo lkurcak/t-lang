@@ -19,6 +19,7 @@
 //! None of it is in the prelude: a module that writes or implements them
 //! says `use core::fmt::{Display, Write};`.
 
+use crate::num::{greatest, least, wrap, wrapping_add};
 use crate::result::Result;
 use crate::slice::Iter;
 
@@ -256,7 +257,7 @@ fn escaped<W: Write>(c: char, quote: char, w: &mut W) -> Result<(), W::Error> wi
         '\0' => w.write_str("\\0"),
         '\u{1}'..='\u{1F}' | '\u{7F}' => {
             w.write_str("\\u{")?;
-            hex(c as u32, w)?;
+            hex_digits(c as u64, 0, w)?;
             w.write_char('}')
         },
         c => {
@@ -266,18 +267,6 @@ fn escaped<W: Write>(c: char, quote: char, w: &mut W) -> Result<(), W::Error> wi
             w.write_char(c)
         },
     }
-}
-
-/// The digits of `n` in lowercase hexadecimal, most significant first.
-#[blame_caller]
-fn hex<W: Write>(n: u32, w: &mut W) -> Result<(), W::Error> with W::e {
-    let q = n / 16;
-    if q != 0 {
-        hex(q, w)?;
-    }
-    let d = n % 16;
-    let c = if d < 10 { d + 0x30 } else { d + 0x57 };
-    w.write_char(c as char)
 }
 
 /// Two values written one after the other: what `f"a{x}"` is made of,
@@ -299,6 +288,42 @@ impl<A: Display, B: Display> Display for Cat<A, B> {
 
 /// `x` as itself: a `{x}` of an `f".."`, which must be `Display`.
 export fn display<'a, unsized T: Display>(x: &'a T) -> &'a T { x }
+
+/// An integer written in hexadecimal, with lowercase digits, at least
+/// `width` of them, with 0s in front: a `{x:x}` of an `f".."`, or
+/// `{x:08x}` for a width of 8, made with `hex`. A negative one is written
+/// as its two's complement bits, as many as its type has: `-1i8` is `ff`.
+#[derive(Copy where T: Copy, Discard where T: Discard)]
+export struct Hex<T> { x: T, width: usize }
+
+/// `x`, to be written in hexadecimal, at least `width` digits.
+export fn hex<'a, T: Int>(x: &'a T, width: usize) -> Hex<T> { Hex { x: *x, width } }
+
+/// Its bits, as many as `T` has, in hexadecimal.
+impl<T: Int> Display for Hex<T> {
+    #[blame_caller]
+    fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e {
+        // `T`'s bits, all ones: its greatest value, and for a signed type
+        // the sign bit too, which is the one above. A `u64` has room for
+        // every type's.
+        let top: u64 = wrap(greatest::<T>());
+        let ones = if least::<T>() < 0 { top | wrapping_add(top, 1) } else { top };
+        hex_digits(wrap::<T, u64>(self.x) & ones, self.width, w)
+    }
+}
+
+/// The digits of `m` in lowercase hexadecimal, most significant first, at
+/// least `width` of them.
+#[blame_caller]
+fn hex_digits<W: Write>(m: u64, width: usize, w: &mut W) -> Result<(), W::Error> with W::e {
+    let q = m / 16;
+    if q != 0 || width > 1 {
+        hex_digits(q, if width > 1 { width - 1 } else { 0 }, w)?;
+    }
+    let d = (m % 16) as u32;
+    let c = if d < 10 { d + 0x30 } else { d + 0x57 };
+    w.write_char(c as char)
+}
 
 /// A value written by its `Debug`: a `{x:?}` of an `f".."`, made with
 /// `debug`.

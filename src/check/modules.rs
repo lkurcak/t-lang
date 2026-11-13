@@ -187,6 +187,10 @@ pub(crate) struct Modules {
     /// which the `let` `Rewrite::param_patterns` makes takes apart: for
     /// saying what's wrong with it as what was written.
     pub(crate) closure_params: HashSet<NodeId>,
+    /// The call of `core::iter::IntoIterator::into_iter` each `for` makes
+    /// of its head, by its node (`Rewrite::for_loop`): of an iterator, it
+    /// is the iterator itself, and the borrow checker leaves it out.
+    pub(crate) for_heads: HashSet<NodeId>,
     /// The pattern, `_`, of the `let _: ! = ..` each `let .. else` puts its
     /// `else` in, for saying what's wrong if it can finish.
     pub(crate) must_leave: HashSet<NodeId>,
@@ -2250,14 +2254,25 @@ impl Rewrite<'_> {
                     span: at,
                     id: self.id(),
                 },
-                FmtPiece::Hole { value, debug, span } => {
+                FmtPiece::Hole { value, spec, span } => {
                     let borrow = Expr {
                         span: value.span,
                         kind: ExprKind::Unary(UnOp::Ref, Box::new(value)),
                         id: self.id(),
                     };
-                    let f = if debug { "debug" } else { "display" };
-                    call(self, f, vec![borrow], span)
+                    match spec {
+                        FmtSpec::Display => call(self, "display", vec![borrow], span),
+                        FmtSpec::Debug => call(self, "debug", vec![borrow], span),
+                        // `core::fmt::hex(&x, 8usize)`.
+                        FmtSpec::Hex(width) => {
+                            let width = Expr {
+                                kind: ExprKind::Int(width as u64, Some(crate::types::IntTy::Usize)),
+                                span: at,
+                                id: self.id(),
+                            };
+                            call(self, "hex", vec![borrow, width], span)
+                        }
+                    }
                 }
             });
         }
@@ -2475,8 +2490,35 @@ impl Rewrite<'_> {
             span: at(k, k + 3),
             id: self.id(),
         };
+        // `core::iter::IntoIterator::into_iter(iter)`, at the head: where
+        // an error about it is, `iter` can't be iterated.
+        let into = &self.symbols[match self.core_item("iter", "IntoIterator") {
+            Item::Trait(k) => k,
+            _ => unreachable!("`core::iter::IntoIterator` is a trait"),
+        }];
+        let head_id = self.id();
+        self.r.m.for_heads.insert(head_id);
+        let head = Expr {
+            kind: ExprKind::Variant(
+                Ident {
+                    name: into.clone(),
+                    span: at(iter_span.start, iter_span.start),
+                    id: self.id(),
+                },
+                Vec::new(),
+                Ident {
+                    name: "into_iter".into(),
+                    span: at(iter_span.start, iter_span.start),
+                    id: self.id(),
+                },
+                vec![f.iter],
+                true,
+            ),
+            span: iter_span,
+            id: head_id,
+        };
         ExprKind::Match(
-            Box::new(f.iter),
+            Box::new(head),
             vec![Arm {
                 pat: bind,
                 body: looped,

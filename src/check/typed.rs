@@ -38,6 +38,12 @@ pub(crate) struct Typed {
     /// wanted, or a `&Box<T>` or `&&T` where a `&T` is. With how many more
     /// `*`s it takes to get to the `T`, and whether the result is `&mut`.
     pub(crate) coerced: HashMap<NodeId, (usize, bool)>,
+    /// Of those, the references to arrays used as references to slices
+    /// (*unsizing*), `&[T; N]` as `&[T]`: what's coerced is then given to
+    /// the array's `as_slice`, or `as_mut_slice`, by symbol, with its type
+    /// arguments, which says the slice is as long as the array (lemma C1
+    /// of docs/73-for-over-collections.md).
+    pub(crate) unsized_: HashMap<NodeId, (String, Vec<Type>)>,
     /// Closures used as functions (*reified*: see `Checker::reify`), by
     /// the node of what's used, with the closure's type's symbol.
     pub(crate) reified: HashMap<NodeId, String>,

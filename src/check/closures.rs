@@ -735,7 +735,7 @@ impl Checker {
             Type::Adt(symbol, ..) => Some((0, self.traits.closures.get(&symbol)?.kind?)),
             // What its bounds say: the strongest of the `Fn` traits they do.
             t @ (Type::Param(_, _) | Type::Proj(..) | Type::Opaque(..)) => {
-                let env = (&self.env, &self.adts.proj.local);
+                let env = (&self.adts.proj.env, &self.adts.proj.local);
                 [FnKind::Fn, FnKind::FnMut, FnKind::FnOnce]
                     .into_iter()
                     .find(|k| self.traits.implements(&t, k.name(), env.0, env.1).is_ok())

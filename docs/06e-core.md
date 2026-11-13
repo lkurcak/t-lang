@@ -528,7 +528,7 @@ embedded in the running compiler, and it can't be renamed. See
 | `unwrap`, `panic` | panics weren't in function types yet | 7 ✅ |
 | `expect` | needs strings | 13 ✅ |
 | `filter` | closures can't be higher-ranked when a bound says they should | 6e.1 ✅ |
-| `IntoIterator`, `for x in &list` | needs equality bounds with projections in them, and negative reasoning to tell its blanket impl from one for `&List<T>` (docs/09.1-list.md) | — |
+| `IntoIterator`, `for x in &list` | needs equality bounds with projections in them, and negative reasoning to tell its blanket impl from one for `&List<T>` (docs/09.1-list.md) | 73 ✅ (no `Item` of its own) |
 | `a..=b`, `a..`, `..b`, `.rev()` | not needed yet | — |
 | `<` on any `Ord`, `#[derive(Ord)]` | would make `Ord` part of the language | — |
 | `Clone`, `Default`, `Show` | `Show` needs strings | — |

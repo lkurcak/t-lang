@@ -579,6 +579,19 @@ impl<'a> Builder<'a> {
                 let f = Operand::Const(self.fn_const(&symbol, &targs));
                 self.call_into(f, ft, Some(receiver), args, dest, span);
             }
+            // A `for`'s `IntoIterator::into_iter(it)` of an iterator `it`:
+            // `it` itself, by the one impl an iterator has, whose body is
+            // `self` (lemma F1 of docs/73-for-over-collections.md). Left
+            // out, so a fact about `it` is one about what the loop goes
+            // through, as `0..n`'s end is. Only where the call's type is
+            // seen to be `it`'s, as it is by that impl.
+            ExprKind::Variant(_, _, _, args, true)
+                if self.cx.is_for_head(e.id)
+                    && self.erased_ty(e) == self.erased_ty(&args[0])
+                    && self.cx.implements_iterator(&self.erased_ty(&args[0])) =>
+            {
+                self.expr_into(&args[0], dest);
+            }
             // A path to a method: the method, as a function, maybe called.
             ExprKind::Variant(_, _, _, args, parens)
                 if let Some(Res::Fn(symbol, targs)) = self.cx.typed().vars.get(&e.id) =>
@@ -898,6 +911,12 @@ impl<'a> Builder<'a> {
         let mut pending: Vec<Arg> = first.into_iter().collect();
         for a in args {
             let coerced = self.cx.typed().coerced.get(&a.id).copied();
+            // An array as a slice is a call, of `as_slice`, made here.
+            if self.cx.typed().unsized_.contains_key(&a.id) {
+                let (o, t) = self.operand(a);
+                pending.push(Arg::Value(o, t, a.span));
+                continue;
+            }
             pending.push(match (&a.kind, coerced) {
                 (ExprKind::Unary(op @ (UnOp::Ref | UnOp::RefMut), x), _) => {
                     let m = *op == UnOp::RefMut;
@@ -1122,7 +1141,10 @@ impl<'a> Builder<'a> {
         if place || (e.is_place() && local_var(self)) {
             let p = self.place(e);
             return match coerced {
-                Some((derefs, m)) => self.reborrow(&p, derefs, m, e.span),
+                Some((derefs, m)) => {
+                    let (o, t) = self.reborrow(&p, derefs, m, e.span);
+                    self.unsize(e, o, t)
+                }
                 None => self.use_place(p, e.span),
             };
         }
@@ -1164,9 +1186,37 @@ impl<'a> Builder<'a> {
             }
         };
         match (coerced, o) {
-            (Some((derefs, m)), Operand::Move(p)) => self.reborrow(&p, derefs, m, e.span),
+            (Some((derefs, m)), Operand::Move(p)) => {
+                let (o, t) = self.reborrow(&p, derefs, m, e.span);
+                self.unsize(e, o, t)
+            }
             (_, o) => (o, t),
         }
+    }
+
+    /// `o`, of type `t`, the reference `e` was coerced to: if that's to an
+    /// array where a slice was wanted, given to the array's `as_slice` or
+    /// `as_mut_slice`, as the checker says (`Typed::unsized_`), so the
+    /// slice is what that call says, as long as the array (lemma C1 of
+    /// docs/73-for-over-collections.md).
+    fn unsize(&mut self, e: &'a Expr, o: Operand, t: Type) -> (Operand, Type) {
+        let Some((symbol, targs)) = self.cx.typed().unsized_.get(&e.id).cloned() else {
+            return (o, t);
+        };
+        let Type::Ref(_, m, inner) = &t else {
+            unreachable!("an array is coerced by reference")
+        };
+        let Type::Array(elem, _) = &**inner else {
+            unreachable!("only an array is coerced to a slice")
+        };
+        let slice = Type::Ref(Region::Erased, *m, Box::new(Type::Slice(elem.clone())));
+        let slice = self.regions.fresh_regions(&slice);
+        let tmp = self.temp(slice.clone(), e.span);
+        let ft = self.fn_value(&symbol, &targs, e.span);
+        let f = Operand::Const(self.fn_const(&symbol, &targs));
+        let receiver = Arg::Value(o, t, e.span);
+        self.call_into(f, ft, Some(receiver), &[], &Place::local(tmp), e.span);
+        (Operand::Move(Place::local(tmp)), slice)
     }
 
     /// Place `p`, used as a value at `span`: copied, or a `&mut` reborrowed,
@@ -1472,8 +1522,13 @@ impl<'a> Builder<'a> {
             let tmp = self.temp(t.clone(), init.span);
             let value = Rvalue::Ref(r, mutable, Place::local(kept));
             self.assign(&Place::local(tmp), value, &t, init.span, false);
+            // `&[a, b]` where a slice is wanted: the slice of it.
+            let (Operand::Move(p), _) = self.unsize(init, Operand::Move(Place::local(tmp)), t)
+            else {
+                unreachable!("a temporary")
+            };
             self.declare(pat);
-            self.bind(pat, &Place::local(tmp));
+            self.bind(pat, &p);
             self.end_temps(init.span);
             return;
         }
@@ -1508,12 +1563,20 @@ impl<'a> Builder<'a> {
                     }
                 });
                 let l = self.declare_var(pat, ann);
-                let t = self.ty(init);
-                let tmp = self.temp(t.clone(), init.span);
-                self.expr_into(init, &Place::local(tmp));
-                let value = match self.cx.is_copy(&t) {
-                    true => Operand::Copy(Place::local(tmp)),
-                    false => Operand::Move(Place::local(tmp)),
+                // An array coerced to a slice is a new value, of a type
+                // of its own, which the variable gets.
+                let (value, t) = match self.cx.typed().unsized_.contains_key(&init.id) {
+                    true => self.operand(init),
+                    false => {
+                        let t = self.ty(init);
+                        let tmp = self.temp(t.clone(), init.span);
+                        self.expr_into(init, &Place::local(tmp));
+                        let value = match self.cx.is_copy(&t) {
+                            true => Operand::Copy(Place::local(tmp)),
+                            false => Operand::Move(Place::local(tmp)),
+                        };
+                        (value, t)
+                    }
                 };
                 self.assign(&Place::local(l), Rvalue::Use(value), &t, pat.span, true);
                 if let Some(r) = refinement {

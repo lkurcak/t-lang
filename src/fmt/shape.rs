@@ -37,7 +37,7 @@ macro_rules! leaves {
 }
 
 leaves!(
-    String, bool, char, u8, u64, i128, usize, IntTy, UnOp, BinOp, Lit, Capture
+    String, bool, char, u8, u64, i128, usize, IntTy, UnOp, BinOp, Lit, Capture, FmtSpec
 );
 
 impl Describe for Span {
@@ -198,10 +198,10 @@ impl Describe for FmtPiece {
     fn describe(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Text(s) => f.debug_tuple("Text").field(&Shape(s)).finish(),
-            Self::Hole { value, debug, span } => f
+            Self::Hole { value, spec, span } => f
                 .debug_struct("Hole")
                 .field("value", &Shape(value))
-                .field("debug", &Shape(debug))
+                .field("spec", &Shape(spec))
                 .field("span", &Shape(span))
                 .finish(),
         }

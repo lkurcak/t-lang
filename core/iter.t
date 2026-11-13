@@ -113,6 +113,24 @@ export trait DoubleEndedIterator: Iterator {
     fn next_back(&mut self) -> Option<Self::Item> with Self::e;
 }
 
+/// What a `for` loop can go through: `for x in c` takes the values of
+/// `c.into_iter()`. Every iterator is one, as it is, and so are references
+/// to a collection, which give references to its values: `for x in &l`.
+export trait IntoIterator {
+    /// The iterator it becomes.
+    type IntoIter: Iterator;
+
+    /// It, as an iterator.
+    fn into_iter(self) -> Self::IntoIter;
+}
+
+/// An iterator is iterated as it is.
+impl<I: Iterator> IntoIterator for I {
+    type IntoIter = I;
+
+    fn into_iter(self) -> I { self }
+}
+
 /// Iterating through a mutable reference iterates what it points to, which
 /// is still there afterwards: `for x in &mut it`.
 impl<'a, I: Iterator> Iterator for &'a mut I {

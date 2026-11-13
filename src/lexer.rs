@@ -1,5 +1,6 @@
 //! Turns source text into a flat list of tokens.
 
+use crate::ast::FmtSpec;
 use crate::error::{Edit, Error, Fix, Span};
 use crate::types::IntTy;
 
@@ -248,10 +249,10 @@ impl OpEq {
 pub enum FPiece {
     /// Text, its escapes and `{{`/`}}` worked out.
     Text(String),
-    /// `{e}` or `{e:?}`: the tokens of expression `e`, ending with an
-    /// `Eof` where it ends; whether it's written by `Debug`; and its span,
-    /// the braces included.
-    Hole(Vec<Token>, bool, Span),
+    /// `{e}`, `{e:?}`, `{e:x}` or `{e:08x}`: the tokens of expression
+    /// `e`, ending with an `Eof` where it ends; how it's written; and its
+    /// span, the braces included.
+    Hole(Vec<Token>, crate::ast::FmtSpec, Span),
 }
 
 /// The format string starting with the `f` at `at`: its pieces, and where
@@ -388,22 +389,34 @@ fn fstring_hole(src: &str, at: usize) -> Result<(FPiece, usize), Error> {
         eof.span = Span::new(end, end);
     }
     let mut i = end;
-    let debug = match bytes.get(i) {
-        Some(b':') if src[i..].starts_with(":?}") => {
-            i += 2;
-            true
-        }
+    let spec = match bytes.get(i) {
         Some(b':') => {
             let stop = src[i..].find(['}', '"']).map_or(i + 1, |n| i + n);
-            return Err(Error::syntax(
-                Span::new(i, stop),
-                "a hole in a format string can say `:?`, for `Debug`, and nothing else yet",
-            ));
+            let written = &src[i + 1..stop];
+            // `?`, `x`, or `0` and a width, then `x`.
+            let width = written.strip_prefix('0').and_then(|w| w.strip_suffix('x'));
+            let spec = match written {
+                "?" => Some(FmtSpec::Debug),
+                "x" => Some(FmtSpec::Hex(0)),
+                _ => width
+                    .filter(|w| !w.is_empty() && w.bytes().all(|b| b.is_ascii_digit()))
+                    .and_then(|w| w.parse().ok())
+                    .map(FmtSpec::Hex),
+            };
+            let Some(spec) = spec.filter(|_| bytes.get(stop) == Some(&b'}')) else {
+                return Err(Error::syntax(
+                    Span::new(i, stop),
+                    "a hole in a format string can say `:?`, for `Debug`, or `:x` or `:08x`, \
+                     for hexadecimal, at least 8 digits, and nothing else yet",
+                ));
+            };
+            i = stop;
+            spec
         }
-        _ => false,
+        _ => FmtSpec::Display,
     };
     match bytes.get(i) {
-        Some(b'}') => Ok((FPiece::Hole(toks, debug, Span::new(at, i + 1)), i + 1)),
+        Some(b'}') => Ok((FPiece::Hole(toks, spec, Span::new(at, i + 1)), i + 1)),
         _ => Err(never_closed()),
     }
 }
@@ -523,6 +536,20 @@ fn escape(src: &str, at: usize, kind: Quote, out: &mut Vec<u8>) -> Result<usize,
     if let Some(b) = simple {
         out.push(b);
         return Ok(i);
+    }
+    // A `\` that ends a line of a string, a byte string or a format
+    // string goes on to the next, without the line break or the blanks
+    // that start it, as Rust's does: a long string written over lines.
+    if matches!(e, '\n' | '\r') && !kind.one() {
+        if e == '\r' && !src[i..].starts_with('\n') {
+            return Err(Error::syntax(
+                Span::new(esc, i),
+                "a `\\` that ends a line goes on to the next; a `\\r` alone isn't one",
+            ));
+        }
+        let rest = &src[i..];
+        let blanks = rest.len() - rest.trim_start_matches([' ', '\t', '\n', '\r']).len();
+        return Ok(i + blanks);
     }
     match (e, kind.bytes()) {
         ('x', bytes) => {

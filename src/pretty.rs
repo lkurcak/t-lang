@@ -1952,7 +1952,7 @@ fn format_literal(pieces: &[FmtPiece]) -> String {
                 let s = s[1..s.len() - 1].replace('{', "{{").replace('}', "}}");
                 out.push_str(&s);
             }
-            FmtPiece::Hole { value, debug, .. } => {
+            FmtPiece::Hole { value, spec, .. } => {
                 let doc = Printer::default().expr(value, 0, Ctx::default());
                 let one_line = match flat(&doc) {
                     Some(doc) => render(&doc),
@@ -1963,9 +1963,7 @@ fn format_literal(pieces: &[FmtPiece]) -> String {
                 };
                 out.push('{');
                 out.push_str(one_line.trim_end());
-                if *debug {
-                    out.push_str(":?");
-                }
+                out.push_str(&spec.suffix());
                 out.push('}');
             }
         }
