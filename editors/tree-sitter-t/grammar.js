@@ -717,38 +717,39 @@ module.exports = grammar({
     // `"hi\n"`, a `&'static str`; escapes as in a character literal.
     string_literal: _ => token(seq(
       '"',
-      repeat(choice(/[^"\\]/, /\\[nrt\\0'"]/, /\\x[0-7][0-9a-fA-F]/, /\\u\{[0-9a-fA-F]{1,6}\}/)),
+      repeat(choice(/[^"\\]/, /\\[nrt\\0'"]/, /\\x[0-7][0-9a-fA-F]/, /\\u\{[0-9a-fA-F]{1,6}\}/, /\\\r?\n[ \t\r\n]*/)),
       '"',
     )),
 
     // `f"x = {x}, p = {p.y:?}"`: a format string, a value that's
     // `Display`. Its text is a string literal's, with `{{` and `}}` for
     // braces; a hole holds an expression, with `:?` after it for
-    // `Debug`.
+    // `Debug`, or `:x` or `:08x` for hexadecimal.
     format_string: $ => seq(
       'f"',
       repeat(choice(
         alias(token.immediate(prec(1, /[^"\\{}]+/)), $.format_text),
-        alias(token.immediate(choice(/\\[nrt\\0'"]/, /\\x[0-7][0-9a-fA-F]/, /\\u\{[0-9a-fA-F]{1,6}\}/)), $.escape_sequence),
+        alias(token.immediate(choice(/\\[nrt\\0'"]/, /\\x[0-7][0-9a-fA-F]/, /\\u\{[0-9a-fA-F]{1,6}\}/, /\\\r?\n[ \t\r\n]*/)), $.escape_sequence),
         alias(token.immediate(choice('{{', '}}')), $.escape_sequence),
         $.format_hole,
       )),
       token.immediate('"'),
     ),
 
-    // `{p.x}`, `{n + 1}` or `{f(x):?}` in a format string: an
-    // expression, with `:?` after it for `Debug`.
+    // `{p.x}`, `{n + 1}`, `{f(x):?}` or `{n:08x}` in a format string: an
+    // expression, with `:?` after it for `Debug`, or `:x` or `:08x` for
+    // hexadecimal.
     format_hole: $ => seq(
       token.immediate('{'),
       field('value', $._expression),
-      optional(alias(':?', $.format_spec)),
+      optional(alias(token(prec(1, /:(\?|x|0[0-9]+x)/)), $.format_spec)),
       '}',
     ),
 
     // `b"hi\xFF"`, a `&'static [u8]`: ASCII and `\x` escapes.
     byte_string_literal: _ => token(seq(
       'b"',
-      repeat(choice(/[\x00-!#-\[\]-\x7F]/, /\\[nrt\\0'"]/, /\\x[0-9a-fA-F]{2}/)),
+      repeat(choice(/[\x00-!#-\[\]-\x7F]/, /\\[nrt\\0'"]/, /\\x[0-9a-fA-F]{2}/, /\\\r?\n[ \t\r\n]*/)),
       '"',
     )),
 

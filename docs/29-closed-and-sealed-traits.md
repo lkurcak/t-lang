@@ -338,9 +338,11 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
 ```
 
 Without `sealed`, another package could implement `Small` for `char`, and
-the two impls overlap. It's one step only: a type no impl's type could
-be. A sealed trait with a blanket impl, `impl<T: Open> Small for T`, rules
-nothing out.
+the two impls overlap. It was one step only: a type no impl's type could
+be. A sealed trait with a blanket impl, `impl<T: Open> Small for T`, ruled
+nothing out. Since step 73 it looks through the impls that could prove
+`char: Small`, and rules out what only the package itself could make
+`Open`, and doesn't (docs/73-for-over-collections.md).
 
 `Int`, `Signed` and `Unsigned` are sealed. So core has one `impl<T: Int>
 Ord for T` and one `impl<T: Int> Display for T`, where it had ten of each,

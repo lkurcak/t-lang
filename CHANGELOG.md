@@ -1,5 +1,49 @@
 # Changelog
 
+## Unreleased
+
+Step 73: `for` over collections. See
+[docs/73-for-over-collections.md](docs/73-for-over-collections.md).
+
+### Added
+
+- `core::iter::IntoIterator`, in the prelude, with an impl for every
+  iterator: a `for` goes through anything that implements it. `for x in
+  &l` and `for x in &mut l` for lists, slices and arrays, which give
+  references to the values; `for x in l` for a list, whose new
+  `alloc::list::IntoIter` takes its values out, and for an array of
+  `Copy` values. `for x in &mut l` keeps the list's length.
+- A blanket impl applies to a type parameter, a projection or an `impl`
+  type where its bounds hold: `I: Iterator` makes `I` an `IntoIterator`,
+  `T: Int` makes `T` `Display`. A written bound comes first, as in Rust.
+- Impls whose types could be the same are apart where one needs what no
+  impl could give there, and only the program itself could: `impl<T:
+  Show> Print for T` and `impl Print for i64` stand together if `Show`
+  is the program's own and `i64` isn't `Show`.
+- `&[T; N]` is coerced to `&[T]` where a slice is wanted: `f(&[1, 2])`,
+  `let s: &[u8] = &a;`. What's known of the slice's length is the
+  array's.
+- `{x:x}` and `{x:08x}` in format strings write an integer in
+  hexadecimal; a negative one as its bits. `core::fmt::hex` and
+  `core::fmt::Hex`.
+- A `\` that ends a line of a string, byte string or format string goes
+  on to the next, leaving out the line break and the next line's leading
+  blanks.
+
+### Changed
+
+- The orphan rule looks through references: `&Bag` and `&mut Bag` are
+  the package's own if `Bag` is.
+- `for` over what isn't iterable says so: "`i64` can't be iterated: it
+  isn't an iterator, nor `IntoIterator`".
+
+### Fixed
+
+- Soundness: the associated type of an `impl Trait` value could be taken
+  from a blanket impl that a sealed bound ruled out for its hidden type,
+  while the hidden type's own impl ran: a value of one type checked as
+  another (from 0.42.0).
+
 ## 0.87.0 (2026-11-12)
 
 Step 72: dividing by a constant. See

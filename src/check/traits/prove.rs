@@ -161,6 +161,12 @@ impl Checker {
         let message = match &o.why {
             // A hole of a format string, which is a call of `display` or
             // `debug` (`modules::Rewrite::format`).
+            Why::Bound(f, _) if f == "core::fmt::hex" && self.modules.formats.contains(&o.span) => {
+                format!(
+                    "`{ty}` isn't an integer type, which a hole `{{x:x}}` of a format string \
+                     needs{needs}"
+                )
+            }
             Why::Bound(f, _) if self.modules.formats.contains(&o.span) && f != "core::fmt::cat" => {
                 let (name, hole) = match tr.as_str() {
                     DEBUG => ("Debug", "`{x:?}`"),

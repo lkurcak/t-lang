@@ -362,7 +362,7 @@ checks as the program runs.
 | `str` | a slice of bytes that are UTF-8 | 13 ✅ |
 | `Box<[T]>`, `Box<str>` | values whose size is known only as the program runs, owned | — |
 | arrays, `[T; N]` | a length in the type: const generics | — |
-| `for x in s` | `IntoIterator`, which still needs negative reasoning (docs/09.1-list.md) | — |
+| `for x in s` | `IntoIterator`, which still needs negative reasoning (docs/09.1-list.md) | 73 ✅ |
 | tuples | `Split` and `SplitMut` are structs until there are | 58 ✅ |
 
 ## Exercises

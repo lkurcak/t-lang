@@ -538,6 +538,13 @@ impl Traits {
     /// which hold by normalising, the same before and after substitution
     /// (see `Projections`). `ty` must be normalised as far as it goes.
     ///
+    /// A type parameter or a rigid projection also implements what a
+    /// blanket impl gives it, where that impl's bounds hold of it (rule R
+    /// of docs/73-for-over-collections.md): at every type it's used at,
+    /// they hold, so by coherence that impl is the one monomorphisation
+    /// finds (lemma R1). What a bound says comes first, giving `Assumed`
+    /// (lemma R2).
+    ///
     /// An opaque type implements what its bounds say, and what blanket
     /// impls give that, as a rigid projection does; monomorphisation asks
     /// of its hidden type, which was checked to implement its bounds with
@@ -1075,9 +1082,16 @@ pub struct Anon<'a> {
 /// monomorphisation to each do it at their own time (see
 /// docs/06b-associated-types.md):
 ///
-/// - At most one impl matches a type (coherence), and only by *matching*
+/// - At most one impl applies to a type (coherence), found by *matching*
 ///   its header to the type, never unifying: more known of a type can't
-///   pick another impl, or none.
+///   pick another impl, or none. Where two headers match, one is ruled
+///   out there by a bound no impl could meet (`select`), and stays so at
+///   every instance (lemma N2 of docs/73-for-over-collections.md). At a
+///   type parameter, a projection or an opaque type, only a blanket impl
+///   matches, and it's used only where its bounds hold and no bound in
+///   scope says the trait (`project`, rules R and R2): else the
+///   projection stays rigid, as another impl may be the one at the type it
+///   stands for (hole O1).
 /// - The header is parametric (`check::traits::collect`'s `parametric`): each
 ///   lifetime and type parameter once, no `'static`. So matching gives each
 ///   of them exactly one region or type, with the regions where the type
@@ -1358,13 +1372,15 @@ pub(crate) fn eq_subject(t: &Type) -> &Type {
 ///   and lengths apart
 ///   (`generics::len`), and lengths are equal only syntactically: so
 ///   matching `[T; N]` decides `N` as matching decides `T`.
-/// - A bound of a sealed trait can rule an impl out where its type matches
-///   (`sealed_refutes`): `select` and `project` pass over an impl that
-///   needs one no impl of the trait could meet there. Two impls' types may
-///   unify only if one is ruled out so wherever both match (coherence,
-///   lemma S2 of docs/29-closed-and-sealed-traits.md), and being ruled out
-///   stays true of every type the matched one becomes: so one impl is
-///   found at most, the same one by the checker as by monomorphisation.
+/// - A bound can rule an impl out where its type matches: one of a sealed
+///   trait (`sealed_refutes`), or, where two headers match, any whose
+///   impls are all in sight (`refuted`, `Knowable::Closed`): `select` and
+///   `project` pass over an impl that needs what no impl could give there.
+///   Two impls' types may unify only if one is ruled out so wherever both
+///   match (coherence, lemma S2 of docs/29-closed-and-sealed-traits.md,
+///   N1 of docs/73-for-over-collections.md), and being ruled out stays
+///   true of every type the matched one becomes (N2): so one impl is found
+///   at most, the same one by the checker as by monomorphisation.
 pub fn matches(pat: &Type, t: &Type, params: &[String], found: &mut HashMap<String, Type>) -> bool {
     match pat {
         // A parameter stands for a slice, `str` or an `unsized` parameter

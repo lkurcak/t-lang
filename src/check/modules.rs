@@ -2254,14 +2254,25 @@ impl Rewrite<'_> {
                     span: at,
                     id: self.id(),
                 },
-                FmtPiece::Hole { value, debug, span } => {
+                FmtPiece::Hole { value, spec, span } => {
                     let borrow = Expr {
                         span: value.span,
                         kind: ExprKind::Unary(UnOp::Ref, Box::new(value)),
                         id: self.id(),
                     };
-                    let f = if debug { "debug" } else { "display" };
-                    call(self, f, vec![borrow], span)
+                    match spec {
+                        FmtSpec::Display => call(self, "display", vec![borrow], span),
+                        FmtSpec::Debug => call(self, "debug", vec![borrow], span),
+                        // `core::fmt::hex(&x, 8usize)`.
+                        FmtSpec::Hex(width) => {
+                            let width = Expr {
+                                kind: ExprKind::Int(width as u64, Some(crate::types::IntTy::Usize)),
+                                span: at,
+                                id: self.id(),
+                            };
+                            call(self, "hex", vec![borrow, width], span)
+                        }
+                    }
                 }
             });
         }
