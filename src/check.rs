@@ -352,13 +352,14 @@ struct Local {
 }
 
 /// Where a variable is bound. `shorthand` is for a struct pattern's `P { x }`,
-/// which is short for `P { x: x }`.
+/// which is short for `P { x: x }`, or `P { mut x }`, for `P { x: mut x }`:
+/// where the field's pattern starts, at the `mut` of one.
 #[derive(Debug, Clone, Copy)]
 struct Site {
     span: Span,
     /// The binding pattern, or the parameter's name.
     node: NodeId,
-    shorthand: bool,
+    shorthand: Option<usize>,
 }
 
 impl Local {
@@ -372,7 +373,7 @@ impl Local {
             sites: vec![Site {
                 span,
                 node,
-                shorthand: false,
+                shorthand: None,
             }],
             used: false,
         }

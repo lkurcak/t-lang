@@ -1,6 +1,6 @@
 //! Turns source text into a flat list of tokens.
 
-use crate::ast::FmtSpec;
+use crate::ast::{FmtAlign, FmtKind, FmtPad, FmtSpec, FmtWidth};
 use crate::error::{Edit, Error, Fix, Span};
 use crate::types::IntTy;
 
@@ -249,10 +249,11 @@ impl OpEq {
 pub enum FPiece {
     /// Text, its escapes and `{{`/`}}` worked out.
     Text(String),
-    /// `{e}`, `{e:?}`, `{e:x}` or `{e:08x}`: the tokens of expression
-    /// `e`, ending with an `Eof` where it ends; how it's written; and its
-    /// span, the braces included.
-    Hole(Vec<Token>, crate::ast::FmtSpec, Span),
+    /// `{e}`, `{e:?}`, `{e:x}`, `{e:>8}` ..: the tokens of expression `e`,
+    /// ending with an `Eof` where it ends; how it's written; where the
+    /// name of its width's variable is, for `{e:>w$}`; and its span, the
+    /// braces included.
+    Hole(Vec<Token>, crate::ast::FmtSpec, Option<Span>, Span),
 }
 
 /// The format string starting with the `f` at `at`: its pieces, and where
@@ -389,36 +390,146 @@ fn fstring_hole(src: &str, at: usize) -> Result<(FPiece, usize), Error> {
         eof.span = Span::new(end, end);
     }
     let mut i = end;
-    let spec = match bytes.get(i) {
+    let (spec, width_at) = match bytes.get(i) {
         Some(b':') => {
             let stop = src[i..].find(['}', '"']).map_or(i + 1, |n| i + n);
-            let written = &src[i + 1..stop];
-            // `?`, `x`, or `0` and a width, then `x`.
-            let width = written.strip_prefix('0').and_then(|w| w.strip_suffix('x'));
-            let spec = match written {
-                "?" => Some(FmtSpec::Debug),
-                "x" => Some(FmtSpec::Hex(0)),
-                _ => width
-                    .filter(|w| !w.is_empty() && w.bytes().all(|b| b.is_ascii_digit()))
-                    .and_then(|w| w.parse().ok())
-                    .map(FmtSpec::Hex),
-            };
-            let Some(spec) = spec.filter(|_| bytes.get(stop) == Some(&b'}')) else {
+            let named = src[at + 1..end].trim();
+            let Some(spec) =
+                spec(src, i + 1, stop, named)?.filter(|_| bytes.get(stop) == Some(&b'}'))
+            else {
                 return Err(Error::syntax(
                     Span::new(i, stop),
-                    "a hole in a format string can say `:?`, for `Debug`, or `:x` or `:08x`, \
-                     for hexadecimal, at least 8 digits, and nothing else yet",
+                    "a hole in a format string can say `:?`, for `Debug`, `:x` or `:08x`, for \
+                     hexadecimal, at least 8 digits, `:05`, for decimal, at least 5 characters, \
+                     and `:<8`, `:^8` or `:>8` for a width, with a fill before the side and `?` \
+                     or `x` after, as in `:*>8x`, and nothing else",
                 ));
             };
             i = stop;
             spec
         }
-        _ => FmtSpec::Display,
+        _ => (FmtSpec::DISPLAY, None),
     };
     match bytes.get(i) {
-        Some(b'}') => Ok((FPiece::Hole(toks, spec, Span::new(at, i + 1)), i + 1)),
+        Some(b'}') => Ok((
+            FPiece::Hole(toks, spec, width_at, Span::new(at, i + 1)),
+            i + 1,
+        )),
         _ => Err(never_closed()),
     }
+}
+
+/// The spec of a hole of a format string, written from `from` to `stop`
+/// after its `:`, in a hole that holds `named`: `[[fill] side width]
+/// [? | x]`, or `0` and a width, then `x` or nothing. A width is 1 to
+/// 65535, or a variable, `w$`, whose span it gives too. `None` if it's
+/// none of those.
+fn spec(
+    src: &str,
+    from: usize,
+    stop: usize,
+    named: &str,
+) -> Result<Option<(FmtSpec, Option<Span>)>, Error> {
+    let written = &src[from..stop];
+    let digits = |w: &str| !w.is_empty() && w.bytes().all(|b| b.is_ascii_digit());
+    let side = |c: char| match c {
+        '<' => Some(FmtAlign::Left),
+        '^' => Some(FmtAlign::Center),
+        '>' => Some(FmtAlign::Right),
+        _ => None,
+    };
+    let mut chars = written.chars();
+    // The fill, if it's written, the side, and where the width starts.
+    let pad = match (chars.next(), chars.next()) {
+        (Some(f), Some(s))
+            if !"{}\\".contains(f)
+                && let Some(align) = side(s) =>
+        {
+            Some((Some(f), align, f.len_utf8() + 1))
+        }
+        (Some(s), _) if let Some(align) = side(s) => Some((None, align, 1)),
+        _ => None,
+    };
+    let Some((fill, align, at)) = pad else {
+        // `0` and a width, with `x` or not.
+        if let Some(w) = written.strip_prefix('0') {
+            let (w, hex) = match w.strip_suffix('x') {
+                Some(w) => (w, true),
+                None => (w, false),
+            };
+            let Some(n) = Some(w).filter(|w| digits(w)).and_then(|w| w.parse().ok()) else {
+                return Ok(None);
+            };
+            let kind = if hex {
+                FmtKind::Hex(n)
+            } else {
+                FmtKind::Dec(n)
+            };
+            return Ok(Some((FmtSpec { kind, pad: None }, None)));
+        }
+        // A width with no side says nothing of where the value goes.
+        let n = written.trim_end_matches(['?', 'x']);
+        if digits(n) {
+            return Err(Error::syntax(
+                Span::new(from, stop),
+                format!(
+                    "say which side of the width `{named}` goes: `{{{named}:>{n}}}`, \
+                     `{{{named}:<{n}}}` or `{{{named}:^{n}}}`"
+                ),
+            ));
+        }
+        let kind = match written {
+            "?" => FmtKind::Debug,
+            "x" => FmtKind::Hex(0),
+            _ => return Ok(None),
+        };
+        return Ok(Some((FmtSpec { kind, pad: None }, None)));
+    };
+    let rest = &written[at..];
+    let start = from + at;
+    let (width, width_at, after) = match rest.find('$') {
+        // `w$`: a variable's.
+        Some(d) => {
+            let v = &rest[..d];
+            if !is_name(v) {
+                return Ok(None);
+            }
+            let name = Span::new(start, start + v.len());
+            (FmtWidth::Var(v.to_string()), Some(name), &rest[d + 1..])
+        }
+        None => {
+            let (w, after) = rest.split_at(rest.bytes().take_while(u8::is_ascii_digit).count());
+            let at_w = Span::new(start, start + w.len());
+            if digits(w) && w.bytes().all(|b| b == b'0') {
+                return Err(Error::syntax(at_w, "a width is at least 1"));
+            }
+            // `>08` would say both a fill and 0s.
+            if !digits(w) || w.starts_with('0') {
+                return Ok(None);
+            }
+            match w.parse::<u64>() {
+                Ok(n) if n <= 65535 => (FmtWidth::Lit(n as usize), None, after),
+                _ => return Err(Error::syntax(at_w, "a width is at most 65535")),
+            }
+        }
+    };
+    let kind = match after {
+        "" => FmtKind::Display,
+        "?" => FmtKind::Debug,
+        "x" => FmtKind::Hex(0),
+        _ => return Ok(None),
+    };
+    let pad = Some(FmtPad { fill, align, width });
+    Ok(Some((FmtSpec { kind, pad }, width_at)))
+}
+
+/// Is `s` a variable's name: a letter or `_`, then letters, digits and
+/// `_`s?
+fn is_name(s: &str) -> bool {
+    let mut cs = s.chars();
+    cs.next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && cs.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// Which kind of quoted literal `quoted` reads.
@@ -682,8 +793,9 @@ impl Token {
         self.span = moved(self.span);
         if let Tok::FStr(pieces) = &mut self.tok {
             for p in pieces {
-                if let FPiece::Hole(toks, _, span) = p {
+                if let FPiece::Hole(toks, _, width, span) = p {
                     *span = moved(*span);
+                    *width = width.map(moved);
                     for t in toks {
                         t.shift(by);
                     }

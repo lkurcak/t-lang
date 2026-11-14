@@ -14,7 +14,8 @@
 //! `f"x = {x}, p = {p:?}"` is a value that writes its text, with `x`'s
 //! `Display` and `p`'s `Debug` in place of the holes: it's `Display`
 //! itself, so it goes wherever one does, as in `out.line(&f"..")?`. It's
-//! made of `cat`, `display` and `debug` below, and needs nothing in scope.
+//! made of `cat`, `display` and `debug` below, and `hex`, `dec` and `pad`
+//! for `{x:x}`, `{x:05}` and `{x:>8}`, and needs nothing in scope.
 //!
 //! None of it is in the prelude: a module that writes or implements them
 //! says `use core::fmt::{Display, Write};`.
@@ -323,6 +324,129 @@ fn hex_digits<W: Write>(m: u64, width: usize, w: &mut W) -> Result<(), W::Error>
     let d = (m % 16) as u32;
     let c = if d < 10 { d + 0x30 } else { d + 0x57 };
     w.write_char(c as char)
+}
+
+/// An integer written in decimal, in at least `width` characters, with 0s
+/// after its sign, if it has one: a `{x:05}` of an `f".."`, made with
+/// `dec`. `-42` in 5 is `-0042`.
+#[derive(Copy where T: Copy, Discard where T: Discard)]
+export struct Dec<T> { x: T, width: usize }
+
+/// `x`, to be written in decimal, in at least `width` characters.
+export fn dec<'a, T: Int>(x: &'a T, width: usize) -> Dec<T> { Dec { x: *x, width } }
+
+/// Its sign, if it's negative, then as many 0s as make it `width`
+/// characters, then its digits.
+impl<T: Int> Display for Dec<T> {
+    #[blame_caller]
+    fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e {
+        let mut width = self.width;
+        if self.x < 0 {
+            w.write_char('-')?;
+            width = if width > 0 { width - 1 } else { 0 };
+        }
+        let mut k = length(self.x);
+        while k < width {
+            w.write_char('0')?;
+            k = k + 1;
+        }
+        digits(self.x, w)
+    }
+}
+
+/// How many digits `m` has in decimal, without its sign: 1 for 0.
+fn length<T: Int>(m: T) -> usize {
+    let q = m / 10;
+    // At most 39, of an `i128`'s, so adding never wraps.
+    if q == 0 { 1 } else { wrapping_add(length(q), 1) }
+}
+
+/// Where a value goes in its width, with fill on the other side, or both:
+/// what `<`, `^` and `>` of an `f".."`'s `{x:<8}` say.
+#[derive(Copy, Discard, Eq, Debug)]
+export enum Align {
+    /// At the start, with fill after it.
+    Left,
+    /// In the middle, with fill both sides, the odd one after it.
+    Center,
+    /// At the end, with fill before it.
+    Right,
+}
+
+/// A value written in at least `width` characters, with `fill` on the
+/// side `align` says: a `{x:>8}` of an `f".."`, made with `pad`.
+#[derive(Copy where A: Copy, Discard where A: Discard)]
+export struct Pad<A> { a: A, width: usize, fill: char, align: Align }
+
+/// `a`, to be written in at least `width` characters, with as many
+/// `fill`s as that needs on the side `align` says: `{x:*>8}` of an
+/// `f".."` is `pad(display(&x), 8, '*', Align::Right)`.
+export fn pad<A: Display>(a: A, width: usize, fill: char, align: Align) -> Pad<A> {
+    Pad { a, width, fill, align }
+}
+
+/// `a`'s text, with the fill that makes it `width` characters, if it's
+/// fewer.
+///
+/// It's written twice: first into a sink that only counts its characters,
+/// up to `width`, and can do nothing else, then into `w`, after any fill
+/// that goes before it. Writing a value is the same each time, but for a
+/// `Display` that changes itself through a `Cell` as it's written, which
+/// is then padded by what it wrote the first time.
+impl<A: Display> Display for Pad<A> {
+    #[blame_caller]
+    fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e {
+        let mut count = Count { n: 0, most: self.width };
+        let n = match self.a.fmt(&mut count) {
+            Ok(()) => count.n,
+            Err(()) => self.width,
+        };
+        let fill = if n < self.width { self.width - n } else { 0 };
+        let (before, after) = match self.align {
+            Align::Left => (0, fill),
+            Align::Center => (fill / 2, fill - fill / 2),
+            Align::Right => (fill, 0),
+        };
+        fills(self.fill, before, w)?;
+        self.a.fmt(w)?;
+        fills(self.fill, after, w)
+    }
+}
+
+/// `n` `c`s.
+#[blame_caller]
+fn fills<W: Write>(c: char, n: usize, w: &mut W) -> Result<(), W::Error> with W::e {
+    for _ in 0..n {
+        w.write_char(c)?;
+    }
+    Ok(())
+}
+
+/// A sink that counts the characters written to it, `n`, and takes no
+/// more than `most`: what `Pad` measures with.
+#[derive(Discard)]
+struct Count { n: usize, most: usize }
+
+/// Counting, and full when it's counted `most`.
+impl Write for Count {
+    type Error = ();
+    effect e = {};
+
+    fn write_str(&mut self, s: &str) -> Result<(), ()> {
+        for c in s.chars() {
+            self.write_char(c)?;
+        }
+        Ok(())
+    }
+
+    fn write_char(&mut self, _: char) -> Result<(), ()> {
+        if self.n < self.most {
+            self.n = self.n + 1;
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
 }
 
 /// A value written by its `Debug`: a `{x:?}` of an `f".."`, made with

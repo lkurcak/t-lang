@@ -1811,10 +1811,11 @@ impl Printer<'_> {
                     BRACES,
                     close,
                     fields,
-                    |f| (f.name.span.start, f.pat.span.end),
+                    |f| (f.name.span.start.min(f.pat.span.start), f.pat.span.end),
                     rest,
                     |p, f| match &f.pat.kind {
                         PatternKind::Bind(b, false) if *b == f.name.name => text(b),
+                        PatternKind::Bind(b, true) if *b == f.name.name => text(format!("mut {b}")),
                         _ => text(&f.name.name) + ": " + p.pattern(&f.pat),
                     },
                 );

@@ -24,9 +24,15 @@ pub(super) fn unused(local: &Local) -> Warning {
     let edits = local
         .sites
         .iter()
-        .map(|site| match site.shorthand {
-            true => Edit::insert(site.span.end, format!(": _{name}")),
-            false => Edit::insert(site.span.start, "_"),
+        .flat_map(|site| match site.shorthand {
+            // `P { x }` is `P { x: _x }`, and `P { mut x }` is
+            // `P { x: mut _x }`.
+            Some(at) if at < site.span.start => vec![
+                Edit::insert(at, format!("{name}: ")),
+                Edit::insert(site.span.start, "_"),
+            ],
+            Some(_) => vec![Edit::insert(site.span.end, format!(": _{name}"))],
+            None => vec![Edit::insert(site.span.start, "_")],
         })
         .collect();
     Warning {

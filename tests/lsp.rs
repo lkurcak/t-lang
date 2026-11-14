@@ -1327,6 +1327,69 @@ fn main() {
     stop(child, c);
 }
 
+/// Renaming either side of a shorthand `P { mut x }` spells out the other,
+/// keeping the `mut` with the variable.
+#[test]
+fn renames_mut_shorthand_fields_and_variables() {
+    let (child, mut c) = start();
+    let src = "\
+#[derive(Discard)] struct P { x: i64 }
+fn main() {
+    let P { mut x } = P { x: 1 };
+    x = x + 1;
+    print(x);
+}
+\nfn print<T: Int>(_x: T) {}\n";
+    let (mut d, diags) = Doc::open(&mut c, "file:///tmp/mut_shorthand.t", src);
+    assert_eq!(diags, Vec::<Value>::new());
+    // `x`s in order: 0 the field, 1 the pattern's, binding the variable,
+    // 2 the literal's field, 3 and 4 the assignment, 5 its use.
+    assert_eq!(
+        d.rename(&mut c, "x", 1, "a").unwrap(),
+        src.replace("P { mut x } =", "P { x: mut a } =")
+            .replace("x = x + 1", "a = a + 1")
+            .replace("print(x)", "print(a)")
+    );
+    assert_eq!(
+        d.rename(&mut c, "x", 4, "a").unwrap(),
+        d.rename(&mut c, "x", 1, "a").unwrap(),
+        "from a use, the variable"
+    );
+    let field = src
+        .replace("{ x: i64", "{ y: i64")
+        .replace("P { x: 1 }", "P { y: 1 }")
+        .replace("P { mut x } =", "P { y: mut x } =");
+    assert_eq!(d.rename(&mut c, "x", 0, "y").unwrap(), field);
+    assert_eq!(
+        d.rename(&mut c, "x", 2, "y").unwrap(),
+        field,
+        "from the literal, the field"
+    );
+
+    stop(child, c);
+}
+
+/// The variable a width of a format string names, `{n:>w$}`, renames
+/// with the others.
+#[test]
+fn renames_a_width_in_a_format_string() {
+    let (child, mut c) = start();
+    let src = "\
+fn main() {
+    let (n, wide) = (7u8, 4usize);
+    let _s = f\"[{n:>wide$}][{n:*<wide$?}]\";
+}
+";
+    let (mut d, diags) = Doc::open(&mut c, "file:///tmp/width.t", src);
+    assert_eq!(diags, Vec::<Value>::new());
+    assert_eq!(
+        d.rename(&mut c, "wide", 1, "w").unwrap(),
+        src.replace("wide", "w")
+    );
+
+    stop(child, c);
+}
+
 /// Fields, variants and type parameters rename too, a type parameter only
 /// in what declares it.
 #[test]

@@ -724,7 +724,8 @@ module.exports = grammar({
     // `f"x = {x}, p = {p.y:?}"`: a format string, a value that's
     // `Display`. Its text is a string literal's, with `{{` and `}}` for
     // braces; a hole holds an expression, with `:?` after it for
-    // `Debug`, or `:x` or `:08x` for hexadecimal.
+    // `Debug`, `:x` or `:08x` for hexadecimal, `:05` for zeros in front,
+    // or a width, `:<8`, `:*^8?` or `:>w$x`.
     format_string: $ => seq(
       'f"',
       repeat(choice(
@@ -736,13 +737,17 @@ module.exports = grammar({
       token.immediate('"'),
     ),
 
-    // `{p.x}`, `{n + 1}`, `{f(x):?}` or `{n:08x}` in a format string: an
-    // expression, with `:?` after it for `Debug`, or `:x` or `:08x` for
-    // hexadecimal.
+    // `{p.x}`, `{n + 1}`, `{f(x):?}`, `{n:08x}` or `{s:>8}` in a format
+    // string: an expression, with `:?` after it for `Debug`, `:x` or
+    // `:08x` for hexadecimal, `:05` for zeros in front, or a width, with
+    // a fill before its side and `?` or `x` after it.
     format_hole: $ => seq(
       token.immediate('{'),
       field('value', $._expression),
-      optional(alias(token(prec(1, /:(\?|x|0[0-9]+x)/)), $.format_spec)),
+      optional(alias(
+        token(prec(1, /:([^{}"\\]?[<^>]([1-9][0-9]*|[a-zA-Z_][a-zA-Z0-9_]*\$)(\?|x)?|\?|x|0[0-9]+x?)/)),
+        $.format_spec,
+      )),
       '}',
     ),
 
@@ -1081,8 +1086,10 @@ module.exports = grammar({
       '}',
     ),
 
+    // `x`, `mut x` (short for `x: mut x`) or `x: pattern`.
     field_pattern: $ => choice(
       field('name', $.identifier),
+      seq($.mutable_specifier, field('name', $.identifier)),
       seq(field('name', $._field_identifier), ':', field('pattern', $._pattern)),
     ),
 

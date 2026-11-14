@@ -198,10 +198,16 @@ impl Describe for FmtPiece {
     fn describe(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Text(s) => f.debug_tuple("Text").field(&Shape(s)).finish(),
-            Self::Hole { value, spec, span } => f
+            Self::Hole {
+                value,
+                spec,
+                width,
+                span,
+            } => f
                 .debug_struct("Hole")
                 .field("value", &Shape(value))
                 .field("spec", &Shape(spec))
+                .field("width", &Shape(width))
                 .field("span", &Shape(span))
                 .finish(),
         }
