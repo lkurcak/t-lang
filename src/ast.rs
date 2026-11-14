@@ -896,17 +896,29 @@ pub enum FmtPiece {
     Text(String),
     Hole {
         value: Expr,
-        /// How it's written: `{x}`, `{x:?}`, `{x:x}` or `{x:08x}`.
+        /// How it's written: `{x}`, `{x:?}`, `{x:x}`, `{x:08x}`, `{x:05}`,
+        /// or any of the first three with a width, `{x:>8}` or `{x:*<w$?}`.
         spec: FmtSpec,
+        /// For a width from a variable, `{x:>w$}`: the variable, as an
+        /// expression, where its name is in the hole.
+        width: Option<Box<Expr>>,
         /// From the `{` to the `}`.
         span: Span,
     },
 }
 
 /// How a hole of a format string writes its value: what follows the `:`,
-/// if anything does.
+/// if anything does (docs/76-widths-and-captures.md).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FmtSpec {
+    pub kind: FmtKind,
+    /// `{x:>8}`: written in at least 8 characters, with fill on a side.
+    pub pad: Option<Box<FmtPad>>,
+}
+
+/// How a hole writes its value itself, padded or not.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FmtSpec {
+pub enum FmtKind {
     /// `{x}`: by its `Display`.
     Display,
     /// `{x:?}`: by its `Debug`.
@@ -915,26 +927,84 @@ pub enum FmtSpec {
     /// integer in hexadecimal, a negative one as its two's complement bits
     /// (docs/73-for-over-collections.md).
     Hex(usize),
+    /// `{x:05}`: an integer in decimal, in at least 5 characters, with 0s
+    /// after its sign, if it has one.
+    Dec(usize),
+}
+
+/// A hole's width, `{x:*^8}`: its fill, if it's written, a space if not;
+/// which side the value goes; and the width.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FmtPad {
+    pub fill: Option<char>,
+    pub align: FmtAlign,
+    pub width: FmtWidth,
+}
+
+/// Where a value goes in its width: `<`, at the start, `^`, in the middle,
+/// or `>`, at the end.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FmtAlign {
+    Left,
+    Center,
+    Right,
+}
+
+/// A width: written, `8`, or a variable's, `w$`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FmtWidth {
+    Lit(usize),
+    Var(String),
 }
 
 impl FmtSpec {
+    /// `{x}`.
+    pub const DISPLAY: FmtSpec = FmtSpec {
+        kind: FmtKind::Display,
+        pad: None,
+    };
+
     /// What's written after the `:`, if anything.
-    pub fn suffix(self) -> String {
-        match self {
-            FmtSpec::Display => String::new(),
-            FmtSpec::Debug => ":?".into(),
-            FmtSpec::Hex(0) => ":x".into(),
-            FmtSpec::Hex(n) => format!(":0{n}x"),
+    pub fn suffix(&self) -> String {
+        let mut out = String::new();
+        if let Some(p) = &self.pad {
+            out.extend(p.fill);
+            out.push(match p.align {
+                FmtAlign::Left => '<',
+                FmtAlign::Center => '^',
+                FmtAlign::Right => '>',
+            });
+            match &p.width {
+                FmtWidth::Lit(n) => out.push_str(&n.to_string()),
+                FmtWidth::Var(w) => {
+                    out.push_str(w);
+                    out.push('$');
+                }
+            }
+        }
+        match self.kind {
+            FmtKind::Display => {}
+            FmtKind::Debug => out.push('?'),
+            FmtKind::Hex(0) => out.push('x'),
+            FmtKind::Hex(n) => out.push_str(&format!("0{n}x")),
+            FmtKind::Dec(n) => out.push_str(&format!("0{n}")),
+        }
+        match out.is_empty() {
+            true => out,
+            false => format!(":{out}"),
         }
     }
 }
 
 impl FmtPiece {
-    /// The expression it holds, if it's a hole.
-    pub fn value(&self) -> Option<&Expr> {
+    /// The expressions it holds, if it's a hole: its value, and its width
+    /// if that's a variable's.
+    pub fn exprs(&self) -> Vec<&Expr> {
         match self {
-            FmtPiece::Text(_) => None,
-            FmtPiece::Hole { value, .. } => Some(value),
+            FmtPiece::Text(_) => Vec::new(),
+            FmtPiece::Hole { value, width, .. } => {
+                std::iter::once(value).chain(width.as_deref()).collect()
+            }
         }
     }
 }
@@ -1420,7 +1490,7 @@ impl Expr {
             | ExprKind::Unit
             | ExprKind::Var(..)
             | ExprKind::Continue(_) => Vec::new(),
-            ExprKind::Format(pieces) => pieces.iter().filter_map(FmtPiece::value).collect(),
+            ExprKind::Format(pieces) => pieces.iter().flat_map(FmtPiece::exprs).collect(),
             ExprKind::Unary(_, x)
             | ExprKind::As(x, _)
             | ExprKind::Field(x, _)
@@ -1968,7 +2038,7 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
         ExprKind::Var(name, _) if name.contains("::") => {}
         ExprKind::Format(pieces) => pieces
             .iter()
-            .filter_map(FmtPiece::value)
+            .flat_map(FmtPiece::exprs)
             .for_each(|x| go(x, bound)),
         ExprKind::Var(name, _) => {
             if !bound.contains(name) && !out.contains(name) {

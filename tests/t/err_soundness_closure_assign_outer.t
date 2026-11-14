@@ -1,5 +1,6 @@
 // A closure given to a variable from further out can't outlive what it
-// borrows.
+// borrows: here `*r.r`, which is in `n` (it captures through `r`'s
+// reference since 0.91.0, docs/76-widths-and-captures.md).
 
 use alloc::boxed::Box;
 
@@ -17,4 +18,4 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     out.line(&f())?;
     Ok(())
 }
-// error: `r` doesn't live long enough
+// error: `n` doesn't live long enough

@@ -307,12 +307,12 @@ impl Checker {
                     self.field_visible(&symbol, &fp.name)?;
                     self.note_field(&symbol, &fp.name, &fields[i].1);
                     args[i] = self.pattern(&fp.pat, &fields[i].1, by_ref, binds)?;
-                    // `P { x }`: the parser made the pattern `x` out of the
-                    // field name, so they're in the same place.
-                    if fp.pat.span == fp.name.span
+                    // `P { x }` or `P { mut x }`: the parser made the pattern
+                    // out of the field's name, so it ends where the name does.
+                    if fp.pat.span.end == fp.name.span.end
                         && let Some(site) = binds.last_mut().and_then(|l| l.sites.first_mut())
                     {
-                        site.shorthand = true;
+                        site.shorthand = Some(fp.pat.span.start);
                     }
                 }
                 if let Some(i) = given.iter().position(|g| !g)

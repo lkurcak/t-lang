@@ -16,4 +16,4 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&y)?;
     Ok(())
 }
-// error: cannot move out of `b` while `b` is mutably borrowed
+// error: cannot move out of `b` while `b.x` is mutably borrowed

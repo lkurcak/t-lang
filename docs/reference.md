@@ -43,7 +43,8 @@ that names nothing in scope is an error. So no variable's name (in a
 uppercase letter, and every variant's name must. A variant is named with
 its enum, `Shape::Dot`, or by itself where a `use` brings it in,
 `use Shape::{Dot, Empty};`. The prelude brings in `Some`, `None`, `Ok` and
-`Err`. See [variants](45-variants.md).
+`Err`. See [variants](45-variants.md). In a struct pattern, `S { a }`
+is short for `S { a: a }`, and `S { mut b }` for `S { b: mut b }`.
 
 `if let p = e { .. } else { .. }` runs its block when the pattern matches,
 and `while let p = e { .. }` loops while it does. `let p = e else { .. };`
@@ -102,10 +103,15 @@ and binary `0b1010`. Text uses `"..."` and `'x'`; byte literals use
 `\"`; `\u{20AC}` in text; and `\xFF` in bytes, or in text up to `\x7F`,
 the ASCII characters. A format string, `f"x = {x}, p = {p.y:?}"`, is a
 value that's `Display`: its text, with each hole written by `Display`, or
-by `Debug` with `:?`. A hole holds an expression, which it borrows, as
-`&e`; it ends at the first `}` or `:` outside brackets of its own, and
-can't hold a `"` or a comment. `{{` and `}}` are braces (see
-[format strings](43.1-formatting.md) and [holes](44-runs-and-holes.md)).
+by `Debug` with `:?`, in hexadecimal with `:x` or `:08x`, or in decimal
+with 0s in front with `:05`. A width, `{x:<6}`, `{x:^6}` or `{x:>6}`,
+pads it to at least that many characters, with spaces or the fill before
+the side, `{x:*>6}`; the width can be a `usize` variable's, `{x:>w$}`,
+and `?` or `x` can follow it. A hole holds an expression, which it
+borrows, as `&e`; it ends at the first `}` or `:` outside brackets of its
+own, and can't hold a `"` or a comment. `{{` and `}}` are braces (see
+[format strings](43.1-formatting.md), [holes](44-runs-and-holes.md) and
+[widths](76-widths-and-captures.md)).
 
 Proofs involving `usize` and `isize` must hold on both 32-bit and 64-bit
 machines. A literal of either type must fit on both. See
@@ -313,10 +319,15 @@ See [ownership](05-ownership.md), [linear values](06a.1-linear-types.md),
 
 ## Closures and generic bounds
 
-A closure captures the variables it uses. It borrows them by shared
-reference, borrows them exclusively when needed, or takes ownership when
-its body moves them. `move || ...` captures by value; a `Copy` value is
-copied into the closure. Capturing does not require heap allocation.
+A closure captures the places it uses: `|| p.x` captures `p.x`, not all
+of `p`. It borrows them by shared reference, borrows them exclusively
+when needed, or takes ownership when its body moves them. `move || ...`
+captures by value; a `Copy` value is copied into the closure. A shared
+borrow reaches through references and boxes, `(*r).x`; an exclusive
+borrow or a move takes fields of the variable only, and takes whole a
+variable declared with a refinement or a struct whose fields have
+refinements (see [captured fields](76-widths-and-captures.md)).
+Capturing does not require heap allocation.
 
 Each capturing closure has its own type. It implements `Fn` when calls
 only need shared access to it, `FnMut` when they need exclusive access,

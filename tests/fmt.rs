@@ -971,3 +971,15 @@ trait Run {
 "
     );
 }
+
+#[test]
+fn a_mut_binding_of_a_field_of_its_name_is_written_short() {
+    let out = fmt_body("let P { x: mut x, y: mut z, mut w } = p;");
+    assert_eq!(out, "let P { mut x, y: mut z, mut w } = p;\n");
+}
+
+#[test]
+fn widths_in_format_strings_are_kept() {
+    let body = r#"let s = f"{a:<6}|{b:>8}|{c:^3?}|{d:*>4x}|{e:05}|{n:08x}|{f:-<w$}|{g:>9}";"#;
+    assert_eq!(fmt_body(body), format!("{body}\n"));
+}

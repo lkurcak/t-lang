@@ -80,10 +80,11 @@ pub(crate) struct Builder<'a> {
     temps: Vec<Vec<Local>>,
     /// Each variable's local, by its id.
     vars: HashMap<NodeId, Local>,
-    /// In a closure's body, where each variable it captured is, by id:
+    /// In a closure's body, where each place it captured is, by the
+    /// variable's id, with the fields and `*`s from the variable to it:
     /// `*(*env).x` for one captured by reference, and `(*env).x` or
     /// `env.x` for one captured by value.
-    captured: HashMap<NodeId, Place>,
+    captured: HashMap<NodeId, Vec<(Vec<Proj>, Place)>>,
     /// The loops being lowered, innermost last.
     loops: Vec<LoopFrame>,
     /// Whether control can get to each block, as far as is known: a block
@@ -193,7 +194,10 @@ impl<'a> Builder<'a> {
                 if v.capture != Capture::Value {
                     p = p.project(Proj::Deref);
                 }
-                self.captured.insert(v.id, p);
+                self.captured
+                    .entry(v.id)
+                    .or_default()
+                    .push((v.path.clone(), p));
             }
             self.body.env = vars;
         }
@@ -828,11 +832,12 @@ impl<'a> Builder<'a> {
             // closure lasts, or its value, moved or copied in.
             ExprKind::Lambda(l) => {
                 let t = self.unreified_ty(e);
-                let modes = self.cx.typed().modes.get(&l.id).cloned();
+                let captures = self.cx.typed().modes.get(&l.id).cloned();
                 let fields = struct_fields(self.adts(), &t).unwrap_or_default();
                 let mut ops = Vec::new();
-                for (i, (id, mode)) in modes.iter().flatten().enumerate() {
-                    let place = self.var_place(*id);
+                for (i, c) in captures.iter().flatten().enumerate() {
+                    let (id, mode) = (&c.var, &c.mode);
+                    let place = self.captured_place(*id, &c.path);
                     let name = &self.cx.typed().binds[id].name;
                     let at = first_use(&l.body, name).unwrap_or(l.body.span);
                     let (o, ot) = match mode {
@@ -1396,20 +1401,43 @@ impl<'a> Builder<'a> {
         if let Some(l) = local {
             return Some(Place::local(l));
         }
+        // A variable a predicate names is captured whole
+        // (`Checker::settle_closure`).
         let typed = self.cx.typed();
         let captured = self.captured.iter();
         (captured.into_iter())
             .find(|(id, _)| typed.binds[*id].name == name)
+            .and_then(|(_, ps)| ps.iter().find(|(path, _)| path.is_empty()))
             .map(|(_, p)| p.clone())
     }
 
     /// Where variable `id` is: its local, or in a closure's body, if it
     /// captured it, where in the closure.
     fn var_place(&self, id: NodeId) -> Place {
-        match self.captured.get(&id) {
-            Some(p) => p.clone(),
-            None => Place::local(self.vars[&id]),
-        }
+        self.captured_place(id, &[])
+    }
+
+    /// Where place `path` in variable `id` is: in its local, or in a
+    /// closure's body, if it captured it, in the place it captured that
+    /// it's in, which there is one of (lemma K4 of
+    /// docs/76-widths-and-captures.md).
+    fn captured_place(&self, id: NodeId, path: &[Proj]) -> Place {
+        let Some(places) = self.captured.get(&id) else {
+            let mut p = Place::local(self.vars[&id]);
+            path.iter().for_each(|proj| p = p.project(*proj));
+            return p;
+        };
+        let Some((at, place)) = places.iter().find(|(at, _)| path.starts_with(at)) else {
+            unreachable!(
+                "a place in `{}` its closure didn't capture",
+                self.cx.typed().binds[&id].name
+            )
+        };
+        let mut p = place.clone();
+        path[at.len()..]
+            .iter()
+            .for_each(|proj| p = p.project(*proj));
+        p
     }
 
     /// Where the value of place expression `e` is: a variable, with any
@@ -1417,6 +1445,13 @@ impl<'a> Builder<'a> {
     /// looks through. Anything else is lowered into a temporary.
     fn place(&mut self, e: &'a Expr) -> Place {
         let typed = self.cx.typed();
+        // In a closure's body, a place in a variable it captured.
+        if !self.captured.is_empty()
+            && let Some((id, path)) = typed.place_path(e)
+            && self.captured.contains_key(&id)
+        {
+            return self.captured_place(id, &path);
+        }
         match &e.kind {
             ExprKind::Var(..) => match typed.vars.get(&e.id) {
                 Some(Res::Local(id)) => return self.var_place(*id),

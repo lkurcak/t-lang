@@ -2254,23 +2254,54 @@ impl Rewrite<'_> {
                     span: at,
                     id: self.id(),
                 },
-                FmtPiece::Hole { value, spec, span } => {
+                FmtPiece::Hole {
+                    value,
+                    spec,
+                    width,
+                    span,
+                } => {
                     let borrow = Expr {
                         span: value.span,
                         kind: ExprKind::Unary(UnOp::Ref, Box::new(value)),
                         id: self.id(),
                     };
-                    match spec {
-                        FmtSpec::Display => call(self, "display", vec![borrow], span),
-                        FmtSpec::Debug => call(self, "debug", vec![borrow], span),
+                    let usize = |cx: &mut Self, n: usize| Expr {
+                        kind: ExprKind::Int(n as u64, Some(crate::types::IntTy::Usize)),
+                        span: at,
+                        id: cx.id(),
+                    };
+                    let inner = match spec.kind {
+                        FmtKind::Display => call(self, "display", vec![borrow], span),
+                        FmtKind::Debug => call(self, "debug", vec![borrow], span),
                         // `core::fmt::hex(&x, 8usize)`.
-                        FmtSpec::Hex(width) => {
-                            let width = Expr {
-                                kind: ExprKind::Int(width as u64, Some(crate::types::IntTy::Usize)),
+                        FmtKind::Hex(n) => {
+                            let n = usize(self, n);
+                            call(self, "hex", vec![borrow, n], span)
+                        }
+                        // `core::fmt::dec(&x, 5usize)`.
+                        FmtKind::Dec(n) => {
+                            let n = usize(self, n);
+                            call(self, "dec", vec![borrow, n], span)
+                        }
+                    };
+                    // `core::fmt::pad(inner, 8usize, ' ', core::fmt::Align::Right)`,
+                    // its width a variable's for `{x:>w$}`.
+                    match spec.pad {
+                        None => inner,
+                        Some(pad) => {
+                            let pad = *pad;
+                            let width = match (pad.width, width) {
+                                (FmtWidth::Lit(n), _) => usize(self, n),
+                                (FmtWidth::Var(_), Some(w)) => *w,
+                                (FmtWidth::Var(w), None) => unreachable!("width `{w}` was parsed"),
+                            };
+                            let fill = Expr {
+                                kind: ExprKind::Char(pad.fill.unwrap_or(' ')),
                                 span: at,
                                 id: self.id(),
                             };
-                            call(self, "hex", vec![borrow, width], span)
+                            let align = self.align(pad.align, at);
+                            call(self, "pad", vec![inner, width, fill, align], span)
                         }
                     }
                 }
@@ -2283,6 +2314,34 @@ impl Rewrite<'_> {
             whole = call(self, "cat", vec![p, whole], span);
         }
         whole.kind
+    }
+
+    /// `core::fmt::Align::Left`, `Center` or `Right`, as `align` says, at
+    /// `at`.
+    fn align(&mut self, align: FmtAlign, at: Span) -> Expr {
+        let ty_id = self.id();
+        let item = self.core_item("fmt", "Align");
+        self.r.m.paths.insert(ty_id, item);
+        let member = match align {
+            FmtAlign::Left => "Left",
+            FmtAlign::Center => "Center",
+            FmtAlign::Right => "Right",
+        };
+        let ty = Ident {
+            name: "core::fmt::Align".into(),
+            span: at,
+            id: ty_id,
+        };
+        let member = Ident {
+            name: member.into(),
+            span: at,
+            id: self.id(),
+        };
+        Expr {
+            kind: ExprKind::Variant(ty, Vec::new(), member, Vec::new(), false),
+            span: at,
+            id: self.id(),
+        }
     }
 
     /// Value `name` of the core library's module `module`, which it has.
@@ -3259,9 +3318,11 @@ pub(crate) fn children_mut(e: &mut Expr) -> Vec<&mut Expr> {
         | ExprKind::Var(..)
         | ExprKind::Continue(_) => Vec::new(),
         ExprKind::Format(pieces) => (pieces.iter_mut())
-            .filter_map(|p| match p {
-                FmtPiece::Text(_) => None,
-                FmtPiece::Hole { value, .. } => Some(value),
+            .flat_map(|p| match p {
+                FmtPiece::Text(_) => Vec::new(),
+                FmtPiece::Hole { value, width, .. } => {
+                    std::iter::once(value).chain(width.as_deref_mut()).collect()
+                }
             })
             .collect(),
         ExprKind::Unary(_, x)

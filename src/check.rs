@@ -352,13 +352,14 @@ struct Local {
 }
 
 /// Where a variable is bound. `shorthand` is for a struct pattern's `P { x }`,
-/// which is short for `P { x: x }`.
+/// which is short for `P { x: x }`, or `P { mut x }`, for `P { x: mut x }`:
+/// where the field's pattern starts, at the `mut` of one.
 #[derive(Debug, Clone, Copy)]
 struct Site {
     span: Span,
     /// The binding pattern, or the parameter's name.
     node: NodeId,
-    shorthand: bool,
+    shorthand: Option<usize>,
 }
 
 impl Local {
@@ -372,7 +373,7 @@ impl Local {
             sites: vec![Site {
                 span,
                 node,
-                shorthand: false,
+                shorthand: None,
             }],
             used: false,
         }
@@ -636,6 +637,10 @@ pub(crate) struct Checker {
     variant_refined: HashMap<String, refine::RefinedVariants>,
     /// The refinement of each refined `let`'s variable, by id.
     refined_lets: HashMap<NodeId, refine::Refinement>,
+    /// The parameters, of functions and closures, declared with
+    /// refinements, by id: a closure captures them whole if it changes
+    /// them (`Checker::capture_places`).
+    refined_params: HashSet<NodeId>,
     /// How each struct and enum varies with its parameters, as the borrow
     /// checker says, once asked, for as many as there were then
     /// (`Checker::adt_info`).
@@ -1025,6 +1030,7 @@ impl Checker {
             refined: HashMap::new(),
             const_values: HashMap::new(),
             refined_lets: HashMap::new(),
+            refined_params: HashSet::new(),
             adt_info: AdtInfoCache::default(),
             field_refined: HashMap::new(),
             variant_refined: HashMap::new(),
@@ -1609,6 +1615,9 @@ impl Checker {
             let mut local = Local::param(&p.name, ty);
             local.mutable = p.mutable.is_some();
             local.mut_span = p.mutable.map(|m| Span::new(m.start, p.name.span.start));
+            if !self.written_out(&p.ty).refinements().is_empty() {
+                self.refined_params.insert(local.id());
+            }
             self.note_binds(std::slice::from_ref(&local), false);
             self.bind(&local);
             self.locals.push(local);

@@ -15,7 +15,7 @@ use crate::error::{Edit, Span};
 use crate::lexer::{self, Tok};
 use crate::load::{self, Read};
 use crate::source::Sources;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::Path;
 
 /// Parses and checks the program that starts at `path`, whose text is
@@ -193,18 +193,29 @@ pub fn rename_all(
                 .into_iter()
                 // A use through another name, given by `use .. as`, keeps it.
                 .filter(|span| sources.text().get(span.start..span.end) == Some(old))
-                .map(|span| match (shorthands.contains(&span), is_field) {
-                    (false, _) => Renamed {
+                .map(|span| match (shorthands.get(&span), is_field) {
+                    (None, _) => Renamed {
                         edit: Edit::replace(span, new),
                         field: (0, new.len()),
                         var: (0, new.len()),
                     },
-                    (true, true) => Renamed {
+                    // `P { mut x }`: from the `mut` on.
+                    (Some(&at), true) if at < span.start => Renamed {
+                        edit: Edit::replace(Span::new(at, span.end), format!("{new}: mut {old}")),
+                        field: (0, new.len()),
+                        var: (new.len() + 6, old.len()),
+                    },
+                    (Some(&at), false) if at < span.start => Renamed {
+                        edit: Edit::replace(Span::new(at, span.end), format!("{old}: mut {new}")),
+                        field: (0, old.len()),
+                        var: (old.len() + 6, new.len()),
+                    },
+                    (Some(_), true) => Renamed {
                         edit: Edit::replace(span, format!("{new}: {old}")),
                         field: (0, new.len()),
                         var: (new.len() + 2, old.len()),
                     },
-                    (true, false) => Renamed {
+                    (Some(_), false) => Renamed {
                         edit: Edit::replace(span, format!("{old}: {new}")),
                         field: (0, old.len()),
                         var: (old.len() + 2, new.len()),
@@ -302,7 +313,8 @@ pub fn rename_all(
 
 /// One edit of a rename, with where the field and the variable it names
 /// end up in its text, as offset and length: in a shorthand they're in
-/// different places.
+/// different places. It edits the name, or for `P { mut x }`, from the
+/// `mut` to the name.
 struct Renamed {
     edit: Edit,
     field: (usize, usize),
@@ -316,9 +328,9 @@ fn moved(renamed: &[Renamed], span: Span, var: bool) -> Span {
     let shifted = |at: usize, by: isize| at.checked_add_signed(by).expect("in the source");
     for r in renamed {
         let e = &r.edit;
-        if e.span == span {
+        if e.span.end == span.end && e.span.start <= span.start {
             let (offset, len) = if var { r.var } else { r.field };
-            let start = shifted(span.start, shift) + offset;
+            let start = shifted(e.span.start, shift) + offset;
             return Span::new(start, start + len);
         }
         if e.span.end <= span.start {
@@ -398,23 +410,24 @@ fn what(kind: &NoteKind) -> &'static str {
 }
 
 /// Where a struct literal or pattern in `prog` uses the shorthand `P { x }`,
-/// for `P { x: x }`: the span of each such `x`.
-fn shorthands(prog: &Program) -> HashSet<Span> {
-    let mut out = HashSet::new();
+/// for `P { x: x }`, or `P { mut x }`, for `P { x: mut x }`: the span of
+/// each such `x`, with where its pattern starts, at the `mut` of one.
+fn shorthands(prog: &Program) -> HashMap<Span, usize> {
+    let mut out = HashMap::new();
     for (f, ..) in prog.all_fns() {
         shorthand_exprs(&f.body, &mut out);
     }
     out
 }
 
-fn shorthand_exprs(e: &Expr, out: &mut HashSet<Span>) {
+fn shorthand_exprs(e: &Expr, out: &mut HashMap<Span, usize>) {
     match &e.kind {
         ExprKind::StructLit(_, _, inits) => {
             out.extend(
                 inits
                     .iter()
                     .filter(|i| i.value.span == i.name.span)
-                    .map(|i| i.name.span),
+                    .map(|i| (i.name.span, i.name.span.start)),
             );
         }
         ExprKind::Block(stmts, _) => {
@@ -435,12 +448,12 @@ fn shorthand_exprs(e: &Expr, out: &mut HashSet<Span>) {
     }
 }
 
-fn shorthand_pats(p: &Pattern, out: &mut HashSet<Span>) {
+fn shorthand_pats(p: &Pattern, out: &mut HashMap<Span, usize>) {
     match &p.kind {
         PatternKind::Struct(_, _, fields, _) => {
             for f in fields {
-                if f.pat.span == f.name.span {
-                    out.insert(f.name.span);
+                if f.pat.span.end == f.name.span.end {
+                    out.insert(f.name.span, f.pat.span.start);
                 }
                 shorthand_pats(&f.pat, out);
             }

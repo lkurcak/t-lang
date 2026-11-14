@@ -442,7 +442,7 @@ impl Checker {
                     doc: None,
                     // `P { x }` binds `x`, but `P { x: i64 }` would read as
                     // a field holding the pattern `i64`.
-                    inferred: inferred && !site.shorthand,
+                    inferred: inferred && site.shorthand.is_none(),
                 });
             }
         }

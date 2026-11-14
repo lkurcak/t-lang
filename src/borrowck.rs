@@ -41,6 +41,7 @@ use crate::error::{Edit, Error, Fix, Lint, Span, Warning};
 use crate::mir::{EnvVar, LocalKind, Place, Proj};
 use crate::traits::FnKind;
 use crate::types::{FnType, Region, Scheme, Type};
+pub(crate) use build::project;
 use build::{Builder, ClosureUse};
 use regions::{AdtInfo, Regions, wf_bounds};
 use std::collections::{HashMap, HashSet};
@@ -651,15 +652,16 @@ fn closure_body(
         def.lifetimes.iter().cloned().map(Region::Named).collect(),
         args.clone(),
     );
-    let modes = &typed.modes[&c.lambda.id];
-    let env_vars: Vec<EnvVar> = modes
+    let places = &typed.modes[&c.lambda.id];
+    let env_vars: Vec<EnvVar> = places
         .iter()
-        .map(|(id, capture)| {
-            let bind = &typed.binds[id];
+        .map(|c| {
+            let bind = &typed.binds[&c.var];
             EnvVar {
-                name: bind.name.clone(),
-                capture: *capture,
-                id: *id,
+                name: c.name.clone(),
+                capture: c.mode,
+                id: c.var,
+                path: c.path.clone(),
                 span: bind.span,
                 mutable: bind.mutable,
             }

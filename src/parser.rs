@@ -2778,8 +2778,23 @@ impl Parser {
                     .map(|p| {
                         Ok(match p {
                             FPiece::Text(t) => FmtPiece::Text(t),
-                            FPiece::Hole(toks, spec, span) => FmtPiece::Hole {
+                            FPiece::Hole(toks, spec, width_at, span) => FmtPiece::Hole {
                                 value: self.hole(toks)?,
+                                // `w` of `{x:>w$}`, a variable.
+                                width: match (spec.pad.as_deref(), width_at) {
+                                    (
+                                        Some(FmtPad {
+                                            width: FmtWidth::Var(w),
+                                            ..
+                                        }),
+                                        Some(at),
+                                    ) => Some(Box::new(Expr {
+                                        kind: ExprKind::Var(w.clone(), Vec::new()),
+                                        span: at,
+                                        id: self.id(),
+                                    })),
+                                    _ => None,
+                                },
                                 spec,
                                 span,
                             },
@@ -3418,12 +3433,39 @@ impl Parser {
                 rest = true;
                 break;
             }
+            // `mut x`: short for `x: mut x`, as `x` is for `x: x`. The
+            // pattern ends where the field's name does, which is how the
+            // checker and `rename` tell a shorthand.
             if *self.peek() == Tok::Mut {
-                let message = match self.peek2() {
-                    Tok::Ident(x) => format!("write `{x}: mut {x}` to bind field `{x}` mutably"),
-                    _ => "expected a field name, found `mut`".to_string(),
+                let start = self.bump().span;
+                if !matches!(self.peek(), Tok::Ident(_)) {
+                    return Err(Error::syntax(
+                        self.span(),
+                        "expected a field name after `mut`",
+                    ));
+                }
+                let name = self.ident()?;
+                if starts_upper(&name.name) {
+                    let lower = crate::naming::snake(&name.name);
+                    return Err(Error::syntax(
+                        name.span,
+                        format!(
+                            "a variable's name can't start with an uppercase letter: write \
+                             `{}: mut {lower}` to bind field `{}`",
+                            name.name, name.name
+                        ),
+                    ));
+                }
+                let pat = Pattern {
+                    kind: PatternKind::Bind(name.name.clone(), true),
+                    span: start.to(name.span),
+                    id: self.id(),
                 };
-                return Err(Error::syntax(self.span(), message));
+                fields.push(FieldPat { name, pat });
+                if !self.eat(&Tok::Comma) {
+                    break;
+                }
+                continue;
             }
             let name = self.ident()?;
             let pat = if self.eat(&Tok::Colon) {

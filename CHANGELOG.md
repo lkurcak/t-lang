@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.91.0 (2026-11-14)
+
+Step 76: widths, captured fields and `mut`. See
+[docs/76-widths-and-captures.md](docs/76-widths-and-captures.md).
+
+### Added
+
+- Widths in format strings: `{x:<6}`, `{x:^8}`, `{x:>8}`, with a fill
+  before the side (`{x:*>8}`), `?` or `x` after the width (`{x:>8?}`),
+  and a width from a `usize` variable (`{x:>w$}`). A width counts
+  characters, and says its side: `{x:8}` is refused. Made of
+  `core::fmt::pad(value, width, fill, Align::Right)`, which programs can
+  call too.
+- Zero-padded decimals, `{n:05}`, the sign first: `-0042`
+  (`core::fmt::dec`).
+- `S { a, mut b }` in a struct pattern, short for `S { a, b: mut b }`.
+
+### Changed
+
+- A closure captures the places its body names, not whole variables:
+  `|| p.x` borrows `p.x`, and `|| s.step` for `s: &mut S` borrows
+  `(*s).step`, so the rest can be used while the closure lives. By
+  `&mut` or by value, a closure captures fields of a variable only, not
+  through a reference or box, nor into a refined variable or a struct
+  whose fields have refinements. What a `move` closure didn't take of a
+  variable is dropped where the variable is, not with the closure.
+
 ## 0.90.0 (2026-11-14)
 
 Step 75: waiting and copying. See
