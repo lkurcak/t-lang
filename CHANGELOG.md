@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.90.0 (2026-11-14)
 
 Step 75: waiting and copying. See
 [docs/75-waiting-and-copying.md](docs/75-waiting-and-copying.md).
