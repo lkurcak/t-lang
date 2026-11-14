@@ -2289,6 +2289,7 @@ impl Rewrite<'_> {
                     match spec.pad {
                         None => inner,
                         Some(pad) => {
+                            let pad = *pad;
                             let width = match (pad.width, width) {
                                 (FmtWidth::Lit(n), _) => usize(self, n),
                                 (FmtWidth::Var(_), Some(w)) => *w,

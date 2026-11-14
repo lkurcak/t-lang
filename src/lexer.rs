@@ -519,7 +519,7 @@ fn spec(
         "x" => FmtKind::Hex(0),
         _ => return Ok(None),
     };
-    let pad = Some(FmtPad { fill, align, width });
+    let pad = Some(Box::new(FmtPad { fill, align, width }));
     Ok(Some((FmtSpec { kind, pad }, width_at)))
 }
 

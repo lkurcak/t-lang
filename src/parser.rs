@@ -2781,7 +2781,7 @@ impl Parser {
                             FPiece::Hole(toks, spec, width_at, span) => FmtPiece::Hole {
                                 value: self.hole(toks)?,
                                 // `w` of `{x:>w$}`, a variable.
-                                width: match (&spec.pad, width_at) {
+                                width: match (spec.pad.as_deref(), width_at) {
                                     (
                                         Some(FmtPad {
                                             width: FmtWidth::Var(w),

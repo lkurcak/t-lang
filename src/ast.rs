@@ -913,7 +913,7 @@ pub enum FmtPiece {
 pub struct FmtSpec {
     pub kind: FmtKind,
     /// `{x:>8}`: written in at least 8 characters, with fill on a side.
-    pub pad: Option<FmtPad>,
+    pub pad: Option<Box<FmtPad>>,
 }
 
 /// How a hole writes its value itself, padded or not.
