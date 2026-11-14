@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.91.0 (2026-11-14)
 
 Step 76: widths, captured fields and `mut`. See
 [docs/76-widths-and-captures.md](docs/76-widths-and-captures.md).
