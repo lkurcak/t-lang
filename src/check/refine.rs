@@ -301,6 +301,35 @@ impl RefinedFields {
             && self.about(i).all(|j| j == i)
     }
 
+    /// A field a refinement relates field `i` to, if there's one: one that
+    /// `i`'s refinement names, or one whose refinement names `i`. With none,
+    /// `i` is apart: no refinement is about it and another field, so a
+    /// closure may change it while the function changes the rest (K2 of
+    /// docs/77-method-captures.md).
+    pub(super) fn related(&self, i: usize) -> Option<usize> {
+        if let Some(&j) = self.named.get(i).and_then(|n| n.first()) {
+            return Some(j);
+        }
+        (0..self.refs.len()).find(|&j| j != i && self.named[j].contains(&i))
+    }
+
+    /// Why field `i` isn't apart, if it isn't (`related`).
+    pub(super) fn relates(&self, i: usize) -> Option<String> {
+        let j = self.related(i)?;
+        Some(format!(
+            "a refinement of `{}` relates `{}` to `{}`",
+            self.name, self.names[i], self.names[j]
+        ))
+    }
+
+    /// Why a place in field `i` isn't apart from the rest of the field, if
+    /// it isn't: the field has a refinement of its own, which may relate
+    /// the places in it.
+    pub(super) fn own(&self, i: usize) -> Option<String> {
+        self.refs.get(i)?.as_ref()?;
+        Some(self.why(i, i))
+    }
+
     /// Why field `i` would have to be proved again after a call it's
     /// lent to, if it would: a refinement is about it.
     fn constrained(&self, i: usize) -> Option<String> {

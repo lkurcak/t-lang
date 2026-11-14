@@ -641,6 +641,12 @@ pub(crate) struct Checker {
     /// refinements, by id: a closure captures them whole if it changes
     /// them (`Checker::capture_places`).
     refined_params: HashSet<NodeId>,
+    /// The parameters of functions, by id, each with whether it's declared
+    /// `mut`. Nothing assigns one that isn't, so what's declared behind
+    /// it, if it's a reference, is what its type says, and a closure
+    /// changing a field through it captures the field (lemma E1 of
+    /// docs/77-method-captures.md).
+    fn_params: HashMap<NodeId, bool>,
     /// How each struct and enum varies with its parameters, as the borrow
     /// checker says, once asked, for as many as there were then
     /// (`Checker::adt_info`).
@@ -1031,6 +1037,7 @@ impl Checker {
             const_values: HashMap::new(),
             refined_lets: HashMap::new(),
             refined_params: HashSet::new(),
+            fn_params: HashMap::new(),
             adt_info: AdtInfoCache::default(),
             field_refined: HashMap::new(),
             variant_refined: HashMap::new(),
@@ -1618,6 +1625,7 @@ impl Checker {
             if !self.written_out(&p.ty).refinements().is_empty() {
                 self.refined_params.insert(local.id());
             }
+            self.fn_params.insert(local.id(), local.mutable);
             self.note_binds(std::slice::from_ref(&local), false);
             self.bind(&local);
             self.locals.push(local);

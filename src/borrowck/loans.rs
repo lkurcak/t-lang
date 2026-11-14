@@ -307,5 +307,9 @@ fn clash(
         LocalKind::Temp => "the temporary value".to_string(),
         _ => format!("`{borrowed}`"),
     };
-    Error::ty(span, message).with_note(loan.span, format!("{what} is {kind} here"))
+    let note = match &loan.why {
+        Some(why) => format!("{what} is {kind} here: {why}"),
+        None => format!("{what} is {kind} here"),
+    };
+    Error::ty(span, message).with_note(loan.span, note)
 }

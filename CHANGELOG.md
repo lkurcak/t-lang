@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+Step 77: captures in methods. See
+[docs/77-method-captures.md](docs/77-method-captures.md).
+
+### Changed
+
+- A closure that changes a field through a function's `&mut` parameter,
+  `self` too, captures that field, not the parameter: `|x| self.total +=
+  x` can be called inside `for x in &self.items`, as in Rust. Only
+  parameters not declared `mut` and without refinements in their types;
+  a reference in a variable, a closure's parameter or a box is still
+  captured whole when the closure changes what it points to.
+- A closure that changes or takes a field of a struct whose fields have
+  refinements captures just that field if no refinement relates it to
+  another; one with a refinement of its own whole. Before, it captured
+  the struct.
+- A borrow error from a closure's capture wider than the place its body
+  names says why: "the closure captures `r`, not just `r.lo`, as a
+  refinement of `R` relates `lo` to `hi`".
+
 ## 0.91.0 (2026-11-14)
 
 Step 76: widths, captured fields and `mut`. See

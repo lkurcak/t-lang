@@ -29,6 +29,9 @@ pub(crate) struct Captured {
     /// The place's type.
     pub(crate) ty: Type,
     pub(crate) mode: Capture,
+    /// Why it's short of a place the body names in it, if it is, as a
+    /// note on a borrow error says it (D3 of docs/77-method-captures.md).
+    pub(crate) cut: Option<String>,
 }
 
 #[derive(Clone, Default)]

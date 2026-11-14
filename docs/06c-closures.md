@@ -161,7 +161,8 @@ as a reborrow `&mut *r` anywhere doesn't (`closure_reborrow.t`).
 captured, and can outlive the variables, but not what they borrow. A whole
 variable was captured, not the fields the body uses: `|| p.x` borrowed all
 of `p`. Since 0.91.0 a closure captures the places its body names, `p.x`
-(docs/76-widths-and-captures.md).
+(docs/76-widths-and-captures.md), and since 0.92.0 `self.x` in a method
+when it changes it (docs/77-method-captures.md).
 
 Which trait a closure implements follows from what its body does:
 

@@ -266,7 +266,10 @@ refused; each that doesn't runs.
   `&mut self` method captures `self` uniquely, so `self.a` can't be
   borrowed next to it, as it can in Rust. Going through the reference
   would need the refinement checker to know nothing is declared behind
-  it relating `b` to the rest, which it can't from the type alone.
+  it relating `b` to the rest, which it can't from the type alone. Done
+  in 0.92.0 for a function's parameters, where it can
+  (docs/77-method-captures.md), and for fields of a struct no refinement
+  relates to another.
 - **Places in patterns.** `match p { P { x, .. } => .. }` in a closure
   uses all of `p`, as does a `let` taking it apart; Rust captures only
   what the pattern reads.
