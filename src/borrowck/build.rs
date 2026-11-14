@@ -37,6 +37,9 @@ pub(crate) struct Loan {
     pub(crate) region: usize,
     pub(crate) point: Point,
     pub(crate) span: Span,
+    /// For a closure's capture short of a place its body names, why
+    /// (`Captured::cut`), as a note on a clash with it says.
+    pub(crate) why: Option<String>,
 }
 
 /// An argument of a call, worked out: a value, or a place to borrow,
@@ -850,6 +853,9 @@ impl<'a> Builder<'a> {
                                 _ => {}
                             }
                             let (r, rt) = self.borrow(&place, m, at);
+                            if let Some(loan) = self.loans.last_mut() {
+                                loan.why = c.cut.clone();
+                            }
                             let tmp = self.temp(rt.clone(), at);
                             let value = Rvalue::Ref(r, m, place);
                             self.assign(&Place::local(tmp), value, &rt, at, false);
@@ -1383,6 +1389,7 @@ impl<'a> Builder<'a> {
             region: r,
             point: self.point(),
             span,
+            why: None,
         });
         (r, Type::Ref(Region::Var(r), mutable, Box::new(t)))
     }

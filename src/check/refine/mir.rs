@@ -2296,32 +2296,54 @@ impl Walk<'_> {
     }
 
     /// Checks, as the checker's capture rules promise, that what closure
-    /// `body` changes or owns of a variable is all of it, or fields of it
-    /// none of whose refinements relate them to the rest of it (lemma C4
-    /// of docs/76-widths-and-captures.md): otherwise the walk would check
-    /// what it changes against the rest as it was when the closure was
-    /// made, which the function may have changed since. Fails closed.
-    fn captures_apart(&self, body: &crate::mir::Body) -> Result<(), Error> {
+    /// `body` changes or owns of a variable is all of it, or a place in it
+    /// no refinement relates to the rest (lemma C4 of
+    /// docs/76-widths-and-captures.md, K2 of docs/77-method-captures.md):
+    /// otherwise the walk would check what it changes against the rest as
+    /// it was when the closure was made, which the function may have
+    /// changed since. So: fields, none of which a refinement relates to
+    /// another field of its struct, and in none with a refinement of its
+    /// own; through a `&mut`, by `&mut`, only if it's first, to a field,
+    /// and nothing's declared behind it (lemma E1). Fails closed.
+    fn captures_apart(&mut self, body: &crate::mir::Body) -> Result<(), Error> {
         for var in &body.env {
             if var.capture == Capture::Ref || var.path.is_empty() {
                 continue;
             }
+            let n = var.path.len();
             let mut p = Place::local(var.id);
             let mut apart = !self.invariants.contains_key(&var.id);
-            for proj in &var.path {
-                let crate::mir::Proj::Field(i) = proj else {
-                    apart = false;
+            for (k, proj) in var.path.iter().enumerate() {
+                match proj {
+                    crate::mir::Proj::Field(i) => {
+                        if let Some(fields) = self.refined_fields(&self.place_ty(&p)) {
+                            apart &= fields.related(*i).is_none()
+                                && (k + 1 == n || fields.own(*i).is_none());
+                        }
+                        p = p.then(Proj::Field(*i));
+                    }
+                    crate::mir::Proj::Deref => {
+                        let behind = p.clone().then(Proj::Deref);
+                        apart &= k == 0
+                            && n > 1
+                            && var.capture != Capture::Value
+                            && matches!(self.place_ty(&p), Type::Ref(_, true, _))
+                            && !self.alias.contains_key(&var.id)
+                            && self.place_decl(&behind).iter().all(|(_, d)| d.is_any());
+                        p = behind;
+                    }
+                    crate::mir::Proj::Variant(..) => apart = false,
+                }
+                if !apart {
                     break;
-                };
-                apart &= self.refined_fields(&self.place_ty(&p)).is_none();
-                p = p.then(Proj::Field(*i));
+                }
             }
             if !apart {
                 return Err(Error::ty(
                     var.span,
                     format!(
                         "internal error: a closure captures `{}` apart from what a refinement \
-                         relates it to (docs/76-widths-and-captures.md)",
+                         relates it to (docs/77-method-captures.md)",
                         var.name
                     ),
                 ));

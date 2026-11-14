@@ -324,9 +324,13 @@ of `p`. It borrows them by shared reference, borrows them exclusively
 when needed, or takes ownership when its body moves them. `move || ...`
 captures by value; a `Copy` value is copied into the closure. A shared
 borrow reaches through references and boxes, `(*r).x`; an exclusive
-borrow or a move takes fields of the variable only, and takes whole a
-variable declared with a refinement or a struct whose fields have
-refinements (see [captured fields](76-widths-and-captures.md)).
+borrow reaches through a function's `&mut` parameter (`self` too) not
+declared `mut` and without refinements, to a field; a move takes fields
+of the variable only. Either takes whole a variable declared with a
+refinement, a struct whose field it would take a refinement relates to
+another, and a field with a refinement of its own (see
+[captured fields](76-widths-and-captures.md) and
+[captures in methods](77-method-captures.md)).
 Capturing does not require heap allocation.
 
 Each capturing closure has its own type. It implements `Fn` when calls

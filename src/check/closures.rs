@@ -436,7 +436,7 @@ impl Checker {
             let used = uses
                 .remove(id)
                 .unwrap_or_else(|| vec![(Vec::new(), Use::Read)]);
-            for (path, used) in self.capture_places(*id, &t, used, l.moves.is_some()) {
+            for (path, used, cut) in self.capture_places(*id, &t, used, l.moves.is_some()) {
                 let (name, t) = self.capture_name(&var, &t, &path);
                 let mode = match (l.moves, used) {
                     (Some(_), _) | (None, Use::Move) => Capture::Value,
@@ -477,6 +477,7 @@ impl Checker {
                     name,
                     ty: t,
                     mode,
+                    cut,
                 });
             }
         }
@@ -541,49 +542,81 @@ impl Checker {
     ///   most either needs; which may cut it again.
     ///
     /// So the places are apart, and each the body names is in one.
+    ///
+    /// With each, why it's short of a place the body names in it, if it is
+    /// (`cut`), for a note on a borrow it makes that clashes.
     fn capture_places(
         &self,
         id: NodeId,
         var_ty: &Type,
         uses: Vec<(Vec<Proj>, Use)>,
         moves: bool,
-    ) -> Vec<(Vec<Proj>, Use)> {
+    ) -> Vec<(Vec<Proj>, Use, Option<String>)> {
         let refined = self.refined_var(id);
-        let cut = |(path, used): (Vec<Proj>, Use)| self.cut(var_ty, path, used, moves, refined);
-        let mut places: Vec<(Vec<Proj>, Use)> = uses.into_iter().map(cut).collect();
-        loop {
+        let cut = |(path, used): (Vec<Proj>, Use)| {
+            let (path, used, _) = self.cut(id, var_ty, path, used, moves, refined);
+            (path, used)
+        };
+        let mut places: Vec<(Vec<Proj>, Use)> = uses.iter().cloned().map(cut).collect();
+        let merged = loop {
             // In order, a place comes right before those in it.
             places.sort_by(|a, b| a.0.cmp(&b.0));
             let mut merged: Vec<(Vec<Proj>, Use)> = Vec::new();
             for (path, used) in places {
                 match merged.last_mut() {
-                    Some((q, u)) if path.starts_with(q) => *u = (*u).max(used),
+                    // Changing a place through a reference in `q` only
+                    // needs `q` unique.
+                    Some((q, u)) if path.starts_with(q) => {
+                        let used = match used {
+                            Use::Mutate if !moves && self.through_ref(var_ty, &path, q.len()) => {
+                                Use::Unique
+                            }
+                            used => used,
+                        };
+                        *u = (*u).max(used)
+                    }
                     _ => merged.push((path, used)),
                 }
             }
             let cut_again: Vec<(Vec<Proj>, Use)> = merged.iter().cloned().map(cut).collect();
             if cut_again == merged {
-                return merged;
+                break merged;
             }
             places = cut_again;
-        }
+        };
+        // Why each is short of what's named in it: unless the body names it
+        // itself, why the first place in it that's cut to it was.
+        (merged.into_iter())
+            .map(|(q, used)| {
+                let named = uses.iter().any(|(u, _)| *u == q);
+                let why = (uses.iter())
+                    .filter(|(u, _)| !named && u.starts_with(&q))
+                    .find_map(|(u, how)| {
+                        let (p, _, why) = self.cut(id, var_ty, u.clone(), *how, moves, refined);
+                        (p == q).then_some(why).flatten()
+                    });
+                (q, used, why)
+            })
+            .collect()
     }
 
-    /// Where a capture of place `path` in a variable of type `var_ty`, used
-    /// `used`, stops (`capture_places`), and how it's used then: changing
-    /// what's through a reference only needs the reference to be unique,
-    /// not `mut`.
+    /// Where a capture of place `path` in variable `id`, of type `var_ty`,
+    /// used `used`, stops (`capture_places`), and how it's used then:
+    /// changing what's through a reference only needs the reference to be
+    /// unique, not `mut`. And why it stops short of `path`, if it does, as
+    /// a note says it: "the closure captures `r`, not just `r.x`, as ...".
     fn cut(
         &self,
+        id: NodeId,
         var_ty: &Type,
         path: Vec<Proj>,
         used: Use,
         moves: bool,
         refined: bool,
-    ) -> (Vec<Proj>, Use) {
+    ) -> (Vec<Proj>, Use, Option<String>) {
         let by_value = moves || used == Use::Move;
         if !by_value && used == Use::Read {
-            return (path, used);
+            return (path, used, None);
         }
         // The type of what each projection is of.
         let mut tys = vec![var_ty.clone()];
@@ -591,26 +624,78 @@ impl Checker {
             let t = crate::borrowck::project(&self.adts, &tys[tys.len() - 1], *p);
             tys.push(self.solved(&t));
         }
-        let stop = |k: usize| {
+        let var = &self.typed.binds[&id].name;
+        let name = |k: usize| self.capture_name(var, var_ty, &path[..k]).0;
+        let stop = |k: usize, why: Option<String>| {
             let through =
                 (k..path.len()).any(|j| path[j] == Proj::Deref && matches!(tys[j], Type::Ref(..)));
             let used = match used {
                 Use::Mutate if through && !moves => Use::Unique,
                 used => used,
             };
-            (path[..k].to_vec(), used)
+            let why = why.map(|why| {
+                let (q, named) = (name(k), name(path.len()));
+                format!("the closure captures `{q}`, not just `{named}`, as {why}")
+            });
+            (path[..k].to_vec(), used, why)
         };
         if refined && !path.is_empty() {
-            return stop(0);
+            return stop(0, Some(format!("`{var}` is declared with a refinement")));
         }
+        // Through a function's parameter that's a `&mut`, to a field of what
+        // it points to: what's declared there is what its type says
+        // (lemma E1 of docs/77-method-captures.md).
+        let through_param = !by_value
+            && self.fn_params.get(&id) == Some(&false)
+            && matches!(var_ty, Type::Ref(_, true, _))
+            && path.len() > 1;
         let mut end = path.len();
+        let mut why = None;
         for (k, p) in path.iter().enumerate() {
-            let refined_fields =
-                matches!(&tys[k], Type::Adt(s, ..) if self.field_refined.contains_key(s));
-            if *p == Proj::Deref || refined_fields {
-                end = k;
-                break;
+            match p {
+                Proj::Deref if k == 0 && through_param => {}
+                Proj::Deref => {
+                    end = k;
+                    let r = name(k);
+                    why = match &tys[k] {
+                        // Named whole, `*r` is `r`: nothing's short.
+                        _ if by_value || path.len() == 1 => None,
+                        Type::Box(_) => Some(format!("`{r}` is a box")),
+                        _ if k == 0 && self.fn_params.get(&id) == Some(&true) => {
+                            Some(format!("`{r}` is declared `mut`"))
+                        }
+                        _ => Some(format!("`{r}` isn't a function's parameter")),
+                    };
+                    break;
+                }
+                Proj::Field(i) => {
+                    let Type::Adt(s, ..) = &tys[k] else {
+                        continue;
+                    };
+                    let Some(fields) = self.field_refined.get(s) else {
+                        continue;
+                    };
+                    // A field a refinement relates to another is captured
+                    // with it, in the struct; one with a refinement of its
+                    // own, whole (lemmas E2 and E3).
+                    if let Some(relates) = fields.relates(*i) {
+                        (end, why) = (k, Some(relates));
+                        break;
+                    }
+                    if k + 1 < path.len()
+                        && let Some(own) = fields.own(*i)
+                    {
+                        (end, why) = (k + 1, Some(own));
+                        break;
+                    }
+                }
+                Proj::Variant(..) => unreachable!("a capture is never in a variant"),
             }
+        }
+        // Not just what a parameter points to: that's the parameter,
+        // uniquely, as before.
+        if end == 1 && path[0] == Proj::Deref {
+            end = 0;
         }
         // Moved out, it can't take apart what only its module may.
         if by_value && !self.is_copy(&tys[end]) {
@@ -620,9 +705,22 @@ impl Checker {
             end = whole.unwrap_or(end);
         }
         match end == path.len() {
-            true => (path, used),
-            false => stop(end),
+            true => (path, used, None),
+            false => stop(end, why),
         }
+    }
+
+    /// Does place `path` in a variable of type `var_ty` go through a
+    /// reference after its first `from` projections?
+    fn through_ref(&self, var_ty: &Type, path: &[Proj], from: usize) -> bool {
+        let mut t = var_ty.clone();
+        for (k, p) in path.iter().enumerate() {
+            if k >= from && *p == Proj::Deref && matches!(t, Type::Ref(..)) {
+                return true;
+            }
+            t = self.solved(&crate::borrowck::project(&self.adts, &t, *p));
+        }
+        false
     }
 
     /// May the function being checked take a value of struct `s`, of type
