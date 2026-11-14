@@ -27,7 +27,7 @@ Now:
 #[derive(Discard)]
 struct Run { name: alloc::string::String, ms: u64, clock: u64 }
 
-fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
+fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     let mut out = os.stdout;
     let run = Run { name: alloc::string::String::from("pool"), ms: 1234, clock: 7 };
     let name = run.name;
@@ -69,12 +69,12 @@ made into calls before types are known, so the side would have to be a
 method of `Display`; saying which is clearer, and the rule can be eased
 later without changing what any program means.
 
-```rust,error
-fn main(os: std::Os) -> Result<(), std::io::Error> {
-    let mut out = os.stdout;
-    let n = 10u8;
-    out.line(&f"{n:8}") // error: say which side of the width `n` goes: `{n:>8}`, `{n:<8}` or `{n:^8}`
-}
+```text
+syntax error: say which side of the width `n` goes: `{n:>8}`, `{n:<8}` or `{n:^8}`
+ --> main.t:4:19
+  |
+4 |     out.line(&f"{n:8}")
+  |                   ^^
 ```
 
 `{n:05}` is an integer in decimal in at least 5 characters, with 0s after
