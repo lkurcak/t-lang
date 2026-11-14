@@ -604,7 +604,7 @@ impl Checker {
     /// used `used`, stops (`capture_places`), and how it's used then:
     /// changing what's through a reference only needs the reference to be
     /// unique, not `mut`. And why it stops short of `path`, if it does, as
-    /// a note says it: "the closure captures `r` rather than `r.x`: ...".
+    /// a note says it: "the closure captures `r`, not just `r.x`, as ...".
     fn cut(
         &self,
         id: NodeId,
