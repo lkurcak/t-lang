@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.92.0 (2026-11-14)
 
 Step 77: captures in methods. See
 [docs/77-method-captures.md](docs/77-method-captures.md).
