@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.89.0 (2026-11-14)
 
 Step 74: what a generic call gives back. See
 [docs/74-refined-instantiation.md](docs/74-refined-instantiation.md).
