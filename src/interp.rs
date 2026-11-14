@@ -2429,6 +2429,12 @@ impl<'p> Interp<'p, '_> {
             }
             Intrinsic::ThreadStart => self.start(args, span),
             Intrinsic::ThreadJoin => self.join(args, span),
+            // The machine's, as a compiled program's is: 0 if it can't say,
+            // which `Threads::available` makes 1.
+            Intrinsic::ThreadsAvailable => {
+                let n = std::thread::available_parallelism().map_or(0, |n| n.get());
+                Ok(self.usize_of(n))
+            }
             Intrinsic::Slots(op) => Ok(self.arena(op, args)),
             Intrinsic::RawBuf(op) => self.raw_buf(op, args, span),
             // A string is its bytes.
@@ -2930,6 +2936,39 @@ impl<'p> Interp<'p, '_> {
                 let fields = vec![("0".into(), head), ("1".into(), tail)];
                 return Value::Struct(pair.to_string(), fields);
             }
+            // Its refinement says `src.len() == len()`, and the borrows that
+            // the two are a `&mut` and a `&` alive at once, that they share
+            // no values, which a compiled program's copy counts on.
+            SliceOp::CopyFrom => {
+                let src = args.next().unwrap_or_else(|| unsound("slice arity"));
+                let Value::Ref(
+                    q @ Ptr {
+                        range: Some((from, n)),
+                        ..
+                    },
+                ) = &src
+                else {
+                    unsound(&format!("`{name}` from `{src}`, which isn't a slice"))
+                };
+                if *n != len {
+                    unsound(&format!("`{name}` from a slice of {n} into one of {len}"));
+                }
+                let shared = q.slot == p.slot && q.generation == p.generation && q.path == p.path;
+                if shared && *from < lo + len && lo < from + n {
+                    unsound(&format!("`{name}` between slices that share values"));
+                }
+                for i in 0..len {
+                    let v = self.memory.get(&Ptr {
+                        range: None,
+                        ..q.field(from + i)
+                    });
+                    *self.memory.get_mut(&Ptr {
+                        range: None,
+                        ..p.field(lo + i)
+                    }) = v.clone();
+                }
+                return Value::Unit;
+            }
         };
         let option = option();
         match made {
@@ -3208,6 +3247,48 @@ impl<'p> Interp<'p, '_> {
                     }
                     _ => Ok(std::mem::replace(self.memory.get_mut(&slot), Value::Moved)),
                 }
+            }
+            RawBufOp::CopyIn => {
+                let block = self.unsafe_op();
+                let this = arg();
+                let (q, at, src) = (buf(self, &this), int(arg()), arg());
+                let Value::Ref(
+                    s @ Ptr {
+                        range: Some((from, n)),
+                        ..
+                    },
+                ) = &src
+                else {
+                    unsound(&format!(
+                        "`RawBuf::{name}` from `{src}`, which isn't a slice"
+                    ))
+                };
+                let (from, n) = (*from, *n);
+                let cap = slots(self, &q);
+                let what = format!("`RawBuf::{name}` of slots {at}..{}", at + n as i128);
+                // That half is its type's, `{ a: i64 | a >= 0 }`.
+                if at < 0 {
+                    unsound(&format!("{what}, but {at} isn't `>= 0`"));
+                }
+                if at + n as i128 > cap as i128 {
+                    let why = format!("{what}, but the buffer has {cap}");
+                    return Err(self.broken(span, block, why));
+                }
+                let at = at as usize;
+                if let Some(i) =
+                    (at..at + n).find(|i| !matches!(self.memory.get(&q.field(*i)), Value::Moved))
+                {
+                    let why = format!("{what}, but slot {i} is initialised");
+                    return Err(self.broken(span, block, why));
+                }
+                for i in 0..n {
+                    let v = self.memory.get(&Ptr {
+                        range: None,
+                        ..s.field(from + i)
+                    });
+                    *self.memory.get_mut(&q.field(at + i)) = v.clone();
+                }
+                Ok(Value::Unit)
             }
             RawBufOp::Free => {
                 let block = self.unsafe_op();

@@ -114,3 +114,18 @@ impl<T> RawBuf<T> {
     #[intrinsic]
     export fn free(self) with unsafe;
 }
+
+impl<T: Copy> RawBuf<T> {
+    /// Puts copies of the values of `src` in slots `at` up to, not
+    /// including, `at + src.len()`, all at once, as the machine copies
+    /// memory.
+    ///
+    /// # Safety
+    ///
+    /// Those slots are uninitialised.
+    #[intrinsic]
+    export fn copy_in(&mut self, at: usize, src: { s: &[T] | at + s.len() <= self.cap() })
+    with unsafe
+    ensures
+        self.cap() == old(self.cap());
+}

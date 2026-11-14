@@ -300,10 +300,16 @@ type with any parameters, needing only `Send` or `Sync` of them.
 gives `f`'s result. So `f` may borrow what lives as long as the handle.
 `core::sync::Mutex<T>` is `Sync` when `T` is `Send`; `m.lock(|x| ..)`
 lends `x: &mut T` to the closure while no other thread has it.
+`core::sync::Barrier::new(n)` is where `n` threads wait for each other,
+round after round (`wait` is `true` for the last to come);
+`core::sync::spin()` says a thread is waiting, in a loop that looks again
+and again; `os.threads.available()` is how many threads the machine runs
+at once, at least 1.
 
 See [ownership](05-ownership.md), [linear values](06a.1-linear-types.md),
 [destructors](20-destructors.md), [cells](37-cell.md),
-[statics and atomics](38-statics.md), and [threads](41-threads.md).
+[statics and atomics](38-statics.md), [threads](41-threads.md), and
+[waiting and copying](75-waiting-and-copying.md).
 
 ## Closures and generic bounds
 
@@ -582,6 +588,9 @@ as a measure of what's behind it. `s.slice(a..b)` and `slice_mut` give a
 sub-slice of a slice, an array or a list for a range proved in it, and
 `split_at` and `str::get` say how long what they give is. See
 [field paths and sub-slices](56-field-paths-and-slices.md).
+`s.copy_from_slice(src)` copies `Copy` values from a slice proved as long,
+and `List::extend_from_slice` and `List::from_slice` copy them into a
+list (see [waiting and copying](75-waiting-and-copying.md)).
 
 A measure is a method marked `#[measure]` that takes only `&self`, returns
 an integer (or a type parameter `T: Int`) or boolean, has no effects, and
@@ -692,7 +701,7 @@ and exits unsuccessfully when it returns `Err`; `E` must implement
 
 | Library | Common items |
 |---|---|
-| [`core`](../core/lib.t) | `Option`, `Result`, `Iterator`, `cell::Cell`, `sync::Atomic`, `volatile::Volatile`, `time::Duration`, `io::{Read, Write, Error}`, numeric operations, traits, and formatting |
+| [`core`](../core/lib.t) | `Option`, `Result`, `Iterator`, `cell::Cell`, `sync::{Atomic, Mutex, Barrier}`, `volatile::Volatile`, `time::Duration`, `io::{Read, Write, Error}`, numeric operations, traits, and formatting |
 | [`alloc`](../alloc/lib.t) | `boxed::Box`, `list::List`, `string::String`, `arena::Arena`, and `io::read_line` |
 | [`std`](../std/lib.t) | `Os`, `io` streams and `io::Raw`, `env::{Args, Env}`, `fs::{Fs, ReadFile}`, `time::{Clock, Instant}`, and `entropy::Entropy` |
 

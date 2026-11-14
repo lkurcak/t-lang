@@ -267,6 +267,38 @@ impl<T: Copy> List<T> {
         }
         list
     }
+
+    /// A list of copies of the values of `s`.
+    #[blame_caller]
+    export fn from_slice(s: &[T]) -> { l: List<T> | l.len() == s.len() } with alloc {
+        let mut list = List::with_capacity(s.len());
+        list.extend_from_slice(s);
+        list
+    }
+
+    /// Puts copies of the values of `s` at the end, all at once. When
+    /// there isn't room for them, it grows the buffer first, to twice what
+    /// it was or to fit them, whichever is more, which moves its values
+    /// somewhere new. `s` can't be any of the list's values, as the list is
+    /// lent `&mut` while it's read.
+    #[blame_caller]
+    export fn extend_from_slice(&mut self, s: &[T])
+    with alloc
+    ensures
+        self.len() == old(self.len()) + s.len(),
+    {
+        let n = s.len();
+        let cap = self.buf.cap();
+        let room = cap - self.len;
+        if room < n {
+            let need = n - room;
+            self.buf.grow(if need > cap { need } else { cap });
+        }
+        // SAFETY: slots `len..len + n` are past those that hold values, so
+        // they hold none.
+        unsafe { self.buf.copy_in(self.len, s) };
+        self.len = self.len + n;
+    }
 }
 
 impl<T: Discard> List<T> {

@@ -1522,6 +1522,7 @@ impl<'e> Gen<'e> {
                      t_free(k, k->size, k->align);\n    return r;\n"
                 )
             }
+            Intrinsic::ThreadsAvailable => "    return t_threads_available();\n".to_string(),
             Intrinsic::OutOfMemory => "    t_fail(\"out of memory\", s);\n".to_string(),
             Intrinsic::FromUtf8Unchecked => "    return a0;\n".to_string(),
             Intrinsic::Swap => {
@@ -1721,6 +1722,12 @@ impl<'e> Gen<'e> {
                     RawBufOp::Read => {
                         format!("    if (a1 >= a0->cap) {broken};\n    return a0->ptr[a1];\n")
                     }
+                    // Its slots and the slice's values are apart: the slice
+                    // is a `&` and the buffer lent `&mut`, alive at once.
+                    RawBufOp::CopyIn => format!(
+                        "    if (a1 > a0->cap || a2.len > a0->cap - a1) {broken};\n    \
+                         if (a2.len) __builtin_memcpy(a0->ptr + a1, a2.ptr, a2.len * sizeof({e}));\n{unit}"
+                    ),
                     RawBufOp::Free => format!(
                         "    if (a0.cap) t_platform_free(a0.ptr, a0.cap * sizeof({e}), _Alignof({e}));\n{unit}"
                     ),
@@ -1762,6 +1769,12 @@ impl<'e> Gen<'e> {
                          return ({r}){{.tag = {none}}};\n"
                     )
                 }
+                // The two are a `&mut` and a `&` alive at once, so they share
+                // no values: one copy of the memory, all at once.
+                SliceOp::CopyFrom => format!(
+                    "    if (a0.len != a1.len) t_bug(\"copy between slices of different lengths\");\n    \
+                     if (a0.len) __builtin_memcpy(a0.ptr, a1.ptr, a0.len * sizeof *a0.ptr);\n{unit}"
+                ),
                 SliceOp::Cut | SliceOp::CutMut => {
                     let sl = self.cty(&params[0]);
                     format!(

@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+Step 75: waiting and copying. See
+[docs/75-waiting-and-copying.md](docs/75-waiting-and-copying.md).
+
+### Added
+
+- `core::sync::spin()`, public: says a thread is waiting for another, in
+  a loop that looks again and again.
+- `os.threads.available()`: how many threads the machine runs at once,
+  for the program, `{ n: usize | n >= 1 }`.
+- `core::sync::Barrier`: where a number of threads wait for each other,
+  round after round; `wait` is `true` for the last to come. It spins.
+- `[T]::copy_from_slice(src)` of `Copy` values, `src` as long, as one copy
+  of memory; `List::extend_from_slice(s)` and `List::from_slice(s)`; and
+  `RawBuf::copy_in(at, src)` under them, unsafe as `write` is.
+
+### Changed
+
+- `core::slice::empty()` and `empty_mut()` say their length is 0.
+
 ## 0.89.0 (2026-11-14)
 
 Step 74: what a generic call gives back. See

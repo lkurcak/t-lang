@@ -17,6 +17,9 @@
 #include <sys/ioctl.h>
 #include <sys/types.h>
 #include <sys/random.h>
+#if defined(__linux__)
+#include <sys/syscall.h>
+#endif
 
 extern char **environ;
 
@@ -444,6 +447,25 @@ static void t_start(void) {
 }
 
 static void t_spin(void) { sched_yield(); }
+
+/* How many threads the machine runs at once, for the program: on Linux,
+ * the processors it may run on, as `taskset` and containers limit them;
+ * elsewhere, those online. 0 if it can't say. */
+static uint64_t t_threads_available(void) {
+#if defined(__linux__) && defined(SYS_sched_getaffinity)
+    unsigned long mask[1024 / (8 * sizeof(unsigned long))] = {0};
+    long n = syscall(SYS_sched_getaffinity, 0, sizeof mask, mask);
+    if (n > 0) {
+        uint64_t count = 0;
+        for (size_t i = 0; i < (size_t)n / sizeof mask[0]; i++) {
+            count += (uint64_t)__builtin_popcountl(mask[i]);
+        }
+        if (count > 0) return count;
+    }
+#endif
+    long online = sysconf(_SC_NPROCESSORS_ONLN);
+    return online > 0 ? (uint64_t)online : 0;
+}
 
 /* Starts a thread, `th`, running `go(k)`, with a stack as big as `main`'s
  * usually is. If it can't, the program stops, as when there's no memory:
