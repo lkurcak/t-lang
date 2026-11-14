@@ -80,6 +80,9 @@ pub enum Intrinsic {
     ThreadStart,
     /// `std::thread::JoinHandle::join`.
     ThreadJoin,
+    /// `std::thread::Threads::os_available`: how many threads the machine
+    /// runs at once, for the program.
+    ThreadsAvailable,
 }
 
 /// A method of `core::sync::Atomic`, each one sequentially consistent step.
@@ -122,6 +125,8 @@ pub enum SliceOp {
     GetMut,
     Cut,
     CutMut,
+    /// `copy_from_slice`, of `Copy` values.
+    CopyFrom,
 }
 
 /// A method of an array.
@@ -144,6 +149,8 @@ pub enum RawBufOp {
     Slice,
     SliceMut,
     Free,
+    /// `copy_in`, of `Copy` values.
+    CopyIn,
 }
 
 /// A method of `alloc::arena::Slots`.
@@ -260,6 +267,7 @@ impl Intrinsic {
             Slice(SliceOp::GetMut),
             Slice(SliceOp::Cut),
             Slice(SliceOp::CutMut),
+            Slice(SliceOp::CopyFrom),
             Array(ArrayOp::Len),
             Array(ArrayOp::AsSlice),
             Array(ArrayOp::AsMutSlice),
@@ -273,6 +281,7 @@ impl Intrinsic {
             RawBuf(RawBufOp::Slice),
             RawBuf(RawBufOp::SliceMut),
             RawBuf(RawBufOp::Free),
+            RawBuf(RawBufOp::CopyIn),
             OutOfMemory,
             Slots(SlotsOp::New),
             Slots(SlotsOp::Alloc),
@@ -305,6 +314,7 @@ impl Intrinsic {
             EntropyFill,
             ThreadStart,
             ThreadJoin,
+            ThreadsAvailable,
         ]
     };
 
@@ -357,6 +367,7 @@ impl Intrinsic {
                 SliceOp::GetMut => "[T]::get_mut",
                 SliceOp::Cut => "[T]::cut",
                 SliceOp::CutMut => "[T]::cut_mut",
+                SliceOp::CopyFrom => "[T]::copy_from_slice",
             },
             Array(op) => match op {
                 ArrayOp::Len => "[T; N]::len",
@@ -374,6 +385,7 @@ impl Intrinsic {
                 RawBufOp::Slice => "alloc::raw::RawBuf::slice",
                 RawBufOp::SliceMut => "alloc::raw::RawBuf::slice_mut",
                 RawBufOp::Free => "alloc::raw::RawBuf::free",
+                RawBufOp::CopyIn => "alloc::raw::RawBuf::copy_in",
             },
             OutOfMemory => "alloc::raw::out_of_memory",
             Slots(op) => match op {
@@ -426,6 +438,7 @@ impl Intrinsic {
             EntropyFill => "std::entropy::Entropy::os_fill",
             ThreadStart => "std::thread::start",
             ThreadJoin => "std::thread::JoinHandle::join",
+            ThreadsAvailable => "std::thread::Threads::os_available",
         }
     }
 

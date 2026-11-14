@@ -1,7 +1,9 @@
 //! Sharing values between threads: the two traits that say what may be
 //! handed to another thread or shared with one, atomics, which can be
-//! changed by several at once (see docs/38-statics.md), and mutexes, which
-//! let one thread at a time change what's in them (docs/41-threads.md).
+//! changed by several at once (see docs/38-statics.md), mutexes, which
+//! let one thread at a time change what's in them (docs/41-threads.md),
+//! and barriers, where threads wait for each other, and `spin`, which
+//! says a thread is waiting (docs/75-waiting-and-copying.md).
 //!
 //! Statics are shared by every function that names them, and so by every
 //! thread, so what's in one must be `Sync` too.
@@ -178,7 +180,56 @@ impl<T> Mutex<T> {
     export fn get_mut(&mut self) -> &mut T { self.value.get_mut() }
 }
 
-/// Says the thread is waiting for another: so the machine may run another
-/// thread, or rest a moment, before trying again.
+/// Where `count` threads wait for each other: each calls `wait`, and none
+/// goes on until all have. It can be used again and again: once all have
+/// come, the next round starts, and the next `wait` of each is of that.
+///
+/// It waits by spinning: by looking again and again, with a `spin` each
+/// time, until the last thread has come, which keeps the thread busy. So
+/// it's for threads that each have a core, and work in short rounds; a
+/// thread that waits long is better told some other way.
+///
+/// More than `count` threads waiting in a round, or a thread that never
+/// comes, keep the others waiting for ever.
+#[derive(Discard, Send, Sync)]
+export struct Barrier {
+    count: { n: usize | n >= 1 },
+    /// How many have come in this round.
+    here: Atomic<usize>,
+    /// Which round it is, counting from 0, round and round: only the last
+    /// to come changes it.
+    round: Atomic<usize>,
+}
+
+impl Barrier {
+    /// A barrier for `count` threads.
+    export fn new(count: { n: usize | n >= 1 }) -> Barrier {
+        Barrier { count, here: Atomic::new(0), round: Atomic::new(0) }
+    }
+
+    /// Waits until all `count` threads have come, `true` for the one that
+    /// came last, and `false` for the others: one in each round is told
+    /// it's the last.
+    export fn wait(&self) -> bool {
+        let round = self.round.load();
+        if self.here.fetch_add(1) == self.count - 1 {
+            // The last: `here` is 0 again before the round changes, so
+            // before any thread can see it change and come again.
+            self.here.store(0);
+            let _ = self.round.fetch_add(1);
+            true
+        } else {
+            while self.round.load() == round {
+                spin();
+            }
+            false
+        }
+    }
+}
+
+/// Says the thread is waiting for another, in a loop that looks again and
+/// again until that one has done something: so the machine may run
+/// another thread, or rest a moment, before it looks again. It changes
+/// nothing, and does nothing else.
 #[intrinsic]
-fn spin();
+export fn spin();

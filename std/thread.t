@@ -41,6 +41,19 @@ impl Threads {
         &self,
         f: F,
     ) -> JoinHandle<'a, R> with {alloc, e} { start(f, run) }
+
+    /// How many threads the machine can run at once, for this program:
+    /// its cores, or those of them it may run on. At least 1. Starting
+    /// more threads than this runs them by turns, not all at once.
+    export fn available(&self) -> { n: usize | n >= 1 } {
+        let n = self.os_available();
+        if n == 0 { 1 } else { n }
+    }
+
+    /// How many threads the machine says it can run at once, for this
+    /// program, or 0 if it can't say.
+    #[intrinsic]
+    fn os_available(&self) -> usize;
 }
 
 impl<'a, R> JoinHandle<'a, R> {

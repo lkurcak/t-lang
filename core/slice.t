@@ -3,6 +3,7 @@
 use crate::cmp::{Ord, Ordering};
 use crate::iter::{DoubleEndedIterator, IntoIterator, Iterator};
 use crate::mem;
+use crate::mem::Copy;
 use crate::ops::Range;
 use crate::option::Option;
 
@@ -132,6 +133,15 @@ impl<T> [T] {
     export fn iter_mut(&mut self) -> IterMut<T> { IterMut { rest: self } }
 }
 
+impl<T: Copy> [T] {
+    /// Copies the values of `src`, which is as long, into it, all at once,
+    /// as the machine copies memory: they're `Copy`, so `src` keeps them,
+    /// and what was here is nothing to lose. `src` can't be any of this
+    /// slice's values, as they're lent `&mut` while it's read.
+    #[intrinsic]
+    export fn copy_from_slice(&mut self, src: { s: &[T] | s.len() == self.len() });
+}
+
 impl<T: Eq> [T] {
     /// Is one of its values equal to `x`?
     export fn contains(&self, x: &T) -> bool {
@@ -164,12 +174,12 @@ impl<T: Ord> Ord for [T] {
 
 /// A slice with no values, of any lifetime: it points at nothing.
 #[intrinsic]
-export fn empty<'a, T>() -> &'a [T];
+export fn empty<'a, T>() -> { s: &'a [T] | s.len() == 0 };
 
 /// A slice with no values, to change, of any lifetime: it points at
 /// nothing, so nothing else can see what it does.
 #[intrinsic]
-export fn empty_mut<'a, T>() -> &'a mut [T];
+export fn empty_mut<'a, T>() -> { s: &'a mut [T] | s.len() == 0 };
 
 /// `for x in s`, for a slice `s`: a reference to each of its values,
 /// front to back, as `s.iter()` gives.

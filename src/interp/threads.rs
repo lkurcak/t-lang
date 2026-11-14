@@ -1,11 +1,12 @@
 //! Threads, as the interpreter runs them (docs/41-threads.md, I): each on
 //! a thread of the machine's, with a stack of its own, but only one at a
 //! time, which holds the *baton*. It's handed on at the points where what
-//! one thread does can be seen by another: each atomic operation, a
-//! mutex's spin, and a `join` of a thread that hasn't ended, as well as
-//! when a thread ends. Each time to the next thread that can run, in the
-//! order they were started, round and round: so a run is the same every
-//! time, and a thread that waits for another, spinning, lets it run.
+//! one thread does can be seen by another: each atomic operation, each
+//! `spin` (a mutex's, a barrier's, a program's own), and a `join` of a
+//! thread that hasn't ended, as well as when a thread ends. Each time to
+//! the next thread that can run, in the order they were started, round
+//! and round: so a run is the same every time, and a thread that waits
+//! for another, spinning, lets it run.
 //!
 //! Between those points, a thread runs alone: so what isn't atomic is
 //! never seen half done, as a program the checker accepted has no data
