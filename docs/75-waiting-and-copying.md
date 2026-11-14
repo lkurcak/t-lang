@@ -118,11 +118,7 @@ It's safe T, on two atomics: how many have come, and which round it is.
 use core::sync::Atomic;
 
 #[derive(Discard, Send, Sync)]
-pub struct Barrier {
-    count: { n: usize | n >= 1 },
-    here: Atomic<usize>,
-    round: Atomic<usize>,
-}
+pub struct Barrier { count: { n: usize | n >= 1 }, here: Atomic<usize>, round: Atomic<usize> }
 
 impl Barrier {
     pub fn wait(&self) -> bool {

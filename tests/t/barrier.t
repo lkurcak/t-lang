@@ -2,12 +2,14 @@
 // have come. It's used again and again: here each round, every thread
 // adds one, waits, checks that all have added, and waits again, so that
 // none adds for the next round before all have checked. Exactly one
-// thread a round is told it came last.
+// thread a round is told it came last. Many rounds, so that a barrier
+// that's wrong only when threads meet just so has its chances to show,
+// compiled.
 use core::sync::{Atomic, Barrier};
 use std::thread::{JoinHandle, Threads};
 
 const THREADS: usize = 4;
-const ROUNDS: usize = 5;
+const ROUNDS: usize = 2000;
 
 #[derive(Discard, Send, Sync)]
 struct Shared { barrier: Barrier, added: Atomic<usize>, wrong: Atomic<usize>, last: Atomic<usize> }
@@ -48,8 +50,8 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     b.join();
     c.join();
     let mut out = os.stdout;
-    out.line(&s.added.load())?; // expect: 20
+    out.line(&s.added.load())?; // expect: 8000
     out.line(&s.wrong.load())?; // expect: 0
-    out.line(&s.last.load())?; // expect: 10
+    out.line(&s.last.load())?; // expect: 4000
     Ok(())
 }
