@@ -109,7 +109,9 @@ impl Walk<'_> {
         let mut todo: Vec<Obj> = Vec::new();
         let outer = |o: Obj| o < objs;
         let mut seen_objs = HashSet::new();
-        for &(o, _) in self.measured.keys() {
+        let mut measures: HashMap<Obj, Vec<&Val>> = HashMap::new();
+        for (&(o, _), v) in &self.measured {
+            measures.entry(o).or_default().push(v);
             if outer(o) && seen_objs.insert(o) {
                 todo.push(o);
             }
@@ -120,9 +122,8 @@ impl Walk<'_> {
             }
         }
         while let Some(o) = todo.pop() {
-            let mut vals: Vec<Val> = (self.measured.iter())
-                .filter(|((p, _), _)| *p == o)
-                .map(|(_, v)| v.clone())
+            let mut vals: Vec<Val> = (measures.get(&o).into_iter().flatten())
+                .map(|v| (*v).clone())
                 .collect();
             if let Some(parts) = self.parts.get(&o) {
                 keep.extend(parts.tag.vars());

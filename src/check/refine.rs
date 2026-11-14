@@ -112,6 +112,12 @@
 //! result is one of those in the arguments, of the variants they're of
 //! (`Walk::free_theorems`): it can't make one (parametricity, lemma P1 of
 //! docs/55-free-theorems.md), which the interpreter checks at each call.
+//! More generally (`targs`), what a call gives back, and leaves behind a
+//! `&mut`, of a type parameter only markers and consumers bound is one of
+//! the cases of what it was given: what its arguments have, what's
+//! declared of each place it's lent, the place's own refinement too, and
+//! what each closure written in the call gives, by its summary
+//! (`summary.rs`, docs/74-refined-instantiation.md).
 
 mod diagnostics;
 mod free;

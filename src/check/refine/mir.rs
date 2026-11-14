@@ -30,7 +30,12 @@
 //!   must have what's declared there (`Walk::bind_ref`).
 //! - A closure is walked where it's made, from what's known there, or, if
 //!   it's given straight to a function, at the call, after the other
-//!   arguments, counting on what they say of its parameters.
+//!   arguments, counting on what they say of its parameters. Either way
+//!   what it captured by value is what it was made with, but what its body
+//!   changes, which each run reads as the runs before left it (lemma S3 of
+//!   docs/69-loans.md, as restated in step 74). What it gives where its
+//!   body returns is its summary, which the call it's given to counts on
+//!   (`summary.rs`).
 
 use super::*;
 use crate::mir::{
