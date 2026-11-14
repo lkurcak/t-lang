@@ -194,7 +194,10 @@ impl<'a> Builder<'a> {
                 if v.capture != Capture::Value {
                     p = p.project(Proj::Deref);
                 }
-                self.captured.entry(v.id).or_default().push((v.path.clone(), p));
+                self.captured
+                    .entry(v.id)
+                    .or_default()
+                    .push((v.path.clone(), p));
             }
             self.body.env = vars;
         }
@@ -1425,10 +1428,15 @@ impl<'a> Builder<'a> {
             return p;
         };
         let Some((at, place)) = places.iter().find(|(at, _)| path.starts_with(at)) else {
-            unreachable!("a place in `{}` its closure didn't capture", self.cx.typed().binds[&id].name)
+            unreachable!(
+                "a place in `{}` its closure didn't capture",
+                self.cx.typed().binds[&id].name
+            )
         };
         let mut p = place.clone();
-        path[at.len()..].iter().for_each(|proj| p = p.project(*proj));
+        path[at.len()..]
+            .iter()
+            .for_each(|proj| p = p.project(*proj));
         p
     }
 

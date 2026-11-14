@@ -470,6 +470,7 @@ fn spec(
         // A width with no side says nothing of where the value goes.
         let n = written.trim_end_matches(['?', 'x']);
         if digits(n) {
+            let n = written;
             return Err(Error::syntax(
                 Span::new(from, stop),
                 format!(

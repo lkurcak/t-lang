@@ -236,7 +236,10 @@ fn main() {
 > the closure was made. K2 cuts a changing capture at each of those, so
 > none relates a place in it to one outside it; refinements of type
 > arguments are of values, not places (lemma A1 of
-> docs/60-refined-type-arguments.md). As a backstop, the refinement
+> docs/60-refined-type-arguments.md). (The function, changing the rest,
+> knows nothing of the lent place but its own refinements, as the loan
+> forgets it, which may well keep it from breaking one; the cut makes the
+> argument not depend on that, and can be eased later.) As a backstop, the refinement
 > checker refuses, as an internal error, a closure that captures by
 > `&mut` or by value a place a refinement relates to the rest
 > (`Walk::captures_apart`).

@@ -433,7 +433,9 @@ impl Checker {
         for id in &p.captured {
             let bind = &self.typed.binds[id];
             let (var, t) = (bind.name.clone(), self.solved(&bind.ty));
-            let used = uses.remove(id).unwrap_or_else(|| vec![(Vec::new(), Use::Read)]);
+            let used = uses
+                .remove(id)
+                .unwrap_or_else(|| vec![(Vec::new(), Use::Read)]);
             for (path, used) in self.capture_places(*id, &t, used, l.moves.is_some()) {
                 let (name, t) = self.capture_name(&var, &t, &path);
                 let mode = match (l.moves, used) {
@@ -511,7 +513,9 @@ impl Checker {
         self.define_closure(symbol, &def);
         self.info.captures.insert(
             l.id,
-            (captures.iter()).map(|c| (c.name.clone(), c.mode)).collect(),
+            (captures.iter())
+                .map(|c| (c.name.clone(), c.mode))
+                .collect(),
         );
         self.typed.modes.insert(p.lambda.id, captures);
         Ok(())
@@ -588,8 +592,8 @@ impl Checker {
             tys.push(self.solved(&t));
         }
         let stop = |k: usize| {
-            let through = (k..path.len())
-                .any(|j| path[j] == Proj::Deref && matches!(tys[j], Type::Ref(..)));
+            let through =
+                (k..path.len()).any(|j| path[j] == Proj::Deref && matches!(tys[j], Type::Ref(..)));
             let used = match used {
                 Use::Mutate if through && !moves => Use::Unique,
                 used => used,
@@ -711,14 +715,7 @@ impl Checker {
     /// used as `how`. `value` says `e`'s value is what's used, rather than
     /// the place it names: a read of one that's `Copy` copies it, which
     /// only needs a `&`.
-    fn uses_in(
-        &self,
-        e: &Expr,
-        how: Use,
-        value: bool,
-        captured: &[NodeId],
-        uses: &mut Uses,
-    ) {
+    fn uses_in(&self, e: &Expr, how: Use, value: bool, captured: &[NodeId], uses: &mut Uses) {
         // Using a value of `e`'s type: moving it, unless it's `Copy`.
         let ty = |e: &Expr| self.typed.exprs.get(&e.id).map(|t| self.solved(t));
         // A `&mut` used is reborrowed, as `Builder::use_place` does.
@@ -986,7 +983,9 @@ fn predicate_names(e: &Expr, out: &mut Vec<String>) {
         }
         _ => {}
     }
-    e.children().into_iter().for_each(|c| predicate_names(c, out));
+    e.children()
+        .into_iter()
+        .for_each(|c| predicate_names(c, out));
 }
 
 /// Adds to `out` the names of variables `e` names.
